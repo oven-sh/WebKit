@@ -41,48 +41,19 @@ constexpr unsigned numberOfValueFlowRareWrites = 4;
 
 constexpr std::optional<ValueFlowRareWrite> rareWriteFoundUnder(ValueFlowNameKind kind)
 {
-    switch (kind) {
-    case ValueFlowNameKind::Getter:
-    case ValueFlowNameKind::Setter:
-    case ValueFlowNameKind::GetterUnderUnknownKey:
-    case ValueFlowNameKind::SetterUnderUnknownKey:
-    case ValueFlowNameKind::EveryGetter:
-    case ValueFlowNameKind::EverySetter:
+    switch (shapeOf(kind).sort) {
+    case ValueFlowNameSort::Getter:
+    case ValueFlowNameSort::Setter:
         return ValueFlowRareWrite::Accessor;
-    case ValueFlowNameKind::DeletedMember:
-    case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
+    case ValueFlowNameSort::Deletion:
         return ValueFlowRareWrite::Deletion;
-    case ValueFlowNameKind::CopiedFrom:
+    case ValueFlowNameSort::Copy:
         return ValueFlowRareWrite::Copy;
-    case ValueFlowNameKind::PrototypeLink:
+    case ValueFlowNameSort::PrototypeLink:
         return ValueFlowRareWrite::PrototypeLink;
-    case ValueFlowNameKind::Property:
-    case ValueFlowNameKind::Elements:
-    case ValueFlowNameKind::UnknownKey:
-    case ValueFlowNameKind::EveryProperty:
-    case ValueFlowNameKind::RedefinedMember:
-    case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
-    case ValueFlowNameKind::PrivateField:
-    case ValueFlowNameKind::Slot:
-    case ValueFlowNameKind::HiddenSlot:
-    case ValueFlowNameKind::InternalFields:
-    case ValueFlowNameKind::SteppedValues:
-    case ValueFlowNameKind::ReturnedValue:
-    case ValueFlowNameKind::SentValues:
-    case ValueFlowNameKind::OpenedBy:
-    case ValueFlowNameKind::ResolvedPromises:
-    case ValueFlowNameKind::RejectedPromises:
-    case ValueFlowNameKind::AllocatedAs:
-    case ValueFlowNameKind::OpenedIterators:
-    case ValueFlowNameKind::IteratedValues:
-    case ValueFlowNameKind::IteratorResults:
-    case ValueFlowNameKind::AwaitedValue:
-    case ValueFlowNameKind::MemberWritten:
-    case ValueFlowNameKind::EveryMemberWritten:
-    case ValueFlowNameKind::EveryMemberRead:
-    case ValueFlowNameKind::RestArgument:
-    case ValueFlowNameKind::AddedNames:
-    case ValueFlowNameKind::FoundThroughEscapedInstances:
+    case ValueFlowNameSort::Value:
+    case ValueFlowNameSort::Redefinition:
+    case ValueFlowNameSort::Other:
         return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -212,24 +183,13 @@ public:
 
     void clear()
     {
-        made.shrink(0);
+        auto shrinkToNothing = [](auto&... lists) {
+            (lists.shrink(0), ...);
+        };
+        shrinkToNothing(made, edges, reached, whoReached, uses, m_usesLogged, statementsWithMembersNotToldApart, runs, nodesRead, functionsAsked, madeNodesAskedFor, valuesShown, partsWatched, partsWatchedLast, nodesAskedWhetherEmpty);
         numberOfMadeNodes = 0;
         numberMadeWhereAskedFor = 0;
         m_madeByKey = HashedIndex();
-        edges.shrink(0);
-        reached.shrink(0);
-        whoReached.shrink(0);
-        uses.shrink(0);
-        m_usesLogged.shrink(0);
-        statementsWithMembersNotToldApart.shrink(0);
-        runs.shrink(0);
-        nodesRead.shrink(0);
-        functionsAsked.shrink(0);
-        madeNodesAskedFor.shrink(0);
-        valuesShown.shrink(0);
-        partsWatched.shrink(0);
-        partsWatchedLast.shrink(0);
-        nodesAskedWhetherEmpty.shrink(0);
     }
 
     Vector<MadeNodes> made;

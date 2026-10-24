@@ -40,7 +40,6 @@ layout L3 kind=Instance name="E" module=m0 flags=[HasHeritage] flow={baseState=B
 variable g0 name="g" module=m0 declared={type=anything} flow={writers=AllKnown stores=Never initialization=StoredBeforeEveryRead reads=NeverRead deferral=CapturesNothing cause=LimitReached}
 module m0 path="/a.js" displayPath="a.js" body=f0 namespaceLayout=L(m0)
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayBeCloned] {
-  b0():
     Return
 }
 function f1 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=object}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1

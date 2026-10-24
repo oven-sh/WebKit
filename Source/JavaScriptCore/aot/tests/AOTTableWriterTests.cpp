@@ -10,7 +10,6 @@
 #include "AOTImageTestSupport.h"
 #include "AOTProgramTableEncoder.h"
 #include "AOTShapeTest.h"
-#include "AOTTableWriter.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <array>
@@ -80,7 +79,7 @@ static void testVectorBytesOverflow()
     AOT_TEST_CHECK(!writer.allocate(8));
     AOT_TEST_CHECK(!writer.append(std::span<const uint8_t> { bytes }));
     AOT_TEST_CHECK(!writer.appendUnshared(bytes));
-    writer.appendByte(5);
+    writer.appendUnshared(std::span { bytes }.first(1));
     AOT_TEST_CHECK(writer.size() == sizeOfLargeRecord);
     AOT_TEST_CHECK(writer.take().isEmpty());
     AOT_TEST_CHECK(hitCount(build, LimitID::VectorBytes) == 1);

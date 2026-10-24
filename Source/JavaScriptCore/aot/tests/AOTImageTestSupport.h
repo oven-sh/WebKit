@@ -9,7 +9,6 @@
 
 #include "AOTBuildContext.h"
 #include "AOTCodeGenerationDriver.h"
-#include "AOTCodeIndex.h"
 #include "AOTCodeTemplates.h"
 #include "AOTCodeUnits.h"
 #include "AOTIRProgram.h"

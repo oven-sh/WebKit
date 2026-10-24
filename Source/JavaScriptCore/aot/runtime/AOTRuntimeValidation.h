@@ -13,6 +13,7 @@
 #include "VM.h"
 #include <algorithm>
 #include <optional>
+#include <tuple>
 
 namespace JSC { namespace AOT {
 
@@ -70,10 +71,6 @@ struct PhotographedCall {
 
 [[noreturn]] JS_EXPORT_PRIVATE void crashOnValidationFailure(VM&, const ValidationFailure&);
 
-// Looks at no more than a fixed number of the values a large container holds.
-bool contentsHaveType(Instance&, JSCell* container, Typed::ContentsSlot, const RuntimeType&);
-bool hasOrdinaryElements(VM&, JSValue array);
-bool hasPristineNames(VM&, JSValue array);
 // RegExp.$1, RegExp.lastMatch and their kin. A match of a program that never reads them leaves nothing for them.
 JS_EXPORT_PRIVATE void willReadLegacyRegExpStatics(VM&);
 
@@ -88,8 +85,6 @@ struct SlotOutsideType {
 // A slot is empty, holds undefined or null as a marker, or holds a value of the type of its field. A reference is followed only to a cell of the heap.
 JS_EXPORT_PRIVATE std::optional<SlotOutsideType> findSlotOutsideType(VM&, const Object&);
 JS_EXPORT_PRIVATE void validateSlotTypes(VM&, const Object&);
-// Also looks at what died since the last collection. Not for a thread that collects.
-JS_EXPORT_PRIVATE void validateSlotTypesOfLiveObjects(VM&);
 
 ALWAYS_INLINE bool validatesRuntime(VM& vm) { return vm.aotState().validatesRuntime; }
 
@@ -100,9 +95,13 @@ struct OperationPermissions {
 
 OperationPermissions permissionsOf(Entry);
 
+using CollectionVersions = std::tuple<HeapVersion, HeapVersion, HeapVersion>;
+CollectionVersions collectionVersionsOf(VM&);
+
 struct CollectionValidator {
     void didFinishCollection(VM&, CollectionScope);
 };
+inline CollectionValidator collectionValidator;
 
 } } // namespace JSC::AOT
 

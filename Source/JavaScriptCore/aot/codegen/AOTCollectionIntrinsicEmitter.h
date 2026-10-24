@@ -13,11 +13,11 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class CollectionIntrinsicEmitter final : public OperationEmitter {
 public:
-    explicit CollectionIntrinsicEmitter(CodeGenerator&);
+    explicit CollectionIntrinsicEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generateCollectionTable(const ValueContext&);
-    void generateMapNext(const ValueContext&);
-    void generateSetNext(const ValueContext&);
+    void generateMapNext(const ValueContext& value) { generateNext(Collection::Map, value); }
+    void generateSetNext(const ValueContext& value) { generateNext(Collection::Set, value); }
     void generateIsCollectionTableFull(const ValueContext&);
     void generateReserveCollectionCapacity(const ValueContext&);
 

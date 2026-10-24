@@ -15,6 +15,5 @@ layout L%(i) name="Other%(i)" fields=[{key="kind" declared={type=245} flags=[IsR
 # CHECK-NEXT: L1: members [L1]
 
 function f0 name="take" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     Return
 }

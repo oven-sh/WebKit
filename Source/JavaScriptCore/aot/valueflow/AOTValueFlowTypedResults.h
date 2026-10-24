@@ -9,12 +9,8 @@
 
 #include "AOTValueFlowBodies.h"
 #include "AOTValueFlowBuiltins.h"
-#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
-
-class CFG;
-class UseLists;
 
 struct ValueFlowTypedResult {
     TypeID type;
@@ -33,12 +29,7 @@ struct ValueFlowTypedResult {
 };
 
 ValueFlowTypedResult typedResultOf(const Program&, ExpectedResultID, uint64_t mostObjects);
-
-ValueFlowTypedResult findTypedResult(const Program&, const ValueFlowBuiltinTables&, const Function&, const UseLists&, ValueID call);
-ValueFlowTypedResult findTypedResult(const Program&, const ValueFlowBuiltinTables&, FunctionID, ValueID call);
-
 void appendSitesOfTypedResults(const Program&, const ValueFlowBuiltinTables&, const Function&, const CFG&, Vector<ValueFlowSite>&);
-
 void allocateTypedResult(const BuiltinOverload&, const ValueFlowStatement& call, const ValueFlowBuiltinCall&, ValueFlowObjectID promise, ValueSetID plainData, ValueFlowRuleContext&);
 
 } } } // namespace JSC::AOT::Typed

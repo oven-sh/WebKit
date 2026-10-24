@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="covered" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = Negate v1
     v3 = Upcast v1 castType=number
     Jump -> next b1()

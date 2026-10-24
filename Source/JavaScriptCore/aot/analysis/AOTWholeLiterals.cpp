@@ -14,25 +14,9 @@
 #include "AOTFlowResults.h"
 #include "AOTThreads.h"
 #include "AOTValueIdentity.h"
-#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
-
-namespace {
-
-struct LiteralSite {
-    AllocationSiteID site;
-    bool isWhole;
-};
-
-} // anonymous namespace
-
-// By site, not by allocation class: one class stands for all the lists of a program that nobody stores into, so one of them in unknown hands would speak for them all.
-static bool isNeverChanged(const FlowResults& flow, AllocationSiteID site)
-{
-    return site && flow.objectsNeverChange(site);
-}
 
 static bool isListLiteral(const Program& program, const Value& value)
 {
@@ -41,40 +25,38 @@ static bool isListLiteral(const Program& program, const Value& value)
     return value.opcode == Opcode::NewArray && !value.capacityOperand();
 }
 
-static void collectLiteralSites(const Program& program, const FlowResults& flow, FunctionID functionID, Vector<LiteralSite>& sites)
-{
-    const Function& function = program.functions[functionID.index()];
-    Vector<ValueID, 8> literals;
-    forEachListedValue(program, functionID, { Opcode::Data, Opcode::NewArray }, [&](BlockID, uint32_t, ValueID id, const Value& value) {
-        if (isListLiteral(program, value) && isNeverChanged(flow, value.allocationSite()))
-            literals.append(id);
-    });
-    if (literals.isEmpty())
-        return;
-
-    BitVector isWritten(function.values.size());
-    for (const Block& block : function.blocks) {
-        for (ValueID id : block.values) {
-            const Value& value = function.at(id);
-            value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-                if (operandUsesOf(value.opcode, operandIndex).containsAny(operandWritingUses))
-                    isWritten.quickSet(sameObjectThroughCasts(function, operand).index());
-            });
-        }
-    }
-    for (ValueID literal : literals)
-        sites.append({ function.at(literal).allocationSite(), !isWritten.quickGet(literal.index()) });
-}
-
 BitVector collectSitesOfWholeLiterals(const Program& program, const FlowResults& flow, BuildContext& build)
 {
+    struct LiteralSite {
+        AllocationSiteID site;
+        bool isWhole;
+    };
     Vector<LiteralSite> literals = collectInParallel<LiteralSite>(build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<LiteralSite>& found) {
-        collectLiteralSites(program, flow, FunctionID(index), found);
+        const Function& function = program.functions[index];
+        Vector<ValueID, 8> literalsOfFunction;
+        forEachListedValue(program, FunctionID(index), { Opcode::Data, Opcode::NewArray }, [&](BlockID, uint32_t, ValueID id, const Value& value) {
+            if (isListLiteral(program, value) && value.allocationSite() && flow.objectsNeverChange(value.allocationSite()))
+                literalsOfFunction.append(id);
+        });
+        if (literalsOfFunction.isEmpty())
+            return;
+
+        BitVector isWritten(function.values.size());
+        for (const Block& block : function.blocks) {
+            for (ValueID id : block.values) {
+                const Value& value = function.at(id);
+                value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                    if (operandUsesOf(value.opcode, operandIndex).containsAny(operandWritingUses))
+                        isWritten.quickSet(sameObjectThroughCasts(function, operand).index());
+                });
+            }
+        }
+        for (ValueID literal : literalsOfFunction)
+            found.append({ function.at(literal).allocationSite(), !isWritten.quickGet(literal.index()) });
     });
     BitVector sites(flow.numberOfAllocationSites());
     for (const LiteralSite& literal : literals)
         sites.quickSet(literal.site.index());
-    // A site that stands in two functions is whole where both copies are.
     for (const LiteralSite& literal : literals) {
         if (!literal.isWhole)
             sites.quickClear(literal.site.index());

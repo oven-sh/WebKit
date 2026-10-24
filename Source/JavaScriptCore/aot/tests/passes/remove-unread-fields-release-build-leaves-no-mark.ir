@@ -4,18 +4,4 @@
 # OPTIONS: only-passes=ComputeEffectSummaries,ResolveCalls,ResolveAccesses,EliminateDeadCode,RemoveUnreadFields
 # STATISTIC: UnreadFieldsRemoved = 1
 # CHECK-NOT: IsRemovedAsUnread
-
-module m0 path="main.js" displayPath="main.js" body=f0
-entry module=m0
-layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="unread" declared={type=anything} flags=[IsRequired]}]
-
-function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="input" [isFreeName]
-    v2 = Integer integer=1
-    v3 = NewObject -, v1, v2 layout=L0 fields=[0, 1]
-    v4 = FinishObject v3
-    v5 = PropGet v4 key="x"
-    Return v5
-}
+# PROGRAM-OF: remove-unread-fields-validating-build.ir

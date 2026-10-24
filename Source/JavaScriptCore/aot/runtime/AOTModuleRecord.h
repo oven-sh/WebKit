@@ -10,7 +10,6 @@
 #include "AOTRecordTypes.h"
 #include "AOTVector.h"
 #include "CyclicModuleRecord.h"
-#include <optional>
 #include <wtf/HashSet.h>
 #include <wtf/OrderedHashSet.h>
 
@@ -41,14 +40,9 @@ public:
     static ModuleRecord* create(Instance&, Structure*, JSModuleLoader*, const Identifier& moduleKey, ModuleID);
 
     DECLARE_EXPORT_INFO;
-    DECLARE_VISIT_CHILDREN;
 
     ModuleID module() const { return m_module; }
-    Instance& instance() const { return m_instance; }
     JSGlobalObject* instanceRealm() const;
-
-    unsigned dfsIndex() const { return m_dfsIndex; }
-    void setDFSIndex(unsigned index) { m_dfsIndex = index; }
 
     bool isOnStack(const ModuleEvaluationStack& stack) const { return m_evaluationStack == &stack; }
     void setEvaluationStack(const ModuleEvaluationStack* stack) { m_evaluationStack = stack; }
@@ -73,14 +67,10 @@ public:
 
 private:
     ModuleRecord(Instance&, Structure*, JSModuleLoader*, const Identifier& moduleKey, ModuleID);
-    void finishCreation(JSGlobalObject*, VM&);
     Modules& modules() const;
-    Resolution resolveCapturedExport(JSGlobalObject*, const Identifier& exportName);
-    Resolution resolveExportEntry(JSGlobalObject*, const Identifier& exportName, unsigned index);
 
     Instance& m_instance;
     ModuleID m_module;
-    unsigned m_dfsIndex { 0 };
     const ModuleEvaluationStack* m_evaluationStack { nullptr };
     Vector<UniquedStringImpl*, 2> m_resolveSet;
     bool m_isInExportStarSet { false };

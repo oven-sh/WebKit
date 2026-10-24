@@ -8,110 +8,92 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="hasOwn" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = String string="a"
     v2 = CallBuiltin -, v0, v1 overload=ObjectHasOwn/0 accessSite=2
     Return v2
-}
-# CHECK-LABEL: function f0 name="hasOwn"
 # CHECK-NOT: CallBuiltin
 # CHECK: v2: boolean = PropHasOwn v0 key="a" accessSite=2
+}
 
 function f1 name="hasOwnProperty" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = String string="a"
     v2 = CallBuiltin v0, v1 overload=ObjectPrototypeHasOwnProperty/0
     Return v2
-}
-# CHECK-LABEL: function f1 name="hasOwnProperty"
 # CHECK-NOT: CallBuiltin
 # CHECK: v2: boolean = PropHasOwn v0 key="a"
+}
 
 function f2 name="symbolKey" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = KeyConstant key=@@iterator
     v2 = CallBuiltin -, v0, v1 overload=ObjectHasOwn/0
     v3 = CallBuiltin v0, v1 overload=ObjectPrototypeHasOwnProperty/0
     v4 = NewArray v2, v3 contents=anything
     Return v4
-}
-# CHECK-LABEL: function f2 name="symbolKey"
 # CHECK-NOT: CallBuiltin
 # CHECK: v2: boolean = PropHasOwn v0 key=@@iterator
 # CHECK-NEXT: v3: boolean = PropHasOwn v0 key=@@iterator
+}
 
 function f3 name="indexLikeKey" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = String string="0"
     v2 = CallBuiltin -, v0, v1 overload=ObjectHasOwn/0
     v3 = CallBuiltin v0, v1 overload=ObjectPrototypeHasOwnProperty/0
     v4 = NewArray v2, v3 contents=anything
     Return v4
-}
-# CHECK-LABEL: function f3 name="indexLikeKey"
 # CHECK-NOT: PropHasOwn
 # CHECK: v2: boolean = CallBuiltin -, v0, v1 overload=ObjectHasOwn/0
 # CHECK-NEXT: v3: boolean = CallBuiltin v0, v1 overload=ObjectPrototypeHasOwnProperty/0
+}
 
 function f4 name="keyIsNotOneLiteral" parameters=[{type=object}, {type=string}, {type="a"|"b"}, {type=symbol}] results=[{type=anything}] {
-  b0(v0: object, v1: string, v2: "a"|"b", v3: symbol):
     v4 = CallBuiltin -, v0, v1 overload=ObjectHasOwn/0
     v5 = CallBuiltin -, v0, v2 overload=ObjectHasOwn/0
     v6 = CallBuiltin -, v0, v3 overload=ObjectHasOwn/0
     v7 = NewArray v4, v5, v6 contents=anything
     Return v7
-}
-# CHECK-LABEL: function f4 name="keyIsNotOneLiteral"
 # CHECK-NOT: PropHasOwn
 # CHECK: v4: boolean = CallBuiltin -, v0, v1 overload=ObjectHasOwn/0
 # CHECK-NEXT: v5: boolean = CallBuiltin -, v0, v2 overload=ObjectHasOwn/0
 # CHECK-NEXT: v6: boolean = CallBuiltin -, v0, v3 overload=ObjectHasOwn/0
+}
 
 function f5 name="receiverMayBePrimitiveOrNullish" parameters=[{type=anything}, {type=string}, {type=undefined|object}] results=[{type=anything}] {
-  b0(v0: anything, v1: string, v2: undefined|object):
     v3 = String string="a"
     v4 = CallBuiltin v0, v3 overload=ObjectPrototypeHasOwnProperty/0
     v5 = CallBuiltin v1, v3 overload=ObjectPrototypeHasOwnProperty/0
     v6 = CallBuiltin v2, v3 overload=ObjectPrototypeHasOwnProperty/0
     v7 = NewArray v4, v5, v6 contents=anything
     Return v7
-}
 # What is an object, undefined or null is converted first, which throws for the two.
-# CHECK-LABEL: function f5 name="receiverMayBePrimitiveOrNullish"
 # CHECK-NOT: PropHasOwn
 # CHECK: v4: boolean = CallBuiltin v0, v3 overload=ObjectPrototypeHasOwnProperty/0
 # CHECK-NEXT: v5: boolean = CallBuiltin v1, v3 overload=ObjectPrototypeHasOwnProperty/0
 # CHECK-NEXT: [[object]]: object = ToObject v2
 # CHECK-NEXT: v6: boolean = PropHasOwn [[object]] key="a"
+}
 
 function f6 name="unmatchedCall" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="a"
     v2 = CallBuiltin -, v0, v1 overload=ObjectHasOwn/0 builtinCallForm=AnyReceiver
     Return v2
-}
-# CHECK-LABEL: function f6 name="unmatchedCall"
 # CHECK-NOT: PropHasOwn
 # CHECK: v2: boolean = CallBuiltin -, v0, v1 overload=ObjectHasOwn/0 builtinCallForm=AnyReceiver
+}
 
 function f7 name="otherEntryWithTheSameOperands" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = String string="a"
     v2 = CallBuiltin v0, v1 overload=ObjectPrototypePropertyIsEnumerable/0
     Return v2
-}
-# CHECK-LABEL: function f7 name="otherEntryWithTheSameOperands"
 # CHECK-NOT: PropHasOwn
 # CHECK: v2: boolean = CallBuiltin v0, v1 overload=ObjectPrototypePropertyIsEnumerable/0
+}
 
 function f8 name="conversionToObjectComesFirst" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=ObjectHasOwn
     v2 = String string="a"
     v3 = Call v1, -, v0, v2
     Return v3
-}
-# RESOLVED-LABEL: function f8 name="conversionToObjectComesFirst"
 # RESOLVED-NOT: PropHasOwn v0
 # RESOLVED: [[object8]]: object = ToObject v0
 # RESOLVED-NEXT: v3: boolean = PropHasOwn [[object8]] key="a"
+}

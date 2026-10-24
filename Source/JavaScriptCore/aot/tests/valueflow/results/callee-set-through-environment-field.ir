@@ -12,13 +12,11 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Environment name="setup" fields=[{key="handler" declared={type=anything}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Boolean boolean=true
     v1 = CallDirect v0 function=f1
     Return
 }
 function f1 name="setup" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject layout=L0 fields=[]
     v2 = ToBoolean v0
     Branch v2 -> taken b1(), notTaken b2()
@@ -35,12 +33,10 @@ function f1 name="setup" parameters=[{type=anything}] results=[{type=anything}] 
     Return v8
 }
 function f2 name="one" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     Return v0
 }
 function f3 name="two" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=2
     Return v0
 }

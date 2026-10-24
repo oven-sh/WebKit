@@ -9,7 +9,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="reserves" parameters=[{type=Array<anything>}, {type=i32}, {type=int}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: Array<anything>, v1: i32, v2: int, v3: boolean):
     v4 = HasSpareArrayCapacity v0
     ReserveArrayCapacity v0, v1
     ReserveArrayCapacity v0, v2

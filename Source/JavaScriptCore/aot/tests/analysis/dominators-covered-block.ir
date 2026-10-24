@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="tryCatch" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=number}] {
-  b0(v0: anything, v1: number, v2: boolean):
     v3 = Add v1, v1
     Jump -> next b1(v3)
   b1(v4) handler=b4():
@@ -56,7 +55,6 @@ function f0 name="tryCatch" parameters=[{type=anything}, {type=number}, {type=bo
 # CHECK-NEXT: b5 handler: none
 # CHECK-NEXT: b5 terminator dominates: []
 function f1 name="twoCoveredBlocksInSequence" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1() handler=b4():
     v1 = Call v0
@@ -99,7 +97,6 @@ function f1 name="twoCoveredBlocksInSequence" parameters=[{type=anything}] resul
 # CHECK-NEXT: b4 handler: none
 # CHECK-NEXT: b4 terminator dominates: []
 function f2 name="secondBlockAloneIsCovered" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = Call v0
@@ -125,7 +122,6 @@ function f2 name="secondBlockAloneIsCovered" parameters=[{type=anything}] result
 # CHECK-NEXT: b2 handler: b4()
 # CHECK-NEXT: b2 terminator dominates: [b3]
 function f3 name="branchInPlaceOfTheHandlerEdge" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=number}] {
-  b0(v0: anything, v1: number, v2: boolean):
     v3 = Add v1, v1
     Jump -> next b1(v3)
   b1(v4):

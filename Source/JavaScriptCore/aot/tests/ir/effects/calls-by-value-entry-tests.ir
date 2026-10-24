@@ -6,11 +6,9 @@
 module m0 path="main.ts" displayPath="main.ts"
 layout L0 kind=Instance name="Counter" constructor=f5 flow={baseState=None members=[L0]}
 function f0 name="deadBody" parameters=[{type=undefined|null|number}] results=[{type=anything}] {
-  b0(v0: undefined|null|number):
     Unreachable
 }
 function f1 name="narrowed" parameters=[{type=int}] results=[{type=undefined}] {
-  b0(v0: int):
     Return
 }
 function f2 name="expected" parameters=[{type=int flags=[IsExpected]}] results=[{type=undefined}] {
@@ -18,27 +16,21 @@ function f2 name="expected" parameters=[{type=int flags=[IsExpected]}] results=[
     Return
 }
 function f3 name="typedThis" flags=[HasThis] thisType={type=undefined|null|string} results=[{type=undefined}] {
-  b0(v0: undefined|null|string):
     Return
 }
 function f4 name="second" parameters=[{type=anything}, {type=undefined|null|string}] results=[{type=undefined}] {
-  b0(v0: anything, v1: undefined|null|string):
     Return
 }
 function f5 name="Counter" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=undefined|null|number}] results=[{type=anything}] constructedClass=L0 {
-  b0(v0: anything, v1: undefined|null|number):
     Unreachable
 }
 function f6 name="asynchronous" flags=[IsAsync] parameters=[{type=undefined|null|number}] results=[{type=anything}] {
-  b0(v0: undefined|null|number):
     Unreachable
 }
 function f7 name="rest" flags=[HasRestParameter] parameters=[{type=Array<number>}] results=[{type=undefined}] {
-  b0(v0: Array<number>):
     Return
 }
 function f8 name="arguments" parameters=[{type=f0}, {type=f1}, {type=f2}, {type=f4}, {type=anything}, {type=string}, {type=number}, {type=undefined}, {type=int}] results=[{type=undefined}] {
-  b0(v0: f0, v1: f1, v2: f2, v3: f4, v4: anything, v5: string, v6: number, v7: undefined, v8: int):
     v9 = Call v0, -, v5 callees=[f0]
     v10 = Call v0, -, v4 callees=[f0]
     v11 = Call v0, -, v6 callees=[f0]
@@ -71,7 +63,6 @@ function f8 name="arguments" parameters=[{type=f0}, {type=f1}, {type=f2}, {type=
 # CHECK-NEXT: v20 Call: none
 # CHECK-NEXT: v21 Call: none
 function f9 name="receivers" parameters=[{type=f3}, {type=string}, {type=number}] results=[{type=undefined}] {
-  b0(v0: f3, v1: string, v2: number):
     v3 = Call v0, v1 callees=[f3]
     v4 = Call v0, v2 callees=[f3]
     v5 = Call v0 callees=[f3]
@@ -82,7 +73,6 @@ function f9 name="receivers" parameters=[{type=f3}, {type=string}, {type=number}
 # CHECK-NEXT: v4 Call: none
 # CHECK-NEXT: v5 Call: none
 function f10 name="otherEntries" parameters=[{type=f5}, {type=f6}, {type=f7}, {type=string}, {type=number}, {type=Array}] results=[{type=undefined}] {
-  b0(v0: f5, v1: f6, v2: f7, v3: string, v4: number, v5: Array):
     v6 = Construct v0, -, v3 callees=[f5]
     v7 = Construct v0, -, v4 callees=[f5]
     v8 = Call v1, -, v3 callees=[f6]

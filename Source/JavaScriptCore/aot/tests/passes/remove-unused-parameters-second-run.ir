@@ -8,16 +8,13 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="ignoresSecond" parameters=[{type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
     Return v0
-}
-# CHECK-LABEL: function f0 name="ignoresSecond"
 # CHECK: b0(v0: number, v1: number):
 # CHECK-NEXT: [[forwarded]]: number = CallDirect v0 function=f4
 # CHECK-NEXT: ReturnCall [[forwarded]]
+}
 
 function f1 name="passesSecondToItself" parameters=[{type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
     v2 = TypeTest v0 testedType=i32
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -25,29 +22,24 @@ function f1 name="passesSecondToItself" parameters=[{type=number}, {type=number}
   b2():
     v3 = CallDirect v0, v1 function=f1
     Return v3
-}
-# CHECK-LABEL: function f1 name="passesSecondToItself"
 # CHECK: b0(v0: number, v1: number):
 # CHECK-NEXT: = CallDirect v0 function=f5
 # CHECK-NEXT: ReturnCall
+}
 
 function f2 name="caller" parameters=[{type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
     v2 = CallDirect v0, v1 function=f0
     v3 = CallDirect v2, v1 function=f1
     Return v3
-}
-# CHECK-LABEL: function f2 name="caller"
 # CHECK: [[first]]: number = CallDirect v0 function=f4
 # CHECK-NEXT: = CallDirect [[first]] function=f5
+}
 
 function f3 name="callerThatMayNotChange" parameters=[{type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
     v2 = CallDirect v0, v1 function=f0
     Return v2
-}
-# CHECK-LABEL: function f3 name="callerThatMayNotChange"
 # CHECK: = CallDirect v0, v1 function=f0
+}
 
 # CHECK-LABEL: function f4 name="ignoresSecond"{{*}}parameters=[{type=number}] results=[{type=number}]{{*}}derivation={source=f0 parameterMap=[{original=0}]}
 # CHECK: b0(v0: number):

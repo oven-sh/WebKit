@@ -7,7 +7,6 @@ variable g0 name="record" module=m0 declared={type=anything} initialization=Unde
 layout L0 name="Record" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = Integer integer=1
@@ -19,7 +18,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="testsPrimitive" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=object
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):
@@ -36,7 +34,6 @@ function f1 name="testsPrimitive" parameters=[{type=anything}] results=[{type=an
 # CHECK-NEXT: = PropHas {{*}}key="missing"
 # CHECK-NEXT: Unreachable
 function f2 name="testsRecord" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = PropHas v0 key="missing"
     Return v1

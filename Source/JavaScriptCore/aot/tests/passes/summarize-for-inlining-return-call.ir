@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="register" [isFreeName]
     v2 = NewClosure function=f1
@@ -16,7 +15,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="endsInTailCall" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f4
     ReturnCall v1
 }
@@ -30,7 +28,6 @@ function f1 name="endsInTailCall" parameters=[{type=anything}] results=[{type=an
 # PASS-NOT: neverReturns
 
 function f2 name="tailCallOnOnePath" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -45,7 +42,6 @@ function f2 name="tailCallOnOnePath" parameters=[{type=anything}] results=[{type
 # PASS-NOT: neverReturns
 
 function f3 name="tailCallOfFunctionWithoutReturn" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f5
     ReturnCall v1
 }
@@ -53,7 +49,6 @@ function f3 name="tailCallOfFunctionWithoutReturn" parameters=[{type=anything}] 
 # PASS: f3: barrier=None {{*}} noReturn=[b0] neverReturns
 
 function f4 name="callsAndReturns" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0
     Return v1
 }
@@ -63,7 +58,6 @@ function f4 name="callsAndReturns" parameters=[{type=anything}] results=[{type=a
 # PASS-NOT: neverReturns
 
 function f5 name="fails" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Throw v0
 }
 # CHECK: f5: barrier=None {{*}} noReturn=[b0] neverReturns

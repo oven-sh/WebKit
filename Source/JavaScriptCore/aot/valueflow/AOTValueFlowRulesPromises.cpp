@@ -9,8 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTValueFlowBuiltins.h"
-#include "AOTVector.h"
-#include <array>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -19,7 +17,6 @@ static constexpr ValueFlowName promiseReason = nameOf(BuiltinSlots::PromiseReaso
 static constexpr ValueFlowName resolvedPromises = ValueFlowName::of(ValueFlowNameKind::ResolvedPromises);
 static constexpr ValueFlowName rejectedPromises = ValueFlowName::of(ValueFlowNameKind::RejectedPromises);
 
-// What a thenable rejects with comes from native code, like the error for a promise that is resolved with itself.
 void adoptRejectionOf(ValueFlowRuleContext& context, ClimbingSet values, ValueFlowNodeID reason)
 {
     ClimbingSet objects = context.restrict(values, context.universe().objects());
@@ -35,7 +32,6 @@ void resolvePromises(ValueFlowRuleContext& context, ClimbingSet promises, Climbi
     forEachNodeOfSlotWrittenThrough(context, promises, promiseValue, [&](ValueFlowNodeID held) {
         context.connect(settledWith, held);
     });
-
     forEachNodeOfSlotWrittenThrough(context, promises, promiseReason, [&](ValueFlowNodeID held) {
         adoptRejectionOf(context, values, held);
     });
@@ -46,14 +42,12 @@ void rejectPromises(ValueFlowRuleContext& context, ClimbingSet promises, const V
     forEachNodeOfSlotWrittenThrough(context, promises, promiseReason, [&](ValueFlowNodeID held) {
         context.connect(reasons, held);
     });
-    // The host reports a rejection that no handler takes.
     context.connect(reasons, ValueFlowProgramNodes::escaped());
 }
 
 void runAwait(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     ClimbingSet values = context.valueOf(context.operandsOf(statement)[0]);
-    // A thenable is asked whether or not somebody reads the answer.
     ValueFlowNodeID awaited = context.lookup(values, awaitedValueName);
     if (statement.result)
         context.connect(awaited, statement.result);
@@ -63,31 +57,6 @@ void runAwait(const ValueFlowStatement& statement, ValueFlowRuleContext& context
     connectContentsOfSlot(context, context.restrict(values, context.universe().objects()), promiseReason, statement.thrown);
 }
 
-// A promise whose `constructor` is not Promise is settled through Promise.prototype.then, which constructs the species of that constructor.
-static void constructSpeciesOfPromises(ValueFlowRuleContext& context, ClimbingSet promises)
-{
-    const ValueFlowUniverse& universe = context.universe();
-    ClimbingSet constructors = without(context, context.valueOf(context.lookup(promises, nameOf(context, BuiltinNames::constructor))), universe.objectOf(Builtins::Promise));
-    ClimbingSet species = context.unite(constructors, context.valueOf(context.lookup(constructors, nameOf(context, BuiltinNames::speciesSymbol))));
-    context.forEachMember(context.restrict(species, universe.builtinFunctions()), [&](ValueFlowObjectID constructor) {
-        noteCallOfBuiltin(universe.builtinOf(constructor), ValueFlowCallKind::ConstructByNativeCode, context);
-    });
-    ClimbingSet constructed = context.restrict(species, context.maker().intersect(universe.callables(), ValueSets::complement(universe.builtinFunctions())));
-    if (!holdsSomething(context, constructed))
-        return;
-
-    // The executor that the constructor is handed is native code's, and so is whoever takes the promise.
-    ValueFlowNodeID escaped = ValueFlowProgramNodes::escaped();
-    forEachPartOfCallees(context, constructed, [&](ClimbingSet part) {
-        ValueFlowCallGroup group = context.group(part, ValueFlowCallKind::ConstructByNativeCode, ValueFlowCalleeOrigin::MemberFoundUnderName);
-        context.add(group.newTarget, part);
-        context.add(group.otherArguments, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
-        context.connect(group.result, escaped);
-        context.connect(group.thrown, escaped);
-    });
-}
-
-// A promise of the realm finds the built-in `then` on its prototype, which is locked, unless something of that name was put on the promise itself, properties were copied onto it or it was given another prototype.
 static bool mayLackBuiltinThen(ValueFlowRuleContext& context, ClimbingSet promises)
 {
     if (!holdsSomething(context, promises))
@@ -103,30 +72,12 @@ static bool mayLackBuiltinThen(ValueFlowRuleContext& context, ClimbingSet promis
         if (mayBeUntracked && holdsSomething(context, context.valueOf(context.read(untrackedObject, name))))
             return true;
     }
-    // A built-in says what lies above the promise that it allocates.
     ValueSetID otherPrototypes = ValueSets::complement(context.maker().of(context.universe().objectOf(Builtins::PromisePrototype)));
     if (context.meet(context.valueOf(context.read(promises, prototypeLinkName)), otherPrototypes))
         return true;
     return mayBeUntracked && context.meet(context.valueOf(context.read(untrackedObject, prototypeLinkName)), otherPrototypes);
 }
 
-static void askThenables(ValueFlowRuleContext& context, ClimbingSet thenables, ValueFlowNodeID result)
-{
-    // `then` of a promise of the realm is the built-in function. What the promise holds stands for its call. The built-in runs all the same.
-    const ValueFlowUniverse& universe = context.universe();
-    ValueFlowObjectID builtinThen = universe.objectOf(Builtins::PromisePrototypeThen);
-    ClimbingSet found = context.valueOf(context.lookup(thenables, nameOf(context, BuiltinNames::then)));
-    if (context.contains(found, builtinThen))
-        noteCallOfBuiltin(Builtins::PromisePrototypeThen, ValueFlowCallKind::CallByNativeCode, context);
-    ClimbingSet methods = without(context, found, builtinThen);
-    if (!context.meet(methods, universe.callables()))
-        return;
-    // The two functions that a thenable is handed are native code's: whatever it calls them with comes back from there.
-    callInProtocol(context, { .callees = methods, .thisValue = thenables, .otherArguments = unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult) });
-    context.add(result, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
-}
-
-// As far as its layout says, an instance of a class that extends something may be a promise.
 static ClimbingSet instancesFindingBuiltinThen(ValueFlowRuleContext& context, ClimbingSet instances)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -152,14 +103,12 @@ static ValueSetID promisesAllocatedByBuiltins(ValueFlowRuleContext& context, Cli
     return context.maker().of(promises.span());
 }
 
-// What awaiting any member of the set gives.
 void runAwaitedValue(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     const ValueFlowUniverse& universe = context.universe();
     ClimbingSet values = context.setOfKey();
     ValueFlowNodeID result = statement.result;
 
-    // Whatever is no thenable is the answer itself.
     ValueSetID promisesOfRealm = context.maker().unite(universe.sureInstancesOf(BuiltinClasses::Promise), promisesAllocatedByBuiltins(context, values));
     context.add(result, context.restrict(values, ValueSets::complement(promisesOfRealm)));
     if (mayLackBuiltinThen(context, context.restrict(values, promisesOfRealm)))
@@ -167,14 +116,37 @@ void runAwaitedValue(const ValueFlowStatement& statement, ValueFlowRuleContext& 
     connectContentsOfSlot(context, context.restrict(values, universe.objects()), promiseValue, result);
 
     forEachPlaceholderAndOthers(context, context.restrict(values, universe.objects()), [&](ClimbingSet thenables) {
-        askThenables(context, thenables, result);
+        ValueFlowObjectID builtinThen = universe.objectOf(Builtins::PromisePrototypeThen);
+        ClimbingSet found = context.valueOf(context.lookup(thenables, nameOf(context, BuiltinNames::then)));
+        if (context.contains(found, builtinThen))
+            noteCallOfBuiltin(Builtins::PromisePrototypeThen, ValueFlowCallKind::CallByNativeCode, context);
+        ClimbingSet methods = without(context, found, builtinThen);
+        if (!context.meet(methods, universe.callables()))
+            return;
+        callInProtocol(context, { .callees = methods, .thisValue = thenables, .otherArguments = unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult) });
+        context.add(result, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
     });
-    // Native code does this to an escaped promise anyway.
     ClimbingSet promises = context.restrict(without(context, values, ValueFlowUniverse::unknownObject()), universe.instancesOf(BuiltinClasses::Promise));
     ValueSetID instancesOfProgram = universe.placeholders().objectsWithLayoutOfProgram;
     promises = context.unite(context.restrict(promises, ValueSets::complement(instancesOfProgram)), instancesFindingBuiltinThen(context, context.restrict(promises, instancesOfProgram)));
-    forEachPlaceholderAndOthers(context, promises, [&](ClimbingSet part) {
-        constructSpeciesOfPromises(context, part);
+    forEachPlaceholderAndOthers(context, promises, [&](ClimbingSet receivers) {
+        ClimbingSet constructors = without(context, context.valueOf(context.lookup(receivers, nameOf(context, BuiltinNames::constructor))), universe.objectOf(Builtins::Promise));
+        ClimbingSet species = context.unite(constructors, context.valueOf(context.lookup(constructors, nameOf(context, BuiltinNames::speciesSymbol))));
+        context.forEachMember(context.restrict(species, universe.builtinFunctions()), [&](ValueFlowObjectID constructor) {
+            noteCallOfBuiltin(universe.builtinOf(constructor), ValueFlowCallKind::ConstructByNativeCode, context);
+        });
+        ClimbingSet constructed = context.restrict(species, context.maker().intersect(universe.callables(), ValueSets::complement(universe.builtinFunctions())));
+        if (!holdsSomething(context, constructed))
+            return;
+
+        ValueFlowNodeID escaped = ValueFlowProgramNodes::escaped();
+        forEachPartOfCallees(context, constructed, [&](ClimbingSet part) {
+            ValueFlowCallGroup group = context.group(part, ValueFlowCallKind::ConstructByNativeCode, ValueFlowCalleeOrigin::MemberFoundUnderName);
+            context.add(group.newTarget, part);
+            context.add(group.otherArguments, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
+            context.connect(group.result, escaped);
+            context.connect(group.thrown, escaped);
+        });
     });
 }
 
@@ -184,7 +156,6 @@ bool applyConstructionOfPromise(BuiltinID builtin, const ValueFlowBuiltinCall& c
     if (!isConstruction(call.kind) || universe.objectOf(builtin) != universe.objectOf(Builtins::Promise))
         return false;
 
-    // A call without objects of its own shares those of the built-in. What a promise is rejected with escapes, so one function may reject them all.
     context.use(builtin, BuiltinUse::Constructed);
     ClimbingSet promise = only(context, call.resultObject ? call.resultObject : universe.resultOf(Builtins::Promise, 0));
     ClimbingSet resolve = only(context, call.contentsObject ? call.contentsObject : universe.resultOf(Builtins::Promise, 1));
@@ -200,7 +171,6 @@ bool applyConstructionOfPromise(BuiltinID builtin, const ValueFlowBuiltinCall& c
         executors = call.argumentsMayBeAbsent ? context.unite(executors, context.valueOf(call.arguments[0])) : context.valueOf(call.arguments[0]);
     std::array<ValueFlowNodeID, 2> settlingFunctions { context.holding(resolve), context.holding(reject) };
     callInProtocol(context, { .callees = executors, .thisValue = ClimbingSet(universe.undefinedValue()), .arguments = settlingFunctions, .origin = ValueFlowCalleeOrigin::Value });
-    // What the executor throws is what the promise is rejected with.
     context.add(context.written(promise, promiseReason), unknownValue(context, ValueFlowUnknownSource::ThrownByRunTime));
 
     if (call.result)
@@ -260,16 +230,14 @@ void runPromiseOperation(const ValueFlowStatement& statement, ValueFlowRuleConte
             context.add(statement.thrown, unknownValue(context, ValueFlowUnknownSource::ThrownByRunTime));
         return;
     }
-    case Opcode::ResolvePromise: {
-        ClimbingSet promises = context.restrict(context.valueOf(operands[0]), universe.objects());
-        context.mark(promises, ObjectMutation::StoreAfterCreation);
-        resolvePromises(context, promises, context.valueOf(operands[1]));
-        return;
-    }
+    case Opcode::ResolvePromise:
     case Opcode::RejectPromise: {
         ClimbingSet promises = context.restrict(context.valueOf(operands[0]), universe.objects());
         context.mark(promises, ObjectMutation::StoreAfterCreation);
-        rejectPromises(context, promises, operands[1]);
+        if (statement.opcode == Opcode::ResolvePromise)
+            resolvePromises(context, promises, context.valueOf(operands[1]));
+        else
+            rejectPromises(context, promises, operands[1]);
         return;
     }
     default:

@@ -14,7 +14,6 @@ entry module=m0
 layout L0 name="Message" fields=[{key="a" declared={type=number}}] supertypes=[L1]
 layout L1 name="MessageType" fields=[{key="a" declared={type=number} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Symbol
     v1 = Builtin builtin=SymbolFor
     v2 = String string="state"

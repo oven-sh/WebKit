@@ -7,11 +7,8 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Instance name="Class" constructor=f0 flow={baseState=None} classFlow={prototypeProperty=Fixed}
 function f0 name="Class" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f1 name="instanceOrUndefined" parameters=[{type=undefined|L0}, {type=f0}] results=[{type=anything}] {
-  b0(v0: undefined|L0, v1: f0):
     v2 = InstanceOf v0, v1
     Return v2
-}
-# CHECK-LABEL: function f1 name="instanceOrUndefined"
 # CHECK-NOT: HasLayoutPrototype
 # CHECK: [[isInstance1]]: boolean = TypeTest v0 testedType=L0
 # CHECK-NEXT: Branch [[isInstance1]] -> taken [[instance1]](| 0), notTaken [[undefined1]]()
@@ -21,3 +18,4 @@ function f1 name="instanceOrUndefined" parameters=[{type=undefined|L0}, {type=f0
 # CHECK: [[instance1]]({{*}}: L0):
 # CHECK-NEXT: = AreMembersUnchanged conditions=[{{*}}{kind=InstancePrototypeUnchanged layout=L0}]
 # CHECK-NOT: HasLayoutPrototype
+}

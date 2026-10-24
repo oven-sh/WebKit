@@ -16,7 +16,6 @@ module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 typesite w0 module=m0 position=40 kind=Parameter
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = NewClosure function=f3
@@ -31,48 +30,40 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="call" flags=[IsChecked] parameters=[{type=undefined|null|f9 site=w0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: undefined|null|f9, v1: anything):
     v2 = Call v0, -, v1
     Return v2
 }
 function f2 name="one" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f9] {
-  b0(v0: anything):
     v1 = Integer integer=1
     v2 = Add v0, v1
     Return v2
 }
 function f3 name="two" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f9] {
-  b0(v0: anything):
     v1 = Integer integer=2
     v2 = Add v0, v1
     Return v2
 }
 function f4 name="three" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f9] {
-  b0(v0: anything):
     v1 = Integer integer=3
     v2 = Add v0, v1
     Return v2
 }
 function f5 name="four" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f9] {
-  b0(v0: anything):
     v1 = Integer integer=4
     v2 = Add v0, v1
     Return v2
 }
 function f6 name="five" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f9] {
-  b0(v0: anything):
     v1 = Integer integer=5
     v2 = Add v0, v1
     Return v2
 }
 function f7 name="six" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f9] {
-  b0(v0: anything):
     v1 = Integer integer=6
     v2 = Add v0, v1
     Return v2
 }
 function f8 name="stranger" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=100
     v2 = Add v0, v1
     Return v2

@@ -87,8 +87,6 @@ private:
     };
 
     Storage& leaseStorage();
-    void returnStorages(std::span<Storage* const>);
-    void close();
 
     StringTable& m_table;
     StoragePool<Storage, ProvisionalStringID::maxStorages> m_storages;
@@ -108,7 +106,6 @@ public:
     StringID intern(std::span<const uint8_t> canonicalProgramString);
     std::span<const uint8_t> at(StringID id) const { return m_table[id]; }
     const StringTable& table() const { return m_table; }
-    // False as long as the task has handed out no id that the phase replaces when it ends: StringRemap::isIdentityFor() will say the same of the task.
     bool hasUsedProvisionalStrings() const { return m_firstUses && !m_firstUses->isEmpty(); }
 
 private:

@@ -313,7 +313,7 @@ static std::unique_ptr<Program> readProgram(std::span<const uint8_t> bytes, cons
     Reader reader(*program, IRForm::AsRead, build);
     reader.setExternalFunctionBodies(externalBodies);
     const auto& options = build.options();
-    bool isLookedAtAsRead = build.validates() || options.verifiesProgram || options.isVerifyOnly() || options.logging.dumpedPass || options.logging.dumps(IRForm::AsRead);
+    bool isLookedAtAsRead = build.validates() || options.verifiesProgram || options.isVerifyOnly() || options.logging.dumpedPass;
     if (purpose == ReadFor::Pipeline && !isLookedAtAsRead)
         reader.setPreparesFunctionsForTyping();
     if (!reader.run())

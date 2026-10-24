@@ -10,7 +10,6 @@ layout L0 fields=[{key="kept" declared={type=anything}}] ownFieldCount=1
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
 # REPEAT: i = 0..69
     v%(i) = NewClosure function=f%(i+1)
 # END REPEAT
@@ -29,11 +28,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 # REPEAT: i = 1..70
 function f%(i) name="choice%(i)" results=[{type=anything}] {
-  b0():
     Return
 }
 # END REPEAT
 function f71 name="kept" results=[{type=anything}] {
-  b0():
     Return
 }

@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="slice-of-slice" parameters=[{type=string}, {type=int}, {type=int}, {type=int}] results=[{type=boolean}] {
-  b0(v0: string, v1: int, v2: int, v3: int):
     v4 = GetStringLength v0
     v5 = StringRange v4, v1, v2
     v6 = ResultAt v5

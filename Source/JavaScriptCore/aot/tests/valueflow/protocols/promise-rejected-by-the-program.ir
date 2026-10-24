@@ -9,12 +9,10 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Failure" fields=[{key="describe" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = CallDirect function=f1
     Return
 }
 function f1 name="run" flags=[IsAsync] results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Promise
     v1 = NewClosure function=f2
     v2 = Construct v0, -, v1
@@ -29,13 +27,11 @@ function f1 name="run" flags=[IsAsync] results=[{type=anything}] {
     Return
 }
 function f2 name="executor" kind=Arrow parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewClosure function=f3
     v3 = NewObject -, v2 layout=L0 fields=[0]
     v4 = Call v1, -, v3
     Return
 }
 function f3 name="describe" results=[{type=anything}] {
-  b0():
     Return
 }

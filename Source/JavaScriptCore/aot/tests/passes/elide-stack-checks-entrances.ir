@@ -9,7 +9,6 @@ module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = CallDirect v0 function=f1
     v2 = CallDirect v0 function=f4
@@ -30,7 +29,6 @@ function f1 name="walk" role=EntryChecks flags=[IsChecked] length=1 thisType={ty
 }
 
 function f2 name="walk" flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1} {
-  b0(v0: number):
     v1 = CallDirect v0 function=f2
     v2 = CallDirect v1 function=f1
     Return v2
@@ -54,7 +52,6 @@ function f4 name="theBodyChecksForNobodyElse" role=EntryChecks flags=[IsChecked]
 }
 
 function f5 name="theBodyChecksForNobodyElse" flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4} {
-  b0(v0: number):
     v1 = CallDirect v0 function=f4
     Return v1
 }
@@ -77,7 +74,6 @@ function f7 name="inNoCycle" role=EntryChecks flags=[IsChecked] length=1 thisTyp
 }
 
 function f8 name="inNoCycle" flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f7} {
-  b0(v0: number):
     Return v0
 }
 

@@ -26,11 +26,6 @@ struct TestedReadMatch {
     std::optional<StringID> comparedString;
 };
 
-struct ComparedRead {
-    ValueID read;
-    StringID literal;
-};
-
 struct ReadPairMatch {
     SelectionGroup group;
     bool readsFromFirstResult;
@@ -88,20 +83,6 @@ static void copyAccessStamp(Value& fused, const Value& read)
     fused.setReceivers(read.receivers());
 }
 
-static std::optional<ComparedRead> findComparedRead(SelectionContext& context, ValueID comparison)
-{
-    const Value& value = context.function().at(comparison);
-    ValueID left = value.leftOperand();
-    ValueID right = value.rightOperand();
-    for (auto [read, other] : { std::pair { left, right }, std::pair { right, left } }) {
-        if (!canFuseRead(context, read, comparison))
-            continue;
-        if (std::optional<StringID> literal = shortLiteralOf(context, other))
-            return ComparedRead { read, *literal };
-    }
-    return std::nullopt;
-}
-
 void selectPropertyReadAndTest(SelectionContext& context)
 {
     const Function& function = context.function();
@@ -122,8 +103,15 @@ void selectPropertyReadAndTest(SelectionContext& context)
     for (ValueID comparison : context.candidates(Opcode::StrictEq)) {
         if (!canFuseTest(context, comparison))
             continue;
-        if (std::optional<ComparedRead> compared = findComparedRead(context, comparison))
-            tryAddMatch({ createFusedGroup(compared->read, comparison, !context.isOnlyBranchedOn(comparison)), compared->literal });
+        ValueID left = function.at(comparison).leftOperand();
+        ValueID right = function.at(comparison).rightOperand();
+        for (auto [read, other] : { std::pair { left, right }, std::pair { right, left } }) {
+            std::optional<StringID> literal = canFuseRead(context, read, comparison) ? shortLiteralOf(context, other) : std::nullopt;
+            if (!literal)
+                continue;
+            tryAddMatch({ createFusedGroup(read, comparison, !context.isOnlyBranchedOn(comparison)), literal });
+            break;
+        }
     }
 
     context.rewriteGroups(SelectionRuleID::PropertyReadAndTest, matches, [](GroupRewriter& rewriter, const TestedReadMatch& match) {

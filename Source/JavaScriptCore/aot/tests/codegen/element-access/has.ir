@@ -9,7 +9,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="valueInInt32Storage" parameters=[{type=Array<anything, proven, Int32, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, proven, Int32, pristine[Storage]>, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
     v6 = HasArrayElement v0, v1 arrayStorage=Int32
     v7 = HasArrayElement v0, v2 arrayStorage=Int32
     v8 = HasArrayElement v0, v3 arrayStorage=Int32
@@ -43,7 +42,6 @@ function f0 name="valueInInt32Storage" parameters=[{type=Array<anything, proven,
 # R-COUNT-12: boolean @Boolean = HasArrayElement
 # R-NOT: = HasArrayElement
 function f1 name="valueInDoubleStorage" parameters=[{type=Array<anything, proven, Double, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, proven, Double, pristine[Storage]>, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
     v6 = HasArrayElement v0, v1 arrayStorage=Double
     v7 = HasArrayElement v0, v2 arrayStorage=Double
     v8 = HasArrayElement v0, v3 arrayStorage=Double
@@ -77,7 +75,6 @@ function f1 name="valueInDoubleStorage" parameters=[{type=Array<anything, proven
 # R-COUNT-12: boolean @Boolean = HasArrayElement
 # R-NOT: = HasArrayElement
 function f2 name="valueInContiguousStorage" parameters=[{type=Array<anything, proven, Contiguous, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, proven, Contiguous, pristine[Storage]>, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
     v6 = HasArrayElement v0, v1 arrayStorage=Contiguous
     v7 = HasArrayElement v0, v2 arrayStorage=Contiguous
     v8 = HasArrayElement v0, v3 arrayStorage=Contiguous
@@ -111,7 +108,6 @@ function f2 name="valueInContiguousStorage" parameters=[{type=Array<anything, pr
 # R-COUNT-12: boolean @Boolean = HasArrayElement
 # R-NOT: = HasArrayElement
 function f3 name="valueInOtherStorage" parameters=[{type=Array<anything, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
     v6 = HasArrayElement v0, v1
     v7 = HasArrayElement v0, v2
     v8 = HasArrayElement v0, v3
@@ -145,7 +141,6 @@ function f3 name="valueInOtherStorage" parameters=[{type=Array<anything, pristin
 # R-COUNT-12: boolean @Boolean = HasArrayElement
 # R-NOT: = HasArrayElement
 function f4 name="conditionInInt32Storage" parameters=[{type=Array<anything, proven, Int32, pristine[Storage]>}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, proven, Int32, pristine[Storage]>, v1: i32, v2: boolean):
     v3 = HasArrayElement v0, v1 arrayStorage=Int32
     Branch v3 -> taken b1(), notTaken b2()
   b1():
@@ -171,7 +166,6 @@ function f4 name="conditionInInt32Storage" parameters=[{type=Array<anything, pro
 # R-COUNT-3: boolean @Boolean = HasArrayElement
 # R-NOT: = HasArrayElement
 function f5 name="conditionInDoubleStorage" parameters=[{type=Array<anything, proven, Double, pristine[Storage]>}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, proven, Double, pristine[Storage]>, v1: i32, v2: boolean):
     v3 = HasArrayElement v0, v1 arrayStorage=Double
     Branch v3 -> taken b1(), notTaken b2()
   b1():
@@ -197,7 +191,6 @@ function f5 name="conditionInDoubleStorage" parameters=[{type=Array<anything, pr
 # R-COUNT-3: boolean @Boolean = HasArrayElement
 # R-NOT: = HasArrayElement
 function f6 name="conditionInContiguousStorage" parameters=[{type=Array<anything, proven, Contiguous, pristine[Storage]>}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, proven, Contiguous, pristine[Storage]>, v1: i32, v2: boolean):
     v3 = HasArrayElement v0, v1 arrayStorage=Contiguous
     Branch v3 -> taken b1(), notTaken b2()
   b1():
@@ -223,7 +216,6 @@ function f6 name="conditionInContiguousStorage" parameters=[{type=Array<anything
 # R-COUNT-3: boolean @Boolean = HasArrayElement
 # R-NOT: = HasArrayElement
 function f7 name="conditionInOtherStorage" parameters=[{type=Array<anything, pristine[Storage]>}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: i32, v2: boolean):
     v3 = HasArrayElement v0, v1
     Branch v3 -> taken b1(), notTaken b2()
   b1():
@@ -249,7 +241,6 @@ function f7 name="conditionInOtherStorage" parameters=[{type=Array<anything, pri
 # R-COUNT-3: boolean @Boolean = HasArrayElement
 # R-NOT: = HasArrayElement
 function f8 name="conditionInInt32StorageAtNumber" parameters=[{type=Array<anything, proven, Int32, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, proven, Int32, pristine[Storage]>, v1: number, v2: boolean):
     v3 = HasArrayElement v0, v1 arrayStorage=Int32
     Branch v3 -> taken b1(), notTaken b2()
   b1():
@@ -275,7 +266,6 @@ function f8 name="conditionInInt32StorageAtNumber" parameters=[{type=Array<anyth
 # R-COUNT-3: boolean @Boolean = HasArrayElement
 # R-NOT: = HasArrayElement
 function f9 name="conditionInDoubleStorageAtNumber" parameters=[{type=Array<anything, proven, Double, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, proven, Double, pristine[Storage]>, v1: number, v2: boolean):
     v3 = HasArrayElement v0, v1 arrayStorage=Double
     Branch v3 -> taken b1(), notTaken b2()
   b1():
@@ -301,7 +291,6 @@ function f9 name="conditionInDoubleStorageAtNumber" parameters=[{type=Array<anyt
 # R-COUNT-3: boolean @Boolean = HasArrayElement
 # R-NOT: = HasArrayElement
 function f10 name="conditionInContiguousStorageAtNumber" parameters=[{type=Array<anything, proven, Contiguous, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, proven, Contiguous, pristine[Storage]>, v1: number, v2: boolean):
     v3 = HasArrayElement v0, v1 arrayStorage=Contiguous
     Branch v3 -> taken b1(), notTaken b2()
   b1():
@@ -327,7 +316,6 @@ function f10 name="conditionInContiguousStorageAtNumber" parameters=[{type=Array
 # R-COUNT-3: boolean @Boolean = HasArrayElement
 # R-NOT: = HasArrayElement
 function f11 name="conditionInOtherStorageAtNumber" parameters=[{type=Array<anything, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: number, v2: boolean):
     v3 = HasArrayElement v0, v1
     Branch v3 -> taken b1(), notTaken b2()
   b1():

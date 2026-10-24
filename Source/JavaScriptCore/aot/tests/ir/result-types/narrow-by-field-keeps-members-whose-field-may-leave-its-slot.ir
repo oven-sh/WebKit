@@ -19,7 +19,6 @@ layout L10 name="OtherBeforeFlow" fields=[{key="kind" declared={type=2} flags=[I
 
 # Of the six members that cannot hold 1, only the one that lacks nothing goes
 function f0 name="oneConditionMissingInEach" parameters=[{type=L0|L1|L2|L3|L4|L5|L6}] results=[{type=undefined}] {
-  b0(v0: L0|L1|L2|L3|L4|L5|L6):
     v1 = PropGet v0 key="kind"
     v2 = Integer integer=1
     v3 = StrictEq v1, v2
@@ -38,7 +37,6 @@ function f0 name="oneConditionMissingInEach" parameters=[{type=L0|L1|L2|L3|L4|L5
 # CHECK-NOT: |L
 
 function f1 name="inheritedFieldIsJudgedWhereItIsDeclared" parameters=[{type=L0|L7|L8}] results=[{type=undefined}] {
-  b0(v0: L0|L7|L8):
     v1 = PropGet v0 key="kind"
     v2 = Integer integer=1
     v3 = StrictEq v1, v2
@@ -56,7 +54,6 @@ function f1 name="inheritedFieldIsJudgedWhereItIsDeclared" parameters=[{type=L0|
 
 # No field has these facts until the flow analysis has run: until then the cast proves only that the holder is neither undefined nor null
 function f2 name="beforeTheFlowAnalysis" parameters=[{type=undefined|L9|L10}] results=[{type=undefined}] {
-  b0(v0: undefined|L9|L10):
     v1 = PropGet v0 key="kind"
     v2 = Integer integer=1
     v3 = StrictEq v1, v2

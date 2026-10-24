@@ -21,15 +21,12 @@ layout L4 name="HasElements" fields=[{key="elements" declared={type=number} flag
 # CHECK-NEXT: L4: members [L0, L5]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f1 name="NodeObject" flags=[HasThis] thisType={type=L1} parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: L1, v1: number):
     PropSet v0, v1 key="kind" mode=Strict
     Return
 }
 function f2 name="take" parameters=[{type=L4}] results=[{type=anything}] {
-  b0(v0: L4):
     Return
 }

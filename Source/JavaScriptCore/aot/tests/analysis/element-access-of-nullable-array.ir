@@ -7,7 +7,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="array" parameters=[{type=undefined|Array<number>}, {type=null|Array<number>}, {type=undefined|null|Array<number>}, {type=int[0, 9]}, {type=number}] results=[{type=anything}] {
-  b0(v0: undefined|Array<number>, v1: null|Array<number>, v2: undefined|null|Array<number>, v3: int[0, 9], v4: number):
     v5 = ElemGet v0, v3
     ElemSet v1, v3, v4
     v7 = ElemHas v2, v3
@@ -17,19 +16,16 @@ function f0 name="array" parameters=[{type=undefined|Array<number>}, {type=null|
 # CHECK-NEXT: F0 v6 ElemSet: form=Array level=Expected operation=PutArrayElement class=[[array]] storage=Double integralKey tests=[nullish, pristine(Storage), storage]
 # CHECK-NEXT: F0 v7 ElemHas: form=Array level=Expected operation=HasArrayElement class=[[array]] storage=Double integralKey tests=[nullish, pristine(Storage), storage]
 function f1 name="typed-array" parameters=[{type=undefined|Uint8Array}, {type=number}] results=[{type=anything}] {
-  b0(v0: undefined|Uint8Array, v1: number):
     v2 = ElemGet v0, v1
     Return v2
 }
 # CHECK-NEXT: F1 v2 ElemGet: form=TypedArray level=Expected operation=GetTypedArrayElement class=[[uint8]] typedArray=TypeUint8 tests=[nullish]
 function f2 name="unknown-key" parameters=[{type=undefined|Array<number>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: undefined|Array<number>, v1: anything):
     v2 = ElemGet v0, v1
     Return v2
 }
 # CHECK-NEXT: F2 v2 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Double integralKey tests=[nullish, key, pristine(Storage+Names), storage]
 function f3 name="nothing-else-to-test" parameters=[{type=undefined|Array<number, proven, Double, pristine[Storage]>}, {type=int[0, 9]}] results=[{type=boolean}] {
-  b0(v0: undefined|Array<number, proven, Double, pristine[Storage]>, v1: int[0, 9]):
     v2 = ElemHas v0, v1
     Return v2
 }
@@ -43,7 +39,6 @@ function f3 name="nothing-else-to-test" parameters=[{type=undefined|Array<number
 # TESTED: = HasArrayElement [[array]], v1 arrayStorage=Double level=Expected [keyIsIntegral]
 # TESTED: = ElemHas {{*}}, v1
 function f4 name="never-undefined" parameters=[{type=Array<number, proven, Double, pristine[Storage]>}, {type=int[0, 9]}] results=[{type=boolean}] {
-  b0(v0: Array<number, proven, Double, pristine[Storage]>, v1: int[0, 9]):
     v2 = ElemHas v0, v1
     Return v2
 }
@@ -54,7 +49,6 @@ function f4 name="never-undefined" parameters=[{type=Array<number, proven, Doubl
 # TESTED-LABEL: function f4 name="never-undefined"
 # TESTED-NOT: TypeTest
 function f5 name="typed-array-store" parameters=[{type=undefined|Uint8Array}, {type=number}] results=[{type=undefined}] {
-  b0(v0: undefined|Uint8Array, v1: number):
     ElemSet v0, v1, v1
     Return
 }
@@ -78,7 +72,6 @@ function f6 name="expected-receiver" parameters=[{type=Array<number> flags=[IsEx
 # RESOLVED-LABEL: function f6 name="expected-receiver"
 # TESTED-LABEL: function f6 name="expected-receiver"
 function f7 name="receivers-without-an-element-form" parameters=[{type=undefined|string}, {type=undefined|Array<number>|Uint8Array}, {type=undefined|Arguments}, {type=undefined|Map<number, number>}, {type=number}] results=[{type=anything}] {
-  b0(v0: undefined|string, v1: undefined|Array<number>|Uint8Array, v2: undefined|Arguments, v3: undefined|Map<number, number>, v4: number):
     v5 = ElemGet v0, v4
     v6 = ElemGet v1, v4
     v7 = ElemGet v2, v4

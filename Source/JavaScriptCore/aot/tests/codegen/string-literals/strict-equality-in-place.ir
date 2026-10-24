@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="stringAndValueInFastCode" parameters=[{type=string}, {type=anything}] results=[{type=boolean}] {
-  b0(v0: string, v1: anything):
     Jump -> next b1()
   b1():
     LoopHint
@@ -24,7 +23,6 @@ function f0 name="stringAndValueInFastCode" parameters=[{type=string}, {type=any
 # CHECK-NOT: stub ValueEqualsLiteral
 
 function f1 name="flatStringInFastCode" parameters=[{type=string}] results=[{type=undefined}] {
-  b0(v0: string):
     v1 = FlattenString v0
     Jump -> next b1()
   b1():
@@ -39,7 +37,6 @@ function f1 name="flatStringInFastCode" parameters=[{type=string}] results=[{typ
 # CHECK: stub StringEqualsLiteralOfLength{{*}} x
 
 function f2 name="longestTextInFastCode" parameters=[{type=string}] results=[{type=undefined}] {
-  b0(v0: string):
     Jump -> next b1()
   b1():
     LoopHint
@@ -53,7 +50,6 @@ function f2 name="longestTextInFastCode" parameters=[{type=string}] results=[{ty
 # CHECK: stub StringEqualsLiteral x
 
 function f3 name="inBalancedCode" parameters=[{type=string}, {type=anything}] results=[{type=boolean}] {
-  b0(v0: string, v1: anything):
     v2 = ValueEqualsLiteral v1 literal="constructor"
     v3 = StringEqualsLiteral v0 literal="GET"
     TestAndBranch v3 -> taken b1(), notTaken b2()
@@ -68,7 +64,6 @@ function f3 name="inBalancedCode" parameters=[{type=string}, {type=anything}] re
 # CHECK: stub ValueEqualsLiteral x1
 
 function f4 name="inCompactCode" parameters=[{type=string}, {type=boolean}] results=[{type=boolean}] {
-  b0(v0: string, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v2 = StringEqualsLiteral v0 literal="GET"
@@ -82,7 +77,6 @@ function f4 name="inCompactCode" parameters=[{type=string}, {type=boolean}] resu
 
 # A text of 33 units, a text with a unit above 0xFF, and the empty text, which a string equals if its length is 0
 function f5 name="otherTextsInFastCode" parameters=[{type=string}, {type=anything}] results=[{type=boolean}] {
-  b0(v0: string, v1: anything):
     Jump -> next b1()
   b1():
     LoopHint

@@ -9,12 +9,10 @@ variable g0 name="mode" module=m0 declared={type="top"}
 variable g1 name="namedByNothing" module=m0 declared={type="bottom"}
 variable g2 name="foldedIntoItsReaders" module=m0 declared={type="kept"}
 function f0 name="first" parameters=[{type="south"|"north"}] results=[{type=undefined}] {
-  b0(v0: "south"|"north"):
     Return
 }
 
 function f1 name="second" parameters=[{type=boolean}] results=[{type=anything}] {
-  b0(v0: boolean):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v1 = String string="north"
@@ -27,7 +25,6 @@ function f1 name="second" parameters=[{type=boolean}] results=[{type=anything}] 
 }
 
 function f2 name="onlyPassedOn" parameters=[{type=function}] results=[{type=anything}] {
-  b0(v0: function):
     v1 = String string="west"
     v2 = Call v0, -, v1
     Return v2
@@ -36,14 +33,12 @@ function f2 name="onlyPassedOn" parameters=[{type=function}] results=[{type=anyt
 function f3 name="withoutBody" parameters=[{type="up"}] results=[{type=undefined}]
 
 function f4 name="compared" parameters=[{type="south"|"north"}] results=[{type=boolean}] {
-  b0(v0: "south"|"north"):
     v1 = String string="center"
     v2 = StrictEq v0, v1
     Return v2
 }
 
 function f5 name="switched" parameters=[{type="south"|"north"}] results=[{type=undefined}] {
-  b0(v0: "south"|"north"):
     SwitchString v0 strings=["south", "far"] -> case b1(), case b2(), otherwise b3()
   b1():
     Return
@@ -54,13 +49,11 @@ function f5 name="switched" parameters=[{type="south"|"north"}] results=[{type=u
 }
 
 function f6 name="readsVariable" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     Return v0
 }
 
 function f7 name="holdsConstant" parameters=[{type=function}] results=[{type=anything}] {
-  b0(v0: function):
     v1 = String string="kept"
     v2 = Call v0, -, v1
     Return v2

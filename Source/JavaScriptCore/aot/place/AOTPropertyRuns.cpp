@@ -52,13 +52,6 @@ static bool canDescribe(const Program& program, PropertyKeyID key)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool hasRepeatedKey(std::span<const PropertyKeyID> keys)
-{
-    Vector<PropertyKeyID, 8> sortedKeys(keys);
-    AOT::sort(sortedKeys);
-    return std::ranges::adjacent_find(sortedKeys) != sortedKeys.end();
-}
-
 bool namesPropertyRun(Opcode opcode)
 {
     return opcode == Opcode::TryPutByIds || opcode == Opcode::CopyDataProperties || opcode == Opcode::CopyObject;
@@ -70,37 +63,31 @@ std::span<const PropertyKeyID> keysOfPropertyRun(const Value& value)
     return value.opcode == Opcode::TryPutByIds ? value.keys() : value.excludedKeys();
 }
 
-bool hasPropertyRun(const Program& program, const BuildContext& build, const Value& value)
+static bool canBePropertyRun(const Program& program, const Value& value)
 {
     if (!namesPropertyRun(value.opcode))
         return false;
-    std::span<const PropertyKeyID> keys = keysOfPropertyRun(value);
-    if (keys.empty() || keys.size() > build.limit(LimitID::MaxPropertyListNames))
-        return false;
-    bool canDescribeEveryKey = std::ranges::all_of(keys, [&](PropertyKeyID key) {
+    Vector<PropertyKeyID, 8> sortedKeys(keysOfPropertyRun(value));
+    bool canDescribeEveryKey = std::ranges::all_of(sortedKeys, [&](PropertyKeyID key) {
         return canDescribe(program, key);
     });
-    return canDescribeEveryKey && !hasRepeatedKey(keys);
+    if (sortedKeys.isEmpty() || !canDescribeEveryKey)
+        return false;
+    AOT::sort(sortedKeys);
+    return std::ranges::adjacent_find(sortedKeys) == sortedKeys.end();
+}
+
+bool hasPropertyRun(const Program& program, const BuildContext& build, const Value& value)
+{
+    return canBePropertyRun(program, value) && keysOfPropertyRun(value).size() <= build.limit(LimitID::MaxPropertyListNames);
 }
 
 std::optional<PlacedPropertyRun> propertyRunOf(const PlacementContext& context, FunctionID function, ValueID id)
 {
-    const Program& program = context.program;
-    const Value& value = program.at(function).at(id);
-    if (!namesPropertyRun(value.opcode))
+    const Value& value = context.program.at(function).at(id);
+    if (!canBePropertyRun(context.program, value) || context.build.exceeds(LimitID::MaxPropertyListNames, keysOfPropertyRun(value).size(), { .function = function, .value = id }))
         return std::nullopt;
-
-    std::span<const PropertyKeyID> keys = keysOfPropertyRun(value);
-    if (keys.empty())
-        return std::nullopt;
-    bool canDescribeEveryKey = std::ranges::all_of(keys, [&](PropertyKeyID key) {
-        return canDescribe(program, key);
-    });
-    if (!canDescribeEveryKey || hasRepeatedKey(keys))
-        return std::nullopt;
-    if (context.build.exceeds(LimitID::MaxPropertyListNames, keys.size(), { .function = function, .value = id }))
-        return std::nullopt;
-    return PlacedPropertyRun { Vector<PropertyKeyID, 8>(keys) };
+    return PlacedPropertyRun { Vector<PropertyKeyID, 8>(keysOfPropertyRun(value)) };
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -12,7 +12,6 @@ layout L0 kind=Instance name="Parent" constructor=f1 fields=[{key="shared" decla
 layout L1 kind=Instance name="Child" base=L0 constructor=f2 fields=[{key="shared" declared={type=anything}}, {key="late" declared={type=anything}}, {key="other" declared={type=anything}}] flags=[IsConstructorFunction]
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = Construct v0, -
     PutModuleVariable v1 variable=g0
@@ -20,7 +19,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Parent" flags=[HasThis] thisType={type=L0|L1} results=[{type=anything}] constructedClass=L0 {
-  b0(v0: L0|L1):
     v1 = Integer integer=1
     PropSet v0, v1 key="shared"
     v3 = Integer integer=2
@@ -28,12 +26,10 @@ function f1 name="Parent" flags=[HasThis] thisType={type=L0|L1} results=[{type=a
     Return
 }
 function f2 name="Child" flags=[HasThis] thisType={type=L1} results=[{type=anything}] constructedClass=L1 {
-  b0(v0: L1):
     v1 = CallDirect v0 function=f1
     Return
 }
 function f3 name="storesLater" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=3
     PropSet v0, v1 key="other"
     Return

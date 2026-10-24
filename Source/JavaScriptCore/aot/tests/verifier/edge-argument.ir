@@ -5,19 +5,16 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="badArgument" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     Jump -> next b1(v0)
   b1(v1: number):
     Return
 }
 function f1 name="goodWiderParameter" parameters=[{type=i32}] results=[{type=undefined}] {
-  b0(v0: i32):
     Jump -> next b1(v0)
   b1(v1: number):
     Return
 }
 function f2 name="badEdgeResult" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=string
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2: number):
@@ -26,7 +23,6 @@ function f2 name="badEdgeResult" parameters=[{type=anything}] results=[{type=und
     Return
 }
 function f3 name="goodEdgeResult" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=string
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2: string):

@@ -23,7 +23,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="c" results=[{type=undefined}] {
-  b0():
     v0 = Undefined
     v1 = Null
     v2 = Boolean boolean=true

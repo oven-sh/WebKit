@@ -10,18 +10,15 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="oneOperation" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Mul v0, v0
     Return v1
 }
 
 function f1 name="alwaysThrows" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Throw v0
 }
 
 function f2 name="smallCallee" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f0
     Return v1
 }
@@ -31,7 +28,6 @@ function f2 name="smallCallee" parameters=[{type=number}] results=[{type=number}
 # CHECK-NEXT: Return v1
 
 function f3 name="markedCall" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f0 [isAlwaysInlined]
     Return v1
 }
@@ -41,7 +37,6 @@ function f3 name="markedCall" parameters=[{type=number}] results=[{type=number}]
 # CHECK-NEXT: Return v1
 
 function f4 name="callInLoop" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
-  b0(v0: number, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -56,7 +51,6 @@ function f4 name="callInLoop" parameters=[{type=number}, {type=boolean}] results
 # CHECK-NEXT: Branch v1
 
 function f5 name="callNeverReturns" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
-  b0(v0: number, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = CallDirect v0 function=f1

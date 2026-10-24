@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTArrayAllocationProfile.h"
-#include "AOTBuiltinCells.h"
 #include "AOTBuiltinIDTypes.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinOperationSupport.h"
@@ -29,6 +28,7 @@
 #include "ButterflyInlines.h"
 #include "DeferGC.h"
 #include "DeferTermination.h"
+#include "ExceptionHelpers.h"
 #include "GCDeferralContextInlines.h"
 #include "JSArrayInlines.h"
 #include "JSCInlines.h"
@@ -41,14 +41,6 @@
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
-
-static NEVER_INLINE bool appendBoxedDoubles(JSGlobalObject* globalObject, VM& vm, JSArray* target, const double* numbers, unsigned length)
-{
-    Vector<EncodedJSValue, 16> boxed(length, [&](size_t i) {
-        return JSValue::encode(JSValue(JSValue::EncodeAsDouble, numbers[i]));
-    });
-    return target->appendMemcpy(globalObject, vm, target->length(), ArrayWithContiguous, boxed.span());
-}
 
 // NaN stands for a hole in Double storage.
 static bool holdsOnlyNumbersForDoubleStorage(std::span<const EncodedJSValue> values)
@@ -66,8 +58,6 @@ static bool tryAppendArray(JSGlobalObject* globalObject, VM& vm, JSArray* target
     if (hasDouble(type)) {
         if (containsHole(source->butterfly()->contiguousDouble().data(), length))
             return false;
-        if (hasContiguous(target->indexingType()) && copiesIntoDenseStorage(vm.arrayStoragePolicy(), static_cast<uint64_t>(target->length()) + length))
-            return appendBoxedDoubles(globalObject, vm, target, source->butterfly()->contiguousDouble().data(), length);
     } else if (hasInt32(type) || hasContiguous(type)) {
         if (containsHole(source->butterfly()->contiguous().data(), length))
             return false;
@@ -235,29 +225,12 @@ static void convertStorageOfNumbers(Instance* instance, JSGlobalObject* globalOb
     lookedAtInVain -= std::min(lookedAtInVain, worthOfConversion);
 }
 
-// What a native function or general code has just made: an array of the realm with storage of its own.
-static bool tryConvertPlainInt32Array(JSGlobalObject* globalObject, VM& vm, JSArray* array)
-{
-    Structure* structure = array->structure();
-    if (structure != globalObject->originalArrayStructureForIndexingType(ArrayWithInt32) || array->indexingMode() != ArrayWithInt32 || structure->transitionWatchpointSetIsStillValid())
-        return false;
-    Butterfly* values = array->butterfly();
-    for (unsigned i = values->vectorLength(); i--;) {
-        JSValue value = values->contiguous().atUnsafe(i).get();
-        values->contiguousDouble().atUnsafe(i) = value.isInt32() ? value.asInt32() : PNaN;
-    }
-    array->setStructure(vm, globalObject->originalArrayStructureForIndexingType(ArrayWithDouble));
-    return true;
-}
-
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTConvertToDoubleStorage, void, (Instance* instance, JSCell* cell))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTConvertToDoubleStorage);
     DeferTerminationForAWhile deferTermination(vm);
     JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTConvertToDoubleStorage);
     // An array that refuses stays as it was, and goes on failing the test for Double storage.
-    if (tryConvertPlainInt32Array(globalObject, vm, array))
-        return;
     if (hasInt32(array->indexingType()) || hasUndecided(array->indexingType()))
         array->tryMakeWritableDouble(vm);
     else if (hasContiguous(array->indexingType()))
@@ -460,15 +433,6 @@ static JSArray* tryFastSlice(VM& vm, JSGlobalObject* globalObject, JSArray* arra
     return result;
 }
 
-static JSValue callBuiltinSlice(Instance* instance, JSArray* array, const ArgList& arguments)
-{
-    JSCell* function = instance->state->builtinCells->findObject(Builtins::ArrayPrototypeSlice);
-    RELEASE_ASSERT(function);
-    auto callData = JSC::getCallData(function);
-    RELEASE_ASSERT(callData.type != CallData::Type::None);
-    return call(instance->globalObject, function, callData, array, arguments);
-}
-
 JSC_DEFINE_JIT_OPERATION(operationAOTArrayCopy, EncodedJSValue, (Instance* instance, JSCell* cell))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTArrayCopy);
@@ -476,8 +440,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayCopy, EncodedJSValue, (Instance* insta
     JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArrayCopy);
     if (JSArray* copy = tryFastSlice(vm, globalObject, array, 0, std::numeric_limits<int64_t>::max()))
         OPERATION_RETURN(scope, JSValue::encode(copy));
-    MarkedArgumentBuffer arguments;
-    OPERATION_RETURN(scope, JSValue::encode(callBuiltinSlice(instance, array, arguments)));
+    OPERATION_RETURN(scope, JSValue::encode(callMethodInEngine(instance, Builtins::ArrayPrototypeSlice, array)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTArraySlice, EncodedJSValue, (Instance* instance, JSCell* cell, int64_t from, int64_t to))
@@ -487,10 +450,78 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArraySlice, EncodedJSValue, (Instance* inst
     JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArraySlice);
     if (JSArray* part = tryFastSlice(vm, globalObject, array, from, to))
         OPERATION_RETURN(scope, JSValue::encode(part));
-    MarkedArgumentBuffer arguments;
-    arguments.append(jsNumber(static_cast<double>(from)));
-    arguments.append(jsNumber(static_cast<double>(to)));
-    OPERATION_RETURN(scope, JSValue::encode(callBuiltinSlice(instance, array, arguments)));
+    OPERATION_RETURN(scope, JSValue::encode(callMethodInEngine(instance, Builtins::ArrayPrototypeSlice, array, jsNumber(static_cast<double>(from)), jsNumber(static_cast<double>(to)))));
+}
+
+static unsigned capacityInUse(const ArrayAllocationProfile& profile)
+{
+    return profile.capacity() ? profile.capacity() : arrayLiteralVectorLength(0);
+}
+
+static void startWindow(ArrayAllocationProfile& profile)
+{
+    profile.reviews = 0;
+    std::ranges::fill(profile.largestLengths, 0);
+}
+
+// Every array of the site is born with the room, and only the ones that outgrow it pay for that.
+void reviewArrayAllocationProfile(ArrayAllocationProfile& profile, JSArray* lastArrayOrNull)
+{
+    if (!lastArrayOrNull)
+        return;
+    IndexingType shape = lastArrayOrNull->indexingType() & IndexingShapeMask;
+    if (shape != Int32Shape && shape != DoubleShape && shape != ContiguousShape)
+        return;
+
+    IndexingType learnedShape = std::max(profile.shape(), shape);
+    unsigned length = std::min<unsigned>(lastArrayOrNull->butterfly()->publicLength(), BASE_CONTIGUOUS_VECTOR_LEN_MAX);
+    unsigned inUse = capacityInUse(profile);
+    uint8_t entering = static_cast<uint8_t>(length);
+    for (uint8_t& kept : profile.largestLengths) {
+        if (entering > kept)
+            std::swap(entering, kept);
+    }
+
+    unsigned wanted = profile.largestLengths[ArrayAllocationProfile::lengthsKept - 1] | 1;
+    if (wanted > inUse) {
+        profile.set(std::min<unsigned>(wanted, BASE_CONTIGUOUS_VECTOR_LEN_MAX), learnedShape);
+        startWindow(profile);
+        return;
+    }
+    if (++profile.reviews < ArrayAllocationProfile::reviewsInWindow) {
+        profile.set(profile.capacity(), learnedShape);
+        return;
+    }
+
+    profile.set(wanted < inUse ? wanted : profile.capacity(), learnedShape);
+    startWindow(profile);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayAtReviewedSite, JSCell*, (Instance* instance, void* profileAddress, uint32_t seedIndexingType))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayAtReviewedSite);
+    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
+    uint8_t* statics = instance->statics();
+    uint8_t* address = static_cast<uint8_t*>(profileAddress);
+    uint64_t distanceToLastArray = instance->arrays.distanceFromProfileToLastArray;
+    RELEASE_ASSERT(address >= statics && distanceToLastArray >= sizeof(ArrayAllocationProfile));
+    RELEASE_ASSERT(address + distanceToLastArray + ArrayAllocationProfile::sizeOfLastArrayWord <= statics + instance->tables().instanceSizes.sizeOfStatics);
+    RELEASE_ASSERT(seedIndexingType == ArrayWithInt32 || seedIndexingType == ArrayWithDouble || seedIndexingType == ArrayWithContiguous);
+    auto& profile = *reinterpret_cast<ArrayAllocationProfile*>(address);
+    auto& lastArray = *reinterpret_cast<JSArray**>(address + distanceToLastArray);
+    ASSERT(profile.isDueForReview());
+
+    reviewArrayAllocationProfile(profile, lastArray);
+
+    IndexingType shape = std::max<IndexingType>(profile.shape(), seedIndexingType & IndexingShapeMask);
+    JSArray* array = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(IsArray | shape), 0, capacityInUse(profile));
+    if (!array) {
+        throwOutOfMemoryError(globalObject, scope);
+        OPERATION_RETURN(scope, nullptr);
+    }
+    // Not a root: every collection zeroes this word, so it neither keeps the array alive nor dangles.
+    lastArray = array;
+    OPERATION_RETURN(scope, array);
 }
 
 } } // namespace JSC::AOT

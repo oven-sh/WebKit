@@ -10,7 +10,6 @@ layout L0 kind=Instance name="InFunction" constructor=f2 fields=[{key="x" declar
 variable g0 name="second" module=m0 declared={type=anything} initialization=Uninitialized
 variable g1 name="FirstClass" module=m0 declared={type=anything} initialization=Uninitialized
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = CallDirect function=f1
     v1 = CallDirect function=f1
     PutModuleVariable v0 variable=g1
@@ -30,7 +29,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="makeClass" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = NewClass v0 layout=L0
     v2 = NewClosure function=f3
@@ -39,57 +37,47 @@ function f1 name="makeClass" results=[{type=anything}] {
     Return v4
 }
 function f2 name="InFunction" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0 fields=[]
     PropSet v3, v1 key="x" mode=Strict
     Return v3
 }
 function f3 name="m" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="x"
     Return v1
 }
 function f4 name="readField" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = PropGet v0 key="x"
     Return v1
-}
-# CHECK-LABEL: function f4 name="readField"
 # CHECK: [[object]]: L0 = GetModuleVariable variable=g0
 # CHECK-NOT: ShapeTest
 # CHECK: = GetSlot [[object]] key="x" receivers=[L0] level=Proven
 # CHECK-NOT: PropGet
+}
 function f5 name="callMethod" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = PropGet v0 key="m"
     v2 = Call v1, v0
     Return v2
-}
-# CHECK-LABEL: function f5 name="callMethod"
 # CHECK-NOT: PropGet
 # CHECK-NOT: = Call
 # CHECK: = GetSlot {{*}}key="x" receivers=[L0] level=Proven
 # CHECK-NOT: PropGet
+}
 function f6 name="testInstance" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = GetModuleVariable variable=g1
     v2 = InstanceOf v0, v1
     Return v2
-}
-# CHECK-LABEL: function f6 name="testInstance"
 # CHECK: boolean = InstanceOf v0, v1
+}
 function f7 name="construct" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g1
     v2 = Construct v1, -, v0
     Return v2
-}
-# CHECK-LABEL: function f7 name="construct"
 # CHECK: = AreMembersUnchanged conditions=[{{*}}{kind=ClassEvaluatedOnce layout=L0}]
 # CHECK: L0 = NewObject layout=L0
 # CHECK: [[prototype]]: object = GetConstructPrototype
 # CHECK-NEXT: L0 = NewObject [[prototype]] layout=L0
+}

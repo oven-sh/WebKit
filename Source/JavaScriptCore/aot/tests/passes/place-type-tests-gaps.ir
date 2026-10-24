@@ -17,7 +17,6 @@ layout L0 name="Point" fields=[{key="x" declared={type=number}}, {key="y" declar
 layout L1 name="Filler" fields=[{key="z" declared={type=number}}]
 
 function f0 name="narrowGap" parameters=[{type=object}, {type=number}] results=[{type=anything}] {
-  b0(v0: object, v1: number):
     v2 = PropGet v0 key="x"
     v3 = Add v1, v1
     v4 = Add v3, v1
@@ -36,7 +35,6 @@ function f0 name="narrowGap" parameters=[{type=object}, {type=number}] results=[
 # F0-NOT: stretch
 
 function f1 name="wideGap" parameters=[{type=object}, {type=number}] results=[{type=anything}] {
-  b0(v0: object, v1: number):
     v2 = PropGet v0 key="x"
 # REPEAT: i = 3..14
     v%(i) = CallDirect v1 function=f9
@@ -50,7 +48,6 @@ function f1 name="wideGap" parameters=[{type=object}, {type=number}] results=[{t
 # F1-NOT: stretch
 
 function f2 name="gapAtBudget" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = PropGet v0 key="x"
     v3 = Add v1, v1
     v4 = Add v3, v1
@@ -71,7 +68,6 @@ function f2 name="gapAtBudget" parameters=[{type=anything}, {type=number}] resul
 # F2-NOT: stretch
 
 function f3 name="gapPastBudget" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = PropGet v0 key="x"
     v3 = Add v1, v1
     v4 = Add v3, v1
@@ -87,7 +83,6 @@ function f3 name="gapPastBudget" parameters=[{type=anything}, {type=number}] res
 # F3-NOT: stretch
 
 function f4 name="nineClusters" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
 # REPEAT: i = 0..7
     v%(i*3+1) = PropGet v0 key="x"
     v%(i*3+2) = PropGet v0 key="y"
@@ -110,7 +105,6 @@ function f4 name="nineClusters" parameters=[{type=object}] results=[{type=anythi
 # F4-NOT: stretch
 
 function f5 name="gapOnOnePath" parameters=[{type=object}, {type=boolean}, {type=number}] results=[{type=anything}] {
-  b0(v0: object, v1: boolean, v2: number):
     v3 = PropGet v0 key="x"
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -133,7 +127,6 @@ function f5 name="gapOnOnePath" parameters=[{type=object}, {type=boolean}, {type
 # F5-NOT: stretch
 
 function f6 name="bothPathsNarrow" parameters=[{type=object}, {type=boolean}, {type=number}] results=[{type=anything}] {
-  b0(v0: object, v1: boolean, v2: number):
     v3 = PropGet v0 key="x"
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -158,7 +151,6 @@ function f6 name="bothPathsNarrow" parameters=[{type=object}, {type=boolean}, {t
 # F6-NOT: stretch
 
 function f7 name="secondConditionRidesAlong" parameters=[{type=object}, {type=object}, {type=number}] results=[{type=anything}] {
-  b0(v0: object, v1: object, v2: number):
     v3 = PropGet v0 key="x"
     v4 = PropGet v1 key="x"
     v5 = Add v2, v2
@@ -178,7 +170,6 @@ function f7 name="secondConditionRidesAlong" parameters=[{type=object}, {type=ob
 # F7-NOT: stretch
 
 function f8 name="usesAreNoGap" parameters=[{type=object}, {type=object}] results=[{type=anything}] {
-  b0(v0: object, v1: object):
     v2 = PropGet v0 key="x"
     v3 = PropGet v1 key="x"
     v4 = PropGet v1 key="y"
@@ -196,6 +187,5 @@ function f8 name="usesAreNoGap" parameters=[{type=object}, {type=object}] result
 # F8-NOT: stretch
 
 function f9 name="identity" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Return v0
 }

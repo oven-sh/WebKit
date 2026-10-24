@@ -10,23 +10,32 @@
 
 #include "AOTConversionEmitter.h"
 #include "AOTStringEmitter.h"
-#include "AOTStubsArithmetic.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static BinaryOperator binaryOperatorFor(Relation relation)
+namespace {
+
+struct RelationTraits {
+    BinaryOperator stub;
+    RuntimeOperation operation;
+    Relation mirrored;
+};
+
+} // anonymous namespace
+
+static RelationTraits traitsOfOperator(Relation relation)
 {
     switch (relation) {
     case Relation::Less:
-        return BinaryOperator::Less;
+        return { BinaryOperator::Less, RuntimeOperation::CompareLess, Relation::Greater };
     case Relation::LessOrEqual:
-        return BinaryOperator::LessEq;
+        return { BinaryOperator::LessEq, RuntimeOperation::CompareLessEq, Relation::GreaterOrEqual };
     case Relation::Greater:
-        return BinaryOperator::Greater;
+        return { BinaryOperator::Greater, RuntimeOperation::CompareGreater, Relation::Less };
     case Relation::GreaterOrEqual:
-        return BinaryOperator::GreaterEq;
+        return { BinaryOperator::GreaterEq, RuntimeOperation::CompareGreaterEq, Relation::LessOrEqual };
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -71,28 +80,28 @@ static Condition compareNonNegative(Output& out, Relation relation, LValue left,
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void OperatorEmitter::generateLess(const ValueContext& value)
+template<typename T>
+Condition OperatorEmitter::compare(std::optional<Relation> relation, T left, T right)
 {
-    generateRelation(value, Relation::Less);
+    if (!relation)
+        return equal(left, right);
+    switch (*relation) {
+    case Relation::Less:
+        return lessThan(left, right);
+    case Relation::LessOrEqual:
+        return lessThanOrEqual(left, right);
+    case Relation::Greater:
+        return greaterThan(left, right);
+    case Relation::GreaterOrEqual:
+        return greaterThanOrEqual(left, right);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
-void OperatorEmitter::generateLessEq(const ValueContext& value)
+void OperatorEmitter::generateComparisonOfNumbers(const ValueContext& value, std::optional<Relation> relation)
 {
-    generateRelation(value, Relation::LessOrEqual);
-}
-
-void OperatorEmitter::generateGreater(const ValueContext& value)
-{
-    generateRelation(value, Relation::Greater);
-}
-
-void OperatorEmitter::generateGreaterEq(const ValueContext& value)
-{
-    generateRelation(value, Relation::GreaterOrEqual);
-}
-
-void OperatorEmitter::generateRelationOnNumbers(const ValueContext& value, Relation relation)
-{
+    if (!relation && (tryGenerateTestOfRemainder(value, value->leftOperand()) || tryGenerateTestOfRemainder(value, value->rightOperand())))
+        return;
     if (tryGenerateComparisonOfWholeRemainder(value, relation))
         return;
 
@@ -130,47 +139,6 @@ void OperatorEmitter::generateRelationOnNumbers(const ValueContext& value, Relat
     });
 }
 
-void OperatorEmitter::generateEqualityOfNumbers(const ValueContext& value)
-{
-    if (tryGenerateTestOfRemainder(value, value->leftOperand()) || tryGenerateTestOfRemainder(value, value->rightOperand()))
-        return;
-    if (tryGenerateComparisonOfWholeRemainder(value, std::nullopt))
-        return;
-
-    Operand left = get(value->leftOperand());
-    Operand right = get(value->rightOperand());
-    const Type& leftType = typeOf(value->leftOperand());
-    const Type& rightType = typeOf(value->rightOperand());
-    auto mayBeInt32 = [](Operand operand, const Type& type) {
-        return operand.is<Word32>() || (operand.is<Boxed>() && type.primitives & Primitive::Integer);
-    };
-    auto int32Of = [&](Operand operand) {
-        return operand.is<Boxed>() ? low32(operand.as<Boxed>()) : operand.as<Word32>();
-    };
-
-    if (left.is<Word32>() && right.is<Word32>()) {
-        defineTest(value, equal(left.as<Word32>(), right.as<Word32>()));
-        return;
-    }
-    if (!mayBeInt32(left, leftType) || !mayBeInt32(right, rightType)) {
-        defineTest(value, equal(asNumber(left, leftType), asNumber(right, rightType)));
-        return;
-    }
-
-    defineTestByBranching(value, [&](BranchTargets targets) {
-        Boxed tested = left.is<Boxed>() ? left.as<Boxed>() : right.as<Boxed>();
-        if (left.is<Boxed>() && right.is<Boxed>())
-            tested = Boxed(m_out.bitAnd(left.value, right.value));
-        LBasicBlock int32Case = newBlock();
-        LBasicBlock numberCase = newBlock();
-        m_out.branch(isInt32(tested).value(), normalEdge(int32Case), unlikelyEdge(numberCase));
-        m_out.appendTo(int32Case);
-        branch(equal(int32Of(left), int32Of(right)), targets);
-        m_out.appendTo(numberCase);
-        branch(equal(asNumber(left, leftType), asNumber(right, rightType)), targets);
-    });
-}
-
 void OperatorEmitter::generateRelation(const ValueContext& value, Relation relation)
 {
     ValueID left = value->leftOperand();
@@ -189,14 +157,16 @@ void OperatorEmitter::generateRelation(const ValueContext& value, Relation relat
         break;
     }
     case OperatorForm::Numbers:
-        generateRelationOnNumbers(value, relation);
+        generateComparisonOfNumbers(value, relation);
         return;
     case OperatorForm::BigInts:
-        result = callOperation<Condition>(value, runtimeOperationOf(relation), { boxCell(in<CellPointer>(left)), boxCell(in<CellPointer>(right)) });
+        result = callOperation<Condition>(value, traitsOfOperator(relation).operation, { boxCell(in<CellPointer>(left)), boxCell(in<CellPointer>(right)) });
         break;
-    case OperatorForm::Strings:
-        result = relationOnStrings(value, relation);
+    case OperatorForm::Strings: {
+        Word32 order = emitter<StringEmitter>().order(value, in<CellPointer>(left), in<CellPointer>(right));
+        result = compare(relation, order, word32(0));
         break;
+    }
     case OperatorForm::NullableStrings:
         result = relationOnNullableStrings(value, relation);
         break;
@@ -222,47 +192,6 @@ void OperatorEmitter::generateRelation(const ValueContext& value, Relation relat
         result = boolean(false);
     }
     defineTest(value, result);
-}
-
-#define AOT_DEFINE_COMPARE(OperandType) \
-    Condition OperatorEmitter::compare(Relation relation, OperandType left, OperandType right) \
-    { \
-        switch (relation) { \
-        case Relation::Less: \
-            return lessThan(left, right); \
-        case Relation::LessOrEqual: \
-            return lessThanOrEqual(left, right); \
-        case Relation::Greater: \
-            return greaterThan(left, right); \
-        case Relation::GreaterOrEqual: \
-            return greaterThanOrEqual(left, right); \
-        } \
-        RELEASE_ASSERT_NOT_REACHED(); \
-    }
-AOT_DEFINE_COMPARE(Number)
-AOT_DEFINE_COMPARE(Integer)
-AOT_DEFINE_COMPARE(Word32)
-#undef AOT_DEFINE_COMPARE
-
-Condition OperatorEmitter::relationOnStrings(const ValueContext& value, Relation relation)
-{
-    Word32 order = emitter<StringEmitter>().order(value, in<CellPointer>(value->leftOperand()), in<CellPointer>(value->rightOperand()));
-    return compare(relation, order, word32(0));
-}
-
-static Relation mirrored(Relation relation)
-{
-    switch (relation) {
-    case Relation::Less:
-        return Relation::Greater;
-    case Relation::LessOrEqual:
-        return Relation::GreaterOrEqual;
-    case Relation::Greater:
-        return Relation::Less;
-    case Relation::GreaterOrEqual:
-        return Relation::LessOrEqual;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
 }
 
 bool OperatorEmitter::tryGenerateComparisonOfWholeRemainder(const ValueContext& value, std::optional<Relation> relation)
@@ -308,23 +237,19 @@ bool OperatorEmitter::tryGenerateComparisonOfWholeRemainder(const ValueContext& 
     auto widened = [&](Operand operand) {
         return operand.is<Word32>() ? signExtended(operand.as<Word32>()) : operand.as<Integer>();
     };
-    Condition holds;
+    Vector<Condition, 3> conditions;
     if (leftOperand.is<Word32>() && rightOperand.is<Word32>())
-        holds = relation ? compare(*relation, leftOperand.as<Word32>(), rightOperand.as<Word32>()) : equal(leftOperand.as<Word32>(), rightOperand.as<Word32>());
+        conditions.append(compare(relation, leftOperand.as<Word32>(), rightOperand.as<Word32>()));
     else
-        holds = relation ? compare(*relation, widened(leftOperand), widened(rightOperand)) : equal(widened(leftOperand), widened(rightOperand));
-
-    Condition leftIsNumber = left ? left->isNumber : Condition();
-    Condition rightIsNumber = right ? right->isNumber : Condition();
-    if (!leftIsNumber && !rightIsNumber) {
-        defineTest(value, holds);
+        conditions.append(compare(relation, widened(leftOperand), widened(rightOperand)));
+    for (const WholeRemainder* remainder : { left, right }) {
+        if (remainder && remainder->isNumber)
+            conditions.append(remainder->isNumber);
+    }
+    if (conditions.size() == 1) {
+        defineTest(value, conditions[0]);
         return true;
     }
-    Vector<Condition, 3> conditions { holds };
-    if (leftIsNumber)
-        conditions.append(leftIsNumber);
-    if (rightIsNumber)
-        conditions.append(rightIsNumber);
     defineTestByBranching(value, [&](BranchTargets targets) {
         for (Condition condition : conditions.span().first(conditions.size() - 1)) {
             LBasicBlock next = newBlock();
@@ -350,7 +275,7 @@ Condition OperatorEmitter::relationOnStringCells(const ValueContext& value, Rela
     if (std::optional<char16_t> character = characterOf(value->rightOperand()))
         return compare(relation, strings.orderToCharacter(strings.viewOfString(value, left), *character), word32(0));
     if (std::optional<char16_t> character = characterOf(value->leftOperand()))
-        return compare(mirrored(relation), strings.orderToCharacter(strings.viewOfString(value, right), *character), word32(0));
+        return compare(traitsOfOperator(relation).mirrored, strings.orderToCharacter(strings.viewOfString(value, right), *character), word32(0));
     return compare(relation, strings.order(value, left, right), word32(0));
 }
 
@@ -374,10 +299,9 @@ Condition OperatorEmitter::relationOnValues(const ValueContext& value, Relation 
     ValueID left = value->leftOperand();
     ValueID right = value->rightOperand();
     if (value->form() == OperatorForm::Generic) {
-        BinaryOperator binaryOperator = binaryOperatorFor(relation);
-        bool mayBothBeInt32 = typeOf(left).primitives & Primitive::Integer && typeOf(right).primitives & Primitive::Integer;
-        bool isAfterInt32Check = !mayBothBeInt32 && hasFormAfterInt32Check(binaryOperator);
-        return Condition(m_out.castToInt32(callStub(value, binaryOperation(binaryOperator, isAfterInt32Check), { in<Boxed>(left).value(), in<Boxed>(right).value() }).first));
+        Boxed x = in<Boxed>(left);
+        Boxed y = in<Boxed>(right);
+        return Condition(m_out.castToInt32(callBinaryStub(value, traitsOfOperator(relation).stub, x, y)));
     }
 
     bool numberIsOnRight = representationOf(left) != Representation::Double;
@@ -388,7 +312,7 @@ Condition OperatorEmitter::relationOnValues(const ValueContext& value, Relation 
         Boxed boxedNumber = emitter<ConversionEmitter>().boxDouble(numberOperand);
         Boxed x = numberIsOnRight ? otherOperand : boxedNumber;
         Boxed y = numberIsOnRight ? boxedNumber : otherOperand;
-        return callOperation<Condition>(value, runtimeOperationOf(relation), { x, y }, options);
+        return callOperation<Condition>(value, traitsOfOperator(relation).operation, { x, y }, options);
     };
     if (!(typeOf(otherID).primitives & Primitive::Number))
         return compareByOperation(CallOptions { });

@@ -13,7 +13,6 @@ layout L0 name="FilledByParse" fields=[{key="c0" declared={type=undefined|null|n
 layout L1 name="CreatedEmpty" fields=[{key="c0" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c1" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c2" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c3" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c4" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c5" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c6" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c7" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c8" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c9" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c10" declared={type=undefined|null|number} flags=[IsRequired]}, {key="c11" declared={type=undefined|null|number} flags=[IsRequired]}, {key="note0" declared={type=undefined|number}}, {key="note1" declared={type=undefined|number}}, {key="note2" declared={type=undefined|number}}]
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=MathRandom
     v1 = Call v0
     v2 = ToNumber v1

@@ -11,7 +11,6 @@ entry module=m0
 typesite w0 module=m0 position=30 kind=Parameter
 
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     Jump -> next b1()

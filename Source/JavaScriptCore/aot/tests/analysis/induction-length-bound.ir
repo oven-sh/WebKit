@@ -5,7 +5,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="lengthReadInHeader" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=undefined}] {
-  b0(v0: Array<number, pristine[Storage, Names]>):
     v1 = Integer integer=0
     Jump -> next b1(v1)
   b1(v2):
@@ -25,7 +24,6 @@ function f0 name="lengthReadInHeader" parameters=[{type=Array<number, pristine[S
 # CHECK-NEXT: loop b1 counter: v2
 
 function f1 name="loopAppendsToArray" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=undefined}] {
-  b0(v0: Array<number, pristine[Storage, Names]>):
     v1 = Integer integer=0
     Jump -> next b1(v1)
   b1(v2):
@@ -46,7 +44,6 @@ function f1 name="loopAppendsToArray" parameters=[{type=Array<number, pristine[S
 # CHECK-NEXT: loop b1 counter: v2
 
 function f2 name="lengthReadBeforeLoop" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=undefined}] {
-  b0(v0: Array<number, pristine[Storage, Names]>):
     v1 = Integer integer=0
     v2 = GetArrayLength v0
     Jump -> next b1(v1)
@@ -66,7 +63,6 @@ function f2 name="lengthReadBeforeLoop" parameters=[{type=Array<number, pristine
 # CHECK-NEXT: loop b1 counter: v3
 
 function f3 name="arrayChangesInLoop" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=Array<number, pristine[Storage, Names]>}] results=[{type=undefined}] {
-  b0(v0: Array<number, pristine[Storage, Names]>, v1: Array<number, pristine[Storage, Names]>):
     v2 = Integer integer=0
     Jump -> next b1(v2, v0)
   b1(v3, v4):
@@ -85,7 +81,6 @@ function f3 name="arrayChangesInLoop" parameters=[{type=Array<number, pristine[S
 # CHECK-NEXT: v3 start v2 step +1 Increasing stepped [v9] tests [b1 v3 Less v6 Unknown BeforeStep entry Unknown exits OnlyAtTest]
 
 function f4 name="boundComesFromCall" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     v1 = Integer integer=0
     Jump -> next b1(v1)
   b1(v2):

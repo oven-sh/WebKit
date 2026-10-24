@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="patternAndFlags" results=[{type=RegExp}] {
-  b0():
     v0 = String string="a+"
     v1 = String string="gi"
     v2 = CallBuiltin -, v0, v1 overload=RegExp/4

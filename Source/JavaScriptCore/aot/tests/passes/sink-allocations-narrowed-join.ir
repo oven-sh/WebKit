@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="builtInTwoBranches" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = NewArray v0 contents=anything
@@ -30,8 +29,6 @@ function f0 name="builtInTwoBranches" parameters=[{type=anything}, {type=boolean
     Return v9
   b8():
     Return v0
-}
-# CHECK-LABEL: function f0 name="builtInTwoBranches"
 # CHECK-NOT: TypeTest
 # CHECK: b5():
 # CHECK-NEXT: [[first0]]: Array = NewArray
@@ -42,9 +39,9 @@ function f0 name="builtInTwoBranches" parameters=[{type=anything}, {type=boolean
 # CHECK: b7([[cell0]]: undefined|Array):
 # CHECK-NEXT: [[narrowed0]]: Array = AssumeType [[cell0]] castType=Array
 # CHECK-NEXT: = CallBuiltin [[narrowed0]] overload=ArrayPrototypeLength/0
+}
 
 function f1 name="everyArmHasTheNarrowedType" parameters=[{type=anything}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean, v2: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v3 = NewArray v0 contents=anything
@@ -70,15 +67,13 @@ function f1 name="everyArmHasTheNarrowedType" parameters=[{type=anything}, {type
     Return v10
   b9():
     Return v0
-}
-# CHECK-LABEL: function f1 name="everyArmHasTheNarrowedType"
 # CHECK-NOT: TypeTest
 # CHECK-NOT: AssumeType
 # CHECK: b8([[cell1]]: Array):
 # CHECK-NEXT: = CallBuiltin [[cell1]] overload=ArrayPrototypeLength/0
+}
 
 function f2 name="builtBeforeLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = NewArray v0 contents=anything
@@ -103,8 +98,6 @@ function f2 name="builtBeforeLoop" parameters=[{type=anything}, {type=boolean}] 
     Jump -> next b5(v14)
   b7():
     Return v0
-}
-# CHECK-LABEL: function f2 name="builtBeforeLoop"
 # CHECK: b4():
 # CHECK: [[built2]]: Array = NewArray
 # CHECK-NEXT: Jump -> next b5(v7, [[built2]])
@@ -115,9 +108,9 @@ function f2 name="builtBeforeLoop" parameters=[{type=anything}, {type=boolean}] 
 # CHECK: b6([[inBody2]]: undefined|Array, v12:
 # CHECK-NEXT: [[argument2]]: Array = AssumeType [[inBody2]] castType=Array
 # CHECK-NEXT: = Call v0, -, [[argument2]]
+}
 
 function f3 name="usedInHandler" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = NewArray v0 contents=anything
@@ -139,15 +132,13 @@ function f3 name="usedInHandler" parameters=[{type=anything}, {type=boolean}] re
     Return v9
   b7():
     Return v0
-}
-# CHECK-LABEL: function f3 name="usedInHandler"
 # CHECK: role=CatchHandler:
 # CHECK-NEXT: = CatchValue
 # CHECK: [[narrowed3]]: Array = AssumeType {{*}} castType=Array
 # CHECK-NEXT: = CallBuiltin [[narrowed3]] overload=ArrayPrototypeLength/0
+}
 
 function f4 name="narrowedByCast" parameters=[{type=anything}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean, v2: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v3 = NewArray v0 contents=anything
@@ -171,17 +162,15 @@ function f4 name="narrowedByCast" parameters=[{type=anything}, {type=boolean}, {
     Return v9
   b8():
     Return v0
-}
-# CHECK-LABEL: function f4 name="narrowedByCast"
 # CHECK: b7([[cell4]]: undefined|Array):
 # CHECK-NEXT: [[narrowed4]]: Array = AssumeType [[cell4]] castType=Array
 # CHECK-NEXT: = CallBuiltin [[narrowed4]] overload=ArrayPrototypeLength/0
 # CHECK: [[missing4]]: undefined = Undefined
 # CHECK-NEXT: = RequireObjectCoercible [[missing4]]
 # CHECK-NEXT: Unreachable
+}
 
 function f5 name="narrowedParameterHoldsCells" parameters=[{type=anything}, {type=boolean}, {type=Array}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean, v2: Array):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v3 = NewArray v0 contents=anything
@@ -200,17 +189,15 @@ function f5 name="narrowedParameterHoldsCells" parameters=[{type=anything}, {typ
   b6(v9):
     v10 = CallBuiltin v9 overload=ArrayPrototypeLength/0
     Return v10
-}
-# CHECK-LABEL: function f5 name="narrowedParameterHoldsCells"
 # CHECK-NOT: AssumeType
 # CHECK: b5():
 # CHECK-NEXT: [[built5]]: Array = NewArray
 # CHECK: Jump -> next b6([[built5]])
 # CHECK: b6([[either5]]: Array):
 # CHECK-NEXT: = CallBuiltin [[either5]] overload=ArrayPrototypeLength/0
+}
 
 function f6 name="builtInOneBranch" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = NewArray v0 contents=anything
@@ -233,10 +220,9 @@ function f6 name="builtInOneBranch" parameters=[{type=anything}, {type=boolean}]
     Return v8
   b8():
     Return v0
-}
-# CHECK-LABEL: function f6 name="builtInOneBranch"
 # CHECK: b7([[tag6]]: i32, [[carried6]]: undefined|Array,
 # CHECK-NEXT: Switch [[tag6]]
 # CHECK: ([[cell6]]: undefined|Array):
 # CHECK-NEXT: [[narrowed6]]: Array = AssumeType [[cell6]] castType=Array
 # CHECK-NEXT: = CallBuiltin [[narrowed6]] overload=ArrayPrototypeLength/0
+}

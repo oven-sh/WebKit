@@ -12,7 +12,6 @@ entry module=m0
 variable g0 name="helper" module=m0 declared={type=anything} initialization=Uninitialized
 evalscope e0 bindings=[{name="helper" variable=g0}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     PutModuleVariable v0 variable=g0
     v2 = Builtin builtin=GlobalThis
@@ -26,7 +25,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="helper" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     Return v0
 }

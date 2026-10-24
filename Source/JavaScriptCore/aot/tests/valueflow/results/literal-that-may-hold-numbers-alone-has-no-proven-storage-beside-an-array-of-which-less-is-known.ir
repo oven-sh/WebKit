@@ -18,7 +18,6 @@ variable g1 name="marks" module=m0 declared={type=anything} initialization=Undef
 data d0 root=Object{layout=L0 members=[{key="m" value=Number{value=4}}]} module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Data data=d0
     v1 = Integer integer=1
     v2 = NewArray v0, v1 contents=anything
@@ -36,19 +35,16 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="first" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer
     v2 = ElemGet v0, v1
     Return v2
 }
 function f2 name="rest" flags=[HasRestParameter] parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
-  b0(v0: Array):
     v1 = NewClosure function=f1
     v2 = Call v1, -, v0
     Return v2
 }
 function f3 name="count" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     v2 = ElemGet v0, v1
     Return v2

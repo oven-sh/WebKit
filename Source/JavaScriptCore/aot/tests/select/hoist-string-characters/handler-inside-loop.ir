@@ -9,7 +9,6 @@
 # CHECK-NOT: FlattenString
 module m0 path="main.js" displayPath="main.js"
 function f0 name="read-under-handler" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
-  b0(v0: string, v1: number):
     v2 = Undefined
     v3 = Integer integer=0
     v4 = Integer integer=1
@@ -40,7 +39,6 @@ function f0 name="read-under-handler" parameters=[{type=string}, {type=number}] 
 # CHECK-NEXT: v10: number = StringRangeCodeUnitOrNaN [[flat1]], -, -, v5
 # CHECK-NOT: FlattenString
 function f1 name="one-of-two-reads-under-handler" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
-  b0(v0: string, v1: number):
     v2 = Undefined
     v3 = Integer integer=0
     v4 = Integer integer=1

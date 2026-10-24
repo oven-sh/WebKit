@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="calledAtOnePlace" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="a"
     v2 = PropGet v1 key="b"
     v3 = PropGet v2 key="c"
@@ -18,7 +17,6 @@ function f0 name="calledAtOnePlace" parameters=[{type=anything}] results=[{type=
     Return v8
 }
 function f1 name="calledAtTwoPlaces" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="a"
     v2 = PropGet v1 key="b"
     v3 = PropGet v2 key="c"
@@ -30,7 +28,6 @@ function f1 name="calledAtTwoPlaces" parameters=[{type=anything}] results=[{type
     Return v8
 }
 function f2 name="calledAtOnePlaceOutsideLoops" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="a"
     v2 = PropGet v1 key="b"
     v3 = PropGet v2 key="c"
@@ -42,7 +39,6 @@ function f2 name="calledAtOnePlaceOutsideLoops" parameters=[{type=anything}] res
     Return v8
 }
 function f3 name="farMoreCalledAtOnePlace" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="a"
     v2 = PropGet v1 key="b"
     v3 = PropGet v2 key="c"
@@ -86,7 +82,6 @@ function f3 name="farMoreCalledAtOnePlace" parameters=[{type=anything}] results=
     Return v40
 }
 function f4 name="theOneCallInALoop" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     LoopHint
@@ -99,12 +94,10 @@ function f4 name="theOneCallInALoop" parameters=[{type=anything}] results=[{type
     Jump -> next b1()
   b3():
     Return v2
-}
-# CHECK-LABEL: function f4 name="theOneCallInALoop"
 # CHECK-NOT: function=f0
+}
 
 function f5 name="oneOfTwoCallsInALoop" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     LoopHint
@@ -117,12 +110,10 @@ function f5 name="oneOfTwoCallsInALoop" parameters=[{type=anything}] results=[{t
     Jump -> next b1()
   b3():
     Return v2
-}
-# CHECK-LABEL: function f5 name="oneOfTwoCallsInALoop"
 # CHECK: = CallDirect {{*}} function=f1
+}
 
 function f6 name="theOtherOfTwoCallsInALoop" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     LoopHint
@@ -135,20 +126,16 @@ function f6 name="theOtherOfTwoCallsInALoop" parameters=[{type=anything}] result
     Jump -> next b1()
   b3():
     Return v2
-}
-# CHECK-LABEL: function f6 name="theOtherOfTwoCallsInALoop"
 # CHECK: = CallDirect {{*}} function=f1
+}
 
 function f7 name="theOneCallOutsideALoop" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f2
     Return v1
-}
-# CHECK-LABEL: function f7 name="theOneCallOutsideALoop"
 # CHECK: = CallDirect {{*}} function=f2
+}
 
 function f8 name="theOneCallOfFarMoreInALoop" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     LoopHint
@@ -161,6 +148,5 @@ function f8 name="theOneCallOfFarMoreInALoop" parameters=[{type=anything}] resul
     Jump -> next b1()
   b3():
     Return v2
-}
-# CHECK-LABEL: function f8 name="theOneCallOfFarMoreInALoop"
 # CHECK: = CallDirect {{*}} function=f3
+}

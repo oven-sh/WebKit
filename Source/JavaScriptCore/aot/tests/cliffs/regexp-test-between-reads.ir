@@ -10,7 +10,6 @@ variable g1 name="asCreated" module=m0 declared={type=anything} initialization=U
 variable g2 name="objectInLastIndex" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToString v1
@@ -28,7 +27,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="acrossMatch" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g0
     v2 = GetModuleVariable variable=g1
     v3 = PropGet v2 key="test"
@@ -36,14 +34,12 @@ function f1 name="acrossMatch" parameters=[{type=anything}] results=[{type=anyth
     v5 = GetModuleVariable variable=g0
     v6 = StrictEq v1, v5
     Return v6
-}
-# CHECK-LABEL: function f1 name="acrossMatch"
 # CHECK: [[first1]]:{{*}}= GetModuleVariable variable=g0
 # CHECK: = CallBuiltin {{*}}overload=RegExpPrototypeTest/0
 # CHECK-NOT: GetModuleVariable variable=g0
+}
 
 function f2 name="acrossConversionOfObject" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g0
     v2 = GetModuleVariable variable=g2
     v3 = PropGet v2 key="test"
@@ -51,7 +47,6 @@ function f2 name="acrossConversionOfObject" parameters=[{type=anything}] results
     v5 = GetModuleVariable variable=g0
     v6 = StrictEq v1, v5
     Return v6
-}
-# CHECK-LABEL: function f2 name="acrossConversionOfObject"
 # CHECK: = CallBuiltin {{*}}overload=RegExpPrototypeTest/0
 # CHECK: = GetModuleVariable variable=g0
+}

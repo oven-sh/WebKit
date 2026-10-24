@@ -11,7 +11,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="literals" results=[{type=undefined}] {
-  b0():
     v0 = NewRegExp pattern="a+" regExpFlags=[Global] @7
     v1 = NewRegExp pattern="a+" regExpFlags=[Global] @8
     v2 = NewRegExp pattern="a+" @9
@@ -21,7 +20,6 @@ function f0 name="literals" results=[{type=undefined}] {
 }
 
 function f1 name="unreachableLiteral" results=[{type=undefined}] {
-  b0():
     Return
   b1():
     v0 = NewRegExp pattern="dead"
@@ -29,7 +27,6 @@ function f1 name="unreachableLiteral" results=[{type=undefined}] {
 }
 
 function f2 name="matchedLiteral" parameters=[{type=string}] results=[{type=boolean}] {
-  b0(v0: string):
     v1 = SharedRegExpLiteral pattern="b" @12
     v2 = RegExpMatchLiteral v0, v1 overload=RegExpPrototypeTest/0 pattern="b"
     Return v2

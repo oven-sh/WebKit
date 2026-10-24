@@ -124,17 +124,6 @@ private:
     Vector<JSObject*> m_objectsWithEveryPropertyLocked;
 };
 
-// The table leads from a module to its namespace object only.
-class NamespacesOfBuiltinModules {
-public:
-    explicit NamespacesOfBuiltinModules(const BuiltinTable&);
-    bool holdAbove(BuiltinID) const;
-
-private:
-    const BuiltinTable& m_table;
-    BitVector m_namespaces;
-};
-
 // The table says of a property that the host makes at the first read that only a write replaces it.
 JS_EXPORT_PRIVATE void hostDidReplaceProperty(JSGlobalObject*, UniquedStringImpl* key);
 JS_EXPORT_PRIVATE void hostDidLoadBuiltinModule(JSGlobalObject*, uint32_t module, JSValue exports);

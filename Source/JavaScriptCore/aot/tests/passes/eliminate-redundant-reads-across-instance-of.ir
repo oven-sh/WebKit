@@ -7,29 +7,25 @@ layout L0 kind=Instance name="Cache" constructor=f2 flow={baseState=None impossi
 layout L1 name="Box" fields=[{key="k" declared={type=number} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L1] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 
 function f0 name="provenChain" parameters=[{type=L1}, {type=L0}, {type=f2}] results=[{type=number}] {
-  b0(v0: L1, v1: L0, v2: f2):
     v3 = PropGet v0 key="k"
     v4 = InstanceOf v1, v2
     v5 = PropGet v0 key="k"
     v6 = Add v3, v5
     Return v6
-}
-# CHECK-LABEL: function f0 name="provenChain"
 # CHECK: [[first]]: number = GetSlot v0 key="k"
 # CHECK-NEXT: = InstanceOf v1, v2
 # CHECK-NEXT: = Upcast [[first]]
 # CHECK-NOT: GetSlot
+}
 
 function f1 name="valueOfAnyClass" parameters=[{type=L1}, {type=object}, {type=f2}] results=[{type=number}] {
-  b0(v0: L1, v1: object, v2: f2):
     v3 = PropGet v0 key="k"
     v4 = InstanceOf v1, v2
     v5 = PropGet v0 key="k"
     v6 = Add v3, v5
     Return v6
-}
-# CHECK-LABEL: function f1 name="valueOfAnyClass"
 # CHECK: = GetSlot v0 key="k"
 # CHECK-NEXT: = InstanceOf v1, v2
 # CHECK-NEXT: = GetSlot v0 key="k"
+}
 function f2 name="Cache" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0

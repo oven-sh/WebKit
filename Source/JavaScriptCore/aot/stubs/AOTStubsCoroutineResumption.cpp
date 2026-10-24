@@ -29,17 +29,10 @@ static_assert(generatorSlotOffset < 0 && -generatorSlotOffset <= static_cast<int
 // A body's first step may be a direct call, which tests the stack where its frame ends. A later step from the same caller has to fit wherever that one did.
 static constexpr int32_t sizeOfStepGeneratorFrame = sizeof(CallerFrameAndPC) + stackAlignmentBytes();
 
-CodePtr<JSEntryPtrTag> handlerOfJobEntrypoint()
-{
-    return entrypointInCurrentImage(Image::FrequentStub::EnterHandlerOfJob, enterHandlerOfJob());
-}
+CodePtr<JSEntryPtrTag> handlerOfJobEntrypoint() { return entrypointInCurrentImage(Image::FrequentStub::EnterHandlerOfJob, enterHandlerOfJob()); }
+CodePtr<JSEntryPtrTag> savedFrameEntrypoint() { return entrypointInCurrentImage(Image::FrequentStub::EnterSavedFrame, enterSavedFrame()); }
 
-CodePtr<JSEntryPtrTag> savedFrameEntrypoint()
-{
-    return entrypointInCurrentImage(Image::FrequentStub::EnterSavedFrame, enterSavedFrame());
-}
-
-void emitUnmodifiedGeneratorCheck(StubAssembler& jit, GPRReg generator, GPRReg scratch, JumpList& otherwise)
+static void emitUnmodifiedGeneratorCheck(StubAssembler& jit, GPRReg generator, GPRReg scratch, JumpList& otherwise)
 {
     // The stored prototype is only known to be a cell while the flag is clear, so test the flag first.
     otherwise.append(jit.branchTest8(CCallHelpers::NonZero, Address(generator, Generator::offsetOfHasOtherPrototype())));
@@ -78,20 +71,7 @@ static void emitStepCheck(StubAssembler& jit, GeneratorStepCheck check, GPRReg g
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void checkRestoreOperands(GPRReg saved, GPRReg mode, GPRReg value)
-{
-    const StubSignature signature = signatureOfRestoreSavedFrameToStack(restoreSavedFrameToStack());
-    RELEASE_ASSERT(signature.numberOfOperands == 3);
-    RELEASE_ASSERT(signature.operands[0] == Reg(saved) && signature.operands[1] == Reg(mode) && signature.operands[2] == Reg(value));
-}
-
-StubSignature signatureOfStepGenerator(StubKey)
-{
-    StubSignature signature = StubSignature::withGPRResult({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2) });
-    signature.result = StubResult::TwoGPRs;
-    signature.secondResult = gprOf(resumeModeRegister);
-    return signature;
-}
+StubSignature signatureOfStepGenerator(StubKey) { return signatureWithResumeMode({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
 
 void generateStepGenerator(StubAssembler& jit)
 {
@@ -105,7 +85,7 @@ void generateStepGenerator(StubAssembler& jit)
     static_assert(static_cast<int32_t>(Generator::State::SuspendedAtStart) >= 0 && static_cast<int32_t>(Generator::State::SuspendedAtYield) >= 0);
     RELEASE_ASSERT(noOverlap(generator, jit.operand(1), jit.operand(2), status, saved, scratch, instanceGPR));
     RELEASE_ASSERT(noOverlap(result, status, scratch));
-    checkRestoreOperands(generator, jit.operand(1), jit.operand(2));
+    checkStubOperands(restoreSavedFrameToStack(), { generator, jit.operand(1), jit.operand(2) });
 
     JumpList isNotStepped;
     emitStepCheck(jit, check, generator, status, scratch, isNotStepped);
@@ -146,15 +126,6 @@ void generateStepGenerator(StubAssembler& jit)
 StubSignature signatureOfEnterSavedFrame(StubKey) { return { }; }
 StubSignature signatureOfEnterHandlerOfJob(StubKey) { return { }; }
 
-// resumeModeBitsOfEngineMode as code.
-static void emitConvertEngineResumeMode(StubAssembler& jit, GPRReg mode, GPRReg scratch)
-{
-    jit.lshift32(mode, TrustedImm32(1), scratch);
-    jit.urshift32(TrustedImm32(1), mode);
-    jit.or32(scratch, mode);
-    jit.and32(TrustedImm32(3), mode);
-}
-
 // When a coroutine has left its frame, the adapter goes on with the frame that would be entered next anyway.
 void generateEnterSavedFrame(StubAssembler& jit)
 {
@@ -167,17 +138,19 @@ void generateEnterSavedFrame(StubAssembler& jit)
     const GPRReg vm = scratch;
     const Address calleeSlot = CCallHelpers::addressFor(CallFrameSlot::callee);
     const Address endsJob(fp, AdapterFrame::offsetOfNewTarget);
-    auto coroutineWord = [](ptrdiff_t offset) {
-        return Address(instanceGPR, static_cast<int32_t>(offset));
-    };
+    auto coroutineWord = [](ptrdiff_t offset) { return Address(instanceGPR, static_cast<int32_t>(offset)); };
     static_assert(tracksNoAsyncContext.word.base == AwaitConditionBase::VM && tracksNoAsyncContext.word.sizeInBytes == 1 && tracksNoAsyncContext.test == AwaitConditionTest::IsZero);
     RELEASE_ASSERT(noOverlap(calleeGPR, saved, mode, value, scratch));
     RELEASE_ASSERT(noOverlap(GPRInfo::returnValueGPR, next, scratch) && noOverlap(saved, mode, value, next, scratch));
-    checkRestoreOperands(saved, mode, value);
+    checkStubOperands(restoreSavedFrameToStack(), { saved, mode, value });
 
     jit.move(calleeGPR, saved);
     jit.load32(CCallHelpers::addressFor(virtualRegisterForArgumentIncludingThis(static_cast<int>(JSGenerator::Argument::ResumeMode))), mode);
-    emitConvertEngineResumeMode(jit, mode, scratch);
+    // resumeModeBitsOfEngineMode as code.
+    jit.lshift32(mode, TrustedImm32(1), scratch);
+    jit.urshift32(TrustedImm32(1), mode);
+    jit.or32(scratch, mode);
+    jit.and32(TrustedImm32(3), mode);
     jit.load64(CCallHelpers::addressFor(virtualRegisterForArgumentIncludingThis(static_cast<int>(JSGenerator::Argument::Value))), value);
     jit.load8(coroutineWord(AOT_INSTANCE_OFFSET(coroutines.nextEntryEndsJob)), scratch);
     jit.store8(TrustedImm32(0), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.nextEntryEndsJob)));
@@ -310,6 +283,24 @@ void generateEnterSavedFrame(StubAssembler& jit)
         const GPRReg promise = driver;
         const GPRReg handler = mode;
         const GPRReg result = GPRInfo::returnValueGPR;
+        auto callHandler = [&](bool hasArgument, JumpList& doesNotGoOn) {
+            jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.enteredFrame)));
+            jit.storePtr(handler, calleeSlot);
+            jit.loadPtr(Address(fp), next);
+            jit.storePtr(handler, Address(next, EntryFrame::vmEntryRecordOffset() + OBJECT_OFFSETOF(VMEntryRecord, m_context)));
+            if (hasArgument)
+                jit.shuffleRegisters<GPRReg, 2>({ handler, value }, { calleeGPR, argumentGPR(0) });
+            else
+                jit.move(handler, calleeGPR);
+            jit.move(TrustedImm64(JSValue::ValueUndefined), thisGPR);
+            jit.callStub(hasArgument ? callValue(1) : callValueCell(0));
+            jit.bindReturnLabel(StubFrameKind::HandlerOfJob);
+            jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), vm);
+            doesNotGoOn.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(vm, VM::exceptionOffset())));
+            doesNotGoOn.append(jit.branchPtr(CCallHelpers::Below, sp, Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit())));
+            doesNotGoOn.append(jit.branchTest64(CCallHelpers::Zero, endsJob));
+        };
+
         callsHandlerUnderContext.link(&jit);
         emitTakeReactionJob(jit, ReactionJob::HasAsyncContext, { next, slot, scratch }, promise, handler, value, leaveWithSentinel);
         Jump hasTakenJob = jit.jump();
@@ -319,19 +310,7 @@ void generateEnterSavedFrame(StubAssembler& jit)
         Label entersHandler = jit.label();
         jit.store64(promise, generatorArgument);
         jit.storePtr(promise, coroutineWord(AOT_INSTANCE_OFFSET(coroutines.promiseOfEnteredHandler)));
-        jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.enteredFrame)));
-        jit.storePtr(handler, calleeSlot);
-        jit.loadPtr(Address(fp), next);
-        jit.storePtr(handler, Address(next, EntryFrame::vmEntryRecordOffset() + OBJECT_OFFSETOF(VMEntryRecord, m_context)));
-        jit.shuffleRegisters<GPRReg, 2>({ handler, value }, { calleeGPR, argumentGPR(0) });
-        jit.move(TrustedImm64(JSValue::ValueUndefined), thisGPR);
-        jit.callStub(callValue(1));
-        jit.bindReturnLabel(StubFrameKind::HandlerOfJob);
-
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), vm);
-        leave.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(vm, VM::exceptionOffset())));
-        leave.append(jit.branchPtr(CCallHelpers::Below, sp, Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit())));
-        leave.append(jit.branchTest64(CCallHelpers::Zero, endsJob));
+        callHandler(true, leave);
         jit.load64(generatorArgument, promise);
         RELEASE_ASSERT(noOverlap(result, promise, slot, mode, value, next, scratch));
         emitFulfillPromise(jit, promise, result, slot, { mode, value, next, scratch }, leave);
@@ -342,18 +321,7 @@ void generateEnterSavedFrame(StubAssembler& jit)
         callsFunction.link(&jit);
         emitTakePerformMicrotaskJob(jit, { next, slot, scratch }, handler, leaveWithSentinel);
         Label entersFunction = jit.label();
-        jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.enteredFrame)));
-        jit.storePtr(handler, calleeSlot);
-        jit.loadPtr(Address(fp), next);
-        jit.storePtr(handler, Address(next, EntryFrame::vmEntryRecordOffset() + OBJECT_OFFSETOF(VMEntryRecord, m_context)));
-        jit.move(handler, calleeGPR);
-        jit.move(TrustedImm64(JSValue::ValueUndefined), thisGPR);
-        jit.callStub(callValueCell(0));
-        jit.bindReturnLabel(StubFrameKind::HandlerOfJob);
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), vm);
-        leaveWithSentinel.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(vm, VM::exceptionOffset())));
-        leaveWithSentinel.append(jit.branchPtr(CCallHelpers::Below, sp, Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit())));
-        leaveWithSentinel.append(jit.branchTest64(CCallHelpers::Zero, endsJob));
+        callHandler(false, leaveWithSentinel);
         jit.jump().linkTo(takeJob, &jit);
 
         // The arguments lie where the adapter finds those of a coroutine: the promise, the handler, what the handler is called with. Without a promise the function is called without an argument.
@@ -386,10 +354,10 @@ void generateEnterSavedFrame(StubAssembler& jit)
 }
 
 #if CPU(ARM64)
-void emitMovePairsSavedInFrame(StubAssembler& jit, GPRReg word, unsigned shift, PairsSavedInFrame direction)
+void emitMoveRegistersSavedInFrame(StubAssembler& jit, GPRReg word, unsigned shift, RegistersSavedInFrame direction)
 {
     auto move = [&](GPRReg first, GPRReg second, int32_t offset) {
-        if (direction == PairsSavedInFrame::AreRestored)
+        if (direction == RegistersSavedInFrame::AreRestored)
             jit.loadPair64(fp, TrustedImm32(offset), first, second);
         else
             jit.storePair64(first, second, fp, TrustedImm32(offset));
@@ -410,31 +378,33 @@ void emitMovePairsSavedInFrame(StubAssembler& jit, GPRReg word, unsigned shift, 
 static constexpr int32_t savedPreservedRegisterBit = SavedFrame::functionSavesPreservedRegister >> SavedFrame::liveSlotMapOffsetBits;
 static constexpr int32_t savedR15Bit = SavedFrame::functionSavesR15 >> SavedFrame::liveSlotMapOffsetBits;
 static_assert(savedPreservedRegisterBit == 1 && savedR15Bit == 2);
+static_assert(1u << SavedFrame::liveSlotMapOffsetBits == SavedFrame::functionSavesPreservedRegister && 2u << SavedFrame::liveSlotMapOffsetBits == SavedFrame::functionSavesR15);
 static_assert(suspensionClobberedGPRs.size() == 1 && suspensionClobberedGPRs[0] == X86Registers::r15);
 
-static void emitStoreRegistersSavedInFrame(StubAssembler& jit, GPRReg bits)
+void emitMoveRegistersSavedInFrame(StubAssembler& jit, GPRReg word, unsigned shift, RegistersSavedInFrame direction)
 {
-    Jump doesNotSaveR15 = jit.branchTest32(CCallHelpers::Zero, bits, TrustedImm32(savedR15Bit));
-    jit.storePtr(X86Registers::r15, Address(fp, -static_cast<int>(sizeof(CPURegister))));
-    Jump savesOnlyR15 = jit.branchTest32(CCallHelpers::Zero, bits, TrustedImm32(savedPreservedRegisterBit));
-    jit.storePtr(SavedFrame::preservedRegister, Address(fp, -2 * static_cast<int>(sizeof(CPURegister))));
-    Jump hasStoredBoth = jit.jump();
+    auto move = [&](GPRReg reg, int wordsBelowFramePointer) {
+        const Address place(fp, -wordsBelowFramePointer * static_cast<int>(sizeof(CPURegister)));
+        if (direction == RegistersSavedInFrame::AreRestored)
+            jit.loadPtr(place, reg);
+        else
+            jit.storePtr(reg, place);
+    };
+    Jump doesNotSaveR15 = jit.branchTest32(CCallHelpers::Zero, word, TrustedImm32(savedR15Bit << shift));
+    move(X86Registers::r15, 1);
+    Jump savesOnlyR15 = jit.branchTest32(CCallHelpers::Zero, word, TrustedImm32(savedPreservedRegisterBit << shift));
+    move(SavedFrame::preservedRegister, 2);
+    Jump hasMovedBoth = jit.jump();
     doesNotSaveR15.link(&jit);
-    Jump savesNothing = jit.branchTest32(CCallHelpers::Zero, bits, TrustedImm32(savedPreservedRegisterBit));
-    jit.storePtr(SavedFrame::preservedRegister, Address(fp, -static_cast<int>(sizeof(CPURegister))));
+    Jump savesNothing = jit.branchTest32(CCallHelpers::Zero, word, TrustedImm32(savedPreservedRegisterBit << shift));
+    move(SavedFrame::preservedRegister, 1);
     savesNothing.link(&jit);
     savesOnlyR15.link(&jit);
-    hasStoredBoth.link(&jit);
+    hasMovedBoth.link(&jit);
 }
 #endif
 
-struct RestoredFrame {
-    GPRReg saved;
-    GPRReg mode;
-    GPRReg value;
-    GPRReg count;
-    GPRReg scratch;
-};
+struct RestoredFrame { GPRReg saved, mode, value, count, scratch; };
 
 // The frame has the words kept, the words skipped above them and the words skipped below them. The three numbers lie in one word of the cell.
 static void emitLoadNumbersOfWords(StubAssembler& jit, GPRReg saved, GPRReg kept, GPRReg skippedAtBottom, GPRReg inFrame)
@@ -527,33 +497,6 @@ static void emitCopyFrameToStack(StubAssembler& jit, const RestoredFrame& frame)
 }
 #endif
 
-// Leaving the function, and the unwinder when it passes the frame, reload callee saves from the frame's save area.
-static void emitStoreResumerCalleeSaves(StubAssembler& jit, const RestoredFrame& frame)
-{
-    const GPRReg bits = frame.scratch;
-    jit.load8(Address(frame.saved, SavedFrame::offsetOfNumberOfSavedRegisterPairs()), bits);
-#if CPU(X86_64)
-    emitStoreRegistersSavedInFrame(jit, bits);
-    // A function that does not save the register leaves with it as it is, so it has to stay the resumer's.
-    Jump doesNotSavePreservedRegister = jit.branchTest32(CCallHelpers::Zero, bits, TrustedImm32(savedPreservedRegisterBit));
-    jit.load64(Address(frame.saved, SavedFrame::offsetOfPreservedRegister()), SavedFrame::preservedRegister);
-    doesNotSavePreservedRegister.link(&jit);
-#elif CPU(ARM64)
-    emitMovePairsSavedInFrame(jit, bits, 0, PairsSavedInFrame::AreStored);
-#endif
-}
-
-// From here on the words of the SavedFrame are stale, so it lists none of them. Until the copy is done a marker may read them.
-static void emitMarkAsOnStack(StubAssembler& jit, GPRReg saved)
-{
-    const Address version(saved, SavedFrame::offsetOfVersion());
-    jit.add32(TrustedImm32(1), version);
-    jit.storeFence();
-    jit.store32(TrustedImm32(0), Address(saved, SavedFrame::offsetOfLiveSlotMapOffsetPlusOne()));
-    jit.storeFence();
-    jit.add32(TrustedImm32(1), version);
-}
-
 static void emitContinueAtSite(StubAssembler& jit, const RestoredFrame& frame)
 {
     const auto [saved, mode, value, flags, resumeAddress] = frame;
@@ -594,10 +537,7 @@ static void emitContinueAtSite(StubAssembler& jit, const RestoredFrame& frame)
     jit.jumpToStub(handleException(false));
 }
 
-StubSignature signatureOfRestoreSavedFrameToStack(StubKey)
-{
-    return StubSignature::withoutResult({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2) });
-}
+StubSignature signatureOfRestoreSavedFrameToStack(StubKey) { return StubSignature::withoutResult({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
 
 // The frame record is pushed here, so the frame's return address is the label after the call of this stub, which tells who resumed the frame.
 void generateRestoreSavedFrameToStack(StubAssembler& jit)
@@ -610,8 +550,26 @@ void generateRestoreSavedFrameToStack(StubAssembler& jit)
         .scratch = jit.allocateScratch(StubRegister::T11),
     };
     emitCopyFrameToStack(jit, frame);
-    emitStoreResumerCalleeSaves(jit, frame);
-    emitMarkAsOnStack(jit, frame.saved);
+
+    // Leaving the function, and the unwinder when it passes the frame, reload callee saves from the frame's save area.
+    const GPRReg bits = frame.scratch;
+    jit.load8(Address(frame.saved, SavedFrame::offsetOfNumberOfSavedRegisterPairs()), bits);
+    emitMoveRegistersSavedInFrame(jit, bits, 0, RegistersSavedInFrame::AreStored);
+#if CPU(X86_64)
+    // A function that does not save the register leaves with it as it is, so it has to stay the resumer's.
+    Jump doesNotSavePreservedRegister = jit.branchTest32(CCallHelpers::Zero, bits, TrustedImm32(savedPreservedRegisterBit));
+    jit.load64(Address(frame.saved, SavedFrame::offsetOfPreservedRegister()), SavedFrame::preservedRegister);
+    doesNotSavePreservedRegister.link(&jit);
+#endif
+
+    // From here on the words of the SavedFrame are stale, so it lists none of them. Until the copy is done a marker may read them.
+    const Address version(frame.saved, SavedFrame::offsetOfVersion());
+    jit.add32(TrustedImm32(1), version);
+    jit.storeFence();
+    jit.store32(TrustedImm32(0), Address(frame.saved, SavedFrame::offsetOfLiveSlotMapOffsetPlusOne()));
+    jit.storeFence();
+    jit.add32(TrustedImm32(1), version);
+
     emitContinueAtSite(jit, frame);
 }
 

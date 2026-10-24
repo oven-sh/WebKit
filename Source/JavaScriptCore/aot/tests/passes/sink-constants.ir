@@ -6,13 +6,11 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="callback" results=[{type=undefined}] {
-  b0():
     v0 = Undefined
     Return v0
 }
 
 function f1 name="exclusiveUsers" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything):
     v2 = NewClosure function=f0
     Branch v0 -> taken b1(), notTaken b2()
   b1():
@@ -33,7 +31,6 @@ function f1 name="exclusiveUsers" parameters=[{type=boolean}, {type=anything}] r
 # CHECK-NEXT: = Call v1, -, [[copyInB2]], [[copyInB2]]
 
 function f2 name="oneUserBlock" parameters=[{type=boolean}, {type=string}] results=[{type=string}] {
-  b0(v0: boolean, v1: string):
     v2 = String string="cold"
     Branch v0 -> taken b1(), notTaken b2()
   b1():
@@ -49,7 +46,6 @@ function f2 name="oneUserBlock" parameters=[{type=boolean}, {type=string}] resul
 # CHECK-NEXT: String string="cold"
 
 function f3 name="userInCycle" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     v1 = NewClosure function=f0
     Jump -> next b1()
   b1():
@@ -68,7 +64,6 @@ function f3 name="userInCycle" parameters=[{type=anything}] results=[{type=undef
 # CHECK-NOT: NewClosure
 
 function f4 name="blockArgument" parameters=[{type=boolean}] results=[{type=anything}] {
-  b0(v0: boolean):
     v1 = NewClosure function=f0
     Branch v0 -> taken b1(v1), notTaken b2()
   b1(v2):
@@ -85,7 +80,6 @@ function f4 name="blockArgument" parameters=[{type=boolean}] results=[{type=anyt
 # CHECK-NEXT: Jump -> next b1([[closure]])
 
 function f5 name="userReachesOtherUser" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything):
     v2 = NewClosure function=f0
     Branch v0 -> taken b1(), notTaken b2()
   b1():
@@ -102,7 +96,6 @@ function f5 name="userReachesOtherUser" parameters=[{type=boolean}, {type=anythi
 # CHECK-NOT: NewClosure
 
 function f6 name="usedInOwnBlock" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything):
     v2 = NewClosure function=f0
     v3 = Call v1, -, v2
     Branch v0 -> taken b1(), notTaken b2()
@@ -119,7 +112,6 @@ function f6 name="usedInOwnBlock" parameters=[{type=boolean}, {type=anything}] r
 # CHECK-NOT: NewClosure
 
 function f7 name="stringInTwoBlocks" parameters=[{type=boolean}, {type=string}] results=[{type=string}] {
-  b0(v0: boolean, v1: string):
     v2 = String string="both"
     Branch v0 -> taken b1(), notTaken b2()
   b1():
@@ -137,7 +129,6 @@ function f7 name="stringInTwoBlocks" parameters=[{type=boolean}, {type=string}] 
 
 # The one user is a jump that hands the constant on, or a return
 function f8 name="handedOnByJump" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything):
     v2 = Builtin builtin=ArrayPrototypePush
     Branch v0 -> taken b1(), notTaken b2()
   b1():
@@ -155,7 +146,6 @@ function f8 name="handedOnByJump" parameters=[{type=boolean}, {type=anything}] r
 # CHECK-NEXT: Jump -> next b3([[handedOn]])
 
 function f9 name="returned" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything):
     v2 = Builtin builtin=ArrayPrototypePush
     Branch v0 -> taken b1(), notTaken b2()
   b1():
@@ -172,7 +162,6 @@ function f9 name="returned" parameters=[{type=boolean}, {type=anything}] results
 
 # The constant is created in each turn of the loop as it is, so the block of the loop that uses it may create it
 function f10 name="createdAndUsedInOneLoop" parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     LoopHint
@@ -198,7 +187,6 @@ function f10 name="createdAndUsedInOneLoop" parameters=[{type=anything}, {type=a
 
 # The branch of its own block hands the constant on over one of its edges: it is created on that edge
 function f11 name="handedOnByBranch" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything):
     v2 = Builtin builtin=ArrayPrototypePush
     Branch v0 -> taken b1(v2), notTaken b2()
   b1(v3: anything):

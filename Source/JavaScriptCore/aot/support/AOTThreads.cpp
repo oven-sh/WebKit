@@ -520,7 +520,7 @@ void runOnBuildThread(NOESCAPE const ScopedLambda<void()>& functor)
     }, ThreadType::Compiler, Thread::defaultQOS, Thread::defaultSchedulingPolicy, StackAllocationSpecification::RequestSize(ParallelLoops::workerStackSize))->waitForCompletion();
 }
 
-static void runLoop(const ParallelLoops& loops, unsigned count, NOESCAPE const ScopedLambda<void(unsigned, unsigned)>& functor)
+void forEachIndexInParallel(const ParallelLoops& loops, unsigned count, NOESCAPE const ScopedLambda<void(unsigned index, unsigned worker)>& functor)
 {
     if (count < 2 || loops.width() == 1) {
         for (unsigned index = 0; index < count; ++index)
@@ -564,14 +564,9 @@ static void runLoop(const ParallelLoops& loops, unsigned count, NOESCAPE const S
 
 void forEachIndexInParallel(const ParallelLoops& loops, unsigned count, NOESCAPE const ScopedLambda<void(unsigned index)>& functor)
 {
-    runLoop(loops, count, [&](unsigned index, unsigned) {
+    forEachIndexInParallel(loops, count, [&](unsigned index, unsigned) {
         functor(index);
     });
-}
-
-void forEachIndexInParallel(const ParallelLoops& loops, unsigned count, NOESCAPE const ScopedLambda<void(unsigned index, unsigned worker)>& functor)
-{
-    runLoop(loops, count, functor);
 }
 
 void forEachIndexInParallel(const ParallelLoops& loops, unsigned count, std::span<const uint32_t> longestFirst, NOESCAPE const ScopedLambda<void(unsigned index)>& functor)
@@ -588,7 +583,7 @@ void forEachIndexInParallel(const ParallelLoops& loops, unsigned count, std::spa
         RELEASE_ASSERT(!isRepeated);
     }
     unsigned numberFirst = static_cast<unsigned>(longestFirst.size());
-    runLoop(loops, numberFirst + count, [&](unsigned position, unsigned) {
+    forEachIndexInParallel(loops, numberFirst + count, [&](unsigned position, unsigned) {
         if (position < numberFirst)
             functor(longestFirst[position]);
         else if (!comesFirst.quickGet(position - numberFirst))

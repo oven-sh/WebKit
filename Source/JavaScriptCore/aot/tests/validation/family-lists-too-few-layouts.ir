@@ -24,7 +24,6 @@ layout L0 name="Shape" fields=[{key="area" declared={type=number} flags=[IsRequi
 layout L1 name="Circle" fields=[{key="area" declared={type=number} flags=[IsRequired]}, {key="sides" declared={type=number} flags=[IsRequired]}] supertypes=[L0]
 layout L2 name="Square" fields=[{key="area" declared={type=number} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Double number=12.5
     v1 = Integer integer=0
     v2 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
@@ -39,7 +38,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="areaOf" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Convert v0 declared={type=L0 site=w0} illTypedCause=FromLooseType
     v2 = PropGet v1 key="area"
     Return v2

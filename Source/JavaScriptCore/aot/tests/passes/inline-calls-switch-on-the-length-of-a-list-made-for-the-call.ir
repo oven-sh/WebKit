@@ -11,7 +11,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="byLength" flags=[HasRestParameter] parameters=[{type=number}, {type=Array<number>}] results=[{type=number}] {
-  b0(v0: number, v1: Array<number>):
     v2 = CallBuiltin v1 overload=ArrayPrototypeLength/0
     Switch v2 cases=[0, 1, 2] -> case b1(), case b2(), case b3(), otherwise b4()
 # REPEAT: i = 1..4
@@ -29,7 +28,6 @@ function f0 name="byLength" flags=[HasRestParameter] parameters=[{type=number}, 
 }
 
 function f1 name="passesOne" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = NewArray v0 contents=number
     v2 = CallDirect v0, v1 function=f0
     Return v2
@@ -38,7 +36,6 @@ function f1 name="passesOne" parameters=[{type=number}] results=[{type=number}] 
 # CHECK-NOT: CallDirect
 
 function f2 name="passesMoreThanAnyCaseLists" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = NewArray v0, v0, v0, v0, v0 contents=number
     v2 = CallDirect v0, v1 function=f0
     Return v2
@@ -47,7 +44,6 @@ function f2 name="passesMoreThanAnyCaseLists" parameters=[{type=number}] results
 # CHECK-NOT: CallDirect
 
 function f3 name="passesSomeList" parameters=[{type=number}, {type=Array<number>}] results=[{type=number}] {
-  b0(v0: number, v1: Array<number>):
     v2 = CallDirect v0, v1 function=f0
     Return v2
 }
@@ -55,7 +51,6 @@ function f3 name="passesSomeList" parameters=[{type=number}, {type=Array<number>
 # CHECK: = CallDirect v0, v1 function=f0
 
 function f4 name="alsoKeepsTheList" parameters=[{type=number}, {type=anything}] results=[{type=number}] {
-  b0(v0: number, v1: anything):
     v2 = NewArray v0 contents=number
     PropSet v1, v2 key="list" mode=Strict
     v4 = CallDirect v0, v2 function=f0

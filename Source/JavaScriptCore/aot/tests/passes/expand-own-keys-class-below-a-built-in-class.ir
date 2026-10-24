@@ -12,7 +12,6 @@ layout L1 kind=Instance name="Custom" constructor=f1 fields=[{key="name" declare
 layout L2 name="Failure" fields=[{key="name" declared={type=string}}] flow={constructorOrders=[{fields=[0]}]}
 
 function f0 name="copy" parameters=[{type=L1|L2}] results=[{type=anything}] {
-  b0(v0: L1|L2):
     v1 = NewObject layout=L0 fields=[]
     CopyDataProperties v1, v0
     v3 = FinishObject v1

@@ -5,20 +5,16 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="flat" parameters=[{type=string}, {type=int[0, 10]}] results=[{type=string}] {
-  b0(v0: string, v1: int[0, 10]):
     v2 = FlattenString v0
     v3 = GetStringCodeUnit v2, v1
     Return v0
-}
-# CHECK-LABEL: function f0 name="flat"
 # CHECK-NEXT: b0(v0: string, v1: int[0, 10]):
 # CHECK-NEXT: Return v0
+}
 
 function f1 name="mayBeRope" parameters=[{type=string}, {type=int[0, 10]}] results=[{type=string}] {
-  b0(v0: string, v1: int[0, 10]):
     v2 = GetStringCodeUnit v0, v1
     Return v0
-}
-# CHECK-LABEL: function f1 name="mayBeRope"
 # CHECK-NEXT: b0(v0: string, v1: int[0, 10]):
 # CHECK-NEXT: Return v0
+}

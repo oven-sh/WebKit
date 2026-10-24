@@ -8,7 +8,6 @@ entry module=m0
 layout L0 name="Home"
 layout L1 name="Base" fields=[{key="who" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module parameters=[] results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L0 fields=[]
     v1 = NewClosure function=f1
     v2 = NewObject -, v1 layout=L1 fields=[0]
@@ -23,11 +22,9 @@ function f0 name="main" kind=Module parameters=[] results=[{type=anything}] {
     Return
 }
 function f1 name="one" results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="go" kind=Method flags=[HasThis] captures=[{type=object}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
     v2 = GetSuperBase v0
     v3 = SuperGet v2, v1 key="who"
     v4 = Call v3, v1

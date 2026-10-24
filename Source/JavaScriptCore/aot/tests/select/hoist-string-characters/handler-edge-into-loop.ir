@@ -14,7 +14,6 @@
 # CHECK-NOT: FlattenString
 module m0 path="main.js" displayPath="main.js"
 function f0 name="handler-in-loop" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: number, v2: anything):
     v3 = Integer integer=0
     v4 = Integer integer=1
     v5 = Undefined
@@ -46,7 +45,6 @@ function f0 name="handler-in-loop" parameters=[{type=string}, {type=number}, {ty
 # CHECK: v9: number = StringRangeCodeUnitOrNaN v0, -, -, v5
 # CHECK-NOT: FlattenString
 function f1 name="covered-loop-entered-from-outside" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
-  b0(v0: string, v1: number):
     v2 = Undefined
     v3 = Integer integer=0
     v4 = Integer integer=1

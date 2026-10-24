@@ -12,7 +12,6 @@ layout L0 name="Table"
 layout L1 name="Other"
 layout L2 name="Bag" fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L0 fields=[]
     v1 = NewClosure function=f1
     v2 = NewClosure function=f2
@@ -41,23 +40,18 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="one" results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="two" results=[{type=anything}] {
-  b0():
     Return
 }
 function f3 name="three" results=[{type=anything}] {
-  b0():
     Return
 }
 function f4 name="four" results=[{type=anything}] {
-  b0():
     Return
 }
 function f5 name="name" results=[{type=string}] {
-  b0():
     v0 = String string="some text that names no property of the program"
     Return v0
 }

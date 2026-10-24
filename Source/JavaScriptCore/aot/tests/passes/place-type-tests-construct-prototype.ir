@@ -11,21 +11,16 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Instance name="Once" constructor=f0 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce staticLink=Fixed}
 layout L1 kind=Instance name="Many" constructor=f1 flags=[IsConstructorFunction] flow={baseState=None} classFlow={staticLink=Fixed}
 function f0 name="Once" flags=[HasThis] thisType={type=L0} results=[{type=undefined}] {
-  b0(v0: L0):
     Return
 }
 function f1 name="Many" flags=[HasThis] thisType={type=L1} results=[{type=undefined}] {
-  b0(v0: L1):
     Return
 }
 function f2 name="own-class" parameters=[{type=f0}] results=[{type=anything}] {
-  b0(v0: f0):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     v3 = CallDirect v2 function=f0 [isConstruction]
     Return v2
-}
-# CHECK-LABEL: function f2 name="own-class"
 # CHECK-NEXT: b0(v0: f0):
 # CHECK-NEXT: [[unchanged]]: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}]
 # CHECK-NEXT: Branch [[unchanged]] -> taken
@@ -34,44 +29,37 @@ function f2 name="own-class" parameters=[{type=f0}] results=[{type=anything}] {
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: [[read]]: object = GetConstructPrototype v0 layout=L0
 # CHECK-NEXT: = NewObject [[read]] layout=L0
+}
 function f3 name="function-created-again" parameters=[{type=f1}] results=[{type=anything}] {
-  b0(v0: f1):
     v1 = GetConstructPrototype v0 layout=L1
     v2 = NewObject v1 layout=L1
     v3 = CallDirect v2 function=f1 [isConstruction]
     Return v2
-}
-# CHECK-LABEL: function f3 name="function-created-again"
 # CHECK-NEXT: b0(v0: f1):
 # CHECK-NEXT: v1: object = GetConstructPrototype v0 layout=L1
 # CHECK-NEXT: = NewObject v1 layout=L1
+}
 function f4 name="other-new-target" parameters=[{type=f1}] results=[{type=anything}] {
-  b0(v0: f1):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2
-}
-# CHECK-LABEL: function f4 name="other-new-target"
 # CHECK-NEXT: b0(v0: f1):
 # CHECK-NEXT: v1: object = GetConstructPrototype v0 layout=L0
 # CHECK-NEXT: = NewObject v1 layout=L0
+}
 function f5 name="unknown-new-target" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2
-}
-# CHECK-LABEL: function f5 name="unknown-new-target"
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: object = GetConstructPrototype v0 layout=L0
 # CHECK-NEXT: = NewObject v1 layout=L0
+}
 function f6 name="new-target-may-be-undefined" parameters=[{type=undefined|f0}] results=[{type=anything}] {
-  b0(v0: undefined|f0):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2
-}
-# CHECK-LABEL: function f6 name="new-target-may-be-undefined"
 # CHECK-NEXT: b0(v0: undefined|f0):
 # CHECK-NEXT: v1: object = GetConstructPrototype v0 layout=L0
 # CHECK-NEXT: = NewObject v1 layout=L0
+}

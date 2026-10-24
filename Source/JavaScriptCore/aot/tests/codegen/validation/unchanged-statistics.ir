@@ -72,7 +72,6 @@ variable g0 module=m0 declared={type=undefined|L0} initialization=Undefined
 variable g1 name="list" module=m0 declared={type=anything|absent} initialization=Uninitialized
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Double number=1.5
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = Convert v1 declared={type=undefined|L0}
@@ -89,7 +88,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v10
 }
 function f1 name="everyRepresentation" parameters=[{type=anything}, {type=number site=w0}, {type=boolean site=w1}, {type=int site=w2}, {type=undefined|number site=w3}, {type=undefined|int site=w4}, {type=string site=w5}] results=[{type=anything}] {
-  b0(v0: anything, v1: number, v2: boolean, v3: int, v4: undefined|number, v5: undefined|int, v6: string):
     v7 = Add v1, v1
     v8 = TypeTest v0 testedType=undefined|null
     Branch v8 -> taken b1(), notTaken b2()
@@ -102,7 +100,6 @@ function f1 name="everyRepresentation" parameters=[{type=anything}, {type=number
     Return v11
 }
 function f2 name="provenLayout" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = TypeTest v0 testedType=undefined|null
     Branch v1 -> taken b2(), notTaken b1(| 0)
@@ -129,7 +126,6 @@ function f3 name="walk" captures=[{type=env L1}] parameters=[{type=anything}] re
     Return v6
 }
 function f4 name="environmentInFrame" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=undefined|null
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -143,7 +139,6 @@ function f4 name="environmentInFrame" parameters=[{type=anything}] results=[{typ
     Return v3
 }
 function f5 name="provenContents" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g1
     v1 = CheckInitialized v0 name="list"
     v2 = Integer integer=0
@@ -157,7 +152,6 @@ function f5 name="provenContents" results=[{type=anything}] {
     Return v9
 }
 function f6 name="coveredByCaller" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Pow v0, v0
     Return v1
 }

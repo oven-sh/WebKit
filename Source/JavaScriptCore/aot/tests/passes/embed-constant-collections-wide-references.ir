@@ -8,7 +8,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="setOfStrings" results=[{type=Set<string>}] {
-  b0():
     v0 = String string="a"
     v1 = NewArray v0 contents=string
     v2 = CallBuiltin -, v1 overload=Set/2 builtinCallForm=Whole

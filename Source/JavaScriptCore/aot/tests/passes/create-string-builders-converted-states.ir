@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="firstStateMayBeUndefined" parameters=[{type=undefined|string}, {type=string}, {type=number}] results=[{type=string}] {
-  b0(v0: undefined|string, v1: string, v2: number):
     v3 = Integer integer=0
     Jump -> next b1(v0, v3)
   b1(v4, v5):
@@ -33,7 +32,6 @@ function f0 name="firstStateMayBeUndefined" parameters=[{type=undefined|string},
 # CHECK-NEXT: Return [[r0]]
 
 function f1 name="firstStateMayBeNumber" parameters=[{type=null|number|string}, {type=string}, {type=number}] results=[{type=string}] {
-  b0(v0: null|number|string, v1: string, v2: number):
     v3 = Integer integer=0
     Jump -> next b1(v0, v3)
   b1(v4, v5):
@@ -55,7 +53,6 @@ function f1 name="firstStateMayBeNumber" parameters=[{type=null|number|string}, 
 # CHECK: b1(v4: stringbuilder, v5: int|whole):
 
 function f2 name="undefinedIsReturned" parameters=[{type=undefined|string}, {type=string}, {type=number}] results=[{type=undefined|string}] {
-  b0(v0: undefined|string, v1: string, v2: number):
     v3 = Integer integer=0
     Jump -> next b1(v0, v3)
   b1(v4, v5):
@@ -74,7 +71,6 @@ function f2 name="undefinedIsReturned" parameters=[{type=undefined|string}, {typ
 # CHECK-NOT: StringBuilder
 
 function f3 name="undefinedIsTested" parameters=[{type=undefined|string}, {type=string}, {type=number}] results=[{type=string}] {
-  b0(v0: undefined|string, v1: string, v2: number):
     v3 = Integer integer=0
     Jump -> next b1(v0, v3)
   b1(v4, v5):
@@ -99,7 +95,6 @@ function f3 name="undefinedIsTested" parameters=[{type=undefined|string}, {type=
 # CHECK-NOT: StringBuilder
 
 function f4 name="passedOnToParameterThatIsReturned" parameters=[{type=undefined|string}, {type=string}, {type=number}, {type=boolean}] results=[{type=undefined|string}] {
-  b0(v0: undefined|string, v1: string, v2: number, v3: boolean):
     v4 = Integer integer=0
     Jump -> next b1(v0, v4)
   b1(v5, v6):
@@ -120,7 +115,6 @@ function f4 name="passedOnToParameterThatIsReturned" parameters=[{type=undefined
 # CHECK-NOT: StringBuilder
 
 function f5 name="sumMayBeNumber" parameters=[{type=undefined|string}, {type=undefined|string}, {type=number}] results=[{type=anything}] {
-  b0(v0: undefined|string, v1: undefined|string, v2: number):
     v3 = Integer integer=0
     Jump -> next b1(v0, v3)
   b1(v4, v5):

@@ -10,7 +10,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="t" parameters=[{type=Uint8Array}, {type=BigInt64Array}, {type=Float64Array}, {type=int}] results=[{type=undefined}] {
-  b0(v0: Uint8Array, v1: BigInt64Array, v2: Float64Array, v3: int):
     v4 = GetTypedArrayElement v0, v3 typedArrayType=2
     v5 = GetTypedArrayElement v1, v3 typedArrayType=11
     v6 = GetTypedArrayElement v2, v3 typedArrayType=10

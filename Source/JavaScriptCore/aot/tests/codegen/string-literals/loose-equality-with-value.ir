@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="asValue" parameters=[{type=anything}] results=[{type=boolean}] {
-  b0(v0: anything):
     v1 = ValueLooselyEqualsLiteral v0 literal="constructor"
     Return v1
 }
@@ -13,7 +12,6 @@ function f0 name="asValue" parameters=[{type=anything}] results=[{type=boolean}]
 # CHECK-NEXT: stub LooseEqualsLiteral x1
 
 function f1 name="asCondition" parameters=[{type=anything}] results=[{type=i32}] {
-  b0(v0: anything):
     v1 = ValueLooselyEqualsLiteral v0 literal="constructor"
     TestAndBranch v1 -> taken b1(), notTaken b2()
   b1():
@@ -27,7 +25,6 @@ function f1 name="asCondition" parameters=[{type=anything}] results=[{type=i32}]
 # CHECK-NEXT: stub LooseEqualsLiteral x1
 
 function f2 name="underHandler" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1() handler=b2():
     v1 = ValueLooselyEqualsLiteral v0 literal="\u{100}"
@@ -40,7 +37,6 @@ function f2 name="underHandler" parameters=[{type=anything}] results=[{type=anyt
 # CHECK: stub LooseEqualsLiteral x1
 
 function f3 name="genericComparison" parameters=[{type=anything}] results=[{type=boolean}] {
-  b0(v0: anything):
     v1 = String string="1"
     v2 = Eq v0, v1 form=Generic
     Return v2
@@ -51,7 +47,6 @@ function f3 name="genericComparison" parameters=[{type=anything}] results=[{type
 
 # The stub takes a boxed value, so a number is boxed for it
 function f4 name="numberOrObject" parameters=[{type=number}, {type=object}, {type=boolean}] results=[{type=boolean}] {
-  b0(v0: number, v1: object, v2: boolean):
     Branch v2 -> taken b1(v0), notTaken b1(v1)
   b1(v3):
     v4 = ValueLooselyEqualsLiteral v3 literal="constructor"

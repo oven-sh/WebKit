@@ -28,7 +28,6 @@ typesite w1 module=m0 position=20 kind=Parameter
 typesite w2 module=m0 position=30 kind=Parameter
 typesite w3 module=m0 position=40 kind=Parameter
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = CallDirect v1 function=f1
@@ -39,7 +38,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v6
 }
 function f1 name="walksAString" module=m0 position=5 flags=[IsChecked] length=1 parameters=[{type=string site=w0}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Integer integer=0
     Jump -> next b1(v1, v1)
   b1(v2, v3):
@@ -55,7 +53,6 @@ function f1 name="walksAString" module=m0 position=5 flags=[IsChecked] length=1 
     Return v3
 }
 function f2 name="walksAStringManyTimes" module=m0 position=15 flags=[IsChecked] length=1 parameters=[{type=string site=w1}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Integer integer=0
     Jump -> next b1(v1, v1)
   b1(v2, v3):
@@ -81,7 +78,6 @@ function f2 name="walksAStringManyTimes" module=m0 position=15 flags=[IsChecked]
     Return v3
 }
 function f3 name="callsAFunctionWithALoop" module=m0 position=25 flags=[IsChecked] length=1 parameters=[{type=string site=w2}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Integer integer=0
     Jump -> next b1(v1, v1)
   b1(v2, v3):
@@ -98,7 +94,6 @@ function f3 name="callsAFunctionWithALoop" module=m0 position=25 flags=[IsChecke
     Return v3
 }
 function f4 name="countsUpToANumber" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=0
     Jump -> next b1(v1, v1)
   b1(v2, v3):

@@ -32,7 +32,6 @@ layout L2 name="Literal" fields=[{key="pos" declared={type=anything} flags=[IsRe
 variable g0 name="lastRange" module=m0 declared={type=undefined|L0 site=w0 flags=[IsExpected]} initialization=Undefined
 variable g1 name="lastLiteral" module=m0 declared={type=undefined|L0 site=w1 flags=[IsExpected]} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L1 fields=[0]
     v2 = NewObject -, v0, v0 layout=L2 fields=[0, 1]
@@ -46,10 +45,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="take" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     Return
 }
 function f2 name="takeLiteral" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     Return
 }

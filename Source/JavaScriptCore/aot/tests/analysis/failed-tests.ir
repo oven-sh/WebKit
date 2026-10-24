@@ -7,7 +7,6 @@ layout L0 name="Point" fields=[{key="x" declared={type=number}}]
 layout L1 name="Size" fields=[{key="width" declared={type=number}}]
 layout L2 name="Name" fields=[{key="text" declared={type=string}}]
 function f0 name="slowBlockAndMerge" parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
-  b0(v0: anything, v1: anything):
     v2 = TypeTest v0 testedType=string
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -35,7 +34,6 @@ function f0 name="slowBlockAndMerge" parameters=[{type=anything}, {type=anything
 # CHECK-NEXT: v7 at b3: Failed
 # CHECK-NOT: Failed
 function f1 name="narrowedCopyOfTheSubject" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=string
     Branch v1 -> taken b1(), notTaken b2(| 0)
   b1():
@@ -52,7 +50,6 @@ function f1 name="narrowedCopyOfTheSubject" parameters=[{type=anything}] results
 # CHECK-NEXT: v5 at b2: Failed
 # CHECK-NOT: Failed
 function f2 name="slowBlockHasAnotherWayIn" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b3()
   b1():
     v2 = TypeTest v0 testedType=string
@@ -66,7 +63,6 @@ function f2 name="slowBlockHasAnotherWayIn" parameters=[{type=anything}, {type=b
 # CHECK-LABEL: function f2
 # CHECK-NOT: Failed
 function f3 name="testForStretch" parameters=[{type=object}] results=[{type=undefined}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
@@ -81,7 +77,6 @@ function f3 name="testForStretch" parameters=[{type=object}] results=[{type=unde
 # CHECK-NEXT: v3 at b2: Failed
 # CHECK-NOT: Failed
 function f4 name="otherwiseOfSwitchOnShape" parameters=[{type=object}, {type=object}] results=[{type=undefined}] {
-  b0(v0: object, v1: object):
     SwitchOnShape v0 layoutSets=[[L0], [L1]] -> case b1(| 0), case b2(| 0), otherwise b3()
   b1(v2):
     v3 = ShapeTest v0 layouts=[L1]

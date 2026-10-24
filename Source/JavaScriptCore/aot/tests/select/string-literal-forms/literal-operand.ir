@@ -5,58 +5,47 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="equality" parameters=[{type=string}] results=[{type=boolean}] {
-  b0(v0: string):
     v1 = String string="accept"
     v2 = StrictEq v0, v1
     Return v2
-}
-# CHECK-LABEL: function f0 name="equality"
 # CHECK: b0(v0: string):
 # CHECK-NEXT: v1: boolean = StringEqualsLiteral v0 literal="accept"
 # CHECK-NEXT: Return v1
+}
 
 function f1 name="literalOnLeft" parameters=[{type=string}] results=[{type=boolean}] {
-  b0(v0: string):
     v1 = String string="accept"
     v2 = StrictEq v1, v0
     Return v2
-}
-# CHECK-LABEL: function f1 name="literalOnLeft"
 # CHECK: b0(v0: string):
 # CHECK-NEXT: v1: boolean = StringEqualsLiteral v0 literal="accept"
+}
 
 function f2 name="prefix" parameters=[{type=string}] results=[{type=boolean}] {
-  b0(v0: string):
     v1 = String string="/api/"
     v2 = CallBuiltin v0, v1 overload=StringPrototypeStartsWith/1
     Return v2
-}
-# CHECK-LABEL: function f2 name="prefix"
 # CHECK: b0(v0: string):
 # CHECK-NEXT: v1: boolean = StringStartsWithLiteral v0 literal="/api/"
+}
 
 function f3 name="search" parameters=[{type=string}] results=[{type=number}] {
-  b0(v0: string):
     v1 = String string="://"
     v2 = CallBuiltin v0, v1 overload=StringPrototypeIndexOf/0
     Return v2
-}
-# CHECK-LABEL: function f3 name="search"
 # CHECK-NOT: = String string
 # CHECK: = StringIndexOfLiteral v0, {{*}}literal="://"
+}
 
 function f4 name="orderToCharacter" parameters=[{type=string}] results=[{type=boolean}] {
-  b0(v0: string):
     v1 = String string="a"
     v2 = Less v0, v1
     Return v2
-}
-# CHECK-LABEL: function f4 name="orderToCharacter"
 # CHECK-NOT: = String string
 # CHECK: = StringOrderToCharacter v0 codeUnit=97
+}
 
 function f5 name="literalIsReturned" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = String string="accept"
     v2 = StrictEq v0, v1
     Branch v2 -> taken b1(), notTaken b2()
@@ -64,20 +53,17 @@ function f5 name="literalIsReturned" parameters=[{type=string}] results=[{type=a
     Return v1
   b2():
     Return v0
-}
-# CHECK-LABEL: function f5 name="literalIsReturned"
 # CHECK: v1: "accept" = String string="accept"
 # CHECK-NEXT: v2: boolean = StringEqualsLiteral v0 literal="accept"
 # CHECK: Return v1
+}
 
 function f6 name="literalComparedTwice" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
-  b0(v0: string, v1: string):
     v2 = String string="accept"
     v3 = StrictEq v0, v2
     v4 = StrictEq v1, v2
     v5 = NewArray v3, v4 contents=anything
     Return v5
-}
-# CHECK-LABEL: function f6 name="literalComparedTwice"
 # CHECK: = StringEqualsLiteral v0 literal="accept"
 # CHECK: = StringEqualsLiteral v1 literal="accept"
+}

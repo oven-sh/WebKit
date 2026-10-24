@@ -5,12 +5,10 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="bad" parameters=[{type=object}, {type=function}] results=[{type=undefined}] {
-  b0(v0: object, v1: function):
     DefineSetter v0, v1
     Return
 }
 function f1 name="good" parameters=[{type=object}, {type=function}] results=[{type=undefined}] {
-  b0(v0: object, v1: function):
     DefineSetter v0, v1 key="x"
     Return
 }

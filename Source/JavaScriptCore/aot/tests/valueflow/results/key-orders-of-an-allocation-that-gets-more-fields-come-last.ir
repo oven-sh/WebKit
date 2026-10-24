@@ -11,7 +11,6 @@ entry module=m0
 layout L0 kind=Record name="Style" fields=[{key="a" declared={type=undefined|number}}, {key="b" declared={type=undefined|number}}, {key="c" declared={type=undefined|number}}, {key="d" declared={type=undefined|number}}]
 layout L1 kind=Record name="Kept" fields=[{key="a" declared={type=undefined|number}}, {key="b" declared={type=undefined|number}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Double number=1.5
     v2 = NewObject layout=L0

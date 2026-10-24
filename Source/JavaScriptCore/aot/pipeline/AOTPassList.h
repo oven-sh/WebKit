@@ -7,55 +7,6 @@
 
 #if ENABLE(AOT)
 
-#define FOR_EACH_AOT_PROGRAM_PASS(v) \
-    v(AllocateTaggedLayouts) \
-    v(CheckTypesAtEntry) \
-    v(VerifyProgram) \
-    v(NarrowFieldTypes) \
-    v(NameCreatedSymbols) \
-    v(GuardTaintedPositions) \
-    v(AnalyzeFlow) \
-    v(ApplyFlowResults) \
-    v(CheckLockedBuiltinWrites) \
-    v(BuildCallGraph) \
-    v(ComputeEffectSummaries) \
-    v(EstimateHeat) \
-    v(SummarizeForInlining) \
-    v(RemoveUnreadExports) \
-    v(PromoteEnvironmentsToVariables) \
-    v(DeferDefinitions) \
-    v(NarrowConstantVariables) \
-    v(DeferInitializers) \
-    v(MarkResultsUsedAsKeys) \
-    v(ReadCapturesFromEnvironments) \
-    v(RemoveUnreadFields) \
-    v(RemoveUnusedResults) \
-    v(RemoveUnusedParameters) \
-    v(RemoveUnreachableFunctions) \
-    v(SplitBehindEntryChecks) \
-    v(SkipAnsweredEntryChecks) \
-    v(SplitFreshResults) \
-    v(PromoteAggregateParameters) \
-    v(SplitCoroutines) \
-    v(CallModules) \
-    v(CreateEntrypoints) \
-    v(ChooseCallingConventions) \
-    v(DeferClosuresInFields) \
-    v(AllocateInFrames) \
-    v(AllocateInnerObjects) \
-    v(ReuseEnvironments) \
-    v(NumberLiteralStrings) \
-    v(EmbedConstantCollections) \
-    v(CollectRegExpLiterals) \
-    v(OutlineColdOperations) \
-    v(InlineHeads) \
-    v(ElideStackChecks) \
-    v(PlanSlots) \
-    v(NumberAndEncode) \
-    v(PlaceSiteCaches) \
-    v(CheckPlacement) \
-    v(GenerateCode)
-
 #define FOR_EACH_AOT_FUNCTION_PASS(v) \
     v(TypeValues, typeValues) \
     v(CheckInt32Promises, checkInt32Promises) \

@@ -13,7 +13,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class PrivateAccessEmitter final : public OperationEmitter {
 public:
-    explicit PrivateAccessEmitter(CodeGenerator&);
+    explicit PrivateAccessEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generatePrivateGet(const ValueContext&);
     void generatePrivateSet(const ValueContext&);
@@ -21,7 +21,8 @@ public:
     void generatePrivateHas(const ValueContext&);
 
 private:
-    Word32 indexInLayoutRecord(const ValueContext&);
+    uint16_t indexInLayoutRecord(const ValueContext&);
+    void storePrivateField(const ValueContext&, RuntimeOperation);
 };
 
 } } } // namespace JSC::AOT::Typed

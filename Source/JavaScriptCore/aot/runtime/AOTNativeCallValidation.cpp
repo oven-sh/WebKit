@@ -8,34 +8,343 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinCells.h"
 #include "AOTBuiltinTableBindings.h"
+#include "AOTBuiltinTableRealm.h"
 #include "AOTCompiledCallee.h"
 #include "AOTInstance.h"
 #include "AOTNameClass.h"
-#include "AOTNativeCallDeclaration.h"
 #include "AOTObject.h"
 #include "AOTOperandSnapshot.h"
 #include "AOTRuntimeReporter.h"
 #include "AOTState.h"
 #include "AOTVector.h"
-#include "JSFunctionWithFields.h"
 #include "DeferGCInlines.h"
 #include "ErrorInstance.h"
+#include "FunctionPrototype.h"
 #include "GlobalObjectMethodTable.h"
 #include "InternalFunction.h"
+#include "JSArrayBuffer.h"
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
+#include "JSFunctionWithFields.h"
 #include "MarkedSpaceInlines.h"
+#include "NativeExecutable.h"
 #include "NullGetterFunction.h"
 #include "NullSetterFunction.h"
 #include "TopExceptionScope.h"
 #include <algorithm>
 #include <mutex>
 #include <wtf/DataLog.h>
+#include <wtf/HashMap.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/StringHash.h>
 
 namespace JSC { namespace AOT {
+
+enum class NativeCallDeclarationSource : uint8_t {
+    Compiler,
+    CalleeInRealm,
+    NativeCodeOfCallee,
+    NameOfModuleMember,
+    NotInTable,
+};
+
+struct NativeCallDeclaration {
+    NativeCallDeclarationSource source { NativeCallDeclarationSource::NotInTable };
+    BuiltinID builtin;
+    Vector<const BuiltinOverload*, 4> overloads;
+};
+
+using BuiltinsByName = UncheckedKeyHashMap<String, Vector<BuiltinID, 1>>;
+
+static const BuiltinsByName& builtinsByFunctionName()
+{
+    static LazyNeverDestroyed<BuiltinsByName> index;
+    static std::once_flag once;
+    std::call_once(once, [] {
+        index.construct();
+        const BuiltinTable& table = BuiltinTable::singleton();
+        for (unsigned number = 0; number < table.builtinCount(); ++number) {
+            BuiltinID id(number);
+            const Builtin& builtin = table.at(id);
+            if (!builtin.overloadCount || !builtin.name)
+                continue;
+            String text = String::fromUTF8(table.textOf(builtin.name));
+            if (table.isSymbolName(builtin.name))
+                text = makeString("[Symbol."_s, text, ']');
+            index->ensure(text, [] {
+                return Vector<BuiltinID, 1>();
+            }).iterator->value.append(id);
+        }
+    });
+    return index.get();
+}
+
+static String nameOfNativeFunction(JSObject* callee)
+{
+    if (auto* function = dynamicDowncast<JSFunction>(callee))
+        return function->isHostFunction() ? uncheckedDowncast<NativeExecutable>(function->executable())->name() : String();
+    if (auto* function = dynamicDowncast<InternalFunction>(callee))
+        return function->name();
+    return { };
+}
+
+// The host makes a function object of a module's built-in for whoever asks, so nothing leads from the realm to one. All of them have the native code that the host has bound to the built-in.
+static BuiltinID findBuiltinWithNativeCodeOf(const BuiltinTable& table, JSObject* callee, BuiltinScope scope)
+{
+    auto* function = dynamicDowncast<JSFunction>(callee);
+    if (!function || !function->isHostFunction())
+        return { };
+    TaggedNativeFunction code = uncheckedDowncast<NativeExecutable>(function->executable())->function();
+    for (const BuiltinNativeFunctionBinding& binding : BuiltinBindings::nativeFunctionsOfHost()) {
+        if (table.at(binding.builtin).scope == scope && code == TaggedNativeFunction(binding.function))
+            return binding.builtin;
+    }
+    return { };
+}
+
+// Nothing leads from the realm to the constructor of a class that only a native binding hands out. The host keeps the Structure of the instances, and the prototype object names the constructor.
+static BuiltinID findConstructorOfHostClass(const BuiltinTable& table, JSGlobalObject* realm, JSObject* callee)
+{
+    if (callee->inherits<JSFunction>())
+        return { };
+    VM& vm = realm->vm();
+    for (const BuiltinClassBinding& binding : BuiltinBindings::classesOfHost()) {
+        BuiltinID constructor = table.at(binding.builtinClass).constructor;
+        Structure* structure = constructor && binding.findInstanceStructure ? binding.findInstanceStructure(realm) : nullptr;
+        JSObject* prototype = structure ? structure->storedPrototypeObject() : nullptr;
+        if (prototype && prototype->getDirect(vm, vm.propertyNames->constructor) == JSValue(callee))
+            return constructor;
+    }
+    return { };
+}
+
+static BuiltinCallMode modeOf(BuiltinCellKey::Kind kind, CodeSpecializationKind specialization)
+{
+    switch (kind) {
+    case BuiltinCellKey::Kind::Object:
+        return specialization == CodeSpecializationKind::CodeForConstruct ? BuiltinCallMode::Construct : BuiltinCallMode::Call;
+    case BuiltinCellKey::Kind::Getter:
+    case BuiltinCellKey::Kind::Value:
+        return BuiltinCallMode::Get;
+    case BuiltinCellKey::Kind::Setter:
+        return BuiltinCallMode::Set;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+enum class Fit : uint8_t { Outside, Unknown, Inside };
+
+static Fit fitOfInstance(const BuiltinTable& table, const BuiltinTypePart& part, JSObject* object)
+{
+    std::optional<bool> passes = passesInstanceTest(table, part.builtinClass, object);
+    if (!passes)
+        return Fit::Unknown;
+    if (!*passes)
+        return Fit::Outside;
+    bool isNarrowed = !part.pristine.isEmpty() || !part.contents.empty() || part.isSettled;
+    return isNarrowed ? Fit::Unknown : Fit::Inside;
+}
+
+static Fit fitOfObject(const BuiltinTable& table, const BuiltinType& type, JSObject* object)
+{
+    if (type.flags.contains(BuiltinTypeFlag::HasAnyObject))
+        return Fit::Inside;
+    if (type.flags.contains(BuiltinTypeFlag::HasAnyFunction) && object->isCallable())
+        return Fit::Inside;
+    Fit fit = type.flags.contains(BuiltinTypeFlag::HasPlainData) ? Fit::Unknown : Fit::Outside;
+    for (const BuiltinTypePart& part : type.parts)
+        fit = std::max(fit, part.kind == BuiltinTypePartKind::Instance ? fitOfInstance(table, part, object) : Fit::Unknown);
+    return fit;
+}
+
+static Fit fitOf(const BuiltinTable& table, BuiltinTypeID id, std::optional<JSValue> passed)
+{
+    const BuiltinType& type = table.at(id);
+    if (type.isAnything())
+        return Fit::Inside;
+    auto has = [&](BuiltinPrimitive primitive) {
+        return type.primitives.contains(primitive) ? Fit::Inside : Fit::Outside;
+    };
+    if (!passed)
+        return std::max(has(BuiltinPrimitive::NotPassed), has(BuiltinPrimitive::Undefined));
+    JSValue value = *passed;
+    if (value.isObject())
+        return fitOfObject(table, type, asObject(value));
+    if (value.isUndefined())
+        return has(BuiltinPrimitive::Undefined);
+    if (value.isNull())
+        return has(BuiltinPrimitive::Null);
+    if (value.isBoolean())
+        return has(BuiltinPrimitive::Boolean);
+    if (value.isSymbol())
+        return has(BuiltinPrimitive::Symbol);
+    if (value.isBigInt())
+        return has(BuiltinPrimitive::BigInt);
+    if (value.isNumber()) {
+        bool isNarrowed = type.flags.contains(BuiltinTypeFlag::HasOnlyIntegers) || !type.integers.isEmpty();
+        return isNarrowed ? Fit::Unknown : has(BuiltinPrimitive::Number);
+    }
+    return type.stringLiterals.empty() ? has(BuiltinPrimitive::String) : Fit::Unknown;
+}
+
+static Fit fitOf(const BuiltinTable& table, const BuiltinParameter& parameter, std::optional<JSValue> passed)
+{
+    if (!passed && parameter.mode != BuiltinParameterMode::Required)
+        return Fit::Inside;
+    Fit fit = fitOf(table, parameter.accepted, passed);
+    if (fit != Fit::Outside || parameter.conversion == BuiltinConversion::None)
+        return fit;
+    return fitOf(table, parameter.refused, passed) == Fit::Outside ? Fit::Inside : Fit::Unknown;
+}
+
+static Fit fitOf(const BuiltinTable& table, const BuiltinOverload& overload, const NativeCall& call)
+{
+    Fit fit = Fit::Inside;
+    if (overload.receiver && overload.mode != BuiltinCallMode::Construct)
+        fit = fitOf(table, *overload.receiver, call.thisValue);
+    for (const BuiltinParameter& parameter : overload.parameters) {
+        unsigned first = parameter.operand.argumentIndex();
+        if (first >= call.arguments.size()) {
+            fit = std::min(fit, fitOf(table, parameter, std::nullopt));
+            continue;
+        }
+        unsigned end = parameter.operand.kind() == BuiltinOperand::Kind::ArgumentsFrom ? call.arguments.size() : first + 1;
+        for (unsigned index = first; index < end; ++index)
+            fit = std::min(fit, fitOf(table, parameter, call.arguments.at(index)));
+    }
+    return fit;
+}
+
+// The first overload that takes the operands is the one the call is. Where that cannot be told, a later one may be it as well.
+static void appendOverloads(NativeCallDeclaration& declaration, BuiltinID builtin, BuiltinCallMode mode, const NativeCall& call)
+{
+    const BuiltinTable& table = BuiltinTable::singleton();
+    size_t sizeBefore = declaration.overloads.size();
+    for (const BuiltinOverload& overload : table.overloadsOf(builtin)) {
+        if (overload.mode != mode)
+            continue;
+        Fit fit = overload.isUndeclared() ? Fit::Unknown : fitOf(table, overload, call);
+        if (fit != Fit::Outside)
+            declaration.overloads.append(&overload);
+        if (fit == Fit::Inside)
+            return;
+    }
+    if (declaration.overloads.size() != sizeBefore)
+        return;
+    for (const BuiltinOverload& overload : table.overloadsOf(builtin)) {
+        if (overload.mode == mode)
+            declaration.overloads.append(&overload);
+    }
+}
+
+// May create objects of the realm that are created on demand.
+static NativeCallDeclaration findDeclaration(const NativeCall& call, const NativeCallExpectation& expectation)
+{
+    const BuiltinTable& table = BuiltinTable::singleton();
+    NativeCallDeclaration declaration;
+    auto declare = [&](NativeCallDeclarationSource source, BuiltinID builtin, BuiltinCallMode mode) {
+        declaration.source = source;
+        declaration.builtin = builtin;
+        appendOverloads(declaration, source == NativeCallDeclarationSource::NameOfModuleMember ? builtin : table.canonicalID(builtin), mode, call);
+        return true;
+    };
+    if (expectation.overload && table.contains(expectation.overload)) {
+        const BuiltinOverload& overload = table.at(expectation.overload);
+        if (!expectation.matchesAnyOverload)
+            return { NativeCallDeclarationSource::Compiler, overload.builtin, { &overload } };
+        declare(NativeCallDeclarationSource::Compiler, overload.builtin, overload.mode);
+        return declaration;
+    }
+
+    auto declareByNativeCode = [&](BuiltinScope scope) {
+        BuiltinID builtin = findBuiltinWithNativeCodeOf(table, call.callee, scope);
+        return builtin && declare(NativeCallDeclarationSource::NativeCodeOfCallee, builtin, modeOf(BuiltinCellKey::Kind::Object, call.kind));
+    };
+    if (declareByNativeCode(BuiltinScope::Module))
+        return declaration;
+
+    // The program may have replaced a step of the path to the function, such as `console.log`. Compiled code that names the function has it in a cell.
+    if (Instance* instance = Instance::of(call.realm); instance && instance->state) {
+        if (std::optional<BuiltinCellKey> key = instance->state->builtinCells->keyOfCellHolding(call.callee)) {
+            declare(NativeCallDeclarationSource::CalleeInRealm, key->builtin(), modeOf(key->kind(), call.kind));
+            return declaration;
+        }
+    }
+
+    String name = nameOfNativeFunction(call.callee);
+    BuiltinCellKey::Kind kind = BuiltinCellKey::Kind::Object;
+    if (name.startsWith("get "_s)) {
+        kind = BuiltinCellKey::Kind::Getter;
+        name = name.substring(4);
+    } else if (name.startsWith("set "_s)) {
+        kind = BuiltinCellKey::Kind::Setter;
+        name = name.substring(4);
+    }
+    if (name.isEmpty()) {
+        // Function.prototype is the one function of the realm that has no name.
+        if (kind == BuiltinCellKey::Kind::Object && call.callee == call.realm->functionPrototype())
+            declare(NativeCallDeclarationSource::CalleeInRealm, Builtins::FunctionPrototype, modeOf(kind, call.kind));
+        return declaration;
+    }
+    auto declareConstructorOfHostClass = [&] {
+        BuiltinID constructor = kind == BuiltinCellKey::Kind::Object ? findConstructorOfHostClass(table, call.realm, call.callee) : BuiltinID();
+        return constructor && declare(NativeCallDeclarationSource::CalleeInRealm, constructor, modeOf(kind, call.kind));
+    };
+    auto candidates = builtinsByFunctionName().find(name);
+    if (candidates == builtinsByFunctionName().end()) {
+        declareConstructorOfHostClass();
+        return declaration;
+    }
+
+    // A spy of bun:test stands in the realm where the function stood that it spies on, under the name of that function, and runs what the program gave it.
+    auto mayBe = [&](BuiltinID candidate) {
+        return call.callee->inherits<JSFunction>() || table.at(candidate).kind == BuiltinKind::Constructor;
+    };
+    BuiltinCallMode mode = modeOf(kind, call.kind);
+    for (BuiltinID candidate : candidates->value) {
+        if (table.at(candidate).scope == BuiltinScope::Module || !mayBe(candidate))
+            continue;
+        BuiltinCellKey key = kind == BuiltinCellKey::Kind::Object ? BuiltinCellKey::object(candidate) : kind == BuiltinCellKey::Kind::Getter ? BuiltinCellKey::getter(candidate) : BuiltinCellKey::setter(candidate);
+        // Compiled code has no cell for the function of an accessor that it never calls by itself. A generic read or store calls it all the same.
+        bool mayBeInRealm = kind == BuiltinCellKey::Kind::Object ? key.hasCell(table) : table.at(candidate).kind == BuiltinKind::Accessor;
+        if (!mayBeInRealm)
+            continue;
+        auto found = findInRealm(call.realm, key);
+        if (!found || *found != call.callee)
+            continue;
+        declare(NativeCallDeclarationSource::CalleeInRealm, candidate, mode);
+        return declaration;
+    }
+
+    // Nothing leads from the realm to what a native module exports either: a function of the realm that was not found there is known by its native code.
+    if (declareByNativeCode(BuiltinScope::Realm) || declareConstructorOfHostClass())
+        return declaration;
+
+    // The program may have replaced a step of the path to the function, such as `console`. The call names the built-ins that flow lists as its callees.
+    for (BuiltinID candidate : candidates->value) {
+        if (table.at(candidate).scope == BuiltinScope::Module || !mayBe(candidate) || !expectation.isKnown || expectation.namesMoreBuiltins || !expectation.names(table.canonicalID(candidate)))
+            continue;
+        declare(NativeCallDeclarationSource::CalleeInRealm, candidate, mode);
+        return declaration;
+    }
+
+    // Nothing leads from the realm to a member of a module, so every member of that name may be the callee. One whose native code the host has bound was looked for by that code.
+    auto isKnownByNativeCode = [&](BuiltinID candidate) {
+        return std::ranges::any_of(BuiltinBindings::nativeFunctionsOfHost(), [&](const BuiltinNativeFunctionBinding& binding) {
+            return binding.builtin == candidate;
+        });
+    };
+    for (BuiltinID candidate : candidates->value) {
+        if (table.at(candidate).scope != BuiltinScope::Module || isKnownByNativeCode(candidate))
+            continue;
+        declare(NativeCallDeclarationSource::NameOfModuleMember, candidate, mode);
+    }
+    return declaration;
+}
 
 static constexpr unsigned maxCheckedArguments = 16;
 
@@ -51,10 +360,7 @@ static bool mayRunCodeThroughOperand(const BuiltinParameter& parameter, JSValue 
 #if !defined(BUN_HARDENED)
 namespace {
 
-class CheckedNativeCalls {
-    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(CheckedNativeCalls);
-    WTF_MAKE_NONCOPYABLE(CheckedNativeCalls);
-public:
+struct CheckedNativeCalls {
     static CheckedNativeCalls* ifAskedFor()
     {
         static CheckedNativeCalls* calls;
@@ -63,61 +369,16 @@ public:
             const char* path = getenv("BUN_AOT_CHECKED_NATIVE_CALLS");
             if (!path || !*path)
                 return;
-            calls = new CheckedNativeCalls(path);
+            calls = new CheckedNativeCalls { .path = Vector<char>(unsafeMakeSpan(path, strlen(path) + 1)) };
             RuntimeReporter::callAtExit(writeCheckedNativeCalls);
         });
         return calls;
     }
 
-    void add(const String& entry, bool didThrow, bool didChangeOperand, bool hadExpectation)
-    {
-        Locker locker { m_lock };
-        auto found = m_counts.find(entry);
-        if (found == m_counts.end())
-            found = m_counts.add(entry.isolatedCopy(), Counts { }).iterator;
-        Counts& counts = found->value;
-        ++(didThrow ? counts.threw : counts.returned);
-        counts.changedOperand += didChangeOperand;
-        counts.hadExpectation += hadExpectation;
-    }
-
-    void write()
-    {
-        Locker locker { m_lock };
-        Vector<String> entries = copyToVector(m_counts.keys());
-        std::ranges::sort(entries, codePointCompareLessThan);
-        StringPrintStream out;
-        for (const String& entry : entries) {
-            const Counts& counts = m_counts.find(entry)->value;
-            out.print(entry, "\t", counts.returned, "\t", counts.threw, "\t", counts.changedOperand, "\t", counts.hadExpectation, "\n");
-        }
-        m_counts.clear();
-        auto text = out.toString().utf8();
-        FILE* file = text.length() ? fopen(m_path.span().data(), "ab") : nullptr;
-        if (!file)
-            return;
-        // One write, so that the lines of two processes do not mix.
-        setvbuf(file, nullptr, _IOFBF, text.length() + 1);
-        fwrite(text.data(), 1, text.length(), file);
-        fclose(file);
-    }
-
-private:
-    struct Counts {
-        uint64_t returned { 0 };
-        uint64_t threw { 0 };
-        uint64_t changedOperand { 0 };
-        uint64_t hadExpectation { 0 };
-    };
-
-    explicit CheckedNativeCalls(const char* path)
-        : m_path(unsafeMakeSpan(path, strlen(path) + 1))
-    {
-    }
-
-    Vector<char> m_path;
-    Lock m_lock;
-    HashMap<String, Counts> m_counts WTF_GUARDED_BY_LOCK(m_lock);
+    Vector<char> path;
+    Lock lock;
+    // How many calls of an entry returned, threw, changed an operand, and came with what the compiler believed about the call.
+    HashMap<String, std::array<uint64_t, 4>> counts;
 };
 
 } // anonymous namespace
@@ -126,101 +387,27 @@ private:
 void writeCheckedNativeCalls()
 {
 #if !defined(BUN_HARDENED)
-    if (CheckedNativeCalls* calls = CheckedNativeCalls::ifAskedFor())
-        calls->write();
+    CheckedNativeCalls* calls = CheckedNativeCalls::ifAskedFor();
+    if (!calls)
+        return;
+    Locker locker { calls->lock };
+    Vector<String> entries = copyToVector(calls->counts.keys());
+    std::ranges::sort(entries, codePointCompareLessThan);
+    StringPrintStream out;
+    for (const String& entry : entries) {
+        auto [returned, threw, changedOperand, hadExpectation] = calls->counts.get(entry);
+        out.print(entry, "\t", returned, "\t", threw, "\t", changedOperand, "\t", hadExpectation, "\n");
+    }
+    calls->counts.clear();
+    auto text = out.toString().utf8();
+    FILE* file = text.length() ? fopen(calls->path.span().data(), "ab") : nullptr;
+    if (!file)
+        return;
+    // One write, so that the lines of two processes do not mix.
+    setvbuf(file, nullptr, _IOFBF, text.length() + 1);
+    fwrite(text.data(), 1, text.length(), file);
+    fclose(file);
 #endif
-}
-
-class NativeCallValidationScope::Checker {
-    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(Checker);
-    WTF_MAKE_NONCOPYABLE(Checker);
-public:
-    Checker(VM&, const NativeCall&, const NativeCallExpectation&);
-    bool finish(JSValue result);
-
-private:
-    struct Operand {
-        BuiltinOperand position;
-        JSObject* object;
-        OperandSnapshot before;
-    };
-
-    struct CollectionVersions {
-        friend bool operator==(const CollectionVersions&, const CollectionVersions&) = default;
-
-        HeapVersion marking { 0 };
-        HeapVersion eden { 0 };
-        HeapVersion newlyAllocated { 0 };
-    };
-
-    CollectionVersions collectionVersions() const;
-    JSValue operandAt(BuiltinOperand) const;
-    void addOperand(BuiltinOperand, JSValue);
-
-    OperandUses usesOf(BuiltinOperand) const;
-    OperandUses usesOfBytesOf(const Operand&) const;
-    bool holdsUnderNamedMember(const BuiltinParameter&, JSObject* holder, JSObject* held) const;
-    bool isAt(BuiltinOperand, JSObject*) const;
-    bool isTakenForUnknownFunction() const;
-    bool isHelperOfLibraryFunctions() const;
-    bool mayReturnHeldValue() const;
-    bool mayReturnWhateverNativeCodeHolds() const;
-    bool covers(const BuiltinKey&, UniquedStringImpl*) const;
-    bool hasActionOn(JSObject*, OperandChange, UniquedStringImpl* key) const;
-    AbstractHeaps declaredWrites() const;
-    bool mayRunCode() const;
-    bool mayThrow() const;
-    bool usesProxyByProtocol() const;
-    bool mayCollect() const;
-
-    void checkOperandsOfUnknownFunction();
-    void checkChanges(bool didRunCode);
-    void checkArrivedValue(const Operand& holder, const OperandDifference&);
-    bool isAmongRetainedContents(JSObject* arrived, UniquedStringImpl* key) const;
-    void checkResult();
-    void checkException(bool didRunCode);
-    void fail(ValidationFailureKind, JSValue found, const String& message);
-    void failForUnknownFunction(JSValue found, OperandUses declaring, const String& message);
-    void noteChangeWithoutDeclaration(const String& message);
-    String describeCallee() const;
-
-    VM& m_vm;
-    NativeCall m_call;
-    NativeCallExpectation m_expectation;
-    NativeCallDeclaration m_declaration;
-    Vector<Operand, 4> m_operands;
-    CollectionVersions m_collectionVersions;
-    JSValue m_result;
-    bool m_didEnterVMBefore { false };
-    bool m_didEnterCompiledCodeBefore { false };
-    // The call in the course of which this one is made.
-    Checker* m_outer { nullptr };
-    bool m_didCallFunctionThatWrites { false };
-    bool m_didChangeOperand { false };
-    static thread_local Checker* s_innermost;
-};
-
-thread_local NativeCallValidationScope::Checker* NativeCallValidationScope::Checker::s_innermost;
-
-NativeCallValidationScope::Checker::Checker(VM& vm, const NativeCall& call, const NativeCallExpectation& expectation)
-    : m_vm(vm)
-    , m_call(call)
-    , m_expectation(expectation)
-{
-    DeferGCForAWhile deferGC(vm);
-    m_declaration = findDeclaration(call, m_expectation);
-
-    if (call.kind == CodeSpecializationKind::CodeForCall)
-        addOperand(BuiltinOperand::receiver(), call.thisValue);
-    for (unsigned index = 0; index < std::min<unsigned>(call.arguments.size(), maxCheckedArguments); ++index)
-        addOperand(BuiltinOperand::argument(index), call.arguments.at(index));
-    checkOperandsOfUnknownFunction();
-
-    m_collectionVersions = collectionVersions();
-    m_didEnterVMBefore = std::exchange(vm.didEnterVM, false);
-    if (Instance* instance = Instance::of(call.realm))
-        m_didEnterCompiledCodeBefore = std::exchange(instance->scratch.didEnterCompiledCode, 0);
-    m_outer = std::exchange(s_innermost, this);
 }
 
 NativeCallExpectation NativeCallExpectation::take(JSGlobalObject* realm, JSObject* callee)
@@ -235,47 +422,6 @@ NativeCallExpectation NativeCallExpectation::take(JSGlobalObject* realm, JSObjec
     if (words.site == overwrittenSite)
         return unknown();
     return decode(words);
-}
-
-NativeCallValidationScope::Checker::CollectionVersions NativeCallValidationScope::Checker::collectionVersions() const
-{
-    MarkedSpace& space = m_vm.heap.objectSpace();
-    return { space.markingVersion(), space.edenVersion(), space.newlyAllocatedVersion() };
-}
-
-JSValue NativeCallValidationScope::Checker::operandAt(BuiltinOperand position) const
-{
-    return position.isReceiver() ? m_call.thisValue : m_call.arguments.at(position.argumentIndex());
-}
-
-void NativeCallValidationScope::Checker::addOperand(BuiltinOperand position, JSValue value)
-{
-    if (!canCapture(value))
-        return;
-    JSObject* object = asObject(value);
-    bool isRepeated = m_operands.containsIf([&](const Operand& operand) {
-        return operand.object == object;
-    });
-    // What is declared for either position may happen to the object.
-    if (isRepeated)
-        return;
-    m_operands.append({ position, object, capture(object) });
-}
-
-// The analysis hands the operands of a callee it does not know to native code, whatever the callee turns out to be.
-bool NativeCallValidationScope::Checker::isTakenForUnknownFunction() const
-{
-    switch (m_declaration.source) {
-    case NativeCallDeclarationSource::Compiler:
-        return false;
-    case NativeCallDeclarationSource::NotInTable:
-        return true;
-    case NativeCallDeclarationSource::CalleeInRealm:
-    case NativeCallDeclarationSource::NativeCodeOfCallee:
-    case NativeCallDeclarationSource::NameOfModuleMember:
-        return m_expectation.isKnown && !m_expectation.names(BuiltinTable::singleton().canonicalID(m_declaration.builtin));
-    }
-    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static bool isBuiltinIterator(JSObject* object)
@@ -293,105 +439,6 @@ static bool isBuiltinIterator(JSObject* object)
     default:
         return false;
     }
-}
-
-// { transfer: [buffer] }: the member itself, or an element of the array that it holds.
-bool NativeCallValidationScope::Checker::holdsUnderNamedMember(const BuiltinParameter& parameter, JSObject* holder, JSObject* held) const
-{
-    const BuiltinTable& table = BuiltinTable::singleton();
-    DeferGCForAWhile deferGC(m_vm);
-    for (BuiltinName name : parameter.namedMembers) {
-        Identifier key = table.identifierOf(m_vm, name);
-        PropertySlot slot(holder, PropertySlot::InternalMethodType::VMInquiry, &m_vm);
-        if (!holder->methodTable()->getOwnPropertySlot(holder, m_call.realm, key, slot) || !slot.isValue())
-            continue;
-        JSValue member = slot.getValue(m_call.realm, key);
-        if (member == JSValue(held))
-            return true;
-        if (!parameter.protocols.contains(Protocol::Iterate) || !isJSArray(member))
-            continue;
-        JSArray* array = asArray(member);
-        for (unsigned index = 0; index < array->length(); ++index) {
-            if (array->canGetIndexQuickly(index) && array->getIndexQuickly(index) == JSValue(held))
-                return true;
-        }
-    }
-    return false;
-}
-
-OperandUses NativeCallValidationScope::Checker::usesOf(BuiltinOperand position) const
-{
-    const BuiltinTable& table = BuiltinTable::singleton();
-    JSObject* object = asObject(operandAt(position));
-    OperandUses uses;
-    auto addUsesAt = [&](const BuiltinOverload& overload, BuiltinOperand other) {
-        if (overload.isUndeclared())
-            uses = OperandUses::all();
-        else if (const BuiltinParameter* parameter = table.parameterFor(overload, other)) {
-            uses.add(parameter->uses);
-            // A function that iterates steps a built-in iterator without a call of `next`, whose entry has the write.
-            if (parameter->protocols.contains(Protocol::Iterate) && isBuiltinIterator(object))
-                uses.add(OperandUse::WritesContents);
-        }
-    };
-    for (const BuiltinOverload* overload : m_declaration.overloads) {
-        if (m_call.kind == CodeSpecializationKind::CodeForCall && m_call.thisValue == JSValue(object))
-            addUsesAt(*overload, BuiltinOperand::receiver());
-        for (unsigned index = 0; index < std::min<unsigned>(m_call.arguments.size(), BuiltinOperand::maxArgumentIndex); ++index) {
-            JSValue argument = m_call.arguments.at(index);
-            if (argument == JSValue(object)) {
-                addUsesAt(*overload, BuiltinOperand::argument(index));
-                continue;
-            }
-            // What is declared for an operand and for what it reaches may happen to another operand that it holds.
-            const BuiltinParameter* parameter = overload->isUndeclared() || !argument.isObject() ? nullptr : table.parameterFor(*overload, BuiltinOperand::argument(index));
-            if (parameter && parameter->uses.contains(OperandUse::AppliesTransitively) && holdsUnderNamedMember(*parameter, asObject(argument), object))
-                uses.add(parameter->uses);
-        }
-    }
-    return uses;
-}
-
-bool NativeCallValidationScope::Checker::isAt(BuiltinOperand position, JSObject* object) const
-{
-    if (position.isReceiver())
-        return m_call.kind == CodeSpecializationKind::CodeForCall && m_call.thisValue == JSValue(object);
-    for (unsigned index = position.argumentIndex(); index < m_call.arguments.size(); ++index) {
-        if (position.coversArgument(index) && m_call.arguments.at(index) == JSValue(object))
-            return true;
-    }
-    return false;
-}
-
-bool NativeCallValidationScope::Checker::covers(const BuiltinKey& key, UniquedStringImpl* name) const
-{
-    const BuiltinTable& table = BuiltinTable::singleton();
-    switch (key.kind) {
-    case BuiltinKeyKind::None:
-    case BuiltinKeyKind::Any:
-    case BuiltinKeyKind::ElementsOf:
-        return true;
-    case BuiltinKeyKind::Indexes: {
-        // As flow has it (Program::isIndexLike()): an index, or another canonical numeric string: an array-like whose length is past the limit of arrays takes its elements under such names.
-        if (name->isSymbol())
-            return false;
-        CString text = String(name).utf8();
-        return Typed::mayBeElementKey(Typed::classifyName(byteCast<uint8_t>(text.span())));
-    }
-    case BuiltinKeyKind::Names:
-        return std::ranges::any_of(key.names, [&](BuiltinName listed) {
-            return table.identifierOf(m_vm, listed).impl() == name;
-        });
-    case BuiltinKeyKind::Operand: {
-        JSValue operand = key.operand ? operandAt(*key.operand) : JSValue();
-        if (!operand || operand.isObject())
-            return true;
-        if (operand.isSymbol())
-            return &asSymbol(operand)->uid() == name;
-        return !name->isSymbol() && operand.toWTFString(m_call.realm) == StringView(name);
-    }
-    }
-    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static bool declares(BuiltinPropertyActionKind action, OperandChange change)
@@ -424,165 +471,9 @@ static bool declares(BuiltinPropertyActionKind action, OperandChange change)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-bool NativeCallValidationScope::Checker::hasActionOn(JSObject* object, OperandChange change, UniquedStringImpl* key) const
-{
-    return std::ranges::any_of(m_declaration.overloads, [&](const BuiltinOverload* overload) {
-        return overload->isUndeclared() || std::ranges::any_of(overload->flow.propertyActions, [&](const BuiltinPropertyAction& action) {
-            return declares(action.kind, change) && isAt(action.object, object) && covers(action.key, key);
-        });
-    });
-}
-
-AbstractHeaps NativeCallValidationScope::Checker::declaredWrites() const
-{
-    AbstractHeaps writes;
-    for (const BuiltinOverload* overload : m_declaration.overloads) {
-        bool mayRunAnyCode = overload->effects.capability == BuiltinCapability::JS && !overload->flags.contains(BuiltinOverloadFlag::RunsOnlyOperandCode);
-        if (overload->isUndeclared() || mayRunAnyCode)
-            return AbstractHeaps::fromRaw((1ull << numberOfEnumerators<AbstractHeap>) - 1);
-        writes.add(overload->effects.writes);
-    }
-    return writes;
-}
-
-bool NativeCallValidationScope::Checker::mayRunCode() const
-{
-    const BuiltinTable& table = BuiltinTable::singleton();
-    if (m_declaration.overloads.isEmpty())
-        return true;
-    // A constructor reads `prototype` from another new.target, which may be a proxy or have an accessor there. The frame has it in the place of `this`.
-    if (m_call.kind == CodeSpecializationKind::CodeForConstruct && m_call.thisValue.isObject() && m_call.thisValue != JSValue(m_call.callee))
-        return true;
-
-    const Builtin& builtin = table.at(m_declaration.builtin);
-    if (builtin.flags.containsAny({ BuiltinFlag::LoadsModuleByName, BuiltinFlag::EvaluatesText, BuiltinFlag::RunsUnseenCode }))
-        return true;
-    if (!table.calledFunctionsOf(m_declaration.builtin).empty() || !table.moduleLoadsOf(m_declaration.builtin).empty() || table.unseenCodeOf(m_declaration.builtin))
-        return true;
-
-    for (const BuiltinOverload* overload : m_declaration.overloads) {
-        if (overload->isUndeclared())
-            return true;
-        // The capability is that of the function behind the conversions of its operands.
-        bool runsOnlyConversions = overload->effects.capability != BuiltinCapability::JS;
-        auto mayRunCodeThrough = [&](const BuiltinParameter& parameter, JSValue operand) {
-            return (operand.isObject() || !runsOnlyConversions) && mayRunCodeThroughOperand(parameter, operand);
-        };
-        if (overload->receiver && mayRunCodeThrough(*overload->receiver, m_call.thisValue))
-            return true;
-        for (unsigned index = 0; index < std::min<unsigned>(m_call.arguments.size(), BuiltinOperand::maxArgumentIndex); ++index) {
-            const BuiltinParameter* parameter = table.parameterFor(*overload, BuiltinOperand::argument(index));
-            if (parameter && mayRunCodeThrough(*parameter, m_call.arguments.at(index)))
-                return true;
-        }
-        if (runsOnlyConversions)
-            continue;
-        if (!overload->flags.contains(BuiltinOverloadFlag::RunsOnlyOperandCode))
-            return true;
-        bool callsBeforeReturn = std::ranges::any_of(overload->flow.callbacks, [](const BuiltinCallback& callback) {
-            return !isCalledAfterReturn(callback.times);
-        }) || std::ranges::any_of(overload->flow.handlerCalls, [](const BuiltinHandlerCall& handler) {
-            return !isCalledAfterReturn(handler.times);
-        });
-        if (callsBeforeReturn)
-            return true;
-    }
-    return false;
-}
-
-// A conversion throws for an operand outside of what the parameter accepts. Only the overload that the compiler matched is known to fit the operands.
-bool NativeCallValidationScope::Checker::mayThrow() const
-{
-    if (m_declaration.source != NativeCallDeclarationSource::Compiler || m_expectation.matchesAnyOverload)
-        return true;
-    return std::ranges::any_of(m_declaration.overloads, [](const BuiltinOverload* overload) {
-        bool mayRunAnyCode = overload->effects.capability == BuiltinCapability::JS && !overload->flags.contains(BuiltinOverloadFlag::RunsOnlyOperandCode);
-        return overload->throws() || mayRunAnyCode;
-    });
-}
-
-bool NativeCallValidationScope::Checker::usesProxyByProtocol() const
-{
-    const BuiltinTable& table = BuiltinTable::singleton();
-    auto isProxyUsedBy = [](const BuiltinParameter& parameter, JSValue operand) {
-        return !parameter.protocols.isEmpty() && operand.isObject() && asObject(operand)->type() == ProxyObjectType;
-    };
-    return std::ranges::any_of(m_declaration.overloads, [&](const BuiltinOverload* overload) {
-        if (overload->receiver && isProxyUsedBy(*overload->receiver, m_call.thisValue))
-            return true;
-        for (unsigned index = 0; index < std::min<unsigned>(m_call.arguments.size(), BuiltinOperand::maxArgumentIndex); ++index) {
-            const BuiltinParameter* parameter = table.parameterFor(*overload, BuiltinOperand::argument(index));
-            if (parameter && isProxyUsedBy(*parameter, m_call.arguments.at(index)))
-                return true;
-        }
-        return false;
-    });
-}
-
-bool NativeCallValidationScope::Checker::mayCollect() const
-{
-    const BuiltinTable& table = BuiltinTable::singleton();
-    // The capability is that of the function behind the conversions of its operands.
-    auto mayMakeFlat = [](const BuiltinParameter& parameter, JSValue operand) {
-        return operand.isString() && readsCharactersOfString(parameter.conversion);
-    };
-    return m_declaration.overloads.isEmpty() || std::ranges::any_of(m_declaration.overloads, [&](const BuiltinOverload* overload) {
-        if (overload->isUndeclared() || overload->effects.capability != BuiltinCapability::None)
-            return true;
-        if (overload->receiver && mayMakeFlat(*overload->receiver, m_call.thisValue))
-            return true;
-        for (unsigned index = 0; index < std::min<unsigned>(m_call.arguments.size(), BuiltinOperand::maxArgumentIndex); ++index) {
-            const BuiltinParameter* parameter = table.parameterFor(*overload, BuiltinOperand::argument(index));
-            if (parameter && mayMakeFlat(*parameter, m_call.arguments.at(index)))
-                return true;
-        }
-        return false;
-    });
-}
-
-String NativeCallValidationScope::Checker::describeCallee() const
-{
-    const BuiltinTable& table = BuiltinTable::singleton();
-    switch (m_declaration.source) {
-    case NativeCallDeclarationSource::Compiler:
-        if (m_expectation.matchesAnyOverload)
-            return makeString(table.tokenOf(m_declaration.builtin), "/any"_s);
-        return table.tokenOf(m_expectation.overload);
-    case NativeCallDeclarationSource::CalleeInRealm:
-    case NativeCallDeclarationSource::NativeCodeOfCallee:
-        return makeString(table.tokenOf(m_declaration.builtin), isTakenForUnknownFunction() ? "/not-named-by-the-call"_s : "/any"_s);
-    case NativeCallDeclarationSource::NameOfModuleMember:
-        return makeString(table.tokenOf(m_declaration.builtin), "/by-name"_s);
-    case NativeCallDeclarationSource::NotInTable:
-        return makeString("function-not-in-table '"_s, nameOfNativeFunction(m_call.callee), "' ("_s, m_call.callee->classInfo()->className, ')');
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static String describe(BuiltinOperand position)
 {
     return position.isReceiver() ? "this"_str : makeString("argument "_s, position.argumentIndex());
-}
-
-static String describe(OperandUses uses)
-{
-    StringPrintStream out;
-    CommaPrinter comma("|"_s);
-    for (OperandUse use : uses)
-        out.print(comma, nameOf(use));
-    return out.toString();
-}
-
-void NativeCallValidationScope::Checker::fail(ValidationFailureKind kind, JSValue found, const String& message)
-{
-    // A log that was asked for gets every mismatch of a run. One entry of the table may be wrong for a function that every program calls.
-    RuntimeReporter* reporter = m_vm.aotState().reporter.get();
-    if (reporter && reporter->isExplicitlyEnabled()) {
-        reporter->reportNativeCall(kind, describeCallee(), message);
-        return;
-    }
-    dataLogLn("AOT native call: ", describeCallee(), " ", message);
-    crashOnValidationFailure(m_vm, { kind, m_expectation.function, m_expectation.value, found });
 }
 
 // The analysis opens the operands of a function that the host's modules reach under a private name of the global object.
@@ -664,66 +555,6 @@ static bool isDeclaredByNativeBinding(JSGlobalObject* realm, JSObject* callee, O
     return false;
 }
 
-void NativeCallValidationScope::Checker::failForUnknownFunction(JSValue found, OperandUses declaring, const String& message)
-{
-    bool restsOnNativeCode = m_expectation.isKnown && m_expectation.trustsNativeCode && !isPrivateGlobal(m_call.realm, m_call.callee) && !isHelperOfLibraryFunctions();
-    if (restsOnNativeCode && isDeclaredByNativeBinding(m_call.realm, m_call.callee, declaring))
-        return;
-    if (restsOnNativeCode) {
-        fail(ValidationFailureKind::NativeCallChangedOperand, found, message);
-        return;
-    }
-    RuntimeReporter* reporter = m_vm.aotState().reporter.get();
-    if (reporter && reporter->isExplicitlyEnabled())
-        reporter->reportNativeCall(ValidationFailureKind::NativeCallChangedOperand, describeCallee(), makeString(message, " (no proof of this program rests on it)"_s));
-}
-
-// Flow opens the operands it knows of an overload without a declaration, so no proof about this operand is wrong. What the unknown object stands for there keeps its proofs.
-void NativeCallValidationScope::Checker::noteChangeWithoutDeclaration(const String& message)
-{
-    RuntimeReporter* reporter = m_vm.aotState().reporter.get();
-    if (reporter && reporter->isExplicitlyEnabled())
-        reporter->reportNativeCall(ValidationFailureKind::NativeCallChangedOperand, describeCallee(), makeString(message, ", and the overload has no declaration"_s));
-}
-
-// A library function calls these, and where flow goes by the entry or the model of that function it does not see the call.
-bool NativeCallValidationScope::Checker::isHelperOfLibraryFunctions() const
-{
-    Instance* instance = Instance::of(m_call.realm);
-    return instance && std::ranges::contains(instance->realm.linkTimeConstants, JSValue::encode(m_call.callee));
-}
-
-// Flow hands the operands of a function it does not know to native code.
-void NativeCallValidationScope::Checker::checkOperandsOfUnknownFunction()
-{
-    if (m_declaration.source != NativeCallDeclarationSource::NotInTable || isHelperOfLibraryFunctions())
-        return;
-    // A bound function hands its operands on to its target, which flow calls in its place.
-    if (m_call.callee->inherits<JSBoundFunction>())
-        return;
-    for (const Operand& operand : m_operands) {
-        Object* compiled = compiledObjectOrNull(operand.object);
-        if (compiled && compiled->layout().impossibleMutations().contains(ObjectMutation::ReachNativeCode))
-            fail(ValidationFailureKind::ImpossibleMutation, compiled, makeString(describe(operand.position), ": layout "_s, compiled->layout().index, " never reaches native code"_s));
-    }
-}
-
-// Two views of one buffer, and the buffer itself, hold the same bytes: what the call writes through one of them shows in the others.
-OperandUses NativeCallValidationScope::Checker::usesOfBytesOf(const Operand& operand) const
-{
-    OperandUses uses = usesOf(operand.position);
-    auto bytesOf = [](const Operand& each) {
-        return std::span(static_cast<const uint8_t*>(each.before.bytes), each.before.byteLength);
-    };
-    std::span bytes = bytesOf(operand);
-    for (const Operand& other : m_operands) {
-        std::span otherBytes = bytesOf(other);
-        if (other.object != operand.object && bytes.data() < otherBytes.data() + otherBytes.size() && otherBytes.data() < bytes.data() + bytes.size())
-            uses.add(usesOf(other.position));
-    }
-    return uses;
-}
-
 static OperandChange changeAsCompiledCodeTakesIt(JSObject* object, const OperandDifference& difference)
 {
     bool isOfProperty = difference.change == OperandChange::PropertyAdded || difference.change == OperandChange::PropertyStored || difference.change == OperandChange::PropertyRemoved;
@@ -732,193 +563,544 @@ static OperandChange changeAsCompiledCodeTakesIt(JSObject* object, const Operand
     return difference.change;
 }
 
-void NativeCallValidationScope::Checker::checkChanges(bool didRunCode)
-{
-    AbstractHeaps declared = declaredWrites();
-    bool hasNoDeclaration = !m_declaration.overloads.isEmpty() && std::ranges::all_of(m_declaration.overloads, &BuiltinOverload::isUndeclared);
-    for (const Operand& operand : m_operands) {
-        Vector<OperandDifference> differences = differencesBetween(m_vm, operand.object, operand.before, capture(operand.object));
-        if (differences.isEmpty())
-            continue;
-        m_didChangeOperand = true;
-        for (const OperandDifference& difference : differences) {
-            OperandChange change = changeAsCompiledCodeTakesIt(operand.object, difference);
-            OperandUses uses = difference.change == OperandChange::BytesChanged ? usesOfBytesOf(operand) : usesOf(operand.position);
-            // A resolving function settles the promise that it was made for. Handed that very promise, it rejects it: no change of what it is handed as such.
-            if (difference.change == OperandChange::InternalStateChanged && operand.object->type() == JSPromiseType && m_call.callee->inherits<JSFunctionWithFields>())
-                continue;
-            String what = makeString(describe(operand.position), ": "_s, nameOf(difference.change), difference.detail.isEmpty() ? ""_s : " "_s, difference.detail);
-            AbstractHeaps heaps = heapsHolding(change);
-            if (difference.change == OperandChange::InternalStateChanged)
-                heaps = heapsOfClassOf(operand.object);
+class NativeCallValidationScope::Checker {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(Checker);
+    WTF_MAKE_NONCOPYABLE(Checker);
+public:
+    Checker(VM& vm, const NativeCall& call, const NativeCallExpectation& expectation)
+        : m_vm(vm)
+        , m_call(call)
+        , m_expectation(expectation)
+    {
+        DeferGCForAWhile deferGC(vm);
+        m_declaration = findDeclaration(call, m_expectation);
 
-            if (m_expectation.isKnown && !heaps.isEmpty() && !m_expectation.writes.containsAny(heaps))
-                fail(ValidationFailureKind::NativeCallWroteHeap, operand.object, makeString(what, ", the call writes "_s, describe(m_expectation.writes), ", not "_s, describe(heaps)));
-            if (didRunCode)
+        if (call.kind == CodeSpecializationKind::CodeForCall)
+            addOperand(BuiltinOperand::receiver(), call.thisValue);
+        for (unsigned index = 0; index < std::min<unsigned>(call.arguments.size(), maxCheckedArguments); ++index)
+            addOperand(BuiltinOperand::argument(index), call.arguments.at(index));
+        checkOperandsOfUnknownFunction();
+
+        m_collectionVersions = collectionVersionsOf(m_vm);
+        m_didEnterVMBefore = std::exchange(vm.didEnterVM, false);
+        if (Instance* instance = Instance::of(call.realm))
+            m_didEnterCompiledCodeBefore = std::exchange(instance->scratch.didEnterCompiledCode, 0);
+        m_outer = std::exchange(s_innermost, this);
+    }
+
+    bool finish(JSValue result)
+    {
+        m_result = result;
+        s_innermost = m_outer;
+        bool didRunCode = m_vm.didEnterVM;
+        // What throws allocates the error that it throws: compiled code expects a collection on the way to a handler, whatever the call is said to do.
+        bool didCollect = collectionVersionsOf(m_vm) != m_collectionVersions && !m_vm.exceptionForInspection();
+        m_vm.didEnterVM |= m_didEnterVMBefore;
+        bool didEnterCompiledCode = false;
+        if (Instance* instance = Instance::of(m_call.realm)) {
+            didEnterCompiledCode = instance->scratch.didEnterCompiledCode;
+            instance->scratch.didEnterCompiledCode |= m_didEnterCompiledCodeBefore;
+        }
+
+        DeferGCForAWhile deferGC(m_vm);
+        if (didEnterCompiledCode && m_expectation.isKnown && !m_expectation.mayEnterCompiledCode)
+            fail(ValidationFailureKind::NativeCallRanCode, m_call.callee, "the call enters no compiled code"_s);
+        if (didRunCode && !mayRunCode())
+            fail(ValidationFailureKind::NativeCallRanCode, m_call.callee, "the entry runs no code with these operands"_s);
+        if (didCollect && m_expectation.isKnown && !m_expectation.mayCollect)
+            fail(ValidationFailureKind::NativeCallCollected, m_call.callee, "the call does not collect"_s);
+        // The conversion of an object operand allocates whether or not it enters JavaScript, and the capability of the entry says nothing of it.
+        else if (didCollect && !didRunCode && !mayCollect() && !mayRunCode())
+            fail(ValidationFailureKind::NativeCallCollected, m_call.callee, "the entry does not allocate"_s);
+        // An entry that may run code through an operand may as well get to a function of the table that way: Reflect.set(o, "__proto__", p) calls the native setter. What that writes is its own doing.
+        bool othersMayHaveWritten = didRunCode || (m_didCallFunctionThatWrites && mayRunCode());
+        checkException(othersMayHaveWritten);
+        checkChanges(othersMayHaveWritten);
+        if (!othersMayHaveWritten)
+            checkResult();
+        bool countsAsCode = didRunCode || m_declaration.overloads.isEmpty();
+        if (m_outer && !countsAsCode && (m_didCallFunctionThatWrites || !declaredWrites().isEmpty()))
+            m_outer->m_didCallFunctionThatWrites = true;
+#if !defined(BUN_HARDENED)
+        if (CheckedNativeCalls* calls = CheckedNativeCalls::ifAskedFor(); calls && m_declaration.source != NativeCallDeclarationSource::NotInTable) {
+            Locker locker { calls->lock };
+            auto& [returned, threw, changedOperand, hadExpectation] = calls->counts.add(describeCallee().isolatedCopy(), std::array<uint64_t, 4> { }).iterator->value;
+            ++(m_vm.exceptionForInspection() ? threw : returned);
+            changedOperand += m_didChangeOperand;
+            hadExpectation += m_expectation.isKnown;
+        }
+#endif
+        return countsAsCode;
+    }
+
+private:
+    struct Operand {
+        BuiltinOperand position;
+        JSObject* object;
+        OperandSnapshot before;
+    };
+
+    JSValue operandAt(BuiltinOperand position) const
+    {
+        return position.isReceiver() ? m_call.thisValue : m_call.arguments.at(position.argumentIndex());
+    }
+
+    void addOperand(BuiltinOperand position, JSValue value)
+    {
+        if (!canCapture(value))
+            return;
+        JSObject* object = asObject(value);
+        bool isRepeated = m_operands.containsIf([&](const Operand& operand) {
+            return operand.object == object;
+        });
+        // What is declared for either position may happen to the object.
+        if (isRepeated)
+            return;
+        m_operands.append({ position, object, capture(object) });
+    }
+
+    // The analysis hands the operands of a callee it does not know to native code, whatever the callee turns out to be.
+    bool isTakenForUnknownFunction() const
+    {
+        if (m_declaration.source == NativeCallDeclarationSource::Compiler || m_declaration.source == NativeCallDeclarationSource::NotInTable)
+            return m_declaration.source == NativeCallDeclarationSource::NotInTable;
+        return m_expectation.isKnown && !m_expectation.names(m_table.canonicalID(m_declaration.builtin));
+    }
+
+    // { transfer: [buffer] }: the member itself, or an element of the array that it holds.
+    bool holdsUnderNamedMember(const BuiltinParameter& parameter, JSObject* holder, JSObject* held) const
+    {
+        DeferGCForAWhile deferGC(m_vm);
+        for (BuiltinName name : parameter.namedMembers) {
+            Identifier key = m_table.identifierOf(m_vm, name);
+            PropertySlot slot(holder, PropertySlot::InternalMethodType::VMInquiry, &m_vm);
+            if (!holder->methodTable()->getOwnPropertySlot(holder, m_call.realm, key, slot) || !slot.isValue())
                 continue;
-            OperandUses declaring = usesDeclaring(change);
-            if (!declaring.isEmpty() && isTakenForUnknownFunction()) {
-                failForUnknownFunction(operand.object, declaring, makeString(what, ", and native code changes nothing it is handed"_s));
+            JSValue member = slot.getValue(m_call.realm, key);
+            if (member == JSValue(held))
+                return true;
+            if (!parameter.protocols.contains(Protocol::Iterate) || !isJSArray(member))
                 continue;
+            JSArray* array = asArray(member);
+            for (unsigned index = 0; index < array->length(); ++index) {
+                if (array->canGetIndexQuickly(index) && array->getIndexQuickly(index) == JSValue(held))
+                    return true;
             }
-            if (!declaring.isEmpty() && hasNoDeclaration) {
-                noteChangeWithoutDeclaration(what);
-                continue;
+        }
+        return false;
+    }
+
+    OperandUses usesOf(BuiltinOperand position) const
+    {
+        JSObject* object = asObject(operandAt(position));
+        OperandUses uses;
+        auto addUsesAt = [&](const BuiltinOverload& overload, BuiltinOperand other) {
+            if (overload.isUndeclared())
+                uses = OperandUses::all();
+            else if (const BuiltinParameter* parameter = m_table.parameterFor(overload, other)) {
+                uses.add(parameter->uses);
+                // A function that iterates steps a built-in iterator without a call of `next`, whose entry has the write.
+                if (parameter->protocols.contains(Protocol::Iterate) && isBuiltinIterator(object))
+                    uses.add(OperandUse::WritesContents);
             }
-            checkArrivedValue(operand, difference);
-            if (!declaring.isEmpty() && !uses.containsAny(declaring))
-                fail(ValidationFailureKind::NativeCallChangedOperand, operand.object, makeString(what, ", uses "_s, describe(uses), ", needs "_s, describe(declaring)));
-            else if (change == difference.change && difference.key && uses != OperandUses::all() && !hasActionOn(operand.object, difference.change, difference.key.get()))
-                fail(ValidationFailureKind::NativeCallChangedOperand, operand.object, makeString(what, ", no property action covers the key"_s));
-            else if (!m_declaration.overloads.isEmpty() && !heaps.isEmpty() && !declared.containsAny(heaps))
-                fail(ValidationFailureKind::NativeCallWroteHeap, operand.object, makeString(what, ", the entry writes "_s, describe(declared), ", not "_s, describe(heaps)));
+        };
+        for (const BuiltinOverload* overload : m_declaration.overloads) {
+            if (m_call.kind == CodeSpecializationKind::CodeForCall && m_call.thisValue == JSValue(object))
+                addUsesAt(*overload, BuiltinOperand::receiver());
+            for (unsigned index = 0; index < std::min<unsigned>(m_call.arguments.size(), BuiltinOperand::maxArgumentIndex); ++index) {
+                JSValue argument = m_call.arguments.at(index);
+                if (argument == JSValue(object)) {
+                    addUsesAt(*overload, BuiltinOperand::argument(index));
+                    continue;
+                }
+                // What is declared for an operand and for what it reaches may happen to another operand that it holds.
+                const BuiltinParameter* parameter = overload->isUndeclared() || !argument.isObject() ? nullptr : m_table.parameterFor(*overload, BuiltinOperand::argument(index));
+                if (parameter && parameter->uses.contains(OperandUse::AppliesTransitively) && holdsUnderNamedMember(*parameter, asObject(argument), object))
+                    uses.add(parameter->uses);
+            }
+        }
+        return uses;
+    }
+
+    bool isAt(BuiltinOperand position, JSObject* object) const
+    {
+        if (position.isReceiver())
+            return m_call.kind == CodeSpecializationKind::CodeForCall && m_call.thisValue == JSValue(object);
+        for (unsigned index = position.argumentIndex(); index < m_call.arguments.size(); ++index) {
+            if (position.coversArgument(index) && m_call.arguments.at(index) == JSValue(object))
+                return true;
+        }
+        return false;
+    }
+
+    bool covers(const BuiltinKey& key, UniquedStringImpl* name) const
+    {
+        switch (key.kind) {
+        case BuiltinKeyKind::None:
+        case BuiltinKeyKind::Any:
+        case BuiltinKeyKind::ElementsOf:
+            return true;
+        case BuiltinKeyKind::Indexes: {
+            // As flow has it (Program::isIndexLike()): an index, or another canonical numeric string: an array-like whose length is past the limit of arrays takes its elements under such names.
+            if (name->isSymbol())
+                return false;
+            CString text = String(name).utf8();
+            return Typed::mayBeElementKey(Typed::classifyName(byteCast<uint8_t>(text.span())));
+        }
+        case BuiltinKeyKind::Names:
+            return std::ranges::any_of(key.names, [&](BuiltinName listed) {
+                return m_table.identifierOf(m_vm, listed).impl() == name;
+            });
+        case BuiltinKeyKind::Operand: {
+            JSValue operand = key.operand ? operandAt(*key.operand) : JSValue();
+            if (!operand || operand.isObject())
+                return true;
+            if (operand.isSymbol())
+                return &asSymbol(operand)->uid() == name;
+            return !name->isSymbol() && operand.toWTFString(m_call.realm) == StringView(name);
+        }
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    bool hasActionOn(JSObject* object, OperandChange change, UniquedStringImpl* key) const
+    {
+        return std::ranges::any_of(m_declaration.overloads, [&](const BuiltinOverload* overload) {
+            return overload->isUndeclared() || std::ranges::any_of(overload->flow.propertyActions, [&](const BuiltinPropertyAction& action) {
+                return declares(action.kind, change) && isAt(action.object, object) && covers(action.key, key);
+            });
+        });
+    }
+
+    bool anyParameterWithOperand(const BuiltinOverload& overload, const Invocable<bool(const BuiltinParameter&, JSValue)> auto& predicate) const
+    {
+        if (overload.receiver && predicate(*overload.receiver, m_call.thisValue))
+            return true;
+        for (unsigned index = 0; index < std::min<unsigned>(m_call.arguments.size(), BuiltinOperand::maxArgumentIndex); ++index) {
+            const BuiltinParameter* parameter = m_table.parameterFor(overload, BuiltinOperand::argument(index));
+            if (parameter && predicate(*parameter, m_call.arguments.at(index)))
+                return true;
+        }
+        return false;
+    }
+
+    AbstractHeaps declaredWrites() const
+    {
+        AbstractHeaps writes;
+        for (const BuiltinOverload* overload : m_declaration.overloads) {
+            bool mayRunAnyCode = overload->effects.capability == BuiltinCapability::JS && !overload->flags.contains(BuiltinOverloadFlag::RunsOnlyOperandCode);
+            if (overload->isUndeclared() || mayRunAnyCode)
+                return AbstractHeaps::fromRaw((1ull << numberOfEnumerators<AbstractHeap>) - 1);
+            writes.add(overload->effects.writes);
+        }
+        return writes;
+    }
+
+    bool mayRunCode() const
+    {
+        if (m_declaration.overloads.isEmpty())
+            return true;
+        // A constructor reads `prototype` from another new.target, which may be a proxy or have an accessor there. The frame has it in the place of `this`.
+        if (m_call.kind == CodeSpecializationKind::CodeForConstruct && m_call.thisValue.isObject() && m_call.thisValue != JSValue(m_call.callee))
+            return true;
+
+        const Builtin& builtin = m_table.at(m_declaration.builtin);
+        if (builtin.flags.containsAny({ BuiltinFlag::LoadsModuleByName, BuiltinFlag::EvaluatesText, BuiltinFlag::RunsUnseenCode }))
+            return true;
+        if (!m_table.calledFunctionsOf(m_declaration.builtin).empty() || !m_table.moduleLoadsOf(m_declaration.builtin).empty() || m_table.unseenCodeOf(m_declaration.builtin))
+            return true;
+
+        for (const BuiltinOverload* overload : m_declaration.overloads) {
+            if (overload->isUndeclared())
+                return true;
+            // The capability is that of the function behind the conversions of its operands.
+            bool runsOnlyConversions = overload->effects.capability != BuiltinCapability::JS;
+            auto mayRunCodeThrough = [&](const BuiltinParameter& parameter, JSValue operand) {
+                return (operand.isObject() || !runsOnlyConversions) && mayRunCodeThroughOperand(parameter, operand);
+            };
+            if (anyParameterWithOperand(*overload, mayRunCodeThrough))
+                return true;
+            if (runsOnlyConversions)
+                continue;
+            if (!overload->flags.contains(BuiltinOverloadFlag::RunsOnlyOperandCode))
+                return true;
+            bool callsBeforeReturn = std::ranges::any_of(overload->flow.callbacks, [](const BuiltinCallback& callback) {
+                return !isCalledAfterReturn(callback.times);
+            }) || std::ranges::any_of(overload->flow.handlerCalls, [](const BuiltinHandlerCall& handler) {
+                return !isCalledAfterReturn(handler.times);
+            });
+            if (callsBeforeReturn)
+                return true;
+        }
+        return false;
+    }
+
+    // A conversion throws for an operand outside of what the parameter accepts. Only the overload that the compiler matched is known to fit the operands.
+    bool mayThrow() const
+    {
+        if (m_declaration.source != NativeCallDeclarationSource::Compiler || m_expectation.matchesAnyOverload)
+            return true;
+        return std::ranges::any_of(m_declaration.overloads, [](const BuiltinOverload* overload) {
+            bool mayRunAnyCode = overload->effects.capability == BuiltinCapability::JS && !overload->flags.contains(BuiltinOverloadFlag::RunsOnlyOperandCode);
+            return overload->throws() || mayRunAnyCode;
+        });
+    }
+
+    bool usesProxyByProtocol() const
+    {
+        return std::ranges::any_of(m_declaration.overloads, [&](const BuiltinOverload* overload) {
+            return anyParameterWithOperand(*overload, [](const BuiltinParameter& parameter, JSValue operand) {
+                return !parameter.protocols.isEmpty() && operand.isObject() && asObject(operand)->type() == ProxyObjectType;
+            });
+        });
+    }
+
+    bool mayCollect() const
+    {
+        return m_declaration.overloads.isEmpty() || std::ranges::any_of(m_declaration.overloads, [&](const BuiltinOverload* overload) {
+            if (overload->isUndeclared() || overload->effects.capability != BuiltinCapability::None)
+                return true;
+            // The capability is that of the function behind the conversions of its operands.
+            return anyParameterWithOperand(*overload, [](const BuiltinParameter& parameter, JSValue operand) {
+                return operand.isString() && readsCharactersOfString(parameter.conversion);
+            });
+        });
+    }
+
+    String describeCallee() const
+    {
+        switch (m_declaration.source) {
+        case NativeCallDeclarationSource::Compiler:
+            if (m_expectation.matchesAnyOverload)
+                return makeString(m_table.tokenOf(m_declaration.builtin), "/any"_s);
+            return m_table.tokenOf(m_expectation.overload);
+        case NativeCallDeclarationSource::CalleeInRealm:
+        case NativeCallDeclarationSource::NativeCodeOfCallee:
+            return makeString(m_table.tokenOf(m_declaration.builtin), isTakenForUnknownFunction() ? "/not-named-by-the-call"_s : "/any"_s);
+        case NativeCallDeclarationSource::NameOfModuleMember:
+            return makeString(m_table.tokenOf(m_declaration.builtin), "/by-name"_s);
+        case NativeCallDeclarationSource::NotInTable:
+            return makeString("function-not-in-table '"_s, nameOfNativeFunction(m_call.callee), "' ("_s, m_call.callee->classInfo()->className, ')');
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    void fail(ValidationFailureKind kind, JSValue found, const String& message)
+    {
+        reportOrCrash(m_vm, { kind, m_expectation.function, m_expectation.value, found }, "native call"_s, describeCallee(), message);
+    }
+
+    void failForUnknownFunction(JSValue found, OperandUses declaring, const String& message)
+    {
+        bool restsOnNativeCode = m_expectation.isKnown && m_expectation.trustsNativeCode && !isPrivateGlobal(m_call.realm, m_call.callee) && !isHelperOfLibraryFunctions();
+        if (restsOnNativeCode && isDeclaredByNativeBinding(m_call.realm, m_call.callee, declaring))
+            return;
+        if (restsOnNativeCode) {
+            fail(ValidationFailureKind::NativeCallChangedOperand, found, message);
+            return;
+        }
+        if (RuntimeReporter* reporter = RuntimeReporter::ifExplicitlyEnabled(m_vm))
+            reporter->reportNativeCall(ValidationFailureKind::NativeCallChangedOperand, describeCallee(), makeString(message, " (no proof of this program rests on it)"_s));
+    }
+
+    // Flow opens the operands it knows of an overload without a declaration, so no proof about this operand is wrong. What the unknown object stands for there keeps its proofs.
+    void noteChangeWithoutDeclaration(const String& message)
+    {
+        if (RuntimeReporter* reporter = RuntimeReporter::ifExplicitlyEnabled(m_vm))
+            reporter->reportNativeCall(ValidationFailureKind::NativeCallChangedOperand, describeCallee(), makeString(message, ", and the overload has no declaration"_s));
+    }
+
+    // A library function calls these, and where flow goes by the entry or the model of that function it does not see the call.
+    bool isHelperOfLibraryFunctions() const
+    {
+        Instance* instance = Instance::of(m_call.realm);
+        return instance && std::ranges::contains(instance->realm.linkTimeConstants, JSValue::encode(m_call.callee));
+    }
+
+    // Flow hands the operands of a function it does not know to native code.
+    void checkOperandsOfUnknownFunction()
+    {
+        if (m_declaration.source != NativeCallDeclarationSource::NotInTable || isHelperOfLibraryFunctions())
+            return;
+        // A bound function hands its operands on to its target, which flow calls in its place.
+        if (m_call.callee->inherits<JSBoundFunction>())
+            return;
+        for (const Operand& operand : m_operands) {
+            Object* compiled = compiledObjectOrNull(operand.object);
+            if (compiled && compiled->layout().impossibleMutations().contains(ObjectMutation::ReachNativeCode))
+                fail(ValidationFailureKind::ImpossibleMutation, compiled, makeString(describe(operand.position), ": layout "_s, compiled->layout().index, " never reaches native code"_s));
         }
     }
-}
 
-// What an operand holds may be another operand, or the operand itself, and a copy of its properties hands that on under its key.
-bool NativeCallValidationScope::Checker::isAmongRetainedContents(JSObject* arrived, UniquedStringImpl* key) const
-{
-    if (!key)
-        return false;
-    DeferGCForAWhile deferGC(m_vm);
-    return std::ranges::any_of(m_operands, [&](const Operand& source) {
-        if (!usesOf(source.position).contains(OperandUse::RetainsContents))
-            return false;
-        PropertySlot slot(source.object, PropertySlot::InternalMethodType::VMInquiry, &m_vm);
-        if (!source.object->methodTable()->getOwnPropertySlot(source.object, m_call.realm, PropertyName(key), slot) || !slot.isValue())
-            return false;
-        return slot.getValue(m_call.realm, PropertyName(key)) == JSValue(arrived);
-    });
-}
-
-// An operand that another operand holds after the call is retained.
-void NativeCallValidationScope::Checker::checkArrivedValue(const Operand& holder, const OperandDifference& difference)
-{
-    // The bits may be those of an unboxed number, so they are only compared.
-    for (const Operand& operand : m_operands) {
-        if (JSValue::encode(operand.object) != difference.arrived || operand.object == holder.object)
-            continue;
+    // Two views of one buffer, and the buffer itself, hold the same bytes: what the call writes through one of them shows in the others.
+    OperandUses usesOfBytesOf(const Operand& operand) const
+    {
         OperandUses uses = usesOf(operand.position);
-        if (!uses.contains(OperandUse::Retains) && !isAmongRetainedContents(operand.object, difference.key.get()))
-            fail(ValidationFailureKind::NativeCallKeptOperand, operand.object, makeString(describe(operand.position), ": "_s, describe(holder.position), " holds it, uses "_s, describe(uses)));
-    }
-}
-
-// What an operand holds may be another operand, or the operand itself.
-bool NativeCallValidationScope::Checker::mayReturnHeldValue() const
-{
-    return std::ranges::any_of(m_declaration.overloads, [](const BuiltinOverload* overload) {
-        auto reachesResult = [](const BuiltinPlace& place) {
-            return place.kind == BuiltinPlaceKind::Result;
+        auto bytesOf = [](const Operand& each) {
+            return std::span(static_cast<const uint8_t*>(each.before.bytes), each.before.byteLength);
         };
-        return overload->isUndeclared()
-            || std::ranges::any_of(overload->flow.transfers, [&](const BuiltinTransfer& transfer) {
-                return reachesResult(transfer.to) && transfer.from.kind != BuiltinPlaceKind::Operand;
-            })
-            || std::ranges::any_of(overload->flow.propertyActions, [&](const BuiltinPropertyAction& action) {
-                return reachesResult(action.value);
-            })
-            || std::ranges::any_of(overload->flow.callbacks, [](const BuiltinCallback& callback) {
-                return callback.resultUse == BuiltinCallbackResultUse::Returned;
-            });
-    });
-}
-
-// A result declared as anything stands for every object that native code holds, and it holds an operand that it retains.
-bool NativeCallValidationScope::Checker::mayReturnWhateverNativeCodeHolds() const
-{
-    const BuiltinTable& table = BuiltinTable::singleton();
-    return std::ranges::all_of(m_declaration.overloads, [&](const BuiltinOverload* overload) {
-        return table.at(overload->result.type).isAnything();
-    });
-}
-
-void NativeCallValidationScope::Checker::checkResult()
-{
-    if (!m_result || !m_result.isObject() || isTakenForUnknownFunction() || mayReturnHeldValue())
-        return;
-    bool mayReturnRetainedOperand = mayReturnWhateverNativeCodeHolds();
-    for (const Operand& operand : m_operands) {
-        if (operand.object != asObject(m_result))
-            continue;
-        OperandUses uses = usesOf(operand.position);
-        if (mayReturnRetainedOperand && uses.contains(OperandUse::Retains))
-            continue;
-        if (!uses.contains(OperandUse::Returns))
-            fail(ValidationFailureKind::NativeCallKeptOperand, operand.object, makeString(describe(operand.position), ": it is the result, uses "_s, describe(uses)));
-    }
-}
-
-void NativeCallValidationScope::Checker::checkException(bool didRunCode)
-{
-    Exception* exception = m_vm.exceptionForInspection();
-    if (!exception || m_vm.isTerminationException(exception))
-        return;
-    if (auto* error = dynamicDowncast<ErrorInstance>(exception->value()); error && (error->isStackOverflowError() || error->isOutOfMemoryError()))
-        return;
-    if (m_expectation.isKnown && !m_expectation.mayThrow)
-        fail(ValidationFailureKind::NativeCallThrew, exception->value(), "the call does not throw"_s);
-    else if (!didRunCode && !mayThrow() && !usesProxyByProtocol())
-        fail(ValidationFailureKind::NativeCallThrew, exception->value(), "the entry does not throw"_s);
-}
-
-bool NativeCallValidationScope::Checker::finish(JSValue result)
-{
-    m_result = result;
-    s_innermost = m_outer;
-    bool didRunCode = m_vm.didEnterVM;
-    // What throws allocates the error that it throws: compiled code expects a collection on the way to a handler, whatever the call is said to do.
-    bool didCollect = collectionVersions() != m_collectionVersions && !m_vm.exceptionForInspection();
-    m_vm.didEnterVM |= m_didEnterVMBefore;
-    bool didEnterCompiledCode = false;
-    if (Instance* instance = Instance::of(m_call.realm)) {
-        didEnterCompiledCode = instance->scratch.didEnterCompiledCode;
-        instance->scratch.didEnterCompiledCode |= m_didEnterCompiledCodeBefore;
+        std::span bytes = bytesOf(operand);
+        for (const Operand& other : m_operands) {
+            std::span otherBytes = bytesOf(other);
+            if (other.object != operand.object && bytes.data() < otherBytes.data() + otherBytes.size() && otherBytes.data() < bytes.data() + bytes.size())
+                uses.add(usesOf(other.position));
+        }
+        return uses;
     }
 
-    DeferGCForAWhile deferGC(m_vm);
-    if (didEnterCompiledCode && m_expectation.isKnown && !m_expectation.mayEnterCompiledCode)
-        fail(ValidationFailureKind::NativeCallRanCode, m_call.callee, "the call enters no compiled code"_s);
-    if (didRunCode && !mayRunCode())
-        fail(ValidationFailureKind::NativeCallRanCode, m_call.callee, "the entry runs no code with these operands"_s);
-    if (didCollect && m_expectation.isKnown && !m_expectation.mayCollect)
-        fail(ValidationFailureKind::NativeCallCollected, m_call.callee, "the call does not collect"_s);
-    // The conversion of an object operand allocates whether or not it enters JavaScript, and the capability of the entry says nothing of it.
-    else if (didCollect && !didRunCode && !mayCollect() && !mayRunCode())
-        fail(ValidationFailureKind::NativeCallCollected, m_call.callee, "the entry does not allocate"_s);
-    // An entry that may run code through an operand may as well get to a function of the table that way: Reflect.set(o, "__proto__", p) calls the native setter. What that writes is its own doing.
-    bool othersMayHaveWritten = didRunCode || (m_didCallFunctionThatWrites && mayRunCode());
-    checkException(othersMayHaveWritten);
-    checkChanges(othersMayHaveWritten);
-    if (!othersMayHaveWritten)
-        checkResult();
-    bool countsAsCode = didRunCode || m_declaration.overloads.isEmpty();
-    if (m_outer && !countsAsCode && (m_didCallFunctionThatWrites || !declaredWrites().isEmpty()))
-        m_outer->m_didCallFunctionThatWrites = true;
-#if !defined(BUN_HARDENED)
-    if (CheckedNativeCalls* calls = CheckedNativeCalls::ifAskedFor(); calls && m_declaration.source != NativeCallDeclarationSource::NotInTable)
-        calls->add(describeCallee(), m_vm.exceptionForInspection(), m_didChangeOperand, m_expectation.isKnown);
-#endif
-    return countsAsCode;
-}
+    void checkChanges(bool didRunCode)
+    {
+        AbstractHeaps declared = declaredWrites();
+        bool hasNoDeclaration = !m_declaration.overloads.isEmpty() && std::ranges::all_of(m_declaration.overloads, &BuiltinOverload::isUndeclared);
+        for (const Operand& operand : m_operands) {
+            Vector<OperandDifference> differences = differencesBetween(m_vm, operand.object, operand.before, capture(operand.object));
+            if (differences.isEmpty())
+                continue;
+            m_didChangeOperand = true;
+            for (const OperandDifference& difference : differences) {
+                OperandChange change = changeAsCompiledCodeTakesIt(operand.object, difference);
+                OperandUses uses = difference.change == OperandChange::BytesChanged ? usesOfBytesOf(operand) : usesOf(operand.position);
+                // A resolving function settles the promise that it was made for. Handed that very promise, it rejects it: no change of what it is handed as such.
+                if (difference.change == OperandChange::InternalStateChanged && operand.object->type() == JSPromiseType && m_call.callee->inherits<JSFunctionWithFields>())
+                    continue;
+                String what = makeString(describe(operand.position), ": "_s, describe(difference));
+                AbstractHeaps heaps = difference.change == OperandChange::InternalStateChanged ? heapsOfClassOf(operand.object) : rowOf(change).heaps;
 
-// The engine fills the missing half of an accessor pair with a function of its own. No program can name it, and a call of it is the read or the store that finds no accessor.
-static bool standsForMissingAccessor(JSObject* callee)
-{
-    return is<NullGetterFunction>(callee) || is<NullSetterFunction>(callee);
-}
+                if (m_expectation.isKnown && !heaps.isEmpty() && !m_expectation.writes.containsAny(heaps))
+                    fail(ValidationFailureKind::NativeCallWroteHeap, operand.object, makeString(what, ", the call writes "_s, describeMembers(m_expectation.writes), ", not "_s, describeMembers(heaps)));
+                if (didRunCode)
+                    continue;
+                OperandUses declaring = rowOf(change).uses;
+                if (!declaring.isEmpty() && isTakenForUnknownFunction()) {
+                    failForUnknownFunction(operand.object, declaring, makeString(what, ", and native code changes nothing it is handed"_s));
+                    continue;
+                }
+                if (!declaring.isEmpty() && hasNoDeclaration) {
+                    noteChangeWithoutDeclaration(what);
+                    continue;
+                }
+                checkArrivedValue(operand, difference);
+                if (!declaring.isEmpty() && !uses.containsAny(declaring))
+                    fail(ValidationFailureKind::NativeCallChangedOperand, operand.object, makeString(what, ", uses "_s, describeMembers(uses), ", needs "_s, describeMembers(declaring)));
+                else if (change == difference.change && difference.key && uses != OperandUses::all() && !hasActionOn(operand.object, difference.change, difference.key.get()))
+                    fail(ValidationFailureKind::NativeCallChangedOperand, operand.object, makeString(what, ", no property action covers the key"_s));
+                else if (!m_declaration.overloads.isEmpty() && !heaps.isEmpty() && !declared.containsAny(heaps))
+                    fail(ValidationFailureKind::NativeCallWroteHeap, operand.object, makeString(what, ", the entry writes "_s, describeMembers(declared), ", not "_s, describeMembers(heaps)));
+            }
+        }
+    }
 
-// The function object of a compiled closure has native code that enters the compiled code, or that throws where a class is called without `new`. What it is handed goes to compiled code or nowhere.
-static bool entersCompiledCode(JSObject* callee)
-{
-    return CompiledCallee::isCompiledCallee(callee);
-}
+    // What an operand holds may be another operand, or the operand itself, and a copy of its properties hands that on under its key.
+    bool isAmongRetainedContents(JSObject* arrived, UniquedStringImpl* key) const
+    {
+        if (!key)
+            return false;
+        DeferGCForAWhile deferGC(m_vm);
+        return std::ranges::any_of(m_operands, [&](const Operand& source) {
+            if (!usesOf(source.position).contains(OperandUse::RetainsContents))
+                return false;
+            PropertySlot slot(source.object, PropertySlot::InternalMethodType::VMInquiry, &m_vm);
+            if (!source.object->methodTable()->getOwnPropertySlot(source.object, m_call.realm, PropertyName(key), slot) || !slot.isValue())
+                return false;
+            return slot.getValue(m_call.realm, PropertyName(key)) == JSValue(arrived);
+        });
+    }
+
+    // An operand that another operand holds after the call is retained.
+    void checkArrivedValue(const Operand& holder, const OperandDifference& difference)
+    {
+        // The bits may be those of an unboxed number, so they are only compared.
+        for (const Operand& operand : m_operands) {
+            if (JSValue::encode(operand.object) != difference.arrived || operand.object == holder.object)
+                continue;
+            OperandUses uses = usesOf(operand.position);
+            if (!uses.contains(OperandUse::Retains) && !isAmongRetainedContents(operand.object, difference.key.get()))
+                fail(ValidationFailureKind::NativeCallKeptOperand, operand.object, makeString(describe(operand.position), ": "_s, describe(holder.position), " holds it, uses "_s, describeMembers(uses)));
+        }
+    }
+
+    // What an operand holds may be another operand, or the operand itself.
+    bool mayReturnHeldValue() const
+    {
+        return std::ranges::any_of(m_declaration.overloads, [](const BuiltinOverload* overload) {
+            auto reachesResult = [](const BuiltinPlace& place) {
+                return place.kind == BuiltinPlaceKind::Result;
+            };
+            return overload->isUndeclared()
+                || std::ranges::any_of(overload->flow.transfers, [&](const BuiltinTransfer& transfer) {
+                    return reachesResult(transfer.to) && transfer.from.kind != BuiltinPlaceKind::Operand;
+                })
+                || std::ranges::any_of(overload->flow.propertyActions, [&](const BuiltinPropertyAction& action) {
+                    return reachesResult(action.value);
+                })
+                || std::ranges::any_of(overload->flow.callbacks, [](const BuiltinCallback& callback) {
+                    return callback.resultUse == BuiltinCallbackResultUse::Returned;
+                });
+        });
+    }
+
+    // A result declared as anything stands for every object that native code holds, and it holds an operand that it retains.
+    bool mayReturnWhateverNativeCodeHolds() const
+    {
+        return std::ranges::all_of(m_declaration.overloads, [&](const BuiltinOverload* overload) {
+            return m_table.at(overload->result.type).isAnything();
+        });
+    }
+
+    void checkResult()
+    {
+        if (!m_result || !m_result.isObject() || isTakenForUnknownFunction() || mayReturnHeldValue())
+            return;
+        bool mayReturnRetainedOperand = mayReturnWhateverNativeCodeHolds();
+        for (const Operand& operand : m_operands) {
+            if (operand.object != asObject(m_result))
+                continue;
+            OperandUses uses = usesOf(operand.position);
+            if (mayReturnRetainedOperand && uses.contains(OperandUse::Retains))
+                continue;
+            if (!uses.contains(OperandUse::Returns))
+                fail(ValidationFailureKind::NativeCallKeptOperand, operand.object, makeString(describe(operand.position), ": it is the result, uses "_s, describeMembers(uses)));
+        }
+    }
+
+    void checkException(bool didRunCode)
+    {
+        Exception* exception = m_vm.exceptionForInspection();
+        if (!exception || m_vm.isTerminationException(exception))
+            return;
+        if (auto* error = dynamicDowncast<ErrorInstance>(exception->value()); error && (error->isStackOverflowError() || error->isOutOfMemoryError()))
+            return;
+        if (m_expectation.isKnown && !m_expectation.mayThrow)
+            fail(ValidationFailureKind::NativeCallThrew, exception->value(), "the call does not throw"_s);
+        else if (!didRunCode && !mayThrow() && !usesProxyByProtocol())
+            fail(ValidationFailureKind::NativeCallThrew, exception->value(), "the entry does not throw"_s);
+    }
+
+    VM& m_vm;
+    const BuiltinTable& m_table { BuiltinTable::singleton() };
+    NativeCall m_call;
+    NativeCallExpectation m_expectation;
+    NativeCallDeclaration m_declaration;
+    Vector<Operand, 4> m_operands;
+    CollectionVersions m_collectionVersions;
+    JSValue m_result;
+    bool m_didEnterVMBefore { false };
+    bool m_didEnterCompiledCodeBefore { false };
+    // The call in the course of which this one is made.
+    Checker* m_outer { nullptr };
+    bool m_didCallFunctionThatWrites { false };
+    bool m_didChangeOperand { false };
+    static thread_local Checker* s_innermost;
+};
+
+thread_local NativeCallValidationScope::Checker* NativeCallValidationScope::Checker::s_innermost;
 
 NEVER_INLINE void NativeCallValidationScope::open(VM& vm, const NativeCall& call, const NativeCallExpectation& expectation)
 {
     JSC_REMOVABLE_DEFINITION(ImageCompiler, &NativeCallValidationScope::open);
-    if (standsForMissingAccessor(call.callee) || entersCompiledCode(call.callee))
+    // The engine fills the missing half of an accessor pair with a function of its own. No program can name it, and a call of it is the read or the store that finds no accessor.
+    // The function object of a compiled closure has native code that enters the compiled code, or that throws where a class is called without `new`. What it is handed goes to compiled code or nowhere.
+    if (is<NullGetterFunction>(call.callee) || is<NullSetterFunction>(call.callee) || CompiledCallee::isCompiledCallee(call.callee))
         return;
     m_checker = new Checker(vm, call, expectation);
 }

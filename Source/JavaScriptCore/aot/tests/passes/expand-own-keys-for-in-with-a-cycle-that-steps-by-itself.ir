@@ -48,11 +48,9 @@ function f0 name="keepsTheLast" parameters=[{type=object}] results=[{type=anythi
   b8() frequency=Unlikely:
     v28 = ElemGet v0, v23
     Jump -> next b4(v28, v26)
-}
-# CHECK-LABEL: function f0 name="keepsTheLast"
 # CHECK: b14({{*}}):
 # CHECK-NEXT: : 1 = Integer integer=1
 # CHECK-NEXT: = IsEnumeratorCurrent v1, v0,
-# ONCE-LABEL: function f0 name="keepsTheLast"
 # ONCE-COUNT-1: -> next b14(
 # ONCE-NOT: -> next b14(
+}

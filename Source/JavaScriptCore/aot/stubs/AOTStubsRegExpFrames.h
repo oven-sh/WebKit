@@ -9,6 +9,7 @@
 
 #include "AOTInstance.h"
 #include "AOTStubHelpers.h"
+#include "AOTStubRegisters.h"
 #include "AOTVMState.h"
 #include "JSCJSValueInlines.h"
 #include "RegExpObject.h"
@@ -18,6 +19,7 @@
 #include "YarrJIT.h"
 #include "YarrMatchingContextHolder.h"
 #include <memory>
+#include <optional>
 #include <span>
 #include <wtf/MathExtras.h>
 #include <wtf/NotFound.h>
@@ -77,6 +79,27 @@ inline void loadMatchOutput(StubAssembler& jit, GPRReg output)
 {
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), output);
     jit.loadPtr(Address(output, VM::offsetOfAOTState() + VMState::offsetOfRegExpMatchOutput()), output);
+}
+
+// The characters are in A0. Without a start the match starts at 0. loadOutput(output) loads the address of the offsets, call() calls the code, whose answer goes to answer.
+inline void callMatchingCodeInFrame(StubAssembler& jit, std::span<const GPRReg> savedOperands, GPRReg subjectLength, std::optional<GPRReg> start, GPRReg answer, const auto& loadOutput, const auto& call)
+{
+    const GPRReg startArgument = jit.reuseScratch(StubRegister::A1);
+    const GPRReg lengthArgument = jit.reuseScratch(StubRegister::A2);
+    const GPRReg output = jit.reuseScratch(StubRegister::A3);
+    const GPRReg context = jit.reuseScratch(StubRegister::A4);
+    pushMatchFrame(jit, savedOperands);
+    jit.move(subjectLength, lengthArgument);
+    // start may share its register with output.
+    if (start)
+        jit.move(*start, startArgument);
+    else
+        jit.move(TrustedImm32(0), startArgument);
+    loadOutput(output);
+    storeMatchingContext(jit, context);
+    jit.move(CCallHelpers::stackPointerRegister, context);
+    call();
+    popMatchFrame(jit, answer, savedOperands);
 }
 
 inline Address matchOutputEntry(GPRReg output, unsigned index)

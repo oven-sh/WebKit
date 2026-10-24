@@ -321,9 +321,16 @@ static void testEncodedHashes()
     TestBuild& build = image.build;
     BitVector namedByNoTable;
     EncodedText encoded = encodeText({ build.program(), build.plan().uses.strings, build.context().identifierNumbering(), build.plan().stringConstants, namedByNoTable }, build.context());
+    auto hashOf = [&](StringID id) -> unsigned {
+        const ImageString& record = spanReinterpretCast<const ImageString>(encoded.strings.span())[id.index()];
+        RELEASE_ASSERT(record.hasText());
+        if (!record.hasIdentifierNumber())
+            return record.hashOrIdentifierNumber();
+        return spanReinterpretCast<const ImageIdentifier>(encoded.identifiers.span())[record.hashOrIdentifierNumber()].hashOrSymbol();
+    };
     for (const ExpectedText& expected : expectedTexts())
-        AOT_TEST_CHECK(encoded.hashOf(image.idOf(expected.text)) == freshCopyOf(expected.text).impl()->hash());
-    AOT_TEST_CHECK(encoded.hashOf(image.idOf(nameOfFreeVariable)) == String(nameOfFreeVariable).impl()->hash());
+        AOT_TEST_CHECK(hashOf(image.idOf(expected.text)) == freshCopyOf(expected.text).impl()->hash());
+    AOT_TEST_CHECK(hashOf(image.idOf(nameOfFreeVariable)) == String(nameOfFreeVariable).impl()->hash());
 }
 
 // The paths of a module are only shown. A string that a table holds as a value has its header. A constant of which only the cell is made, whoever else shows it, gets its header with the cell.

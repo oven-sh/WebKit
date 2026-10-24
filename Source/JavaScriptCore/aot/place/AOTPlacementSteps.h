@@ -8,7 +8,6 @@
 #if ENABLE(AOT)
 
 #include "AOTCellSizeClasses.h"
-#include "AOTGlobalBindingPlacement.h"
 #include "AOTPlacement.h"
 #include "AOTPropertyAccessReceivers.h"
 #include "AOTSiteWeight.h"
@@ -55,6 +54,17 @@ struct SourceSite {
 
 SourceSite sourceSiteOf(const Program&, FunctionID, const Value&);
 
+inline bool hasArrayProfile(ArrayLiteralStorage storage)
+{
+    switch (storage) {
+    case ArrayLiteralStorage::Fresh:
+        return false;
+    case ArrayLiteralStorage::Profiled:
+        return true;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 struct FieldAccessUse {
     SlotAccessKey access;
     // Right where some receiver has no slot for the field, so that the access tests shapes. Nobody reads another's, and it may lack sites.
@@ -88,12 +98,12 @@ struct AllocationUse {
     }
 };
 
-struct KeyOrderTestUse {
+struct FieldsOfLayout {
     LayoutID layout;
     Vector<FieldIndex> fields;
 
-    friend bool operator==(const KeyOrderTestUse&, const KeyOrderTestUse&) = default;
-    friend bool operator<(const KeyOrderTestUse& a, const KeyOrderTestUse& b)
+    friend bool operator==(const FieldsOfLayout&, const FieldsOfLayout&) = default;
+    friend bool operator<(const FieldsOfLayout& a, const FieldsOfLayout& b)
     {
         if (a.layout != b.layout)
             return a.layout < b.layout;
@@ -101,19 +111,9 @@ struct KeyOrderTestUse {
     }
 };
 
+using KeyOrderTestUse = FieldsOfLayout;
 // The fields that one store, or one run of stores, may create in an object of the layout, in the sequence of the stores.
-struct FieldCreationUse {
-    LayoutID layout;
-    Vector<FieldIndex> fields;
-
-    friend bool operator==(const FieldCreationUse&, const FieldCreationUse&) = default;
-    friend bool operator<(const FieldCreationUse& a, const FieldCreationUse& b)
-    {
-        if (a.layout != b.layout)
-            return a.layout < b.layout;
-        return std::ranges::lexicographical_compare(a.fields, b.fields);
-    }
-};
+using FieldCreationUse = FieldsOfLayout;
 
 struct GuardUse {
     LayoutID classLayout;
@@ -123,7 +123,6 @@ struct GuardUse {
     SiteWeight weight { 0 };
 };
 
-// A call through the method table: the pairs of a shape and a selector that it can ask for.
 struct TableCallUse {
     friend auto operator<=>(const TableCallUse&, const TableCallUse&) = default;
 
@@ -137,6 +136,13 @@ struct GuardSetUse {
     SiteWeight weight { 0 };
 };
 
+struct RequireEdgeUse {
+    RequireEdge edge;
+    StringID specifier;
+
+    friend auto operator<=>(const RequireEdgeUse&, const RequireEdgeUse&) = default;
+};
+
 struct ModuleBuiltinUse {
     BuiltinID builtin;
     ModuleID module;
@@ -144,14 +150,22 @@ struct ModuleBuiltinUse {
     friend auto operator<=>(const ModuleBuiltinUse&, const ModuleBuiltinUse&) = default;
 };
 
-struct PlacedSites {
+// Where the program's text names the cell of a key: module, function as written. A cell that no operation names comes behind all that one does.
+struct KeyCellUse {
+    PropertyKeyID key;
+    uint32_t module { UINT32_MAX };
+    uint32_t sourceFunction { UINT32_MAX };
+
+    friend auto operator<=>(const KeyCellUse&, const KeyCellUse&) = default;
+};
+
+// Of one body, or of all of them: then ascending, each once.
+struct SiteLists {
     Vector<FieldAccessUse> fieldAccesses;
     Vector<ShapeTestUse> shapeTests;
     Vector<AllocationUse> allocations;
     Vector<KeyOrderTestUse> keyOrderTests;
     Vector<FieldCreationUse> fieldCreations;
-    // By function: how many stores that may add a field the functions in front of it have. One entry more than there are functions.
-    Vector<uint32_t> firstStoreThatMayAdd;
     Vector<GuardUse> guards;
     Vector<GuardSetUse> guardSets;
     Vector<TableCallUse> tableCalls;
@@ -162,9 +176,14 @@ struct PlacedSites {
     Vector<DataID> arraysWithStorageInImage;
     Vector<BuiltinCellKey> builtinCells;
     Vector<StringID> bigIntConstants;
-    Vector<RequireEdge> requireEdges;
-    Vector<StringID> requireEdgeSpecifiers;
+    Vector<RequireEdgeUse> requireEdges;
     Vector<ModuleBuiltinUse> moduleBuiltins;
+    unsigned maxClosureCaptures { 0 };
+};
+
+struct PlacedSites : SiteLists {
+    // By function: how many stores that may add a field the functions in front of it have. One entry more than there are functions.
+    Vector<uint32_t> firstStoreThatMayAdd;
     BitVector variablesNamedByCode;
     // Of a type that code hands to the run time the tables hold a record. A type that code only tests needs the cells and the names that its test compares with.
     BitVector typesInRunTimePayloads;
@@ -172,7 +191,6 @@ struct PlacedSites {
     BitVector functionsWithAllocatedClosures;
     BitVector layoutsOutOfUse;
     BitVector bodiesWithoutCode;
-    unsigned maxClosureCaptures { 0 };
 };
 
 struct ShapeVariants {
@@ -228,41 +246,6 @@ struct PlacedOrderWords {
     Vector<std::optional<uint32_t>> ofTest;
 };
 
-struct ResolvedSites {
-    RequestTable requests;
-    PlacedPropertyRuns propertyRuns;
-    BitVector stringConstantsInTables;
-};
-
-struct PlacementParts {
-    const SlotPlan* slots { nullptr };
-    ShapeTable shapes;
-    Vector<FieldAccess> fieldAccesses;
-    AllocationTable allocations;
-    LayoutID closureLayout;
-    KeyOrders keyOrders;
-    StaticsPlan statics;
-    GuardBitTable guardBits;
-    MethodTable methodTable;
-    GlobalBindingTable globalBindings;
-    ConstantNumbering constants;
-    FunctionNumbering functions;
-    Vector<std::optional<uint32_t>> classRanks;
-    BitVector layoutsOutOfUse;
-    BitVector typesNeededAtRunTime;
-    BitVector typesWithCells;
-    unsigned numberOfRegExpRecords { 0 };
-};
-
-// Where the program's text names the cell of a key: module, function as written. A cell that no operation names comes behind all that one does.
-struct KeyCellUse {
-    PropertyKeyID key;
-    uint32_t module { UINT32_MAX };
-    uint32_t sourceFunction { UINT32_MAX };
-
-    friend auto operator<=>(const KeyCellUse&, const KeyCellUse&) = default;
-};
-
 struct GlobalBindingSite {
     GlobalBindingKey key;
     FunctionID function;
@@ -271,22 +254,31 @@ struct GlobalBindingSite {
     bool isNamedStore { false };
 };
 
-void collectKeyCellUses(const Program&, FunctionID, Vector<KeyCellUse>&);
-void collectGlobalBindingSites(const Program&, FunctionID, Vector<GlobalBindingSite>&);
+template<typename Site>
+Vector<std::span<const Site>> groupSitesByFunction(std::span<const Site> sites)
+{
+    Vector<std::span<const Site>> groups;
+    size_t first = 0;
+    for (size_t index = 1; index <= sites.size(); ++index) {
+        if (index < sites.size() && sites[index].function == sites[first].function)
+            continue;
+        groups.append(sites.subspan(first, index - first));
+        first = index;
+    }
+    return groups;
+}
 
-PlacedSites collectPlacedSites(const PlacementContext&);
+LayoutID findClosureLayout(const Program&);
+GlobalBindingTable placeGlobalBindings(ProgramEditor&, const PlacementContext&, TypeArena&, BodyScansForPlacement&);
 
 ShapeVariants chooseShapeVariants(const PlacementContext&, const PlacedSites&);
-Vector<FieldAccess> createFieldAccesses(const PlacementContext&, const PlacedSites&, TypeArena&);
 ShapeTestCandidates collectShapeTestCandidates(const PlacementContext&, const PlacedSites&, std::span<const FieldAccess>, const ShapeVariants&, const BitVector& typesNeededAtRunTime);
 ShapeNumbering numberShapes(const PlacementContext&, const ShapeTestCandidates&, const ShapeVariants&);
 ShapeTest chooseShapeTestForm(std::span<const uint32_t> ascendingShapes, const AssignedShapes&);
-ShapeTest chooseShapeTestForm(std::span<const uint32_t> ascendingShapes, std::span<const uint32_t> ascendingKnownShapes, const AssignedShapes&);
 ShapeTable deriveShapeTests(const PlacementContext&, const PlacedSites&, const ShapeNumbering&, const ShapeVariants&, const BitVector& typesNeededAtRunTime, Vector<FieldAccess>&);
 
-AllocationTable numberAllocations(const PlacementContext&, const PlacedSites&);
+FunctionNumbering numberFunctions(const PlacementContext&, const PlacedSites&);
 std::pair<KeyOrders, PlacedOrderWords> collectKeyOrders(const PlacementContext&, const PlacedSites&, const AllocationTable&);
-void finishAllocations(const PlacementContext&, const ShapeTable&, const PlacedOrderWords&, std::span<const AllocationUse>, AllocationTable&);
 
 Vector<GuardUse, 4> guardsOf(PayloadListView<MemberConditionRecord>);
 Vector<GuardUse, 4> guardsOf(std::span<const MemberCondition>);
@@ -320,14 +312,6 @@ void placeGuardSets(const PlacementContext&, const PlacedSites&, GuardBitTable&)
 std::pair<StaticsPlan, LiteralSites> placeStatics(const PlacementContext&, const PlacedSites&, GuardBitTable&);
 uint64_t initialWordOf(const Program&, VariableID, const PlannedVariable&);
 
-// What collectKeyCellUses() gives for a function with a body.
-using KeyCellUsesOfBodies = ScopedLambda<const Vector<KeyCellUse>&(FunctionID)>;
-ConstantNumbering numberConstants(const PlacementContext&, PlacedSites&, const BitVector& typesWithCells, const KeyCellUsesOfBodies* = nullptr);
-FunctionNumbering numberFunctions(const PlacementContext&, const PlacedSites&);
-enum class TypesTestedByCode : uint8_t { Exclude, Include };
-enum class LayoutsOutOfUse : uint8_t { Exclude, Include };
-BitVector computeTypesNeededAtRunTime(const PlacementContext&, const PlacedSites&, TypesTestedByCode, LayoutsOutOfUse = LayoutsOutOfUse::Exclude);
-
 struct SiteResolutionInputs {
     const PlacedSites& sites;
     const LiteralSites& literals;
@@ -335,10 +319,8 @@ struct SiteResolutionInputs {
     const Placement& placement;
 };
 
-ResolvedSites resolveSites(ProgramEditor&, const PlacementContext&, const SiteResolutionInputs&);
-// The same in two parts, for a caller that has the bodies changed between them by somebody who asks for field accesses, adds values and blocks, and leaves every value its number.
-void resolveFieldAccesses(const PlacementContext&, const SiteResolutionInputs&, FunctionID, Function&, Vector<ValueID>& valuesWithOtherWords);
-// By function.
+// The words of sites in two parts. Between them the bodies may be changed by somebody who asks for field accesses, adds values and blocks, and leaves every value its number.
+void resolveFieldAccesses(const Placement&, Function&, Vector<ValueID>& valuesWithOtherWords);
 ResolvedSites resolveOtherWords(ProgramEditor&, const PlacementContext&, const SiteResolutionInputs&, std::span<const Vector<ValueID>> valuesWithOtherWords);
 // The request of such an operation is the number of a run of property keys: the keys it stores under, or the keys a copy leaves out.
 bool namesPropertyRun(Opcode);

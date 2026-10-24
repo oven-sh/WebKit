@@ -7,7 +7,6 @@ module m0 path="main.js" displayPath="main.js"
 # CHECK-LABEL: function f0 name="call-in-third-block"
 # CHECK-NOT: Switch
 function f0 name="call-in-third-block" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = String string="a"
     v3 = StrictEq v0, v2
     Branch v3 -> taken b1(), notTaken b2()
@@ -43,7 +42,6 @@ function f0 name="call-in-third-block" parameters=[{type=anything}, {type=anythi
 # CHECK: b3():
 # CHECK-NEXT: Return [[third]]
 function f1 name="constant-used-later" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="a"
     v2 = StrictEq v0, v1
     Branch v2 -> taken b1(), notTaken b2()
@@ -74,7 +72,6 @@ function f1 name="constant-used-later" parameters=[{type=anything}] results=[{ty
 # CHECK-LABEL: function f2 name="comparison-used-later"
 # CHECK-NOT: Switch
 function f2 name="comparison-used-later" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="a"
     v2 = StrictEq v0, v1
     Branch v2 -> taken b1(), notTaken b2()
@@ -99,7 +96,6 @@ function f2 name="comparison-used-later" parameters=[{type=anything}] results=[{
 # CHECK-LABEL: function f3 name="negated-comparison"
 # CHECK-NOT: Switch
 function f3 name="negated-comparison" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="a"
     v2 = StrictEq v0, v1
     Branch v2 -> taken b1(), notTaken b2()

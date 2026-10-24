@@ -28,22 +28,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr OptionSet<ObjectMutation> mutationsOfBuiltinInstancesWithoutMark {
-    ObjectMutation::ChangePrototype,
-    ObjectMutation::BecomePrototype,
-    ObjectMutation::StoreOfOtherType,
-};
-
-static ValueFlowObjectID builtinInstanceAllocatedBy(const ValueFlowUniverse& universe, FunctionID function, ValueID operation, Opcode opcode)
-{
-    if (!PayloadWord::allocationSite(opcode))
-        return { };
-    ValueFlowObjectID object = universe.siteObject(function, operation);
-    const ValueFlowSite* site = object ? universe.siteOf(object) : nullptr;
-    if (!site || site->origin != ValueFlowSiteOrigin::Operation || site->layout || !site->builtinClass)
-        return { };
-    return object;
-}
+static constexpr OptionSet<ObjectMutation> mutationsOfBuiltinInstancesWithoutMark { ObjectMutation::ChangePrototype, ObjectMutation::BecomePrototype, ObjectMutation::StoreOfOtherType };
 
 static void stampAllocationsOfBuiltinInstances(const ValueFlowResultInputs& inputs, const ValueFlowContainerResults& containers, FlowResultTables& tables)
 {
@@ -69,8 +54,10 @@ static void stampAllocationsOfBuiltinInstances(const ValueFlowResultInputs& inpu
             return instances;
         const Function& function = program.functions[index];
         for (uint32_t valueIndex = 0; valueIndex < function.values.size(); ++valueIndex) {
-            if (ValueFlowObjectID object = builtinInstanceAllocatedBy(universe, FunctionID(index), ValueID(valueIndex), function.values[valueIndex].opcode))
-                instances.append({ ValueID(valueIndex), object, universe.siteOf(object)->builtinClass, markedMutationsOf(inputs, object), neverChangesOnceMade(inputs, object) });
+            ValueFlowObjectID object = PayloadWord::allocationSite(function.values[valueIndex].opcode) ? universe.siteObject(FunctionID(index), ValueID(valueIndex)) : ValueFlowObjectID();
+            const ValueFlowSite* site = object ? universe.siteOf(object) : nullptr;
+            if (site && site->origin == ValueFlowSiteOrigin::Operation && !site->layout && site->builtinClass)
+                instances.append({ ValueID(valueIndex), object, site->builtinClass, markedMutationsOf(inputs, object), neverChangesOnceMade(inputs, object) });
         }
         return instances;
     });
@@ -225,25 +212,25 @@ public:
     {
         RELEASE_ASSERT(priority != TaskPriority::Idle);
         StepID id = m_steps.size();
-        m_steps.append(makeUnique<Step>(WTF::move(run), static_cast<unsigned>(awaited.size()), priority));
+        m_steps.append(Step { WTF::move(run), static_cast<unsigned>(awaited.size()), priority, { } });
         for (StepID earlier : awaited)
-            m_steps[earlier]->followers.append(id);
+            m_steps[earlier].followers.append(id);
         return id;
     }
 
     void run()
     {
         if (m_loops.width() == 1) {
-            for (auto& step : m_steps)
-                step->run();
+            for (Step& step : m_steps)
+                step.run();
             return;
         }
         {
             Locker locker { m_lock };
             m_numberUnfinished = m_steps.size();
             for (StepID id = 0; id < m_steps.size(); ++id) {
-                if (!m_steps[id]->numberAwaited)
-                    dueOf(m_steps[id]->priority).append(id);
+                if (!m_steps[id].numberAwaited)
+                    dueOf(m_steps[id].priority).append(id);
             }
             if (size_t numberDue = dueOf(TaskPriority::Foreground).size())
                 askForThreads(TaskPriority::Foreground, numberDue - 1);
@@ -269,14 +256,6 @@ public:
 
 private:
     struct Step {
-        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Step);
-        Step(WTF::Function<void()>&& run, unsigned numberAwaited, TaskPriority priority)
-            : run(WTF::move(run))
-            , numberAwaited(numberAwaited)
-            , priority(priority)
-        {
-        }
-
         WTF::Function<void()> run;
         unsigned numberAwaited;
         TaskPriority priority;
@@ -290,20 +269,20 @@ private:
 
     void runStep(StepID id)
     {
-        m_steps[id]->run();
+        m_steps[id].run();
         Locker locker { m_lock };
         --m_numberUnfinished;
         std::array<size_t, numberOfPriorities> numberDue { };
-        for (StepID follower : m_steps[id]->followers) {
-            if (--m_steps[follower]->numberAwaited)
+        for (StepID follower : m_steps[id].followers) {
+            if (--m_steps[follower].numberAwaited)
                 continue;
-            dueOf(m_steps[follower]->priority).append(follower);
-            ++numberDue[static_cast<size_t>(m_steps[follower]->priority)];
+            dueOf(m_steps[follower].priority).append(follower);
+            ++numberDue[static_cast<size_t>(m_steps[follower].priority)];
         }
         if (!m_numberUnfinished || (numberDue[static_cast<size_t>(TaskPriority::Foreground)] && m_callerWaits))
             m_hasChanged.notifyAll();
         for (TaskPriority priority : { TaskPriority::Foreground, TaskPriority::Background }) {
-            size_t numberTaken = (priority == m_steps[id]->priority) + (priority == TaskPriority::Foreground && m_callerWaits);
+            size_t numberTaken = (priority == m_steps[id].priority) + (priority == TaskPriority::Foreground && m_callerWaits);
             if (numberDue[static_cast<size_t>(priority)] > numberTaken)
                 askForThreads(priority, numberDue[static_cast<size_t>(priority)] - numberTaken);
         }
@@ -338,7 +317,7 @@ private:
     Deque<StepID>& dueOf(TaskPriority priority) WTF_REQUIRES_LOCK(m_lock) { return m_due[static_cast<size_t>(priority)]; }
 
     const ParallelLoops& m_loops;
-    Vector<std::unique_ptr<Step>> m_steps;
+    Vector<Step> m_steps;
     Lock m_lock;
     WTF::Condition m_hasChanged;
     std::array<Deque<StepID>, numberOfPriorities> m_due WTF_GUARDED_BY_LOCK(m_lock);

@@ -17,7 +17,6 @@ layout L0 name="Settings" fields=[{key="level" declared={type=number} flags=[IsR
 variable g0 name="made" module=m0 declared={type=undefined|null|L0 flags=[IsExpected]} initialization=Undefined
 variable g1 name="either" module=m0 declared={type=undefined|null|L0 flags=[IsExpected]} initialization=Undefined
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=ObjectCreate
     v1 = Builtin builtin=Object
     v2 = Null
@@ -32,14 +31,12 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="readsMade" module=m0 results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = Check v0 castType=undefined|null|L0
     v2 = PropGet v1 key="level"
     Return v2
 }
 function f2 name="readsEither" module=m0 results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g1
     v1 = Check v0 castType=undefined|null|L0
     v2 = PropGet v1 key="level"

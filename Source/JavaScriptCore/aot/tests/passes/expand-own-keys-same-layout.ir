@@ -16,8 +16,6 @@ function f0 name="sameLayout" parameters=[{type=object}, {type=number}] results=
     PropDefine v2, v1 key="a"
     v5 = FinishObject v2
     Return v5
-}
-# CHECK-LABEL: function f0 name="sameLayout"
 # CHECK: v2:{{*}}= NewObject layout=L0
 # CHECK-NEXT: [[copied0]]: boolean = TryCopyFields v2, v0 layout=L0
 # CHECK-NEXT: Branch [[copied0]]
@@ -26,19 +24,18 @@ function f0 name="sameLayout" parameters=[{type=object}, {type=number}] results=
 # CHECK-NOT: GetSlot
 # CHECK: frequency=Rare:
 # CHECK-NEXT: CopyDataProperties v2, v0
+}
 
 function f1 name="provenSameLayout" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = NewObject layout=L0
     CopyDataProperties v1, v0
     v3 = FinishObject v1
     Return v3
-}
-# CHECK-LABEL: function f1 name="provenSameLayout"
 # CHECK: v1:{{*}}= NewObject layout=L0
 # CHECK-NEXT: [[copied1]]: boolean = TryCopyFields v1, v0 layout=L0
 # CHECK-NOT: ShapeTest
 # CHECK: CopyDataProperties v1, v0
+}
 
 function f2 name="literalHasProperty" parameters=[{type=object}, {type=number}] results=[{type=anything}] {
   b0(v0: object ~ L0, v1: number):
@@ -46,10 +43,9 @@ function f2 name="literalHasProperty" parameters=[{type=object}, {type=number}] 
     CopyDataProperties v2, v0
     v4 = FinishObject v2
     Return v4
-}
-# CHECK-LABEL: function f2 name="literalHasProperty"
 # CHECK-NOT: TryCopyFields
 # CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[0, 1, 2]
+}
 
 function f3 name="propertyDefinedFirst" parameters=[{type=object}, {type=number}] results=[{type=anything}] {
   b0(v0: object ~ L0, v1: number):
@@ -58,10 +54,9 @@ function f3 name="propertyDefinedFirst" parameters=[{type=object}, {type=number}
     CopyDataProperties v2, v0
     v5 = FinishObject v2
     Return v5
-}
-# CHECK-LABEL: function f3 name="propertyDefinedFirst"
 # CHECK-NOT: TryCopyFields
 # CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[0, 1, 2]
+}
 
 function f4 name="excludedKey" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L0):
@@ -69,10 +64,9 @@ function f4 name="excludedKey" parameters=[{type=object}] results=[{type=anythin
     CopyDataProperties v1, v0 excludedKeys=["a"]
     v3 = FinishObject v1
     Return v3
-}
-# CHECK-LABEL: function f4 name="excludedKey"
 # CHECK-NOT: TryCopyFields
 # CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[0, 1, 2]
+}
 
 function f5 name="otherLayout" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L1):
@@ -80,10 +74,9 @@ function f5 name="otherLayout" parameters=[{type=object}] results=[{type=anythin
     CopyDataProperties v1, v0
     v3 = FinishObject v1
     Return v3
-}
-# CHECK-LABEL: function f5 name="otherLayout"
 # CHECK-NOT: TryCopyFields
 # CHECK: = HasKeyOrder v0, {{*}} layout=L1 fields=[0, 1, 2]
+}
 
 function f6 name="slotsThatAreMoreThanBits" parameters=[{type=object}, {type=object}] results=[{type=anything}] {
   b0(v0: object ~ L2, v1: object ~ L3):
@@ -94,12 +87,10 @@ function f6 name="slotsThatAreMoreThanBits" parameters=[{type=object}, {type=obj
     CopyDataProperties v5, v1
     v7 = FinishObject v5
     Return v7
-}
-# CHECK-LABEL: function f6 name="slotsThatAreMoreThanBits"
 # CHECK-NOT: TryCopyFields
 # CHECK: Return
+}
 
 function f7 name="run" results=[{type=anything}] {
-  b0():
     Return
 }

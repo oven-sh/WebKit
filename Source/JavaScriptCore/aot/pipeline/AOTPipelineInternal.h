@@ -12,11 +12,8 @@
 #include "AOTPassRunner.h"
 #include "AOTPipeline.h"
 #include "AOTProgramAnalyses.h"
-#include "AOTProgramCaches.h"
-#include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include <memory>
-#include <optional>
 #include <span>
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
@@ -29,107 +26,24 @@ class OutliningSiteFinder;
 struct PlacementInputs;
 struct ReadersOfOutlinedFunctions;
 
-class CachesAroundStepsThatRunBesideEachOther {
-    WTF_MAKE_NONCOPYABLE(CachesAroundStepsThatRunBesideEachOther);
-public:
-    CachesAroundStepsThatRunBesideEachOther(const Program& program, BuildContext& build)
-    {
-        if (!program.types.hasOpenPhase())
-            m_scratch.emplace(program.types, 0u, TypeInterningPhase::Scratch);
-        m_caches.emplace(program, build);
-    }
-
-    ~CachesAroundStepsThatRunBesideEachOther()
-    {
-        m_caches.reset();
-        if (m_scratch)
-            m_scratch->discard();
-    }
-
-private:
-    std::optional<TypeInterningPhase> m_scratch;
-    std::optional<ProgramCaches> m_caches;
-};
-
 class Pipeline {
     WTF_MAKE_NONCOPYABLE(Pipeline);
 public:
     Pipeline(Program&, PassRunner&);
     ~Pipeline();
 
-    void runAllStages();
-    void runAllStages(NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries);
-    std::unique_ptr<PipelineOutput> takeOutput();
+    void runAllStages(NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries = [](const PipelineOutput&) { });
+    std::unique_ptr<PipelineOutput> takeOutput() { return WTF::move(m_output); }
 
     void runReadStage();
-    void runFlowStage();
-    void runOptimizeStage();
-    void runSlotStage();
-    void runSelectStage();
-    // None unless the report lists the sites.
-    const Heat* heatForReport();
     void runPlacementStage();
     void runRepresentationStage();
-    void runPlacementAndRepresentationStagesTogether();
 
     PassOutcome runProgramPass(PassID);
+    PassOutcome verify(IRForm);
     void runSchedule(FunctionSchedule, const StepsAroundSchedule& = { });
     void dumpResultOf(PassID, PrintStream&) const;
 
-    PassOutcome allocateTaggedLayouts();
-    PassOutcome checkTypesAtEntry();
-    PassOutcome splitBehindEntryChecks();
-    PassOutcome skipAnsweredEntryChecks();
-    PassOutcome narrowFieldTypes();
-    PassOutcome nameCreatedSymbols();
-    PassOutcome verify(IRForm);
-    void verifyUnspecifiedValues();
-    PassOutcome guardTaintedPositions();
-    PassOutcome analyzeFlow();
-    PassOutcome applyFlowResults();
-    PassOutcome checkLockedBuiltinWrites();
-    PassOutcome buildCallGraph();
-    PassOutcome computeEffectSummaries();
-    PassOutcome estimateHeat();
-    PassOutcome summarizeForInlining();
-    PassOutcome removeUnreadExports();
-    PassOutcome deferDefinitions();
-    PassOutcome narrowConstantVariables();
-    PassOutcome deferInitializers();
-    PassOutcome markResultsUsedAsKeys();
-    PassOutcome deferClosuresInFields();
-    PassOutcome promoteEnvironmentsToVariables();
-    PassOutcome readCapturesFromEnvironments();
-    PassOutcome removeUnreadFields();
-    PassOutcome removeUnusedResults();
-    PassOutcome removeUnusedParameters();
-    PassOutcome removeUnreachableFunctions();
-    PassOutcome splitFreshResults();
-    PassOutcome promoteAggregateParameters();
-    PassOutcome splitCoroutines();
-    PassOutcome callModules();
-    PassOutcome createEntrypoints();
-    PassOutcome chooseCallingConventions();
-    PassOutcome allocateInFrames();
-    PassOutcome allocateInnerObjects();
-    PassOutcome reuseEnvironments();
-    PassOutcome numberLiteralStrings();
-    PassOutcome embedConstantCollections();
-    PassOutcome collectRegExpLiterals();
-    PassOutcome outlineColdOperations(OutliningSiteFinder* = nullptr, const ReadersOfOutlinedFunctions* = nullptr);
-    PassOutcome inlineHeads(const ReaderOfScheduledFunction* readEditedFunction = nullptr);
-    PassOutcome elideStackChecks();
-    PassOutcome planSlots();
-    PassOutcome numberAndEncode();
-    PassOutcome placeSiteCaches();
-    PassOutcome checkPlacement();
-
-    void planSlotsBesideOtherReadersOfPreparedBodies();
-    PassOutcome numberAndEncodeBesideOtherReadersOfSelectedBodies();
-    PassOutcome numberAndEncode(NOESCAPE const ScopedLambda<void()>& readBodiesBesideCollectingSites);
-    void collectRegExpsAndElideStackChecks(const CallGraph&);
-    // The stages NumberAndEncode and ChooseRepresentations as one. It says when a step has ended.
-    void numberBesideChoosingRepresentations(NOESCAPE const ScopedLambda<void(ASCIILiteral)>& didFinish);
     PlacementInputs createPlacementInputs(const CallGraph&);
 
     Program& program() { return m_program; }
@@ -143,6 +57,8 @@ public:
     OptimizationInputs inputsFor(FunctionSchedule schedule) { return createInputs(inputsOf(schedule), readsEffectSummaries(schedule) ? EffectSummariesFor::Reader : EffectSummariesFor::Nobody); }
 
 private:
+    class TimedStage;
+
     // To bring the effect summaries up to date is to read every body that has changed and to solve the program again.
     static bool readsEffectSummaries(PassID id)
     {
@@ -150,11 +66,14 @@ private:
     }
     static bool readsEffectSummaries(FunctionSchedule schedule) { return schedule != FunctionSchedule::Resolve && schedule != FunctionSchedule::Represent; }
 
-    template<typename Functor>
-    auto edit(PassID id, const Functor& functor)
+    // The arguments are those that the pass takes behind the editor.
+    template<typename Pass, typename... Arguments>
+    auto edit(PassID id, const Pass& pass, Arguments&&... arguments)
     {
         inputsFor(id);
-        return m_runner.runProgramPass(id, m_program, m_analyses, functor);
+        return m_runner.runProgramPass(id, m_program, m_analyses, [&](ProgramEditor& editor) {
+            return pass(editor, arguments...);
+        });
     }
 
     template<typename Functor>
@@ -164,12 +83,31 @@ private:
         return m_runner.runProgramPassWithoutEditor(id, m_program, m_analyses, functor, bodiesAreChanged);
     }
 
-    template<typename Functor>
-    auto read(PassID id, const Functor& functor)
+    template<typename Analysis, typename... Arguments>
+    auto read(PassID id, const Analysis& analysis, Arguments&&... arguments)
     {
         inputsFor(id);
-        return m_runner.runAnalysis(id, m_program, functor);
+        return m_runner.runAnalysis(id, m_program, [&] {
+            return analysis(arguments...);
+        });
     }
+
+    void runFlowStage();
+    void runOptimizeStage();
+    void runSlotStage();
+    void runSelectStage();
+    // The stages NumberAndEncode and ChooseRepresentations as one.
+    void runPlacementAndRepresentationStagesTogether();
+
+    PassOutcome outlineColdOperations(OutliningSiteFinder* = nullptr, const ReadersOfOutlinedFunctions* = nullptr);
+    PassOutcome inlineHeads(const ReaderOfScheduledFunction* readEditedFunction = nullptr);
+    PassOutcome numberAndEncode(NOESCAPE const ScopedLambda<void()>& readBodiesBesideCollectingSites);
+    const CallGraph& prepareToReadSelectedBodiesBesideNumbering();
+    void collectRegExpsAndElideStackChecks(const CallGraph&);
+    void countGenericVersions();
+    void didPlace();
+    // None unless the report lists the sites.
+    const Heat* heatForReport();
 
     void advanceTo(IRForm, bool didRunProducer);
     void didAddFunctions();

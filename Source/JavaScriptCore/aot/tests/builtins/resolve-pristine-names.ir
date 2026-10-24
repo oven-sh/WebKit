@@ -6,47 +6,40 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="provenByType" parameters=[{type=Array<anything, pristine[Names]>}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Names]>):
     v1 = PropGet v0 key="length"
     v2 = PropGet v0 key="constructor"
     v3 = PropGet v0 key=@@iterator
     v4 = NewArray v1, v2, v3 contents=anything
     Return v4
-}
-# CHECK-LABEL: function f0 name="provenByType"
 # CHECK-NOT: IsPristine
 # CHECK: v1: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: v2: builtin(Array) = Builtin builtin=Array
 # CHECK-NEXT: v3: builtin(ArrayPrototypeValues) = Builtin builtin=ArrayPrototypeValues
 # CHECK-NOT: IsPristine
+}
 
 function f1 name="noProof" parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     v1 = PropGet v0 key="length"
     v2 = PropGet v0 key="constructor"
     v3 = PropGet v0 key=@@iterator
     v4 = NewArray v1, v2, v3 contents=anything
     Return v4
-}
-# CHECK-LABEL: function f1 name="noProof"
 # CHECK-NOT: IsPristine
 # CHECK: v1: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
 # CHECK-NEXT: v2: anything = PropGet v0 key="constructor"
 # CHECK-NEXT: v3: anything = PropGet v0 key=@@iterator
 # CHECK-NOT: IsPristine
+}
 
 function f2 name="otherAspectProven" parameters=[{type=Array<anything, pristine[Storage]>}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>):
     v1 = PropGet v0 key="constructor"
     Return v1
-}
-# CHECK-LABEL: function f2 name="otherAspectProven"
 # CHECK-NOT: IsPristine
 # CHECK: v1: anything = PropGet v0 key="constructor"
 # CHECK-NOT: IsPristine
+}
 
 function f3 name="freshUntilItEscapes" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray contents=anything
     v2 = PropGet v1 key="constructor"
     v3 = Call v0
@@ -55,8 +48,6 @@ function f3 name="freshUntilItEscapes" parameters=[{type=anything}] results=[{ty
     v6 = PropGet v1 key="constructor"
     v7 = NewArray v2, v4, v6 contents=anything
     Return v7
-}
-# CHECK-LABEL: function f3 name="freshUntilItEscapes"
 # CHECK-NOT: IsPristine
 # CHECK: v2: builtin(Array) = Builtin builtin=Array
 # CHECK-NEXT: v3: anything = Call v0
@@ -64,49 +55,44 @@ function f3 name="freshUntilItEscapes" parameters=[{type=anything}] results=[{ty
 # CHECK-NEXT: v5: anything = Call v0, -, v1
 # CHECK-NEXT: v6: anything = PropGet v1 key="constructor"
 # CHECK-NOT: IsPristine
+}
 
 function f4 name="freshUntilStoreByName" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray contents=anything
     v2 = PropGet v1 key=@@iterator
     PropSet v1, v0 key="label" mode=Strict
     v4 = PropGet v1 key=@@iterator
     v5 = NewArray v2, v4 contents=anything
     Return v5
-}
-# CHECK-LABEL: function f4 name="freshUntilStoreByName"
 # CHECK-NOT: IsPristine
 # CHECK: v2: builtin(ArrayPrototypeValues) = Builtin builtin=ArrayPrototypeValues
 # CHECK-NEXT: PropSet v1, v0 key="label"
 # CHECK-NEXT: v4: anything = PropGet v1 key=@@iterator
 # CHECK-NOT: IsPristine
+}
 
 function f5 name="mapProvenByType" parameters=[{type=Map<anything, anything, pristine[Names]>}] results=[{type=anything}] {
-  b0(v0: Map<anything, anything, pristine[Names]>):
     v1 = PropGet v0 key="size"
     v2 = PropGet v0 key="get"
     v3 = PropGet v0 key=@@iterator
     v4 = NewArray v1, v2, v3 contents=anything
     Return v4
-}
-# CHECK-LABEL: function f5 name="mapProvenByType"
 # CHECK-NOT: IsPristine
 # CHECK: v1: int[0, 2147483647] = CallBuiltin v0 overload=MapPrototypeSize/0
 # CHECK-NEXT: v2: builtin(MapPrototypeGet) = Builtin builtin=MapPrototypeGet
 # CHECK-NEXT: v3: builtin(MapPrototypeEntries) = Builtin builtin=MapPrototypeEntries
 # CHECK-NOT: IsPristine
+}
 
 function f6 name="mapWithoutProof" parameters=[{type=Map}] results=[{type=anything}] {
-  b0(v0: Map):
     v1 = PropGet v0 key="size"
     v2 = PropGet v0 key="get"
     v3 = PropGet v0 key=@@iterator
     v4 = NewArray v1, v2, v3 contents=anything
     Return v4
-}
-# CHECK-LABEL: function f6 name="mapWithoutProof"
 # CHECK-NOT: IsPristine
 # CHECK: v1: anything = PropGet v0 key="size"
 # CHECK-NEXT: v2: anything = PropGet v0 key="get"
 # CHECK-NEXT: v3: anything = PropGet v0 key=@@iterator
 # CHECK-NOT: IsPristine
+}

@@ -20,7 +20,6 @@
 
 entry module=m0
 function f0 name="ids" parameters=[{type=function}] results=[{type=L1}] {
-  b0(v0: function):
     v1 = CallDirect function=f1
     PutModuleVariable v1 variable=g0
     Jump -> next b1(v1)

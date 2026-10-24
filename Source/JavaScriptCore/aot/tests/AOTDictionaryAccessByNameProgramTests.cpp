@@ -15,7 +15,6 @@ namespace JSC { namespace AOT {
 static constexpr ASCIILiteral programText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -24,12 +23,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="read" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="shared"
     Return v1
 }
 function f2 name="store" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     PropSet v0, v1 key="shared" mode=Strict
     Return
 }

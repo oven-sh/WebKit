@@ -9,7 +9,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="appendsInLoop" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=string}] {
-  b0(v0: string, v1: number, v2: anything):
     v3 = String string=""
     v4 = Integer integer=0
     Jump -> next b1(v3, v4)
@@ -35,7 +34,6 @@ function f0 name="appendsInLoop" parameters=[{type=string}, {type=number}, {type
 # CHECK-NEXT: Return [[r0]]
 
 function f1 name="appendsPartsToPrefix" parameters=[{type=string}, {type=string}, {type=number}] results=[{type=string}] {
-  b0(v0: string, v1: string, v2: number):
     v3 = Integer integer=0
     v4 = String string="<"
     Jump -> next b1(v0, v3)
@@ -60,7 +58,6 @@ function f1 name="appendsPartsToPrefix" parameters=[{type=string}, {type=string}
 # CHECK-NEXT: Return [[r1]]
 
 function f2 name="appendsOnBranches" parameters=[{type=boolean}, {type=string}] results=[{type=string}] {
-  b0(v0: boolean, v1: string):
     v2 = String string="a"
     Branch v0 -> taken b1(), notTaken b2()
   b1():
@@ -98,7 +95,6 @@ function f2 name="appendsOnBranches" parameters=[{type=boolean}, {type=string}] 
 # CHECK-NEXT: Return [[r2]]
 
 function f3 name="appendsThreeTimes" parameters=[{type=boolean}, {type=string}] results=[{type=string}] {
-  b0(v0: boolean, v1: string):
     v2 = String string="a"
     Branch v0 -> taken b1(), notTaken b2()
   b1():
@@ -115,7 +111,6 @@ function f3 name="appendsThreeTimes" parameters=[{type=boolean}, {type=string}] 
 # CHECK-NOT: StringBuilder
 
 function f4 name="appendsWithoutCarrying" parameters=[{type=string}, {type=string}, {type=number}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: string, v1: string, v2: number, v3: anything):
     v4 = Integer integer=0
     Jump -> next b1(v4)
   b1(v5):
@@ -136,7 +131,6 @@ function f4 name="appendsWithoutCarrying" parameters=[{type=string}, {type=strin
 # CHECK-NOT: StringBuilder
 
 function f5 name="entersLoopOnBranch" parameters=[{type=boolean}, {type=string}, {type=string}, {type=number}] results=[{type=string}] {
-  b0(v0: boolean, v1: string, v2: string, v3: number):
     v4 = Integer integer=0
     Branch v0 -> taken b1(v1, v4), notTaken b3()
   b1(v5, v6):
@@ -164,7 +158,6 @@ function f5 name="entersLoopOnBranch" parameters=[{type=boolean}, {type=string},
 # CHECK-NEXT: Jump -> next b1([[h5]], v4)
 
 function f6 name="handlerReadsOldState" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=string}] {
-  b0(v0: string, v1: number, v2: anything):
     v3 = String string=""
     v4 = Integer integer=0
     Jump -> next b1(v3, v4)
@@ -200,7 +193,6 @@ function f6 name="handlerReadsOldState" parameters=[{type=string}, {type=number}
 # CHECK-NEXT: Return [[s6]]
 
 function f7 name="readsStateUnderHandler" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: number, v2: anything):
     v3 = String string=""
     v4 = Integer integer=0
     Jump -> next b1(v3, v4)
@@ -232,7 +224,6 @@ function f7 name="readsStateUnderHandler" parameters=[{type=string}, {type=numbe
 # CHECK-NEXT: Jump -> next b4()
 
 function f8 name="interleavesTwoBuilders" parameters=[{type=string}, {type=string}, {type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: string, v2: number, v3: anything):
     v4 = String string="a"
     v5 = String string="b"
     v6 = Integer integer=0
@@ -262,7 +253,6 @@ function f8 name="interleavesTwoBuilders" parameters=[{type=string}, {type=strin
 # CHECK-NEXT: v16: anything = Call v3, -, [[a10]], [[b10]]
 
 function f9 name="testsTruthinessInLoop" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=string}] {
-  b0(v0: string, v1: number, v2: anything):
     v3 = String string=""
     v4 = Integer integer=0
     Jump -> next b1(v3, v4)
@@ -300,7 +290,6 @@ function f9 name="testsTruthinessInLoop" parameters=[{type=string}, {type=number
 # CHECK: Jump -> next b1(v12, v15)
 
 function f10 name="readsLengthInLoop" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=string}] {
-  b0(v0: string, v1: number, v2: anything):
     v3 = String string=""
     v4 = Integer integer=0
     Jump -> next b1(v3, v4)
@@ -329,7 +318,6 @@ function f10 name="readsLengthInLoop" parameters=[{type=string}, {type=number}, 
 # CHECK-NEXT: Return [[r12]]
 
 function f11 name="discardsOnEarlyReturn" parameters=[{type=string}, {type=number}, {type=boolean}] results=[{type=string}] {
-  b0(v0: string, v1: number, v2: boolean):
     v3 = String string=""
     v4 = Integer integer=0
     Jump -> next b1(v3, v4)
@@ -363,7 +351,6 @@ function f11 name="discardsOnEarlyReturn" parameters=[{type=string}, {type=numbe
 # CHECK-NEXT: Jump -> next b5()
 
 function f12 name="returnsOnlyLength" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: number, v2: anything):
     v3 = String string=""
     v4 = Integer integer=0
     Jump -> next b1(v3, v4)
@@ -390,7 +377,6 @@ function f12 name="returnsOnlyLength" parameters=[{type=string}, {type=number}, 
 # CHECK-NEXT: Return v12
 
 function f13 name="readsStateInLoop" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=string}] {
-  b0(v0: string, v1: number, v2: anything):
     v3 = String string=""
     v4 = Integer integer=0
     Jump -> next b1(v3, v4)
@@ -419,7 +405,6 @@ function f13 name="readsStateInLoop" parameters=[{type=string}, {type=number}, {
 # CHECK-NEXT: Return [[r15]]
 
 function f14 name="readsStateBetweenLoops" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=string}] {
-  b0(v0: string, v1: number, v2: anything):
     v3 = String string=""
     v4 = Integer integer=0
     Jump -> next b1(v3, v4)
@@ -461,7 +446,6 @@ function f14 name="readsStateBetweenLoops" parameters=[{type=string}, {type=numb
 # CHECK-NEXT: Return [[r16]]
 
 function f15 name="readsInnerLoopResult" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=string}] {
-  b0(v0: string, v1: number, v2: anything):
     v3 = String string=""
     v4 = Integer integer=0
     Jump -> next b1(v3, v4)
@@ -502,7 +486,6 @@ function f15 name="readsInnerLoopResult" parameters=[{type=string}, {type=number
 # CHECK: Jump -> next b1(v11, v20)
 
 function f16 name="keepsTwoStatesLive" parameters=[{type=string}, {type=string}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: string, v2: anything):
     v3 = Add v0, v1
     v4 = Add v3, v1
     v5 = Add v4, v1
@@ -514,7 +497,6 @@ function f16 name="keepsTwoStatesLive" parameters=[{type=string}, {type=string},
 # CHECK-NOT: StringBuilder
 
 function f17 name="prependsToState" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=string}] {
-  b0(v0: string, v1: number, v2: anything):
     v3 = String string=""
     v4 = Integer integer=0
     Jump -> next b1(v3, v4)
@@ -534,7 +516,6 @@ function f17 name="prependsToState" parameters=[{type=string}, {type=number}, {t
 # CHECK-NOT: StringBuilder
 
 function f18 name="appendsObjectPart" parameters=[{type=anything}, {type=number}, {type=anything}] results=[{type=string}] {
-  b0(v0: anything, v1: number, v2: anything):
     v3 = String string=""
     v4 = Integer integer=0
     Jump -> next b1(v3, v4)
@@ -562,7 +543,6 @@ function f18 name="appendsObjectPart" parameters=[{type=anything}, {type=number}
 # CHECK-NEXT: Return [[r20]]
 
 function f19 name="appendsConvertedPart" parameters=[{type=anything}, {type=number}, {type=anything}] results=[{type=string}] {
-  b0(v0: anything, v1: number, v2: anything):
     v3 = String string=""
     v4 = Integer integer=0
     Jump -> next b1(v3, v4)
@@ -587,7 +567,6 @@ function f19 name="appendsConvertedPart" parameters=[{type=anything}, {type=numb
 # CHECK-NEXT: StringBuilderAppend v5, v9
 
 function f20 name="exceedsWebLimit" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: number, v2: anything):
     v3 = String string=""
     v4 = Integer integer=0
     Jump -> next b1(v3, v3, v3, v4)
@@ -613,7 +592,6 @@ function f20 name="exceedsWebLimit" parameters=[{type=string}, {type=number}, {t
 # CHECK: Jump -> next b1(v5, v6, v13, v15)
 
 function f21 name="keepsSubstringPart" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=string}] {
-  b0(v0: string, v1: number, v2: anything):
     v3 = String string=""
     v4 = Integer integer=0
     Jump -> next b1(v3, v4)
@@ -640,7 +618,6 @@ function f21 name="keepsSubstringPart" parameters=[{type=string}, {type=number},
 # CHECK-NEXT: Return [[r23]]
 
 function f22 name="keepsJoinWithoutAppendFunction" parameters=[{type=Array<string, proven>}, {type=string}] results=[{type=string}] {
-  b0(v0: Array<string, proven>, v1: string):
     v2 = String string=","
     v3 = String string="<"
     v4 = String string=">"
@@ -660,7 +637,6 @@ function f22 name="keepsJoinWithoutAppendFunction" parameters=[{type=Array<strin
 # CHECK-NEXT: Return [[r24]]
 
 function f23 name="keepsJoinBeforeStore" parameters=[{type=Array<string, proven>}, {type=string}, {type=anything}] results=[{type=string}] {
-  b0(v0: Array<string, proven>, v1: string, v2: anything):
     v3 = String string=","
     v4 = String string="<"
     v5 = String string=">"
@@ -677,7 +653,6 @@ function f23 name="keepsJoinBeforeStore" parameters=[{type=Array<string, proven>
 # CHECK: StringBuilderAppend {{*}}, v4, v9, v5
 
 function f24 name="keepsSubstringUsedTwice" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=string}] {
-  b0(v0: string, v1: number, v2: anything):
     v3 = String string=""
     v4 = Integer integer=0
     Jump -> next b1(v3, v4)
@@ -704,7 +679,6 @@ function f24 name="keepsSubstringUsedTwice" parameters=[{type=string}, {type=num
 # CHECK-NEXT: v12: anything = Call v2, -, v10
 
 function f25 name="keepsSubstringUnderHandler" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=string}] {
-  b0(v0: string, v1: number, v2: anything):
     v3 = String string=""
     v4 = Integer integer=0
     Jump -> next b1(v3, v4)
@@ -737,7 +711,6 @@ function f25 name="keepsSubstringUnderHandler" parameters=[{type=string}, {type=
 # CHECK: b5(v13: stringbuilder) role=CatchHandler:
 
 function f26 name="marksElementReadKey" parameters=[{type=anything}, {type=string}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: string, v2: number):
     v3 = String string=","
     v4 = Strcat v1, v3, v2
     v5 = ElemGet v0, v4
@@ -748,7 +721,6 @@ function f26 name="marksElementReadKey" parameters=[{type=anything}, {type=strin
 # CHECK: v4: string = Strcat v1, v3, v2 [isLikelyKey]
 
 function f27 name="marksMapLookupKey" parameters=[{type=Map}, {type=string}, {type=number}] results=[{type=anything}] {
-  b0(v0: Map, v1: string, v2: number):
     v3 = String string=","
     v4 = Strcat v1, v3, v2
     v5 = CallBuiltin v0, v4 overload=MapPrototypeGet/0
@@ -758,7 +730,6 @@ function f27 name="marksMapLookupKey" parameters=[{type=Map}, {type=string}, {ty
 # CHECK: v4: string = Strcat v1, v3, v2 [isLikelyKey]
 
 function f28 name="sharedKeyNotMarked" parameters=[{type=anything}, {type=string}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: string, v2: number):
     v3 = String string=","
     v4 = Strcat v1, v3, v2
     v5 = ElemGet v0, v4
@@ -769,7 +740,6 @@ function f28 name="sharedKeyNotMarked" parameters=[{type=anything}, {type=string
 # CHECK-NOT: isLikelyKey
 
 function f29 name="marksFinishedKey" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: number, v2: anything):
     v3 = String string=""
     v4 = Integer integer=0
     Jump -> next b1(v3, v4)
@@ -794,7 +764,6 @@ function f29 name="marksFinishedKey" parameters=[{type=string}, {type=number}, {
 # CHECK-NEXT: v12: anything = ElemGet v2, [[k31]]
 
 function f30 name="untypedHandlerReadsState" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: number, v2: anything):
     v3 = String string=""
     v4 = Integer integer=0
     Jump -> next b1(v3, v4)
@@ -862,7 +831,6 @@ function f31 name="appendsToHandlerParameter" parameters=[{type=string}, {type=s
 # CHECK-NEXT: Jump -> next b1()
 
 function f32 name="readsStateTwiceInCall" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: number, v2: anything):
     v3 = String string=""
     v4 = Integer integer=0
     Jump -> next b1(v3, v4)
@@ -887,7 +855,6 @@ function f32 name="readsStateTwiceInCall" parameters=[{type=string}, {type=numbe
 # CHECK-NEXT: v12: anything = Call v2, -, [[t34]], [[t34]]
 
 function f33 name="keepsUntypedArrayJoin" parameters=[{type=Array<anything, proven>}, {type=string}] results=[{type=string}] {
-  b0(v0: Array<anything, proven>, v1: string):
     v2 = String string=","
     v3 = String string="<"
     v4 = String string=">"
@@ -906,7 +873,6 @@ function f33 name="keepsUntypedArrayJoin" parameters=[{type=Array<anything, prov
 # CHECK-NEXT: Return [[r35]]
 
 function f34 name="appendsObjectTemplatePart" parameters=[{type=anything}, {type=number}, {type=anything}] results=[{type=string}] {
-  b0(v0: anything, v1: number, v2: anything):
     v3 = String string=""
     v4 = Integer integer=0
     Jump -> next b1(v3, v4)
@@ -931,14 +897,12 @@ function f34 name="appendsObjectTemplatePart" parameters=[{type=anything}, {type
 # CHECK-NEXT: StringBuilderAppend v5, [[p36]]
 
 function f35 name="awaitsBetweenAppends" role=CoroutineRamp flags=[IsAsync] parameters=[{type=string}, {type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f35 body=f36 entryWithoutPromise=f36 promiseType=Promise<anything> promiseParameter=2} {
-  b0(v0: string, v1: anything):
     v2 = NewPromise
     v3 = CallDirect v0, v1, v2 function=f36
     Return v2
 }
 
 function f36 name="awaitsBetweenAppends" role=CoroutineBody flags=[IsAsync] parameters=[{type=string}, {type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f35} creator=Coroutine{kind=AsyncFunction ramp=f35 body=f36 entryWithoutPromise=f36 promiseType=Promise<anything> promiseParameter=2} {
-  b0(v0: string, v1: anything, v2: undefined|Promise):
     v3 = String string=""
     Jump -> next b1(v3)
   b1(v4):

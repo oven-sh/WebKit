@@ -82,69 +82,58 @@ static constexpr ASCIILiteral functionsOfProgram = R"IR(function f0 name="main" 
     Return
 }
 function f1 name="validateByPlan" role=Library parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything, v3: anything):
     v4 = Builtin builtin=TypeError
     v5 = String string="the value does not match the type"
     v6 = Construct v4, -, v5
     Throw v6
 }
 function f2 name="resultIsUsed" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=BunBundleValidate
     v2 = Call v1, -, v0 expectedResult=x0
     Return v2
 }
 function f3 name="resultIsNotUsed" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=BunBundleValidate
     v2 = Call v1, -, v0 expectedResult=x0
     v3 = String string="did not throw"
     Return v3
 }
 function f4 name="inRareBlock" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=BunBundleValidate
     v2 = Call v1, -, v0 expectedResult=x0
     Throw v2
 }
 function f5 name="withDefault" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=BunBundleValidate
     v2 = Call v1, -, v0 expectedResult=x1
     Return v2
 }
 function f6 name="validatedParse" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=JSONParse
     v2 = Call v1, -, v0 expectedResult=x0
     Return v2
 }
 function f7 name="typedParse" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=JSONParse
     v2 = Call v1, -, v0 expectedResult=x2
     Return v2
 }
 function f8 name="inTailPosition" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=BunBundleValidate
     v2 = Call v1, -, v0 expectedResult=x0
     ReturnCall v2
 }
 function f9 name="withoutUndeclaredMembers" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=BunBundleValidate
     v2 = Call v1, -, v0 expectedResult=x3
     Return v2
 }
 function f10 name="againstNothing" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=BunBundleValidate
     v2 = Call v1, -, v0
     ReturnCall v2
 }
 function f11 name="validate" role=Library parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 function f12 name="holdsRule" role=Library parameters=[{type=anything}, {type=string flags=[IsExpected]}, {type=anything}] results=[{type=boolean flags=[IsExpected]}] {
@@ -154,25 +143,21 @@ function f12 name="holdsRule" role=Library parameters=[{type=anything}, {type=st
     Return v4
 }
 function f13 name="withRuleTestedByHelper" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=BunBundleValidate
     v2 = Call v1, -, v0 expectedResult=x4
     Return v2
 }
 function f14 name="toldApartByTag" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=BunBundleValidate
     v2 = Call v1, -, v0 expectedResult=x5
     Return v2
 }
 function f15 name="interpretedAtTheRoot" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=BunBundleValidate
     v2 = Call v1, -, v0 expectedResult=x6
     Return v2
 }
 function f16 name="interpretedBelowTheRoot" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=BunBundleValidate
     v2 = Call v1, -, v0 expectedResult=x7
     Return v2

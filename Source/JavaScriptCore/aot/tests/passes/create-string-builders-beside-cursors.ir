@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="stateReadAfterReservation" parameters=[{type=string}, {type=number}] results=[{type=string}] {
-  b0(v0: string, v1: number):
     v2 = String string=""
     v3 = Integer integer=0
     Jump -> next b1(v2, v3)
@@ -33,7 +32,6 @@ function f0 name="stateReadAfterReservation" parameters=[{type=string}, {type=nu
 # CHECK-NEXT: v13: buildercursor = JSONAppendString v11, v12, [[text0]]
 
 function f1 name="secondStringAfterFirst" parameters=[{type=string}, {type=number}] results=[{type=string}] {
-  b0(v0: string, v1: number):
     v2 = String string=""
     v3 = Integer integer=0
     Jump -> next b1(v2, v3)
@@ -62,7 +60,6 @@ function f1 name="secondStringAfterFirst" parameters=[{type=string}, {type=numbe
 # CHECK-NEXT: v14: buildercursor = JSONAppendString v11, v13, [[text1]]
 
 function f2 name="stateAppendedAfterReservation" parameters=[{type=string}, {type=number}] results=[{type=string}] {
-  b0(v0: string, v1: number):
     v2 = String string=""
     v3 = Integer integer=0
     Jump -> next b1(v2, v3)
@@ -91,7 +88,6 @@ function f2 name="stateAppendedAfterReservation" parameters=[{type=string}, {typ
 # CHECK-NEXT: v14: buildercursor = JSONAppendString v11, v12, v13
 
 function f3 name="cursorEntersBlock" parameters=[{type=string}, {type=number}, {type=boolean}] results=[{type=string}] {
-  b0(v0: string, v1: number, v2: boolean):
     v3 = String string=""
     v4 = Integer integer=0
     Jump -> next b1(v3, v4)

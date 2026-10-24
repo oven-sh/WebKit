@@ -26,7 +26,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="keys" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="length"
     v2 = PropGet v0 key="map"
     v3 = PropGet v0 key=@@iterator

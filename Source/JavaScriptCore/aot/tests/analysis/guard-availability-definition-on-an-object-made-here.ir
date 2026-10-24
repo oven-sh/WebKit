@@ -6,7 +6,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Empty" fields=[]
 layout L1 name="WithField" fields=[{key="a" declared={type=anything}}]
 function f0 name="keyIsNoField" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<anything, proven, pristine[Storage, Names]>, v1: number):
     v2 = HasArrayStorage v0 arrayStorage=Contiguous
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3: guard):
@@ -22,7 +21,6 @@ function f0 name="keyIsNoField" parameters=[{type=Array<anything, proven, pristi
 # CHECK-NEXT: b1:2 available: [v3]
 # CHECK-NEXT: b1:3 available: [v3]
 function f1 name="keyIsAField" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<anything, proven, pristine[Storage, Names]>, v1: number):
     v2 = HasArrayStorage v0 arrayStorage=Contiguous
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3: guard):
@@ -38,7 +36,6 @@ function f1 name="keyIsAField" parameters=[{type=Array<anything, proven, pristin
 # CHECK-NEXT: b1:2 available: [v3]
 # CHECK-NEXT: b1:3 available: [v3]
 function f2 name="givenObject" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=number}, {type=Object}] results=[{type=anything}] {
-  b0(v0: Array<anything, proven, pristine[Storage, Names]>, v1: number, v2: Object):
     v3 = HasArrayStorage v0 arrayStorage=Contiguous
     Branch v3 -> taken b1(| 0), notTaken b2()
   b1(v4: guard):

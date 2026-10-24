@@ -18,30 +18,19 @@ namespace JSC {
 class Identifier;
 class JSGlobalObject;
 class JSObject;
-class VM;
 
 namespace AOT {
 
-class Object;
-struct FieldData;
 struct LayoutData;
 struct LayoutSetData;
 struct ProgramTables;
 struct RuntimeType;
-struct State;
 
-enum class ValueDetail : uint8_t {
-    KindOnly,
-    WithContents,
-};
-
-JS_EXPORT_PRIVATE String describe(JSValue, ValueDetail = ValueDetail::WithContents);
+JS_EXPORT_PRIVATE String describe(JSValue);
 String describe(const ProgramTables&, const RuntimeType&);
 String describe(const ProgramTables&, const RuntimeType&, Typed::TypeSiteID);
-String describeKinds(State&, uint32_t kinds, uint32_t name);
 String nameOf(const ProgramTables&, const LayoutData&);
 String nameOf(const ProgramTables&, const LayoutSetData&);
-
 
 enum class LoaderChange : uint8_t {
     ReplaceInRequireCache,

@@ -22,11 +22,6 @@ void OperatorEmitter::generateInstanceOf(const ValueContext& value)
     defineTest(value, Condition(m_out.castToInt32(callStub(value, AOT::instanceOf(InstanceOfOperand::Constructor), { object.value(), constructor.value() }).first)));
 }
 
-bool OperatorEmitter::testsForCellBeforeWalk(const Value& walk)
-{
-    return typeOf(walk.valueOperand()).primitives;
-}
-
 // What is no cell has no prototype chain: that is answered in line, and the prototype of a built-in class that only this walk asks for is fetched behind that answer.
 bool OperatorEmitter::fetchesPrototypeItself(ValueID builtin)
 {
@@ -38,7 +33,7 @@ bool OperatorEmitter::fetchesPrototypeItself(ValueID builtin)
         return false;
     const Value& user = m_function.at(use->user);
     return user.opcode == Opcode::HasInPrototypeChain && user.prototypeOperand() == builtin && user.valueOperand() != builtin
-        && use->block == analyses().useLists().locationOf(builtin).block && testsForCellBeforeWalk(user);
+        && use->block == analyses().useLists().locationOf(builtin).block && typeOf(user.valueOperand()).primitives;
 }
 
 void OperatorEmitter::generateHasInPrototypeChain(const ValueContext& value)
@@ -52,7 +47,7 @@ void OperatorEmitter::generateHasInPrototypeChain(const ValueContext& value)
             : in<CellPointer>(prototypeID);
         return Condition(m_out.castToInt32(callStub(value, AOT::instanceOf(InstanceOfOperand::Prototype), { object.value(), boxCell(prototype).value() }).first));
     };
-    if (!testsForCellBeforeWalk(value.value())) {
+    if (!typeOf(value->valueOperand()).primitives) {
         defineTest(value, walksChain());
         return;
     }

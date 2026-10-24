@@ -29,40 +29,35 @@ function f0 name="fiveLayoutsOneTest" parameters=[{type=L0|L1|L2|L3|L4 flags=[Is
   b0(v0: anything ~ L0|L1|L2|L3|L4):
     v1 = PropGet v0 key="x"
     Return v1
-}
-# CHECK-LABEL: function f0 name="fiveLayoutsOneTest"
 # CHECK: = TypeTest v0 testedType=L0|L1|L2|L3|L4
 # CHECK-NOT: TypeTest
 # CHECK: v1:{{*}}= GetSlot {{*}}key="x" receivers=[L0, L1, L2, L3, L4] level=Expected
 # CHECK-NOT: GetSlot
 # CHECK: = PropGet {{*}}key="x"
 # CHECK-NOT: TypeTest
-# SECOND-LABEL: function f0 name="fiveLayoutsOneTest"
 # SECOND: = TypeTest v0 testedType=L0|L1|L2|L3|L4
 # SECOND-NOT: TypeTest
-# SELECTED-LABEL: function f0 name="fiveLayoutsOneTest"
 # SELECTED-NOT: SwitchOnShape
 # SELECTED: = GetSlot {{*}}key="x" receivers=[L0, L1, L2, L3, L4] level=Expected
 # SELECTED-NOT: SwitchOnShape
+}
 
 # The arm that finds the field comes first. The arm that finds nothing is tested for where the first test has failed
 function f1 name="layoutWithoutTheFieldIsAnotherArm" parameters=[{type=L0|L1|L5 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ L0|L1|L5):
     v1 = PropGet v0 key="x"
     Return v1
-}
-# CHECK-LABEL: function f1 name="layoutWithoutTheFieldIsAnotherArm"
 # CHECK: = TypeTest v0 testedType=L0|L1
 # CHECK-NOT: TypeTest
 # CHECK: v1:{{*}}= GetSlot {{*}}key="x" receivers=[L0, L1] level=Expected
 # CHECK: = PropGet {{*}}key="x"
 # CHECK-NOT: TypeTest
-# SECOND-LABEL: function f1 name="layoutWithoutTheFieldIsAnotherArm"
 # SECOND: = TypeTest v0 testedType=L0|L1
 # SECOND: = GetSlot {{*}}key="x" receivers=[L0, L1] level=Expected
 # SECOND: = TypeTest {{*}}testedType=L5
 # SECOND: = Undefined
 # SECOND: = PropGet {{*}}key="x"
+}
 
 # The reads that know the layout weigh more than the read through both, so each field keeps the form of its own type: a raw number, a boxed value
 function f2 name="fieldKeptInTwoPlaces" parameters=[{type=L6|L7 flags=[IsExpected]}, {type=L6}] results=[{type=anything}] {
@@ -71,15 +66,13 @@ function f2 name="fieldKeptInTwoPlaces" parameters=[{type=L6|L7 flags=[IsExpecte
     v3 = GetSlot v1 key="value" receivers=[L6] level=Proven
     v4 = PropGet v0 key="value"
     Return v4
-}
-# CHECK-LABEL: function f2 name="fieldKeptInTwoPlaces"
 # CHECK: = TypeTest v0 testedType=L6|L7
 # CHECK-NOT: TypeTest
 # CHECK: v4:{{*}}= GetSlot {{*}}key="value" receivers=[L6, L7] level=Expected
-# SELECTED-LABEL: function f2 name="fieldKeptInTwoPlaces"
 # SELECTED-NOT: receivers=[L6, L7]
 # SELECTED: = TypeTest v0 testedType=L6|L7
 # SELECTED: = TypeTest {{*}} testedType=L6
 # SELECTED: = GetSlot {{*}}key="value" receivers=[L6] level=Expected
 # SELECTED: = GetSlot {{*}}key="value" receivers=[L7] level=Expected
 # SELECTED-NOT: receivers=[L6, L7]
+}

@@ -14,7 +14,6 @@
 #include "AOTCodeRecords.h"
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
-#include "AOTConversions.h"
 #include "AOTEdgeResults.h"
 #include "AOTEntryEmitter.h"
 #include "AOTFunctionAnalyses.h"

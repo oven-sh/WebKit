@@ -9,21 +9,18 @@ module m0 path="main.js" displayPath="main.js"
 function f0 name="withoutBody" parameters=[{type=number}] results=[{type=number}]
 
 function f1 name="mustTailCall" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Mul v0, v0
     v2 = CallDirect v1 function=f0
     ReturnCall v2 @30
 }
 
 function f2 name="mayTailCall" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Mul v0, v0
     v2 = CallDirect v1 function=f0
     ReturnCall v2 requirement=Allowed @30
 }
 
 function f3 name="returnsOrTailCalls" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
-  b0(v0: number, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = CallDirect v0 function=f0
@@ -34,7 +31,6 @@ function f3 name="returnsOrTailCalls" parameters=[{type=number}, {type=boolean}]
 }
 
 function f4 name="requiredSiteOfRequired" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f1
     ReturnCall v1
 }
@@ -45,7 +41,6 @@ function f4 name="requiredSiteOfRequired" parameters=[{type=number}] results=[{t
 # CHECK-NEXT: ReturnCall [[call4]] @30:1
 
 function f5 name="allowedSiteOfRequired" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f1
     ReturnCall v1 requirement=Allowed
 }
@@ -56,7 +51,6 @@ function f5 name="allowedSiteOfRequired" parameters=[{type=number}] results=[{ty
 # CHECK-NEXT: ReturnCall [[call5]] @30:1
 
 function f6 name="requiredSiteOfAllowed" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f2
     ReturnCall v1
 }
@@ -67,7 +61,6 @@ function f6 name="requiredSiteOfAllowed" parameters=[{type=number}] results=[{ty
 # CHECK-NEXT: ReturnCall [[call6]] requirement=Allowed @30:1
 
 function f7 name="calleeAlsoReturns" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
-  b0(v0: number, v1: boolean):
     v2 = CallDirect v0, v1 function=f3
     ReturnCall v2
 }
@@ -82,7 +75,6 @@ function f7 name="calleeAlsoReturns" parameters=[{type=number}, {type=boolean}] 
 # CHECK-NEXT: Jump -> next [[after7]]([[product7]])
 
 function f8 name="siteIsNotTailCall" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f1
     Return v1
 }

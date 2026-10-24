@@ -14,7 +14,6 @@
 #include "AOTCompiledCallee.h"
 #include "AOTFunctionNames.h"
 #include "AOTInstance.h"
-#include "AOTIteration.h"
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
@@ -33,6 +32,7 @@
 #include "ExceptionHelpers.h"
 #include "GetterSetter.h"
 #include "JSCInlines.h"
+#include "JSPropertyNameEnumerator.h"
 #include "ObjectConstructor.h"
 #include "PropertyDescriptor.h"
 #include <array>
@@ -244,24 +244,22 @@ static bool tryDefineAbsentProperty(JSGlobalObject* globalObject, JSObject* obje
     return object->putDirectNonIndexAccessor(vm, name, uncheckedDowncast<GetterSetter>(stored), attributes);
 }
 
-static JSObject* createDescriptorLiteral(JSGlobalObject* globalObject, JSValue valueOrGetter, JSValue setter, PropertyDescriptorBits bits)
+static PropertyDescriptor descriptorFromBits(JSValue valueOrGetter, JSValue setter, PropertyDescriptorBits bits)
 {
-    VM& vm = globalObject->vm();
-    const CommonIdentifiers& names = *vm.propertyNames;
-    JSObject* literal = bits.inheritsNothing ? constructEmptyObject(vm, WTF::opaque(globalObject->nullPrototypeObjectStructure())) : constructEmptyObject(globalObject);
-    if (bits.hasValue)
-        literal->putDirect(vm, names.value, valueOrGetter);
-    if (bits.hasWritable)
-        literal->putDirect(vm, names.writable, jsBoolean(bits.isWritable));
+    PropertyDescriptor descriptor;
     if (bits.hasEnumerable)
-        literal->putDirect(vm, names.enumerable, jsBoolean(bits.isEnumerable));
+        descriptor.setEnumerable(bits.isEnumerable);
     if (bits.hasConfigurable)
-        literal->putDirect(vm, names.configurable, jsBoolean(bits.isConfigurable));
+        descriptor.setConfigurable(bits.isConfigurable);
+    if (bits.hasValue)
+        descriptor.setValue(valueOrGetter);
+    if (bits.hasWritable)
+        descriptor.setWritable(bits.isWritable);
     if (bits.hasGet)
-        literal->putDirect(vm, names.get, valueOrGetter);
+        descriptor.setGetter(valueOrGetter);
     if (bits.hasSet)
-        literal->putDirect(vm, names.set, setter);
-    return literal;
+        descriptor.setSetter(setter);
+    return descriptor;
 }
 
 // While this holds, a descriptor object whose prototype is Object.prototype has the members that it lists itself and no others.
@@ -306,20 +304,7 @@ static bool tryDefineOwnPropertyFromBits(JSGlobalObject* globalObject, JSObject*
         return true;
     if (!definesWithoutOtherCode(vm, object, name, valueOrGetter, bits))
         return false;
-    PropertyDescriptor descriptor;
-    if (bits.hasEnumerable)
-        descriptor.setEnumerable(bits.isEnumerable);
-    if (bits.hasConfigurable)
-        descriptor.setConfigurable(bits.isConfigurable);
-    if (bits.hasValue)
-        descriptor.setValue(valueOrGetter);
-    if (bits.hasWritable)
-        descriptor.setWritable(bits.isWritable);
-    if (bits.hasGet)
-        descriptor.setGetter(valueOrGetter);
-    if (bits.hasSet)
-        descriptor.setSetter(setter);
-    RELEASE_AND_RETURN(scope, object->methodTable()->defineOwnProperty(object, globalObject, name, descriptor, false));
+    RELEASE_AND_RETURN(scope, object->methodTable()->defineOwnProperty(object, globalObject, name, descriptorFromBits(valueOrGetter, setter, bits), false));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTDefineOwnProperty, void, (Instance* instance, EncodedJSValue encodedObject, EncodedJSValue key, EncodedJSValue encodedValueOrGetter, EncodedJSValue encodedSetter, uint32_t descriptorBits))
@@ -338,7 +323,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineOwnProperty, void, (Instance* instanc
             OPERATION_RETURN(scope);
     }
     // Object.defineProperty() itself refuses, and runs the code of others, in a frame of its own.
-    callInEngine(instance, Builtins::ObjectDefineProperty, object, JSValue::decode(key), createDescriptorLiteral(globalObject, valueOrGetter, setter, bits));
+    JSObject* literal = constructObjectFromPropertyDescriptor(globalObject, descriptorFromBits(valueOrGetter, setter, bits));
+    if (bits.inheritsNothing)
+        literal->setPrototypeDirect(vm, jsNull());
+    callInEngine(instance, Builtins::ObjectDefineProperty, object, JSValue::decode(key), literal);
     OPERATION_RETURN(scope);
 }
 
@@ -407,16 +395,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineAccessors, void, (Instance* instance,
     for (uint32_t index = 0; index < count; ++index) {
         const DefinedAccessor& accessor = accessors[index];
         uint32_t accessorFlags = (getters >> index & 1 ? accessorIsGetter : 0) | (enumerable >> index & 1 ? accessorIsEnumerable : 0);
-        if (UniquedStringImpl* name = compiledObject && accessorFlags & accessorIsGetter ? atomOfKey(JSValue::decode(accessor.key)) : nullptr) {
-            unsigned attributes = PropertyAttribute::Accessor | (accessorFlags & accessorIsEnumerable ? PropertyAttribute::None : PropertyAttribute::DontEnum);
-            if (compiledObject->tryDefineAbsentGetterInSlot(vm, globalObject, name, asObject(JSValue::decode(accessor.function)), attributes))
-                continue;
-        }
         defineAccessor(globalObject, object, JSValue::decode(accessor.key), JSValue::decode(accessor.function), accessorFlags);
         OPERATION_RETURN_IF_EXCEPTION(scope);
     }
-    if (Object* compiled = compiledObjectOrNull(object))
-        compiled->ensureStructureForExtraProperties(vm);
+    if (compiledObject)
+        compiledObject->ensureStructureForExtraProperties(vm);
     OPERATION_RETURN(scope);
 }
 
@@ -509,20 +492,12 @@ static std::optional<bool> isMarkedAsESModule(JSGlobalObject* globalObject, JSOb
     return slot.getValue(globalObject, marker).toBoolean(globalObject);
 }
 
-struct LiveBinding {
-    JSObject* target;
-    JSObject* source;
-    UniquedStringImpl* sourceKey;
-    UniquedStringImpl* targetKey;
-    // Since TypeScript 4.6 the helper passes on the source's own descriptor for an accessor of an ES module and for a value that can never change.
-    bool reusesDescriptors;
-};
-
 // Does all of what TypeScript's __createBinding does, or nothing: false where that would run code of the program, throw, or meet a property that exists.
-static bool tryDefineLiveBinding(JSGlobalObject* globalObject, const LiveBinding& binding, const Invocable<JSObject*()> auto& getterOfBinding)
+// Since TypeScript 4.6 the helper passes on the source's own descriptor for an accessor of an ES module and for a value that can never change.
+static bool tryDefineLiveBinding(JSGlobalObject* globalObject, JSObject* target, JSObject* source, UniquedStringImpl* sourceKey, UniquedStringImpl* targetKey, bool reusesDescriptors, const Invocable<JSObject*()> auto& getterOfBinding)
 {
     VM& vm = globalObject->vm();
-    if (parseIndex(*binding.targetKey) || !descriptorObjectsInheritNoMembers(globalObject))
+    if (parseIndex(*targetKey) || !descriptorObjectsInheritNoMembers(globalObject))
         return false;
 
     PropertyDescriptorBits bits { };
@@ -531,15 +506,15 @@ static bool tryDefineLiveBinding(JSGlobalObject* globalObject, const LiveBinding
     bits.hasGet = true;
     JSValue valueOrGetter;
     JSValue setter = jsUndefined();
-    if (binding.reusesDescriptors) {
-        std::optional<OwnPropertyOfPlainObject> property = findOwnPropertyOfPlainObject(vm, binding.source, binding.sourceKey);
+    if (reusesDescriptors) {
+        std::optional<OwnPropertyOfPlainObject> property = findOwnPropertyOfPlainObject(vm, source, sourceKey);
         if (!property)
             return false;
         JSValue found = property->valueOrAccessor;
         bool isEnumerable = !(property->attributes & PropertyAttribute::DontEnum);
         bool isConfigurable = !(property->attributes & PropertyAttribute::DontDelete);
         if (found && (property->attributes & PropertyAttribute::Accessor)) {
-            std::optional<bool> isESModule = isMarkedAsESModule(globalObject, binding.source);
+            std::optional<bool> isESModule = isMarkedAsESModule(globalObject, source);
             if (!isESModule)
                 return false;
             if (*isESModule) {
@@ -563,7 +538,7 @@ static bool tryDefineLiveBinding(JSGlobalObject* globalObject, const LiveBinding
     }
     if (!valueOrGetter)
         valueOrGetter = getterOfBinding();
-    return tryDefineAbsentProperty(globalObject, binding.target, binding.targetKey, valueOrGetter, setter, bits);
+    return tryDefineAbsentProperty(globalObject, target, targetKey, valueOrGetter, setter, bits);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryDefineLiveBinding, size_t, (Instance* instance, EncodedJSValue encodedTarget, EncodedJSValue encodedSource, EncodedJSValue encodedSourceKey, EncodedJSValue encodedTargetKey, JSCell* getter))
@@ -578,8 +553,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryDefineLiveBinding, size_t, (Ins
     UniquedStringImpl* targetName = targetKey.isUndefined() ? sourceName : atomOfKey(targetKey);
     if (!target.isObject() || !source.isObject() || !sourceName || !targetName)
         OPERATION_RETURN(scope, 0);
-    LiveBinding binding { asObject(target), asObject(source), sourceName, targetName, true };
-    bool isDefined = tryDefineLiveBinding(globalObject, binding, [&] {
+    bool isDefined = tryDefineLiveBinding(globalObject, asObject(target), asObject(source), sourceName, targetName, true, [&] {
         return cellArgument<JSObject>(getter, entry);
     });
     OPERATION_RETURN(scope, static_cast<size_t>(isDefined));
@@ -649,8 +623,7 @@ static bool tryReExportFields(Instance* instance, JSObject* target, JSObject* so
             return false;
         if (existing->valueOrAccessor)
             return true;
-        LiveBinding binding { target, source, name, name, !!(rule & reExportReusesDescriptors) };
-        return tryDefineLiveBinding(globalObject, binding, [&] {
+        return tryDefineLiveBinding(globalObject, target, source, name, name, rule & reExportReusesDescriptors, [&] {
             uint64_t capturedKey = JSValue::encode(key);
             uint64_t capturedSource = JSValue::encode(source);
             std::array<uint64_t, 2> captures { isKeyInFirstSlot ? capturedKey : capturedSource, isKeyInFirstSlot ? capturedSource : capturedKey };

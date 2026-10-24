@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="slice-of-view-escapes" parameters=[{type=string}, {type=int}, {type=int}, {type=int}] results=[{type=string}] {
-  b0(v0: string, v1: int, v2: int, v3: int):
     v4 = GetStringLength v0
     v5 = StringRange v4, v1, v2
     v6 = ResultAt v5
@@ -17,8 +16,6 @@ function f0 name="slice-of-view-escapes" parameters=[{type=string}, {type=int}, 
     v12 = ResultAt v10 index=1
     v13 = Substring v8, v11, v12
     Return v13
-}
-# CHECK-LABEL: function f0 name="slice-of-view-escapes"
 # CHECK-NOT: = Substring
 # CHECK: [[differenceInner0]]: int[-2147483647, 2147483647] = Sub v7, v6
 # CHECK-NEXT: [[maskInner0]]: 2147483647 = Integer integer=2147483647
@@ -30,9 +27,9 @@ function f0 name="slice-of-view-escapes" parameters=[{type=string}, {type=int}, 
 # CHECK-NEXT: [[innerTo0]]: {{*}} = Add v6, [[relativeTo0]]
 # CHECK-NEXT: [[result0]]: string = Substring v0, [[innerFrom0]], [[innerTo0]]
 # CHECK-NEXT: Return [[result0]]
+}
 
 function f1 name="character-of-view-escapes" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=undefined|string}] {
-  b0(v0: string, v1: int, v2: int):
     v3 = GetStringLength v0
     v4 = StringRange v3, v1
     v5 = ResultAt v4
@@ -40,8 +37,6 @@ function f1 name="character-of-view-escapes" parameters=[{type=string}, {type=in
     v7 = Substring v0, v5, v6
     v8 = CallBuiltin v7, v2 overload=StringPrototypeAt/0
     Return v8
-}
-# CHECK-LABEL: function f1 name="character-of-view-escapes"
 # CHECK-NOT: = Substring
 # CHECK-NOT: StringPrototypeAt
 # CHECK: [[innerLength1]]: {{*}} = Sub v6, v5
@@ -52,9 +47,9 @@ function f1 name="character-of-view-escapes" parameters=[{type=string}, {type=in
 # CHECK-NEXT: [[innerTo1]]: {{*}} = Add v5, [[relativeTo1]]
 # CHECK-NEXT: [[result1]]: undefined|string = StringRangeSubstringOrUndefined v0, [[innerFrom1]], [[innerTo1]]
 # CHECK-NEXT: Return [[result1]]
+}
 
 function f2 name="char-at-of-view-escapes" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=string}] {
-  b0(v0: string, v1: int, v2: int):
     v3 = GetStringLength v0
     v4 = StringRange v3, v1
     v5 = ResultAt v4
@@ -62,8 +57,6 @@ function f2 name="char-at-of-view-escapes" parameters=[{type=string}, {type=int}
     v7 = Substring v0, v5, v6
     v8 = CallBuiltin v7, v2 overload=StringPrototypeCharAt/0
     Return v8
-}
-# CHECK-LABEL: function f2 name="char-at-of-view-escapes"
 # CHECK-NOT: = Substring
 # CHECK-NOT: StringPrototypeCharAt
 # CHECK: = StringRange [[innerLength2]], v2 method=SingleIndex
@@ -71,9 +64,9 @@ function f2 name="char-at-of-view-escapes" parameters=[{type=string}, {type=int}
 # CHECK-NEXT: [[innerTo2]]: {{*}} = Add v5,
 # CHECK-NEXT: [[result2]]: string = Substring v0, [[innerFrom2]], [[innerTo2]]
 # CHECK-NEXT: Return [[result2]]
+}
 
 function f3 name="slice-of-escaping-slice" parameters=[{type=string}, {type=int}, {type=int}, {type=int}] results=[{type=string}] {
-  b0(v0: string, v1: int, v2: int, v3: int):
     v4 = GetStringLength v0
     v5 = StringRange v4, v1, v2
     v6 = ResultAt v5

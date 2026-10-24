@@ -7,7 +7,6 @@ entry module=m0
 variable g0 name="none" module=m0 declared={type=function} initialization=Function function=f1
 variable g1 name="assigned" module=m0 declared={type=anything} initialization=Function function=f2
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = PropGet v0 key="length"
     v2 = Builtin builtin=GlobalThis
@@ -21,15 +20,12 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="none" results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="assigned" results=[{type=anything}] {
-  b0():
     Return
 }
 function f3 name="later" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g1
     Return v0
 }

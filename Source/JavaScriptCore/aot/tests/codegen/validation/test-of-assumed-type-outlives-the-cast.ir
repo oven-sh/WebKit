@@ -27,7 +27,6 @@ module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibr
 entry module=m0
 layout L0 name="Source" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = FinishObject v1
@@ -41,12 +40,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=131085 thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="a"
     Return v1
 }
 function f2 name="callsByValue" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f3
     v1 = Call v0 [isNeverInlined]
     v2 = Integer integer=1
@@ -54,7 +51,6 @@ function f2 name="callsByValue" results=[{type=anything}] {
     Return v3
 }
 function f3 name="one" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     Return v0
 }

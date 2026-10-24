@@ -12,7 +12,6 @@ layout L2 kind=Environment name="environmentLiveAcrossAwait" fields=[{key="x" de
 layout L3 kind=Environment name="createdAfterAwait" fields=[{key="x" declared={type=anything}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = CallDirect v1 function=f1
@@ -23,7 +22,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="deadBeforeAwait" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewClosure v1 function=f6
     v3 = CallDirect v2 function=f5
@@ -35,7 +33,6 @@ function f1 name="deadBeforeAwait" flags=[IsAsync] parameters=[{type=anything}] 
 # PLAN-NEXT: v2: Frame
 
 function f2 name="closureLiveAcrossAwait" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L1 fields=[0]
     v2 = NewClosure v1 function=f7
     v3 = Await v0
@@ -47,7 +44,6 @@ function f2 name="closureLiveAcrossAwait" flags=[IsAsync] parameters=[{type=anyt
 # PLAN-NEXT: v2: Heap LiveAcrossSuspension by v3(0)
 
 function f3 name="environmentLiveAcrossAwait" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L2 fields=[0]
     v2 = NewClosure v1 function=f8
     v3 = CallDirect v2 function=f5
@@ -60,7 +56,6 @@ function f3 name="environmentLiveAcrossAwait" flags=[IsAsync] parameters=[{type=
 # PLAN-NEXT: v2: Frame
 
 function f4 name="createdAfterAwait" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Await v0
     v2 = NewObject -, v1 layout=L3 fields=[0]
     v3 = NewClosure v2 function=f9
@@ -72,7 +67,6 @@ function f4 name="createdAfterAwait" flags=[IsAsync] parameters=[{type=anything}
 # PLAN-NEXT: v3: Frame
 
 function f5 name="callsParameter" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0
     Return v1
 }

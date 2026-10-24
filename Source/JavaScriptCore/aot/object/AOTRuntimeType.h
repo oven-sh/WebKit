@@ -45,41 +45,22 @@ struct RuntimeCellTest {
         ASSERT_UNDER_CONSTEXPR_CONTEXT(kind == CellTestKind::CellTypeIs);
         return { static_cast<JSType>(firstCellType), static_cast<JSType>(lastCellType) };
     }
-    constexpr uint32_t shapeTestOffset() const
+    constexpr uint32_t operandOf(CellTestKind expectedKind) const
     {
-        ASSERT_UNDER_CONSTEXPR_CONTEXT(kind == CellTestKind::ShapeIn);
+        ASSERT_UNDER_CONSTEXPR_CONTEXT(kind == expectedKind);
         return operand;
     }
+    constexpr uint32_t shapeTestOffset() const { return operandOf(CellTestKind::ShapeIn); }
     constexpr BuiltinClassID builtinClass() const
     {
         ASSERT_UNDER_CONSTEXPR_CONTEXT(kind == CellTestKind::InheritsClassInfo || kind == CellTestKind::IsPristine);
         return BuiltinClassID(operand);
     }
-    constexpr uint32_t builtinCellNumber() const
-    {
-        ASSERT_UNDER_CONSTEXPR_CONTEXT(kind == CellTestKind::IsBuiltinCell);
-        return operand;
-    }
-    constexpr FunctionID function() const
-    {
-        ASSERT_UNDER_CONSTEXPR_CONTEXT(kind == CellTestKind::IsClosureOf);
-        return FunctionID(operand);
-    }
-    constexpr uint32_t symbolKeyNumber() const
-    {
-        ASSERT_UNDER_CONSTEXPR_CONTEXT(kind == CellTestKind::IsSymbol);
-        return operand;
-    }
-    constexpr ArrayBufferSharingMode sharingMode() const
-    {
-        ASSERT_UNDER_CONSTEXPR_CONTEXT(kind == CellTestKind::SharingModeIs);
-        return operand ? ArrayBufferSharingMode::Shared : ArrayBufferSharingMode::Default;
-    }
-    constexpr ModuleID module() const
-    {
-        ASSERT_UNDER_CONSTEXPR_CONTEXT(kind == CellTestKind::IsNamespaceOf);
-        return ModuleID(operand);
-    }
+    constexpr uint32_t builtinCellNumber() const { return operandOf(CellTestKind::IsBuiltinCell); }
+    constexpr FunctionID function() const { return FunctionID(operandOf(CellTestKind::IsClosureOf)); }
+    constexpr uint32_t symbolKeyNumber() const { return operandOf(CellTestKind::IsSymbol); }
+    constexpr ArrayBufferSharingMode sharingMode() const { return operandOf(CellTestKind::SharingModeIs) ? ArrayBufferSharingMode::Shared : ArrayBufferSharingMode::Default; }
+    constexpr ModuleID module() const { return ModuleID(operandOf(CellTestKind::IsNamespaceOf)); }
 
     static constexpr ptrdiff_t offsetOfKind() { return 0; }
     static constexpr ptrdiff_t offsetOfFirstCellType() { return 1; }

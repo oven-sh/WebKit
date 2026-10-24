@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="switchThrowReturnCall" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     Switch v0 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
   b1():
     Throw v1
@@ -28,7 +27,6 @@ function f0 name="switchThrowReturnCall" parameters=[{type=number}, {type=anythi
 # CHECK-NEXT: detached: []
 
 function f1 name="inlineCallWithReceiverAndTwoArguments" parameters=[{type=number}, {type=number}, {type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: number, v1: number, v2: Array<number, pristine[Storage, Names]>):
     TryCallInline v2, v0, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b1(), miss b2()
   b1(v3):
     Return v3
@@ -52,7 +50,6 @@ function f1 name="inlineCallWithReceiverAndTwoArguments" parameters=[{type=numbe
 # CHECK-NEXT: detached: []
 
 function f2 name="inlineCallWithoutReceiver" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     TryCallInline -, v0 inlineBuiltin=MathAbs overload=MathAbs/0 -> done b1(), miss b2()
   b1(v1):
     Return v1
@@ -66,6 +63,5 @@ function f2 name="inlineCallWithoutReceiver" parameters=[{type=number}] results=
 # CHECK-NEXT: v0 use points: [b0:0]
 
 function f3 name="callee" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }

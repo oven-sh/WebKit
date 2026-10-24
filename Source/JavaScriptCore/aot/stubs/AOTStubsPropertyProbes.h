@@ -125,9 +125,8 @@ struct HashedProbeRegisters {
 };
 
 // Adds to hasNoStructure in an out-of-line part: the list has to outlive the generator, and an out-of-line part added after this call links it.
-void loadStructureIDOfReceiver(StubAssembler&, GPRReg receiver, GPRReg structureID, JumpList& hasNoStructure);
 // What probeCell emits runs for a receiver that is a cell, before its StructureID is loaded.
-void loadStructureIDOfReceiver(StubAssembler&, GPRReg receiver, GPRReg structureID, JumpList& hasNoStructure, const ScopedLambda<void()>& probeCell);
+void loadStructureIDOfReceiver(StubAssembler&, GPRReg receiver, GPRReg structureID, JumpList& hasNoStructure, const ScopedLambda<void()>& probeCell = [] { });
 void loadFrontRow(CCallHelpers&, SlotAccess, GPRReg structureID, GPRReg row, GPRReg scratch);
 void loadFrontCell(StubAssembler&, SlotAccess, const FrontProbeRegisters&);
 Jump branchUnlessOwnInlineValue(StubAssembler&, GPRReg column, GPRReg cell, GPRReg scratch);
@@ -294,15 +293,9 @@ inline constexpr unsigned locationShiftInCell = 8 * PackedSlot::offsetOfLocation
 
 inline constexpr PutMode putModeOf(SlotOperation operation)
 {
-    switch (operation) {
-    case SlotOperation::StoreStrict:
-        return PutMode::Strict;
-    case SlotOperation::StoreSloppy:
-        return PutMode::Sloppy;
-    case SlotOperation::Define:
-        return PutMode::Define;
-    case SlotOperation::Read:
-        break;
+    for (PutMode mode : { PutMode::Strict, PutMode::Sloppy, PutMode::Define }) {
+        if (operationFor(mode) == operation)
+            return mode;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }

@@ -5,22 +5,18 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="global" parameters=[{type=string}] results=[{type=undefined}] {
-  b0(v0: string):
     v1 = RegExpMatchLiteral v0 overload=RegExpPrototypeTest/0 pattern="a+" regExpFlags=[Global]
     Return
 }
 function f1 name="sticky" parameters=[{type=string}] results=[{type=undefined}] {
-  b0(v0: string):
     v1 = RegExpMatchLiteral v0 overload=RegExpPrototypeTest/0 pattern="a+" regExpFlags=[Sticky]
     Return
 }
 function f2 name="withIndices" parameters=[{type=string}] results=[{type=undefined}] {
-  b0(v0: string):
     v1 = RegExpMatchLiteral v0 overload=RegExpPrototypeExec/0 pattern="a+" regExpFlags=[HasIndices] matchForm=Exec
     Return
 }
 function f3 name="good" parameters=[{type=string}, {type=RegExp<"a+"[Global], pristine[Storage, Names, AsCreated]>}] results=[{type=undefined}] {
-  b0(v0: string, v1: RegExp<"a+"[Global], pristine[Storage, Names, AsCreated]>):
     v2 = RegExpMatchLiteral v0 overload=RegExpPrototypeTest/0 pattern="a+" regExpFlags=[IgnoreCase]
     v3 = RegExpMatchLiteral v0, v1 overload=RegExpPrototypeTest/0 pattern="a+" regExpFlags=[Global]
     Return

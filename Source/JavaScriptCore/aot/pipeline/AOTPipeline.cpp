@@ -8,7 +8,10 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include "AOTEffectsDeclared.h"
+#include "AOTFunctionAnalyses.h"
+#include "AOTHeat.h"
 #include "AOTOpcode.h"
 #include "AOTPass.h"
 #include "AOTPassRunner.h"
@@ -37,48 +40,12 @@ struct Forms {
 
 constexpr PassDescriptor programPass(PassID id, PassNecessity necessity, Forms forms, Results inputs, Results outputs, Results invalidatedResults)
 {
-    return {
-        .id = id,
-        .scope = PassScope::Program,
-        .necessity = necessity,
-        .firstForm = forms.first,
-        .lastForm = forms.last,
-        .produces = std::nullopt,
-        .inputs = inputs,
-        .outputs = outputs,
-        .invalidatedResults = invalidatedResults,
-        .invalidatedAnalyses = InvalidatedAnalyses::None,
-        .editedFunctions = EditedFunctions::DoAnything,
-        .effectsAddedByEdits = Effects::none(),
-        .readsOtherBodies = false,
-        .derivesFunctions = false,
-        .countsOwnChanges = false,
-        .isVerifiedAfterNextPass = false,
-        .run = nullptr,
-    };
+    return { .id = id, .scope = PassScope::Program, .necessity = necessity, .firstForm = forms.first, .lastForm = forms.last, .inputs = inputs, .outputs = outputs, .invalidatedResults = invalidatedResults };
 }
 
 constexpr PassDescriptor functionPass(PassID id, FunctionPass run, PassNecessity necessity, IRForm form, Results inputs, InvalidatedAnalyses invalidatedAnalyses)
 {
-    return {
-        .id = id,
-        .scope = PassScope::Function,
-        .necessity = necessity,
-        .firstForm = form,
-        .lastForm = form,
-        .produces = std::nullopt,
-        .inputs = inputs,
-        .outputs = { },
-        .invalidatedResults = { },
-        .invalidatedAnalyses = invalidatedAnalyses,
-        .editedFunctions = EditedFunctions::DoAnything,
-        .effectsAddedByEdits = Effects::none(),
-        .readsOtherBodies = false,
-        .derivesFunctions = false,
-        .countsOwnChanges = false,
-        .isVerifiedAfterNextPass = false,
-        .run = run,
-    };
+    return { .id = id, .scope = PassScope::Function, .necessity = necessity, .firstForm = form, .lastForm = form, .inputs = inputs, .invalidatedAnalyses = invalidatedAnalyses, .run = run };
 }
 
 constexpr PassDescriptor producing(IRForm form, PassDescriptor descriptor)
@@ -101,29 +68,17 @@ constexpr PassDescriptor takingAway(PassDescriptor descriptor)
     return descriptor;
 }
 
-constexpr PassDescriptor readingOtherBodies(PassDescriptor descriptor)
+template<bool PassDescriptor::* trait>
+constexpr PassDescriptor having(PassDescriptor descriptor)
 {
-    descriptor.readsOtherBodies = true;
+    descriptor.*trait = true;
     return descriptor;
 }
 
-constexpr PassDescriptor derivingFunctions(PassDescriptor descriptor)
-{
-    descriptor.derivesFunctions = true;
-    return descriptor;
-}
-
-constexpr PassDescriptor countingOwnChanges(PassDescriptor descriptor)
-{
-    descriptor.countsOwnChanges = true;
-    return descriptor;
-}
-
-constexpr PassDescriptor verifiedAfterNextPass(PassDescriptor descriptor)
-{
-    descriptor.isVerifiedAfterNextPass = true;
-    return descriptor;
-}
+constexpr auto readingOtherBodies = having<&PassDescriptor::readsOtherBodies>;
+constexpr auto derivingFunctions = having<&PassDescriptor::derivesFunctions>;
+constexpr auto countingOwnChanges = having<&PassDescriptor::countsOwnChanges>;
+constexpr auto verifiedAfterNextPass = having<&PassDescriptor::isVerifiedAfterNextPass>;
 
 constexpr InvalidatedAnalyses nothing = InvalidatedAnalyses::None;
 constexpr InvalidatedAnalyses values = InvalidatedAnalyses::Values;
@@ -367,20 +322,16 @@ constexpr std::array representSteps {
 constexpr unsigned indexOf(PassID id) { return static_cast<unsigned>(id); }
 constexpr unsigned indexOf(FunctionSchedule schedule) { return static_cast<unsigned>(schedule); }
 
-constexpr std::array<PassDescriptor, numberOfPasses> createDescriptors()
-{
-    std::array<PassDescriptor, numberOfPasses> result { };
+template<typename T> using ByPass = std::array<T, numberOfPasses>;
+
+constexpr ByPass<PassDescriptor> descriptors = [] {
+    ByPass<PassDescriptor> result { };
     for (const PassDescriptor& row : rows)
         result[indexOf(row.id)] = row;
     return result;
-}
+}();
 
-constexpr std::array<PassDescriptor, numberOfPasses> descriptors = createDescriptors();
-
-constexpr const PassDescriptor& descriptorAt(PassID id)
-{
-    return descriptors[indexOf(id)];
-}
+constexpr const PassDescriptor& descriptorAt(PassID id) { return descriptors[indexOf(id)]; }
 
 constexpr PassSet functionPassesExcept(PassID excluded)
 {
@@ -426,27 +377,21 @@ constexpr PassesLeftIdle passesThatCanWait[] {
     { ThreadJumps, { ResolveBuiltins, FoldConstants, PropagateBranchConditions, EliminateRedundantReads } },
 };
 
-constexpr std::array<PassSet, numberOfPasses> createPassesThatCanWait()
-{
-    std::array<PassSet, numberOfPasses> result { };
+constexpr ByPass<PassSet> passesThatCanWaitByChanger = [] {
+    ByPass<PassSet> result { };
     for (const PassesLeftIdle& row : passesThatCanWait)
         result[indexOf(row.changer)] = row.passes;
     return result;
-}
+}();
 
-constexpr std::array<PassSet, numberOfPasses> passesThatCanWaitByChanger = createPassesThatCanWait();
-
-constexpr std::array<PassSet, numberOfPasses> createEnablingPasses()
-{
-    std::array<PassSet, numberOfPasses> changersWithoutEffect { };
+constexpr ByPass<PassSet> enablingPasses = [] {
+    ByPass<PassSet> changersWithoutEffect { };
     for (const PassesLeftIdle& row : passesLeftIdle) {
-        for (PassID pass : allMembersOf<PassID>) {
-            if (row.passes.contains(pass))
-                changersWithoutEffect[indexOf(pass)].add(row.changer);
-        }
+        row.passes.forEach([&](PassID pass) {
+            changersWithoutEffect[indexOf(pass)].add(row.changer);
+        });
     }
-
-    std::array<PassSet, numberOfPasses> result { };
+    ByPass<PassSet> result { };
     for (PassID pass : allMembersOf<PassID>) {
         for (PassID changer : allMembersOf<PassID>) {
             if (!changersWithoutEffect[indexOf(pass)].contains(changer))
@@ -454,9 +399,7 @@ constexpr std::array<PassSet, numberOfPasses> createEnablingPasses()
         }
     }
     return result;
-}
-
-constexpr std::array<PassSet, numberOfPasses> enablingPasses = createEnablingPasses();
+}();
 
 constexpr bool namesFunctionPasses(const PassesLeftIdle& row)
 {
@@ -518,14 +461,11 @@ constexpr std::array schedules {
     schedule(FunctionSchedule::Represent, "Represent"_s, ScheduleMode::InPlace, ScheduledFunctions::All, Placed),
 };
 
-constexpr const ScheduleDescriptor& scheduleAt(FunctionSchedule id)
-{
-    return schedules[indexOf(id)];
-}
+constexpr const ScheduleDescriptor& scheduleAt(FunctionSchedule id) { return schedules[indexOf(id)]; }
 
 constexpr bool everyPassHasOneRow()
 {
-    std::array<unsigned, numberOfPasses> numberOfRows { };
+    ByPass<unsigned> numberOfRows { };
     for (const PassDescriptor& row : rows)
         ++numberOfRows[indexOf(row.id)];
     for (unsigned index = 0; index < numberOfPasses; ++index) {
@@ -533,25 +473,6 @@ constexpr bool everyPassHasOneRow()
             return false;
     }
     return true;
-}
-
-constexpr bool schedulesAreInEnumOrder()
-{
-    for (unsigned index = 0; index < schedules.size(); ++index) {
-        if (indexOf(schedules[index].id) != index)
-            return false;
-    }
-    return true;
-}
-
-constexpr bool hasValidEntryPoint(const PassDescriptor& descriptor)
-{
-    return (descriptor.scope == PassScope::Function) == !!descriptor.run;
-}
-
-constexpr bool hasValidForms(const PassDescriptor& descriptor)
-{
-    return descriptor.firstForm <= descriptor.lastForm;
 }
 
 constexpr bool hasValidProducedForm(const PassDescriptor& descriptor)
@@ -573,24 +494,16 @@ constexpr bool canObtainInputs(const PassDescriptor& consumer)
     });
 }
 
-constexpr bool passListsMatchTable()
+constexpr bool listOfFunctionPassesMatchesTable()
 {
-    std::array<bool, numberOfPasses> isListed { };
+    PassSet listed;
 #define AOT_CHECK_FUNCTION_PASS(id, function) \
     if (descriptorAt(PassID::id).run != function) \
         return false; \
-    isListed[indexOf(PassID::id)] = true;
+    listed.add(PassID::id);
     FOR_EACH_AOT_FUNCTION_PASS(AOT_CHECK_FUNCTION_PASS)
 #undef AOT_CHECK_FUNCTION_PASS
-#define AOT_CHECK_PROGRAM_PASS(id) \
-    if (descriptorAt(PassID::id).scope != PassScope::Program || isListed[indexOf(PassID::id)]) \
-        return false; \
-    isListed[indexOf(PassID::id)] = true;
-    FOR_EACH_AOT_PROGRAM_PASS(AOT_CHECK_PROGRAM_PASS)
-#undef AOT_CHECK_PROGRAM_PASS
-    return std::ranges::all_of(rows, [&](const PassDescriptor& row) {
-        return isListed[indexOf(row.id)];
-    });
+    return listed == functionPasses;
 }
 
 constexpr bool resultsHaveOneProducer()
@@ -636,33 +549,19 @@ constexpr bool allPassesIn(const ScheduleDescriptor& descriptor, const Invocable
     });
 }
 
-constexpr bool runsOnlyFunctionPasses(const ScheduleDescriptor& descriptor)
-{
-    return allPassesIn(descriptor, [](const PassDescriptor& pass) {
-        return pass.scope == PassScope::Function;
-    });
-}
-
-constexpr bool runsInDeclaredForm(const ScheduleDescriptor& descriptor)
+constexpr bool runsFunctionPassesOfDeclaredForm(const ScheduleDescriptor& descriptor)
 {
     return allPassesIn(descriptor, [&](const PassDescriptor& pass) {
-        return pass.firstForm == descriptor.form && pass.lastForm == descriptor.form;
+        return pass.scope == PassScope::Function && pass.firstForm == descriptor.form && pass.lastForm == descriptor.form;
     });
 }
 
-constexpr bool isScheduled(PassID id)
+constexpr bool isScheduled(const PassDescriptor& row)
 {
-    return std::ranges::any_of(schedules, [&](const ScheduleDescriptor& descriptor) {
-        return std::ranges::any_of(descriptor.steps, [&](const ScheduleStep& step) {
-            return step.kind == ScheduleStep::Kind::RunPass && step.pass == id;
+    return row.scope == PassScope::Program || std::ranges::any_of(schedules, [&](const ScheduleDescriptor& descriptor) {
+        return !allPassesIn(descriptor, [&](const PassDescriptor& pass) {
+            return pass.id != row.id;
         });
-    });
-}
-
-constexpr bool schedulesEveryFunctionPass()
-{
-    return std::ranges::all_of(rows, [](const PassDescriptor& row) {
-        return row.scope == PassScope::Program || isScheduled(row.id);
     });
 }
 
@@ -701,10 +600,7 @@ constexpr bool runsPassAfterUnverifiedPass(const ScheduleDescriptor& descriptor)
     return true;
 }
 
-constexpr bool isLocalToFunction(const PassDescriptor& pass)
-{
-    return !pass.readsOtherBodies && !pass.derivesFunctions;
-}
+constexpr bool isLocalToFunction(const PassDescriptor& pass) { return !pass.readsOtherBodies && !pass.derivesFunctions; }
 
 constexpr bool modeFitsPasses(const ScheduleDescriptor& descriptor)
 {
@@ -713,7 +609,7 @@ constexpr bool modeFitsPasses(const ScheduleDescriptor& descriptor)
     return descriptor.functions != ScheduledFunctions::Reached && allPassesIn(descriptor, isLocalToFunction);
 }
 
-// optimizeCopy() scans a finished copy for function references only when the schedule is Reached.
+// runOnCopies() scans a finished copy for function references only when the schedule is Reached.
 constexpr bool schedulesDerivedFunctions(const ScheduleDescriptor& descriptor)
 {
     return descriptor.functions == ScheduledFunctions::Reached || allPassesIn(descriptor, [](const PassDescriptor& pass) {
@@ -790,11 +686,11 @@ constexpr bool canRunFunctionPass(PassID id, PassID nestedID)
 }
 
 static_assert(everyPassHasOneRow());
-static_assert(std::ranges::all_of(rows, hasValidEntryPoint));
-static_assert(std::ranges::all_of(rows, hasValidForms));
+static_assert(std::ranges::all_of(rows, [](const PassDescriptor& row) { return (row.scope == PassScope::Function) == !!row.run; }));
+static_assert(std::ranges::all_of(rows, [](const PassDescriptor& row) { return row.firstForm <= row.lastForm; }));
 static_assert(std::ranges::all_of(rows, hasValidProducedForm));
 static_assert(std::ranges::all_of(rows, canObtainInputs));
-static_assert(passListsMatchTable());
+static_assert(listOfFunctionPassesMatchesTable());
 static_assert(resultsHaveOneProducer());
 static_assert(std::ranges::all_of(passesLeftIdle, namesFunctionPasses));
 static_assert(std::ranges::all_of(passesThatCanWait, namesFunctionPasses));
@@ -802,16 +698,15 @@ static_assert(std::ranges::all_of(enablingPasses, [](const PassSet& passes) { re
 static_assert(!descriptorAt(ChooseRepresentations).inputs.contains(Heat));
 
 static_assert(std::size(schedules) == numberOfFunctionSchedules);
-static_assert(schedulesAreInEnumOrder());
+static_assert(std::ranges::all_of(schedules, [](const ScheduleDescriptor& descriptor) { return &scheduleAt(descriptor.id) == &descriptor; }));
 static_assert(std::ranges::all_of(schedules, hasBalancedFixpoints));
-static_assert(std::ranges::all_of(schedules, runsOnlyFunctionPasses));
-static_assert(std::ranges::all_of(schedules, runsInDeclaredForm));
+static_assert(std::ranges::all_of(schedules, runsFunctionPassesOfDeclaredForm));
 static_assert(std::ranges::all_of(schedules, includesOnlySimplify));
 static_assert(std::ranges::all_of(schedules, compactsBehindIncludedSchedules));
 static_assert(std::ranges::all_of(schedules, modeFitsPasses));
 static_assert(std::ranges::all_of(schedules, schedulesDerivedFunctions));
 static_assert(std::ranges::all_of(schedules, runsPassAfterUnverifiedPass));
-static_assert(schedulesEveryFunctionPass());
+static_assert(std::ranges::all_of(rows, isScheduled));
 
 static_assert(removingPassesRunUnconditionally());
 static_assert(runsUnconditionally(SelectTypedResults));
@@ -859,6 +754,81 @@ const ScheduleDescriptor& descriptorOf(FunctionSchedule schedule)
     return PassTable::scheduleAt(schedule);
 }
 
-} } } // namespace JSC::AOT::Typed
+FunctionID FunctionPassContext::derivedFunction(const DerivedFunctionKey& key)
+{
+    RELEASE_ASSERT(inputs.derivedFunctions);
+    return inputs.derivedFunctions->ensure(key);
+}
+
+double FunctionPassContext::heatOf(BlockID block)
+{
+    return inputs.heat.activationsOf(program, id) * analyses.blockFrequencies().frequencyOf(block);
+}
+
+bool FunctionPassContext::runsAtMostOnce(BlockID block)
+{
+    return analyses.executionCountOf(block) == ExecutionCount::AtMostOnce;
+}
+
+Subject FunctionPassContext::subject() const
+{
+    return analyses.subject();
+}
+
+Subject FunctionPassContext::subject(BlockID block) const
+{
+    Subject result = subject();
+    if (!block)
+        return result;
+    if (result.function == id)
+        result.block = block;
+    for (ValueID value : function.at(block).values) {
+        SourceLocation location = function.locationOf(value);
+        if (!hasModule(location))
+            continue;
+        result.location = location;
+        break;
+    }
+    return result;
+}
+
+Subject FunctionPassContext::subject(ValueID value) const
+{
+    return analyses.subject(value);
+}
+
+uint64_t FunctionPassContext::limit(LimitID limit) const
+{
+    return build.limit(limit);
+}
+
+bool FunctionPassContext::exceeds(LimitID limit, uint64_t amount, ValueID value)
+{
+    if (amount <= build.limit(limit))
+        return false;
+    build.gaveUp(limit, subject(value));
+    return true;
+}
+
+GaveUp FunctionPassContext::gaveUp(LimitID limit, ValueID value)
+{
+    return build.gaveUp(limit, subject(value));
+}
+
+void FunctionPassContext::addDecline(Wire::DeclineKind kind, ValueID value, const DeclineReason& reason, LimitID limit, uint32_t count)
+{
+    if (!build.options().collectsDeclines())
+        return;
+    build.addDecline({ .kind = kind, .limit = limit, .count = count, .reason = encodeDeclineReason(kind, reason), .witness = witnessOf(subject(value)) });
+}
+
+} // namespace Typed
+
+bool isOptionalPass(PassID pass)
+{
+    return pass != PassID::None && Typed::descriptorOf(pass).necessity == Typed::PassNecessity::Optional;
+}
+
+} } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

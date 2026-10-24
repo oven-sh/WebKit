@@ -11,7 +11,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=FunctionPrototypeCall
     v1 = Builtin builtin=FunctionPrototypeApply
     v2 = Builtin builtin=ReflectApply
@@ -62,46 +61,35 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="receiverOfCall" results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="receiverOfApply" results=[{type=anything}] {
-  b0():
     Return
 }
 function f3 name="targetOfReflectApply" results=[{type=anything}] {
-  b0():
     Return
 }
 function f4 name="handedOnByCall" results=[{type=anything}] {
-  b0():
     Return
 }
 function f5 name="handedOnByApply" results=[{type=anything}] {
-  b0():
     Return
 }
 function f6 name="handedOnByReflectApply" results=[{type=anything}] {
-  b0():
     Return
 }
 function f7 name="bound" results=[{type=anything}] {
-  b0():
     Return
 }
 function f8 name="calledThroughCallOfCall" results=[{type=anything}] {
-  b0():
     Return
 }
 function f9 name="enteredFromTwoPlaces" results=[{type=anything}] {
-  b0():
     Return
 }
 function f10 name="receiverOrArgument" results=[{type=anything}] {
-  b0():
     Return
 }
 function f11 name="enteredInLoop" results=[{type=anything}] {
-  b0():
     Return
 }

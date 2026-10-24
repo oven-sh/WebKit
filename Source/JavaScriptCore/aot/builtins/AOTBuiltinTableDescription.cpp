@@ -11,608 +11,376 @@
 #include "AOTBuiltinTableWords.h"
 #include "AOTVector.h"
 #include "JSCInlines.h"
-#include "ObjectConstructor.h"
-#include <wtf/HexNumber.h>
+#include "JSONObject.h"
+#include <concepts>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
 
 extern "C" const char* Bun__removableFeatureName(uint16_t featureIndex);
 
 namespace JSC { namespace AOT {
 
-using WordList = std::span<const ASCIILiteral>;
+namespace {
 
-struct TableDescription {
-    JSGlobalObject* realm;
-    VM& vm;
-    const BuiltinTable& table;
+struct Null { };
+struct PlainName { BuiltinName name; };
+struct OptionalName { BuiltinName name; };
+
+struct FeatureUseSummary {
+    RemovableFeature feature;
+    bool isConditional;
 };
 
-static void put(const TableDescription& description, JSObject* object, ASCIILiteral name, JSValue value)
-{
-    object->putDirect(description.vm, Identifier::fromString(description.vm, name), value);
-}
-
-static JSValue describeText(const TableDescription& description, const String& text)
-{
-    return jsString(description.vm, text);
-}
-
-template<typename Elements, typename Functor>
-static JSArray* describeList(const TableDescription& description, const Elements& elements, const Functor& describeElement)
-{
-    auto scope = DECLARE_THROW_SCOPE(description.vm);
-    JSArray* array = constructEmptyArray(description.realm, nullptr);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    unsigned index = 0;
-    for (auto&& element : elements) {
-        JSValue value = describeElement(description, element);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        array->putDirectIndex(description.realm, index++, value);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-    }
-    return array;
-}
-
-template<typename Enum>
-static JSValue describeWord(const TableDescription& description, WordList words, Enum value)
-{
-    return describeText(description, words[static_cast<unsigned>(value)]);
-}
-
-template<typename Enum>
-static JSValue describeOptionalWord(const TableDescription& description, WordList words, std::optional<Enum> value)
-{
-    return value ? describeWord(description, words, *value) : jsNull();
-}
-
-template<typename Enum>
-static JSArray* describeWords(const TableDescription& description, WordList words, OptionSet<Enum> set)
-{
-    Vector<ASCIILiteral, 32> wordsInSet;
-    for (size_t position = 0; position < words.size(); ++position) {
-        if ((set.toRaw() >> position) & 1)
-            wordsInSet.append(words[position]);
-    }
-    return describeList(description, wordsInSet, describeText);
-}
-
-static JSValue describeHeap(const TableDescription& description, AbstractHeap heap)
-{
-    return describeWord(description, abstractHeapWords, heap);
-}
-
-template<typename ID>
-static JSValue describeToken(const TableDescription& description, ID id)
-{
-    return id ? describeText(description, makeString(description.table.tokenOf(id))) : jsNull();
-}
-
-static JSValue describeFunction(RuntimeFunctionID id)
-{
-    return id ? jsNumber(id.index()) : jsNull();
-}
-
-static JSValue describeNameText(const TableDescription& description, BuiltinName name)
-{
-    return describeText(description, String::fromUTF8(description.table.textOf(name)));
-}
-
-static JSValue describeName(const TableDescription& description, BuiltinName name)
-{
-    const BuiltinTable& table = description.table;
-    if (table.isRegisteredSymbolName(name))
-        return describeText(description, makeString("@@@"_s, String::fromUTF8(table.textOf(name))));
-    if (table.isSymbolName(name))
-        return describeText(description, makeString("@@"_s, String::fromUTF8(table.textOf(name))));
-    return describeNameText(description, name);
-}
-
-static JSValue describeOperand(const TableDescription& description, BuiltinOperand operand)
-{
-    switch (operand.kind()) {
-    case BuiltinOperand::Kind::Receiver:
-        return describeText(description, "this"_s);
-    case BuiltinOperand::Kind::Argument: {
-        JSObject* object = constructEmptyObject(description.realm);
-        put(description, object, "argument"_s, jsNumber(operand.argumentIndex()));
-        return object;
-    }
-    case BuiltinOperand::Kind::ArgumentsFrom: {
-        JSObject* object = constructEmptyObject(description.realm);
-        put(description, object, "argumentsFrom"_s, jsNumber(operand.argumentIndex()));
-        return object;
-    }
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static JSValue describeOptionalOperand(const TableDescription& description, std::optional<BuiltinOperand> operand)
-{
-    return operand ? describeOperand(description, *operand) : jsNull();
-}
-
-static JSObject* describeType(const TableDescription&, BuiltinTypeID);
-
-static JSObject* describeSlotContents(const TableDescription& description, const BuiltinSlotContents& contents)
-{
-    auto scope = DECLARE_THROW_SCOPE(description.vm);
-    JSObject* type = describeType(description, contents.type);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
-    JSObject* object = constructEmptyObject(description.realm);
-    put(description, object, "slot"_s, describeToken(description, contents.slot));
-    put(description, object, "type"_s, type);
-    return object;
-}
-
-static JSObject* describeTypePart(const TableDescription& description, const BuiltinTypePart& part)
-{
-    auto scope = DECLARE_THROW_SCOPE(description.vm);
-    JSObject* object = constructEmptyObject(description.realm);
-    put(description, object, "part"_s, describeWord(description, builtinTypePartKindWords, part.kind));
-    switch (part.kind) {
-    case BuiltinTypePartKind::Instance: {
-        JSArray* pristine = describeWords(description, pristineAspectsWords, part.pristine);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        JSArray* contents = describeList(description, part.contents, describeSlotContents);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        put(description, object, "class"_s, describeToken(description, part.builtinClass));
-        put(description, object, "pristine"_s, pristine);
-        put(description, object, "contents"_s, contents);
-        return object;
-    }
-    case BuiltinTypePartKind::InstanceOfReceiverClass:
-    case BuiltinTypePartKind::TypedArrayOfReceiverElementType:
-        return object;
-    case BuiltinTypePartKind::Layout:
-        put(description, object, "layout"_s, describeToken(description, part.layout));
-        return object;
-    case BuiltinTypePartKind::Builtin:
-        put(description, object, "builtin"_s, describeToken(description, part.builtin));
-        return object;
-    case BuiltinTypePartKind::Operand:
-    case BuiltinTypePartKind::CallbackResult:
-    case BuiltinTypePartKind::Prototype:
-        put(description, object, "operand"_s, describeOptionalOperand(description, part.operand));
-        return object;
-    case BuiltinTypePartKind::IteratedValues:
-        put(description, object, "operand"_s, describeOptionalOperand(description, part.operand));
-        put(description, object, "isSettled"_s, jsBoolean(part.isSettled));
-        return object;
-    case BuiltinTypePartKind::Slot:
-        put(description, object, "operand"_s, describeOptionalOperand(description, part.operand));
-        put(description, object, "slot"_s, describeToken(description, part.slot));
-        return object;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static JSValue describeIntegers(const TableDescription& description, const BuiltinType& type)
-{
-    if (!type.flags.contains(BuiltinTypeFlag::HasOnlyIntegers))
-        return jsNull();
-    JSObject* object = constructEmptyObject(description.realm);
-    put(description, object, "minimum"_s, jsNumber(type.integers.minimum));
-    put(description, object, "maximum"_s, jsNumber(type.integers.maximum));
-    return object;
-}
-
-static JSObject* describeType(const TableDescription& description, BuiltinTypeID id)
-{
-    auto scope = DECLARE_THROW_SCOPE(description.vm);
-    const BuiltinType& type = description.table.at(id);
-    JSArray* primitives = describeWords(description, builtinPrimitiveWords, type.primitives);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSArray* stringLiterals = describeList(description, type.stringLiterals, describeName);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSArray* parts = describeList(description, type.parts, describeTypePart);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
-    JSObject* object = constructEmptyObject(description.realm);
-    put(description, object, "isAnything"_s, jsBoolean(type.flags.contains(BuiltinTypeFlag::IsAnything)));
-    put(description, object, "hasAnyObject"_s, jsBoolean(type.flags.contains(BuiltinTypeFlag::HasAnyObject)));
-    put(description, object, "hasAnyFunction"_s, jsBoolean(type.flags.contains(BuiltinTypeFlag::HasAnyFunction)));
-    put(description, object, "hasPlainData"_s, jsBoolean(type.flags.contains(BuiltinTypeFlag::HasPlainData)));
-    put(description, object, "primitives"_s, primitives);
-    put(description, object, "integers"_s, describeIntegers(description, type));
-    put(description, object, "stringLiterals"_s, stringLiterals);
-    put(description, object, "freshness"_s, describeWord(description, builtinFreshnessWords, type.freshness));
-    put(description, object, "parts"_s, parts);
-    return object;
-}
-
-static JSValue describeMemberStep(const TableDescription& description, BuiltinName name)
-{
-    return name ? describeName(description, name) : jsNull();
-}
-
-static JSObject* describePlace(const TableDescription& description, const BuiltinPlace& place)
-{
-    auto scope = DECLARE_THROW_SCOPE(description.vm);
-    JSObject* object = constructEmptyObject(description.realm);
-    put(description, object, "place"_s, describeWord(description, builtinPlaceKindWords, place.kind));
-    switch (place.kind) {
-    case BuiltinPlaceKind::None:
-    case BuiltinPlaceKind::Result:
-    case BuiltinPlaceKind::NativeMemory:
-        return object;
-    case BuiltinPlaceKind::Operand:
-    case BuiltinPlaceKind::OwnValues:
-    case BuiltinPlaceKind::Prototype:
-        put(description, object, "operand"_s, describeOptionalOperand(description, place.operand));
-        return object;
-    case BuiltinPlaceKind::IteratedValues:
-        put(description, object, "operand"_s, describeOptionalOperand(description, place.operand));
-        put(description, object, "isSettled"_s, jsBoolean(place.isSettled));
-        return object;
-    case BuiltinPlaceKind::Slot:
-        put(description, object, "operand"_s, describeOptionalOperand(description, place.operand));
-        put(description, object, "slot"_s, describeToken(description, place.slot));
-        return object;
-    case BuiltinPlaceKind::ResultSlot:
-        put(description, object, "slot"_s, describeToken(description, place.slot));
-        return object;
-    case BuiltinPlaceKind::ResultField:
-        put(description, object, "index"_s, jsNumber(place.fieldIndex));
-        put(description, object, "holdsOnlyWhatIsStored"_s, jsBoolean(place.holdsOnlyWhatIsStored));
-        return object;
-    case BuiltinPlaceKind::NewValue: {
-        JSObject* type = describeType(description, place.newValueType);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        put(description, object, "type"_s, type);
-        return object;
-    }
-    case BuiltinPlaceKind::Member: {
-        JSArray* path = describeList(description, place.memberPath, describeMemberStep);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        put(description, object, "operand"_s, describeOptionalOperand(description, place.operand));
-        put(description, object, "path"_s, path);
-        put(description, object, "firstStep"_s, jsNumber(place.firstMemberStep));
-        return object;
-    }
-    case BuiltinPlaceKind::NativeCell:
-        put(description, object, "cell"_s, describeNameText(description, place.nativeCell));
-        return object;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static JSObject* describeKey(const TableDescription& description, const BuiltinKey& key)
-{
-    auto scope = DECLARE_THROW_SCOPE(description.vm);
-    JSObject* object = constructEmptyObject(description.realm);
-    put(description, object, "key"_s, describeWord(description, builtinKeyKindWords, key.kind));
-    switch (key.kind) {
-    case BuiltinKeyKind::None:
-    case BuiltinKeyKind::Any:
-    case BuiltinKeyKind::Indexes:
-        return object;
-    case BuiltinKeyKind::Names: {
-        JSArray* names = describeList(description, key.names, describeName);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        put(description, object, "names"_s, names);
-        return object;
-    }
-    case BuiltinKeyKind::Operand:
-    case BuiltinKeyKind::ElementsOf:
-        put(description, object, "operand"_s, describeOptionalOperand(description, key.operand));
-        return object;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static JSObject* describeTransfer(const TableDescription& description, const BuiltinTransfer& transfer)
-{
-    auto scope = DECLARE_THROW_SCOPE(description.vm);
-    JSObject* from = describePlace(description, transfer.from);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSObject* to = describePlace(description, transfer.to);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
-    JSObject* object = constructEmptyObject(description.realm);
-    put(description, object, "from"_s, from);
-    put(description, object, "to"_s, to);
-    return object;
-}
-
-static JSObject* describeCallback(const TableDescription& description, const BuiltinCallback& callback)
-{
-    auto scope = DECLARE_THROW_SCOPE(description.vm);
-    JSObject* newTarget = describePlace(description, callback.newTarget);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSObject* thisValue = describePlace(description, callback.thisValue);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSArray* arguments = describeList(description, callback.arguments, describePlace);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSObject* spreadArguments = describePlace(description, callback.spreadArguments);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSObject* resultTo = describePlace(description, callback.resultTo);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
-    JSObject* object = constructEmptyObject(description.realm);
-    put(description, object, "callee"_s, describeOperand(description, callback.callee));
-    put(description, object, "times"_s, describeWord(description, builtinCallbackTimesWords, callback.times));
-    put(description, object, "constructs"_s, jsBoolean(callback.constructs));
-    put(description, object, "newTarget"_s, newTarget);
-    put(description, object, "thisValue"_s, thisValue);
-    put(description, object, "arguments"_s, arguments);
-    put(description, object, "spreadArguments"_s, spreadArguments);
-    put(description, object, "resultUse"_s, describeWord(description, builtinCallbackResultUseWords, callback.resultUse));
-    put(description, object, "resultTo"_s, resultTo);
-    return object;
-}
-
-static JSObject* describeHandlerCall(const TableDescription& description, const BuiltinHandlerCall& call)
-{
-    auto scope = DECLARE_THROW_SCOPE(description.vm);
-    JSObject* callee = describePlace(description, call.callee);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSObject* thisValue = describePlace(description, call.thisValue);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSArray* arguments = describeList(description, call.arguments, describePlace);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
-    JSObject* object = constructEmptyObject(description.realm);
-    put(description, object, "callee"_s, callee);
-    put(description, object, "times"_s, describeWord(description, builtinCallbackTimesWords, call.times));
-    put(description, object, "thisValue"_s, thisValue);
-    put(description, object, "arguments"_s, arguments);
-    put(description, object, "resultUse"_s, describeWord(description, builtinCallbackResultUseWords, call.resultUse));
-    return object;
-}
-
-static JSObject* describePropertyAction(const TableDescription& description, const BuiltinPropertyAction& action)
-{
-    auto scope = DECLARE_THROW_SCOPE(description.vm);
-    JSObject* key = describeKey(description, action.key);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSObject* value = describePlace(description, action.value);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    bool hasIntegrityLevel = action.kind == BuiltinPropertyActionKind::ChangesIntegrity;
-
-    JSObject* object = constructEmptyObject(description.realm);
-    put(description, object, "action"_s, describeWord(description, builtinPropertyActionKindWords, action.kind));
-    put(description, object, "object"_s, describeOperand(description, action.object));
-    put(description, object, "key"_s, key);
-    put(description, object, "value"_s, value);
-    put(description, object, "integrityLevel"_s, hasIntegrityLevel ? describeWord(description, builtinIntegrityLevelWords, action.integrityLevel) : jsNull());
-    return object;
-}
-
-static JSObject* describeParameter(const TableDescription& description, const BuiltinParameter& parameter)
-{
-    auto scope = DECLARE_THROW_SCOPE(description.vm);
-    JSObject* accepted = describeType(description, parameter.accepted);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSObject* converted = describeType(description, parameter.converted);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSObject* refused = describeType(description, parameter.refused);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSObject* admitted = parameter.admitted ? describeType(description, parameter.admitted) : nullptr;
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSArray* uses = describeWords(description, operandUseWords, parameter.uses);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSArray* roles = describeWords(description, builtinOperandRoleWords, parameter.roles);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSArray* protocols = describeWords(description, protocolWords, parameter.protocols);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSArray* namedMembers = describeList(description, parameter.namedMembers, describeName);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSArray* calledMembers = describeList(description, parameter.calledMembers, describeName);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
-    JSObject* object = constructEmptyObject(description.realm);
-    put(description, object, "operand"_s, describeOperand(description, parameter.operand));
-    put(description, object, "mode"_s, describeWord(description, builtinParameterModeWords, parameter.mode));
-    put(description, object, "accepted"_s, accepted);
-    put(description, object, "conversion"_s, describeWord(description, builtinConversionWords, parameter.conversion));
-    put(description, object, "converted"_s, converted);
-    put(description, object, "refused"_s, refused);
-    put(description, object, "admitted"_s, admitted ? JSValue(admitted) : jsNull());
-    put(description, object, "uses"_s, uses);
-    put(description, object, "roles"_s, roles);
-    put(description, object, "protocols"_s, protocols);
-    put(description, object, "namedMembers"_s, namedMembers);
-    put(description, object, "calledMembers"_s, calledMembers);
-    return object;
-}
-
-static JSObject* describeResult(const TableDescription& description, const BuiltinResult& result)
-{
-    auto scope = DECLARE_THROW_SCOPE(description.vm);
-    JSObject* type = describeType(description, result.type);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
-    JSObject* object = constructEmptyObject(description.realm);
-    put(description, object, "type"_s, type);
-    put(description, object, "rangeRule"_s, describeWord(description, builtinRangeRuleWords, result.rangeRule));
-    put(description, object, "rangeOperand"_s, describeOptionalOperand(description, result.rangeOperand));
-    put(description, object, "substringOf"_s, describeOptionalOperand(description, result.substringOf));
-    put(description, object, "typedResultForm"_s, describeWord(description, typedResultFormWords, result.typedResultForm));
-    put(description, object, "typedResultSource"_s, describeOptionalOperand(description, result.typedResultSource));
-    put(description, object, "iteratedOperand"_s, describeOptionalOperand(description, result.iteratedOperand));
-    put(description, object, "iterationKind"_s, result.iteratedOperand ? describeWord(description, iterationKindWords, result.iterationKind) : jsNull());
-    put(description, object, "prototypeSource"_s, describeOptionalOperand(description, result.prototypeSource));
-    return object;
-}
-
-static JSObject* describeImplementation(const TableDescription& description, const BuiltinImplementation& implementation)
-{
-    JSObject* object = constructEmptyObject(description.realm);
-    put(description, object, "how"_s, describeWord(description, builtinImplementationKindWords, implementation.kind));
-    put(description, object, "otherwise"_s, describeOptionalWord(description, builtinImplementationKindWords, implementation.otherwise));
-    put(description, object, "callee"_s, describeWord(description, builtinCalleeWords, implementation.callee));
-    put(description, object, "inlineBuiltin"_s, describeOptionalWord(description, inlineBuiltinWords, implementation.inlineBuiltin));
-    put(description, object, "maximumArgumentCount"_s, implementation.maximumArgumentCount ? jsNumber(*implementation.maximumArgumentCount) : jsNull());
-    put(description, object, "function"_s, describeFunction(implementation.function));
-    return object;
-}
-
-static JSObject* describeOverload(const TableDescription& description, BuiltinOverloadID id)
-{
-    auto scope = DECLARE_THROW_SCOPE(description.vm);
-    const BuiltinTable& table = description.table;
-    const BuiltinOverload& overload = table.at(id);
-
-    JSValue receiver = jsNull();
-    if (overload.receiver) {
-        receiver = describeParameter(description, *overload.receiver);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-    }
-    JSArray* parameters = describeList(description, overload.parameters, describeParameter);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSObject* result = describeResult(description, overload.result);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSArray* reads = describeList(description, overload.effects.reads, describeHeap);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSArray* writes = describeList(description, overload.effects.writes, describeHeap);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSArray* transfers = describeList(description, overload.flow.transfers, describeTransfer);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSArray* callbacks = describeList(description, overload.flow.callbacks, describeCallback);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSArray* propertyActions = describeList(description, overload.flow.propertyActions, describePropertyAction);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSArray* handlerCalls = describeList(description, overload.flow.handlerCalls, describeHandlerCall);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
-    JSObject* object = constructEmptyObject(description.realm);
-    put(description, object, "token"_s, describeText(description, table.tokenOf(id)));
-    put(description, object, "path"_s, describeText(description, table.textOf(overload.builtin)));
-    put(description, object, "mode"_s, describeWord(description, builtinCallModeWords, overload.mode));
-    put(description, object, "isProvenByConstruction"_s, jsBoolean(overload.flags.contains(BuiltinOverloadFlag::IsProvenByConstruction)));
-    put(description, object, "isUndeclared"_s, jsBoolean(overload.flags.contains(BuiltinOverloadFlag::IsUndeclared)));
-    put(description, object, "receiver"_s, receiver);
-    put(description, object, "parameters"_s, parameters);
-    put(description, object, "result"_s, result);
-    put(description, object, "capability"_s, describeWord(description, builtinCapabilityWords, overload.effects.capability));
-    put(description, object, "throws"_s, jsBoolean(overload.flags.contains(BuiltinOverloadFlag::Throws)));
-    put(description, object, "onlyPropagatesErrors"_s, jsBoolean(overload.onlyPropagatesErrors()));
-    put(description, object, "runsOnlyOperandCode"_s, jsBoolean(overload.flags.contains(BuiltinOverloadFlag::RunsOnlyOperandCode)));
-    put(description, object, "readsStateBeforeConversions"_s, jsBoolean(overload.flags.contains(BuiltinOverloadFlag::ReadsStateBeforeConversions)));
-    put(description, object, "isSpecialCase"_s, jsBoolean(overload.flags.contains(BuiltinOverloadFlag::IsSpecialCase)));
-    if (overload.resultIsDeclaredOnly())
-        put(description, object, "resultIsDeclaredOnly"_s, jsBoolean(true));
-    put(description, object, "reads"_s, reads);
-    put(description, object, "writes"_s, writes);
-    put(description, object, "transfers"_s, transfers);
-    put(description, object, "callbacks"_s, callbacks);
-    put(description, object, "propertyActions"_s, propertyActions);
-    put(description, object, "handlerCalls"_s, handlerCalls);
-    put(description, object, "implementation"_s, describeImplementation(description, overload.code.implementation));
-    put(description, object, "model"_s, describeFunction(overload.code.model));
-    return object;
-}
-
-static JSObject* describeEntry(const TableDescription& description, BuiltinID id)
-{
-    auto scope = DECLARE_THROW_SCOPE(description.vm);
-    const BuiltinTable& table = description.table;
-    const Builtin& builtin = table.at(id);
-    JSArray* platforms = describeWords(description, builtinPlatformWords, builtin.platforms);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSArray* flags = describeWords(description, builtinFlagWords, builtin.flags);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSArray* overloads = describeList(description, table.overloadIDsOf(id), describeOverload);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
-    JSObject* object = constructEmptyObject(description.realm);
-    put(description, object, "id"_s, jsNumber(id.index()));
-    put(description, object, "token"_s, describeToken(description, id));
-    put(description, object, "path"_s, describeText(description, table.textOf(id)));
-    put(description, object, "kind"_s, describeWord(description, builtinKindWords, builtin.kind));
-    put(description, object, "origin"_s, describeWord(description, builtinOriginWords, builtin.origin));
-    put(description, object, "scope"_s, describeWord(description, builtinScopeWords, builtin.scope));
-    put(description, object, "mutability"_s, describeWord(description, builtinMutabilityWords, builtin.mutability));
-    put(description, object, "platforms"_s, platforms);
-    put(description, object, "flags"_s, flags);
-    put(description, object, "holder"_s, describeToken(description, builtin.holder));
-    put(description, object, "name"_s, describeNameText(description, builtin.name));
-    put(description, object, "isSymbolName"_s, jsBoolean(table.isSymbolName(builtin.name)));
-    put(description, object, "prototypeLink"_s, describeWord(description, builtinPrototypeLinkWords, builtin.prototypeLink));
-    put(description, object, "inheritsFrom"_s, describeToken(description, builtin.inheritsFrom));
-    put(description, object, "instanceClass"_s, describeToken(description, builtin.instanceClass));
-    put(description, object, "sameObjectAs"_s, describeToken(description, builtin.sameObjectAs));
-    put(description, object, "overloads"_s, overloads);
-    return object;
-}
-
-static JSObject* describeSlot(const TableDescription& description, BuiltinSlotID id)
-{
-    auto scope = DECLARE_THROW_SCOPE(description.vm);
-    const BuiltinSlot& slot = description.table.at(id);
-    JSValue holds = jsNull();
-    if (slot.holds) {
-        holds = describeType(description, slot.holds);
-        RETURN_IF_EXCEPTION(scope, nullptr);
+class TableWriter {
+public:
+    explicit TableWriter(const BuiltinTable& table)
+        : m_table(table)
+    {
     }
 
-    JSObject* object = constructEmptyObject(description.realm);
-    put(description, object, "token"_s, describeToken(description, id));
-    put(description, object, "name"_s, describeNameText(description, slot.name));
-    put(description, object, "owner"_s, describeToken(description, slot.owner));
-    put(description, object, "heap"_s, describeHeap(description, slot.heap));
-    put(description, object, "contentsSlot"_s, describeOptionalWord(description, contentsSlotWords, slot.contentsSlot));
-    put(description, object, "holds"_s, holds);
-    return object;
-}
+    JSValue parse(JSGlobalObject* realm) { return JSONParse(realm, m_out.toString()); }
 
-static JSObject* describeClass(const TableDescription& description, BuiltinClassID id)
-{
-    auto scope = DECLARE_THROW_SCOPE(description.vm);
-    const BuiltinClass& builtinClass = description.table.at(id);
-    JSArray* slots = describeList(description, builtinClass.slots, describeSlot);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
-    JSObject* object = constructEmptyObject(description.realm);
-    put(description, object, "token"_s, describeToken(description, id));
-    put(description, object, "origin"_s, describeWord(description, builtinOriginWords, builtinClass.origin));
-    put(description, object, "parent"_s, describeToken(description, builtinClass.parent));
-    put(description, object, "constructor"_s, describeToken(description, builtinClass.constructor));
-    put(description, object, "prototype"_s, describeToken(description, builtinClass.prototype));
-    put(description, object, "instanceTest"_s, describeWord(description, builtinInstanceTestWords, builtinClass.instanceTest));
-    put(description, object, "isPrimitiveWrapper"_s, jsBoolean(builtinClass.isPrimitiveWrapper));
-    put(description, object, "isNeverPristine"_s, jsBoolean(builtinClass.isNeverPristine));
-    put(description, object, "pristineTest"_s, describeWord(description, builtinPristineTestWords, builtinClass.pristineTest));
-    put(description, object, "hasClosureInstances"_s, jsBoolean(builtinClass.hasClosureInstances));
-    put(description, object, "definesCharactersOnNewInstances"_s, jsBoolean(builtinClass.definesCharactersOnNewInstances));
-    JSValue namesDefinedOnNewInstances = jsNull();
-    if (builtinClass.listsNamesDefinedOnNewInstances) {
-        namesDefinedOnNewInstances = describeList(description, builtinClass.namesDefinedOnNewInstances, describeName);
-        RETURN_IF_EXCEPTION(scope, nullptr);
+    void object(const auto&... nameThenValue)
+    {
+        open('{');
+        members(nameThenValue...);
+        close('}');
     }
-    put(description, object, "namesDefinedOnNewInstances"_s, namesDefinedOnNewInstances);
-    put(description, object, "slots"_s, slots);
-    put(description, object, "stateHeap"_s, describeOptionalWord(description, abstractHeapWords, builtinClass.stateHeap));
-    return object;
-}
 
-static JSObject* describeLayoutField(const TableDescription& description, const BuiltinLayoutField& field)
-{
-    auto scope = DECLARE_THROW_SCOPE(description.vm);
-    JSObject* type = describeType(description, field.type);
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    void list(const auto& range, const auto& writeElement)
+    {
+        open('[');
+        for (auto&& element : range) {
+            separate();
+            writeElement(element);
+        }
+        close(']');
+    }
 
-    JSObject* object = constructEmptyObject(description.realm);
-    put(description, object, "name"_s, field.name ? describeName(description, field.name) : jsNull());
-    put(description, object, "isOptional"_s, jsBoolean(field.isOptional));
-    put(description, object, "type"_s, type);
-    return object;
-}
+    void write(Null) { m_out.append("null"_s); }
+    void write(bool value) { m_out.append(value ? "true"_s : "false"_s); }
+    void write(const String& text) { m_out.appendQuotedJSONString(text); }
+    void write(ASCIILiteral text) { write(String(text)); }
+    void write(const std::invocable auto& writeValue) { writeValue(); }
+    void write(PlainName plain) { write(String::fromUTF8(m_table.textOf(plain.name))); }
+    void write(RuntimeFunctionID id) { id ? write(id.index()) : write(Null { }); }
+    void write(OptionalName optional) { optional.name ? write(optional.name) : write(Null { }); }
 
-static JSObject* describeLayout(const TableDescription& description, BuiltinLayoutID id)
-{
-    auto scope = DECLARE_THROW_SCOPE(description.vm);
-    const BuiltinLayout& layout = description.table.at(id);
-    JSArray* fields = describeList(description, layout.fields, describeLayoutField);
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    template<std::integral Number> requires (!std::same_as<Number, bool>)
+    void write(Number number) { m_out.append(static_cast<double>(number)); }
 
-    JSObject* object = constructEmptyObject(description.realm);
-    put(description, object, "token"_s, describeToken(description, id));
-    put(description, object, "isTuple"_s, jsBoolean(layout.isTuple));
-    put(description, object, "fields"_s, fields);
-    return object;
-}
+    template<typename Value>
+    void write(const std::optional<Value>& value) { value ? write(*value) : write(Null { }); }
+
+    template<typename Record, BuiltinRecordPool pool>
+    void write(BuiltinRecordPointer<Record, pool> record) { record ? write(*record) : write(Null { }); }
+
+    template<typename Enum> requires std::is_enum_v<Enum>
+    void write(Enum value) { write(wordsOf(value)[static_cast<unsigned>(value)]); }
+
+    template<typename Enum>
+    void write(OptionSet<Enum> set)
+    {
+        open('[');
+        std::span<const ASCIILiteral> words = wordsOf(Enum { });
+        for (size_t position = 0; position < words.size(); ++position) {
+            if ((set.toRaw() >> position) & 1) {
+                separate();
+                write(words[position]);
+            }
+        }
+        close(']');
+    }
+
+    template<typename ID> requires requires(const BuiltinTable& table, ID id) { table.tokenOf(id); }
+    void write(ID id) { id ? write(makeString(m_table.tokenOf(id))) : write(Null { }); }
+
+    template<typename Range> requires requires(const Range& range) { range.begin(); range.end(); }
+    void write(const Range& range)
+    {
+        list(range, [&](const auto& element) {
+            write(element);
+        });
+    }
+
+    void write(BuiltinName name)
+    {
+        ASCIILiteral prefix = m_table.isRegisteredSymbolName(name) ? "@@@"_s : m_table.isSymbolName(name) ? "@@"_s : ""_s;
+        write(makeString(prefix, String::fromUTF8(m_table.textOf(name))));
+    }
+
+    void write(BuiltinOperand operand)
+    {
+        switch (operand.kind()) {
+        case BuiltinOperand::Kind::Receiver:
+            return write("this"_s);
+        case BuiltinOperand::Kind::Argument:
+            return object("argument"_s, operand.argumentIndex());
+        case BuiltinOperand::Kind::ArgumentsFrom:
+            return object("argumentsFrom"_s, operand.argumentIndex());
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    void write(const BuiltinSlotContents& contents) { object("slot"_s, contents.slot, "type"_s, contents.type); }
+
+    void write(const BuiltinTypePart& part)
+    {
+        open('{');
+        members("part"_s, part.kind);
+        switch (part.kind) {
+        case BuiltinTypePartKind::Instance:
+            members("class"_s, part.builtinClass, "pristine"_s, part.pristine, "contents"_s, part.contents);
+            break;
+        case BuiltinTypePartKind::InstanceOfReceiverClass:
+        case BuiltinTypePartKind::TypedArrayOfReceiverElementType:
+            break;
+        case BuiltinTypePartKind::Layout:
+            members("layout"_s, part.layout);
+            break;
+        case BuiltinTypePartKind::Builtin:
+            members("builtin"_s, part.builtin);
+            break;
+        case BuiltinTypePartKind::Operand:
+        case BuiltinTypePartKind::CallbackResult:
+        case BuiltinTypePartKind::Prototype:
+            members("operand"_s, part.operand);
+            break;
+        case BuiltinTypePartKind::IteratedValues:
+            members("operand"_s, part.operand, "isSettled"_s, part.isSettled);
+            break;
+        case BuiltinTypePartKind::Slot:
+            members("operand"_s, part.operand, "slot"_s, part.slot);
+            break;
+        }
+        close('}');
+    }
+
+    void write(BuiltinTypeID id)
+    {
+        if (!id)
+            return write(Null { });
+        const BuiltinType& type = m_table.at(id);
+        auto has = [&](BuiltinTypeFlag flag) {
+            return type.flags.contains(flag);
+        };
+        auto integers = [&] {
+            has(BuiltinTypeFlag::HasOnlyIntegers) ? object("minimum"_s, type.integers.minimum, "maximum"_s, type.integers.maximum) : write(Null { });
+        };
+        object("isAnything"_s, has(BuiltinTypeFlag::IsAnything), "hasAnyObject"_s, has(BuiltinTypeFlag::HasAnyObject), "hasAnyFunction"_s, has(BuiltinTypeFlag::HasAnyFunction),
+            "hasPlainData"_s, has(BuiltinTypeFlag::HasPlainData), "primitives"_s, type.primitives, "integers"_s, integers, "stringLiterals"_s, type.stringLiterals,
+            "freshness"_s, type.freshness, "parts"_s, type.parts);
+    }
+
+    void write(const BuiltinPlace& place)
+    {
+        open('{');
+        members("place"_s, place.kind);
+        switch (place.kind) {
+        case BuiltinPlaceKind::None:
+        case BuiltinPlaceKind::Result:
+        case BuiltinPlaceKind::NativeMemory:
+            break;
+        case BuiltinPlaceKind::Operand:
+        case BuiltinPlaceKind::OwnValues:
+        case BuiltinPlaceKind::Prototype:
+            members("operand"_s, place.operand);
+            break;
+        case BuiltinPlaceKind::IteratedValues:
+            members("operand"_s, place.operand, "isSettled"_s, place.isSettled);
+            break;
+        case BuiltinPlaceKind::Slot:
+            members("operand"_s, place.operand, "slot"_s, place.slot);
+            break;
+        case BuiltinPlaceKind::ResultSlot:
+            members("slot"_s, place.slot);
+            break;
+        case BuiltinPlaceKind::ResultField:
+            members("index"_s, place.fieldIndex, "holdsOnlyWhatIsStored"_s, place.holdsOnlyWhatIsStored);
+            break;
+        case BuiltinPlaceKind::NewValue:
+            members("type"_s, place.newValueType);
+            break;
+        case BuiltinPlaceKind::Member: {
+            auto path = [&] {
+                list(place.memberPath, [&](BuiltinName step) {
+                    write(OptionalName { step });
+                });
+            };
+            members("operand"_s, place.operand, "path"_s, path, "firstStep"_s, place.firstMemberStep);
+            break;
+        }
+        case BuiltinPlaceKind::NativeCell:
+            members("cell"_s, PlainName { place.nativeCell });
+            break;
+        }
+        close('}');
+    }
+
+    void write(const BuiltinKey& key)
+    {
+        open('{');
+        members("key"_s, key.kind);
+        switch (key.kind) {
+        case BuiltinKeyKind::None:
+        case BuiltinKeyKind::Any:
+        case BuiltinKeyKind::Indexes:
+            break;
+        case BuiltinKeyKind::Names:
+            members("names"_s, key.names);
+            break;
+        case BuiltinKeyKind::Operand:
+        case BuiltinKeyKind::ElementsOf:
+            members("operand"_s, key.operand);
+            break;
+        }
+        close('}');
+    }
+
+    void write(const BuiltinTransfer& transfer) { object("from"_s, transfer.from, "to"_s, transfer.to); }
+
+    void write(const BuiltinCallback& callback)
+    {
+        object("callee"_s, callback.callee, "times"_s, callback.times, "constructs"_s, callback.constructs, "newTarget"_s, callback.newTarget, "thisValue"_s, callback.thisValue,
+            "arguments"_s, callback.arguments, "spreadArguments"_s, callback.spreadArguments, "resultUse"_s, callback.resultUse, "resultTo"_s, callback.resultTo);
+    }
+
+    void write(const BuiltinHandlerCall& call)
+    {
+        object("callee"_s, call.callee, "times"_s, call.times, "thisValue"_s, call.thisValue, "arguments"_s, call.arguments, "resultUse"_s, call.resultUse);
+    }
+
+    void write(const BuiltinPropertyAction& action)
+    {
+        bool hasIntegrityLevel = action.kind == BuiltinPropertyActionKind::ChangesIntegrity;
+        object("action"_s, action.kind, "object"_s, action.object, "key"_s, action.key, "value"_s, action.value,
+            "integrityLevel"_s, hasIntegrityLevel ? std::optional(action.integrityLevel) : std::nullopt);
+    }
+
+    void write(const BuiltinParameter& parameter)
+    {
+        object("operand"_s, parameter.operand, "mode"_s, parameter.mode, "accepted"_s, parameter.accepted, "conversion"_s, parameter.conversion, "converted"_s, parameter.converted,
+            "refused"_s, parameter.refused, "admitted"_s, parameter.admitted, "uses"_s, parameter.uses, "roles"_s, parameter.roles, "protocols"_s, parameter.protocols,
+            "namedMembers"_s, parameter.namedMembers, "calledMembers"_s, parameter.calledMembers);
+    }
+
+    void write(const BuiltinResult& result)
+    {
+        object("type"_s, result.type, "rangeRule"_s, result.rangeRule, "rangeOperand"_s, result.rangeOperand, "substringOf"_s, result.substringOf,
+            "typedResultForm"_s, result.typedResultForm, "typedResultSource"_s, result.typedResultSource, "iteratedOperand"_s, result.iteratedOperand,
+            "iterationKind"_s, result.iteratedOperand ? std::optional(result.iterationKind) : std::nullopt, "prototypeSource"_s, result.prototypeSource);
+    }
+
+    void write(const BuiltinImplementation& implementation)
+    {
+        object("how"_s, implementation.kind, "otherwise"_s, implementation.otherwise, "callee"_s, implementation.callee, "inlineBuiltin"_s, implementation.inlineBuiltin,
+            "maximumArgumentCount"_s, implementation.maximumArgumentCount, "function"_s, implementation.function);
+    }
+
+    void writeOverload(BuiltinOverloadID id)
+    {
+        const BuiltinOverload& overload = m_table.at(id);
+        auto has = [&](BuiltinOverloadFlag flag) {
+            return overload.flags.contains(flag);
+        };
+        open('{');
+        members("token"_s, m_table.tokenOf(id), "path"_s, m_table.textOf(overload.builtin), "mode"_s, overload.mode,
+            "isProvenByConstruction"_s, has(BuiltinOverloadFlag::IsProvenByConstruction), "isUndeclared"_s, overload.isUndeclared(), "receiver"_s, overload.receiver,
+            "parameters"_s, overload.parameters, "result"_s, overload.result, "capability"_s, overload.effects.capability, "throws"_s, overload.throws(),
+            "onlyPropagatesErrors"_s, overload.onlyPropagatesErrors(), "runsOnlyOperandCode"_s, has(BuiltinOverloadFlag::RunsOnlyOperandCode),
+            "readsStateBeforeConversions"_s, has(BuiltinOverloadFlag::ReadsStateBeforeConversions), "isSpecialCase"_s, has(BuiltinOverloadFlag::IsSpecialCase));
+        if (overload.resultIsDeclaredOnly())
+            members("resultIsDeclaredOnly"_s, true);
+        members("reads"_s, overload.effects.reads, "writes"_s, overload.effects.writes, "transfers"_s, overload.flow.transfers, "callbacks"_s, overload.flow.callbacks,
+            "propertyActions"_s, overload.flow.propertyActions, "handlerCalls"_s, overload.flow.handlerCalls, "implementation"_s, overload.code.implementation, "model"_s, overload.code.model);
+        close('}');
+    }
+
+    void writeEntry(BuiltinID id)
+    {
+        const Builtin& builtin = m_table.at(id);
+        auto overloads = [&] {
+            list(m_table.overloadIDsOf(id), [&](BuiltinOverloadID overload) {
+                writeOverload(overload);
+            });
+        };
+        object("id"_s, id.index(), "token"_s, id, "path"_s, m_table.textOf(id), "kind"_s, builtin.kind, "origin"_s, builtin.origin, "scope"_s, builtin.scope,
+            "mutability"_s, builtin.mutability, "platforms"_s, builtin.platforms, "flags"_s, builtin.flags, "holder"_s, builtin.holder, "name"_s, PlainName { builtin.name },
+            "isSymbolName"_s, m_table.isSymbolName(builtin.name), "prototypeLink"_s, builtin.prototypeLink, "inheritsFrom"_s, builtin.inheritsFrom,
+            "instanceClass"_s, builtin.instanceClass, "sameObjectAs"_s, builtin.sameObjectAs, "overloads"_s, overloads);
+    }
+
+    void writeSlot(BuiltinSlotID id)
+    {
+        const BuiltinSlot& slot = m_table.at(id);
+        object("token"_s, id, "name"_s, PlainName { slot.name }, "owner"_s, slot.owner, "heap"_s, slot.heap, "contentsSlot"_s, slot.contentsSlot, "holds"_s, slot.holds);
+    }
+
+    void writeClass(BuiltinClassID id)
+    {
+        const BuiltinClass& builtinClass = m_table.at(id);
+        auto names = [&] {
+            builtinClass.listsNamesDefinedOnNewInstances ? write(builtinClass.namesDefinedOnNewInstances) : write(Null { });
+        };
+        auto slots = [&] {
+            list(builtinClass.slots, [&](BuiltinSlotID slot) {
+                writeSlot(slot);
+            });
+        };
+        object("token"_s, id, "origin"_s, builtinClass.origin, "parent"_s, builtinClass.parent, "constructor"_s, builtinClass.constructor, "prototype"_s, builtinClass.prototype,
+            "instanceTest"_s, builtinClass.instanceTest, "isPrimitiveWrapper"_s, builtinClass.isPrimitiveWrapper, "isNeverPristine"_s, builtinClass.isNeverPristine,
+            "pristineTest"_s, builtinClass.pristineTest, "hasClosureInstances"_s, builtinClass.hasClosureInstances,
+            "definesCharactersOnNewInstances"_s, builtinClass.definesCharactersOnNewInstances, "namesDefinedOnNewInstances"_s, names, "slots"_s, slots, "stateHeap"_s, builtinClass.stateHeap);
+    }
+
+    void write(const BuiltinLayoutField& field) { object("name"_s, OptionalName { field.name }, "isOptional"_s, field.isOptional, "type"_s, field.type); }
+
+    void writeLayout(BuiltinLayoutID id)
+    {
+        const BuiltinLayout& layout = m_table.at(id);
+        object("token"_s, id, "isTuple"_s, layout.isTuple, "fields"_s, layout.fields);
+    }
+
+    void write(const FeatureUseSummary& summary)
+    {
+        const char* name = Bun__removableFeatureName(static_cast<uint16_t>(summary.feature));
+        object("feature"_s, name ? std::optional(String::fromUTF8(name)) : std::nullopt, "isConditional"_s, summary.isConditional);
+    }
+
+private:
+    void open(char bracket)
+    {
+        m_out.append(bracket);
+        m_isFirst = true;
+    }
+
+    void close(char bracket)
+    {
+        m_out.append(bracket);
+        m_isFirst = false;
+    }
+
+    void separate()
+    {
+        if (!std::exchange(m_isFirst, false))
+            m_out.append(',');
+    }
+
+    void members() { }
+    void members(ASCIILiteral name, const auto& value, const auto&... rest)
+    {
+        separate();
+        m_out.append('"', name, "\":"_s);
+        write(value);
+        members(rest...);
+    }
+
+    const BuiltinTable& m_table;
+    StringBuilder m_out;
+    bool m_isFirst { true };
+};
+
+} // anonymous namespace
 
 template<typename ID>
 static BuiltinTableIDRange<ID> idsBelow(unsigned count)
@@ -622,28 +390,25 @@ static BuiltinTableIDRange<ID> idsBelow(unsigned count)
 
 JSValue BuiltinTable::describeForTesting(JSGlobalObject* realm) const
 {
-    VM& vm = realm->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    TableDescription description { realm, vm, *this };
-
-    JSArray* entries = describeList(description, idsBelow<BuiltinID>(builtinCount()), describeEntry);
-    RETURN_IF_EXCEPTION(scope, { });
-    JSArray* classes = describeList(description, idsBelow<BuiltinClassID>(classCount()), describeClass);
-    RETURN_IF_EXCEPTION(scope, { });
-    JSArray* layouts = describeList(description, idsBelow<BuiltinLayoutID>(layoutCount()), describeLayout);
-    RETURN_IF_EXCEPTION(scope, { });
-
-    JSObject* object = constructEmptyObject(realm);
-    put(description, object, "entries"_s, entries);
-    put(description, object, "classes"_s, classes);
-    put(description, object, "layouts"_s, layouts);
-    return object;
+    TableWriter writer(*this);
+    auto entries = [&] {
+        writer.list(idsBelow<BuiltinID>(builtinCount()), [&](BuiltinID id) {
+            writer.writeEntry(id);
+        });
+    };
+    auto classes = [&] {
+        writer.list(idsBelow<BuiltinClassID>(classCount()), [&](BuiltinClassID id) {
+            writer.writeClass(id);
+        });
+    };
+    auto layouts = [&] {
+        writer.list(idsBelow<BuiltinLayoutID>(layoutCount()), [&](BuiltinLayoutID id) {
+            writer.writeLayout(id);
+        });
+    };
+    writer.object("entries"_s, entries, "classes"_s, classes, "layouts"_s, layouts);
+    return writer.parse(realm);
 }
-
-struct FeatureUseSummary {
-    RemovableFeature feature;
-    bool isConditional;
-};
 
 static void addFeatureUse(Vector<FeatureUseSummary>& summaries, const BuiltinFeatureUse& use)
 {
@@ -672,15 +437,6 @@ static Vector<FeatureUseSummary> summarizeFeatureUses(std::span<const BuiltinFea
     return summaries;
 }
 
-static JSObject* describeFeatureUse(const TableDescription& description, const FeatureUseSummary& summary)
-{
-    const char* name = Bun__removableFeatureName(static_cast<uint16_t>(summary.feature));
-    JSObject* object = constructEmptyObject(description.realm);
-    put(description, object, "feature"_s, name ? describeText(description, String::fromUTF8(name)) : jsNull());
-    put(description, object, "isConditional"_s, jsBoolean(summary.isConditional));
-    return object;
-}
-
 static Vector<RuntimeModuleID> findModulesByRoot(const BuiltinTable& table)
 {
     Vector<RuntimeModuleID> modules(FillWith { }, table.builtinCount(), RuntimeModuleID());
@@ -692,14 +448,6 @@ static Vector<RuntimeModuleID> findModulesByRoot(const BuiltinTable& table)
     return modules;
 }
 
-static JSValue describeFeatureUserKind(const TableDescription& description, BuiltinID id, RuntimeModuleID module)
-{
-    if (!module)
-        return describeWord(description, builtinKindWords, description.table.at(id).kind);
-    bool isPublic = description.table.at(module).flags.contains(RuntimeModuleFlag::IsPublic);
-    return describeText(description, isPublic ? "Module"_s : "InternalModule"_s);
-}
-
 static bool hasHiddenRoot(const BuiltinTable& table, const Vector<RuntimeModuleID>& modulesByRoot, BuiltinID id)
 {
     BuiltinID root = table.rootOf(id);
@@ -709,39 +457,26 @@ static bool hasHiddenRoot(const BuiltinTable& table, const Vector<RuntimeModuleI
     return builtin.kind != BuiltinKind::NativeBinding && !modulesByRoot[root.index()];
 }
 
-static JSObject* describeFeatureUser(const TableDescription& description, const Vector<RuntimeModuleID>& modulesByRoot, BuiltinID id)
-{
-    auto scope = DECLARE_THROW_SCOPE(description.vm);
-    const BuiltinTable& table = description.table;
-    JSArray* uses = describeList(description, summarizeFeatureUses(table.featureUsesOf(id)), describeFeatureUse);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSArray* nativeSymbols = constructEmptyArray(description.realm, nullptr);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
-    JSObject* object = constructEmptyObject(description.realm);
-    put(description, object, "id"_s, jsNumber(id.index()));
-    put(description, object, "path"_s, describeText(description, table.textOf(id)));
-    put(description, object, "kind"_s, describeFeatureUserKind(description, id, modulesByRoot[id.index()]));
-    put(description, object, "uses"_s, uses);
-    put(description, object, "nativeSymbols"_s, nativeSymbols);
-    put(description, object, "hasHiddenRoot"_s, jsBoolean(hasHiddenRoot(table, modulesByRoot, id)));
-    return object;
-}
-
 JSValue BuiltinTable::describeFeatureUsesForTesting(JSGlobalObject* realm, BuiltinPlatform platform) const
 {
-    VM& vm = realm->vm();
-    TableDescription description { realm, vm, *this };
+    TableWriter writer(*this);
     Vector<RuntimeModuleID> modulesByRoot = findModulesByRoot(*this);
-
     Vector<BuiltinID> users;
     for (BuiltinID id : idsBelow<BuiltinID>(builtinCount())) {
         if (existsOn(id, platform) && !featureUsesOf(id).empty())
             users.append(id);
     }
-    return describeList(description, users, [&](const TableDescription&, BuiltinID id) -> JSValue {
-        return describeFeatureUser(description, modulesByRoot, id);
+    writer.list(users, [&](BuiltinID id) {
+        RuntimeModuleID module = modulesByRoot[id.index()];
+        auto kind = [&] {
+            if (!module)
+                return writer.write(at(id).kind);
+            writer.write(at(module).flags.contains(RuntimeModuleFlag::IsPublic) ? "Module"_s : "InternalModule"_s);
+        };
+        writer.object("id"_s, id.index(), "path"_s, textOf(id), "kind"_s, kind, "uses"_s, summarizeFeatureUses(featureUsesOf(id)), "nativeSymbols"_s, Vector<String>(),
+            "hasHiddenRoot"_s, hasHiddenRoot(*this, modulesByRoot, id));
     });
+    return writer.parse(realm);
 }
 
 } } // namespace JSC::AOT

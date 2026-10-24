@@ -7,12 +7,9 @@
 
 #if ENABLE(AOT)
 
-#include "AOTHeat.h"
 #include "AOTPass.h"
-#include "AOTStatistics.h"
 #include "AOTSummarizeForInlining.h"
 #include <wtf/OptionSet.h>
-#include <wtf/text/ASCIILiteral.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -48,11 +45,6 @@ struct InlineVerdict {
 InlineVerdict computeInlineVerdict(FunctionPassContext&, const InliningSummary& callee, BlockID blockOfCall, ValueID call);
 
 unsigned inlineDepthOf(const Program&, const Function& caller, uint32_t inlineFrame);
-uint32_t inlineBudgetBytes(const FunctionPassContext&, HeatClass, unsigned depth);
-
-ASCIILiteral nameOf(InlineDecision);
-StatisticID statisticFor(InlineDecision);
-StatisticID statisticFor(InlineBenefit);
 
 } } } // namespace JSC::AOT::Typed
 

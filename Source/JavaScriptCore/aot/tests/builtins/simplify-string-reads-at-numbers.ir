@@ -5,11 +5,8 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="positionIsNumber" parameters=[{type=string}, {type=number}] results=[{type=number}] {
-  b0(v0: string, v1: number):
     v2 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
     Return v2
-}
-# CHECK-LABEL: function f0 name="positionIsNumber"
 # CHECK: [[isInt32Of0]]:{{*}}= TypeTest v1 testedType=i32
 # CHECK-NEXT: Branch [[isInt32Of0]] -> taken [[integer0]](| 0), notTaken [[other0]](| 0)
 # CHECK: [[integer0]]([[int32Of0]]: i32):
@@ -24,9 +21,9 @@ function f0 name="positionIsNumber" parameters=[{type=string}, {type=number}] re
 # CHECK: [[outside0]]({{*}}) frequency=Unlikely:
 # CHECK-NEXT: = Double number=NaN
 # CHECK-NOT: CallBuiltin
+}
 
 function f1 name="positionComparedWithLength" parameters=[{type=string}, {type=number}] results=[{type=number}] {
-  b0(v0: string, v1: number):
     v2 = GetStringLength v0
     v3 = Less v1, v2
     Branch v3 -> taken b1(), notTaken b2()
@@ -36,48 +33,40 @@ function f1 name="positionComparedWithLength" parameters=[{type=string}, {type=n
   b2():
     v5 = Integer
     Return v5
-}
-# CHECK-LABEL: function f1 name="positionComparedWithLength"
 # CHECK: b1():
 # CHECK-NEXT: [[isInt32Of1]]:{{*}}= TypeTest v1 testedType=i32
 # CHECK-NEXT: Branch [[isInt32Of1]] -> taken [[integer1]](| 0), notTaken [[other1]](| 0)
 # CHECK: [[other1]]([[rest1]]: number) frequency=Unlikely:
 # CHECK-NEXT: = CallBuiltin v0, [[rest1]] overload=StringPrototypeCharCodeAt/0
 # CHECK: = GetStringCodeUnit v0,
+}
 
 function f2 name="positionMayBeMissing" parameters=[{type=string}, {type=undefined|number}] results=[{type=number}] {
-  b0(v0: string, v1: undefined|number):
     v2 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
     Return v2
-}
-# CHECK-LABEL: function f2 name="positionMayBeMissing"
 # CHECK-NOT: TypeTest
 # CHECK: v2: number = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
 # CHECK-NOT: GetStringCodeUnit
+}
 
 function f3 name="positionMayBeAnything" parameters=[{type=string}, {type=anything}] results=[{type=number}] {
-  b0(v0: string, v1: anything):
     v2 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0 builtinCallForm=AnyReceiver
     Return v2
-}
-# CHECK-LABEL: function f3 name="positionMayBeAnything"
 # CHECK-NOT: TypeTest
 # CHECK: v2: number = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0 builtinCallForm=AnyReceiver
 # CHECK-NOT: GetStringCodeUnit
+}
 
 function f4 name="positionIsNeverAnInteger" parameters=[{type=string}] results=[{type=number}] {
-  b0(v0: string):
     v1 = Double number=0.5
     v2 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
     Return v2
-}
-# CHECK-LABEL: function f4 name="positionIsNeverAnInteger"
 # CHECK-NOT: TypeTest
 # CHECK: v2: number = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
 # CHECK-NOT: GetStringCodeUnit
+}
 
 function f5 name="inUnlikelyCode" parameters=[{type=string}, {type=number}, {type=boolean}] results=[{type=number}] {
-  b0(v0: string, v1: number, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1() frequency=Unlikely:
     v3 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
@@ -85,18 +74,15 @@ function f5 name="inUnlikelyCode" parameters=[{type=string}, {type=number}, {typ
   b2():
     v4 = Integer
     Return v4
-}
-# CHECK-LABEL: function f5 name="inUnlikelyCode"
 # CHECK-NOT: TypeTest
 # CHECK: v3: number = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
 # CHECK-NOT: GetStringCodeUnit
+}
 
 function f6 name="receiverMayBeUndefined" parameters=[{type=undefined|string}, {type=number}] results=[{type=number}] {
-  b0(v0: undefined|string, v1: number):
     v2 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0 builtinCallForm=AnyReceiver
     Return v2
-}
-# CHECK-LABEL: function f6 name="receiverMayBeUndefined"
 # CHECK-NOT: TypeTest
 # CHECK: v2: number = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0 builtinCallForm=AnyReceiver
 # CHECK-NOT: GetStringCodeUnit
+}

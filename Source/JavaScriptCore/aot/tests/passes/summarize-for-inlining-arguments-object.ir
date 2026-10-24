@@ -44,7 +44,6 @@ function f3 name="createsArgumentsAndEvaluatesText" flags=[HasArgumentCount, Has
 # CHECK: f3: barrier=None {{*}} boundToFrame=[b0]
 
 function f4 name="createsUnmappedArguments" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] thisType={type=anything} results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0} {
-  b0(v0: f0, v1: anything):
     v2 = GetRestLength firstArgument=0
     v3 = TypeTest v1 testedType=undefined
     Branch v3 -> taken b1(), notTaken b2()

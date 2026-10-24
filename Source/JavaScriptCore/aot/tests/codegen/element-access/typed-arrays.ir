@@ -9,7 +9,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="readsOfInt8Array" parameters=[{type=Int8Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Int8Array, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
     v6 = GetTypedArrayElement v0, v1 typedArrayType=1 level=Proven
     v7 = GetTypedArrayElement v0, v2 typedArrayType=1 level=Proven
     v8 = GetTypedArrayElement v0, v3 typedArrayType=1 level=Proven
@@ -43,7 +42,6 @@ function f0 name="readsOfInt8Array" parameters=[{type=Int8Array}, {type=i32}, {t
 # R-COUNT-12: undefined|int[-128, 127] @OptionalInt64 = GetTypedArrayElement
 # R-NOT: = GetTypedArrayElement
 function f1 name="readsOfUint8Array" parameters=[{type=Uint8Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Uint8Array, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
     v6 = GetTypedArrayElement v0, v1 typedArrayType=2 level=Proven
     v7 = GetTypedArrayElement v0, v2 typedArrayType=2 level=Proven
     v8 = GetTypedArrayElement v0, v3 typedArrayType=2 level=Proven
@@ -77,7 +75,6 @@ function f1 name="readsOfUint8Array" parameters=[{type=Uint8Array}, {type=i32}, 
 # R-COUNT-12: undefined|int[0, 255] @OptionalInt64 = GetTypedArrayElement
 # R-NOT: = GetTypedArrayElement
 function f2 name="readsOfUint8ClampedArray" parameters=[{type=Uint8ClampedArray}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Uint8ClampedArray, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
     v6 = GetTypedArrayElement v0, v1 typedArrayType=3 level=Proven
     v7 = GetTypedArrayElement v0, v2 typedArrayType=3 level=Proven
     v8 = GetTypedArrayElement v0, v3 typedArrayType=3 level=Proven
@@ -111,7 +108,6 @@ function f2 name="readsOfUint8ClampedArray" parameters=[{type=Uint8ClampedArray}
 # R-COUNT-12: undefined|int[0, 255] @OptionalInt64 = GetTypedArrayElement
 # R-NOT: = GetTypedArrayElement
 function f3 name="readsOfInt16Array" parameters=[{type=Int16Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Int16Array, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
     v6 = GetTypedArrayElement v0, v1 typedArrayType=4 level=Proven
     v7 = GetTypedArrayElement v0, v2 typedArrayType=4 level=Proven
     v8 = GetTypedArrayElement v0, v3 typedArrayType=4 level=Proven
@@ -145,7 +141,6 @@ function f3 name="readsOfInt16Array" parameters=[{type=Int16Array}, {type=i32}, 
 # R-COUNT-12: undefined|int[-32768, 32767] @OptionalInt64 = GetTypedArrayElement
 # R-NOT: = GetTypedArrayElement
 function f4 name="readsOfUint16Array" parameters=[{type=Uint16Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Uint16Array, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
     v6 = GetTypedArrayElement v0, v1 typedArrayType=5 level=Proven
     v7 = GetTypedArrayElement v0, v2 typedArrayType=5 level=Proven
     v8 = GetTypedArrayElement v0, v3 typedArrayType=5 level=Proven
@@ -179,7 +174,6 @@ function f4 name="readsOfUint16Array" parameters=[{type=Uint16Array}, {type=i32}
 # R-COUNT-12: undefined|int[0, 65535] @OptionalInt64 = GetTypedArrayElement
 # R-NOT: = GetTypedArrayElement
 function f5 name="readsOfInt32Array" parameters=[{type=Int32Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Int32Array, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
     v6 = GetTypedArrayElement v0, v1 typedArrayType=6 level=Proven
     v7 = GetTypedArrayElement v0, v2 typedArrayType=6 level=Proven
     v8 = GetTypedArrayElement v0, v3 typedArrayType=6 level=Proven
@@ -213,7 +207,6 @@ function f5 name="readsOfInt32Array" parameters=[{type=Int32Array}, {type=i32}, 
 # R-COUNT-12: undefined|i32 @OptionalInt64 = GetTypedArrayElement
 # R-NOT: = GetTypedArrayElement
 function f6 name="readsOfUint32Array" parameters=[{type=Uint32Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Uint32Array, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
     v6 = GetTypedArrayElement v0, v1 typedArrayType=7 level=Proven
     v7 = GetTypedArrayElement v0, v2 typedArrayType=7 level=Proven
     v8 = GetTypedArrayElement v0, v3 typedArrayType=7 level=Proven
@@ -248,7 +241,6 @@ function f6 name="readsOfUint32Array" parameters=[{type=Uint32Array}, {type=i32}
 # REPEAT: i = 8..10; a = 16 32 64
 # R-NOT: = GetTypedArrayElement
 function f%(i-1) name="readsOfFloat%(a)Array" parameters=[{type=Float%(a)Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Float%(a)Array, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
     v6 = GetTypedArrayElement v0, v1 typedArrayType=%(i) level=Proven
     v7 = GetTypedArrayElement v0, v2 typedArrayType=%(i) level=Proven
     v8 = GetTypedArrayElement v0, v3 typedArrayType=%(i) level=Proven
@@ -283,7 +275,6 @@ function f%(i-1) name="readsOfFloat%(a)Array" parameters=[{type=Float%(a)Array},
 # END REPEAT
 # R-NOT: = GetTypedArrayElement
 function f10 name="readsOfBigInt64Array" parameters=[{type=BigInt64Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: BigInt64Array, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
     v6 = GetTypedArrayElement v0, v1 typedArrayType=11 level=Proven
     v7 = GetTypedArrayElement v0, v2 typedArrayType=11 level=Proven
     v8 = GetTypedArrayElement v0, v3 typedArrayType=11 level=Proven
@@ -317,7 +308,6 @@ function f10 name="readsOfBigInt64Array" parameters=[{type=BigInt64Array}, {type
 # R-COUNT-12: undefined|bigint @JSValue = GetTypedArrayElement
 # R-NOT: = GetTypedArrayElement
 function f11 name="readsOfBigUint64Array" parameters=[{type=BigUint64Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: BigUint64Array, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
     v6 = GetTypedArrayElement v0, v1 typedArrayType=12 level=Proven
     v7 = GetTypedArrayElement v0, v2 typedArrayType=12 level=Proven
     v8 = GetTypedArrayElement v0, v3 typedArrayType=12 level=Proven
@@ -351,7 +341,6 @@ function f11 name="readsOfBigUint64Array" parameters=[{type=BigUint64Array}, {ty
 # R-COUNT-12: undefined|bigint @JSValue = GetTypedArrayElement
 # R-NOT: = GetTypedArrayElement
 function f12 name="storesInInt8Array" parameters=[{type=Int8Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=i32}, {type=int}, {type=number}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Int8Array, v1: i32, v2: int, v3: number, v4: whole, v5: i32, v6: int, v7: number, v8: boolean):
     PutTypedArrayElement v0, v1, v5 typedArrayType=1 level=Proven
     PutTypedArrayElement v0, v1, v6 typedArrayType=1 level=Proven
     PutTypedArrayElement v0, v1, v7 typedArrayType=1 level=Proven
@@ -390,7 +379,6 @@ function f12 name="storesInInt8Array" parameters=[{type=Int8Array}, {type=i32}, 
 # R-NEXT: PutTypedArrayElement v0, v1, v6 typedArrayType=
 # R-NEXT: PutTypedArrayElement v0, v1, v7 typedArrayType=
 function f13 name="storesInUint8Array" parameters=[{type=Uint8Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=i32}, {type=int}, {type=number}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Uint8Array, v1: i32, v2: int, v3: number, v4: whole, v5: i32, v6: int, v7: number, v8: boolean):
     PutTypedArrayElement v0, v1, v5 typedArrayType=2 level=Proven
     PutTypedArrayElement v0, v1, v6 typedArrayType=2 level=Proven
     PutTypedArrayElement v0, v1, v7 typedArrayType=2 level=Proven
@@ -429,7 +417,6 @@ function f13 name="storesInUint8Array" parameters=[{type=Uint8Array}, {type=i32}
 # R-NEXT: PutTypedArrayElement v0, v1, v6 typedArrayType=
 # R-NEXT: PutTypedArrayElement v0, v1, v7 typedArrayType=
 function f14 name="storesInUint8ClampedArray" parameters=[{type=Uint8ClampedArray}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=i32}, {type=int}, {type=number}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Uint8ClampedArray, v1: i32, v2: int, v3: number, v4: whole, v5: i32, v6: int, v7: number, v8: boolean):
     PutTypedArrayElement v0, v1, v5 typedArrayType=3 level=Proven
     PutTypedArrayElement v0, v1, v6 typedArrayType=3 level=Proven
     PutTypedArrayElement v0, v1, v7 typedArrayType=3 level=Proven
@@ -468,7 +455,6 @@ function f14 name="storesInUint8ClampedArray" parameters=[{type=Uint8ClampedArra
 # R-NEXT: PutTypedArrayElement v0, v1, v6 typedArrayType=
 # R-NEXT: PutTypedArrayElement v0, v1, v7 typedArrayType=
 function f15 name="storesInInt16Array" parameters=[{type=Int16Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=i32}, {type=int}, {type=number}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Int16Array, v1: i32, v2: int, v3: number, v4: whole, v5: i32, v6: int, v7: number, v8: boolean):
     PutTypedArrayElement v0, v1, v5 typedArrayType=4 level=Proven
     PutTypedArrayElement v0, v1, v6 typedArrayType=4 level=Proven
     PutTypedArrayElement v0, v1, v7 typedArrayType=4 level=Proven
@@ -507,7 +493,6 @@ function f15 name="storesInInt16Array" parameters=[{type=Int16Array}, {type=i32}
 # R-NEXT: PutTypedArrayElement v0, v1, v6 typedArrayType=
 # R-NEXT: PutTypedArrayElement v0, v1, v7 typedArrayType=
 function f16 name="storesInUint16Array" parameters=[{type=Uint16Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=i32}, {type=int}, {type=number}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Uint16Array, v1: i32, v2: int, v3: number, v4: whole, v5: i32, v6: int, v7: number, v8: boolean):
     PutTypedArrayElement v0, v1, v5 typedArrayType=5 level=Proven
     PutTypedArrayElement v0, v1, v6 typedArrayType=5 level=Proven
     PutTypedArrayElement v0, v1, v7 typedArrayType=5 level=Proven
@@ -546,7 +531,6 @@ function f16 name="storesInUint16Array" parameters=[{type=Uint16Array}, {type=i3
 # R-NEXT: PutTypedArrayElement v0, v1, v6 typedArrayType=
 # R-NEXT: PutTypedArrayElement v0, v1, v7 typedArrayType=
 function f17 name="storesInInt32Array" parameters=[{type=Int32Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=i32}, {type=int}, {type=number}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Int32Array, v1: i32, v2: int, v3: number, v4: whole, v5: i32, v6: int, v7: number, v8: boolean):
     PutTypedArrayElement v0, v1, v5 typedArrayType=6 level=Proven
     PutTypedArrayElement v0, v1, v6 typedArrayType=6 level=Proven
     PutTypedArrayElement v0, v1, v7 typedArrayType=6 level=Proven
@@ -585,7 +569,6 @@ function f17 name="storesInInt32Array" parameters=[{type=Int32Array}, {type=i32}
 # R-NEXT: PutTypedArrayElement v0, v1, v6 typedArrayType=
 # R-NEXT: PutTypedArrayElement v0, v1, v7 typedArrayType=
 function f18 name="storesInUint32Array" parameters=[{type=Uint32Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=i32}, {type=int}, {type=number}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Uint32Array, v1: i32, v2: int, v3: number, v4: whole, v5: i32, v6: int, v7: number, v8: boolean):
     PutTypedArrayElement v0, v1, v5 typedArrayType=7 level=Proven
     PutTypedArrayElement v0, v1, v6 typedArrayType=7 level=Proven
     PutTypedArrayElement v0, v1, v7 typedArrayType=7 level=Proven
@@ -625,7 +608,6 @@ function f18 name="storesInUint32Array" parameters=[{type=Uint32Array}, {type=i3
 # R-NEXT: PutTypedArrayElement v0, v1, v6 typedArrayType=
 # R-NEXT: PutTypedArrayElement v0, v1, v7 typedArrayType=
 function f%(i+11) name="storesInFloat%(a)Array" parameters=[{type=Float%(a)Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=i32}, {type=int}, {type=number}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Float%(a)Array, v1: i32, v2: int, v3: number, v4: whole, v5: i32, v6: int, v7: number, v8: boolean):
     PutTypedArrayElement v0, v1, v5 typedArrayType=%(i) level=Proven
     PutTypedArrayElement v0, v1, v6 typedArrayType=%(i) level=Proven
     PutTypedArrayElement v0, v1, v7 typedArrayType=%(i) level=Proven
@@ -665,7 +647,6 @@ function f%(i+11) name="storesInFloat%(a)Array" parameters=[{type=Float%(a)Array
 # R-NEXT: PutTypedArrayElement v0, v1, v6 typedArrayType=
 # R-NEXT: PutTypedArrayElement v0, v1, v7 typedArrayType=
 function f22 name="storesInBigInt64Array" parameters=[{type=BigInt64Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=bigint}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: BigInt64Array, v1: i32, v2: int, v3: number, v4: whole, v5: bigint, v6: boolean):
     PutTypedArrayElement v0, v1, v5 typedArrayType=11 level=Proven
     PutTypedArrayElement v0, v2, v5 typedArrayType=11 level=Proven
     PutTypedArrayElement v0, v3, v5 typedArrayType=11 level=Proven
@@ -695,7 +676,6 @@ function f22 name="storesInBigInt64Array" parameters=[{type=BigInt64Array}, {typ
 # R-LABEL: function f22 name="storesInBigInt64Array"
 # R: PutTypedArrayElement v0, v1, {{*}} typedArrayType=
 function f23 name="storesInBigUint64Array" parameters=[{type=BigUint64Array}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=bigint}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: BigUint64Array, v1: i32, v2: int, v3: number, v4: whole, v5: bigint, v6: boolean):
     PutTypedArrayElement v0, v1, v5 typedArrayType=12 level=Proven
     PutTypedArrayElement v0, v2, v5 typedArrayType=12 level=Proven
     PutTypedArrayElement v0, v3, v5 typedArrayType=12 level=Proven

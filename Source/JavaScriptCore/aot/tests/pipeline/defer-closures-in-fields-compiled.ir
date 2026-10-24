@@ -17,7 +17,6 @@ layout L0 kind=Instance name="Widget" constructor=f1 fields=[{key="count" declar
 layout L1 name="Literal" fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = FinishClass v1 layout=L0
@@ -34,7 +33,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v12
 }
 function f1 name="Widget" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     v3 = Integer integer=0
@@ -46,11 +44,9 @@ function f1 name="Widget" kind=BaseConstructor flags=[HasNewTarget] results=[{ty
     Return v2
 }
 function f2 name="handler" kind=Arrow captures=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="count"
     Return v1
 }
 function f3 name="plain" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }

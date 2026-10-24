@@ -31,7 +31,6 @@ layout L3 name="Pair" module=m0 fields=[{key="a" declared={type=anything} flags=
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="registry" [isFreeName]
     v2 = Integer integer=1
@@ -67,7 +66,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Point" kind=BaseConstructor flags=[HasNewTarget] length=2 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = GetConstructPrototype v0 layout=L0
     v4 = NewObject v3 layout=L0
     PropSet v4, v1 key="x"
@@ -75,35 +73,28 @@ function f1 name="Point" kind=BaseConstructor flags=[HasNewTarget] length=2 para
     Return v4
 }
 function f2 name="method" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f3 name="Unlisted" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L1
     v2 = NewObject v1 layout=L1
     Return v2
 }
 function f4 name="method" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f5 name="UnlistedWithInstance" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L2
     v2 = NewObject v1 layout=L2
     Return v2
 }
 function f6 name="method" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f7 name="closure" results=[{type=anything}] {
-  b0():
     Return
 }
 function f8 name="generate" flags=[IsGenerator, TakesCallee] results=[{type=anything}] {
-  b0(v0: function):
     InitialYield
     Return
 }
@@ -112,7 +103,6 @@ function f8 name="generate" flags=[IsGenerator, TakesCallee] results=[{type=anyt
 static constexpr ASCIILiteral programNamingFunctionOfShellText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="structuredClone" [isFreeName]
     v2 = PropGet v0 key="registry" [isFreeName]

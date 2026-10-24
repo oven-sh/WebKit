@@ -10,7 +10,6 @@ layout L1 name="Large" fields=[{key="n0" declared={type=number} flags=[IsRequire
 layout L2 name="Holder" fields=[{key="small" declared={type=L0} flags=[IsRequired]}, {key="large" declared={type=L1} flags=[IsRequired]}, {key="either" declared={type=L0|L1} flags=[IsRequired]}, {key="maybeLarge" declared={type=null|L1} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToNumber v1

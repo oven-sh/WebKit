@@ -14,7 +14,7 @@ import { emitCppArraysHeader, emitCppIds, engineListStampOf } from "./emit-cpp-i
 import { emitCppNames } from "./emit-cpp-names.ts";
 import { emitCppOverloads } from "./emit-cpp-overloads.ts";
 import { emitCppTypes } from "./emit-cpp-types.ts";
-import { emitCppWords } from "./emit-cpp-words.ts";
+import { emitCppEnums, emitCppWords } from "./emit-cpp-words.ts";
 import { serializeEngineDeclarations, type EngineDeclarations } from "./engine-declarations.ts";
 import { engineFiles } from "./engine-sources.ts";
 import { leftOut } from "./lib.ts";
@@ -74,6 +74,7 @@ export function emitEngineCode(model: TableModel, schema: Schema, features: read
       ["AOTBuiltinFeatures.h", emitCppFeatures(model, features)],
       ["AOTBuiltinIDs.h", ids],
       ["AOTBuiltinTableEngineBindings.cpp", emitEngineBindings(model)],
+      ["AOTBuiltinTableEnums.h", emitCppEnums(schema)],
       ["AOTBuiltinTableWords.h", emitCppWords(schema)],
     ]),
     table: new Map([

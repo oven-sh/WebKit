@@ -9,7 +9,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = CallDirect v1 function=f1
@@ -19,42 +18,35 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="calleeOnlyCalls" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f3
     v2 = NewArray v0 contents=anything
     v3 = CallDirect v1, v2 function=f2
     Return v3
-}
-# CHECK-LABEL: function f1 name="calleeOnlyCalls"
 # CHECK: [[frameClosure]]:{{*}}= NewClosure function=f3 {{*}}storage=Frame
 # CHECK: = CallDirect [[frameClosure]], {{*}}function=f2
+}
 
 function f2 name="retry" flags=[HasRestParameter] parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
-  b0(v0: anything, v1: Array<anything>):
     v2 = Call v0
     Return v2
 }
 # CHECK-LABEL: function f2 name="retry"
 
 function f3 name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 
 function f4 name="calleeStores" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f6
     v2 = NewArray v0 contents=anything
     v3 = CallDirect v1, v2 function=f5
     Return v3
-}
-# CHECK-LABEL: function f4 name="calleeStores"
 # CHECK-NOT: function=f6 {{*}}storage=Frame
 # CHECK: = CallDirect
 # CHECK-NOT: storage=Frame
+}
 
 function f5 name="keep" flags=[HasRestParameter] parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
-  b0(v0: anything, v1: Array<anything>):
     v2 = Builtin builtin=GlobalThis
     v3 = PropGet v2 key="holder" [isFreeName]
     PropSet v3, v0 key="callback" mode=Strict
@@ -63,29 +55,24 @@ function f5 name="keep" flags=[HasRestParameter] parameters=[{type=anything}, {t
 # CHECK-LABEL: function f5 name="keep"
 
 function f6 name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 
 function f7 name="calledByValue" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f9
     v1 = NewClosure function=f8
     v2 = Call v1, -, v0
     Return v2
-}
-# CHECK-LABEL: function f7 name="calledByValue"
 # CHECK: [[passed]]:{{*}}= NewClosure function=f9 {{*}}storage=Frame
 # CHECK: [[called]]:{{*}}= NewClosure function=f8 {{*}}storage=Frame
+}
 
 function f8 name="callsParameter" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0
     Return v1
 }
 # CHECK-LABEL: function f8 name="callsParameter"
 
 function f9 name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }

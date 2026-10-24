@@ -6,22 +6,4 @@
 # RUN: run-in-shell globalThis.process = { argv: [] };
 # CHECK: no function
 # CHECK-NEXT: exited with 0
-
-module m0 path="/main.js" displayPath="main.js" body=f0
-entry module=m0
-function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="process" [isFreeName, isForTypeOf]
-    v2 = TypeTest v1 testedType=function
-    v3 = PropGet v0 key="print" [isFreeName]
-    Branch v2 -> taken b1(), notTaken b2()
-  b1():
-    v4 = String string="a function"
-    v5 = Call v3, -, v4
-    Return
-  b2():
-    v6 = String string="no function"
-    v7 = Call v3, -, v6
-    Return
-}
+# PROGRAM-OF: global-of-the-host-that-nobody-defines.ir

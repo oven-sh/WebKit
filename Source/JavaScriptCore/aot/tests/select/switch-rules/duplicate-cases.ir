@@ -11,7 +11,6 @@ module m0 path="main.js" displayPath="main.js"
 # CHECK-NOT: key="x"
 # CHECK-NOT: b5():
 function f0 name="repeated-constant" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="a"
     v2 = StrictEq v0, v1
     Branch v2 -> taken b1(), notTaken b2()
@@ -48,7 +47,6 @@ function f0 name="repeated-constant" parameters=[{type=anything}] results=[{type
 # CHECK-NOT: StrictEq
 # CHECK-NOT: b5():
 function f1 name="repeated-constant-with-shared-target" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="a"
     v2 = StrictEq v0, v1
     Branch v2 -> taken b1(), notTaken b2()
@@ -78,7 +76,6 @@ function f1 name="repeated-constant-with-shared-target" parameters=[{type=anythi
 # CHECK-LABEL: function f2 name="two-distinct-constants"
 # CHECK-NOT: Switch
 function f2 name="two-distinct-constants" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="a"
     v2 = StrictEq v0, v1
     Branch v2 -> taken b1(), notTaken b2()

@@ -5,91 +5,73 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="less-than-fraction" parameters=[{type=int}] results=[{type=boolean}] {
-  b0(v0: int):
     v1 = Double number=2.5
     v2 = Less v0, v1
     Return v2
-}
-# CHECK-LABEL: function f0 name="less-than-fraction"
 # CHECK: [[three]]: 3 = Integer integer=3
 # CHECK-NEXT: boolean = Less v0, [[three]]
+}
 
 function f1 name="at-most-fraction" parameters=[{type=int}] results=[{type=boolean}] {
-  b0(v0: int):
     v1 = Double number=2.5
     v2 = LessEq v0, v1
     Return v2
-}
-# CHECK-LABEL: function f1 name="at-most-fraction"
 # CHECK: [[two]]: 2 = Integer integer=2
 # CHECK-NEXT: boolean = LessEq v0, [[two]]
+}
 
 function f2 name="at-least-negative-fraction" parameters=[{type=int}] results=[{type=boolean}] {
-  b0(v0: int):
     v1 = Double number=-0.5
     v2 = GreaterEq v0, v1
     Return v2
-}
-# CHECK-LABEL: function f2 name="at-least-negative-fraction"
 # CHECK: [[zero]]: 0 = Integer
 # CHECK-NEXT: boolean = GreaterEq v0, [[zero]]
+}
 
 function f3 name="less-than-not-a-number" parameters=[{type=int}] results=[{type=boolean}] {
-  b0(v0: int):
     v1 = Double number=NaN
     v2 = Less v0, v1
     Return v2
-}
-# CHECK-LABEL: function f3 name="less-than-not-a-number"
 # CHECK: [[least]]: -4611686018427387903 = Integer integer=-4611686018427387903
 # CHECK-NEXT: boolean = Less v0, [[least]]
+}
 
 function f4 name="greater-than-not-a-number" parameters=[{type=int}] results=[{type=boolean}] {
-  b0(v0: int):
     v1 = Double number=NaN
     v2 = Greater v0, v1
     Return v2
-}
-# CHECK-LABEL: function f4 name="greater-than-not-a-number"
 # CHECK: [[greatest]]: 4611686018427387903 = Integer integer=4611686018427387903
 # CHECK-NEXT: boolean = Greater v0, [[greatest]]
+}
 
 function f5 name="greater-than-huge-number" parameters=[{type=int}] results=[{type=boolean}] {
-  b0(v0: int):
     v1 = Double number=1e300
     v2 = Greater v0, v1
     Return v2
-}
-# CHECK-LABEL: function f5 name="greater-than-huge-number"
 # CHECK: [[clamped]]: 4611686018427387903 = Integer integer=4611686018427387903
 # CHECK-NEXT: boolean = Greater v0, [[clamped]]
+}
 
 function f6 name="fraction-on-left" parameters=[{type=int}] results=[{type=boolean}] {
-  b0(v0: int):
     v1 = Double number=2.5
     v2 = Less v1, v0
     Return v2
-}
-# CHECK-LABEL: function f6 name="fraction-on-left"
 # CHECK: [[below]]: 2 = Integer integer=2
 # CHECK-NEXT: boolean = Less [[below]], v0
+}
 
 function f7 name="integral-constant" parameters=[{type=int}] results=[{type=boolean}] {
-  b0(v0: int):
     v1 = Double number=3
     v2 = Less v0, v1
     Return v2
-}
-# CHECK-LABEL: function f7 name="integral-constant"
 # CHECK-NOT: = Integer
 # CHECK: boolean = Less v0, v1
+}
 
 function f8 name="number-with-fraction" parameters=[{type=number}] results=[{type=boolean}] {
-  b0(v0: number):
     v1 = Double number=2.5
     v2 = Less v0, v1
     Return v2
-}
-# CHECK-LABEL: function f8 name="number-with-fraction"
 # CHECK-NOT: = Integer
 # CHECK: boolean = Less v0, v1
+}

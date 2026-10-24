@@ -10,21 +10,18 @@ layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=A
 layout L1 name="Empty" flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 
 function f0 name="on-a-rare-path" parameters=[{type=L0|L1}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: L0|L1, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v2 = PropGet v0 key="x"
     Return v2
   b2():
     Return v1
-}
-# CHECK-LABEL: function f0 name="on-a-rare-path"
 # CHECK: b1() frequency=Rare:
 # CHECK-NEXT: v2{{*}}= PropGet v0 key="x"
 # CHECK-NEXT: Return v2
+}
 
 function f1 name="in-a-loop" parameters=[{type=L0|L1}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: L0|L1, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -32,11 +29,10 @@ function f1 name="in-a-loop" parameters=[{type=L0|L1}, {type=boolean}] results=[
     Branch v1 -> taken b1(), notTaken b2()
   b2():
     Return v3
-}
-# CHECK-LABEL: function f1 name="in-a-loop"
 # CHECK: [[isPoint]]: boolean = TypeTest v0 testedType=L0
 # CHECK-NEXT: Branch [[isPoint]] -> taken [[pointArm]](| 0), notTaken [[emptyArm]](| 0)
 # CHECK: [[pointArm]]([[point]]: L0):
 # CHECK-NEXT: = PropGet [[point]] key="x" receivers=[L0]
 # CHECK: [[emptyArm]]([[empty]]: L1):
 # CHECK-NEXT: = PropGet [[empty]] key="x" receivers=[L1]
+}

@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = CallDirect function=f1
     v1 = CallDirect function=f2
     v2 = CallDirect function=f3
@@ -17,79 +16,61 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="memberOfGlobalObject" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="nope"
     Return v1
-}
-# CHECK-LABEL: function f1 name="memberOfGlobalObject"
 # CHECK: v1: anything = PropGet v0 key="nope"
-# FLOW-LABEL: function f1 name="memberOfGlobalObject"
 # FLOW-NOT: PropGet
 # FLOW: [[absent]]: undefined = Undefined
 # FLOW-NEXT: [[proven]]: undefined = AssumeType [[absent]] castType=undefined
 # FLOW-NEXT: Return [[proven]]
+}
 
 function f2 name="freeName" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="nope" [isFreeName]
     Return v1
-}
-# CHECK-LABEL: function f2 name="freeName"
 # CHECK: = PropGet v0 key="nope" [isFreeName]
-# FLOW-LABEL: function f2 name="freeName"
 # FLOW-NOT: = Undefined
 # FLOW: = PropGet {{*}}key="nope"{{*}}[isFreeName]
+}
 
 function f3 name="typeofFreeName" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="nope" [isFreeName, isForTypeOf]
     v2 = TypeOf v1
     Return v2
-}
-# CHECK-LABEL: function f3 name="typeofFreeName"
 # CHECK: = PropGet v0 key="nope" [isFreeName, isForTypeOf]
-# FLOW-LABEL: function f3 name="typeofFreeName"
 # FLOW-NOT: PropGet
 # FLOW: = Undefined
+}
 
 function f4 name="symbolKey" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key=@@iterator
     Return v1
-}
-# CHECK-LABEL: function f4 name="symbolKey"
 # CHECK: = PropGet v0 key=@@iterator
-# FLOW-LABEL: function f4 name="symbolKey"
 # FLOW-NOT: PropGet
 # FLOW: = Undefined
+}
 
 function f5 name="memberThatTheProgramAdds" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = Integer integer=1
     PropSet v0, v1 key="added" mode=Strict
     v3 = PropGet v0 key="added"
     Return v3
-}
-# CHECK-LABEL: function f5 name="memberThatTheProgramAdds"
 # CHECK: = PropGet v0 key="added"
-# FLOW-LABEL: function f5 name="memberThatTheProgramAdds"
 # FLOW-NOT: = Undefined
 # FLOW: = PropGet {{*}}key="added"
+}
 
 # The global object holds undefined under `undefined`, for good
 function f6 name="memberNamedUndefined" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="undefined"
     Return v1
-}
-# CHECK-LABEL: function f6 name="memberNamedUndefined"
 # CHECK: v1: undefined = Undefined
-# FLOW-LABEL: function f6 name="memberNamedUndefined"
 # FLOW-NOT: PropGet
 # FLOW: = Undefined
+}

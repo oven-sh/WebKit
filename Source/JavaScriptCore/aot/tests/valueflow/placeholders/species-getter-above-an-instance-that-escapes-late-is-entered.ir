@@ -12,7 +12,6 @@ entry module=m0
 layout L0 kind=Instance name="List" constructor=f1 flags=[HasHeritage]
 variable g0 name="List" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Array
     v1 = NewClosure function=f1
     v2 = ResolveHeritage v0
@@ -31,18 +30,15 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="List" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0 homeKind=Object
     v3 = SuperConstruct v2, v1 layout=L0
     Return v3
 }
 function f2 name="species" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=Array
     Return v1
 }
 function f3 name="first" kind=Arrow results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = NewClosure function=f4
@@ -50,7 +46,6 @@ function f3 name="first" kind=Arrow results=[{type=anything}] {
     Return
 }
 function f4 name="second" kind=Arrow results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = Construct v0
     v2 = Builtin builtin=GlobalThis

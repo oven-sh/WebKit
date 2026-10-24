@@ -7,7 +7,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Split" fields=[{key="name" declared={type=anything}}, {key="place" declared={type=anything}}]
 
 function f0 name="sliceOfOneVariant" parameters=[{type=string}, {type=boolean}, {type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: boolean, v2: boolean, v3: anything):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v4 = NewObject -, v0 layout=L0 fields=[0]
@@ -25,8 +24,6 @@ function f0 name="sliceOfOneVariant" parameters=[{type=string}, {type=boolean}, 
     Return v10
   b5():
     Return v0
-}
-# CHECK-LABEL: function f0 name="sliceOfOneVariant"
 # CHECK: b4() frequency=Rare:
 # CHECK-NEXT: Switch [[tag]] cases=[1] -> case [[without]](), otherwise [[with]]()
 # CHECK: [[without]]() frequency=Rare:
@@ -34,9 +31,9 @@ function f0 name="sliceOfOneVariant" parameters=[{type=string}, {type=boolean}, 
 # CHECK: [[with]]() frequency=Rare:
 # CHECK-NEXT: [[slice]]: string = Substring
 # CHECK-NEXT: = NewObject -, [[name]], [[slice]] layout=L0 fields=[0, 1]
+}
 
 function f1 name="sliceMadeOnEveryWayAndNamedBehind" parameters=[{type=string}, {type=boolean}, {type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: boolean, v2: boolean, v3: anything):
     v4 = Integer integer=1
     v5 = Integer integer=3
     v6 = Substring v0, v4, v5
@@ -55,11 +52,10 @@ function f1 name="sliceMadeOnEveryWayAndNamedBehind" parameters=[{type=string}, 
     Return v11
   b5():
     Return v0
-}
-# CHECK-LABEL: function f1 name="sliceMadeOnEveryWayAndNamedBehind"
 # CHECK: b4() frequency=Rare:
 # CHECK-NEXT: [[slice1]]: string = Substring
 # CHECK-NEXT: Switch [[tag1]] cases=[1] -> case [[without1]](), otherwise [[with1]]()
 # CHECK: = Call v3, -, [[slice1]]
 # CHECK: [[with1]]() frequency=Rare:
 # CHECK-NEXT: = NewObject -, [[name1]], [[slice1]] layout=L0 fields=[0, 1]
+}

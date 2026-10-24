@@ -9,7 +9,10 @@
 #if ENABLE(AOT)
 
 #include "AOTCompileOptions.h"
+#include "AOTErrorMessages.h"
+#include "AOTHeapCacheRegistry.h"
 #include "AOTHeapHooks.h"
+#include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
@@ -17,6 +20,8 @@
 #include "AOTProgramStrings.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTState.h"
+#include "BuiltinNames.h"
+#include "GetterSetter.h"
 #include "HeapAnalyzer.h"
 #include "HeapCellInlines.h"
 #include "JSCInlines.h"
@@ -311,6 +316,260 @@ bool Extension::tryInsert(uint64_t granuleBits)
     }
     m_granuleBits = bitsAfter;
     return true;
+}
+
+void crashOnImpossibleMutation(VM& vm, const Object& object, ObjectMutation mutation)
+{
+    dataLogLn("impossible mutation ", static_cast<unsigned>(mutation), " of layout ", object.layout().index);
+    crashOnValidationFailure(vm, { ValidationFailureKind::ImpossibleMutation, { }, { }, &object });
+}
+
+void crashOnImpossibleMutation(VM& vm, const Object& object, const FieldData& field, ObjectMutation mutation)
+{
+    dataLogLn("impossible mutation ", static_cast<unsigned>(mutation), " of field ", String(propertyNameOf(vm, object, field)), " of layout ", object.layout().index);
+    crashOnValidationFailure(vm, { ValidationFailureKind::ImpossibleMutation, { }, { }, &object });
+}
+
+void crashOnLostStateOfBirth(VM& vm, const Object& object, const FieldData& field, ASCIILiteral event)
+{
+    const LayoutData& layout = object.layout();
+    const ImageText& text = vm.aotState().image->text();
+    StringID layoutName(layout.name);
+    dataLogLn("AOT: ", event, " of field ", String(propertyNameOf(vm, object, field)), " of layout ", layout.index, " (", layoutName && text.hasText(layoutName) ? text.view(layoutName) : StringView("-"_s), "), which compiled code reads without a test");
+    crashOnValidationFailure(vm, { ValidationFailureKind::ImpossibleMutation, { }, { }, &object });
+}
+
+static thread_local const JSObject* objectListedWithoutOrder;
+
+KeyListingThatShowsNoOrder::KeyListingThatShowsNoOrder(const JSObject* object)
+    : m_outer(std::exchange(objectListedWithoutOrder, object))
+{
+}
+
+KeyListingThatShowsNoOrder::~KeyListingThatShowsNoOrder()
+{
+    objectListedWithoutOrder = m_outer;
+}
+
+void failIfKeysMustNotBeListed(VM& vm, const Object& object)
+{
+    const LayoutData& layout = object.layout();
+    if (object.state().objects->layouts.everyObjectHadRemovedField(layout))
+        crashOnValidationFailure(vm, { ValidationFailureKind::RemovedFieldNamed, { }, { }, &object });
+    if (layout.keysAreNeverEnumerated && objectListedWithoutOrder != &object)
+        crashOnValidationFailure(vm, { ValidationFailureKind::KeysListed, { }, { }, &object });
+}
+
+UniquedStringImpl* propertyNameOf(VM& vm, const Object& object, const FieldData& field)
+{
+    return object.state().objects->layouts.nameOf(vm, field);
+}
+
+FieldProperty findFieldProperty(VM& vm, const Object& object, const FieldData& field)
+{
+    JSValue value = object.readInline(field);
+    if (!value)
+        value = object.read(field);
+    if (value)
+        return { value, object.attributesOf(field), true };
+    JSObject* extra = object.extraProperties();
+    if (!extra)
+        return { };
+    unsigned attributes;
+    value = extra->getDirect(vm, propertyNameOf(vm, object, field), attributes);
+    if (!value)
+        return { };
+    return { value, field.isPrivate() ? static_cast<unsigned>(PropertyAttribute::None) : attributes, false };
+}
+
+bool livesInExtraProperties(VM& vm, const Object& object, const FieldData& field)
+{
+    JSObject* extra = object.extraProperties();
+    return extra && extra->getDirect(vm, propertyNameOf(vm, object, field));
+}
+
+bool tryCreateField(VM& vm, State& state, Object& object, const FieldData& field, JSValue value)
+{
+    ASSERT(!object.isInSlot(field) && !livesInExtraProperties(vm, object, field));
+    // The creation is the one store of a field that is stored once, so this does not ask tryStore, which refuses every store to such a field.
+    std::optional<AcceptedValue> accepted = state.objects->layouts.accept(field, value);
+    if (!accepted || !object.store(vm, field, *accepted))
+        return false;
+    object.didCreateField(state, field, !!object.slotOf(field));
+    if (field.isFilledAtBirth)
+        object.tryFinishBirth();
+    if (object.structure()->mayBePrototype()) [[unlikely]]
+        didChangeOwnProperties(vm, object, VM::StructureChainIntegrityEvent::Add, state.objects->layouts.nameOf(vm, field));
+    return true;
+}
+
+void putProperty(VM& vm, JSObject* holder, PropertyName name, Object::LeavingProperty property)
+{
+    if (property.attributes & PropertyAttribute::Accessor)
+        holder->putDirectNonIndexAccessor(vm, name, uncheckedDowncast<GetterSetter>(property.valueOrAccessor), property.attributes);
+    else if (property.attributes & PropertyAttribute::CustomAccessorOrValue)
+        holder->putDirectCustomAccessor(vm, name, property.valueOrAccessor, property.attributes);
+    else
+        holder->putDirect(vm, name, property.valueOrAccessor, property.attributes);
+}
+
+void didChangeOwnProperties(VM& vm, Object& object, VM::StructureChainIntegrityEvent event, UniquedStringImpl* nameOrNull)
+{
+    if (object.structure()->mayBePrototype()) [[unlikely]]
+        vm.invalidateStructureChainIntegrity(event, &object, nameOrNull);
+}
+
+bool interceptsIndexedAccesses(const Object& object)
+{
+    JSObject* extra = object.extraProperties();
+    return extra && extra->structure()->mayInterceptIndexedAccesses();
+}
+
+// The extra properties are nobody's prototype, so JSObject::notifyPresenceOfIndexedAccessors() tells nobody on their behalf.
+void didChangeIndexedProperties(VM& vm, Object& object, bool interceptedIndexedAccessesBefore)
+{
+    if (!interceptedIndexedAccessesBefore && object.mayBePrototype() && interceptsIndexedAccesses(object))
+        object.structure()->realm()->haveABadTime(vm, &object);
+}
+
+const ClassInfo Environment::s_info = { "Environment"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(Environment) };
+
+static_assert(offsetOfEnvironmentShapeLowByte == JSCell::indexingTypeAndMiscOffset() && offsetOfEnvironmentShapeHighByte == JSCell::typeInfoFlagsOffset());
+
+CompiledStructure* EnvironmentShapes::structureFor(VM& vm, Instance& instance, uint32_t shape)
+{
+    uint16_t page = shape >> environmentShapesPerPageShift;
+    while (structuresByPage.size() <= page)
+        structuresByPage.append(nullptr);
+    if (!structuresByPage[page]) {
+        CompiledStructure* created = Environment::createStructure(vm, instance, *this, page);
+        structuresByPage[page] = created;
+        instance.state->immortalCells->add(created);
+    }
+    return structuresByPage[page];
+}
+
+CompiledStructure* Environment::createStructure(VM& vm, Instance& instance, const EnvironmentShapes& shapes, uint16_t shapePage)
+{
+    return CompiledStructure::createForEnvironment(vm, instance.globalObject, TypeInfo(CompiledEnvironmentType, StructureFlags), info(), shapes, shapePage);
+}
+
+Environment* Environment::create(VM& vm, Structure* structure, const EnvironmentData& layout, size_t size)
+{
+    ASSERT(size >= layout.size);
+    ASSERT(layout.kind != LayoutKind::Closure);
+    void* cell = vm.heap.aotClosureSpace<SubspaceAccess::OnMainThread>()->allocate(vm, WTF::roundUpToMultipleOf<atomSize>(size), nullptr, AllocationFailureMode::Assert);
+    static_cast<JSCell*>(cell)->clearStructure();
+    Environment* environment = new (NotNull, cell) Environment(vm, structure);
+    zeroSpan(std::span { reinterpret_cast<uint8_t*>(environment) + sizeof(JSCell), size - sizeof(JSCell) });
+    for (auto& variable : layout.describedVariables()) {
+        if (traitsOf(variable.slot.representation()).absentBits)
+            clearSlot(variable.slot.representation(), &environment->at<uint8_t>(variable.slot.offset));
+    }
+    environment->at<uint8_t>(offsetOfEnvironmentShapeLowByte) = layout.shape;
+    environment->at<uint8_t>(offsetOfEnvironmentShapeHighByte) = layout.shape >> 8;
+    ASSERT(environment->at<uint64_t>(0) == headerFor(structure, layout.shape));
+    vm.mutatorFence();
+    return environment;
+}
+
+uint64_t Environment::headerFor(Structure* structure, uint32_t shape)
+{
+    ASSERT(uncheckedDowncast<CompiledStructure>(structure)->describesEnvironment());
+    ASSERT(uncheckedDowncast<CompiledStructure>(structure)->environmentShapePage() == shape >> environmentShapesPerPageShift);
+    uint64_t header = cellHeaderFor(structure);
+    header &= ~(0xffull << 8 * offsetOfEnvironmentShapeLowByte | 0xffull << 8 * offsetOfEnvironmentShapeHighByte);
+    header |= static_cast<uint64_t>(shape & 0xff) << 8 * offsetOfEnvironmentShapeLowByte | static_cast<uint64_t>(shape >> 8 & 0xff) << 8 * offsetOfEnvironmentShapeHighByte;
+    return header;
+}
+
+template<typename Visitor>
+void Environment::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    Base::visitChildren(cell, visitor);
+    visitFields(uncheckedDowncast<Environment>(cell), visitor);
+}
+
+DEFINE_VISIT_CHILDREN(Environment);
+
+size_t Environment::estimatedSize(JSCell* cell, VM&)
+{
+    return cell->cellSize();
+}
+
+void Environment::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    Environment* environment = uncheckedDowncast<Environment>(cell);
+    Base::analyzeHeap(cell, analyzer);
+    const ProgramIdentifiers& identifiers = *environment->vm().aotState().identifiers;
+    uintptr_t cageBase = cageBaseOf(environment);
+    for (auto& variable : environment->layout().describedVariables()) {
+        if (!traitsOf(variable.slot.representation()).holdsCell)
+            continue;
+        JSCell* target = cellInSlot(variable.slot.representation(), &environment->at<uint8_t>(variable.slot.offset), cageBase);
+        UniquedStringImpl* name = target ? identifiers.tryGetIdentifierConcurrently(variable.name) : nullptr;
+        if (name)
+            analyzer.analyzeVariableNameEdge(environment, target, name);
+    }
+}
+
+const ClassInfo EvalScope::s_info = { "EvalScope"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(EvalScope) };
+
+EvalScope::EvalScope(VM& vm, Structure* structure, JSScope* next, JSObject* bindings, JSValue newTarget)
+    : Base(vm, structure, next)
+    , m_bindings(bindings, WriteBarrierEarlyInit)
+    , m_newTarget(newTarget, WriteBarrierEarlyInit)
+{
+}
+
+Structure* EvalScope::createStructure(VM& vm, JSGlobalObject* globalObject)
+{
+    return Structure::create(vm, globalObject, jsNull(), TypeInfo(StrictEvalActivationType, StructureFlags), info());
+}
+
+EvalScope* EvalScope::create(VM& vm, Structure* structure, JSScope* next, JSObject* bindings, JSValue newTarget)
+{
+    EvalScope* scope = new (NotNull, allocateCell<EvalScope>(vm)) EvalScope(vm, structure, next, bindings, newTarget);
+    scope->finishCreation(vm);
+    return scope;
+}
+
+template<typename Visitor>
+void EvalScope::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* scope = uncheckedDowncast<EvalScope>(cell);
+    Base::visitChildren(scope, visitor);
+    visitor.append(scope->m_bindings);
+    visitor.append(scope->m_newTarget);
+}
+
+DEFINE_VISIT_CHILDREN(EvalScope);
+
+bool EvalScope::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName name, PropertySlot& slot)
+{
+    VM& vm = globalObject->vm();
+    auto* scope = uncheckedDowncast<EvalScope>(object);
+    if (name == vm.propertyNames->builtinNames().newTargetLocalPrivateName()) {
+        JSValue newTarget = scope->m_newTarget.get();
+        if (!newTarget)
+            return false;
+        slot.setValue(object, PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | PropertyAttribute::DontEnum, newTarget);
+        return true;
+    }
+    JSObject* bindings = scope->m_bindings.get();
+    return bindings->methodTable()->getOwnPropertySlot(bindings, globalObject, name, slot);
+}
+
+bool EvalScope::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot)
+{
+    JSObject* bindings = uncheckedDowncast<EvalScope>(cell)->m_bindings.get();
+    PutPropertySlot bindingsSlot(bindings, slot.isStrictMode());
+    return bindings->methodTable()->put(bindings, globalObject, name, value, bindingsSlot);
+}
+
+bool EvalScope::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, DeletePropertySlot&)
+{
+    return !uncheckedDowncast<EvalScope>(cell)->m_bindings->hasOwnProperty(globalObject, name);
 }
 
 } } // namespace JSC::AOT

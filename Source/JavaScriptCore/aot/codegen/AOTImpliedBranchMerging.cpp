@@ -47,21 +47,8 @@ struct LeavingBranch {
 
 static bool isRelation(B3::Opcode opcode)
 {
-    switch (opcode) {
-    case B3::Equal:
-    case B3::NotEqual:
-    case B3::LessThan:
-    case B3::GreaterThan:
-    case B3::LessEqual:
-    case B3::GreaterEqual:
-    case B3::Below:
-    case B3::Above:
-    case B3::BelowEqual:
-    case B3::AboveEqual:
-        return true;
-    default:
-        return false;
-    }
+    return opcode == B3::Equal || opcode == B3::NotEqual || opcode == B3::LessThan || opcode == B3::GreaterThan || opcode == B3::LessEqual || opcode == B3::GreaterEqual
+        || B3::isUnsignedRelation(opcode);
 }
 
 static std::optional<LeavingBranch> describeBranchLeavingBy(B3::BasicBlock* block, unsigned leavingSuccessor)
@@ -92,13 +79,6 @@ static std::optional<LeavingBranch> findLeavingBranch(B3::BasicBlock* block)
     if (takenIsLikely == notTakenIsLikely)
         return std::nullopt;
     return describeBranchLeavingBy(block, takenIsLikely ? 1 : 0);
-}
-
-static std::optional<int64_t> findOnlyLeavingValue(const LeavingBranch& branch)
-{
-    if (branch.relation != (branch.leavesWhenItHolds ? B3::Equal : B3::NotEqual))
-        return std::nullopt;
-    return branch.constant;
 }
 
 static bool leavesFor(const LeavingBranch& branch, int64_t left)
@@ -136,23 +116,18 @@ static bool leavesFor(const LeavingBranch& branch, int64_t left)
     return holds() == branch.leavesWhenItHolds;
 }
 
-static bool isUnsignedOrder(B3::Opcode opcode)
-{
-    return opcode == B3::Below || opcode == B3::Above || opcode == B3::BelowEqual || opcode == B3::AboveEqual;
-}
-
 // Whatever leaves at the first branch would leave at the second too.
 static bool secondLeavesForAllThatFirstLeavesFor(const LeavingBranch& first, const LeavingBranch& second)
 {
-    std::optional<int64_t> leavingValue = findOnlyLeavingValue(first);
-    if (!leavingValue)
+    bool firstLeavesForOneValue = first.relation == (first.leavesWhenItHolds ? B3::Equal : B3::NotEqual);
+    if (!firstLeavesForOneValue)
         return false;
     if (second.subject == first.subject)
-        return leavesFor(second, *leavingValue);
+        return leavesFor(second, first.constant);
 
     // The first leaves for the words without a bit of the mask. They lie from zero to the word of all the other bits, and what an unsigned order leaves for has no gap.
     B3::Value* masked = first.subject;
-    if (*leavingValue || masked->opcode() != B3::BitAnd || !masked->child(1)->hasInt() || masked->child(0) != second.subject || !isUnsignedOrder(second.relation))
+    if (first.constant || masked->opcode() != B3::BitAnd || !masked->child(1)->hasInt() || masked->child(0) != second.subject || !B3::isUnsignedRelation(second.relation))
         return false;
     return leavesFor(second, 0) && leavesFor(second, ~masked->child(1)->asInt());
 }
@@ -256,9 +231,9 @@ static std::optional<unsigned> findSuccessorTakenForNaN(B3::Procedure& proc, B3:
         holds = value->opcode() == B3::NotEqual;
     else if (value->opcode() == B3::EqualOrUnordered && (value->child(0) == number || value->child(1) == number))
         holds = true;
-    else if (isX86_64() && isUnsignedOrder(value->opcode()) && isTruncationOf(value->child(0), number) && isNonNegative(proc, value->child(1)))
+    else if (isX86_64() && B3::isUnsignedRelation(value->opcode()) && isTruncationOf(value->child(0), number) && isNonNegative(proc, value->child(1)))
         holds = value->opcode() == B3::Above || value->opcode() == B3::AboveEqual;
-    else if (isX86_64() && isUnsignedOrder(value->opcode()) && isTruncationOf(value->child(1), number) && isNonNegative(proc, value->child(0)))
+    else if (isX86_64() && B3::isUnsignedRelation(value->opcode()) && isTruncationOf(value->child(1), number) && isNonNegative(proc, value->child(0)))
         holds = value->opcode() == B3::Below || value->opcode() == B3::BelowEqual;
     else if (isX86_64() && isRelation(value->opcode()) && value->child(0)->type() == B3::Int64 && value->child(1)->hasInt64()) {
         // x86-64 truncates NaN to the least int64.
@@ -455,235 +430,220 @@ static void foldSelectsDecidedByBranchesAbove(B3::Procedure& proc)
 
 namespace {
 
-// A compressed reference that was decoded into a boxed value: Select(Above(word, undefinedCell32), pointer, ZExt32(word)). The pointer has no tag bit and is no marker.
-class TestsOfDecodedReferences {
-public:
-    TestsOfDecodedReferences(const Typed::Program& program, const Typed::Function& function)
-        : m_program(program)
-        , m_function(function)
-    {
-    }
+struct TestOfDecodedReference {
+    B3::Value* isCell;
+    bool holdsForCells;
+};
 
-    void testWordsInstead(B3::Procedure& proc) const
-    {
-        for (B3::BasicBlock* block : proc) {
-            for (B3::Value* value : *block) {
-                if (value->opcode() != B3::Select)
-                    continue;
-                if (std::optional<Test> test = findTest(value->child(0))) {
-                    value->child(0) = test->isCell;
-                    if (!test->holdsForCells)
-                        std::swap(value->child(1), value->child(2));
-                }
-            }
-            B3::Value* terminal = block->last();
-            if (terminal->opcode() != B3::Branch)
-                continue;
-            if (std::optional<Test> test = findTest(terminal->child(0))) {
-                terminal->child(0) = test->isCell;
-                if (!test->holdsForCells) {
-                    proc.willReorderSuccessors();
-                    std::swap(block->successor(0), block->successor(1));
-                    proc.didReorderSuccessors();
-                }
-            }
-        }
-    }
-
-    bool findsDecodedReferenceIn(B3::Procedure& proc) const
-    {
-        for (B3::BasicBlock* block : proc) {
-            for (B3::Value* value : *block) {
-                if (findWordDecodedInto(value))
-                    return true;
-            }
-        }
-        return false;
-    }
-
-    // The first pages of the cage of cells are never mapped, and a marker is a small word.
-    void readThroughPointers(B3::Procedure& proc) const
-    {
-        Reads reads;
-        for (B3::BasicBlock* block : proc) {
-            for (unsigned index = 0; index < block->size(); ++index) {
-                auto* access = block->at(index)->as<B3::MemoryValue>();
-                if (!access || !faultsForMarkers(access))
-                    continue;
-                B3::Value*& base = access->lastChild();
-                if (findWordDecodedInto(base)) {
-                    reads.ensure(base, [] { return Vector<Position, 2>(); }).iterator->value.append({ block, index });
-                    base = base->child(1);
-                } else if (base->opcode() == B3::Phi)
-                    reads.ensure(base, [] { return Vector<Position, 2>(); }).iterator->value.append({ block, index });
-            }
-        }
-        if (reads.isEmpty())
-            return;
-
-        B3::Dominators& dominators = proc.dominators();
-        auto isBehindRead = [&](B3::Value* value, B3::BasicBlock* block, unsigned index) {
-            auto found = reads.find(value);
-            return found != reads.end() && std::ranges::any_of(found->value, [&](Position read) {
-                return read.block == block ? read.index < index : dominators.strictlyDominates(read.block, block);
-            });
-        };
-
-        // `for (; node !== null; node = node.next) node.value`: the variable is read before anything else is done with it.
-        UncheckedKeyHashSet<B3::Value*> variablesUsedUnread;
-        for (B3::BasicBlock* block : proc) {
-            for (unsigned index = 0; index < block->size(); ++index) {
-                B3::Value* value = block->at(index);
-                auto* access = value->as<B3::MemoryValue>();
-                for (B3::Value*& child : value->children()) {
-                    if (child->opcode() == B3::Select) {
-                        if (isBehindRead(child, block, index))
-                            child = child->child(1);
-                        continue;
-                    }
-                    if (child->opcode() != B3::Phi || !reads.contains(child))
-                        continue;
-                    bool isRead = access && &child == &access->lastChild() && faultsForMarkers(access);
-                    if (!isRead && !isBehindRead(child, block, index))
-                        variablesUsedUnread.add(child);
-                }
-            }
-        }
-        for (B3::BasicBlock* block : proc) {
-            for (B3::Value* value : *block) {
-                if (value->opcode() != B3::Upsilon || !findWordDecodedInto(value->child(0)))
-                    continue;
-                B3::Value* phi = value->as<B3::UpsilonValue>()->phi();
-                if (reads.contains(phi) && !variablesUsedUnread.contains(phi))
-                    value->child(0) = value->child(0)->child(1);
-            }
-        }
-    }
-
-    // No pointer is a marker, so the decoded value is a marker where the word is.
-    void askWordsForMarkers(B3::Procedure& proc) const
-    {
-        B3::InsertionSet insertionSet(proc);
-        for (B3::BasicBlock* block : proc) {
-            for (unsigned index = 0; index < block->size(); ++index) {
-                B3::Value* value = block->at(index);
-                if ((value->opcode() != B3::Equal && value->opcode() != B3::NotEqual) || !value->child(1)->hasInt64())
-                    continue;
-                B3::Value* word = findWordDecodedInto(value->child(0));
-                int64_t constant = value->child(1)->asInt64();
-                if (!word || constant < 0 || constant > static_cast<int64_t>(undefinedCell32))
-                    continue;
-                value->child(0) = word;
-                value->child(1) = insertionSet.insert<B3::Const32Value>(index, value->origin(), static_cast<int32_t>(constant));
-            }
-            insertionSet.execute(block);
-        }
-    }
-
-private:
-    struct Test {
-        B3::Value* isCell;
-        bool holdsForCells;
-    };
-
-    struct Position {
-        B3::BasicBlock* block;
-        unsigned index;
-    };
-
-    using Reads = UncheckedKeyHashMap<B3::Value*, Vector<Position, 2>>;
-
-    static bool isPointerOf(B3::Value* sum, B3::Value* word)
-    {
-        if (sum->opcode() != B3::Add)
-            return false;
-        for (unsigned index = 0; index < 2; ++index) {
-            auto* base = sum->child(index)->as<B3::ArgumentRegValue>();
-            B3::Value* distance = sum->child(1 - index);
-            if (base && base->argumentReg() == Reg(cellCageBaseGPR) && distance->opcode() == B3::Shl && distance->child(1)->isInt32(cell32Shift) && distance->child(0)->opcode() == B3::ZExt32 && distance->child(0)->child(0) == word)
-                return true;
-        }
-        return false;
-    }
-
-    // Whatever operation has decoded it: a Decode, or a read of a narrow slot whose result is boxed.
-    static B3::Value* findWordDecodedInto(B3::Value* value)
-    {
-        if (value->opcode() != B3::Select)
-            return nullptr;
-        B3::Value* isCell = value->child(0);
-        if (isCell->opcode() != B3::Above || !isCell->child(1)->isInt32(undefinedCell32))
-            return nullptr;
-        B3::Value* word = isCell->child(0);
-        if (value->child(2)->opcode() != B3::ZExt32 || value->child(2)->child(0) != word || !isPointerOf(value->child(1), word))
-            return nullptr;
-        return word;
-    }
-
-    static bool faultsForMarkers(const B3::MemoryValue* access)
-    {
-        AOT_THRESHOLD(int64_t, largestAccess, 16);
-        return access->traps() && access->offset() >= 0 && (static_cast<int64_t>(undefinedCell32) << cell32Shift) + access->offset() + largestAccess <= static_cast<int64_t>(FaultSite::reach);
-    }
-
-    static constexpr uint16_t markers = Typed::Primitive::UndefinedOrNull | Typed::Primitive::Absent;
-
-    std::optional<uint16_t> findMarkersOf(B3::Value* value) const
-    {
-        if (value->opcode() != B3::Select)
-            return std::nullopt;
-        B3::Value* isCell = value->child(0);
-        if (isCell->opcode() != B3::Above || !isCell->child(1)->isInt32(undefinedCell32))
-            return std::nullopt;
-        if (value->child(2)->opcode() != B3::ZExt32 || value->child(2)->child(0) != isCell->child(0))
-            return std::nullopt;
-        Typed::ValueID id = Typed::valueOfOrigin(value->origin());
-        if (!id || id.index() >= m_function.values.size())
-            return std::nullopt;
-        const Typed::Value& origin = m_function.at(id);
-        if (origin.opcode == Typed::Opcode::Decode)
-            return m_program.at(m_function.at(origin.valueOperand()).type).primitives & markers;
-        if (origin.representation != Typed::Representation::Cell32)
-            return std::nullopt;
-        return m_program.at(origin.type).primitives & markers;
-    }
-
-    std::optional<Test> findTest(B3::Value* condition) const
-    {
-        bool isNegated = false;
-        while ((condition->opcode() == B3::Equal || condition->opcode() == B3::NotEqual) && condition->child(1)->isInt(0) && condition->child(0)->opcode() != B3::Select) {
-            isNegated ^= condition->opcode() == B3::Equal;
-            condition = condition->child(0);
-        }
-        if (condition->numChildren() != 2 || !condition->child(1)->hasInt64())
-            return std::nullopt;
-        std::optional<uint16_t> possible = findMarkersOf(condition->child(0));
-        if (!possible)
-            return std::nullopt;
-        int64_t constant = condition->child(1)->asInt64();
-        B3::Value* isCell = condition->child(0)->child(0);
-        switch (condition->opcode()) {
-        case B3::BitAnd:
-            if (constant != static_cast<int64_t>(JSValue::NotCellMask) || (*possible & Typed::Primitive::Absent))
-                return std::nullopt;
-            return Test { isCell, isNegated };
-        case B3::Equal:
-        case B3::NotEqual: {
-            bool isOnlyMarker = (constant == JSValue::ValueNull && *possible == Typed::Primitive::Null) || (constant == JSValue::ValueUndefined && *possible == Typed::Primitive::Undefined);
-            if (!isOnlyMarker)
-                return std::nullopt;
-            return Test { isCell, (condition->opcode() == B3::NotEqual) != isNegated };
-        }
-        default:
-            return std::nullopt;
-        }
-    }
-
-    const Typed::Program& m_program;
-    const Typed::Function& m_function;
+struct ReadPosition {
+    B3::BasicBlock* block;
+    unsigned index;
 };
 
 } // anonymous namespace
+
+static bool isPointerOf(B3::Value* sum, B3::Value* word)
+{
+    if (sum->opcode() != B3::Add)
+        return false;
+    for (unsigned index = 0; index < 2; ++index) {
+        auto* base = sum->child(index)->as<B3::ArgumentRegValue>();
+        B3::Value* distance = sum->child(1 - index);
+        if (base && base->argumentReg() == Reg(cellCageBaseGPR) && distance->opcode() == B3::Shl && distance->child(1)->isInt32(cell32Shift) && distance->child(0)->opcode() == B3::ZExt32 && distance->child(0)->child(0) == word)
+            return true;
+    }
+    return false;
+}
+
+// A compressed reference that was decoded into a boxed value: Select(Above(word, undefinedCell32), pointer, ZExt32(word)). The pointer has no tag bit and is no marker.
+// Whatever operation has decoded it: a Decode, or a read of a narrow slot whose result is boxed.
+static B3::Value* findWordDecodedInto(B3::Value* value)
+{
+    if (value->opcode() != B3::Select)
+        return nullptr;
+    B3::Value* isCell = value->child(0);
+    if (isCell->opcode() != B3::Above || !isCell->child(1)->isInt32(undefinedCell32))
+        return nullptr;
+    B3::Value* word = isCell->child(0);
+    if (value->child(2)->opcode() != B3::ZExt32 || value->child(2)->child(0) != word || !isPointerOf(value->child(1), word))
+        return nullptr;
+    return word;
+}
+
+static bool faultsForMarkers(const B3::MemoryValue* access)
+{
+    AOT_THRESHOLD(int64_t, largestAccess, 16);
+    return access->traps() && access->offset() >= 0 && (static_cast<int64_t>(undefinedCell32) << cell32Shift) + access->offset() + largestAccess <= static_cast<int64_t>(FaultSite::reach);
+}
+
+static constexpr uint16_t markersOfReferences = Typed::Primitive::UndefinedOrNull | Typed::Primitive::Absent;
+
+static std::optional<uint16_t> findMarkersOf(const Typed::Program& program, const Typed::Function& function, B3::Value* value)
+{
+    if (value->opcode() != B3::Select)
+        return std::nullopt;
+    B3::Value* isCell = value->child(0);
+    if (isCell->opcode() != B3::Above || !isCell->child(1)->isInt32(undefinedCell32))
+        return std::nullopt;
+    if (value->child(2)->opcode() != B3::ZExt32 || value->child(2)->child(0) != isCell->child(0))
+        return std::nullopt;
+    Typed::ValueID id = Typed::valueOfOrigin(value->origin());
+    if (!id || id.index() >= function.values.size())
+        return std::nullopt;
+    const Typed::Value& origin = function.at(id);
+    if (origin.opcode == Typed::Opcode::Decode)
+        return program.at(function.at(origin.valueOperand()).type).primitives & markersOfReferences;
+    if (origin.representation != Typed::Representation::Cell32)
+        return std::nullopt;
+    return program.at(origin.type).primitives & markersOfReferences;
+}
+
+static std::optional<TestOfDecodedReference> findTestOfDecodedReference(const Typed::Program& program, const Typed::Function& function, B3::Value* condition)
+{
+    bool isNegated = false;
+    while ((condition->opcode() == B3::Equal || condition->opcode() == B3::NotEqual) && condition->child(1)->isInt(0) && condition->child(0)->opcode() != B3::Select) {
+        isNegated ^= condition->opcode() == B3::Equal;
+        condition = condition->child(0);
+    }
+    if (condition->numChildren() != 2 || !condition->child(1)->hasInt64())
+        return std::nullopt;
+    std::optional<uint16_t> possible = findMarkersOf(program, function, condition->child(0));
+    if (!possible)
+        return std::nullopt;
+    int64_t constant = condition->child(1)->asInt64();
+    B3::Value* isCell = condition->child(0)->child(0);
+    switch (condition->opcode()) {
+    case B3::BitAnd:
+        if (constant != static_cast<int64_t>(JSValue::NotCellMask) || (*possible & Typed::Primitive::Absent))
+            return std::nullopt;
+        return TestOfDecodedReference { isCell, isNegated };
+    case B3::Equal:
+    case B3::NotEqual: {
+        bool isOnlyMarker = (constant == JSValue::ValueNull && *possible == Typed::Primitive::Null) || (constant == JSValue::ValueUndefined && *possible == Typed::Primitive::Undefined);
+        if (!isOnlyMarker)
+            return std::nullopt;
+        return TestOfDecodedReference { isCell, (condition->opcode() == B3::NotEqual) != isNegated };
+    }
+    default:
+        return std::nullopt;
+    }
+}
+
+static void testWordsInstead(const Typed::Program& program, const Typed::Function& function, B3::Procedure& proc)
+{
+    for (B3::BasicBlock* block : proc) {
+        for (B3::Value* value : *block) {
+            if (value->opcode() != B3::Select)
+                continue;
+            if (std::optional<TestOfDecodedReference> test = findTestOfDecodedReference(program, function, value->child(0))) {
+                value->child(0) = test->isCell;
+                if (!test->holdsForCells)
+                    std::swap(value->child(1), value->child(2));
+            }
+        }
+        B3::Value* terminal = block->last();
+        if (terminal->opcode() != B3::Branch)
+            continue;
+        if (std::optional<TestOfDecodedReference> test = findTestOfDecodedReference(program, function, terminal->child(0))) {
+            terminal->child(0) = test->isCell;
+            if (!test->holdsForCells) {
+                proc.willReorderSuccessors();
+                std::swap(block->successor(0), block->successor(1));
+                proc.didReorderSuccessors();
+            }
+        }
+    }
+}
+
+static bool findsDecodedReferenceIn(B3::Procedure& proc)
+{
+    for (B3::BasicBlock* block : proc) {
+        for (B3::Value* value : *block) {
+            if (findWordDecodedInto(value))
+                return true;
+        }
+    }
+    return false;
+}
+
+// The first pages of the cage of cells are never mapped, and a marker is a small word.
+static void readThroughPointers(B3::Procedure& proc)
+{
+    UncheckedKeyHashMap<B3::Value*, Vector<ReadPosition, 2>> reads;
+    for (B3::BasicBlock* block : proc) {
+        for (unsigned index = 0; index < block->size(); ++index) {
+            auto* access = block->at(index)->as<B3::MemoryValue>();
+            if (!access || !faultsForMarkers(access))
+                continue;
+            B3::Value*& base = access->lastChild();
+            if (findWordDecodedInto(base)) {
+                reads.ensure(base, [] { return Vector<ReadPosition, 2>(); }).iterator->value.append({ block, index });
+                base = base->child(1);
+            } else if (base->opcode() == B3::Phi)
+                reads.ensure(base, [] { return Vector<ReadPosition, 2>(); }).iterator->value.append({ block, index });
+        }
+    }
+    if (reads.isEmpty())
+        return;
+
+    B3::Dominators& dominators = proc.dominators();
+    auto isBehindRead = [&](B3::Value* value, B3::BasicBlock* block, unsigned index) {
+        auto found = reads.find(value);
+        return found != reads.end() && std::ranges::any_of(found->value, [&](ReadPosition read) {
+            return read.block == block ? read.index < index : dominators.strictlyDominates(read.block, block);
+        });
+    };
+
+    // `for (; node !== null; node = node.next) node.value`: the variable is read before anything else is done with it.
+    UncheckedKeyHashSet<B3::Value*> variablesUsedUnread;
+    for (B3::BasicBlock* block : proc) {
+        for (unsigned index = 0; index < block->size(); ++index) {
+            B3::Value* value = block->at(index);
+            auto* access = value->as<B3::MemoryValue>();
+            for (B3::Value*& child : value->children()) {
+                if (child->opcode() == B3::Select) {
+                    if (isBehindRead(child, block, index))
+                        child = child->child(1);
+                    continue;
+                }
+                if (child->opcode() != B3::Phi || !reads.contains(child))
+                    continue;
+                bool isRead = access && &child == &access->lastChild() && faultsForMarkers(access);
+                if (!isRead && !isBehindRead(child, block, index))
+                    variablesUsedUnread.add(child);
+            }
+        }
+    }
+    for (B3::BasicBlock* block : proc) {
+        for (B3::Value* value : *block) {
+            if (value->opcode() != B3::Upsilon || !findWordDecodedInto(value->child(0)))
+                continue;
+            B3::Value* phi = value->as<B3::UpsilonValue>()->phi();
+            if (reads.contains(phi) && !variablesUsedUnread.contains(phi))
+                value->child(0) = value->child(0)->child(1);
+        }
+    }
+}
+
+// No pointer is a marker, so the decoded value is a marker where the word is.
+static void askWordsForMarkers(B3::Procedure& proc)
+{
+    B3::InsertionSet insertionSet(proc);
+    for (B3::BasicBlock* block : proc) {
+        for (unsigned index = 0; index < block->size(); ++index) {
+            B3::Value* value = block->at(index);
+            if ((value->opcode() != B3::Equal && value->opcode() != B3::NotEqual) || !value->child(1)->hasInt64())
+                continue;
+            B3::Value* word = findWordDecodedInto(value->child(0));
+            int64_t constant = value->child(1)->asInt64();
+            if (!word || constant < 0 || constant > static_cast<int64_t>(undefinedCell32))
+                continue;
+            value->child(0) = word;
+            value->child(1) = insertionSet.insert<B3::Const32Value>(index, value->origin(), static_cast<int32_t>(constant));
+        }
+        insertionSet.execute(block);
+    }
+}
 
 bool mergeImpliedBranches(B3::Procedure& proc)
 {
@@ -708,11 +668,10 @@ B3::ClientPhase mergeImpliedBranchesAfterOptimization(const Typed::Program& prog
         B3::ClientPhase::Point::AfterOptimization,
         "mergeImpliedBranches"_s,
         createSharedTask<bool(B3::Procedure&)>([&program, &function](B3::Procedure& proc) {
-            TestsOfDecodedReferences tests(program, function);
-            if (tests.findsDecodedReferenceIn(proc)) {
-                tests.testWordsInstead(proc);
-                tests.askWordsForMarkers(proc);
-                tests.readThroughPointers(proc);
+            if (findsDecodedReferenceIn(proc)) {
+                testWordsInstead(program, function, proc);
+                askWordsForMarkers(proc);
+                readThroughPointers(proc);
             }
             return mergeImpliedBranches(proc);
         })

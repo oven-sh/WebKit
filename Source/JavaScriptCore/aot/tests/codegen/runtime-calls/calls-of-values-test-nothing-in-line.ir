@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="callsUnderName" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0, -, v0 calleeName="input" @30
     v2 = Call v0, v1, v1 calleeName="input" @40
     v3 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v2 calleeName="input" @50
@@ -18,7 +17,6 @@ function f0 name="callsUnderName" parameters=[{type=anything}] results=[{type=an
 # CHECK-NEXT: stub CallValueWithoutThis.n1 x1
 # CHECK-NEXT: f1: size=[[tail]] frame=
 function f1 name="tailCallUnderName" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0, -, v0 calleeName="input" @30
     ReturnCall v1
 }
@@ -26,7 +24,6 @@ function f1 name="tailCallUnderName" parameters=[{type=anything}] results=[{type
 # CHECK-NEXT: stub ThrowUnlessCallable x1
 # CHECK-NEXT: f2: size=[[tail]] frame=
 function f2 name="tailCallWithoutName" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0, -, v0 @30
     ReturnCall v1
 }
@@ -34,7 +31,6 @@ function f2 name="tailCallWithoutName" parameters=[{type=anything}] results=[{ty
 # CHECK-NEXT: stub ThrowUnlessCallable x1
 # CHECK-NEXT: f3: size=
 function f3 name="tailCallOfFunction" parameters=[{type=function}] results=[{type=anything}] {
-  b0(v0: function):
     v1 = Call v0, -, v0 calleeName="input" @30
     ReturnCall v1
 }

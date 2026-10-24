@@ -9,7 +9,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="arrayLength" parameters=[{type=Array<anything, pristine[Storage]>}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: boolean):
     v2 = GetArrayLength v0
     v3 = NewArray v2 contents=anything
     Jump -> next b1()
@@ -33,7 +32,6 @@ function f0 name="arrayLength" parameters=[{type=Array<anything, pristine[Storag
 # R-LABEL: function f0 name="arrayLength"
 # R-COUNT-3: int[0, 4294967295] @Int64 = GetArrayLength v0
 function f1 name="arrayLengthUnderGuard" parameters=[{type=Array}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array, v1: boolean):
     v2 = IsPristine v0 builtinClass=Array aspects=[Storage]
     Branch v2 -> taken b1(| 0), notTaken b8()
   b1(v3):
@@ -67,7 +65,6 @@ function f1 name="arrayLengthUnderGuard" parameters=[{type=Array}, {type=boolean
 # R-LABEL: function f1 name="arrayLengthUnderGuard"
 # R-COUNT-3: int[0, 4294967295] @Int64 = GetArrayLength v0, v3
 function f2 name="typedArrayLengths" parameters=[{type=Int8Array}, {type=Uint8Array}, {type=Uint8ClampedArray}, {type=Int16Array}, {type=Uint16Array}, {type=Int32Array}, {type=Uint32Array}, {type=Float16Array}, {type=Float32Array}, {type=Float64Array}, {type=BigInt64Array}, {type=BigUint64Array}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Int8Array, v1: Uint8Array, v2: Uint8ClampedArray, v3: Int16Array, v4: Uint16Array, v5: Int32Array, v6: Uint32Array, v7: Float16Array, v8: Float32Array, v9: Float64Array, v10: BigInt64Array, v11: BigUint64Array, v12: boolean):
 # REPEAT: i = 0..11
     v%(i+13) = GetTypedArrayLength v%(i) typedArrayType=%(i+1)
 # END REPEAT
@@ -98,7 +95,6 @@ function f2 name="typedArrayLengths" parameters=[{type=Int8Array}, {type=Uint8Ar
 # R-COUNT-36: int[0, 17179869184] @Int64 = GetTypedArrayLength
 # R-NOT: = GetTypedArrayLength
 function f3 name="stringLength" parameters=[{type=string}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: string, v1: boolean):
     v2 = GetStringLength v0
     v3 = NewArray v2 contents=anything
     Jump -> next b1()
@@ -122,7 +118,6 @@ function f3 name="stringLength" parameters=[{type=string}, {type=boolean}] resul
 # R-LABEL: function f3 name="stringLength"
 # R-COUNT-3: int[0, 2147483647] @Int32 = GetStringLength v0
 function f4 name="flatStringLength" parameters=[{type=string}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: string, v1: boolean):
     v2 = FlattenString v0
     v3 = GetStringLength v2
     v4 = NewArray v3 contents=anything

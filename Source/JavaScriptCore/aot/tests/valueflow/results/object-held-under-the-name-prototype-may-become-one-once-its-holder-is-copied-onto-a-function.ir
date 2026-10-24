@@ -12,7 +12,6 @@ layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequir
 layout L1 name="Holder" fields=[{key="prototype" declared={type=anything} flags=[IsRequired]}]
 layout L2 name="Other" fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = PropGet v1 key="x"
@@ -24,6 +23,5 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="target" module=m0 results=[{type=anything}] {
-  b0():
     Return
 }

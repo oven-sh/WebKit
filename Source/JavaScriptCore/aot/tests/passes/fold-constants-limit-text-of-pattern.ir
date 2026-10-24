@@ -7,18 +7,15 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="patternOnly" results=[{type=RegExp}] {
-  b0():
     v0 = String string="abcde"
     v1 = String string="fghij"
     v2 = Add v0, v1
     v3 = CallBuiltin -, v2 overload=RegExp/4
     Return v3
-}
-# CHECK-LABEL: function f0 name="patternOnly"
 # CHECK: v2: "abcdefghij" = String string="abcdefghij"
+}
 
 function f1 name="partOfTextThatIsPatternOnly" results=[{type=RegExp}] {
-  b0():
     v0 = String string="abcde"
     v1 = String string="fghij"
     v2 = Add v0, v1
@@ -26,13 +23,11 @@ function f1 name="partOfTextThatIsPatternOnly" results=[{type=RegExp}] {
     v4 = Strcat v2, v3
     v5 = CallBuiltin -, v4 overload=RegExp/4
     Return v5
-}
-# CHECK-LABEL: function f1 name="partOfTextThatIsPatternOnly"
 # CHECK: v2: "abcdefghij" = String string="abcdefghij"
 # CHECK: v4: "abcdefghijk" = String string="abcdefghijk"
+}
 
 function f2 name="usedOtherwiseToo" results=[{type=string}] {
-  b0():
     v0 = String string="abcde"
     v1 = String string="fghij"
     v2 = Add v0, v1
@@ -41,7 +36,6 @@ function f2 name="usedOtherwiseToo" results=[{type=string}] {
     v5 = String string="a"
     v6 = CallBuiltin -, v5, v4 overload=RegExp/4
     Return v2
-}
-# CHECK-LABEL: function f2 name="usedOtherwiseToo"
 # CHECK: v2: string = Add v0, v1
 # CHECK: v4: string = Add v1, v0
+}

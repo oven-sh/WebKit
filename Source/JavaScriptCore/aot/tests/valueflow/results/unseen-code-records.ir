@@ -24,7 +24,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 evalscope e0 mode=Strict
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = Builtin builtin=Function
@@ -38,13 +37,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="evaluatesAgain" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Undefined
     v2 = DirectEval v0, v1 evalScope=e0
     Return v2
 }
 function f2 name="unreached" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Undefined
     v2 = DirectEval v0, v1 evalScope=e0
     v3 = ImportDynamic v0 referrer=m0

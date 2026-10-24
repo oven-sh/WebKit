@@ -9,20 +9,17 @@ layout L0 kind=Instance name="Base" constructor=f1 flow={baseState=None}
 layout L1 kind=Instance name="Derived" base=L0 constructor=f2 flags=[HasHeritage] flow={baseState=Layout base=L0}
 layout L2 kind=Instance name="Legacy" constructor=f3 flags=[IsConstructorFunction] flow={baseState=None}
 function f0 name="operands" parameters=[{type=f1}, {type=f2}, {type=f3}, {type=f4}, {type=f5}, {type=f6}, {type=f7}, {type=f8}, {type=f9}, {type=f1|f3}, {type=f1|f5}, {type=function}] results=[{type=undefined}] {
-  b0(v0: f1, v1: f2, v2: f3, v3: f4, v4: f5, v5: f6, v6: f7, v7: f8, v8: f9, v9: f1|f3, v10: f1|f5, v11: function):
     Return
 }
 function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}]
 function f2 name="Derived" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=object}]
 function f3 name="Legacy" flags=[HasThis] thisType={type=object} results=[{type=undefined}]
 function f4 name="generator" flags=[IsGenerator, TakesCallee] results=[{type=anything}] {
-  b0(v0: function):
     Unreachable
 }
 function f5 name="arrow" kind=Arrow results=[{type=anything}]
 function f6 name="method" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}]
 function f7 name="asynchronous" flags=[IsAsync] results=[{type=anything}] {
-  b0():
     Unreachable
 }
 function f8 name="getter" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}]
@@ -41,7 +38,6 @@ function f9 name="ofTheLibrary" module=m1 results=[{type=anything}]
 # CHECK-NEXT: v10: ?
 # CHECK-NEXT: v11: ?
 function f10 name="reads" parameters=[{type=f1}, {type=f3}, {type=f5}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: f1, v1: f3, v2: f5, v3: anything):
     v4 = GetConstructPrototype v0 layout=L0
     v5 = GetConstructPrototype v1 layout=L2
     v6 = GetConstructPrototype v2 layout=L0

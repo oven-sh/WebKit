@@ -10,7 +10,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 variable g0 name="cells" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToNumber v1
@@ -30,21 +29,18 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v15
 }
 function f1 name="lowWordOfProduct" parameters=[{type=i32}, {type=i32}] results=[{type=anything}] {
-  b0(v0: i32, v1: i32):
     v2 = Mul v0, v1
     v3 = Integer integer=0
     v4 = BitOr v2, v3
     Return v4
 }
 function f2 name="lowWordOfProductWithNumber" parameters=[{type=i32}, {type=number}] results=[{type=anything}] {
-  b0(v0: i32, v1: number):
     v2 = Mul v0, v1
     v3 = Integer integer=0
     v4 = BitOr v2, v3
     Return v4
 }
 function f3 name="lowWordOfTwoProducts" parameters=[{type=i32}, {type=i32}, {type=i32}, {type=i32}] results=[{type=anything}] {
-  b0(v0: i32, v1: i32, v2: i32, v3: i32):
     v4 = Mul v0, v1
     v5 = Mul v2, v3
     v6 = Sub v4, v5
@@ -53,7 +49,6 @@ function f3 name="lowWordOfTwoProducts" parameters=[{type=i32}, {type=i32}, {typ
     Return v8
 }
 function f4 name="elementAtProductAndTerm" parameters=[{type=i32}, {type=i32}, {type=i32}] results=[{type=anything}] {
-  b0(v0: i32, v1: i32, v2: i32):
     v3 = GetModuleVariable variable=g0
     v4 = Mul v0, v1
     v5 = Add v4, v2
@@ -61,7 +56,6 @@ function f4 name="elementAtProductAndTerm" parameters=[{type=i32}, {type=i32}, {
     Return v6
 }
 function f5 name="elementAtTwoProducts" parameters=[{type=i32}, {type=i32}, {type=i32}, {type=i32}] results=[{type=anything}] {
-  b0(v0: i32, v1: i32, v2: i32, v3: i32):
     v4 = GetModuleVariable variable=g0
     v5 = Mul v0, v1
     v6 = Mul v2, v3

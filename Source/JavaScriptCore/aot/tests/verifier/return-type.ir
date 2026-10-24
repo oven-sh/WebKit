@@ -6,38 +6,30 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Environment fields=[{key="c" declared={type=number}}]
 function f0 name="badValue" parameters=[{type=anything}] results=[{type=number}] {
-  b0(v0: anything):
     Return v0
 }
 function f1 name="badNone" results=[{type=number}] {
-  b0():
     Return
 }
 function f2 name="badSecondResultOfCall" results=[{type=number}, {type=string}] {
-  b0():
     v0 = CallDirect function=f17
     Return v0
 }
 function f3 name="badNumberOfResults" results=[{type=number}, {type=number}, {type=number}] {
-  b0():
     v0 = CallDirect function=f17
     Return v0
 }
 function f4 name="badPlainValueForTwoResults" parameters=[{type=number}] results=[{type=number}, {type=string}] {
-  b0(v0: number):
     Return v0
 }
 function f5 name="badNoneForTwoResults" results=[{type=undefined}, {type=undefined}] {
-  b0():
     Return
 }
 function f6 name="badResultsForOneResult" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Results v0
     Return v1
 }
 function f7 name="badResultsFromUnsplitAsync" flags=[IsAsync] parameters=[{type=number}] results=[{type=Promise<number>}] {
-  b0(v0: number):
     v1 = Results v0
     Return v1
 }
@@ -46,38 +38,30 @@ function f8 name="badEnvironmentForUntypedResult" captures=[{type=env L0}] resul
     Return v0
 }
 function f9 name="badEnumeratorForUntypedResult" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ForInOpen v0
     Return v1
 }
 function f10 name="goodValue" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Return v0
 }
 function f11 name="goodNone" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f12 name="goodNoneForOptionalResult" results=[{type=undefined|number}] {
-  b0():
     Return
 }
 function f13 name="goodResults" parameters=[{type=number}, {type=string}] results=[{type=number}, {type=string}] {
-  b0(v0: number, v1: string):
     v2 = Results v0, v1
     Return v2
 }
 function f14 name="goodResultsOfCall" results=[{type=number}, {type=undefined|number}] {
-  b0():
     v0 = CallDirect function=f17
     Return v0
 }
 function f15 name="goodUnsplitAsync" flags=[IsAsync] parameters=[{type=number}] results=[{type=Promise<number>}] {
-  b0(v0: number):
     Return v0
 }
 function f16 name="goodNoneFromUnsplitAsync" flags=[IsAsync] results=[{type=Promise<number>}] {
-  b0():
     Return
 }
 function f17 name="callee" results=[{type=number}, {type=number}]

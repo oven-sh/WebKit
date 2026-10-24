@@ -9,7 +9,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="y" declared={type=anything} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}] flow={members=[L0] impossibleMutations=[DeleteField, RedefineProperty]}
 function f0 name="checked" flags=[IsChecked] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1: anything ~ undefined|L0 = Upcast v0 castType=anything
     v2 = PropGet v1 key="y" receivers=[L0, ..]
     v3 = TypeTest v1 testedType=L0
@@ -22,16 +21,14 @@ function f0 name="checked" flags=[IsChecked] parameters=[{type=anything}] result
     Return v4
   b2():
     Return v2
-}
-# CHECK-LABEL: function f0 name="checked"
 # CHECK: = Builtin builtin=GlobalThis
 # CHECK-NOT: frequency=Unlikely:
 # CHECK: frequency=Rare:
 # CHECK-NOT: frequency=Unlikely:
 # CHECK: = Builtin builtin=GlobalThis
+}
 
 function f1 name="notChecked" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1: anything ~ undefined|L0 = Upcast v0 castType=anything
     v2 = PropGet v1 key="y" receivers=[L0, ..]
     v3 = TypeTest v1 testedType=L0
@@ -44,14 +41,12 @@ function f1 name="notChecked" parameters=[{type=anything}] results=[{type=anythi
     Return v4
   b2():
     Return v2
-}
-# CHECK-LABEL: function f1 name="notChecked"
 # CHECK: = Builtin builtin=GlobalThis
 # CHECK: frequency=Unlikely:
 # CHECK-NOT: = Builtin builtin=GlobalThis
+}
 
 function f2 name="checkedInLibrary" role=Library flags=[IsChecked] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1: anything ~ undefined|L0 = Upcast v0 castType=anything
     v2 = PropGet v1 key="y" receivers=[L0, ..]
     v3 = TypeTest v1 testedType=L0
@@ -64,8 +59,7 @@ function f2 name="checkedInLibrary" role=Library flags=[IsChecked] parameters=[{
     Return v4
   b2():
     Return v2
-}
-# CHECK-LABEL: function f2 name="checkedInLibrary"
 # CHECK: = Builtin builtin=GlobalThis
 # CHECK: frequency=Unlikely:
 # CHECK-NOT: = Builtin builtin=GlobalThis
+}

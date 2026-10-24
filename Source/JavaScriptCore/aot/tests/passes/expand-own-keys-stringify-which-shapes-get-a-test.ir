@@ -25,12 +25,9 @@ layout L10 name="Five" module=m0 position=30 fields=[{key="a" declared={type=num
 layout L11 name="Marked" module=m0 position=40 fields=[{key="a" declared={type=number}}, {key="mark" declared={type=symbol}}] flow={constructorOrders=[{fields=[0, 1]}]}
 
 function f0 name="numberedOneWay" parameters=[{type=L0|L1|L2|L3|L4|L5}] results=[{type=anything}] {
-  b0(v0: L0|L1|L2|L3|L4|L5):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1 overload=JSONStringify/0
     Return v2
-}
-# CHECK-LABEL: function f0 name="numberedOneWay"
 # CHECK: = StringBuilderBegin
 # CHECK-NOT: layouts=[L1]
 # CHECK-NOT: layouts=[L0]
@@ -38,14 +35,12 @@ function f0 name="numberedOneWay" parameters=[{type=L0|L1|L2|L3|L4|L5}] results=
 # CHECK: = ShapeTest {{*}} layouts=[L4]
 # CHECK: = ShapeTest {{*}} layouts=[L3]
 # CHECK: = ShapeTest {{*}} layouts=[L2]
+}
 
 function f1 name="numberedAnotherWay" parameters=[{type=L6|L7|L8|L9|L10|L11}] results=[{type=anything}] {
-  b0(v0: L6|L7|L8|L9|L10|L11):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1 overload=JSONStringify/0
     Return v2
-}
-# CHECK-LABEL: function f1 name="numberedAnotherWay"
 # CHECK: = StringBuilderBegin
 # CHECK-NOT: layouts=[L9]
 # CHECK-NOT: layouts=[L7]
@@ -53,27 +48,24 @@ function f1 name="numberedAnotherWay" parameters=[{type=L6|L7|L8|L9|L10|L11}] re
 # CHECK: = ShapeTest {{*}} layouts=[L6]
 # CHECK: = ShapeTest {{*}} layouts=[L10]
 # CHECK: = ShapeTest {{*}} layouts=[L11]
+}
 
 # Where all of them get a test the order is the same.
 function f2 name="fewEnough" parameters=[{type=L0|L1|L5}] results=[{type=anything}] {
-  b0(v0: L0|L1|L5):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1 overload=JSONStringify/0
     Return v2
-}
-# CHECK-LABEL: function f2 name="fewEnough"
 # CHECK: = StringBuilderBegin
 # CHECK: = ShapeTest {{*}} layouts=[L5]
 # CHECK: = ShapeTest {{*}} layouts=[L0]
+}
 
 function f3 name="Made" module=m0 position=50 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L1
     v2 = NewObject v1 layout=L1 fields=[]
     Return v2
 }
 function f4 name="Made" module=m0 position=50 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L9
     v2 = NewObject v1 layout=L9 fields=[]
     Return v2

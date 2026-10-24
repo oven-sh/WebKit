@@ -36,7 +36,6 @@ public:
 
     bool strictlyDominates(BlockID from, BlockID to) const
     {
-        // The entry block dominates all that is reachable.
         if (from == m_cfg.root())
             return to != from && m_cfg.isReachable(to);
         uint32_t numberOfDominated = placeOf(to).number;
@@ -65,7 +64,6 @@ public:
     BlockID nearestCommonDominator(BlockID, BlockID) const;
 
     bool terminatorDominates(BlockID from, BlockID to) const;
-    // The same answer from the dominator tree of a graph in which every covered block is two nodes, for a checking build.
     bool terminatorDominatesInSplitGraph(BlockID from, BlockID to) const;
 
     void walkTree(NOESCAPE const Invocable<void(BlockID)> auto& enter, NOESCAPE const Invocable<void(BlockID)> auto& leave) const
@@ -109,7 +107,6 @@ private:
     bool tryFindDominatorsByOrder(std::span<uint32_t> dominatorByOrder) const;
     void computeChildren() const;
     void computeJumpPointers() const;
-    const SplitBlockDominators& splitBlockDominators() const;
     const BitVector& blocksReachedFromHandlerOfDominator() const;
 
     BlockID jumpOf(BlockID block) const

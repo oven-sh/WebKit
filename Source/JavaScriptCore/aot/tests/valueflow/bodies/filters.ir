@@ -41,7 +41,6 @@
 module m0 path="main.js" displayPath="main.js"
 entry module=m0
 function f0 name="oneReader" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=undefined
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):
@@ -51,7 +50,6 @@ function f0 name="oneReader" parameters=[{type=anything}] results=[{type=anythin
     Return
 }
 function f1 name="twoReaders" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=function
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):
@@ -62,7 +60,6 @@ function f1 name="twoReaders" parameters=[{type=anything}] results=[{type=anythi
     Return v5
 }
 function f2 name="truthiness" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):

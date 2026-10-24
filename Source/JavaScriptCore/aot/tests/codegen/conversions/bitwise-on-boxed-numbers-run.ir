@@ -11,7 +11,6 @@
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = NewClosure function=f3
@@ -24,32 +23,26 @@ function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[
     Return
 }
 function f1 name="or" module=m0 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: number, v1: number):
     v2 = BitOr v0, v1
     Return v2
 }
 function f2 name="and" module=m0 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: number, v1: number):
     v2 = BitAnd v0, v1
     Return v2
 }
 function f3 name="xor" module=m0 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: number, v1: number):
     v2 = BitXor v0, v1
     Return v2
 }
 function f4 name="left" module=m0 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: number, v1: number):
     v2 = LShift v0, v1
     Return v2
 }
 function f5 name="right" module=m0 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: number, v1: number):
     v2 = RShift v0, v1
     Return v2
 }
 function f6 name="unsignedRight" module=m0 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: number, v1: number):
     v2 = URShift v0, v1
     Return v2
 }

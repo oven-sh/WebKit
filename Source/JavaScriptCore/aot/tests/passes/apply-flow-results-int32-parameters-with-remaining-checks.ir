@@ -11,7 +11,6 @@ typesite w2 module=m0 position=30 kind=Parameter
 typesite w3 module=m0 position=40 kind=Parameter
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Integer integer=7
     v2 = Call v0, -, v1
@@ -28,7 +27,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="handedOn" module=m0 position=5 flags=[IsChecked] length=1 parameters=[{type=number site=w0}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewClosure function=f2
     v2 = Integer integer=1
     v3 = Add v0, v2
@@ -37,7 +35,6 @@ function f1 name="handedOn" module=m0 position=5 flags=[IsChecked] length=1 para
 }
 
 function f2 name="calledWithASumByAFunctionThatIsHandedOn" module=m0 position=15 flags=[IsChecked] length=1 parameters=[{type=number site=w1}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = Integer integer=0
     v2 = BitOr v0, v1
     Return v2
@@ -47,7 +44,6 @@ function f2 name="calledWithASumByAFunctionThatIsHandedOn" module=m0 position=15
 # CHECK: i32 = Check v0 castType=i32 site=w1
 
 function f3 name="calledWithASumThatFlowProves" module=m0 position=25 flags=[IsChecked] length=1 parameters=[{type=number site=w2}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = Integer integer=0
     v2 = BitOr v0, v1
     Return v2

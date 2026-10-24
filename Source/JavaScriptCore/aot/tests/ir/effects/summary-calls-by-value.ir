@@ -7,7 +7,6 @@ layout L0 kind=Environment fields=[{key="count" declared={type=number}}]
 layout L1 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 variable g0 name="total" declared={type=number} initialization=Undefined
 function f0 name="writesVariable" parameters=[{type=L1}] results=[{type=undefined}] {
-  b0(v0: L1):
     v1 = Integer integer=1
     PutModuleVariable v1 variable=g0
     Return
@@ -20,17 +19,14 @@ function f1 name="writesCaptureAndArgument" captures=[{type=env L0}] parameters=
     Return
 }
 function f2 name="everyCalleeNamed" parameters=[{type=f0|f1}, {type=L1}] results=[{type=undefined}] {
-  b0(v0: f0|f1, v1: L1):
     v2 = Call v0, -, v1 callees=[f0, f1]
     Return
 }
 function f3 name="someCalleeUnnamed" parameters=[{type=function}, {type=L1}] results=[{type=undefined}] {
-  b0(v0: function, v1: L1):
     v2 = Call v0, -, v1 callees=[f0, f1, ..]
     Return
 }
 function f4 name="noCalleeNamed" parameters=[{type=function}, {type=L1}] results=[{type=undefined}] {
-  b0(v0: function, v1: L1):
     v2 = Call v0, -, v1
     Return
 }

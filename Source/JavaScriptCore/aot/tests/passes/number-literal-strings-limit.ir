@@ -7,12 +7,10 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="first" parameters=[{type="south"|"north"}] results=[{type=undefined}] {
-  b0(v0: "south"|"north"):
     Return
 }
 
 function f1 name="numberedAgain" parameters=[{type="south"}] results=[{type=undefined}] {
-  b0(v0: "south"):
     Return
 }
 # CHECK: 0 ""

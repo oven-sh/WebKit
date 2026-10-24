@@ -4,95 +4,77 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="emptyAndNumber" parameters=[{type=number}] results=[{type=string}] {
-  b0(v0: number):
     v1 = String string=""
     v2 = Add v1, v0
     Return v2
-}
-# CHECK-LABEL: function f0 name="emptyAndNumber"
 # CHECK-NOT: = Add
 # CHECK: string = Strcat v0
+}
 
 function f1 name="numberAndEmpty" parameters=[{type=i32}] results=[{type=string}] {
-  b0(v0: i32):
     v1 = String string=""
     v2 = Add v0, v1
     Return v2
-}
-# CHECK-LABEL: function f1 name="numberAndEmpty"
 # CHECK-NOT: = Add
 # CHECK: string = Strcat v0
+}
 
 # Two numbers behind the empty text are not added: each becomes a string.
 function f2 name="emptyAndTwoNumbers" parameters=[{type=number}, {type=number}] results=[{type=string}] {
-  b0(v0: number, v1: number):
     v2 = String string=""
     v3 = Add v2, v0
     v4 = Add v3, v1
     Return v4
-}
-# CHECK-LABEL: function f2 name="emptyAndTwoNumbers"
 # CHECK-NOT: = Add
 # CHECK: string = Strcat v0, v1
+}
 
 function f3 name="emptyAmongParts" parameters=[{type=string}, {type=boolean}] results=[{type=string}] {
-  b0(v0: string, v1: boolean):
     v2 = String string=""
     v3 = String string="-"
     v4 = Strcat v2, v0, v2, v3, v1, v2
     Return v4
-}
-# CHECK-LABEL: function f3 name="emptyAmongParts"
 # CHECK: string = Strcat v0, v3, v1
+}
 
 function f4 name="nothingButEmpty" results=[{type=string}] {
-  b0():
     v0 = String string=""
     v1 = Add v0, v0
     Return v1
-}
-# CHECK-LABEL: function f4 name="nothingButEmpty"
 # CHECK-NOT: = Add
 # CHECK: string = Strcat
 # CHECK-NEXT: Return v1
+}
 
 function f5 name="likelyKey" parameters=[{type=i32}, {type=i32}] results=[{type=string}] {
-  b0(v0: i32, v1: i32):
     v2 = String string=""
     v3 = String string=","
     v4 = Strcat v2, v0, v3, v1 [isLikelyKey]
     Return v4
-}
-# CHECK-LABEL: function f5 name="likelyKey"
 # CHECK: string = Strcat v0, v3, v1 [isLikelyKey]
+}
 
 # The conversion of an object or a symbol can be seen, and "" + x asks an object for its default value, not for a string.
 function f6 name="unknownOperand" parameters=[{type=anything}] results=[{type=string}] {
-  b0(v0: anything):
     v1 = String string=""
     v2 = Add v1, v0
     Return v2
-}
-# CHECK-LABEL: function f6 name="unknownOperand"
 # CHECK: = Add v1, v0
 # CHECK-NOT: Strcat
+}
 
 function f7 name="symbolOperand" parameters=[{type=symbol}] results=[{type=string}] {
-  b0(v0: symbol):
     v1 = String string=""
     v2 = Add v1, v0
     Return v2
-}
-# CHECK-LABEL: function f7 name="symbolOperand"
 # CHECK: = Add v1, v0
 # CHECK-NOT: Strcat
+}
 
 function f8 name="textThatIsNotEmpty" parameters=[{type=number}] results=[{type=string}] {
-  b0(v0: number):
     v1 = String string=" "
     v2 = Add v1, v0
     Return v2
-}
-# CHECK-LABEL: function f8 name="textThatIsNotEmpty"
 # CHECK: = Add v1, v0
 # CHECK-NOT: Strcat
+}

@@ -6,7 +6,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 name="" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Boolean boolean=true
     v1 = CallDirect function=f1
     v2 = CallDirect v0 function=f3
@@ -21,16 +20,13 @@ function f0 name="" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="recursive" role=OutlinedBody results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f1
     Return v0
 }
 function f2 name="inLoop" role=OutlinedBody results=[{type=undefined}] {
-  b0():
     Return
 }
 function f3 name="callsItselfInLoop" role=OutlinedBody parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -40,17 +36,14 @@ function f3 name="callsItselfInLoop" role=OutlinedBody parameters=[{type=boolean
     Return
 }
 function f4 name="even" role=OutlinedBody results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f5
     Return v0
 }
 function f5 name="odd" role=OutlinedBody results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f4
     Return v0
 }
 function f6 name="once" role=OutlinedBody results=[{type=undefined}] {
-  b0():
     Return
 }
 # CHECK: f0 size 10 mass 37.000000: f1*1.000000 f2*10.000000 f3*1.000000 f4*1.000000 f6*1.000000

@@ -11,7 +11,6 @@ layout L2 name="Text" fields=[{key="pos" declared={type=undefined|string}}, {key
 layout L3 name="Count" fields=[{key="pos" declared={type=undefined|number}}, {key="end" declared={type=undefined|number}}] flow={members=[L3]}
 
 function f0 name="stores-behind-the-join-of-allocations" parameters=[{type=boolean}, {type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: boolean, v1: number, v2: number):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v3 = NewObject layout=L0 fields=[]
@@ -24,13 +23,11 @@ function f0 name="stores-behind-the-join-of-allocations" parameters=[{type=boole
     PutSlotOrAdd v5, -, v2 key="end" receivers=[L0, L1] level=Proven
     PutSlotOrAdd v5, -, v1 key="kind" receivers=[L0, L1] level=Proven
     Return v5
-}
-# CHECK-LABEL: function f0 name="stores-behind-the-join-of-allocations"
 # CHECK: ([[object]]: L0|L1):
 # CHECK-NEXT: PutSlots [[object]], -, v1, v2, v1 placedKeys=[{key="pos" level=Proven mayAdd=true}, {key="end" level=Proven mayAdd=true}, {key="kind" level=Proven mayAdd=true}] receivers=[L0, L1]
 # CHECK-NEXT: Return [[object]]
+}
 function f1 name="stores-under-two-guards" parameters=[{type=object}, {type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: object, v1: number, v2: number):
     v3 = ShapeTest v0 layouts=[L0]
     Branch v3 -> taken b1(| 0), notTaken b3()
   b1(v4):
@@ -42,14 +39,12 @@ function f1 name="stores-under-two-guards" parameters=[{type=object}, {type=numb
     Return v0
   b3():
     Return v0
-}
-# CHECK-LABEL: function f1 name="stores-under-two-guards"
 # CHECK: b2(v6: guard):
 # CHECK-NEXT: [[both]]:{{*}}= AllGuards v4, v6
 # CHECK-NEXT: PutSlots v0, [[both]], v1, v2 placedKeys=[{key="pos" level=Expected mayAdd=true}, {key="end" level=Expected mayAdd=true}] receivers=[L0]
 # CHECK-NEXT: Return v0
+}
 function f2 name="stores-under-lists-of-guards" parameters=[{type=object}, {type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: object, v1: number, v2: number):
     v3 = ShapeTest v0 layouts=[L0]
     Branch v3 -> taken b1(| 0), notTaken b3()
   b1(v4):
@@ -63,26 +58,23 @@ function f2 name="stores-under-lists-of-guards" parameters=[{type=object}, {type
     Return v0
   b3():
     Return v0
-}
-# CHECK-LABEL: function f2 name="stores-under-lists-of-guards"
 # CHECK: b2(v6: guard):
 # CHECK-NEXT: [[first]]:{{*}}= AllGuards v4, v6
 # CHECK-NEXT: [[second]]:{{*}}= AllGuards v4, v6
 # CHECK-NEXT: [[all]]:{{*}}= AllGuards [[first]], [[second]]
 # CHECK-NEXT: PutSlots v0, [[all]], v1, v2 placedKeys=[{key="pos" level=Expected mayAdd=true}, {key="end" level=Expected mayAdd=true}] receivers=[L0]
 # CHECK-NEXT: Return v0
+}
 
 # Each store is a dispatch of its own over the layouts that the type lists, so no two stores stand in one block.
 function f3 name="layouts-that-hold-the-fields-in-two-places" parameters=[{type=L2|L3}] results=[{type=anything}] {
-  b0(v0: L2|L3):
     v1 = Undefined
     PutSlotOrAdd v0, -, v1 key="pos" receivers=[L2, L3] level=Proven
     PutSlotOrAdd v0, -, v1 key="end" receivers=[L2, L3] level=Proven
     Return v0
-}
-# CHECK-LABEL: function f3 name="layouts-that-hold-the-fields-in-two-places"
 # CHECK: = TypeTest v0 testedType=L2
 # CHECK: PutSlotOrAdd {{*}} key="pos" receivers=[L2] level=Proven
 # CHECK: PutSlotOrAdd {{*}} key="pos" receivers=[L3] level=Proven
 # CHECK: = TypeTest v0 testedType=L2
 # CHECK-NOT: PutSlots
+}

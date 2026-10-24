@@ -8,7 +8,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = NewClosure function=f3
@@ -18,12 +17,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v5
 }
 function f1 name="truthinessAsValue" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Return v1
 }
 function f2 name="truthinessUnderBranch" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -33,7 +30,6 @@ function f2 name="truthinessUnderBranch" parameters=[{type=anything}] results=[{
     Return v2
 }
 function f3 name="typeOfIsObject" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeOf v0
     v2 = String string="object"
     v3 = StrictEq v1, v2

@@ -17,7 +17,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class ArrayAllocationEmitter final : public OperationEmitter {
 public:
-    explicit ArrayAllocationEmitter(CodeGenerator&);
+    explicit ArrayAllocationEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     const ArrayStorageForm& formAtAllocation(const Type& array) const;
     const ArrayStorageForm& formOfLiteral(std::span<const ValueID> elements, const Type& array) const;

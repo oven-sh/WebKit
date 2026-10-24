@@ -17,7 +17,6 @@ entry module=m0
 layout L0 kind=Instance name="A" constructor=f1
 layout L1 kind=Instance name="B" constructor=f3
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = NewClosure function=f2
@@ -36,29 +35,24 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="A" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0 fields=[]
     Return v2
 }
 function f2 name="m" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="x"
     Return
 }
 function f3 name="B" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L1
     v2 = NewObject v1 layout=L1 fields=[]
     Return v2
 }
 function f4 name="m" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="x"
     Return
 }
 function f5 name="run" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="m"
     v2 = Call v1, v0 calleeKey="m"
     Return

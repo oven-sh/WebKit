@@ -25,7 +25,6 @@ function f1 name="callsWriter" captures=[{type=env L0}] parameters=[{type=L1}, {
 }
 # CHECK: f1 return: writes(ModuleVariables/1) throw: none p0: [{{*}}] writes(EnvironmentFields/1) p1: [{{*}}] writes(ObjectFields/3)
 function f2 name="writesEntireHeaps" parameters=[{type=L1}, {type=function}] results=[{type=undefined}] {
-  b0(v0: L1, v1: function):
     DefineGetter v0, v1 key="x"
     Return
 }
@@ -38,7 +37,6 @@ function f3 name="callsBoth" captures=[{type=env L0}] parameters=[{type=L1}, {ty
 }
 # CHECK: f3 return: {{*}}writes(ModuleVariables/1, ObjectFields, ShapeWords,{{*}} p0: [{{*}}] writes(EnvironmentFields/1) p1: [{{*}}] reads({{*}}) writes(ObjectFields, ShapeWords, OrderWords, NamedProperties)
 function f4 name="callsSeventyWriters" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
-  b0(v0: L2, v1: number):
 # REPEAT: i = 2..71
     v%(i) = CallDirect v0, v1 function=f%(i+3)
 # END REPEAT
@@ -48,13 +46,11 @@ function f4 name="callsSeventyWriters" parameters=[{type=L2}, {type=number}] res
 # CHECK-NOT: NamedProperties
 # REPEAT: i = 0..69
 function f%(i+5) name="writesKey%(i)" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
-  b0(v0: L2, v1: number):
     PutSlot v0, -, v1 key="k%(i)" receivers=[L2] level=Proven
     Return
 }
 # END REPEAT
 function f75 name="callsCallerOfSeventy" parameters=[{type=L2}, {type=number}] results=[{type=undefined}] {
-  b0(v0: L2, v1: number):
     v2 = CallDirect v0, v1 function=f4
     Return
 }

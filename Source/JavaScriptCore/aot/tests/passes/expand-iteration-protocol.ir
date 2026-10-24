@@ -10,11 +10,8 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Bag" fields=[{key="x" declared={type=number}}]
 
 function f0 name="open" parameters=[{type=L0}] results=[{type=undefined}] {
-  b0(v0: L0):
     v1 = IteratorOpen v0
     Return
-}
-# CHECK-LABEL: function f0 name="open"
 # CHECK: b0(v0: L0
 # CHECK-NEXT: [[method4]]: anything = PropGet v0 key=@@iterator
 # CHECK-NEXT: [[isCallable4]]: boolean = TypeTest [[method4]] testedType=function
@@ -26,13 +23,12 @@ function f0 name="open" parameters=[{type=L0}] results=[{type=undefined}] {
 # CHECK: [[throw4]]({{*}}) frequency=Rare:
 # CHECK-NEXT: never = ThrowNotIterable v0
 # CHECK-NEXT: Unreachable
-# ABSENT-LABEL: function f0 name="open"
 # ABSENT-NOT: isSpread
 # ABSENT-NOT: RequireObjectCoercible
 # ABSENT-NOT: testedType=Array
+}
 
 function f1 name="openOfNullable" parameters=[{type=undefined|null|L0}] results=[{type=undefined}] {
-  b0(v0: undefined|null|L0):
     v1 = IteratorOpen v0
     Return
 }
@@ -45,15 +41,12 @@ function f1 name="openOfNullable" parameters=[{type=undefined|null|L0}] results=
 # ABSENT-LABEL: function f1 name="openOfNullable"
 
 function f2 name="step" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     v2 = IteratorOpen v0
     v3 = IteratorResume v2
     v4 = ResultAt v3
     v5 = ResultAt v3 index=1
     v6 = Call v1, -, v4, v5
     Return v6
-}
-# CHECK-LABEL: function f2 name="step"
 # CHECK: [[result6]]: anything = Call [[next6]], [[iterator6]]
 # CHECK-NEXT: [[object6]]: object = RequireObject [[result6]] runtimeError=IteratorResultNotObject
 # CHECK-NEXT: [[doneValue6]]: anything = PropGet [[object6]] key="done"
@@ -70,12 +63,11 @@ function f2 name="step" parameters=[{type=L0}, {type=anything}] results=[{type=a
 # CHECK-NEXT: [[value6]]: anything = PropGet [[object6]] key="value"
 # CHECK-NEXT: [[no6]]: false = Boolean
 # CHECK-NEXT: Jump -> next [[after6]]([[no6]], [[value6]])
-# ABSENT-LABEL: function f2 name="step"
 # ABSENT-COUNT-1: key="value"
 # ABSENT-NOT: key="value"
+}
 
 function f3 name="stepSendsValue" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     v2 = IteratorOpen v0
     v3 = IteratorResume v2, v1
     v4 = ResultAt v3 index=1
@@ -87,12 +79,9 @@ function f3 name="stepSendsValue" parameters=[{type=L0}, {type=anything}] result
 # ABSENT-LABEL: function f3 name="stepSendsValue"
 
 function f4 name="closeNormal" parameters=[{type=L0}] results=[{type=undefined}] {
-  b0(v0: L0):
     v1 = IteratorOpen v0
     IteratorClose v1
     Return
-}
-# CHECK-LABEL: function f4 name="closeNormal"
 # CHECK: [[method8]]: anything = PropGet [[iterator8]] key="return"
 # CHECK-NEXT: [[isNullish8]]: boolean = TypeTest [[method8]] testedType=undefined|null
 # CHECK-NEXT: Branch [[isNullish8]] -> taken [[none8]](| 0), notTaken [[some8]](| 0)
@@ -103,12 +92,11 @@ function f4 name="closeNormal" parameters=[{type=L0}] results=[{type=undefined}]
 # CHECK-NEXT: [[returned8]]: anything = Call [[callee8]], [[iterator8]]
 # CHECK-NEXT: = RequireObject [[returned8]] runtimeError=IteratorResultNotObject
 # CHECK-NEXT: Jump -> next [[after8]]()
-# ABSENT-LABEL: function f4 name="closeNormal"
 # ABSENT-NOT: handler=
 # ABSENT-NOT: CatchValue
+}
 
 function f5 name="closeThrow" parameters=[{type=L0}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: L0, v1: anything):
     v2 = IteratorOpen v0
     Jump -> next b1()
   b1() handler=b3():
@@ -120,9 +108,7 @@ function f5 name="closeThrow" parameters=[{type=L0}, {type=anything}] results=[{
     v4 = CatchException
     IteratorClose v2 completion=Throw
     Rethrow v4
-}
 # Whatever the read of return, the test and the call throw is dropped, and the exception that was caught goes on.
-# CHECK-LABEL: function f5 name="closeThrow"
 # CHECK: b3() role=CleanupHandler:
 # CHECK-NEXT: v4: exception = CatchException
 # CHECK-NEXT: Jump -> next [[attempt9]]()
@@ -140,10 +126,10 @@ function f5 name="closeThrow" parameters=[{type=L0}, {type=anything}] results=[{
 # CHECK-NEXT: [[some9]]([[callee9]]: {{*}}) frequency=Rare handler=[[dropped9]]():
 # CHECK-NEXT: = Call [[callee9]], [[iterator9]]
 # CHECK-NEXT: Jump -> next [[after9]]()
-# ABSENT-LABEL: function f5 name="closeThrow"
 # ABSENT-NOT: runtimeError=IteratorResultNotObject
 # ABSENT-NOT: role=IterationCleanup
 # ABSENT-NOT: subject=
+}
 
 # LEFT-NOT: IteratorOpen
 # LEFT-NOT: IteratorResume

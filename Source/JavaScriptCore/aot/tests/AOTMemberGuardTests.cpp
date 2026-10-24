@@ -56,7 +56,6 @@ variable g2 name="Base" module=m0 declared={type=anything} initialization=Undefi
 variable g3 name="Middle" module=m0 declared={type=anything} initialization=Undefined
 variable g4 name="Leaf" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -96,42 +95,34 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
     PropSet v3, v1 key="value"
     Return v3
 }
 function f2 name="Middle" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: function, v1: anything, v2: number):
     v3 = GetSuperBase v0
     v4 = SuperConstruct v3, v1, v2 layout=L1
     Return v4
 }
 function f3 name="Leaf" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: function, v1: anything, v2: number):
     v3 = GetSuperBase v0
     v4 = SuperConstruct v3, v1, v2 layout=L2
     Return v4
 }
 function f4 name="firstStep" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f5 name="secondStep" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f6 name="unusedStep" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f7 name="createOne" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f8 name="initializer" kind=Initializer flags=[HasThis] thisType={type=function} results=[{type=anything}] {
-  b0(v0: function):
     v1 = Integer integer=0
     PropDefine v0, v1 key="tally"
     v3 = String string="red"
@@ -139,15 +130,12 @@ function f8 name="initializer" kind=Initializer flags=[HasThis] thisType={type=f
     Return
 }
 function f9 name="middleStep" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f10 name="leafStep" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f11 name="use" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = GetModuleVariable variable=g2
     v2 = GetModuleVariable variable=g3
     v3 = GetModuleVariable variable=g4
@@ -186,7 +174,6 @@ function f11 name="use" parameters=[{type=number}] results=[{type=anything}] {
     Return v35
 }
 function f12 name="mutate" parameters=[{type=anything}, {type=string}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: string, v2: anything):
     ElemSet v0, v1, v2
     v4 = ElemDelete v0, v1
     v5 = Builtin builtin=ObjectSetPrototypeOf
@@ -194,17 +181,14 @@ function f12 name="mutate" parameters=[{type=anything}, {type=string}, {type=any
     Return
 }
 function f13 name="level" kind=Setter flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Return
 }
 function f14 name="Late" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: function, v1: anything, v2: number):
     v3 = GetSuperBase v0
     v4 = SuperConstruct v3, v1, v2 layout=L3
     Return v4
 }
 function f15 name="defineLate" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g2
     v1 = ResolveHeritage v0
     v2 = NewClosure function=f14
@@ -217,13 +201,11 @@ function f15 name="defineLate" results=[{type=anything}] {
     Return v8
 }
 function f16 name="Foreign" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0
     v3 = SuperConstruct v2, v1 layout=L4
     Return v3
 }
 function f17 name="defineForeign" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ResolveHeritage v0
     v2 = NewClosure function=f16
     v3 = NewClass v2, v0, v1 layout=L4
@@ -238,7 +220,6 @@ function f17 name="defineForeign" parameters=[{type=anything}] results=[{type=an
     Return v11
 }
 function f18 name="foreignStep" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 )IR"_s;
@@ -249,7 +230,6 @@ layout L0 kind=Instance name="Lazy" module=m0 constructor=f1
 layout L1 kind=Instance name="Shadowing" module=m0 base=L0 constructor=f2 supertypes=[L0] flags=[HasHeritage]
 variable g0 name="Shadowing" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -268,23 +248,19 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Lazy" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2
 }
 function f2 name="Shadowing" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0
     v3 = SuperConstruct v2, v1 layout=L1
     Return v3
 }
 function f3 name="lazyStep" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f4 name="useShadowing" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = Construct v0
     v2 = PropGet v1 key="lazyStep"
@@ -292,7 +268,6 @@ function f4 name="useShadowing" results=[{type=anything}] {
     Return
 }
 function f5 name="shadow" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: anything):
     v2 = GetModuleVariable variable=g0
     v3 = PropGet v2 key="prototype"
     ElemSet v3, v0, v1
@@ -306,7 +281,6 @@ layout L0 kind=Instance name="Above" module=m0 constructor=f1 fields=[{key="x" d
 layout L1 kind=Instance name="Computed" module=m0 base=L0 constructor=f2 supertypes=[L0] flags=[HasHeritage]
 variable g0 name="Computed" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -335,17 +309,14 @@ function f1 name="Above" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} r
     Return v3
 }
 function f2 name="Computed" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0
     v3 = SuperConstruct v2, v1 layout=L1
     Return v3
 }
 function f3 name="step" flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f4 name="useComputed" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = Construct v0
     v2 = PropGet v1 key="step"
@@ -353,7 +324,6 @@ function f4 name="useComputed" results=[{type=anything}] {
     Return
 }
 function f5 kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 )IR"_s;
@@ -364,7 +334,6 @@ layout L0 kind=Instance name="Early" module=m0 constructor=f1
 layout L1 kind=Instance name="Late" module=m0 base=L0 constructor=f2 supertypes=[L0] flags=[HasHeritage]
 variable g0 name="Early" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -379,19 +348,16 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Early" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2
 }
 function f2 name="Late" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0
     v3 = SuperConstruct v2, v1 layout=L1
     Return v3
 }
 function f3 name="step" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=7
     Return v1
 }
@@ -403,7 +369,6 @@ function f4 name="callStep" parameters=[{type=L0|L1 flags=[IsExpected]}] results
     Return v3
 }
 function f5 name="defineLate" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = ResolveHeritage v0
     v2 = NewClosure function=f2
@@ -419,7 +384,6 @@ entry module=m0
 layout L0 kind=Instance name="Quiet" module=m0 constructor=f1
 variable g0 name="Quiet" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Function
     v1 = String string="return globalThis.publish"
     v2 = Construct v0, -, v1
@@ -436,18 +400,15 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Quiet" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2
 }
 function f2 name="step" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=7
     Return v1
 }
 function f3 name="make" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = Construct v0
     Return v1

@@ -4,421 +4,404 @@
  */
 
 #include "config.h"
-#include "AOTPass.h"
+#include "AOTSimplifyCastsInternal.h"
 
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
-#include "AOTFunctionAnalyses.h"
-#include "AOTIRBuilder.h"
+#include "AOTFlowApply.h"
 #include "AOTResultRules.h"
-#include "AOTSimplifyCastsInternal.h"
-#include "AOTValueIdentity.h"
-#include "AOTValueSubstitution.h"
-#include "AOTVector.h"
+#include "AOTRewrite.h"
+#include "AOTTypePropagation.h"
+#include <algorithm>
 #include <optional>
+#include <tuple>
 #include <utility>
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
-#include <wtf/Hasher.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
+static constexpr OpcodeSet repeatableCasts { Opcode::Check, Opcode::CheckInitialized, Opcode::RequireObjectCoercible, Opcode::RequireObject };
+
+static_assert((simplifiableCasts | repeatableCasts) == simplifiableCasts);
+static_assert(simplifiableCasts.contains(Opcode::AssumeType));
+
 namespace {
 
-struct CastKey {
-    ValueID operand;
-    TypeID type;
-    Opcode opcode { Opcode::Undefined };
-
-    friend bool operator==(const CastKey&, const CastKey&) = default;
+struct CastAtHead {
+    BlockID block;
+    uint32_t parameterIndex;
+    ValueID cast;
+    bool hasTest;
 };
 
-struct CastKeyHash {
-    static unsigned hash(const CastKey& key) { return computeHash(key.operand, key.type, key.opcode); }
-    static bool equal(const CastKey& a, const CastKey& b) { return a == b; }
-    static constexpr bool safeToCompareToEmptyOrDeleted = true;
-};
-
-struct CastKeyHashTraits : WTF::GenericHashTraits<CastKey> {
-    static void constructDeletedValue(CastKey& slot) { slot = CastKey { ValueID(ValueID::hashTableDeletedIndex), TypeID(), Opcode::Undefined }; }
-    static bool isDeletedValue(const CastKey& key) { return key.operand.index() == ValueID::hashTableDeletedIndex; }
-};
-
-struct PendingEdits {
-    Vector<std::pair<BlockID, BitVector>, 4> erasedValues;
-};
-
-struct DominatingCasts {
-    // Of a block that adds casts or bindings, or hides some. Any other block leaves the tables as they are.
-    struct Scope {
-        BlockID block;
-        size_t numberOfAddedCasts;
-        size_t numberOfReplacedNarrowestCasts;
-        size_t numberOfBindingsPastDeadZone;
-        Vector<ValueID> hiddenCasts;
-        Vector<uint64_t> hiddenBindingsPastDeadZone;
-    };
-
-    HashMap<CastKey, ValueID, CastKeyHash, CastKeyHashTraits> passed;
-    // A number stands for a variable, or for a field of the environment that a value of the function holds. In the order in which they were found: one that is found again further down is not listed twice.
-    Vector<uint64_t> bindingsPastDeadZone;
-    HashSet<uint64_t> isPastDeadZone;
-    Vector<ValueID> addedCasts;
-    Vector<ValueID> narrowestCast;
-    Vector<std::pair<ValueID, ValueID>> replacedNarrowestCasts;
-    Vector<Scope> scopes;
-};
-
-class CastSimplification {
-public:
-    explicit CastSimplification(FunctionPassContext& context)
-        : m_context(context)
-        , m_program(context.program)
-        , m_function(context.function)
-        , m_builder(context.analyses.context(), context.function, context.types, &context.analyses)
-        , m_substitution(context.function)
-    {
-    }
+// Every step tells the analyses what it has changed, so the frame only lends its reads and its builder.
+struct CastSimplification : Rewrite {
+    using Rewrite::Rewrite;
 
     unsigned run()
     {
-        unsigned changed = static_cast<unsigned>(moveCastsToEdges(m_context));
+        unsigned changed = static_cast<unsigned>(moveCastsToEdges());
         for (;;) {
             changed += removeCasts();
             // removeCasts() judges each cast by what it leaves behind, so it finds nothing more until removeRepeatedCasts() has changed something.
             unsigned repeated = removeRepeatedCasts();
             if (!repeated) {
-                RELEASE_ASSERT(!m_context.build.options().verifiesAfterEveryPass || (!removeCasts() && !removeRepeatedCasts()));
-                break;
+                RELEASE_ASSERT(!context.build.options().verifiesAfterEveryPass || (!removeCasts() && !removeRepeatedCasts()));
+                return changed;
             }
             changed += repeated;
         }
-        return changed;
     }
 
-private:
-    const Type& typeOf(ValueID value) const { return m_program.typeOf(m_function, value); }
-    const Type& expectedOrTypeOf(ValueID value) const { return m_program.expectedOrTypeOf(m_function, value); }
+    std::optional<CastAtHead> findCastOfParameter(const CFG& cfg, BlockID id)
+    {
+        const Block& block = at(id);
+        if (block.isHandlerBlock() || block.parameters.isEmpty() || block.values.isEmpty())
+            return std::nullopt;
+
+        // In a validating build the test of an assumed type stands before the cast and goes to the edges with it.
+        const Value& test = at(block.values[0]);
+        bool hasTest = test.opcode == Opcode::ValidateType && block.values.size() > 1;
+        ValueID castID = block.values[hasTest];
+        const Value& cast = at(castID);
+        if (cast.opcode != Opcode::Check && cast.opcode != Opcode::AssumeType)
+            return std::nullopt;
+
+        ValueID parameter = cast.operand(0);
+        if (hasTest && (cast.opcode != Opcode::AssumeType || test.valueOperand() != parameter || test.validatedType() != cast.castType()))
+            return std::nullopt;
+        size_t parameterIndex = block.parameters.find(parameter);
+        if (parameterIndex == notFound || parameterIndex >= numberOfSharedExplicitParameters(function, cfg, id))
+            return std::nullopt;
+        if (uses().useCount(parameter) != 1u + hasTest || !context.types.at(at(parameter).type).isJavaScriptValue())
+            return std::nullopt;
+        return CastAtHead { id, static_cast<uint32_t>(parameterIndex), castID, hasTest };
+    }
+
+    bool edgeNeedsCast(const CastAtHead& candidate, Edge edge)
+    {
+        ValueID definition = analyses.definitionThroughUpcasts(targetOf(function, edge).arguments[candidate.parameterIndex]);
+        return !context.types.at(at(definition).type).isSubsetOf(context.types.at(at(candidate.cast).type), program);
+    }
+
+    bool canMoveCast(const CFG& cfg, const CastAtHead& candidate)
+    {
+        std::span<const Edge> edges = cfg.incomingEdges(candidate.block);
+        bool castHasCode = at(candidate.cast).opcode == Opcode::Check;
+        size_t numberOfEdgesNeedingCast = 0;
+        for (Edge edge : edges) {
+            if (edge.isHandlerEdge() || edge.from == candidate.block || at(edge.from).terminator.kind != TerminatorKind::Jump)
+                return false;
+            if (!edgeNeedsCast(candidate, edge))
+                continue;
+            if (castHasCode && at(edge.from).handler != at(candidate.block).handler)
+                return false;
+            ++numberOfEdgesNeedingCast;
+        }
+        if (castHasCode && numberOfEdgesNeedingCast > 1)
+            return false;
+        return numberOfEdgesNeedingCast < edges.size();
+    }
+
+    size_t moveCastsToEdges()
+    {
+        const CFG& cfg = this->cfg();
+        Vector<CastAtHead, 4> candidates;
+        for (BlockID block : cfg.reversePostOrder()) {
+            if (block == cfg.root())
+                continue;
+            if (auto candidate = findCastOfParameter(cfg, block))
+                candidates.append(*candidate);
+        }
+
+        Vector<ValueID, 4> movedParameters;
+        bool didChangeEdge = false;
+        for (const CastAtHead& candidate : candidates) {
+            if (!canMoveCast(cfg, candidate))
+                continue;
+            const Value cast = at(candidate.cast);
+            builder().setOrigin(cast.origin());
+            for (Edge edge : cfg.incomingEdges(candidate.block)) {
+                ValueID& argument = editTarget(function, edge).arguments[candidate.parameterIndex];
+                ValueID passed = analyses.definitionThroughUpcasts(argument);
+                if (edgeNeedsCast(candidate, edge)) {
+                    if (candidate.hasTest)
+                        builder().insertBefore(pointBeforeTerminatorOf(function, edge.from), makeValidateType(argument, cast.castType()));
+                    Value castOnEdge = cast;
+                    castOnEdge.setOperand(0, argument);
+                    castOnEdge.setExpected({ });
+                    passed = builder().insertBefore(pointBeforeTerminatorOf(function, edge.from), WTF::move(castOnEdge));
+                }
+                didChangeEdge |= passed != argument;
+                argument = passed;
+            }
+            movedParameters.append(cast.operand(0));
+        }
+        if (movedParameters.isEmpty())
+            return 0;
+
+        builder().applyInsertions();
+        // The arguments of the edges were written past the builder.
+        analyses.didChangeValues();
+        // A join may widen, so the cast at the head stays until the type of its parameter is inside it.
+        TypePropagationOutcome outcome = narrowValueTypes(TypePropagationInputs { program, context.id, function, analyses, context.types, context.build, &context.typingMemo }, movedParameters.span());
+        return didChangeEdge || outcome.didChange() ? movedParameters.size() : 0;
+    }
 
     // isSubsetOf() does not compare what a type only declares: contents that are not proven, a signature.
-    bool isUnchangedByCastTo(const Type& type, const Type& castType) const
+    bool isUnchangedByCastTo(const Type& type, const Type& castType)
     {
-        return &type == &castType || type.castTo(castType, m_context.types) == type;
+        return &type == &castType || type.castTo(castType, context.types) == type;
     }
 
-    bool canReplaceWithOperand(const Type& operand, const Type& target) const
-    {
-        return operand.hasLiteralStrings() == target.hasLiteralStrings() && isUnchangedByCastTo(operand, target);
-    }
-
-    bool expectsNarrowerTypeThan(const Value& cast, ValueID operand) const
+    bool expectsNarrowerTypeThan(const Value& cast, ValueID operand)
     {
         TypeID expected = cast.expected();
-        if (!expected || expected == m_function.at(operand).expected())
+        if (!expected || expected == at(operand).expected())
             return false;
-        return !typeOf(operand).isSubsetOf(m_program.at(expected), m_program);
+        return !typeOf(operand).isSubsetOf(program.at(expected), program);
     }
 
-    ValueID withoutRemovableUpcasts(ValueID operand) const
+    void eraseValue(BlockID block, uint32_t index)
     {
-        for (;;) {
-            const Value& value = m_function.at(operand);
-            if (value.opcode != Opcode::Upcast)
-                return operand;
-            ValueID inner = m_substitution.resolve(value.operand(0));
-            if (expectsNarrowerTypeThan(value, inner) || !isUnchangedByCastTo(typeOf(inner), typeOf(operand)))
-                return operand;
-            operand = inner;
-        }
+        if (erasedValues.isEmpty() || erasedValues.last().first != block)
+            erasedValues.append({ block, BitVector() });
+        erasedValues.last().second.set(index);
     }
 
-    void eraseValue(PendingEdits& edits, BlockID block, uint32_t index) const
+    unsigned finishStep(unsigned changed)
     {
-        if (edits.erasedValues.isEmpty() || edits.erasedValues.last().first != block)
-            edits.erasedValues.append({ block, BitVector() });
-        edits.erasedValues.last().second.set(index);
-    }
-
-    void applyEdits(const PendingEdits& edits)
-    {
-        for (auto& [block, indexes] : edits.erasedValues)
-            m_builder.eraseValues(block, indexes);
-        m_substitution.apply(m_function, &m_context.analyses);
-        m_context.analyses.didChangeValues();
+        if (!changed)
+            return 0;
+        for (auto& [block, indexes] : std::exchange(erasedValues, { }))
+            builder().eraseValues(block, indexes);
+        substitution.apply(function, &analyses);
+        analyses.didChangeValues();
+        return changed;
     }
 
     unsigned removeCasts()
     {
-        PendingEdits edits;
         unsigned changed = 0;
-        for (BlockID block : m_context.analyses.cfg().reversePostOrder()) {
-            const BlockValues& values = m_function.at(block).values;
+        for (BlockID block : blocks()) {
+            const BlockValues& values = at(block).values;
             for (uint32_t index = 0; index < values.size(); ++index) {
-                if (isSimplifiable(m_function.at(values[index]).opcode))
-                    changed += simplifyCast(block, index, edits);
+                if (simplifiableCasts.contains(at(values[index]).opcode))
+                    changed += simplifyCast(block, index);
             }
         }
-        if (changed)
-            applyEdits(edits);
-        return changed;
+        return finishStep(changed);
     }
 
-    unsigned simplifyCast(BlockID block, uint32_t index, PendingEdits& edits)
+    unsigned simplifyCast(BlockID block, uint32_t index)
     {
-        ValueID id = m_function.at(block).values[index];
-        const Value& cast = m_function.at(id);
-        ValueID operand = m_substitution.resolve(cast.operand(0));
+        ValueID id = at(block).values[index];
+        const Value& cast = at(id);
+        ValueID operand = substitution.resolve(cast.operand(0));
 
-        unsigned changed = 0;
-        if (cast.opcode != Opcode::Upcast) {
-            ValueID narrowest = withoutRemovableUpcasts(operand);
-            if (narrowest != operand) {
-                operand = narrowest;
-                m_function.edit(id, ValueEdit::Definition).setOperand(0, operand);
-                ++changed;
-            }
+        ValueID narrowest = operand;
+        while (cast.opcode != Opcode::Upcast && at(narrowest).opcode == Opcode::Upcast) {
+            ValueID inner = substitution.resolve(at(narrowest).operand(0));
+            if (expectsNarrowerTypeThan(at(narrowest), inner) || !isUnchangedByCastTo(typeOf(inner), typeOf(narrowest)))
+                break;
+            narrowest = inner;
         }
-        if (!typeOf(operand).isSubsetOf(typeOf(id), m_program))
+        unsigned changed = narrowest != operand;
+        if (changed)
+            edit(id, ValueEdit::Definition).setOperand(0, narrowest);
+        operand = narrowest;
+        if (!typeOf(operand).isSubsetOf(typeOf(id), program))
             return changed;
 
-        if (!expectsNarrowerTypeThan(cast, operand) && canReplaceWithOperand(typeOf(operand), typeOf(id))) {
-            m_substitution.replace(id, operand);
-            eraseValue(edits, block, index);
+        if (!expectsNarrowerTypeThan(cast, operand) && typeOf(operand).hasLiteralStrings() == typeOf(id).hasLiteralStrings() && isUnchangedByCastTo(typeOf(operand), typeOf(id))) {
+            substitution.replace(id, operand);
+            eraseValue(block, index);
         } else if (repeatableCasts.contains(cast.opcode))
-            becomeUpcast(m_function, id, operand);
+            becomeUpcast(function, id, operand);
         else
             return changed;
         return changed + 1;
     }
 
-    CastKey keyOf(ValueID id) const
+    std::tuple<ValueID, TypeID, uint32_t> keyOf(ValueID id)
     {
-        const Value& cast = m_function.at(id);
-        return { m_substitution.resolve(cast.operand(0)), cast.type, cast.opcode };
+        const Value& cast = at(id);
+        return { substitution.resolve(cast.operand(0)), cast.type, static_cast<uint32_t>(cast.opcode) };
     }
 
-    bool hasRepeatableCast() const
+    uint64_t bindingOf(const Value& access)
     {
-        for (BlockID block : m_context.analyses.cfg().reversePostOrder()) {
-            for (ValueID id : m_function.at(block).values) {
-                if (repeatableCasts.contains(m_function.at(id).opcode))
-                    return true;
-            }
-        }
-        return false;
-    }
-
-    void addDominatingCast(DominatingCasts& casts, ValueID id) const
-    {
-        casts.passed.add(keyOf(id), id);
-        casts.addedCasts.append(id);
-        ValueID object = m_context.analyses.sameObjectThroughCasts(id);
-        ValueID before = casts.narrowestCast[object.index()];
-        if (before && typeOf(before).isSubsetOf(typeOf(id), m_program))
-            return;
-        casts.replacedNarrowestCasts.append({ object, before });
-        casts.narrowestCast[object.index()] = id;
-    }
-
-    void removeCastsAddedIn(DominatingCasts& casts, const DominatingCasts::Scope& scope) const
-    {
-        while (casts.addedCasts.size() > scope.numberOfAddedCasts)
-            casts.passed.remove(keyOf(casts.addedCasts.takeLast()));
-        while (casts.replacedNarrowestCasts.size() > scope.numberOfReplacedNarrowestCasts) {
-            auto [object, before] = casts.replacedNarrowestCasts.takeLast();
-            casts.narrowestCast[object.index()] = before;
-        }
-    }
-
-    bool notePastDeadZone(DominatingCasts& casts, uint64_t binding) const
-    {
-        if (!casts.isPastDeadZone.add(binding).isNewEntry)
-            return false;
-        casts.bindingsPastDeadZone.append(binding);
-        return true;
-    }
-
-    void forgetBindingsFoundBehind(DominatingCasts& casts, size_t numberOfBindings) const
-    {
-        while (casts.bindingsPastDeadZone.size() > numberOfBindings)
-            casts.isPastDeadZone.remove(casts.bindingsPastDeadZone.takeLast());
-    }
-
-    bool hasScope(const DominatingCasts& casts, BlockID block) const
-    {
-        return !casts.scopes.isEmpty() && casts.scopes.last().block == block;
-    }
-
-    void enterScope(DominatingCasts& casts, BlockID block, Vector<ValueID>&& hiddenCasts, Vector<uint64_t>&& hiddenBindings) const
-    {
-        casts.scopes.append(DominatingCasts::Scope { block, casts.addedCasts.size(), casts.replacedNarrowestCasts.size(), casts.bindingsPastDeadZone.size(), WTF::move(hiddenCasts), WTF::move(hiddenBindings) });
-    }
-
-    void ensureScope(DominatingCasts& casts, BlockID block) const
-    {
-        if (!hasScope(casts, block))
-            enterScope(casts, block, { }, { });
-    }
-
-    // A covered block dominates its handler and whatever the handler leads to, and its casts do not.
-    void hideCastsAndBindingsOfDominator(DominatingCasts& casts, const Dominators& dominators, BlockID block) const
-    {
-        if (casts.scopes.isEmpty())
-            return;
-        const DominatingCasts::Scope& innermost = casts.scopes.last();
-        if (casts.addedCasts.size() == innermost.numberOfAddedCasts && casts.bindingsPastDeadZone.size() == innermost.numberOfBindingsPastDeadZone)
-            return;
-        if (innermost.block != dominators.idom(block) || dominators.terminatorDominates(innermost.block, block))
-            return;
-        Vector<ValueID> hiddenCasts;
-        Vector<uint64_t> hiddenBindings;
-        hiddenCasts.append(casts.addedCasts.subspan(innermost.numberOfAddedCasts));
-        hiddenBindings.append(casts.bindingsPastDeadZone.subspan(innermost.numberOfBindingsPastDeadZone));
-        removeCastsAddedIn(casts, innermost);
-        forgetBindingsFoundBehind(casts, innermost.numberOfBindingsPastDeadZone);
-        enterScope(casts, block, WTF::move(hiddenCasts), WTF::move(hiddenBindings));
-    }
-
-    void leaveScope(DominatingCasts& casts) const
-    {
-        DominatingCasts::Scope scope = casts.scopes.takeLast();
-        removeCastsAddedIn(casts, scope);
-        forgetBindingsFoundBehind(casts, scope.numberOfBindingsPastDeadZone);
-        for (ValueID cast : scope.hiddenCasts)
-            addDominatingCast(casts, cast);
-        for (uint64_t binding : scope.hiddenBindingsPastDeadZone)
-            notePastDeadZone(casts, binding);
-    }
-
-    uint64_t bindingOf(const Value& access) const
-    {
-        switch (access.opcode) {
-        case Opcode::GetModuleVariable:
-        case Opcode::PutModuleVariable:
+        if (access.opcode == Opcode::GetModuleVariable || access.opcode == Opcode::PutModuleVariable)
             return 1ull << 63 | access.variable().index();
-        case Opcode::GetEnvironmentField:
-        case Opcode::PutEnvironmentField: {
-            ValueID environment = m_context.analyses.sameObjectThroughCasts(m_substitution.resolve(access.environmentOperand()));
-            return access.field() < 1u << 24 ? 1ull << 62 | static_cast<uint64_t>(environment.index()) << 24 | access.field() : 0;
-        }
-        default:
+        if (access.opcode != Opcode::GetEnvironmentField && access.opcode != Opcode::PutEnvironmentField)
             return 0;
-        }
+        ValueID environment = analyses.sameObjectThroughCasts(substitution.resolve(access.environmentOperand()));
+        return access.field() < 1u << 24 ? 1ull << 62 | static_cast<uint64_t>(environment.index()) << 24 | access.field() : 0;
     }
 
     // A binding never goes back into its dead zone: it has left it where a store has run, where the test for it has passed, and where a cast stands for that test.
-    uint64_t bindingPastDeadZoneBehind(ValueID id) const
+    uint64_t bindingPastDeadZoneBehind(const Value& value)
     {
-        const Value& value = m_function.at(id);
         if (value.opcode == Opcode::PutModuleVariable || value.opcode == Opcode::PutEnvironmentField)
             return typeOf(value.valueOperand()).primitives & Primitive::Absent ? 0 : bindingOf(value);
-        if (!leavesDeadZoneBehind(m_program, m_function, value))
+        if (!leavesDeadZoneBehind(program, function, value))
             return 0;
-        return bindingOf(m_function.at(definitionThroughUpcasts(m_function, m_substitution.resolve(value.valueOperand()))));
+        return bindingOf(at(definitionThroughUpcasts(function, substitution.resolve(value.valueOperand()))));
     }
 
-    void assumeInitialized(ValueID id)
+    unsigned repointOperand(ValueID id, uint32_t operandIndex, const Vector<ValueID>& narrowestCast)
     {
-        Value& test = m_function.edit(id);
-        ValueID operand = test.valueOperand();
-        TypeID type = test.type;
-        test.become(Opcode::AssumeType);
-        test.setValueOperand(operand);
-        test.setCastType(type);
-    }
-
-    unsigned repointOperand(ValueID id, uint32_t operandIndex, const DominatingCasts& casts)
-    {
-        ValueID current = m_function.at(id).operand(operandIndex);
-        ValueID cast = casts.narrowestCast[m_context.analyses.sameObjectThroughCasts(current).index()];
+        ValueID current = at(id).operand(operandIndex);
+        ValueID cast = narrowestCast[analyses.sameObjectThroughCasts(current).index()];
         if (!cast || typeOf(cast) == typeOf(current) || !isUnchangedByCastTo(typeOf(cast), typeOf(current)))
             return 0;
-        if (!expectedOrTypeOf(cast).isSubsetOf(expectedOrTypeOf(current), m_program))
+        if (!program.expectedOrTypeOf(function, cast).isSubsetOf(program.expectedOrTypeOf(function, current), program))
             return 0;
-        Value& user = m_function.edit(id, ValueEdit::Definition);
+        Value& user = edit(id, ValueEdit::Definition);
         user.setOperand(operandIndex, cast);
         // A check that nothing passes is typed by its cast type, as behind a check that passed, and that is more than it let through of the wider operand.
-        if (user.opcode == Opcode::Check && !computeResultType(TypingContext { m_program, m_function, m_context.types }, user).isSubsetOf(typeOf(id), m_program)) {
+        if (user.opcode == Opcode::Check && !computeResultType(TypingContext { program, function, context.types }, user).isSubsetOf(typeOf(id), program)) {
             user.setOperand(operandIndex, current);
             return 0;
         }
         return 1;
     }
 
-    unsigned repointAccess(ValueID id, const DominatingCasts& casts)
-    {
-        std::optional<uint8_t> receiver = receiverOf(m_function.at(id).opcode);
-        return receiver ? repointOperand(id, *receiver, casts) : 0;
-    }
-
-    unsigned visitBlock(BlockID block, DominatingCasts& casts, PendingEdits& edits)
-    {
-        const BlockValues& values = m_function.at(block).values;
-        unsigned changed = 0;
-        for (uint32_t index = 0; index < values.size(); ++index) {
-            ValueID id = values[index];
-            Opcode opcode = m_function.at(id).opcode;
-            if (accessClassOf(opcode) == AccessClass::ByName) {
-                changed += repointAccess(id, casts);
-                continue;
-            }
-            uint64_t binding = bindingPastDeadZoneBehind(id);
-            if (binding)
-                ensureScope(casts, block);
-            bool wasPastDeadZone = binding && !notePastDeadZone(casts, binding);
-            if (!repeatableCasts.contains(opcode))
-                continue;
-            ValueID earlier = casts.passed.get(keyOf(id));
-            if (!earlier && wasPastDeadZone && opcode == Opcode::CheckInitialized) {
-                assumeInitialized(id);
-                ++changed;
-                continue;
-            }
-            if (!earlier) {
-                // A cast of what an earlier cast has let through asks only for what that one left open, and the next round removes it where that is nothing.
-                changed += repointOperand(id, 0, casts);
-                ensureScope(casts, block);
-                addDominatingCast(casts, id);
-                continue;
-            }
-            m_substitution.replace(id, earlier);
-            eraseValue(edits, block, index);
-            ++changed;
-        }
-        return changed;
-    }
-
     unsigned removeRepeatedCasts()
     {
-        if (!hasRepeatableCast())
+        bool hasRepeatableCast = std::ranges::any_of(blocks(), [&](BlockID block) {
+            return std::ranges::any_of(at(block).values, [&](ValueID id) {
+                return repeatableCasts.contains(at(id).opcode);
+            });
+        });
+        if (!hasRepeatableCast)
             return 0;
 
-        const Dominators& dominators = m_context.analyses.dominators();
-        DominatingCasts casts;
-        casts.narrowestCast.fill(ValueID(), m_function.values.size());
-        PendingEdits edits;
+        // Of a block that adds casts or bindings, or hides some. Any other block leaves the tables as they are.
+        struct Scope {
+            BlockID block;
+            size_t numberOfAddedCasts;
+            size_t numberOfReplacedNarrowestCasts;
+            size_t numberOfBindingsPastDeadZone;
+            Vector<ValueID> hiddenCasts;
+            Vector<uint64_t> hiddenBindingsPastDeadZone;
+        };
+        const Dominators& dominators = analyses.dominators();
+        HashMap<std::tuple<ValueID, TypeID, uint32_t>, ValueID> passed;
+        // A number stands for a variable, or for a field of the environment that a value of the function holds. In the order in which they were found: one that is found again further down is not listed twice.
+        Vector<uint64_t> bindingsPastDeadZone;
+        HashSet<uint64_t> isPastDeadZone;
+        Vector<ValueID> addedCasts;
+        Vector<ValueID> narrowestCast(function.values.size());
+        Vector<std::pair<ValueID, ValueID>> replacedNarrowestCasts;
+        Vector<Scope> scopes;
         unsigned changed = 0;
-        auto enter = [&](BlockID block) {
-            hideCastsAndBindingsOfDominator(casts, dominators, block);
-            changed += visitBlock(block, casts, edits);
+
+        auto addDominatingCast = [&](ValueID id) {
+            passed.add(keyOf(id), id);
+            addedCasts.append(id);
+            ValueID object = analyses.sameObjectThroughCasts(id);
+            ValueID before = narrowestCast[object.index()];
+            if (before && typeOf(before).isSubsetOf(typeOf(id), program))
+                return;
+            replacedNarrowestCasts.append({ object, before });
+            narrowestCast[object.index()] = id;
         };
-        auto leave = [&](BlockID block) {
-            if (hasScope(casts, block))
-                leaveScope(casts);
+        auto notePastDeadZone = [&](uint64_t binding) {
+            if (!isPastDeadZone.add(binding).isNewEntry)
+                return false;
+            bindingsPastDeadZone.append(binding);
+            return true;
         };
-        dominators.walkTree(enter, leave);
-        if (changed)
-            applyEdits(edits);
-        return changed;
+        auto forgetWhatWasAddedIn = [&](const Scope& scope) {
+            while (addedCasts.size() > scope.numberOfAddedCasts)
+                passed.remove(keyOf(addedCasts.takeLast()));
+            while (replacedNarrowestCasts.size() > scope.numberOfReplacedNarrowestCasts) {
+                auto [object, before] = replacedNarrowestCasts.takeLast();
+                narrowestCast[object.index()] = before;
+            }
+            while (bindingsPastDeadZone.size() > scope.numberOfBindingsPastDeadZone)
+                isPastDeadZone.remove(bindingsPastDeadZone.takeLast());
+        };
+        auto hasScope = [&](BlockID block) {
+            return !scopes.isEmpty() && scopes.last().block == block;
+        };
+        auto enterScope = [&](BlockID block, Vector<ValueID>&& hiddenCasts, Vector<uint64_t>&& hiddenBindings) {
+            scopes.append(Scope { block, addedCasts.size(), replacedNarrowestCasts.size(), bindingsPastDeadZone.size(), WTF::move(hiddenCasts), WTF::move(hiddenBindings) });
+        };
+        auto ensureScope = [&](BlockID block) {
+            if (!hasScope(block))
+                enterScope(block, { }, { });
+        };
+        // A covered block dominates its handler and whatever the handler leads to, and its casts do not.
+        auto hideCastsAndBindingsOfDominator = [&](BlockID block) {
+            if (scopes.isEmpty())
+                return;
+            const Scope& innermost = scopes.last();
+            if (addedCasts.size() == innermost.numberOfAddedCasts && bindingsPastDeadZone.size() == innermost.numberOfBindingsPastDeadZone)
+                return;
+            if (innermost.block != dominators.idom(block) || dominators.terminatorDominates(innermost.block, block))
+                return;
+            Vector<ValueID> hiddenCasts(addedCasts.subspan(innermost.numberOfAddedCasts));
+            Vector<uint64_t> hiddenBindings(bindingsPastDeadZone.subspan(innermost.numberOfBindingsPastDeadZone));
+            forgetWhatWasAddedIn(innermost);
+            enterScope(block, WTF::move(hiddenCasts), WTF::move(hiddenBindings));
+        };
+
+        dominators.walkTree([&](BlockID block) {
+            hideCastsAndBindingsOfDominator(block);
+            const BlockValues& values = at(block).values;
+            for (uint32_t index = 0; index < values.size(); ++index) {
+                ValueID id = values[index];
+                Opcode opcode = at(id).opcode;
+                if (accessClassOf(opcode) == AccessClass::ByName) {
+                    if (std::optional<uint8_t> receiver = receiverOf(opcode))
+                        changed += repointOperand(id, *receiver, narrowestCast);
+                    continue;
+                }
+                uint64_t binding = bindingPastDeadZoneBehind(at(id));
+                if (binding)
+                    ensureScope(block);
+                bool wasPastDeadZone = binding && !notePastDeadZone(binding);
+                if (!repeatableCasts.contains(opcode))
+                    continue;
+                if (ValueID earlier = passed.get(keyOf(id))) {
+                    substitution.replace(id, earlier);
+                    eraseValue(block, index);
+                    ++changed;
+                } else if (wasPastDeadZone && opcode == Opcode::CheckInitialized) {
+                    Value& test = edit(id);
+                    ValueID operand = test.valueOperand();
+                    TypeID type = test.type;
+                    test.become(Opcode::AssumeType);
+                    test.setValueOperand(operand);
+                    test.setCastType(type);
+                    ++changed;
+                } else {
+                    // A cast of what an earlier cast has let through asks only for what that one left open, and the next round removes it where that is nothing.
+                    changed += repointOperand(id, 0, narrowestCast);
+                    ensureScope(block);
+                    addDominatingCast(id);
+                }
+            }
+        }, [&](BlockID block) {
+            if (!hasScope(block))
+                return;
+            Scope scope = scopes.takeLast();
+            forgetWhatWasAddedIn(scope);
+            for (ValueID cast : scope.hiddenCasts)
+                addDominatingCast(cast);
+            for (uint64_t binding : scope.hiddenBindingsPastDeadZone)
+                notePastDeadZone(binding);
+        });
+        return finishStep(changed);
     }
 
-    FunctionPassContext& m_context;
-    const Program& m_program;
-    Function& m_function;
-    IRBuilder m_builder;
-    ValueSubstitution m_substitution;
+    ValueSubstitution substitution { function };
+    Vector<std::pair<BlockID, BitVector>, 4> erasedValues;
 };
 
 } // anonymous namespace

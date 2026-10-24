@@ -7,31 +7,26 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="countsUp" position=10 role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=number}] results=[{type=Generator}] creator=Coroutine{ramp=f0 body=f4 promiseParameter=2} {
-  b0(v0: function, v1: number):
     v2 = NewGenerator v0 function=f0 @10
     v3 = CallDirect v0, v1, v2 function=f4 @10
     Return v2 @10
 }
 function f1 name="yieldsTwice" position=20 role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f1 body=f5 promiseParameter=3} {
-  b0(v0: function, v1: anything, v2: anything):
     v3 = NewGenerator v0 function=f1 @20
     v4 = CallDirect v0, v1, v2, v3 function=f5 @20
     Return v3 @20
 }
 function f2 name="repeats" position=30 role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f2 body=f6 promiseParameter=2} {
-  b0(v0: function, v1: anything):
     v2 = NewGenerator v0 function=f2 @30
     v3 = CallDirect v0, v1, v2 function=f6 @30
     Return v2 @30
 }
 function f3 name="keepsValue" position=35 role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f3 body=f7 promiseParameter=2} {
-  b0(v0: function, v1: anything):
     v2 = NewGenerator v0 function=f3 @35
     v3 = CallDirect v0, v1, v2 function=f7 @35
     Return v2 @35
 }
 function f4 name="countsUp" position=10 role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=number}, {type=Generator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{ramp=f0 body=f4 promiseParameter=2} {
-  b0(v0: function, v1: number, v2: Generator):
     v3 = Undefined @10
     v4 = YieldBySavingFrame v2, v3 @10
     v5 = ResultAt v4 index=0 @10
@@ -66,7 +61,6 @@ function f4 name="countsUp" position=10 role=CoroutineBody flags=[IsGenerator, T
     Return v16
 }
 function f5 name="yieldsTwice" position=20 role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f1} creator=Coroutine{ramp=f1 body=f5 promiseParameter=3} {
-  b0(v0: function, v1: anything, v2: anything, v3: Generator):
     v4 = Undefined @20
     v5 = YieldBySavingFrame v3, v4 @20
     v6 = ResultAt v5 index=0 @20
@@ -99,7 +93,6 @@ function f5 name="yieldsTwice" position=20 role=CoroutineBody flags=[IsGenerator
     Return v14
 }
 function f6 name="repeats" position=30 role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f2} creator=Coroutine{ramp=f2 body=f6 promiseParameter=2} {
-  b0(v0: function, v1: anything, v2: Generator):
     v3 = Undefined @30
     v4 = YieldBySavingFrame v2, v3 @30
     v5 = ResultAt v4 index=0 @30
@@ -130,7 +123,6 @@ function f6 name="repeats" position=30 role=CoroutineBody flags=[IsGenerator, Ta
     Return v13
 }
 function f7 name="keepsValue" position=35 role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f3} creator=Coroutine{ramp=f3 body=f7 promiseParameter=2} {
-  b0(v0: function, v1: anything, v2: Generator):
     v3 = Undefined @35
     v4 = YieldBySavingFrame v2, v3 @35
     v5 = ResultAt v4 index=0 @35
@@ -164,7 +156,6 @@ function f7 name="keepsValue" position=35 role=CoroutineBody flags=[IsGenerator,
     Return v14
 }
 function f8 name="range" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     v2 = NewClosure function=f0
     v3 = NewGenerator v2 function=f0 @40
     v4 = CallDirect v2, v0, v3 function=f4 @40
@@ -192,8 +183,6 @@ function f8 name="range" parameters=[{type=number}, {type=anything}] results=[{t
   b5():
     v17 = Undefined
     Return v17
-}
-# CHECK-LABEL: function f8 name="range"
 # CHECK: inlineFrames=[{}, {callee=f4 callPosition=50 module=m0}]
 # CHECK-NOT: StepGenerator
 # CHECK-NOT: YieldBySavingFrame
@@ -214,7 +203,6 @@ function f8 name="range" parameters=[{type=number}, {type=anything}] results=[{t
 # CHECK: : 2 = Integer integer=2 @12:1
 # CHECK-NOT: StepGenerator
 # CHECK-NOT: YieldBySavingFrame
-# SIMPLE-LABEL: function f8 name="range"
 # SIMPLE-NOT: NewGenerator
 # SIMPLE-NOT: NewClosure
 # SIMPLE-NOT: StepGenerator
@@ -223,8 +211,8 @@ function f8 name="range" parameters=[{type=number}, {type=anything}] results=[{t
 # SIMPLE-NOT: Switch
 # SIMPLE: = Call v1, -, {{*}} @51
 # SIMPLE-NOT: Switch
+}
 function f9 name="twoYields" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewClosure function=f1
     v3 = NewGenerator v2 function=f1 @41
     v4 = CallDirect v2, v0, v1, v3 function=f5 @41
@@ -252,8 +240,6 @@ function f9 name="twoYields" parameters=[{type=anything}, {type=anything}] resul
   b5():
     v17 = Undefined
     Return v17
-}
-# CHECK-LABEL: function f9 name="twoYields"
 # CHECK: inlineFrames=[{}, {callee=f5 callPosition=50 module=m0}]
 # CHECK-NOT: StepGenerator
 # CHECK-NOT: YieldBySavingFrame
@@ -264,11 +250,10 @@ function f9 name="twoYields" parameters=[{type=anything}, {type=anything}] resul
 # CHECK: : 3 = Integer integer=3 @22:1
 # CHECK-NOT: StepGenerator
 # CHECK-NOT: YieldBySavingFrame
-# SIMPLE-LABEL: function f9 name="twoYields"
 # SIMPLE-NOT: NewGenerator
 # SIMPLE-NOT: StepGenerator
+}
 function f10 name="yieldInLoop" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewClosure function=f2
     v3 = NewGenerator v2 function=f2 @42
     v4 = CallDirect v2, v0, v3 function=f6 @42
@@ -296,8 +281,6 @@ function f10 name="yieldInLoop" parameters=[{type=anything}, {type=anything}] re
   b5():
     v17 = Undefined
     Return v17
-}
-# CHECK-LABEL: function f10 name="yieldInLoop"
 # CHECK: inlineFrames=[{}, {callee=f6 callPosition=50 module=m0}]
 # CHECK-NOT: StepGenerator
 # CHECK-NOT: YieldBySavingFrame
@@ -308,13 +291,12 @@ function f10 name="yieldInLoop" parameters=[{type=anything}, {type=anything}] re
 # CHECK: Jump -> next [[leave10]]([[made10]],
 # CHECK-NOT: StepGenerator
 # CHECK-NOT: YieldBySavingFrame
-# SIMPLE-LABEL: function f10 name="yieldInLoop"
 # SIMPLE-NOT: NewGenerator
 # SIMPLE-NOT: StepGenerator
 # SIMPLE: [[made10]]: anything = Call v0 @31:1
 # SIMPLE: = Call v1, -, [[made10]] @51
+}
 function f11 name="valueLiveAcrossYield" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewClosure function=f3
     v3 = NewGenerator v2 function=f3 @43
     v4 = CallDirect v2, v0, v3 function=f7 @43
@@ -342,8 +324,6 @@ function f11 name="valueLiveAcrossYield" parameters=[{type=anything}, {type=anyt
   b5():
     v17 = Undefined
     Return v17
-}
-# CHECK-LABEL: function f11 name="valueLiveAcrossYield"
 # CHECK: inlineFrames=[{}, {callee=f7 callPosition=50 module=m0}]
 # CHECK-NOT: StepGenerator
 # CHECK-NOT: YieldBySavingFrame
@@ -356,11 +336,10 @@ function f11 name="valueLiveAcrossYield" parameters=[{type=anything}, {type=anyt
 # CHECK: Jump -> next [[leave11]]({{*}}, [[kept11]])
 # CHECK-NOT: StepGenerator
 # CHECK-NOT: YieldBySavingFrame
-# SIMPLE-LABEL: function f11 name="valueLiveAcrossYield"
 # SIMPLE-NOT: NewGenerator
 # SIMPLE-NOT: StepGenerator
+}
 function f12 name="creationInLaterBlock" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     Jump -> next b6()
   b1():
     LoopHint
@@ -390,19 +369,16 @@ function f12 name="creationInLaterBlock" parameters=[{type=number}, {type=anythi
     v16 = NewGenerator v15 function=f0 @44
     v17 = CallDirect v15, v0, v16 function=f4 @44
     Jump -> next b1()
-}
-# CHECK-LABEL: function f12 name="creationInLaterBlock"
 # CHECK: inlineFrames=[{}, {callee=f4 callPosition=50 module=m0}]
 # CHECK-NOT: StepGenerator
 # CHECK-NOT: YieldBySavingFrame
 # CHECK: Switch {{*}} cases=[1, 2] ->
 # CHECK-NOT: StepGenerator
 # CHECK-NOT: YieldBySavingFrame
-# SIMPLE-LABEL: function f12 name="creationInLaterBlock"
 # SIMPLE-NOT: NewGenerator
 # SIMPLE-NOT: StepGenerator
+}
 function f13 name="twoGenerators" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     v2 = NewClosure function=f0
     v3 = NewGenerator v2 function=f0 @45
     v4 = CallDirect v2, v0, v3 function=f4 @45
@@ -455,11 +431,9 @@ function f13 name="twoGenerators" parameters=[{type=number}, {type=anything}] re
   b10():
     v32 = Undefined
     Return v32
-}
-# CHECK-LABEL: function f13 name="twoGenerators"
 # CHECK: inlineFrames=[{}, {callee=f4 callPosition=50 module=m0}, {callee=f5 callPosition=52 module=m0}]
 # CHECK-NOT: StepGenerator
 # CHECK-NOT: YieldBySavingFrame
-# SIMPLE-LABEL: function f13 name="twoGenerators"
 # SIMPLE-NOT: NewGenerator
 # SIMPLE-NOT: StepGenerator
+}

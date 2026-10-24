@@ -12,13 +12,11 @@ typesite w1 module=m0 position=20 kind=Assertion
 typesite w2 module=m0 position=30 kind=Parameter
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     Return
 }
 function f1 name="keepsCheck" module=m0 position=100 flags=[IsChecked] length=2 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = Check v0 castType=string site=w0

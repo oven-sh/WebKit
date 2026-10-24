@@ -17,7 +17,6 @@
 module m0 path="main.js" displayPath="main.js"
 entry module=m0
 function f0 name="copies" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     v3 = Convert v0 declared={type=anything}
     v4 = Convert v3 declared={type=object flags=[IsExpected]}
     Jump -> next b1(v4)

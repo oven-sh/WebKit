@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="awaitsTypedValues" flags=[IsAsync] parameters=[{type=number}, {type=undefined|string}, {type=Promise<string, proven>}, {type=anything}, {type=anything}] results=[{type=Promise}] {
-  b0(v0: number, v1: undefined|string, v2: Promise<string, proven>, v3: anything, v4: anything):
     v5 = Await v0 @10
     v6 = Mul v5, v5
     v7 = Await v1 @11
@@ -17,7 +16,6 @@ function f0 name="awaitsTypedValues" flags=[IsAsync] parameters=[{type=number}, 
     Return v6
 }
 function f1 name="awaitsNumberInAsyncGenerator" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=number}, {type=anything}] results=[{type=AsyncGenerator}] {
-  b0(v0: function, v1: number, v2: anything):
     InitialYield @20
     v4 = Await v1 @21
     v5 = Negate v4

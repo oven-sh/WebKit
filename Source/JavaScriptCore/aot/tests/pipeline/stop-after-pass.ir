@@ -8,7 +8,6 @@ module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 name="" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="sink" [isFreeName]
     v2 = NewClosure function=f1
@@ -17,7 +16,6 @@ function f0 name="" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="callsIdentity" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = Integer integer=2
     v2 = Add v0, v1
@@ -31,7 +29,6 @@ function f1 name="callsIdentity" results=[{type=anything}] {
 }
 
 function f2 name="identity" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 # CHECK-LABEL: function f1 name="callsIdentity"

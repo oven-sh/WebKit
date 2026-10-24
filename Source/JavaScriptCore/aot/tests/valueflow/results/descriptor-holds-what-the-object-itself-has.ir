@@ -10,7 +10,6 @@ entry module=m0
 layout L0 name="Source" fields=[{key="kept" declared={type=anything}}]
 layout L1 name="Target" fields=[]
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L0
     v1 = FinishObject v0
     v2 = Integer integer=1

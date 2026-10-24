@@ -8,7 +8,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Plain" fields=[{key="a" declared={type=number} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown stores=AtMostOnce initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype]}
 
 function f0 name="operandsThatRunNothing" parameters=[{type=L0}, {type=string}, {type=int[0, 8]}, {type=Map}] results=[{type=undefined}] {
-  b0(v0: L0, v1: string, v2: int[0, 8], v3: Map):
     v4 = CallBuiltin -, v0 overload=ObjectKeys/0
     v5 = CallBuiltin -, v0 overload=ObjectGetOwnPropertyNames/0
     v6 = CallBuiltin -, v0 overload=ObjectEntries/0
@@ -34,7 +33,6 @@ function f0 name="operandsThatRunNothing" parameters=[{type=L0}, {type=string}, 
 # EFFECTS-NOT: unknownCode
 
 function f1 name="operandsThatMayMakeItThrow" parameters=[{type=anything}, {type=object}, {type=number}, {type=int[-1, 8]}, {type=int[0, 1099511627776]}, {type=string}] results=[{type=undefined}] {
-  b0(v0: anything, v1: object, v2: number, v3: int[-1, 8], v4: int[0, 1099511627776], v5: string):
     v6 = CallBuiltin -, v1 overload=ObjectKeys/0
     v7 = CallBuiltin -, v1 overload=ObjectEntries/0
     v8 = CallBuiltin -, v2 overload=Uint8Array/4
@@ -72,14 +70,12 @@ function f1 name="operandsThatMayMakeItThrow" parameters=[{type=anything}, {type
 
 # A lookup may move the table of a collection, and so may a new iterator: that changes how the collection is stored and the result of no operation.
 function f2 name="lookupsAndIterators" parameters=[{type=Map}, {type=Set}, {type=string}] results=[{type=undefined}] {
-  b0(v0: Map, v1: Set, v2: string):
     v3 = CallBuiltin v1, v2 overload=SetPrototypeHas/0
     v4 = CallBuiltin v0 overload=MapPrototypeEntries/0
     v5 = CallBuiltin v0 overload=MapPrototypeValues/0
     v6 = CallBuiltin v0 overload=MapPrototypeKeys/0
     v7 = CallBuiltin v1 overload=SetPrototypeValues/0
     Return
-}
-# CHECK-LABEL: function f2 name="lookupsAndIterators"
 # CHECK-NEXT: b0(
 # CHECK-NEXT: Return
+}

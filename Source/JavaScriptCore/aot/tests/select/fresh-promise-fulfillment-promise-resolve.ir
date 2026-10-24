@@ -6,40 +6,34 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="constant" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Promise
     v1 = PropGet v0 key="resolve"
     v2 = Integer integer=1
     v3 = Call v1, v0, v2 calleeKey="resolve"
     Return v3
-}
-# CHECK-LABEL: function f0 name="constant"
 # CHECK-NOT: ResolvePromise
 # CHECK-NOT: CallInline
 # CHECK: [[promise0]]: Promise = NewPromise
 # CHECK-NEXT: FulfillFreshPromise [[promise0]], v2
 # CHECK-NOT: ResolvePromise
+}
 
 function f1 name="primitive" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Builtin builtin=Promise
     v2 = PropGet v1 key="resolve"
     v3 = Call v2, v1, v0 calleeKey="resolve"
     Return v3
-}
-# CHECK-LABEL: function f1 name="primitive"
 # CHECK-NOT: ResolvePromise
 # CHECK-NOT: CallInline
 # CHECK: [[promise1]]: Promise = NewPromise
 # CHECK-NEXT: FulfillFreshPromise [[promise1]], v0
 # CHECK-NOT: ResolvePromise
+}
 
 function f2 name="may-be-a-promise" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=Promise
     v2 = PropGet v1 key="resolve"
     v3 = Call v2, v1, v0 calleeKey="resolve"
     Return v3
-}
-# CHECK-LABEL: function f2 name="may-be-a-promise"
 # CHECK-NOT: FulfillFreshPromise
+}

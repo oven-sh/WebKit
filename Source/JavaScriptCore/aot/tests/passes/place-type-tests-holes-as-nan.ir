@@ -11,7 +11,6 @@ module m0 path="main.js" displayPath="main.js"
 
 # sum += l[j], with sum: number
 function f0 name="sum" parameters=[{type=Array<number, proven>}, {type=int[0, 1000]}] results=[{type=number}] {
-  b0(v0: Array<number, proven>, v1: int[0, 1000]):
     v2 = Integer integer=0
     v3 = Double number=0.5
     Jump -> next b1(v2, v3)
@@ -52,7 +51,6 @@ function f0 name="sum" parameters=[{type=Array<number, proven>}, {type=int[0, 10
 
 # r ^= l[j]
 function f1 name="exclusiveOr" parameters=[{type=Array<number, proven>}, {type=int[0, 1000]}] results=[{type=i32}] {
-  b0(v0: Array<number, proven>, v1: int[0, 1000]):
     v2 = Integer integer=0
     Jump -> next b1(v2, v2)
   b1(v3: int[0, 1000], v4: i32):
@@ -86,7 +84,6 @@ function f1 name="exclusiveOr" parameters=[{type=Array<number, proven>}, {type=i
 
 # The type proves the kind and the prototypes, and ResolveAccesses has rewritten the read: a turn has the test of the bounds and nothing stands in front of the loop
 function f2 name="provenArray" parameters=[{type=Array<number, proven, Double, pristine[Storage]>}, {type=int[0, 1000]}] results=[{type=number}] {
-  b0(v0: Array<number, proven, Double, pristine[Storage]>, v1: int[0, 1000]):
     v2 = Integer integer=0
     v3 = Double number=0.5
     Jump -> next b1(v2, v3)
@@ -116,7 +113,6 @@ function f2 name="provenArray" parameters=[{type=Array<number, proven, Double, p
 
 # text + l[j], with text: string, would hold the text "undefined"
 function f3 name="concatenated" parameters=[{type=Array<number, proven>}, {type=int[0, 1000]}, {type=string}] results=[{type=string}] {
-  b0(v0: Array<number, proven>, v1: int[0, 1000], v2: string):
     v3 = Integer integer=0
     Jump -> next b1(v3, v2)
   b1(v4: int[0, 1000], v5: string):
@@ -144,7 +140,6 @@ function f3 name="concatenated" parameters=[{type=Array<number, proven>}, {type=
 
 # out.push(l[j])
 function f4 name="pushed" parameters=[{type=Array<number, proven>}, {type=int[0, 1000]}] results=[{type=anything}] {
-  b0(v0: Array<number, proven>, v1: int[0, 1000]):
     v2 = NewArray contents=number
     v3 = Integer integer=0
     Jump -> next b1(v3)
@@ -171,7 +166,6 @@ function f4 name="pushed" parameters=[{type=Array<number, proven>}, {type=int[0,
 
 # return l[j]
 function f5 name="returned" parameters=[{type=Array<number, proven>}, {type=int[0, 1000]}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: Array<number, proven>, v1: int[0, 1000], v2: boolean):
     v3 = Integer integer=0
     Jump -> next b1(v3)
   b1(v4: int[0, 1000]):
@@ -203,7 +197,6 @@ function f5 name="returned" parameters=[{type=Array<number, proven>}, {type=int[
 
 # What the array holds is only expected, so the read by key may give anything and a check stands between it and the sum: a check tells undefined from NaN
 function f6 name="contentsOnlyExpected" parameters=[{type=Array<number>}, {type=int[0, 1000]}] results=[{type=number}] {
-  b0(v0: Array<number>, v1: int[0, 1000]):
     v2 = Integer integer=0
     v3 = Double number=0.5
     Jump -> next b1(v2, v3)
@@ -233,7 +226,6 @@ function f6 name="contentsOnlyExpected" parameters=[{type=Array<number>}, {type=
 
 # The test of the prototypes pays only in front of a loop
 function f7 name="outsideLoops" parameters=[{type=Array<number, proven>}, {type=int[0, 1000]}, {type=number}] results=[{type=number}] {
-  b0(v0: Array<number, proven>, v1: int[0, 1000], v2: number):
     v3 = ElemGet v0, v1
     v4 = Add v2, v3
     Return v4
@@ -249,7 +241,6 @@ function f7 name="outsideLoops" parameters=[{type=Array<number, proven>}, {type=
 # NONE-NOT: IsPristine
 
 function f8 name="arrayChangesInLoop" parameters=[{type=Array<number, proven>}, {type=Array<number, proven>}, {type=int[0, 1000]}] results=[{type=number}] {
-  b0(v0: Array<number, proven>, v1: Array<number, proven>, v2: int[0, 1000]):
     v3 = Integer integer=0
     v4 = Double number=0.5
     Jump -> next b1(v3, v4, v0)
@@ -278,7 +269,6 @@ function f8 name="arrayChangesInLoop" parameters=[{type=Array<number, proven>}, 
 
 # The hole of Int32 storage is no number
 function f9 name="integers" parameters=[{type=Array<i32, proven>}, {type=int[0, 1000]}] results=[{type=number}] {
-  b0(v0: Array<i32, proven>, v1: int[0, 1000]):
     v2 = Integer integer=0
     v3 = Double number=0.5
     Jump -> next b1(v2, v3)

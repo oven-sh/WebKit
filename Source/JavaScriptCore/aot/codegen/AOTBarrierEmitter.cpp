@@ -22,11 +22,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-BarrierEmitter::BarrierEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
-
 template<typename Functor>
 void BarrierEmitter::forEachStoredOperand(const Value& store, const Functor& functor) const
 {
@@ -205,11 +200,6 @@ void BarrierEmitter::elementBarrierAfterStore(const ValueContext& store, CellPoi
         callBarrierStub(store, rememberElement(), { array.value(), value.value() }, { .isOnRarePath = true });
     m_out.jump(continuation);
     m_out.appendTo(continuation);
-}
-
-void BarrierEmitter::fenceAfterInitialization()
-{
-    mutatorFence();
 }
 
 TypedPointer BarrierEmitter::pendingBarrierOwner()

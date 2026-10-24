@@ -12,7 +12,6 @@ layout L17 kind=Environment name="scope" fields=[{key=@"binding.0" declared={typ
 variable g0 name="later" module=m0 declared={type=absent|L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16 flags=[IsExpected]} flags=[IsImmutable]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Call v0
     v2 = Integer integer=1
@@ -26,14 +25,12 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="readsVariable" kind=Arrow results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = CheckInitialized v0 name="later"
     v2 = PropGet v1 key="x"
     Return v2
 }
 function f2 name="owner" results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L17
     v1 = NewClosure v0 function=f3
     v2 = Call v1

@@ -14,8 +14,6 @@ function f0 name="named" parameters=[{type=object}] results=[{type=anything}] {
     CopyDataProperties v1, v0 excludedKeys=["id"]
     v3 = FinishObject v1
     Return v3
-}
-# CHECK-LABEL: function f0 name="named"
 # CHECK: = ShapeTest v0 layouts=[L1]
 # CHECK: frequency=Rare:
 # CHECK-NEXT: CopyDataProperties v1, v0 excludedKeys=["id"]
@@ -26,6 +24,7 @@ function f0 name="named" parameters=[{type=object}] results=[{type=anything}] {
 # CHECK-NEXT: PropDefine v1, [[name]] key="name"
 # CHECK-NEXT: PropDefine v1, [[tags]] key="tags"
 # CHECK-NOT: key="id"
+}
 
 function f1 name="computed" parameters=[{type=object}, {type=string}] results=[{type=anything}] {
   b0(v0: object ~ L1, v1: string):
@@ -33,9 +32,8 @@ function f1 name="computed" parameters=[{type=object}, {type=string}] results=[{
     CopyDataProperties v2, v0, v1
     v4 = FinishObject v2
     Return v4
-}
-# CHECK-LABEL: function f1 name="computed"
 # CHECK-NEXT: b0(v0: object ~ L1, v1: string):
 # CHECK-NEXT: = NewObject layout=L0
 # CHECK-NEXT: CopyDataProperties v2, v0, v1
 # CHECK-NEXT: = FinishObject v2
+}

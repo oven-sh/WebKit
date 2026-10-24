@@ -18,7 +18,6 @@ variable g1 name="besideConstructed" module=m0 declared={type=anything} initiali
 variable g2 name="compiled" module=m0 declared={type=anything} initialization=Undefined
 variable g3 name="textInLastIndex" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewRegExp pattern="a"
     PutModuleVariable v0 variable=g0
     v2 = NewRegExp pattern="b" regExpFlags=[Global]

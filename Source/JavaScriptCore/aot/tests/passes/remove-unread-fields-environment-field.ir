@@ -14,52 +14,44 @@ layout L3 kind=Environment name="readRemains" fields=[{key="x" declared={type=an
 # CHECK: layout L3 kind=Environment name="readRemains"{{*}}{key="callback"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=OnlyCalled}}}]
 
 function f0 name="setAtCreation" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = Add v1, v1
     v3 = NewObject -, v0, v2 layout=L0 fields=[0, 1]
     v4 = NewClosure v3 function=f4
     Return v4
-}
-# CHECK-LABEL: function f0 name="setAtCreation"
 # CHECK-NOT: Add
 # CHECK: = NewObject -, v0 layout=L0 fields=[0]
+}
 
 function f1 name="storedLater" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = NewObject -, v0 layout=L1 fields=[0]
     v3 = Add v1, v1
     PutEnvironmentField v2, v3 layout=L1 field=1
     PutEnvironmentField v2, v3 layout=L1 field=0
     v6 = NewClosure v2 function=f5
     Return v6
-}
-# CHECK-LABEL: function f1 name="storedLater"
 # CHECK: = NewObject -, v0 layout=L1 fields=[0]
 # CHECK-NEXT: [[sum]]: number = Add v1, v1
 # CHECK-NEXT: PutEnvironmentField v2, [[sum]] layout=L1
 # CHECK-NOT: field=1
 # CHECK: = NewClosure
+}
 
 function f2 name="withoutName" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0, v0 layout=L2 fields=[0, 1]
     v2 = NewClosure v1 function=f6
     Return v2
-}
-# CHECK-LABEL: function f2 name="withoutName"
 # CHECK: = NewObject -, v0 layout=L2 fields=[0]
+}
 
 function f3 name="readRemains" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f8
     v2 = NewObject -, v0, v1 layout=L3 fields=[0, 1]
     PutEnvironmentField v2, v1 layout=L3 field=1
     v4 = NewClosure v2 function=f7
     Return v4
-}
-# CHECK-LABEL: function f3 name="readRemains"
 # CHECK: = NewObject -, v0, v1 layout=L3 fields=[0, 1]
 # CHECK-NEXT: PutEnvironmentField v2, v1 layout=L3 field=1
+}
 
 function f4 name="readsOtherField" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
   b0(v0: env L0):
@@ -83,6 +75,5 @@ function f7 name="callsField" kind=Arrow captures=[{type=env L3}] results=[{type
     Return v2
 }
 function f8 name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }

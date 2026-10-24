@@ -28,23 +28,19 @@ module m69 path="/small.ts" displayPath="small.ts" requests=[{target=m66 complet
 entry module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = ImportModule module=m1 referrer=m0
     v1 = ImportModule module=m2 referrer=m0
     v2 = ImportModule module=m69 referrer=m0
     Return
 }
 function f1 name="ring5" module=m5 kind=Module results=[{type=anything}] {
-  b0():
     v0 = ImportModule module=m68 referrer=m5
     Return
 }
 function f2 name="x" module=m66 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
-  b0():
     Return
 }
 function f3 name="y" module=m67 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
-  b0():
     Return
 }
 

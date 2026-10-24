@@ -37,15 +37,6 @@ public:
     }
 
 private:
-    struct CollectionVersions {
-        friend bool operator==(const CollectionVersions&, const CollectionVersions&) = default;
-
-        HeapVersion marking { 0 };
-        HeapVersion eden { 0 };
-        HeapVersion newlyAllocated { 0 };
-    };
-
-    CollectionVersions collectionVersions() const;
     void open(Entry);
     void close();
 

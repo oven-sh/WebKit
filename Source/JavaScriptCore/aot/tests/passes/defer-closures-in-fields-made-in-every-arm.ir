@@ -17,12 +17,10 @@ layout L2 name="OneArmGivesAnotherValue" fields=[{key="run" declared={type=anyth
 # CHECK-NEXT: layout L2 name="OneArmGivesAnotherValue" fields=[{key="run" declared={type=anything}}]
 
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 
 function f1 name="madeInBothArms" module=m0 parameters=[{type=boolean}] results=[{type=L0}] {
-  b0(v0: boolean):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v1 = Integer integer=1
@@ -37,16 +35,14 @@ function f1 name="madeInBothArms" module=m0 parameters=[{type=boolean}] results=
   b3(v7: number, v8: f4, v9: f5):
     v10 = NewObject -, v7, v8, v9 layout=L0 fields=[0, 1, 2]
     Return v10
-}
-# CHECK-LABEL: function f1 name="madeInBothArms"
 # CHECK-NOT: NewClosure
 # CHECK: b3([[id]]: number):
 # CHECK: [[run]]: f4 = NewClosure function=f4 [isMadeOnDemand]
 # CHECK: [[stop]]: f5 = NewClosure function=f5 [isMadeOnDemand]
 # CHECK: = NewObject -, [[id]], [[run]], [[stop]] layout=L0 fields=[0, 1, 2]
+}
 
 function f2 name="twoFunctions" module=m0 parameters=[{type=boolean}] results=[{type=L1}] {
-  b0(v0: boolean):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v1 = NewClosure function=f4
@@ -59,14 +55,12 @@ function f2 name="twoFunctions" module=m0 parameters=[{type=boolean}] results=[{
   b3(v5: function):
     v6 = NewObject -, v5 layout=L1 fields=[0]
     Return v6
-}
-# CHECK-LABEL: function f2 name="twoFunctions"
 # CHECK: = NewClosure function=f4
 # CHECK: = NewClosure function=f5
 # CHECK: b3(v5: function):
+}
 
 function f3 name="oneArmGivesAnotherValue" module=m0 parameters=[{type=boolean}, {type=f4}] results=[{type=L2}] {
-  b0(v0: boolean, v1: f4):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v2 = NewClosure function=f4
@@ -76,16 +70,13 @@ function f3 name="oneArmGivesAnotherValue" module=m0 parameters=[{type=boolean},
   b3(v3: f4):
     v4 = NewObject -, v3 layout=L2 fields=[0]
     Return v4
-}
-# CHECK-LABEL: function f3 name="oneArmGivesAnotherValue"
 # CHECK: v2: f4 = NewClosure function=f4
 # CHECK: b3(v3: f4):
+}
 
 function f4 name="run" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f5 name="stop" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }

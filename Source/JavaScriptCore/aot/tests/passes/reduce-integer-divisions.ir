@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="floorOfNonNegative" parameters=[{type=int[0, 100]}, {type=int[1, 8]}] results=[{type=number}] {
-  b0(v0: int[0, 100], v1: int[1, 8]):
     v2 = Div v0, v1
     v3 = CallBuiltin -, v2 overload=MathFloor/0 builtinCallForm=Whole
     Return v3
@@ -15,7 +14,6 @@ function f0 name="floorOfNonNegative" parameters=[{type=int[0, 100]}, {type=int[
 # CHECK-NOT: rounding=
 
 function f1 name="floorOfNegativeDividend" parameters=[{type=int[-100, 100]}, {type=int[1, 8]}] results=[{type=number}] {
-  b0(v0: int[-100, 100], v1: int[1, 8]):
     v2 = Div v0, v1
     v3 = CallBuiltin -, v2 overload=MathFloor/0 builtinCallForm=Whole
     Return v3
@@ -25,7 +23,6 @@ function f1 name="floorOfNegativeDividend" parameters=[{type=int[-100, 100]}, {t
 # CHECK-NOT: rounding=
 
 function f2 name="ceilOfNonNegative" parameters=[{type=int[0, 100]}, {type=int[1, 8]}] results=[{type=number}] {
-  b0(v0: int[0, 100], v1: int[1, 8]):
     v2 = Div v0, v1
     v3 = CallBuiltin -, v2 overload=MathCeil/0 builtinCallForm=Whole
     Return v3
@@ -34,7 +31,6 @@ function f2 name="ceilOfNonNegative" parameters=[{type=int[0, 100]}, {type=int[1
 # CHECK: v3: int[{{*}} = DivideIntegers v0, v1 rounding=Ceil
 
 function f3 name="truncOfNonNegative" parameters=[{type=int[0, 100]}, {type=int[1, 8]}] results=[{type=number}] {
-  b0(v0: int[0, 100], v1: int[1, 8]):
     v2 = Div v0, v1
     v3 = CallBuiltin -, v2 overload=MathTrunc/0 builtinCallForm=Whole
     Return v3
@@ -43,7 +39,6 @@ function f3 name="truncOfNonNegative" parameters=[{type=int[0, 100]}, {type=int[
 # CHECK: v3: int[{{*}} = DivideIntegers v0, v1 rounding=Truncate
 
 function f4 name="roundOfNonNegative" parameters=[{type=int[0, 100]}, {type=int[1, 8]}] results=[{type=number}] {
-  b0(v0: int[0, 100], v1: int[1, 8]):
     v2 = Div v0, v1
     v3 = CallBuiltin -, v2 overload=MathRound/0 builtinCallForm=Whole
     Return v3
@@ -52,7 +47,6 @@ function f4 name="roundOfNonNegative" parameters=[{type=int[0, 100]}, {type=int[
 # CHECK: v3: int[{{*}} = DivideIntegers v0, v1 rounding=Round
 
 function f5 name="quotientThroughUpcast" parameters=[{type=int[0, 100]}, {type=int[1, 8]}] results=[{type=number}] {
-  b0(v0: int[0, 100], v1: int[1, 8]):
     v2 = Div v0, v1
     v3 = Upcast v2 castType=undefined|number
     v4 = CallBuiltin -, v3 overload=MathFloor/0 builtinCallForm=Whole
@@ -63,7 +57,6 @@ function f5 name="quotientThroughUpcast" parameters=[{type=int[0, 100]}, {type=i
 # CHECK-NOT: rounding=
 
 function f6 name="bitOrDivisorMayBeZero" parameters=[{type=i32}, {type=i32}] results=[{type=i32}] {
-  b0(v0: i32, v1: i32):
     v2 = Div v0, v1
     v3 = Integer integer=0
     v4 = BitOr v2, v3
@@ -74,7 +67,6 @@ function f6 name="bitOrDivisorMayBeZero" parameters=[{type=i32}, {type=i32}] res
 # CHECK-NEXT: v4: {{*}} = BitOr [[q6]], v3
 
 function f7 name="unsignedShift" parameters=[{type=i32}, {type=int[1, 8]}] results=[{type=int[0, 4294967295]}] {
-  b0(v0: i32, v1: int[1, 8]):
     v2 = Div v0, v1
     v3 = Integer integer=0
     v4 = URShift v2, v3
@@ -85,7 +77,6 @@ function f7 name="unsignedShift" parameters=[{type=i32}, {type=int[1, 8]}] resul
 # CHECK-NEXT: v4: {{*}} = URShift [[q7]], v3
 
 function f8 name="bitNot" parameters=[{type=i32}, {type=int[1, 8]}] results=[{type=i32}] {
-  b0(v0: i32, v1: int[1, 8]):
     v2 = Div v0, v1
     v3 = BitNot v2
     Return v3
@@ -95,7 +86,6 @@ function f8 name="bitNot" parameters=[{type=i32}, {type=int[1, 8]}] results=[{ty
 # CHECK-NEXT: v3: {{*}} = BitNot [[q8]]
 
 function f9 name="imulArgument" parameters=[{type=i32}, {type=int[1, 8]}] results=[{type=i32}] {
-  b0(v0: i32, v1: int[1, 8]):
     v2 = Div v0, v1
     v3 = ToInt32 v2
     v4 = Integer integer=3
@@ -107,7 +97,6 @@ function f9 name="imulArgument" parameters=[{type=i32}, {type=int[1, 8]}] result
 # CHECK-NEXT: v3: {{*}} = ToInt32 [[q9]]
 
 function f10 name="quotientHasSecondUse" parameters=[{type=int[0, 100]}, {type=int[1, 8]}] results=[{type=number}] {
-  b0(v0: int[0, 100], v1: int[1, 8]):
     v2 = Div v0, v1
     v3 = CallBuiltin -, v2 overload=MathFloor/0 builtinCallForm=Whole
     v4 = Add v2, v3
@@ -119,7 +108,6 @@ function f10 name="quotientHasSecondUse" parameters=[{type=int[0, 100]}, {type=i
 # CHECK-NEXT: = Add v2, v3
 
 function f11 name="ceilMayBeNegativeZero" parameters=[{type=int[-1, 1]}, {type=int[1, 2]}] results=[{type=number}] {
-  b0(v0: int[-1, 1], v1: int[1, 2]):
     v2 = Div v0, v1
     v3 = CallBuiltin -, v2 overload=MathCeil/0 builtinCallForm=Whole
     Return v3
@@ -128,7 +116,6 @@ function f11 name="ceilMayBeNegativeZero" parameters=[{type=int[-1, 1]}, {type=i
 # CHECK-NOT: DivideIntegers
 
 function f12 name="truncMayBeNegativeZero" parameters=[{type=int[-100, 100]}, {type=int[1, 8]}] results=[{type=number}] {
-  b0(v0: int[-100, 100], v1: int[1, 8]):
     v2 = Div v0, v1
     v3 = CallBuiltin -, v2 overload=MathTrunc/0 builtinCallForm=Whole
     Return v3
@@ -137,7 +124,6 @@ function f12 name="truncMayBeNegativeZero" parameters=[{type=int[-100, 100]}, {t
 # CHECK-NOT: DivideIntegers
 
 function f13 name="roundMayBeNegativeZero" parameters=[{type=int[-100, 100]}, {type=int[1, 8]}] results=[{type=number}] {
-  b0(v0: int[-100, 100], v1: int[1, 8]):
     v2 = Div v0, v1
     v3 = CallBuiltin -, v2 overload=MathRound/0 builtinCallForm=Whole
     Return v3
@@ -146,7 +132,6 @@ function f13 name="roundMayBeNegativeZero" parameters=[{type=int[-100, 100]}, {t
 # CHECK-NOT: DivideIntegers
 
 function f14 name="floorWithNegativeDivisor" parameters=[{type=int[0, 9]}, {type=int[-2, -1]}] results=[{type=number}] {
-  b0(v0: int[0, 9], v1: int[-2, -1]):
     v2 = Div v0, v1
     v3 = CallBuiltin -, v2 overload=MathFloor/0 builtinCallForm=Whole
     Return v3
@@ -155,7 +140,6 @@ function f14 name="floorWithNegativeDivisor" parameters=[{type=int[0, 9]}, {type
 # CHECK-NOT: DivideIntegers
 
 function f15 name="roundWithNegativeDivisor" parameters=[{type=int[0, 100]}, {type=int[-8, -1]}] results=[{type=number}] {
-  b0(v0: int[0, 100], v1: int[-8, -1]):
     v2 = Div v0, v1
     v3 = CallBuiltin -, v2 overload=MathRound/0 builtinCallForm=Whole
     Return v3
@@ -164,7 +148,6 @@ function f15 name="roundWithNegativeDivisor" parameters=[{type=int[0, 100]}, {ty
 # CHECK-NOT: DivideIntegers
 
 function f16 name="floorDivisorMayBeZero" parameters=[{type=int[0, 100]}, {type=int[0, 8]}] results=[{type=number}] {
-  b0(v0: int[0, 100], v1: int[0, 8]):
     v2 = Div v0, v1
     v3 = CallBuiltin -, v2 overload=MathFloor/0 builtinCallForm=Whole
     Return v3
@@ -173,7 +156,6 @@ function f16 name="floorDivisorMayBeZero" parameters=[{type=int[0, 100]}, {type=
 # CHECK-NOT: DivideIntegers
 
 function f17 name="dividendIsNumber" parameters=[{type=number}, {type=int[1, 8]}] results=[{type=number}] {
-  b0(v0: number, v1: int[1, 8]):
     v2 = Div v0, v1
     v3 = CallBuiltin -, v2 overload=MathFloor/0 builtinCallForm=Whole
     Return v3
@@ -182,7 +164,6 @@ function f17 name="dividendIsNumber" parameters=[{type=number}, {type=int[1, 8]}
 # CHECK-NOT: DivideIntegers
 
 function f18 name="dividendAboveMaxExactInteger" parameters=[{type=int[0, 9007199254740993]}, {type=int[1, 8]}] results=[{type=number}] {
-  b0(v0: int[0, 9007199254740993], v1: int[1, 8]):
     v2 = Div v0, v1
     v3 = CallBuiltin -, v2 overload=MathFloor/0 builtinCallForm=Whole
     Return v3
@@ -191,7 +172,6 @@ function f18 name="dividendAboveMaxExactInteger" parameters=[{type=int[0, 900719
 # CHECK-NOT: DivideIntegers
 
 function f19 name="roundDividendAboveLimit" parameters=[{type=int[0, 2251799813685249]}, {type=int[1, 8]}] results=[{type=number}] {
-  b0(v0: int[0, 2251799813685249], v1: int[1, 8]):
     v2 = Div v0, v1
     v3 = CallBuiltin -, v2 overload=MathRound/0 builtinCallForm=Whole
     Return v3
@@ -200,7 +180,6 @@ function f19 name="roundDividendAboveLimit" parameters=[{type=int[0, 22517998136
 # CHECK-NOT: DivideIntegers
 
 function f20 name="twoConstants" results=[{type=number}] {
-  b0():
     v0 = Integer integer=7
     v1 = Integer integer=2
     v2 = Div v0, v1
@@ -211,7 +190,6 @@ function f20 name="twoConstants" results=[{type=number}] {
 # CHECK-NOT: DivideIntegers
 
 function f21 name="floorOfSum" parameters=[{type=int[0, 100]}, {type=int[1, 8]}] results=[{type=number}] {
-  b0(v0: int[0, 100], v1: int[1, 8]):
     v2 = Add v0, v1
     v3 = CallBuiltin -, v2 overload=MathFloor/0 builtinCallForm=Whole
     Return v3
@@ -220,7 +198,6 @@ function f21 name="floorOfSum" parameters=[{type=int[0, 100]}, {type=int[1, 8]}]
 # CHECK-NOT: DivideIntegers
 
 function f22 name="bitOrOfNumberQuotient" parameters=[{type=number}, {type=i32}] results=[{type=i32}] {
-  b0(v0: number, v1: i32):
     v2 = Div v0, v1
     v3 = Integer integer=0
     v4 = BitOr v2, v3

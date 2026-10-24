@@ -6,56 +6,46 @@ layout L0 name="Message" fields=[{key="id" declared={type=number} flags=[IsEnfor
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="neverBuilt" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
     v3 = PropDelete v2 key="draft" mode=Strict
     v4 = IsSlotFilled v2 key="draft" receivers=[L0] level=Proven
     v5 = NewArray v3, v4
     Return v5
-}
-# CHECK-LABEL: function f0 name="neverBuilt"
 # CHECK-NOT: NewObject
 # CHECK-NOT: PropDelete
 # CHECK-NOT: IsSlotFilled
+}
 
 function f1 name="builtBehindTheDeletion" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything, v2: anything):
     v3 = NewObject -, v0, v1, v2 layout=L0 fields=[0, 1, 2]
     v4 = PropDelete v3 key="draft" mode=Strict
     Return v3
-}
-# CHECK-LABEL: function f1 name="builtBehindTheDeletion"
 # CHECK-NOT: PropDelete
 # CHECK: = NewObject -, v0, v2 layout=L0 fields=[0, 2]
 # CHECK-NOT: PropDelete
+}
 
 function f2 name="storedAgain" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything, v2: anything):
     v3 = NewObject -, v0, v1, v2 layout=L0 fields=[0, 1, 2]
     v4 = PropDelete v3 key="draft" mode=Strict
     PutSlotOrAdd v3, -, v1 key="draft" receivers=[L0] level=Proven
     Return v3
-}
-# CHECK-LABEL: function f2 name="storedAgain"
 # CHECK-NOT: PropDelete
 # CHECK: = NewObject -, v0, v2, v1 layout=L0 fields=[0, 2, 1]
+}
 
 function f3 name="aFieldThatCannotBeDeleted" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 3]
     v3 = PropDelete v2 key="fixed" mode=Sloppy
     Return v3
-}
-# CHECK-LABEL: function f3 name="aFieldThatCannotBeDeleted"
 # CHECK: = NewObject
 # CHECK: = PropDelete
+}
 
 function f4 name="aNameThatIsNoField" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = PropDelete v1 key="other" mode=Sloppy
     Return v2
-}
-# CHECK-LABEL: function f4 name="aNameThatIsNoField"
 # CHECK: = NewObject
 # CHECK: = PropDelete
+}

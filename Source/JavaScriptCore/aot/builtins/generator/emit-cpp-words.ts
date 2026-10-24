@@ -120,13 +120,36 @@ function formatEnumeratorValue(numbering: Numbering, position: number): string {
   }
 }
 
-function emitWordList({ cppEnum, numbering, words, enumerators }: WordList): string {
+const isDeclaredHere = ({ cppEnum }: WordList): boolean => cppEnum.startsWith("Builtin");
+
+function emitEnum({ cppEnum, numbering, enumerators }: WordList): string {
+  const underlying = numbering === "Flags" && enumerators.length > 8 ? "uint16_t" : "uint8_t";
+  const members = enumerators.map((name, position) => (numbering === "Flags" ? `${name} = 1 << ${position}` : name));
+  return `enum class ${cppEnum} : ${underlying} { ${members.join(", ")} };`;
+}
+
+function emitWordList(list: WordList): string {
+  const { cppEnum, numbering, words, enumerators } = list;
   const array = emitArray(`inline constexpr ASCIILiteral ${lowerFirst(cppEnum)}Words`, words.map(formatASCIILiteral));
-  const assertions = enumerators.map((enumerator, position) => {
+  const assertions = (isDeclaredHere(list) ? [] : enumerators).map((enumerator, position) => {
     const value = `static_cast<unsigned>(${formatEnumerator(cppEnum, enumerator)})`;
     return `static_assert(${value} == ${formatEnumeratorValue(numbering, position)});`;
   });
-  return [array, ...assertions].join("\n");
+  const lookup = `constexpr std::span<const ASCIILiteral> wordsOf(${cppEnum}) { return ${lowerFirst(cppEnum)}Words; }`;
+  return [array, lookup, ...assertions].join("\n");
+}
+
+export function emitCppEnums(schema: Schema): string {
+  const blocks = [
+    `${fileHeader}#pragma once`,
+    "#if ENABLE(AOT)",
+    "#include <cstdint>",
+    "namespace JSC { namespace AOT {",
+    collectWordLists(schema).filter(isDeclaredHere).map(emitEnum).join("\n"),
+    "} } // namespace JSC::AOT",
+    "#endif // ENABLE(AOT)",
+  ];
+  return `${joinBlocks(blocks)}\n`;
 }
 
 export function emitCppWords(schema: Schema): string {

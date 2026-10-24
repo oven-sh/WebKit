@@ -12,6 +12,7 @@
 #include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTOperationScope.h"
+#include "AOTProgramTables.h"
 #include "AOTPropertyCaches.h"
 #include "AOTRuntimeFunctions.h"
 #include "AOTRuntimeRecords.h"
@@ -48,33 +49,55 @@ struct ChainAboveRun {
     bool didFlatten { false };
 };
 
-static bool canStorePropertyRun(Structure* structure)
+const PropertyRun* propertyRunAt(Instance* instance, uint32_t number)
+{
+    const PropertyRun*& run = instance->runtime.literals.propertyRuns[number];
+    if (run) [[likely]]
+        return run;
+    std::span<const uint32_t> row = instance->tables().propertyRunRow(number);
+    RELEASE_ASSERT(row.size() == PropertyRunHeader::decode(row[0]).count + 1u);
+    std::span<const uint32_t> numbers = row.subspan(1);
+    Vector<UniquedStringImpl*, 16> names(numbers.size(), [&](size_t index) {
+        return identifierAt(instance, numbers[index]).impl();
+    });
+    run = instance->vm->propertyRuns.intern(names.span());
+    return run;
+}
+
+static bool canDefinePropertiesOneByOne(Structure* structure)
 {
     return structure->typeInfo().type() == FinalObjectType
         && !structure->isCompiledStructure()
-        && !structure->isDictionary()
         && structure->isStructureExtensible()
         && !structure->hasPolyProto()
         && !structure->mayBePrototype()
         && !structure->hasImmutableProperties()
-        && !structure->hasListedImmutableProperties()
+        && !structure->hasListedImmutableProperties();
+}
+
+static bool canStorePropertyRun(Structure* structure)
+{
+    return canDefinePropertiesOneByOne(structure)
+        && !structure->isDictionary()
         && structure->propertyAccessesAreCacheable()
         && structure->transitionCountEstimate() <= Structure::s_maxTransitionLength;
 }
 
-static void fillPropertyRunCache(Instance* instance, SiteCache cache, const Slot& slot)
+// A change of the chain drops what is remembered. Without a chain it follows from the Structure alone, so it holds as long as the Structure is the object's.
+static void fillPropertyRunCache(Instance* instance, SiteCache cache, const Slot& slot, const PropertyRun* run = nullptr, const ChainAboveRun& chain = { })
 {
     if (!cache)
         return;
-    instance->state->propertyCaches->siteCaches().fill(cache, slot);
+    Vector<SiteCaches::ChainDependence, 4> dependences(chain.walks.size(), [&](size_t index) {
+        return SiteCaches::ChainDependence { run->names()[index].get(), chain.walks[index].changeableObjects.span() };
+    });
+    instance->state->propertyCaches->siteCaches().fill(cache, slot, dependences.span());
 }
 
-// Single stores are right for every object. What is remembered follows from the Structure alone, so it holds as long as the Structure is the object's.
-static void rememberRefusal(Instance* instance, SiteCache cache, Structure* structure)
+// Single stores are right for every object.
+static void rememberRefusal(Instance* instance, SiteCache cache, Structure* structure, const PropertyRun* run = nullptr, const ChainAboveRun& chain = { })
 {
-    if (!cache)
-        return;
-    fillPropertyRunCache(instance, cache, Slot::createWithoutPayload(structure->id(), Slot::Kind::Uncacheable, 0));
+    fillPropertyRunCache(instance, cache, Slot::createWithoutPayload(structure->id(), Slot::Kind::Uncacheable, chain.slotFlags()), run, chain);
 }
 
 // A store and a definition do the same to a data property that is writable, enumerable and configurable.
@@ -99,13 +122,6 @@ static bool tryReplaceRun(Instance* instance, VM& vm, const PropertyRunStore& st
     return true;
 }
 
-static bool hasAnyName(VM& vm, Structure* structure, const PropertyRun& run)
-{
-    return std::ranges::any_of(run.names(), [&](const RefPtr<UniquedStringImpl>& name) {
-        return isValidOffset(structure->get(vm, name.get()));
-    });
-}
-
 static ChainAboveRun walkChainAbove(Instance* instance, const PropertyRunStore& store)
 {
     ChainAboveRun chain;
@@ -115,32 +131,6 @@ static ChainAboveRun walkChainAbove(Instance* instance, const PropertyRunStore& 
         chain.didFlatten |= chain.walks.last().didFlatten;
     }
     return chain;
-}
-
-static void fillPropertyRunCache(Instance* instance, const PropertyRunStore& store, const Slot& slot, const ChainAboveRun& chain)
-{
-    if (!store.cache)
-        return;
-    std::span names = store.run.names();
-    Vector<SiteCaches::ChainDependence, 4> dependences(chain.walks.size(), [&](size_t index) {
-        return SiteCaches::ChainDependence { names[index].get(), chain.walks[index].changeableObjects.span() };
-    });
-    instance->state->propertyCaches->siteCaches().fill(store.cache, slot, dependences.span());
-}
-
-// A change of the chain drops what is remembered.
-static void rememberRefusal(Instance* instance, const PropertyRunStore& store, const ChainAboveRun& chain)
-{
-    if (!store.cache)
-        return;
-    fillPropertyRunCache(instance, store, Slot::createWithoutPayload(store.structure->id(), Slot::Kind::Uncacheable, chain.slotFlags()), chain);
-}
-
-static void didFailToFillPropertyRunCache(Instance* instance, SiteCache cache)
-{
-    if (!cache)
-        return;
-    instance->state->propertyCaches->siteCaches().didFailToFill(cache);
 }
 
 static bool tryAddRun(Instance* instance, VM& vm, const PropertyRunStore& store)
@@ -157,10 +147,10 @@ static bool tryAddRun(Instance* instance, VM& vm, const PropertyRunStore& store)
     ChainAboveRun chain = store.isDefinition ? ChainAboveRun { } : walkChainAbove(instance, store);
     if (!chain.everyStoreCreatesOwnProperty) {
         // The walk gives another answer once a prototype is flattened.
-        if (chain.didFlatten)
-            didFailToFillPropertyRunCache(instance, store.cache);
-        else
-            rememberRefusal(instance, store, chain);
+        if (!chain.didFlatten)
+            rememberRefusal(instance, store.cache, before, &store.run, chain);
+        else if (store.cache)
+            instance->state->propertyCaches->siteCaches().didFailToFill(store.cache);
         return false;
     }
     if (!store.object->tryPutDirectPropertyRun(vm, store.run, store.values)) {
@@ -175,23 +165,19 @@ static bool tryAddRun(Instance* instance, VM& vm, const PropertyRunStore& store)
     if (before->typeInfo().inlineTypeFlags() == after->typeInfo().inlineTypeFlags())
         transition = Slot::tryCreateTransition(before->id(), Slot::isOwn | chain.slotFlags(), after->id(), offsetForPropertyNumber(firstPropertyNumber, before->inlineCapacity()), 0);
     if (transition)
-        fillPropertyRunCache(instance, store, *transition, chain);
+        fillPropertyRunCache(instance, store.cache, *transition, &store.run, chain);
     else
         rememberRefusal(instance, store.cache, before);
     return true;
 }
 
-static bool namesField(Instance* instance, const Object& object, const PropertyRun& run)
-{
-    return std::ranges::any_of(run.names(), [&](const RefPtr<UniquedStringImpl>& name) {
-        return !!object.fieldNamed(*instance->state, name.get());
-    });
-}
-
 static bool tryAddRunToExtraProperties(Instance* instance, VM& vm, Object& object, const PropertyRunStore& store)
 {
     // The layout says which names are fields, and the Structure says which layout it is.
-    if (namesField(instance, object, store.run)) {
+    bool namesField = std::ranges::any_of(store.run.names(), [&](const RefPtr<UniquedStringImpl>& name) {
+        return !!object.fieldNamed(*instance->state, name.get());
+    });
+    if (namesField) {
         rememberRefusal(instance, store.cache, store.structure);
         return false;
     }
@@ -213,24 +199,6 @@ static bool tryAddRunToExtraProperties(Instance* instance, VM& vm, Object& objec
     return true;
 }
 
-static bool canDefinePropertiesOneByOne(Structure* structure)
-{
-    return structure->typeInfo().type() == FinalObjectType
-        && !structure->isCompiledStructure()
-        && structure->isStructureExtensible()
-        && !structure->hasPolyProto()
-        && !structure->mayBePrototype()
-        && !structure->hasImmutableProperties()
-        && !structure->hasListedImmutableProperties();
-}
-
-static void defineRunOneByOne(VM& vm, JSObject* object, const PropertyRun& run, const EncodedJSValue* values)
-{
-    std::span names = run.names();
-    for (size_t index = 0; index < names.size(); ++index)
-        object->putDirect(vm, PropertyName(names[index].get()), JSValue::decode(values[index]));
-}
-
 // At a site with a cache the emitted code has counted the miss, and the site is due for a refill.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryPutProperties, size_t, (Instance* instance, SiteCache cache, EncodedJSValue encodedObject, uint32_t request, const EncodedJSValue* values, uint32_t isDefinition))
 {
@@ -247,18 +215,22 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryPutProperties, size_t, (Instanc
     const PropertyRun* run = propertyRunAt(instance, request);
     if (!run)
         OPERATION_RETURN(scope, 0);
+    JSObject* object = asObject(base);
     if (!canStoreRun) {
-        defineRunOneByOne(vm, asObject(base), *run, values);
+        for (size_t index = 0; index < run->size(); ++index)
+            object->putDirect(vm, PropertyName(run->names()[index].get()), JSValue::decode(values[index]));
         OPERATION_RETURN(scope, 1);
     }
-    JSObject* object = asObject(base);
     PropertyRunStore store { object, object->structure(), *run, { values, run->size() }, cache, !!isDefinition };
     if (compiledObject)
         OPERATION_RETURN(scope, static_cast<size_t>(tryAddRunToExtraProperties(instance, vm, *compiledObject, store)));
 
     if (tryReplaceRun(instance, vm, store))
         OPERATION_RETURN(scope, 1);
-    if (hasAnyName(vm, store.structure, *run)) {
+    bool hasAnyName = std::ranges::any_of(run->names(), [&](const RefPtr<UniquedStringImpl>& name) {
+        return isValidOffset(store.structure->get(vm, name.get()));
+    });
+    if (hasAnyName) {
         rememberRefusal(instance, cache, store.structure);
         OPERATION_RETURN(scope, 0);
     }

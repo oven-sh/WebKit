@@ -10,7 +10,6 @@ layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired
 variable g0 name="last" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="point" parameters=[{type=number}] results=[{type=L0}] {
-  b0(v0: number):
     v1 = Add v0, v0
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
     Return v2
@@ -19,7 +18,6 @@ function f0 name="point" parameters=[{type=number}] results=[{type=L0}] {
 # CHECK: creator=ResultWrapper{worker=[[pointWorker]] layout=L0} {
 
 function f1 name="chain1" parameters=[{type=number}] results=[{type=L0}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f0
     Return v1
 }
@@ -29,7 +27,6 @@ function f1 name="chain1" parameters=[{type=number}] results=[{type=L0}] {
 # CHECK: = NewObject -, {{*}} layout=L0 fields=[0, 1]
 
 function f2 name="chain2" parameters=[{type=number}] results=[{type=L0}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f1
     Return v1
 }
@@ -37,7 +34,6 @@ function f2 name="chain2" parameters=[{type=number}] results=[{type=L0}] {
 # CHECK: creator=ResultWrapper{worker=[[chain2Worker]] layout=L0} {
 
 function f3 name="chain3" parameters=[{type=number}] results=[{type=L0}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f2
     Return v1
 }
@@ -45,7 +41,6 @@ function f3 name="chain3" parameters=[{type=number}] results=[{type=L0}] {
 # CHECK: creator=ResultWrapper{worker=[[chain3Worker]] layout=L0} {
 
 function f4 name="readsThenForwards" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f0
     v2 = GetSlot v1 key="x" receivers=[L0] level=Proven
     v3 = CallDirect v2 function=f10
@@ -55,7 +50,6 @@ function f4 name="readsThenForwards" parameters=[{type=number}] results=[{type=a
 # CHECK: creator=ResultWrapper{worker=[[readingWorker]] layout=L0} {
 
 function f5 name="forwardsOrReturnsAnotherCall" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -77,7 +71,6 @@ function f5 name="forwardsOrReturnsAnotherCall" parameters=[{type=number}] resul
 # CHECK-NEXT: Jump -> next {{*}}([[other5]])
 
 function f6 name="forwardsByAllowedTailCall" parameters=[{type=number}] results=[{type=L0}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f0
     ReturnCall v1 requirement=Allowed
 }
@@ -86,7 +79,6 @@ function f6 name="forwardsByAllowedTailCall" parameters=[{type=number}] results=
 # CHECK-NOT: ReturnCall
 
 function f7 name="forwardsByRequiredTailCall" parameters=[{type=number}] results=[{type=L0}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f0
     ReturnCall v1
 }
@@ -95,7 +87,6 @@ function f7 name="forwardsByRequiredTailCall" parameters=[{type=number}] results
 # CHECK-NOT: ReturnCall
 
 function f8 name="forwardsOrCallsItself" parameters=[{type=number}] results=[{type=L0}] {
-  b0(v0: number):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -111,7 +102,6 @@ function f8 name="forwardsOrCallsItself" parameters=[{type=number}] results=[{ty
 # CHECK-NEXT: Return v2
 
 function f9 name="passesOnThenForwards" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f0
     v2 = CallDirect v1 function=f10
     Return v1
@@ -123,7 +113,6 @@ function f9 name="passesOnThenForwards" parameters=[{type=number}] results=[{typ
 # CHECK-NEXT: Return v1
 
 function f10 name="remember" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     PutModuleVariable v0 variable=g0
     Return v0
 }
@@ -179,7 +168,6 @@ function f10 name="remember" parameters=[{type=anything}] results=[{type=anythin
 
 # Whoever calls them needs no object
 function f11 name="dropsTheResults" parameters=[{type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: number, v1: number, v2: number, v3: number, v4: number, v5: number, v6: number, v7: number, v8: number, v9: number, v10: anything):
 # REPEAT: i = 0..10
     v%(i+11) = CallDirect v%(i) function=f%(i)
 # END REPEAT

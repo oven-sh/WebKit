@@ -15,7 +15,6 @@
 #include "AOTConversionEmitter.h"
 #include "AOTElementEmitterAllocation.h"
 #include "AOTFunctionAnalyses.h"
-#include "AOTStubsArrays.h"
 #include "AOTVector.h"
 #include "IndexingType.h"
 #include "JSType.h"
@@ -36,11 +35,6 @@ static ArrayStorageFormList formsStartingWith(const ArrayStorageForm& expected)
             forms.append(&form);
     }
     return forms;
-}
-
-ArrayStorageBuiltinEmitter::ArrayStorageBuiltinEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
 }
 
 Operand ArrayStorageBuiltinEmitter::lengthResult(const InlineCall& call, Integer length)
@@ -73,13 +67,12 @@ Operand ArrayStorageBuiltinEmitter::lengthResult(const InlineCall& call, Integer
 
 void ArrayStorageBuiltinEmitter::generateArrayLength(const InlineCall& call)
 {
-    finishInlineCall(call, lengthResult(call, emitter<ElementAccessEmitter>().arrayLength(in<CellPointer>(call.receiver()))));
+    finishInlineCall(call, lengthResult(call, elements().arrayLength(in<CellPointer>(call.receiver()))));
 }
 
 void ArrayStorageBuiltinEmitter::generateArraySetLength(const InlineCall& call)
 {
     RELEASE_ASSERT(call.numberOfArguments());
-    ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
     CellPointer array = in<CellPointer>(call.receiver());
     ValueID argument = call.argument(0);
     LBasicBlock slowPath = call.canMiss() ? missBlockOf(call) : newBlock();
@@ -89,18 +82,18 @@ void ArrayStorageBuiltinEmitter::generateArraySetLength(const InlineCall& call)
     LBasicBlock clear = newBlock();
     LBasicBlock setLength = newBlock();
 
-    Integer newLength = elements.indexOrElse(argument, false, slowPath);
-    Word32 mode = elements.indexingMode(array, IndexingShapeAndWritabilityMask);
+    Integer newLength = elements().indexOrElse(argument, false, slowPath);
+    Word32 mode = elements().indexingMode(array, IndexingShapeAndWritabilityMask);
     Condition hasForm;
     for (const ArrayStorageForm& form : arrayStorageForms)
-        hasForm = logicalOr(hasForm, elements.hasWritableShape(mode, form));
+        hasForm = logicalOr(hasForm, elements().hasWritableShape(mode, form));
     branchUnless(hasForm, slowPath);
-    ArrayElements storage = elements.elementsOf(array);
-    Integer length = elements.publicLength(storage);
+    ArrayElements storage = elements().elementsOf(array);
+    Integer length = elements().publicLength(storage);
     branch(below(newLength, length), { normalEdge(isShorter), normalEdge(isNotShorter) });
 
     m_out.appendTo(isNotShorter);
-    branchUnless(belowOrEqual(newLength, elements.vectorLength(storage)), slowPath);
+    branchUnless(belowOrEqual(newLength, elements().vectorLength(storage)), slowPath);
     m_out.jump(setLength);
 
     m_out.appendTo(isShorter);
@@ -108,7 +101,7 @@ void ArrayStorageBuiltinEmitter::generateArraySetLength(const InlineCall& call)
     branchUnless(belowOrEqual(sub(length, newLength), maxClearedElements), slowPath);
     Integer hole = integer(static_cast<int64_t>(arrayStorageForms.back().hole));
     for (const ArrayStorageForm& form : std::span(arrayStorageForms).first(arrayStorageForms.size() - 1))
-        hole = select(elements.hasWritableShape(mode, form), integer(static_cast<int64_t>(form.hole)), hole);
+        hole = select(elements().hasWritableShape(mode, form), integer(static_cast<int64_t>(form.hole)), hole);
     ValueFromBlock firstCleared = m_out.anchor(newLength.value());
     m_out.jump(clearLoop);
 
@@ -117,12 +110,12 @@ void ArrayStorageBuiltinEmitter::generateArraySetLength(const InlineCall& call)
     branch(below(index, length), { normalEdge(clear), normalEdge(setLength) });
 
     m_out.appendTo(clear);
-    m_out.store64(hole.value(), elements.elementOfUnknownForm(storage, index));
+    m_out.store64(hole.value(), elements().elementOfUnknownForm(storage, index));
     m_out.addIncomingToPhi(index.value(), m_out.anchor(add(index, integer(1)).value()));
     m_out.jump(clearLoop);
 
     m_out.appendTo(setLength);
-    elements.setPublicLength(storage, newLength);
+    elements().setPublicLength(storage, newLength);
     if (!call.canMiss()) {
         LBasicBlock continuation = newBlock();
         m_out.jump(continuation);
@@ -135,7 +128,7 @@ void ArrayStorageBuiltinEmitter::generateArraySetLength(const InlineCall& call)
         m_out.appendTo(continuation);
     }
     Representation representation = resultRepresentationOf(call);
-    finishInlineCall(call, representation == Representation::Void ? Operand() : elements.absentElement(call.context(), representation));
+    finishInlineCall(call, representation == Representation::Void ? Operand() : elements().absentElement(call.context(), representation));
 }
 
 void ArrayStorageBuiltinEmitter::generateArrayPush(const InlineCall& call)
@@ -156,10 +149,9 @@ void ArrayStorageBuiltinEmitter::pushOne(const InlineCall& call, CellPointer arr
         return;
     }
 
-    ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
     ArrayStorage expected = ArrayAllocationEmitter(generator()).formAtAllocation(typeOf(call.receiver())).kind;
     ArrayStorage declared = arrayStorageDeclaredBy(m_program, typeOf(call.receiver()));
-    ArrayStorageFormList forms = elements.candidateFormsFor(pushed, expected);
+    ArrayStorageFormList forms = elements().candidateFormsFor(pushed, expected);
     // An array of any other kind than its element type declares takes the stub, which knows them all.
     if (hasArrayStorageForm(declared) && forms.size() > 1 && forms.first()->kind == declared)
         forms.shrink(1);
@@ -168,23 +160,23 @@ void ArrayStorageBuiltinEmitter::pushOne(const InlineCall& call, CellPointer arr
     LBasicBlock slowPath = newBlock();
     OperandJoin join(m_out, resultRepresentationOf(call));
 
-    ArrayElements storage = elements.elementsOf(array);
-    Integer length = elements.publicLength(storage);
-    branchUnless(below(length, elements.vectorLength(storage)), slowPath);
+    ArrayElements storage = elements().elementsOf(array);
+    Integer length = elements().publicLength(storage);
+    branchUnless(below(length, elements().vectorLength(storage)), slowPath);
     // Read in the block that asks for it: a compare reads the byte from memory.
-    Word32 mode = elements.indexingMode(array, IndexingShapeAndWritabilityMask);
-    elements.forEachFormByWritableShape(mode, forms, slowPath, [&](const ArrayStorageForm& form) {
-        Operand rawElement = *elements.rawElementToStore(form, pushed, slowPath);
+    Word32 mode = elements().indexingMode(array, IndexingShapeAndWritabilityMask);
+    elements().forEachFormByShape(mode, &ElementAccessEmitter::hasWritableShape, forms, slowPath, [&](const ArrayStorageForm& form) {
+        Operand rawElement = *elements().rawElementToStore(form, pushed, slowPath);
         // An array that needs a barrier takes the stub, which remembers the pushed element and not the array.
         if (form.holdsCells && mayPushCell)
             branchUnless(emitter<BarrierEmitter>().isBeyondBarrierThreshold(array), slowPath);
-        elements.storeRawElement(form, storage, length, rawElement);
+        elements().storeRawElement(form, storage, length, rawElement);
         m_out.jump(isStored);
     });
 
     m_out.appendTo(isStored);
     Integer newLength = add(length, integer(1));
-    elements.setPublicLength(storage, newLength);
+    elements().setPublicLength(storage, newLength);
     join.add(lengthResult(call, newLength));
 
     m_out.appendTo(slowPath);
@@ -194,27 +186,8 @@ void ArrayStorageBuiltinEmitter::pushOne(const InlineCall& call, CellPointer arr
 
 Operand ArrayStorageBuiltinEmitter::pushOutOfLine(const InlineCall& call, CellPointer array, ValueID pushed)
 {
-    ConversionEmitter& conversions = emitter<ConversionEmitter>();
-    Operand operand = get(pushed);
-    if (operand.is<Number>() && typeOf(pushed).isInt32())
-        operand = Operand(boxInt32(conversions.toInt32(operand.as<Number>())));
-    StubCallResult newLength = operand.is<Number>()
-        ? callStub(call.context(), arrayPushDouble(), { array.value(), conversions.bitsOf(operand).value() })
-        : callStub(call.context(), arrayPush(), { array.value(), conversions.box(call.context(), operand, typeOf(pushed)).value() });
-    return conversions.unbox(Boxed(newLength.first), resultTypeOf(call), resultRepresentationOf(call));
-}
-
-ArrayElements ArrayStorageBuiltinEmitter::makeRoom(const InlineCall& call, const ArrayElements& storage, Integer newLength)
-{
-    ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
-    Pointer butterfly = either<Pointer>(belowOrEqual(newLength, elements.vectorLength(storage)), [&] {
-        return storage.butterfly;
-    }, [&] {
-        Integer hasGrown = callOperation<Integer>(call.context(), RuntimeOperation::ArrayGrow, { storage.array, low32(newLength) }, { .isOnRarePath = true });
-        branchUnless(isNotZero(hasGrown), missBlockOf(call));
-        return elements.elementsOf(storage.array).butterfly;
-    });
-    return { storage.array, butterfly };
+    Boxed newLength = elements().appendOutOfLine(call.context(), array, pushed);
+    return emitter<ConversionEmitter>().unbox(newLength, resultTypeOf(call), resultRepresentationOf(call));
 }
 
 void ArrayStorageBuiltinEmitter::pushSeveral(const InlineCall& call, CellPointer array)
@@ -225,12 +198,11 @@ void ArrayStorageBuiltinEmitter::pushSeveral(const InlineCall& call, CellPointer
         return;
     }
 
-    ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
     std::span<const ValueID> pushed = call.arguments();
     ArrayStorageFormList forms = formsStartingWith(ArrayAllocationEmitter(generator()).formAtAllocation(typeOf(call.receiver())));
     forms.removeAllMatching([&](const ArrayStorageForm* form) {
         return std::ranges::any_of(pushed, [&](ValueID id) {
-            return !elements.candidateFormsFor(id, form->kind).contains(form);
+            return !elements().candidateFormsFor(id, form->kind).contains(form);
         });
     });
     bool mayPushCell = std::ranges::any_of(pushed, [&](ValueID id) {
@@ -239,20 +211,27 @@ void ArrayStorageBuiltinEmitter::pushSeveral(const InlineCall& call, CellPointer
     LBasicBlock miss = missBlockOf(call);
     LBasicBlock isStored = newBlock();
 
-    Word32 mode = elements.indexingMode(array, IndexingShapeAndWritabilityMask);
-    ArrayElements currentStorage = elements.elementsOf(array);
-    Integer length = elements.publicLength(currentStorage);
+    Word32 mode = elements().indexingMode(array, IndexingShapeAndWritabilityMask);
+    ArrayElements currentStorage = elements().elementsOf(array);
+    Integer length = elements().publicLength(currentStorage);
     Integer newLength = add(length, integer(pushed.size()));
     // No program can observe the capacity, so the call may still miss after the vector has grown.
-    ArrayElements storage = makeRoom(call, currentStorage, newLength);
-    elements.forEachFormByWritableShape(mode, forms, miss, [&](const ArrayStorageForm& form) {
+    Pointer butterfly = either<Pointer>(belowOrEqual(newLength, elements().vectorLength(currentStorage)), [&] {
+        return currentStorage.butterfly;
+    }, [&] {
+        Integer hasGrown = callOperation<Integer>(call.context(), RuntimeOperation::ArrayGrow, { array, low32(newLength) }, { .isOnRarePath = true });
+        branchUnless(isNotZero(hasGrown), miss);
+        return elements().elementsOf(array).butterfly;
+    });
+    ArrayElements storage { array, butterfly };
+    elements().forEachFormByShape(mode, &ElementAccessEmitter::hasWritableShape, forms, miss, [&](const ArrayStorageForm& form) {
         // Nothing is stored before every element is known to fit.
         Vector<Operand, maxInlinePushOperands> rawElements;
         for (ValueID id : pushed)
-            rawElements.append(*elements.rawElementToStore(form, id, miss));
+            rawElements.append(*elements().rawElementToStore(form, id, miss));
         for (size_t i = 0; i < rawElements.size(); ++i)
-            elements.storeRawElement(form, storage, add(length, integer(i)), rawElements[i]);
-        elements.setPublicLength(storage, newLength);
+            elements().storeRawElement(form, storage, add(length, integer(i)), rawElements[i]);
+        elements().setPublicLength(storage, newLength);
         if (form.holdsCells && mayPushCell)
             emitter<BarrierEmitter>().barrier(call.context(), array);
         m_out.jump(isStored);
@@ -279,7 +258,7 @@ void ArrayStorageBuiltinEmitter::generateArrayWithLength(const InlineCall& call)
     ArrayAllocationEmitter allocation(generator());
     LBasicBlock isNotInteger = newBlock();
     Join<Integer> join(m_out);
-    join.add(emitter<ElementAccessEmitter>().indexOrElse(call.argument(0), false, isNotInteger));
+    join.add(elements().indexOrElse(call.argument(0), false, isNotInteger));
 
     m_out.appendTo(isNotInteger);
     join.add(integer(invalidArrayLength));

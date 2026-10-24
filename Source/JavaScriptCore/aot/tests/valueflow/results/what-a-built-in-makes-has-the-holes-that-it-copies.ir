@@ -21,7 +21,6 @@ variable g4 name="twice" module=m0 declared={type=anything} initialization=Undef
 variable g5 name="reversed" module=m0 declared={type=anything} initialization=Undefined
 variable g6 name="ofObject" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = Integer integer=2
     v2 = NewArray v0, v1 contents=anything

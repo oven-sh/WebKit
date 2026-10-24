@@ -4,29 +4,4 @@
 # RUN: check-replacement summaries-before=f2 f0 v7 v6
 # DIAGNOSTIC: EffectsExceedReplacedGroup 1
 # CHECK-NOT: valid
-
-module m0 path="main.js" displayPath="main.js"
-variable g0 name="onlyCompiledCodeWrites" module=m0 declared={type=anything} initialization=Undefined flow={writers=AllKnown}
-function f0 name="waits" parameters=[{type=Promise}, {type=anything}] results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
-  b0(v0: Promise, v1: anything):
-    v2 = NewClosure function=f2
-    v3 = Call v1, v0, v2, v2 calleeKey="then"
-    v4 = CallBuiltin v0, v2, v2 overload=PromisePrototypeThen/0
-    v5 = NewClosure function=f3
-    v6 = Call v1, v0, v5, v5 calleeKey="then"
-    v7 = CallBuiltin v0, v5, v5 overload=PromisePrototypeThen/0
-    Return
-}
-function f1 name="target" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame] {
-  b0(v0: anything):
-    Return v0
-}
-function f2 name="target" kind=Arrow role=BoundFunction parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame] derivation={source=f1} creator=BoundFunction{target=f1} {
-  b0(v0: anything):
-    v1 = CallDirect v0 function=f1
-    ReturnCall v1 requirement=Allowed
-}
-function f3 name="other" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame] {
-  b0(v0: anything):
-    Return v0
-}
+# PROGRAM-OF: bound-function-made-behind-the-summaries.ir

@@ -12,8 +12,11 @@
 #include "AOTInstance.h"
 #include "AOTProgramStrings.h"
 #include "AOTRuntimeTable.h"
+#include "AOTRuntimeWords.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
+#include "AOTStubsGlobalBindings.h"
+#include "JSGlobalObject.h"
 #include "JSString.h"
 #include "RememberedSlot.h"
 #include <wtf/CheckedArithmetic.h>
@@ -23,31 +26,24 @@ namespace JSC { namespace AOT {
 // On x86-64 the immediate and the result share a register.
 static StubSignature signatureOfConstant()
 {
-    StubSignature signature;
-    signature.result = StubResult::GPR;
-    signature.firstResult = GPRInfo::returnValueGPR;
+    StubSignature signature = StubSignature::withGPRResult({ });
     signature.immediate = isARM64() ? gprOf(stubImmediateRegister) : GPRInfo::returnValueGPR;
     return signature;
 }
 
 static void createConstantAndReturn(StubAssembler& jit, Entry operation, GPRReg number)
 {
-    jit.callOperationAndReturn(operation, {
-        .returns = OperationCall::Returns::Value,
-        .firstArgument = OperationCall::FirstArgument::Instance,
-        .saves = OperationCall::Saves::CallerSavedRegisters,
-        .checksException = false,
-        .secondArgumentIn = number,
-    });
+    jit.callOperationAndReturn(operation, { .saves = OperationCall::Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = number });
 }
 
-static void jumpToUnboundStub(StubAssembler& jit)
-{
-    jit.move(TrustedImm32(*jit.key().immediate()), *jit.signature().immediate);
-    jit.jumpToStub(jit.key().withoutImmediate());
-}
+struct ConstantRegisters {
+    GPRReg number;
+    GPRReg result;
+    GPRReg table;
+    GPRReg index;
+};
 
-static void returnCellFromTable(StubAssembler& jit, int32_t offsetOfTable, Entry createOperation)
+static ConstantRegisters allocateConstantRegisters(StubAssembler& jit)
 {
     const GPRReg number = jit.immediate();
     const GPRReg result = jit.result();
@@ -59,11 +55,26 @@ static void returnCellFromTable(StubAssembler& jit, int32_t offsetOfTable, Entry
     const GPRReg index = jit.allocateScratch(StubRegister::T12);
 #endif
     RELEASE_ASSERT(noOverlap(result, table, index, instanceGPR, cellCageBaseGPR) && number != table);
+    return { number, result, table, index };
+}
+
+enum class CellReference : bool { Wide, Narrow };
+
+static void returnCellFromTable(StubAssembler& jit, int32_t offsetOfTable, CellReference reference, Entry createOperation)
+{
+    const auto [number, result, table, index] = allocateConstantRegisters(jit);
+    Jump isNotCreated;
 
     jit.loadPtr(Address(instanceGPR, offsetOfTable), table);
     jit.zeroExtend32ToWord(number, index);
-    jit.load64(BaseIndex(table, index, CCallHelpers::TimesEight), result);
-    Jump isNotCreated = jit.branchTest64(CCallHelpers::Zero, result);
+    if (reference == CellReference::Narrow) {
+        jit.load32(BaseIndex(table, index, CCallHelpers::TimesFour), result);
+        isNotCreated = jit.branchTest32(CCallHelpers::Zero, result);
+        decodeCell32(jit, result, result);
+    } else {
+        jit.load64(BaseIndex(table, index, CCallHelpers::TimesEight), result);
+        isNotCreated = jit.branchTest64(CCallHelpers::Zero, result);
+    }
     jit.returnToCaller();
 
     isNotCreated.link(&jit);
@@ -275,16 +286,7 @@ static void createCellOfImageStringAndReturn(StubAssembler& jit, GPRReg wordAndR
 
 static void returnStringConstant(StubAssembler& jit)
 {
-    const GPRReg number = jit.immediate();
-    const GPRReg result = jit.result();
-#if CPU(X86_64)
-    constexpr GPRReg address = CCallHelpers::s_scratchRegister;
-    const GPRReg index = jit.allocateScratch(StubRegister::T9);
-#else
-    const GPRReg address = jit.allocateScratch(StubRegister::T11);
-    const GPRReg index = jit.allocateScratch(StubRegister::T12);
-#endif
-    RELEASE_ASSERT(noOverlap(result, address, index, instanceGPR, cellCageBaseGPR) && number != address);
+    const auto [number, result, address, index] = allocateConstantRegisters(jit);
     Jump isNotCreated;
 
     jit.zeroExtend32ToWord(number, index);
@@ -319,11 +321,7 @@ static void returnStringConstant(StubAssembler& jit)
 static void returnNewStringConstant(StubAssembler& jit)
 {
 #if CPU(X86_64)
-    const GPRReg string = jit.immediate();
-    const GPRReg result = jit.result();
-    constexpr GPRReg address = CCallHelpers::s_scratchRegister;
-    const GPRReg index = jit.allocateScratch(StubRegister::T9);
-    RELEASE_ASSERT(noOverlap(result, address, index, instanceGPR, cellCageBaseGPR) && string != address);
+    const auto [string, result, address, index] = allocateConstantRegisters(jit);
     JumpList cannot;
 
     jit.zeroExtend32ToWord(string, index);
@@ -335,34 +333,6 @@ static void returnNewStringConstant(StubAssembler& jit)
 #else
     createConstantAndReturn(jit, Entry::operationAOTNewStringConstant, jit.immediate());
 #endif
-}
-
-static void returnKeyConstant(StubAssembler& jit)
-{
-    if (jit.options().useWideReferences) {
-        returnCellFromTable(jit, AOT_INSTANCE_OFFSET(runtime.constants.wideKeyCells), Entry::operationAOTKeyConstant);
-        return;
-    }
-    const GPRReg number = jit.immediate();
-    const GPRReg result = jit.result();
-#if CPU(X86_64)
-    constexpr GPRReg table = CCallHelpers::s_scratchRegister;
-    const GPRReg index = jit.allocateScratch(StubRegister::T9);
-#else
-    const GPRReg table = jit.allocateScratch(StubRegister::T11);
-    const GPRReg index = jit.allocateScratch(StubRegister::T12);
-#endif
-    RELEASE_ASSERT(noOverlap(result, table, index, instanceGPR, cellCageBaseGPR) && number != table);
-
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.constants.keyCells)), table);
-    jit.zeroExtend32ToWord(number, index);
-    jit.load32(BaseIndex(table, index, CCallHelpers::TimesFour), result);
-    Jump isNotCreated = jit.branchTest32(CCallHelpers::Zero, result);
-    decodeCell32(jit, result, result);
-    jit.returnToCaller();
-
-    isNotCreated.link(&jit);
-    createConstantAndReturn(jit, Entry::operationAOTKeyConstant, index);
 }
 
 // Behind a miss in the cache of such names, which the operation fills.
@@ -379,17 +349,15 @@ void generateCreateConstant(StubAssembler& jit)
 {
     switch (static_cast<CreatedConstant>(jit.key().form())) {
     case CreatedConstant::String:
-        returnStringConstant(jit);
-        return;
+        return returnStringConstant(jit);
     case CreatedConstant::NewString:
-        returnNewStringConstant(jit);
-        return;
+        return returnNewStringConstant(jit);
     case CreatedConstant::Key:
-        returnKeyConstant(jit);
-        return;
+        if (jit.options().useWideReferences)
+            return returnCellFromTable(jit, AOT_INSTANCE_OFFSET(runtime.constants.wideKeyCells), CellReference::Wide, Entry::operationAOTKeyConstant);
+        return returnCellFromTable(jit, AOT_INSTANCE_OFFSET(runtime.constants.keyCells), CellReference::Narrow, Entry::operationAOTKeyConstant);
     case CreatedConstant::FunctionName:
-        returnFunctionName(jit);
-        return;
+        return returnFunctionName(jit);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -406,7 +374,7 @@ void generateBuiltinCell(StubAssembler& jit)
     constexpr int32_t offsetOfTable = AOT_INSTANCE_PREFIX_OFFSET(builtinCells);
     std::optional<uint32_t> index = jit.key().immediate();
     if (!index) {
-        returnCellFromTable(jit, offsetOfTable, Entry::operationAOTBuiltinCell);
+        returnCellFromTable(jit, offsetOfTable, CellReference::Wide, Entry::operationAOTBuiltinCell);
         return;
     }
     const GPRReg result = jit.result();
@@ -417,7 +385,58 @@ void generateBuiltinCell(StubAssembler& jit)
     jit.returnToCaller();
 
     isNotCreated.link(&jit);
-    jumpToUnboundStub(jit);
+    jit.move(TrustedImm32(*index), *jit.signature().immediate);
+    jit.jumpToStub(jit.key().withoutImmediate());
+}
+
+StubSignature signatureOfGetGlobalBinding(StubKey)
+{
+    return signatureOfConstant();
+}
+
+// What the record holds: a constant, or the place of a value under the Structure, and the epoch of the scripts' bindings, that it was filed under. A record that holds nothing has a Structure that no object has.
+void generateGetGlobalBinding(StubAssembler& jit)
+{
+    const auto scope = static_cast<GlobalBindingScope>(jit.key().form());
+    const GPRReg result = jit.result();
+#if CPU(X86_64)
+    const GPRReg number = jit.allocateScratch(stubImmediateRegister);
+    jit.zeroExtend32ToWord(jit.immediate(), number);
+#else
+    const GPRReg number = jit.immediate();
+#endif
+    const GPRReg record = jit.allocateScratch(StubRegister::T10);
+    const GPRReg global = jit.allocateScratch(StubRegister::T11);
+    JumpList callsOperation;
+
+    static_assert(sizeof(GlobalBinding) == 3 * sizeof(uint64_t));
+    jit.getEffectiveAddress(BaseIndex(number, number, CCallHelpers::TimesTwo), record);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.counters.globalBindings)), result);
+    jit.getEffectiveAddress(BaseIndex(result, record, CCallHelpers::TimesEight), record);
+    jit.load64(Address(record, OBJECT_OFFSETOF(GlobalBinding, constant)), result);
+    Jump isNoConstant = jit.branchTest64(CCallHelpers::Zero, result);
+    jit.returnToCaller();
+
+    isNoConstant.link(&jit);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), global);
+    jit.load32(Address(global, JSCell::structureIDOffset()), result);
+    callsOperation.append(jit.branch32(CCallHelpers::NotEqual, result, Address(record, OBJECT_OFFSETOF(GlobalBinding, structureID))));
+    if (scope == GlobalBindingScope::ScriptsAndGlobalObject) {
+        jit.load32(Address(global, JSGlobalObject::globalLexicalBindingEpochOffset()), result);
+        callsOperation.append(jit.branch32(CCallHelpers::NotEqual, result, Address(record, OBJECT_OFFSETOF(GlobalBinding, lexicalBindingEpoch))));
+    }
+    jit.load64(Address(record, OBJECT_OFFSETOF(GlobalBinding, location)), record);
+    Jump isAddress = jit.branch64(CCallHelpers::GreaterThanOrEqual, record, TrustedImm32(0));
+    jit.loadPtr(Address(global, JSObject::butterflyOffset()), global);
+    jit.add64(global, record);
+    isAddress.link(&jit);
+    jit.load64(Address(record), result);
+    callsOperation.append(jit.branchTest64(CCallHelpers::Zero, result));
+    jit.returnToCaller();
+
+    callsOperation.link(&jit);
+    Entry operation = scope == GlobalBindingScope::ScriptsAndGlobalObject ? Entry::operationAOTGetGlobalBinding : Entry::operationAOTGetGlobalObjectBinding;
+    jit.callOperationAndReturn(operation, { .saves = OperationCall::Saves::CallerSavedRegisters, .secondArgumentIn = number });
 }
 
 } } // namespace JSC::AOT

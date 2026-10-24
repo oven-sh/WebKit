@@ -10,7 +10,6 @@ layout L2 kind=Instance name="Widget" constructor=f0 flow={baseState=None}
 function f0 name="Widget" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
 
 function f1 name="underPassedTest" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b4()
   b1(v2):
@@ -23,8 +22,6 @@ function f1 name="underPassedTest" parameters=[{type=object}] results=[{type=any
     Return v0
   b4():
     Return v0
-}
-# CHECK-LABEL: function f1 name="underPassedTest"
 # CHECK: v1: boolean = ShapeTest v0 layouts=[L0]
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b4()
 # CHECK-NEXT: b1(v2: guard):
@@ -34,9 +31,9 @@ function f1 name="underPassedTest" parameters=[{type=object}] results=[{type=any
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: b3():
 # CHECK-NEXT: Unreachable
+}
 
 function f2 name="chain" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(), notTaken b6()
   b1():
@@ -54,8 +51,6 @@ function f2 name="chain" parameters=[{type=object}] results=[{type=anything}] {
     Return v0
   b6():
     Return v0
-}
-# CHECK-LABEL: function f2 name="chain"
 # CHECK: v1: boolean = ShapeTest v0 layouts=[L0]
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b6()
 # CHECK-NEXT: b1([[first2]]: guard):
@@ -64,9 +59,9 @@ function f2 name="chain" parameters=[{type=object}] results=[{type=anything}] {
 # CHECK-NEXT: Jump -> next b3([[first2]])
 # CHECK-NEXT: b3(v4: guard):
 # CHECK-NOT: ShapeTest
+}
 
 function f3 name="throughUpcast" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b3()
   b1(v2):
@@ -78,14 +73,12 @@ function f3 name="throughUpcast" parameters=[{type=object}] results=[{type=anyth
     Return v6
   b3():
     Return v0
-}
-# CHECK-LABEL: function f3 name="throughUpcast"
 # CHECK: b1(v2: guard):
 # CHECK-NOT: ShapeTest
 # CHECK: Jump -> next b2(v2)
+}
 
 function f4 name="memberUnchanged" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = AreMembersUnchanged conditions=[{layout=L2 key="draw"}]
     Branch v1 -> taken b1(), notTaken b3()
   b1():
@@ -95,14 +88,12 @@ function f4 name="memberUnchanged" parameters=[{type=anything}] results=[{type=a
     Return v0
   b3():
     Return v0
-}
-# CHECK-LABEL: function f4 name="memberUnchanged"
 # CHECK: v1: boolean = AreMembersUnchanged conditions=[{layout=L2 key="draw"}]
 # CHECK-NOT: AreMembersUnchanged
 # CHECK: Jump -> next b2()
+}
 
 function f5 name="onBothArms" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: object, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = ShapeTest v0 layouts=[L0]
@@ -122,8 +113,6 @@ function f5 name="onBothArms" parameters=[{type=object}, {type=boolean}] results
     Return v8
   b7():
     Return v0
-}
-# CHECK-LABEL: function f5 name="onBothArms"
 # CHECK: b3(v4: guard):
 # CHECK-NEXT: Jump -> next b5(v4)
 # CHECK-NEXT: b4(v5: guard):
@@ -132,9 +121,9 @@ function f5 name="onBothArms" parameters=[{type=object}, {type=boolean}] results
 # CHECK-NEXT: Jump -> next b6([[joined5]])
 # CHECK-NEXT: b6(v7: guard):
 # CHECK-NEXT: v8: number = GetSlot v0, v7 key="x" receivers=[L0] level=Expected
+}
 
 function f6 name="underSwitchCase" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     SwitchOnShape v0 layoutSets=[[L0], [L1]] -> case b1(| 0), case b2(| 0), otherwise b5()
   b1(v1):
     v2 = ShapeTest v0 layouts=[L0]
@@ -148,14 +137,12 @@ function f6 name="underSwitchCase" parameters=[{type=object}] results=[{type=any
     Return v0
   b5():
     Return v0
-}
-# CHECK-LABEL: function f6 name="underSwitchCase"
 # CHECK: b1(v1: guard):
 # CHECK-NEXT: Jump -> next b3(v1)
 # CHECK-NOT: ShapeTest
+}
 
 function f7 name="alsoReturned" parameters=[{type=object}] results=[{type=boolean}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b3()
   b1(v2):
@@ -165,15 +152,13 @@ function f7 name="alsoReturned" parameters=[{type=object}] results=[{type=boolea
     Return v3
   b3():
     Return v1
-}
-# CHECK-LABEL: function f7 name="alsoReturned"
 # CHECK: b1(v2: guard):
 # CHECK-NOT: ShapeTest
 # CHECK: [[yes8]]: true = Boolean boolean=true
 # CHECK: Return [[yes8]]
+}
 
 function f8 name="writeBetween" parameters=[{type=Array<anything>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array<anything>, v1: anything):
     v2 = HasArrayStorage v0 arrayStorage=Int32
     Branch v2 -> taken b1(| 0), notTaken b3()
   b1(v3):
@@ -184,12 +169,10 @@ function f8 name="writeBetween" parameters=[{type=Array<anything>}, {type=anythi
     Return v0
   b3():
     Return v1
-}
-# CHECK-LABEL: function f8 name="writeBetween"
 # CHECK-COUNT-2: = HasArrayStorage v0 arrayStorage=Int32
+}
 
 function f9 name="nothingWrittenBetween" parameters=[{type=Array<anything>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array<anything>, v1: anything):
     v2 = HasArrayStorage v0 arrayStorage=Int32
     Branch v2 -> taken b1(| 0), notTaken b3()
   b1(v3):
@@ -199,13 +182,11 @@ function f9 name="nothingWrittenBetween" parameters=[{type=Array<anything>}, {ty
     Return v0
   b3():
     Return v1
-}
-# CHECK-LABEL: function f9 name="nothingWrittenBetween"
 # CHECK: = HasArrayStorage v0 arrayStorage=Int32
 # CHECK-NOT: HasArrayStorage
+}
 
 function f10 name="callBetween" parameters=[{type=object}, {type=function}] results=[{type=anything}] {
-  b0(v0: object, v1: function):
     v2 = ShapeTest v0 layouts=[L0]
     Branch v2 -> taken b1(| 0), notTaken b3()
   b1(v3):
@@ -217,13 +198,11 @@ function f10 name="callBetween" parameters=[{type=object}, {type=function}] resu
     Return v7
   b3():
     Return v0
-}
-# CHECK-LABEL: function f10 name="callBetween"
 # CHECK: = ShapeTest v0 layouts=[L0]
 # CHECK-NOT: ShapeTest
+}
 
 function f11 name="onOneArmOnly" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: object, v1: boolean):
     Branch v1 -> taken b1(), notTaken b3()
   b1():
     v2 = ShapeTest v0 layouts=[L0]
@@ -238,12 +217,10 @@ function f11 name="onOneArmOnly" parameters=[{type=object}, {type=boolean}] resu
     Return v6
   b5():
     Return v0
-}
-# CHECK-LABEL: function f11 name="onOneArmOnly"
 # CHECK-COUNT-2: = ShapeTest v0 layouts=[L0]
+}
 
 function f12 name="underFailedTest" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
@@ -256,12 +233,10 @@ function f12 name="underFailedTest" parameters=[{type=object}] results=[{type=an
     Return v5
   b4():
     Return v0
-}
-# CHECK-LABEL: function f12 name="underFailedTest"
 # CHECK-COUNT-2: = ShapeTest v0 layouts=[L0]
+}
 
 function f13 name="otherLayoutSet" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b3()
   b1(v2):
@@ -272,13 +247,11 @@ function f13 name="otherLayoutSet" parameters=[{type=object}] results=[{type=any
     Return v5
   b3():
     Return v0
-}
-# CHECK-LABEL: function f13 name="otherLayoutSet"
 # CHECK: = ShapeTest v0 layouts=[L0]
 # CHECK: = ShapeTest v0 layouts=[L0, L1]
+}
 
 function f14 name="otherObject" parameters=[{type=object}, {type=object}] results=[{type=anything}] {
-  b0(v0: object, v1: object):
     v2 = ShapeTest v0 layouts=[L0]
     Branch v2 -> taken b1(| 0), notTaken b3()
   b1(v3):
@@ -289,13 +262,11 @@ function f14 name="otherObject" parameters=[{type=object}, {type=object}] result
     Return v6
   b3():
     Return v0
-}
-# CHECK-LABEL: function f14 name="otherObject"
 # CHECK: = ShapeTest v0 layouts=[L0]
 # CHECK: = ShapeTest v1 layouts=[L0]
+}
 
 function f15 name="suspensionBetween" flags=[IsAsync] parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
     v2 = AreMembersUnchanged conditions=[{layout=L2 key="draw"}]
     Branch v2 -> taken b1(| 0), notTaken b3()
   b1(v3):
@@ -306,12 +277,10 @@ function f15 name="suspensionBetween" flags=[IsAsync] parameters=[{type=object},
     Return v4
   b3():
     Return v0
-}
-# CHECK-LABEL: function f15 name="suspensionBetween"
 # CHECK-COUNT-2: = AreMembersUnchanged conditions=[{layout=L2 key="draw"}]
+}
 
 function f16 name="typeTest" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=number
     Branch v1 -> taken b1(), notTaken b3()
   b1():
@@ -321,12 +290,10 @@ function f16 name="typeTest" parameters=[{type=anything}] results=[{type=anythin
     Return v3
   b3():
     Return v0
-}
-# CHECK-LABEL: function f16 name="typeTest"
 # CHECK-COUNT-2: = TypeTest v0 testedType=number
+}
 
 function f17 name="underOtherSwitchCase" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     SwitchOnShape v0 layoutSets=[[L0], [L1]] -> case b1(| 0), case b2(| 0), otherwise b5()
   b1(v1):
     Return v0
@@ -340,8 +307,7 @@ function f17 name="underOtherSwitchCase" parameters=[{type=object}] results=[{ty
     Return v0
   b5():
     Return v0
-}
-# CHECK-LABEL: function f17 name="underOtherSwitchCase"
 # CHECK: b2(v2: guard):
 # CHECK-NEXT: v3: boolean = ShapeTest v0 layouts=[L0]
 # CHECK-NEXT: Branch v3 -> taken b3(| 0), notTaken b4()
+}

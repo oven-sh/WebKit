@@ -10,7 +10,6 @@ runtimefunction id=3 function=f3
 runtimefunction id=4 function=f4
 
 function f0 name="provenStrings" role=Library enclosingRuntimeFunction=0 parameters=[{type=Array<string, proven>}] results=[{type=anything}] {
-  b0(v0: Array<string, proven>):
     v1 = ArrayStorageKind v0
     Switch v1 cases=[2, 3, 1] -> case b1(), case b2(), case b2(), otherwise b3()
   b1():
@@ -22,13 +21,11 @@ function f0 name="provenStrings" role=Library enclosingRuntimeFunction=0 paramet
   b3():
     v4 = Integer integer=30
     Return v4
-}
-# CHECK-LABEL: function f0 name="provenStrings"
 # CHECK: Switch v1 cases=[3, 1] -> case b2(), case b2(), otherwise b3()
 # CHECK-NOT: integer=10
+}
 
 function f1 name="provenNumbers" role=Library enclosingRuntimeFunction=1 parameters=[{type=Array<number, proven>}] results=[{type=anything}] {
-  b0(v0: Array<number, proven>):
     v1 = ArrayStorageKind v0
     Switch v1 cases=[2, 3, 1] -> case b1(), case b2(), case b2(), otherwise b3()
   b1():
@@ -40,12 +37,10 @@ function f1 name="provenNumbers" role=Library enclosingRuntimeFunction=1 paramet
   b3():
     v4 = Integer integer=30
     Return v4
-}
-# CHECK-LABEL: function f1 name="provenNumbers"
 # CHECK: Switch v1 cases=[2, 3, 1] -> case b1(), case b2(), case b2(), otherwise b3()
+}
 
 function f2 name="stringsWithoutProof" role=Library enclosingRuntimeFunction=2 parameters=[{type=Array<string>}] results=[{type=anything}] {
-  b0(v0: Array<string>):
     v1 = ArrayStorageKind v0
     Switch v1 cases=[2, 3, 1] -> case b1(), case b2(), case b2(), otherwise b3()
   b1():
@@ -57,12 +52,10 @@ function f2 name="stringsWithoutProof" role=Library enclosingRuntimeFunction=2 p
   b3():
     v4 = Integer integer=30
     Return v4
-}
-# CHECK-LABEL: function f2 name="stringsWithoutProof"
 # CHECK: Switch v1 cases=[2, 3, 1] -> case b1(), case b2(), case b2(), otherwise b3()
+}
 
 function f3 name="otherIntegerOfTheSameRange" role=Library enclosingRuntimeFunction=3 parameters=[{type=Array<string, proven>}, {type=int[0, 3]}] results=[{type=anything}] {
-  b0(v0: Array<string, proven>, v1: int[0, 3]):
     Switch v1 cases=[2, 3, 1] -> case b1(), case b2(), case b2(), otherwise b3()
   b1():
     v2 = Integer integer=10
@@ -73,12 +66,10 @@ function f3 name="otherIntegerOfTheSameRange" role=Library enclosingRuntimeFunct
   b3():
     v4 = Integer integer=30
     Return v4
-}
-# CHECK-LABEL: function f3 name="otherIntegerOfTheSameRange"
 # CHECK: Switch v1 cases=[2, 3, 1] -> case b1(), case b2(), case b2(), otherwise b3()
+}
 
 function f4 name="comparisons" role=Library enclosingRuntimeFunction=4 parameters=[{type=Array<string, proven>}] results=[{type=anything}] {
-  b0(v0: Array<string, proven>):
     v1 = ArrayStorageKind v0
     v2 = Integer integer=2
     v3 = StrictEq v1, v2

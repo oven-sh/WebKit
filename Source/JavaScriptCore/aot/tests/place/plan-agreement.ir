@@ -16,7 +16,6 @@ variable g0 name="numberOrString" module=m0 declared={type=anything} initializat
 variable g1 name="texts" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToNumber v1

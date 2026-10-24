@@ -41,7 +41,6 @@ variable g5 name="WithStatic" module=m0 declared={type=f6 flags=[IsFromCompiler]
 data d0 root=Object{layout=L6 members=[{key="other" value=Number{value=1}}]} module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = GetModuleVariable variable=g0
     v2 = Construct v1, -, v0 calleeName="Plain"
@@ -73,43 +72,36 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v27
 }
 function f1 name="Plain" flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
-  b0(v0: L0, v1: anything):
     PropSet v0, v1 key="x"
     v3 = Undefined
     Return v3
 }
 function f2 name="WithMethod" flags=[HasThis, HasExplicitName] length=1 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L1 {
-  b0(v0: L1, v1: anything):
     PropSet v0, v1 key="x"
     v3 = Undefined
     Return v3
 }
 function f3 name="Replaced" flags=[HasThis, HasExplicitName] length=1 thisType={type=L2 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L2 {
-  b0(v0: L2, v1: anything):
     PropSet v0, v1 key="x"
     v3 = Undefined
     Return v3
 }
 function f4 name="Relinked" flags=[HasThis, HasExplicitName] length=1 thisType={type=L3 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L3 {
-  b0(v0: L3, v1: anything):
     PropSet v0, v1 key="x"
     v3 = Undefined
     Return v3
 }
 function f5 name="HandedOut" flags=[HasThis, HasExplicitName] length=1 thisType={type=L4 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L4 {
-  b0(v0: L4, v1: anything):
     PropSet v0, v1 key="x"
     v3 = Undefined
     Return v3
 }
 function f6 name="WithStatic" flags=[HasThis, HasExplicitName] length=1 thisType={type=L5 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L5 {
-  b0(v0: L5, v1: anything):
     PropSet v0, v1 key="x"
     v3 = Undefined
     Return v3
 }
 function f7 name="twice" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="x"
     v2 = Integer integer=2
     v3 = Mul v1, v2

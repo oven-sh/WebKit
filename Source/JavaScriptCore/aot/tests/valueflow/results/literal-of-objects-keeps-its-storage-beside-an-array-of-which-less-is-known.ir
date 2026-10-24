@@ -23,7 +23,6 @@ variable g1 name="numbers" module=m0 declared={type=anything} initialization=Und
 data d0 root=Object{layout=L0 members=[{key="m" value=Number{value=4}}]} module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Data data=d0
     v1 = NewArray v0, v0 contents=anything
     PutModuleVariable v1 variable=g0
@@ -39,25 +38,21 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="first" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer
     v2 = ElemGet v0, v1
     Return v2
 }
 function f2 name="rest" flags=[HasRestParameter] parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
-  b0(v0: Array):
     v1 = NewClosure function=f1
     v2 = Call v1, -, v0
     Return v2
 }
 function f3 name="count" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     v2 = ElemGet v0, v1
     Return v2
 }
 function f4 name="ofNumbers" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer
     v2 = BitOr v0, v1
     v3 = NewArray v2 contents=anything
@@ -69,13 +64,11 @@ function f4 name="ofNumbers" parameters=[{type=anything}] results=[{type=anythin
     Return v8
 }
 function f5 name="firstNumber" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer
     v2 = ElemGet v0, v1
     Return v2
 }
 function f6 name="restOfNumbers" flags=[HasRestParameter] parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
-  b0(v0: Array):
     v1 = NewClosure function=f5
     v2 = Call v1, -, v0
     Return v2

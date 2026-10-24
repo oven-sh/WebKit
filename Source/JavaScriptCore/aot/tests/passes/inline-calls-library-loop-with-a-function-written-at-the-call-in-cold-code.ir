@@ -8,7 +8,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="visitsEachInTheLibrary" role=Library parameters=[{type=anything}, {type=int[0, 100]}, {type=number}] results=[{type=boolean}] {
-  b0(v0: anything, v1: int[0, 100], v2: number):
     v3 = Integer integer=0
     Jump -> next b1(v3)
   b1(v4):
@@ -34,7 +33,6 @@ function f0 name="visitsEachInTheLibrary" role=Library parameters=[{type=anythin
 }
 
 function f1 name="visitsEachInTheProgram" parameters=[{type=anything}, {type=int[0, 100]}, {type=number}] results=[{type=boolean}] {
-  b0(v0: anything, v1: int[0, 100], v2: number):
     v3 = Integer integer=0
     Jump -> next b1(v3)
   b1(v4):
@@ -60,13 +58,11 @@ function f1 name="visitsEachInTheProgram" parameters=[{type=anything}, {type=int
 }
 
 function f2 name="handed" kind=Arrow captures=[{type=number}] parameters=[{type=anything}] results=[{type=boolean}] {
-  b0(v0: number, v1: anything):
     v2 = Less v1, v0
     Return v2
 }
 
 function f3 name="writesTheFunctionAtTheCall" parameters=[{type=int[0, 100]}, {type=number}] results=[{type=boolean}] {
-  b0(v0: int[0, 100], v1: number):
     v2 = NewClosure v1 function=f2
     v3 = CallDirect v2, v0, v1 function=f0
     Return v3
@@ -76,7 +72,6 @@ function f3 name="writesTheFunctionAtTheCall" parameters=[{type=int[0, 100]}, {t
 # CHECK: LoopHint
 
 function f4 name="handsOnWhatItWasGiven" parameters=[{type=f2}, {type=int[0, 100]}, {type=number}] results=[{type=boolean}] {
-  b0(v0: f2, v1: int[0, 100], v2: number):
     v3 = CallDirect v0, v1, v2 function=f0
     Return v3
 }
@@ -85,7 +80,6 @@ function f4 name="handsOnWhatItWasGiven" parameters=[{type=f2}, {type=int[0, 100
 # CHECK: = CallDirect v0, v1, v2
 
 function f5 name="whereTheCallIsNotExpected" parameters=[{type=int[0, 100]}, {type=number}, {type=boolean}] results=[{type=boolean}] {
-  b0(v0: int[0, 100], v1: number, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1() frequency=Unlikely:
     v3 = NewClosure v1 function=f2
@@ -99,7 +93,6 @@ function f5 name="whereTheCallIsNotExpected" parameters=[{type=int[0, 100]}, {ty
 # CHECK: = CallDirect v3, v0, v1
 
 function f6 name="theSameLoopOfTheProgram" parameters=[{type=int[0, 100]}, {type=number}] results=[{type=boolean}] {
-  b0(v0: int[0, 100], v1: number):
     v2 = NewClosure v1 function=f2
     v3 = CallDirect v2, v0, v1 function=f1
     Return v3
@@ -109,14 +102,12 @@ function f6 name="theSameLoopOfTheProgram" parameters=[{type=int[0, 100]}, {type
 # CHECK: = CallDirect v2, v0, v1
 
 function f7 name="theSameLoopOfTheProgramAgain" parameters=[{type=int[0, 100]}, {type=number}] results=[{type=boolean}] {
-  b0(v0: int[0, 100], v1: number):
     v2 = NewClosure v1 function=f2
     v3 = CallDirect v2, v0, v1 function=f1
     Return v3
 }
 
 function f8 name="handsTheOneClosureOnInTwoArms" parameters=[{type=int[0, 100]}, {type=number}, {type=boolean}] results=[{type=boolean}] {
-  b0(v0: int[0, 100], v1: number, v2: boolean):
     v3 = NewClosure v1 function=f2
     Branch v2 -> taken b1(), notTaken b2()
   b1():

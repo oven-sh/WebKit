@@ -27,14 +27,9 @@
 #include <wtf/BitVector.h>
 #include <wtf/CPUTime.h>
 #include <wtf/DataLog.h>
-#include <wtf/Scope.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
-
-#if ASSERT_ENABLED
-#include "AOTIRPrinter.h"
-#endif
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -56,11 +51,6 @@ static size_t findFixpointEnd(std::span<const ScheduleStep> steps, size_t begin)
         }
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-static bool acceptsForm(const PassDescriptor& descriptor, IRForm form)
-{
-    return descriptor.firstForm <= form && form <= descriptor.lastForm;
 }
 
 static void invalidateAnalyses(FunctionAnalyses& analyses, InvalidatedAnalyses invalidated, AnalysisSet kept)
@@ -113,36 +103,25 @@ static bool cutCodeBehindNeverValues(FunctionPassContext& context, const BodyCon
     return false;
 }
 
-auto PassRunner::passesEnabledBy(PassID changer) -> const PassBits&
+auto PassRunner::passesAffectedBy(PassID changer) -> const AffectedPasses&
 {
-    static const std::array<PassBits, numberOfPasses> enabledPasses = [] {
-        std::array<PassBits, numberOfPasses> result { };
+    static const std::array<AffectedPasses, numberOfPasses> passesByChanger = [] {
+        std::array<AffectedPasses, numberOfPasses> result { };
         for (PassID pass : allMembersOf<PassID>) {
+            PassBits& givenWork = result[static_cast<unsigned>(pass)].givenWork;
+            givenWork.setAll();
+            passesThatCanWaitBehind(pass).forEach([&](PassID waiting) {
+                givenWork.clear(static_cast<unsigned>(waiting));
+            });
             if (pass == PassID::None)
                 continue;
             passesEnabling(pass).forEach([&](PassID enabling) {
-                result[static_cast<unsigned>(enabling)].set(static_cast<unsigned>(pass));
+                result[static_cast<unsigned>(enabling)].enabled.set(static_cast<unsigned>(pass));
             });
         }
         return result;
     }();
-    return enabledPasses[static_cast<unsigned>(changer)];
-}
-
-auto PassRunner::passesGivenWorkBy(PassID changer) -> const PassBits&
-{
-    static const std::array<PassBits, numberOfPasses> passesGivenWork = [] {
-        std::array<PassBits, numberOfPasses> result { };
-        for (PassID member : allMembersOf<PassID>) {
-            PassBits& passes = result[static_cast<unsigned>(member)];
-            passes.setAll();
-            passesThatCanWaitBehind(member).forEach([&](PassID pass) {
-                passes.clear(static_cast<unsigned>(pass));
-            });
-        }
-        return result;
-    }();
-    return passesGivenWork[static_cast<unsigned>(changer)];
+    return passesByChanger[static_cast<unsigned>(changer)];
 }
 
 PassRunner::PassRunner(BuildContext& build, std::optional<PassID> stopAfter)
@@ -235,12 +214,6 @@ void PassRunner::didFinishFunctionLoop()
         m_isStopped = true;
 }
 
-void PassRunner::didReachForm(const Program& program)
-{
-    if (m_build.options().logging.dumps(program.form()))
-        dumpFunctions(program, nameOf(program.form()));
-}
-
 void shrinkToFit(Function& function)
 {
     for (Block& block : function.storageOfBlocks()) {
@@ -283,7 +256,7 @@ PassOutcome PassRunner::updateAnalyses(PassID id, const ProgramEditor& editor, P
 
 void PassRunner::checkFormAndInputs(const PassDescriptor& descriptor, const Program& program) const
 {
-    RELEASE_ASSERT(acceptsForm(descriptor, program.form()));
+    RELEASE_ASSERT(descriptor.accepts(program.form()));
     RELEASE_ASSERT(m_availableResults.containsAll(descriptor.inputs));
 }
 
@@ -333,18 +306,24 @@ void PassRunner::endProgramPass(PassID id, const Program& program, PassTimer tim
         verifyAfterProgramPass(descriptor, program);
     }
 
-    if (m_build.options().logging.dumpedPass == id)
-        dumpFunctions(program, nameOf(id));
-
-    updateIsStopped(id);
+    if (m_build.diagnostics().hasErrors() || m_stopAfter == id || m_didRunLastPass.load(std::memory_order_relaxed))
+        m_isStopped = true;
 }
 
-bool PassRunner::canVerify(IRForm form) const
+// The messages are worded at the end of the build, from the body that the program has then. This is the body that failed.
+static String describeError(const InternalError& error, const Function& verifiedBody)
 {
-    return form != IRForm::Placed || m_verifierInputs.placed;
+    StringBuilder description;
+    description.append(nameOf(error.kind));
+    if (error.block)
+        description.append(", block b"_s, error.block.index());
+    if (error.value) {
+        description.append(", value v"_s, error.value.index());
+        if (error.value.index() < verifiedBody.values.size())
+            description.append(" ("_s, nameOf(verifiedBody.at(error.value).opcode), ')');
+    }
+    return description.toString();
 }
-
-static String describeError(const InternalError&, const Function& verifiedBody);
 
 void PassRunner::verifyAfterProgramPass(const PassDescriptor& descriptor, const Program& program) const
 {
@@ -361,28 +340,27 @@ void PassRunner::verifyAfterProgramPass(const PassDescriptor& descriptor, const 
     // Not ProgramAnalyses::effects(): summaries cached here would reach later passes, and the output would depend on this option.
     EffectSummaries effects;
     const PassDescriptor& summarizer = descriptorOf(PassID::ComputeEffectSummaries);
-    if (m_verifierInputs.flow && acceptsForm(summarizer, program.form()) && m_build.isEnabled(summarizer.id, FunctionID()))
+    if (m_verifierInputs.flow && summarizer.accepts(program.form()) && m_build.isEnabled(summarizer.id, FunctionID()))
         effects = computeEffectSummaries(program, *m_verifierInputs.flow, m_build);
 
     VerifierInputs inputs = m_verifierInputs;
     inputs.isOptimizing = form == IRForm::Prepared;
     inputs.effects = &effects;
-    if (!verifyProgram(program, form, m_build, inputs)) {
-        InternalError failure { .kind = InternalErrorKind::VerificationFailedAfterPass, .pass = descriptor.id };
-        for (size_t index = 0; index < program.functions.size(); ++index) {
-            const Function& function = program.functions[index];
-            if (!function.hasBody())
-                continue;
-            Vector<InternalError> errors = findErrorsInFunction(program, FunctionID(index), function, form, m_build, inputs);
-            if (errors.isEmpty())
-                continue;
-            failure.function = findFunctionAsRead(&program, FunctionID(index));
-            failure.detail = describeError(errors.first(), function);
-            break;
-        }
-        m_build.diagnostics().add(failure);
+    if (verifyProgram(program, form, m_build, inputs))
         return;
+    InternalError failure { .kind = InternalErrorKind::VerificationFailedAfterPass, .pass = descriptor.id };
+    for (size_t index = 0; index < program.functions.size(); ++index) {
+        const Function& function = program.functions[index];
+        if (!function.hasBody())
+            continue;
+        Vector<InternalError> errors = findErrorsInFunction(program, FunctionID(index), function, form, m_build, inputs);
+        if (errors.isEmpty())
+            continue;
+        failure.function = findFunctionAsRead(&program, FunctionID(index));
+        failure.detail = describeError(errors.first(), function);
+        break;
     }
+    m_build.diagnostics().add(failure);
 }
 
 bool PassRunner::mayRunAnalysesTogether() const
@@ -395,12 +373,6 @@ void PassRunner::runTogether(NOESCAPE const ScopedLambda<void()>& first, NOESCAP
     forEachIndexInParallel(m_build.parallelLoops(), 2, [&](unsigned index) {
         index ? second() : first();
     });
-}
-
-void PassRunner::updateIsStopped(PassID id)
-{
-    if (m_build.diagnostics().hasErrors() || m_stopAfter == id || m_didRunLastPass.load(std::memory_order_relaxed))
-        m_isStopped = true;
 }
 
 static bool hasSameWords(const Instruction& a, const Instruction& b)
@@ -512,7 +484,6 @@ PassOutcome PassRunner::runFunctionPass(PassID id, FunctionPassContext& context,
             run.didLookAtFunction(id);
             if (waits)
                 run.passesThatWait.set(index);
-            dumpAfterFunctionPass(id, context);
         } else if (run.passesBehindChange.get(index)) {
             ++run.numberOfSkippedRuns;
             if (!run.passesThatWait.get(index))
@@ -527,7 +498,7 @@ PassOutcome PassRunner::runFunctionPass(PassID id, FunctionPassContext& context,
     checkFormAndInputs(descriptor, context.program);
     RELEASE_ASSERT(!descriptor.derivesFunctions || context.inputs.derivedFunctions);
 
-    if (!triggersOf(id).isAlways && !run.mayFire(id, context.function)) {
+    if (hasTriggers(id) && !run.mayFire(id, context.function)) {
         // All that later runs go by is as it is behind a run that has found nothing to do.
         if (run.notes) [[unlikely]]
             ++run.notes->runsWithoutTrigger[index];
@@ -535,7 +506,6 @@ PassOutcome PassRunner::runFunctionPass(PassID id, FunctionPassContext& context,
         verifySkippedFunctionPass(descriptor, context, run);
         run.passesThatRan.add(id);
         run.didLookAtFunction(id);
-        dumpAfterFunctionPass(id, context);
         stopBehind(id, run);
         return PassOutcome::Unchanged;
     }
@@ -575,18 +545,16 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
         logBeforeRun = context.changes.end();
     currentWork().setPass(id);
     PassOutcome outcome = descriptor.run(context);
-    if (m_build.options().checksThatUsedValuesAreListed && outcome == PassOutcome::Changed) [[unlikely]] {
-        if (String problem = findValueListedWrongly(context.function); !problem.isNull()) {
-            m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = run.functionAsRead, .pass = id, .detail = problem });
-            run.isStopped = true;
-        }
-    }
-    if (functionBeforeRun) [[unlikely]] {
-        if (String problem = findEditWithoutEntry(*functionBeforeRun, context.function, context.changes, logBeforeRun); !problem.isNull()) {
-            m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = run.functionAsRead, .pass = id, .detail = problem });
-            run.isStopped = true;
-        }
-    }
+    auto stopWhereThereIsOne = [&](const String& problem) {
+        if (problem.isNull())
+            return;
+        m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = run.functionAsRead, .pass = id, .detail = problem });
+        run.isStopped = true;
+    };
+    if (m_build.options().checksThatUsedValuesAreListed && outcome == PassOutcome::Changed) [[unlikely]]
+        stopWhereThereIsOne(findValueListedWrongly(context.function));
+    if (functionBeforeRun) [[unlikely]]
+        stopWhereThereIsOne(findEditWithoutEntry(*functionBeforeRun, context.function, context.changes, logBeforeRun));
     if (isTimed) {
         if (outcome == PassOutcome::Unchanged && !context.analyses.computed().containsAll(analysesBefore))
             m_functionPassTotals[index].needlessDrops.fetch_add(1, std::memory_order_relaxed);
@@ -637,7 +605,6 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
     if (context.lookedOnlyNearby)
         run.passesThatWait.set(index);
     verifyAfterFunctionPass(descriptor, context, run);
-    dumpAfterFunctionPass(id, context);
     stopBehind(id, run);
     return outcome;
 }
@@ -648,21 +615,6 @@ void PassRunner::stopBehind(PassID id, ScheduleRun& run) const
         return;
     run.isStopped = true;
     m_didRunLastPass.store(true, std::memory_order_relaxed);
-}
-
-// The messages are worded at the end of the build, from the body that the program has then. This is the body that failed.
-static String describeError(const InternalError& error, const Function& verifiedBody)
-{
-    StringBuilder description;
-    description.append(nameOf(error.kind));
-    if (error.block)
-        description.append(", block b"_s, error.block.index());
-    if (error.value) {
-        description.append(", value v"_s, error.value.index());
-        if (error.value.index() < verifiedBody.values.size())
-            description.append(" ("_s, nameOf(verifiedBody.at(error.value).opcode), ')');
-    }
-    return description.toString();
 }
 
 void PassRunner::verifyAfterFunctionPass(const PassDescriptor& descriptor, FunctionPassContext& context, ScheduleRun& run) const
@@ -716,23 +668,13 @@ static String describeChangers(const PassSet& changers)
     return description.toString();
 }
 
-static String describeFirstDifference(const Program& program, const Function& function, const Function& changed)
+static String describeFirstDifference(const Function& function, const Function& changed)
 {
     StringPrintStream out;
     if (function.blocks.size() != changed.blocks.size() || function.values.size() != changed.values.size()) {
         out.print("; ", function.blocks.size(), " blocks and ", function.values.size(), " values become ", changed.blocks.size(), " and ", changed.values.size());
         return out.toString();
     }
-#if ASSERT_ENABLED
-    auto printTypeOrNone = [&](TypeID type) {
-        if (type)
-            printType(out, program, type);
-        else
-            out.print("none");
-    };
-#else
-    UNUSED_PARAM(program);
-#endif
     for (size_t index = 0; index < function.values.size(); ++index) {
         const Value& before = function.values[index];
         const Value& after = changed.values[index];
@@ -741,25 +683,10 @@ static String describeFirstDifference(const Program& program, const Function& fu
         out.print("; v", index, " (", nameOf(before.opcode), ")");
         if (before.opcode != after.opcode)
             out.print(" becomes ", nameOf(after.opcode));
-#if ASSERT_ENABLED
-        if (before.type != after.type) {
-            out.print(" of type ");
-            printTypeOrNone(before.type);
-            out.print(" gets the type ");
-            printTypeOrNone(after.type);
-        }
-        if (before.expected() != after.expected()) {
-            out.print(" expected to be ");
-            printTypeOrNone(before.expected());
-            out.print(" is expected to be ");
-            printTypeOrNone(after.expected());
-        }
-#else
         if (before.type != after.type)
             out.print(" gets another type");
         if (before.expected() != after.expected())
             out.print(" is expected to be of another type");
-#endif
         break;
     }
     return out.toString();
@@ -780,22 +707,8 @@ void PassRunner::verifySkippedFunctionPass(const PassDescriptor& descriptor, con
         return;
 
     const PassSet& changers = run.notes->changersSinceLastRun[static_cast<unsigned>(descriptor.id)];
-    m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::SkippedPassChangesFunction, .function = run.functionAsRead, .pass = descriptor.id, .detail = makeString(describeChangers(changers), describeFirstDifference(context.program, context.function, copy)) });
+    m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::SkippedPassChangesFunction, .function = run.functionAsRead, .pass = descriptor.id, .detail = makeString(describeChangers(changers), describeFirstDifference(context.function, copy)) });
     run.isStopped = true;
-}
-
-void PassRunner::dumpAfterFunctionPass(PassID id, const FunctionPassContext& context) const
-{
-    if (m_build.options().logging.dumpedPass != id) [[likely]]
-        return;
-    if (!m_build.shouldDump(context.subject().function))
-        return;
-#if ASSERT_ENABLED
-    Locker locker { m_dumpLock };
-    PrintStream& out = WTF::dataFile();
-    out.println("AOT IR after ", nameOf(id), ":");
-    printFunction(out, context.program, context.id, context.function);
-#endif
 }
 
 void PassRunner::runSteps(std::span<const ScheduleStep> steps, FunctionPassContext& context, ScheduleRun& run, WhatFollows whatFollows) const
@@ -948,29 +861,6 @@ void PassRunner::flushFunctionPassTotals()
     }
     if (m_build.options().logging.logsPhaseTimes)
         FunctionAnalyses::logBuilds();
-}
-
-void PassRunner::dumpFunctions(const Program& program, ASCIILiteral point) const
-{
-#if ASSERT_ENABLED
-    PrintStream& out = WTF::dataFile();
-    out.println("AOT IR at ", point, ":");
-    // Without a choice of functions the text is the whole program, which the parser of IR text reads back.
-    if (m_build.options().logging.functionToDump.span().empty()) {
-        printProgram(out, program);
-        out.println("AOT IR ends");
-        return;
-    }
-    for (unsigned index = 0; index < program.functions.size(); ++index) {
-        FunctionID id(index);
-        const Function& function = program.functions[index];
-        if (function.hasBody() && m_build.shouldDump(id))
-            printFunction(out, program, id, function);
-    }
-#else
-    UNUSED_PARAM(program);
-    UNUSED_PARAM(point);
-#endif
 }
 
 } } } // namespace JSC::AOT::Typed

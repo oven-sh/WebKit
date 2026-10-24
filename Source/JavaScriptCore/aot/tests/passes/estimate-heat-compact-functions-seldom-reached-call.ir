@@ -13,7 +13,6 @@ entry module=m0
 variable g0 name="input" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = ToBoolean v0
     Jump -> next b1()
@@ -26,7 +25,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="calledInLoop" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
 # REPEAT: i = 2..73; a = 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1
     v%(i) = ToBoolean v%(a)
 # END REPEAT
@@ -46,7 +44,6 @@ function f1 name="calledInLoop" parameters=[{type=anything}, {type=anything}] re
 }
 
 function f2 name="calledBehindTwoUnlikelyBranches" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 1..70
     v%(i) = ToBoolean v0
 # END REPEAT
@@ -55,7 +52,6 @@ function f2 name="calledBehindTwoUnlikelyBranches" parameters=[{type=anything}] 
 }
 
 function f3 name="calledBehindOneUnlikelyBranch" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 1..70
     v%(i) = ToBoolean v0
 # END REPEAT
@@ -64,7 +60,6 @@ function f3 name="calledBehindOneUnlikelyBranch" parameters=[{type=anything}] re
 }
 
 function f4 name="calledByTheFirst" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 1..70
     v%(i) = ToBoolean v0
 # END REPEAT
@@ -72,7 +67,6 @@ function f4 name="calledByTheFirst" parameters=[{type=anything}] results=[{type=
 }
 
 function f5 name="calledByTheSecond" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 1..70
     v%(i) = ToBoolean v0
 # END REPEAT

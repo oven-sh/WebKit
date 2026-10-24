@@ -33,7 +33,6 @@ std::span<const NativeTest> replacedBuiltinTests();
 static constexpr ASCIILiteral patchBeforeFirstUse = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
     v2 = PropGet v0 key="replacement" [isFreeName]
@@ -52,7 +51,6 @@ static constexpr ASCIILiteral patchInModuleImportedFirst = R"IR(module m0 path="
 module m1 path="/polyfill.js" displayPath="polyfill.js" body=f1
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
     v2 = PropGet v0 key="Math" [isFreeName]
@@ -64,7 +62,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="polyfill" module=m1 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="replacement" [isFreeName]
     v2 = PropGet v0 key="Math" [isFreeName]
@@ -76,7 +73,6 @@ function f1 name="polyfill" module=m1 kind=Module results=[{type=anything}] {
 static constexpr ASCIILiteral patchAfterFirstUse = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
     v2 = PropGet v0 key="replacement" [isFreeName]
@@ -97,7 +93,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 static constexpr ASCIILiteral originalKeptThenDeleted = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
     v2 = PropGet v0 key="Math" [isFreeName]
@@ -129,7 +124,6 @@ static constexpr ASCIILiteral wrappedJSONParse = R"IR(variable g0 name="original
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
     v2 = PropGet v0 key="JSON" [isFreeName]
@@ -144,7 +138,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="wrapper" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="report" [isFreeName]
     v3 = String string="wrapped"
@@ -158,7 +151,6 @@ function f1 name="wrapper" parameters=[{type=anything}] results=[{type=anything}
 static constexpr ASCIILiteral originalNamesAfterReplacement = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
     v2 = PropGet v0 key="replacement" [isFreeName]
@@ -186,7 +178,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 static constexpr ASCIILiteral replacedGlobal = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
     v2 = PropGet v0 key="fakeDate" [isFreeName]
@@ -207,7 +198,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 static constexpr ASCIILiteral replacedDateNow = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
     v2 = PropGet v0 key="replacement" [isFreeName]
@@ -227,7 +217,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 static constexpr ASCIILiteral storeUnderUnknownKey = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
     v2 = PropGet v0 key="replacement" [isFreeName]
@@ -250,7 +239,6 @@ static constexpr ASCIILiteral replacedByBuiltinCall = R"IR(module m0 path="main.
 entry module=m0
 layout L0 name="Patch" fields=[{key="sign" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
     v2 = PropGet v0 key="replacement" [isFreeName]
@@ -273,7 +261,6 @@ static constexpr ASCIILiteral replacedGetter = R"IR(module m0 path="main.js" dis
 entry module=m0
 layout L0 name="Descriptor" fields=[{key="get" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
     v2 = PropGet v0 key="Intl" [isFreeName]
@@ -295,7 +282,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="compare" results=[{type=anything}] {
-  b0():
     v0 = String string="replaced"
     Return v0
 }
@@ -304,7 +290,6 @@ function f1 name="compare" results=[{type=anything}] {
 static constexpr ASCIILiteral builtinCalledOnce = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
     v2 = PropGet v0 key="Math" [isFreeName]
@@ -320,7 +305,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 static constexpr ASCIILiteral originalsNamedAfterReplacement = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="replacement" [isFreeName]
     v2 = PropGet v0 key="report" [isFreeName]

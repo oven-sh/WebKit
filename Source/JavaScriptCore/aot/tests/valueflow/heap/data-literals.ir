@@ -8,7 +8,6 @@ entry module=m0
 layout L0 name="Table" fields=[{key="list" declared={type=anything} flags=[IsRequired]}, {key="name" declared={type=anything} flags=[IsRequired]}]
 layout L1 name="Deep" fields=[{key="deep" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Data data=d0
     v1 = PropGet v0 key="list"
     v2 = Integer integer=1
@@ -21,7 +20,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="one" results=[{type=anything}] {
-  b0():
     Return
 }
 data d0 root=Object{layout=L0 members=[{key="list" value=Array{contents=anything elements=[Number{value=1}, Object{layout=L1 members=[{key="deep" value=String{value="x"}}]}]}}, {key="name" value=String{value="n"}}]} module=m0

@@ -7,7 +7,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
 function f0 name="goodNothingBetween" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything):
     v2 = IsPristine v0 builtinClass=Array aspects=[Storage]
     Jump -> next b1()
   b1():
@@ -19,7 +18,6 @@ function f0 name="goodNothingBetween" parameters=[{type=Array}, {type=anything}]
     Return
 }
 function f1 name="goodAllocationBetween" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything):
     v2 = IsPristine v0 builtinClass=Array aspects=[Storage]
     v3 = NewArray v1 contents=anything
     Jump -> next b1()
@@ -32,7 +30,6 @@ function f1 name="goodAllocationBetween" parameters=[{type=Array}, {type=anythin
     Return v3
 }
 function f2 name="badCallBehindTest" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything):
     v2 = IsPristine v0 builtinClass=Array aspects=[Storage]
     v3 = Call v1
     Jump -> next b1()
@@ -45,7 +42,6 @@ function f2 name="badCallBehindTest" parameters=[{type=Array}, {type=anything}] 
     Return
 }
 function f3 name="badCallInBlockOfBranch" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything):
     v2 = IsPristine v0 builtinClass=Array aspects=[Storage]
     Jump -> next b1()
   b1():
@@ -58,7 +54,6 @@ function f3 name="badCallInBlockOfBranch" parameters=[{type=Array}, {type=anythi
     Return
 }
 function f4 name="badCallOnOneOfTwoWays" parameters=[{type=Array}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything, v2: boolean):
     v3 = IsPristine v0 builtinClass=Array aspects=[Storage]
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -73,7 +68,6 @@ function f4 name="badCallOnOneOfTwoWays" parameters=[{type=Array}, {type=anythin
     Return
 }
 function f5 name="goodShapeOutlastsTheCall" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
     v2 = ShapeTest v0 layouts=[L0]
     v3 = Call v1
     Jump -> next b1()

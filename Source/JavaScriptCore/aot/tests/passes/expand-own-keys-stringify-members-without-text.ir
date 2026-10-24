@@ -14,7 +14,6 @@ layout L3 name="HandlerWithToJSON" fields=[{key="run" declared={type=anything} f
 layout L4 name="HandlerSeenOutside" fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = PropGet v0 key="sink" [isFreeName]
@@ -60,28 +59,22 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="run" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="orNumber" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f3 name="listed" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f4 name="withToJSON" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f5 name="toJSON" kind=Arrow results=[{type=anything}] {
-  b0():
     v0 = String string="text"
     Return v0
 }
 function f6 name="seenOutside" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 

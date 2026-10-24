@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinCells.h"
-#include "AOTChainDependents.h"
 #include "AOTClassPrototype.h"
 #include "AOTClassTable.h"
 #include "AOTClosure.h"
@@ -25,7 +24,6 @@
 #include "AOTSort.h"
 #include "AOTState.h"
 #include "AOTStaticFields.h"
-#include "AOTVector.h"
 #include "FunctionPrototype.h"
 #include "GetterSetter.h"
 #include "JSCInlines.h"
@@ -33,7 +31,6 @@
 #include "ObjectPrototype.h"
 #include <algorithm>
 #include <tuple>
-#include <utility>
 #include <wtf/IterationStatus.h>
 #include <wtf/OSAllocator.h>
 #include <wtf/SetForScope.h>
@@ -44,38 +41,25 @@ namespace JSC { namespace AOT {
 
 namespace {
 
-// A class record is asked for a name by its number, an object by its identifier.
-class MemberName {
-public:
-    MemberName(VM& vm, uint32_t key)
-        : m_vm(vm)
-        , m_key(key)
-    {
-    }
-
-    uint32_t key() const { return m_key; }
-
+struct MemberName {
     UniquedStringImpl* uid()
     {
-        if (!m_uid)
-            m_uid = m_vm.aotState().identifiers->identifier(m_key).impl();
-        return m_uid;
+        if (!knownUid)
+            knownUid = vm.aotState().identifiers->identifier(key).impl();
+        return knownUid;
     }
 
-private:
-    VM& m_vm;
-    uint32_t m_key;
-    UniquedStringImpl* m_uid { nullptr };
+    VM& vm;
+    uint32_t key;
+    UniquedStringImpl* knownUid { nullptr };
 };
 
 struct GuardResolution {
     const LayoutData* declarer { nullptr };
     JSObject* declarerHolder { nullptr };
-    // What the lookup passes that holds no class of the chain.
     ChainObjects otherObjects;
 };
 
-// Says "no" only of a name that was never added. A class has many guards and a chain many levels, and most names are on one level or on none.
 class NameFilter {
 public:
     void add(uint32_t key) { m_bits[key / bitsPerWord % numberOfWords] |= 1ull << key % bitsPerWord; }
@@ -85,6 +69,13 @@ private:
     static constexpr uint32_t bitsPerWord = 64;
     static constexpr uint32_t numberOfWords = 4;
     std::array<uint64_t, numberOfWords> m_bits { };
+};
+
+struct ChainLevel {
+    const LayoutData* classLayout;
+    JSObject* holder;
+    MemberGuardWatchpoints::NamesOnHolder* names;
+    NameFilter namesToLookFor { };
 };
 
 } // anonymous namespace
@@ -190,7 +181,6 @@ static bool isClosureOfMethod(const JSCell* cell, const MethodData& method)
     return functionOf(cell) == FunctionID(method.function);
 }
 
-// Compiled code that reads the member as a value takes the closure from the table.
 static bool isClosureThatTableHolds(State& state, JSCell* closure, const MethodData& method)
 {
     ClosureTable& closures = state.objects->closures;
@@ -292,7 +282,6 @@ static uint64_t& wordOf(State& state, const LayoutData& layout, const MemberGuar
     return words[guard.wordIndex()];
 }
 
-// Where the words lie follows from the sizes in the program tables. A loop over bits asks once.
 static uint64_t* wordsOfBits(State& state)
 {
     return reinterpret_cast<uint64_t*>(state.instance.statics());
@@ -320,11 +309,6 @@ static ALWAYS_INLINE bool holds(const uint64_t* words, uint32_t listEntry)
     return isBitSet != !!(listEntry & MemberGuardAggregates::holdsWhileClear);
 }
 
-static bool holds(State& state, uint32_t listEntry)
-{
-    return holds(wordsOfBits(state), listEntry);
-}
-
 static ALWAYS_INLINE void setHolds(uint64_t* words, uint32_t listEntry, bool shouldHold)
 {
     uint32_t number = MemberGuardAggregates::numberInListEntry(listEntry);
@@ -334,19 +318,9 @@ static ALWAYS_INLINE void setHolds(uint64_t* words, uint32_t listEntry, bool sho
         words[MemberGuardAggregates::wordIndex(number)] &= ~MemberGuardAggregates::mask(number);
 }
 
-static void setHolds(State& state, uint32_t listEntry, bool shouldHold)
-{
-    setHolds(wordsOfBits(state), listEntry, shouldHold);
-}
-
 static bool isSet(State& state, const LayoutData& layout, const MemberGuardData& guard)
 {
-    return holds(state, listEntryOf(layout, guard));
-}
-
-static uint32_t wordNumberOf(const LayoutData& layout, const MemberGuardData& guard)
-{
-    return MemberGuardAggregates::wordIndex(bitNumberOf(layout, guard));
+    return holds(wordsOfBits(state), listEntryOf(layout, guard));
 }
 
 static void noteSets(State& state, MemberGuardAggregates aggregates)
@@ -362,12 +336,6 @@ static void noteSets(State& state, MemberGuardAggregates aggregates)
     }
 }
 
-static void noteSetsContaining(State& state, const LayoutData& layout, const MemberGuardData& guard)
-{
-    noteSets(state, layout.aggregatesOf(guard));
-}
-
-// One site has one set for all the classes that may come to it.
 enum class SetsThatHeld : bool { StayClear, AreReadAgain };
 
 static void clearSetsContaining(State& state, const LayoutData& layout, const MemberGuardData& guard, SetsThatHeld setsThatHeld = SetsThatHeld::StayClear)
@@ -402,41 +370,31 @@ static void set(State& state, const LayoutData& layout, const MemberGuardData& g
     MemberGuardWatchpoints::MethodTableUpdate update(state);
     word |= guard.mask();
     watchpointsOf(state).didChangeBit(listEntryOf(layout, guard));
-    noteSetsContaining(state, layout, guard);
+    noteSets(state, layout.aggregatesOf(guard));
 }
 
 static bool clear(State& state, const LayoutData& layout, const MemberGuardData& guard)
 {
     uint32_t listEntry = listEntryOf(layout, guard);
-    if (!holds(state, listEntry))
+    if (!holds(wordsOfBits(state), listEntry))
         return false;
-    setHolds(state, listEntry, false);
+    setHolds(wordsOfBits(state), listEntry, false);
     clearSetsContaining(state, layout, guard);
     if (!holdsFromStart(layout))
         watchpointsOf(state).didEnd(guard);
-    switch (guard.kind()) {
-    case MemberGuardKind::Member:
+    if (guard.kind() == MemberGuardKind::Member)
         count(state.instance, RuntimeCounterID::MemberGuardsCleared);
-        break;
-    case MemberGuardKind::PrototypeLink:
+    else if (guard.kind() == MemberGuardKind::PrototypeLink)
         count(state.instance, RuntimeCounterID::PrototypeLinkGuardsCleared);
-        break;
-    case MemberGuardKind::EvaluatedOnce:
-    case MemberGuardKind::InstancePrototype:
-    case MemberGuardKind::NotHidden:
-    case MemberGuardKind::PassedByStores:
-        break;
-    }
     return true;
 }
 
-// For what no later definition can make true again. A guard that is clear because its member is not defined yet would be set by the definition.
 static void end(State& state, const LayoutData& layout, const MemberGuardData& guard)
 {
     if (clear(state, layout, guard) || holdsFromStart(layout))
         return;
     watchpointsOf(state).didEnd(guard);
-    watchpointsOf(state).didCreateClassWith(wordNumberOf(layout, guard));
+    watchpointsOf(state).didCreateClassWith(MemberGuardAggregates::wordIndex(bitNumberOf(layout, guard)));
     clearSetsContaining(state, layout, guard);
 }
 
@@ -445,17 +403,23 @@ static void leaveForLater(State& state, const LayoutData& layout, const MemberGu
 {
     ASSERT(guard.kind() == MemberGuardKind::PassedByStores);
     uint32_t listEntry = listEntryOf(layout, guard);
-    if (holds(state, listEntry)) {
+    if (holds(wordsOfBits(state), listEntry)) {
         MemberGuardWatchpoints::MethodTableUpdate update(state);
-        setHolds(state, listEntry, false);
+        setHolds(wordsOfBits(state), listEntry, false);
         clearSetsContaining(state, layout, guard, setsThatHeld);
     }
     watchpointsOf(state).mayHoldAgain(guard);
 }
 
-static bool isDeclaredBetween(State&, const LayoutData& from, const LayoutData* endExclusive, ClassSide, uint32_t key);
+static bool isDeclaredBetween(State& state, const LayoutData& from, const LayoutData* endExclusive, ClassSide side, uint32_t key)
+{
+    for (const LayoutData* next = &from; next && next != endExclusive; next = state.objects->classes.assumedBaseOf(*next)) {
+        if (declares(state, *next, side, key))
+            return true;
+    }
+    return false;
+}
 
-// For a class whose guards hold while their bits are clear, at its definition.
 static void leaveGuardsOfStoresForLater(State& state, const LayoutData& layout, ClassSide side)
 {
     bool leavesGuardsClear = false;
@@ -475,7 +439,7 @@ static void beginSpeakingOfObjects(State& state, const LayoutData& layout, Class
     for (const MemberGuardData& guard : layout.memberGuards()) {
         if (guard.side() != side)
             continue;
-        watchpointsOf(state).didCreateClassWith(wordNumberOf(layout, guard));
+        watchpointsOf(state).didCreateClassWith(MemberGuardAggregates::wordIndex(bitNumberOf(layout, guard)));
         if (!isSet(state, layout, guard))
             clearSetsContaining(state, layout, guard, setsThatHeldBelowNewClass(guard));
     }
@@ -514,15 +478,6 @@ static void forEachDescendant(State& state, const LayoutData& layout, const Invo
     }
 }
 
-static bool isDeclaredBetween(State& state, const LayoutData& from, const LayoutData* endExclusive, ClassSide side, uint32_t key)
-{
-    for (const LayoutData* next = &from; next && next != endExclusive; next = state.objects->classes.assumedBaseOf(*next)) {
-        if (declares(state, *next, side, key))
-            return true;
-    }
-    return false;
-}
-
 static void clearInheritedGuards(State& state, const LayoutData& layout, const LayoutData* endExclusive, ClassSide side)
 {
     for (const MemberGuardData& guard : guardsOf(layout, side, MemberGuardKind::Member)) {
@@ -535,7 +490,6 @@ static void clearInheritedGuards(State& state, const LayoutData& layout, const L
     }
 }
 
-// A Structure without properties answers without the identifier.
 static PropertyOffset offsetOfMember(VM& vm, Structure* structure, MemberName& name, unsigned& attributes)
 {
     if (!isValidOffset(structure->maxOffset()))
@@ -545,19 +499,18 @@ static PropertyOffset offsetOfMember(VM& vm, Structure* structure, MemberName& n
 
 static bool holdsAsDeclared(VM& vm, State& state, const LayoutData& layout, ClassSide side, JSObject* holder, MemberName& name)
 {
-    if (side == ClassSide::Static && findOwnStaticField(layout, name.key())) {
+    if (side == ClassSide::Static && findOwnStaticField(layout, name.key)) {
         unsigned attributes = 0;
         return !isValidOffset(offsetOfMember(vm, holder->structure(), name, attributes)) || (attributes & PropertyAttribute::CustomValue);
     }
     bool isLazy = isLazyHolder(holder, side);
-    if (declaresMember(layout, side, name.key()))
-        return isLazy || holdsDeclaredMember(vm, state, holder, name.uid(), declaredMember(layout, side, name.key()));
+    if (declaresMember(layout, side, name.key))
+        return isLazy || holdsDeclaredMember(vm, state, holder, name.uid(), declaredMember(layout, side, name.key));
     switch (side) {
     case ClassSide::Prototype:
         return isLazy || holder->getDirect(vm, name.uid()) == JSValue(registeredClassObjectOf(state, layout));
     case ClassSide::Static:
-        // The prototype property holds the object that the definition made the prototype of the instances.
-        return watchpointsOf(state).implicitMemberKeys().prototype == name.key() && holderOf(vm, state, layout, ClassSide::Prototype);
+        return watchpointsOf(state).implicitMemberKeys().prototype == name.key && holderOf(vm, state, layout, ClassSide::Prototype);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -575,7 +528,6 @@ static bool hasPropertyOrSlot(VM& vm, JSObject* holder, MemberName& name)
     return extraProperties && isValidOffset(offsetOfMember(vm, extraProperties->structure(), name, attributes));
 }
 
-// The assumed base of a constructor function is the class from whose prototype object its own inherits. The function itself inherits from no class object.
 static const LayoutData* nextClassOnSide(const ClassTable& classes, const LayoutData& layout, ClassSide side)
 {
     if (side == ClassSide::Static && !ClassTable::isDefinedByClass(layout))
@@ -583,7 +535,6 @@ static const LayoutData* nextClassOnSide(const ClassTable& classes, const Layout
     return classes.assumedBaseOf(layout);
 }
 
-// Where the classes end, the compiler goes on with what it knows about the built-in objects.
 static JSObject* objectAboveClasses(State& state, ClassSide side)
 {
     JSGlobalObject* realm = state.instance.globalObject;
@@ -612,7 +563,6 @@ static bool lacksMember(VM& vm, State& state, JSObject* object, MemberName& name
     return !hasPropertyOrSlot(vm, object, name);
 }
 
-// A program puts objects of its own into a chain: between the prototype objects of two constructor functions, above the last one, between an instance and its class.
 static bool passOtherObjects(VM& vm, State& state, JSValue first, JSObject* end, MemberName& name, ChainObjects& passed)
 {
     for (JSValue next = first; next != JSValue(end); next = asObject(next)->getPrototypeDirect()) {
@@ -625,7 +575,6 @@ static bool passOtherObjects(VM& vm, State& state, JSValue first, JSObject* end,
 
 namespace {
 
-// What a lookup finds out about the classes on its way up that has nothing to do with the name.
 class ClassesAbove {
 public:
     struct Level {
@@ -658,7 +607,6 @@ public:
 
     bool declares(Level& level, uint32_t key)
     {
-        // The first name pays for no filter.
         if (!std::exchange(level.wasAskedBefore, true) || m_side == ClassSide::Static)
             return JSC::AOT::declares(m_state, *level.classLayout, m_side, key);
         if (!std::exchange(level.hasFilter, true)) {
@@ -696,7 +644,6 @@ private:
 
 } // anonymous namespace
 
-// From the prototype object of a built-in class upwards the compiler knows what a lookup finds.
 static JSObject* prototypeOfBuiltinBase(VM& vm, State& state, const LayoutData& classLayout, ClassSide side)
 {
     uint32_t builtinBase = classLayout.classData().builtinBase;
@@ -716,7 +663,7 @@ static std::optional<GuardResolution> resolveAsDeclared(VM& vm, State& state, Cl
         if (!holder || classes.at(index).hasNameThatNobodyKnows)
             return std::nullopt;
         const LayoutData* current = classes.at(index).classLayout;
-        if (classes.declares(classes.at(index), name.key())) {
+        if (classes.declares(classes.at(index), name.key)) {
             if (!holdsAsDeclared(vm, state, *current, side, holder, name))
                 return std::nullopt;
             resolution.declarer = current;
@@ -739,41 +686,39 @@ static std::optional<GuardResolution> resolveAsDeclared(VM& vm, State& state, Cl
     }
 }
 
-static bool tryWatchDeclarer(VM& vm, State& state, const LayoutData& layout, ClassSide side, const GuardResolution& resolution, MemberName& name)
+static bool tryWatchDeclarer(VM& vm, State& state, const LayoutData& layout, ClassSide side, const LayoutData* declarer, JSObject* holder, MemberName& name)
 {
-    const LayoutData* declarer = resolution.declarer;
     if (!declarer)
         return true;
-    JSObject* holder = resolution.declarerHolder;
-    if (const FieldData* field = side == ClassSide::Static ? findOwnStaticField(*declarer, name.key()) : nullptr) {
+    if (const FieldData* field = side == ClassSide::Static ? findOwnStaticField(*declarer, name.key) : nullptr) {
         // A field without a value is not defined yet or was deleted, and only the bit of its own class records a deletion.
         return declarer == &layout || StaticFields::isInVariable(*uncheckedDowncast<Closure>(holder), *field);
     }
     if (isLazyHolder(holder, side))
         return true;
     // Nothing can change or remove the prototype property of a class object. Class objects share their Structure, and a watchpoint on it would fire when another class leaves it.
-    if (side == ClassSide::Static && ClassTable::isDefinedByClass(*declarer) && !declaresMember(*declarer, side, name.key()))
+    if (side == ClassSide::Static && ClassTable::isDefinedByClass(*declarer) && !declaresMember(*declarer, side, name.key))
         return true;
     // Whoever stores to the prototype property of a constructor function, defines it or deletes it comes through the functions of the closure, which report it and let no cache remember the store.
-    if (side == ClassSide::Static && watchpointsOf(state).implicitMemberKeys().prototype == name.key() && !declaresMember(*declarer, side, name.key()))
+    if (side == ClassSide::Static && watchpointsOf(state).implicitMemberKeys().prototype == name.key && !declaresMember(*declarer, side, name.key))
         return true;
     return watchpointsOf(state).tryWatch(vm, *declarer, side, holder, name.uid());
 }
 
 static bool tryWatchMember(VM& vm, State& state, const LayoutData& layout, const MemberGuardData& guard, ClassesAbove& classes)
 {
-    ClassSide side = guard.side();
-    ASSERT(classes.side() == side && classes.at(0).classLayout == &layout);
-    MemberName name(vm, guard.name);
+    ASSERT(classes.side() == guard.side() && classes.at(0).classLayout == &layout);
+    MemberName name { vm, guard.name };
     std::optional<GuardResolution> resolution = resolveAsDeclared(vm, state, classes, name);
-    if (!resolution || !tryWatchDeclarer(vm, state, layout, side, *resolution, name))
+    if (!resolution)
+        return false;
+    if (guard.kind() == MemberGuardKind::PassedByStores ? !!resolution->declarer : !tryWatchDeclarer(vm, state, layout, guard.side(), resolution->declarer, resolution->declarerHolder, name))
         return false;
     if (!resolution->otherObjects.isEmpty())
         watchpointsOf(state).watchOtherObjects(resolution->otherObjects.span(), layout, guard, name.uid());
     return true;
 }
 
-// A store to an object that has the prototype object of the class above it and no property of the name creates one: the first object above that has the name has a writable data property, or none has it.
 static bool tryWatchMemberPassedByStores(VM& vm, State& state, const LayoutData& layout, const MemberGuardData& guard)
 {
     JSObject* holder = holderOf(vm, state, layout, ClassSide::Prototype);
@@ -781,7 +726,7 @@ static bool tryWatchMemberPassedByStores(VM& vm, State& state, const LayoutData&
         return false;
     JSGlobalObject* realm = state.instance.globalObject;
     Structure* structureBelow = realm->structureCache().emptyObjectStructureForPrototype(realm, holder, JSFinalObject::defaultInlineCapacity);
-    MemberName name(vm, guard.name);
+    MemberName name { vm, guard.name };
     ChainWalk walk = walkChain({ realm, structureBelow, nullptr, ChainWalkMode::MayAllocate, ChainWalkUse::KeptForStores }, name.uid());
     if (walk.didFlatten || storeThroughChain(walk) != StoreThroughChain::CreatesOwnProperty)
         return false;
@@ -805,12 +750,11 @@ static void setGuardOfStores(State& state, const LayoutData& layout, const Membe
     SetForScope aStoreByNameHasAsked(watchpointsOf(state).aStoreByNameHasAsked(), true);
     MemberGuardWatchpoints::MethodTableUpdate update(state);
     uint32_t listEntry = listEntryOf(layout, guard);
-    setHolds(state, listEntry, true);
+    setHolds(wordsOfBits(state), listEntry, true);
     watchpointsOf(state).didChangeBit(listEntry);
-    noteSetsContaining(state, layout, guard);
+    noteSets(state, layout.aggregatesOf(guard));
 }
 
-// For a store that no cache serves. The chain is looked at for the one name that was stored, at the second store: a class that makes one object costs nothing, and a name costs one look.
 void ClassTable::didStoreByName(VM& vm, const LayoutData& instanceLayout, UniquedStringImpl* uid)
 {
     if (!instanceLayout.isClass())
@@ -836,19 +780,6 @@ void ClassTable::didFindThatStoresPass(VM& vm, const LayoutData& instanceLayout,
         return;
     watchpointsOf(m_state).watchOtherObjects(changeableObjects, layout, *guard, uid);
     setGuardOfStores(m_state, layout, *guard);
-}
-
-// Most names are on no holder, and the classes report what their holders get: that costs no more than the guard of a member.
-static bool tryWatchAbsentMember(VM& vm, State& state, const LayoutData& layout, const MemberGuardData& guard, ClassesAbove& classes)
-{
-    ASSERT(classes.side() == guard.side() && classes.at(0).classLayout == &layout);
-    MemberName name(vm, guard.name);
-    std::optional<GuardResolution> resolution = resolveAsDeclared(vm, state, classes, name);
-    if (!resolution || resolution->declarer)
-        return false;
-    if (!resolution->otherObjects.isEmpty())
-        watchpointsOf(state).watchOtherObjects(resolution->otherObjects.span(), layout, guard, name.uid());
-    return true;
 }
 
 static void updateMemberGuard(VM& vm, State& state, const LayoutData& layout, const MemberGuardData& guard, ClassesAbove& classes)
@@ -880,7 +811,6 @@ const LayoutData* ClassTable::classHeldBy(JSObject* holder, ClassSide& side) con
     return classWithIndex(found->value >> 1);
 }
 
-// All that armMemberGuards() has to do for the stand-in. For the class object it has nothing to do: no guard on that side says what stores pass.
 void ClassTable::didCreatePrototypeLeftToRecord(const LayoutData& layout)
 {
     ASSERT(leavesDefinitionToRecord(layout) && guardsOf(layout, ClassSide::Static, MemberGuardKind::PassedByStores).empty());
@@ -902,12 +832,6 @@ const LayoutData* ClassTable::classLeftToRecordHeldBy(JSObject* holder, ClassSid
         return nullptr;
     side = ClassSide::Static;
     return layout;
-}
-
-void ClassTable::didCreateHolder(const LayoutData& layout, ClassSide side)
-{
-    MemberGuardWatchpoints::MethodTableUpdate update(m_state);
-    watchpointsOf(m_state).didCreateHolder(layout, side);
 }
 
 static std::span<const MemberGuardData> guardsOn(const LayoutData& layout, ClassSide side)
@@ -962,28 +886,13 @@ static bool appendNamesOfHolder(VM& vm, State& state, const LayoutData& layout, 
     return true;
 }
 
-namespace {
-
-struct ChainLevel {
-    const LayoutData* classLayout;
-    JSObject* holder;
-    MemberGuardWatchpoints::NamesOnHolder* names;
-    // The names on the holder, and what the class declares where the holder makes its members when somebody looks.
-    NameFilter namesToLookFor { };
-};
-
-} // anonymous namespace
-
 static bool isAsDeclaredOn(VM& vm, State& state, const ChainLevel& level, uint32_t key)
 {
     constexpr ClassSide side = ClassSide::Prototype;
     if (!declares(state, *level.classLayout, side, key))
         return false;
-    MemberName name(vm, key);
-    GuardResolution resolution;
-    resolution.declarer = level.classLayout;
-    resolution.declarerHolder = level.holder;
-    return holdsAsDeclared(vm, state, *level.classLayout, side, level.holder, name) && tryWatchDeclarer(vm, state, *level.classLayout, side, resolution, name);
+    MemberName name { vm, key };
+    return holdsAsDeclared(vm, state, *level.classLayout, side, level.holder, name) && tryWatchDeclarer(vm, state, *level.classLayout, side, level.classLayout, level.holder, name);
 }
 
 static bool findsMemberAsDeclared(VM& vm, State& state, std::span<const ChainLevel> chain, uint32_t key)
@@ -1009,7 +918,6 @@ static bool findsMemberAsDeclared(VM& vm, State& state, std::span<const ChainLev
 
 static bool isOnNoLevel(State& state, std::span<const ChainLevel> chain, uint32_t key)
 {
-    // The names of a holder that makes its members when somebody looks leave out what the class declares.
     return std::ranges::none_of(chain, [&](const ChainLevel& level) {
         if (!level.namesToLookFor.mayContain(key))
             return false;
@@ -1106,18 +1014,13 @@ static void watchOwnMember(VM& vm, State& state, const LayoutData& layout, Class
 {
     if (!layout.classData().subclassesOffset && !findGuard(layout, side, MemberGuardKind::Member, key))
         return;
-    MemberName name(vm, key);
-    GuardResolution resolution;
-    resolution.declarer = &layout;
-    resolution.declarerHolder = holder;
-    // The record takes the closures of a class with one class object out of the closure table. Of any other closure the table learns when somebody looks at the member.
+    MemberName name { vm, key };
     bool isAsDeclared = (holderState == ClassTable::HolderState::AsDefinitionMadeIt && ClassTable::hasOneClassObject(layout)) || holdsAsDeclared(vm, state, layout, side, holder, name);
     ASSERT(isAsDeclared == holdsAsDeclared(vm, state, layout, side, holder, name));
-    if (!isAsDeclared || !tryWatchDeclarer(vm, state, layout, side, resolution, name))
+    if (!isAsDeclared || !tryWatchDeclarer(vm, state, layout, side, &layout, holder, name))
         state.objects->classes.didChangeMember(layout, side, name.uid());
 }
 
-// A holder that creates its members when somebody looks reports every change by itself. An ordinary object reports a name that it gets, and a watchpoint reports another value under a name that it has.
 static void watchMembersOfHolder(VM& vm, State& state, const LayoutData& layout, ClassSide side, JSObject* holder, ClassTable::HolderState holderState)
 {
     if (isLazyHolder(holder, side))
@@ -1151,10 +1054,8 @@ void ClassTable::armMemberGuards(VM& vm, const LayoutData& layout, ClassSide sid
     if (!isFirstCall && !m_sidesEnteredWithoutGuards.isEmpty())
         isFirstCall = m_sidesEnteredWithoutGuards.remove(encodeClassSide(layout, side));
     if (holdsFromStart(layout)) {
-        // What watches the members of a holder follows the holder by itself.
         if (!isFirstCall && holderState == HolderState::NotTouched)
             return;
-        // No guard speaks of the class, and there is no class below that could have one.
         if (!layout.numberOfMemberGuards() && !layout.classData().subclassesOffset) {
             if (isFirstCall)
                 m_writes.recordAll();
@@ -1166,7 +1067,6 @@ void ClassTable::armMemberGuards(VM& vm, const LayoutData& layout, ClassSide sid
     MemberGuardWatchpoints::MethodTableUpdate update(m_state);
     bool describesHolder = layout.evaluation() != EvaluationState::SeenTwice && registeredHolderOf(vm, m_state, layout, side) == holder;
     if (holdsFromStart(layout)) {
-        // The records say all there is to say: a name that no class above declares is on no holder.
         if (isFirstCall) {
             leaveGuardsOfStoresForLater(m_state, layout, side);
             m_writes.recordAll();
@@ -1192,21 +1092,14 @@ void ClassTable::armMemberGuards(VM& vm, const LayoutData& layout, ClassSide sid
         beginSpeakingOfObjects(m_state, layout, side);
         return;
     }
-    switch (side) {
-    case ClassSide::Static:
-        // A class object reports what happens to it through its method table. A constructor function reports like a prototype object.
-        if (!isDefinedByClass(layout)) {
-            holder->didBecomePrototype(vm);
-            m_state.objects->closures.didGivePrototypePropertyTo(vm, holder);
-        }
-        break;
-    case ClassSide::Prototype:
-        // Only an object whose Structure may be a prototype reports an added name to VM::invalidateStructureChainIntegrity().
+    // Only an object whose Structure may be a prototype reports an added name to VM::invalidateStructureChainIntegrity().
+    // A class object reports what happens to it through its method table. A constructor function reports like a prototype object.
+    if (side == ClassSide::Prototype || !isDefinedByClass(layout)) {
         holder->didBecomePrototype(vm);
-        break;
+        if (side == ClassSide::Static)
+            m_state.objects->closures.didGivePrototypePropertyTo(vm, holder);
     }
     if (isFirstCall) {
-        // Nothing reports that a constructor function is created again.
         bool isKnownWhenEvaluatedAgain = isDefinedByClass(layout) || layout.evaluation() == EvaluationState::ProvenOnce;
         for (MemberGuardKind kind : { MemberGuardKind::PrototypeLink, MemberGuardKind::EvaluatedOnce, MemberGuardKind::InstancePrototype, MemberGuardKind::NotHidden }) {
             if (kind == MemberGuardKind::EvaluatedOnce && !isKnownWhenEvaluatedAgain)
@@ -1226,7 +1119,7 @@ void ClassTable::armMemberGuards(VM& vm, const LayoutData& layout, ClassSide sid
     if (isFirstCall) {
         bool leavesGuardsOfStoresClear = false;
         for (const MemberGuardData& guard : guardsOf(layout, side, MemberGuardKind::PassedByStores)) {
-            if (tryWatchAbsentMember(vm, m_state, layout, guard, classesAbove))
+            if (tryWatchMember(vm, m_state, layout, guard, classesAbove))
                 set(m_state, layout, guard);
             else {
                 leaveForLater(m_state, layout, guard);
@@ -1250,7 +1143,6 @@ void ClassTable::armMemberGuards(VM& vm, const LayoutData& layout, ClassSide sid
     });
 }
 
-// What armMemberGuards() does for the classes below: they find the holder, and hear of what happens to it.
 void ClassTable::enterHolderWithoutGuards(VM& vm, const LayoutData& layout, ClassSide side, JSObject* holder)
 {
     ASSERT(!holdsFromStart(layout) && !isDefinedByClass(layout));
@@ -1258,7 +1150,6 @@ void ClassTable::enterHolderWithoutGuards(VM& vm, const LayoutData& layout, Clas
         return;
     m_writes.recordAll();
     m_sidesEnteredWithoutGuards.add(encodeClassSide(layout, side));
-    // The guards go on speaking of no object.
     watchpointsOf(m_state).didArmHolder(layout, side);
     holder->didBecomePrototype(vm);
     if (side == ClassSide::Static)
@@ -1269,7 +1160,6 @@ void ClassTable::didChangeMember(const LayoutData& layout, ClassSide side, Uniqu
 {
     if (m_memberBeingDefined.classLayout == &layout && m_memberBeingDefined.side == side && m_memberBeingDefined.uid == uid)
         return;
-    // No guard speaks of the class, and there is no class below that could have one or would ask what names its holder has.
     if (!layout.numberOfMemberGuards() && !layout.classData().subclassesOffset)
         return;
     MemberGuardWatchpoints::MethodTableUpdate update(m_state);
@@ -1284,18 +1174,15 @@ void ClassTable::didChangeMember(const LayoutData& layout, ClassSide side, Uniqu
     }
     if (side == ClassSide::Prototype)
         watchpointsOf(m_state).didChangeNameOnPrototypeSide(layout, *key);
-    if (const MemberGuardData* guard = findGuard(layout, side, MemberGuardKind::Member, *key))
-        clear(m_state, layout, *guard);
-    if (const MemberGuardData* guard = findGuard(layout, side, MemberGuardKind::PassedByStores, *key))
-        leaveForLater(m_state, layout, *guard);
+    auto endGuardsOf = [&](const LayoutData& inheriting) {
+        if (const MemberGuardData* guard = findGuard(inheriting, side, MemberGuardKind::Member, *key))
+            clear(m_state, inheriting, *guard);
+        if (const MemberGuardData* guard = findGuard(inheriting, side, MemberGuardKind::PassedByStores, *key))
+            leaveForLater(m_state, inheriting, *guard);
+    };
+    endGuardsOf(layout);
     if (!layout.classData().subclassesOffset)
         return;
-    auto endGuardsOf = [&](const LayoutData& descendant) {
-        if (const MemberGuardData* guard = findGuard(descendant, side, MemberGuardKind::Member, *key))
-            clear(m_state, descendant, *guard);
-        if (const MemberGuardData* guard = findGuard(descendant, side, MemberGuardKind::PassedByStores, *key))
-            leaveForLater(m_state, descendant, *guard);
-    };
     NamedGuardsBelow& below = m_namedGuardsBelow.add(encodeClassSide(layout, side), NamedGuardsBelow { }).iterator->value;
     if (!std::exchange(below.hasWalked, true)) {
         forEachDescendant(m_state, layout, [&](const LayoutData& descendant) {
@@ -1334,10 +1221,8 @@ std::span<const uint64_t> ClassTable::classesBelowWithGuardsNamed(NamedGuardsBel
     return { named.begin(), named.end() };
 }
 
-// A definition changes what its own name finds, in the class and below it. The watchpoints of the other members follow the holder to its next Structure by themselves.
 void ClassTable::didDefineMember(VM& vm, const LayoutData& layout, ClassSide side, JSObject* holder, UniquedStringImpl* uid, JSObject* function)
 {
-    // Most members are spoken of by no guard: none of the class, and there is no class below that could have one.
     std::optional<FunctionID> defined = functionOf(function);
     bool isNamedByClosureTable = defined && m_state.objects->closures.hasCellFor(*defined);
     if (!isNamedByClosureTable && holdsFromStart(layout) && !layout.classData().subclassesOffset && m_classSidesByHolder.contains(holder)) {
@@ -1366,7 +1251,6 @@ void ClassTable::didDefineMember(VM& vm, const LayoutData& layout, ClassSide sid
     std::optional<uint32_t> key = vm.aotState().identifiers->numberOf(uid);
     if (layout.evaluation() == EvaluationState::SeenTwice || registeredHolderOf(vm, m_state, layout, side) != holder)
         return;
-    // A definition that comes later reports its own name like this one.
     if (side == ClassSide::Prototype && !isLazyHolder(holder, side) && watchpointsOf(m_state).takeMembersLeftUnarmed(layout)) {
         ClassesAbove classesAbove(vm, m_state, layout, side);
         for (const MemberGuardData& guard : guardsOf(layout, side, MemberGuardKind::Member)) {
@@ -1421,7 +1305,6 @@ void ClassTable::didChangePrototypeLink(const LayoutData& layout, ClassSide side
     forEachDescendant(m_state, layout, clearGuards);
 }
 
-// The holder had another parent than the compiler expects when the class was defined. The guards of members were armed over the chain that is there, and no class is defined below yet.
 void ClassTable::didDefineWithOtherParent(const LayoutData& layout, ClassSide side)
 {
     MemberGuardWatchpoints::MethodTableUpdate update(m_state);
@@ -1431,7 +1314,6 @@ void ClassTable::didDefineWithOtherParent(const LayoutData& layout, ClassSide si
         end(m_state, layout, guard);
 }
 
-// Every property that an object gets beside its fields comes by here, and nearly all of these objects are records.
 void ClassTable::didShadowMember(const LayoutData& instanceLayout, UniquedStringImpl* uid)
 {
     if (!instanceLayout.isClass())
@@ -1447,12 +1329,6 @@ void ClassTable::didShadowMember(const LayoutData& instanceLayout, UniquedString
     end(m_state, layout, *guard);
 }
 
-void ClassTable::didChangeInstancePrototype(const LayoutData& instanceLayout)
-{
-    didChangeInstancePrototype(*m_state.instance.vm, instanceLayout, jsNull());
-}
-
-// No object of the layout hides a member while each of them comes to the prototype object of the class past objects without the name.
 void ClassTable::didChangeInstancePrototype(VM& vm, const LayoutData& instanceLayout, JSValue prototype)
 {
     MemberGuardWatchpoints::MethodTableUpdate update(m_state);
@@ -1468,7 +1344,7 @@ void ClassTable::didChangeInstancePrototype(VM& vm, const LayoutData& instanceLa
     for (const MemberGuardData& guard : guardsOf(layout, ClassSide::Prototype, MemberGuardKind::InstancePrototype))
         end(m_state, layout, guard);
     for (const MemberGuardData& guard : guardsOf(layout, ClassSide::Prototype, MemberGuardKind::NotHidden)) {
-        MemberName name(vm, guard.name);
+        MemberName name { vm, guard.name };
         ChainObjects passed;
         if (holder && isSet(m_state, layout, guard) && passOtherObjects(vm, m_state, prototype, holder, name, passed))
             watchpointsOf(m_state).watchOtherObjects(passed.span(), layout, guard, name.uid());
@@ -1539,10 +1415,8 @@ MemberGuardWatchpoints::MethodTableUpdate::~MethodTableUpdate()
         m_watchpoints.updateMethodTable();
 }
 
-// The bit of a set of guards is set with the last of its members.
 bool MemberGuardWatchpoints::tryArmGuardOfStoresInTheWay(uint32_t listEntry, bool setHeldBefore)
 {
-    // The definition of a class sets guards too, and nobody has asked for its sets yet.
     if ((!m_aStoreByNameHasAsked && !setHeldBefore) || m_classesWithClearGuardsOfStores.isEmpty())
         return false;
     if (!std::exchange(m_classesWithClearGuardsOfStoresAreSorted, true))
@@ -1569,42 +1443,36 @@ bool MemberGuardWatchpoints::tryArmGuardOfStoresInTheWay(uint32_t listEntry, boo
     return false;
 }
 
-// A member that is armed here has sets of its own.
 void MemberGuardWatchpoints::setCompleteSets()
 {
-    while (!m_setsToComplete.isEmpty())
-        setCompleteSetsNotedSoFar();
-}
-
-void MemberGuardWatchpoints::setCompleteSetsNotedSoFar()
-{
-    m_recentSetsToComplete.clear();
-    uint64_t* words = wordsOfBits(m_state);
-    auto standsInNobodysWay = [&](uint32_t entry) ALWAYS_INLINE_LAMBDA {
-        if (holds(words, entry))
-            return true;
-        if (entry & (MemberGuardAggregates::isAwaitedBeforeClassExists | MemberGuardAggregates::holdsWhileClear))
-            return false;
-        return !isAboutExistingClass(MemberGuardAggregates::wordIndex(MemberGuardAggregates::numberInListEntry(entry)));
-    };
-    for (const GuardSet& set : std::exchange(m_setsToComplete, { })) {
-        if (holds(words, set.bit))
-            continue;
-        const uint32_t* list = m_state.tables.at<uint32_t>(set.offsetOfMembers);
-        std::span members { list + 1, list[0] };
-        if (uint32_t remembered = memberLastInTheWayOf(set.bit); remembered && !standsInNobodysWay(members[remembered]) && !tryArmGuardOfStoresInTheWay(members[remembered], set.heldBefore))
-            continue;
-        auto inTheWay = std::ranges::find_if_not(members, standsInNobodysWay);
-        while (inTheWay != members.end() && tryArmGuardOfStoresInTheWay(*inTheWay, set.heldBefore))
-            inTheWay = std::find_if_not(inTheWay, members.end(), standsInNobodysWay);
-        if (inTheWay != members.end()) {
-            // A member near the start is found again sooner than it is looked up.
-            if (size_t index = inTheWay - members.begin(); index >= fewestMembersPassedToRemember)
-                didFindInTheWay(set.bit, static_cast<uint32_t>(index));
-            continue;
+    while (!m_setsToComplete.isEmpty()) {
+        m_recentSetsToComplete.clear();
+        uint64_t* words = wordsOfBits(m_state);
+        auto standsInNobodysWay = [&](uint32_t entry) ALWAYS_INLINE_LAMBDA {
+            if (holds(words, entry))
+                return true;
+            if (entry & (MemberGuardAggregates::isAwaitedBeforeClassExists | MemberGuardAggregates::holdsWhileClear))
+                return false;
+            return !isAboutExistingClass(MemberGuardAggregates::wordIndex(MemberGuardAggregates::numberInListEntry(entry)));
+        };
+        for (const GuardSet& set : std::exchange(m_setsToComplete, { })) {
+            if (holds(words, set.bit))
+                continue;
+            const uint32_t* list = m_state.tables.at<uint32_t>(set.offsetOfMembers);
+            std::span members { list + 1, list[0] };
+            if (uint32_t remembered = memberLastInTheWayOf(set.bit); remembered && !standsInNobodysWay(members[remembered]) && !tryArmGuardOfStoresInTheWay(members[remembered], set.heldBefore))
+                continue;
+            auto inTheWay = std::ranges::find_if_not(members, standsInNobodysWay);
+            while (inTheWay != members.end() && tryArmGuardOfStoresInTheWay(*inTheWay, set.heldBefore))
+                inTheWay = std::find_if_not(inTheWay, members.end(), standsInNobodysWay);
+            if (inTheWay != members.end()) {
+                if (size_t index = inTheWay - members.begin(); index >= fewestMembersPassedToRemember)
+                    didFindInTheWay(set.bit, static_cast<uint32_t>(index));
+                continue;
+            }
+            setHolds(words, set.bit, true);
+            didChangeBit(set.bit);
         }
-        setHolds(words, set.bit, true);
-        didChangeBit(set.bit);
     }
 }
 
@@ -1654,7 +1522,6 @@ void MemberGuardWatchpoints::didChangeNameOnPrototypeSide(const LayoutData& clas
     names.verdicts.insert(index, MemberVerdict::NotLookedAt);
 }
 
-// Few bits have an entry of the method table hanging on them, and a definition changes hundreds.
 void MemberGuardWatchpoints::didChangeBit(uint32_t guardBit)
 {
     uint32_t number = MemberGuardAggregates::numberInListEntry(guardBit);
@@ -1676,12 +1543,11 @@ void MemberGuardWatchpoints::updateMethodTable()
     std::span<const uint32_t> compiled = image.methodTable();
     std::span<const uint32_t> lookups = image.methodLookups();
     std::span<uint32_t> table = m_state.instance.methodTable();
-    // The copy is read-only but for the time of a change: no table of code addresses lies about that can be written.
     bool isWritable = false;
     size_t reservedSize = InstanceLayout::bytesReservedForMethodTable(m_state.tables.instanceSizes);
     m_recentChangedBits.clear();
     for (uint32_t listEntry : std::exchange(m_changedBits, { })) {
-        bool isSet = holds(m_state, listEntry);
+        bool isSet = holds(wordsOfBits(m_state), listEntry);
         uint32_t guardBit = MemberGuardAggregates::numberInListEntry(listEntry);
         for (const MethodTableDependentData& dependent : std::ranges::equal_range(m_state.tables.methodTableDependents(), guardBit, { }, &MethodTableDependentData::guardBit)) {
             uint32_t entry = isSet ? compiled[dependent.entry] : lookups[dependent.selector];
@@ -1720,27 +1586,22 @@ void MemberGuardWatchpoints::watchOtherObjects(std::span<JSObject* const> object
     m_state.chainDependents->add(objects, { uid, encodeDependent(classLayout, guard), m_chainDependentOwner });
 }
 
-static const LayoutData& classOfDependent(State& state, uint32_t subject)
+static std::pair<const LayoutData&, const MemberGuardData*> findGuardOfDependent(State& state, uint32_t subject, UniquedStringImpl* uid)
 {
-    return *state.objects->classes.classWithIndex(subject >> 2);
-}
-
-static const MemberGuardData* findGuardOfDependent(State& state, const LayoutData& layout, uint32_t subject, UniquedStringImpl* uid)
-{
+    const LayoutData& layout = *state.objects->classes.classWithIndex(subject >> 2);
     std::optional<uint32_t> key = state.instance.vm->aotState().identifiers->numberOf(uid);
     ClassSide side = static_cast<ClassSide>(subject >> 1 & 1);
     if (!key)
-        return nullptr;
+        return { layout, nullptr };
     if (!(subject & 1))
-        return findGuard(layout, side, MemberGuardKind::Member, *key);
-    return findGuard(layout, ClassSide::Prototype, side == ClassSide::Static ? MemberGuardKind::PassedByStores : MemberGuardKind::NotHidden, *key);
+        return { layout, findGuard(layout, side, MemberGuardKind::Member, *key) };
+    return { layout, findGuard(layout, ClassSide::Prototype, side == ClassSide::Static ? MemberGuardKind::PassedByStores : MemberGuardKind::NotHidden, *key) };
 }
 
 // The report may come before the change. Each class below has dependents of its own for the guards that it has.
 void MemberGuardWatchpoints::dropChainDependent(VM&, uint32_t subject, UniquedStringImpl* uid)
 {
-    const LayoutData& layout = classOfDependent(m_state, subject);
-    const MemberGuardData* guard = findGuardOfDependent(m_state, layout, subject, uid);
+    auto [layout, guard] = findGuardOfDependent(m_state, subject, uid);
     if (!guard)
         return;
     if (guard->kind() == MemberGuardKind::PassedByStores)
@@ -1751,8 +1612,7 @@ void MemberGuardWatchpoints::dropChainDependent(VM&, uint32_t subject, UniquedSt
 
 bool MemberGuardWatchpoints::hasChainDependent(VM&, uint32_t subject, UniquedStringImpl* uid) const
 {
-    const LayoutData& layout = classOfDependent(m_state, subject);
-    const MemberGuardData* guard = findGuardOfDependent(m_state, layout, subject, uid);
+    auto [layout, guard] = findGuardOfDependent(m_state, subject, uid);
     return guard && isSet(m_state, layout, *guard);
 }
 

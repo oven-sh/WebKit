@@ -15,7 +15,6 @@ layout L0 name="Point" fields=[{key="x" declared={type=number}}, {key="y" declar
 layout L1 name="Size" fields=[{key="x" declared={type=number}}, {key="y" declared={type=number}}]
 
 function f0 name="twoUses" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = PropGet v0 key="x"
     v2 = PropGet v0 key="y"
     v3 = ShapeTest v0 layouts=[L0]
@@ -25,7 +24,6 @@ function f0 name="twoUses" parameters=[{type=object}] results=[{type=anything}] 
 # F0-NOT: stretch
 
 function f1 name="oneUse" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = PropGet v0 key="x"
     v2 = ShapeTest v0 layouts=[L0]
     Return v1
@@ -34,7 +32,6 @@ function f1 name="oneUse" parameters=[{type=object}] results=[{type=anything}] {
 # F1-NOT: stretch
 
 function f2 name="twoReceivers" parameters=[{type=object}, {type=object}] results=[{type=anything}] {
-  b0(v0: object, v1: object):
     v2 = PropGet v0 key="x"
     v3 = PropGet v1 key="x"
     v4 = PropGet v0 key="y"
@@ -47,7 +44,6 @@ function f2 name="twoReceivers" parameters=[{type=object}, {type=object}] result
 # F2-NOT: stretch
 
 function f3 name="castsShareCondition" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = PropGet v0 key="x"
     v2 = Upcast v0 castType=anything
     v3 = PropGet v2 key="y"
@@ -59,7 +55,6 @@ function f3 name="castsShareCondition" parameters=[{type=object}] results=[{type
 # F3-NOT: stretch
 
 function f4 name="differentLayoutSets" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = PropGet v0 key="x"
     v2 = PropGet v0 key="y"
     v3 = ShapeTest v0 layouts=[L0]
@@ -70,7 +65,6 @@ function f4 name="differentLayoutSets" parameters=[{type=object}] results=[{type
 # F4-NOT: stretch
 
 function f5 name="twoTestsOfOneSite" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="length"
     v2 = TypeTest v0 testedType=Array<anything>
     v3 = IsPristine v0 builtinClass=Array aspects=[Storage]
@@ -80,7 +74,6 @@ function f5 name="twoTestsOfOneSite" parameters=[{type=anything}] results=[{type
 # F5-NOT: stretch
 
 function f6 name="useOnOneArm" parameters=[{type=object}, {type=boolean}, {type=function}] results=[{type=anything}] {
-  b0(v0: object, v1: boolean, v2: function):
     v3 = PropGet v0 key="x"
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -96,7 +89,6 @@ function f6 name="useOnOneArm" parameters=[{type=object}, {type=boolean}, {type=
 # F6-NOT: stretch
 
 function f7 name="permanentAcrossCall" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
-  b0(v0: anything, v1: function):
     v2 = PropGet v0 key="x"
     v3 = Call v1
     v4 = PropGet v0 key="y"
@@ -107,7 +99,6 @@ function f7 name="permanentAcrossCall" parameters=[{type=anything}, {type=functi
 # F7-NOT: stretch
 
 function f8 name="endedByCall" parameters=[{type=Array<anything>}, {type=function}] results=[{type=anything}] {
-  b0(v0: Array<anything>, v1: function):
     v2 = Integer integer=0
     v3 = ElemGet v0, v2
     v4 = Call v1

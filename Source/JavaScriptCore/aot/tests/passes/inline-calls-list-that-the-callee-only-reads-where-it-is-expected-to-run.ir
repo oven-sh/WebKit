@@ -9,7 +9,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="reads" flags=[HasRestParameter] parameters=[{type=anything}, {type=Array<number>}] results=[{type=anything}] {
-  b0(v0: anything, v1: Array<number>):
     v2 = CallBuiltin v1 overload=ArrayPrototypeLength/0
     v3 = ToBoolean v2
     Branch v3 -> taken b1(), notTaken b2()
@@ -25,7 +24,6 @@ function f0 name="reads" flags=[HasRestParameter] parameters=[{type=anything}, {
     Return v9
 }
 function f1 name="inALoop" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     Jump -> next b1()
   b1():
     LoopHint
@@ -39,21 +37,17 @@ function f1 name="inALoop" parameters=[{type=number}, {type=anything}] results=[
     Jump -> next b1()
   b3():
     Return v3
-}
-# CHECK-LABEL: function f1 name="inALoop"
 # CHECK-NOT: function=f0
+}
 
 function f2 name="outsideALoop" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     v2 = NewArray v0, v0, v0 contents=number
     v3 = CallDirect v1, v2 function=f0
     Return v3
-}
-# CHECK-LABEL: function f2 name="outsideALoop"
 # CHECK: = CallDirect {{*}} function=f0
+}
 
 function f3 name="keeps" flags=[HasRestParameter] parameters=[{type=anything}, {type=Array<number>}] results=[{type=anything}] {
-  b0(v0: anything, v1: Array<number>):
     PropSet v0, v1 key="list" mode=Strict
     v3 = PropGet v0 key="a"
     v4 = PropGet v3 key="b"
@@ -63,7 +57,6 @@ function f3 name="keeps" flags=[HasRestParameter] parameters=[{type=anything}, {
     Return v7
 }
 function f4 name="theCalleeKeepsTheList" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     Jump -> next b1()
   b1():
     LoopHint
@@ -77,12 +70,10 @@ function f4 name="theCalleeKeepsTheList" parameters=[{type=number}, {type=anythi
     Jump -> next b1()
   b3():
     Return v3
-}
-# CHECK-LABEL: function f4 name="theCalleeKeepsTheList"
 # CHECK: = CallDirect {{*}} function=f3
+}
 
 function f5 name="readsAnOrdinaryParameter" parameters=[{type=anything}, {type=Array<number>}] results=[{type=anything}] {
-  b0(v0: anything, v1: Array<number>):
     v2 = CallBuiltin v1 overload=ArrayPrototypeLength/0
     v3 = ToBoolean v2
     Branch v3 -> taken b1(), notTaken b2()
@@ -98,7 +89,6 @@ function f5 name="readsAnOrdinaryParameter" parameters=[{type=anything}, {type=A
     Return v9
 }
 function f6 name="theListIsTheProgramsOwn" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     Jump -> next b1()
   b1():
     LoopHint
@@ -112,13 +102,11 @@ function f6 name="theListIsTheProgramsOwn" parameters=[{type=number}, {type=anyt
     Jump -> next b1()
   b3():
     Return v3
-}
-# CHECK-LABEL: function f6 name="theListIsTheProgramsOwn"
 # CHECK: = CallDirect {{*}} function=f5
+}
 
 # The one call of a function in a loop has a budget of its own, so each of these two has a second call.
 function f7 name="callsThemAgain" parameters=[{type=anything}, {type=Array<number>}] results=[{type=anything}] {
-  b0(v0: anything, v1: Array<number>):
     v2 = CallDirect v0, v1 function=f3
     v3 = CallDirect v2, v1 function=f5
     Return v3

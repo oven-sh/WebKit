@@ -20,7 +20,6 @@ layout L3 name="Holder" fields=[{key="go" declared={type=anything} flags=[IsRequ
 variable g0 name="any" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="others" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L0 fields=[]
     v1 = NewObject layout=L1 fields=[]
     v2 = NewObject layout=L2 fields=[]
@@ -44,15 +43,12 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="one" results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="two" results=[{type=anything}] {
-  b0():
     Return
 }
 function f3 name="made" kind=Getter results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     Return v0
 }

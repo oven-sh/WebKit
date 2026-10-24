@@ -27,15 +27,6 @@ void CalleeList::add(BuiltinID builtin)
     insertInUniquedSortedVector(builtins, builtin);
 }
 
-void CalleeList::merge(const CalleeList& other)
-{
-    for (FunctionID function : other.functions)
-        add(function);
-    for (BuiltinID builtin : other.builtins)
-        add(builtin);
-    isComplete = isComplete && other.isComplete;
-}
-
 void CalleeList::dump(PrintStream& out) const
 {
     if (runsNothing()) {

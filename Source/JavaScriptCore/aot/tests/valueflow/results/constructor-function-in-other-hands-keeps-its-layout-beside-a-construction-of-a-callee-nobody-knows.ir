@@ -13,7 +13,6 @@ layout L1 kind=Instance name="Base" constructor=f3
 layout L2 kind=Instance name="Derived" base=L1 constructor=f4 flags=[HasHeritage]
 variable g0 name="shape" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = NewClosure function=f1
     v2 = NewClosure function=f2
@@ -36,23 +35,19 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Shape" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     PropSet v0, v1 key="a" mode=Strict
     Return
 }
 function f2 name="plain" results=[{type=anything}] {
-  b0():
     Return
 }
 function f3 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L1
     v2 = NewObject v1 layout=L1 fields=[]
     Return v2
 }
 function f4 name="Derived" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0
     v3 = SuperConstruct v2, v1 layout=L2
     Return v3

@@ -10,7 +10,6 @@ layout L0 kind=Instance name="Counter" constructor=f1 staticFields=[{key="count"
 variable g0 module=m0 declared={type=number} owner=L0
 variable g1 name="moduleCount" module=m0 declared={type=number} initialization=Uninitialized
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToNumber v1
@@ -26,13 +25,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2
 }
 function f2 name="initializeCounter" kind=Initializer flags=[HasThis] thisType={type=function} parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: function, v1: number):
     PropDefine v0, v1 key="count"
     Return
 }

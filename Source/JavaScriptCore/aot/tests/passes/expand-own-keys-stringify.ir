@@ -14,8 +14,6 @@ function f0 name="expectedLayout" parameters=[{type=object}] results=[{type=anyt
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
     Return v2
-}
-# CHECK-LABEL: function f0 name="expectedLayout"
 # CHECK: [[builder0]]: stringbuilder = StringBuilderBegin
 # CHECK: [[shape0]]: boolean = ShapeTest v0 layouts=[L0]
 # CHECK-NEXT: Branch [[shape0]] -> taken [[call0]](| 0), notTaken
@@ -32,62 +30,53 @@ function f0 name="expectedLayout" parameters=[{type=object}] results=[{type=anyt
 # CHECK-NEXT: Switch [[outcome0]] cases=[1] -> case
 # CHECK: [[text0]]: string = StringBuilderFinish [[builder0]]
 # CHECK-NEXT: Jump -> next [[done0]]([[text0]])
+}
 
 function f1 name="number" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
     Return v2
-}
-# CHECK-LABEL: function f1 name="number"
 # CHECK: b0(v0: number):
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: v2: undefined|string = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
 # CHECK-NEXT: Return v2
+}
 
 function f2 name="string" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
     Return v2
-}
-# CHECK-LABEL: function f2 name="string"
 # CHECK: b0(v0: string):
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: v2: undefined|string = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
 # CHECK-NEXT: Return v2
+}
 
 function f3 name="nullOrNumber" parameters=[{type=null|number}] results=[{type=anything}] {
-  b0(v0: null|number):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
     Return v2
-}
-# CHECK-LABEL: function f3 name="nullOrNumber"
 # CHECK: b0(v0: null|number):
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: v2: undefined|string = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
 # CHECK-NEXT: Return v2
+}
 
 function f4 name="undefinedOrNumber" parameters=[{type=undefined|number}] results=[{type=anything}] {
-  b0(v0: undefined|number):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
     Return v2
-}
-# CHECK-LABEL: function f4 name="undefinedOrNumber"
 # CHECK: b0(v0: undefined|number):
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: v2: undefined|string = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
 # CHECK-NEXT: Return v2
+}
 
 function f5 name="arrayOfLayout" parameters=[{type=Array<object>}] results=[{type=anything}] {
   b0(v0: Array<object> ~ Array<L0>):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
     Return v2
-}
-# CHECK-LABEL: function f5 name="arrayOfLayout"
 # CHECK: [[builder5]]: stringbuilder = StringBuilderBegin
 # CHECK: = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
 # CHECK: = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
@@ -98,14 +87,13 @@ function f5 name="arrayOfLayout" parameters=[{type=Array<object>}] results=[{typ
 # CHECK: = CallDirect [[element5]], [[builder5]] function=[[serializerOfPoint]]
 # CHECK: = JSONAppendToken [[builder5]], {{*}} jsonToken=CloseArray
 # CHECK: = StringBuilderFinish [[builder5]]
+}
 
 function f6 name="unionOfTwoLayouts" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L0|L1):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
     Return v2
-}
-# CHECK-LABEL: function f6 name="unionOfTwoLayouts"
 # CHECK: [[builder6]]: stringbuilder = StringBuilderBegin
 # CHECK: = ShapeTest v0 layouts=[L0]
 # CHECK: = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
@@ -114,33 +102,29 @@ function f6 name="unionOfTwoLayouts" parameters=[{type=object}] results=[{type=a
 # CHECK: = CallDirect v0, [[builder6]] function=[[serializerOfPoint]]
 # CHECK: = CallDirect v0, [[builder6]] function=[[serializerOfOther]]
 # CHECK: = StringBuilderFinish [[builder6]]
+}
 
 function f7 name="oneArgument" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1 overload=JSONStringify/0
     Return v2
-}
-# CHECK-LABEL: function f7 name="oneArgument"
 # CHECK: b0(v0: number):
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: v2: undefined|string = CallBuiltin -, v0, v1 overload=JSONStringify/0
 # CHECK-NEXT: Return v2
+}
 
 function f8 name="nothingKnown" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
     Return v2
-}
-# CHECK-LABEL: function f8 name="nothingKnown"
 # CHECK: b0(v0: anything):
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: v2: undefined|string = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
 # CHECK-NEXT: Return v2
+}
 
 function f9 name="testsOfUnchangedAllocation" parameters=[{type=number}] results=[{type=undefined|null|number}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L1 fields=[0]
     v2 = HasKeyOrder v1, v1 layout=L1 fields=[0]
     Branch v2 -> taken b1(| 0), notTaken b3()
@@ -153,16 +137,14 @@ function f9 name="testsOfUnchangedAllocation" parameters=[{type=number}] results
     Return v7
   b3():
     Return v0
-}
-# CHECK-LABEL: function f9 name="testsOfUnchangedAllocation"
 # CHECK: v1:{{*}}= NewObject -, v0 layout=L1 fields=[0]
 # CHECK-NEXT: v2: true = Boolean boolean=true
 # CHECK: v4: true = Boolean boolean=true
 # CHECK-NOT: HasKeyOrder
 # CHECK-NOT: HasNoExtraProperties
+}
 
 function f10 name="testOfAnotherOrder" parameters=[{type=number}] results=[{type=undefined|null|number}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L1 fields=[0]
     v2 = HasKeyOrder v1, v1 layout=L1 fields=[0, 1]
     Branch v2 -> taken b1(| 0), notTaken b2()
@@ -172,14 +154,12 @@ function f10 name="testOfAnotherOrder" parameters=[{type=number}] results=[{type
     Return v5
   b2():
     Return v0
-}
-# CHECK-LABEL: function f10 name="testOfAnotherOrder"
 # CHECK: v1:{{*}}= NewObject -, v0 layout=L1 fields=[0]
 # CHECK-NEXT: v2: false = Boolean
 # CHECK-NOT: HasKeyOrder
+}
 
 function f11 name="fieldAddedBetweenAllocationAndTest" parameters=[{type=number}] results=[{type=undefined|null|number}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L1 fields=[0]
     PutSlotOrAdd v1, v1, v0 key="w" receivers=[L1] level=Expected
     v3 = HasKeyOrder v1, v1 layout=L1 fields=[0]
@@ -190,14 +170,12 @@ function f11 name="fieldAddedBetweenAllocationAndTest" parameters=[{type=number}
     Return v6
   b2():
     Return v0
-}
-# CHECK-LABEL: function f11 name="fieldAddedBetweenAllocationAndTest"
 # CHECK: PutSlotOrAdd v1, v1, v0 key="w" receivers=[L1] level=Expected
 # CHECK-NEXT: v3: boolean = HasKeyOrder v1, v1 layout=L1 fields=[0]
 # CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2()
+}
 
 function f12 name="allocationPassedToCallBeforeTest" parameters=[{type=number}, {type=anything}] results=[{type=undefined|null|number}] {
-  b0(v0: number, v1: anything):
     v2 = NewObject -, v0 layout=L1 fields=[0]
     v3 = Call v1, -, v2
     v4 = ShapeTest v2 layouts=[L1]
@@ -214,10 +192,9 @@ function f12 name="allocationPassedToCallBeforeTest" parameters=[{type=number}, 
     Return v11
   b4():
     Return v0
-}
-# CHECK-LABEL: function f12 name="allocationPassedToCallBeforeTest"
 # CHECK: v6: boolean = HasKeyOrder v2, v5 layout=L1 fields=[0]
 # CHECK: v8: boolean = HasNoExtraProperties v2, v5
+}
 
 # CHECK-LABEL: role=Serializer
 # CHECK-LABEL: role=Serializer

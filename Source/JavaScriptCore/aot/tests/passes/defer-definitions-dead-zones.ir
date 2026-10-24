@@ -53,7 +53,6 @@ variable g2 name="pattern" module=m0 declared={type=absent|RegExp} flow={writers
 variable g3 name="readWithoutTest" module=m0 declared={type=absent|f4} flow={writers=AllKnown stores=AtMostOnce}
 variable g4 name="exported" module=m0 declared={type=absent|f5} flow={writers=AllKnown stores=AtMostOnce}
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     PutModuleVariable v0 variable=g0
     v2 = NewClosure function=f2
@@ -71,29 +70,23 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="helper" module=m0 kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="Plain" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2
 }
 function f3 name="method" module=m0 kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f4 name="readWithoutTest" module=m0 kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f5 name="exported" module=m0 kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f6 name="reader" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g0
     v2 = CheckInitialized v1 name="helper"
     v3 = Call v0, -, v2

@@ -11,17 +11,15 @@ function f0 name="multiplies" parameters=[{type=number flags=[IsExpected]}] resu
   b0(v0: anything ~ number):
     v1 = Mul v0, v0
     Return v1
-}
-# CHECK-LABEL: function f0 name="multiplies"
 # CHECK-NOT: TypeTest
 # CHECK: = Mul v0, v0
+}
 
 function f1 name="reads" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ L0):
     v1 = PropGet v0 key="memoizedState"
     Return v1
-}
-# CHECK-LABEL: function f1 name="reads"
 # CHECK: = TypeTest v0 testedType=L0
+}
 
 function f2 name="Hook" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]

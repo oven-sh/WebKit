@@ -11,7 +11,6 @@
 #include "AOTChainDependents.h"
 #include "AOTClosure.h"
 #include "AOTHeapCacheRegistry.h"
-#include "AOTImmortalCells.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTObjectBuilder.h"
@@ -20,7 +19,6 @@
 #include "AOTObjectModelCaches.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTPropertyCachesKeys.h"
-#include "AOTPropertyCachesNamedAccess.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTState.h"
 #include "AOTVector.h"
@@ -29,13 +27,37 @@
 #include "GetterSetter.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
+#include "Options.h"
 #include "PropertySlot.h"
+#include "ScriptExecutable.h"
+#include "SourceProvider.h"
 #include <bit>
+#include <wtf/DataLog.h>
 #include <wtf/TZoneMallocInlines.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
+
+void willRunInInterpreter(CodeBlock* codeBlock)
+{
+    VM& vm = codeBlock->vm();
+    count(vm, counterFor(codeBlock->codeType()));
+
+    if (!Options::crashIfInterpreterIsUsed()) [[likely]]
+        return;
+    if (codeBlock->source().provider()->provenance() != SourceProvenance::Static)
+        return;
+    // The text of an implicit class constructor is the engine's, whichever text declares the class. Only bytecode creates one, and that bytecode came through here.
+    if (codeBlock->unlinkedCodeBlock()->isBuiltinDefaultClassConstructor())
+        return;
+    // Compiled code belongs to the realm of the program. Any other realm has its built-in functions as text, and what creates such a realm is declared to use the interpreter.
+    if (vm.hasCompiledCode() && !Instance::of(codeBlock->globalObject()) && codeBlock->unlinkedCodeBlock()->isBuiltinFunction())
+        return;
+
+    dataLogLn("crashIfInterpreterIsUsed: ", codeBlock->codeType(), " ", codeBlock->inferredName(), " at ", codeBlock->ownerExecutable()->sourceURL(), ":", codeBlock->ownerExecutable()->firstLine());
+    CRASH();
+}
 
 static JSValue getById(Instance&, JSCell* base, const Identifier&);
 
@@ -43,11 +65,6 @@ static Instance* runningInstanceOf(JSGlobalObject* realm)
 {
     Instance* instance = Instance::of(realm);
     return instance && instance->state ? instance : nullptr;
-}
-
-static NamedAccess namedAccess(Instance& instance, const Identifier& ident)
-{
-    return { &instance, instance.globalObject, *instance.vm, *instance.state->propertyCaches, ident, std::nullopt, nullptr };
 }
 
 // Null where the field lies outside the cell and has no storage yet.
@@ -73,32 +90,6 @@ static JSValue readField(Instance& instance, const Slot& slot, Object& object)
     if (!value && slot.has(Slot::absentIsUndefined))
         return jsUndefined();
     return value;
-}
-
-static JSValue callGetterInField(Instance& instance, const Slot& slot, Object& object)
-{
-    const void* field = storageOfField(slot, object);
-    JSValue accessor = field ? readSlot(slot.fieldSlot().representation(), field, *instance.state->strings) : JSValue();
-    if (!accessor || !accessor.isCell())
-        return slot.has(Slot::absentIsUndefined) ? jsUndefined() : JSValue();
-    return uncheckedDowncast<GetterSetter>(accessor.asCell())->callGetter(instance.globalObject, &object);
-}
-
-// The value of a data property does not depend on the receiver, so the holder is asked for it as for a property of its own.
-static JSValue readFieldOrInheritedField(Instance& instance, const Slot& slot, Object& object, const Identifier& ident)
-{
-    const void* field = storageOfField(slot, object);
-    if (!field)
-        return { };
-    if (!slotHoldsAbsent(slot.fieldSlot().representation(), field))
-        return readField(instance, slot, object);
-    return getById(instance, MarkedBlockCage::decode(instance.cellCageBase, slot.fieldAndHolder.holder), ident);
-}
-
-static JSValue readExtraProperty(const Slot& slot, Object& object)
-{
-    JSObject* extraProperties = object.extraProperties();
-    return extraProperties ? extraProperties->getDirect(Slot::offsetFor(slot.extraProperty.wordIndex)) : JSValue();
 }
 
 static JSValue valueInStorage(const Slot& slot, JSCell* base)
@@ -134,27 +125,27 @@ static JSValue readBySlot(Instance& instance, const Slot& slot, JSCell* base, co
         return callCustomGetter(instance, slot, base, ident);
     case Slot::Kind::Field:
         return readField(instance, slot, *uncheckedDowncast<Object>(base));
-    case Slot::Kind::FieldGetter:
-        return callGetterInField(instance, slot, *uncheckedDowncast<Object>(base));
     case Slot::Kind::InheritedField:
         return getById(instance, slot.holder, ident);
-    case Slot::Kind::FieldOrInheritedField:
-        return readFieldOrInheritedField(instance, slot, *uncheckedDowncast<Object>(base), ident);
-    case Slot::Kind::ExtraProperty:
-        return readExtraProperty(slot, *uncheckedDowncast<Object>(base));
+    case Slot::Kind::ExtraProperty: {
+        JSObject* extraProperties = uncheckedDowncast<Object>(base)->extraProperties();
+        return extraProperties ? extraProperties->getDirect(Slot::offsetFor(slot.extraProperty.wordIndex)) : JSValue();
+    }
     case Slot::Kind::Constant:
         return JSValue::decode(slot.constant);
     case Slot::Kind::Empty:
     case Slot::Kind::Setter:
+    case Slot::Kind::Transition:
     case Slot::Kind::CustomSetter:
+    case Slot::Kind::FieldGetter:
     case Slot::Kind::FieldCreation:
     case Slot::Kind::FieldOrInherited:
     case Slot::Kind::FieldOrInheritedSetter:
+    case Slot::Kind::FieldOrInheritedField:
     case Slot::Kind::Variable:
     case Slot::Kind::ExtraGetter:
     case Slot::Kind::ExtraSetter:
     case Slot::Kind::ExtraPropertyAddition:
-    case Slot::Kind::Transition:
     case Slot::Kind::ArrayLength:
     case Slot::Kind::TypedArrayLength:
     case Slot::Kind::StringLength:
@@ -171,7 +162,7 @@ static JSValue getById(Instance& instance, JSCell* base, const Identifier& ident
     auto scope = DECLARE_THROW_SCOPE(*instance.vm);
     const Slot* slot = instance.state->propertyCaches->findByKey(base->structure(), ident.impl(), SlotAccess::Read);
     if (!slot)
-        RELEASE_AND_RETURN(scope, getAndCache(namedAccess(instance, ident), base));
+        RELEASE_AND_RETURN(scope, getAndCache({ &instance, ident, std::nullopt, nullptr }, base));
     JSValue value = readBySlot(instance, *slot, base, ident);
     RETURN_IF_EXCEPTION(scope, { });
     if (value)
@@ -195,69 +186,6 @@ static std::optional<JSValue> tryGetFromOrdinaryObject(Instance& instance, JSCel
     if (!value)
         return std::nullopt;
     return value;
-}
-
-static bool isHeldByCacheOfInterpreter(VM& vm, JSObject* base, const Identifier& ident, const PropertySlot& slot)
-{
-    return slot.isCacheableValue() || (isJSArray(base) && ident == vm.propertyNames->length);
-}
-
-static std::optional<bool> isFieldPresent(const Slot& slot, Object& object)
-{
-    const void* field = storageOfField(slot, object);
-    if (!field)
-        return std::nullopt;
-    if (!slotHoldsAbsent(slot.field.slot.representation(), field))
-        return true;
-    if (slot.has(Slot::absentIsUndefined))
-        return false;
-    return std::nullopt;
-}
-
-static std::optional<bool> isPresentBySlot(const Slot& slot, JSObject* base)
-{
-    switch (Slot::presenceOf(slot.kind)) {
-    case SlotPresence::Unknown:
-        return std::nullopt;
-    case SlotPresence::Present:
-        return true;
-    case SlotPresence::Absent:
-        return false;
-    case SlotPresence::ReadsSlot:
-        return isFieldPresent(slot, *uncheckedDowncast<Object>(base));
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static bool inById(Instance& instance, JSObject* base, const Identifier& ident)
-{
-    const Slot* slot = instance.state->propertyCaches->findByKey(base->structure(), ident.impl(), SlotAccess::Read);
-    if (!slot)
-        return hasPropertyAndCache(&instance, base, { ident.impl(), std::nullopt });
-    if (std::optional<bool> isPresent = isPresentBySlot(*slot, base))
-        return *isPresent;
-    return base->hasProperty(instance.globalObject, ident);
-}
-
-// A marker that the type of the field does not list is left to Object::store(), which may have to set the mark of the cell.
-static bool slotAdmits(const RuntimeLayoutTable& layouts, const Slot::FieldPayload& field, JSValue value)
-{
-    return layouts.valueHasType(layouts.typeAt(field.type), value);
-}
-
-static bool tryStoreField(Instance& instance, const Slot& slot, Object& object, JSValue value)
-{
-    SlotRepresentation representation = slot.field.slot.representation();
-    void* field = storageOfField(slot, object);
-    if (!field || object.isFrozen() || slotHoldsAbsent(representation, field))
-        return false;
-    State& state = *instance.state;
-    bool takesAnyValue = slot.kind == Slot::Kind::FieldCreation && slot.has(Slot::remembersOrder);
-    if ((!takesAnyValue && !slotAdmits(state.objects->layouts, slot.field, value)) || !tryWriteSlot(*state.strings, representation, field, value))
-        return false;
-    if (traitsOf(representation).holdsCell)
-        instance.vm->writeBarrier(&object, value);
-    return true;
 }
 
 // addExtraProperty() in the stubs, for a property that needs no new storage: the Structures before and after are the slot's, so nothing is looked up and nobody is told again.
@@ -284,32 +212,18 @@ static bool tryAddExtraProperty(Instance& instance, const Slot& slot, Object& ob
     return true;
 }
 
-static bool tryReplaceExtraProperty(Instance& instance, const Slot& slot, Object& object, JSValue value)
-{
-    JSObject* extraProperties = object.extraProperties();
-    if (!extraProperties)
-        return false;
-    extraProperties->putDirectOffset(*instance.vm, Slot::offsetFor(slot.extraProperty.wordIndex), value);
-    return true;
-}
-
 static void putById(Instance& instance, JSCell* base, const Identifier& ident, JSValue value, bool isStrict)
 {
     const Slot* slot = instance.state->propertyCaches->findByKey(base->structure(), ident.impl(), SlotAccess::Store);
     if (!slot) {
-        putAndCache(namedAccess(instance, ident), base, value, isStrict ? PutMode::Strict : PutMode::Sloppy);
+        putAndCache({ &instance, ident, std::nullopt, nullptr }, base, value, isStrict ? PutMode::Strict : PutMode::Sloppy);
         return;
     }
-    bool isField = slot->kind == Slot::Kind::Field || slot->kind == Slot::Kind::FieldCreation;
-    if (isField && tryStoreField(instance, *slot, *uncheckedDowncast<Object>(base), value))
-        return;
     if (slot->kind == Slot::Kind::Setter) {
         uncheckedDowncast<GetterSetter>(valueInStorage(*slot, base))->callSetter(instance.globalObject, base, value, isStrict);
         return;
     }
     if (slot->kind == Slot::Kind::ExtraPropertyAddition && tryAddExtraProperty(instance, *slot, *uncheckedDowncast<Object>(base), value))
-        return;
-    if (slot->kind == Slot::Kind::ExtraProperty && tryReplaceExtraProperty(instance, *slot, *uncheckedDowncast<Object>(base), value))
         return;
     PutPropertySlot putSlot(base, isStrict, PutPropertySlot::PutById);
     JSValue(base).putInline(instance.globalObject, ident, value, putSlot);
@@ -400,7 +314,7 @@ std::optional<PropertyOffset> placeOfFieldInSiteCache(JSGlobalObject* globalObje
 void didGetById(JSGlobalObject* globalObject, JSObject* base, Structure* structureBefore, const Identifier& ident, const PropertySlot& slot)
 {
     Instance* instance = runningInstanceOf(globalObject);
-    if (!instance || structureBefore->isDictionary() || isHeldByCacheOfInterpreter(*instance->vm, base, ident, slot))
+    if (!instance || structureBefore->isDictionary() || slot.isCacheableValue() || (isJSArray(base) && ident == instance->vm->propertyNames->length))
         return;
     PropertyCaches& caches = *instance->state->propertyCaches;
     UniquedStringImpl* uid = ident.impl();
@@ -423,7 +337,9 @@ std::optional<bool> tryInById(JSGlobalObject* globalObject, JSObject* base, cons
     if (!instance)
         return std::nullopt;
     count(*instance, RuntimeCounterID::InterpreterPresenceSlowPaths);
-    return inById(*instance, base, ident);
+    if (!instance->state->propertyCaches->findByKey(base->structure(), ident.impl(), SlotAccess::Read))
+        return hasPropertyAndCache(instance, base, { ident.impl(), std::nullopt });
+    return base->hasProperty(instance->globalObject, ident);
 }
 
 std::optional<bool> tryInByVal(JSGlobalObject* globalObject, JSObject* base, JSValue key)

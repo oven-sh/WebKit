@@ -14,7 +14,6 @@ layout L1 name="WithGetter" fields=[{key="g" declared={type=anything} form=[IsAc
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="literalOrFalse" parameters=[{type=boolean}, {type=number}] results=[{type=anything}] {
-  b0(v0: boolean, v1: number):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v2 = NewObject -, v1 layout=L0 fields=[2]
@@ -28,8 +27,6 @@ function f0 name="literalOrFalse" parameters=[{type=boolean}, {type=number}] res
     CopyDataProperties v6, v5
     v8 = FinishObject v6
     Return v8
-}
-# CHECK-LABEL: function f0 name="literalOrFalse"
 # CHECK: b1():
 # CHECK: [[one0]]: 1 = Integer integer=1
 # CHECK-NEXT: Jump -> next b3([[one0]], v1)
@@ -44,9 +41,9 @@ function f0 name="literalOrFalse" parameters=[{type=boolean}, {type=number}] res
 # CHECK: [[defines0]]():
 # CHECK-NEXT: [[held0]]: number = AssumeType [[c0]] castType=number
 # CHECK-NEXT: PropDefine v6, [[held0]] key="c"
+}
 
 function f1 name="oneOfTwoLiterals" parameters=[{type=boolean}, {type=number}] results=[{type=anything}] {
-  b0(v0: boolean, v1: number):
     v2 = NewObject layout=L0 fields=[]
     Branch v0 -> taken b1(), notTaken b2()
   b1():
@@ -61,8 +58,6 @@ function f1 name="oneOfTwoLiterals" parameters=[{type=boolean}, {type=number}] r
     CopyDataProperties v2, v7
     v9 = FinishObject v2
     Return v9
-}
-# CHECK-LABEL: function f1 name="oneOfTwoLiterals"
 # CHECK: Switch {{*}} cases=[1, 2] -> case [[first1]](), case [[second1]](), otherwise
 # CHECK-NOT: CopyDataProperties
 # CHECK: [[first1]]():
@@ -70,9 +65,9 @@ function f1 name="oneOfTwoLiterals" parameters=[{type=boolean}, {type=number}] r
 # CHECK: [[second1]]():
 # CHECK: PropDefine v2, {{*}} key="c"
 # CHECK: PropDefine v2, {{*}} key="b"
+}
 
 function f2 name="literalIsKept" parameters=[{type=boolean}, {type=number}] results=[{type=anything}] {
-  b0(v0: boolean, v1: number):
     v2 = NewObject layout=L0 fields=[]
     Branch v0 -> taken b1(), notTaken b2()
   b1():
@@ -86,12 +81,10 @@ function f2 name="literalIsKept" parameters=[{type=boolean}, {type=number}] resu
   b3(v7: false|L0):
     CopyDataProperties v2, v7
     Return v2
-}
-# CHECK-LABEL: function f2 name="literalIsKept"
 # CHECK: CopyDataProperties v2, v7
+}
 
 function f3 name="mergedValueIsReadAgain" parameters=[{type=boolean}, {type=number}] results=[{type=anything}] {
-  b0(v0: boolean, v1: number):
     v2 = NewObject layout=L0 fields=[]
     Branch v0 -> taken b1(), notTaken b2()
   b1():
@@ -104,12 +97,10 @@ function f3 name="mergedValueIsReadAgain" parameters=[{type=boolean}, {type=numb
   b3(v6: false|L0):
     CopyDataProperties v2, v6
     Return v6
-}
-# CHECK-LABEL: function f3 name="mergedValueIsReadAgain"
 # CHECK: CopyDataProperties v2, v6
+}
 
 function f4 name="accessor" parameters=[{type=boolean}, {type=function}] results=[{type=anything}] {
-  b0(v0: boolean, v1: function):
     v2 = NewObject layout=L0 fields=[]
     Branch v0 -> taken b1(), notTaken b2()
   b1():
@@ -122,12 +113,10 @@ function f4 name="accessor" parameters=[{type=boolean}, {type=function}] results
   b3(v6: false|L1):
     CopyDataProperties v2, v6
     Return v2
-}
-# CHECK-LABEL: function f4 name="accessor"
 # CHECK: CopyDataProperties v2, v6
+}
 
 function f5 name="textOnAnEdge" parameters=[{type=boolean}, {type=number}, {type=string}] results=[{type=anything}] {
-  b0(v0: boolean, v1: number, v2: string):
     v3 = NewObject layout=L0 fields=[]
     Branch v0 -> taken b1(), notTaken b2()
   b1():
@@ -139,8 +128,6 @@ function f5 name="textOnAnEdge" parameters=[{type=boolean}, {type=number}, {type
   b3(v6: string|L0):
     CopyDataProperties v3, v6
     Return v3
-}
-# CHECK-LABEL: function f5 name="textOnAnEdge"
 # CHECK: Jump -> next b3({{*}}, v1, {{*}})
 # CHECK: Jump -> next b3({{*}}, {{*}}, v2)
 # CHECK: b3([[which5]]: i32, [[c5]]: undefined|number, [[other5]]: undefined|string):
@@ -152,9 +139,9 @@ function f5 name="textOnAnEdge" parameters=[{type=boolean}, {type=number}, {type
 # CHECK-NEXT: Branch [[nothing5]] -> taken {{*}}(), notTaken [[text5]]()
 # CHECK: [[text5]]():
 # CHECK-NEXT: CopyDataProperties v3, [[other5]]
+}
 
 function f6 name="prototypeOfItsOwn" parameters=[{type=boolean}, {type=number}, {type=object}] results=[{type=anything}] {
-  b0(v0: boolean, v1: number, v2: object):
     v3 = NewObject layout=L0 fields=[]
     Branch v0 -> taken b1(), notTaken b2()
   b1():
@@ -167,12 +154,10 @@ function f6 name="prototypeOfItsOwn" parameters=[{type=boolean}, {type=number}, 
   b3(v7: undefined|L0):
     CopyDataProperties v3, v7
     Return v3
-}
-# CHECK-LABEL: function f6 name="prototypeOfItsOwn"
 # CHECK: CopyDataProperties v3, v7
+}
 
 function f7 name="namedByAnUnreachableBlock" parameters=[{type=boolean}, {type=number}] results=[{type=anything}] {
-  b0(v0: boolean, v1: number):
     v2 = NewObject layout=L0 fields=[]
     Branch v0 -> taken b1(), notTaken b2()
   b1():
@@ -188,16 +173,14 @@ function f7 name="namedByAnUnreachableBlock" parameters=[{type=boolean}, {type=n
   b4():
     v8 = Boolean boolean=false
     Jump -> next b3(v8)
-}
-# CHECK-LABEL: function f7 name="namedByAnUnreachableBlock"
 # CHECK-NOT: CopyDataProperties
 # CHECK: b3([[which7]]: i32, [[c7]]: undefined|number):
 # CHECK: b4():
 # CHECK: Jump -> next b3({{*}}, {{*}})
 # CHECK: PropDefine v2, {{*}} key="c"
+}
 
 function f8 name="namesByDefinitions" parameters=[{type=boolean}, {type=number}] results=[{type=anything}] {
-  b0(v0: boolean, v1: number):
     v2 = NewDictionary
     Branch v0 -> taken b1(), notTaken b2()
   b1():
@@ -212,16 +195,14 @@ function f8 name="namesByDefinitions" parameters=[{type=boolean}, {type=number}]
   b3(v8: undefined|L0):
     CopyDataProperties v2, v8
     Return v2
-}
-# CHECK-LABEL: function f8 name="namesByDefinitions"
 # CHECK-NOT: PropDefine v3
 # CHECK-NOT: CopyDataProperties
 # CHECK: PropDefine v2, {{*}} key="b"
 # CHECK: PropDefine v2, {{*}} key="not.a.field"
 # CHECK: PropDefine v2, {{*}} key="another"
+}
 
 function f9 name="noConditionLeft" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewObject -, v0 layout=L0 fields=[2]
     PropDefine v2, v0 key="not.a.field"
@@ -229,9 +210,8 @@ function f9 name="noConditionLeft" parameters=[{type=number}] results=[{type=any
     CopyDataProperties v1, v4
     v6 = FinishObject v1
     Return v6
-}
-# CHECK-LABEL: function f9 name="noConditionLeft"
 # CHECK-NOT: PropDefine v2
 # CHECK-NOT: CopyDataProperties
 # CHECK: PropDefine v1, v0 key="c"
 # CHECK-NEXT: PropDefine v1, v0 key="not.a.field"
+}

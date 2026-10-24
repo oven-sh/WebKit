@@ -10,14 +10,12 @@ module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 typesite w0 module=m0 position=10 kind=Parameter
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = CallDirect v1 function=f1
     Return v2
 }
 function f1 name="walksAView" module=m0 position=5 flags=[IsChecked] length=1 parameters=[{type=Uint8Array site=w0}] results=[{type=anything}] {
-  b0(v0: Uint8Array):
     v1 = Integer integer=0
     Jump -> next b1(v1, v1)
   b1(v2, v3):

@@ -11,7 +11,6 @@ module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[Keeps
 module m1 path="/app/child.cjs" displayPath="child.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f1 exportsVariable=g1
 entry module=m0
 function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
-  b0():
     EvaluateModule module=m1 referrer=m0 [isBare]
     RecordRequire module=m1 referrer=m0
     v2 = ModuleBuiltin builtin=ModuleObject module=m0
@@ -23,12 +22,10 @@ function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} r
     Return
 }
 function f1 name="child" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     PutModuleVariable v0 variable=g1
     Return
 }
 function f2 name="exportedByChild" module=m1 results=[{type=anything}] {
-  b0():
     Return
 }

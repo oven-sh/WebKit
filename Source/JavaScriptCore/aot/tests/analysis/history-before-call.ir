@@ -9,7 +9,6 @@ module m0 path="main.js" displayPath="main.js"
 entry module=m0
 layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
 function f0 name="beforeCall" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Undefined
     v2 = NewObject -, v1 layout=L0 fields=[0]
     v3 = NewObject -, v1 layout=L0 fields=[0]
@@ -33,7 +32,6 @@ function f0 name="beforeCall" parameters=[{type=anything}] results=[{type=anythi
     Return v1
 }
 function f1 name="escapesEachIteration" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Undefined
     Jump -> next b1(v1)
   b1(v2):

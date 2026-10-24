@@ -10,7 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTCFG.h"
-#include "AOTDiagnostics.h"
+#include "AOTCheckCause.h"
 #include "AOTFlowReportInternal.h"
 #include "AOTRemoveUnreachableFunctions.h"
 #include "AOTResultRules.h"
@@ -18,74 +18,48 @@
 #include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTTypeTestReport.h"
-#include "AOTVector.h"
 #include "IntlObject.h"
-#include <algorithm>
-#include <array>
-#include <compare>
-#include <optional>
-#include <tuple>
 #include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-namespace {
-
-struct CanonicalLocaleUse {
-    LocaleUseKind kind { LocaleUseKind::Unknown };
-    Vector<uint8_t, 16> tag;
-    BuiltinID builtin;
-    Witness witness { noWitness };
-};
-
-} // anonymous namespace
-
-static std::optional<Vector<uint8_t, 16>> tryCanonicalizeTag(const Program& program, StringID tag)
+static void appendLocaleUses(const Program& program, const FlowResults& flow, FlowReport& report)
 {
-    if (!tag)
-        return std::nullopt;
-    Vector<char16_t> buffer;
-    StringView text = program.strings.viewOf(tag, buffer);
-    if (!isStructurallyValidLanguageTag(text))
-        return std::nullopt;
-    String canonical = canonicalizeUnicodeLocaleID(text);
-    if (canonical.isNull())
-        return std::nullopt;
-    return Vector<uint8_t, 16>(byteCast<uint8_t>(canonical.utf8().span()));
-}
-
-static CanonicalLocaleUse canonicalLocaleUseOf(const Program& program, const FlowLocaleUse& use)
-{
-    CanonicalLocaleUse canonical { use.kind, { }, use.builtin, use.witness };
-    if (use.kind != LocaleUseKind::Constant)
-        return canonical;
-
-    if (auto tag = tryCanonicalizeTag(program, use.tag))
-        canonical.tag = WTF::move(*tag);
-    else
-        canonical.kind = LocaleUseKind::Unknown;
-    return canonical;
-}
-
-static std::strong_ordering compareKindAndTag(const CanonicalLocaleUse& a, const CanonicalLocaleUse& b)
-{
-    if (a.kind != b.kind)
-        return a.kind <=> b.kind;
-    return std::lexicographical_compare_three_way(a.tag.begin(), a.tag.end(), b.tag.begin(), b.tag.end());
-}
-
-void appendLocaleUses(const Program& program, const FlowResults& flow, FlowReport& report)
-{
+    struct CanonicalLocaleUse {
+        LocaleUseKind kind { LocaleUseKind::Unknown };
+        Vector<uint8_t, 16> tag;
+        BuiltinID builtin;
+        Witness witness { noWitness };
+    };
     Vector<CanonicalLocaleUse> uses;
     uses.reserveInitialCapacity(flow.localeUses().size());
-    for (const FlowLocaleUse& use : flow.localeUses())
-        uses.append(canonicalLocaleUseOf(program, use));
+    for (const FlowLocaleUse& use : flow.localeUses()) {
+        uses.append(CanonicalLocaleUse { use.kind, { }, use.builtin, use.witness });
+        if (use.kind != LocaleUseKind::Constant)
+            continue;
+        String canonical;
+        if (use.tag) {
+            Vector<char16_t> buffer;
+            StringView text = program.strings.viewOf(use.tag, buffer);
+            if (isStructurallyValidLanguageTag(text))
+                canonical = canonicalizeUnicodeLocaleID(text);
+        }
+        if (canonical.isNull())
+            uses.last().kind = LocaleUseKind::Unknown;
+        else
+            uses.last().tag = Vector<uint8_t, 16>(byteCast<uint8_t>(canonical.utf8().span()));
+    }
 
-    AOT::sort(uses, [](const CanonicalLocaleUse& a, const CanonicalLocaleUse& b) {
+    auto compareKindAndTag = [](const CanonicalLocaleUse& a, const CanonicalLocaleUse& b) -> std::strong_ordering {
+        if (a.kind != b.kind)
+            return a.kind <=> b.kind;
+        return std::lexicographical_compare_three_way(a.tag.begin(), a.tag.end(), b.tag.begin(), b.tag.end());
+    };
+    AOT::sort(uses, [&](const CanonicalLocaleUse& a, const CanonicalLocaleUse& b) {
         std::strong_ordering order = compareKindAndTag(a, b);
         return order != 0 ? order < 0 : isLowerWitness(a.witness, b.witness);
     });
-    removeRepeatedElements(uses, [](const CanonicalLocaleUse& a, const CanonicalLocaleUse& b) {
+    removeRepeatedElements(uses, [&](const CanonicalLocaleUse& a, const CanonicalLocaleUse& b) {
         return compareKindAndTag(a, b) == 0;
     });
 
@@ -99,21 +73,40 @@ void appendLocaleUses(const Program& program, const FlowResults& flow, FlowRepor
     }
 }
 
-// An obfuscated image holds no display paths, so its executable makes the ids from the paths of the modules.
-uint64_t remainingCheckIDOf(const Program& program, const AOT::CompileOptions& options, Wire::SourceLocation origin, TypeSiteKind kind)
+static void appendRemainingChecks(const Program& program, const AOT::CompileOptions& options, FunctionID id, Vector<Wire::RemainingCheckRecord>& checks)
 {
-    std::span<const uint8_t> path;
-    if (hasModule(origin)) {
-        const Module& module = program.at(ModuleID(origin.module));
-        path = program.string(options.obfuscates() ? module.path : module.displayPath);
-    }
-    return typeCheckIDOf(path, origin.position, kind);
-}
+    const Function& function = program.at(id);
+    CFG cfg(function);
+    for (BlockID block : cfg.reversePostOrder()) {
+        for (ValueID value : function.at(block).values) {
+            const Value& check = function.at(value);
+            if (check.opcode != Opcode::Check && !std::ranges::contains(replacedOperationsOf(check.opcode), Opcode::Check))
+                continue;
+            CheckCause cause = PayloadWord::cause(check.opcode) ? check.cause() : CheckCause::Unknown;
+            if (cause == CheckCause::Unknown && check.opcode == Opcode::Check)
+                cause = computeUnknownObjectCause(function, check.valueOperand());
 
-static auto remainingCheckOrderKey(const Wire::RemainingCheckRecord& check)
-{
-    const Wire::Witness& witness = check.witness;
-    return std::tuple { check.id, witness.function, witness.value, witness.location.module, witness.location.position, check.cause };
+            Wire::SourceLocation location = function.locationOf(value);
+            Wire::SourceLocation origin = location;
+            TypeSiteKind siteKind = TypeSiteKind::Unknown;
+            if (TypeSiteID site = PayloadWord::site(check.opcode) ? check.site() : TypeSiteID()) {
+                origin = { program.at(site).module.index(), program.at(site).position };
+                siteKind = program.at(site).kind;
+            }
+            std::span<const uint8_t> path;
+            if (hasModule(origin)) {
+                const Module& module = program.at(ModuleID(origin.module));
+                path = program.string(options.obfuscates() ? module.path : module.displayPath);
+            }
+            checks.append(Wire::RemainingCheckRecord {
+                .id = typeCheckIDOf(path, origin.position, siteKind),
+                .witness = { findFunctionAsRead(&program, check.inlineFrame ? function.inlineFrames[check.inlineFrame].callee : id).index(), value.index(), location },
+                .origin = origin,
+                .cause = cause,
+                .siteKind = static_cast<uint32_t>(siteKind),
+            });
+        }
+    }
 }
 
 Vector<Wire::RemainingCheckRecord> collectRemainingChecks(const Program& program, BuildContext& build)
@@ -124,18 +117,21 @@ Vector<Wire::RemainingCheckRecord> collectRemainingChecks(const Program& program
     const ParallelLoops& loops = build.parallelLoops();
     Vector<Wire::RemainingCheckRecord> checks = collectInParallel<Wire::RemainingCheckRecord>(loops, program.functions.size(), [&](unsigned index, Vector<Wire::RemainingCheckRecord>& found) {
         if (program.functions[index].hasBody())
-            found.appendVector(collectRemainingChecks(program, build.options(), FunctionID(index)));
+            appendRemainingChecks(program, build.options(), FunctionID(index), found);
     });
 
-    sortAndRemoveDuplicates(loops, checks, [](const Wire::RemainingCheckRecord& a, const Wire::RemainingCheckRecord& b) {
-        return remainingCheckOrderKey(a) < remainingCheckOrderKey(b);
+    auto orderKey = [](const Wire::RemainingCheckRecord& check) {
+        const Wire::Witness& witness = check.witness;
+        return std::tuple { check.id, witness.function, witness.value, witness.location.module, witness.location.position, check.cause };
+    };
+    sortAndRemoveDuplicates(loops, checks, [&](const Wire::RemainingCheckRecord& a, const Wire::RemainingCheckRecord& b) {
+        return orderKey(a) < orderKey(b);
     }, [](const Wire::RemainingCheckRecord& a, const Wire::RemainingCheckRecord& b) {
         return a.id == b.id;
     });
     return checks;
 }
 
-// The block in which the function ends without a choice, if it does.
 static BlockID findEndOfStraightEntry(const Function& function)
 {
     BlockID block = entryBlock;
@@ -154,20 +150,17 @@ Vector<InternalError> findFunctionsThatEndInFirstBlock(const Program& program, c
 {
     return collectInParallel<InternalError>(build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<InternalError>& found) {
         const Function& function = program.functions[index];
-        // The model of a built-in is never run.
         if (!function.hasBody() || function.role == FunctionRole::Model || !isReachable.get(index))
             return;
         BlockID block = findEndOfStraightEntry(function);
         if (!block)
             return;
-        // Later steps renumber blocks and values, so the operation and its position in the source are taken here.
         InternalError error { .kind = InternalErrorKind::FunctionEndsInFirstBlock, .function = FunctionID(index) };
         const Block& contents = function.at(block);
         if (contents.values.isEmpty())
             error.detail = "it ends at once"_s;
         else {
             const Value& last = function.at(contents.values.last());
-            // An operation that only throws is what the program says.
             if (std::optional<Type> natural = tryWidestNaturalTypeOf(last); natural && natural->isNever())
                 return;
             error.location = function.locationOf(contents.values.last());
@@ -226,10 +219,7 @@ static void countAccessStatistics(std::span<const Wire::AccessCountRecord> count
         for (KnowledgeLevel level : allMembersOf<KnowledgeLevel>) {
             unsigned rank = rankOf(level);
             accesses[rank] += record.accesses[rank];
-            if (level == KnowledgeLevel::Unknown)
-                indirectCalls += record.calls[rank];
-            else
-                directCalls += record.calls[rank];
+            (level == KnowledgeLevel::Unknown ? indirectCalls : directCalls) += record.calls[rank];
         }
     }
 
@@ -294,20 +284,12 @@ static AllocationKind allocationKindOf(const Program& program, const FlowResults
     return site.builtinClass ? allocationKindOf(site.builtinClass) : AllocationKind::Other;
 }
 
-static Vector<AllocationSiteReport> collectAllocationSites(const Program& program, const FlowResults& flow)
-{
-    return WTF::map(flow.allocationSites(), [&](const AllocationSite& site) {
-        return AllocationSiteReport { findFunctionAsRead(&program, site.function), allocationKindOf(program, flow, site) };
-    });
-}
-
 FlowReportBodyRecords collectFlowReportBodyRecords(const Program& program, BuildContext& build)
 {
     FlowReportBodyRecords records;
     runTasksInParallel(build.parallelLoops(), {
         [&] { records.typeTests = collectTypeTestRecords(program, build.parallelLoops()); },
         [&] {
-            // A run that ends before flow is applied still has every check in its program.
             if (program.form() == IRForm::AsRead)
                 records.remainingChecks = collectRemainingChecks(program, build);
         },
@@ -325,8 +307,11 @@ FlowReport buildFlowReport(const Program& program, const FlowResults& flow, cons
     report.builtinsUsed = Vector<Wire::BuiltinUseRecord>(flow.builtinUses());
     report.featuresUsed = Vector<Wire::FeatureUseRecord>(flow.featureUses());
     appendLocaleUses(program, flow, report);
-    if (build.options().collectsAllocationRemarks())
-        report.allocationSites = collectAllocationSites(program, flow);
+    if (build.options().collectsAllocationRemarks()) {
+        report.allocationSites = WTF::map(flow.allocationSites(), [&](const AllocationSite& site) {
+            return AllocationSiteReport { findFunctionAsRead(&program, site.function), allocationKindOf(program, flow, site) };
+        });
+    }
 
     ReportSet reports = build.options().reports;
     bool collectsRecords = hasFlag(reports, ReportSet::Flow);
@@ -343,7 +328,6 @@ FlowReport buildFlowReport(const Program& program, const FlowResults& flow, cons
     if (!collectsRecords) {
         report.typeTests.clear();
         report.remainingChecks.clear();
-        // The compile call counts these records per function for its function reports and drops them afterwards.
         if (!hasFlag(reports, ReportSet::Functions))
             report.accesses.clear();
     }

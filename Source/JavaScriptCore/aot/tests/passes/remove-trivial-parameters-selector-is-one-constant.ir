@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="onePathIsLeft" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=0
     v2 = Undefined
     Jump -> next b1(v1, v2)
@@ -18,23 +17,20 @@ function f0 name="onePathIsLeft" parameters=[{type=anything}] results=[{type=any
     Return v5
   b3():
     Throw v4
-}
-# CHECK-LABEL: function f0 name="onePathIsLeft"
 # CHECK: Jump -> next b1()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: = Call v0
 # CHECK-NEXT: Switch v1 cases=[0] -> case b2(), otherwise b3()
 # CHECK: b3():
 # CHECK-NEXT: Throw v2
-# DECIDED-LABEL: function f0 name="onePathIsLeft"
 # DECIDED-NOT: Switch
 # DECIDED: = Call v0
 # DECIDED-NOT: Switch
 # DECIDED: Return v5
 # DECIDED-NOT: Throw
+}
 
 function f1 name="twoPathsAreLeft" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = Integer integer=0
@@ -50,12 +46,10 @@ function f1 name="twoPathsAreLeft" parameters=[{type=anything}, {type=boolean}] 
     Return v7
   b5():
     Throw v6
-}
-# CHECK-LABEL: function f1 name="twoPathsAreLeft"
 # CHECK: Jump -> next b3(v2, v3)
 # CHECK: Jump -> next b3(v4, v0)
 # CHECK-NEXT: b3(v5: int[0, 1], v6: anything):
 # CHECK: Switch v5 cases=[0] -> case b4(), otherwise b5()
-# DECIDED-LABEL: function f1 name="twoPathsAreLeft"
 # DECIDED: Switch v5 cases=[0] -> case b4(), otherwise b5()
 # DECIDED: Throw v6
+}

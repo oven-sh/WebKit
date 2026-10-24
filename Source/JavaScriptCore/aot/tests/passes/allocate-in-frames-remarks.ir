@@ -10,7 +10,6 @@ layout L2 name="DefersClosureOverObject" fields=[{key="x" declared={type=anythin
 layout L3 name="MayGetProperty" fields=[{key="x" declared={type=anything} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L3] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType]}
 
 function f0 name="inFrame" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = GetSlot v1 key="x" receivers=[L0] level=Proven
     Return v2
@@ -21,7 +20,6 @@ function f0 name="inFrame" parameters=[{type=anything}] results=[{type=anything}
 # CHECK-NOT: cause=
 
 function f1 name="fieldsCreatedLater" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L1 fields=[0]
     v2 = GetSlot v1 key="x" receivers=[L1] level=Proven
     Return v2
@@ -31,7 +29,6 @@ function f1 name="fieldsCreatedLater" parameters=[{type=anything}] results=[{typ
 # CHECK-NEXT: remark: heap cause=FieldsCreatedLater
 
 function f2 name="layoutDefersClosureOverObject" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L2 fields=[0]
     v2 = GetSlot v1 key="x" receivers=[L2] level=Proven
     Return v2
@@ -41,7 +38,6 @@ function f2 name="layoutDefersClosureOverObject" parameters=[{type=anything}] re
 # CHECK-NEXT: remark: heap cause=LayoutDefersClosures
 
 function f3 name="mayGetProperty" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L3 fields=[0]
     v2 = GetSlot v1 key="x" receivers=[L3] level=Proven
     Return v2
@@ -51,7 +47,6 @@ function f3 name="mayGetProperty" parameters=[{type=anything}] results=[{type=an
 # CHECK-NEXT: remark: heap cause=ChangedByUse
 
 function f4 name="inspectedByBuiltin" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = CallBuiltin -, v1 overload=ArrayIsArray/0
     Return v2
@@ -61,12 +56,10 @@ function f4 name="inspectedByBuiltin" parameters=[{type=anything}] results=[{typ
 # CHECK-NEXT: remark: heap: CallBuiltin cause=SeenByNativeCode
 
 function f5 name="readsObject" kind=Arrow captures=[{type=L2}] results=[{type=anything}] {
-  b0(v0: L2):
     Return
 }
 
 function f6 name="returned" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     Return v1
 }

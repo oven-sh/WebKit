@@ -17,7 +17,6 @@ layout L6 name="OuterOfResult" fields=[{key="c" declared={type=L7} flags=[IsRequ
 layout L7 name="Result" fields=[{key="d" declared={type=number} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Double number=0.5
     v1 = Boolean boolean=true
     v2 = CallDirect v0 function=f1
@@ -31,17 +30,14 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="literalInLiteral" parameters=[{type=number}] results=[{type=L0}] {
-  b0(v0: number):
     v1 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
     Return v2
-}
-# CHECK-LABEL: function f1 name="literalInLiteral"
 # CHECK: [[inner]]:{{*}}= NewObject -, v0, v0 layout=L1 {{*}}outerLayout=L0
 # CHECK-NEXT: = NewObject -, v0, [[inner]] layout=L0 {{*}}[takesCellOfInnerObject]
+}
 
 function f2 name="outerObjectInEitherArm" parameters=[{type=number}, {type=boolean}] results=[{type=L0}] {
-  b0(v0: number, v1: boolean):
     v2 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -50,27 +46,23 @@ function f2 name="outerObjectInEitherArm" parameters=[{type=number}, {type=boole
   b2():
     v4 = NewObject -, v0, v2 layout=L0 fields=[0, 1]
     Return v4
-}
-# CHECK-LABEL: function f2 name="outerObjectInEitherArm"
 # CHECK: = NewObject -, v0, v0 layout=L1 {{*}}outerLayout=L0
 # CHECK: b1():
 # CHECK-NEXT: layout=L0 {{*}}[takesCellOfInnerObject]
 # CHECK: b2():
 # CHECK-NEXT: layout=L0 {{*}}[takesCellOfInnerObject]
+}
 
 function f3 name="twoObjectsListOne" parameters=[{type=number}] results=[{type=L2}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L3 fields=[0]
     v2 = NewObject -, v1 layout=L2 fields=[0]
     v3 = NewObject -, v1 layout=L2 fields=[0]
     Return v3
-}
-# CHECK-LABEL: function f3 name="twoObjectsListOne"
 # CHECK-NOT: outerLayout
 # CHECK-NOT: takesCellOfInnerObject
+}
 
 function f4 name="outerObjectsInLoop" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L5 fields=[0]
     v2 = Integer integer=0
     Jump -> next b1(v2)
@@ -86,33 +78,26 @@ function f4 name="outerObjectsInLoop" parameters=[{type=number}] results=[{type=
     Jump -> next b1(v9)
   b3():
     Return
-}
-# CHECK-LABEL: function f4 name="outerObjectsInLoop"
 # CHECK-NOT: outerLayout
 # CHECK-NOT: takesCellOfInnerObject
+}
 
 function f5 name="makesResult" parameters=[{type=number}] results=[{type=L7}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L7 fields=[0]
     Return v1
-}
-# CHECK-LABEL: function f5 name="makesResult"
 # CHECK: = NewObject -, v0 layout=L7 {{*}}outerLayout=L6
+}
 
 function f6 name="listsFreshResult" parameters=[{type=number}] results=[{type=L6}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f5
     v2 = NewObject -, v1 layout=L6 fields=[0]
     Return v2
-}
-# CHECK-LABEL: function f6 name="listsFreshResult"
 # CHECK: layout=L6 {{*}}[takesCellOfInnerObject]
+}
 
 # An allocation that lists an object from elsewhere asks for a cell of its own, without the room.
 function f7 name="listsObjectFromElsewhere" parameters=[{type=number}, {type=L1}] results=[{type=L0}] {
-  b0(v0: number, v1: L1):
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
     Return v2
-}
-# CHECK-LABEL: function f7 name="listsObjectFromElsewhere"
 # CHECK-NOT: takesCellOfInnerObject
+}

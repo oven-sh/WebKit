@@ -75,7 +75,6 @@ function f2 name="oneExpectedFunction" parameters=[{type=f11 flags=[IsExpected]}
 # CHECK-NEXT: boolean = IsPristine [[target2]] builtinClass=Function aspects=[Names]
 
 function f3 name="provenFunction" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = PropGet v0 key="call"
     v3 = Call v2, v0, v1 calleeKey="call"
     Return v3
@@ -93,7 +92,6 @@ function f3 name="provenFunction" parameters=[{type=function}, {type=anything}] 
 # CHECK: anything = Call {{*}}, v0, v1 calleeKey="call"
 
 function f4 name="closureOfCoroutine" parameters=[{type=AsyncFunction}] results=[{type=anything}] {
-  b0(v0: AsyncFunction):
     v1 = PropGet v0 key="call"
     Return v1
 }
@@ -132,10 +130,8 @@ function f7 name="Shape" flags=[HasThis] thisType={type=object} results=[{type=u
 function f8 name="Circle" flags=[HasThis] thisType={type=object} results=[{type=undefined}]
 function f9 name="MadeByFactory" flags=[HasThis] thisType={type=object} results=[{type=undefined}]
 function f10 name="make" results=[{type=anything}] {
-  b0():
     Return
 }
 function f11 name="target" results=[{type=anything}] {
-  b0():
     Return
 }

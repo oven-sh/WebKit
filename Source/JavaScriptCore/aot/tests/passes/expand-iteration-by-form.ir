@@ -11,7 +11,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="smallLoop" parameters=[{type=undefined|null|Array<number>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: undefined|null|Array<number>, v1: anything):
     v2 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -37,8 +36,6 @@ function f0 name="smallLoop" parameters=[{type=undefined|null|Array<number>}, {t
     Rethrow v10
   b7():
     Return v1
-}
-# CHECK-LABEL: function f0 name="smallLoop"
 # CHECK: b1([[index0]]: int[0, 9007199254740991]):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: Switch [[form0]] cases=[0] -> case [[arrayStep0]](), otherwise [[protocolStep0]]()
@@ -76,23 +73,21 @@ function f0 name="smallLoop" parameters=[{type=undefined|null|Array<number>}, {t
 # CHECK-NEXT: = Call [[next0]], [[iterator0]]
 # CHECK: = ElemGet [[array0]], {{*}} [keyIsIntegral]
 # On the edge of the array form next is a value nobody reads, so selection resolves no call target from it in front of the loop, where both forms pass.
-# SELECTED-LABEL: function f0 name="smallLoop"
 # SELECTED: ({{*}}: int[0, 1], {{*}}: Array<number>, [[selectedIterator0]]: object, [[selectedNext0]]: anything,
 # SELECTED-NOT: ResolveCallTarget [[selectedNext0]]
 # SELECTED: = ResolveCallTarget v1 argumentCount=1
 # SELECTED-NOT: ResolveCallTarget [[selectedNext0]]
 # SELECTED: = Call [[selectedNext0]], [[selectedIterator0]]
 # SELECTED-NOT: ResolveCallTarget [[selectedNext0]]
-# ABSENT-LABEL: function f0 name="smallLoop"
 # ABSENT-NOT: role=IterationCleanup
 # ABSENT-NOT: subject=
 # ABSENT-COUNT-1: LoopHint
 # ABSENT-NOT: LoopHint
 # ABSENT-COUNT-1: = Call v1, -,
 # ABSENT-NOT: = Call v1, -,
+}
 
 function f1 name="oneForm" parameters=[{type=Array<number, pristine[Names]>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Names]>, v1: anything):
     v2 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -129,7 +124,6 @@ function f1 name="oneForm" parameters=[{type=Array<number, pristine[Names]>}, {t
 # ABSENT-NOT: handler=
 
 function f2 name="coroutine" role=CoroutineRamp flags=[IsAsync] parameters=[{type=undefined|null|Array<number>}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=1} {
-  b0(v0: undefined|null|Array<number>):
     v1 = NewPromise
     v2 = CallDirect v0, v1 function=f3
     v3 = AssumeType v2 castType=Promise
@@ -139,7 +133,6 @@ function f2 name="coroutine" role=CoroutineRamp flags=[IsAsync] parameters=[{typ
 # ABSENT-LABEL: function f2 name="coroutine"
 
 function f3 name="coroutine" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|null|Array<number>}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f2} creator=Coroutine{kind=AsyncFunction ramp=f2 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=1} {
-  b0(v0: undefined|null|Array<number>, v1: undefined|Promise):
     v2 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -161,9 +154,7 @@ function f3 name="coroutine" role=CoroutineBody flags=[IsAsync] parameters=[{typ
     v10 = Undefined
     v11 = ReturnAsyncResult v1, v10
     Return v11
-}
 # The form, the array, the iterator and the index are values like any other across the suspension.
-# CHECK-LABEL: function f3 name="coroutine"
 # CHECK: b1([[index3]]: int[0, 9007199254740991]):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: Switch [[form3]] cases=[0] -> case [[arrayStep3]](), otherwise [[protocolStep3]]()
@@ -179,9 +170,9 @@ function f3 name="coroutine" role=CoroutineBody flags=[IsAsync] parameters=[{typ
 # CHECK-NEXT: = PropGet [[array3]] key="length"
 # CHECK: [[protocolStep3]]() frequency=Unlikely:
 # CHECK-NEXT: = Call [[next3]], [[iterator3]]
-# ABSENT-LABEL: function f3 name="coroutine"
 # ABSENT-COUNT-1: AwaitBySavingFrame
 # ABSENT-NOT: AwaitBySavingFrame
+}
 
 # LEFT-NOT: IteratorOpen
 # LEFT-NOT: IteratorResume

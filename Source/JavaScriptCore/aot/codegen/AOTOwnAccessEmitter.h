@@ -13,7 +13,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class OwnAccessEmitter final : public OperationEmitter {
 public:
-    explicit OwnAccessEmitter(CodeGenerator&);
+    explicit OwnAccessEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generatePropHasOwn(const ValueContext&);
 };

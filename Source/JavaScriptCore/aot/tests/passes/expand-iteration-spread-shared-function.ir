@@ -7,14 +7,12 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="unknown" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray contents=anything
     AppendSpread v1, v0
     Return v1
 }
 
 function f1 name="alsoUnknown" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewArray contents=anything
     AppendSpread v2, v0
     AppendSpread v2, v1

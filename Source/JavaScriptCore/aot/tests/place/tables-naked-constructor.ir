@@ -9,7 +9,6 @@ entry module=m0
 runtimefunction id=0 function=f1
 layout L0 kind=Instance name="Widget" constructor=f2
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f2
@@ -21,12 +20,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Promise" module=m1 kind=BaseConstructor role=Library flags=[HasNewTarget, HasExplicitName, IsNakedConstructor] enclosingRuntimeFunction=0 parameters=[{type=anything}] results=[{type=object}] {
-  b0(v0: anything, v1: anything):
     v2 = Builtin builtin=GlobalThis
     Return v2
 }
 function f2 name="Widget" kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] results=[{type=object}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2

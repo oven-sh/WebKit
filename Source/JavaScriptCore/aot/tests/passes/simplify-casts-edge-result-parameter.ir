@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="filledByTestOnOneEdge" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = TypeTest v0 testedType=number|string
@@ -20,8 +19,6 @@ function f0 name="filledByTestOnOneEdge" parameters=[{type=anything}, {type=bool
   b4():
     v6 = Integer integer=0
     Return v6
-}
-# CHECK-LABEL: function f0 name="filledByTestOnOneEdge"
 # CHECK: b1():
 # CHECK-NEXT: v2: boolean = TypeTest v0 testedType=number|string
 # CHECK-NEXT: Branch v2 -> taken b3(| 0), notTaken b4()
@@ -31,3 +28,4 @@ function f0 name="filledByTestOnOneEdge" parameters=[{type=anything}, {type=bool
 # CHECK-NEXT: b3(v4: number|string):
 # CHECK-NEXT: v5: number = Check v4 castType=number
 # CHECK-NEXT: Return v5
+}

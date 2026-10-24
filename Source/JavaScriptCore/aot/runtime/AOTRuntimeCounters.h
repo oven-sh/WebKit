@@ -10,10 +10,17 @@
 #include "AOTLimits.h"
 #include "AOTRuntimeWords.h"
 #include "CodeType.h"
+#include "JSCJSValue.h"
 #include "JSExportMacros.h"
 #include <array>
+#include <utility>
 #include <wtf/Assertions.h>
 #include <wtf/Forward.h>
+#include <wtf/HashMap.h>
+#include <wtf/Noncopyable.h>
+#include <wtf/TZoneMalloc.h>
+#include <wtf/text/StringHash.h>
+#include <wtf/text/WTFString.h>
 
 namespace JSC {
 
@@ -21,6 +28,7 @@ class VM;
 
 namespace AOT {
 
+enum class Entry : uint16_t;
 struct Instance;
 
 struct RuntimeCounters {
@@ -40,37 +48,46 @@ JS_EXPORT_PRIVATE uint64_t runtimeLimitValue(VM&, LimitID);
 
 constexpr RuntimeCounterID counterFor(CodeType codeType)
 {
-    switch (codeType) {
-    case GlobalCode:
-        return RuntimeCounterID::InterpretedGlobalCode;
-    case EvalCode:
-        return RuntimeCounterID::InterpretedEvalCode;
-    case FunctionCode:
-        return RuntimeCounterID::InterpretedFunctionCode;
-    case ModuleCode:
-        return RuntimeCounterID::InterpretedModuleCode;
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
+    using enum RuntimeCounterID;
+    return std::array { InterpretedGlobalCode, InterpretedEvalCode, InterpretedFunctionCode, InterpretedModuleCode }[codeType];
 }
-static_assert(counterFor(EvalCode) == RuntimeCounterID::InterpretedEvalCode);
+static_assert(counterFor(GlobalCode) == RuntimeCounterID::InterpretedGlobalCode && counterFor(EvalCode) == RuntimeCounterID::InterpretedEvalCode);
+static_assert(counterFor(FunctionCode) == RuntimeCounterID::InterpretedFunctionCode && counterFor(ModuleCode) == RuntimeCounterID::InterpretedModuleCode);
 
 constexpr bool countsStubExit(RuntimeCounterID counter)
 {
-    switch (counter) {
-    case RuntimeCounterID::StubCannotReadField:
-    case RuntimeCounterID::StubCannotStoreField:
-    case RuntimeCounterID::StubCannotCreateField:
-    case RuntimeCounterID::StubCannotCallGetter:
-    case RuntimeCounterID::StubCannotCallSetter:
-    case RuntimeCounterID::StubCannotGrowStorage:
-        return true;
-    default:
-        return false;
-    }
+    using enum RuntimeCounterID;
+    return counter == StubCannotReadField || counter == StubCannotStoreField || counter == StubCannotCreateField || counter == StubCannotCallGetter || counter == StubCannotCallSetter || counter == StubCannotGrowStorage;
 }
-static_assert(countsStubExit(RuntimeCounterID::StubCannotCallSetter) && !countsStubExit(RuntimeCounterID::ChainDependentsDropped) && !countsStubExit(RuntimeCounterID::TypedParsesFellBackPerValue));
 
 JS_EXPORT_PRIVATE void dumpCounts(VM&, PrintStream&);
+
+// What arrived at the accesses that go by name, in an executable built with --aot-count-arrivals. One per instance, created by the first arrival.
+class ArrivalCounts {
+    WTF_MAKE_TZONE_ALLOCATED(ArrivalCounts);
+    WTF_MAKE_NONCOPYABLE(ArrivalCounts);
+public:
+    // By site and what arrived there. The compiler gives no site the largest number.
+    using Counts = UncheckedKeyHashMap<std::pair<uint32_t, String>, uint64_t>;
+
+    JS_EXPORT_PRIVATE ArrivalCounts();
+    JS_EXPORT_PRIVATE ~ArrivalCounts();
+
+    // Allocates no cell and runs no JavaScript.
+    JS_EXPORT_PRIVATE void record(JSValue receiver, uint32_t site);
+
+    // An access by name whose stub finds its answer calls nothing.
+    JS_EXPORT_PRIVATE void didCallOperation(Entry);
+
+    // "<count> TAB arrival:<site> TAB <what arrived>", by site and then with the largest count first, and behind them "<count> TAB left:<site> TAB <operation>" in the same order.
+    JS_EXPORT_PRIVATE void dump(PrintStream&) const;
+
+private:
+    Counts m_arrivals;
+    Counts m_operationsBehindArrivals;
+    uint32_t m_lastSite { 0 };
+    bool m_hasCalledNothingSinceArrival { false };
+};
 
 } } // namespace JSC::AOT
 

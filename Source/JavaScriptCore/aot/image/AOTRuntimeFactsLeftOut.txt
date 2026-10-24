@@ -3,7 +3,6 @@ AOT_INSTANCE_OFFSET(allocation.inlineAllocations[kind].allocator) | use of undec
 AOT_INSTANCE_OFFSET(allocation.inlineAllocations[kind].header) | use of undeclared identifier 'kind'; did you mean 'find'?
 ExactAllocationCounts::offsetOfCellsOfAllocations() | use of undeclared identifier 'ExactAllocationCounts'
 Extension::offsetOfGranuleBits() | use of undeclared identifier 'Extension'; did you mean 'Exception'?
-Image::frameAtReturnOffset() | call to non-static member function without an object argument
 MapBucket::offsetOfKey() | use of undeclared identifier 'MapBucket'
 MapBucket::offsetOfValue() | use of undeclared identifier 'MapBucket'
 OBJECT_OFFSETOF(AllocatorWithoutRoom, freeList) | unknown type name 'AllocatorWithoutRoom'

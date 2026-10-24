@@ -13,7 +13,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="tryStatement" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = Integer integer=7
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -95,7 +94,6 @@ function f1 name="coveredCaller" parameters=[{type=anything}] results=[{type=any
 # INLINE-NEXT: Jump -> next [[continuation]]([[second]])
 # INLINE-NEXT: }
 function f2 name="uncoveredCaller" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f3
     Return v1
 }
@@ -116,7 +114,6 @@ function f2 name="uncoveredCaller" parameters=[{type=anything}] results=[{type=a
 # UNCOVERED-NEXT: Jump -> next [[continuation]]([[second]])
 # UNCOVERED-NEXT: }
 function f3 name="calleeWithTry" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1() handler=b2():
     v1 = Call v0
@@ -127,7 +124,6 @@ function f3 name="calleeWithTry" parameters=[{type=anything}] results=[{type=any
     Return v3
 }
 function f4 name="sharedLandingBlock" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1() handler=b4():
     v1 = Call v0
@@ -156,7 +152,6 @@ function f4 name="sharedLandingBlock" parameters=[{type=anything}] results=[{typ
 # LANDING-NEXT: Return [[caught]]
 # LANDING-NEXT: }
 function f5 name="handlerArgumentDefinedInRegion" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b2()
@@ -185,7 +180,6 @@ function f5 name="handlerArgumentDefinedInRegion" parameters=[{type=anything}, {
 # ARGUMENT-NEXT: Jump -> next b3([[call]])
 # ARGUMENT-NEXT: }
 function f6 name="valueOfCoveredBlockUsedAfterIt" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b2()

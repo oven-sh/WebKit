@@ -7,7 +7,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="y" declared={type=anything} flow={occupancy=AlwaysFilled}}] flow={fieldCreation=OnlyAtConstruction impossibleMutations=[DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, StoreOfOtherType]}
 
 function f0 name="castToText" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything):
     v2 = Integer integer=1
     v3 = NewObject -, v2 layout=L0 fields=[0] storage=Frame
     v4 = Undefined
@@ -22,7 +21,6 @@ function f0 name="castToText" parameters=[{type=boolean}, {type=anything}] resul
 # CHECK-NEXT: frame pointers: [v3 v5]
 
 function f1 name="plannedCastToText" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything):
     v2 = Integer integer=1
     v3 = NewObject -, v2 layout=L0 fields=[0]
     v4 = Undefined
@@ -36,7 +34,6 @@ function f1 name="plannedCastToText" parameters=[{type=boolean}, {type=anything}
 # PLAN-NEXT: v3: Frame
 
 function f2 name="plannedCastToObject" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything):
     v2 = Integer integer=1
     v3 = NewObject -, v2 layout=L0 fields=[0]
     v4 = Undefined

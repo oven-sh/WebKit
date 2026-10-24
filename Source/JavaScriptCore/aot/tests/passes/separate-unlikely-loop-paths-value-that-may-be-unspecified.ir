@@ -9,7 +9,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Made" fields=[{key="value" declared={type=anything}}]
 
 function f0 name="cellBesideTag" parameters=[{type=anything}, {type=number}, {type=L0}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: number, v2: L0, v3: boolean):
     v4 = Integer integer=0
     v5 = Integer integer=0
     v6 = Integer integer=1
@@ -49,8 +48,6 @@ function f0 name="cellBesideTag" parameters=[{type=anything}, {type=number}, {ty
     Return v11
   b12():
     Return v8
-}
-# CHECK-LABEL: function f0 name="cellBesideTag"
 # CHECK: b1(v8: number, v9: int|whole, v10: {{*}}, v11: null|string|L0{{*}}):
 # CHECK: [[entry0]]({{*}}: number ~ 0, {{*}}: null|string|L0{{*}}):
 # CHECK-NEXT: Jump -> next b1(
@@ -60,10 +57,10 @@ function f0 name="cellBesideTag" parameters=[{type=anything}, {type=number}, {ty
 # CHECK-NEXT: [[passed0]]([[narrowed0]]: number) frequency=Unlikely:
 # CHECK-NEXT: Jump -> next [[entry0]]([[narrowed0]], [[counter0]], [[tag0]], [[cell0]])
 # CHECK-NOT: = TypeTest
+}
 
 # The same loop with a cell that is always there
 function f1 name="cellThatIsAlwaysThere" parameters=[{type=anything}, {type=number}, {type=L0}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: number, v2: L0, v3: boolean):
     v4 = Integer integer=0
     v5 = Integer integer=0
     v6 = Integer integer=1
@@ -103,14 +100,12 @@ function f1 name="cellThatIsAlwaysThere" parameters=[{type=anything}, {type=numb
     Return v11
   b12():
     Return v8
-}
-# CHECK-LABEL: function f1 name="cellThatIsAlwaysThere"
 # CHECK: b1(v8: number, v9: int|whole, v10: {{*}}, v11: null|L0):
 # CHECK: = TypeTest {{*}} testedType=null|L0
+}
 
 # The cell is tested in every turn, behind the switch on the tag. On an edge into the header the test would stand in front of the switch, so it stays
 function f2 name="testOfEveryTurnStaysBehindTheTag" parameters=[{type=anything}, {type=boolean}, {type=L0}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean, v2: L0):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v3 = Integer integer=2
@@ -136,8 +131,7 @@ function f2 name="testOfEveryTurnStaysBehindTheTag" parameters=[{type=anything},
     Branch v1 -> taken b3(v7, v14), notTaken b8()
   b8():
     Return
-}
-# CHECK-LABEL: function f2 name="testOfEveryTurnStaysBehindTheTag"
 # CHECK: b4():
 # CHECK-NEXT: v10: boolean = TypeTest v8 testedType=L0
 # CHECK-NOT: = TypeTest
+}

@@ -15,9 +15,7 @@ class FunctionBuiltinEmitter final : public BuiltinFamilyEmitter {
 public:
     explicit FunctionBuiltinEmitter(CodeGenerator&);
 
-    void generateFunctionBind(const InlineCall&);
-    void generateReflectApply(const InlineCall&);
-    void generateFunctionApply(const InlineCall&);
+    FOR_EACH_AOT_INLINE_BUILTIN_IN_FUNCTION_BUILTIN(AOT_DECLARE_INLINE_BUILTIN_GENERATOR)
 
 private:
     void missUnlessCallableClosure(const InlineCall&, CellPointer target, const Type&);

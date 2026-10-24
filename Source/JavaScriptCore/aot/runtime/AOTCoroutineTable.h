@@ -41,7 +41,6 @@ public:
     size_t removeDeadEntries(VM&, CollectionScope);
 
 private:
-    void createStructures(VM&);
     uint32_t createEmptyPrototypeStructure(VM&, JSObject* parent);
     void initializeCoroutineWords(VM&);
 

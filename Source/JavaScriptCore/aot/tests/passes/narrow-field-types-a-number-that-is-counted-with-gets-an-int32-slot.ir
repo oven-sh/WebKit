@@ -33,7 +33,6 @@ layout L7 name="Inferred" module=m1 fields=[{key="position" declared={type=numbe
 layout L8 name="Lone" module=m0 fields=[{key="position" declared={type=number} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module flags=[IsChecked] results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="given" [isFreeName]
     v2 = ToNumber v1
@@ -95,7 +94,6 @@ function f0 name="main" kind=Module flags=[IsChecked] results=[{type=anything}] 
 }
 
 function f1 name="codeUnitAt" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="text"
     v2 = PropGet v1 key="charCodeAt"
     v3 = Call v2, v1, v0
@@ -103,17 +101,14 @@ function f1 name="codeUnitAt" parameters=[{type=anything}] results=[{type=anythi
 }
 
 function f2 name="idOf" parameters=[{type=L2}] results=[{type=anything}] {
-  b0(v0: L2):
     v1 = PropGet v0 key="id"
     Return v1
 }
 
 function f3 name="same" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 
 function f4 name="plain" kind=Module results=[{type=anything}] {
-  b0():
     Return
 }

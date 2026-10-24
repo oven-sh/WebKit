@@ -250,12 +250,12 @@ struct alignas(16) Slot {
     }
     bool namesOnlyLiveCells(const Invocable<bool(JSCell*)> auto& isMarked, uintptr_t cageBase) const;
 
-    static constexpr ptrdiff_t offsetOfStructureID() { return 0; }
-    static constexpr ptrdiff_t offsetOfKind() { return 4; }
-    static constexpr ptrdiff_t offsetOfFlags() { return 5; }
-    static constexpr ptrdiff_t offsetOfLocation() { return 6; }
-    static constexpr ptrdiff_t offsetOfPayload() { return 8; }
-    static constexpr ptrdiff_t offsetOfSecondPayloadWord() { return 12; }
+    static constexpr ptrdiff_t offsetOfStructureID() { return OBJECT_OFFSETOF(Slot, structureID); }
+    static constexpr ptrdiff_t offsetOfKind() { return OBJECT_OFFSETOF(Slot, kind); }
+    static constexpr ptrdiff_t offsetOfFlags() { return OBJECT_OFFSETOF(Slot, flags); }
+    static constexpr ptrdiff_t offsetOfLocation() { return OBJECT_OFFSETOF(Slot, location); }
+    static constexpr ptrdiff_t offsetOfPayload() { return OBJECT_OFFSETOF(Slot, holder); }
+    static constexpr ptrdiff_t offsetOfSecondPayloadWord() { return OBJECT_OFFSETOF(Slot, field.type); }
     static constexpr unsigned kindShiftInHeader = 32;
     static constexpr unsigned flagsShiftInHeader = 40;
     static constexpr unsigned locationShiftInHeader = 48;
@@ -286,53 +286,29 @@ inline constexpr std::array allSlotKinds {
 };
 inline constexpr unsigned numberOfSlotKinds = allSlotKinds.size();
 
-constexpr SlotPayload Slot::payloadOf(Kind kind)
+struct SlotKindTraits {
+    SlotPayload payload;
+    SlotLocation location;
+    SlotPresence presence;
+    SlotKindFlag kindFlag;
+};
+
+inline constexpr SlotKindTraits slotKindTraits[] = {
+#define AOT_SLOT_KIND_TRAITS(name, payload, location, presence, kindFlag) { SlotPayload::payload, SlotLocation::location, SlotPresence::presence, SlotKindFlag::kindFlag },
+    FOR_EACH_AOT_SLOT_KIND(AOT_SLOT_KIND_TRAITS)
+#undef AOT_SLOT_KIND_TRAITS
+};
+
+constexpr SlotKindTraits traitsOf(Slot::Kind kind)
 {
-    switch (kind) {
-#define AOT_SLOT_KIND_PAYLOAD(name, payload, location, presence, kindFlag) \
-    case Kind::name: \
-        return SlotPayload::payload;
-    FOR_EACH_AOT_SLOT_KIND(AOT_SLOT_KIND_PAYLOAD)
-#undef AOT_SLOT_KIND_PAYLOAD
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
+    RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(static_cast<unsigned>(kind) < numberOfSlotKinds);
+    return slotKindTraits[static_cast<unsigned>(kind)];
 }
 
-constexpr SlotLocation Slot::locationOf(Kind kind)
-{
-    switch (kind) {
-#define AOT_SLOT_KIND_LOCATION(name, payload, location, presence, kindFlag) \
-    case Kind::name: \
-        return SlotLocation::location;
-    FOR_EACH_AOT_SLOT_KIND(AOT_SLOT_KIND_LOCATION)
-#undef AOT_SLOT_KIND_LOCATION
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-}
-
-constexpr SlotPresence Slot::presenceOf(Kind kind)
-{
-    switch (kind) {
-#define AOT_SLOT_KIND_PRESENCE(name, payload, location, presence, kindFlag) \
-    case Kind::name: \
-        return SlotPresence::presence;
-    FOR_EACH_AOT_SLOT_KIND(AOT_SLOT_KIND_PRESENCE)
-#undef AOT_SLOT_KIND_PRESENCE
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-}
-
-constexpr uint8_t Slot::kindFlagOf(Kind kind)
-{
-    switch (kind) {
-#define AOT_SLOT_KIND_FLAG(name, payload, location, presence, kindFlag) \
-    case Kind::name: \
-        return static_cast<uint8_t>(SlotKindFlag::kindFlag);
-    FOR_EACH_AOT_SLOT_KIND(AOT_SLOT_KIND_FLAG)
-#undef AOT_SLOT_KIND_FLAG
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-}
+constexpr SlotPayload Slot::payloadOf(Kind kind) { return traitsOf(kind).payload; }
+constexpr SlotLocation Slot::locationOf(Kind kind) { return traitsOf(kind).location; }
+constexpr SlotPresence Slot::presenceOf(Kind kind) { return traitsOf(kind).presence; }
+constexpr uint8_t Slot::kindFlagOf(Kind kind) { return static_cast<uint8_t>(traitsOf(kind).kindFlag); }
 
 inline Slot Slot::createInStorage(StructureID structureID, Kind kind, uint8_t flags, JSCell* holderOrNull, PropertyOffset offset)
 {
@@ -447,10 +423,10 @@ struct PackedSlot {
     bool canOutliveWhatItNames() const;
     static constexpr uint32_t upperHalfForOwnInlineValue(uint16_t name) { return static_cast<uint32_t>(name) << 16; }
 
-    static constexpr ptrdiff_t offsetOfPayload() { return 0; }
-    static constexpr ptrdiff_t offsetOfLocation() { return 4; }
-    static constexpr ptrdiff_t offsetOfBiasedKindAndFlags() { return 5; }
-    static constexpr ptrdiff_t offsetOfName() { return 6; }
+    static constexpr ptrdiff_t offsetOfPayload() { return OBJECT_OFFSETOF(PackedSlot, payload); }
+    static constexpr ptrdiff_t offsetOfLocation() { return OBJECT_OFFSETOF(PackedSlot, location); }
+    static constexpr ptrdiff_t offsetOfBiasedKindAndFlags() { return OBJECT_OFFSETOF(PackedSlot, biasedKindAndFlags); }
+    static constexpr ptrdiff_t offsetOfName() { return OBJECT_OFFSETOF(PackedSlot, name); }
 
     uint32_t payload;
     uint8_t location;
@@ -603,7 +579,7 @@ struct SiteCacheState {
     static constexpr unsigned sampleStep = (UINT8_MAX + 1) / missesOfEmptySitesPerSample;
     static constexpr uint8_t missesBeforeRefill(unsigned refillCount) { return static_cast<uint8_t>((4u << (2 * std::min(refillCount, maxRefillCount))) - 1); }
 
-    static constexpr ptrdiff_t offsetOfMissesLeft() { return 1; }
+    static constexpr ptrdiff_t offsetOfMissesLeft() { return OBJECT_OFFSETOF(SiteCacheState, missesLeft); }
 
     uint8_t refillCount;
     uint8_t missesLeft;
@@ -620,12 +596,6 @@ struct CustomAccessorRecord {
 static_assert(static_cast<unsigned>(SlotAccess::Define) + 1 == numberOfSlotAccesses);
 
 static_assert(sizeof(Slot) == 16 && alignof(Slot) == 16);
-static_assert(OBJECT_OFFSETOF(Slot, structureID) == Slot::offsetOfStructureID());
-static_assert(OBJECT_OFFSETOF(Slot, kind) == Slot::offsetOfKind());
-static_assert(OBJECT_OFFSETOF(Slot, flags) == Slot::offsetOfFlags());
-static_assert(OBJECT_OFFSETOF(Slot, location) == Slot::offsetOfLocation());
-static_assert(OBJECT_OFFSETOF(Slot, holder) == Slot::offsetOfPayload());
-static_assert(OBJECT_OFFSETOF(Slot, field.type) == Slot::offsetOfSecondPayloadWord());
 static_assert(Slot::kindShiftInHeader == 8 * Slot::offsetOfKind());
 static_assert(Slot::flagsShiftInHeader == 8 * Slot::offsetOfFlags());
 static_assert(Slot::locationShiftInHeader == 8 * Slot::offsetOfLocation());
@@ -642,13 +612,8 @@ static_assert(Slot::storageCapacityAfterAdding(Slot::wordIndexFor(firstOutOfLine
 static_assert(Slot::storageCapacityAfterAdding(Slot::wordIndexFor(firstOutOfLineOffset + 4)) == 8);
 
 static_assert(sizeof(PackedSlot) == 8 && std::is_trivially_copyable_v<PackedSlot>);
-static_assert(OBJECT_OFFSETOF(PackedSlot, payload) == PackedSlot::offsetOfPayload());
-static_assert(OBJECT_OFFSETOF(PackedSlot, location) == PackedSlot::offsetOfLocation());
-static_assert(OBJECT_OFFSETOF(PackedSlot, biasedKindAndFlags) == PackedSlot::offsetOfBiasedKindAndFlags());
-static_assert(OBJECT_OFFSETOF(PackedSlot, name) == PackedSlot::offsetOfName());
 
 static_assert(sizeof(SiteCacheState) == 2);
-static_assert(OBJECT_OFFSETOF(SiteCacheState, missesLeft) == SiteCacheState::offsetOfMissesLeft());
 static_assert(sizeof(Slot) >> SiteCacheState::slotAddressShift == sizeof(SiteCacheState));
 static_assert(SiteCacheState::missesBeforeRefill(SiteCacheState::maxRefillCount) == 255);
 

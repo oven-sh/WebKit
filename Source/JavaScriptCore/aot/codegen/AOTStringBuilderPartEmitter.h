@@ -13,7 +13,10 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class StringBuilderPartEmitter final : public OperationEmitter {
 public:
-    explicit StringBuilderPartEmitter(CodeGenerator&);
+    explicit StringBuilderPartEmitter(CodeGenerator& generator)
+        : OperationEmitter(generator)
+    {
+    }
 
     void generateStringBuilderAppendConstant(const ValueContext&);
     void generateStringBuilderAppendInteger(const ValueContext&);
@@ -30,11 +33,9 @@ private:
         const StringBuilderEmitter::StackBuilder* onStack { nullptr };
     };
 
+    StringBuilderEmitter& builders() { return emitter<StringBuilderEmitter>(); }
     Builder builderOf(const ValueContext&);
     void appendString(const OperationContext&, Builder, CellPointer string);
-    void appendView(Builder, const CharacterView&, LBasicBlock byCall);
-    void appendViewOrCall(Builder, const CharacterView&, LBasicBlock byCall, NOESCAPE const Invocable<void()> auto& appendByCall);
-    void appendConstant(const OperationContext&, Builder, StringID);
     void appendDigits(const OperationContext&, Builder, Word32 value);
     void appendNullish(const OperationContext&, Builder, Condition isUndefined);
     void appendPrimitive(const OperationContext&, Builder, Boxed primitive, bool isOnRarePath = false);

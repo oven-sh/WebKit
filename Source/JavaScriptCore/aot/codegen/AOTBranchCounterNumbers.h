@@ -42,10 +42,7 @@ class BranchCounterNumbers {
 public:
     static constexpr unsigned numberOfSides = 2;
 
-    BranchCounterNumbers() = default;
-
     bool isCounting() const { return m_limit; }
-    uint32_t firstOf(FunctionID) const;
     std::optional<uint32_t> counterFor(FunctionID, uint32_t ordinal, unsigned side) const;
     std::optional<uint32_t> counterOfEntries(FunctionID) const;
     JS_EXPORT_PRIVATE void dump(PrintStream&, const Program&) const;

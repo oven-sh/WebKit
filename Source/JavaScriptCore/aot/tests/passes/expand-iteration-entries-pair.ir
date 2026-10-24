@@ -11,7 +11,6 @@ entry module=m0
 layout L0 name="Key" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
 layout L1 name="Value" fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = PropGet v0 key="Map" [isFreeName]
@@ -47,7 +46,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="tagged" module=m1 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = PropGet v0 key="Map" [isFreeName]

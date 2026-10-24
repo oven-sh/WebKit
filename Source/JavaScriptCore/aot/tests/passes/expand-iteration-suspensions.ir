@@ -10,7 +10,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Source" fields=[{key="x" declared={type=number}}]
 
 function f0 name="noSuspension" parameters=[{type=Array<number, pristine[Names]>}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: Array<number, pristine[Names]>, v1: anything):
     v2 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -55,7 +54,6 @@ function f4 name="yieldInBodyOverMap" role=CoroutineRamp flags=[IsGenerator, Tak
 function f5 name="awaitInBodyOverObject" role=CoroutineRamp flags=[IsAsync] parameters=[{type=L0}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f5 body=f10 entryWithoutPromise=f10 promiseType=Promise promiseParameter=1}
 
 function f6 name="awaitInBody" role=CoroutineBody flags=[IsAsync] parameters=[{type=Array<number, pristine[Names]>}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f1} creator=Coroutine{kind=AsyncFunction ramp=f1 body=f6 entryWithoutPromise=f6 promiseType=Promise promiseParameter=1} {
-  b0(v0: Array<number, pristine[Names]>, v1: undefined|Promise):
     v2 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -77,8 +75,6 @@ function f6 name="awaitInBody" role=CoroutineBody flags=[IsAsync] parameters=[{t
     v10 = Undefined
     v11 = ReturnAsyncResult v1, v10
     Return v11
-}
-# CHECK-LABEL: function f6 name="awaitInBody"
 # CHECK: b1([[index6]]: int[0, 9007199254740991]):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: [[length6]]: anything = PropGet v0 key="length"
@@ -93,16 +89,15 @@ function f6 name="awaitInBody" role=CoroutineBody flags=[IsAsync] parameters=[{t
 # CHECK-NEXT: [[element6]]: {{*}} = ElemGet v0, [[proven6]] [keyIsIntegral]
 # CHECK-NEXT: [[one6]]: 1 = Integer integer=1
 # CHECK-NEXT: [[next6]]: int[1, 9007199254740991] = Add [[proven6]], [[one6]]
-# ABSENT-LABEL: function f6 name="awaitInBody"
 # ABSENT-NOT: = New
 # ABSENT-NOT: = Call
 # ABSENT-NOT: @@iterator
 # ABSENT-NOT: [isNeverInlined]
 # ABSENT-NOT: key="next"
 # ABSENT-NOT: handler=
+}
 
 function f7 name="awaitInBodyOverMap" role=CoroutineBody flags=[IsAsync] parameters=[{type=Map<string, number, pristine[Names]>}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f2} creator=Coroutine{kind=AsyncFunction ramp=f2 body=f7 entryWithoutPromise=f7 promiseType=Promise promiseParameter=1} {
-  b0(v0: Map<string, number, pristine[Names]>, v1: undefined|Promise):
     v2 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -124,9 +119,7 @@ function f7 name="awaitInBodyOverMap" role=CoroutineBody flags=[IsAsync] paramet
     v10 = Undefined
     v11 = ReturnAsyncResult v1, v10
     Return v11
-}
 # The pair of an entry is the one allocation, and the language asks for it.
-# CHECK-LABEL: function f7 name="awaitInBodyOverMap"
 # CHECK: b1([[table7]]: anything, [[position7]]: int[0, 2147483648]):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: = MapNext v0, [[table7]], [[position7]]
@@ -136,7 +129,6 @@ function f7 name="awaitInBodyOverMap" role=CoroutineBody flags=[IsAsync] paramet
 # CHECK: (v5: boolean, v6: anything, [[carriedTable7]]: anything, [[carriedPosition7]]: int[0, 2147483648]):
 # CHECK: = CollectionTable v0
 # CHECK: = NewArray {{*}} contents=anything
-# ABSENT-LABEL: function f7 name="awaitInBodyOverMap"
 # ABSENT-NOT: NewObject
 # ABSENT-NOT: = Call
 # ABSENT-NOT: @@iterator
@@ -145,9 +137,9 @@ function f7 name="awaitInBodyOverMap" role=CoroutineBody flags=[IsAsync] paramet
 # ABSENT-NOT: handler=
 # ABSENT-COUNT-1: = New
 # ABSENT-NOT: = New
+}
 
 function f8 name="yieldInBody" role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=Array<number, pristine[Names]>}, {type=Generator}] results=[{type=anything}] derivation={source=f3} creator=Coroutine{ramp=f3 body=f8 promiseParameter=2} {
-  b0(v0: function, v1: Array<number, pristine[Names]>, v2: Generator):
     v3 = IteratorOpen v1
     Jump -> next b1()
   b1():
@@ -179,8 +171,6 @@ function f8 name="yieldInBody" role=CoroutineBody flags=[IsGenerator, TakesCalle
   b9():
     v14 = Undefined
     Return v14
-}
-# CHECK-LABEL: function f8 name="yieldInBody"
 # CHECK: b1([[index8]]: int[0, 9007199254740991]):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: [[length8]]: anything = PropGet v1 key="length"
@@ -196,7 +186,6 @@ function f8 name="yieldInBody" role=CoroutineBody flags=[IsGenerator, TakesCalle
 # CHECK-NEXT: [[element8]]: {{*}} = ElemGet v1, [[proven8]] [keyIsIntegral]
 # CHECK-NEXT: [[one8]]: 1 = Integer integer=1
 # CHECK-NEXT: [[next8]]: int[1, 9007199254740991] = Add [[proven8]], [[one8]]
-# ABSENT-LABEL: function f8 name="yieldInBody"
 # ABSENT-NOT: = New
 # ABSENT-NOT: = Call
 # ABSENT-NOT: @@iterator
@@ -204,9 +193,9 @@ function f8 name="yieldInBody" role=CoroutineBody flags=[IsGenerator, TakesCalle
 # ABSENT-NOT: key="next"
 # ABSENT-NOT: key="return"
 # ABSENT-NOT: handler=
+}
 
 function f9 name="yieldInBodyOverMap" role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=Map<string, number, pristine[Names]>}, {type=Generator}] results=[{type=anything}] derivation={source=f4} creator=Coroutine{ramp=f4 body=f9 promiseParameter=2} {
-  b0(v0: function, v1: Map<string, number, pristine[Names]>, v2: Generator):
     v3 = CallBuiltin v1 overload=MapPrototypeKeys/0
     v4 = IteratorOpen v3
     Jump -> next b1()
@@ -239,8 +228,6 @@ function f9 name="yieldInBodyOverMap" role=CoroutineBody flags=[IsGenerator, Tak
   b9():
     v15 = Undefined
     Return v15
-}
-# CHECK-LABEL: function f9 name="yieldInBodyOverMap"
 # CHECK: b1([[table9]]: anything, [[position9]]: int[0, 2147483648]):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: = MapNext v1, [[table9]], [[position9]]
@@ -249,16 +236,15 @@ function f9 name="yieldInBodyOverMap" role=CoroutineBody flags=[IsGenerator, Tak
 # CHECK: b7():
 # CHECK-NEXT: Jump -> next b1([[carriedTable9]], [[carriedPosition9]])
 # CHECK: (v7: boolean, v8: anything, [[carriedTable9]]: anything, [[carriedPosition9]]: int[0, 2147483648]):
-# ABSENT-LABEL: function f9 name="yieldInBodyOverMap"
 # ABSENT-NOT: = New
 # ABSENT-NOT: = Call v
 # ABSENT-NOT: @@iterator
 # ABSENT-NOT: [isNeverInlined]
 # ABSENT-NOT: key="next"
 # ABSENT-NOT: handler=
+}
 
 function f10 name="awaitInBodyOverObject" role=CoroutineBody flags=[IsAsync] parameters=[{type=L0}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f5} creator=Coroutine{kind=AsyncFunction ramp=f5 body=f10 entryWithoutPromise=f10 promiseType=Promise promiseParameter=1} {
-  b0(v0: L0, v1: undefined|Promise):
     v2 = IteratorOpen v0
     Jump -> next b1()
   b1():

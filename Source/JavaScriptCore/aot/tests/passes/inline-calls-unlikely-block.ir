@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="hasUnlikelyBlock" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
-  b0(v0: number, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1() frequency=Unlikely:
     v2 = Mul v0, v0
@@ -18,7 +17,6 @@ function f0 name="hasUnlikelyBlock" parameters=[{type=number}, {type=boolean}] r
 }
 
 function f1 name="callInOrdinaryBlock" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
-  b0(v0: number, v1: boolean):
     v2 = CallDirect v0, v1 function=f0 [isAlwaysInlined]
     Return v2
 }
@@ -31,7 +29,6 @@ function f1 name="callInOrdinaryBlock" parameters=[{type=number}, {type=boolean}
 # CHECK-NEXT: = Add v0, v0
 
 function f2 name="callInUnlikelyBlock" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
-  b0(v0: number, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1() frequency=Unlikely:
     v2 = CallDirect v0, v1 function=f0 [isAlwaysInlined]
@@ -48,7 +45,6 @@ function f2 name="callInUnlikelyBlock" parameters=[{type=number}, {type=boolean}
 # CHECK-NEXT: = Add v0, v0
 
 function f3 name="callInRareBlock" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
-  b0(v0: number, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v2 = CallDirect v0, v1 function=f0 [isAlwaysInlined]

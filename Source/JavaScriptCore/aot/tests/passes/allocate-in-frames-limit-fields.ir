@@ -15,7 +15,6 @@ layout L0 kind=Environment name="twoFields" fields=[{key="x" declared={type=anyt
 layout L1 kind=Environment name="oneField" fields=[{key="x" declared={type=anything}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = CallDirect v1 function=f1
@@ -24,7 +23,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 # CHECK-LABEL: function f0 name="main"
 function f1 name="overTheLimit" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     v2 = CallDirect v1 function=f3
     Return v2
@@ -35,7 +33,6 @@ function f1 name="overTheLimit" parameters=[{type=anything}] results=[{type=anyt
 # PLAN-LABEL: function f1
 # PLAN-NEXT: v1: Heap ExceedsLimit limit=MaxFrameEnvironmentFields
 function f2 name="atTheLimit" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L1 fields=[0]
     v2 = CallDirect v1 function=f4
     Return v2

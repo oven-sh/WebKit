@@ -37,7 +37,6 @@ layout L5 kind=Instance name="F" constructor=f9 fields=[{key="v" declared={type=
 layout L6 name="Copy"
 variable g0 name="B" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="show" [isFreeName]
     v2 = Builtin builtin=MathRandom
@@ -98,7 +97,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="C" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
     v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]}
@@ -109,12 +107,10 @@ function f1 name="C" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type
     Return v3
 }
 function f2 name="initialize" kind=Initializer flags=[HasThis] thisType={type=L0 flags=[IsFromCompiler]} parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: L0, v1: number):
     PropDefine v0, v1 key="a"
     Return
 }
 function f3 name="B" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L1
     v3 = NewObject v2 layout=L1
     v4 = Integer integer=1
@@ -124,7 +120,6 @@ function f3 name="B" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type
     Return v3
 }
 function f4 name="D" kind=DerivedConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetModuleVariable variable=g0
     v3 = SuperConstruct v2, v0, v1 layout=L2
     v4 = Integer integer=2
@@ -136,7 +131,6 @@ function f4 name="D" kind=DerivedConstructor flags=[HasNewTarget] parameters=[{t
     Return v3
 }
 function f5 name="E" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: number, v2: boolean):
     v3 = GetConstructPrototype v0 layout=L3
     v4 = NewObject v3 layout=L3
     v5 = Integer integer=1
@@ -153,7 +147,6 @@ function f5 name="E" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type
     Return v4
 }
 function f6 name="H" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L4
     v3 = NewObject v2 layout=L4
     PropSet v3, v1 key="n"
@@ -168,21 +161,18 @@ function f6 name="H" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type
     Return v3
 }
 function f7 name="helper" parameters=[{type=L4}, {type=number}] results=[{type=anything}] {
-  b0(v0: L4, v1: number):
     v2 = Integer integer=1
     v3 = Add v1, v2
     PropSet v0, v3 key="k"
     Return
 }
 function f8 name="bump" kind=Method flags=[HasThis] thisType={type=L4} parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: L4, v1: number):
     v2 = Integer integer=20
     v3 = Add v1, v2
     PropSet v0, v3 key="k"
     Return
 }
 function f9 name="F" flags=[HasThis] thisType={type=L5} parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: L5, v1: number):
     PropSet v0, v1 key="u"
     v3 = Integer integer=1
     v4 = Add v1, v3
@@ -190,7 +180,6 @@ function f9 name="F" flags=[HasThis] thisType={type=L5} parameters=[{type=number
     Return
 }
 function f10 name="compiled" parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
     v6 = CallDirect v0 function=f11
     v7 = CallDirect v1 function=f11
     v8 = CallDirect v2 function=f11
@@ -200,7 +189,6 @@ function f10 name="compiled" parameters=[{type=anything}, {type=anything}, {type
     Return
 }
 function f11 name="walk" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="showCompiled" [isFreeName]
     v3 = PropGet v1 key="noteKey" [isFreeName]
@@ -233,7 +221,6 @@ static constexpr ASCIILiteral programCreatingFieldsLater = R"IR(module m0 path="
 entry module=m0
 layout L0 name="Record" fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number}}, {key="c" declared={type=number}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="show" [isFreeName]
     v2 = Builtin builtin=MathRandom
@@ -276,21 +263,18 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="addB" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0, v1: number):
     v2 = Integer integer=1
     v3 = Add v1, v2
     PropSet v0, v3 key="b"
     Return
 }
 function f2 name="addC" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0, v1: number):
     v2 = Integer integer=2
     v3 = Add v1, v2
     PropSet v0, v3 key="c"
     Return
 }
 function f3 name="addBoth" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0, v1: number):
     v2 = Integer integer=3
     v3 = Add v1, v2
     PropSet v0, v3 key="b"
@@ -306,7 +290,6 @@ layout L0 kind=Instance name="B" constructor=f1 fields=[{key="p" declared={type=
 layout L1 kind=Instance name="D" base=L0 constructor=f2 fields=[{key="d" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=number} flags=[IsRequired]}] flags=[HasHeritage]
 variable g0 name="B" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="showList" [isFreeName]
     v2 = Builtin builtin=MathRandom
@@ -340,7 +323,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="B" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
     v4 = Integer integer=1
@@ -350,7 +332,6 @@ function f1 name="B" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type
     Return v3
 }
 function f2 name="D" kind=DerivedConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetModuleVariable variable=g0
     v3 = SuperConstruct v2, v0, v1 layout=L1
     v4 = Integer integer=2
@@ -367,7 +348,6 @@ static constexpr ASCIILiteral programWithLongRuns = R"IR(module m0 path="main.js
 entry module=m0
 layout L0 name="Wide" fields=[{key="a" declared={type=number}}, {key="b" declared={type=number}}, {key="c" declared={type=number}}, {key="d" declared={type=number}}, {key="e" declared={type=number}}, {key="f" declared={type=number}}, {key="g" declared={type=number}}, {key="h" declared={type=number}}, {key="i" declared={type=number}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="show" [isFreeName]
     v2 = Builtin builtin=MathRandom
@@ -415,7 +395,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="fillAll" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0, v1: number):
     v2 = Integer integer=10
     v3 = Add v1, v2
     PropSet v0, v3 key="a"
@@ -446,7 +425,6 @@ function f1 name="fillAll" parameters=[{type=L0}, {type=number}] results=[{type=
     Return
 }
 function f2 name="fillMiddle" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0, v1: number):
     v2 = Integer integer=30
     v3 = Add v1, v2
     PropSet v0, v3 key="c"
@@ -465,7 +443,6 @@ function f2 name="fillMiddle" parameters=[{type=L0}, {type=number}] results=[{ty
     Return
 }
 function f3 name="fillBackwards" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0, v1: number):
     v2 = Integer integer=50
     v3 = Add v1, v2
     PropSet v0, v3 key="i"

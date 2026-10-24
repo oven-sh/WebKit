@@ -9,44 +9,36 @@ layout L0 kind=Instance name="Body" constructor=f0
 layout L1 kind=Instance name="Ghost" base=L0 constructor=f11 flags=[HasHeritage]
 
 function f0 name="Body" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     Return v1
 }
 function f1 name="Ghost" role=GenericEntrypoint flags=[HasThis] captures=[{type=function}] results=[{type=anything}] derivation={source=f2} creator=Entrypoint{target=f2} {
-  b0(v0: function, v1: anything):
     v2 = CreateRest
     v3 = SuperConstructList v0, v1, v2 layout=L1 callees=[f0]
     Return v3
-}
-# CHECK-LABEL: function f1 name="Ghost"
 # CHECK-NOT: CreateRest
 # CHECK: [[first]]: anything = GetArgument
 # CHECK-NEXT: [[second]]: anything = GetArgument argumentIndex=1
 # CHECK-NEXT: = SuperConstruct v0, v1, [[first]], [[second]] layout=L1 callees=[f0]
+}
 
 function f2 name="one" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 function f3 name="three" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     Return v2
 }
 function f4 name="wrap" role=GenericEntrypoint flags=[HasThis] captures=[{type=function}] results=[{type=anything}] derivation={source=f2} creator=Entrypoint{target=f2} {
-  b0(v0: function, v1: anything):
     v2 = CreateRest firstArgument=1
     v3 = CallList v0, v1, v2 callees=[f2, f3]
     Return v3
-}
-# CHECK-LABEL: function f4 name="wrap"
 # CHECK-NOT: CreateRest
 # CHECK: [[a]]: anything = GetArgument argumentIndex=1
 # CHECK-NEXT: [[b]]: anything = GetArgument argumentIndex=2
 # CHECK-NEXT: [[c]]: anything = GetArgument argumentIndex=3
 # CHECK-NEXT: = Call v0, v1, [[a]], [[b]], [[c]] callees=[f2, f3]
+}
 
 function f5 name="rest" flags=[HasRestParameter] parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     Return v0
 }
 function f6 name="counts" flags=[HasArgumentCount] parameters=[{type=anything}] results=[{type=anything}] {
@@ -54,42 +46,32 @@ function f6 name="counts" flags=[HasArgumentCount] parameters=[{type=anything}] 
     Return v0
 }
 function f7 name="toRest" role=GenericEntrypoint flags=[HasThis] captures=[{type=function}] results=[{type=anything}] derivation={source=f2} creator=Entrypoint{target=f2} {
-  b0(v0: function, v1: anything):
     v2 = CreateRest
     v3 = CallList v0, v1, v2 callees=[f2, f5]
     Return v3
-}
-# CHECK-LABEL: function f7 name="toRest"
 # CHECK: = CallForwardVarargs v0, v1 callees=[f2, f5]
+}
 function f8 name="toCounts" role=GenericEntrypoint flags=[HasThis] captures=[{type=function}] results=[{type=anything}] derivation={source=f2} creator=Entrypoint{target=f2} {
-  b0(v0: function, v1: anything):
     v2 = CreateRest
     v3 = CallList v0, v1, v2 callees=[f6]
     Return v3
-}
-# CHECK-LABEL: function f8 name="toCounts"
 # CHECK: = CallForwardVarargs v0, v1 callees=[f6]
+}
 function f9 name="toSomebodyElse" role=GenericEntrypoint flags=[HasThis] captures=[{type=function}] results=[{type=anything}] derivation={source=f2} creator=Entrypoint{target=f2} {
-  b0(v0: function, v1: anything):
     v2 = CreateRest
     v3 = CallList v0, v1, v2 callees=[f2, ..]
     Return v3
-}
-# CHECK-LABEL: function f9 name="toSomebodyElse"
 # CHECK: = CallForwardVarargs v0, v1 callees=[f2, ..]
+}
 function f10 name="withoutStamp" role=GenericEntrypoint flags=[HasThis] captures=[{type=function}] results=[{type=anything}] derivation={source=f2} creator=Entrypoint{target=f2} {
-  b0(v0: function, v1: anything):
     v2 = CreateRest
     v3 = CallList v0, v1, v2
     Return v3
-}
-# CHECK-LABEL: function f10 name="withoutStamp"
 # CHECK: = CallForwardVarargs v0, v1
+}
 function f11 name="Ghost" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: function, v1: anything, v2: Array):
     v3 = SuperConstructList v0, v1, v2 layout=L1 callees=[f0]
     Return v3
-}
 # A rest array that a caller has made is no list of this frame.
-# CHECK-LABEL: function f11 name="Ghost"
 # CHECK: = SuperConstructList v0, v1, v2 layout=L1 callees=[f0]
+}

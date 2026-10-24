@@ -14,7 +14,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class SavedFrameEmitter final : public OperationEmitter {
 public:
-    explicit SavedFrameEmitter(CodeGenerator&);
+    explicit SavedFrameEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generateNewGenerator(const ValueContext&);
     void generateNewAsyncGenerator(const ValueContext&);
@@ -37,25 +37,15 @@ public:
     void generateIsUnmodifiedGenerator(const ValueContext&);
 
 private:
-    // The operands of the stub in front of the site word.
-    struct Suspension {
-        StubKey key;
-        LValue firstOperand { nullptr };
-        LValue secondOperand { nullptr };
-        LValue thirdOperand { nullptr };
-        ValueID driver;
-    };
-
     CoroutineKind kindOfFunction() const;
-    CellPointer newGenerator(const ValueContext&, CoroutineKind);
     CellPointer allocateGenerator(CellPointer closure, LBasicBlock slowPath);
     LValue cellOrZero(ValueID driver);
     LValue driverAsPassed(ValueID driver);
     TypedPointer stateOf(CellPointer generator);
     Pointer framePointerAtThisPoint();
-    StubCallResult suspend(const ValueContext&, const Suspension&);
-    void suspendGenerator(const ValueContext&, GeneratorSuspension, Boxed value);
-    void defineYieldResults(const ValueContext&, StubCallResult);
+    StubCallResult suspend(const ValueContext&, StubKey, std::initializer_list<LValue> operandsInFrontOfSiteWord, ValueID driver);
+    void suspendGenerator(const ValueContext&, GeneratorSuspension);
+    void defineValueAndWord(const ValueContext&, StubCallResult);
     void branchUnlessUnmodifiedGenerator(Operand, const Type&, LBasicBlock otherwise);
 };
 

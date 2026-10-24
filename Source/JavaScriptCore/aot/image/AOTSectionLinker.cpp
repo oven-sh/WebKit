@@ -10,7 +10,6 @@
 
 #include "AOTLimits.h"
 #include "AOTUnitPlacement.h"
-#include "AOTVector.h"
 #include <algorithm>
 #include <iterator>
 #include <wtf/BitVector.h>
@@ -24,19 +23,6 @@ static constexpr uint64_t maxVectorSize = defaultLimitValue(LimitID::VectorBytes
 
 namespace {
 
-struct UnitGraph {
-    bool isCopyable(uint32_t unit) const { return units[unit].sharing == UnitSharing::Copyable; }
-
-    std::span<const LinkUnit> units;
-    Vector<Vector<UnitTarget, 0>> targets;
-    Vector<uint32_t> numberWithinSharing;
-    Vector<uint32_t> uniqueUnits;
-    Vector<uint32_t> copyableUnits;
-    // The unique units from this one on are data.
-    size_t firstDataUnit { 0 };
-    size_t dataAlignment { 1 };
-};
-
 struct UseRows {
     std::span<const CopyableUse> of(uint32_t user) const
     {
@@ -47,9 +33,19 @@ struct UseRows {
     Vector<uint32_t> firstUseByUser;
 };
 
-struct CopyableUses {
-    UseRows ofUniqueUnits;
-    UseRows ofCopyableUnits;
+struct UnitGraph {
+    bool isCopyable(uint32_t unit) const { return units[unit].sharing == UnitSharing::Copyable; }
+
+    std::span<const LinkUnit> units;
+    Vector<Vector<UnitTarget, 0>> targets;
+    Vector<uint32_t> numberWithinSharing;
+    Vector<uint32_t> uniqueUnits;
+    Vector<uint32_t> copyableUnits;
+    UseRows usesOfUniqueUnits;
+    UseRows usesOfCopyableUnits;
+    // The unique units from this one on are data.
+    size_t firstDataUnit { 0 };
+    size_t dataAlignment { 1 };
 };
 
 struct Veneer {
@@ -62,34 +58,6 @@ struct SectionLayout {
     Vector<Vector<Veneer, 0>> veneersByUniqueUnit;
     size_t dataOffset { 0 };
     size_t end { 0 };
-};
-
-class RelocationLinker {
-public:
-    RelocationLinker(const UnitGraph&, const CopyableUses&, const SectionLayout&, const CodeTemplates&, std::span<uint8_t> bytes);
-
-    std::optional<SectionLinkFailure> run();
-
-private:
-    struct PlacedUser {
-        uint32_t unit;
-        size_t start;
-        std::span<const CopyableUse> uses;
-        std::span<const size_t> copyOffsetByUse;
-        std::span<const Veneer> veneers;
-    };
-
-    size_t offsetOfUniqueTarget(const UnitTarget&) const;
-    size_t offsetOfVeneer(const PlacedUser&, size_t veneer) const;
-    std::optional<SectionLinkFailure> link(const PlacedUser&);
-    std::optional<SectionLinkFailure> linkVeneers(const PlacedUser&);
-
-    const UnitGraph& m_graph;
-    const CopyableUses& m_uses;
-    const SectionLayout& m_layout;
-    const CodeTemplates& m_templates;
-    std::span<uint8_t> m_bytes;
-    Vector<size_t> m_copyOffsetByCopyable;
 };
 
 } // anonymous namespace
@@ -113,57 +81,6 @@ static bool isWithinReach(RelocationKind kind, size_t site, size_t target)
 {
     size_t distance = site < target ? target - site : site - target;
     return static_cast<int64_t>(distance) < MacroAssembler::relocationReach(kind);
-}
-
-static std::expected<Vector<Vector<UnitTarget, 0>>, SectionLinkFailure> resolveTargets(const SectionLinkInputs& inputs)
-{
-    std::span<const LinkUnit> units = inputs.units;
-    Vector<Vector<UnitTarget, 0>> targets(units.size());
-    for (uint32_t unit = 0; unit < units.size(); ++unit) {
-        std::span<const uint8_t> bytes = units[unit].bytes;
-        std::span<const Relocation> relocations = units[unit].relocations;
-        targets[unit].reserveInitialCapacity(relocations.size());
-        for (uint32_t index = 0; index < relocations.size(); ++index) {
-            const Relocation& relocation = relocations[index];
-            size_t size = MacroAssembler::relocationSize(relocation.kind);
-            RELEASE_ASSERT(size && size <= bytes.size() && relocation.offset <= bytes.size() - size);
-            std::optional<UnitTarget> target = inputs.resolve(unit, relocation);
-            if (!target || target->unit >= units.size() || target->offset > units[target->unit].bytes.size())
-                return std::unexpected(SectionLinkFailure { SectionLinkError::SymbolWithoutUnit, unit, index });
-            targets[unit].append(*target);
-        }
-    }
-    return targets;
-}
-
-static std::expected<UnitGraph, SectionLinkFailure> createGraph(const SectionLinkInputs& inputs)
-{
-    RELEASE_ASSERT(isRepresentableAs<uint32_t>(inputs.units.size()));
-    auto targets = resolveTargets(inputs);
-    if (!targets)
-        return std::unexpected(targets.error());
-
-    UnitGraph graph;
-    graph.units = inputs.units;
-    graph.targets = WTF::move(*targets);
-    graph.dataAlignment = inputs.dataAlignment;
-    graph.numberWithinSharing.fill(0, inputs.units.size());
-    auto append = [&](Vector<uint32_t>& unitsWithSameSharing, uint32_t unit) {
-        graph.numberWithinSharing[unit] = static_cast<uint32_t>(unitsWithSameSharing.size());
-        unitsWithSameSharing.append(unit);
-    };
-    for (uint32_t unit = 0; unit < inputs.units.size(); ++unit) {
-        if (graph.isCopyable(unit))
-            append(graph.copyableUnits, unit);
-        else if (!inputs.units[unit].isData)
-            append(graph.uniqueUnits, unit);
-    }
-    graph.firstDataUnit = graph.uniqueUnits.size();
-    for (uint32_t unit = 0; unit < inputs.units.size(); ++unit) {
-        if (!graph.isCopyable(unit) && inputs.units[unit].isData)
-            append(graph.uniqueUnits, unit);
-    }
-    return graph;
 }
 
 static UseRows collectUses(const UnitGraph& graph, std::span<const uint32_t> users)
@@ -201,6 +118,50 @@ static UseRows collectUses(const UnitGraph& graph, std::span<const uint32_t> use
     return rows;
 }
 
+static std::expected<UnitGraph, SectionLinkFailure> createGraph(const SectionLinkInputs& inputs)
+{
+    std::span<const LinkUnit> units = inputs.units;
+    RELEASE_ASSERT(isRepresentableAs<uint32_t>(units.size()));
+    UnitGraph graph;
+    graph.units = units;
+    graph.dataAlignment = inputs.dataAlignment;
+    graph.targets.grow(units.size());
+    for (uint32_t unit = 0; unit < units.size(); ++unit) {
+        std::span<const uint8_t> bytes = units[unit].bytes;
+        std::span<const Relocation> relocations = units[unit].relocations;
+        graph.targets[unit].reserveInitialCapacity(relocations.size());
+        for (uint32_t index = 0; index < relocations.size(); ++index) {
+            const Relocation& relocation = relocations[index];
+            size_t size = MacroAssembler::relocationSize(relocation.kind);
+            RELEASE_ASSERT(size && size <= bytes.size() && relocation.offset <= bytes.size() - size);
+            std::optional<UnitTarget> target = inputs.resolve(unit, relocation);
+            if (!target || target->unit >= units.size() || target->offset > units[target->unit].bytes.size())
+                return std::unexpected(SectionLinkFailure { SectionLinkError::SymbolWithoutUnit, unit, index });
+            graph.targets[unit].append(*target);
+        }
+    }
+
+    graph.numberWithinSharing.fill(0, units.size());
+    auto append = [&](Vector<uint32_t>& unitsWithSameSharing, uint32_t unit) {
+        graph.numberWithinSharing[unit] = static_cast<uint32_t>(unitsWithSameSharing.size());
+        unitsWithSameSharing.append(unit);
+    };
+    for (uint32_t unit = 0; unit < units.size(); ++unit) {
+        if (graph.isCopyable(unit))
+            append(graph.copyableUnits, unit);
+        else if (!units[unit].isData)
+            append(graph.uniqueUnits, unit);
+    }
+    graph.firstDataUnit = graph.uniqueUnits.size();
+    for (uint32_t unit = 0; unit < units.size(); ++unit) {
+        if (!graph.isCopyable(unit) && units[unit].isData)
+            append(graph.uniqueUnits, unit);
+    }
+    graph.usesOfUniqueUnits = collectUses(graph, graph.uniqueUnits.span());
+    graph.usesOfCopyableUnits = collectUses(graph, graph.copyableUnits.span());
+    return graph;
+}
+
 static bool addVeneers(const UnitGraph& graph, SectionLayout& layout)
 {
     const Vector<size_t>& unitStarts = layout.placement.unitStarts;
@@ -225,7 +186,7 @@ static bool addVeneers(const UnitGraph& graph, SectionLayout& layout)
     return didAdd;
 }
 
-static SectionLayout layOutSection(const UnitGraph& graph, const CopyableUses& uses, const CodeTemplates& templates)
+static SectionLayout layOutSection(const UnitGraph& graph, const CodeTemplates& templates)
 {
     size_t numberOfUniqueUnits = graph.uniqueUnits.size();
     Vector<size_t> alignments(numberOfUniqueUnits, [&](size_t number) -> size_t {
@@ -256,10 +217,10 @@ static SectionLayout layOutSection(const UnitGraph& graph, const CopyableUses& u
             .alignments = alignments.span(),
             .fallsIntoNext = fallsIntoNext,
             .copyables = copyables.span(),
-            .uses = uses.ofUniqueUnits.uses.span(),
-            .firstUseByUnit = uses.ofUniqueUnits.firstUseByUser.span(),
-            .usesOfCopyables = uses.ofCopyableUnits.uses.span(),
-            .firstUseByCopyable = uses.ofCopyableUnits.firstUseByUser.span(),
+            .uses = graph.usesOfUniqueUnits.uses.span(),
+            .firstUseByUnit = graph.usesOfUniqueUnits.firstUseByUser.span(),
+            .usesOfCopyables = graph.usesOfCopyableUnits.uses.span(),
+            .firstUseByCopyable = graph.usesOfCopyableUnits.firstUseByUser.span(),
             .alignmentAfterCopies = 1,
             .start = 0,
             .shiftOfFirstUnit = 0,
@@ -301,91 +262,55 @@ static LinkedSection copyUnits(const UnitGraph& graph, const SectionLayout& layo
     return section;
 }
 
-RelocationLinker::RelocationLinker(const UnitGraph& graph, const CopyableUses& uses, const SectionLayout& layout, const CodeTemplates& templates, std::span<uint8_t> bytes)
-    : m_graph(graph)
-    , m_uses(uses)
-    , m_layout(layout)
-    , m_templates(templates)
-    , m_bytes(bytes)
-    , m_copyOffsetByCopyable(FillWith { }, graph.copyableUnits.size(), 0)
+static std::optional<SectionLinkFailure> linkUnits(const UnitGraph& graph, const SectionLayout& layout, const CodeTemplates& templates, std::span<uint8_t> bytes)
 {
-}
+    const UnitPlacement& placement = layout.placement;
+    Vector<size_t> copyOffsetByCopyable(FillWith { }, graph.copyableUnits.size(), 0);
+    auto offsetOfUniqueTarget = [&](const UnitTarget& target) {
+        return placement.unitStarts[graph.numberWithinSharing[target.unit]] + target.offset;
+    };
+    auto link = [&](uint32_t unit, size_t start, std::span<const CopyableUse> uses, std::span<const size_t> copyOffsetByUse, std::span<const Veneer> veneers) {
+        RELEASE_ASSERT(uses.size() == copyOffsetByUse.size());
+        for (size_t use = 0; use < uses.size(); ++use)
+            copyOffsetByCopyable[uses[use].copyable] = copyOffsetByUse[use];
 
-std::optional<SectionLinkFailure> RelocationLinker::run()
-{
-    const UnitPlacement& placement = m_layout.placement;
-    for (uint32_t number = 0; number < m_graph.uniqueUnits.size(); ++number) {
-        std::span<const CopyableUse> uses = m_uses.ofUniqueUnits.of(number);
-        auto failure = link({
-            .unit = m_graph.uniqueUnits[number],
-            .start = placement.unitStarts[number],
-            .uses = uses,
-            .copyOffsetByUse = placement.copyOffsetByUse.span().subspan(m_uses.ofUniqueUnits.firstUseByUser[number], uses.size()),
-            .veneers = m_layout.veneersByUniqueUnit[number].span(),
+        std::span<const Relocation> relocations = graph.units[unit].relocations;
+        auto indexOf = [&](const Relocation& relocation) {
+            return static_cast<uint32_t>(std::distance(relocations.data(), &relocation));
+        };
+        auto offsetOfVeneer = [&](size_t veneer) {
+            return start + offsetOfVeneers(graph.units[unit]) + veneer * templates.sizeOfVeneer();
+        };
+        std::optional<SectionLinkFailure> failure;
+        applyRelocations(bytes, start, relocations, [&](const Relocation& relocation) -> std::optional<size_t> {
+            const UnitTarget& target = graph.targets[unit][indexOf(relocation)];
+            if (graph.isCopyable(target.unit))
+                return copyOffsetByCopyable[graph.numberWithinSharing[target.unit]] + target.offset;
+            if (transfersControl(relocation.kind)) {
+                if (auto veneer = findVeneer(veneers, target))
+                    return offsetOfVeneer(*veneer);
+            }
+            return offsetOfUniqueTarget(target);
+        }, [&](const Relocation& relocation) {
+            if (!failure)
+                failure = SectionLinkFailure { SectionLinkError::OutOfPCRelativeReach, unit, indexOf(relocation) };
         });
-        if (failure)
+        for (size_t index = 0; !failure && index < veneers.size(); ++index) {
+            if (!applyRelocation(bytes, offsetOfVeneer(index), templates.veneer.relocations[0], offsetOfUniqueTarget(veneers[index].target)))
+                failure = SectionLinkFailure { SectionLinkError::OutOfPCRelativeReach, unit, veneers[index].firstRelocation };
+        }
+        return failure;
+    };
+
+    for (uint32_t number = 0; number < graph.uniqueUnits.size(); ++number) {
+        std::span<const CopyableUse> uses = graph.usesOfUniqueUnits.of(number);
+        std::span<const size_t> copyOffsetByUse = placement.copyOffsetByUse.span().subspan(graph.usesOfUniqueUnits.firstUseByUser[number], uses.size());
+        if (auto failure = link(graph.uniqueUnits[number], placement.unitStarts[number], uses, copyOffsetByUse, layout.veneersByUniqueUnit[number].span()))
             return failure;
     }
     for (const PlacedCopy& copy : placement.copies) {
-        auto failure = link({
-            .unit = m_graph.copyableUnits[copy.copyable],
-            .start = copy.offset,
-            .uses = m_uses.ofCopyableUnits.of(copy.copyable),
-            .copyOffsetByUse = copy.copyOffsetByUse.span(),
-            .veneers = { },
-        });
-        if (failure)
+        if (auto failure = link(graph.copyableUnits[copy.copyable], copy.offset, graph.usesOfCopyableUnits.of(copy.copyable), copy.copyOffsetByUse.span(), { }))
             return failure;
-    }
-    return std::nullopt;
-}
-
-size_t RelocationLinker::offsetOfUniqueTarget(const UnitTarget& target) const
-{
-    return m_layout.placement.unitStarts[m_graph.numberWithinSharing[target.unit]] + target.offset;
-}
-
-size_t RelocationLinker::offsetOfVeneer(const PlacedUser& user, size_t veneer) const
-{
-    return user.start + offsetOfVeneers(m_graph.units[user.unit]) + veneer * m_templates.sizeOfVeneer();
-}
-
-std::optional<SectionLinkFailure> RelocationLinker::link(const PlacedUser& user)
-{
-    RELEASE_ASSERT(user.uses.size() == user.copyOffsetByUse.size());
-    for (size_t use = 0; use < user.uses.size(); ++use)
-        m_copyOffsetByCopyable[user.uses[use].copyable] = user.copyOffsetByUse[use];
-
-    std::span<const Relocation> relocations = m_graph.units[user.unit].relocations;
-    const Vector<UnitTarget, 0>& targets = m_graph.targets[user.unit];
-    auto indexOf = [&](const Relocation& relocation) {
-        return static_cast<uint32_t>(std::distance(relocations.data(), &relocation));
-    };
-    std::optional<SectionLinkFailure> failure;
-    applyRelocations(m_bytes, user.start, relocations, [&](const Relocation& relocation) -> std::optional<size_t> {
-        const UnitTarget& target = targets[indexOf(relocation)];
-        if (m_graph.isCopyable(target.unit))
-            return m_copyOffsetByCopyable[m_graph.numberWithinSharing[target.unit]] + target.offset;
-        if (transfersControl(relocation.kind)) {
-            if (auto veneer = findVeneer(user.veneers, target))
-                return offsetOfVeneer(user, *veneer);
-        }
-        return offsetOfUniqueTarget(target);
-    }, [&](const Relocation& relocation) {
-        if (!failure)
-            failure = SectionLinkFailure { SectionLinkError::OutOfPCRelativeReach, user.unit, indexOf(relocation) };
-    });
-    if (failure)
-        return failure;
-    return linkVeneers(user);
-}
-
-std::optional<SectionLinkFailure> RelocationLinker::linkVeneers(const PlacedUser& user)
-{
-    for (size_t index = 0; index < user.veneers.size(); ++index) {
-        const Veneer& veneer = user.veneers[index];
-        if (!applyRelocation(m_bytes, offsetOfVeneer(user, index), m_templates.veneer.relocations[0], offsetOfUniqueTarget(veneer.target)))
-            return SectionLinkFailure { SectionLinkError::OutOfPCRelativeReach, user.unit, veneer.firstRelocation };
     }
     return std::nullopt;
 }
@@ -395,14 +320,12 @@ std::expected<LinkedSection, SectionLinkFailure> linkSection(const SectionLinkIn
     auto graph = createGraph(inputs);
     if (!graph)
         return std::unexpected(graph.error());
-    CopyableUses uses { collectUses(*graph, graph->uniqueUnits.span()), collectUses(*graph, graph->copyableUnits.span()) };
-
-    SectionLayout layout = layOutSection(*graph, uses, inputs.templates);
+    SectionLayout layout = layOutSection(*graph, inputs.templates);
     if (layout.end > std::min(inputs.maxSize, maxVectorSize))
         return std::unexpected(SectionLinkFailure { SectionLinkError::SectionTooLarge, 0, 0 });
 
     LinkedSection section = copyUnits(*graph, layout, inputs.templates);
-    if (auto failure = RelocationLinker(*graph, uses, layout, inputs.templates, section.bytes.mutableSpan()).run())
+    if (auto failure = linkUnits(*graph, layout, inputs.templates, section.bytes.mutableSpan()))
         return std::unexpected(*failure);
     return section;
 }

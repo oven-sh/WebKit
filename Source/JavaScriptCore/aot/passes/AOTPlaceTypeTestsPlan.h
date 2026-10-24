@@ -87,29 +87,8 @@ enum class ProofsHeldByGuards : uint8_t { AreListed, AreLeftOut };
 Vector<ExistingProof> findExistingProofs(FunctionPassContext&, const TestConditions&, ProofsHeldByGuards = ProofsHeldByGuards::AreListed);
 ValueID ensureEdgeResult(IRBuilder&, FunctionAnalyses&, Edge, uint32_t proof);
 
-bool expectedTypeTellsResultOf(FunctionPassContext&, const TestSite&);
-Vector<ValueID> collectSubjectsKnownBeyondTheirTypes(FunctionPassContext&, const TestPlacementPlan&);
-
 TestPlacementPlan planTestPlacement(FunctionPassContext&);
 TestPlacementPlan planTestPlacement(FunctionPassContext&, TestSites&&);
-
-// The blocks of the ranges that the functor picks, and every block that is reached from one of them.
-BitVector findBlocksBehindRanges(const Function& function, std::span<const StretchRange> ranges, NOESCAPE const Invocable<bool(const StretchRange&)> auto& picks)
-{
-    BitVector isBehind(function.blocks.size());
-    Vector<BlockID, 16> worklist;
-    auto add = [&](BlockID block) {
-        if (isBehind.add(block.index()))
-            worklist.append(block);
-    };
-    for (const StretchRange& range : ranges) {
-        if (picks(range))
-            add(range.block);
-    }
-    while (!worklist.isEmpty())
-        function.at(worklist.takeLast()).forEachTarget([&](const Target& target) { add(target.block); });
-    return isBehind;
-}
 
 } } } // namespace JSC::AOT::Typed
 

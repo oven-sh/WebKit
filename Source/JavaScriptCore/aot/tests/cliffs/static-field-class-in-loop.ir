@@ -14,7 +14,6 @@ entry module=m0
 layout L0 kind=Instance name="Counter" constructor=f1 staticFields=[{key="count" variable=g0}]
 variable g0 module=m0 declared={type=anything} owner=L0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="flag" [isFreeName]
     v2 = ToBoolean v1
@@ -29,20 +28,16 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Branch v2 -> taken b1(), notTaken b2()
   b2():
     Return
-}
-# CHECK-LABEL: function f0 name="main"
 # CHECK: = PropGet [[classObject]] key="count"
+}
 function f1 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2
 }
 function f2 name="initializeCounter" kind=Initializer flags=[HasThis] thisType={type=function} results=[{type=anything}] {
-  b0(v0: function):
     v1 = Integer integer=1
     PropDefine v0, v1 key="count"
     Return
-}
-# CHECK-LABEL: function f2 name="initializeCounter"
 # CHECK: PropDefine v0, v1 key="count"
+}

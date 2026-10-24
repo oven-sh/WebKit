@@ -34,7 +34,6 @@ entry module=m0
 layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}]
 layout L1 name="Named" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = PropGet v1 key="x"
@@ -47,11 +46,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v5
 }
 function f1 name="withoutAccess" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f2 name="fusedAccesses" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = PropGetPair v0, v1 key="x" secondKey="y"
     v3 = ResultAt v2
     v4 = PropGetChain v0 key="x" secondKey="y"
@@ -80,18 +77,15 @@ function f4 name="expectedParameterWithoutGuard" parameters=[{type=L0|L1 flags=[
     Return v1
 }
 function f5 name="provenReceiver" parameters=[{type=L0|L1}] results=[{type=anything}] {
-  b0(v0: L0|L1):
     v1 = PropGet v0 key="other" accessSite=3 receivers=[L0]
     Return v1
 }
 function f6 name="slotOperationOfAnotherAccess" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     v2 = GetSlot v0 key="x" receivers=[L0] level=Proven accessSite=4
     v3 = PropGet v1 key="x" accessSite=5
     Return v3
 }
 function f7 name="callsByValue" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Call v0, -, v1
     v3 = Construct v0, -, v1
     v4 = CallDirect function=f1

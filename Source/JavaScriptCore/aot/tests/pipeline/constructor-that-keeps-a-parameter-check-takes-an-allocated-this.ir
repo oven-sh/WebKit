@@ -20,7 +20,6 @@ entry module=m0
 typesite w0 module=m0 position=20 kind=Parameter
 layout L0 kind=Instance name="Meter" module=m0 constructor=f1 fields=[{key="total" declared={type=number} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = FinishClass v1 layout=L0
@@ -34,7 +33,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v9
 }
 function f1 name="Meter" module=m0 position=5 kind=BaseConstructor flags=[HasNewTarget, IsChecked] length=1 parameters=[{type=number site=w0}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0 fields=[]
     PropSet v3, v1 key="total" mode=Strict

@@ -16,7 +16,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Empty"
 function f0 name="loopAndObject" parameters=[{type=boolean}] results=[{type=object}] {
-  b0(v0: boolean):
     v1 = NewObject layout=L0 fields=[]
     Jump -> next b1()
   b1():

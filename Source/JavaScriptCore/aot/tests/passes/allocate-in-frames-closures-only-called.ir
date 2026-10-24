@@ -7,7 +7,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToBoolean v1
@@ -20,7 +19,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="calledBehindAJoin" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = NewClosure function=f6
@@ -31,12 +29,10 @@ function f1 name="calledBehindAJoin" parameters=[{type=anything}, {type=boolean}
   b3(v4: anything):
     v5 = Call v4, v0, v0
     Return v5
-}
-# CHECK-LABEL: function f1 name="calledBehindAJoin"
 # CHECK: = NewClosure function=f6 {{*}}[isHeldByClosureTable]
+}
 
 function f2 name="comparedBehindTheJoin" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = NewClosure function=f6
@@ -48,12 +44,10 @@ function f2 name="comparedBehindTheJoin" parameters=[{type=anything}, {type=bool
     v5 = StrictEq v4, v0
     v6 = Call v4, v0, v5
     Return v6
-}
-# CHECK-LABEL: function f2 name="comparedBehindTheJoin"
 # CHECK-NOT: isHeldByClosureTable
+}
 
 function f3 name="handedOnBehindTheJoin" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = NewClosure function=f6
@@ -64,12 +58,10 @@ function f3 name="handedOnBehindTheJoin" parameters=[{type=anything}, {type=bool
   b3(v4: anything):
     v5 = Call v0, -, v0, v0, v4
     Return v5
-}
-# CHECK-LABEL: function f3 name="handedOnBehindTheJoin"
 # CHECK-NOT: isHeldByClosureTable
+}
 
 function f4 name="isItsOwnReceiver" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = NewClosure function=f6
@@ -80,12 +72,10 @@ function f4 name="isItsOwnReceiver" parameters=[{type=anything}, {type=boolean}]
   b3(v4: anything):
     v5 = Call v4, v4
     Return v5
-}
-# CHECK-LABEL: function f4 name="isItsOwnReceiver"
 # CHECK-NOT: isHeldByClosureTable
+}
 
 function f5 name="hasACapture" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = NewClosure v0 function=f7
@@ -96,16 +86,13 @@ function f5 name="hasACapture" parameters=[{type=anything}, {type=boolean}] resu
   b3(v4: anything):
     v5 = Call v4, v0
     Return v5
-}
-# CHECK-LABEL: function f5 name="hasACapture"
 # CHECK-NOT: isHeldByClosureTable
+}
 
 function f6 name="method" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 
 function f7 name="arrow" kind=Arrow captures=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }

@@ -27,7 +27,6 @@
 #include "AOTThreshold.h"
 #include "AOTTypeArena.h"
 #include "AOTTypePropagation.h"
-#include "AOTUseLists.h"
 #include "AOTValueFlowPositions.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
@@ -40,8 +39,6 @@
 #include <tuple>
 #include <wtf/Atomics.h>
 #include <wtf/DataLog.h>
-#include <wtf/Scope.h>
-#include <wtf/text/StringView.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -71,8 +68,7 @@ public:
 
 private:
     struct Writer {
-        auto order() const { return std::tuple { position, function, value }; }
-        friend bool operator==(const Writer&, const Writer&) = default;
+        friend auto operator<=>(const Writer&, const Writer&) = default;
 
         uint32_t position;
         FunctionID function;
@@ -80,8 +76,7 @@ private:
     };
 
     struct CallByValue {
-        auto order() const { return std::tuple { caller, site, callees.index() }; }
-        friend bool operator==(const CallByValue&, const CallByValue&) = default;
+        friend auto operator<=>(const CallByValue&, const CallByValue&) = default;
 
         FunctionID caller;
         ValueID site;
@@ -156,9 +151,7 @@ private:
     void startFromTypes();
     void collectCalls();
     void choosePositions(const FlowResultTables&);
-    void collectWritersOf(FunctionID, Vector<Writer>&) const;
     void collectWriters(const FlowResultTables&);
-    void findMaps();
     BitVector collectWritersOfMaps(ValueFlowHeapView&);
     std::optional<uint32_t> indexOfMap(ValueFlowObjectID) const;
     const ReadOfMaps* readOfMapsAt(FunctionID caller, ValueID site) const;
@@ -168,7 +161,7 @@ private:
     Type typeAt(Evaluation&, uint32_t position, Type&& known) const;
     std::optional<Type> typeOfCall(Evaluation&, FunctionID caller, ValueID site) const;
     Type typeOf(Evaluation&, FunctionID, ValueID, unsigned depth) const;
-    Type typeWithoutProof(const DeclaredType&) const;
+    Type typeWithoutProof(const DeclaredType& declared) const { return m_inputs.program.at(m_inputs.program.provenTypeOf(declared)); }
     bool typeWritersByRules(TypeArena&, FunctionID, std::span<const uint32_t> writers, Vector<uint32_t>& positionsAsked);
     bool typeLoopsByRules();
     bool runRound();
@@ -209,6 +202,72 @@ private:
     BitVector m_mapsWithOtherWriter;
 };
 
+struct LocationsStoredUndefined {
+    BitVector variables;
+    HashSet<uint32_t> environmentFields;
+};
+
+class QuestionsAnsweredWithNo {
+    WTF_MAKE_NONCOPYABLE(QuestionsAnsweredWithNo);
+public:
+    QuestionsAnsweredWithNo(const ParallelLoops& loops, size_t mostQuestions)
+        : m_mask(std::bit_ceil(std::max<size_t>(1024, mostQuestions * 2)) - 1)
+        , m_slots(MallocSpan<std::atomic<uint64_t>>::malloc((m_mask + 1) * sizeof(std::atomic<uint64_t>)))
+    {
+        constexpr size_t placesPerTask = 32 * KB;
+        forEachIndexInParallel(loops, static_cast<unsigned>((m_mask + placesPerTask) / placesPerTask), [&](unsigned task) {
+            for (size_t place = task * placesPerTask, end = std::min(m_mask + 1, place + placesPerTask); place < end; ++place)
+                new (NotNull, &m_slots[place]) std::atomic<uint64_t>(0);
+        });
+    }
+
+    bool contains(uint64_t question) const
+    {
+        for (size_t place = placeOf(question), steps = 0; steps < mostSteps; place = (place + 1) & m_mask, ++steps) {
+            uint64_t held = m_slots[place].load(std::memory_order_relaxed);
+            if (held == question + 1)
+                return true;
+            if (!held)
+                return false;
+        }
+        return false;
+    }
+
+    void add(uint64_t question)
+    {
+        for (size_t place = placeOf(question), steps = 0; steps < mostSteps; place = (place + 1) & m_mask, ++steps) {
+            uint64_t held = 0;
+            if (m_slots[place].compare_exchange_strong(held, question + 1, std::memory_order_relaxed) || held == question + 1)
+                return;
+        }
+    }
+
+private:
+    AOT_CLASS_THRESHOLD(size_t, mostSteps, 16);
+
+    size_t placeOf(uint64_t question) const
+    {
+        uint64_t hash = question * 0x9e3779b97f4a7c15ull;
+        return (hash ^ hash >> 29) & m_mask;
+    }
+
+    size_t m_mask;
+    MallocSpan<std::atomic<uint64_t>> m_slots;
+};
+
+struct ValuesWithoutProof {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(ValuesWithoutProof);
+
+    ValuesWithoutProof(const ParallelLoops& loops, size_t mostQuestions)
+        : inside(loops, mostQuestions)
+        , outsideFamily(loops, mostQuestions / 8)
+    {
+    }
+
+    QuestionsAnsweredWithNo inside;
+    QuestionsAnsweredWithNo outsideFamily;
+};
+
 } // anonymous namespace
 
 NumbersOfPositions::NumbersOfPositions(const ValueFlowResultInputs& inputs, ValueFlowHeapView& heap, const FlowResultTables& tables)
@@ -217,23 +276,21 @@ NumbersOfPositions::NumbersOfPositions(const ValueFlowResultInputs& inputs, Valu
 {
     const Program& program = inputs.program;
     uint32_t next = program.variables.size();
-    m_firstField = Vector<uint32_t>(program.layouts.size(), [&](size_t index) {
-        uint32_t first = next;
-        next += program.layouts[index].isEnvironment() ? program.layouts[index].fields.size() : 0;
-        return first;
-    });
-    m_firstEntryParameter = Vector<uint32_t>(program.functions.size(), [&](size_t index) {
-        uint32_t first = next;
-        next += program.functions[index].numberOfEntryParameters();
-        return first;
-    });
-    m_firstResult = Vector<uint32_t>(program.functions.size(), [&](size_t index) {
-        uint32_t first = next;
-        next += program.functions[index].results.size();
-        return first;
-    });
+    auto take = [&](size_t numberOfPositions) {
+        return std::exchange(next, static_cast<uint32_t>(next + numberOfPositions));
+    };
+    m_firstField = Vector<uint32_t>(program.layouts.size(), [&](size_t index) { return take(program.layouts[index].isEnvironment() ? program.layouts[index].fields.size() : 0); });
+    m_firstEntryParameter = Vector<uint32_t>(program.functions.size(), [&](size_t index) { return take(program.functions[index].numberOfEntryParameters()); });
+    m_firstResult = Vector<uint32_t>(program.functions.size(), [&](size_t index) { return take(program.functions[index].results.size()); });
     m_firstMap = next;
-    findMaps();
+    ValueSetID filledAsRecordsSay = inputs.solver().valueOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::MapsFilledAsRecordsSay));
+    m_maps = collectInParallel<ValueFlowObjectID>(inputs.loops(), inputs.universe().numberOfObjects(), [&](unsigned index, Vector<ValueFlowObjectID>& maps) {
+        ValueFlowObjectID object(index);
+        if (classOfFollowedContainer(inputs, object) != BuiltinClasses::Map || inputs.sets().contains(filledAsRecordsSay, object))
+            return;
+        if (program.at(inputs.universe().functionOf(object)).at(inputs.universe().siteOf(object)->value).opcode == Opcode::Construct)
+            maps.append(object);
+    });
     next += m_maps.size();
     m_numbers = Vector<ValueFlowNumbers>(next, [](size_t) { return ValueFlowNumbers::any(); });
     m_isFollowed = BitVector(next);
@@ -261,8 +318,7 @@ NumbersOfPositions::NumbersOfPositions(const ValueFlowResultInputs& inputs, Valu
 
 void NumbersOfPositions::followPositions(const FlowResultTables& tables)
 {
-    const ValueFlowResultInputs& inputs = m_inputs;
-    PhaseTimes times(inputs.build, PassID::AnalyzeFlow);
+    PhaseTimes times(m_inputs.build, PassID::AnalyzeFlow);
     choosePositions(tables);
     times.didFinish("numbers: positions chosen"_s);
     for (uint32_t index = 0; index < m_maps.size(); ++index) {
@@ -277,7 +333,7 @@ void NumbersOfPositions::followPositions(const FlowResultTables& tables)
         if (typing == maxTypingsOfLoops || !typeLoopsByRules())
             break;
     }
-    if (inputs.build.options().logging.logsPhaseTimes) [[unlikely]]
+    if (m_inputs.build.options().logging.logsPhaseTimes) [[unlikely]]
         dataLogLn("AOT flow: numbers: ", m_numberOfRounds, " rounds over ", m_followed.size(), " positions have looked at ", m_numberOfPositionsLookedAt, "; ", m_numberOfTypings, " typings of ", m_loopingFunctions.size(), " functions with a loop have typed ", m_numberOfFunctionsTyped);
     m_positionsReadInTask.clear();
     m_loopingFunctions.clear();
@@ -400,9 +456,7 @@ void NumbersOfPositions::collectCalls()
         });
     });
     m_someCallEntersAnything = someCallEntersAnything.load(std::memory_order_relaxed);
-    sortAndRemoveDuplicates(m_inputs.loops(), m_calls, [](const CallByValue& a, const CallByValue& b) {
-        return a.order() < b.order();
-    }, std::equal_to<CallByValue>());
+    sortAndRemoveDuplicates(m_inputs.loops(), m_calls);
 }
 
 void NumbersOfPositions::choosePositions(const FlowResultTables& tables)
@@ -421,37 +475,26 @@ void NumbersOfPositions::choosePositions(const FlowResultTables& tables)
         uint32_t position;
         bool holdsPrimitivesAlone;
     };
-    struct Chooser {
-        Chooser(const ValueFlowResultInputs& inputs, ValueFlowPositionCounts& counts, ValueSetMaker& maker, Vector<Followed>& followed)
-            : arena(inputs.program.types)
-            , positions(inputs, arena, counts, 0, &maker)
-            , followed(followed)
-        {
-        }
-
-        ScratchTypeArena arena;
-        ValueFlowPositions positions;
-        Vector<Followed>& followed;
-    };
-    auto follow = [&](Chooser& chooser, uint32_t position, ValueFlowNodeID node) {
-        ValueSetID held = m_inputs.solver().valueOf(node);
-        if (!ValueSets::isComplement(held) && !sets.meet(held, numbers))
-            return;
-        ValueFlowPositionResult result = chooser.positions.resultAt(anything, held);
-        bool holdsPrimitivesAlone = result.proof == ValueFlowProof::Proven && result.narrowed && !result.narrowed->hasObjects();
-        chooser.followed.append({ position, holdsPrimitivesAlone });
-        if (holdsPrimitivesAlone)
-            m_primitives[position] = result.narrowed->primitives | (result.narrowed->stringLiterals.isEmpty() ? 0 : Primitive::String) | (result.narrowed->symbolLiterals.isEmpty() ? 0 : Primitive::Symbol);
-    };
     ValueSetMakers makers(m_inputs);
     constexpr unsigned indicesPerTask = 1024;
     auto forEachIndex = [&](unsigned count, const auto& functor) {
         unsigned numberOfTasks = (count + indicesPerTask - 1) / indicesPerTask;
         Vector<Vector<Followed>> followedOfTask(numberOfTasks);
         forEachIndexInParallel(m_inputs.loops(), numberOfTasks, [&](unsigned task, unsigned worker) {
-            Chooser chooser(m_inputs, counts, makers.of(worker), followedOfTask[task]);
+            ScratchTypeArena arena(program.types);
+            ValueFlowPositions positions(m_inputs, arena, counts, 0, &makers.of(worker));
+            auto follow = [&](uint32_t position, ValueFlowNodeID node) {
+                ValueSetID held = m_inputs.solver().valueOf(node);
+                if (!ValueSets::isComplement(held) && !sets.meet(held, numbers))
+                    return;
+                ValueFlowPositionResult result = positions.resultAt(anything, held);
+                bool holdsPrimitivesAlone = result.proof == ValueFlowProof::Proven && result.narrowed && !result.narrowed->hasObjects();
+                followedOfTask[task].append({ position, holdsPrimitivesAlone });
+                if (holdsPrimitivesAlone)
+                    m_primitives[position] = result.narrowed->primitives | (result.narrowed->stringLiterals.isEmpty() ? 0 : Primitive::String) | (result.narrowed->symbolLiterals.isEmpty() ? 0 : Primitive::Symbol);
+            };
             for (unsigned index = task * indicesPerTask; index < std::min(count, (task + 1) * indicesPerTask); ++index)
-                functor(chooser, index);
+                functor(follow, index);
         });
         for (const Vector<Followed>& followedInTask : followedOfTask) {
             for (Followed followed : followedInTask) {
@@ -464,26 +507,25 @@ void NumbersOfPositions::choosePositions(const FlowResultTables& tables)
     auto namesEveryWriter = [](const LocationFlow& flow) {
         return flow.writers == WriterState::AllKnown && flow.storeNaming == StoreNaming::EveryStoreNamesLocation;
     };
-
     auto everyStoreThroughObjectSpellsItsValue = [&](VariableID id) {
         return std::ranges::all_of(m_inputs.variablesOnObjects->accessesTo(id), [&](const ValueFlowAccessThroughObject& access) {
             return access.kind != ValueFlowAccessThroughObjectKind::Store || indexOfValueStoredIntoProperty(program.at(access.function).at(access.site).opcode);
         });
     };
 
-    forEachIndex(program.variables.size(), [&](Chooser& chooser, unsigned index) {
+    forEachIndex(program.variables.size(), [&](const auto& follow, unsigned index) {
         const LocationFlow& flow = application.variables[index].flow;
         if (namesEveryWriter(flow) || (program.variables[index].owner && flow.writers == WriterState::AllKnown && everyStoreThroughObjectSpellsItsValue(VariableID(index))))
-            follow(chooser, index, nodes.variable(VariableID(index)));
+            follow(index, nodes.variable(VariableID(index)));
     });
-    forEachIndex(program.layouts.size(), [&](Chooser& chooser, unsigned index) {
+    forEachIndex(program.layouts.size(), [&](const auto& follow, unsigned index) {
         const Layout& layout = program.layouts[index];
         for (uint32_t field = 0; layout.isEnvironment() && field < layout.fields.size(); ++field) {
             if (namesEveryWriter(application.layouts[index].fields[field].flow.location))
-                follow(chooser, m_firstField[index] + field, nodes.environmentField(LayoutID(index), field));
+                follow(m_firstField[index] + field, nodes.environmentField(LayoutID(index), field));
         }
     });
-    forEachIndex(program.functions.size(), [&](Chooser& chooser, unsigned index) {
+    forEachIndex(program.functions.size(), [&](const auto& follow, unsigned index) {
         FunctionID id(index);
         const Function& function = program.functions[index];
         if (!m_inputs.isReached(id) || !function.hasBody())
@@ -494,58 +536,11 @@ void NumbersOfPositions::choosePositions(const FlowResultTables& tables)
         for (uint32_t parameter = 0; parameter < function.numberOfEntryParameters(); ++parameter) {
             EntryParameter kind = function.entryParameterKind(parameter);
             if (kind == EntryParameter::Capture || (kind == EntryParameter::Parameter && everyEntryIsCall))
-                follow(chooser, m_firstEntryParameter[index] + parameter, nodes.entryParameter(id, parameter));
+                follow(m_firstEntryParameter[index] + parameter, nodes.entryParameter(id, parameter));
         }
         if (function.results.size() == 1 && !function.isUnsplitCoroutine())
-            follow(chooser, m_firstResult[index], nodes.result(id, 0));
+            follow(m_firstResult[index], nodes.result(id, 0));
     });
-}
-
-void NumbersOfPositions::collectWritersOf(FunctionID id, Vector<Writer>& writers) const
-{
-    const Program& program = m_inputs.program;
-    const Function& function = program.at(id);
-    auto add = [&](uint32_t position, ValueID value) {
-        if (m_isFollowed.quickGet(position))
-            writers.append({ position, id, value });
-    };
-    bool holdsWriter = m_inputs.bodies().holdsAnyOf(id, notedOperations({ ValueFlowNotedOperation::StoreToLocation, ValueFlowNotedOperation::NewObject, ValueFlowNotedOperation::NewClosure, ValueFlowNotedOperation::CallDirect }));
-    for (const Value& value : holdsWriter ? function.values.span() : std::span<const Value> { }) {
-        switch (value.opcode) {
-        case Opcode::PutModuleVariable:
-            add(value.variable().index(), value.valueOperand());
-            break;
-        case Opcode::PutEnvironmentField:
-            add(m_firstField[value.layout().index()] + value.field(), value.valueOperand());
-            break;
-        case Opcode::NewObject: {
-            if (!program.at(value.layout()).isEnvironment())
-                break;
-            auto fields = value.fields();
-            for (uint32_t index = 0; index < fields.size(); ++index)
-                add(m_firstField[value.layout().index()] + fields[index], value.operand(OperandIndex::NewObject::values + index));
-            break;
-        }
-        case Opcode::NewClosure:
-        case Opcode::CallDirect: {
-            std::span<const ValueID> operands = value.variadicOperands();
-            for (uint32_t index = 0; index < operands.size(); ++index)
-                add(m_firstEntryParameter[value.function().index()] + index, operands[index]);
-            break;
-        }
-        default:
-            break;
-        }
-    }
-    if (function.results.size() != 1)
-        return;
-    for (const Block& block : function.blocks) {
-        const Terminator& terminator = block.terminator;
-        if (terminator.kind == TerminatorKind::ReturnCall)
-            add(m_firstResult[id.index()], terminator.callOperand());
-        if (terminator.kind == TerminatorKind::Return && terminator.valueOperand())
-            add(m_firstResult[id.index()], terminator.valueOperand());
-    }
 }
 
 void NumbersOfPositions::collectWriters(const FlowResultTables& tables)
@@ -553,8 +548,50 @@ void NumbersOfPositions::collectWriters(const FlowResultTables& tables)
     const Program& program = m_inputs.program;
     m_writers = collectInParallel<Writer>(m_inputs.loops(), program.functions.size(), [&](unsigned index, Vector<Writer>& writers) {
         FunctionID id(index);
-        if (program.functions[index].hasBody() && (m_inputs.isReached(id) || isUnsolvedCode(m_inputs, tables, id)))
-            collectWritersOf(id, writers);
+        const Function& function = program.functions[index];
+        if (!function.hasBody() || (!m_inputs.isReached(id) && !isUnsolvedCode(m_inputs, tables, id)))
+            return;
+        auto add = [&](uint32_t position, ValueID value) {
+            if (m_isFollowed.quickGet(position))
+                writers.append({ position, id, value });
+        };
+        bool holdsWriter = m_inputs.bodies().holdsAnyOf(id, notedOperations({ ValueFlowNotedOperation::StoreToLocation, ValueFlowNotedOperation::NewObject, ValueFlowNotedOperation::NewClosure, ValueFlowNotedOperation::CallDirect }));
+        for (const Value& value : holdsWriter ? function.values.span() : std::span<const Value> { }) {
+            switch (value.opcode) {
+            case Opcode::PutModuleVariable:
+                add(value.variable().index(), value.valueOperand());
+                break;
+            case Opcode::PutEnvironmentField:
+                add(m_firstField[value.layout().index()] + value.field(), value.valueOperand());
+                break;
+            case Opcode::NewObject: {
+                if (!program.at(value.layout()).isEnvironment())
+                    break;
+                auto fields = value.fields();
+                for (uint32_t field = 0; field < fields.size(); ++field)
+                    add(m_firstField[value.layout().index()] + fields[field], value.operand(OperandIndex::NewObject::values + field));
+                break;
+            }
+            case Opcode::NewClosure:
+            case Opcode::CallDirect: {
+                std::span<const ValueID> operands = value.variadicOperands();
+                for (uint32_t operand = 0; operand < operands.size(); ++operand)
+                    add(m_firstEntryParameter[value.function().index()] + operand, operands[operand]);
+                break;
+            }
+            default:
+                break;
+            }
+        }
+        if (function.results.size() != 1)
+            return;
+        for (const Block& block : function.blocks) {
+            const Terminator& terminator = block.terminator;
+            if (terminator.kind == TerminatorKind::ReturnCall)
+                add(m_firstResult[id.index()], terminator.callOperand());
+            if (terminator.kind == TerminatorKind::Return && terminator.valueOperand())
+                add(m_firstResult[id.index()], terminator.valueOperand());
+        }
     });
     m_writers.appendVector(collectInParallel<Writer>(m_inputs.loops(), m_calls.size(), [&](unsigned index, Vector<Writer>& writers) {
         const CallByValue& call = m_calls[index];
@@ -578,10 +615,7 @@ void NumbersOfPositions::collectWriters(const FlowResultTables& tables)
         m_writers.append({ access.variable.index(), access.function, store.operand(*indexOfValueStoredIntoProperty(store.opcode)) });
     }
     m_writers.appendVector(std::exchange(m_writersOfMaps, { }));
-    parallelSort(m_inputs.loops(), m_writers.mutableSpan(), [](const Writer& a, const Writer& b) {
-        return a.order() < b.order();
-    });
-    removeRepeatedElements(m_writers);
+    sortAndRemoveDuplicates(m_inputs.loops(), m_writers);
 
     uint32_t writer = 0;
     for (size_t position : m_isFollowed) {
@@ -633,19 +667,6 @@ void NumbersOfPositions::collectWriters(const FlowResultTables& tables)
         for (uint32_t result = 0; result < program.functions[index].results.size(); ++result)
             note(m_firstResult[index] + result, program.functions[index].results[result]);
     }
-}
-
-void NumbersOfPositions::findMaps()
-{
-    const ValueFlowUniverse& universe = m_inputs.universe();
-    ValueSetID filledAsRecordsSay = m_inputs.solver().valueOf(m_inputs.bodies().nodes().ofHost(ValueFlowHostNode::MapsFilledAsRecordsSay));
-    m_maps = collectInParallel<ValueFlowObjectID>(m_inputs.loops(), universe.numberOfObjects(), [&](unsigned index, Vector<ValueFlowObjectID>& maps) {
-        ValueFlowObjectID object(index);
-        if (classOfFollowedContainer(m_inputs, object) != BuiltinClasses::Map || m_inputs.sets().contains(filledAsRecordsSay, object))
-            return;
-        if (m_inputs.program.at(universe.functionOf(object)).at(universe.siteOf(object)->value).opcode == Opcode::Construct)
-            maps.append(object);
-    });
 }
 
 std::optional<uint32_t> NumbersOfPositions::indexOfMap(ValueFlowObjectID object) const
@@ -1078,11 +1099,6 @@ void computeNumbersOfPositions(ValueFlowNumbersOfValues& prepared, const FlowRes
     static_cast<NumbersOfPositions&>(prepared).followPositions(tables);
 }
 
-Type NumbersOfPositions::typeWithoutProof(const DeclaredType& declared) const
-{
-    return m_inputs.program.at(m_inputs.program.provenTypeOf(declared));
-}
-
 bool NumbersOfPositions::typeWritersByRules(TypeArena& arena, FunctionID id, std::span<const uint32_t> writers, Vector<uint32_t>& positionsAsked)
 {
     const Program& program = m_inputs.program;
@@ -1277,16 +1293,6 @@ static std::optional<Value> findValueHeldAnyway(const Program& program, const Ty
     return std::nullopt;
 }
 
-static bool canHoldUnobservedDefinition(const Program& program, const Type& type)
-{
-    return type.primitives & Primitive::Undefined || findValueHeldAnyway(program, type);
-}
-
-static FieldReference fieldDefinedBy(const Program& program, const UnobservedFieldDefinition& definition)
-{
-    return declarationOf(program, { definition.classLayout, *program.at(definition.classLayout).findField(definition.key) });
-}
-
 using FieldsDefined = Vector<FieldReference, 2>;
 static Vector<FieldsDefined> findFieldsDefinedUnobserved(const ValueFlowResultInputs& inputs)
 {
@@ -1295,7 +1301,7 @@ static Vector<FieldsDefined> findFieldsDefinedUnobserved(const ValueFlowResultIn
     Vector<FieldsDefined> fields(definitions.size());
     Vector<Vector<uint32_t, 2>> definitionsOfClass(definitions.empty() ? 0 : program.layouts.size());
     for (uint32_t index = 0; index < definitions.size(); ++index) {
-        fields[index].append(fieldDefinedBy(program, definitions[index]));
+        fields[index].append(declarationOf(program, { definitions[index].classLayout, *program.at(definitions[index].classLayout).findField(definitions[index].key) }));
         definitionsOfClass[definitions[index].classLayout.index()].append(index);
     }
     if (definitions.empty())
@@ -1308,16 +1314,6 @@ static Vector<FieldsDefined> findFieldsDefinedUnobserved(const ValueFlowResultIn
                     fields[index].appendIfNotContains(declarationOf(program, { LayoutID(heir), *field }));
             }
         }
-    }
-    return fields;
-}
-
-static Vector<BitVector> findFieldsWithUnobservedDefinition(const ValueFlowResultInputs& inputs, const Vector<FieldsDefined>& fieldsDefined)
-{
-    Vector<BitVector> fields(inputs.program.layouts.size());
-    for (const FieldsDefined& defined : fieldsDefined) {
-        for (FieldReference field : defined)
-            fields[field.layout.index()].set(field.field);
     }
     return fields;
 }
@@ -1357,7 +1353,7 @@ static void replaceUnobservedDefinitions(const ValueFlowResultInputs& inputs, co
     }
 }
 
-static void narrowFieldsOfObjects(const ValueFlowResultInputs& inputs, LayoutID id, const ValueFlowFieldContents& contents, const BitVector& fieldsWithUnobservedDefinition, ValueFlowPositions& positions, TypeArena& types, ValueFlowPositionCounts& counts, FlowLayoutUpdate& update)
+static void narrowFieldsOfObjects(const ValueFlowResultInputs& inputs, LayoutID id, const ValueFlowFieldContents& contents, const BitVector& fieldsWithUnobservedDefinition, ValueFlowPositions& positions, TypeArena& types, FlowLayoutUpdate& update)
 {
     const Program& program = inputs.program;
     const Layout& layout = program.at(id);
@@ -1376,7 +1372,8 @@ static void narrowFieldsOfObjects(const ValueFlowResultInputs& inputs, LayoutID 
         };
         ValueFlowPositionResult result = resultWith(stored);
         bool hasUnobservedDefinition = fieldsWithUnobservedDefinition.get(index);
-        if (hasUnobservedDefinition && result.proof == ValueFlowProof::Proven && !canHoldUnobservedDefinition(program, result.narrowed ? *result.narrowed : asRead)) {
+        const Type& proven = result.narrowed ? *result.narrowed : asRead;
+        if (hasUnobservedDefinition && result.proof == ValueFlowProof::Proven && !(proven.primitives & Primitive::Undefined) && !findValueHeldAnyway(program, proven)) {
             stored = maker.unite(stored, inputs.universe().undefinedValue());
             result = resultWith(stored);
         }
@@ -1415,15 +1412,6 @@ static void narrowFieldsOfObjects(const ValueFlowResultInputs& inputs, LayoutID 
             flow.location.stores = StoreCount::Never;
     }
 }
-
-namespace {
-
-struct LocationsStoredUndefined {
-    BitVector variables;
-    HashSet<uint32_t> environmentFields;
-};
-
-} // anonymous namespace
 
 static LocationsStoredUndefined findLocationsStoredUndefined(const ValueFlowResultInputs& inputs, const FlowApplication& application)
 {
@@ -1545,7 +1533,7 @@ static void narrowEntryParameters(const ValueFlowResultInputs& inputs, FunctionI
         update.entryParameters = WTF::move(parameters);
 }
 
-static void narrowResults(const ValueFlowResultInputs& inputs, FunctionID id, const NumbersOfPositions& numbers, ValueFlowPositions& positions, TypeArena& types, ValueFlowPositionCounts& counts, FlowSignatureUpdate& update)
+static void narrowResults(const ValueFlowResultInputs& inputs, FunctionID id, const NumbersOfPositions& numbers, ValueFlowPositions& positions, FlowSignatureUpdate& update)
 {
     const Program& program = inputs.program;
     const Function& function = program.at(id);
@@ -1574,71 +1562,6 @@ static bool hasTypeOfNarrowedLocation(const FlowApplication& application, const 
     }
 }
 
-namespace {
-
-class QuestionsAnsweredWithNo {
-    WTF_MAKE_NONCOPYABLE(QuestionsAnsweredWithNo);
-public:
-    QuestionsAnsweredWithNo(const ParallelLoops& loops, size_t mostQuestions)
-        : m_mask(std::bit_ceil(std::max<size_t>(1024, mostQuestions * 2)) - 1)
-        , m_slots(MallocSpan<std::atomic<uint64_t>>::malloc((m_mask + 1) * sizeof(std::atomic<uint64_t>)))
-    {
-        constexpr size_t placesPerTask = 32 * KB;
-        forEachIndexInParallel(loops, static_cast<unsigned>((m_mask + placesPerTask) / placesPerTask), [&](unsigned task) {
-            for (size_t place = task * placesPerTask, end = std::min(m_mask + 1, place + placesPerTask); place < end; ++place)
-                new (NotNull, &m_slots[place]) std::atomic<uint64_t>(0);
-        });
-    }
-
-    bool contains(uint64_t question) const
-    {
-        for (size_t place = placeOf(question), steps = 0; steps < mostSteps; place = (place + 1) & m_mask, ++steps) {
-            uint64_t held = m_slots[place].load(std::memory_order_relaxed);
-            if (held == question + 1)
-                return true;
-            if (!held)
-                return false;
-        }
-        return false;
-    }
-
-    void add(uint64_t question)
-    {
-        for (size_t place = placeOf(question), steps = 0; steps < mostSteps; place = (place + 1) & m_mask, ++steps) {
-            uint64_t held = 0;
-            if (m_slots[place].compare_exchange_strong(held, question + 1, std::memory_order_relaxed) || held == question + 1)
-                return;
-        }
-    }
-
-private:
-    AOT_CLASS_THRESHOLD(size_t, mostSteps, 16);
-
-    size_t placeOf(uint64_t question) const
-    {
-        uint64_t hash = question * 0x9e3779b97f4a7c15ull;
-        return (hash ^ hash >> 29) & m_mask;
-    }
-
-    size_t m_mask;
-    MallocSpan<std::atomic<uint64_t>> m_slots;
-};
-
-struct ValuesWithoutProof {
-    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(ValuesWithoutProof);
-
-    ValuesWithoutProof(const ParallelLoops& loops, size_t mostQuestions)
-        : inside(loops, mostQuestions)
-        , outsideFamily(loops, mostQuestions / 8)
-    {
-    }
-
-    QuestionsAnsweredWithNo inside;
-    QuestionsAnsweredWithNo outsideFamily;
-};
-
-} // anonymous namespace
-
 static bool hasCheck(const Terminator& terminator)
 {
     for (TailCast cast : terminator.casts()) {
@@ -1653,26 +1576,8 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
     const Program& program = inputs.program;
     const Function& function = program.at(id);
     ValueSetMaker& maker = positions.maker();
-    ValueSetID placeholders = maker.unite(inputs.universe().untrackedObjectAlone(), inputs.universe().unknownObjectAlone());
     BitVector isDecided(function.values.size());
 
-    auto setOf = [&](const ValueFlowOperand& operand) {
-        ValueSetID held = operand.constant ? operand.constant : ValueSets::nothing;
-        if (operand.node)
-            held = maker.unite(held, inputs.solver().valueOf(operand.node));
-        if (!operand.mask)
-            return held;
-        switch (operand.maskKind) {
-        case ValueFlowMaskKind::Plain:
-            return maker.intersect(held, operand.mask);
-        case ValueFlowMaskKind::Checked:
-            return maker.unite(maker.intersect(held, operand.mask), maker.intersect(held, placeholders));
-        case ValueFlowMaskKind::Declared:
-        case ValueFlowMaskKind::Expected:
-            return held;
-        }
-        RELEASE_ASSERT_NOT_REACHED();
-    };
     auto mayComeFromUnseenCaller = [&](ValueID value) {
         return callers != CallerState::AllKnown && function.at(entryBlock).parameters.find(value) != notFound;
     };
@@ -1727,7 +1632,7 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
             continue;
         for (uint32_t index = 0; index < operands.size(); ++index) {
             if (operation.operand(index))
-                prove(operation.operand(index), [&] { return setOf(operands[index]); });
+                prove(operation.operand(index), [&] { return inputs.valueOf(maker, operands[index]); });
         }
     }
 
@@ -1735,7 +1640,7 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
         if (!observed.test)
             continue;
         const Value& test = function.at(observed.test);
-        ValueSetID held = setOf(observed.operand);
+        ValueSetID held = inputs.valueOf(maker, observed.operand);
         prove(test.operand(0), [&] { return held; });
         if (test.opcode != Opcode::Check || !inputs.build.isEnabled(FlowResultKind::NarrowedTypes, id.index()) || inputs.sets().isEmpty(held))
             continue;
@@ -1818,11 +1723,13 @@ void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFiel
     };
 
     PhaseTimes times(inputs.build, PassID::AnalyzeFlow);
-    LocationsStoredUndefined locationsStoredUndefined = findLocationsStoredUndefined(inputs, application);
-    const BitVector& variablesStoredUndefined = locationsStoredUndefined.variables;
-    const HashSet<uint32_t>& environmentFieldsStoredUndefined = locationsStoredUndefined.environmentFields;
+    LocationsStoredUndefined storedUndefined = findLocationsStoredUndefined(inputs, application);
     Vector<FieldsDefined> fieldsDefinedUnobserved = findFieldsDefinedUnobserved(inputs);
-    Vector<BitVector> fieldsWithUnobservedDefinition = findFieldsWithUnobservedDefinition(inputs, fieldsDefinedUnobserved);
+    Vector<BitVector> fieldsWithUnobservedDefinition(numberOfLayouts);
+    for (const FieldsDefined& defined : fieldsDefinedUnobserved) {
+        for (FieldReference field : defined)
+            fieldsWithUnobservedDefinition[field.layout.index()].set(field.field);
+    }
     RELEASE_ASSERT(inputs.numbersOfValues);
     const auto& numbers = static_cast<const NumbersOfPositions&>(*inputs.numbersOfValues);
 
@@ -1847,14 +1754,14 @@ void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFiel
         ValueSetMaker* maker = &makers.of(worker);
         if (task < numberOfLayouts) {
             ValueFlowPositions positions(inputs, arena, counts, task, maker);
-            narrowEnvironmentFields(inputs, LayoutID(task), environmentFieldsStoredUndefined, numbers, positions, application.layouts[task]);
-            narrowFieldsOfObjects(inputs, LayoutID(task), fieldContents, fieldsWithUnobservedDefinition[task], positions, arena, counts, application.layouts[task]);
+            narrowEnvironmentFields(inputs, LayoutID(task), storedUndefined.environmentFields, numbers, positions, application.layouts[task]);
+            narrowFieldsOfObjects(inputs, LayoutID(task), fieldContents, fieldsWithUnobservedDefinition[task], positions, arena, application.layouts[task]);
             return;
         }
         if (task < firstFunctionTask) {
             forEachVariableOf(task, [&](uint32_t index) {
                 ValueFlowPositions positions(inputs, arena, counts, index, maker);
-                narrowVariable(inputs, VariableID(index), variablesStoredUndefined, numbers, positions, application.variables[index]);
+                narrowVariable(inputs, VariableID(index), storedUndefined.variables, numbers, positions, application.variables[index]);
             });
             return;
         }
@@ -1862,7 +1769,7 @@ void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFiel
         ValueFlowPositions positions(inputs, arena, counts, id.index(), maker);
         CallerState callers = tables.functions.functions[id.index()].callers;
         narrowEntryParameters(inputs, id, callers, numbers, application, createdBelowMembers[id.index()].span(), positions, arena, application.signatures[id.index()]);
-        narrowResults(inputs, id, numbers, positions, arena, counts, application.signatures[id.index()]);
+        narrowResults(inputs, id, numbers, positions, application.signatures[id.index()]);
         proveValuesOfOperations(inputs, id, callers, numbers, positions, arena, application, valuesWithoutProof.get(), counts, application.bodies[id.index()]);
     });
     inputs.build.destroyLater(WTF::move(valuesWithoutProof));

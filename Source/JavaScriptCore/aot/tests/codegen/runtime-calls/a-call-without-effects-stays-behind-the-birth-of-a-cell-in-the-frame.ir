@@ -18,7 +18,6 @@ layout L1 fields=[{key="sort" declared={type=anything} flags=[IsRequired]}]
 layout L2 fields=[{key="neither" declared={type=anything} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Integer
     v2 = Integer
@@ -50,7 +49,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v23
 }
 function f1 name="whichOf" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropHas v0 key="kind"
     v2 = ToBoolean v1
     Branch v2 -> taken b1(), notTaken b2()

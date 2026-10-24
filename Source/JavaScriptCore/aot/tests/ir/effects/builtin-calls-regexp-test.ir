@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="test" parameters=[{type=RegExp<pristine[Names, AsCreated]>}, {type=string}, {type=RegExp<pristine[Names]>}, {type=RegExp}] results=[{type=undefined}] {
-  b0(v0: RegExp<pristine[Names, AsCreated]>, v1: string, v2: RegExp<pristine[Names]>, v3: RegExp):
     v4 = CallBuiltin v0, v1 overload=RegExpPrototypeTest/0
     v5 = CallBuiltin v2, v1 overload=RegExpPrototypeTest/0
     v6 = CallBuiltin v3, v1 overload=RegExpPrototypeTest/1

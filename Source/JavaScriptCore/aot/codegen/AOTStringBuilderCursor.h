@@ -8,7 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTIR.h"
-#include "AOTStringBuilderReservation.h"
+#include "AOTStringBuilderWords.h"
 #include "AOTVector.h"
 #include <span>
 #include <wtf/text/Latin1Character.h>

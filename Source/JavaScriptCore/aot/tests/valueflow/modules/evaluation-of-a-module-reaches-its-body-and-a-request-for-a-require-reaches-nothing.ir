@@ -14,7 +14,6 @@ module m1 path="/app/first.cjs" displayPath="first.cjs" kind=CommonJs flags=[Kee
 module m2 path="/app/second.cjs" displayPath="second.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f2
 entry module=m0
 function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
-  b0():
     Jump -> next b1()
   b1() handler=b2():
     EvaluateModule module=m1 referrer=m0
@@ -29,17 +28,14 @@ function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} r
     Return
 }
 function f1 name="first" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L0
     v1 = FinishObject v0
     Throw v1
 }
 function f2 name="second" module=m2 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
-  b0():
     Return
 }
 function f3 name="later" module=m0 results=[{type=anything}] {
-  b0():
     EvaluateModule module=m2 referrer=m0
     Return
 }

@@ -7,7 +7,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point"
 function f0 name="fiveObjects" results=[{type=boolean}] {
-  b0():
     v0 = NewObject layout=L0 fields=[]
     v1 = NewObject layout=L0 fields=[]
     v2 = NewObject layout=L0 fields=[]
@@ -35,7 +34,6 @@ function f0 name="fiveObjects" results=[{type=boolean}] {
 # CHECK: o4 uses: all
 # CHECK-NEXT: o4 live instances: Unknown
 function f1 name="fourObjects" results=[{type=boolean}] {
-  b0():
     v0 = NewObject layout=L0 fields=[]
     v1 = NewObject layout=L0 fields=[]
     v2 = NewObject layout=L0 fields=[]

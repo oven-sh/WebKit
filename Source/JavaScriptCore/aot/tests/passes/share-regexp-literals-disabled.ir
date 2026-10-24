@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="test" parameters=[{type=string}] results=[{type=boolean}] {
-  b0(v0: string):
     v1 = NewRegExp pattern="a"
     v2 = CallBuiltin v1, v0 overload=RegExpPrototypeTest/0
     Return v2

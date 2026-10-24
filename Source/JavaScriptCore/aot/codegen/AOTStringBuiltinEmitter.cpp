@@ -8,10 +8,12 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinCalls.h"
 #include "AOTBuiltinFamilyEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTOperatorEmitter.h"
 #include "AOTRepresentation.h"
+#include "AOTRuntimeCallEmitter.h"
 #include "AOTThreshold.h"
 #include "AOTTypeTable.h"
 #include "AOTVector.h"
@@ -19,25 +21,11 @@
 #include "PureNaN.h"
 #include "SmallStrings.h"
 #include <wtf/text/StringImpl.h>
+#include <wtf/text/WTFString.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 AOT_THRESHOLD(int64_t, maxFlatStringLength, 1024);
-
-static constexpr bool trimsStart(TrimmedEnds ends)
-{
-    return ends != TrimmedEnds::End;
-}
-
-static constexpr bool trimsEnd(TrimmedEnds ends)
-{
-    return ends != TrimmedEnds::Start;
-}
-
-StringBuiltinEmitter::StringBuiltinEmitter(CodeGenerator& generator)
-    : BuiltinFamilyEmitter(generator)
-{
-}
 
 Condition StringBuiltinEmitter::is8Bit(CellPointer string)
 {
@@ -166,26 +154,6 @@ void StringBuiltinEmitter::generateIndexedRead(const InlineCall& call, InlineBui
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void StringBuiltinEmitter::generateStringAt(const InlineCall& call)
-{
-    generateIndexedRead(call, InlineBuiltin::StringAt);
-}
-
-void StringBuiltinEmitter::generateStringCharAt(const InlineCall& call)
-{
-    generateIndexedRead(call, InlineBuiltin::StringCharAt);
-}
-
-void StringBuiltinEmitter::generateStringCharCodeAt(const InlineCall& call)
-{
-    generateIndexedRead(call, InlineBuiltin::StringCharCodeAt);
-}
-
-void StringBuiltinEmitter::generateStringCodePointAt(const InlineCall& call)
-{
-    generateIndexedRead(call, InlineBuiltin::StringCodePointAt);
-}
-
 void StringBuiltinEmitter::generateRange(const InlineCall& call, StringRangeMethod method)
 {
     CellPointer string = stringOperand(call.receiver());
@@ -194,21 +162,6 @@ void StringBuiltinEmitter::generateRange(const InlineCall& call, StringRangeMeth
     // Without an end the range goes on to the end of the string, as it does for an end past it.
     CodeUnitRange range = strings().clampRange(method, length, first, numberArgument(call, 1, std::numeric_limits<double>::infinity()));
     finish(call, strings().substring(call.context(), string, range));
-}
-
-void StringBuiltinEmitter::generateStringSlice(const InlineCall& call)
-{
-    generateRange(call, StringRangeMethod::Slice);
-}
-
-void StringBuiltinEmitter::generateStringSubstring(const InlineCall& call)
-{
-    generateRange(call, StringRangeMethod::Substring);
-}
-
-void StringBuiltinEmitter::generateStringSubstr(const InlineCall& call)
-{
-    generateRange(call, StringRangeMethod::Substr);
 }
 
 void StringBuiltinEmitter::generateStringFromCharCode(const InlineCall& call)
@@ -239,11 +192,9 @@ void StringBuiltinEmitter::generateStringUTF8ByteLength(const InlineCall& call)
         branchUnless(logicalNot(hasType(get(encoding), isString)), missBlockOf(call));
     }
     CharacterView view = strings().viewOfString(call.context(), stringOperand(call.argument(0)));
-    Integer byteLength = selectByBranch<Integer>(view.is8Bit, [&] {
-        return callLeaf<Integer>(RuntimeOperation::StringUTF8Length8, { view.characters, view.length });
-    }, [&] {
-        return callLeaf<Integer>(RuntimeOperation::StringUTF8Length16, { view.characters, view.length });
-    });
+    Integer byteLength = strings().selectByWidth<Integer>(view.is8Bit, [&](bool is8Bit) {
+        return callLeaf<Integer>(is8Bit ? RuntimeOperation::StringUTF8Length8 : RuntimeOperation::StringUTF8Length16, { view.characters, view.length });
+    }, B3::FrequencyClass::Normal);
     ensureStillAliveHere(view.owner);
     finish(call, byteLength);
 }
@@ -274,16 +225,6 @@ void StringBuiltinEmitter::generatePad(const InlineCall& call, bool isAtStart)
     }));
 }
 
-void StringBuiltinEmitter::generateStringPadStart(const InlineCall& call)
-{
-    generatePad(call, true);
-}
-
-void StringBuiltinEmitter::generateStringPadEnd(const InlineCall& call)
-{
-    generatePad(call, false);
-}
-
 void StringBuiltinEmitter::generateStringIsWellFormed(const InlineCall& call)
 {
     LBasicBlock miss = missBlockOf(call);
@@ -299,28 +240,9 @@ void StringBuiltinEmitter::generateStringToWellFormed(const InlineCall& call)
     finish(call, string);
 }
 
-void StringBuiltinEmitter::generateStringNormalize(const InlineCall& call)
+void StringBuiltinEmitter::generateCase(const InlineCall& call, RuntimeOperation operation)
 {
-    LBasicBlock miss = missBlockOf(call);
-    CellPointer string = stringOperand(call.receiver());
-    branchUnless(is8Bit(string), miss);
-    finish(call, string);
-}
-
-void StringBuiltinEmitter::generateCase(const InlineCall& call, StringCase letterCase)
-{
-    RuntimeOperation operation = letterCase == StringCase::Lower ? RuntimeOperation::StringToLowerCase : RuntimeOperation::StringToUpperCase;
     finish(call, callOperation<CellPointer>(call.context(), operation, { stringOperand(call.receiver()) }));
-}
-
-void StringBuiltinEmitter::generateStringToLowerCase(const InlineCall& call)
-{
-    generateCase(call, StringCase::Lower);
-}
-
-void StringBuiltinEmitter::generateStringToUpperCase(const InlineCall& call)
-{
-    generateCase(call, StringCase::Upper);
 }
 
 void StringBuiltinEmitter::generateTrim(const InlineCall& call, TrimmedEnds ends)
@@ -328,44 +250,24 @@ void StringBuiltinEmitter::generateTrim(const InlineCall& call, TrimmedEnds ends
     CellPointer string = stringOperand(call.receiver());
     LBasicBlock byCall = newBlock();
     Join<CellPointer> join(m_out);
-    auto continueIf = [&](Condition condition) {
-        LBasicBlock next = newBlock();
-        m_out.branch(condition.value(), normalEdge(next), unlikelyEdge(byCall));
-        m_out.appendTo(next);
-    };
 
-    continueIf(logicalNot(isRopeString(string)));
+    continueIf(logicalNot(isRopeString(string)), byCall);
     CharacterView view = strings().viewOfFlatString(string);
-    continueIf(view.is8Bit);
-    continueIf(isNotZero(view.length));
+    continueIf(view.is8Bit, byCall);
+    continueIf(isNotZero(view.length), byCall);
     CharacterView narrowView { view.characters, view.length, boolean(true), view.owner };
     auto isPrintableASCII = [&](Word32 index) {
         return belowOrEqual(add(strings().codeUnitAt(narrowView, index), word32(-0x21)), word32(0x7e - 0x21));
     };
-    if (trimsStart(ends))
-        continueIf(isPrintableASCII(word32(0)));
-    if (trimsEnd(ends))
-        continueIf(isPrintableASCII(sub(view.length, word32(1))));
+    if (ends != TrimmedEnds::End)
+        continueIf(isPrintableASCII(word32(0)), byCall);
+    if (ends != TrimmedEnds::Start)
+        continueIf(isPrintableASCII(sub(view.length, word32(1))), byCall);
     join.add(string);
 
     m_out.appendTo(byCall);
     join.add(callOperation<CellPointer>(call.context(), RuntimeOperation::StringTrim, { string, word32(static_cast<int32_t>(ends)) }));
     finish(call, join.finish());
-}
-
-void StringBuiltinEmitter::generateStringTrim(const InlineCall& call)
-{
-    generateTrim(call, TrimmedEnds::Both);
-}
-
-void StringBuiltinEmitter::generateStringTrimStart(const InlineCall& call)
-{
-    generateTrim(call, TrimmedEnds::Start);
-}
-
-void StringBuiltinEmitter::generateStringTrimEnd(const InlineCall& call)
-{
-    generateTrim(call, TrimmedEnds::End);
 }
 
 void StringBuiltinEmitter::generateStringLocaleCompare(const InlineCall& call)
@@ -382,6 +284,207 @@ void StringBuiltinEmitter::generateStringConcat(const InlineCall& call)
     for (ValueID argument : call.arguments())
         parts.append(stringOperand(argument));
     finish(call, strings().concatenate(call.context(), parts.span()));
+}
+
+using SplitResults = Vector<Operand, 33>;
+
+// By whether all are counted, whether the separator has several units, and whether the string is wide.
+static constexpr RuntimeOperation separatorOperations[2][2][2] = {
+    { { RuntimeOperation::FindSeparators8, RuntimeOperation::FindSeparators16 }, { RuntimeOperation::FindLongSeparators8, RuntimeOperation::FindLongSeparators16 } },
+    { { RuntimeOperation::CountSeparators8, RuntimeOperation::CountSeparators16 }, { RuntimeOperation::CountLongSeparators8, RuntimeOperation::CountLongSeparators16 } },
+};
+
+void StringBuiltinEmitter::generateStringSplitPrefix(const InlineCall& call)
+{
+    RELEASE_ASSERT(call.value());
+    const ValueContext& value = *call.value();
+    bool isBuiltinCall = value.opcode() == Opcode::CallBuiltin;
+    CellPointer string = stringOperand(call.receiver());
+    unsigned count = isBuiltinCall ? *value->prefixLength() : call.parameterWord(0);
+    if (StringID literal = isBuiltinCall ? value->literalSeparator() : StringID()) {
+        splitAtLiteral(call, string, literal, count);
+        return;
+    }
+
+    Pointer bounds = emitter<RuntimeCallEmitter>().uninitializedArgumentBuffer(count);
+    SplitResults results;
+    results.append(callOperation<Integer>(call.context(), RuntimeOperation::StringSplitPrefix, { string, stringOperand(call.argument(0)), word32(count), bounds }));
+    for (unsigned i = 0; i < 2 * count; ++i)
+        results.append(Word32(m_out.load32(m_out.address(m_heaps.argumentBuffer, bounds.value(), i * sizeof(uint32_t)))));
+    finishWithResults(call, results.span());
+}
+
+Integer StringBuiltinEmitter::searchSeparators(const CharacterView& view, const Separator& separator, Pointer positions, unsigned wanted)
+{
+    bool isLong = separator.length > 1;
+    Integer result = strings().selectByWidth<Integer>(view.is8Bit, [&](bool is8Bit) {
+        Vector<Operand, 5> arguments { view.characters, view.length, separator.codeUnitOrText };
+        if (wanted) {
+            arguments.append(positions);
+            arguments.append(word32(wanted));
+        }
+        RuntimeOperation operation = separatorOperations[!wanted][isLong][!is8Bit];
+        Operand answer = isLong ? callWithoutSite(operation, arguments.span(), Integer::representation, { }) : callLeaf(operation, arguments.span(), Integer::representation);
+        return answer.as<Integer>();
+    }, B3::FrequencyClass::Normal);
+    ensureStillAliveHere(view.owner);
+    return result;
+}
+
+void StringBuiltinEmitter::splitAtLiteral(const InlineCall& call, CellPointer string, StringID literal, unsigned count)
+{
+    const OperationContext& context = call.context();
+    String text = strings().textOf(literal);
+    RELEASE_ASSERT(!text.isEmpty());
+    Separator separator { word32(text.length() == 1 ? text[0] : literal.index()), text.length() };
+    Word32 size = word32(separator.length);
+    CharacterView view = strings().viewOfString(context, string);
+
+    SplitResults results;
+    if (!count) {
+        results.append(add(searchSeparators(view, separator), integer(1)));
+        finishWithResults(call, results.span());
+        return;
+    }
+
+    Pointer buffer = emitter<RuntimeCallEmitter>().uninitializedArgumentBuffer((count + 1) / 2);
+    Word32 found = low32(searchSeparators(view, separator, buffer, count));
+    Vector<Word32, 16> positions;
+    for (unsigned i = 0; i < count; ++i)
+        positions.append(Word32(m_out.load32(m_out.address(m_heaps.argumentBuffer, buffer.value(), i * sizeof(uint32_t)))));
+
+    Integer numberOfSeparators = selectByBranch<Integer>(below(found, word32(count)), [&] {
+        return zeroExtended(found);
+    }, [&] {
+        CharacterView rest = strings().subview(view, { add(positions[count - 1], size), view.length });
+        return add(integer(count), searchSeparators(rest, separator));
+    });
+
+    results.append(add(numberOfSeparators, integer(1)));
+    for (unsigned i = 0; i < count; ++i) {
+        CodeUnitRange piece { i ? add(positions[i - 1], size) : word32(0), select(below(word32(i), found), positions[i], view.length) };
+        Condition exists = belowOrEqual(word32(i), found);
+        results.append(select(exists, piece.start, word32(absentBound)));
+        results.append(select(exists, piece.end, word32(absentBound)));
+    }
+    finishWithResults(call, results.span());
+}
+
+void StringBuiltinEmitter::generateHasAt(const InlineCall& call, LiteralEnd end)
+{
+    CellPointer string = stringOperand(call.receiver());
+    CellPointer other = stringOperand(call.argument(0));
+    Word32 length = strings().lengthOf(string);
+    Integer otherLength = zeroExtended(strings().lengthOf(other));
+
+    Integer at;
+    Condition hasRoom;
+    switch (end) {
+    case LiteralEnd::Start:
+        at = zeroExtended(positionArgument(call, 1, length, word32(0)));
+        hasRoom = lessThanOrEqual(add(at, otherLength), zeroExtended(length));
+        break;
+    case LiteralEnd::End:
+        at = sub(zeroExtended(positionArgument(call, 1, length, length)), otherLength);
+        hasRoom = greaterThanOrEqual(at, integer(0));
+        break;
+    }
+
+    finish(call, selectByBranch<Condition>(hasRoom, [&] {
+        return hasCharactersAt(call, string, other, at);
+    }, [&] {
+        return boolean(false);
+    }));
+}
+
+// There is room for other at that place in string.
+Condition StringBuiltinEmitter::hasCharactersAt(const InlineCall& call, CellPointer string, CellPointer other, Integer at)
+{
+    constexpr unsigned maxLengthComparedInLine = 2 * sizeof(uint64_t);
+    const B3::AbstractHeap& characters = m_heaps.characters8.atAnyIndex();
+    LBasicBlock generic = newBlock();
+    Join<Condition> join(m_out);
+    auto load = [&](unsigned width, Pointer pointer) {
+        return loadBytes(m_out, width, TypedPointer(characters, pointer.value()));
+    };
+
+    continueIf(logicalNot(isRopeString(string)), generic);
+    continueIf(logicalNot(isRopeString(other)), generic);
+    CharacterView subject = strings().viewOfFlatString(string);
+    CharacterView sought = strings().viewOfFlatString(other);
+    continueIf(logicalAnd(subject.is8Bit, sought.is8Bit), generic);
+    continueIf(belowOrEqual(sought.length, word32(maxLengthComparedInLine)), generic);
+    Pointer here = offsetBy(subject.characters, at, 0);
+    Integer size = zeroExtended(sought.length);
+    for (unsigned width : { 8u, 4u, 2u }) {
+        LBasicBlock compare = newBlock();
+        LBasicBlock shorter = newBlock();
+        m_out.branch(aboveOrEqual(sought.length, word32(width)).value(), normalEdge(compare), normalEdge(shorter));
+
+        m_out.appendTo(compare);
+        Integer lastOffset = sub(size, integer(width));
+        LValue firstDifference = m_out.bitXor(load(width, here), load(width, sought.characters));
+        LValue lastDifference = m_out.bitXor(load(width, offsetBy(here, lastOffset, 0)), load(width, offsetBy(sought.characters, lastOffset, 0)));
+        LValue difference = m_out.bitOr(firstDifference, lastDifference);
+        join.add(Condition(width == 8 ? m_out.isZero64(difference) : m_out.isZero32(difference)));
+
+        m_out.appendTo(shorter);
+    }
+    LBasicBlock oneCharacter = newBlock();
+    LBasicBlock noCharacter = newBlock();
+    m_out.branch(isNotZero(sought.length).value(), normalEdge(oneCharacter), normalEdge(noCharacter));
+
+    m_out.appendTo(oneCharacter);
+    join.add(Condition(m_out.equal(load(1, here), load(1, sought.characters))));
+
+    m_out.appendTo(noCharacter);
+    join.add(boolean(true));
+
+    m_out.appendTo(generic);
+    join.add(isNotZero(low32(callOperation<Integer>(call.context(), RuntimeOperation::StringHasAt, { string, other, low32(at) }))));
+    return join.finish();
+}
+
+void StringBuiltinEmitter::generateSearch(const InlineCall& call, SearchDirection direction, bool resultIsBoolean)
+{
+    CellPointer string = stringOperand(call.receiver());
+    CellPointer other = stringOperand(call.argument(0));
+
+    RuntimeOperation operationOnCells = direction == SearchDirection::Forward ? RuntimeOperation::StringIndexOfFrom : RuntimeOperation::StringLastIndexOf;
+
+    Word32 position;
+    switch (direction) {
+    case SearchDirection::Forward:
+        position = positionArgument(call, 1, strings().lengthOf(string), word32(0));
+        break;
+    case SearchDirection::Backward: {
+        Word32 fromEnd = word32(INT32_MAX);
+        position = fromEnd;
+        if (std::optional<Number> argument = numberArgument(call, 1))
+            position = select(equal(*argument, *argument), positionArgument(call, 1, fromEnd, fromEnd), fromEnd);
+        break;
+    }
+    }
+
+    LBasicBlock generic = newBlock();
+    Join<Word32> join(m_out);
+
+    continueIf(logicalNot(isRopeString(string)), generic);
+    continueIf(logicalNot(isRopeString(other)), generic);
+    CharacterView subject = strings().viewOfFlatString(string);
+    CharacterView sought = strings().viewOfFlatString(other);
+    continueIf(equal(subject.is8Bit, sought.is8Bit), generic);
+    join.add(strings().find(subject, sought, position, direction));
+
+    m_out.appendTo(generic);
+    join.add(low32(callOperation<Integer>(call.context(), operationOnCells, { string, other, position })));
+
+    Word32 found = join.finish();
+    if (resultIsBoolean) {
+        finish(call, notEqual(found, word32(-1)));
+        return;
+    }
+    finish(call, found);
 }
 
 } } } // namespace JSC::AOT::Typed

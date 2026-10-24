@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="handedOnInAnotherRound" parameters=[{type=object}, {type=object}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: object, v1: object, v2: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -35,7 +34,6 @@ function f0 name="handedOnInAnotherRound" parameters=[{type=object}, {type=objec
 # CHECK-NEXT: b4:1 available: [v6]
 
 function f1 name="storedInThisRound" parameters=[{type=object}, {type=object}] results=[{type=undefined}] {
-  b0(v0: object, v1: object):
     Jump -> next b1()
   b1():
     LoopHint
@@ -56,7 +54,6 @@ function f1 name="storedInThisRound" parameters=[{type=object}, {type=object}] r
 # CHECK-NEXT: b3:1 available: []
 
 function f2 name="earlierResultIsStillNamed" parameters=[{type=object}, {type=object}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: object, v1: object, v2: boolean):
     Jump -> next b1(v0)
   b1(v3: object):
     LoopHint
@@ -81,7 +78,6 @@ function f2 name="earlierResultIsStillNamed" parameters=[{type=object}, {type=ob
 # CHECK-NEXT: b4:1 available: []
 
 function f3 name="resultsMeetBehindABlockOfTheInlineResult" parameters=[{type=object}, {type=object}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: object, v1: object, v2: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -114,7 +110,6 @@ function f3 name="resultsMeetBehindABlockOfTheInlineResult" parameters=[{type=ob
 # CHECK-NEXT: b5:1 available: [v7]
 
 function f4 name="olderObjectMeetsTheResult" parameters=[{type=object}, {type=object}, {type=boolean}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: object, v1: object, v2: boolean, v3: anything):
     v4 = NewArray v3 contents=anything
     PropSet v1, v4 key="kept"
     TryCallInline -, v0 inlineBuiltin=OwnPropertyKeys inlineParameters=[0] overload=ObjectKeys/0 -> done b1(), miss b5()
@@ -137,7 +132,6 @@ function f4 name="olderObjectMeetsTheResult" parameters=[{type=object}, {type=ob
 # CHECK-NEXT: b3:1 available: []
 
 function f5 name="objectInUseMeetsTheResultOnAnotherPath" parameters=[{type=object}, {type=object}, {type=boolean}, {type=anything}, {type=object}] results=[{type=undefined}] {
-  b0(v0: object, v1: object, v2: boolean, v3: anything, v4: object):
     v5 = NewArray v3 contents=anything
     Jump -> next b1()
   b1():

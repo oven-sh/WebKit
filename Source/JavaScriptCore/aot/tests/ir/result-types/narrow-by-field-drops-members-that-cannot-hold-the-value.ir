@@ -17,7 +17,6 @@ layout L9 name="Shape" fields=[{key="kind" declared={type=number} flags=[IsRequi
 
 # The second test reads the tag from what the first one left
 function f0 name="chainOfTests" parameters=[{type=undefined|null|L0|L1|L2}] results=[{type=undefined}] {
-  b0(v0: undefined|null|L0|L1|L2):
     v1 = PropGet v0 key="kind"
     v2 = Integer integer=1
     v3 = StrictEq v1, v2
@@ -55,7 +54,6 @@ function f0 name="chainOfTests" parameters=[{type=undefined|null|L0|L1|L2}] resu
 
 # A range has no gaps, so the edge that is not taken learns nothing about the read, and the holder keeps its members
 function f1 name="tagInsideTheRange" parameters=[{type=L0|L1|L2}] results=[{type=undefined}] {
-  b0(v0: L0|L1|L2):
     v1 = PropGet v0 key="kind"
     v2 = Integer integer=2
     v3 = StrictEq v1, v2
@@ -75,7 +73,6 @@ function f1 name="tagInsideTheRange" parameters=[{type=L0|L1|L2}] results=[{type
 # CHECK-NEXT: v7: L0|L1|L2
 
 function f2 name="stringTag" parameters=[{type=L3|L4|L5}] results=[{type=undefined}] {
-  b0(v0: L3|L4|L5):
     v1 = PropGet v0 key="kind"
     v2 = String string="mul"
     v3 = StrictEq v1, v2
@@ -97,7 +94,6 @@ function f2 name="stringTag" parameters=[{type=L3|L4|L5}] results=[{type=undefin
 
 # Two cases that share a body join what each of them left
 function f3 name="switchOnTheField" parameters=[{type=L0|L1|L2}] results=[{type=undefined}] {
-  b0(v0: L0|L1|L2):
     v1 = PropGet v0 key="kind"
     Switch v1 cases=[1, 3] -> case b1(| 0), case b2(| 0), otherwise b4()
   b1(v2):
@@ -120,7 +116,6 @@ function f3 name="switchOnTheField" parameters=[{type=L0|L1|L2}] results=[{type=
 # CHECK-NEXT: v6: L0|L2
 
 function f4 name="switchOnAStringField" parameters=[{type=L3|L4|L5}] results=[{type=undefined}] {
-  b0(v0: L3|L4|L5):
     v1 = PropGet v0 key="kind"
     SwitchString v1 strings=["add", "neg"] -> case b1(| 0), case b2(| 0), otherwise b3()
   b1(v2):
@@ -140,7 +135,6 @@ function f4 name="switchOnAStringField" parameters=[{type=L3|L4|L5}] results=[{t
 # CHECK-NEXT: v5: L5
 
 function f5 name="fieldThatCanHoldTheValue" parameters=[{type=L0|L1|L6}] results=[{type=undefined}] {
-  b0(v0: L0|L1|L6):
     v1 = PropGet v0 key="kind"
     v2 = Integer integer=1
     v3 = StrictEq v1, v2
@@ -161,7 +155,6 @@ function f5 name="fieldThatCanHoldTheValue" parameters=[{type=L0|L1|L6}] results
 
 # The copy of an inherited field says nothing about its stores. The field it was copied from does
 function f6 name="inheritedField" parameters=[{type=L0|L7|L8}] results=[{type=undefined}] {
-  b0(v0: L0|L7|L8):
     v1 = PropGet v0 key="kind"
     v2 = Integer integer=1
     v3 = StrictEq v1, v2
@@ -182,7 +175,6 @@ function f6 name="inheritedField" parameters=[{type=L0|L7|L8}] results=[{type=un
 
 # The field of Shape holds every tag, and no object has that layout
 function f7 name="memberThatNothingAllocates" parameters=[{type=L0|L1|L9}] results=[{type=undefined}] {
-  b0(v0: L0|L1|L9):
     v1 = PropGet v0 key="kind"
     v2 = Integer integer=1
     v3 = StrictEq v1, v2
@@ -205,7 +197,6 @@ function f7 name="memberThatNothingAllocates" parameters=[{type=L0|L1|L9}] resul
 
 # (A function without a check waits for no generic version: there the block is cut at such a narrowing. passes/inline-calls-narrowing-by-a-field-that-leaves-nothing.ir)
 function f8 name="noMemberIsLeft" parameters=[{type=anything}, {type=1}] results=[{type=undefined}] {
-  b0(v0: anything, v1: 1):
     v2 = Check v0 castType=undefined|L1|L2
     v3 = NarrowByField v2, v1 key="kind"
     Return
@@ -217,7 +208,6 @@ function f8 name="noMemberIsLeft" parameters=[{type=anything}, {type=1}] results
 # CHECK-NEXT: v3: L1|L2
 
 function f9 name="readThatNothingReaches" parameters=[{type=L0|L1}, {type=never}] results=[{type=undefined}] {
-  b0(v0: L0|L1, v1: never):
     v2 = NarrowByField v0, v1 key="kind"
     Unreachable
 }

@@ -8,14 +8,12 @@ module m0 path="main.js" displayPath="main.js"
 entry module=m0
 layout L0 name="Point"
 function f0 name="pastTheLimit" results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L0 fields=[]
     Jump -> next b1()
   b1():
     Return v0
 }
 function f1 name="withinTheLimit" results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L0 fields=[]
     Return v0
 }

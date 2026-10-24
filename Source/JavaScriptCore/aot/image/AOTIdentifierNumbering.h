@@ -7,11 +7,7 @@
 
 #if ENABLE(AOT)
 
-#include "AOTImageForward.h"
 #include "AOTStringUses.h"
-#include "AOTVector.h"
-#include <optional>
-#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT {
 
@@ -22,11 +18,13 @@ struct NumberedIdentifier {
 
 class IdentifierNumbering {
 public:
-    IdentifierNumbering() = default;
-
-    std::optional<uint32_t> numberOf(PropertyKeyID) const;
-    std::optional<uint32_t> numberOfText(StringID) const;
-    const NumberedIdentifier& at(uint32_t number) const;
+    std::optional<uint32_t> numberOf(PropertyKeyID key) const { return numberIn(m_numbersByKey, key); }
+    std::optional<uint32_t> numberOfText(StringID text) const { return numberIn(m_numbersByText, text); }
+    const NumberedIdentifier& at(uint32_t number) const
+    {
+        RELEASE_ASSERT(number < count());
+        return m_identifiers[number];
+    }
 
     uint32_t count() const { return m_identifiers.size(); }
     uint32_t countWithLookupTableColumn() const { return m_countWithLookupTableColumn; }
@@ -40,7 +38,6 @@ private:
     uint32_t m_countWithLookupTableColumn { 1 };
 };
 
-// The number of a name with a column in the lookup table is its column, so these come first, by use.
 IdentifierNumbering numberIdentifiers(const Typed::Program&, const KeyUses&, const BitVector& keysWithColumn, BuildContext&);
 
 } } // namespace JSC::AOT

@@ -22,6 +22,5 @@ layout L5 name="Runner" fields=[{key="run" declared={type=anything} flags=[IsReq
 # CHECK-NEXT: L5: members [L4, L5]
 
 function f0 name="take" parameters=[{type=L1}] results=[{type=anything}] {
-  b0(v0: L1):
     Return
 }

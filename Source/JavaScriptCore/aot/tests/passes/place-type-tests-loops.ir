@@ -26,7 +26,6 @@ layout L2 kind=Instance name="Shape" constructor=f17
 layout L3 name="Pair" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 
 function f0 name="invariantReceiver" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: object, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -40,7 +39,6 @@ function f0 name="invariantReceiver" parameters=[{type=object}, {type=boolean}] 
 # F0-NOT: stretch
 
 function f1 name="variantReceiver" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: object, v1: boolean):
     Jump -> next b1(v0)
   b1(v2):
     LoopHint
@@ -54,7 +52,6 @@ function f1 name="variantReceiver" parameters=[{type=object}, {type=boolean}] re
 # F1-NOT: stretch
 
 function f2 name="castInsideLoop" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: object, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -69,7 +66,6 @@ function f2 name="castInsideLoop" parameters=[{type=object}, {type=boolean}] res
 # F2-NOT: stretch
 
 function f3 name="chainLeavesTogether" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -86,7 +82,6 @@ function f3 name="chainLeavesTogether" parameters=[{type=anything}, {type=boolea
 # F3-NOT: stretch
 
 function f4 name="indexStaysInside" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = Integer integer=0
     Jump -> next b1(v2)
   b1(v3):
@@ -107,7 +102,6 @@ function f4 name="indexStaysInside" parameters=[{type=anything}, {type=boolean}]
 # F4-NOT: stretch
 
 function f5 name="endedInsideLoop" parameters=[{type=anything}, {type=boolean}, {type=Array<anything>}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean, v2: Array<anything>):
     Jump -> next b1()
   b1():
     LoopHint
@@ -124,7 +118,6 @@ function f5 name="endedInsideLoop" parameters=[{type=anything}, {type=boolean}, 
 # F5-NOT: stretch
 
 function f6 name="callInsideLoop" parameters=[{type=object}, {type=boolean}, {type=function}] results=[{type=anything}] {
-  b0(v0: object, v1: boolean, v2: function):
     Jump -> next b1()
   b1():
     LoopHint
@@ -140,7 +133,6 @@ function f6 name="callInsideLoop" parameters=[{type=object}, {type=boolean}, {ty
 # F6-NOT: stretch
 
 function f7 name="nestedLoops" parameters=[{type=object}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: object, v1: boolean, v2: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -159,7 +151,6 @@ function f7 name="nestedLoops" parameters=[{type=object}, {type=boolean}, {type=
 # F7-NOT: stretch
 
 function f8 name="largeOuterLoopWithinLimit" parameters=[{type=object}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: object, v1: boolean, v2: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -180,7 +171,6 @@ function f8 name="largeOuterLoopWithinLimit" parameters=[{type=object}, {type=bo
 # F8-NOT: stretch
 
 function f9 name="twoEntries" parameters=[{type=object}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: object, v1: boolean, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3()
@@ -199,7 +189,6 @@ function f9 name="twoEntries" parameters=[{type=object}, {type=boolean}, {type=b
 
 # Unlikely code gets a test only where another test of the value has failed on the way in.
 function f10 name="rarelyUsedInLoop" parameters=[{type=object}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: object, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -218,7 +207,6 @@ function f10 name="rarelyUsedInLoop" parameters=[{type=object}, {type=boolean}] 
 # F10-NOT: stretch
 
 function f11 name="irreducibleCycle" parameters=[{type=object}, {type=boolean}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: object, v1: boolean, v2: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     LoopHint
@@ -234,7 +222,6 @@ function f11 name="irreducibleCycle" parameters=[{type=object}, {type=boolean}, 
 # F11-NOT: stretch
 
 function f12 name="guardBitLeavesLoop" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
-  b0(v0: number, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -279,7 +266,6 @@ function f13 name="prerequisiteRedefinedInLoop" parameters=[{type=L0 flags=[IsEx
 # IR-LABEL: function f14
 
 function f14 name="definedInOuterLoop" parameters=[{type=function}, {type=boolean}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: function, v1: boolean, v2: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -299,7 +285,6 @@ function f14 name="definedInOuterLoop" parameters=[{type=function}, {type=boolea
 # F14-NOT: stretch
 
 function f15 name="wideGapInsideLoop" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: object, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint

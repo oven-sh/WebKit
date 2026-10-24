@@ -13,17 +13,14 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="first" results=[{type=undefined}] {
-  b0():
     v0 = Undefined
     Return v0
 }
 function f1 name="second" results=[{type=undefined}] {
-  b0():
     v0 = Undefined
     Return v0
 }
 function f2 name="third" results=[{type=undefined}] {
-  b0():
     v0 = Undefined
     Return v0
 }

@@ -20,7 +20,6 @@ layout L1 kind=Instance name="Other" constructor=f6 fields=[{key="y" declared={t
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Uninitialized
 variable g1 name="FirstClass" module=m0 declared={type=anything} initialization=Uninitialized
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = CallDirect function=f1
     v1 = CallDirect function=f1
     PutModuleVariable v0 variable=g1
@@ -38,21 +37,18 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="makeClass" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = NewClass v0 layout=L0
     v2 = FinishClass v1 layout=L0
     Return v2
 }
 function f2 name="InFunction" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0 fields=[]
     PropSet v3, v1 key="x" mode=Strict
     Return v3
 }
 function f3 name="constructInLoop" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     LoopHint
@@ -65,26 +61,22 @@ function f3 name="constructInLoop" parameters=[{type=anything}] results=[{type=a
     Return
 }
 function f4 name="constructOnce" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g1
     v2 = Construct v1, -, v0
     Return v2
 }
 function f5 name="readKept" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = PropGet v0 key="x"
     Return v1
 }
 function f6 name="Other" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = GetConstructPrototype v0 layout=L1
     v3 = NewObject v2 layout=L1 fields=[]
     PropSet v3, v1 key="y" mode=Strict
     Return v3
 }
 function f7 name="constructForOtherNewTarget" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = GetModuleVariable variable=g1
     v3 = Construct v2, v1, v0
     Return v3

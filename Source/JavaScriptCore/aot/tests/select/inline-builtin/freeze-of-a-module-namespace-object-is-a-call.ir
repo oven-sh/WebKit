@@ -11,13 +11,11 @@ module m0 path="main.mjs" displayPath="main.mjs"
 module m1 path="box.mjs" displayPath="box.mjs"
 layout L0 name="MayBeFrozen" fields=[{key="a" declared={type=number}}]
 function f0 name="freezeNamespace" results=[{type=anything}] {
-  b0():
     v0 = ModuleNamespace module=m1
     v1 = CallBuiltin -, v0 overload=ObjectFreeze/0
     Return v1
 }
 function f1 name="freezeRecord" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = CallBuiltin -, v0 overload=ObjectFreeze/0
     Return v1
 }

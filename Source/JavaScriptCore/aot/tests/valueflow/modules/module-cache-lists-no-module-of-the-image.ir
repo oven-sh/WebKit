@@ -13,7 +13,6 @@ module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[Keeps
 module m1 path="/app/other.cjs" displayPath="other.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
 entry module=m0
 function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = ModuleBuiltin builtin=ModuleRequire module=m0
     v1 = ModuleBuiltin builtin=ImportMeta module=m0
     v2 = PropGet v1 key="path"
@@ -27,7 +26,6 @@ function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} r
     Return
 }
 function f1 name="other" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewDictionary
     PutModuleVariable v0 variable=g1
     v2 = NewClosure function=f2
@@ -35,10 +33,8 @@ function f1 name="other" module=m1 kind=CommonJsModule thisType={type=anything} 
     Return
 }
 function f2 name="handler" module=m1 results=[{type=anything}] {
-  b0():
     Return
 }
 function f3 name="nobodyCalls" module=m0 results=[{type=anything}] {
-  b0():
     Return
 }

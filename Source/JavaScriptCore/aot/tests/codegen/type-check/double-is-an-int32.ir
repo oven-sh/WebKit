@@ -9,7 +9,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="isInt32" parameters=[{type=number}] results=[{type=int}] {
-  b0(v0: number):
     v1 = TypeTest v0 testedType=i32
     Branch v1 -> taken b1(), notTaken b2()
   b1():

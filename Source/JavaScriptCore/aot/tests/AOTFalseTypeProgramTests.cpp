@@ -16,7 +16,6 @@ static constexpr ASCIILiteral onlyFalseArgument = R"IR(module m0 path="main.ts" 
 entry module=m0
 typesite w0 module=m0 position=17 kind=Parameter
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = NewClosure function=f1
@@ -37,7 +36,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="double" parameters=[{type=undefined|null|number site=w0}] results=[{type=anything}] {
-  b0(v0: undefined|null|number):
     v1 = Integer integer=2
     v2 = Mul v0, v1
     Return v2
@@ -49,7 +47,6 @@ static constexpr ASCIILiteral resultUnused = R"IR(module m0 path="main.ts" displ
 entry module=m0
 typesite w0 module=m0 position=17 kind=Parameter
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = NewClosure function=f1
@@ -69,7 +66,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="ignore" parameters=[{type=undefined|null|number site=w0}] results=[{type=anything}] {
-  b0(v0: undefined|null|number):
     v1 = Integer integer=1
     Return v1
 }
@@ -80,7 +76,6 @@ static constexpr ASCIILiteral calleeFromUnknownCode = R"IR(module m0 path="main.
 entry module=m0
 typesite w0 module=m0 position=17 kind=Parameter
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = PropGet v0 key="id" [isFreeName]
@@ -101,7 +96,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="double" parameters=[{type=undefined|null|number site=w0}] results=[{type=anything}] {
-  b0(v0: undefined|null|number):
     v1 = Integer integer=2
     v2 = Mul v0, v1
     Return v2
@@ -113,7 +107,6 @@ static constexpr ASCIILiteral fittingAndFalseArguments = R"IR(module m0 path="ma
 entry module=m0
 typesite w0 module=m0 position=17 kind=Parameter
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = NewClosure function=f1
@@ -141,7 +134,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="double" parameters=[{type=undefined|null|number site=w0}] results=[{type=anything}] {
-  b0(v0: undefined|null|number):
     v1 = Integer integer=2
     v2 = Mul v0, v1
     Return v2
@@ -153,7 +145,6 @@ static constexpr ASCIILiteral builtinInDeadBody = R"IR(module m0 path="main.ts" 
 entry module=m0
 typesite w0 module=m0 position=15 kind=Parameter
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = NewClosure function=f1
@@ -172,7 +163,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="show" parameters=[{type=undefined|null|number site=w0}] results=[{type=anything}] {
-  b0(v0: undefined|null|number):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="String" [isFreeName]
     v3 = Call v2, -, v0
@@ -185,7 +175,6 @@ static constexpr ASCIILiteral falseReceiver = R"IR(module m0 path="main.ts" disp
 entry module=m0
 typesite w0 module=m0 position=15 kind=This
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = NewClosure function=f1
@@ -204,7 +193,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="shout" flags=[HasThis] thisType={type=undefined|null|string site=w0} results=[{type=anything}] {
-  b0(v0: undefined|null|string):
     v1 = String string="!"
     v2 = Add v0, v1
     Return v2
@@ -215,7 +203,6 @@ function f1 name="shout" flags=[HasThis] thisType={type=undefined|null|string si
 static constexpr ASCIILiteral builtinBehindCallThatThrows = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = NewClosure function=f1
@@ -234,7 +221,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="fail" results=[{type=anything}] {
-  b0():
     v0 = String string="always"
     Throw v0
 }

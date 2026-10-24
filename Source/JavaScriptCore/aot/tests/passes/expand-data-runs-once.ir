@@ -11,7 +11,6 @@ data d0 root=Object{layout=L0 members=[{key="content-type" value=String{value="t
 data d1 root=Object{layout=L1 members=[{key="x" value=Number{value=1}}]}
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="sink" [isFreeName]
     v2 = Data data=d0
@@ -21,18 +20,15 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v6 = NewClosure function=f1
     v7 = Call v1, -, v6
     Return
-}
-# CHECK-LABEL: function f0 name="main"
 # CHECK: v2:{{*}}= Data data=d0
 # CHECK: v4:{{*}}= NewObject -, {{*}} layout=L1 fields=[0]
+}
 
 function f1 name="calledByAnybody" results=[{type=anything}] {
-  b0():
     v0 = Data data=d0
     Return v0
-}
-# CHECK-LABEL: function f1 name="calledByAnybody"
 # CHECK: [[head]]:{{*}}= NewObject layout=L0
 # CHECK-NEXT: PropDefine [[head]], {{*}} key="content-type"
 # CHECK-NEXT: PropDefine [[head]], {{*}} key="accept"
 # CHECK-NEXT: v0:{{*}}= FinishObject [[head]]
+}

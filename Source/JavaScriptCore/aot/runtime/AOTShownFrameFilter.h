@@ -20,19 +20,7 @@ public:
 
     bool shows(TraceVisibility visibility, bool isTailDeleted)
     {
-        if (isTailDeleted)
-            return false;
-        bool isShown = false;
-        switch (visibility) {
-        case TraceVisibility::Visible:
-            isShown = true;
-            break;
-        case TraceVisibility::VisibleOnlyOnTop:
-            isShown = !m_hasShownFrame;
-            break;
-        case TraceVisibility::Hidden:
-            break;
-        }
+        bool isShown = !isTailDeleted && (visibility == TraceVisibility::Visible || (visibility == TraceVisibility::VisibleOnlyOnTop && !m_hasShownFrame));
         m_hasShownFrame |= isShown;
         return isShown;
     }

@@ -8,14 +8,16 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrivalSiteNumbers.h"
+#include "AOTConstantEmitter.h"
 #include "AOTFieldTable.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIdentifierNumbering.h"
 #include "AOTPlacement.h"
 #include "AOTPropertyCachesFront.h"
 #include "AOTRuntimeWords.h"
-#include "AOTSiteCachePlacement.h"
 #include "AOTStubCatalog.h"
+#include "AOTStubsElements.h"
 #include "AOTStubsGlobalBindings.h"
 #include "AOTStubsPropertyInlineCode.h"
 #include "AOTStubsPropertyKeys.h"
@@ -23,49 +25,9 @@
 #include "AllowMacroScratchRegisterUsage.h"
 #include "B3PatchpointValue.h"
 #include "B3StackmapGenerationParams.h"
-#include <initializer_list>
-#include <span>
+#include "ECMAMode.h"
 
 namespace JSC { namespace AOT { namespace Typed {
-
-namespace {
-
-struct SiteCacheProbe {
-    B3::PatchpointValue* patchpoint;
-    LBasicBlock hit;
-    LBasicBlock miss;
-};
-
-class SiteCacheProbeEmitter final : public OperationEmitter {
-public:
-    explicit SiteCacheProbeEmitter(CodeGenerator& generator)
-        : OperationEmitter(generator)
-    {
-    }
-
-    SiteCacheProbe loadConstant(Pointer site);
-    Boxed joinWithMiss(const SiteCacheProbe&, NOESCAPE const Invocable<Boxed()> auto& readOnMiss);
-
-private:
-    using Heaps = std::initializer_list<const B3::AbstractHeap*>;
-
-    SiteCacheProbe createProbe(LType result, std::initializer_list<LValue> operands, uint8_t numberOfScratchRegisters, Heaps reads);
-};
-
-} // anonymous namespace
-
-static void jumpToSuccessors(CCallHelpers& jit, const B3::StackmapGenerationParams& params, const CCallHelpers::JumpList& misses)
-{
-    CCallHelpers::Jump hit;
-    if (!params.fallsThroughToSuccessor(0))
-        hit = jit.jump();
-    WTF::Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
-    params.addLatePath([=](CCallHelpers& jit) {
-        misses.linkTo(*labels[1], &jit);
-        if (hit.isSet())
-            hit.linkTo(*labels[0], &jit);
-    });
-}
 
 static bool probesFreeNameInline(CodeShape shape)
 {
@@ -86,95 +48,6 @@ static bool probesBindingLocationInline(CodeShape shape)
     return shape == CodeShape::Fast;
 }
 
-static RuntimeOperation setFreeNameOperationFor(ECMAMode mode)
-{
-    switch (mode) {
-    case ECMAMode::Strict:
-        return RuntimeOperation::SetFreeName;
-    case ECMAMode::Sloppy:
-        return RuntimeOperation::SetFreeNameSloppy;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static RuntimeOperation setGlobalBindingOperationFor(ECMAMode mode, bool seesScriptBindings)
-{
-    switch (mode) {
-    case ECMAMode::Strict:
-        return seesScriptBindings ? RuntimeOperation::SetGlobalBinding : RuntimeOperation::SetGlobalObjectBinding;
-    case ECMAMode::Sloppy:
-        return seesScriptBindings ? RuntimeOperation::SetGlobalBindingSloppy : RuntimeOperation::SetGlobalObjectBindingSloppy;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static RuntimeOperation deleteByIdOperationFor(ECMAMode mode)
-{
-    switch (mode) {
-    case ECMAMode::Strict:
-        return RuntimeOperation::DeleteById;
-    case ECMAMode::Sloppy:
-        return RuntimeOperation::DeleteByIdSloppy;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-SiteCacheProbe SiteCacheProbeEmitter::createProbe(LType result, std::initializer_list<LValue> operands, uint8_t numberOfScratchRegisters, Heaps reads)
-{
-    B3::PatchpointValue* patchpoint = m_out.patchpoint(result);
-    for (LValue operand : operands)
-        patchpoint->appendSomeRegister(operand);
-    patchpoint->numGPScratchRegisters = numberOfScratchRegisters;
-    patchpoint->clobber(RegisterSet::macroClobberedGPRs());
-    patchpoint->effects = B3::Effects::none();
-    patchpoint->effects.terminal = true;
-    patchpoint->effects.controlDependent = true;
-    m_heaps.decoratePatchpointRead(std::span<const B3::AbstractHeap* const>(reads.begin(), reads.size()), patchpoint);
-    patchpoint->setRunsWithoutFrame(true);
-
-    SiteCacheProbe probe { patchpoint, newBlock(), newBlock() };
-    m_out.m_block->appendSuccessor(normalEdge(probe.hit));
-    m_out.m_block->appendSuccessor(rareEdge(probe.miss));
-    return probe;
-}
-
-SiteCacheProbe SiteCacheProbeEmitter::loadConstant(Pointer site)
-{
-    SiteCacheProbe probe = createProbe(B3::Int64, { site.value() }, 1, { &m_heaps.AOTInstance_siteCaches });
-    probe.patchpoint->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
-        AllowMacroScratchRegisterUsage allowScratch(jit);
-        CCallHelpers::Jump isNotConstant = InlinePropertyCode::loadConstantSlotAtSite(jit, params[1].gpr(), params.gpScratch(0), params[0].gpr());
-        jumpToSuccessors(jit, params, isNotConstant);
-    });
-    return probe;
-}
-
-Boxed SiteCacheProbeEmitter::joinWithMiss(const SiteCacheProbe& probe, NOESCAPE const Invocable<Boxed()> auto& readOnMiss)
-{
-    Join<Boxed> join(m_out);
-    m_out.appendTo(probe.hit);
-    join.add(Boxed(probe.patchpoint));
-    m_out.appendTo(probe.miss);
-    join.add(readOnMiss());
-    return join.finish();
-}
-
-AccessEmitter::AccessEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
-
-PutMode AccessEmitter::putModeOf(ECMAMode mode)
-{
-    switch (mode) {
-    case ECMAMode::Strict:
-        return PutMode::Strict;
-    case ECMAMode::Sloppy:
-        return PutMode::Sloppy;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 std::optional<uint32_t> AccessEmitter::findIdentifierNumber(const OperationContext& context, PropertyKeyID key)
 {
     std::optional<uint32_t> number = build().identifierNumbering().numberOf(key);
@@ -187,6 +60,19 @@ std::optional<uint32_t> AccessEmitter::findIdentifierNumber(const OperationConte
 bool AccessEmitter::comesAgain(const OperationContext& context)
 {
     return mayReadSiteCachesAgain(analyses(), context.block());
+}
+
+// The call has the effects of the operation and not those of the access it stands before. An access that writes nothing would leave a call that writes nothing, which B3 removes.
+void AccessEmitter::recordArrival(const OperationContext& context, Boxed receiver, uint32_t part)
+{
+    const ArrivalSiteNumbers& sites = inputs().arrivalSites;
+    if (!sites.isCounting())
+        return;
+    std::optional<uint32_t> number = sites.numberOf(m_id, context.valueID(), part);
+    if (!number)
+        return;
+    Operand arguments[] { receiver, word32(static_cast<int32_t>(*number)) };
+    callWithoutSite(RuntimeOperation::RecordArrival, arguments, Representation::Void, { .isOnRarePath = true });
 }
 
 static RuntimeOperation putOperationWithoutCachesFor(PutMode mode)
@@ -208,12 +94,16 @@ Boxed AccessEmitter::getById(const OperationContext& context, Boxed receiver, Pr
     std::optional<uint32_t> identifier = findIdentifierNumber(context, key);
     if (!identifier)
         return undefined();
-    if (!comesAgain(context)) {
-        // Behind the tables the stub asks the objects themselves and files nothing, so code that runs once takes the way of all other code and leaves nothing behind.
-        return getByIdThroughTables(context, receiver, *identifier, origin);
-    }
+    CallOptions options { .immediate = *identifier, .origin = origin };
+    auto readThroughTables = [&] {
+        StubKey stub = RowDisplacementTable::hasColumn(*identifier) ? AOT::getById() : getByIdHashed();
+        return Boxed(callStub(context, stub, { receiver.value() }, options).first);
+    };
+    // Behind the tables the stub asks the objects themselves and files nothing, so code that runs once takes the way of all other code and leaves nothing behind.
+    if (!comesAgain(context))
+        return readThroughTables();
     if (cache && m_program.nameClassOf(key) == NameClass::Length)
-        return Boxed(callStub(context, getLengthAtSite(), { receiver.value(), siteCacheAddress(cache).value() }, { .immediate = *identifier, .origin = origin }).first);
+        return Boxed(callStub(context, getLengthAtSite(), { receiver.value(), siteCacheAddress(cache).value() }, options).first);
     // A site cache pays where one kind of receiver comes again and again.
 #if CPU(X86_64)
     // The tables answer for every Structure alike, in about what a hit at a site and the site's operand cost together.
@@ -222,8 +112,8 @@ Boxed AccessEmitter::getById(const OperationContext& context, Boxed receiver, Pr
     bool tablesAnswer = context.shape() == CodeShape::Compact || inputs().stubCatalog.bindsImmediate(AOT::getById(), *identifier);
 #endif
     if (cache && (!tablesAnswer || !RowDisplacementTable::hasColumn(*identifier)))
-        return getByIdThroughSiteCache(context, receiver, *identifier, cache, origin);
-    return getByIdThroughTables(context, receiver, *identifier, origin);
+        return Boxed(callStub(context, getByIdAtSite(), { receiver.value(), siteCacheAddress(cache).value() }, options).first);
+    return readThroughTables();
 }
 
 void AccessEmitter::putById(const OperationContext& context, Boxed receiver, PropertyKeyID key, Boxed value, PutMode mode, SiteCacheID cache)
@@ -242,10 +132,11 @@ void AccessEmitter::putById(const OperationContext& context, Boxed receiver, Pro
         return;
     }
     if (cache) {
-        putByIdThroughSiteCache(context, receiver, *identifier, value, mode, cache);
+        callStub(context, putByIdAtSite(mode), { receiver.value(), value.value(), siteCacheAddress(cache).value() }, { .immediate = *identifier });
         return;
     }
-    putByIdThroughTables(context, receiver, *identifier, value, mode);
+    StubKey stub = RowDisplacementTable::hasColumn(*identifier) ? AOT::putById(mode) : putByIdHashed(mode);
+    callStub(context, stub, { receiver.value(), value.value() }, { .immediate = *identifier });
 }
 
 Condition AccessEmitter::hasById(const OperationContext& context, Boxed receiver, PropertyKeyID key)
@@ -255,30 +146,6 @@ Condition AccessEmitter::hasById(const OperationContext& context, Boxed receiver
     if (!identifier)
         return boolean(false);
     return Condition(m_out.castToInt32(callStub(context, inById(PresenceQuestion::In), { receiver.value() }, { .immediate = *identifier }).first));
-}
-
-Boxed AccessEmitter::getByIdThroughTables(const OperationContext& context, Boxed receiver, uint32_t identifier, std::optional<Origin> origin)
-{
-    StubKey stub = RowDisplacementTable::hasColumn(identifier) ? AOT::getById() : getByIdHashed();
-    return Boxed(callStub(context, stub, { receiver.value() }, { .immediate = identifier, .origin = origin }).first);
-}
-
-void AccessEmitter::putByIdThroughTables(const OperationContext& context, Boxed receiver, uint32_t identifier, Boxed value, PutMode mode)
-{
-    StubKey stub = RowDisplacementTable::hasColumn(identifier) ? AOT::putById(mode) : putByIdHashed(mode);
-    callStub(context, stub, { receiver.value(), value.value() }, { .immediate = identifier });
-}
-
-Boxed AccessEmitter::getByIdThroughSiteCache(const OperationContext& context, Boxed receiver, uint32_t identifier, SiteCacheID cache, std::optional<Origin> origin)
-{
-    Pointer site = siteCacheAddress(cache);
-    return Boxed(callStub(context, getByIdAtSite(), { receiver.value(), site.value() }, { .immediate = identifier, .origin = origin }).first);
-}
-
-void AccessEmitter::putByIdThroughSiteCache(const OperationContext& context, Boxed receiver, uint32_t identifier, Boxed value, PutMode mode, SiteCacheID cache)
-{
-    Pointer site = siteCacheAddress(cache);
-    callStub(context, putByIdAtSite(mode), { receiver.value(), value.value(), site.value() }, { .immediate = identifier });
 }
 
 Boxed AccessEmitter::getFreeName(const ValueContext& value)
@@ -301,10 +168,40 @@ Boxed AccessEmitter::getFreeName(const ValueContext& value)
     if (!probesFreeNameInline(value.shape()))
         return readByStub(false);
 
-    SiteCacheProbeEmitter probes(generator());
-    return probes.joinWithMiss(probes.loadConstant(site), [&] {
-        return readByStub(true);
+    B3::PatchpointValue* probe = m_out.patchpoint(B3::Int64);
+    probe->appendSomeRegister(site.value());
+    probe->numGPScratchRegisters = 1;
+    probe->clobber(RegisterSet::macroClobberedGPRs());
+    probe->effects = B3::Effects::none();
+    probe->effects.terminal = true;
+    probe->effects.controlDependent = true;
+    const B3::AbstractHeap* const reads[] { &m_heaps.AOTInstance_siteCaches };
+    m_heaps.decoratePatchpointRead(std::span<const B3::AbstractHeap* const>(reads), probe);
+    probe->setRunsWithoutFrame(true);
+    LBasicBlock holdsConstant = newBlock();
+    LBasicBlock holdsNoConstant = newBlock();
+    m_out.m_block->appendSuccessor(normalEdge(holdsConstant));
+    m_out.m_block->appendSuccessor(rareEdge(holdsNoConstant));
+    probe->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        CCallHelpers::Jump isNotConstant = InlinePropertyCode::loadConstantSlotAtSite(jit, params[1].gpr(), params.gpScratch(0), params[0].gpr());
+        CCallHelpers::Jump isConstant;
+        if (!params.fallsThroughToSuccessor(0))
+            isConstant = jit.jump();
+        WTF::Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
+        params.addLatePath([=](CCallHelpers& jit) {
+            isNotConstant.linkTo(*labels[1], &jit);
+            if (isConstant.isSet())
+                isConstant.linkTo(*labels[0], &jit);
+        });
     });
+
+    Join<Boxed> join(m_out);
+    m_out.appendTo(holdsConstant);
+    join.add(Boxed(probe));
+    m_out.appendTo(holdsNoConstant);
+    join.add(readByStub(true));
+    return join.finish();
 }
 
 void AccessEmitter::putFreeName(const ValueContext& value)
@@ -313,7 +210,7 @@ void AccessEmitter::putFreeName(const ValueContext& value)
     SiteCacheID cache = value->siteCache();
     Pointer site = siteCacheAddress(cache);
     if (!cache) {
-        callVoidOperation(value, setFreeNameOperationFor(value->mode()), { identifierNumber(value->key()), site, stored });
+        callVoidOperation(value, forMode(value->mode(), RuntimeOperation::SetFreeName, RuntimeOperation::SetFreeNameSloppy), { identifierNumber(value->key()), site, stored });
         return;
     }
 
@@ -416,8 +313,11 @@ void AccessEmitter::generateSetGlobalBinding(const ValueContext& value)
 
     bool seesScriptBindings = value->seesScriptBindings();
     Boxed stored = in<Boxed>(value->valueOperand());
+    RuntimeOperation operation = seesScriptBindings
+        ? forMode(value->mode(), RuntimeOperation::SetGlobalBinding, RuntimeOperation::SetGlobalBindingSloppy)
+        : forMode(value->mode(), RuntimeOperation::SetGlobalObjectBinding, RuntimeOperation::SetGlobalObjectBindingSloppy);
     auto storeByOperation = [&](bool isOnRarePath) {
-        callVoidOperation(value, setGlobalBindingOperationFor(value->mode(), seesScriptBindings), { word32(static_cast<int32_t>(binding.index())), stored }, { .isOnRarePath = isOnRarePath });
+        callVoidOperation(value, operation, { word32(static_cast<int32_t>(binding.index())), stored }, { .isOnRarePath = isOnRarePath });
     };
     if (!probesBindingLocationInline(value.shape())) {
         storeByOperation(false);
@@ -439,23 +339,21 @@ void AccessEmitter::generateSetGlobalBinding(const ValueContext& value)
 
 void AccessEmitter::generatePropGet(const ValueContext& value)
 {
-    if (value->isFreeName()) {
-        define(value, getFreeName(value));
-        return;
-    }
-    define(value, getById(value, in<Boxed>(value->objectOperand()), value->key(), value->siteCache()));
+    define(value, value->isFreeName() ? getFreeName(value) : getById(value, in<Boxed>(value->objectOperand()), value->key(), value->siteCache()));
 }
 
-StubKey AccessEmitter::stubForStoreByRecord(const ValueContext& value, PutMode mode)
-{
-    return storedFieldTakesAnyValue(m_program, m_placement, m_function, value.value()) ? putKnownFieldThatTakesAnyValue(mode) : putKnownField(mode);
-}
-
-std::optional<uint32_t> AccessEmitter::findRecordOfStoredField(const ValueContext& value)
+void AccessEmitter::putNamedProperty(const ValueContext& value, Boxed object, PutMode mode)
 {
     std::optional<uint32_t> identifier = build().identifierNumbering().numberOf(value->key());
-    bool nameHasColumn = identifier && FieldTableEntry::hasColumn(*identifier);
-    return Typed::findRecordOfStoredField(m_program, m_placement, m_function, value.value(), nameHasColumn ? NameHasColumn::Yes : NameHasColumn::No);
+    NameHasColumn nameHasColumn = identifier && FieldTableEntry::hasColumn(*identifier) ? NameHasColumn::Yes : NameHasColumn::No;
+    std::optional<uint32_t> record = findRecordOfStoredField(m_program, m_placement, m_function, value.value(), nameHasColumn);
+    if (!record) {
+        putById(value, object, value->key(), in<Boxed>(value->valueOperand()), mode, value->siteCache());
+        return;
+    }
+    recordArrival(value, object);
+    StubKey stub = storedFieldTakesAnyValue(m_program, m_placement, m_function, value.value()) ? putKnownFieldThatTakesAnyValue(mode) : putKnownField(mode);
+    callStub(value, stub, { object.value(), in<Boxed>(value->valueOperand()).value() }, { .immediate = *record });
 }
 
 void AccessEmitter::generatePropSet(const ValueContext& value)
@@ -464,24 +362,12 @@ void AccessEmitter::generatePropSet(const ValueContext& value)
         putFreeName(value);
         return;
     }
-    if (std::optional<uint32_t> record = findRecordOfStoredField(value)) {
-        Boxed object = in<Boxed>(value->objectOperand());
-        recordArrival(value, object);
-        callStub(value, stubForStoreByRecord(value, putModeOf(value->mode())), { object.value(), in<Boxed>(value->valueOperand()).value() }, { .immediate = *record });
-        return;
-    }
-    putById(value, in<Boxed>(value->objectOperand()), value->key(), in<Boxed>(value->valueOperand()), putModeOf(value->mode()), value->siteCache());
+    putNamedProperty(value, in<Boxed>(value->objectOperand()), putModeOf(value->mode()));
 }
 
 void AccessEmitter::generatePropDefine(const ValueContext& value)
 {
-    if (std::optional<uint32_t> record = findRecordOfStoredField(value)) {
-        Boxed object = boxCell(in<CellPointer>(value->objectOperand()));
-        recordArrival(value, object);
-        callStub(value, stubForStoreByRecord(value, PutMode::Define), { object.value(), in<Boxed>(value->valueOperand()).value() }, { .immediate = *record });
-        return;
-    }
-    putById(value, boxCell(in<CellPointer>(value->objectOperand())), value->key(), in<Boxed>(value->valueOperand()), PutMode::Define, value->siteCache());
+    putNamedProperty(value, boxCell(in<CellPointer>(value->objectOperand())), PutMode::Define);
 }
 
 void AccessEmitter::generatePropHas(const ValueContext& value)
@@ -496,7 +382,130 @@ void AccessEmitter::generatePropDelete(const ValueContext& value)
         define(value, callOperation<Condition>(value, RuntimeOperation::DeleteFreeName, { key }));
         return;
     }
-    define(value, callOperation<Condition>(value, deleteByIdOperationFor(value->mode()), { in<Boxed>(value->objectOperand()), key }));
+    define(value, callOperation<Condition>(value, forMode(value->mode(), RuntimeOperation::DeleteById, RuntimeOperation::DeleteByIdSloppy), { in<Boxed>(value->objectOperand()), key }));
+}
+
+static StubKey cachedStoreStubFor(PutMode mode)
+{
+    switch (mode) {
+    case PutMode::Strict:
+    case PutMode::Sloppy:
+        return putByValCached(mode);
+    case PutMode::Define:
+        return defineByValCached();
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static std::optional<AOT::ExpectedElements> stubFormOf(ExpectedElements expected)
+{
+    switch (expected) {
+    case ExpectedElements::Anything:
+        return std::nullopt;
+    case ExpectedElements::Int32Array:
+        return AOT::ExpectedElements::Int32Array;
+    case ExpectedElements::Uint8Array:
+        return AOT::ExpectedElements::Uint8Array;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+Boxed AccessEmitter::getByVal(const OperationContext& context, Boxed receiver, Boxed key)
+{
+    recordArrival(context, receiver);
+    return Boxed(callStub(context, getByValCached(), { receiver.value(), key.value() }).first);
+}
+
+void AccessEmitter::putByVal(const OperationContext& context, Boxed receiver, Boxed key, Boxed value, PutMode mode)
+{
+    recordArrival(context, receiver);
+    callStub(context, cachedStoreStubFor(mode), { receiver.value(), key.value(), value.value() });
+}
+
+Condition AccessEmitter::hasByVal(const OperationContext& context, Boxed receiver, Boxed key)
+{
+    recordArrival(context, receiver);
+    return Condition(m_out.castToInt32(callStub(context, inByValCached(PresenceQuestion::In), { receiver.value(), key.value() }).first));
+}
+
+std::optional<AccessEmitter::ElementKey> AccessEmitter::elementKeyOf(const ValueContext& value)
+{
+    ValueID property = value->propertyOperand();
+    switch (representationOf(property)) {
+    case Representation::Int32:
+    case Representation::Int64:
+        return ElementKey { integerOf(property).value(), true };
+    case Representation::JSValue:
+        return ElementKey { in<Boxed>(property).value(), false };
+    case Representation::Unchosen:
+    case Representation::Void:
+    case Representation::Boolean:
+    case Representation::Double:
+    case Representation::OptionalInt64:
+    case Representation::OptionalDouble:
+    case Representation::Cell:
+    case Representation::Cell32:
+    case Representation::LiteralString:
+    case Representation::RawWord:
+        fail(value, InternalErrorKind::OpcodeWithoutCode);
+        return std::nullopt;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void AccessEmitter::generateElemGet(const ValueContext& value)
+{
+    Boxed object = in<Boxed>(value->objectOperand());
+    std::optional<ElementKey> key = elementKeyOf(value);
+    if (!key) {
+        define(value, emitter<ConstantEmitter>().zeroOf(value.representation()));
+        return;
+    }
+    StubKey stub = getByValCached();
+    if (key->isInteger || value->keyIsIntegral()) {
+        std::optional<AOT::ExpectedElements> expected = stubFormOf(value->expectedElements());
+        stub = expected ? getByValExpecting(key->isInteger, *expected) : AOT::getByVal(key->isInteger);
+    } else if (typeOf(value->objectOperand()).isObject() && typeOf(value->propertyOperand()).isString())
+        stub = getByValCachedCells();
+    recordArrival(value, object);
+    define(value, Boxed(callStub(value, stub, { object.value(), key->value }).first));
+}
+
+void AccessEmitter::generateElemSet(const ValueContext& value)
+{
+    Boxed object = in<Boxed>(value->objectOperand());
+    Boxed stored = in<Boxed>(value->valueOperand());
+    std::optional<ElementKey> key = elementKeyOf(value);
+    if (!key)
+        return;
+    StubKey stub = putByValCached(putModeOf(value->mode()));
+    if (key->isInteger || value->keyIsIntegral()) {
+        JSC::ECMAMode mode = forMode(value->mode(), JSC::ECMAMode::strict(), JSC::ECMAMode::sloppy());
+        std::optional<AOT::ExpectedElements> expected = stubFormOf(value->expectedElements());
+        stub = expected ? putByValExpecting(key->isInteger, mode, *expected) : AOT::putByVal(key->isInteger, mode);
+    }
+    recordArrival(value, object);
+    callStub(value, stub, { object.value(), key->value, stored.value() });
+}
+
+void AccessEmitter::generateElemHas(const ValueContext& value)
+{
+    defineTest(value, hasByVal(value, in<Boxed>(value->objectOperand()), in<Boxed>(value->propertyOperand())));
+}
+
+void AccessEmitter::generateElemDelete(const ValueContext& value)
+{
+    Boxed object = in<Boxed>(value->objectOperand());
+    Boxed key = in<Boxed>(value->propertyOperand());
+    define(value, callOperation<Condition>(value, forMode(value->mode(), RuntimeOperation::DeleteByVal, RuntimeOperation::DeleteByValSloppy), { object, key }));
+}
+
+void AccessEmitter::generateElemDefine(const ValueContext& value)
+{
+    Boxed object = boxCell(in<CellPointer>(value->objectOperand()));
+    Boxed key = in<Boxed>(value->propertyOperand());
+    Boxed stored = in<Boxed>(value->valueOperand());
+    putByVal(value, object, key, stored, PutMode::Define);
 }
 
 } } } // namespace JSC::AOT::Typed

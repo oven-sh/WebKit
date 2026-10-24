@@ -20,10 +20,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The planners behind the rules of PlaceTypeTests, in the word that a content begins with. Those of the resolving passes are numbered by RefusalKind, from 0.
 enum class TestSitePlanner : uint8_t { FieldOrGetter = 16, CalledMember, MemberCall, AccessUnderTests };
 
-// All that a planner takes from a site and its function: what the operation says and the types of its operands, not their numbers.
 class SiteContent {
 public:
     explicit SiteContent(uint32_t planner) { add(planner); }
@@ -57,7 +55,6 @@ public:
         add(value.expected());
     }
 
-    // An id that an arena gave out means something else in the next arena.
     bool holdsOnlyIDsOfProgram() const { return m_holdsOnlyIDsOfProgram; }
     uint64_t first() const { return m_first; }
     uint64_t second() const { return m_second; }
@@ -68,19 +65,17 @@ private:
     bool m_holdsOnlyIDsOfProgram { true };
 };
 
-// The contents for which a planner has found no plan, without asking where the site stands and without leaving a record in its arena.
 class RefusedContents {
     WTF_MAKE_NONCOPYABLE(RefusedContents);
 public:
     RefusedContents() = default;
 
-    // What the refusal has to say beside itself: a byte of the planner's own.
     std::optional<uint32_t> find(const SiteContent& content) const
     {
         const Table* table = shardOf(content).table.load(std::memory_order_acquire);
         if (!table)
             return std::nullopt;
-        return table->find(keyOf(content), content.second());
+        return findIn(*table, keyOf(content), content.second());
     }
 
     void add(const SiteContent& content, uint32_t remark = 0)
@@ -89,11 +84,11 @@ public:
         Shard& shard = shardOf(content);
         Locker locker { shard.lock };
         Table* table = shard.table.load(std::memory_order_relaxed);
-        if (table && table->find(keyOf(content), content.second()))
+        if (table && findIn(*table, keyOf(content), content.second()))
             return;
-        if (!table || (shard.numberOfEntries + 1) * 2 > table->slots.size())
+        if (!table || (shard.numberOfEntries + 1) * 2 > table->size())
             table = &shard.grow();
-        table->insert(keyOf(content) | remark, content.second());
+        insertInto(*table, keyOf(content) | remark, content.second());
         ++shard.numberOfEntries;
     }
 
@@ -101,54 +96,43 @@ private:
     static constexpr unsigned shardBits = 6;
     static constexpr size_t initialTableSize = 64;
     static constexpr uint64_t remarkMask = 0xff;
-    // No slot in use holds zero.
     static constexpr uint64_t isInUse = 0x100;
 
     struct Slot {
-        // The second word is written first. Neither changes once the first is there.
         std::atomic<uint64_t> keyAndRemark { 0 };
         std::atomic<uint64_t> second { 0 };
     };
 
-    struct Table {
-        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Table);
+    using Table = Vector<Slot>;
 
-        explicit Table(size_t size)
-            : slots(size)
-        {
+    static std::optional<uint32_t> findIn(const Table& slots, uint64_t key, uint64_t second)
+    {
+        size_t mask = slots.size() - 1;
+        for (size_t index = second & mask; uint64_t keyAndRemark = slots[index].keyAndRemark.load(std::memory_order_acquire); index = (index + 1) & mask) {
+            if ((keyAndRemark & ~remarkMask) == key && slots[index].second.load(std::memory_order_relaxed) == second)
+                return static_cast<uint32_t>(keyAndRemark & remarkMask);
         }
+        return std::nullopt;
+    }
 
-        std::optional<uint32_t> find(uint64_t key, uint64_t second) const
-        {
-            size_t mask = slots.size() - 1;
-            for (size_t index = second & mask; uint64_t keyAndRemark = slots[index].keyAndRemark.load(std::memory_order_acquire); index = (index + 1) & mask) {
-                if ((keyAndRemark & ~remarkMask) == key && slots[index].second.load(std::memory_order_relaxed) == second)
-                    return static_cast<uint32_t>(keyAndRemark & remarkMask);
-            }
-            return std::nullopt;
-        }
-
-        void insert(uint64_t keyAndRemark, uint64_t second)
-        {
-            size_t mask = slots.size() - 1;
-            size_t index = second & mask;
-            while (slots[index].keyAndRemark.load(std::memory_order_relaxed))
-                index = (index + 1) & mask;
-            slots[index].second.store(second, std::memory_order_relaxed);
-            slots[index].keyAndRemark.store(keyAndRemark, std::memory_order_release);
-        }
-
-        Vector<Slot> slots;
-    };
+    static void insertInto(Table& slots, uint64_t keyAndRemark, uint64_t second)
+    {
+        size_t mask = slots.size() - 1;
+        size_t index = second & mask;
+        while (slots[index].keyAndRemark.load(std::memory_order_relaxed))
+            index = (index + 1) & mask;
+        slots[index].second.store(second, std::memory_order_relaxed);
+        slots[index].keyAndRemark.store(keyAndRemark, std::memory_order_release);
+    }
 
     struct Shard {
         Table& grow() WTF_REQUIRES_LOCK(lock)
         {
-            auto larger = makeUnique<Table>(tables.isEmpty() ? initialTableSize : tables.last()->slots.size() * 2);
+            auto larger = makeUnique<Table>(tables.isEmpty() ? initialTableSize : tables.last()->size() * 2);
             if (!tables.isEmpty()) {
-                for (const Slot& slot : tables.last()->slots) {
+                for (const Slot& slot : *tables.last()) {
                     if (uint64_t keyAndRemark = slot.keyAndRemark.load(std::memory_order_relaxed))
-                        larger->insert(keyAndRemark, slot.second.load(std::memory_order_relaxed));
+                        insertInto(*larger, keyAndRemark, slot.second.load(std::memory_order_relaxed));
                 }
             }
             tables.append(WTF::move(larger));
@@ -158,7 +142,6 @@ private:
 
         Lock lock;
         std::atomic<Table*> table { nullptr };
-        // A lookup on another thread may still be probing an earlier table.
         Vector<std::unique_ptr<Table>> tables WTF_GUARDED_BY_LOCK(lock);
         size_t numberOfEntries WTF_GUARDED_BY_LOCK(lock) { 0 };
     };

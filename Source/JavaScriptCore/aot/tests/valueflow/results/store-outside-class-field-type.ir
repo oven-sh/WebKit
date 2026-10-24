@@ -23,7 +23,6 @@ layout L3 name="WeakRefGetsWeakRef" fields=[{key="held" declared={type=undefined
 layout L4 name="MapGetsMap" fields=[{key="held" declared={type=undefined|null|Map} flags=[IsRequired]}]
 layout L5
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Null
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewObject -, v0 layout=L1 fields=[0]
@@ -45,27 +44,22 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="storeFunction" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     PropSet v0, v1 key="held" mode=Strict
     Return
 }
 function f2 name="storePlainObject" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     PropSet v0, v1 key="held" mode=Strict
     Return
 }
 function f3 name="storeArray" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     PropSet v0, v1 key="held" mode=Strict
     Return
 }
 function f4 name="storeWeakRef" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     PropSet v0, v1 key="held" mode=Strict
     Return
 }
 function f5 name="storeMap" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     PropSet v0, v1 key="held" mode=Strict
     Return
 }

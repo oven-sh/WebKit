@@ -7,7 +7,6 @@ module m0 path="/main.ts" displayPath="main.ts" body=f0
 entry module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = CallDirect v1 function=f2
@@ -24,12 +23,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="inLoop" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 
 function f2 name="once" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 # CHECK: f0 Cold 8 10

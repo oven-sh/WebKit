@@ -19,7 +19,6 @@ variable g2 module=m0 declared={type=function} flags=[IsImmutable]
 variable g3 module=m0 declared={type=number|absent flags=[IsExpected]}
 variable g4 module=m0 declared={type=number|absent flags=[IsExpected]}
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     PutModuleVariable v1 variable=g2
@@ -39,13 +38,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2
 }
 function f2 name="next" kind=Method results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g3
     v1 = TypeTest v0 testedType=absent
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
@@ -57,11 +54,9 @@ function f2 name="next" kind=Method results=[{type=anything}] {
     v6 = BitOr v4, v5
     PutModuleVariable v6 variable=g3
     Return v6
-}
-# CHECK-LABEL: function f2 name="next"
 # CHECK-NOT: InvalidPrivateRead
+}
 function f3 name="peek" kind=Method results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g4
     v1 = TypeTest v0 testedType=absent
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
@@ -70,11 +65,9 @@ function f3 name="peek" kind=Method results=[{type=anything}] {
     Throw v3
   b2(v4):
     Return v4
-}
-# CHECK-LABEL: function f3 name="peek"
 # CHECK: InvalidPrivateRead
+}
 function f4 name="initializeCounter" kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=function} results=[{type=anything}] {
-  b0(v0: function):
     v1 = Integer integer=1
     PutModuleVariable v1 variable=g3
     v3 = PropGet v0 key="peek"

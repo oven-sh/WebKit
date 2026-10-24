@@ -32,7 +32,6 @@ class TypeRemap;
 uint64_t stampOfRecord(const Function&);
 uint64_t stampOfEntry(const Function&);
 
-// A value that a block lists: its number, its opcode and the block, in one word.
 class IndexedValue {
 public:
     static constexpr unsigned bitsOfOpcode = 10;
@@ -57,7 +56,6 @@ private:
 
 enum class NameKind : uint8_t { Key, Function, Layout, Variable };
 
-// What a listed value answers to key(), function(), layout() or variable(), where the answer is not null.
 class IndexedName {
 public:
     static constexpr unsigned bitsOfPosition = 30;
@@ -68,7 +66,6 @@ public:
     {
     }
 
-    // Among the listed values of the function.
     uint32_t position() const { return static_cast<uint32_t>(m_word) >> 2; }
     NameKind kind() const { return static_cast<NameKind>(m_word & 3); }
     uint32_t index() const { return static_cast<uint32_t>(m_word >> 32); }
@@ -103,17 +100,13 @@ void forEachNameOf(const Value& value, const Functor& functor)
 enum class BodyTrait : uint8_t {
     SeveralBlocks = 1 << 0,
     Handlers = 1 << 1,
-    // Of a block other than the entry block.
     BlockParameters = 1 << 2,
-    // A terminator with more than one target.
     SeveralTargets = 1 << 3,
-    // A value with a result whose type is never.
     NeverValues = 1 << 4,
     ParametersOfRuntimeFunction = 1 << 5,
     UnfinishedThis = 1 << 6,
 };
 
-// What a pass can tell from that it has nothing to do in a body. The values count that a block lists, among its parameters or its values, and all blocks, reachable or not.
 struct BodyContents {
     friend bool operator==(const BodyContents&, const BodyContents&) = default;
 
@@ -124,20 +117,14 @@ struct BodyContents {
 
 BodyContents contentsOf(const Function&);
 
-// What a step that looks through the whole program asks of a body before it opens it.
 struct RowOfBody {
-    // Of the values that the blocks list. The parameters of blocks are not among them.
     OpcodeSet opcodes;
     TerminatorKindSet terminators;
-    // Block by block as the function lists them, the values of a block in the order of its list.
     std::span<const IndexedValue> listedValues;
-    // Every value of the function stands in the list of a block or is a parameter of one.
     bool listsAllValues { false };
-    // False: no value of the function, listed or not, has an expected type. The end of a loop takes away an expected type that has become the type of its value, behind the row.
     bool holdsExpectedTypes { false };
 };
 
-// The records that a function names: in its own record, as the type or the expected type of a value, listed by a block or not, in the words of a value or of a terminator.
 struct NamesInBody {
     std::span<const TypeID> types;
     std::span<const LayoutID> layouts;
@@ -145,7 +132,6 @@ struct NamesInBody {
     std::span<const VariableID> variables;
 };
 
-// What loops over all functions ask of the record of a function before they look at anything else.
 struct RecordFacts {
     RecordFacts() = default;
     explicit RecordFacts(const Function& function)
@@ -172,28 +158,23 @@ struct RecordFacts {
     FunctionRole role { FunctionRole::Source };
     FunctionKind kind { FunctionKind::Plain };
     CreatorRecord::Kind creatorKind { CreatorRecord::Kind::None };
-    // 255 stands for more.
     uint8_t numberOfResults { 0 };
     bool hasBody { false };
 };
 static_assert(sizeof(RecordFacts) <= 8);
 
-// Whether the ids in a body are those that it will have when the loop or the edit that changes it has ended.
 enum class BodyIDs : bool { MayBeProvisional, Final };
 
-// A program pass looks through all bodies, often several times, for a few kinds of operations, and finds them in a few bodies.
 class BodyIndex {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(BodyIndex);
     WTF_MAKE_NONCOPYABLE(BodyIndex);
 public:
     BodyIndex() = default;
-    // With the loops all threads take the page faults of the lists when they grow.
     explicit BodyIndex(const ParallelLoops& loops)
         : m_loops(&loops)
     {
     }
 
-    // stampOfRecord() and stampOfEntry() of a function.
     struct RecordStamps {
         uint64_t record { 0 };
         uint64_t entry { 0 };
@@ -201,17 +182,14 @@ public:
         friend bool operator==(const RecordStamps&, const RecordStamps&) = default;
     };
 
-    // The part of a row that screens a body out. A loop over all functions reads one cache line per function.
     struct HotRow {
         TerminatorKindSet terminators() const { return std::bit_cast<TerminatorKindSet>(static_cast<uint64_t>(terminatorBits)); }
 
         OpcodeSet opcodes;
         uint16_t terminatorBits { 0 };
-        // False for a function with more blocks than a word has room for.
         bool isComplete { false };
         bool listsAllValues { false };
         bool holdsExpectedTypes { false };
-        // Some block has a parameter. The opcodes above are those of the other listed values.
         bool listsParameters { false };
         OptionSet<BodyTrait> traits;
     };
@@ -231,21 +209,16 @@ public:
         NamesInBody namesInBody() const;
 
         MallocSpan<IndexedValue> listedValues;
-        // By block.
         MallocSpan<TerminatorKind> terminatorKinds;
-        // In the order of the listed values. Made with the names.
         MallocSpan<IndexedName> listedNames;
-        // Types, layouts, sets of layouts, variables.
         MallocSpan<uint32_t> names;
         std::array<uint32_t, 3> endOfNames { };
         uint8_t stateOfNames { 0 };
     };
 
     struct Row {
-        // The names are made here, while the body is in the cache, where its ids are final. Otherwise they are made when they are first asked for.
         explicit Row(const Function&, BodyIDs = BodyIDs::MayBeProvisional);
 
-        // For a row that was made as if the ids were final, in front of the remaps of the function. The function is handed in, as it is behind them, where they have changed its record.
         void applyRemaps(const TypeRemap&, const FunctionRemap&, const Function* functionWithChangedRecord);
 
         HotRow hot;
@@ -254,26 +227,21 @@ public:
         std::optional<RecordStamps> recordStamps;
     };
 
-    // While no other thread asks.
     void growTo(size_t numberOfFunctions) { growTo(numberOfFunctions, State::Unknown); }
     void didAddFunctionsUpTo(size_t numberOfFunctions) { growTo(numberOfFunctions, State::GivenOut); }
     void forgetAll() { m_states.fill(static_cast<uint8_t>(State::Unknown)); }
     void didGiveOutAll() { m_states.fill(static_cast<uint8_t>(State::GivenOut)); }
     void didEndAllEdits();
 
-    // From any thread, each function from one thread at a time.
     void didGiveOut(FunctionID id)
     {
         if (id.index() < m_states.size())
             stateOf(id).store(static_cast<uint8_t>(State::GivenOut), std::memory_order_relaxed);
     }
-    // Does nothing, and answers false, for a function that was not given out since its row was last written.
     bool write(FunctionID, const Function&, BodyIDs = BodyIDs::MayBeProvisional);
-    // The row was made from the body that the function has now.
     bool write(FunctionID, Row&&);
     void didEndEdits(FunctionID);
 
-    // Null while the function is given out, or while another thread makes the row.
     const HotRow* hotRowOf(const Program& program, FunctionID id)
     {
         if (!ensureRow(program, id))
@@ -282,7 +250,6 @@ public:
         return row.isComplete ? &row : nullptr;
     }
 
-    // contentsOf() of the function without a look at it. Nothing unless its row is there: none is made for this.
     std::optional<BodyContents> contentsOf(FunctionID id)
     {
         if (!isKnown(id) || !m_hotRows[id.index()].isComplete)
@@ -294,11 +261,9 @@ public:
         return contents;
     }
 
-    // Of a function for which hotRowOf() has answered.
     std::span<const IndexedValue> listedValuesOf(FunctionID id) const { return m_coldRows[id.index()].listedValues.span(); }
     std::span<const TerminatorKind> terminatorKindsOf(FunctionID id) const { return m_coldRows[id.index()].terminatorKinds.span(); }
 
-    // Nothing where hotRowOf() gives nothing.
     std::optional<RowOfBody> rowOf(const Program& program, FunctionID id)
     {
         const HotRow* row = hotRowOf(program, id);
@@ -307,7 +272,6 @@ public:
         return RowOfBody { row->opcodes, row->terminators(), listedValuesOf(id), row->listsAllValues, row->holdsExpectedTypes };
     }
 
-    // Out of an array with 12 bytes per function. No row is made for these.
     size_t numberOfValuesIn(const Program& program, FunctionID id)
     {
         if (isKnown(id))
@@ -321,7 +285,6 @@ public:
         return RecordFacts(program.functions[id.index()]);
     }
 
-    // They are kept for as long as the row of the function is.
     RecordStamps recordStampsOf(const Program& program, FunctionID id)
     {
         if (!isKnown(id))
@@ -330,7 +293,6 @@ public:
         RecordStamps& kept = m_recordStamps[id.index()];
         if (hasStamps.load(std::memory_order_acquire))
             return RecordStamps { AtomicRef(kept.record).load(std::memory_order_relaxed), AtomicRef(kept.entry).load(std::memory_order_relaxed) };
-        // Two threads that come here at one time store the same words.
         RecordStamps stamps = computeRecordStamps(program.functions[id.index()]);
         AtomicRef(kept.record).store(stamps.record, std::memory_order_relaxed);
         AtomicRef(kept.entry).store(stamps.entry, std::memory_order_relaxed);
@@ -338,7 +300,6 @@ public:
         return stamps;
     }
 
-    // Made when they are first asked for. Nothing where rowOf() gives nothing, or while another thread makes them.
     std::optional<NamesInBody> namesIn(const Program& program, FunctionID id)
     {
         if (!hotRowOf(program, id))
@@ -355,7 +316,6 @@ public:
         return row.namesInBody();
     }
 
-    // Nothing where namesIn() gives nothing.
     std::optional<std::span<const IndexedName>> listedNamesIn(const Program& program, FunctionID id)
     {
         if (!namesIn(program, id))
@@ -363,7 +323,6 @@ public:
         return m_coldRows[id.index()].listedNames.span();
     }
 
-    // Every row that counts is what a row made now would be.
     void check(const Program&, const ParallelLoops&) const;
 
 private:
@@ -387,7 +346,7 @@ private:
         return true;
     }
 
-    static RecordStamps computeRecordStamps(const Function&);
+    static RecordStamps computeRecordStamps(const Function& function) { return { stampOfRecord(function), stampOfEntry(function) }; }
     void store(FunctionID, Row&&);
     void growTo(size_t numberOfFunctions, State);
     AtomicRef<uint8_t> stateOf(FunctionID id) { return AtomicRef(m_states[id.index()]); }
@@ -401,28 +360,31 @@ private:
     Vector<uint8_t> m_states;
 };
 
-// Hands the functor (BlockID, uint32_t indexInBlock, ValueID, const Value&) for each value of the function that a block lists and whose opcode is wanted.
+inline const BodyIndex::HotRow* hotRowOf(const Program& program, FunctionID id)
+{
+    BodyIndex* index = program.bodyIndex();
+    return index ? index->hotRowOf(program, id) : nullptr;
+}
+
 template<typename Functor>
 void forEachListedValue(const Program& program, FunctionID id, const OpcodeSet& wanted, const Functor& functor)
 {
     const Function& function = program.functions[id.index()];
-    if (BodyIndex* index = program.bodyIndex()) {
-        if (const BodyIndex::HotRow* row = index->hotRowOf(program, id)) {
-            if (!row->opcodes.intersects(wanted))
-                return;
-            BlockID block;
-            uint32_t indexInBlock = 0;
-            for (IndexedValue listed : index->listedValuesOf(id)) {
-                if (listed.block() != block) {
-                    block = listed.block();
-                    indexInBlock = 0;
-                }
-                if (wanted.contains(listed.opcode()))
-                    functor(block, indexInBlock, listed.value(), function.at(listed.value()));
-                ++indexInBlock;
-            }
+    if (const BodyIndex::HotRow* row = hotRowOf(program, id)) {
+        if (!row->opcodes.intersects(wanted))
             return;
+        BlockID block;
+        uint32_t indexInBlock = 0;
+        for (IndexedValue listed : program.bodyIndex()->listedValuesOf(id)) {
+            if (listed.block() != block) {
+                block = listed.block();
+                indexInBlock = 0;
+            }
+            if (wanted.contains(listed.opcode()))
+                functor(block, indexInBlock, listed.value(), function.at(listed.value()));
+            ++indexInBlock;
         }
+        return;
     }
     for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
         uint32_t indexInBlock = 0;
@@ -435,23 +397,20 @@ void forEachListedValue(const Program& program, FunctionID id, const OpcodeSet& 
     }
 }
 
-// Hands the functor (BlockID, ValueID, Opcode, NameKind, uint32_t index) for each name of each value that a block lists and whose opcode is wanted: see IndexedName.
 template<typename Functor>
 void forEachListedName(const Program& program, FunctionID id, const OpcodeSet& wanted, const Functor& functor)
 {
-    if (BodyIndex* index = program.bodyIndex()) {
-        if (const BodyIndex::HotRow* row = index->hotRowOf(program, id)) {
-            if (!row->opcodes.intersects(wanted))
-                return;
-            if (std::optional<std::span<const IndexedName>> names = index->listedNamesIn(program, id)) {
-                std::span<const IndexedValue> listedValues = index->listedValuesOf(id);
-                for (IndexedName name : *names) {
-                    IndexedValue listed = listedValues[name.position()];
-                    if (wanted.contains(listed.opcode()))
-                        functor(listed.block(), listed.value(), listed.opcode(), name.kind(), name.index());
-                }
-                return;
+    if (const BodyIndex::HotRow* row = hotRowOf(program, id)) {
+        if (!row->opcodes.intersects(wanted))
+            return;
+        if (std::optional<std::span<const IndexedName>> names = program.bodyIndex()->listedNamesIn(program, id)) {
+            std::span<const IndexedValue> listedValues = program.bodyIndex()->listedValuesOf(id);
+            for (IndexedName name : *names) {
+                IndexedValue listed = listedValues[name.position()];
+                if (wanted.contains(listed.opcode()))
+                    functor(listed.block(), listed.value(), listed.opcode(), name.kind(), name.index());
             }
+            return;
         }
     }
     const Function& function = program.functions[id.index()];
@@ -467,7 +426,6 @@ void forEachListedName(const Program& program, FunctionID id, const OpcodeSet& w
     }
 }
 
-// Hands the functor (BlockID, ValueID, const Value&) for each value that a block lists, whose opcode is wanted, and one of whose names the filter (NameKind, uint32_t index) accepts.
 template<typename Filter, typename Functor>
 void forEachListedValueNaming(const Program& program, FunctionID id, const OpcodeSet& wanted, const Filter& filter, const Functor& functor)
 {
@@ -481,7 +439,6 @@ void forEachListedValueNaming(const Program& program, FunctionID id, const Opcod
     });
 }
 
-// Hands the functor (BlockID, ValueID, FunctionID callee) for each CallDirect that a block lists, in the order of forEachListedValue().
 template<typename Functor>
 void forEachDirectCall(const Program& program, FunctionID id, const Functor& functor)
 {
@@ -491,26 +448,23 @@ void forEachDirectCall(const Program& program, FunctionID id, const Functor& fun
     });
 }
 
-// Hands the functor (ValueID, const Value&) for each value of the function whose opcode is wanted, listed by a block or not, in the order of their numbers.
 template<typename Functor>
 void forEachValueListedOrNot(const Program& program, FunctionID id, const OpcodeSet& wanted, const Functor& functor)
 {
     ASSERT(!wanted.contains(Opcode::Parameter));
     const Function& function = program.functions[id.index()];
-    if (BodyIndex* index = program.bodyIndex()) {
-        if (const BodyIndex::HotRow* row = index->hotRowOf(program, id); row && row->listsAllValues) {
-            if (!row->opcodes.intersects(wanted))
-                return;
-            Vector<ValueID, 16> found;
-            for (IndexedValue listed : index->listedValuesOf(id)) {
-                if (wanted.contains(listed.opcode()))
-                    found.append(listed.value());
-            }
-            AOT::sort(found);
-            for (ValueID value : found)
-                functor(value, function.at(value));
+    if (const BodyIndex::HotRow* row = hotRowOf(program, id); row && row->listsAllValues) {
+        if (!row->opcodes.intersects(wanted))
             return;
+        Vector<ValueID, 16> found;
+        for (IndexedValue listed : program.bodyIndex()->listedValuesOf(id)) {
+            if (wanted.contains(listed.opcode()))
+                found.append(listed.value());
         }
+        AOT::sort(found);
+        for (ValueID value : found)
+            functor(value, function.at(value));
+        return;
     }
     for (uint32_t valueIndex = 0; valueIndex < function.values.size(); ++valueIndex) {
         const Value& value = function.values[valueIndex];
@@ -519,21 +473,18 @@ void forEachValueListedOrNot(const Program& program, FunctionID id, const Opcode
     }
 }
 
-// Whether the predicate (ValueID, const Value&) holds for some value of the function that a block lists and whose opcode is wanted.
 template<typename Predicate>
 bool anyListedValue(const Program& program, FunctionID id, const OpcodeSet& wanted, const Predicate& predicate)
 {
     const Function& function = program.functions[id.index()];
-    if (BodyIndex* index = program.bodyIndex()) {
-        if (const BodyIndex::HotRow* row = index->hotRowOf(program, id)) {
-            if (!row->opcodes.intersects(wanted))
-                return false;
-            for (IndexedValue listed : index->listedValuesOf(id)) {
-                if (wanted.contains(listed.opcode()) && predicate(listed.value(), function.at(listed.value())))
-                    return true;
-            }
+    if (const BodyIndex::HotRow* row = hotRowOf(program, id)) {
+        if (!row->opcodes.intersects(wanted))
             return false;
+        for (IndexedValue listed : program.bodyIndex()->listedValuesOf(id)) {
+            if (wanted.contains(listed.opcode()) && predicate(listed.value(), function.at(listed.value())))
+                return true;
         }
+        return false;
     }
     for (const Block& block : function.blocks) {
         for (ValueID value : block.values) {
@@ -545,15 +496,18 @@ bool anyListedValue(const Program& program, FunctionID id, const OpcodeSet& want
     return false;
 }
 
-// The same for all values of the function, listed by a block or not. No parameter of a block is wanted.
+inline bool listsAllValues(const Program& program, FunctionID id)
+{
+    const BodyIndex::HotRow* row = hotRowOf(program, id);
+    return row && row->listsAllValues;
+}
+
 template<typename Predicate>
 bool anyValueListedOrNot(const Program& program, FunctionID id, const OpcodeSet& wanted, const Predicate& predicate)
 {
     ASSERT(!wanted.contains(Opcode::Parameter));
-    if (BodyIndex* index = program.bodyIndex()) {
-        if (const BodyIndex::HotRow* row = index->hotRowOf(program, id); row && row->listsAllValues)
-            return anyListedValue(program, id, wanted, predicate);
-    }
+    if (listsAllValues(program, id))
+        return anyListedValue(program, id, wanted, predicate);
     const Function& function = program.functions[id.index()];
     for (uint32_t valueIndex = 0; valueIndex < function.values.size(); ++valueIndex) {
         const Value& value = function.values[valueIndex];
@@ -563,68 +517,43 @@ bool anyValueListedOrNot(const Program& program, FunctionID id, const OpcodeSet&
     return false;
 }
 
-// False where no block of the function lists a value with one of the opcodes. True says nothing.
 inline bool mayListValueWith(const Program& program, FunctionID id, const OpcodeSet& wanted)
 {
-    if (BodyIndex* index = program.bodyIndex()) {
-        if (const BodyIndex::HotRow* row = index->hotRowOf(program, id))
-            return row->opcodes.intersects(wanted);
-    }
-    return true;
+    const BodyIndex::HotRow* row = hotRowOf(program, id);
+    return !row || row->opcodes.intersects(wanted);
 }
 
-// False where the function has no value with one of the opcodes, listed by a block or not. True says nothing.
 inline bool mayHoldValueWith(const Program& program, FunctionID id, const OpcodeSet& wanted)
 {
     ASSERT(!wanted.contains(Opcode::Parameter));
-    if (BodyIndex* index = program.bodyIndex()) {
-        if (const BodyIndex::HotRow* row = index->hotRowOf(program, id); row && row->listsAllValues)
-            return row->opcodes.intersects(wanted);
-    }
-    return true;
+    const BodyIndex::HotRow* row = hotRowOf(program, id);
+    return !row || !row->listsAllValues || row->opcodes.intersects(wanted);
 }
 
-// True where every value of the function stands in the list of a block or is a parameter of one. False says nothing.
-inline bool listsAllValues(const Program& program, FunctionID id)
-{
-    BodyIndex* index = program.bodyIndex();
-    const BodyIndex::HotRow* row = index ? index->hotRowOf(program, id) : nullptr;
-    return row && row->listsAllValues;
-}
-
-// False where no value of the function, listed or not, has an expected type. True says nothing.
 inline bool mayHoldExpectedTypes(const Program& program, FunctionID id)
 {
-    BodyIndex* index = program.bodyIndex();
-    const BodyIndex::HotRow* row = index ? index->hotRowOf(program, id) : nullptr;
+    const BodyIndex::HotRow* row = hotRowOf(program, id);
     return !row || row->holdsExpectedTypes;
 }
 
-// False where no block of the function ends in a terminator of one of the kinds. True says nothing.
 inline bool mayEndBlockWith(const Program& program, FunctionID id, const TerminatorKindSet& wanted)
 {
-    if (BodyIndex* index = program.bodyIndex()) {
-        if (const BodyIndex::HotRow* row = index->hotRowOf(program, id))
-            return row->terminators().intersects(wanted);
-    }
-    return true;
+    const BodyIndex::HotRow* row = hotRowOf(program, id);
+    return !row || row->terminators().intersects(wanted);
 }
 
-// Hands the functor (BlockID) for each block of the function that ends in a terminator of one of the kinds, in ascending order. With a row of the index no block is read.
 template<typename Functor>
 void forEachBlockEndingWith(const Program& program, FunctionID id, const TerminatorKindSet& wanted, const Functor& functor)
 {
-    if (BodyIndex* index = program.bodyIndex()) {
-        if (const BodyIndex::HotRow* row = index->hotRowOf(program, id)) {
-            if (!row->terminators().intersects(wanted))
-                return;
-            std::span<const TerminatorKind> kinds = index->terminatorKindsOf(id);
-            for (uint32_t blockIndex = 0; blockIndex < kinds.size(); ++blockIndex) {
-                if (wanted.contains(kinds[blockIndex]))
-                    functor(BlockID(blockIndex));
-            }
+    if (const BodyIndex::HotRow* row = hotRowOf(program, id)) {
+        if (!row->terminators().intersects(wanted))
             return;
+        std::span<const TerminatorKind> kinds = program.bodyIndex()->terminatorKindsOf(id);
+        for (uint32_t blockIndex = 0; blockIndex < kinds.size(); ++blockIndex) {
+            if (wanted.contains(kinds[blockIndex]))
+                functor(BlockID(blockIndex));
         }
+        return;
     }
     const Function& function = program.functions[id.index()];
     for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {

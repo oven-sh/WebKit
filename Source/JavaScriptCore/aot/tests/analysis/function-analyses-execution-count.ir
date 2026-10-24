@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="flag" [isFreeName]
     v2 = ToBoolean v1
@@ -36,7 +35,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # NOFLOW-NEXT: b2 Unknown
 # NOFLOW-NEXT: b3 Unknown
 function f1 name="calledTwice" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Return
 }
 # CHECK-LABEL: function f1
@@ -46,7 +44,6 @@ function f1 name="calledTwice" parameters=[{type=boolean}] results=[{type=undefi
 # NOFLOW-NEXT: execution-counts:
 # NOFLOW-NEXT: b0 Unknown
 function f2 name="calledOnce" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -65,7 +62,6 @@ function f2 name="calledOnce" parameters=[{type=boolean}] results=[{type=undefin
 # NOFLOW-NEXT: b1 Unknown
 # NOFLOW-NEXT: b2 Unknown
 function f3 name="calledInLoop" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Return
 }
 # CHECK-LABEL: function f3

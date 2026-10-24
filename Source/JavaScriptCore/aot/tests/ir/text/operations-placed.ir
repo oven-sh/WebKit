@@ -86,11 +86,9 @@ layout L2 kind=Environment fields=[{key="c" declared={type=anything}}]
 module m0 path="main.js" displayPath="main.js"
 module m1 path="other.cjs" displayPath="other.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0
 function f0 module=m1 kind=CommonJsModule flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
     Return
 }
 function f1 name="fieldsFromPlaced" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=number}, {type=L0}, {type=string}] results=[{type=anything}] {
-  b0(v0: anything, v1: number, v2: L0, v3: string):
     v4 = KeyConstant key=@@iterator
     v5 = NewObject -, v0, v1 layout=L0 fields=[0, 1] allocation=2
     v6 = PropGet v0 key="x" siteCache=1
@@ -116,7 +114,6 @@ function f1 name="fieldsFromPlaced" module=m0 thisType={type=anything} parameter
     Return v8
 }
 function f2 name="accesses" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=L0}, {type=number}, {type=object}] results=[{type=anything}] {
-  b0(v0: anything, v1: L0, v2: number, v3: object):
     v4 = PropHasOwn v0 key="x" siteCache=20
     v5 = PropGet v0 key="x" siteCache=21
     v6 = PropGetChain v0 key="x" secondKey="y" siteCache=22

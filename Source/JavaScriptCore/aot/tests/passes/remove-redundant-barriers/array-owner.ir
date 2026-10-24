@@ -13,16 +13,14 @@ function f0 name="array-owner" parameters=[{type=anything}] results=[{type=undef
     PutContiguousIndex v3, v2, v0
     v5 @JSValue = Undefined
     Return v5
-}
-# CHECK-LABEL: function f0 name="array-owner"
 # CHECK: PutContiguousIndex v3, v2, v0
 # CHECK-NOT: ownerCannotBeMarked
+}
 function f1 name="promise-owner" parameters=[{type=string}] results=[{type=undefined}] {
   b0(v0: string @JSValue):
     v1 @Cell = NewPromise
     FulfillFreshPromise v1, v0
     v3 @JSValue = Undefined
     Return v3
-}
-# CHECK-LABEL: function f1 name="promise-owner"
 # CHECK: FulfillFreshPromise v1, v0 [ownerCannotBeMarked]
+}

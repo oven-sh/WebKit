@@ -43,11 +43,6 @@ static std::optional<FunctionID> functionInInstance(const Instance& instance, co
     return functionOf(callee);
 }
 
-static JSObject* prototypeOrObjectPrototype(JSValue prototype, JSGlobalObject* realm)
-{
-    return prototype && prototype.isObject() ? asObject(prototype) : realm->objectPrototype();
-}
-
 enum class Ancestry : uint8_t { NotBelow, Unknown, SameOrBelow };
 
 // A class whose base is not proven to be a compiled class may be below any class.
@@ -236,7 +231,8 @@ JSFinalObject* ClassTable::createOrdinaryInstance(JSGlobalObject* realm, unsigne
 
 JSObject* ClassTable::prototypeForInstancesOf(VM& vm, JSObject* compiledCallee)
 {
-    return prototypeOrObjectPrototype(ownPrototypeProperty(vm, compiledCallee), m_state.instance.globalObject);
+    JSValue prototype = ownPrototypeProperty(vm, compiledCallee);
+    return prototype && prototype.isObject() ? asObject(prototype) : m_state.instance.globalObject->objectPrototype();
 }
 
 void ClassTable::rememberPlaceOfPrototypeProperty(VM& vm, Closure* function, JSObject* prototype)
@@ -359,19 +355,7 @@ JSObject* ClassTable::instanceWithPrototype(VM& vm, Object* allocated, JSObject*
     }
 
     Ancestry ancestry = ancestryOf(*this, *requested, allocatedClass);
-    if (ancestry == Ancestry::SameOrBelow && requested->shape) {
-        Object* instance = createClassInstance(vm, *requested, prototype);
-        if (listsNoField) {
-            recent = { prototype, &allocatedLayout, uncheckedDowncast<CompiledStructure>(instance->structure()) };
-            return instance;
-        }
-        allocated->forEachFieldInKeyOrder(m_state, [&](uint16_t index) {
-            copyFieldToInstance(vm, m_state, *allocated, allocatedLayout.fields()[index], *instance);
-        });
-        return instance;
-    }
-
-    bool hasShapeOfRequestedClass = ancestry == Ancestry::Unknown && requested->shape;
+    bool hasShapeOfRequestedClass = ancestry != Ancestry::NotBelow && requested->shape;
     JSObject* instance = hasShapeOfRequestedClass ? static_cast<JSObject*>(createClassInstance(vm, *requested, prototype)) : createOrdinaryInstance(m_state.instance.globalObject, allocatedLayout.numberOfFields, prototype);
     if (listsNoField) {
         if (hasShapeOfRequestedClass)
@@ -379,7 +363,11 @@ JSObject* ClassTable::instanceWithPrototype(VM& vm, Object* allocated, JSObject*
         return instance;
     }
     allocated->forEachFieldInKeyOrder(m_state, [&](uint16_t index) {
-        defineFieldOnInstance(vm, m_state, *allocated, allocatedLayout.fields()[index], *instance);
+        const FieldData& field = allocatedLayout.fields()[index];
+        if (hasShapeOfRequestedClass && ancestry == Ancestry::SameOrBelow)
+            copyFieldToInstance(vm, m_state, *allocated, field, *uncheckedDowncast<Object>(instance));
+        else
+            defineFieldOnInstance(vm, m_state, *allocated, field, *instance);
     });
     return instance;
 }

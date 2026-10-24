@@ -5,7 +5,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=IntlSupportedValuesOf
     v1 = String string="collation"
     v2 = Call v0, -, v1

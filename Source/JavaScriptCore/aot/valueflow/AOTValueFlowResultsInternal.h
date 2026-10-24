@@ -723,11 +723,8 @@ private:
 
     void appendPrototypesAtCreation(ValueFlowObjectID, Vector<ValueFlowObjectID, 8>&) const;
     ValueSetID prototypesOfHeirs(ValueSetMaker&, ValueSetID heirs) const;
-    ValueSetID findPrototypesOf(ValueSetMaker&, ValueSetID objects) const;
     ValueSetID findWrittenUnder(ValueSetMaker&, ValueSetID objects, const NodesWrittenUnderName&) const;
     ValueSetID chainWalkedInFull(ValueSetMaker&, ValueSetID objects) const;
-    ValueSetID walkChainOf(ValueSetMaker&, ValueSetID objects) const;
-    void indexStoresIntoPrototypeLinks();
 
     const ValueFlowResultInputs& m_inputs;
     std::unique_ptr<ValueFlowHeapIndex> m_ownIndex;

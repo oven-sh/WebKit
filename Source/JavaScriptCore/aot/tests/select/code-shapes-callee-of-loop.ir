@@ -7,7 +7,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToBoolean v1
@@ -31,33 +30,25 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="calledEveryIteration" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
-  b0(v0: anything, v1: string):
     v2 = StrictEq v1, v0
     Return v2
-}
-# CHECK-LABEL: function f1 name="calledEveryIteration"
 # CHECK: form=StringAndValue
+}
 
 function f2 name="calledBehindOneBranch" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
-  b0(v0: anything, v1: string):
     v2 = StrictEq v1, v0
     Return v2
-}
-# CHECK-LABEL: function f2 name="calledBehindOneBranch"
 # CHECK: form=StringAndValue
+}
 
 function f3 name="calledBehindTwoBranches" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
-  b0(v0: anything, v1: string):
     v2 = StrictEq v1, v0
     Return v2
-}
-# CHECK-LABEL: function f3 name="calledBehindTwoBranches"
 # CHECK: form=Generic
+}
 
 function f4 name="calledOutsideLoop" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
-  b0(v0: anything, v1: string):
     v2 = StrictEq v1, v0
     Return v2
-}
-# CHECK-LABEL: function f4 name="calledOutsideLoop"
 # CHECK: form=Generic
+}

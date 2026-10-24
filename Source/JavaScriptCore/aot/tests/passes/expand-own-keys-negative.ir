@@ -15,31 +15,28 @@ function f0 name="nullishReplacerAndIndent" parameters=[{type=object}] results=[
     v2 = Undefined
     v3 = CallBuiltin -, v0, v1, v2 overload=JSONStringify/0
     Return v3
-}
-# CHECK-LABEL: function f0 name="nullishReplacerAndIndent"
 # CHECK: = StringBuilderBegin
 # CHECK: frequency=Rare:
 # CHECK-NEXT: = CallBuiltin -, v0, v1, v2 overload=JSONStringify/0
+}
 
 function f1 name="replacer" parameters=[{type=object}, {type=function}] results=[{type=anything}] {
   b0(v0: object ~ L0, v1: function):
     v2 = CallBuiltin -, v0, v1 overload=JSONStringify/1
     Return v2
-}
-# CHECK-LABEL: function f1 name="replacer"
 # CHECK: b0(v0: object ~ L0, v1: function):
 # CHECK-NEXT: v2: undefined|string = CallBuiltin -, v0, v1 overload=JSONStringify/1
 # CHECK-NEXT: Return v2
+}
 
 function f2 name="replacerMayBeNullish" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
   b0(v0: object ~ L0, v1: anything):
     v2 = CallBuiltin -, v0, v1 overload=JSONStringify/2
     Return v2
-}
-# CHECK-LABEL: function f2 name="replacerMayBeNullish"
 # CHECK: b0(v0: object ~ L0, v1: anything):
 # CHECK-NEXT: v2: undefined|string = CallBuiltin -, v0, v1 overload=JSONStringify/2
 # CHECK-NEXT: Return v2
+}
 
 function f3 name="indent" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L0):
@@ -47,23 +44,20 @@ function f3 name="indent" parameters=[{type=object}] results=[{type=anything}] {
     v2 = Integer integer=2
     v3 = CallBuiltin -, v0, v1, v2 overload=JSONStringify/0
     Return v3
-}
-# CHECK-LABEL: function f3 name="indent"
 # CHECK: v2: 2 = Integer integer=2
 # CHECK-NEXT: v3: undefined|string = CallBuiltin -, v0, v1, v2 overload=JSONStringify/0
 # CHECK-NEXT: Return v3
+}
 
 function f4 name="noArgument" results=[{type=anything}] {
-  b0():
     v0 = Undefined
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1 overload=JSONStringify/0
     Return v2
-}
-# CHECK-LABEL: function f4 name="noArgument"
 # CHECK: v1: undefined = Undefined
 # CHECK-NEXT: v2: undefined|string = CallBuiltin -, v0, v1 overload=JSONStringify/0
 # CHECK-NEXT: Return v2
+}
 
 function f5 name="unlikelyBlockBehindLikelyBlock" parameters=[{type=object}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
   b0(v0: object ~ L0, v1: boolean, v2: boolean):
@@ -76,9 +70,7 @@ function f5 name="unlikelyBlockBehindLikelyBlock" parameters=[{type=object}, {ty
     Return v4
   b3():
     Return v0
-}
 # How often a block is taken to run does not decide: both are expanded.
-# CHECK-LABEL: function f5 name="unlikelyBlockBehindLikelyBlock"
 # CHECK: b1():
 # CHECK-NEXT: = ShapeTest v0 layouts=[L0]
 # CHECK: b2() frequency=Unlikely:
@@ -86,6 +78,7 @@ function f5 name="unlikelyBlockBehindLikelyBlock" parameters=[{type=object}, {ty
 # CHECK: frequency=Rare:
 # CHECK-NEXT: = CallBuiltin -, v0 overload=ObjectEntries/0
 # CHECK: = CallBuiltin -, v0 overload=ObjectValues/0
+}
 
 function f6 name="rareBlock" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
   b0(v0: object ~ L0, v1: boolean):
@@ -96,30 +89,27 @@ function f6 name="rareBlock" parameters=[{type=object}, {type=boolean}] results=
   b2() frequency=Rare:
     v3 = CallBuiltin -, v0 overload=ObjectValues/0
     Return v3
-}
-# CHECK-LABEL: function f6 name="rareBlock"
 # CHECK: b1():
 # CHECK-NEXT: = ShapeTest v0 layouts=[L0]
 # CHECK: b2() frequency=Rare:
 # CHECK-NEXT: v3: Array = CallBuiltin -, v0 overload=ObjectValues/0
 # CHECK-NEXT: Return v3
+}
 
 function f7 name="reflectOwnKeys" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L0):
     v1 = CallBuiltin -, v0 overload=ReflectOwnKeys/0
     Return v1
-}
-# CHECK-LABEL: function f7 name="reflectOwnKeys"
 # CHECK: b0(v0: object ~ L0):
 # CHECK-NEXT: v1: Array<string|symbol> = CallBuiltin -, v0 overload=ReflectOwnKeys/0
 # CHECK-NEXT: Return v1
+}
 
 function f8 name="listOfKeysThatLivesOn" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L0):
     v1 = CallBuiltin -, v0 overload=ObjectKeys/0
     Return v1
-}
-# CHECK-LABEL: function f8 name="listOfKeysThatLivesOn"
 # CHECK: b0(v0: object ~ L0):
 # CHECK-NEXT: v1: Array<string> = CallBuiltin -, v0 overload=ObjectKeys/0
 # CHECK-NEXT: Return v1
+}

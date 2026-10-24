@@ -5,7 +5,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = NewClosure function=f1
@@ -15,7 +14,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="mapValues" parameters=[{type=Map<string, number>}] results=[{type=anything}] {
-  b0(v0: Map<string, number>):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="print" [isFreeName]
     v3 = PropGet v0 key="values"
@@ -33,9 +31,7 @@ function f1 name="mapValues" parameters=[{type=Map<string, number>}] results=[{t
     Jump -> next b1()
   b3():
     Return
-}
 # The loop is printed in front of the block that makes the iterator. In front of that block the checks name what would take an iterator; behind it they name the iterator.
-# CHECK-LABEL: function f1 name="mapValues"
 # CHECK-NOT: IteratorOpen
 # CHECK-NOT: IteratorResume
 # CHECK-NOT: MapIterator
@@ -67,8 +63,8 @@ function f1 name="mapValues" parameters=[{type=Map<string, number>}] results=[{t
 # CHECK: = CallDirect {{*}} function=[[openIterator]] [isNeverInlined]
 # CHECK-NOT: [[iterator1]]
 # CHECK-NOT: Switch
+}
 function f2 name="arrayEntries" parameters=[{type=Array<number>}] results=[{type=anything}] {
-  b0(v0: Array<number>):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="print" [isFreeName]
     v3 = PropGet v0 key="entries"
@@ -86,8 +82,6 @@ function f2 name="arrayEntries" parameters=[{type=Array<number>}] results=[{type
     Jump -> next b1()
   b3():
     Return
-}
-# CHECK-LABEL: function f2 name="arrayEntries"
 # CHECK-NOT: IteratorOpen
 # CHECK-NOT: IteratorResume
 # CHECK-NOT: ArrayIterator
@@ -119,3 +113,4 @@ function f2 name="arrayEntries" parameters=[{type=Array<number>}] results=[{type
 # CHECK-NOT: [[iterator2]]
 # CHECK-NOT: Switch
 # CHECK: = ElemGet v0,
+}

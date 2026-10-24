@@ -39,11 +39,9 @@ enum class SiteKind : uint8_t {
     Bare,
     // EvaluateModule anywhere else: in a function, a branch, a loop, under a handler.
     Late,
-    // RequireModule.
     Required,
     // Any other operation that may be the first to evaluate the module it names.
     Named,
-    // RecordRequire.
     Record,
 };
 
@@ -52,11 +50,6 @@ struct ModuleCallSite {
     ValueID value;
     ModuleID target;
     SiteKind kind;
-};
-
-struct BareSite {
-    ValueID value;
-    ModuleID target;
 };
 
 struct ModuleToStart {
@@ -70,8 +63,6 @@ struct ModuleToStart {
 
 // What is found out about the modules before anything is changed. Lists and sets are by the number of the module.
 struct EvaluationPlan {
-    bool passesWalkOn(size_t index) const { return isWalkedByCode.quickGet(index) && !startsItself.quickGet(index); }
-
     const Program& program;
     // The requests that run in front of the body, in their order. A request that a `require` makes runs where the `require` stands.
     Vector<ModuleList> imports;
@@ -83,17 +74,11 @@ struct EvaluationPlan {
     BitVector isCalledWhereRequired;
     BitVector hasNoState;
     // In the order in which the body comes to them.
-    Vector<Vector<BareSite>> bareSites;
+    Vector<Vector<ModuleCallSite>> bareSites;
     // What stands in the place of each of them.
     Vector<Vector<ModuleCallees>> calleesAtBareSites;
     // For a module with a state: what evaluates all that it imports.
     Vector<ModuleCallees> steps;
-};
-
-// What a program can tell of a `require` beyond the evaluation of the module.
-struct TracesOfRequire {
-    bool markIsSpelled { true };
-    bool somebodyAsksWhoRequiredWhom { true };
 };
 
 } // anonymous namespace
@@ -113,10 +98,13 @@ static bool onlyReturns(const Function& body)
     });
 }
 
-// The function that takes the place of the body returns undefined, whether or not it runs the code.
-static bool returnsOnlyUndefined(const Function& body)
+// Whoever evaluates a module has nothing to pass but `this`, which is undefined in an ES module. The body of a CommonJS module takes nothing.
+static bool canBeCalledByCode(const Function& body)
 {
-    return std::ranges::all_of(body.blocks, [&](const Block& block) {
+    if (body.role != FunctionRole::Source || !body.isModuleBody() || body.isUnsplitCoroutine() || body.results.size() != 1)
+        return false;
+    // The function that takes the place of the body returns undefined, whether or not it runs the code.
+    bool returnsOnlyUndefined = std::ranges::all_of(body.blocks, [&](const Block& block) {
         switch (block.terminator.kind) {
         case TerminatorKind::Return: {
             ValueID returned = block.terminator.valueOperand();
@@ -137,12 +125,7 @@ static bool returnsOnlyUndefined(const Function& body)
             return true;
         }
     });
-}
-
-// Whoever evaluates a module has nothing to pass but `this`, which is undefined in an ES module. The body of a CommonJS module takes nothing.
-static bool canBeCalledByCode(const Function& body)
-{
-    if (body.role != FunctionRole::Source || !body.isModuleBody() || body.isUnsplitCoroutine() || body.results.size() != 1 || !returnsOnlyUndefined(body))
+    if (!returnsOnlyUndefined)
         return false;
     for (unsigned index = 0; index < body.numberOfEntryParameters(); ++index) {
         if (body.entryParameterKind(index) != EntryParameter::This)
@@ -213,12 +196,6 @@ static bool runsCode(const Program& program, const Module& module)
     return isEvaluatedWithImporter(program, module) && hasCode(program, module) && !onlyReturns(program.at(module.body));
 }
 
-// An ES module that failed throws the same error at everybody who asks for it later. What a CommonJS module does is written in its record: a wrapper of a bundler counts as done once it has begun.
-static bool keepsError(const Module& module)
-{
-    return module.kind != ModuleKind::CommonJs || module.flags.contains(ModuleFlags::KeepsError);
-}
-
 // The body of a face evaluates its file, whether the run time lists the names of the file behind that or the body copies them itself.
 static bool isFaceOfCommonJSFile(const Program& program, const Module& module)
 {
@@ -228,35 +205,23 @@ static bool isFaceOfCommonJSFile(const Program& program, const Module& module)
     return file.kind == ModuleKind::CommonJs && file.displayPath == module.displayPath;
 }
 
-static Vector<ModuleList> collectImports(const Vector<Module>& modules)
-{
-    return Vector<ModuleList>(modules.size(), [&](size_t index) {
-        ModuleList imports;
-        for (const ModuleRequest& request : modules[index].requests) {
-            if (request.kind == ModuleRequestKind::Import)
-                imports.append(request.target.index());
-        }
-        return imports;
-    });
-}
-
 // The modules that have the property themselves or import, directly or not, a module that has it.
-static BitVector findModulesThatReach(const Vector<ModuleList>& imports, const StronglyConnectedComponents& components, NOESCAPE const Invocable<bool(size_t)> auto& hasProperty)
+static BitVector findModulesThatReach(const EvaluationPlan& plan, const StronglyConnectedComponents& components, bool (*hasProperty)(const Program&, const Module&))
 {
     const Vector<uint32_t>& componentOf = components.componentOf;
 
     // A component has a higher number than every component it imports.
     BitVector reachingComponents(components.numberOfComponents);
     for (uint32_t index : components.members) {
-        bool reaches = hasProperty(index) || std::ranges::any_of(imports[index], [&](uint32_t target) {
+        bool reaches = hasProperty(plan.program, plan.program.modules[index]) || std::ranges::any_of(plan.imports[index], [&](uint32_t target) {
             return reachingComponents.quickGet(componentOf[target]);
         });
         if (reaches)
             reachingComponents.quickSet(componentOf[index]);
     }
 
-    BitVector reachingModules(imports.size());
-    for (size_t index = 0; index < imports.size(); ++index) {
+    BitVector reachingModules(plan.imports.size());
+    for (size_t index = 0; index < plan.imports.size(); ++index) {
         if (reachingComponents.quickGet(componentOf[index]))
             reachingModules.quickSet(index);
     }
@@ -281,46 +246,6 @@ static std::optional<SiteKind> siteKindOf(const Value& value)
         return SiteKind::Record;
     default:
         return std::nullopt;
-    }
-}
-
-// The front end says which sites are bare, and the passes between it and this one move code.
-static void appendFlaggedSites(const Function& function, Vector<std::pair<BlockID, ModuleCallSite>, 8>& flagged, Vector<ModuleCallSite>& found)
-{
-    if (flagged.isEmpty())
-        return;
-    if (function.blocks.size() == 1) {
-        for (auto& [block, site] : flagged) {
-            site.kind = SiteKind::Bare;
-            found.append(site);
-        }
-        return;
-    }
-
-    CFG cfg(function);
-    Dominators dominators(cfg, false);
-    std::optional<BlockCycles> cycles;
-    if (cfg.hasCycle())
-        cycles.emplace(cfg);
-    Vector<BlockID, 4> ends;
-    for (BlockID block : cfg.reversePostOrder()) {
-        if (returnsToCaller(function.at(block).terminator.kind))
-            ends.append(block);
-    }
-    auto isPassedOnceByEveryRun = [&](BlockID block) {
-        if (ends.isEmpty() || !cfg.isReachable(block) || (cycles && cycles->isInCycle(block)))
-            return false;
-        return std::ranges::all_of(ends, [&](BlockID end) {
-            return dominators.dominates(block, end);
-        });
-    };
-    AOT::stableSort(flagged, { }, [&](const std::pair<BlockID, ModuleCallSite>& entry) {
-        return cfg.isReachable(entry.first) ? cfg.reversePostOrderIndex(entry.first) : UINT32_MAX;
-    });
-    for (auto& [block, site] : flagged) {
-        if (isPassedOnceByEveryRun(block))
-            site.kind = SiteKind::Bare;
-        found.append(site);
     }
 }
 
@@ -353,7 +278,39 @@ static void findSites(const EvaluationPlan& plan, const Vector<ModuleID>& module
                 found.append(site);
         }
     }
-    appendFlaggedSites(function, flagged, found);
+
+    // The front end says which sites are bare, and the passes between it and this one move code.
+    if (flagged.isEmpty())
+        return;
+    if (function.blocks.size() == 1) {
+        for (auto& [block, site] : flagged) {
+            site.kind = SiteKind::Bare;
+            found.append(site);
+        }
+        return;
+    }
+
+    CFG cfg(function);
+    Dominators dominators(cfg, false);
+    std::optional<BlockCycles> cycles;
+    if (cfg.hasCycle())
+        cycles.emplace(cfg);
+    Vector<BlockID, 4> ends;
+    for (BlockID block : cfg.reversePostOrder()) {
+        if (returnsToCaller(function.at(block).terminator.kind))
+            ends.append(block);
+    }
+    AOT::stableSort(flagged, { }, [&](const std::pair<BlockID, ModuleCallSite>& entry) {
+        return cfg.isReachable(entry.first) ? cfg.reversePostOrderIndex(entry.first) : UINT32_MAX;
+    });
+    for (auto& [block, site] : flagged) {
+        bool isPassedOnceByEveryRun = !ends.isEmpty() && cfg.isReachable(block) && !(cycles && cycles->isInCycle(block)) && std::ranges::all_of(ends, [&](BlockID end) {
+            return dominators.dominates(block, end);
+        });
+        if (isPassedOnceByEveryRun)
+            site.kind = SiteKind::Bare;
+        found.append(site);
+    }
 }
 
 // By node: the node that every way from the root to it passes last. The root has the highest number and is its own answer; a node that the root does not reach has none.
@@ -363,22 +320,20 @@ static Vector<uint32_t> computeImmediateDominators(const Vector<ModuleList>& suc
     uint32_t numberOfNodes = successors.size();
     Vector<uint32_t> postOrder;
     Vector<uint32_t> numberOf(FillWith { }, numberOfNodes, none);
-    {
-        BitVector isVisited(numberOfNodes);
-        isVisited.quickSet(root);
-        Vector<std::pair<uint32_t, uint32_t>, 32> stack { { root, 0 } };
-        while (!stack.isEmpty()) {
-            auto& [node, next] = stack.last();
-            if (next == successors[node].size()) {
-                numberOf[node] = postOrder.size();
-                postOrder.append(node);
-                stack.removeLast();
-                continue;
-            }
-            uint32_t successor = successors[node][next++];
-            if (!isVisited.quickSet(successor))
-                stack.append({ successor, 0 });
+    BitVector isVisited(numberOfNodes);
+    isVisited.quickSet(root);
+    Vector<std::pair<uint32_t, uint32_t>, 32> stack { { root, 0 } };
+    while (!stack.isEmpty()) {
+        auto& [node, next] = stack.last();
+        if (next == successors[node].size()) {
+            numberOf[node] = postOrder.size();
+            postOrder.append(node);
+            stack.removeLast();
+            continue;
         }
+        uint32_t successor = successors[node][next++];
+        if (!isVisited.quickSet(successor))
+            stack.append({ successor, 0 });
     }
     Vector<ModuleList> predecessors(numberOfNodes);
     for (uint32_t node : postOrder) {
@@ -394,14 +349,11 @@ static Vector<uint32_t> computeImmediateDominators(const Vector<ModuleList>& suc
         for (uint32_t index = postOrder.size() - 1; index--;) {
             uint32_t node = postOrder[index];
             uint32_t found = none;
-            for (uint32_t predecessor : predecessors[node]) {
-                if (dominatorOf[predecessor] == none)
+            for (uint32_t other : predecessors[node]) {
+                if (dominatorOf[other] == none)
                     continue;
-                if (found == none) {
-                    found = predecessor;
-                    continue;
-                }
-                uint32_t other = predecessor;
+                if (found == none)
+                    found = other;
                 while (other != found) {
                     while (numberOf[other] < numberOf[found])
                         other = dominatorOf[other];
@@ -430,10 +382,11 @@ static BitVector findModulesWithoutState(const EvaluationPlan& plan, BitVector& 
             if (plan.isWalkedByCode.quickGet(target))
                 successors[index].append(target);
         }
-        for (const BareSite& site : plan.bareSites[index])
+        for (const ModuleCallSite& site : plan.bareSites[index])
             successors[index].append(site.target.index());
     }
 
+    BitVector hasNoState(numberOfModules);
     while (true) {
         successors[root].shrink(0);
         for (size_t index : isStart) {
@@ -443,6 +396,7 @@ static BitVector findModulesWithoutState(const EvaluationPlan& plan, BitVector& 
         Vector<uint32_t> dominatorOf = computeImmediateDominators(successors, root);
 
         bool didFindStart = false;
+        hasNoState.clearAll();
         for (size_t index : plan.isWalkedByCode) {
             // Nothing that is seen here comes to it. Whatever does finds a module with a state.
             if (dominatorOf[index] == UINT32_MAX) {
@@ -450,112 +404,83 @@ static BitVector findModulesWithoutState(const EvaluationPlan& plan, BitVector& 
                 didFindStart = true;
                 continue;
             }
+            if (dominatorOf[index] != root) {
+                hasNoState.quickSet(index);
+                continue;
+            }
             // The loader goes through a module that has nothing to run, and calls what that module imports.
-            if (dominatorOf[index] != root || plan.startsItself.quickGet(index))
+            if (plan.startsItself.quickGet(index))
                 continue;
             for (uint32_t successor : successors[index])
                 didFindStart |= !isStart.quickSet(successor);
         }
-        if (didFindStart)
-            continue;
-
-        BitVector hasNoState(numberOfModules);
-        for (size_t index : plan.isWalkedByCode) {
-            if (dominatorOf[index] != root)
-                hasNoState.quickSet(index);
-        }
-        return hasNoState;
+        if (!didFindStart)
+            return hasNoState;
     }
 }
 
-// What happens from the module on, in its order.
 static void walkFrom(EvaluationPlan& plan, ModuleID first)
 {
-    constexpr uint32_t stepsOfFirst = UINT32_MAX;
-    struct List {
-        uint32_t module;
-        uint32_t site;
-    };
     struct Frame {
         uint32_t module;
         uint32_t nextEdge;
-        List list;
+        // The steps of the first module, or what stands at the bare site that led here.
+        ModuleCallees* callees;
     };
     const Program& program = plan.program;
-    auto calleesOf = [&](List list) -> ModuleCallees& {
-        return list.site == stepsOfFirst ? plan.steps[list.module] : plan.calleesAtBareSites[list.module][list.site];
-    };
 
     UncheckedKeyHashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> visited;
     visited.add(first.index());
-    Vector<Frame, 32> stack { Frame { first.index(), 0, { first.index(), stepsOfFirst } } };
+    Vector<Frame, 32> stack { Frame { first.index(), 0, &plan.steps[first.index()] } };
     while (!stack.isEmpty()) {
         Frame& frame = stack.last();
         uint32_t index = frame.module;
         const ModuleList& imports = plan.imports[index];
-        const Vector<BareSite>& bareSites = plan.bareSites[index];
+        const Vector<ModuleCallSite>& bareSites = plan.bareSites[index];
         uint32_t edge = frame.nextEdge++;
         if (edge == imports.size() + bareSites.size()) {
             if (index != first.index() && plan.hasNoState.quickGet(index) && plan.startsItself.quickGet(index)) {
                 FunctionID body = program.modules[index].body;
                 if (!onlyReturns(program.at(body)))
-                    calleesOf(frame.list).append(body);
+                    frame.callees->append(body);
             }
             stack.removeLast();
             continue;
         }
 
-        List list = frame.list;
+        ModuleCallees* callees = frame.callees;
         uint32_t target;
         if (edge < imports.size())
             target = imports[edge];
         else {
-            list = { index, static_cast<uint32_t>(edge - imports.size()) };
-            target = bareSites[list.site].target.index();
+            callees = &plan.calleesAtBareSites[index][edge - imports.size()];
+            target = bareSites[edge - imports.size()].target.index();
         }
         if (!visited.add(target).isNewEntry)
             continue;
-        if (plan.hasNoState.quickGet(target) || plan.passesWalkOn(target))
-            stack.append(Frame { target, 0, list });
+        // A module that has nothing to run passes the walk on.
+        if (plan.hasNoState.quickGet(target) || (plan.isWalkedByCode.quickGet(target) && !plan.startsItself.quickGet(target)))
+            stack.append(Frame { target, 0, callees });
         else if (plan.startsItself.quickGet(target))
-            calleesOf(list).append(program.modules[target].body);
+            callees->append(program.modules[target].body);
     }
 }
 
-static Function createCode(const Function& body)
-{
-    Function code = body;
-    code.capabilities.add({ FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost });
-    return code;
-}
-
-static ValueID appendCall(IRBuilder& builder, FunctionID callee, std::span<const ValueID> arguments)
+static Value makeCall(FunctionID callee, std::span<const ValueID> arguments)
 {
     Value call = IRBuilder::make(Opcode::CallDirect);
     call.setFunction(callee);
     call.setArgumentsOperands(arguments);
-    return builder.append(WTF::move(call));
+    return call;
 }
 
-static void appendCallOfModule(IRBuilder& builder, FunctionID callee)
+static void addCallOfModule(const Program& program, FunctionID callee, NOESCAPE const Invocable<ValueID(Value&&)> auto& add)
 {
     Vector<ValueID, 1> arguments;
-    unsigned numberOfArguments = builder.context().program.at(callee).numberOfEntryParameters();
+    unsigned numberOfArguments = program.at(callee).numberOfEntryParameters();
     for (unsigned index = 0; index < numberOfArguments; ++index)
-        arguments.append(builder.appendUndefined());
-    appendCall(builder, callee, arguments.span());
-}
-
-static void insertCallOfModule(IRBuilder& builder, ProgramPoint point, FunctionID callee)
-{
-    Vector<ValueID, 1> arguments;
-    unsigned numberOfArguments = builder.context().program.at(callee).numberOfEntryParameters();
-    for (unsigned index = 0; index < numberOfArguments; ++index)
-        arguments.append(builder.insertBefore(point, IRBuilder::make(Opcode::Undefined)));
-    Value call = IRBuilder::make(Opcode::CallDirect);
-    call.setFunction(callee);
-    call.setArgumentsOperands(arguments.span());
-    builder.insertBefore(point, WTF::move(call));
+        arguments.append(add(IRBuilder::make(Opcode::Undefined)));
+    add(makeCall(callee, arguments.span()));
 }
 
 static Value makeModuleOperation(Opcode opcode, ModuleID module)
@@ -579,9 +504,15 @@ static void buildStart(const AnalysisContext& context, Function& start, const Mo
         arguments.append(copy);
     }
     builder.moveToEndOf(entry);
+    auto appendCallsOf = [&](std::span<const FunctionID> callees) {
+        for (FunctionID callee : callees) {
+            addCallOfModule(context.program, callee, [&](Value&& value) {
+                return builder.append(WTF::move(value));
+            });
+        }
+    };
 
-    for (FunctionID callee : steps.span().first(module.numberOfStepsBeforeItBegins))
-        appendCallOfModule(builder, callee);
+    appendCallsOf(steps.span().first(module.numberOfStepsBeforeItBegins));
     ValueID begins = module.beginsInCode ? ValueID() : builder.append(makeModuleOperation(Opcode::BeginModuleEvaluation, module.module));
     // Whoever has required the module may catch what its evaluation throws and go on.
     BlockID threw;
@@ -606,10 +537,9 @@ static void buildStart(const AnalysisContext& context, Function& start, const Mo
     }
 
     builder.moveToEndOf(run);
-    for (FunctionID callee : steps.span().subspan(module.numberOfStepsBeforeItBegins))
-        appendCallOfModule(builder, callee);
+    appendCallsOf(steps.span().subspan(module.numberOfStepsBeforeItBegins));
     if (!onlyReturns(code))
-        appendCall(builder, module.code, arguments.span());
+        builder.append(makeCall(module.code, arguments.span()));
     if (begins)
         builder.append(makeModuleOperation(Opcode::FinishModuleEvaluation, module.module));
     builder.emitReturn(builder.appendUndefined());
@@ -643,25 +573,6 @@ static void beginEvaluationInCode(const AnalysisContext& context, Function& code
     builder.emitReturn(builder.appendUndefined());
 }
 
-static bool spellsKey(const Value& value, PropertyKeyID key)
-{
-    switch (value.opcode) {
-    case Opcode::PropGet:
-    case Opcode::PropSet:
-    case Opcode::PropDefine:
-    case Opcode::PropHas:
-    case Opcode::PropHasOwn:
-    case Opcode::PropDelete:
-    case Opcode::GetOwnProperty:
-    case Opcode::GetOwnDataProperty:
-    case Opcode::KeyConstant:
-    case Opcode::NarrowByField:
-        return value.key() == key;
-    default:
-        return false;
-    }
-}
-
 // Behind the evaluation, require() marks the namespace object of a module that has no export `__esModule`: everybody who holds that object reads `true` under the name from then on.
 static bool isMarkOfRequireSpelled(const Program& program, const ParallelLoops& loops)
 {
@@ -680,7 +591,7 @@ static bool isMarkOfRequireSpelled(const Program& program, const ParallelLoops& 
             return isSpelled;
         }
         return anyValueListedOrNot(program, FunctionID(index), opcodesThatSpellKeys, [&](ValueID, const Value& value) {
-            return spellsKey(value, marker);
+            return value.key() == marker;
         });
     }).isEmpty();
 }
@@ -696,99 +607,51 @@ static bool somebodyAsksWhoRequiredWhom(const Program& program, const FlowResult
     return !flow.usesOf(Builtins::ModuleObjectParent).isEmpty() || !(flow.usesOf(Builtins::ModuleObjectChildren) - BuiltinUse::Tested).isEmpty();
 }
 
-static bool nobodySeesMarkOfRequire(const FlowResults& flow, const TracesOfRequire& traces, ModuleID module)
-{
-    return flow.hasResults() && !traces.markIsSpelled && flow.module(module).namespaceUse != NamespaceUse::Unknown;
-}
-
-// What is recorded is who required whom and, of an ES module, the mark, which a module that exports the name itself does not get.
-static bool recordsNothingThatIsSeen(const Program& program, const FlowResults& flow, const TracesOfRequire& traces, ModuleID target)
-{
-    if (traces.somebodyAsksWhoRequiredWhom)
-        return false;
-    const Module& module = program.at(target);
-    if (module.kind != ModuleKind::SourceText)
-        return true;
-    if (std::ranges::contains(module.exports, program.stringOf(BuiltinNames::__esModule), &ModuleExport::name))
-        return true;
-    return nobodySeesMarkOfRequire(flow, traces, target);
-}
-
-// Every site becomes what it does.
-static void replaceSites(const EvaluationPlan& plan, const FlowResults& flow, const TracesOfRequire& traces, ModuleID evaluated, Function& function, IRBuilder& builder)
+static void replaceSites(const EvaluationPlan& plan, NOESCAPE const Invocable<bool(ModuleID)> auto& recordsNothingThatIsSeen, ModuleID evaluated, Function& function, IRBuilder& builder)
 {
     const Program& program = plan.program;
-    auto isReplaced = [&](const Value& value) {
-        switch (value.opcode) {
-        case Opcode::EvaluateModule:
-            return true;
-        case Opcode::RecordRequire:
-            return recordsNothingThatIsSeen(program, flow, traces, value.module());
-        default:
-            return false;
-        }
-    };
-
-    Vector<ProgramPoint, 8> points;
-    for (unsigned blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
-        const BlockValues& values = function.blocks[blockIndex].values;
-        for (uint32_t index = 0; index < values.size(); ++index) {
-            const Value& value = function.at(values[index]);
-            if (!isReplaced(value))
-                continue;
-            points.append({ BlockID(blockIndex), index });
-        }
-    }
-    if (points.isEmpty())
-        return;
-
-    Vector<std::pair<ValueID, uint32_t>, 8> bareSites;
+    // By the number of the value: which of the bare sites of the module it is, counted from one.
+    Vector<uint32_t> bareSiteOf(FillWith { }, evaluated ? function.values.size() : 0, 0u);
     if (evaluated) {
-        const Vector<BareSite>& sites = plan.bareSites[evaluated.index()];
-        for (uint32_t index = 0; index < sites.size(); ++index)
-            bareSites.append({ sites[index].value, index });
-        AOT::sort(bareSites);
+        uint32_t numberOfSites = 0;
+        for (const ModuleCallSite& site : plan.bareSites[evaluated.index()])
+            bareSiteOf[site.value.index()] = ++numberOfSites;
     }
-    auto calleesAtBareSite = [&](ValueID id) -> const ModuleCallees* {
-        auto found = std::ranges::lower_bound(bareSites, id, { }, &std::pair<ValueID, uint32_t>::first);
-        if (found == bareSites.end() || found->first != id)
-            return nullptr;
-        return &plan.calleesAtBareSites[evaluated.index()][found->second];
-    };
 
     BitVector isErased(function.values.size());
-    for (ProgramPoint point : points) {
-        ValueID id = function.at(point.block).values[point.index];
-        Opcode opcode = function.at(id).opcode;
-        ModuleID target = function.at(id).module();
-        ModuleID referrer = function.at(id).referrer();
-        builder.setOrigin(function.at(id).origin());
-
-        if (opcode == Opcode::RecordRequire) {
+    for (unsigned blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
+        for (uint32_t index = 0; index < function.blocks[blockIndex].values.size(); ++index) {
+            ProgramPoint point { BlockID(blockIndex), index };
+            ValueID id = function.blocks[blockIndex].values[index];
+            const Value& value = function.at(id);
+            bool isRecord = value.opcode == Opcode::RecordRequire;
+            if (isRecord ? !recordsNothingThatIsSeen(value.module()) : value.opcode != Opcode::EvaluateModule)
+                continue;
             isErased.quickSet(id.index());
-            continue;
+            if (isRecord)
+                continue;
+
+            ModuleID target = value.module();
+            builder.setOrigin(value.origin());
+            std::span<const FunctionID> callees;
+            if (evaluated && bareSiteOf[id.index()])
+                callees = plan.calleesAtBareSites[evaluated.index()][bareSiteOf[id.index()] - 1].span();
+            else if (!plan.isCalledWhereRequired.quickGet(target.index())) {
+                // The loader links what the module imports, waits or refuses to, or has the module itself.
+                Value require = makeModuleOperation(Opcode::RequireModule, target);
+                require.setReferrer(value.referrer());
+                require.setSpecifier(program.at(target).path);
+                builder.insertBefore(point, WTF::move(require));
+            } else if (plan.startsItself.quickGet(target.index()))
+                callees = singleElementSpan(program.at(target).body);
+            else
+                callees = plan.steps[target.index()].span();
+            for (FunctionID callee : callees) {
+                addCallOfModule(program, callee, [&](Value&& added) {
+                    return builder.insertBefore(point, WTF::move(added));
+                });
+            }
         }
-        isErased.quickSet(id.index());
-        if (const ModuleCallees* callees = calleesAtBareSite(id)) {
-            for (FunctionID callee : *callees)
-                insertCallOfModule(builder, point, callee);
-            continue;
-        }
-        if (!plan.isCalledWhereRequired.quickGet(target.index())) {
-            // The loader links what the module imports, waits or refuses to, or has the module itself.
-            Value require = IRBuilder::make(Opcode::RequireModule);
-            require.setModule(target);
-            require.setReferrer(referrer);
-            require.setSpecifier(program.at(target).path);
-            builder.insertBefore(point, WTF::move(require));
-            continue;
-        }
-        if (plan.startsItself.quickGet(target.index())) {
-            insertCallOfModule(builder, point, program.at(target).body);
-            continue;
-        }
-        for (FunctionID callee : plan.steps[target.index()])
-            insertCallOfModule(builder, point, callee);
     }
     builder.applyInsertions();
 
@@ -816,22 +679,24 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
     const Program& program = editor.program();
     const Vector<Module>& modules = program.modules;
     const ParallelLoops& loops = build.parallelLoops();
+    constexpr OptionSet<FunctionCapabilities> calledByCodeAlone { FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost };
 
     EvaluationPlan plan { .program = program };
-    plan.imports = collectImports(modules);
+    plan.imports = Vector<ModuleList>(modules.size(), [&](size_t index) {
+        ModuleList imports;
+        for (const ModuleRequest& request : modules[index].requests) {
+            if (request.kind == ModuleRequestKind::Import)
+                imports.append(request.target.index());
+        }
+        return imports;
+    });
     StronglyConnectedComponents components = computeStronglyConnectedComponents(modules.size(), [&](unsigned index) -> const ModuleList& {
         return plan.imports[index];
     });
     // A `require` of a module that needs the loader asks the loader where it stands. The module that holds it waits for nothing.
-    BitVector needsLoader = findModulesThatReach(plan.imports, components, [&](size_t index) {
-        return needsLoaderItself(program, modules[index]);
-    });
-    BitVector leadsToCode = findModulesThatReach(plan.imports, components, [&](size_t index) {
-        return runsCode(program, modules[index]);
-    });
-    BitVector needsLink = findModulesThatReach(plan.imports, components, [&](size_t index) {
-        return hasLinkWorkItself(program, modules[index]);
-    });
+    BitVector needsLoader = findModulesThatReach(plan, components, needsLoaderItself);
+    BitVector leadsToCode = findModulesThatReach(plan, components, runsCode);
+    BitVector needsLink = findModulesThatReach(plan, components, hasLinkWorkItself);
 
     // A module that only passes the walk on is being evaluated while what it imports runs, as any other.
     plan.isWalkedByCode.ensureSize(modules.size());
@@ -867,7 +732,7 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
         size_t target = site.target.index();
         switch (site.kind) {
         case SiteKind::Bare:
-            plan.bareSites[moduleWithBody[site.function.index()].index()].append({ site.value, site.target });
+            plan.bareSites[moduleWithBody[site.function.index()].index()].append(site);
             ++numberOfSitesBound;
             continue;
         case SiteKind::Late:
@@ -901,17 +766,15 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
     auto importsCommonJSBeforeItBegins = [&](size_t index) {
         return isAskedOfLoader.quickGet(index) && modules[index].kind == ModuleKind::SourceText;
     };
-    for (size_t index : isAskedOfLoader) {
-        if (!importsCommonJSBeforeItBegins(index))
-            continue;
-        for (uint32_t target : plan.imports[index]) {
-            if (modules[target].kind == ModuleKind::CommonJs || isFaceOfCommonJSFile(program, modules[target]))
-                isStart.quickSet(target);
-        }
-    }
     for (const Entry& entry : program.entries)
         isStart.quickSet(entry.module.index());
     for (size_t index = 0; index < modules.size(); ++index) {
+        if (importsCommonJSBeforeItBegins(index)) {
+            for (uint32_t target : plan.imports[index]) {
+                if (modules[target].kind == ModuleKind::CommonJs || isFaceOfCommonJSFile(program, modules[target]))
+                    isStart.quickSet(target);
+            }
+        }
         // Behind the evaluation of a module that takes its names from an exports object the run time fills them in. It finds the place by the state.
         if ((modules[index].kind == ModuleKind::SourceText && modules[index].exportRule != SyntheticExportRule::None) || (modules[index].kind == ModuleKind::CommonJs && !modules[index].syntheticExports.isEmpty()))
             isStart.quickSet(index);
@@ -922,29 +785,34 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
     }
     plan.hasNoState = findModulesWithoutState(plan, isStart);
 
-    TracesOfRequire traces;
-    if (recordsRequires) {
-        traces.markIsSpelled = isMarkOfRequireSpelled(program, loops);
-        traces.somebodyAsksWhoRequiredWhom = somebodyAsksWhoRequiredWhom(program, flow);
-    }
+    // What a program can tell of a `require` beyond the evaluation of the module.
+    bool markIsSpelled = !recordsRequires || isMarkOfRequireSpelled(program, loops);
+    bool isAskedWhoRequiredWhom = !recordsRequires || somebodyAsksWhoRequiredWhom(program, flow);
+    // What is recorded is who required whom and, of an ES module, the mark, which a module that exports the name itself does not get.
+    auto recordsNothingThatIsSeen = [&](ModuleID target) {
+        if (isAskedWhoRequiredWhom)
+            return false;
+        const Module& module = program.at(target);
+        if (module.kind != ModuleKind::SourceText || std::ranges::contains(module.exports, program.stringOf(BuiltinNames::__esModule), &ModuleExport::name))
+            return true;
+        return flow.hasResults() && !markIsSpelled && flow.module(target).namespaceUse != NamespaceUse::Unknown;
+    };
 
     // What compiled code starts where a handler of the program may stand around it, and everything that is evaluated below that.
     BitVector mayBeLeftByCaughtError = isRequiredLate;
-    {
-        Vector<uint32_t, 32> work;
-        for (size_t index : mayBeLeftByCaughtError)
-            work.append(index);
-        auto add = [&](ModuleID target) {
-            if (!mayBeLeftByCaughtError.quickSet(target.index()))
-                work.append(target.index());
-        };
-        while (!work.isEmpty()) {
-            uint32_t index = work.takeLast();
-            for (const ModuleRequest& request : modules[index].requests)
-                add(request.target);
-            for (const BareSite& site : plan.bareSites[index])
-                add(site.target);
-        }
+    Vector<uint32_t, 32> work;
+    for (size_t index : mayBeLeftByCaughtError)
+        work.append(index);
+    auto addToWork = [&](ModuleID target) {
+        if (!mayBeLeftByCaughtError.quickSet(target.index()))
+            work.append(target.index());
+    };
+    while (!work.isEmpty()) {
+        uint32_t index = work.takeLast();
+        for (const ModuleRequest& request : modules[index].requests)
+            addToWork(request.target);
+        for (const ModuleCallSite& site : plan.bareSites[index])
+            addToWork(site.target);
     }
 
     plan.steps.grow(modules.size());
@@ -979,24 +847,29 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
     // The loader calls a module that nothing of the image evaluates and that imports nothing, and there is no call to save.
     Vector<ModuleToStart> starts;
     for (uint32_t index : modulesWithState) {
-        if (!plan.startsItself.quickGet(index) || (plan.steps[index].isEmpty() && !isCalled.quickGet(modules[index].body.index())))
+        const Module& module = modules[index];
+        const ModuleCallees& steps = plan.steps[index];
+        if (!plan.startsItself.quickGet(index) || (steps.isEmpty() && !isCalled.quickGet(module.body.index())))
             continue;
-        starts.append(ModuleToStart { ModuleID(index), modules[index].body, { }, keepsError(modules[index]) && mayBeLeftByCaughtError.quickGet(index) });
-        starts.last().beginsInCode = modules[index].kind == ModuleKind::CommonJs && plan.steps[index].isEmpty() && !onlyReturns(program.at(modules[index].body));
+        // An ES module that failed throws the same error at everybody who asks for it later. What a CommonJS module does is written in its record: a wrapper of a bundler counts as done once it has begun.
+        bool keepsError = module.kind != ModuleKind::CommonJs || module.flags.contains(ModuleFlags::KeepsError);
+        starts.append(ModuleToStart { ModuleID(index), module.body, { }, keepsError && mayBeLeftByCaughtError.quickGet(index) });
+        starts.last().beginsInCode = module.kind == ModuleKind::CommonJs && steps.isEmpty() && !onlyReturns(program.at(module.body));
         if (!importsCommonJSBeforeItBegins(index))
             continue;
-        auto firstOther = std::ranges::find_if(plan.steps[index], [&](FunctionID callee) {
+        auto firstOther = std::ranges::find_if(steps, [&](FunctionID callee) {
             size_t called = moduleWithBody[callee.index()].index();
             bool runsCommonJS = modules[called].kind == ModuleKind::CommonJs || isFaceOfCommonJSFile(program, modules[called]);
             return !runsCommonJS || plan.hasNoState.quickGet(called);
         });
-        starts.last().numberOfStepsBeforeItBegins = firstOther - plan.steps[index].begin();
+        starts.last().numberOfStepsBeforeItBegins = firstOther - steps.begin();
     }
 
     Vector<FunctionID> codeOfModule(modules.size());
     Vector<Function> codes(starts.size());
     forEachIndexInParallel(loops, starts.size(), [&](unsigned index) {
-        codes[index] = createCode(program.at(starts[index].start));
+        codes[index] = program.at(starts[index].start);
+        codes[index].capabilities.add(calledByCodeAlone);
     });
     // The bodies are built at the same time, and each reads the headers of those it calls: the headers are final before the first body is begun.
     for (size_t index = 0; index < starts.size(); ++index) {
@@ -1014,7 +887,7 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
         if (!plan.startsItself.quickGet(index))
             continue;
         ++numberOfModulesWithoutState;
-        editor.at(modules[index].body).capabilities.add({ FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost });
+        editor.at(modules[index].body).capabilities.add(calledByCodeAlone);
         // For the loader it is a module that has nothing to run.
         editor.at(ModuleID(static_cast<uint32_t>(index))).body = FunctionID();
     }
@@ -1023,8 +896,7 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
         return module.start;
     });
     editFunctionsInParallel(editor, build, startIDs.span(), [&](unsigned index, FunctionID id, Function& function, TaskArenas& arenas) {
-        AnalysisContext context { build, program, nullptr, nullptr, id };
-        buildStart(context, function, starts[index], plan.steps[starts[index].module.index()], arenas.types);
+        buildStart({ build, program, nullptr, nullptr, id }, function, starts[index], plan.steps[starts[index].module.index()], arenas.types);
     });
     for (const ModuleToStart& module : starts) {
         if (isStart.quickGet(module.module.index())) {
@@ -1032,7 +904,7 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
             continue;
         }
         // Two walks meet at it, and that is all it has a state for. Nothing but the starts of other modules comes to it, and they call it: for the loader it is a module that has nothing to run.
-        editor.at(module.start).capabilities.add({ FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost });
+        editor.at(module.start).capabilities.add(calledByCodeAlone);
         editor.at(module.module).body = FunctionID();
     }
 
@@ -1052,7 +924,7 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
         case SiteKind::Named:
             break;
         case SiteKind::Record:
-            isReplaced = recordsNothingThatIsSeen(program, flow, traces, site.target);
+            isReplaced = recordsNothingThatIsSeen(site.target);
             numberOfRequiresRecorded += !isReplaced;
             break;
         }
@@ -1067,7 +939,7 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
     editFunctionsInParallel(editor, build, functionsWithSites.span(), [&](unsigned index, FunctionID id, Function& function, TaskArenas& arenas) {
         AnalysisContext context { build, program, nullptr, nullptr, id };
         IRBuilder builder(context, function, arenas.types);
-        replaceSites(plan, flow, traces, modulesEvaluatedByThem[index], function, builder);
+        replaceSites(plan, recordsNothingThatIsSeen, modulesEvaluatedByThem[index], function, builder);
     });
     Vector<FunctionID> codesThatBegin;
     Vector<ModuleID> modulesThatBeginInCode;
@@ -1078,8 +950,7 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
         modulesThatBeginInCode.append(module.module);
     }
     editFunctionsInParallel(editor, build, codesThatBegin.span(), [&](unsigned index, FunctionID id, Function& function, TaskArenas& arenas) {
-        AnalysisContext context { build, program, nullptr, nullptr, id };
-        beginEvaluationInCode(context, function, modulesThatBeginInCode[index], arenas.types);
+        beginEvaluationInCode({ build, program, nullptr, nullptr, id }, function, modulesThatBeginInCode[index], arenas.types);
     });
 
     build.statistics().count(StatisticID::ModulesWithState, starts.size());

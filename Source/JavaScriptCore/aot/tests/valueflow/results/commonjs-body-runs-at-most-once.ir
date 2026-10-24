@@ -22,7 +22,6 @@ module m7 path="/app/alsoWaits.js" displayPath="alsoWaits.js" flags=[HasTopLevel
 module m8 path="/app/sixth.cjs" displayPath="sixth.cjs" kind=CommonJs flags=[KeepsError] body=f9
 entry module=m0
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = Call v1
@@ -39,7 +38,6 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="first" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = Call v1
@@ -47,14 +45,12 @@ function f1 name="first" module=m1 kind=CommonJsModule thisType={type=anything} 
     Return
 }
 function f2 name="second" module=m2 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = Call v1
     Return
 }
 function f3 name="third" module=m3 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = Call v1
@@ -62,26 +58,22 @@ function f3 name="third" module=m3 kind=CommonJsModule thisType={type=anything} 
     Return
 }
 function f4 name="fourth" module=m4 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = Call v1
     Return
 }
 function f5 name="fifth" module=m5 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = Call v1
     Return
 }
 function f6 name="later" module=m0 results=[{type=anything}] {
-  b0():
     EvaluateModule module=m5 referrer=m0
     Return
 }
 function f7 name="waits" module=m6 kind=Module flags=[IsAsync] results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="ready" [isFreeName]
     v2 = Await v1
@@ -89,7 +81,6 @@ function f7 name="waits" module=m6 kind=Module flags=[IsAsync] results=[{type=an
     Return
 }
 function f8 name="alsoWaits" module=m7 kind=Module flags=[IsAsync] results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="ready" [isFreeName]
     v2 = Await v1
@@ -97,7 +88,6 @@ function f8 name="alsoWaits" module=m7 kind=Module flags=[IsAsync] results=[{typ
     Return
 }
 function f9 name="sixth" module=m8 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = Call v1

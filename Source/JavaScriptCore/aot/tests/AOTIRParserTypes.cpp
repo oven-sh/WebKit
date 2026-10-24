@@ -372,6 +372,13 @@ uint32_t TextParser::typeWordOfAnything()
     return m_builder.internType(anythingOnWire());
 }
 
+uint32_t TextParser::typeWordOfAnyFunction()
+{
+    Wire::Type wire;
+    wire.flags = anyFunctionFlag;
+    return m_builder.internType(wire);
+}
+
 uint32_t TextParser::parseTypeWord()
 {
     SetForScope nesting(m_typeNesting, m_typeNesting + 1);

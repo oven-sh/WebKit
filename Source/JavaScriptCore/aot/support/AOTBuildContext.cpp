@@ -199,11 +199,6 @@ void BuildContext::resolveFunctionToDump(const Typed::Program& program)
     m_functionsToDump = WTF::move(functionsToDump);
 }
 
-bool BuildContext::shouldDump(Typed::FunctionID function) const
-{
-    return !m_functionsToDump || m_functionsToDump->get(function.index());
-}
-
 bool BuildContext::exceeds(LimitID id, uint64_t amount, const Subject& subject)
 {
     if (amount <= limit(id))
@@ -237,16 +232,6 @@ void BuildContext::reportLimitExceeded(LimitID id, uint64_t needed, const Subjec
     });
 }
 
-void BuildContext::addDecline(const Wire::DeclineRecord& decline)
-{
-    m_losses.addDecline(decline);
-}
-
-void BuildContext::addAllocationRemark(const AllocationRemark& remark)
-{
-    m_losses.addAllocationRemark(remark);
-}
-
 const IdentifierNumbering& BuildContext::identifierNumbering() const
 {
     RELEASE_ASSERT(m_identifierNumbering);
@@ -273,31 +258,6 @@ void BuildContext::setIdentifierNumbering(IdentifierNumbering&& numbering)
 {
     RELEASE_ASSERT(!m_identifierNumbering);
     m_identifierNumbering = makeUniqueWithoutFastMallocCheck<IdentifierNumbering>(WTF::move(numbering));
-}
-
-Diagnostics BuildContext::takeDiagnostics()
-{
-    return WTF::move(m_diagnostics);
-}
-
-Statistics BuildContext::takeStatistics()
-{
-    return std::exchange(m_statistics, Statistics());
-}
-
-Vector<Wire::LossRecord> BuildContext::takeLosses(const Typed::Program* program)
-{
-    return m_losses.takeLosses(program);
-}
-
-Vector<Wire::DeclineRecord> BuildContext::takeDeclines(const Typed::Program* program)
-{
-    return m_losses.takeDeclines(program);
-}
-
-Vector<AllocationRemark> BuildContext::takeAllocationRemarks()
-{
-    return m_losses.takeAllocationRemarks();
 }
 
 void BuildContext::enqueueDeferredValue(std::unique_ptr<DeferredValue> value)

@@ -22,12 +22,11 @@
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTThreads.h"
 #include "AOTValueIdentity.h"
-#include "AOTVector.h"
 #include <algorithm>
+#include <functional>
 #include <tuple>
 #include <wtf/Atomics.h>
 #include <wtf/HashSet.h>
-#include <wtf/Int128.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -37,52 +36,43 @@ static constexpr OpcodeSet allocationOpcodes { Opcode::NewObject, Opcode::CloneA
 
 namespace {
 
-// A parameter of the entry block in which a function is handed an object that its constructor is still filling.
 struct ObjectUnderConstruction {
     uint32_t parameterIndex { 0 };
     LayoutID layout;
-
-    friend bool operator==(const ObjectUnderConstruction&, const ObjectUnderConstruction&) = default;
 };
 
 struct ScanInputs {
     const SlotPlanContext& context;
     BitVector zeroEncodingCandidates;
     BitVector runsBeforeEntry;
-    // By layout: the compiled objects whose class the source puts below the class of the layout, at any depth.
     Vector<Vector<LayoutID>> layoutsNamedBelow;
-    // By function.
     Vector<Vector<ObjectUnderConstruction, 1>> objectsUnderConstruction;
 };
 
-struct SharedCounters {
-    std::span<SlotRowUse> rows;
-    std::span<LayoutUse> layouts;
-    std::span<SiteWeight> keyWeights;
-    FastBitVector& keysNamed;
-    FastBitVector& stringsNamed;
+struct StoreByNameUse {
+    auto place() const { return std::tuple(key, receivers); }
+
+    PropertyKeyID key;
+    LayoutSetID receivers;
+    double heat { 0 };
 };
 
-// It says that the field exists and fills nothing.
 struct StoreOfUndefined {
+    auto place() const { return std::tuple(key, receivers); }
+
     PropertyKeyID key;
     LayoutSetID receivers;
     uint32_t sites { 0 };
 };
 
-// A function stores into a field of nearly every object that it makes at one place, or that it gets from a function that has just made it.
 struct FillBesideCreation {
-    // Where the function sees the object made.
     LayoutID layout;
-    // Otherwise: the function that returned it.
     FunctionID maker;
     PropertyKeyID key;
     bool storesUndefined { false };
-    // How often such an object is made there.
     double heat { 0 };
 };
 
-// Where the object that a function returns comes from.
 struct SourceOfResult {
     LayoutID layout;
     FunctionID maker;
@@ -103,17 +93,22 @@ struct SlotUseCreation {
     bool isInLoop { false };
 };
 
+struct SlotUseFreshObject {
+    LayoutID layout;
+    FunctionID maker;
+    ValueID allocation;
+    BlockID block;
+};
+
+// Heat has no upper limit and is added up in the order of the functions: sums of floating-point numbers depend on their order.
 struct FunctionUses {
     FunctionID function;
-    // In heat without an upper limit, which is added up in the order of the functions: sums of floating-point numbers depend on their order.
     Vector<SlotUseCreation> creations;
-    // One entry for each place outside the constructor of a layout that makes an object of it: an allocation, or a construction by name. With how often it runs.
     Vector<std::pair<LayoutID, double>> placesThatMake;
     Vector<FunctionID> functionsCalledByName;
     Vector<FunctionID> functionsCalledByNameInLoops;
     Vector<std::pair<SlotRow, double>> fills;
     Vector<FillBesideCreation> fillsBesideCreation;
-    // Empty where the function may return something else than an object made during the call.
     Vector<SourceOfResult, 1> sourcesOfResult;
     Vector<SlotAccessUse> accesses;
     Vector<StoreByNameUse> storesByName;
@@ -123,23 +118,6 @@ struct FunctionUses {
     Vector<KeysStoredTogether> keysStoredTogether;
     Vector<VariableID> variablesNamed;
     Vector<VariableID> variablesWithUncheckedReads;
-    Vector<VariableID> variablesUsedBeforeProgramEntry;
-};
-
-struct SlotUseSite {
-    BlockID block;
-    const Value& value;
-};
-
-// An object that a function is the first to fill.
-struct SlotUseFreshObject {
-    // None for what a call returns whose callee does not say by itself what it makes.
-    LayoutID layout;
-    FunctionID maker;
-    // The allocation or the call. None for the object that the function was called to construct.
-    ValueID allocation;
-    // It runs once for each such object on its way to the store.
-    BlockID block;
 };
 
 } // anonymous namespace
@@ -159,10 +137,36 @@ static void addSaturated(SiteWeight& sum, SiteWeight more)
     }
 }
 
-// The host enters a module body through a closure, and creating a closure outside the runtime modules fills the statics.
-static bool isModuleBodyOrItsEntrypoint(const Function& function)
+static void setBit(FastBitVector& bits, size_t index)
 {
-    return function.kind == FunctionKind::Module || function.kind == FunctionKind::CommonJsModule;
+    if (!bits.at(index))
+        bits.atomicSetAndCheck(index, true);
+}
+
+template<typename T, size_t inlineCapacity>
+static void foldEntriesOfOnePlace(Vector<T, inlineCapacity>& sorted, const auto& placeOf, const auto& addTo)
+{
+    size_t count = 0;
+    for (const T& entry : sorted) {
+        if (count && placeOf(sorted[count - 1]) == placeOf(entry))
+            addTo(sorted[count - 1], entry);
+        else
+            sorted[count++] = entry;
+    }
+    sorted.shrink(count);
+}
+
+template<typename T>
+static Vector<T> listsOfAll(std::span<const FunctionUses> functions, Vector<T> FunctionUses::* list)
+{
+    size_t count = 0;
+    for (const FunctionUses& function : functions)
+        count += (function.*list).size();
+    Vector<T> all;
+    all.reserveInitialCapacity(count);
+    for (const FunctionUses& function : functions)
+        all.appendVector(function.*list);
+    return all;
 }
 
 static ValueID thisParameterOf(const Function& function)
@@ -184,7 +188,8 @@ static BitVector computeRunsBeforeEntry(const SlotPlanContext& context)
     };
     for (unsigned i = 0; i < program.functions.size(); ++i) {
         const Function& function = program.functions[i];
-        if ((function.mayBeCalledByHost() && !isModuleBodyOrItsEntrypoint(function)) || isInRuntimeModule(program, function))
+        bool isModuleBody = function.kind == FunctionKind::Module || function.kind == FunctionKind::CommonJsModule;
+        if ((function.mayBeCalledByHost() && !isModuleBody) || isInRuntimeModule(program, function))
             reach(FunctionID(i));
     }
     for (const RuntimeFunctionEntry& entry : program.runtimeFunctions)
@@ -210,106 +215,75 @@ static Vector<Vector<LayoutID>> findLayoutsNamedBelow(const SlotPlanContext& con
     return below;
 }
 
-namespace {
-
-// `constructor() { this.update = options => { this.options = options.
-class ConstructionFollower {
-public:
-    ConstructionFollower(const SlotPlanContext& context, FunctionID id, std::span<const ObjectUnderConstruction> handedOver)
-        : m_program(context.program)
-        , m_function(m_program.at(id))
-        , m_handedOver(handedOver)
-        , m_analyses({ context.build, m_program, &context.inputs.flow, nullptr, id }, m_function)
-    {
-    }
-
-    void run(NOESCAPE const Invocable<void(FunctionID, ObjectUnderConstruction)> auto& handOver)
-    {
-        struct ClosureOverObject {
-            FunctionID function;
-            ObjectUnderConstruction object;
-        };
-        Vector<ClosureOverObject, 8> closures;
-        const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
-        double frequencyOfEntry = frequencies.frequencyOf(entryBlock);
-        for (BlockID block : m_analyses.cfg().reversePostOrder()) {
-            bool runsNearlyAlways = frequencies.frequencyOf(block) * 2 > frequencyOfEntry;
-            for (ValueID id : m_function.at(block).values) {
-                const Value& value = m_function.at(id);
-                if (value.opcode == Opcode::NewClosure) {
-                    std::span<const ValueID> captures = value.capturesOperands();
-                    for (uint32_t index = 0; index < captures.size(); ++index) {
-                        if (LayoutID layout = layoutUnderConstruction(captures[index]))
-                            closures.append({ value.function(), { index, layout } });
-                    }
-                    continue;
-                }
-                if (value.opcode != Opcode::CallDirect || value.isConstruction() || !runsNearlyAlways)
-                    continue;
-                std::span<const ValueID> arguments = value.argumentsOperands();
-                for (uint32_t index = 0; index < arguments.size(); ++index) {
-                    if (LayoutID layout = layoutUnderConstruction(arguments[index]))
-                        handOver(value.function(), { index, layout });
-                }
-                for (const ClosureOverObject& closure : closures) {
-                    if (closure.function == value.function())
-                        handOver(closure.function, closure.object);
-                }
-            }
-        }
-    }
-
-private:
-    LayoutID layoutUnderConstruction(ValueID value)
-    {
-        Vector<ValueID, 4> visitedParameters;
-        return layoutUnderConstruction(value, visitedParameters);
-    }
-
-    // A test that passes hands the object on as a parameter of the block behind it.
-    LayoutID layoutUnderConstruction(ValueID value, Vector<ValueID, 4>& visitedParameters)
-    {
-        ValueID root = definitionThroughSameValues(m_function, value);
-        const Value& definition = m_function.at(root);
-        LayoutID constructed = m_function.constructedClass;
+static void forEachObjectHandedOver(const SlotPlanContext& context, FunctionID id, std::span<const ObjectUnderConstruction> handedOver, NOESCAPE const Invocable<void(FunctionID, ObjectUnderConstruction)> auto& handOver)
+{
+    const Function& function = context.program.at(id);
+    FunctionAnalyses analyses({ context.build, context.program, &context.inputs.flow, nullptr, id }, function);
+    LayoutID constructed = function.constructedClass;
+    Vector<ValueID, 4> visitedParameters;
+    auto follow = [&](auto& self, ValueID value) -> LayoutID {
+        ValueID root = definitionThroughSameValues(function, value);
+        const Value& definition = function.at(root);
         if (definition.opcode == Opcode::NewObject)
-            return constructed && m_function.kind == FunctionKind::BaseConstructor && definition.layout() == constructed ? constructed : LayoutID();
+            return constructed && function.kind == FunctionKind::BaseConstructor && definition.layout() == constructed ? constructed : LayoutID();
         if (definition.opcode != Opcode::Parameter || visitedParameters.contains(root))
             return { };
         visitedParameters.append(root);
 
-        ValueLocation location = m_analyses.useLists().locationOf(root);
+        ValueLocation location = analyses.useLists().locationOf(root);
         if (location.block == entryBlock) {
-            if (constructed && m_function.thisParameterIndex() == location.index)
+            if (constructed && function.thisParameterIndex() == location.index)
                 return constructed;
-            auto found = std::ranges::find(m_handedOver, location.index, &ObjectUnderConstruction::parameterIndex);
-            return found == m_handedOver.end() ? LayoutID() : found->layout;
+            auto found = std::ranges::find(handedOver, location.index, &ObjectUnderConstruction::parameterIndex);
+            return found == handedOver.end() ? LayoutID() : found->layout;
         }
         LayoutID layout;
-        for (Edge edge : m_analyses.cfg().incomingEdges(location.block)) {
-            ValueID passed = valuePassedOn(m_function, edge, location.index);
-            LayoutID layoutOnEdge = passed ? layoutUnderConstruction(passed, visitedParameters) : LayoutID();
+        for (Edge edge : analyses.cfg().incomingEdges(location.block)) {
+            ValueID passed = valuePassedOn(function, edge, location.index);
+            LayoutID layoutOnEdge = passed ? self(self, passed) : LayoutID();
             if (!layoutOnEdge || (layout && layout != layoutOnEdge))
                 return { };
             layout = layoutOnEdge;
         }
         return layout;
+    };
+    auto forEachObjectAmong = [&](std::span<const ValueID> values, const auto& functor) {
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            visitedParameters.shrink(0);
+            if (LayoutID layout = follow(follow, values[index]))
+                functor(ObjectUnderConstruction { index, layout });
+        }
+    };
+
+    Vector<std::pair<FunctionID, ObjectUnderConstruction>, 8> closures;
+    const BlockFrequencies& frequencies = analyses.blockFrequencies();
+    double frequencyOfEntry = frequencies.frequencyOf(entryBlock);
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        bool runsNearlyAlways = frequencies.frequencyOf(block) * 2 > frequencyOfEntry;
+        for (ValueID valueID : function.at(block).values) {
+            const Value& value = function.at(valueID);
+            if (value.opcode == Opcode::NewClosure) {
+                forEachObjectAmong(value.capturesOperands(), [&](ObjectUnderConstruction object) {
+                    closures.append({ value.function(), object });
+                });
+                continue;
+            }
+            if (value.opcode != Opcode::CallDirect || value.isConstruction() || !runsNearlyAlways)
+                continue;
+            forEachObjectAmong(value.argumentsOperands(), [&](ObjectUnderConstruction object) {
+                handOver(value.function(), object);
+            });
+            for (auto& [closure, object] : closures) {
+                if (closure == value.function())
+                    handOver(closure, object);
+            }
+        }
     }
-
-    const Program& m_program;
-    const Function& m_function;
-    std::span<const ObjectUnderConstruction> m_handedOver;
-    FunctionAnalyses m_analyses;
-};
-
-} // anonymous namespace
+}
 
 static Vector<Vector<ObjectUnderConstruction, 1>> findObjectsUnderConstruction(const SlotPlanContext& context)
 {
-    struct HandOver {
-        FunctionID callee;
-        ObjectUnderConstruction object;
-    };
+    using HandOver = std::pair<FunctionID, ObjectUnderConstruction>;
     const Program& program = context.program;
     auto callsDirectly = [&](FunctionID function) {
         return std::ranges::any_of(program.at(function).values, [](const Value& value) {
@@ -326,19 +300,19 @@ static Vector<Vector<ObjectUnderConstruction, 1>> findObjectsUnderConstruction(c
     while (!functionsToVisit.isEmpty()) {
         Vector<HandOver> handOvers = collectInParallel<HandOver>(context.build.parallelLoops(), functionsToVisit.size(), [&](unsigned index, Vector<HandOver>& collected) {
             FunctionID function = functionsToVisit[index];
-            ConstructionFollower(context, function, objects[function.index()].span()).run([&](FunctionID callee, ObjectUnderConstruction object) {
+            forEachObjectHandedOver(context, function, objects[function.index()].span(), [&](FunctionID callee, ObjectUnderConstruction object) {
                 collected.append({ callee, object });
             });
         });
         functionsToVisit.shrink(0);
-        for (const HandOver& handOver : handOvers) {
-            Vector<ObjectUnderConstruction, 1>& known = objects[handOver.callee.index()];
-            const Function& callee = program.at(handOver.callee);
-            if (!callee.hasBody() || callee.constructedClass || std::ranges::contains(known, handOver.object.parameterIndex, &ObjectUnderConstruction::parameterIndex))
+        for (auto& [calleeID, object] : handOvers) {
+            Vector<ObjectUnderConstruction, 1>& known = objects[calleeID.index()];
+            const Function& callee = program.at(calleeID);
+            if (!callee.hasBody() || callee.constructedClass || std::ranges::contains(known, object.parameterIndex, &ObjectUnderConstruction::parameterIndex))
                 continue;
-            known.append(handOver.object);
-            if (!functionsToVisit.contains(handOver.callee) && callsDirectly(handOver.callee))
-                functionsToVisit.append(handOver.callee);
+            known.append(object);
+            if (!functionsToVisit.contains(calleeID) && callsDirectly(calleeID))
+                functionsToVisit.append(calleeID);
         }
     }
     return objects;
@@ -352,57 +326,381 @@ static bool accessIsOrderedBefore(const SlotAccessUse& a, const SlotAccessUse& b
 
 static void foldEqualAccesses(Vector<SlotAccessUse>& sorted)
 {
-    size_t count = 0;
-    for (const SlotAccessUse& use : sorted) {
-        if (!count || sorted[count - 1].access != use.access) {
-            sorted[count++] = use;
-            continue;
-        }
-        SlotAccessUse& folded = sorted[count - 1];
+    foldEntriesOfOnePlace(sorted, [](const SlotAccessUse& use) { return use.access; }, [](SlotAccessUse& folded, const SlotAccessUse& use) {
         folded.sites += use.sites;
         folded.weight = saturatedSum(folded.weight, use.weight);
         folded.fillHeat += use.fillHeat;
         folded.storesWithoutAllocation += use.storesWithoutAllocation;
         folded.storesIntoFilledSlots += use.storesIntoFilledSlots;
         folded.storesIntoNewObjects += use.storesIntoNewObjects;
-    }
-    sorted.shrink(count);
+    });
 }
 
 namespace {
 
 class SlotUseScanner {
 public:
-    SlotUseScanner(const ScanInputs&, const SharedCounters&, FunctionID);
+    SlotUseScanner(const ScanInputs& inputs, SlotUses& shared, FunctionID id)
+        : m_inputs(inputs)
+        , m_shared(shared)
+        , m_program(inputs.context.program)
+        , m_rows(inputs.context.rows)
+        , m_id(id)
+        , m_function(m_program.at(id))
+        , m_thisParameter(thisParameterOf(m_function))
+        , m_analyses({ inputs.context.build, m_program, &inputs.context.inputs.flow, nullptr, id }, m_function)
+        , m_weights(m_program, inputs.context.inputs.heat, id, m_analyses)
+    {
+    }
 
-    FunctionUses run();
+    FunctionUses run()
+    {
+        m_uses.function = m_id;
+        LayoutID constructed = m_function.constructedClass;
+        if (constructed && m_program.at(constructed).constructor == m_id && m_function.kind != FunctionKind::BaseConstructor)
+            m_uses.creations.append({ constructed, m_weights.heatOf(entryBlock), false });
+        findSourcesOfResult();
+        for (unsigned i = 0; i < m_function.blocks.size(); ++i) {
+            for (ValueID id : m_function.blocks[i].values)
+                scanValue(BlockID(i), m_function.at(id));
+            scanNames(m_function.blocks[i].terminator);
+        }
+        if (m_readsZeroEncodingCandidate)
+            findUncheckedVariableReads(m_analyses, m_inputs.zeroEncodingCandidates, m_uses.variablesWithUncheckedReads);
+        AOT::sort(m_uses.accesses, accessIsOrderedBefore);
+        foldEqualAccesses(m_uses.accesses);
+        AOT::sort(m_uses.variablesNamed);
+        removeRepeatedElements(m_uses.variablesNamed);
+        return WTF::move(m_uses);
+    }
 
 private:
-    bool isUndefinedConstant(ValueID) const;
-    BlockID blockOf(ValueID);
-    bool collectFreshObjects(ValueID, BlockID join, Vector<ValueID, 4>& visitedParameters, Vector<SlotUseFreshObject, 4>&);
-    void findSourcesOfResult();
-    void countAllocation(LayoutID, BlockID);
-    void scanCallByName(const SlotUseSite&);
+    SlotRowUse& rowUseOf(LayoutID layout, FieldIndex field) { return m_shared.rows[m_rows.rowOf(layout, field)]; }
+    ValueID rootOf(ValueID id) const { return definitionThroughSameValues(m_function, id); }
 
-    void scanValue(const SlotUseSite&);
-    void scanSlotRow(const SlotUseSite&);
-    void noteStoreBehindStore(ValueID object, const Value& store, SiteWeight);
-    void scanStoreByName(const SlotUseSite&);
-    void scanStoreOfConstructor(const SlotUseSite&);
-    void scanPrivateDefinition(const SlotUseSite&);
-    void countAllocationsByRunTime();
-    void scanEnvironmentField(const Value&);
-    void scanAllocation(const SlotUseSite&);
-    void scanInitialFields(const Value&, BlockID);
-    void scanData(const SlotUseSite&);
-    void scanDataObject(const DataNode::Object&, BlockID);
-    void scanKeysLookedUpByName(const SlotUseSite&);
-    void scanNames(const auto& valueOrTerminator);
-    void scanVariables(const Value&);
+    bool isUndefinedConstant(ValueID id) const
+    {
+        auto constant = constantThroughCasts(m_program, m_function, id);
+        return constant && m_function.at(*constant).opcode == Opcode::Undefined;
+    }
+
+    BlockID blockOf(ValueID id)
+    {
+        if (m_blockOfValue.isEmpty()) {
+            m_blockOfValue.fill(BlockID(), m_function.values.size());
+            for (unsigned index = 0; index < m_function.blocks.size(); ++index) {
+                const Block& block = m_function.blocks[index];
+                for (ValueID parameter : block.parameters)
+                    m_blockOfValue[parameter.index()] = BlockID(index);
+                for (ValueID value : block.values)
+                    m_blockOfValue[value.index()] = BlockID(index);
+            }
+        }
+        return m_blockOfValue[id.index()];
+    }
+
+    void forEachClassConstructedBy(const Value& construct, const Invocable<void(LayoutID)> auto& functor) const
+    {
+        CalleeSetID callees = construct.callees();
+        if (!callees)
+            return;
+        for (FunctionID callee : m_program.at(callees).functions) {
+            if (LayoutID constructed = m_program.at(callee).constructedClass)
+                functor(constructed);
+        }
+    }
+
+    bool collectFreshObjects(ValueID value, BlockID join, Vector<ValueID, 4>& visitedParameters, Vector<SlotUseFreshObject, 4>& objects)
+    {
+        ValueID root = rootOf(value);
+        const Value& definition = m_function.at(root);
+        auto addObjectOf = [&](LayoutID layout, FunctionID maker) {
+            objects.append({ layout, maker, root, join ? join : blockOf(root) });
+        };
+        auto addObjectHandedIn = [&](LayoutID layout) {
+            objects.append({ layout, { }, { }, join ? join : entryBlock });
+            return true;
+        };
+        switch (definition.opcode) {
+        case Opcode::NewObject:
+            addObjectOf(definition.layout(), { });
+            return true;
+        case Opcode::CallDirect:
+            if (!definition.isConstruction())
+                addObjectOf({ }, definition.function());
+            else if (LayoutID constructed = m_program.at(definition.function()).constructedClass)
+                addObjectOf(constructed, { });
+            else
+                return false;
+            return true;
+        case Opcode::Construct: {
+            // The list may lack callees. What they make is not seen here, and the estimate does without it.
+            size_t numberOfOtherObjects = objects.size();
+            forEachClassConstructedBy(definition, [&](LayoutID constructed) {
+                addObjectOf(constructed, { });
+            });
+            return objects.size() != numberOfOtherObjects;
+        }
+        default:
+            break;
+        }
+        if (LayoutID constructed = m_function.constructedClass; constructed && root == m_thisParameter)
+            return addObjectHandedIn(constructed);
+        if (definition.opcode != Opcode::Parameter)
+            return false;
+        if (visitedParameters.contains(root))
+            return true;
+        visitedParameters.append(root);
+
+        BlockID block = blockOf(root);
+        if (!block)
+            return false;
+        std::span<const ValueID> parameters = m_function.at(block).parameters.span();
+        auto parameterIndex = static_cast<uint32_t>(std::ranges::find(parameters, root) - parameters.begin());
+        if (block == entryBlock) {
+            std::span<const ObjectUnderConstruction> handedOver = m_inputs.objectsUnderConstruction[m_id.index()].span();
+            auto found = std::ranges::find(handedOver, parameterIndex, &ObjectUnderConstruction::parameterIndex);
+            return found != handedOver.end() && addObjectHandedIn(found->layout);
+        }
+        std::span<const Edge> edges = m_analyses.cfg().incomingEdges(block);
+        if (!join && edges.size() > 1)
+            join = block;
+        bool areAllFresh = true;
+        for (Edge edge : edges) {
+            ValueID passed = valuePassedOn(m_function, edge, parameterIndex);
+            areAllFresh &= passed && collectFreshObjects(passed, join, visitedParameters, objects);
+        }
+        return areAllFresh;
+    }
+
+    void findSourcesOfResult()
+    {
+        if (m_function.results.size() != 1 || !m_program.at(m_function.results[0].type).layouts)
+            return;
+        Vector<SlotUseFreshObject, 4> objects;
+        for (const Block& block : m_function.blocks) {
+            if (block.terminator.kind == TerminatorKind::ReturnCall)
+                return;
+            if (block.terminator.kind != TerminatorKind::Return)
+                continue;
+            Vector<ValueID, 4> visitedParameters;
+            ValueID returned = block.terminator.valueOperand();
+            if (!returned || !collectFreshObjects(returned, { }, visitedParameters, objects))
+                return;
+        }
+        for (const SlotUseFreshObject& object : objects)
+            m_uses.sourcesOfResult.append({ object.layout, object.maker });
+    }
+
+    void countAllocation(LayoutID layout, BlockID block)
+    {
+        add(m_shared.layouts[layout.index()].allocationSites, 1);
+        m_uses.creations.append({ layout, m_weights.heatOf(block), m_weights.isInLoop(block) });
+    }
+
+    void countInitialField(LayoutID layout, FieldIndex field, bool isUndefined, BlockID block)
+    {
+        SlotRowUse& use = rowUseOf(layout, field);
+        add(use.initializingSites, 1);
+        if (isUndefined)
+            return;
+        add(use.sitesInitializingWithValue, 1);
+        m_uses.fills.append({ m_rows.rowOf(layout, field), m_weights.heatOf(block) });
+    }
+
+    void scanCallByName(BlockID block, const Value& call)
+    {
+        FunctionID callee = call.function();
+        if (LayoutID constructed = m_program.at(callee).constructedClass; constructed && call.isConstruction())
+            m_uses.placesThatMake.append({ constructed, m_weights.heatOf(block) });
+        bool isClassConstructor = m_function.kind == FunctionKind::BaseConstructor || m_function.kind == FunctionKind::DerivedConstructor;
+        if (callee == m_id && call.isConstruction() && !isClassConstructor)
+            return;
+        (m_weights.isInLoop(block) ? m_uses.functionsCalledByNameInLoops : m_uses.functionsCalledByName).append(callee);
+    }
+
+    void scanSlotAccess(BlockID block, const Value& value)
+    {
+        SlotAccessUse use { { value.key(), value.receivers(), isSlotStore(value.opcode) }, 1, m_weights.weightOf(block) };
+        if (std::optional<uint8_t> storedOperand = storedOf(value.opcode)) {
+            if (isUndefinedConstant(value.operand(*storedOperand)))
+                m_uses.storesOfUndefined.append({ value.key(), value.receivers(), 1 });
+            else
+                use.fillHeat = m_weights.heatOf(block);
+            // PutSlot declares no allocation, so it can neither create nor grow an Extension. Behind a proof that the slot is filled it finds the Extension that the creating store left.
+            bool cannotAllocate = value.opcode == Opcode::PutSlot;
+            use.storesIntoFilledSlots = cannotAllocate && guardProvesSlotFilled(m_analyses, value);
+            use.storesWithoutAllocation = cannotAllocate && !use.storesIntoFilledSlots;
+            ValueID objectID = rootOf(value.objectOperand());
+            const Value& object = m_function.at(objectID);
+            std::span<const LayoutID> receivers = m_program.at(value.receivers()).members.span();
+            use.storesIntoNewObjects = object.opcode == Opcode::NewObject && receivers.size() == 1 && receivers[0] == object.layout();
+            noteStoreBehindStore(objectID, value, use.weight);
+        }
+        m_uses.accesses.append(use);
+    }
+
+    // In the order of the blocks. The rarer of the two stores says how often both run.
+    void noteStoreBehindStore(ValueID object, const Value& store, SiteWeight weight)
+    {
+        LastStore current { store.key(), store.receivers(), weight };
+        auto result = m_lastStoreInto.add(object.index(), current);
+        if (result.isNewEntry)
+            return;
+        LastStore last = std::exchange(result.iterator->value, current);
+        if (last.receivers == current.receivers && last.key != current.key)
+            m_uses.keysStoredTogether.append({ std::min(last.key, current.key), std::max(last.key, current.key), current.receivers, std::min(last.weight, weight) });
+    }
+
+    void scanStoreByName(BlockID block, const Value& store)
+    {
+        std::optional<uint8_t> receiver = receiverOf(store.opcode);
+        ValueID object = receiver ? rootOf(store.operand(*receiver)) : ValueID();
+        if (object && m_function.at(object).opcode == Opcode::NewClosure)
+            m_uses.functionsWhoseNewClosuresAreStoredInto.append(m_function.at(object).function());
+        LayoutSetID receivers = store.receivers();
+        if (!receivers)
+            return;
+        std::optional<uint8_t> stored = storedOf(store.opcode);
+        if (stored && isUndefinedConstant(store.operand(*stored)))
+            m_uses.storesOfUndefined.append({ store.key(), receivers, 1 });
+        else
+            m_uses.storesByName.append({ store.key(), receivers, m_weights.heatOf(block) });
+        if (object)
+            noteStoreBehindStore(object, store, m_weights.weightOf(block));
+    }
+
+    void scanStoreIntoFreshObject(BlockID block, const Value& store)
+    {
+        std::optional<uint8_t> receiver = receiverOf(store.opcode);
+        std::optional<uint8_t> stored = storedOf(store.opcode);
+        if (!receiver || !stored || !Value::opcodesWithKey.contains(store.opcode) || !store.key())
+            return;
+
+        Vector<ValueID, 4> visitedParameters;
+        Vector<SlotUseFreshObject, 4> objects;
+        collectFreshObjects(store.operand(*receiver), { }, visitedParameters, objects);
+        if (objects.isEmpty())
+            return;
+
+        bool storesUndefined = isUndefinedConstant(store.operand(*stored));
+        const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
+        double frequencyOfStore = frequencies.frequencyOf(block);
+        auto countStoreInto = [&](LayoutID layout) {
+            std::optional<uint32_t> field = m_program.at(layout).findField(store.key());
+            if (!field)
+                return;
+            SlotRowUse& use = rowUseOf(layout, *field);
+            add(storesUndefined ? use.storesOfUndefined : use.storesOfConstructorWithValue, 1);
+        };
+        for (SlotUseFreshObject object : objects) {
+            if (!storesUndefined && frequencyOfStore * 2 <= frequencies.frequencyOf(object.block))
+                continue;
+            if (object.allocation) {
+                if (storesUndefined || m_fieldsFilledBesideAllocation.add(static_cast<uint64_t>(object.allocation.index()) << 32 | store.key().index()).isNewEntry)
+                    m_uses.fillsBesideCreation.append({ object.layout, object.maker, store.key(), storesUndefined, m_weights.heatOf(blockOf(object.allocation)) });
+                continue;
+            }
+            countStoreInto(object.layout);
+            for (LayoutID below : m_inputs.layoutsNamedBelow[object.layout.index()])
+                countStoreInto(below);
+        }
+    }
+
+    void scanAllocation(BlockID block, const Value& allocation)
+    {
+        LayoutID layout = allocation.layout();
+        countAllocation(layout, block);
+        if (allocation.opcode == Opcode::NewObject && m_function.constructedClass != layout)
+            m_uses.placesThatMake.append({ layout, m_weights.heatOf(block) });
+        if (allocation.opcode == Opcode::MaterializeEnvironment)
+            return;
+        auto fields = allocation.fields();
+        auto initialValues = allocation.variadicOperands();
+        for (uint32_t i = 0; i < fields.size(); ++i)
+            countInitialField(layout, fields[i], isUndefinedConstant(initialValues[i]), block);
+    }
+
+    void scanData(BlockID block, const Value& value)
+    {
+        forEachDataNodeInPreorder(m_program.at(value.data()).root, [&](uint32_t, const DataNode& node) {
+            if (const DataNode::String* string = node.tryAs<DataNode::String>())
+                setBit(m_shared.stringsNamed, string->value.index());
+            const DataNode::Object* object = node.tryAs<DataNode::Object>();
+            if (!object)
+                return;
+            for (const DataMember& member : object->members)
+                setBit(m_shared.keysNamed, member.key.index());
+            if (!object->layout)
+                return;
+            countAllocation(object->layout, block);
+            for (const DataMember& member : object->members) {
+                if (std::optional<uint32_t> field = m_program.at(object->layout).findField(member.key))
+                    countInitialField(object->layout, *field, member.value.is<DataNode::Undefined>(), block);
+            }
+        });
+    }
+
+    void scanNames(const auto& valueOrTerminator)
+    {
+        forEachPropertyKey(valueOrTerminator, [&](PropertyKeyID key) {
+            setBit(m_shared.keysNamed, key.index());
+        });
+        forEachString(valueOrTerminator, [&](StringID string) {
+            setBit(m_shared.stringsNamed, string.index());
+        });
+    }
+
+    void scanValue(BlockID block, const Value& value)
+    {
+        Opcode opcode = value.opcode;
+        if (Value::opcodesWithFieldAccess.contains(opcode))
+            scanSlotAccess(block, value);
+        else if (siteCachesOf(opcode)) {
+            SiteWeight weight = m_weights.weightOf(block);
+            forEachPropertyKey(value, [&](PropertyKeyID key) {
+                addSaturated(m_shared.keyWeights[key.index()], weight);
+            });
+        }
+        if (storesByName.contains(opcode))
+            scanStoreByName(block, value);
+        if (storesByName.contains(opcode) || isSlotStore(opcode))
+            scanStoreIntoFreshObject(block, value);
+        if (environmentFieldOpcodes.contains(opcode))
+            add(rowUseOf(value.layout(), value.field()).environmentUses, 1);
+        if (opcode == Opcode::PrivateDefine) {
+            add(rowUseOf(value.layout(), value.field()).privateDefinitionsByName, 1);
+            m_uses.fills.append({ m_rows.rowOf(value.layout(), value.field()), m_weights.heatOf(block) });
+        }
+        if (allocationOpcodes.contains(opcode))
+            scanAllocation(block, value);
+        if (opcode == Opcode::NewClosure && value.isLent())
+            m_uses.functionsWithLentClosures.append(value.function());
+        if (opcode == Opcode::CallDirect)
+            scanCallByName(block, value);
+        if (opcode == Opcode::Construct) {
+            forEachClassConstructedBy(value, [&](LayoutID constructed) {
+                m_uses.placesThatMake.append({ constructed, m_weights.heatOf(block) });
+            });
+        }
+        if (Value::opcodesWithData.contains(opcode))
+            scanData(block, value);
+        forEachVariable(value, [&](VariableID variable) {
+            m_uses.variablesNamed.append(variable);
+        });
+        if (opcode == Opcode::GetModuleVariable && m_inputs.zeroEncodingCandidates.quickGet(value.variable().index()))
+            m_readsZeroEncodingCandidate = true;
+        scanNames(value);
+    }
+
+    struct LastStore {
+        PropertyKeyID key;
+        LayoutSetID receivers;
+        SiteWeight weight { 0 };
+    };
 
     const ScanInputs& m_inputs;
-    const SharedCounters& m_counters;
+    SlotUses& m_shared;
     const Program& m_program;
     const SlotRows& m_rows;
     FunctionID m_id;
@@ -412,504 +710,55 @@ private:
     FunctionSiteWeights m_weights;
     FunctionUses m_uses;
     Vector<BlockID> m_blockOfValue;
-    struct LastStore {
-        PropertyKeyID key;
-        LayoutSetID receivers;
-        SiteWeight weight { 0 };
-    };
     UncheckedKeyHashMap<uint32_t, LastStore, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_lastStoreInto;
     UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_fieldsFilledBesideAllocation;
     bool m_readsZeroEncodingCandidate { false };
 };
 
-SlotUseScanner::SlotUseScanner(const ScanInputs& inputs, const SharedCounters& counters, FunctionID id)
-    : m_inputs(inputs)
-    , m_counters(counters)
-    , m_program(inputs.context.program)
-    , m_rows(inputs.context.rows)
-    , m_id(id)
-    , m_function(m_program.at(id))
-    , m_thisParameter(thisParameterOf(m_function))
-    , m_analyses({ inputs.context.build, m_program, &inputs.context.inputs.flow, nullptr, id }, m_function)
-    , m_weights(m_program, inputs.context.inputs.heat, id, m_analyses)
-{
-}
-
-bool SlotUseScanner::isUndefinedConstant(ValueID id) const
-{
-    auto constant = constantThroughCasts(m_program, m_function, id);
-    return constant && m_function.at(*constant).opcode == Opcode::Undefined;
-}
-
-BlockID SlotUseScanner::blockOf(ValueID id)
-{
-    if (m_blockOfValue.isEmpty()) {
-        m_blockOfValue.fill(BlockID(), m_function.values.size());
-        for (unsigned index = 0; index < m_function.blocks.size(); ++index) {
-            const Block& block = m_function.blocks[index];
-            for (ValueID parameter : block.parameters)
-                m_blockOfValue[parameter.index()] = BlockID(index);
-            for (ValueID value : block.values)
-                m_blockOfValue[value.index()] = BlockID(index);
-        }
-    }
-    return m_blockOfValue[id.index()];
-}
-
-// A test that passes hands the object on as a parameter of the block behind it.
-bool SlotUseScanner::collectFreshObjects(ValueID value, BlockID join, Vector<ValueID, 4>& visitedParameters, Vector<SlotUseFreshObject, 4>& objects)
-{
-    ValueID root = definitionThroughSameValues(m_function, value);
-    const Value& definition = m_function.at(root);
-    auto addObjectOf = [&](LayoutID layout, FunctionID maker) {
-        objects.append({ layout, maker, root, join ? join : blockOf(root) });
-    };
-    switch (definition.opcode) {
-    case Opcode::NewObject:
-        addObjectOf(definition.layout(), { });
-        return true;
-    case Opcode::CallDirect:
-        if (!definition.isConstruction())
-            addObjectOf({ }, definition.function());
-        else if (LayoutID constructed = m_program.at(definition.function()).constructedClass)
-            addObjectOf(constructed, { });
-        else
-            return false;
-        return true;
-    case Opcode::Construct: {
-        // The list may lack callees. What they make is not seen here, and the estimate does without it.
-        size_t numberOfOtherObjects = objects.size();
-        if (CalleeSetID callees = definition.callees()) {
-            for (FunctionID callee : m_program.at(callees).functions) {
-                if (LayoutID constructed = m_program.at(callee).constructedClass)
-                    addObjectOf(constructed, { });
-            }
-        }
-        return objects.size() != numberOfOtherObjects;
-    }
-    default:
-        break;
-    }
-    if (LayoutID constructed = m_function.constructedClass; constructed && root == m_thisParameter) {
-        objects.append({ constructed, { }, { }, join ? join : entryBlock });
-        return true;
-    }
-    if (definition.opcode != Opcode::Parameter)
-        return false;
-    if (visitedParameters.contains(root))
-        return true;
-    visitedParameters.append(root);
-
-    BlockID block = blockOf(root);
-    if (!block)
-        return false;
-    std::span<const ValueID> parameters = m_function.at(block).parameters.span();
-    auto parameterIndex = static_cast<uint32_t>(std::ranges::find(parameters, root) - parameters.begin());
-    if (block == entryBlock) {
-        std::span<const ObjectUnderConstruction> handedOver = m_inputs.objectsUnderConstruction[m_id.index()].span();
-        auto found = std::ranges::find(handedOver, parameterIndex, &ObjectUnderConstruction::parameterIndex);
-        if (found == handedOver.end())
-            return false;
-        objects.append({ found->layout, { }, { }, join ? join : entryBlock });
-        return true;
-    }
-    std::span<const Edge> edges = m_analyses.cfg().incomingEdges(block);
-    if (!join && edges.size() > 1)
-        join = block;
-    bool areAllFresh = true;
-    for (Edge edge : edges) {
-        ValueID passed = valuePassedOn(m_function, edge, parameterIndex);
-        areAllFresh &= passed && collectFreshObjects(passed, join, visitedParameters, objects);
-    }
-    return areAllFresh;
-}
-
-void SlotUseScanner::findSourcesOfResult()
-{
-    if (m_function.results.size() != 1 || !m_program.at(m_function.results[0].type).layouts)
-        return;
-    Vector<SlotUseFreshObject, 4> objects;
-    for (const Block& block : m_function.blocks) {
-        if (block.terminator.kind == TerminatorKind::ReturnCall)
-            return;
-        if (block.terminator.kind != TerminatorKind::Return)
-            continue;
-        Vector<ValueID, 4> visitedParameters;
-        ValueID returned = block.terminator.valueOperand();
-        if (!returned || !collectFreshObjects(returned, { }, visitedParameters, objects))
-            return;
-    }
-    for (const SlotUseFreshObject& object : objects)
-        m_uses.sourcesOfResult.append({ object.layout, object.maker });
-}
-
-void SlotUseScanner::countAllocation(LayoutID layout, BlockID block)
-{
-    LayoutUse& use = m_counters.layouts[layout.index()];
-    add(use.allocationSites, 1);
-    m_uses.creations.append({ layout, m_weights.heatOf(block), m_weights.isInLoop(block) });
-}
-
-// A function that is written to be called with and without `new` constructs itself once where `this` is not its own: that is no recursion.
-void SlotUseScanner::scanCallByName(const SlotUseSite& site)
-{
-    FunctionID callee = site.value.function();
-    if (LayoutID constructed = m_program.at(callee).constructedClass; constructed && site.value.isConstruction())
-        m_uses.placesThatMake.append({ constructed, m_weights.heatOf(site.block) });
-    bool isClassConstructor = m_function.kind == FunctionKind::BaseConstructor || m_function.kind == FunctionKind::DerivedConstructor;
-    if (callee == m_id && site.value.isConstruction() && !isClassConstructor)
-        return;
-    (m_weights.isInLoop(site.block) ? m_uses.functionsCalledByNameInLoops : m_uses.functionsCalledByName).append(callee);
-}
-
-void SlotUseScanner::scanSlotRow(const SlotUseSite& site)
-{
-    const Value& value = site.value;
-    SlotAccessUse use { { value.key(), value.receivers(), isSlotStore(value.opcode) }, 1, m_weights.weightOf(site.block) };
-    if (std::optional<uint8_t> storedOperand = storedOf(value.opcode)) {
-        ValueID stored = value.operand(*storedOperand);
-        if (isUndefinedConstant(stored))
-            m_uses.storesOfUndefined.append({ value.key(), value.receivers(), 1 });
-        else
-            use.fillHeat = m_weights.heatOf(site.block);
-        // PutSlot declares no allocation, so it can neither create nor grow an Extension. Behind a proof that the slot is filled it finds the Extension that the creating store left.
-        bool cannotAllocate = value.opcode == Opcode::PutSlot;
-        use.storesIntoFilledSlots = cannotAllocate && guardProvesSlotFilled(m_analyses, value);
-        use.storesWithoutAllocation = cannotAllocate && !use.storesIntoFilledSlots;
-        ValueID objectID = definitionThroughSameValues(m_function, value.objectOperand());
-        const Value& object = m_function.at(objectID);
-        std::span<const LayoutID> receivers = m_program.at(value.receivers()).members.span();
-        use.storesIntoNewObjects = object.opcode == Opcode::NewObject && receivers.size() == 1 && receivers[0] == object.layout();
-        noteStoreBehindStore(objectID, value, use.weight);
-    }
-    m_uses.accesses.append(use);
-}
-
-// In the order of the blocks. The rarer of the two stores says how often both run.
-void SlotUseScanner::noteStoreBehindStore(ValueID object, const Value& store, SiteWeight weight)
-{
-    LastStore current { store.key(), store.receivers(), weight };
-    auto result = m_lastStoreInto.add(object.index(), current);
-    if (result.isNewEntry)
-        return;
-    LastStore last = std::exchange(result.iterator->value, current);
-    if (last.receivers == current.receivers && last.key != current.key)
-        m_uses.keysStoredTogether.append({ std::min(last.key, current.key), std::max(last.key, current.key), current.receivers, std::min(last.weight, weight) });
-}
-
-void SlotUseScanner::scanStoreByName(const SlotUseSite& site)
-{
-    const Value& store = site.value;
-    if (std::optional<uint8_t> receiver = receiverOf(store.opcode)) {
-        const Value& definition = m_function.at(definitionThroughSameValues(m_function, store.operand(*receiver)));
-        if (definition.opcode == Opcode::NewClosure)
-            m_uses.functionsWhoseNewClosuresAreStoredInto.append(definition.function());
-    }
-    LayoutSetID receivers = store.receivers();
-    if (!receivers)
-        return;
-    std::optional<uint8_t> stored = storedOf(store.opcode);
-    if (stored && isUndefinedConstant(store.operand(*stored)))
-        m_uses.storesOfUndefined.append({ store.key(), receivers, 1 });
-    else
-        m_uses.storesByName.append({ store.key(), receivers, m_weights.heatOf(site.block) });
-    if (std::optional<uint8_t> receiver = receiverOf(store.opcode))
-        noteStoreBehindStore(definitionThroughSameValues(m_function, store.operand(*receiver)), store, m_weights.weightOf(site.block));
-}
-
-// What a function stores into nearly every object that it is called to construct, that it allocates itself, or that it gets from the function that has made it.
-void SlotUseScanner::scanStoreOfConstructor(const SlotUseSite& site)
-{
-    const Value& store = site.value;
-    std::optional<uint8_t> receiver = receiverOf(store.opcode);
-    std::optional<uint8_t> stored = storedOf(store.opcode);
-    if (!receiver || !stored || !Value::opcodesWithKey.contains(store.opcode) || !store.key())
-        return;
-
-    Vector<ValueID, 4> visitedParameters;
-    Vector<SlotUseFreshObject, 4> objects;
-    collectFreshObjects(store.operand(*receiver), { }, visitedParameters, objects);
-    if (objects.isEmpty())
-        return;
-
-    bool storesUndefined = isUndefinedConstant(store.operand(*stored));
-    const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
-    double frequencyOfStore = frequencies.frequencyOf(site.block);
-    for (SlotUseFreshObject object : objects) {
-        if (!storesUndefined && frequencyOfStore * 2 <= frequencies.frequencyOf(object.block))
-            continue;
-        if (object.allocation) {
-            if (storesUndefined || m_fieldsFilledBesideAllocation.add(static_cast<uint64_t>(object.allocation.index()) << 32 | store.key().index()).isNewEntry)
-                m_uses.fillsBesideCreation.append({ object.layout, object.maker, store.key(), storesUndefined, m_weights.heatOf(blockOf(object.allocation)) });
-            continue;
-        }
-        auto countStoreInto = [&](LayoutID layout) {
-            std::optional<uint32_t> field = m_program.at(layout).findField(store.key());
-            if (!field)
-                return;
-            SlotRowUse& use = m_counters.rows[m_rows.rowOf(layout, *field)];
-            add(storesUndefined ? use.storesOfUndefined : use.storesOfConstructorWithValue, 1);
-        };
-        countStoreInto(object.layout);
-        // The objects of a class below pass this constructor too: `Parent.call(this)`, super(). A field that flow has added to their layout alone is inherited from nobody.
-        for (LayoutID below : m_inputs.layoutsNamedBelow[object.layout.index()])
-            countStoreInto(below);
-    }
-}
-
-void SlotUseScanner::scanPrivateDefinition(const SlotUseSite& site)
-{
-    SlotRow row = m_rows.rowOf(site.value.layout(), site.value.field());
-    add(m_counters.rows[row].privateDefinitionsByName, 1);
-    m_uses.fills.append({ row, m_weights.heatOf(site.block) });
-}
-
-// The run time allocates the object of a subclass and of a function called with new, once per activation of the constructor.
-void SlotUseScanner::countAllocationsByRunTime()
-{
-    LayoutID constructed = m_function.constructedClass;
-    if (!constructed || m_program.at(constructed).constructor != m_id || m_function.kind == FunctionKind::BaseConstructor)
-        return;
-    m_uses.creations.append({ constructed, m_weights.heatOf(BlockID(0u)), false });
-}
-
-void SlotUseScanner::scanEnvironmentField(const Value& value)
-{
-    add(m_counters.rows[m_rows.rowOf(value.layout(), value.field())].environmentUses, 1);
-}
-
-void SlotUseScanner::scanInitialFields(const Value& allocation, BlockID block)
-{
-    LayoutID layout = allocation.layout();
-    auto fields = allocation.fields();
-    auto initialValues = allocation.variadicOperands();
-    for (uint32_t i = 0; i < fields.size(); ++i) {
-        SlotRow row = m_rows.rowOf(layout, fields[i]);
-        ValueID initialValue = initialValues[i];
-        add(m_counters.rows[row].initializingSites, 1);
-        if (isUndefinedConstant(initialValue))
-            continue;
-        add(m_counters.rows[row].sitesInitializingWithValue, 1);
-        m_uses.fills.append({ row, m_weights.heatOf(block) });
-    }
-}
-
-void SlotUseScanner::scanAllocation(const SlotUseSite& site)
-{
-    const Value& value = site.value;
-    countAllocation(value.layout(), site.block);
-    if (value.opcode == Opcode::NewObject && m_function.constructedClass != value.layout())
-        m_uses.placesThatMake.append({ value.layout(), m_weights.heatOf(site.block) });
-    if (value.opcode != Opcode::MaterializeEnvironment)
-        scanInitialFields(value, site.block);
-}
-
-void SlotUseScanner::scanDataObject(const DataNode::Object& object, BlockID block)
-{
-    if (!object.layout)
-        return;
-    countAllocation(object.layout, block);
-    const Layout& layout = m_program.at(object.layout);
-    for (const DataMember& member : object.members) {
-        std::optional<uint32_t> field = layout.findField(member.key);
-        if (!field)
-            continue;
-        SlotRow row = m_rows.rowOf(object.layout, *field);
-        add(m_counters.rows[row].initializingSites, 1);
-        if (!member.value.is<DataNode::Undefined>()) {
-            add(m_counters.rows[row].sitesInitializingWithValue, 1);
-            m_uses.fills.append({ row, m_weights.heatOf(block) });
-        }
-    }
-}
-
-static void setBit(FastBitVector& bits, size_t index)
-{
-    if (!bits.at(index))
-        bits.atomicSetAndCheck(index, true);
-}
-
-void SlotUseScanner::scanData(const SlotUseSite& site)
-{
-    forEachDataNodeInPreorder(m_program.at(site.value.data()).root, [&](uint32_t, const DataNode& node) {
-        if (const DataNode::String* string = node.tryAs<DataNode::String>())
-            setBit(m_counters.stringsNamed, string->value.index());
-        const DataNode::Object* object = node.tryAs<DataNode::Object>();
-        if (!object)
-            return;
-        for (const DataMember& member : object->members)
-            setBit(m_counters.keysNamed, member.key.index());
-        scanDataObject(*object, site.block);
-    });
-}
-
-void SlotUseScanner::scanNames(const auto& valueOrTerminator)
-{
-    forEachPropertyKey(valueOrTerminator, [&](PropertyKeyID key) {
-        setBit(m_counters.keysNamed, key.index());
-    });
-    forEachString(valueOrTerminator, [&](StringID string) {
-        setBit(m_counters.stringsNamed, string.index());
-    });
-}
-
-void SlotUseScanner::scanKeysLookedUpByName(const SlotUseSite& site)
-{
-    SiteWeight weight = m_weights.weightOf(site.block);
-    forEachPropertyKey(site.value, [&](PropertyKeyID key) {
-        addSaturated(m_counters.keyWeights[key.index()], weight);
-    });
-}
-
-void SlotUseScanner::scanVariables(const Value& value)
-{
-    forEachVariable(value, [&](VariableID variable) {
-        m_uses.variablesNamed.append(variable);
-    });
-    if (value.opcode == Opcode::GetModuleVariable && m_inputs.zeroEncodingCandidates.quickGet(value.variable().index()))
-        m_readsZeroEncodingCandidate = true;
-}
-
-void SlotUseScanner::scanValue(const SlotUseSite& site)
-{
-    Opcode opcode = site.value.opcode;
-    if (Value::opcodesWithFieldAccess.contains(opcode))
-        scanSlotRow(site);
-    else if (siteCachesOf(opcode))
-        scanKeysLookedUpByName(site);
-    if (storesByName.contains(opcode))
-        scanStoreByName(site);
-    if (storesByName.contains(opcode) || isSlotStore(opcode))
-        scanStoreOfConstructor(site);
-    if (environmentFieldOpcodes.contains(opcode))
-        scanEnvironmentField(site.value);
-    if (opcode == Opcode::PrivateDefine)
-        scanPrivateDefinition(site);
-    if (allocationOpcodes.contains(opcode))
-        scanAllocation(site);
-    if (opcode == Opcode::NewClosure && site.value.isLent())
-        m_uses.functionsWithLentClosures.append(site.value.function());
-    if (opcode == Opcode::CallDirect)
-        scanCallByName(site);
-    if (opcode == Opcode::Construct) {
-        if (CalleeSetID callees = site.value.callees()) {
-            for (FunctionID callee : m_program.at(callees).functions) {
-                if (LayoutID constructed = m_program.at(callee).constructedClass)
-                    m_uses.placesThatMake.append({ constructed, m_weights.heatOf(site.block) });
-            }
-        }
-    }
-    if (Value::opcodesWithData.contains(opcode))
-        scanData(site);
-    scanVariables(site.value);
-    scanNames(site.value);
-}
-
-FunctionUses SlotUseScanner::run()
-{
-    m_uses.function = m_id;
-    countAllocationsByRunTime();
-    findSourcesOfResult();
-    for (unsigned i = 0; i < m_function.blocks.size(); ++i) {
-        for (ValueID id : m_function.blocks[i].values)
-            scanValue({ BlockID(i), m_function.at(id) });
-        scanNames(m_function.blocks[i].terminator);
-    }
-    if (m_readsZeroEncodingCandidate)
-        findUncheckedVariableReads(m_analyses, m_inputs.zeroEncodingCandidates, m_uses.variablesWithUncheckedReads);
-    AOT::sort(m_uses.accesses, accessIsOrderedBefore);
-    foldEqualAccesses(m_uses.accesses);
-    AOT::sort(m_uses.variablesNamed);
-    removeRepeatedElements(m_uses.variablesNamed);
-    if (m_inputs.runsBeforeEntry.quickGet(m_id.index()))
-        m_uses.variablesUsedBeforeProgramEntry = m_uses.variablesNamed;
-    return WTF::move(m_uses);
-}
-
 } // anonymous namespace
 
-static void mergeAccesses(const ParallelLoops& loops, std::span<const FunctionUses> functions, Vector<SlotAccessUse>& accesses)
+static Vector<StoreByNameUse> mergeStoresByName(const ParallelLoops& loops, std::span<const FunctionUses> functions)
 {
-    size_t count = 0;
-    for (const FunctionUses& function : functions)
-        count += function.accesses.size();
-    accesses.reserveInitialCapacity(count);
-    for (const FunctionUses& function : functions)
-        accesses.appendVector(function.accesses);
-    parallelSort(loops, accesses.mutableSpan(), accessIsOrderedBefore);
-    foldEqualAccesses(accesses);
-    moveToExactBuffer(accesses);
-}
-
-static void mergeStoresByName(const ParallelLoops& loops, std::span<const FunctionUses> functions, Vector<StoreByNameUse>& stores)
-{
-    for (const FunctionUses& function : functions)
-        stores.appendVector(function.storesByName);
+    Vector<StoreByNameUse> stores = listsOfAll(functions, &FunctionUses::storesByName);
     parallelSort(loops, stores.mutableSpan(), [](const StoreByNameUse& a, const StoreByNameUse& b) {
         return std::tuple(a.key, a.receivers, a.heat) < std::tuple(b.key, b.receivers, b.heat);
     });
-    size_t count = 0;
-    for (const StoreByNameUse& store : stores) {
-        if (count && stores[count - 1].key == store.key && stores[count - 1].receivers == store.receivers)
-            stores[count - 1].heat += store.heat;
-        else
-            stores[count++] = store;
-    }
-    stores.shrink(count);
-}
-
-static auto placeOf(const StoreOfUndefined& store)
-{
-    return std::tuple(store.key, store.receivers);
-}
-
-static void mergeStoresOfUndefined(const ParallelLoops& loops, std::span<const FunctionUses> functions, Vector<StoreOfUndefined>& stores)
-{
-    for (const FunctionUses& function : functions)
-        stores.appendVector(function.storesOfUndefined);
-    parallelSort(loops, stores.mutableSpan(), [](const StoreOfUndefined& a, const StoreOfUndefined& b) {
-        return placeOf(a) < placeOf(b);
+    foldEntriesOfOnePlace(stores, std::mem_fn(&StoreByNameUse::place), [](StoreByNameUse& folded, const StoreByNameUse& store) {
+        folded.heat += store.heat;
     });
-    size_t count = 0;
-    for (const StoreOfUndefined& store : stores) {
-        if (!count || placeOf(stores[count - 1]) != placeOf(store)) {
-            stores[count++] = store;
-            continue;
-        }
-        stores[count - 1].sites += store.sites;
-    }
-    stores.shrink(count);
+    return stores;
+}
+
+static Vector<StoreOfUndefined> mergeStoresOfUndefined(const ParallelLoops& loops, std::span<const FunctionUses> functions)
+{
+    Vector<StoreOfUndefined> stores = listsOfAll(functions, &FunctionUses::storesOfUndefined);
+    parallelSort(loops, stores.mutableSpan(), [](const StoreOfUndefined& a, const StoreOfUndefined& b) {
+        return a.place() < b.place();
+    });
+    foldEntriesOfOnePlace(stores, std::mem_fn(&StoreOfUndefined::place), [](StoreOfUndefined& folded, const StoreOfUndefined& store) {
+        folded.sites += store.sites;
+    });
+    return stores;
 }
 
 static void findRowsStoredTogether(const SlotPlanContext& context, std::span<const FunctionUses> functions, Vector<RowsStoredTogether>& rows)
 {
     const Program& program = context.program;
     const ParallelLoops& loops = context.build.parallelLoops();
-    Vector<KeysStoredTogether> keys;
-    for (const FunctionUses& function : functions)
-        keys.appendVector(function.keysStoredTogether);
+    auto addWeight = [](auto& folded, const auto& stored) {
+        folded.weight = saturatedSum(folded.weight, stored.weight);
+    };
+    Vector<KeysStoredTogether> keys = listsOfAll(functions, &FunctionUses::keysStoredTogether);
     parallelSort(loops, keys.mutableSpan(), [](const KeysStoredTogether& a, const KeysStoredTogether& b) {
         return a.place() < b.place();
     });
-    size_t count = 0;
-    for (const KeysStoredTogether& stored : keys) {
-        if (!count || keys[count - 1].place() != stored.place()) {
-            keys[count++] = stored;
-            continue;
-        }
-        keys[count - 1].weight = saturatedSum(keys[count - 1].weight, stored.weight);
-    }
-    keys.shrink(count);
+    foldEntriesOfOnePlace(keys, std::mem_fn(&KeysStoredTogether::place), addWeight);
 
     for (const KeysStoredTogether& stored : keys) {
-        for (LayoutID member : program.at(stored.receivers).members) {
-            if (!context.isCompiledObject(member))
-                continue;
-            std::optional<uint32_t> first = program.at(member).findField(stored.first);
-            std::optional<uint32_t> second = program.at(member).findField(stored.second);
-            if (first && second)
-                rows.append({ context.rows.rowOf(member, *first), context.rows.rowOf(member, *second), stored.weight });
-        }
+        context.forEachHolder(stored.first, stored.receivers, [&](LayoutID member, SlotRow first) {
+            if (std::optional<uint32_t> second = program.at(member).findField(stored.second))
+                rows.append({ first, context.rows.rowOf(member, *second), stored.weight });
+        });
     }
     auto placeOf = [](const RowsStoredTogether& stored) {
         return std::pair(stored.first, stored.second);
@@ -917,33 +766,25 @@ static void findRowsStoredTogether(const SlotPlanContext& context, std::span<con
     parallelSort(loops, rows.mutableSpan(), [&](const RowsStoredTogether& a, const RowsStoredTogether& b) {
         return placeOf(a) < placeOf(b);
     });
-    count = 0;
-    for (const RowsStoredTogether& stored : rows) {
-        if (!count || placeOf(rows[count - 1]) != placeOf(stored)) {
-            rows[count++] = stored;
-            continue;
-        }
-        rows[count - 1].weight = saturatedSum(rows[count - 1].weight, stored.weight);
-    }
-    rows.shrink(count);
+    foldEntriesOfOnePlace(rows, placeOf, addWeight);
     parallelSort(loops, rows.mutableSpan(), [&](const RowsStoredTogether& a, const RowsStoredTogether& b) {
         return a.weight != b.weight ? a.weight > b.weight : placeOf(a) < placeOf(b);
     });
 }
 
-static void markVariables(std::span<const FunctionUses> functions, std::span<VariableUse> variables)
+static void markVariables(const BitVector& runsBeforeEntry, std::span<const FunctionUses> functions, std::span<VariableUse> variables)
 {
     for (const FunctionUses& function : functions) {
-        for (VariableID variable : function.variablesNamed)
+        bool isBeforeEntry = runsBeforeEntry.quickGet(function.function.index());
+        for (VariableID variable : function.variablesNamed) {
             variables[variable.index()].isNamedByCode = true;
+            variables[variable.index()].isUsedBeforeProgramEntry |= isBeforeEntry;
+        }
         for (VariableID variable : function.variablesWithUncheckedReads)
             variables[variable.index()].hasUncheckedRead = true;
-        for (VariableID variable : function.variablesUsedBeforeProgramEntry)
-            variables[variable.index()].isUsedBeforeProgramEntry = true;
     }
 }
 
-// A closure that lies in the frame of whoever lends it has the slim form.
 static void markFunctionsWhoseNewClosuresAreStoredInto(std::span<const FunctionUses> functions, BitVector& marked)
 {
     for (const FunctionUses& function : functions) {
@@ -956,23 +797,13 @@ static void markFunctionsWhoseNewClosuresAreStoredInto(std::span<const FunctionU
     }
 }
 
-static void forEachHolder(const SlotPlanContext& context, PropertyKeyID key, LayoutSetID receivers, NOESCAPE const Invocable<void(LayoutID, SlotRow)> auto& functor)
-{
-    const Program& program = context.program;
-    for (LayoutID member : program.at(receivers).members) {
-        if (!context.isCompiledObject(member))
-            continue;
-        if (std::optional<uint32_t> field = program.at(member).findField(key))
-            functor(member, context.rows.rowOf(member, *field));
-    }
-}
-
-// The objects that reach a store are taken to be of its receivers in the proportion in which those are made.
 static void distributeFillHeat(const SlotPlanContext& context, SlotUses& uses, PropertyKeyID key, LayoutSetID receivers, double heat)
 {
+    if (!heat)
+        return;
     Vector<std::pair<SlotRow, double>, 8> holders;
     double made = 0;
-    forEachHolder(context, key, receivers, [&](LayoutID member, SlotRow row) {
+    context.forEachHolder(key, receivers, [&](LayoutID member, SlotRow row) {
         holders.append({ row, uses.layouts[member.index()].creationHeat });
         made += holders.last().second;
     });
@@ -982,18 +813,23 @@ static void distributeFillHeat(const SlotPlanContext& context, SlotUses& uses, P
         uses.rows[row].fillHeat += heat * (madeOfHolder / made);
 }
 
-// The layout of the object that every call of a function makes and returns, by function. None where it may return something else, or objects of several layouts.
+static Vector<const FunctionUses*> usesByFunction(const Program& program, std::span<const FunctionUses> functions)
+{
+    Vector<const FunctionUses*> usesOf(FillWith { }, program.functions.size(), nullptr);
+    for (const FunctionUses& uses : functions)
+        usesOf[uses.function.index()] = &uses;
+    return usesOf;
+}
+
 static Vector<LayoutID> findLayoutsOfFreshResults(const Program& program, std::span<const FunctionUses> functions)
 {
     enum class State : uint8_t { Unknown, Visiting, Known };
     Vector<LayoutID> layouts(program.functions.size());
     Vector<State> states(FillWith { }, program.functions.size(), State::Known);
-    Vector<const FunctionUses*> usesOf(FillWith { }, program.functions.size(), nullptr);
+    Vector<const FunctionUses*> usesOf = usesByFunction(program, functions);
     for (const FunctionUses& uses : functions) {
-        if (uses.sourcesOfResult.isEmpty())
-            continue;
-        usesOf[uses.function.index()] = &uses;
-        states[uses.function.index()] = State::Unknown;
+        if (!uses.sourcesOfResult.isEmpty())
+            states[uses.function.index()] = State::Unknown;
     }
     auto resolve = [&](auto& self, FunctionID function) -> LayoutID {
         State& state = states[function.index()];
@@ -1015,14 +851,10 @@ static Vector<LayoutID> findLayoutsOfFreshResults(const Program& program, std::s
     return layouts;
 }
 
-// A function that is called by name from a place in a loop, from a function that calls itself again by name, or from such a function, and a callback that a built-in calls for each element.
 static BitVector findFunctionsThatRunInLoops(const SlotPlanContext& context, std::span<const FunctionUses> functions)
 {
     unsigned numberOfFunctions = context.program.functions.size();
-    Vector<const FunctionUses*> usesOf;
-    usesOf.fill(nullptr, numberOfFunctions);
-    for (const FunctionUses& uses : functions)
-        usesOf[uses.function.index()] = &uses;
+    Vector<const FunctionUses*> usesOf = usesByFunction(context.program, functions);
     auto calleesOf = [&](unsigned index) {
         return usesOf[index] ? usesOf[index]->functionsCalledByName.span() : std::span<const FunctionID>();
     };
@@ -1053,7 +885,6 @@ static BitVector findFunctionsThatRunInLoops(const SlotPlanContext& context, std
 static void countStoresOfFactories(const SlotPlanContext& context, std::span<const FunctionUses> functions, SlotUses& uses)
 {
     const Program& program = context.program;
-    // A factory stores what the objects that it makes get as a constructor does.
     Vector<double> heatOfPlacesThatMake(FillWith { }, program.layouts.size(), 0.0);
     Vector<double> heatOfPlacesThatFill(FillWith { }, uses.rows.size(), 0.0);
     for (const FunctionUses& function : functions) {
@@ -1089,14 +920,6 @@ static void addUpCreations(const SlotPlanContext& context, std::span<const Funct
     }
 }
 
-static void addUpFills(std::span<const FunctionUses> functions, SlotUses& uses)
-{
-    for (const FunctionUses& function : functions) {
-        for (auto [row, heat] : function.fills)
-            uses.rows[row].fillHeat += heat;
-    }
-}
-
 static void addUpFillsBesideCreation(const SlotPlanContext& context, std::span<const FunctionUses> functions, SlotUses& uses)
 {
     const Program& program = context.program;
@@ -1129,7 +952,7 @@ static bool isOptionalWhereDeclared(const Program& program, FieldReference refer
     return !fieldAt(program, reference).flags.contains(FieldFlags::IsRequired);
 }
 
-static void distributeToRows(const SlotPlanContext& context, SlotUses& uses, std::span<const StoreOfUndefined> storesOfUndefined)
+static void distributeToRows(const SlotPlanContext& context, SlotUses& uses, std::span<const StoreByNameUse> stores, std::span<const StoreOfUndefined> storesOfUndefined)
 {
     const Program& program = context.program;
     const ParallelLoops& loops = context.build.parallelLoops();
@@ -1140,11 +963,9 @@ static void distributeToRows(const SlotPlanContext& context, SlotUses& uses, std
             return;
         const Layout& layout = program.at(id);
         for (FieldIndex field = 0; field < context.rows.numberOfFieldsOf(id); ++field) {
-            SlotRow row = context.rows.rowOf(id, field);
-            SlotRowUse& use = rows[row];
+            SlotRowUse& use = rows[context.rows.rowOf(id, field)];
             use.holderHeat = uses.layouts[index].creationHeat;
             use.hasHoldersMadeInLoop = uses.layouts[index].isMadeInLoop;
-            // No more objects are filled than are made.
             if (use.heatFilledBesideCreation && use.heatFilledBesideCreation >= use.holderHeat * 0.4999 && use.heatFilledBesideCreation <= use.holderHeat * 2)
                 ++use.storesOfConstructorWithValue;
             OptionSet<FieldFlags> flags = layout.fields[field].flags;
@@ -1153,21 +974,19 @@ static void distributeToRows(const SlotPlanContext& context, SlotUses& uses, std
         }
     });
     // By one thread, in the order of the lists.
-    for (const StoreByNameUse& store : uses.storesByName)
+    for (const StoreByNameUse& store : stores)
         distributeFillHeat(context, uses, store.key, store.receivers, store.heat);
-    for (const SlotAccessUse& use : uses.accesses) {
-        if (use.fillHeat)
-            distributeFillHeat(context, uses, use.access.key, use.access.receivers, use.fillHeat);
-    }
+    for (const SlotAccessUse& use : uses.accesses)
+        distributeFillHeat(context, uses, use.access.key, use.access.receivers, use.fillHeat);
     forEachIndexInParallel(loops, storesOfUndefined.size(), [&](unsigned index) {
         const StoreOfUndefined& store = storesOfUndefined[index];
-        forEachHolder(context, store.key, store.receivers, [&](LayoutID, SlotRow row) {
+        context.forEachHolder(store.key, store.receivers, [&](LayoutID, SlotRow row) {
             add(rows[row].storesOfUndefined, store.sites);
         });
     });
     forEachIndexInParallel(loops, uses.accesses.size(), [&](unsigned index) {
         const SlotAccessUse& use = uses.accesses[index];
-        forEachHolder(context, use.access.key, use.access.receivers, [&](LayoutID, SlotRow row) {
+        context.forEachHolder(use.access.key, use.access.receivers, [&](LayoutID, SlotRow row) {
             addSaturated(rows[row].accessWeight, use.weight);
             add(rows[row].storesWithoutAllocation, use.storesWithoutAllocation);
             add(rows[row].storesIntoFilledSlots, use.storesIntoFilledSlots);
@@ -1196,26 +1015,36 @@ SlotUses collectSlotUses(const SlotPlanContext& context)
         [&] { inputs.zeroEncodingCandidates = findZeroEncodingCandidates(context); },
         [&] { inputs.runsBeforeEntry = computeRunsBeforeEntry(context); },
     });
-    SharedCounters counters { uses.rows.mutableSpan(), uses.layouts.mutableSpan(), uses.keyWeights.mutableSpan(), uses.keysNamed, uses.stringsNamed };
     ParallelArray<FunctionUses> usesOfFunctions = collectIntoArrayInParallel<FunctionUses>(loops, program.functions.size(), largeFunctions(program, loops).span(), [&](unsigned index, Vector<FunctionUses>& collected) {
         if (program.functions[index].hasBody())
-            collected.append(SlotUseScanner(inputs, counters, FunctionID(index)).run());
+            collected.append(SlotUseScanner(inputs, uses, FunctionID(index)).run());
     });
     std::span<const FunctionUses> functions = usesOfFunctions.span();
+    Vector<StoreByNameUse> stores;
     Vector<StoreOfUndefined> storesOfUndefined;
     runTasksInParallel(loops, {
-        [&] { mergeAccesses(loops, functions, uses.accesses); },
-        [&] { mergeStoresByName(loops, functions, uses.storesByName); },
-        [&] { mergeStoresOfUndefined(loops, functions, storesOfUndefined); },
+        [&] {
+            uses.accesses = listsOfAll(functions, &FunctionUses::accesses);
+            parallelSort(loops, uses.accesses.mutableSpan(), accessIsOrderedBefore);
+            foldEqualAccesses(uses.accesses);
+            moveToExactBuffer(uses.accesses);
+        },
+        [&] { stores = mergeStoresByName(loops, functions); },
+        [&] { storesOfUndefined = mergeStoresOfUndefined(loops, functions); },
         [&] { findRowsStoredTogether(context, functions, uses.rowsStoredTogether); },
-        [&] { markVariables(functions, uses.variables.mutableSpan()); },
+        [&] { markVariables(inputs.runsBeforeEntry, functions, uses.variables.mutableSpan()); },
         [&] { markFunctionsWhoseNewClosuresAreStoredInto(functions, uses.functionsWhoseNewClosuresAreStoredInto); },
         [&] { countStoresOfFactories(context, functions, uses); },
         [&] { addUpCreations(context, functions, uses); },
-        [&] { addUpFills(functions, uses); },
+        [&] {
+            for (const FunctionUses& function : functions) {
+                for (auto [row, heat] : function.fills)
+                    uses.rows[row].fillHeat += heat;
+            }
+        },
         [&] { addUpFillsBesideCreation(context, functions, uses); },
     });
-    distributeToRows(context, uses, storesOfUndefined.span());
+    distributeToRows(context, uses, stores.span(), storesOfUndefined.span());
     context.build.destroyLater(WTF::move(usesOfFunctions));
     return uses;
 }

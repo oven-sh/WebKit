@@ -9,33 +9,49 @@
 #if ENABLE(AOT)
 
 #include "AOTAllocationCounts.h"
-#include "AOTArrivalCounts.h"
+#include "AOTObjectWords.h"
+#include "AOTCompiledCallee.h"
+#include "AOTCompiledFrame.h"
+#include "AOTConvention.h"
+#include "AOTErrorMessages.h"
+#include "AOTFunctionDescription.h"
+#include "AOTFunctionNames.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTJSONHooks.h"
+#include "AOTModuleTable.h"
+#include "AOTObject.h"
 #include "AOTObjectModel.h"
 #include "AOTObjectModelCaches.h"
+#include "AOTProgramTables.h"
 #include "AOTPropertyCaches.h"
 #include "AOTRuntimeTable.h"
+#include "AOTSchemaRuntimeOperations.h"
+#include "AOTSlimClosure.h"
 #include "AOTSort.h"
 #include "AOTState.h"
+#include "AOTStubDescriptor.h"
 #include "AOTVector.h"
+#include "BlockDirectory.h"
+#include "FreeList.h"
+#include "JSCInlines.h"
 #include "JSCJSValueInlines.h"
+#include "LocalAllocator.h"
+#include "MarkedSpace.h"
+#include "Subspace.h"
 #include "VM.h"
 #include <algorithm>
+#include <optional>
 #include <span>
+#include <wtf/HexNumber.h>
 #include <wtf/PrintStream.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringView.h>
 
 namespace JSC { namespace AOT {
-
-enum class CounterKind : uint8_t { Counter, StubExit };
-
-static CounterKind kindOf(RuntimeCounterID counter)
-{
-    return countsStubExit(counter) ? CounterKind::StubExit : CounterKind::Counter;
-}
 
 template<typename Function>
 static void forEachInstance(VM& vm, const Function& function)
@@ -109,23 +125,329 @@ uint64_t runtimeLimitValue(VM& vm, LimitID limit)
     return image ? valueWhenLowered(limit, usual, image->header().options.loweredLimit, image->header().options.loweredLimitValue) : usual;
 }
 
-static void dumpCounters(VM& vm, PrintStream& out, CounterKind kind, ASCIILiteral prefix)
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ArrivalCounts);
+
+static constexpr size_t maxNamesShown = 12;
+
+static constexpr std::pair<bool (JSValue::*)() const, ASCIILiteral> primitiveArrivals[] {
+    { &JSValue::isUndefined, "undefined"_s }, { &JSValue::isNull, "null"_s }, { &JSValue::isBoolean, "boolean"_s }, { &JSValue::isNumber, "number"_s },
+    { &JSValue::isString, "string"_s }, { &JSValue::isSymbol, "symbol"_s }, { &JSValue::isBigInt, "bigint"_s },
+};
+
+// A property gets the next free offset, so the offsets give the order in which the properties were added. Only a property that took the place of a deleted one is out of order.
+static String describeNamesOf(Structure* structure)
 {
-    for (RuntimeCounterID counter : allMembersOf<RuntimeCounterID>) {
-        if (counter != RuntimeCounterID::None && kindOf(counter) == kind)
-            out.println(valueOf(vm, counter), "\t", prefix, Wire::nameOf(counter));
+    Vector<PropertyTableEntry> properties = structure->getPropertiesConcurrently();
+    AOT::sort(properties, { }, [](const PropertyTableEntry& property) {
+        return property.offset();
+    });
+
+    StringBuilder names;
+    names.append("object{"_s);
+    for (size_t index = 0; index < properties.size(); ++index) {
+        if (index)
+            names.append(',');
+        if (index == maxNamesShown) {
+            names.append(".."_s);
+            break;
+        }
+        names.append(StringView(properties[index].key()));
     }
+    names.append('}');
+    if (structure->isDictionary())
+        names.append("dict"_s);
+    return names.toString();
 }
 
-static void dumpLimitHits(VM& vm, PrintStream& out)
+static String describeArrival(JSValue value)
 {
-    // The run time also meets limits of the build, such as the number of key orders of a layout.
-    for (LimitID limit : allMembersOf<LimitID>) {
-        uint64_t hits = limitHitsOf(vm, limit);
-        if (stageOf(limit) == Stage::RunTime || hits)
-            out.println(hits, "\tlimit:", Wire::nameOf(limit));
+    for (auto& [isArrival, name] : primitiveArrivals) {
+        if ((value.*isArrival)())
+            return name;
     }
+    if (Object* object = compiledObjectOrNull(value)) {
+        bool hasLeftShape = object->hasFlagsInOrderWord() || object->compiledStructure().hasOtherPrototype();
+        return makeString("layout:"_s, object->layout().index, hasLeftShape ? "+changed"_s : ""_s);
+    }
+    JSCell* cell = value.asCell();
+    if (isFunctionType(cell->type())) {
+        std::optional<FunctionID> function = functionOf(cell);
+        return function ? makeString("function:"_s, function->index()) : "function:native"_str;
+    }
+    if (cell->type() == FinalObjectType)
+        return describeNamesOf(cell->structure());
+    return makeString("class:"_s, cell->classInfo()->className);
 }
+
+static void dumpArrivalLines(PrintStream& out, ASCIILiteral prefix, const ArrivalCounts::Counts& counts)
+{
+    Vector<const ArrivalCounts::Counts::KeyValuePairType*> lines;
+    for (auto& line : counts)
+        lines.append(&line);
+    AOT::sort(lines, [](auto* a, auto* b) {
+        if (a->key.first != b->key.first)
+            return a->key.first < b->key.first;
+        return a->value != b->value ? a->value > b->value : codePointCompareLessThan(a->key.second, b->key.second);
+    });
+    for (auto* line : lines)
+        out.println(line->value, "\t", prefix, line->key.first, "\t", line->key.second);
+}
+
+ArrivalCounts::ArrivalCounts() = default;
+ArrivalCounts::~ArrivalCounts() = default;
+
+void ArrivalCounts::record(JSValue receiver, uint32_t site)
+{
+    ASSERT(receiver);
+    ++m_arrivals.add({ site, describeArrival(receiver) }, 0).iterator->value;
+    m_lastSite = site;
+    m_hasCalledNothingSinceArrival = true;
+}
+
+void ArrivalCounts::didCallOperation(Entry entry)
+{
+    if (!m_hasCalledNothingSinceArrival || entry == Entry::operationAOTRecordArrival)
+        return;
+    m_hasCalledNothingSinceArrival = false;
+    ++m_operationsBehindArrivals.add({ m_lastSite, nameOf(entry) }, 0).iterator->value;
+}
+
+void ArrivalCounts::dump(PrintStream& out) const
+{
+    dumpArrivalLines(out, "arrival:"_s, m_arrivals);
+    dumpArrivalLines(out, "left:"_s, m_operationsBehindArrivals);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRecordArrival, void, (Instance* instance, EncodedJSValue receiver, uint32_t site))
+{
+    State& state = *instance->state;
+    if (!state.arrivalCounts) [[unlikely]]
+        state.arrivalCounts = makeUnique<ArrivalCounts>();
+    state.arrivalCounts->record(JSValue::decode(receiver), site);
+}
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(AllocationCounts);
+
+static_assert(!FunctionID(AllocationData::notConstructed));
+
+static constexpr std::array<ASCIILiteral, 7> reasonsForSlowAllocation {
+    "the_first_allocation_at_the_site"_s, "the_allocator_had_no_list"_s, "a_list_of_1_cell_is_used_up"_s, "a_list_of_2_to_4_cells_is_used_up"_s,
+    "a_list_of_5_to_16_cells_is_used_up"_s, "a_list_of_17_to_64_cells_is_used_up"_s, "a_longer_list_is_used_up"_s,
+};
+static constexpr std::array<uint64_t, 5> longestListOfReason { 0, 1, 4, 16, 64 };
+
+// Also right for the allocator without room of an empty allocation site record, which is a free list behind as many bytes.
+static const FreeList& freeListOf(const void* allocator)
+{
+    return *reinterpret_cast<const FreeList*>(static_cast<const uint8_t*>(allocator) + LocalAllocator::offsetOfFreeList());
+}
+
+static CountedCells listOf(const void* allocator)
+{
+    uint64_t bytes = freeListOf(allocator).originalSize();
+    return { bytes, bytes ? bytes / freeListOf(allocator).cellSize() : 0 };
+}
+
+static std::optional<CountedCells> usedUpListOf(const void* allocator)
+{
+    if (!allocator || !listOf(allocator).bytes || freeListOf(allocator).allocationWillSucceed())
+        return std::nullopt;
+    return listOf(allocator);
+}
+
+static void addLine(AllocationCounts::Lines& lines, const String& words, CountedCells counted)
+{
+    CountedCells& line = lines.add(words, CountedCells { }).iterator->value;
+    line.bytes += counted.bytes;
+    line.cells += counted.cells;
+}
+
+static void dumpLines(PrintStream& out, ASCIILiteral firstWord, const AllocationCounts::Lines& unsorted)
+{
+    Vector<const AllocationCounts::Lines::KeyValuePairType*> lines;
+    for (auto& line : unsorted)
+        lines.append(&line);
+    AOT::sort(lines, [](auto* a, auto* b) {
+        return a->value != b->value ? a->value > b->value : codePointCompareLessThan(a->key, b->key);
+    });
+    for (auto* line : lines)
+        out.println(firstWord, " ", line->key, " ", line->value.cells, " ", line->value.bytes);
+}
+
+static String countedAsWord(StringView text)
+{
+    if (text.isEmpty())
+        return "-"_str;
+    StringBuilder builder;
+    for (char16_t unit : text.codeUnits()) {
+        if (unit == ' ')
+            builder.append('_');
+        else if (unit > ' ' && unit != 0x7f && unit != '\\')
+            builder.append(unit);
+        else
+            builder.append("\\u"_s, hex(unit, 4, Lowercase));
+    }
+    return builder.toString();
+}
+
+// The constructor of a class allocates the object, in its own frame or in one that was inlined.
+static std::optional<CompiledFrame> findAllocatingFrame(VM& vm, FunctionID constructor)
+{
+    std::optional<CompiledFrameIterator> frames = CompiledFrameIterator::tryCreateAtTop(vm);
+    if (!frames && vm.topCallFrame && isCallerCompiled(vm, vm.topCallFrame))
+        frames = CompiledFrameIterator::tryCreateAtCallerOf(vm, vm.topCallFrame, vm.topEntryFrame);
+    if (!frames || frames->isAtEnd())
+        return std::nullopt;
+    CompiledFrame innermost = frames->frame();
+    if (!constructor || FunctionDescription(innermost.function).sourceFunction() != constructor)
+        return innermost;
+    frames->advance();
+    while (!frames->isAtEnd() && isEntrypointOf(frames->frame().function, constructor))
+        frames->advance();
+    return frames->isAtEnd() ? innermost : frames->frame();
+}
+
+static String describePlace(VM& vm, FunctionID constructor = { })
+{
+    std::optional<CompiledFrame> frame = findAllocatingFrame(vm, constructor);
+    if (!frame)
+        return "- -"_str;
+    const Image& image = *vm.aotState().image;
+    FunctionDescription description(frame->function);
+    String function = description.codeType() == ModuleCode ? "module"_str : countedAsWord(description.name(vm));
+    if (image.isObfuscated()) {
+        LineColumn position = frame->lineColumn();
+        return makeString(function, ' ', position.line, ':', position.column);
+    }
+    std::optional<SourcePosition> position = image.positionOf(frame->code.index(), frame->callSite);
+    if (!position)
+        return makeString(function, " -"_s);
+    String path = position->source ? ModuleTable(image.programTables()).pathTextForLineColumns(position->source) : emptyString();
+    return makeString(function, ' ', countedAsWord(path), ':', position->lineColumn.line);
+}
+
+static String describeLayoutOfAllocation(const Instance& instance, uint32_t allocation)
+{
+    const Image& image = *instance.vm->aotState().image;
+    const ProgramTables& tables = instance.tables();
+    uint32_t shape = tables.allocations()[allocation].shape;
+    if (shape < tables.firstEnvironmentShape) {
+        const LayoutData& layout = tables.layoutForShape(shape);
+        return makeString('L', layout.index, ':', countedAsWord(nameOf(tables, layout)));
+    }
+    const EnvironmentData& environment = tables.environmentForShape(shape);
+    if (environment.kind == LayoutKind::Closure)
+        return "closure"_str;
+    StringID name(environment.name);
+    bool hasName = !image.isObfuscated() && name && image.text().hasText(name);
+    return makeString('L', environment.index, ':', countedAsWord(hasName ? image.text().createString(name) : emptyString()));
+}
+
+AllocationCounts& AllocationCounts::ensure(Instance& instance)
+{
+    State& state = *instance.state;
+    if (!state.allocationCounts) [[unlikely]]
+        state.allocationCounts = makeUnique<AllocationCounts>();
+    return *state.allocationCounts;
+}
+
+AllocationCounts* AllocationCounts::ensureForFirstInstance(VM& vm)
+{
+    VMState& vmState = vm.aotState();
+    if (vmState.instances.isEmpty() || !vmState.instances.first()->state)
+        return nullptr;
+    return &ensure(*vmState.instances.first());
+}
+
+void AllocationCounts::willAllocate(Instance& instance, uint32_t allocation)
+{
+    const AllocationSiteRecord* record = instance.objects.allocationSite(allocation);
+    if (auto list = usedUpListOf(record ? record->allocator : nullptr)) {
+        FunctionID constructor { instance.tables().constructorOfAllocation(allocation) };
+        if (constructor)
+            constructor = FunctionDescription(constructor).sourceFunction();
+        addLine(ensure(instance).m_allocations, makeString(describePlace(*instance.vm, constructor), ' ', describeLayoutOfAllocation(instance, allocation)), *list);
+    }
+    size_t reason = 0;
+    if (record && record->header)
+        reason = 1 + (std::ranges::lower_bound(longestListOfReason, listOf(record->allocator).cells) - longestListOfReason.begin());
+    ++ensure(instance).m_slowAllocations[reason];
+}
+
+void AllocationCounts::willAllocateClosure(Instance& instance, uint64_t request)
+{
+    const void* allocator = nullptr;
+    if (ClosureRequest::isSlim(request))
+        allocator = instance.closures.slimClosureAllocators[MarkedSpace::sizeClassToIndex(SlimClosure::allocationSize(ClosureRequest::countOf(request))) - 1];
+    else if (const AllocationSiteRecord* record = instance.objects.allocationSite(ClosureRequest::allocationOf(request)))
+        allocator = record->allocator;
+    if (auto list = usedUpListOf(allocator))
+        addLine(ensure(instance).m_allocations, makeString(describePlace(*instance.vm), " closure:"_s, countedAsWord(writtenFunctionName(FunctionID(ClosureRequest::functionOf(request))))), *list);
+}
+
+void AllocationCounts::willAllocateMap(Instance& instance)
+{
+    if (auto list = usedUpListOf(instance.allocation.inlineAllocations[static_cast<unsigned>(InlineAllocation::Map)].allocator))
+        addLine(ensure(instance).m_allocations, makeString(describePlace(*instance.vm), " Map"_s), *list);
+}
+
+void AllocationCounts::willAllocateSet(Instance& instance)
+{
+    if (auto list = usedUpListOf(instance.allocation.inlineAllocations[static_cast<unsigned>(InlineAllocation::Set)].allocator))
+        addLine(ensure(instance).m_allocations, makeString(describePlace(*instance.vm), " Set"_s), *list);
+}
+
+void AllocationCounts::willRefill(VM& vm, const LocalAllocator& allocator)
+{
+    CountedCells list = listOf(&allocator);
+    AllocationCounts* counts = list.bytes ? ensureForFirstInstance(vm) : nullptr;
+    if (counts)
+        addLine(counts->m_refills, makeString(describePlace(vm), ' ', countedAsWord(String::fromLatin1(allocator.directory().subspace()->name().data())), ':', allocator.cellSize()), list);
+}
+
+void AllocationCounts::didMake(VM& vm, ASCIILiteral what, const char* detailOrNull)
+{
+    if (AllocationCounts* counts = ensureForFirstInstance(vm))
+        addLine(counts->m_made, makeString(describePlace(vm), ' ', what, detailOrNull ? ":"_s : ""_s, detailOrNull ? countedAsWord(String::fromLatin1(detailOrNull)) : emptyString()), { 0, 1 });
+}
+
+size_t ExactAllocationCounts::numberOfKinds()
+{
+    return numberOfStubFamilies + 1;
+}
+
+void AllocationCounts::dump(const Instance& instance, PrintStream& out)
+{
+    const uint64_t* exactCounts = instance.runtime.counters.allocationCounts;
+    if (exactCounts) {
+        Lines lines;
+        std::span allocations = instance.tables().allocations();
+        const uint64_t* cellsOfAllocations = exactCounts + ExactAllocationCounts::offsetOfCellsOfAllocations() / sizeof(uint64_t);
+        for (size_t allocation = 0; allocation < allocations.size(); ++allocation) {
+            if (uint64_t cells = cellsOfAllocations[allocation])
+                addLine(lines, makeString("- - "_s, describeLayoutOfAllocation(instance, static_cast<uint32_t>(allocation))), { cells * MarkedSpace::optimalSizeFor(allocations[allocation].size()), cells });
+        }
+        for (size_t kind = 0; kind < ExactAllocationCounts::numberOfKinds(); ++kind) {
+            const uint64_t* counted = exactCounts + kind * ExactAllocationCounts::wordsOfKind;
+            if (counted[0])
+                addLine(lines, kind == ExactAllocationCounts::kindOfCompiledCode() ? "- - code"_str : makeString("- - stub:"_s, descriptorOf(static_cast<StubFamily>(kind)).name), { counted[1], counted[0] });
+        }
+        dumpLines(out, "allocation"_s, lines);
+    }
+    const AllocationCounts* counts = instance.state->allocationCounts.get();
+    if (!counts)
+        return;
+    if (!exactCounts)
+        dumpLines(out, "allocation"_s, counts->m_allocations);
+    dumpLines(out, "refill"_s, counts->m_refills);
+    dumpLines(out, "made"_s, counts->m_made);
+    for (size_t reason = 0; reason < reasonsForSlowAllocation.size(); ++reason)
+        out.println("slow-allocation "_s, reasonsForSlowAllocation[reason], " "_s, counts->m_slowAllocations[reason]);
+}
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 static void dumpOperationCalls(VM& vm, PrintStream& out)
 {
@@ -145,71 +467,54 @@ static void dumpOperationCalls(VM& vm, PrintStream& out)
         out.println(table->callCount(entry), "\toperation:", nameOf(entry));
 }
 
-static void dumpBranchCounts(VM& vm, const Instance& instance, PrintStream& out)
-{
-    if (!instance.runtime.counters.branchCounts)
-        return;
-    auto branchCounts = unsafeMakeSpan(instance.runtime.counters.branchCounts, static_cast<size_t>(runtimeLimitValue(vm, LimitID::BranchCounters)));
-    for (size_t index = 0; index < branchCounts.size(); ++index) {
-        if (uint64_t branchCount = branchCounts[index])
-            out.println(branchCount, "\tbranch:", index);
-    }
-}
-
-static void dumpArrivals(const Instance& instance, PrintStream& out)
-{
-    if (!instance.state)
-        return;
-    if (const ArrivalCounts* arrivals = instance.state->arrivalCounts.get())
-        arrivals->dump(out);
-}
-
-static void dumpStructuresMade(const Instance& instance, PrintStream& out)
-{
-    if (!instance.state || !instance.state->objects)
-        return;
-    instance.state->objects->structures.dumpStructuresMade(out);
-    if (instance.state->objects->caches)
-        instance.state->objects->caches->assignmentPlans.dumpCopies(out);
-}
-
-static void dumpAllocations(const Instance& instance, PrintStream& out)
-{
-    if (!instance.state)
-        return;
-    ExactAllocationCounts::dump(instance, out);
-    if (const AllocationCounts* allocations = instance.state->allocationCounts.get())
-        allocations->dump(out);
-}
-
-static void dumpNamedCounts(const Instance& instance, PrintStream& out)
-{
-    if (!instance.state)
-        return;
-    if (const PropertyCaches* caches = instance.state->propertyCaches.getIfCreated())
-        caches->dumpNamedCounts(out);
-}
-
 void dumpCounts(VM& vm, PrintStream& out)
 {
-    dumpCounters(vm, out, CounterKind::Counter, "counter:"_s);
-    dumpCounters(vm, out, CounterKind::StubExit, "exit:"_s);
-    dumpLimitHits(vm, out);
+    for (bool isStubExit : { false, true }) {
+        for (RuntimeCounterID counter : allMembersOf<RuntimeCounterID>) {
+            if (counter != RuntimeCounterID::None && countsStubExit(counter) == isStubExit)
+                out.println(valueOf(vm, counter), "\t", isStubExit ? "exit:" : "counter:", Wire::nameOf(counter));
+        }
+    }
+    // The run time also meets limits of the build, such as the number of key orders of a layout.
+    for (LimitID limit : allMembersOf<LimitID>) {
+        uint64_t hits = limitHitsOf(vm, limit);
+        if (stageOf(limit) == Stage::RunTime || hits)
+            out.println(hits, "\tlimit:", Wire::nameOf(limit));
+    }
     dumpOperationCalls(vm, out);
+
     forEachInstance(vm, [&](const Instance& instance) {
-        dumpBranchCounts(vm, instance, out);
+        if (!instance.runtime.counters.branchCounts)
+            return;
+        auto branchCounts = unsafeMakeSpan(instance.runtime.counters.branchCounts, static_cast<size_t>(runtimeLimitValue(vm, LimitID::BranchCounters)));
+        for (size_t index = 0; index < branchCounts.size(); ++index) {
+            if (uint64_t branchCount = branchCounts[index])
+                out.println(branchCount, "\tbranch:", index);
+        }
     });
-    forEachInstance(vm, [&](const Instance& instance) {
-        dumpStructuresMade(instance, out);
+    auto forEachState = [&](const auto& dump) {
+        forEachInstance(vm, [&](const Instance& instance) {
+            if (instance.state)
+                dump(instance, *instance.state);
+        });
+    };
+    forEachState([&](const Instance&, const State& state) {
+        if (!state.objects)
+            return;
+        state.objects->structures.dumpStructuresMade(out);
+        if (state.objects->caches)
+            state.objects->caches->assignmentPlans.dumpCopies(out);
     });
-    forEachInstance(vm, [&](const Instance& instance) {
-        dumpArrivals(instance, out);
+    forEachState([&](const Instance&, const State& state) {
+        if (state.arrivalCounts)
+            state.arrivalCounts->dump(out);
     });
-    forEachInstance(vm, [&](const Instance& instance) {
-        dumpAllocations(instance, out);
+    forEachState([&](const Instance& instance, const State&) {
+        AllocationCounts::dump(instance, out);
     });
-    forEachInstance(vm, [&](const Instance& instance) {
-        dumpNamedCounts(instance, out);
+    forEachState([&](const Instance&, const State& state) {
+        if (const PropertyCaches* caches = state.propertyCaches.getIfCreated())
+            caches->dumpNamedCounts(out);
     });
 }
 

@@ -11,7 +11,6 @@ module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 layout L0 kind=Record name="Lamp" module=m0 fields=[{key="isOn" declared={type=boolean} flags=[IsRequired]}]
 function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = Builtin builtin=GlobalThis
@@ -20,14 +19,12 @@ function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[
     Return
 }
 function f1 name="make" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToBoolean v0
     v2 = NewObject -, v1 layout=L0 fields=[0]
     v3 = FinishObject v2
     Return v3
 }
 function f2 name="level" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="isOn"
     v2 = ToBoolean v1
     Branch v2 -> taken b1(), notTaken b2()

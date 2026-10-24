@@ -42,7 +42,6 @@ layout L1 name="Circle" supertypes=[L0]
 layout L2 name="Square" supertypes=[L0]
 layout L3 name="Label"
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L1 fields=[]
     v1 = NewObject layout=L2 fields=[]
     v2 = NewObject layout=L3 fields=[]
@@ -60,7 +59,6 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="pick" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=L0
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):
@@ -71,7 +69,6 @@ function f1 name="pick" module=m0 parameters=[{type=anything}] results=[{type=an
     Return
 }
 function f2 name="choose" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=L0
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):

@@ -8,21 +8,9 @@
 
 #if ENABLE(AOT)
 
-#include "AOTVector.h"
 #include <algorithm>
-#include <span>
 
 namespace JSC { namespace AOT { namespace Typed {
-
-BlockCycles::BlockCycles(CFG& cfg)
-    : BlockCycles(cfg, nullptr)
-{
-}
-
-BlockCycles::BlockCycles(CFG& cfg, const Function& function)
-    : BlockCycles(cfg, &function)
-{
-}
 
 bool BlockCycles::hasCycleWithSeveralEntries() const
 {
@@ -78,7 +66,15 @@ public:
             m_stack.grow(m_numberOfBlocks);
             for (size_t cycle = 0; cycle + 1 < firstMember.size(); ++cycle)
                 addCycle(members.subspan(firstMember[cycle], firstMember[cycle + 1] - firstMember[cycle]), none);
-            findInnerCycles();
+            while (!m_pending.isEmpty()) {
+                Pending pending = m_pending.takeLast();
+                uint32_t* number = m_number.mutableSpan().data();
+                for (uint32_t block : pending.blocks)
+                    number[block] = 0;
+                decompose(pending.blocks.span(), pending.cycle, [&](std::span<const uint32_t> membersOfCycle) {
+                    addCycle(membersOfCycle, pending.cycle);
+                });
+            }
         }
         computePostOrder();
         return WTF::move(m_parts);
@@ -100,20 +96,6 @@ private:
         uint32_t cycle;
         Vector<uint32_t> blocks;
     };
-
-    void findInnerCycles()
-    {
-        while (!m_pending.isEmpty()) {
-            Pending pending = m_pending.takeLast();
-            uint32_t* number = m_number.mutableSpan().data();
-            for (uint32_t block : pending.blocks)
-                number[block] = 0;
-            uint32_t scope = pending.cycle;
-            decompose(pending.blocks.span(), scope, [&](std::span<const uint32_t> members) {
-                addCycle(members, scope);
-            });
-        }
-    }
 
     void decompose(std::span<const uint32_t> blocks, uint32_t scope, NOESCAPE const Invocable<void(std::span<const uint32_t>)> auto& didFindCycle)
     {

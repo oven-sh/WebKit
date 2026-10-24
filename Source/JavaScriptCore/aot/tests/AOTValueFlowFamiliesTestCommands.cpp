@@ -13,13 +13,7 @@
 #include "AOTSort.h"
 #include "AOTSupportTestCommands.h"
 #include "AOTValueFlowAnalysis.h"
-#include "AOTValueFlowLog.h"
-#include "AOTVector.h"
-#include <algorithm>
-#include <wtf/BitVector.h>
-#include <wtf/HashMap.h>
 #include <wtf/StringPrintStream.h>
-#include <wtf/text/StringToIntegerConversion.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -27,6 +21,7 @@ namespace {
 
 enum class PositionKind : uint8_t { Parameter, This, Result, Variable, Field };
 constexpr unsigned numberOfPositionKinds = 5;
+constexpr ASCIILiteral namesOfPositionKinds[numberOfPositionKinds] { "parameter"_s, "this"_s, "result"_s, "variable"_s, "field"_s };
 
 struct Position {
     PositionKind kind { PositionKind::Parameter };
@@ -57,221 +52,100 @@ struct Family {
     ValueSetID admitted;
 };
 
-class FamilyCounter {
-public:
-    FamilyCounter(ValueFlowSolution& solution, ValueSetMaker& maker)
-        : m_solution(solution)
-        , m_program(solution.program())
-        , m_universe(solution.bodies().universe())
-        , m_maker(maker)
-    {
-    }
-
-    void count(const Position&, const DeclaredType&, ValueSetID arrived);
-    void print(PrintStream&, size_t numberOfPairs);
-
-private:
-    const Family* familyOf(const DeclaredType&);
-    void printPosition(PrintStream&, const Position&) const;
-    void printLayout(PrintStream&, LayoutID) const;
-
-    ValueFlowSolution& m_solution;
-    const Program& m_program;
-    const ValueFlowUniverse& m_universe;
-    ValueSetMaker& m_maker;
-    HashMap<uint32_t, std::unique_ptr<Family>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_families;
-    HashMap<uint64_t, uint32_t> m_pairAt;
-    Vector<Pair> m_pairs;
-    std::array<Counts, numberOfPositionKinds> m_counts;
-};
-
 } // anonymous namespace
 
-static ASCIILiteral nameOf(PositionKind kind)
+static void printFamilies(PrintStream& out, ValueFlowSolution& solution)
 {
-    switch (kind) {
-    case PositionKind::Parameter:
-        return "parameter"_s;
-    case PositionKind::This:
-        return "this"_s;
-    case PositionKind::Result:
-        return "result"_s;
-    case PositionKind::Variable:
-        return "variable"_s;
-    case PositionKind::Field:
-        return "field"_s;
-    }
-    return "?"_s;
-}
-
-const Family* FamilyCounter::familyOf(const DeclaredType& declared)
-{
-    auto result = m_families.add(declared.type.index(), nullptr);
-    if (!result.isNewEntry)
-        return result.iterator->value.get();
-
-    const Type& type = m_program.at(declared.type);
-    auto family = makeUnique<Family>();
-    for (LayoutID member : membersOf(m_program, type))
-        family->members.set(member.index());
-    if (family->members.isEmpty())
-        return nullptr;
-    family->admitted = m_universe.maskOf(m_maker, m_program, type);
-    for (uint32_t member : family->members) {
-        bool liesBelowAnother = false;
-        for (LayoutID above : m_program.layouts[member].supertypes)
-            liesBelowAnother |= above.index() != member && family->members.get(above.index());
-        if (!liesBelowAnother)
-            family->roots.append(LayoutID(member));
-    }
-    if (family->roots.isEmpty())
-        family->roots.append(LayoutID(static_cast<uint32_t>(*family->members.begin())));
-    result.iterator->value = WTF::move(family);
-    return result.iterator->value.get();
-}
-
-void FamilyCounter::count(const Position& position, const DeclaredType& declared, ValueSetID arrived)
-{
-    const Family* family = familyOf(declared);
-    if (!family)
-        return;
-
-    auto leaveOutWhatIsCovered = [&](ValueFlowObjectID placeholder, ValueFlowNodeID covered) {
-        if (m_solution.sets().contains(arrived, placeholder))
-            arrived = m_maker.unite(m_maker.intersect(arrived, ValueSets::complement(m_maker.intersect(m_solution.solver().valueOf(covered), m_universe.knownObjects()))), m_maker.of(placeholder));
-    };
-    leaveOutWhatIsCovered(ValueFlowUniverse::unknownObject(), ValueFlowProgramNodes::escaped());
-    leaveOutWhatIsCovered(ValueFlowUniverse::untrackedObject(), ValueFlowProgramNodes::lost());
-
-    Counts& counts = m_counts[static_cast<unsigned>(position.kind)];
-    ++counts.positions;
-    bool hasObject = false;
-    bool hasUnknownObject = false;
-    bool hasUntrackedObject = false;
-    bool hasObjectWithoutLayout = false;
-    Vector<LayoutID, 8> outside;
-    m_solution.sets().forEachMember(arrived, [&](ValueFlowObjectID object) {
-        if (!m_universe.isObject(object))
-            return;
-        hasObject = true;
-        if (object == ValueFlowUniverse::unknownObject()) {
-            hasUnknownObject = true;
-            return;
-        }
-        if (object == ValueFlowUniverse::untrackedObject()) {
-            hasUntrackedObject = true;
-            return;
-        }
-        LayoutID layout = m_universe.layoutOf(object);
-        if (!layout) {
-            hasObjectWithoutLayout |= !m_solution.sets().contains(family->admitted, object);
-            return;
-        }
-        if (!family->members.get(layout.index()) && !outside.contains(layout))
-            outside.append(layout);
-    });
-    counts.withoutArrival += !hasObject;
-    counts.withUnknownObject += hasUnknownObject;
-    counts.withUntrackedObject += hasUntrackedObject;
-    counts.withObjectWithoutLayout += hasObjectWithoutLayout;
-    counts.withLayoutOutside += !outside.isEmpty();
-
-    LayoutID named = family->roots[0];
-    for (LayoutID arriving : outside) {
-        auto result = m_pairAt.add((static_cast<uint64_t>(named.index()) << 32 | arriving.index()) + 1, m_pairs.size());
-        if (result.isNewEntry)
-            m_pairs.append({ named, arriving, 0, position });
-        ++m_pairs[result.iterator->value].positions;
-    }
-}
-
-void FamilyCounter::printLayout(PrintStream& out, LayoutID layout) const
-{
-    const Layout& record = m_program.layouts[layout.index()];
-    IRPrinter printer(out, m_program);
-    out.print("L", layout.index());
-    if (record.name) {
-        out.print(" ");
-        printer.print(record.name);
-    }
-    if (record.module) {
-        out.print(" ");
-        printer.print(m_program.at(record.module).displayPath);
-        out.print("@", record.position);
-    }
-}
-
-void FamilyCounter::printPosition(PrintStream& out, const Position& position) const
-{
-    IRPrinter printer(out, m_program);
-    out.print(nameOf(position.kind), " ");
-    switch (position.kind) {
-    case PositionKind::Parameter:
-    case PositionKind::This:
-    case PositionKind::Result: {
-        const Function& function = m_program.functions[position.owner];
-        out.print("f", position.owner, ":", position.index);
-        if (function.module) {
-            out.print(" ");
-            printer.print(m_program.at(function.module).displayPath);
-            out.print("@", function.position);
-        }
-        return;
-    }
-    case PositionKind::Variable: {
-        const Variable& variable = m_program.variables[position.owner];
-        out.print("g", position.owner);
-        if (variable.name) {
-            out.print(" ");
-            printer.print(variable.name);
-        }
-        out.print(" ");
-        printer.print(m_program.at(variable.module).displayPath);
-        return;
-    }
-    case PositionKind::Field:
-        printLayout(out, LayoutID(position.owner));
-        out.print(" field ", position.index);
-        return;
-    }
-}
-
-void FamilyCounter::print(PrintStream& out, size_t numberOfPairs)
-{
-    Counts total;
-    for (unsigned kind = 0; kind < numberOfPositionKinds; ++kind) {
-        const Counts& counts = m_counts[kind];
-        out.println(nameOf(static_cast<PositionKind>(kind)), " positions ", counts.positions, " layout-outside ", counts.withLayoutOutside, " unknown-object ", counts.withUnknownObject,
-            " object-without-layout ", counts.withObjectWithoutLayout, " no-object ", counts.withoutArrival, " untracked-object ", counts.withUntrackedObject);
-        total.positions += counts.positions;
-        total.withLayoutOutside += counts.withLayoutOutside;
-        total.withUnknownObject += counts.withUnknownObject;
-        total.withUntrackedObject += counts.withUntrackedObject;
-        total.withObjectWithoutLayout += counts.withObjectWithoutLayout;
-        total.withoutArrival += counts.withoutArrival;
-    }
-    out.println("all positions ", total.positions, " layout-outside ", total.withLayoutOutside, " unknown-object ", total.withUnknownObject, " object-without-layout ", total.withObjectWithoutLayout,
-        " no-object ", total.withoutArrival, " pairs ", m_pairs.size(), " untracked-object ", total.withUntrackedObject);
-
-    AOT::sort(m_pairs, [](const Pair& a, const Pair& b) {
-        return std::tuple(b.positions, a.named.index(), a.arriving.index()) < std::tuple(a.positions, b.named.index(), b.arriving.index());
-    });
-    for (const Pair& pair : m_pairs.span().first(std::min(numberOfPairs, m_pairs.size()))) {
-        out.print("pair positions ", pair.positions, " named ");
-        printLayout(out, pair.named);
-        out.print(" arriving ");
-        printLayout(out, pair.arriving);
-        out.print(" first ");
-        printPosition(out, pair.first);
-        out.println();
-    }
-}
-
-static void countPositionsOfFunctions(ValueFlowSolution& solution, FamilyCounter& counter)
-{
+    constexpr size_t numberOfPairsPrinted = 40;
     const Program& program = solution.program();
     const ValueFlowSolver& solver = solution.solver();
     const ValueFlowProgramNodes& nodes = solution.bodies().nodes();
+    const ValueFlowUniverse& universe = solution.bodies().universe();
+    ValueSetMaker maker(solution.bodies().sets());
+    IRPrinter printer(out, program);
+    HashMap<uint32_t, std::unique_ptr<Family>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> families;
+    HashMap<uint64_t, uint32_t> pairAt;
+    Vector<Pair> pairs;
+    std::array<Counts, numberOfPositionKinds> countsOf;
+
+    auto familyOf = [&](const DeclaredType& declared) -> const Family* {
+        auto result = families.add(declared.type.index(), nullptr);
+        if (!result.isNewEntry)
+            return result.iterator->value.get();
+
+        const Type& type = program.at(declared.type);
+        auto family = makeUnique<Family>();
+        for (LayoutID member : membersOf(program, type))
+            family->members.set(member.index());
+        if (family->members.isEmpty())
+            return nullptr;
+        family->admitted = universe.maskOf(maker, program, type);
+        for (uint32_t member : family->members) {
+            bool liesBelowAnother = false;
+            for (LayoutID above : program.layouts[member].supertypes)
+                liesBelowAnother |= above.index() != member && family->members.get(above.index());
+            if (!liesBelowAnother)
+                family->roots.append(LayoutID(member));
+        }
+        if (family->roots.isEmpty())
+            family->roots.append(LayoutID(static_cast<uint32_t>(*family->members.begin())));
+        result.iterator->value = WTF::move(family);
+        return result.iterator->value.get();
+    };
+    auto count = [&](const Position& position, const DeclaredType& declared, ValueSetID arrived) {
+        const Family* family = familyOf(declared);
+        if (!family)
+            return;
+
+        auto leaveOutWhatIsCovered = [&](ValueFlowObjectID placeholder, ValueFlowNodeID covered) {
+            if (solution.sets().contains(arrived, placeholder))
+                arrived = maker.unite(maker.intersect(arrived, ValueSets::complement(maker.intersect(solver.valueOf(covered), universe.knownObjects()))), maker.of(placeholder));
+        };
+        leaveOutWhatIsCovered(ValueFlowUniverse::unknownObject(), ValueFlowProgramNodes::escaped());
+        leaveOutWhatIsCovered(ValueFlowUniverse::untrackedObject(), ValueFlowProgramNodes::lost());
+
+        Counts& counts = countsOf[static_cast<unsigned>(position.kind)];
+        ++counts.positions;
+        bool hasObject = false;
+        bool hasUnknownObject = false;
+        bool hasUntrackedObject = false;
+        bool hasObjectWithoutLayout = false;
+        Vector<LayoutID, 8> outside;
+        solution.sets().forEachMember(arrived, [&](ValueFlowObjectID object) {
+            if (!universe.isObject(object))
+                return;
+            hasObject = true;
+            if (object == ValueFlowUniverse::unknownObject()) {
+                hasUnknownObject = true;
+                return;
+            }
+            if (object == ValueFlowUniverse::untrackedObject()) {
+                hasUntrackedObject = true;
+                return;
+            }
+            LayoutID layout = universe.layoutOf(object);
+            if (!layout) {
+                hasObjectWithoutLayout |= !solution.sets().contains(family->admitted, object);
+                return;
+            }
+            if (!family->members.get(layout.index()) && !outside.contains(layout))
+                outside.append(layout);
+        });
+        counts.withoutArrival += !hasObject;
+        counts.withUnknownObject += hasUnknownObject;
+        counts.withUntrackedObject += hasUntrackedObject;
+        counts.withObjectWithoutLayout += hasObjectWithoutLayout;
+        counts.withLayoutOutside += !outside.isEmpty();
+
+        LayoutID named = family->roots[0];
+        for (LayoutID arriving : outside) {
+            auto result = pairAt.add((static_cast<uint64_t>(named.index()) << 32 | arriving.index()) + 1, pairs.size());
+            if (result.isNewEntry)
+                pairs.append({ named, arriving, 0, position });
+            ++pairs[result.iterator->value].positions;
+        }
+    };
+
     for (uint32_t index = 0; index < program.functions.size(); ++index) {
         const Function& function = program.functions[index];
         FunctionID id(index);
@@ -280,24 +154,17 @@ static void countPositionsOfFunctions(ValueFlowSolution& solution, FamilyCounter
         std::optional<unsigned> thisParameter = function.thisParameterIndex();
         for (unsigned parameter = 0; parameter < function.numberOfEntryParameters(); ++parameter) {
             if (const DeclaredType* declared = function.declaredEntryParameter(parameter))
-                counter.count({ thisParameter == parameter ? PositionKind::This : PositionKind::Parameter, index, parameter }, *declared, solver.valueOf(nodes.entryParameter(id, parameter)));
+                count({ thisParameter == parameter ? PositionKind::This : PositionKind::Parameter, index, parameter }, *declared, solver.valueOf(nodes.entryParameter(id, parameter)));
         }
         for (unsigned result = 0; result < function.results.size(); ++result)
-            counter.count({ PositionKind::Result, index, result }, function.results[result], solver.valueOf(nodes.result(id, result)));
+            count({ PositionKind::Result, index, result }, function.results[result], solver.valueOf(nodes.result(id, result)));
     }
     for (uint32_t index = 0; index < program.variables.size(); ++index)
-        counter.count({ PositionKind::Variable, index, 0 }, program.variables[index].declared, solver.valueOf(nodes.variable(VariableID(index))));
-}
-
-static void countFields(ValueFlowSolution& solution, FamilyCounter& counter, ValueSetMaker& maker)
-{
-    const Program& program = solution.program();
-    const ValueFlowSolver& solver = solution.solver();
-    const ValueFlowUniverse& universe = solution.bodies().universe();
+        count({ PositionKind::Variable, index, 0 }, program.variables[index].declared, solver.valueOf(nodes.variable(VariableID(index))));
 
     HashMap<uint64_t, ValueSetID> arrivedAt;
     Vector<LayoutID, 16> layouts;
-    for (uint32_t node = solution.bodies().nodes().numberOfNodes(); node < solver.graph().numberOfNodes(); ++node) {
+    for (uint32_t node = nodes.numberOfNodes(); node < solver.graph().numberOfNodes(); ++node) {
         const ValueFlowNodeKey* key = solver.keyOfMadeNode(ValueFlowNodeID(node));
         if (!key || key->kind != ValueFlowMadeNodeKind::Written || key->name().kind != ValueFlowNameKind::Property)
             continue;
@@ -316,15 +183,81 @@ static void countFields(ValueFlowSolution& solution, FamilyCounter& counter, Val
                 result.iterator->value = maker.unite(result.iterator->value, value);
         }
     }
-
     for (uint32_t layout = 0; layout < program.layouts.size(); ++layout) {
         std::span<const Field> fields = program.layouts[layout].fields;
         for (uint32_t field = 0; field < fields.size(); ++field) {
             if (!fields[field].key)
                 continue;
             auto arrived = arrivedAt.find((static_cast<uint64_t>(layout) << 32 | fields[field].key.index()) + 1);
-            counter.count({ PositionKind::Field, layout, field }, fields[field].declared, arrived == arrivedAt.end() ? ValueSets::nothing : arrived->value);
+            count({ PositionKind::Field, layout, field }, fields[field].declared, arrived == arrivedAt.end() ? ValueSets::nothing : arrived->value);
         }
+    }
+
+    Counts total;
+    for (unsigned kind = 0; kind < numberOfPositionKinds; ++kind) {
+        const Counts& counts = countsOf[kind];
+        out.println(namesOfPositionKinds[kind], " positions ", counts.positions, " layout-outside ", counts.withLayoutOutside, " unknown-object ", counts.withUnknownObject,
+            " object-without-layout ", counts.withObjectWithoutLayout, " no-object ", counts.withoutArrival, " untracked-object ", counts.withUntrackedObject);
+        total.positions += counts.positions;
+        total.withLayoutOutside += counts.withLayoutOutside;
+        total.withUnknownObject += counts.withUnknownObject;
+        total.withUntrackedObject += counts.withUntrackedObject;
+        total.withObjectWithoutLayout += counts.withObjectWithoutLayout;
+        total.withoutArrival += counts.withoutArrival;
+    }
+    out.println("all positions ", total.positions, " layout-outside ", total.withLayoutOutside, " unknown-object ", total.withUnknownObject, " object-without-layout ", total.withObjectWithoutLayout,
+        " no-object ", total.withoutArrival, " pairs ", pairs.size(), " untracked-object ", total.withUntrackedObject);
+
+    auto printAfterBlank = [&](auto text) {
+        out.print(" ");
+        printer.print(text);
+    };
+    auto printLayout = [&](LayoutID layout) {
+        const Layout& record = program.layouts[layout.index()];
+        out.print("L", layout.index());
+        if (record.name)
+            printAfterBlank(record.name);
+        if (record.module) {
+            printAfterBlank(program.at(record.module).displayPath);
+            out.print("@", record.position);
+        }
+    };
+    AOT::sort(pairs, [](const Pair& a, const Pair& b) {
+        return std::tuple(b.positions, a.named.index(), a.arriving.index()) < std::tuple(a.positions, b.named.index(), b.arriving.index());
+    });
+    for (const Pair& pair : pairs.span().first(std::min(numberOfPairsPrinted, pairs.size()))) {
+        out.print("pair positions ", pair.positions, " named ");
+        printLayout(pair.named);
+        out.print(" arriving ");
+        printLayout(pair.arriving);
+        const Position& position = pair.first;
+        out.print(" first ", namesOfPositionKinds[static_cast<unsigned>(position.kind)], " ");
+        switch (position.kind) {
+        case PositionKind::Parameter:
+        case PositionKind::This:
+        case PositionKind::Result: {
+            const Function& function = program.functions[position.owner];
+            out.print("f", position.owner, ":", position.index);
+            if (function.module) {
+                printAfterBlank(program.at(function.module).displayPath);
+                out.print("@", function.position);
+            }
+            break;
+        }
+        case PositionKind::Variable: {
+            const Variable& variable = program.variables[position.owner];
+            out.print("g", position.owner);
+            if (variable.name)
+                printAfterBlank(variable.name);
+            printAfterBlank(program.at(variable.module).displayPath);
+            break;
+        }
+        case PositionKind::Field:
+            printLayout(LayoutID(position.owner));
+            out.print(" field ", position.index);
+            break;
+        }
+        out.println();
     }
 }
 
@@ -523,138 +456,17 @@ static void printCallees(PrintStream& out, ValueFlowSolution& solution)
     }
 }
 
-static ValueID definitionThroughCopies(const Function& function, ValueID id)
-{
-    for (unsigned steps = 0; steps < 16; ++steps) {
-        switch (function.at(id).opcode) {
-        case Opcode::Upcast:
-        case Opcode::Convert:
-        case Opcode::Check:
-        case Opcode::CheckInitialized:
-        case Opcode::RequireObject:
-        case Opcode::NarrowByField:
-        case Opcode::RequireObjectCoercible:
-            id = function.at(id).operand(0);
-            continue;
-        default:
-            return id;
-        }
-    }
-    return id;
-}
-
-static ASCIILiteral describeObjectsIn(ValueFlowSolution& solution, ValueSetID set)
-{
-    const ValueFlowUniverse& universe = solution.bodies().universe();
-    bool hasUnknownObject = false;
-    bool hasUntrackedObject = false;
-    bool hasObjectWithoutLayout = false;
-    bool hasSeveralLayouts = false;
-    LayoutID first;
-    solution.sets().forEachMember(set, [&](ValueFlowObjectID object) {
-        if (!universe.isObject(object))
-            return;
-        if (object == ValueFlowUniverse::unknownObject()) {
-            hasUnknownObject = true;
-            return;
-        }
-        if (object == ValueFlowUniverse::untrackedObject()) {
-            hasUntrackedObject = true;
-            return;
-        }
-        LayoutID layout = universe.layoutOf(object);
-        if (!layout)
-            hasObjectWithoutLayout = true;
-        else if (!first)
-            first = layout;
-        else
-            hasSeveralLayouts |= layout != first;
-    });
-    if (hasUnknownObject)
-        return "unknown-object"_s;
-    if (hasUntrackedObject)
-        return "untracked-object"_s;
-    if (hasObjectWithoutLayout)
-        return "object-without-layout"_s;
-    if (hasSeveralLayouts)
-        return "several-layouts"_s;
-    return first ? "one-layout"_s : "no-object"_s;
-}
-
-static void printCalleeSites(PrintStream& out, ValueFlowSolution& solution)
-{
-    const Program& program = solution.program();
-    IRPrinter printer(out, program);
-    HashMap<uint32_t, uint32_t> statementAt;
-    for (uint32_t index = 0; index < program.functions.size(); ++index) {
-        const Function& function = program.functions[index];
-        if (!function.hasBody() || !solution.solver().isReached(FunctionID(index)))
-            continue;
-        std::span<const ValueFlowStatement> statements = solution.bodies().statementsOf(index);
-        statementAt.clear();
-        for (uint32_t position = 0; position < statements.size(); ++position) {
-            if (statements[position].kind == ValueFlowStatementKind::Operation && statements[position].site)
-                statementAt.add(statements[position].site.index() + 1, position);
-        }
-        for (const ValueFlowStatement& statement : statements) {
-            if (statement.kind != ValueFlowStatementKind::Operation)
-                continue;
-            if (statement.opcode != Opcode::Call && statement.opcode != Opcode::CallList && statement.opcode != Opcode::Construct && statement.opcode != Opcode::ConstructList)
-                continue;
-            if (!solution.sets().contains(solution.valueOf(solution.bodies().operandsOf(statement)[0]), ValueFlowUniverse::unknownObject()))
-                continue;
-            out.print("site\t", isLibraryCode(program, function) ? "library" : "application", "\t");
-            if (function.module)
-                printer.print(program.at(function.module).displayPath);
-            out.print("\t", function.locationOf(statement.site).position, "\tf", index, "\t");
-            ValueID definition = definitionThroughCopies(function, function.at(statement.site).operand(0));
-            const Value& value = function.at(definition);
-            out.print(value.opcode, "\t");
-            switch (value.opcode) {
-            case Opcode::PropGet: {
-                printer.print(value.key());
-                auto read = statementAt.find(definition.index() + 1);
-                out.print("\t", read == statementAt.end() ? "?"_s : describeObjectsIn(solution, solution.valueOf(solution.bodies().operandsOf(statements[read->value])[0])));
-                break;
-            }
-            case Opcode::GetModuleVariable:
-                if (StringID name = program.at(value.variable()).name)
-                    printer.print(name);
-                break;
-            case Opcode::Parameter:
-                out.print(function.at(BlockID(0u)).parameters.find(definition));
-                break;
-            default:
-                break;
-            }
-            out.println();
-        }
-    }
-}
-
 void runValueFlowFamiliesTestCommand(TestCommandContext& context)
 {
-    size_t numberOfPairs = 40;
     bool printsReceivers = false;
     bool printsCallees = false;
-    bool printsCalleeSites = false;
     for (const String& word : context.arguments) {
-        if (word == "receivers"_s) {
+        if (word == "receivers"_s)
             printsReceivers = true;
-            continue;
-        }
-        if (word == "callees"_s) {
+        else if (word == "callees"_s)
             printsCallees = true;
-            continue;
-        }
-        if (word == "callee-sites"_s) {
-            printsCalleeSites = true;
-            continue;
-        }
-        std::optional<uint32_t> number = word.startsWith("pairs="_s) ? parseInteger<uint32_t>(StringView(word).substring(6)) : std::nullopt;
-        if (!number)
+        else
             return printBadArgument(context.out, word);
-        numberOfPairs = *number;
     }
 
     ValueFlowSolution solution(*context.program, context.build);
@@ -666,15 +478,8 @@ void runValueFlowFamiliesTestCommand(TestCommandContext& context)
         printReceivers(context.out, solution);
     if (printsCallees)
         printCallees(context.out, solution);
-    if (printsCalleeSites)
-        printCalleeSites(context.out, solution);
-    if (printsReceivers || printsCallees || printsCalleeSites)
-        return;
-    ValueSetMaker maker(solution.bodies().sets());
-    FamilyCounter counter(solution, maker);
-    countPositionsOfFunctions(solution, counter);
-    countFields(solution, counter, maker);
-    counter.print(context.out, numberOfPairs);
+    if (!printsReceivers && !printsCallees)
+        printFamilies(context.out, solution);
 }
 
 } } } // namespace JSC::AOT::Typed

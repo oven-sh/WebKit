@@ -9,7 +9,6 @@ module m0 path="main.js" displayPath="main.js"
 variable g0 name="n" module=m0 declared={type=undefined|number} initialization=Undefined
 
 function f0 name="atTheLimit" parameters=[{type=number}, {type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: number, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     PutModuleVariable v0 variable=g0
@@ -20,15 +19,13 @@ function f0 name="atTheLimit" parameters=[{type=number}, {type=number}, {type=bo
   b3():
     v5 = GetModuleVariable variable=g0
     Return v5
-}
-# CHECK-LABEL: function f0 name="atTheLimit"
 # CHECK: Jump -> next b3(v0)
 # CHECK: Jump -> next b3(v1)
 # CHECK: b3([[merged]]:
 # CHECK-NEXT: v5:{{*}}= Upcast [[merged]]
+}
 
 function f1 name="overTheLimit" parameters=[{type=number}, {type=number}, {type=number}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: number, v2: number, v3: boolean, v4: boolean):
     Branch v3 -> taken b1(), notTaken b2()
   b1():
     PutModuleVariable v0 variable=g0
@@ -44,8 +41,7 @@ function f1 name="overTheLimit" parameters=[{type=number}, {type=number}, {type=
   b5():
     v8 = GetModuleVariable variable=g0
     Return v8
-}
-# CHECK-LABEL: function f1 name="overTheLimit"
 # CHECK-COUNT-3: Jump -> next b5()
 # CHECK: b5():
 # CHECK-NEXT: v8: undefined|number = GetModuleVariable variable=g0
+}

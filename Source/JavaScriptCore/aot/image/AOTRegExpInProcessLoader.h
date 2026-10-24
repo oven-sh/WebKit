@@ -7,7 +7,7 @@
 
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
 
-#include "AOTRegExpSection.h"
+#include "AOTRegExpCompiler.h"
 #include "YarrJIT.h"
 
 namespace JSC::AOT {

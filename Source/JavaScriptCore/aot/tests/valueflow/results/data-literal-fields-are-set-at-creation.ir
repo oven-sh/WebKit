@@ -22,7 +22,6 @@ data d2 root=Object{layout=L3 members=[{key="always" value=Number{value=1}}, {ke
 data d3 root=Object{layout=L3 members=[{key="always" value=Number{value=1}}]} module=m0
 data d4 root=Object{layout=L4 members=[{key="gone" value=Number{value=1}}]} module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Data data=d0
     v1 = PropGet v0 key="dt"
     v2 = PropGet v0 key="label"

@@ -8,7 +8,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="goodRead" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]>, v1: int[0, 1000], v2: i32):
     v3 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
     Branch v3 -> taken b1(| 0), notTaken b3()
   b1(v4):
@@ -23,7 +22,6 @@ function f0 name="goodRead" parameters=[{type=Array<i32, proven, pristine[Storag
     Return v9
 }
 function f1 name="goodStoreThenRead" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]>, v1: int[0, 1000], v2: i32):
     v3 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
     Branch v3 -> taken b1(| 0), notTaken b3()
   b1(v4):
@@ -39,7 +37,6 @@ function f1 name="goodStoreThenRead" parameters=[{type=Array<i32, proven, pristi
     Return v10
 }
 function f2 name="goodStoreInsideAnotherArrayThatMayBeThisOne" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}, {type=Array<i32, proven, pristine[Storage, Names, Dense]>}] results=[{type=anything}] {
-  b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]>, v1: int[0, 1000], v2: i32, v3: Array<i32, proven, pristine[Storage, Names, Dense]>):
     v4 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
     Branch v4 -> taken b1(| 0), notTaken b5()
   b1(v5):
@@ -62,7 +59,6 @@ function f2 name="goodStoreInsideAnotherArrayThatMayBeThisOne" parameters=[{type
     Return v16
 }
 function f3 name="badPositionOfAnotherValue" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}, {type=int[0, 1000]}] results=[{type=anything}] {
-  b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]>, v1: int[0, 1000], v2: i32, v3: int[0, 1000]):
     v4 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
     Branch v4 -> taken b1(| 0), notTaken b3()
   b1(v5):
@@ -77,7 +73,6 @@ function f3 name="badPositionOfAnotherValue" parameters=[{type=Array<i32, proven
     Return v10
 }
 function f4 name="badArrayOfAnotherValue" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}, {type=Array<i32, proven, pristine[Storage, Names, Dense]>}] results=[{type=anything}] {
-  b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]>, v1: int[0, 1000], v2: i32, v3: Array<i32, proven, pristine[Storage, Names, Dense]>):
     v4 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
     Branch v4 -> taken b1(| 0), notTaken b3()
   b1(v5):
@@ -92,7 +87,6 @@ function f4 name="badArrayOfAnotherValue" parameters=[{type=Array<i32, proven, p
     Return v10
 }
 function f5 name="badGuardWithoutTheTestOfThePosition" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]>, v1: int[0, 1000], v2: i32):
     v3 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
     Branch v3 -> taken b1(| 0), notTaken b3()
   b1(v4):
@@ -107,7 +101,6 @@ function f5 name="badGuardWithoutTheTestOfThePosition" parameters=[{type=Array<i
     Return v9
 }
 function f6 name="badStoreIntoStorageThatMayBeShared" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]>, v1: int[0, 1000], v2: i32):
     v3 = HasArrayStorage v0 arrayStorage=Int32
     Branch v3 -> taken b1(| 0), notTaken b3()
   b1(v4):
@@ -122,7 +115,6 @@ function f6 name="badStoreIntoStorageThatMayBeShared" parameters=[{type=Array<i3
     Return v9
 }
 function f7 name="badReadAfterStoreAnywhere" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}, {type=int[0, 1000]}] results=[{type=anything}] {
-  b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]>, v1: int[0, 1000], v2: i32, v3: int[0, 1000]):
     v4 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
     Branch v4 -> taken b1(| 0), notTaken b3()
   b1(v5):
@@ -138,7 +130,6 @@ function f7 name="badReadAfterStoreAnywhere" parameters=[{type=Array<i32, proven
     Return v11
 }
 function f8 name="badReadAfterStoreAnywhereInArrayThatMayBeThisOne" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}, {type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}] results=[{type=anything}] {
-  b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]>, v1: int[0, 1000], v2: i32, v3: Array<i32, proven, pristine[Storage, Names, Dense]>, v4: int[0, 1000]):
     v5 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
     Branch v5 -> taken b1(| 0), notTaken b3()
   b1(v6):
@@ -154,7 +145,6 @@ function f8 name="badReadAfterStoreAnywhereInArrayThatMayBeThisOne" parameters=[
     Return v12
 }
 function f9 name="badReadAfterAppend" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]>, v1: int[0, 1000], v2: i32):
     v3 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
     Branch v3 -> taken b1(| 0), notTaken b3()
   b1(v4):
@@ -170,7 +160,6 @@ function f9 name="badReadAfterAppend" parameters=[{type=Array<i32, proven, prist
     Return v10
 }
 function f10 name="badReadAfterCall" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}, {type=function}] results=[{type=anything}] {
-  b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]>, v1: int[0, 1000], v2: i32, v3: function):
     v4 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
     Branch v4 -> taken b1(| 0), notTaken b3()
   b1(v5):
@@ -186,7 +175,6 @@ function f10 name="badReadAfterCall" parameters=[{type=Array<i32, proven, pristi
     Return v11
 }
 function f11 name="badStoreOfValueThatMayNotFit" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]>, v1: int[0, 1000], v2: i32, v3: number):
     v4 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
     Branch v4 -> taken b1(| 0), notTaken b3()
   b1(v5):
@@ -201,7 +189,6 @@ function f11 name="badStoreOfValueThatMayNotFit" parameters=[{type=Array<i32, pr
     Return v10
 }
 function f12 name="badPositionThatMayBeAFraction" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]>, v1: int[0, 1000], v2: i32, v3: number):
     v4 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
     Branch v4 -> taken b1(| 0), notTaken b3()
   b1(v5):
@@ -216,7 +203,6 @@ function f12 name="badPositionThatMayBeAFraction" parameters=[{type=Array<i32, p
     Return v10
 }
 function f13 name="badWithoutNamedStorage" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]>, v1: int[0, 1000], v2: i32):
     v3 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
     Branch v3 -> taken b1(| 0), notTaken b3()
   b1(v4):

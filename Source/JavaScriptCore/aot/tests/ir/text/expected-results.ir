@@ -25,7 +25,6 @@ layout L0 fields=[{key="y" declared={type=anything}}, {key="x" declared={type=nu
 layout L1
 module m0 path="/a.ts" displayPath="a.ts" body=f0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=JSONParse
     v1 = String string="{}"
     v2 = Call v0, -, v1 expectedResult=x1

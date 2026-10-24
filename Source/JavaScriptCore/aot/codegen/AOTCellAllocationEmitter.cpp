@@ -10,12 +10,12 @@
 
 #include "AOTAllocationCounts.h"
 #include "AOTAllocationEmitter.h"
-#include "AOTAllocationSiteRecord.h"
 #include "AOTArrayStorageForms.h"
 #include "AOTBarrierEmitter.h"
 #include "AOTCellFormat.h"
 #include "AOTConvention.h"
 #include "AOTInstance.h"
+#include "AOTObjectWords.h"
 #include "AOTPlacement.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTStubsAllocation.h"
@@ -45,26 +45,11 @@ namespace JSC { namespace AOT { namespace Typed {
 static_assert(sizeof(JSArray) <= MarkedSpace::preciseCutoff && !(sizeof(JSArray) % MarkedSpace::sizeStep));
 static_assert(sizeof(JSRopeString) <= MarkedSpace::preciseCutoff && !(sizeof(JSRopeString) % MarkedSpace::sizeStep));
 
-static constexpr ptrdiff_t offsetOfAllocator(InlineAllocation kind)
-{
-    return AOT_INSTANCE_OFFSET(allocation.inlineAllocations) + static_cast<unsigned>(kind) * sizeof(InlineAllocationData) + OBJECT_OFFSETOF(InlineAllocationData, allocator);
-}
-
-static constexpr ptrdiff_t offsetOfHeader(InlineAllocation kind)
-{
-    return AOT_INSTANCE_OFFSET(allocation.inlineAllocations) + static_cast<unsigned>(kind) * sizeof(InlineAllocationData) + OBJECT_OFFSETOF(InlineAllocationData, header);
-}
-
 static constexpr std::optional<size_t> knownCellSizeFor(size_t bytes)
 {
     if (bytes <= MarkedSpace::preciseCutoff && !(bytes % MarkedSpace::sizeStep))
         return bytes;
     return std::nullopt;
-}
-
-CellAllocationEmitter::CellAllocationEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
 }
 
 CellPointer CellAllocationEmitter::allocateHeapCell(Pointer allocatorOrNull, LBasicBlock slowPath)
@@ -161,9 +146,10 @@ void CellAllocationEmitter::storeHeader(CellPointer cell, Integer header)
 CellPointer CellAllocationEmitter::allocateObject(InlineAllocation kind, LBasicBlock slowPath)
 {
     const B3::AbstractHeap& heap = m_heaps.entire(AbstractHeap::AllocatorState);
-    CellPointer result = allocateHeapCell(Pointer(m_out.loadPtr(instanceField(heap, offsetOfAllocator(kind)))), slowPath);
+    ptrdiff_t offsetOfData = AOT_INSTANCE_OFFSET(allocation.inlineAllocations) + static_cast<unsigned>(kind) * sizeof(InlineAllocationData);
+    CellPointer result = allocateHeapCell(Pointer(m_out.loadPtr(instanceField(heap, offsetOfData + OBJECT_OFFSETOF(InlineAllocationData, allocator)))), slowPath);
     CodeGenerator::InitializationScope scope(generator());
-    storeHeader(result, Integer(m_out.load64(instanceField(heap, offsetOfHeader(kind)))));
+    storeHeader(result, Integer(m_out.load64(instanceField(heap, offsetOfData + OBJECT_OFFSETOF(InlineAllocationData, header)))));
     m_out.storePtr(m_out.intPtrZero, result.value(), m_heaps.JSObject_butterfly);
     return result;
 }
@@ -176,21 +162,18 @@ CellAllocationEmitter::AllocationSiteAddress CellAllocationEmitter::allocationSi
     return { distances, signExtended(distance) };
 }
 
-Pointer CellAllocationEmitter::recordAt(const AllocationSiteAddress& site)
+Pointer CellAllocationEmitter::allocationSiteRecord(AllocationID id)
 {
+    AllocationSiteAddress site = allocationSiteAddress(id);
     return offsetBy(Pointer(m_out.add(site.distances.value(), site.distance.value())), -static_cast<ptrdiff_t>(sizeof(AllocationSiteRecord)));
 }
 
-Pointer CellAllocationEmitter::allocationSiteRecord(AllocationID id)
-{
-    return recordAt(allocationSiteAddress(id));
-}
-
 // The header, the order word and the shape word lie in the record as they lie in the cell.
-void CellAllocationEmitter::copyHeaderAndWords(const AllocationSiteAddress& site, CellPointer cell)
+void CellAllocationEmitter::copyHeaderAndWords(AllocationID id, CellPointer cell)
 {
     static_assert(AllocationSiteRecord::offsetOfOrderAndShapeWords() == AllocationSiteRecord::offsetOfHeader() + static_cast<ptrdiff_t>(sizeof(uint64_t)));
     static_assert(offsetOfOrderWord == sizeof(JSCell) && offsetOfShapeWord == offsetOfOrderWord + sizeof(uint32_t) && sizeof(JSCell) == sizeof(uint64_t));
+    AllocationSiteAddress site = allocationSiteAddress(id);
     const B3::AbstractHeap& recordHeap = m_heaps.entire(AbstractHeap::AllocatorState);
     std::array<const B3::AbstractHeap*, 3> written { &m_heaps.JSCell_header, &m_heaps.AOTObject_orderWord, &m_heaps.entire(AbstractHeap::ShapeWords) };
     B3::PatchpointValue* copy = m_out.patchpoint(B3::Void);
@@ -227,11 +210,6 @@ void CellAllocationEmitter::copyHeaderAndWords(const AllocationSiteAddress& site
         jit.storePair64(first, second, cell, CCallHelpers::TrustedImm32(0));
 #endif
     });
-}
-
-void CellAllocationEmitter::copyHeaderAndWords(AllocationID id, CellPointer cell)
-{
-    copyHeaderAndWords(allocationSiteAddress(id), cell);
 }
 
 void CellAllocationEmitter::ensureRecordIsFilled(const OperationContext& context, AllocationID id)
@@ -365,33 +343,59 @@ std::pair<CellPointer, Pointer> CellAllocationEmitter::allocateArray(const Opera
     return { array, Pointer(m_out.loadPtr(array.value(), m_heaps.JSObject_butterfly)) };
 }
 
-CellPointer CellAllocationEmitter::newArrayOf(const OperationContext& context, std::span<const Boxed> elements)
+CellPointer CellAllocationEmitter::newArrayOf(const OperationContext& context, std::span<const Boxed> elements, AllocationStorage storage)
 {
+    bool isInFrame = storage != AllocationStorage::Heap;
     unsigned length = static_cast<unsigned>(elements.size());
     if (length <= maxArrayElementsInRegisters) {
-        Vector<LValue, maxArrayElementsInRegisters> operands;
+        Vector<LValue, maxArrayElementsInRegisters + 1> operands;
         for (Boxed element : elements)
             operands.append(element.value());
-        return CellPointer(callStub(context, arrayLiteral(length), operands.span()).first);
+        if (isInFrame)
+            operands.append(allocateInFrame(sizeOfFrameArray(length)).value());
+        return CellPointer(callStub(context, isInFrame ? frameArrayLiteral(length) : arrayLiteral(length), operands.span()).first);
     }
-    if (context.shape() != CodeShape::Fast)
+    if (!isInFrame && context.shape() != CodeShape::Fast)
         return callOperation<CellPointer>(context, RuntimeOperation::NewArray, { word32(static_cast<int32_t>(length)), argumentBuffer(elements) });
 
     unsigned vectorLength = std::max<unsigned>(length, BASE_CONTIGUOUS_VECTOR_LEN) | 1;
     LBasicBlock slowPath = newBlock();
     Join<CellPointer> join(m_out);
-    auto [array, butterfly] = allocateArray(context, word32(static_cast<int32_t>(length)), word32(static_cast<int32_t>(vectorLength)), ArrayWithContiguous, slowPath);
+    auto [array, butterfly] = isInFrame
+        ? allocateArrayInFrame(word32(static_cast<int32_t>(length)), length, slowPath)
+        : allocateArray(context, word32(static_cast<int32_t>(length)), word32(static_cast<int32_t>(vectorLength)), ArrayWithContiguous, slowPath);
     {
         CodeGenerator::InitializationScope scope(generator());
         for (unsigned i = 0; i < length; ++i)
             m_out.store64(elements[i].value(), butterfly.value(), m_heaps.indexedContiguousProperties[i]);
     }
-    emitter<BarrierEmitter>().fenceAfterInitialization();
+    if (!isInFrame)
+        emitter<BarrierEmitter>().fenceAfterInitialization();
     join.add(array);
 
     m_out.appendTo(slowPath);
     join.add(callOperation<CellPointer>(context, RuntimeOperation::NewArray, { word32(static_cast<int32_t>(length)), argumentBuffer(elements) }, { .isOnRarePath = true }));
     return join.finish();
+}
+
+void CellAllocationEmitter::copyFromBuffer(Word32 count, Pointer buffer, Pointer butterfly, LBasicBlock copyLoop, LBasicBlock copyElement, LBasicBlock copied)
+{
+    CodeGenerator::InitializationScope scope(generator());
+    LValue end = m_out.shl(zeroExtended(count).value(), m_out.constInt32(3));
+    ValueFromBlock start = m_out.anchor(m_out.intPtrZero);
+    m_out.jump(copyLoop);
+
+    m_out.appendTo(copyLoop);
+    LValue offset = m_out.phi(B3::pointerType(), start);
+    m_out.branch(m_out.below(offset, end), normalEdge(copyElement), normalEdge(copied));
+
+    m_out.appendTo(copyElement);
+    LValue element = m_out.load64(TypedPointer(m_heaps.argumentBuffer, m_out.add(buffer.value(), offset)));
+    m_out.store64(element, TypedPointer(m_heaps.indexedContiguousProperties.atAnyIndex(), m_out.add(butterfly.value(), offset)));
+    m_out.addIncomingToPhi(offset, m_out.anchor(m_out.add(offset, m_out.intPtrEight)));
+    m_out.jump(copyLoop);
+
+    m_out.appendTo(copied);
 }
 
 CellPointer CellAllocationEmitter::newArrayFromBuffer(const OperationContext& context, Word32 count, Pointer buffer)
@@ -402,24 +406,7 @@ CellPointer CellAllocationEmitter::newArrayFromBuffer(const OperationContext& co
     LBasicBlock copied = newBlock();
     Join<CellPointer> join(m_out);
     auto [array, butterfly] = allocateArray(context, count, bitOr(count, word32(1)), ArrayWithContiguous, slowPath);
-    {
-        CodeGenerator::InitializationScope scope(generator());
-        LValue end = m_out.shl(zeroExtended(count).value(), m_out.constInt32(3));
-        ValueFromBlock start = m_out.anchor(m_out.intPtrZero);
-        m_out.jump(copyLoop);
-
-        m_out.appendTo(copyLoop);
-        LValue offset = m_out.phi(B3::pointerType(), start);
-        m_out.branch(m_out.below(offset, end), normalEdge(copyElement), normalEdge(copied));
-
-        m_out.appendTo(copyElement);
-        LValue element = m_out.load64(TypedPointer(m_heaps.argumentBuffer, m_out.add(buffer.value(), offset)));
-        m_out.store64(element, TypedPointer(m_heaps.indexedContiguousProperties.atAnyIndex(), m_out.add(butterfly.value(), offset)));
-        m_out.addIncomingToPhi(offset, m_out.anchor(m_out.add(offset, m_out.intPtrEight)));
-        m_out.jump(copyLoop);
-
-        m_out.appendTo(copied);
-    }
+    copyFromBuffer(count, buffer, butterfly, copyLoop, copyElement, copied);
     emitter<BarrierEmitter>().fenceAfterInitialization();
     join.add(array);
 
@@ -444,32 +431,6 @@ std::pair<CellPointer, Pointer> CellAllocationEmitter::allocateArrayInFrame(Word
     return { array, butterfly };
 }
 
-CellPointer CellAllocationEmitter::newArrayInFrameOf(const OperationContext& context, std::span<const Boxed> elements)
-{
-    unsigned length = static_cast<unsigned>(elements.size());
-    if (length <= maxArrayElementsInRegisters) {
-        Vector<LValue, maxArrayElementsInRegisters + 1> operands;
-        for (Boxed element : elements)
-            operands.append(element.value());
-        operands.append(allocateInFrame(sizeOfFrameArray(length)).value());
-        return CellPointer(callStub(context, frameArrayLiteral(length), operands.span()).first);
-    }
-
-    LBasicBlock isOnHeap = newBlock();
-    Join<CellPointer> join(m_out);
-    auto [array, butterfly] = allocateArrayInFrame(word32(static_cast<int32_t>(length)), length, isOnHeap);
-    {
-        CodeGenerator::InitializationScope scope(generator());
-        for (unsigned i = 0; i < length; ++i)
-            m_out.store64(elements[i].value(), butterfly.value(), m_heaps.indexedContiguousProperties[i]);
-    }
-    join.add(array);
-
-    m_out.appendTo(isOnHeap);
-    join.add(callOperation<CellPointer>(context, RuntimeOperation::NewArray, { word32(static_cast<int32_t>(length)), argumentBuffer(elements) }, { .isOnRarePath = true }));
-    return join.finish();
-}
-
 CellPointer CellAllocationEmitter::newArrayInFrameFromBuffer(const OperationContext& context, Word32 count, Pointer buffer, unsigned capacity)
 {
     LBasicBlock isOnHeap = newBlock();
@@ -479,24 +440,7 @@ CellPointer CellAllocationEmitter::newArrayInFrameFromBuffer(const OperationCont
     Join<CellPointer> join(m_out);
     branchUnless(belowOrEqual(count, word32(static_cast<int32_t>(capacity))), isOnHeap);
     auto [array, butterfly] = allocateArrayInFrame(count, capacity, isOnHeap);
-    {
-        CodeGenerator::InitializationScope scope(generator());
-        LValue end = m_out.shl(zeroExtended(count).value(), m_out.constInt32(3));
-        ValueFromBlock start = m_out.anchor(m_out.intPtrZero);
-        m_out.jump(copyLoop);
-
-        m_out.appendTo(copyLoop);
-        LValue offset = m_out.phi(B3::pointerType(), start);
-        m_out.branch(m_out.below(offset, end), normalEdge(copyElement), normalEdge(copied));
-
-        m_out.appendTo(copyElement);
-        LValue element = m_out.load64(TypedPointer(m_heaps.argumentBuffer, m_out.add(buffer.value(), offset)));
-        m_out.store64(element, TypedPointer(m_heaps.indexedContiguousProperties.atAnyIndex(), m_out.add(butterfly.value(), offset)));
-        m_out.addIncomingToPhi(offset, m_out.anchor(m_out.add(offset, m_out.intPtrEight)));
-        m_out.jump(copyLoop);
-
-        m_out.appendTo(copied);
-    }
+    copyFromBuffer(count, buffer, butterfly, copyLoop, copyElement, copied);
     join.add(array);
 
     m_out.appendTo(isOnHeap);

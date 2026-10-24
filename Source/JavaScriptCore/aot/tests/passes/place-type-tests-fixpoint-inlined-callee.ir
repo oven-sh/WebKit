@@ -10,7 +10,6 @@ entry module=m0
 layout L0 name="Point" fields=[{key="x" declared={type=number}}, {key="y" declared={type=number}}, {key="z" declared={type=number}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="register" [isFreeName]
     v2 = Call v1

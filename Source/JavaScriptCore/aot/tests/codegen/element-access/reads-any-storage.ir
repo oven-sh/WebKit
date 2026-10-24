@@ -9,7 +9,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="int32Contents" parameters=[{type=Array<i32, proven, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<i32, proven, pristine[Storage]>, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
     v6 = GetArrayElement v0, v1 level=Proven
     v7 = GetArrayElement v0, v2 level=Proven
     v8 = GetArrayElement v0, v3 level=Proven
@@ -47,7 +46,6 @@ function f0 name="int32Contents" parameters=[{type=Array<i32, proven, pristine[S
 # R-COUNT-15: undefined|i32 @JSValue = GetArrayElement
 # R-NOT: = GetArrayElement
 function f1 name="numberContents" parameters=[{type=Array<number, proven, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<number, proven, pristine[Storage]>, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
     v6 = GetArrayElement v0, v1 level=Proven
     v7 = GetArrayElement v0, v2 level=Proven
     v8 = GetArrayElement v0, v3 level=Proven
@@ -85,7 +83,6 @@ function f1 name="numberContents" parameters=[{type=Array<number, proven, pristi
 # R-COUNT-15: undefined|number @JSValue = GetArrayElement
 # R-NOT: = GetArrayElement
 function f2 name="stringContents" parameters=[{type=Array<string, proven, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<string, proven, pristine[Storage]>, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
     v6 = GetArrayElement v0, v1 level=Proven
     v7 = GetArrayElement v0, v2 level=Proven
     v8 = GetArrayElement v0, v3 level=Proven
@@ -123,7 +120,6 @@ function f2 name="stringContents" parameters=[{type=Array<string, proven, pristi
 # R-COUNT-15: undefined|string @JSValue = GetArrayElement
 # R-NOT: = GetArrayElement
 function f3 name="anyContents" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, proven, pristine[Storage]>, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
     v6 = GetArrayElement v0, v1 level=Proven
     v7 = GetArrayElement v0, v2 level=Proven
     v8 = GetArrayElement v0, v3 level=Proven

@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="comparator-swapped" parameters=[{type=string}, {type=string}] results=[{type=int}] {
-  b0(v0: string, v1: string):
     v2 = Less v0, v1
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -20,27 +19,24 @@ function f0 name="comparator-swapped" parameters=[{type=string}, {type=string}] 
   b4():
     v6 = Integer integer=0
     Return v6
-}
-# CHECK-LABEL: function f0 name="comparator-swapped"
 # CHECK: [[order]]: int[-1, 1] = StringOrder v0, v1
 # CHECK: boolean = Less [[order]], [[zero]]
 # CHECK-NOT: StringOrder
 # CHECK: [[secondZero]]: 0 = Integer
 # CHECK-NEXT: boolean = Greater [[order]], [[secondZero]]
 # CHECK-NOT: StringOrder
+}
 
 function f1 name="each-operation-swapped" parameters=[{type=string}, {type=string}] results=[{type=boolean}] {
-  b0(v0: string, v1: string):
     v2 = Less v0, v1
     v3 = LessEq v1, v0
     v4 = Greater v1, v0
     v5 = GreaterEq v1, v0
     Return v5
-}
-# CHECK-LABEL: function f1 name="each-operation-swapped"
 # CHECK: [[shared]]: int[-1, 1] = StringOrder v0, v1
 # CHECK: boolean = Less [[shared]],
 # CHECK-NOT: StringOrder
 # CHECK: boolean = GreaterEq [[shared]],
 # CHECK: boolean = Less [[shared]],
 # CHECK: boolean = LessEq [[shared]],
+}

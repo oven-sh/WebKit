@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="doubleStaysDouble" parameters=[{type=number}] results=[{type=boolean}] {
-  b0(v0: number):
     v1 = Mul v0, v0 form=Numbers
     v2 = CallInline -, v1 inlineBuiltin=NumberIsNaN overload=NumberIsNaN/0
     v3 = CallInline -, v1 inlineBuiltin=NumberIsFinite overload=NumberIsFinite/0
@@ -19,17 +18,15 @@ function f0 name="doubleStaysDouble" parameters=[{type=number}] results=[{type=b
     Return v4
   b3():
     Return v5
-}
-# CHECK-LABEL: function f0 name="doubleStaysDouble"
 # CHECK: v1: number @Double = Mul
 # CHECK-NOT: = Box
 # CHECK: = CallInline -, v1 inlineBuiltin=NumberIsNaN
 # CHECK-NEXT: = CallInline -, v1 inlineBuiltin=NumberIsFinite
 # CHECK-NEXT: = CallInline -, v1 inlineBuiltin=NumberIsInteger
 # CHECK-NEXT: = CallInline -, v1 inlineBuiltin=NumberIsSafeInteger
+}
 
 function f1 name="anythingArrivesBoxed" parameters=[{type=anything}] results=[{type=boolean}] {
-  b0(v0: anything):
     v1 = CallInline -, v0 inlineBuiltin=NumberIsInteger overload=NumberIsInteger/0
     Return v1
 }

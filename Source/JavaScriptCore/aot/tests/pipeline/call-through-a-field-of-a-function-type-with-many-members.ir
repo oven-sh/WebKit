@@ -21,7 +21,6 @@ typesite w0 module=m0 position=40 kind=Parameter
 typesite w1 module=m0 position=80 kind=Parameter
 layout L0 name="Holder" fields=[{key="run" declared={type=undefined|null|f10} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = NewClosure function=f1
     v2 = NewClosure function=f3
@@ -37,55 +36,46 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="hold" flags=[IsChecked] parameters=[{type=undefined|null|f10 site=w0}] results=[{type=anything}] {
-  b0(v0: undefined|null|f10):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = FinishObject v1
     Return v2
 }
 function f2 name="callField" flags=[IsChecked] parameters=[{type=undefined|null|L0 site=w1}, {type=anything}] results=[{type=anything}] {
-  b0(v0: undefined|null|L0, v1: anything):
     v2 = PropGet v0 key="run"
     v3 = Call v2, v0, v1 calleeKey="run"
     Return v3
 }
 function f3 name="one" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f10] {
-  b0(v0: anything):
     v1 = Integer integer=1
     v2 = Add v0, v1
     Return v2
 }
 function f4 name="two" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f10] {
-  b0(v0: anything):
     v1 = Integer integer=2
     v2 = Add v0, v1
     Return v2
 }
 function f5 name="three" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f10] {
-  b0(v0: anything):
     v1 = Integer integer=3
     v2 = Add v0, v1
     Return v2
 }
 function f6 name="four" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f10] {
-  b0(v0: anything):
     v1 = Integer integer=4
     v2 = Add v0, v1
     Return v2
 }
 function f7 name="five" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f10] {
-  b0(v0: anything):
     v1 = Integer integer=5
     v2 = Add v0, v1
     Return v2
 }
 function f8 name="six" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f10] {
-  b0(v0: anything):
     v1 = Integer integer=6
     v2 = Add v0, v1
     Return v2
 }
 function f9 name="stranger" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=100
     v2 = Add v0, v1
     Return v2

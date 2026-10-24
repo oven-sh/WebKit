@@ -26,7 +26,6 @@ variable g5 name="sum" module=m0 declared={type=anything} initialization=Functio
 # CHECK: variable g3 name="mixed" module=m0 declared={type=number site=w2 flags=[IsExpected]}
 # CHECK: variable g4 name="fed" module=m0 declared={type=number site=w3 flags=[IsExpected]}
 function f0 name="main" kind=Module flags=[IsChecked] results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = Construct v0, -
     v2 = Convert v1 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
@@ -50,7 +49,6 @@ function f0 name="main" kind=Module flags=[IsChecked] results=[{type=anything}] 
     Return v19
 }
 function f1 name="sum" flags=[IsChecked] results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g1
     v1 = GetModuleVariable variable=g2
     v2 = Add v0, v1
@@ -59,8 +57,6 @@ function f1 name="sum" flags=[IsChecked] results=[{type=anything}] {
     v5 = Add v3, v4
     v6 = Add v2, v5
     Return v6
-}
-# CHECK-LABEL: function f1 name="sum"
 # CHECK: : number = GetModuleVariable variable=g1
 # CHECK-NOT: = Check
 # CHECK: : number = GetModuleVariable variable=g2
@@ -68,8 +64,8 @@ function f1 name="sum" flags=[IsChecked] results=[{type=anything}] {
 # CHECK: = GetModuleVariable variable=g3
 # CHECK: = Check {{*}}castType=number site=w2
 # CHECK: = Check {{*}}castType=number site=w3
+}
 function f2 name="Options" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
-  b0(v0: L0):
     v1 = Double number=0.5
     PropSet v0, v1 key="dt"
     v3 = String string="x"

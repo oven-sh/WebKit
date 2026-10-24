@@ -9,7 +9,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="restOfList" parameters=[{type=Array}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: Array, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v2 = Integer integer=7
@@ -45,7 +44,6 @@ function f0 name="restOfList" parameters=[{type=Array}, {type=boolean}] results=
 # REPEAT: i = 1..8
 
 function f%(i) name="plain%(i)" parameters=[{type=boolean}] results=[{type=anything}] {
-  b0(v0: boolean):
     Branch v0 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v1 = Integer integer=7

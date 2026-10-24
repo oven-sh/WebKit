@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="wideInteger" parameters=[{type=int[0, 4294967294]}] results=[{type=string}] {
-  b0(v0: int[0, 4294967294]):
     v1 = ToString v0 form=NumberByOperation
     Return v1
 }
@@ -13,7 +12,6 @@ function f0 name="wideInteger" parameters=[{type=int[0, 4294967294]}] results=[{
 # CHECK-NEXT: f1: size=
 
 function f1 name="wideIntegerInFastCode" parameters=[{type=int[0, 4294967294]}] results=[{type=string}] {
-  b0(v0: int[0, 4294967294]):
     v1 = ToString v0 form=Number
     Return v1
 }
@@ -21,7 +19,6 @@ function f1 name="wideIntegerInFastCode" parameters=[{type=int[0, 4294967294]}] 
 # CHECK-NEXT: f2: size=
 
 function f2 name="int32" parameters=[{type=i32}] results=[{type=string}] {
-  b0(v0: i32):
     v1 = ToString v0 form=NumberByOperation
     Return v1
 }
@@ -29,7 +26,6 @@ function f2 name="int32" parameters=[{type=i32}] results=[{type=string}] {
 # CHECK-NEXT: f3: size=
 
 function f3 name="anyNumber" parameters=[{type=number}] results=[{type=string}] {
-  b0(v0: number):
     v1 = ToString v0 form=NumberByOperation
     Return v1
 }

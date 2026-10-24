@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="sameIndex" parameters=[{type=Array<undefined|int[1, 8], proven, Int32, pristine[Storage, Names]>}] results=[{type=i32}] {
-  b0(v0: Array<undefined|int[1, 8], proven, Int32, pristine[Storage, Names]>):
     v1 = Integer
     v2 = Integer
     Jump -> next b1(v1, v2)
@@ -34,7 +33,6 @@ function f0 name="sameIndex" parameters=[{type=Array<undefined|int[1, 8], proven
     Return v3
 }
 function f1 name="otherIndex" parameters=[{type=Array<undefined|int[1, 8], proven, Int32, pristine[Storage, Names]>}, {type=int[0, 4294967294]}] results=[{type=i32}] {
-  b0(v0: Array<undefined|int[1, 8], proven, Int32, pristine[Storage, Names]>, v1: int[0, 4294967294]):
     v2 = Integer
     v3 = Integer
     Jump -> next b1(v2, v3)

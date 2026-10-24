@@ -17,7 +17,6 @@ layout L0 kind=Instance name="Filled" constructor=f1 fields=[{key=#"count"@L0 de
 variable g0 name="seen" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="token" module=m0 declared={type=classtoken flags=[IsFromCompiler]} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=7
     v1 = NewClassToken layout=L0
     PutModuleVariable v1 variable=g1
@@ -28,7 +27,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Filled" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
-  b0(v0: anything, v1: anything):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
     v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
@@ -46,7 +44,6 @@ function f1 name="Filled" kind=BaseConstructor flags=[HasNewTarget] parameters=[
     Return v4
 }
 function f2 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
-  b0(v0: L0):
     v1 = Undefined
     v2 = GetModuleVariable variable=g1
     PrivateDefine v0, v2, v1 layout=L0 field=0

@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="narrowedOnOneEdge" parameters=[{type=string}] results=[{type=string}] {
-  b0(v0: string):
     v1 = String string="get"
     v2 = StrictEq v0, v1
     Branch v2 -> taken b1(| 0), notTaken b2(v0)
@@ -14,16 +13,14 @@ function f0 name="narrowedOnOneEdge" parameters=[{type=string}] results=[{type=s
     Jump -> next b2(v3)
   b2(v4):
     Return v4
-}
-# CHECK-LABEL: function f0 name="narrowedOnOneEdge"
 # CHECK: Branch v2 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: b2():
 # CHECK-NEXT: Return v0
+}
 
 function f1 name="narrowedOnBothEdges" parameters=[{type=undefined|string}] results=[{type=undefined|string}] {
-  b0(v0: undefined|string):
     v1 = TypeTest v0 testedType=string
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):
@@ -32,14 +29,12 @@ function f1 name="narrowedOnBothEdges" parameters=[{type=undefined|string}] resu
     Jump -> next b3(v3)
   b3(v4):
     Return v4
-}
-# CHECK-LABEL: function f1 name="narrowedOnBothEdges"
 # CHECK: Branch v1 -> taken b1(), notTaken b2()
 # CHECK: b3():
 # CHECK-NEXT: Return v0
+}
 
 function f2 name="chainOfJoins" parameters=[{type=string}] results=[{type=string}] {
-  b0(v0: string):
     v1 = String string="get"
     v2 = StrictEq v0, v1
     Branch v2 -> taken b1(| 0), notTaken b2(v0)
@@ -53,16 +48,14 @@ function f2 name="chainOfJoins" parameters=[{type=string}] results=[{type=string
     Jump -> next b4(v7)
   b4(v8):
     Return v8
-}
-# CHECK-LABEL: function f2 name="chainOfJoins"
 # CHECK: = StrictEq v0, v1
 # CHECK: = StrictEq v0, v5
 # CHECK-NEXT: Branch v6 -> taken b3(), notTaken b4()
 # CHECK: b4():
 # CHECK-NEXT: Return v0
+}
 
 function f3 name="narrowedCopyIsUsed" parameters=[{type=undefined|string}] results=[{type=undefined|string}] {
-  b0(v0: undefined|string):
     v1 = TypeTest v0 testedType=string
     Branch v1 -> taken b1(| 0), notTaken b2(v0)
   b1(v2):
@@ -72,16 +65,14 @@ function f3 name="narrowedCopyIsUsed" parameters=[{type=undefined|string}] resul
     Jump -> next b2(v2)
   b2(v6):
     Return v6
-}
-# CHECK-LABEL: function f3 name="narrowedCopyIsUsed"
 # CHECK: Branch v1 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v2: string):
 # CHECK-NEXT: = GetStringLength v2
 # CHECK: b2():
 # CHECK-NEXT: Return v0
+}
 
 function f4 name="joinKnowsMoreThanTheValue" parameters=[{type=undefined|number|string}] results=[{type=undefined|number|string}] {
-  b0(v0: undefined|number|string):
     v1 = TypeTest v0 testedType=string
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):
@@ -95,15 +86,13 @@ function f4 name="joinKnowsMoreThanTheValue" parameters=[{type=undefined|number|
     Return v6
   b5():
     Return
-}
-# CHECK-LABEL: function f4 name="joinKnowsMoreThanTheValue"
 # CHECK: Jump -> next b4(v2)
 # CHECK: Jump -> next b4(v5)
 # CHECK-NEXT: b4(v6: number|string):
 # CHECK-NEXT: Return v6
+}
 
 function f5 name="joinWithAnotherValue" parameters=[{type=string}, {type=string}] results=[{type=string}] {
-  b0(v0: string, v1: string):
     v2 = String string="get"
     v3 = StrictEq v0, v2
     Branch v3 -> taken b1(| 0), notTaken b2(v1)
@@ -111,9 +100,8 @@ function f5 name="joinWithAnotherValue" parameters=[{type=string}, {type=string}
     Jump -> next b2(v4)
   b2(v5):
     Return v5
-}
-# CHECK-LABEL: function f5 name="joinWithAnotherValue"
 # CHECK: Branch v3 -> taken b1(| 0), notTaken b2(v1)
 # CHECK: Jump -> next b2(v4)
 # CHECK-NEXT: b2(v5: string):
 # CHECK-NEXT: Return v5
+}

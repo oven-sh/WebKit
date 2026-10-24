@@ -20,7 +20,6 @@ layout L1 kind=Instance name="WithMethod" constructor=f12
 layout L2 kind=Instance name="WithGetter" constructor=f13
 layout L3 kind=Instance name="WithNeither" constructor=f14
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -38,17 +37,14 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="read" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="shared"
     Return v1
 }
 function f2 name="has" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropHas v0 key="shared"
     Return v1
 }
 function f3 name="hasOwn" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="Object" [isFreeName]
     v3 = PropGet v2 key="hasOwn"
@@ -57,17 +53,14 @@ function f3 name="hasOwn" parameters=[{type=anything}] results=[{type=anything}]
     Return v5
 }
 function f4 name="readByKey" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = ElemGet v0, v1
     Return v2
 }
 function f5 name="hasByKey" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = ElemHas v0, v1
     Return v2
 }
 function f6 name="hasOwnByKey" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Builtin builtin=GlobalThis
     v3 = PropGet v2 key="Object" [isFreeName]
     v4 = PropGet v3 key="hasOwn"
@@ -75,28 +68,23 @@ function f6 name="hasOwnByKey" parameters=[{type=anything}, {type=anything}] res
     Return v5
 }
 function f7 name="storeByKey" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     ElemSet v0, v1, v2 mode=Strict
     Return
 }
 function f8 name="storeByKeySloppy" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     ElemSet v0, v1, v2 mode=Sloppy
     Return
 }
 function f9 name="makeRecord" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
     v3 = FinishObject v2
     Return v3
 }
 function f10 name="construct" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Construct v0
     Return v1
 }
 function f11 name="defineClasses" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f12
     v1 = NewClass v0 layout=L1
     v2 = NewClosure function=f15
@@ -114,29 +102,24 @@ function f11 name="defineClasses" results=[{type=anything}] {
     Return v13
 }
 function f12 name="WithMethod" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L1
     v2 = NewObject v1 layout=L1
     Return v2
 }
 function f13 name="WithGetter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L2
     v2 = NewObject v1 layout=L2
     Return v2
 }
 function f14 name="WithNeither" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L3
     v2 = NewObject v1 layout=L3
     Return v2
 }
 function f15 name="shared" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 function f16 name="shared" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 )IR"_s;

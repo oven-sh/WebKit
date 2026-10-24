@@ -12,10 +12,7 @@
 #include "AOTLargeVectors.h"
 #include "AOTProvisionalFunctions.h"
 #include "AOTSchemaWalkers.h"
-#include "AOTSort.h"
 #include "AOTTypeArena.h"
-#include "AOTVector.h"
-#include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -117,11 +114,6 @@ BodyIndex::Row::Row(const Function& function, BodyIDs ids)
     }
 }
 
-auto BodyIndex::computeRecordStamps(const Function& function) -> RecordStamps
-{
-    return { stampOfRecord(function), stampOfEntry(function) };
-}
-
 void BodyIndex::store(FunctionID id, Row&& row)
 {
     m_hotRows[id.index()] = row.hot;
@@ -130,54 +122,6 @@ void BodyIndex::store(FunctionID id, Row&& row)
     m_recordStamps[id.index()] = row.recordStamps.value_or(RecordStamps { });
     m_hasRecordStamps[id.index()] = row.recordStamps.has_value();
 }
-
-namespace {
-
-struct CollectorOfNames {
-    CollectorOfNames()
-    {
-        for (auto& names : lastNames)
-            names.fill(UINT32_MAX);
-    }
-
-    // A body names the same few records again and again. A name goes to its list a second time only where another name has taken its place in between: the sort has little left to take out.
-    void add(unsigned list, uint32_t index)
-    {
-        uint32_t& last = lastNames[list][index % lastNames[list].size()];
-        if (last == index)
-            return;
-        last = index;
-        lists[list].append(index);
-    }
-
-    void operator()(const TypeID& id)
-    {
-        if (id)
-            add(0, id.index());
-    }
-    void operator()(const LayoutID& id)
-    {
-        if (id)
-            add(1, id.index());
-    }
-    void operator()(const LayoutSetID& id)
-    {
-        if (id)
-            add(2, id.index());
-    }
-    void operator()(const VariableID& id)
-    {
-        if (id)
-            add(3, id.index());
-    }
-    template<typename Tag> void operator()(const ID<Tag>&) { }
-
-    // Types, layouts, sets of layouts, variables.
-    std::array<Vector<uint32_t, 64>, 4> lists;
-    std::array<std::array<uint32_t, 64>, 4> lastNames;
-};
-
-} // anonymous namespace
 
 void BodyIndex::ColdRow::setNames(std::array<Vector<uint32_t, 64>, 4>& lists)
 {
@@ -200,7 +144,22 @@ void BodyIndex::ColdRow::setNames(std::array<Vector<uint32_t, 64>, 4>& lists)
 
 void BodyIndex::ColdRow::makeNames(const Function& function)
 {
-    CollectorOfNames collector;
+    std::array<Vector<uint32_t, 64>, 4> lists;
+    std::array<std::array<uint32_t, 64>, 4> lastNames;
+    for (auto& lastNamesOfList : lastNames)
+        lastNamesOfList.fill(UINT32_MAX);
+    auto collector = [&]<typename Tag>(const ID<Tag>& id) {
+        constexpr int list = std::same_as<ID<Tag>, TypeID> ? 0 : std::same_as<ID<Tag>, LayoutID> ? 1 : std::same_as<ID<Tag>, LayoutSetID> ? 2 : std::same_as<ID<Tag>, VariableID> ? 3 : -1;
+        if constexpr (list >= 0) {
+            if (!id)
+                return;
+            uint32_t& last = lastNames[list][id.index() % lastNames[list].size()];
+            if (last == id.index())
+                return;
+            last = id.index();
+            lists[list].append(id.index());
+        }
+    };
     forEachReference(static_cast<const FunctionRecord&>(function), collector);
     for (const Value& value : function.values) {
         collector(value.type);
@@ -209,7 +168,7 @@ void BodyIndex::ColdRow::makeNames(const Function& function)
     }
     for (const Block& block : function.blocks)
         forEachReference(block.terminator, collector);
-    setNames(collector.lists);
+    setNames(lists);
 
     Vector<IndexedName, 64> namesOfListedValues;
     std::span<const IndexedValue> listed = listedValues.span();
@@ -234,7 +193,6 @@ void BodyIndex::Row::applyRemaps(const TypeRemap& types, const FunctionRemap& fu
             name = IndexedName(name.position(), NameKind::Function, functions(FunctionID(name.index())).index());
     }
 
-    // Each list ascends, and a provisional id is above all others.
     NamesInBody names = cold.namesInBody();
     bool namesProvisionalRecord = (!names.types.empty() && TypeTable::isProvisional(names.types.back())) || (!names.layoutSets.empty() && TypeTable::isProvisional(names.layoutSets.back()));
     if (namesProvisionalRecord) {
@@ -269,7 +227,6 @@ void BodyIndex::growTo(size_t numberOfFunctions, State state)
 {
     if (numberOfFunctions <= m_states.size())
         return;
-    // A program gets more functions at every loop and at many passes, and a list that grows moves all that it holds: so there is room to spare.
     if (m_loops && numberOfFunctions > m_hotRows.capacity()) {
         size_t capacity = numberOfFunctions + numberOfFunctions / 2;
         reserveCapacityInParallel(*m_loops, m_hotRows, capacity);

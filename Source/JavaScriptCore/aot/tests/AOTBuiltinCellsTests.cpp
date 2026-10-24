@@ -38,7 +38,6 @@ variable g2 name="symbol" module=m0 declared={type=anything} initialization=Unde
 module m0 path="/main.js" displayPath="main.js" body=f0 exports=[{name="buffer" variable=g0}, {name="length" variable=g1}, {name="symbol" variable=g2}]
 entry module=m0 hostReads=[{exportName="buffer"}, {exportName="length"}, {exportName="symbol"}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=SymbolIterator
     v1 = Builtin builtin=ArrayBuffer
     v2 = Integer integer=8
@@ -278,7 +277,6 @@ static constexpr ASCIILiteral programThatReadsMethodOfShadowRealmText = R"IR(var
 module m0 path="/main.js" displayPath="main.js" body=f0 exports=[{name="method" variable=g0}]
 entry module=m0 hostReads=[{exportName="method"}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=ShadowRealmPrototype
     v1 = PropGet v0 key="importValue"
     PutModuleVariable v1 variable=g0
@@ -290,13 +288,11 @@ static constexpr ASCIILiteral programThatTakesShadowRealmText = R"IR(variable g0
 module m0 path="/main.js" displayPath="main.js" body=f0 exports=[{name="call" variable=g0}]
 entry module=m0 hostReads=[{exportName="call"}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     PutModuleVariable v0 variable=g0
     Return
 }
 function f1 name="call" parameters=[{type=ShadowRealm}, {type=anything}] results=[{type=anything}] {
-  b0(v0: ShadowRealm, v1: anything):
     v2 = PropGet v0 key="importValue"
     v3 = Call v2, v0, v1, v1 calleeKey="importValue"
     Return v3

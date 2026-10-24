@@ -21,12 +21,6 @@
 namespace JSC { namespace AOT {
 
 struct VariableBinding {
-    VariableBinding() = default;
-    explicit VariableBinding(SlotData variable)
-        : variable(variable)
-    {
-    }
-
     // The offset alone does not identify a variable: it indexes the statics or, for SlotRepresentation::DeferredClosure, the closure table.
     SlotData variable { };
 
@@ -69,31 +63,26 @@ struct StarCandidate {
 // Ordered by the hashes of the names, not by their addresses: whoever walks the candidates and reads deferred exports runs their getters in the same order in every process.
 using StarCandidates = UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, StarCandidate, IdentifierRepHash>;
 
-enum class NameResolution : uint8_t { NotFound, Found, Ambiguous };
-
-struct UnresolvedName {
-    ModuleID exporter;
-    uint32_t name;
-    NameResolution resolution;
-};
-
 class StarExportResolver {
     WTF_MAKE_NONCOPYABLE(StarExportResolver);
 public:
-    explicit StarExportResolver(Modules&);
+    explicit StarExportResolver(Modules& modules)
+        : m_modules(modules)
+    {
+    }
 
     // Null while an exception is pending. Valid until the next call.
     const StarCandidates* candidatesOf(ModuleID);
     const StarCandidate* find(ModuleID exporter, UniquedStringImpl* name);
-    NameResolution resolve(ModuleID exporter, uint32_t nameIdentifier);
-    std::optional<UnresolvedName> findUnresolvedName(std::span<const ModuleID> modules);
+    // Throws for the first name that an unlinked module of the list requires and that its exporter lacks or has from two bindings.
+    void checkRequiredNames(std::span<const ModuleID> modules);
     // Reads a deferred export now. To find a candidate reads none.
     JSValue capturedValueOf(const StarCandidate&);
     StarBinding bindingOf(const ModuleExportData&);
 
     // What a table of exports holds under the name. In the captured exports of a module the table itself stands for a deferred export: Modules::capturedValue() reads that one.
     static JSValue storedValue(JSGlobalObject*, JSObject* table, const Identifier& name);
-    // Reads every deferred export of the module.
+    // Hands over no value for a deferred export.
     static void forEachCapturedExport(Modules&, ModuleID, const ScopedLambda<void(const Identifier&, JSValue)>&);
 
 private:
@@ -101,6 +90,7 @@ private:
 
     enum class ExportedNames : uint8_t { All, WithoutDefault };
 
+    AbstractModuleRecord::Resolution::Type resolve(ModuleID exporter, const Identifier& name);
     void solve(ModuleID root);
     bool collectUnsolvedModules(ModuleID root, Vector<ModuleID, 8>& postOrder);
     void addOwnCandidates(ModuleID);

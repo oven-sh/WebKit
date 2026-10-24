@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="switch-string-long-case" parameters=[{type=string}, {type=int}] results=[{type=int}] {
-  b0(v0: string, v1: int):
     v2 = ElemGet v0, v1
     SwitchString v2 strings=["a", "bc"] -> case b1(), case b2(), otherwise b3()
   b1():
@@ -24,7 +23,6 @@ function f0 name="switch-string-long-case" parameters=[{type=string}, {type=int}
 # CHECK-NOT: StringRangeCodeUnitOr
 
 function f1 name="switch-string-empty-case" parameters=[{type=string}, {type=int}] results=[{type=int}] {
-  b0(v0: string, v1: int):
     v2 = CallBuiltin v0, v1 overload=StringPrototypeCharAt/0
     SwitchString v2 strings=["a", ""] -> case b1(), case b2(), otherwise b2()
   b1():
@@ -39,7 +37,6 @@ function f1 name="switch-string-empty-case" parameters=[{type=string}, {type=int
 # CHECK-NOT: StringRangeCodeUnitOr
 
 function f2 name="switch-on-slice" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=int}] {
-  b0(v0: string, v1: int, v2: int):
     v3 = GetStringLength v0
     v4 = StringRange v3, v1, v2
     v5 = ResultAt v4

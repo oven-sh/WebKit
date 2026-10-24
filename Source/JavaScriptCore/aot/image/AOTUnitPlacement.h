@@ -8,9 +8,6 @@
 #if ENABLE(AOT)
 
 #include "AOTVector.h"
-#include <cstddef>
-#include <cstdint>
-#include <span>
 #include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT {

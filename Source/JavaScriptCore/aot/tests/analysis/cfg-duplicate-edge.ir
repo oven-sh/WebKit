@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="duplicateEdge" parameters=[{type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: boolean, v1: number, v2: number):
     Branch v0 -> taken b1(v1), notTaken b1(v2)
   b1(v3):
     Jump -> next b2()

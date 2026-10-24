@@ -51,11 +51,6 @@ static bool everyReceiverHasInlineSlot(const FieldAccess& field)
     return everyReceiverHasSlot && field.slot.hasStorage() && !field.slot.isOutOfLine();
 }
 
-void RuntimeValidationEmitter::checkValue(const OperationContext&, ValueID id, Operand operand)
-{
-    checkValue(id, operand);
-}
-
 void RuntimeValidationEmitter::checkValue(ValueID id, Operand operand)
 {
     if (generator().mayBeUnspecified(id) || operand.representation == Representation::Void || operand.representation == Representation::LiteralString)

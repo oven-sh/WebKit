@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="emptyLoop" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     Jump -> next b1(v1)
   b1(v2):
@@ -18,14 +17,12 @@ function f0 name="emptyLoop" parameters=[{type=int[0, 100]}] results=[{type=unde
     Jump -> next b1(v7)
   b3():
     Return
-}
-# CHECK-LABEL: function f0 name="emptyLoop"
 # CHECK: b0(
 # CHECK-NOT: Jump -> next b1
 # CHECK: Jump -> next b3()
+}
 
 function f1 name="unusedArithmeticInside" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     Jump -> next b1(v1)
   b1(v2):
@@ -39,14 +36,12 @@ function f1 name="unusedArithmeticInside" parameters=[{type=int[0, 100]}] result
     Jump -> next b1(v8)
   b3():
     Return
-}
-# CHECK-LABEL: function f1 name="unusedArithmeticInside"
 # CHECK: b0(
 # CHECK-NOT: Jump -> next b1
 # CHECK: Jump -> next b3()
+}
 
 function f2 name="nestOfTwo" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     v2 = Integer integer=1
     Jump -> next b1(v1)
@@ -68,14 +63,12 @@ function f2 name="nestOfTwo" parameters=[{type=int[0, 100]}] results=[{type=unde
     Jump -> next b1(v12)
   b6():
     Return
-}
-# CHECK-LABEL: function f2 name="nestOfTwo"
 # CHECK: b0(
 # CHECK-NOT: Jump -> next b1
 # CHECK: Jump -> next b6()
+}
 
 function f3 name="stepOfZero" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     Jump -> next b1(v1)
   b1(v2):
@@ -88,13 +81,11 @@ function f3 name="stepOfZero" parameters=[{type=int[0, 100]}] results=[{type=und
     Jump -> next b1(v7)
   b3():
     Return
-}
-# CHECK-LABEL: function f3 name="stepOfZero"
 # CHECK: b0(
 # CHECK: Jump -> next b1(v1)
+}
 
 function f4 name="counterUsedAfterLoop" parameters=[{type=int[0, 100]}] results=[{type=number}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     Jump -> next b1(v1)
   b1(v2):
@@ -107,13 +98,11 @@ function f4 name="counterUsedAfterLoop" parameters=[{type=int[0, 100]}] results=
     Jump -> next b1(v7)
   b3():
     Return v2
-}
-# CHECK-LABEL: function f4 name="counterUsedAfterLoop"
 # CHECK: b0(
 # CHECK: Jump -> next b1(v1)
+}
 
 function f5 name="callInside" parameters=[{type=int[0, 100]}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: int[0, 100], v1: anything):
     v2 = Integer integer=0
     Jump -> next b1(v2)
   b1(v3):
@@ -127,13 +116,11 @@ function f5 name="callInside" parameters=[{type=int[0, 100]}, {type=anything}] r
     Jump -> next b1(v9)
   b3():
     Return
-}
-# CHECK-LABEL: function f5 name="callInside"
 # CHECK: b0(
 # CHECK: Jump -> next b1(v2)
+}
 
 function f6 name="secondExit" parameters=[{type=int[0, 100]}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: int[0, 100], v1: boolean):
     v2 = Integer integer=0
     Jump -> next b1(v2)
   b1(v3):
@@ -150,13 +137,11 @@ function f6 name="secondExit" parameters=[{type=int[0, 100]}, {type=boolean}] re
     Jump -> next b1(v8)
   b5():
     Return
-}
-# CHECK-LABEL: function f6 name="secondExit"
 # CHECK: b0(
 # CHECK: Jump -> next b1(v2)
+}
 
 function f7 name="irreducibleCycleInside" parameters=[{type=int[0, 100]}, {type=boolean}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: int[0, 100], v1: boolean, v2: boolean):
     v3 = Integer integer=0
     Jump -> next b1(v3)
   b1(v4):
@@ -177,13 +162,11 @@ function f7 name="irreducibleCycleInside" parameters=[{type=int[0, 100]}, {type=
     Jump -> next b1(v11)
   b6():
     Return
-}
-# CHECK-LABEL: function f7 name="irreducibleCycleInside"
 # CHECK: b0(
 # CHECK: Jump -> next b1(v3)
+}
 
 function f8 name="uncountedInnerLoop" parameters=[{type=int[0, 100]}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: int[0, 100], v1: boolean):
     v2 = Integer integer=0
     Jump -> next b1(v2)
   b1(v3):
@@ -201,13 +184,11 @@ function f8 name="uncountedInnerLoop" parameters=[{type=int[0, 100]}, {type=bool
     Jump -> next b1(v9)
   b5():
     Return
-}
-# CHECK-LABEL: function f8 name="uncountedInnerLoop"
 # CHECK: b0(
 # CHECK: Jump -> next b1(v2)
+}
 
 function f9 name="exitWithArgument" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     Jump -> next b1(v1)
   b1(v2):
@@ -220,13 +201,11 @@ function f9 name="exitWithArgument" parameters=[{type=int[0, 100]}] results=[{ty
     Jump -> next b1(v7)
   b3(v8):
     Return
-}
-# CHECK-LABEL: function f9 name="exitWithArgument"
 # CHECK: b0(
 # CHECK: Jump -> next b1(v1)
+}
 
 function f10 name="numberBound" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     v1 = Integer integer=0
     Jump -> next b1(v1)
   b1(v2):
@@ -240,13 +219,11 @@ function f10 name="numberBound" parameters=[{type=number}] results=[{type=undefi
     Jump -> next b1(v7)
   b3():
     Return
-}
-# CHECK-LABEL: function f10 name="numberBound"
 # CHECK: b0(
 # CHECK: Jump -> next b1(v1)
+}
 
 function f11 name="consecutiveLoops" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     v2 = Integer integer=1
     Jump -> next b1(v1)
@@ -268,16 +245,14 @@ function f11 name="consecutiveLoops" parameters=[{type=int[0, 100]}] results=[{t
     Jump -> next b4(v12)
   b6():
     Return
-}
-# CHECK-LABEL: function f11 name="consecutiveLoops"
 # CHECK: b0(
 # CHECK-NOT: Jump -> next b1
 # CHECK: Jump -> next b3()
 # CHECK: b3():
 # CHECK-NEXT: Jump -> next b6()
+}
 
 function f12 name="integerBoundAndAssumedCounter" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     Jump -> next b1(v1)
   b1(v2):
@@ -291,8 +266,7 @@ function f12 name="integerBoundAndAssumedCounter" parameters=[{type=int[0, 100]}
     Jump -> next b1(v7)
   b3():
     Return
-}
-# CHECK-LABEL: function f12 name="integerBoundAndAssumedCounter"
 # CHECK: b0(
 # CHECK-NOT: Jump -> next b1
 # CHECK: Jump -> next b3()
+}

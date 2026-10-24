@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="enteredByJumpFromNormalBlock" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Branch v0 -> taken b1(), notTaken b3()
   b1():
     Jump -> next b2()
@@ -16,7 +15,6 @@ function f0 name="enteredByJumpFromNormalBlock" parameters=[{type=boolean}] resu
 # CHECK-LABEL: function f0
 # CHECK: b2 frequency: Rare
 function f1 name="onlyWayThroughTheFunction" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Jump -> next b1()
   b1() frequency=Rare:
     Return
@@ -25,7 +23,6 @@ function f1 name="onlyWayThroughTheFunction" parameters=[{type=boolean}] results
 # CHECK-NEXT: b0 frequency: Normal
 # CHECK-NEXT: b1 frequency: Rare
 function f2 name="headerOfLoop" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Jump -> next b1()
   b1() frequency=Rare:
     LoopHint

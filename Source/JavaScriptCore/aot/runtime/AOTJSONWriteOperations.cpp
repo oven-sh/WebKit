@@ -16,7 +16,6 @@
 #include "JSCInlines.h"
 #include "JSONObject.h"
 #include "NumberPrototype.h"
-#include "NumericStrings.h"
 #include <array>
 #include <wtf/MathExtras.h>
 #include <wtf/SIMDHelpers.h>
@@ -121,21 +120,6 @@ static NEVER_INLINE Latin1Character* appendQuotedAndEscaped(Latin1Character* cur
     return cursor;
 }
 
-static NEVER_INLINE Latin1Character* tryAppendEscapedAtCursor(const StringBuilderStorage& builder, Latin1Character* cursor, std::span<const Latin1Character> characters)
-{
-    if (!builder.hasRoomAt(cursor, roomForEscapedString(characters.size())))
-        return nullptr;
-    return appendQuotedAndEscaped(cursor, characters);
-}
-
-static NEVER_INLINE Latin1Character* appendQuotedWithEscapes(JSGlobalObject* globalObject, StringBuilderStorage& builder, std::span<const Latin1Character> characters)
-{
-    Latin1Character* cursor = builder.reserve(globalObject, roomForEscapedString(characters.size()));
-    if (!cursor)
-        return nullptr;
-    return appendQuotedAndEscaped(cursor, characters);
-}
-
 static NEVER_INLINE Latin1Character* appendQuoted16Bit(JSGlobalObject* globalObject, StringBuilderStorage& builder, std::span<const char16_t> characters)
 {
     VM& vm = globalObject->vm();
@@ -175,7 +159,7 @@ static ALWAYS_INLINE Latin1Character* tryAppendQuotedWithoutEscapes(const String
     return cursor;
 }
 
-Latin1Character* appendQuotedJSONString(JSGlobalObject* globalObject, StringBuilderStorage& builder, Latin1Character* cursor, const StringImpl& string)
+static Latin1Character* appendQuotedJSONString(JSGlobalObject* globalObject, StringBuilderStorage& builder, Latin1Character* cursor, const StringImpl& string)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -193,10 +177,10 @@ Latin1Character* appendQuotedJSONString(JSGlobalObject* globalObject, StringBuil
     }
     if (Latin1Character* end = tryAppendQuotedWithoutEscapes(builder, cursor, string)) [[likely]]
         return end;
-    if (Latin1Character* end = tryAppendEscapedAtCursor(builder, cursor, characters))
-        return end;
     builder.commit(cursor);
-    RELEASE_AND_RETURN(scope, appendQuotedWithEscapes(globalObject, builder, characters));
+    cursor = builder.reserve(globalObject, roomForEscapedString(characters.size()));
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return appendQuotedAndEscaped(cursor, characters);
 }
 
 static ALWAYS_INLINE Latin1Character* appendPrimitive(Latin1Character* cursor, JSValue value)
@@ -220,7 +204,12 @@ static ALWAYS_INLINE Latin1Character* tryAppendValueAtCursor(const StringBuilder
     return appendPrimitive(cursor, value);
 }
 
-AppendedJSONValue appendJSONValue(JSGlobalObject* globalObject, StringBuilderStorage& builder, Latin1Character* cursor, JSValue value, JSONPosition position)
+struct AppendedJSONValue {
+    Latin1Character* cursor { nullptr };
+    JSONOutcome outcome { JSONOutcome::Unknown };
+};
+
+static AppendedJSONValue appendJSONValue(JSGlobalObject* globalObject, StringBuilderStorage& builder, Latin1Character* cursor, JSValue value, JSONPosition position)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -384,19 +373,6 @@ static JSString* quoteString(JSGlobalObject* globalObject, JSString* string)
     RELEASE_AND_RETURN(scope, quoteStringInEngine(globalObject, string));
 }
 
-static ALWAYS_INLINE JSString* numberToJSONText(VM& vm, JSValue value)
-{
-    if (value.isInt32())
-        return int32ToString(vm, value.asInt32(), 10);
-    double number = value.asDouble();
-    if (!std::isfinite(number))
-        return vm.smallStrings.nullString();
-    int32_t integer = truncateDoubleToInt32(number);
-    if (integer == number)
-        return int32ToString(vm, integer, 10);
-    return vm.numericStrings.addJSString(vm, number);
-}
-
 JSC_DEFINE_JIT_OPERATION(operationAOTJSONStringifyPrimitive, JSCell*, (Instance* instance, EncodedJSValue encodedValue))
 {
     constexpr Entry entry = Entry::operationAOTJSONStringifyPrimitive;
@@ -405,7 +381,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTJSONStringifyPrimitive, JSCell*, (Instance*
     if (value.isCell())
         OPERATION_RETURN(scope, quoteString(globalObject, cellArgument<JSString>(value.asCell(), entry)));
     if (value.isNumber())
-        OPERATION_RETURN(scope, numberToJSONText(vm, value));
+        OPERATION_RETURN(scope, std::isfinite(value.asNumber()) ? numberToString(vm, value.asNumber(), 10) : vm.smallStrings.nullString());
     if (value.isBoolean())
         OPERATION_RETURN(scope, value.isTrue() ? vm.smallStrings.trueString() : vm.smallStrings.falseString());
     if (!value.isNull()) [[unlikely]]

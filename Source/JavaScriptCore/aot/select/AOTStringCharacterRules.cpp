@@ -37,6 +37,9 @@ struct Pair {
     bool resolvesUnderOtherHandler { false };
     bool hasFlatteningReader { false };
     ValueID flat { };
+
+    // A rewrite adds no effect, so a rope that no reader resolves is not flattened either. Running out of memory on the loop entry reaches the handler of the header.
+    bool hasReaders() const { return firstReader || (hasLikelyReader && hasResolvingReader && !resolvesUnderOtherHandler); }
 };
 
 struct PairTable {
@@ -56,14 +59,9 @@ struct StringCharacterMatch {
     bool readsCharacters { false };
 };
 
-struct PlacedReader {
-    uint32_t reader;
+struct PlacedIndex {
+    uint32_t index;
     ProgramPoint point;
-};
-
-struct PlacedPair {
-    uint32_t pair;
-    ProgramPoint place;
 };
 
 } // anonymous namespace
@@ -108,28 +106,37 @@ static std::optional<StringCharacterMatch> findReader(SelectionContext& context,
     return reader;
 }
 
-static bool resolvesRopes(SelectionContext& context, ValueID reader)
+static bool suspendsAt(SelectionContext& context, ValueID id)
 {
-    return effectsOfFlatteningString.isSubsetOf(context.analyses().effectsOf(reader));
+    return maySuspend(context.function().at(id).opcode) && context.analyses().maySuspend(id);
 }
 
-static bool suspends(SelectionContext& context, BlockID header)
+static bool suspendsIn(SelectionContext& context, BlockID id)
 {
-    const Function& function = context.function();
-    FunctionAnalyses& analyses = context.analyses();
-    const NaturalLoop* loop = analyses.naturalLoops().headerOf(header);
-    RELEASE_ASSERT(loop);
+    const Block& block = context.function().at(id);
+    if (declaredBoundOf(block.terminator.kind).maySuspend && context.analyses().effectsOfTerminator(id).normal.maySuspend)
+        return true;
+    return std::ranges::any_of(block.values, [&](ValueID value) {
+        return suspendsAt(context, value);
+    });
+}
 
-    for (unsigned index = 0; index < loop->size(); ++index) {
-        BlockID block = loop->at(index);
-        if (declaredBoundOf(function.at(block).terminator.kind).maySuspend && analyses.effectsOfTerminator(block).normal.maySuspend)
-            return true;
-        for (ValueID id : function.at(block).values) {
-            if (maySuspend(function.at(id).opcode) && analyses.maySuspend(id))
-                return true;
-        }
-    }
-    return false;
+static bool suspendsAnywhere(SelectionContext& context)
+{
+    return std::ranges::any_of(context.analyses().cfg().reversePostOrder(), [&](BlockID block) {
+        return suspendsIn(context, block);
+    });
+}
+
+static bool suspendsBetween(SelectionContext& context, ProgramPoint first, ProgramPoint last, bool functionSuspends)
+{
+    if (!functionSuspends)
+        return false;
+    if (first.block != last.block)
+        return true;
+    return std::ranges::any_of(context.function().at(first.block).values.span().subspan(first.index, last.index - first.index), [&](ValueID id) {
+        return suspendsAt(context, id);
+    });
 }
 
 static std::optional<BlockID> findLoopWithoutSuspension(SelectionContext& context, PairTable& table, BlockID user, BlockID outermostHeader)
@@ -139,7 +146,11 @@ static std::optional<BlockID> findLoopWithoutSuspension(SelectionContext& contex
     // What is invariant in a loop is invariant in the loops inside it, and a loop around a suspending loop suspends too.
     for (const NaturalLoop* loop = loops.innerMostLoopOf(user); loop; loop = loops.innerMostOuterLoop(*loop)) {
         bool loopSuspends = table.suspendingLoops.ensure(loop->header(), [&] {
-            return suspends(context, loop->header());
+            for (unsigned index = 0; index < loop->size(); ++index) {
+                if (suspendsIn(context, loop->at(index)))
+                    return true;
+            }
+            return false;
         }).iterator->value;
         if (loopSuspends)
             break;
@@ -200,7 +211,7 @@ static Vector<StringCharacterMatch> collectReaders(SelectionContext& context, Pa
                 continue;
 
             reader->pair = findOrAddPair(context, table, block, reader->string);
-            reader->resolvesRopes = resolvesRopes(context, id);
+            reader->resolvesRopes = effectsOfFlatteningString.isSubsetOf(context.analyses().effectsOf(id));
             reader->readsCharacters = reader->resolvesRopes && !readersThatOnlyCutPieces.contains(opcode);
             if (reader->pair) {
                 Pair& pair = table.pairs[*reader->pair];
@@ -211,46 +222,11 @@ static Vector<StringCharacterMatch> collectReaders(SelectionContext& context, Pa
             readers.append(WTF::move(*reader));
         }
     }
-    return readers;
-}
-
-static bool shouldFlatten(const Pair& pair)
-{
-    // A rewrite adds no effect, so a rope that no reader resolves is not flattened either. Running out of memory on the loop entry reaches the handler of the header.
-    return pair.hasLikelyReader && pair.hasResolvingReader && !pair.resolvesUnderOtherHandler;
-}
-
-static void clearUnflattenedPairs(const Vector<Pair>& pairs, Vector<StringCharacterMatch>& readers)
-{
     for (StringCharacterMatch& reader : readers) {
-        if (reader.pair && !shouldFlatten(pairs[*reader.pair]))
+        if (reader.pair && !table.pairs[*reader.pair].hasReaders())
             reader.pair = std::nullopt;
     }
-}
-
-static bool suspendsBetween(SelectionContext& context, ProgramPoint first, ProgramPoint last, bool functionSuspends)
-{
-    if (!functionSuspends)
-        return false;
-    if (first.block != last.block)
-        return true;
-    const Block& block = context.function().at(first.block);
-    return std::ranges::any_of(block.values.span().subspan(first.index, last.index - first.index), [&](ValueID id) {
-        return maySuspend(context.function().at(id).opcode) && context.analyses().maySuspend(id);
-    });
-}
-
-static bool suspendsAnywhere(SelectionContext& context)
-{
-    const Function& function = context.function();
-    FunctionAnalyses& analyses = context.analyses();
-    return std::ranges::any_of(analyses.cfg().reversePostOrder(), [&](BlockID block) {
-        if (declaredBoundOf(function.at(block).terminator.kind).maySuspend && analyses.effectsOfTerminator(block).normal.maySuspend)
-            return true;
-        return std::ranges::any_of(function.at(block).values, [&](ValueID id) {
-            return maySuspend(function.at(id).opcode) && analyses.maySuspend(id);
-        });
-    });
+    return readers;
 }
 
 static bool runsRightBehind(SelectionContext& context, BlockID block, BlockID follower)
@@ -274,78 +250,65 @@ static void pairReadersBehindFirstReader(SelectionContext& context, Vector<Pair>
     if (std::ranges::count_if(readers, isUnpaired) < 2 || std::ranges::none_of(readers, mayComeFirst))
         return;
 
+    const Function& function = context.function();
     FunctionAnalyses& analyses = context.analyses();
     const CFG& cfg = analyses.cfg();
 
-    HashMap<ValueID, Vector<PlacedReader, 4>> readersOfString;
+    HashMap<ValueID, Vector<PlacedIndex, 4>> readersOfString;
     for (uint32_t index = 0; index < readers.size(); ++index) {
         const StringCharacterMatch& reader = readers[index];
         if (reader.pair)
             continue;
         ValueLocation location = analyses.useLists().locationOf(reader.group.root);
-        if (location.placement != ValuePlacement::InBlock)
-            continue;
-        readersOfString.ensure(analyses.identityOf(reader.string), [] {
-            return Vector<PlacedReader, 4>();
-        }).iterator->value.append(PlacedReader { index, { location.block, location.index } });
+        if (location.placement == ValuePlacement::InBlock)
+            readersOfString.add(analyses.identityOf(reader.string), Vector<PlacedIndex, 4>()).iterator->value.append(PlacedIndex { index, { location.block, location.index } });
     }
 
     std::optional<bool> functionSuspends;
     for (auto& remaining : readersOfString.values()) {
-        AOT::sort(remaining, { }, [&](const PlacedReader& placed) {
+        AOT::sort(remaining, { }, [&](const PlacedIndex& placed) {
             return std::pair { cfg.reversePostOrderIndex(placed.point.block), placed.point.index };
         });
         while (remaining.size() > 1) {
-            PlacedReader first = remaining.first();
+            PlacedIndex first = remaining.first();
             remaining.removeAt(0);
             if (!functionSuspends)
                 functionSuspends = suspendsAnywhere(context);
 
+            StringCharacterMatch& firstReader = readers[first.index];
+            auto staysFlatUntil = [&](const PlacedIndex& follower) {
+                return analyses.dominates(firstReader.group.root, follower.point) && !suspendsBetween(context, first.point, follower.point, *functionSuspends);
+            };
+
             std::optional<uint32_t> flatteningReader;
-            if (readers[first.reader].resolvesRopes)
-                flatteningReader = first.reader;
-            unsigned numberOfLikelyReads = readers[first.reader].readsCharacters;
-            for (const PlacedReader& follower : remaining) {
-                if (!readers[follower.reader].readsCharacters || context.function().at(follower.point.block).frequency != context.function().at(first.point.block).frequency)
-                    continue;
-                if (!analyses.dominates(readers[first.reader].group.root, follower.point) || suspendsBetween(context, first.point, follower.point, *functionSuspends))
+            if (firstReader.resolvesRopes)
+                flatteningReader = first.index;
+            unsigned numberOfLikelyReads = firstReader.readsCharacters;
+            for (const PlacedIndex& follower : remaining) {
+                if (!readers[follower.index].readsCharacters || function.at(follower.point.block).frequency != function.at(first.point.block).frequency || !staysFlatUntil(follower))
                     continue;
                 ++numberOfLikelyReads;
                 if (!flatteningReader && runsRightBehind(context, first.point.block, follower.point.block))
-                    flatteningReader = follower.reader;
+                    flatteningReader = follower.index;
             }
             // One read alone flattens nothing.
             if (!flatteningReader || numberOfLikelyReads < 2)
                 continue;
 
             uint32_t pair = static_cast<uint32_t>(pairs.size());
-            bool hasFollower = remaining.removeAllMatching([&](const PlacedReader& follower) {
-                if (!analyses.dominates(readers[first.reader].group.root, follower.point) || suspendsBetween(context, first.point, follower.point, *functionSuspends))
+            bool hasFollower = remaining.removeAllMatching([&](const PlacedIndex& follower) {
+                if (!staysFlatUntil(follower))
                     return false;
-                readers[follower.reader].pair = pair;
+                readers[follower.index].pair = pair;
                 return true;
             });
             if (!hasFollower)
                 continue;
-            readers[first.reader].pair = pair;
-            pairs.append(Pair { .header = { }, .string = readers[first.reader].string, .firstReader = readers[first.reader].group.root, .blockOfFirstReader = first.point.block, .flatteningReader = readers[*flatteningReader].group.root });
+            firstReader.pair = pair;
+            ValueID flattening = readers[*flatteningReader].group.root;
+            pairs.append(Pair { .header = { }, .string = firstReader.string, .firstReader = firstReader.group.root, .blockOfFirstReader = first.point.block, .flatteningReader = flattening });
         }
     }
-}
-
-static ProgramPoint placeOf(SelectionContext& context, const Pair& pair)
-{
-    return pair.firstReader ? context.analyses().useLists().pointOf(pair.firstReader) : ProgramPoint::atHeadOf(pair.header);
-}
-
-static bool hasReaders(const Pair& pair)
-{
-    return pair.firstReader || shouldFlatten(pair);
-}
-
-static bool isMade(SelectionContext& context, const Pair& pair)
-{
-    return pair.firstReader || (shouldFlatten(pair) && canEmitOnLoopEntry(context, pair.header));
 }
 
 // The flat string of a loop is defined on the only entry of the header, so it reaches all that the header dominates, the code behind the loop included.
@@ -367,14 +330,15 @@ static void sharePairsOfOneString(SelectionContext& context, Vector<Pair>& pairs
     FunctionAnalyses& analyses = context.analyses();
     const CFG& cfg = analyses.cfg();
 
-    Vector<PlacedPair, 8> placedPairs;
+    Vector<PlacedIndex, 8> placedPairs;
     for (uint32_t index = 0; index < pairs.size(); ++index) {
-        if (hasReaders(pairs[index]))
-            placedPairs.append(PlacedPair { index, placeOf(context, pairs[index]) });
+        const Pair& pair = pairs[index];
+        if (pair.hasReaders())
+            placedPairs.append(PlacedIndex { index, pair.firstReader ? analyses.useLists().pointOf(pair.firstReader) : ProgramPoint::atHeadOf(pair.header) });
     }
     // What dominates a place comes before it.
-    AOT::sort(placedPairs, { }, [&](const PlacedPair& placed) {
-        return std::tuple { cfg.reversePostOrderIndex(placed.place.block), placed.place.index, placed.pair };
+    AOT::sort(placedPairs, { }, [&](const PlacedIndex& placed) {
+        return std::tuple { cfg.reversePostOrderIndex(placed.point.block), placed.point.index, placed.index };
     });
 
     HashMap<ValueID, Vector<uint32_t, 2>> flattenedPairsOfString;
@@ -390,14 +354,11 @@ static void sharePairsOfOneString(SelectionContext& context, Vector<Pair>& pairs
     };
 
     Vector<std::optional<uint32_t>> sharedWith(pairs.size());
-    for (const PlacedPair& placed : placedPairs) {
-        const Pair& pair = pairs[placed.pair];
-        sharedWith[placed.pair] = findPairThatReaches(pair.string, placed.place);
-        if (sharedWith[placed.pair] || !isMade(context, pair))
-            continue;
-        flattenedPairsOfString.ensure(analyses.identityOf(pair.string), [] {
-            return Vector<uint32_t, 2>();
-        }).iterator->value.append(placed.pair);
+    for (const PlacedIndex& placed : placedPairs) {
+        const Pair& pair = pairs[placed.index];
+        sharedWith[placed.index] = findPairThatReaches(pair.string, placed.point);
+        if (!sharedWith[placed.index] && (pair.firstReader || canEmitOnLoopEntry(context, pair.header)))
+            flattenedPairsOfString.add(analyses.identityOf(pair.string), Vector<uint32_t, 2>()).iterator->value.append(placed.index);
     }
 
     for (StringCharacterMatch& reader : readers) {
@@ -480,7 +441,6 @@ void selectHoistStringCharacters(SelectionContext& context)
     PairTable table;
     Vector<StringCharacterMatch> readers = collectReaders(context, table);
     Vector<Pair>& pairs = table.pairs;
-    clearUnflattenedPairs(pairs, readers);
     pairReadersBehindFirstReader(context, pairs, readers);
     sharePairsOfOneString(context, pairs, readers);
     readers.removeAllMatching([&](const StringCharacterMatch& reader) {

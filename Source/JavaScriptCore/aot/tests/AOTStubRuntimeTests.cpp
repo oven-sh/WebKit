@@ -7,7 +7,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTAllocationSiteRecord.h"
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinTableBindings.h"
 #include "AOTBuiltinTableRealm.h"

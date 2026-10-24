@@ -488,7 +488,7 @@ static BuiltImage buildWholeProgram(ParsedProgram& parsed)
     std::unique_ptr<Typed::PipelineOutput> pipeline = Typed::runPipeline(WTF::move(parsed.program), context);
     AOT_TEST_CHECK(pipeline && pipeline->isComplete);
     CodeGenerationPlan plan = prepareCodeGeneration(*pipeline, context);
-    GeneratedCode generated = generateAllCode(createCodeGenerationInputs(*pipeline, plan), *pipeline->program, context);
+    GeneratedCode generated = CodeGenerationJob(createCodeGenerationInputs(*pipeline, plan), *pipeline->program, context).run();
     for (const CompiledCode& code : generated.functions) {
         const Typed::Function& function = pipeline->program->at(code.function);
         AOT_TEST_CHECK(function.bodyIsReleased && function.hasBody() && function.blocks.isEmpty() && function.values.isEmpty());

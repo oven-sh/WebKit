@@ -32,7 +32,6 @@ variable g0 name="helper" module=m1 declared={type=anything} initialization=Unde
 variable g1 name="helper" module=m3 declared={type=anything} initialization=Undefined
 variable g2 name="helper" module=m2 declared={type=anything} initialization=Undefined
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = Call v0, -
     v2 = Builtin builtin=GlobalThis
@@ -43,32 +42,26 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="wrap" module=m1 kind=Module role=Library results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     PutModuleVariable v0 variable=g0
     Return
 }
 function f2 name="helperOfWrap" module=m1 role=Library results=[{type=anything}] {
-  b0():
     Return
 }
 function f3 name="runtime" module=m2 kind=CommonJsModule role=Library thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f4
     PutModuleVariable v0 variable=g2
     Return
 }
 function f4 name="helperOfRuntime" module=m2 role=Library results=[{type=anything}] {
-  b0():
     Return
 }
 function f5 name="other" module=m3 kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f6
     PutModuleVariable v0 variable=g1
     Return
 }
 function f6 name="helperOfProgram" module=m3 results=[{type=anything}] {
-  b0():
     Return
 }

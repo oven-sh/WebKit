@@ -82,12 +82,6 @@ export function cppSource(includes: Lines, body: Lines): string[] {
   return [cppMarker, "", '#include "config.h"', `#include ${own}`, "", ...insideFeatureGuard(others, body)];
 }
 
-/** AOTIRPrinter.h says why. Where it is empty it reads no header either. */
-export function cppSourceThatPrintsIR(includes: Lines, body: Lines): string[] {
-  const condition = "ENABLE(AOT) && (ASSERT_ENABLED || defined(AOT_IR_PRINTER_FOR_TESTAOT))";
-  return [cppMarker, "", '#include "config.h"', "", ...insideFeatureGuard(includes, body, condition)];
-}
-
 
 export function inNamespace(namespace: "Wire" | "Typed", body: Lines): string[] {
   return [

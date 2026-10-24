@@ -10,7 +10,6 @@ entry module=m0
 evalscope e0 mode=Sloppy flags=[IsInFunction] bindings=[{name="x" kind=MappedArgument field=16777215 operand=0}]
 evalscope e1 mode=Sloppy flags=[IsInFunction] bindings=[{name="x" kind=MappedArgument field=16777216 operand=0}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = String string="x"
     v2 = Call v0, -, v1, v1

@@ -24,6 +24,5 @@
 module m0 path="main.js" displayPath="main.js"
 entry module=m0
 function f0 name="only" results=[{type=undefined}] {
-  b0():
     Return
 }

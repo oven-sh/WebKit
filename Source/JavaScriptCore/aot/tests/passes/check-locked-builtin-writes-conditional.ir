@@ -11,7 +11,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 module m1 path="lazy.js" displayPath="lazy.js" body=f2
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=ObjectPrototype
     v1 = Integer integer=1
     v2 = Builtin builtin=GlobalThis
@@ -35,21 +34,18 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="inFunction" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=ObjectPrototype
     v1 = Integer integer=1
     PropSet v0, v1 key="inFunction" mode=Strict @60
     Return
 }
 function f2 name="lazy" module=m1 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=ObjectPrototype
     v1 = Integer integer=1
     PropSet v0, v1 key="inImportedModule" mode=Strict @10
     Return
 }
 function f3 name="unreached" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=ObjectPrototype
     v1 = Integer integer=1
     PropSet v0, v1 key="unreached" mode=Strict @70

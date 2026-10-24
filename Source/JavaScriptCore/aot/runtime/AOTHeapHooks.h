@@ -9,6 +9,7 @@
 
 #include "CollectionScope.h"
 #include "JSExportMacros.h"
+#include "MarkStack.h"
 #include <memory>
 #include <span>
 #include <wtf/Forward.h>
@@ -66,6 +67,19 @@ JS_EXPORT_PRIVATE void initializeCollectorWords(VM&, Instance&);
 
 // For a validating image. A function cell in a frame is only ever called: its properties would lie on the heap, outlive the frame and point back into it.
 void validateFunctionCellIsNotInFrame(VM&, const JSCell*);
+
+// Where a stub finds what MarkStackArray::append() reads and writes.
+class MutatorMarkStackLayout final : public MarkStackArray {
+public:
+    using Segment = GCArraySegment<const JSCell*>;
+
+    static constexpr size_t segmentCapacity = CapacityFromSize<Segment::blockSize>::value;
+    static constexpr ptrdiff_t offsetOfFirstCellInSegment = sizeof(Segment);
+    static ptrdiff_t offsetOfTop() { return OBJECT_OFFSETOF(MutatorMarkStackLayout, m_top); }
+    // The list of segments begins with its head. initializeCollectorWords() checks that.
+    static ptrdiff_t offsetOfHeadSegment() { return OBJECT_OFFSETOF(MutatorMarkStackLayout, m_segments); }
+    static Segment* headSegmentOf(MarkStackArray& stack) { return static_cast<MutatorMarkStackLayout&>(stack).m_segments.head(); }
+};
 
 } } // namespace JSC::AOT
 

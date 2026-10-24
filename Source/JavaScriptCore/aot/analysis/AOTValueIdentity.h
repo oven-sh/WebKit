@@ -43,7 +43,6 @@ constexpr bool isCastOrConversion(Opcode opcode) { return castsAndConversions.co
 ValueID sameObjectThroughCasts(const Function&, ValueID);
 ValueID definitionThroughUpcasts(const Function&, ValueID);
 
-// The test for a dead zone, or the cast that stands in its place where a store is proven to come before the read.
 inline bool leavesDeadZoneBehind(const Program& program, const Function& function, const Value& value)
 {
     if (value.opcode == Opcode::CheckInitialized)
@@ -110,12 +109,9 @@ class ValueIdentities {
     WTF_MAKE_NONCOPYABLE(ValueIdentities);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueIdentities);
 public:
-    // StartAtEntry also takes no shortcut, for comparison.
     enum class RepeatedWalks : uint8_t { StartAtFirstChangedBlock, StartAtEntry };
-    // OnDemand reads the function when it is asked, so it is only for callers that ask before they edit.
     enum class Evaluation : uint8_t { Complete, OnDemand };
 
-    // opcodesOfValues may be a superset.
     ValueIdentities(const Function&, const CFG&, RepeatedWalks = RepeatedWalks::StartAtFirstChangedBlock, const OpcodeSet* opcodesOfValues = nullptr, Evaluation = Evaluation::Complete);
 
     ValueID identityOf(ValueID id) const
@@ -132,20 +128,15 @@ public:
 
     bool isComplete() const { return m_isComplete; }
     void complete();
-    // Until it is complete it needs the current graph.
     void setGraph(const CFG* cfg) { m_cfg = cfg; }
-    // Null if only complete() can tell.
     ValueID tryResolve(ValueID);
 
     void didEraseValues(std::span<const ValueID>);
-    // False if the identities have to be computed again.
-    bool didRenumber(const Renumbering&);
 
 private:
-    class PassedValues;
+    struct PassedValues;
     class MergingParameters;
 
-    // What a walk may still find for a parameter. Each is less than the one before.
     enum class Expectation : uint8_t {
         IsPassedOneValue,
         ReceivesWhatEarlierParameterReceives,
@@ -154,7 +145,6 @@ private:
 
     void computeAll();
     void walk(const Function&, const CFG&, uint32_t firstOrderIndex);
-    void forgetIdentitiesFrom(const Function&, const CFG&, uint32_t firstOrderIndex);
     PassedValues passedValuesInto(const Function&, const CFG&, uint32_t orderIndex);
     ValueID identityOfParameter(const PassedValues&, uint32_t parameterIndex, MergingParameters&);
     ValueID identityOfParameterWithSingleEdge(const PassedValues&, uint32_t parameterIndex);
@@ -179,13 +169,10 @@ private:
 
     const Function& m_function;
     const CFG* m_cfg;
-    // Empty if every value is its own identity. Until it is complete, null for a value that nobody has asked about.
     Vector<ValueID> m_identities;
     unsigned m_numberOfValues;
     bool m_isComplete { false };
-    bool m_convergedOnFirstWalk { true };
 
-    // The order in which a walk assigns identities, shifted left by one; the low bit marks a block parameter.
     static constexpr uint32_t notListed = UINT32_MAX;
     Vector<uint32_t> m_walkPositions;
     Vector<ListedParameter> m_listedParameters;

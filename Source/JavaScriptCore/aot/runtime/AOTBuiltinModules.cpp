@@ -18,18 +18,14 @@
 #include "AOTModules.h"
 #include "AOTObjectModel.h"
 #include "AOTState.h"
-#include "AOTVector.h"
 #include "BuiltinExecutables.h"
 #include "ConstructData.h"
-#include "Error.h"
 #include "FunctionExecutable.h"
 #include "JITCode.h"
 #include "JSCInlines.h"
 #include "LLIntData.h"
 #include "NativeExecutable.h"
 #include <wtf/TZoneMallocInlines.h>
-#include <wtf/text/MakeString.h>
-#include <wtf/text/StringBuilder.h>
 
 namespace JSC { namespace AOT {
 
@@ -75,12 +71,8 @@ bool hasBuiltinFunction(VM&, uint32_t id)
 static std::optional<FunctionID> findCompiledFunction(JSGlobalObject* globalObject, uint32_t id)
 {
     Instance* instance = Instance::of(globalObject);
-    if (!instance)
-        return std::nullopt;
-    const CompiledRuntimeFunctionData* entry = ModuleTable(instance->tables()).findRuntimeFunction(id);
-    if (!entry)
-        return std::nullopt;
-    return FunctionID(entry->function);
+    const CompiledRuntimeFunctionData* entry = instance ? ModuleTable(instance->tables()).findRuntimeFunction(id) : nullptr;
+    return entry ? std::optional(FunctionID(entry->function)) : std::nullopt;
 }
 
 JSFunction* builtinFunction(JSGlobalObject* globalObject, uint32_t id, JSObject* prototype)
@@ -103,26 +95,19 @@ class CompiledBuiltinJITCode final : public NativeJITCode {
 public:
     CompiledBuiltinJITCode(CodeRef<JSEntryPtrTag> trampoline, FunctionID function)
         : NativeJITCode(trampoline, JITType::HostCallThunk, NoIntrinsic)
-        , m_function(function)
+        , function(function)
     {
     }
 
-    FunctionID function() const { return m_function; }
-
-private:
-    FunctionID m_function;
+    const FunctionID function;
 };
 
 } // anonymous namespace
 
-static NativeExecutable* executableOfCallee(CallFrame* callFrame)
-{
-    return uncheckedDowncast<NativeExecutable>(uncheckedDowncast<JSFunction>(callFrame->jsCallee())->executable());
-}
-
 static JSObject* compiledClosureOfCallee(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
-    FunctionID function = static_cast<const CompiledBuiltinJITCode&>(executableOfCallee(callFrame)->generatedJITCodeForCall().get()).function();
+    auto* executable = uncheckedDowncast<NativeExecutable>(uncheckedDowncast<JSFunction>(callFrame->jsCallee())->executable());
+    FunctionID function = static_cast<const CompiledBuiltinJITCode&>(executable->generatedJITCodeForCall().get()).function;
     return asObject(State::of(globalObject).objects->closures.closure(globalObject->vm(), function));
 }
 
@@ -146,11 +131,10 @@ NativeExecutable* builtinExecutable(JSGlobalObject* globalObject, uint32_t id)
     std::optional<FunctionID> function = findCompiledFunction(globalObject, id);
     if (!function)
         return nullptr;
-    FunctionKindData kind = functionKindData(*function);
     // Private hides only the host function's frame. A stack trace shows the frame of the compiled function it calls.
     return NativeExecutable::create(globalObject->vm(),
         adoptRef(*new CompiledBuiltinJITCode(LLInt::getCodeRef<JSEntryPtrTag>(llint_native_call_trampoline), *function)), toTagged(callCompiledBuiltin),
-        adoptRef(*new NativeJITCode(LLInt::getCodeRef<JSEntryPtrTag>(llint_native_construct_trampoline), JITType::HostCallThunk, NoIntrinsic)), toTagged(FunctionTables::canConstruct(kind) ? constructCompiledBuiltin : callHostFunctionAsConstructor),
+        adoptRef(*new NativeJITCode(LLInt::getCodeRef<JSEntryPtrTag>(llint_native_construct_trampoline), JITType::HostCallThunk, NoIntrinsic)), toTagged(FunctionTables::canConstruct(functionKindData(*function)) ? constructCompiledBuiltin : callHostFunctionAsConstructor),
         ImplementationVisibility::Private, functionLengthOf(*function), initialNameProperty(*function));
 }
 
@@ -162,22 +146,16 @@ bool refusesLibraryText()
 
 static std::optional<uint32_t> builtinFunctionHolding(const FunctionExecutable& executable)
 {
-    const SourceCode& source = executable.source();
-    return source.provider()->builtinFunctionAt(source.startOffset());
-}
-
-static bool isTextOfHostLibrary(ScriptExecutable& executable)
-{
-    auto* function = dynamicDowncast<FunctionExecutable>(&executable);
-    if (!function || !function->isBuiltinFunction() || function->unlinkedExecutable()->isBuiltinDefaultClassConstructor())
-        return false;
-    std::optional<uint32_t> id = builtinFunctionHolding(*function);
-    return !id || *id >= numberOfBuiltinCodes;
+    return executable.source().provider()->builtinFunctionAt(executable.source().startOffset());
 }
 
 bool refusesToInterpret(ScriptExecutable& executable)
 {
-    return refusesLibraryText() && isTextOfHostLibrary(executable);
+    auto* function = dynamicDowncast<FunctionExecutable>(&executable);
+    if (!refusesLibraryText() || !function || !function->isBuiltinFunction() || function->unlinkedExecutable()->isBuiltinDefaultClassConstructor())
+        return false;
+    std::optional<uint32_t> id = builtinFunctionHolding(*function);
+    return !id || *id >= numberOfBuiltinCodes;
 }
 
 bool refusesToRun(JSFunction* function)
@@ -195,11 +173,8 @@ static Vector<String, 4> globalBuiltinsThatRun(RuntimeFunctionID function)
 
     // The built-in that a function implements also lists it among the functions it calls.
     auto add = [&](BuiltinID builtin) {
-        if (!table.isUnder(builtin, Builtins::GlobalThis))
-            return;
-        String name = table.textOf(builtin);
-        if (!names.contains(name))
-            names.append(WTF::move(name));
+        if (table.isUnder(builtin, Builtins::GlobalThis) && !names.contains(table.textOf(builtin)))
+            names.append(table.textOf(builtin));
     };
     for (BuiltinID builtin : table.at(function).implements)
         add(builtin);
@@ -212,45 +187,29 @@ static Vector<String, 4> globalBuiltinsThatRun(RuntimeFunctionID function)
     return names;
 }
 
-static bool isGetterOfAccessor(RuntimeFunctionID function)
-{
-    const BuiltinTable& table = BuiltinTable::singleton();
-    return std::ranges::any_of(table.at(function).implements, [&](BuiltinID builtin) {
-        return table.at(builtin).kind == BuiltinKind::Accessor;
-    });
-}
-
-static void throwErrorOfCodeLeftOut(JSGlobalObject* realm, ThrowScope& scope, JSObject* error)
-{
-    noteErrorOfCodeLeftOut(realm, error);
-    throwException(realm, scope, error);
-}
-
 void throwBuiltinNotCompiled(JSGlobalObject* realm, const String& builtin)
 {
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
-    throwErrorOfCodeLeftOut(realm, scope, createBuiltinNotCompiledError(realm, builtin));
+    JSObject* error = createBuiltinNotCompiledError(realm, builtin);
+    noteErrorOfCodeLeftOut(realm, error);
+    throwException(realm, scope, error);
 }
 
 void throwLibraryFunctionNotCompiled(JSGlobalObject* realm, ScriptExecutable& executable)
 {
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
     auto& function = *uncheckedDowncast<FunctionExecutable>(&executable);
-    Vector<String, 4> names;
+    const BuiltinTable& table = BuiltinTable::singleton();
     std::optional<uint32_t> id = builtinFunctionHolding(function);
-    if (id)
-        names = globalBuiltinsThatRun(RuntimeFunctionID(*id));
+    Vector<String, 4> names = id ? globalBuiltinsThatRun(RuntimeFunctionID(*id)) : Vector<String, 4>();
+    JSObject* error = names.size() == 1 ? createBuiltinNotCompiledError(realm, names[0]) : names.isEmpty() ? createBuiltinFunctionNotCompiledError(realm, function.name().string()) : createBuiltinsNotCompiledError(realm, names.span());
     // Reading an accessor is calling its getter. What it answers may be a number, and a function in the place of a number is a wrong answer: the read is refused.
-    if (id && isGetterOfAccessor(RuntimeFunctionID(*id))) {
-        throwException(realm, scope, names.size() == 1 ? createBuiltinNotCompiledError(realm, names[0]) : names.isEmpty() ? createBuiltinFunctionNotCompiledError(realm, function.name().string()) : createBuiltinsNotCompiledError(realm, names.span()));
-        return;
-    }
-    if (names.isEmpty())
-        throwErrorOfCodeLeftOut(realm, scope, createBuiltinFunctionNotCompiledError(realm, function.name().string()));
-    else if (names.size() == 1)
-        throwErrorOfCodeLeftOut(realm, scope, createBuiltinNotCompiledError(realm, names[0]));
-    else
-        throwErrorOfCodeLeftOut(realm, scope, createBuiltinsNotCompiledError(realm, names.span()));
+    bool isGetterOfAccessor = id && std::ranges::any_of(table.at(RuntimeFunctionID(*id)).implements, [&](BuiltinID builtin) {
+        return table.at(builtin).kind == BuiltinKind::Accessor;
+    });
+    if (!isGetterOfAccessor)
+        noteErrorOfCodeLeftOut(realm, error);
+    throwException(realm, scope, error);
 }
 
 } } // namespace JSC::AOT

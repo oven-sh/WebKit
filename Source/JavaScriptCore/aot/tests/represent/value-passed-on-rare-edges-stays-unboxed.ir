@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="rareEdgesTakeTheSumBoxed" parameters=[{type=number}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean, v2: boolean, v3: boolean, v4: boolean):
     Jump -> next b1(v0)
   b1(v5: number):
     LoopHint
@@ -23,15 +22,13 @@ function f0 name="rareEdgesTakeTheSumBoxed" parameters=[{type=number}, {type=boo
     Branch v1 -> taken b1(v0), notTaken b7(v8)
   b7(v9: anything):
     Return v9
-}
-# CHECK-LABEL: function f0 name="rareEdgesTakeTheSumBoxed"
 # CHECK: b1(v5: number @Double):
 # CHECK: number @Double = Add v5, v0 form=Numbers
 # CHECK-NEXT: Jump -> next b1(v7)
 # CHECK-NEXT: b6(v8: anything @JSValue) frequency=Rare:
+}
 
 function f1 name="unlikelyEdgesTakeTheSumBoxed" parameters=[{type=number}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean, v2: boolean, v3: boolean, v4: boolean):
     Jump -> next b1(v0)
   b1(v5: number):
     LoopHint
@@ -49,15 +46,13 @@ function f1 name="unlikelyEdgesTakeTheSumBoxed" parameters=[{type=number}, {type
     Branch v1 -> taken b1(v0), notTaken b7(v8)
   b7(v9: anything):
     Return v9
-}
-# CHECK-LABEL: function f1 name="unlikelyEdgesTakeTheSumBoxed"
 # CHECK: b1(v5: number @Double):
 # CHECK: number @Double = Add v5, v0 form=Numbers
 # CHECK-NEXT: Jump -> next b1(v7)
 # CHECK-NEXT: b6(v8: anything @JSValue) frequency=Unlikely:
+}
 
 function f2 name="likelyEdgesTakeTheSumBoxed" parameters=[{type=number}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean, v2: boolean, v3: boolean, v4: boolean):
     Jump -> next b1(v0)
   b1(v5: number):
     LoopHint
@@ -75,12 +70,10 @@ function f2 name="likelyEdgesTakeTheSumBoxed" parameters=[{type=number}, {type=b
     Branch v1 -> taken b1(v0), notTaken b7(v8)
   b7(v9: anything):
     Return v9
-}
-# CHECK-LABEL: function f2 name="likelyEdgesTakeTheSumBoxed"
 # CHECK: b1(v5: number @JSValue):
+}
 
 function f3 name="edgesOutOfTheLoopTakeTheSumBoxed" parameters=[{type=number}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean, v2: boolean, v3: boolean, v4: boolean):
     Jump -> next b1(v0)
   b1(v5: number):
     LoopHint
@@ -96,9 +89,8 @@ function f3 name="edgesOutOfTheLoopTakeTheSumBoxed" parameters=[{type=number}, {
     Jump -> next b1(v7)
   b6(v8: anything):
     Return v8
-}
-# CHECK-LABEL: function f3 name="edgesOutOfTheLoopTakeTheSumBoxed"
 # CHECK: b1(v5: number @Double):
 # CHECK: number @Double = Add v5, v0 form=Numbers
 # CHECK-NEXT: Jump -> next b1(v7)
 # CHECK-NEXT: b6(v8: anything @JSValue):
+}

@@ -10,7 +10,6 @@ module m0 path="main.js" displayPath="main.js"
 # CHECK-NEXT: b1():
 # CHECK-NOT: StrictEq
 function f0 name="three-numbers" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
 # REPEAT: i = 1..3
     v%(i*2-1) = Integer integer=%(i)
     v%(i*2) = StrictEq v0, v%(i*2-1)
@@ -25,7 +24,6 @@ function f0 name="three-numbers" parameters=[{type=number}] results=[{type=numbe
 # CHECK-LABEL: function f1 name="loose-equality"
 # CHECK-NOT: Switch
 function f1 name="loose-equality" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Integer integer=1
     v2 = StrictEq v0, v1
     Branch v2 -> taken b1(), notTaken b2()

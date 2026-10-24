@@ -9,8 +9,8 @@
 
 #include "AOTFFIStubs.h"
 #include "AOTHeat.h"
+#include "AOTImageBuilder.h"
 #include "AOTImageSiteTestBodies.h"
-#include "AOTImageSymbols.h"
 #include "AOTImageTestBodies.h"
 #include "AOTObfuscatedSites.h"
 #include "AOTRegExpCompiler.h"

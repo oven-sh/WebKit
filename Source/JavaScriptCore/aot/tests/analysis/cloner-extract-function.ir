@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="whole" parameters=[{type=boolean}, {type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: number):
     v3 = Integer integer=5
     v4 = TypeTest v1 testedType=object
     Branch v0 -> taken b1(), notTaken b2(v2)

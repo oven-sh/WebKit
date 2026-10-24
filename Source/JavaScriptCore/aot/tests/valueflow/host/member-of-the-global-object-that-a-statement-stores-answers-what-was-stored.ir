@@ -9,7 +9,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = NewClosure function=f1
     PropSet v0, v1 key="__byName" mode=Strict
@@ -24,14 +23,11 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="byName" module=m0 results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="underSomeKey" module=m0 results=[{type=anything}] {
-  b0():
     Return
 }
 function f3 name="keep" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }

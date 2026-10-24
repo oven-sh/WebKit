@@ -15,7 +15,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Item" module=m0 constructor=f1 fields=[{key="kind" declared={type=number} flags=[IsRequired] flow={occupancy=FilledWithValueAtBirth stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="size" declared={type=number} flags=[IsRequired] flow={occupancy=FilledWithValueAtBirth stability=[IsNeverDeleted, IsNeverRedefined]}}, {key="label" declared={type=string} flags=[IsRequired] flow={occupancy=FilledAtBirth stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="count" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = FinishClass v1 layout=L0
@@ -26,7 +25,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v3
 }
 function f1 name="Item" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     v3 = Double number=1.5

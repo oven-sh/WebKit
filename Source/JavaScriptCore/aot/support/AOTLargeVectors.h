@@ -21,14 +21,7 @@ void reserveCapacityInParallel(const ParallelLoops& loops, Vector<T, inlineCapac
 {
     if (capacity <= vector.capacity())
         return;
-    Vector<T, inlineCapacity> larger;
-    larger.reserveInitialCapacity(capacity);
-    // AddressSanitizer is told that nobody writes behind the end of a vector.
-#if !ASAN_ENABLED
-    takePageFaultsInParallel(loops, unsafeMakeSpan(reinterpret_cast<uint8_t*>(larger.mutableSpan().data()), capacity * sizeof(T)));
-#else
-    UNUSED_PARAM(loops);
-#endif
+    auto larger = createVectorWithCapacityInParallel<T, inlineCapacity>(loops, capacity);
     larger.appendVector(WTF::move(vector));
     vector = WTF::move(larger);
 }

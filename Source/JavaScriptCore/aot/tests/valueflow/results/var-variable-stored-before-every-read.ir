@@ -15,7 +15,6 @@ variable g0 name="early" module=m0 declared={type=anything} initialization=Undef
 variable g1 name="late" module=m0 declared={type=anything} initialization=Undefined
 variable g2 name="cleared" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = Undefined
     PutModuleVariable v0 variable=g0
@@ -27,7 +26,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v6
 }
 function f1 name="reader" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = GetModuleVariable variable=g1
     v2 = GetModuleVariable variable=g2

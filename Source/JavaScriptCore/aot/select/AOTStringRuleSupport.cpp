@@ -10,7 +10,6 @@
 
 #include "AOTDecidedBranches.h"
 #include "AOTEffectsOfOperands.h"
-#include "AOTInductionVariables.h"
 #include "AOTInlineBuiltinForms.h"
 #include "AOTPropertyAccessElements.h"
 #include <algorithm>
@@ -159,50 +158,6 @@ std::optional<LiteralArgument> comparedLiteralOf(SelectionContext& context, cons
 
     bool isLeftOperand = OperandPosition::left(comparison.opcode) == use.operandIndex;
     return literalArgumentOf(context, isLeftOperand ? comparison.rightOperand() : comparison.leftOperand());
-}
-
-static bool isConstantPart(SelectionContext& context, ValueID part, const Type& type)
-{
-    if (std::optional<LiteralArgument> literal = literalArgumentOf(context, part))
-        return literal->text.containsOnlyLatin1() && !context.pass().exceeds(LimitID::MaxLengthCopiedInline, literal->text.length(), part);
-    return type.isSingleValue() && type.hasOnlyPrimitives(Primitive::UndefinedOrNull | Primitive::Boolean);
-}
-
-static bool isRangeWithSingleUserInBlock(SelectionContext& context, ValueID part)
-{
-    if (context.isClaimed(part))
-        return false;
-    std::optional<StringRangeSource> source = stringRangeSourceOf(context.program(), context.function(), context.function().at(part));
-    if (!source || source->mayBeUndefined)
-        return false;
-    std::optional<ValueID> user = context.singleUser(part);
-    if (!user)
-        return false;
-
-    const UseLists& useLists = context.analyses().useLists();
-    ValueLocation definition = useLists.locationOf(part);
-    return definition.placement == ValuePlacement::InBlock && definition.block == useLists.blockOf(*user);
-}
-
-StringBuilderPartForm partFormOf(SelectionContext& context, ValueID part, CodeShape shape)
-{
-    const Type& type = context.typeOf(part);
-    if (isConstantPart(context, part, type))
-        return StringBuilderPartForm::Constant;
-    // In compact code a part is one call. The call for a string takes the string itself: it has no list of values to fill and does not ask what it was given.
-    if (shape == CodeShape::Compact)
-        return type.isAnyString() ? StringBuilderPartForm::String : StringBuilderPartForm::Value;
-    if (type.isInteger())
-        return StringBuilderPartForm::Integer;
-    if (type.isNumber())
-        return StringBuilderPartForm::Number;
-    if (type.isBoolean())
-        return StringBuilderPartForm::Boolean;
-    if (type.isAnyString())
-        return isRangeWithSingleUserInBlock(context, part) ? StringBuilderPartForm::StringRange : StringBuilderPartForm::String;
-    if (type.isAnyStringOrNullish())
-        return StringBuilderPartForm::StringOrNullish;
-    return StringBuilderPartForm::Value;
 }
 
 } } } // namespace JSC::AOT::Typed

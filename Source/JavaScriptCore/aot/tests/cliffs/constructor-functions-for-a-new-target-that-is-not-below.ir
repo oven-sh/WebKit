@@ -25,7 +25,6 @@ layout L2 kind=Instance name="Child" module=m0 constructor=f3 fields=[{key="x" d
 data d0 root=Array{contents=anything} module=m0
 module m0 path="/$bunfs/root/main" displayPath="main.js" body=f0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = NewClosure function=f3
@@ -47,21 +46,18 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     Return v17
 }
 function f1 name="Plain" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
-  b0(v0: L0):
     v1 = Integer integer=1
     PropSet v0, v1 key="p"
     v3 = Undefined
     Return v3
 }
 function f2 name="Parent" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] {
-  b0(v0: L1):
     v1 = Integer integer=2
     PropSet v0, v1 key="x"
     v3 = Undefined
     Return v3
 }
 function f3 name="Child" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L2 flags=[IsExpected]} results=[{type=anything}] {
-  b0(v0: L2):
     v1 = Integer integer=3
     PropSet v0, v1 key="x"
     PropSet v0, v1 key="z"

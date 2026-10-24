@@ -19,7 +19,6 @@ module m1 path="/b.ts" displayPath="b.ts"
 modulefailure q0 importer=m0 specifier=""
 modulefailure q1 importer=m1 specifier="./missing"
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = ThrowModuleFailure failure=q1
     Unreachable
 }

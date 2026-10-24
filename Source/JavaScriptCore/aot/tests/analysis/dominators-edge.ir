@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="edgeDominance" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: anything, v1: boolean):
     v2 = TypeTest v0 testedType=string
     Branch v2 -> taken b1(| 0), notTaken b3(| 0)
   b1(v3):

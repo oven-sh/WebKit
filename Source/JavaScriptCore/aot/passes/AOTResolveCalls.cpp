@@ -46,13 +46,6 @@ bool admitsUnlistedFunctions(const Program& program, const Type& type)
     return type.anyFunction || type.anyObject || hasMembersWithoutLayout(program, type);
 }
 
-static bool isStronger(const Program& program, const Type& candidate, const Type& current)
-{
-    if (candidate.functions.size() != current.functions.size())
-        return candidate.functions.size() < current.functions.size();
-    return candidate != current && candidate.isSubsetOf(current, program);
-}
-
 static ValueID findStrongestLink(const Program& program, const Function& function, ValueID callee)
 {
     ValueID strongest;
@@ -60,7 +53,8 @@ static ValueID findStrongestLink(const Program& program, const Function& functio
         const Type& type = program.typeOf(function, id);
         if (type.functions.isEmpty() || type.anyFunction || type.anyObject)
             continue;
-        if (!strongest || isStronger(program, type, program.typeOf(function, strongest)))
+        const Type* current = strongest ? &program.typeOf(function, strongest) : nullptr;
+        if (!current || (type.functions.size() != current->functions.size() ? type.functions.size() < current->functions.size() : type != *current && type.isSubsetOf(*current, program)))
             strongest = id;
     }
     return strongest ? strongest : callee;
@@ -102,7 +96,6 @@ CalleeCandidates calleeCandidates(const Program& program, const Function& functi
     return result;
 }
 
-// Where neither the type of the callee nor its expected type lists a function, the callee is expected to be one of the functions that flow saw arrive at the operation.
 static CalleeCandidates calleeCandidatesOf(const Program& program, const Function& function, const Value& operation, ValueID callee)
 {
     CalleeCandidates result = calleeCandidates(program, function, callee);
@@ -281,7 +274,6 @@ ValueID appendDirectCall(IRBuilder& builder, const DirectCallRequest& request)
     return withInsertionAtEnd(builder, [&](const ValueInsertion& insertion) { return builder.append(makeDirectCall(insertion, request)); });
 }
 
-// A validating build tests the callee of a call that its type alone made direct.
 static void appendCalleeValidation(IRBuilder& builder, ValueID callee)
 {
     const Function& function = builder.function();
@@ -323,11 +315,6 @@ TailCallRequirement tailCallRequirementOf(const Function& body)
     return hasRequiredTailCall ? TailCallRequirement::Required : TailCallRequirement::Allowed;
 }
 
-static bool canBeCallTarget(FunctionKind kind)
-{
-    return kind == FunctionKind::Plain || kind == FunctionKind::Arrow || kind == FunctionKind::Method || kind == FunctionKind::Getter || kind == FunctionKind::Setter;
-}
-
 static bool canBeConstructTarget(const Function& constructor)
 {
     return constructor.hasBody() && (constructor.role == FunctionRole::Source || constructor.role == FunctionRole::Library);
@@ -349,7 +336,8 @@ static bool canPassRestArguments(const Program& program, const Function& callee)
 bool mayBeCalledDirectly(const Program& program, FunctionID id)
 {
     const Function& callee = program.at(id);
-    if (!callee.hasBody() || !canBeCalledByValueOf(callee.role) || !canBeCallTarget(callee.kind))
+    FunctionKind kind = callee.kind;
+    if (!callee.hasBody() || !canBeCalledByValueOf(callee.role) || !(kind == FunctionKind::Plain || kind == FunctionKind::Arrow || kind == FunctionKind::Method || kind == FunctionKind::Getter || kind == FunctionKind::Setter))
         return false;
     return !callee.isUnsplitCoroutine() && callee.results.size() == 1 && canPassRestArguments(program, callee);
 }
@@ -426,7 +414,6 @@ static bool findCastChainUsedByCallAlone(const Function& function, const UseList
     return true;
 }
 
-// All but whether the read can sink to the call, which is asked of the effects of what stands between the two.
 static MemberRead findLinksOfMemberRead(FunctionPassContext& context, const ValueSite& call)
 {
     static_assert(!OperandIndex::Call::callee, "findCastChainUsedByCallAlone starts at operand 0 of its user.");
@@ -463,15 +450,31 @@ static bool readsMemberOfPrototypeProperty(const Program& program, const Functio
 
 namespace {
 
-// `F.prototype.m`, read or called with a `this` that the caller names: the lookup starts at the prototype object of the class of F.
 struct PrototypeMemberRead {
     LayoutID classLayout;
     ValueID classObject;
     PropertyKeyID key;
-    // The read of `prototype` and, of a call, the read of the member, each with its casts. Nothing else uses them.
     MemberRead reads;
 
     explicit operator bool() const { return !!classLayout; }
+};
+
+enum class ChainEnd : uint8_t { Unknown, MeetsClass, MissesClass };
+
+// What says that an object still inherits from the prototype object that its layout names: a bit of its class, which the run time clears when any object of the class gets another prototype, or a test of the object itself.
+enum class PrototypeKnownBy : uint8_t { BitOfClass, TestOfObject };
+
+struct ChainAnswers {
+    LayoutList decided;
+    LayoutList instances;
+    MemberConditions conditions;
+    bool leavesOutLayouts { false };
+    bool testsObjects { false };
+};
+
+struct TestedInstanceOf {
+    bool walksChain { false };
+    AccessTests tests;
 };
 
 } // anonymous namespace
@@ -769,7 +772,6 @@ static MemberAnswer findBuiltinClassMember(const PropertyAccessContext& context,
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Nothing where the home object is neither a class object nor the prototype object of a class.
 static std::optional<MemberAnswer> findSuperMember(const PropertyAccessContext& context, const Function& function, const Value& superAccess, Access access)
 {
     const Program& program = context.program;
@@ -815,30 +817,6 @@ static std::optional<MemberAnswer> findSuperMember(const PropertyAccessContext& 
     return finishAtChainEnd(WTF::move(walked), WTF::move(found));
 }
 
-namespace {
-
-enum class ChainEnd : uint8_t { Unknown, MeetsClass, MissesClass };
-
-// What says that an object still inherits from the prototype object that its layout names: a bit of its class, which the run time clears when any object of the class gets another prototype, or a test of the object itself.
-enum class PrototypeKnownBy : uint8_t { BitOfClass, TestOfObject };
-
-struct ChainAnswers {
-    // The layouts whose objects are instances, or are none, while the conditions hold.
-    LayoutList decided;
-    LayoutList instances;
-    MemberConditions conditions;
-    bool leavesOutLayouts { false };
-    bool testsObjects { false };
-};
-
-// What `value instanceof C` is under tests.
-struct TestedInstanceOf {
-    bool walksChain { false };
-    AccessTests tests;
-};
-
-} // anonymous namespace
-
 static bool inheritsFromObjectPrototype(const Program& program, const Layout& layout)
 {
     switch (layout.kind) {
@@ -858,7 +836,6 @@ static bool inheritsFromObjectPrototype(const Program& program, const Layout& la
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Collects what has to hold for the prototype objects of the classes above the layout's own to be linked as the classes were defined, up to the tested class or to the end of the chain.
 static ChainEnd followChain(const Program& program, LayoutID layout, LayoutID tested, MemberConditions& conditions)
 {
     const Layout& start = program.at(layout);
@@ -981,11 +958,6 @@ static bool isObjectOutsideLayouts(UnionPartKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool hasObjectsOutsideLayouts(const Program& program, const Type& type)
-{
-    return hasMembersWithoutLayout(program, type) || std::ranges::any_of(unionPartsOf(type), [](const UnionPart& part) { return isObjectOutsideLayouts(part.kind); });
-}
-
 static bool mayBelongToOtherInstance(const PropertyAccessContext& context, const ReceiverCandidates& subject)
 {
     return !subject.isProven() && instanceCountOf(context) != InstanceCount::AtMostOne;
@@ -1017,7 +989,6 @@ static std::optional<MemberConditions> conditionsOfClassObject(const PropertyAcc
     return conditions;
 }
 
-// The forms in the order in which they are worth trying. None where the operation is not known well enough.
 static Vector<TestedInstanceOf, 2> planTestedInstanceOf(FunctionPassContext& context, const Value& instanceOf)
 {
     const Program& program = context.program;
@@ -1061,7 +1032,6 @@ static Vector<TestedInstanceOf, 2> planTestedInstanceOf(FunctionPassContext& con
     return forms;
 }
 
-// Of the layouts that the tests have established, those whose objects are instances. Nothing where the tests are about the class object alone.
 static std::optional<LayoutList> instancesAmongTestedLayouts(const Program& program, const Function& function, const Value& instanceOf, std::span<const Value> tests, LayoutList& testedLayouts)
 {
     std::optional<ReceiverCandidates> established = receiversEstablishedBy(program, tests);
@@ -1158,19 +1128,14 @@ struct ConstructArm {
     bool readsConstructPrototype { false };
 };
 
-// f(a, b, ...rest), where rest is the rest array of the caller.
 struct SpreadOfRest {
     ValueID rest;
-    // The name under which it is spread, which may say more of it.
     ValueID spreadName;
-    // The literal in front of the spread, and whatever names it but the call: casts, checks of a validating build, and what appends the rest array.
     ValueID list;
     Vector<ValueID, 4> operationsOnList;
-    // The one operation that appends. None where a test of the rest array chooses between two.
     ValueID append;
 };
 
-// One run on one function. Every site is planned on the function as the run finds it. A plan is the rewriting of its site, and the last site is rewritten first.
 struct CallResolver {
     using Rewriting = WTF::Function<void()>;
     using Plan = std::expected<Rewriting, CallDeclineReason>;
@@ -1184,7 +1149,6 @@ struct CallResolver {
     static constexpr std::unexpected<CallDeclineReason> declined { CallDeclineReason::None };
 
     FunctionPassContext& context;
-    // Only the calls of methods that would need a test of member conditions or more arms than a dispatch has. They go through the method table.
     bool resolvesOnlyThroughTable;
     const Program& program { context.program };
     Function& function { context.function };
@@ -1355,7 +1319,6 @@ struct CallResolver {
         return plans;
     }
 
-    // The plan of the first planner of the operation that has one. Where none has, the reason of the last that gives one.
     // collectSites() looks for the read of a member of a prototype property only where a call has no member read, so the planner of the one and those of the other take different calls.
     Plan plan(const CallSite& site)
     {
@@ -1416,7 +1379,6 @@ struct CallResolver {
         return context.analyses.identities().areSameValue(a, b);
     }
 
-    // The read of the callee, where the call hands the function the object that the function was read from.
     const Value* findMethodRead(const CallSite& site, Opcode readOpcode)
     {
         RELEASE_ASSERT(site.opcode == Opcode::Call && readsOfMembers.contains(readOpcode));
@@ -1444,7 +1406,6 @@ struct CallResolver {
         return typeOf(thisValue).hasOnlyLayouts(program) && declared.hasOnlyLayouts(program) && !typeOf(thisValue).overlaps(declared, program);
     }
 
-    // `closure`: the value that is called, where the function is not found under a name.
     CallArm directCallArm(FunctionID callee, const MemberConditions& conditions = { }, ValueID closure = { }) const
     {
         return { .kind = CallArmKind::DirectCall, .closureFunction = callee, .callee = callee, .closureCreation = closure ? findClosureCreation(function, closure, callee) : ValueID(), .conditions = conditions };
@@ -1493,7 +1454,6 @@ struct CallResolver {
         return appendCaptures(builder, arm.closureFunction, closure);
     }
 
-    // Goes on where the conditions hold. Where they do not, the arm ends with the operations as they were.
     void branchOnConditions(std::span<const MemberCondition> conditions, const OriginalCopy& original, LayoutID classWhoseGuardsBegin = { })
     {
         RELEASE_ASSERT(expansion.isOpen());
@@ -1528,22 +1488,28 @@ struct CallResolver {
         const Function& callee = program.at(arm.callee);
         if (cannotBeThisOf(callee, thisValue))
             return convertTo(builder, thisValue, callee.thisType);
+        return appendCallOfArm(arm, thisValue, closure, arguments);
+    }
 
+    ValueID appendCallOfArm(const CallArm& arm, ValueID thisValue, ValueID closure, std::span<const ValueID> arguments, ValueID newTarget = { }, ValueID restArray = { })
+    {
         const Value& original = expansion.original();
         Vector<ValueID, 8> captures = capturesOf(arm, closure, thisValue);
         return appendDirectCall(builder, {
             .callee = arm.callee,
             .captures = captures.span(),
             .thisValue = thisValue,
-            .calleeValue = callee.has(FunctionFlags::TakesCallee) ? closure : ValueID(),
+            .calleeValue = program.at(arm.callee).has(FunctionFlags::TakesCallee) ? closure : ValueID(),
+            .newTarget = newTarget,
             .arguments = arguments,
+            .restArray = restArray,
             .accessSite = original.accessSite(),
+            .isConstruction = !!newTarget,
             .isNeverInlined = original.opcode == Opcode::Call && original.isNeverInlined(),
-            .isDemotedTailCall = expansion.isTailCall(),
+            .isDemotedTailCall = !newTarget && expansion.isTailCall(),
         });
     }
 
-    // Whether the elements of the list have room among the arguments on the stack, beside the other arguments.
     ValueID appendTestThatListFits(ValueID list, uint64_t numberOfOtherArguments)
     {
         Value lengthRead = IRBuilder::make(Opcode::PropGet, { list });
@@ -1615,7 +1581,6 @@ struct CallResolver {
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    // A method of the receiver that is called, a getter, a setter.
     Plan planReceiverDispatch(const CallSite& site)
     {
         bool isCall = site.opcode == Opcode::Call;
@@ -1698,7 +1663,6 @@ struct CallResolver {
         };
     }
 
-    // What the class definitions say of a member holds while the bits of its conditions are set, and one test at the site asks for all of them.
     bool canTestConditions(const CallSite& site, const MemberAnswer& answer)
     {
         if (answer.needsNoTest())
@@ -1715,7 +1679,6 @@ struct CallResolver {
         return !isRare(site) && !hasFailedEarlier(makeConditionsTest(context.types, answer.conditions.span()), site);
     }
 
-    // The function that is entered in place of the operations. No function: the read gives undefined. Nothing: the operations stay.
     static std::optional<FunctionID> findFunctionEnteredFor(Opcode opcode, const MemberAnswer& answer)
     {
         bool isCall = opcode == Opcode::Call;
@@ -1740,7 +1703,6 @@ struct CallResolver {
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    // A member that is looked up on one known object.
     Plan planHolderMember(const CallSite& site, const MemberAnswer& answer, ValueID thisValue)
     {
         if (!answer.isKnown())
@@ -1931,7 +1893,6 @@ struct CallResolver {
         return split;
     }
 
-    // Ends the expansion: an arm for each function, and the operation as it was for whatever else the callee is.
     void emitCalleeDispatch(CalleeProof proof, const ValueSplit& split, uint32_t calleeOperandIndex, NOESCAPE const EmitSplitArm& emitArm)
     {
         if (proof == CalleeProof::Type)
@@ -2043,17 +2004,7 @@ struct CallResolver {
         const Value& original = expansion.original();
         ValueID newTarget = original.newTargetOperand() ? original.newTargetOperand() : closure;
         ValueID thisValue = arm.allocatedClass ? appendThis(builder, arm.allocatedClass, arm.readsConstructPrototype ? newTarget : ValueID()) : ValueID();
-        Vector<ValueID, 8> captures = capturesOf(arm.call, closure, { });
-        ValueID returned = appendDirectCall(builder, {
-            .callee = arm.call.callee,
-            .captures = captures.span(),
-            .thisValue = thisValue,
-            .calleeValue = program.at(arm.call.callee).has(FunctionFlags::TakesCallee) ? closure : ValueID(),
-            .newTarget = newTarget,
-            .arguments = arguments,
-            .accessSite = original.accessSite(),
-            .isConstruction = true,
-        });
+        ValueID returned = appendCallOfArm(arm.call, thisValue, closure, arguments, newTarget);
 
         if (!arm.allocatedClass || typeOf(returned).isNever())
             return expansion.finishArm(returned);
@@ -2190,7 +2141,8 @@ struct CallResolver {
             considered.clear();
         ChainAnswers answers = followChains(program, considered, tested, PrototypeKnownBy::BitOfClass);
 
-        bool failedTestMeansFalse = !isOverLimit && !answers.leavesOutLayouts && !answers.testsObjects && !hasObjectsOutsideLayouts(program, subjectType);
+        bool failedTestMeansFalse = !isOverLimit && !answers.leavesOutLayouts && !answers.testsObjects && !hasMembersWithoutLayout(program, subjectType)
+            && std::ranges::none_of(unionPartsOf(subjectType), [](const UnionPart& part) { return isObjectOutsideLayouts(part.kind); });
         bool isAlwaysFalse = failedTestMeansFalse && answers.instances.isEmpty();
         // A miss walks the chain, so nothing is asked about the layouts that are no instances.
         if (!failedTestMeansFalse)
@@ -2260,7 +2212,6 @@ struct CallResolver {
         };
     }
 
-    // call, apply and bind.
     Plan planFunctionMethod(const CallSite& site)
     {
         const Value& value = function.at(site.position.value);
@@ -2300,7 +2251,6 @@ struct CallResolver {
         return !context.exceeds(LimitID::MaxCaptures, target.captures.size() + numberOfBoundThisAndTargetCaptures + numberOfCapturedArguments, site);
     }
 
-    // Whether the function has passed the test at the end of the only block that leads to the call. Nothing where there is no such test, or where something has run since it passed that could change the function.
     std::optional<bool> findPristineTestInFrontOf(const ValueSite& site, ValueID receiver)
     {
         FunctionAnalyses& analyses = context.analyses;
@@ -2551,16 +2501,6 @@ struct CallResolver {
             && leadsInLineTo(ProgramPoint::atHeadOf(join), site.position.point(), retired);
     }
 
-    // Made for this call of this function, by its generic entry or by whoever calls it directly, and known to nobody else when the function begins.
-    bool isRestArrayOfThisFrame(ValueID id) const
-    {
-        if (function.at(id).opcode == Opcode::CreateRest)
-            return true;
-        const Block& entry = function.at(entryBlock);
-        unsigned index = function.firstParameterIndex() + function.numberOfPositionalParameters();
-        return function.has(FunctionFlags::HasRestParameter) && index < entry.parameters.size() && entry.parameters[index] == id;
-    }
-
     // Nothing that can run before the call does more than read the array, and nothing that can run behind it looks at the array again. A test of its header tells nobody anything.
     bool isSeenByNobodyElse(const CallSite& site, const SpreadOfRest& spread)
     {
@@ -2640,7 +2580,13 @@ struct CallResolver {
         const Value& list = function.at(spread.list);
         if (list.opcode != Opcode::NewArray || !list.holes().empty() || list.capacityOperand() || list.elementsOperands().size() != target.numberOfPositionalParameters())
             return declined;
-        if (!findSpreadOfRest(site, spread) || !isRestArrayOfThisFrame(spread.rest) || !isSeenByNobodyElse(site, spread) || !liesOnEveryLikelyWay(site.position.block))
+        if (!findSpreadOfRest(site, spread))
+            return declined;
+        // Made for this call of this function, by its generic entry or by whoever calls it directly, and known to nobody else when the function begins.
+        const Block& entry = function.at(entryBlock);
+        unsigned restIndex = function.firstParameterIndex() + function.numberOfPositionalParameters();
+        bool isRestArrayOfThisFrame = function.at(spread.rest).opcode == Opcode::CreateRest || (function.has(FunctionFlags::HasRestParameter) && restIndex < entry.parameters.size() && entry.parameters[restIndex] == spread.rest);
+        if (!isRestArrayOfThisFrame || !isSeenByNobodyElse(site, spread) || !liesOnEveryLikelyWay(site.position.block))
             return declined;
 
         // What f knows of its rest array it knows of this one.
@@ -2678,17 +2624,7 @@ struct CallResolver {
             goOnIf(appendTestThatListFits(spread.spreadName, arguments.size()));
 
             appendCalleeValidation(builder, closure);
-            Vector<ValueID, 8> captures = capturesOf(arm, closure, thisValue);
-            expansion.finishArm(appendDirectCall(builder, {
-                .callee = arm.callee,
-                .captures = captures.span(),
-                .thisValue = thisValue,
-                .calleeValue = program.at(arm.callee).has(FunctionFlags::TakesCallee) ? closure : ValueID(),
-                .arguments = arguments.span(),
-                .restArray = spread.spreadName,
-                .accessSite = expansion.original().accessSite(),
-                .isDemotedTailCall = expansion.isTailCall(),
-            }));
+            expansion.finishArm(appendCallOfArm(arm, thisValue, closure, arguments.span(), { }, spread.spreadName));
 
             builder.moveToEndOf(asBefore);
             ValueID listAsBefore = builder.append(WTF::move(list));
@@ -2700,7 +2636,6 @@ struct CallResolver {
         };
     }
 
-    // The layouts that the receiver of a call of a member can have, where the table may serve the call.
     // The type alone says which rows the call can ask for: what flow knows beside it is not in the type of the operand.
     std::optional<ReceiverCandidates> findReceiversOfTableCall(const ValueSite& position) const
     {
@@ -2716,7 +2651,6 @@ struct CallResolver {
         return candidates;
     }
 
-    // The layouts of the receiver's family find methods of classes under the name, and not all of them the same one.
     Plan planTableCall(const CallSite& site)
     {
         const Value* read = site.opcode == Opcode::Call ? findMethodRead(site, Opcode::PropGet) : nullptr;
@@ -2795,23 +2729,6 @@ struct CallResolver {
     }
 };
 
-} // anonymous namespace
-
-PassOutcome resolveCalls(FunctionPassContext& context)
-{
-    return CallResolver { context, false }.run();
-}
-
-PassOutcome callThroughMethodTable(FunctionPassContext& context)
-{
-    // The lookup of a selector is where the table sends a receiver that finds something else than the class definitions say.
-    if (context.function.role == FunctionRole::TableLookup)
-        return PassOutcome::Unchanged;
-    return CallResolver { context, true }.run();
-}
-
-namespace {
-
 struct TestedMemberUse {
     NamedAccessSite site;
     AccessOperands operands;
@@ -2829,7 +2746,6 @@ struct TestedSuperAccess {
     MemberConditions conditions;
 };
 
-// A use of a member for which the plan without a failed test leads to no site, whoever uses what is read.
 struct RefusedMemberUse {
     RefusedMemberUse(TestSiteReporter& reporter, ValueID receiver, NOESCAPE const Invocable<std::optional<SiteContent>()> auto& contentOfUse)
         : cache(reporter.program().propertyAccessCache())
@@ -2854,6 +2770,19 @@ struct RefusedMemberUse {
 };
 
 } // anonymous namespace
+
+PassOutcome resolveCalls(FunctionPassContext& context)
+{
+    return CallResolver { context, false }.run();
+}
+
+PassOutcome callThroughMethodTable(FunctionPassContext& context)
+{
+    // The lookup of a selector is where the table sends a receiver that finds something else than the class definitions say.
+    if (context.function.role == FunctionRole::TableLookup)
+        return PassOutcome::Unchanged;
+    return CallResolver { context, true }.run();
+}
 
 // A test in front of a member call also answers for the member read before it, so what it proves may never come back once it is lost. The bits of a class never come back either.
 static constexpr ProofSet monotoneObjectProofs { Proof::NotNullish, Proof::OwnInstance, Proof::PrototypeLinkUnchanged, Proof::NoExtraProperties, Proof::NoFieldOutsideSlot };
@@ -2932,7 +2861,6 @@ static std::optional<TestedMemberUse> planWithTestsOfEachObject(FunctionPassCont
     return WTF::move(use);
 }
 
-// hasFailedTest: the plan is another than where no test has failed.
 static std::optional<TestedMemberUse> planWithoutFailedTests(TestSiteReporter& reporter, TestedMemberUsePlanner plan, const ValueSite& site, bool& hasFailedTest)
 {
     std::optional<TestedMemberUse> use = plan(reporter.context(), site, nullptr);
@@ -2957,11 +2885,6 @@ static std::optional<TestedMemberUse> planWithoutFailedTests(TestSiteReporter& r
     return planWithTestsOfEachObject(reporter.context(), WTF::move(*use));
 }
 
-static bool needsPlaceableTests(const TestedMemberUse& use)
-{
-    return !use.site.plan.needsNoTest() && !use.tests.tests.isEmpty();
-}
-
 // The callee tests its own arguments and runs without its types where one of them fails, so the call has the effects of both bodies.
 static Effects effectsOfDirectCall(FunctionPassContext& context, FunctionID callee)
 {
@@ -2974,17 +2897,6 @@ static bool canRecreateMethodClosure(const Program& program, const PropertyAcces
     return !method.has(FunctionFlags::TakesCallee) && method.captures.size() == (plan.capturesReceiver ? 1u : 0u);
 }
 
-static bool isMemberCall(FunctionAnalyses& analyses, const Function& function, const Value& call)
-{
-    ValueID thisValue = call.thisValueOperand();
-    if (!call.calleeKey() || !thisValue)
-        return false;
-    const Value& read = function.at(sameObjectThroughCasts(function, call.calleeOperand()));
-    if (read.opcode != Opcode::PropGet || read.isFreeName() || read.key() != call.calleeKey())
-        return false;
-    return analyses.identityOf(read.objectOperand()) == analyses.identityOf(thisValue);
-}
-
 static void reportClosureTest(TestSiteReporter& reporter, ValueID callee, FunctionID function)
 {
     bool isCall = reporter.useValue().opcode == Opcode::Call;
@@ -2995,7 +2907,11 @@ static bool reportMemberCallTests(TestSiteReporter& reporter, const ValueSite& s
 {
     FunctionPassContext& context = reporter.context();
     const Value& call = reporter.useValue();
-    if (!isMemberCall(context.analyses, context.function, call))
+    ValueID thisValue = call.thisValueOperand();
+    if (!call.calleeKey() || !thisValue)
+        return false;
+    const Value& read = context.function.at(sameObjectThroughCasts(context.function, call.calleeOperand()));
+    if (read.opcode != Opcode::PropGet || read.isFreeName() || read.key() != call.calleeKey() || context.analyses.identityOf(read.objectOperand()) != context.analyses.identityOf(thisValue))
         return false;
 
     // All that planTestedMemberCall() takes from the call and its function.
@@ -3016,7 +2932,7 @@ static bool reportMemberCallTests(TestSiteReporter& reporter, const ValueSite& s
         refused.didRefuse(hasFailedTest);
         return false;
     }
-    if (!needsPlaceableTests(*use))
+    if (use->site.plan.needsNoTest() || use->tests.tests.isEmpty())
         return false;
 
     const PropertyAccessPlan& plan = use->site.plan;
@@ -3099,7 +3015,7 @@ static void reportMemberAccessTests(TestSiteReporter& reporter, const ValueSite&
     const PropertyAccessPlan& plan = use->site.plan;
     if (use->tests.tests.isEmpty() || (plan.form != AccessForm::Method && plan.form != AccessForm::Call))
         return refuse();
-    if (!needsPlaceableTests(*use))
+    if (plan.needsNoTest() || use->tests.tests.isEmpty())
         return leavePlan();
 
     if (plan.form == AccessForm::Method) {
@@ -3271,10 +3187,9 @@ static void rewriteTestedInstanceOf(TestSiteRewriter& rewriter)
     LayoutList testedLayouts;
     std::optional<LayoutList> instances = instancesAmongTestedLayouts(rewriter.program(), rewriter.function(), use, rewriter.tests(), testedLayouts);
     if (!instances) {
-        const Value& instanceOf = rewriter.useValue();
-        ValueID subject = instanceOf.valueOperand();
-        Value read = IRBuilder::make(Opcode::GetClassPrototype, { instanceOf.constructorOperand() });
-        read.setLayout(classTestedBy(rewriter.program(), rewriter.function(), instanceOf));
+        ValueID subject = use.valueOperand();
+        Value read = IRBuilder::make(Opcode::GetClassPrototype, { use.constructorOperand() });
+        read.setLayout(classTestedBy(rewriter.program(), rewriter.function(), use));
         ValueID prototype = rewriter.insertBeforeUse(WTF::move(read));
 
         Value& walk = rewriter.useValue();
@@ -3358,10 +3273,7 @@ void rewriteTestedCall(TestSiteRewriter& rewriter)
             AccessRewriter(context, insert).rewrite(use->site, use->operands);
             break;
         }
-        Vector<ValueID, 1> arguments;
-        if (use->operands.stored)
-            arguments.append(use->operands.stored);
-        becomeDirectCall({ .callee = use->site.plan.member.accessorFor(use->site.query.access), .thisValue = use->operands.receiver, .arguments = arguments.span(), .accessSite = use->stamp.accessSite });
+        becomeDirectCall({ .callee = use->site.plan.member.accessorFor(use->site.query.access), .thisValue = use->operands.receiver, .arguments = std::span(&use->operands.stored, use->operands.stored ? 1 : 0), .accessSite = use->stamp.accessSite });
         break;
     }
     case Opcode::SuperGet:
@@ -3375,10 +3287,8 @@ void rewriteTestedCall(TestSiteRewriter& rewriter)
         } else if (access.form == SuperAccessForm::Undefined)
             use.become(Opcode::Undefined);
         else {
-            Vector<ValueID, 1> arguments;
-            if (use.opcode == Opcode::SuperSet)
-                arguments.append(use.valueOperand());
-            becomeDirectCall({ .callee = access.function, .thisValue = use.receiverOperand(), .arguments = arguments.span(), .accessSite = use.accessSite() });
+            ValueID stored = use.opcode == Opcode::SuperSet ? use.valueOperand() : ValueID();
+            becomeDirectCall({ .callee = access.function, .thisValue = use.receiverOperand(), .arguments = std::span(&stored, use.opcode == Opcode::SuperSet ? 1 : 0), .accessSite = use.accessSite() });
         }
         break;
     }

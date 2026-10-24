@@ -22,8 +22,7 @@
 #include "AOTRealmTestSupport.h"
 #include "AOTShellProcess.h"
 #include "AOTTemporaryFile.h"
-#include "AOTWasmModuleCompiler.h"
-#include "AOTWasmSection.h"
+#include "AOTWasmModules.h"
 #include "JSCInlines.h"
 #include "JSWebAssemblyInstance.h"
 #include "JSWebAssemblyModule.h"
@@ -87,7 +86,6 @@ constexpr ASCIILiteral programText = R"IR(module m0 path="main.js" displayPath="
 entry module=m0
 webassemblymodule module=m0
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 )IR"_s;
@@ -208,11 +206,9 @@ static void runInNewProcess(ASCIILiteral testName)
 static Wasm::ModuleForImage compileForImage(VM& vm, std::span<const uint8_t> source)
 {
     BuildContext context(makeDefaultCompileOptions());
-    auto compiler = WasmModuleCompiler::create(vm, source);
-    AOT_TEST_CHECK(compiler.has_value());
     auto templates = CodeTemplates::create(context.assemblerPolicy(), &context);
     AOT_TEST_CHECK(templates.has_value());
-    auto module = (*compiler)->compile(*templates, context);
+    auto module = compileWasmModule(vm, source, *templates, context);
     AOT_TEST_CHECK(module.has_value());
     return WTF::move(*module);
 }

@@ -33,7 +33,6 @@ layout L3 name="Wide" fields=[{key="narrow" declared={type=number} flags=[IsRequ
 module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -45,31 +44,26 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="makeItem" parameters=[{type=number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: string, v2: anything, v3: boolean):
     v4 = NewObject -, v0, v1, v2, v3 layout=L0 fields=[0, 1, 2, 3]
     v5 = FinishObject v4
     Return v5
 }
 function f2 name="makeBag" results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L1 fields=[]
     v1 = FinishObject v0
     Return v1
 }
 function f3 name="makeEscaped" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0, v0, v0, v0, v0 layout=L2 fields=[0, 1, 2, 3, 4]
     v2 = FinishObject v1
     Return v2
 }
 function f4 name="makeWide" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0, v0 layout=L3 fields=[0, 1]
     v2 = FinishObject v1
     Return v2
 }
 function f5 name="mutate" parameters=[{type=anything}, {type=string}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: string, v2: anything):
     ElemSet v0, v1, v2
     v4 = ElemDelete v0, v1
     v5 = Builtin builtin=ObjectFreeze

@@ -23,11 +23,6 @@ static bool canBeCopiedOutOfFrame(const PlannedLayout& layout)
     return layout.hasSlots() && !layout.extensionSize && layout.size > sizeof(JSCell) && !(layout.size % sizeof(uint64_t));
 }
 
-EnvironmentEmitter::EnvironmentEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
-
 Operand EnvironmentEmitter::closureCapture(CellPointer closure, FunctionID function, unsigned index)
 {
     const Function& callee = m_program.at(function);

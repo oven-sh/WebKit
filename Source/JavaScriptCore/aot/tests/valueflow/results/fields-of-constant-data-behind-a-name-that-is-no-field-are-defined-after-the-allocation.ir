@@ -14,7 +14,6 @@ entry module=m0
 layout L0 name="Literal" fields=[{key="a" declared={type=anything}}, {key="01" declared={type=anything}}, {key="d" declared={type=anything}}] flags=[HasMembersWithoutLayout]
 data d0 root=Object{layout=L0 members=[{key="a" value=Number{value=1}}, {key="-1" value=Number{value=8}}, {key="01" value=Number{value=9}}, {key="d" value=Number{value=10}}]}
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Data data=d0
     v1 = Builtin builtin=Object
     v2 = Builtin builtin=ObjectKeys

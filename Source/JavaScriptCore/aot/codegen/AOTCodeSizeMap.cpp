@@ -30,9 +30,6 @@
 #include <wtf/HashMap.h>
 #include <wtf/StringPrintStream.h>
 
-#if ASSERT_ENABLED
-#include "AOTIRPrinter.h"
-#endif
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -294,6 +291,10 @@ static ValueID argumentOnEdge(const Function& function, Edge edge, uint32_t inde
 static OriginOfTestedValue findOriginOfTestedValue(const Function& function, const CFG& cfg, const UseLists& useLists, ValueID value)
 {
     OriginOfTestedValue origin;
+    auto endsAt = [&](ASCIILiteral place) {
+        origin.place = place;
+        return origin;
+    };
     for (uint32_t steps = 0; steps < 64; ++steps) {
         value = sameObjectThroughCasts(function, value);
         ValueLocation location = useLists.locationOf(value);
@@ -301,27 +302,17 @@ static OriginOfTestedValue findOriginOfTestedValue(const Function& function, con
             origin.opcode = function.at(value).opcode;
             return origin;
         }
-        if (!location.block.index()) {
-            origin.place = "Parameter"_s;
-            return origin;
-        }
+        if (!location.block.index())
+            return endsAt("Parameter"_s);
         std::span<const Edge> incoming = cfg.incomingEdges(location.block);
-        if (incoming.empty()) {
-            origin.place = "Handler"_s;
-            return origin;
-        }
+        if (incoming.empty() || incoming[0].isHandlerEdge())
+            return endsAt("Handler"_s);
         Edge edge = incoming[0];
-        if (edge.isHandlerEdge()) {
-            origin.place = "Handler"_s;
-            return origin;
-        }
         uint32_t firstResult = firstEdgeResultParameter(function, edge.from, edge.targetIndex);
         if (incoming.size() == 1 && location.index >= firstResult) {
             std::optional<EdgeResult> result = tryGetEdgeResult(function, { edge.from, edge.targetIndex, location.index - firstResult });
-            if (!result || result->kind != EdgeResultKind::NarrowedOperand || !result->subject) {
-                origin.place = "ResultOfTerminator"_s;
-                return origin;
-            }
+            if (!result || result->kind != EdgeResultKind::NarrowedOperand || !result->subject)
+                return endsAt("ResultOfTerminator"_s);
             if (result->test && function.at(result->test).opcode == Opcode::TypeTest)
                 ++origin.earlierTypeTests;
             else
@@ -345,32 +336,25 @@ static OriginOfTestedValue findOriginOfTestedValue(const Function& function, con
                     isSame = false;
                 only = argument;
             }
-            if (!isSame || !only) {
-                origin.place = "Merge"_s;
-                return origin;
-            }
+            if (!isSame || !only)
+                return endsAt("Merge"_s);
             ++origin.merges;
             value = only;
             continue;
         }
         value = argumentOnEdge(function, edge, location.index);
-        if (!value) {
-            origin.place = "Merge"_s;
-            return origin;
-        }
+        if (!value)
+            return endsAt("Merge"_s);
     }
-    origin.place = "Merge"_s;
-    return origin;
+    return endsAt("Merge"_s);
 }
 
 static void printTestOfCounters(PrintStream& out, const Program& program, const Function& function, const CFG& cfg, const UseLists& useLists, const CountedBranch& branch, uint32_t trueSide)
 {
-    const Terminator& terminator = function.at(branch.block).terminator;
-    if (terminator.kind != TerminatorKind::Branch && terminator.kind != TerminatorKind::TestAndBranch)
+    if (!branch.test)
         return;
-    const Value* test = &function.at(terminator.conditionOperand());
-    while (test->opcode == Opcode::LogicalNot)
-        test = &function.at(test->valueOperand());
+    const Terminator& terminator = function.at(branch.block).terminator;
+    const Value* test = &function.at(branch.test);
     BlockID targetWhenTrue = terminator.targets[branch.isNegated ? 1 : 0].block;
     BlockID targetWhenFalse = terminator.targets[branch.isNegated ? 0 : 1].block;
     out.print("\nq\t", trueSide, "\t", nameOf(test->opcode), "\t", nameOf(function.at(targetWhenTrue).frequency), "\t", nameOf(function.at(targetWhenFalse).frequency), "\t", nameOf(function.at(branch.block).frequency));
@@ -378,16 +362,8 @@ static void printTestOfCounters(PrintStream& out, const Program& program, const 
         return;
     OriginOfTestedValue origin = findOriginOfTestedValue(function, cfg, useLists, test->operand(0));
     out.print("\t", origin.place, "\t", nameOf(origin.opcode), "\t", origin.earlierTypeTests, "\t", origin.earlierOtherTests, "\t", origin.merges, "\t");
-#if ASSERT_ENABLED
-    printType(out, program, program.typeOf(function, test->operand(0)));
-#endif
     out.print("\t");
-#if ASSERT_ENABLED
-    if (test->opcode == Opcode::TypeTest)
-        printType(out, program, test->testedType());
-#else
     UNUSED_PARAM(program);
-#endif
 }
 
 static void printCounters(PrintStream& out, const CodeGenerationInputs& inputs, FunctionID id, const Function& function)

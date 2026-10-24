@@ -14,7 +14,6 @@ variable g0 name="plain" module=m0 declared={type=anything} initialization=Undef
 variable g1 name="cycle" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToNumber v1
@@ -38,25 +37,21 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="readPlain" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = PropGet v0 key="x"
     Return v1
 }
 function f2 name="readPlainAgain" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = PropGet v0 key="x"
     Return v1
 }
 function f3 name="readOutsideCycle" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g1
     v1 = PropGet v0 key="x"
     Return v1
 }
 function f4 name="readInCycle" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g1
     Jump -> next b1()
   b1():
@@ -68,7 +63,6 @@ function f4 name="readInCycle" results=[{type=anything}] {
     Return
 }
 function f5 name="readAndStore" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = GetModuleVariable variable=g0
     v2 = PropGet v1 key="y"
     PropSet v1, v0 key="y"

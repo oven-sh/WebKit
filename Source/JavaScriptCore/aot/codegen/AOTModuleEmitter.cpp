@@ -45,11 +45,6 @@ static bool keepsNamespaceInValueWord(const Module& module, ImportPhase phase)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-ModuleEmitter::ModuleEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
-
 Word32 ModuleEmitter::moduleIndex(ModuleID module)
 {
     return word32(static_cast<int32_t>(module.index()));

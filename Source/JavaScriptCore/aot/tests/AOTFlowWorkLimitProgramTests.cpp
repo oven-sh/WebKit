@@ -55,7 +55,6 @@ variable g14 name="class" module=m0 declared={type=anything} initialization=Unde
 variable g15 name="closure" module=m0 declared={type=anything} initialization=Undefined
 variable g16 name="stored" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
     v2 = Integer integer=1
@@ -88,7 +87,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="busy" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Builtin builtin=ObjectGetPrototypeOf
     v3 = Call v2, -, v1
     v4 = Builtin builtin=ObjectPrototype
@@ -187,7 +185,6 @@ function f1 name="busy" parameters=[{type=anything}, {type=anything}] results=[{
 static constexpr ASCIILiteral textAfterRepeatedReads = R"IR(    Return
 }
 function f2 name="idle" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g0
     v2 = PropGet v1 key="z"
     v3 = Call v0, -, v2
@@ -252,28 +249,23 @@ function f2 name="idle" parameters=[{type=anything}] results=[{type=anything}] {
     Return
 }
 function f3 name="closure" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="closure"
     Return v1
 }
 function f4 name="method" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="y"
     Return v1
 }
 function f5 name="getter" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="getter"
     Return v1
 }
 function f6 name="Made" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="made"
     PropSet v0, v1 key="made"
     Return
 }
 function f7 name="setter" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=11
     PropSet v0, v1 key="x"
     Return
@@ -284,12 +276,10 @@ function f8 name="inner" kind=Arrow captures=[{type=env L7}] results=[{type=anyt
     Return v1
 }
 function f9 name="m" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="method of class"
     Return v1
 }
 function f10 name="Class" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L8
     v2 = NewObject v1 layout=L8 fields=[]
     Return v2

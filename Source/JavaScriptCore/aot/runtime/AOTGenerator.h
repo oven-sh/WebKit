@@ -47,16 +47,14 @@ public:
     };
 
     JSValue resume(JSGlobalObject*, ResumeMode, JSValue);
-    JSValue resume(JSGlobalObject*, ResumeMode, JSValue, bool& isDone);
     bool isSuspendedAtStart() const { return m_state == State::SuspendedAtStart; }
 
     State state() const { return m_state; }
     SavedFrame* savedFrame() const { return m_savedFrame; }
     void setSavedFrame(VM&, SavedFrame*);
-    void didThrow();
+    void didThrow() { m_state = State::Completed; }
 
     static constexpr int32_t generatorSlotInStubFrame = -1;
-    static Generator* fromStepStubFrame(CallFrame* stubFrame);
 
     static constexpr ptrdiff_t offsetOfSavedFrame() { return OBJECT_OFFSETOF(Generator, m_savedFrame); }
     static constexpr ptrdiff_t offsetOfState() { return OBJECT_OFFSETOF(Generator, m_state); }

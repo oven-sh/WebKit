@@ -15,7 +15,6 @@ variable g1 name="withOrAlsoWithout" module=m0 declared={type=anything} initiali
 variable g2 name="bothWith" module=m0 declared={type=anything} initialization=Undefined
 variable g3 name="oneWithTwoWithout" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToNumber v1
@@ -36,7 +35,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="read" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = PropGet v0 key="first"
     v2 = PropGet v0 key="payload"

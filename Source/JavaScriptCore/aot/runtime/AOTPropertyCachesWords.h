@@ -9,7 +9,6 @@
 
 #include "AOTRuntimeRecords.h"
 #include <array>
-#include <optional>
 #include <type_traits>
 #include <wtf/MathExtras.h>
 
@@ -26,7 +25,6 @@ struct alignas(32) HashedSlot {
 
     static uintptr_t keyFor(const UniquedStringImpl* uid, SlotAccess access) { return std::bit_cast<uintptr_t>(uid) | static_cast<uintptr_t>(access); }
     static constexpr uint64_t offsetMaskFor(uint32_t numberOfEntries) { return static_cast<uint64_t>(numberOfEntries - 1) << sizeShift; }
-    // The size of the table comes in with the mask alone, as the last step. HashedSlotTable::grow relies on it: in a table of twice the size an offset is what it was, or that plus the size the table had.
     static uint32_t offsetOfFirstWay(StructureID structureID, const UniquedStringImpl* uid, uint64_t offsetMask)
     {
         uint32_t structureHash = (structureID.bits() * structureMultiplier) >> structureHashShift;
@@ -51,32 +49,8 @@ enum class SlotForm : uint8_t { Slot, PackedSlot };
 enum class SlotOrigin : uint8_t { ById, ByIdInStubFrame, ByVal, FreeName, FreeNameForTypeOf };
 enum class SlotOperation : uint8_t { Read, StoreStrict, StoreSloppy, Define };
 
-constexpr SlotAccess accessOf(SlotOperation operation)
-{
-    switch (operation) {
-    case SlotOperation::Read:
-        return SlotAccess::Read;
-    case SlotOperation::StoreStrict:
-    case SlotOperation::StoreSloppy:
-        return SlotAccess::Store;
-    case SlotOperation::Define:
-        return SlotAccess::Define;
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-}
-
-constexpr SlotOperation operationFor(PutMode mode)
-{
-    switch (mode) {
-    case PutMode::Strict:
-        return SlotOperation::StoreStrict;
-    case PutMode::Sloppy:
-        return SlotOperation::StoreSloppy;
-    case PutMode::Define:
-        return SlotOperation::Define;
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-}
+constexpr SlotAccess accessOf(SlotOperation operation) { return operation == SlotOperation::Read ? SlotAccess::Read : operation == SlotOperation::Define ? SlotAccess::Define : SlotAccess::Store; }
+constexpr SlotOperation operationFor(PutMode mode) { return mode == PutMode::Strict ? SlotOperation::StoreStrict : mode == PutMode::Sloppy ? SlotOperation::StoreSloppy : SlotOperation::Define; }
 
 #define FOR_EACH_AOT_SLOT_HANDLER_TABLE(v) \
     v(ReadById, Read, ById, Slot) \
@@ -121,30 +95,21 @@ inline constexpr unsigned numberOfSlotHandlerTables = allSlotHandlerTables.size(
 
 constexpr SlotHandlerTableTraits traitsOf(SlotHandlerTable table)
 {
-    switch (table) {
-#define AOT_SLOT_HANDLER_TABLE_TRAITS(name, operation, origin, form) \
-    case SlotHandlerTable::name: \
-        return { SlotOperation::operation, SlotOrigin::origin, SlotForm::form };
-    FOR_EACH_AOT_SLOT_HANDLER_TABLE(AOT_SLOT_HANDLER_TABLE_TRAITS)
+    constexpr SlotHandlerTableTraits traits[] = {
+#define AOT_SLOT_HANDLER_TABLE_TRAITS(name, operation, origin, form) { SlotOperation::operation, SlotOrigin::origin, SlotForm::form },
+        FOR_EACH_AOT_SLOT_HANDLER_TABLE(AOT_SLOT_HANDLER_TABLE_TRAITS)
 #undef AOT_SLOT_HANDLER_TABLE_TRAITS
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-}
-
-constexpr std::optional<SlotHandlerTable> tryFindSlotHandlerTable(SlotHandlerTableTraits traits)
-{
-    for (SlotHandlerTable table : allSlotHandlerTables) {
-        if (traitsOf(table) == traits)
-            return table;
-    }
-    return std::nullopt;
+    };
+    return traits[static_cast<unsigned>(table)];
 }
 
 constexpr SlotHandlerTable slotHandlerTable(SlotOperation operation, SlotOrigin origin, SlotForm form)
 {
-    std::optional<SlotHandlerTable> table = tryFindSlotHandlerTable({ operation, origin, form });
-    RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(table);
-    return *table;
+    for (SlotHandlerTable table : allSlotHandlerTables) {
+        if (traitsOf(table) == SlotHandlerTableTraits { operation, origin, form })
+            return table;
+    }
+    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
 struct StructureRowWords {
@@ -152,7 +117,6 @@ struct StructureRowWords {
     static constexpr unsigned wordShift = 2;
 };
 
-// The names that an object of one Structure, or an object above it, may have: a bit for each, found by the number of the name.
 struct AbsenceFilter {
     static constexpr unsigned numberOfFilters = 256;
     static constexpr unsigned sizeShift = 5;
@@ -164,16 +128,12 @@ struct AbsenceFilter {
     bool letsStoresPass(uint32_t identifierNumber) const { return !(namesThatStopStores[(identifierNumber >> bitsOfWordShift) & (numberOfWordsForStores - 1)] >> (identifierNumber & 63) & 1); }
 
     uint32_t structureID;
-    // A name that an object on some chain gets, loses or has changed is noted by itself, in PropertyCacheWords::namesChangedOnChains. Only a change that is reported without a name starts a new generation of these.
     uint32_t generationForStores;
-    // The names under which an object above may have anything but a data property that can be written. A store to the object passes every other name and creates the object's own property.
     uint64_t namesThatStopStores[numberOfWordsForStores];
     uint64_t unused;
 };
 
-// The name that a short text is, for a key that is no atom: a piece of a longer string, or a string made a moment ago.
 struct NameOfText {
-    // Two entries side by side take the texts of one hash, the one that came last in front.
     static constexpr unsigned numberOfPairs = 64;
     static constexpr unsigned numberOfEntries = 2 * numberOfPairs;
     static constexpr unsigned sizeShift = 5;
@@ -239,16 +199,12 @@ struct PropertyCacheWords {
     uint64_t hashedSlotOffsetMask;
     AbsenceFilter* absenceFilters;
     uint32_t absenceFilterGenerationForStores;
-    // A bit for the number of every name that the Object.prototype of some realm of the VM has or has had.
     const uint64_t* namesOfObjectPrototypes;
-    // A bit for the number of every name under which an object that is a prototype has got anything but a data property that can be written.
     const uint64_t* namesChangedOnChains;
-    // How often a read of a Structure and a name has found them in no table, by a hash of the two.
     uint8_t* missesOfPairs;
     const NameOfText* namesOfTexts;
     uint8_t missIsDueForFiling;
     uint8_t placesSayAbsence;
-    // What the Structure of a stand-in for the prototype object of a class has as its ClassInfo.
     const void* infoOfClassPrototypes;
     SiteCacheState* siteCacheStates;
     uint8_t missesOfEmptySites;

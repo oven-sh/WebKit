@@ -13,7 +13,6 @@ entry module=m0
 layout L0 kind=Environment name="scope" fields=[{key="x" declared={type=anything}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = CallDirect v1 function=f1
@@ -22,20 +21,18 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="capturedAndPassed" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewClosure v1 function=f2
     v3 = ToBoolean v2
     v4 = NewObject -, v0 layout=L0 fields=[0]
     v5 = CallDirect v4 function=f2
     Return v3
-}
-# CHECK-LABEL: function f1 name="capturedAndPassed"
 # CHECK: v1: env L0 = NewObject
 # CHECK-NOT: storage=
 # CHECK: v2: f2 = NewClosure v1 function=f2 {{*}}storage=Frame
 # CHECK: v4: env L0 = NewObject
 # CHECK-NOT: storage=
+}
 
 function f2 name="readsCapture" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
   b0(v0: env L0):
@@ -46,22 +43,18 @@ function f2 name="readsCapture" kind=Arrow captures=[{type=env L0}] results=[{ty
 # CHECK-LABEL: function f2 name="readsCapture"
 
 function f3 name="closurePassed" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f5
     v1 = CallDirect v0 function=f4
     Return v1
-}
-# CHECK-LABEL: function f3 name="closurePassed"
 # CHECK-NOT: storage=
+}
 
 function f4 name="callsParameter" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0
     Return v1
 }
 # CHECK-LABEL: function f4 name="callsParameter"
 
 function f5 name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }

@@ -12,7 +12,6 @@
 # CHECK-NOT: FlattenString
 module m0 path="main.js" displayPath="main.js"
 function f0 name="char-code-at" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
-  b0(v0: string, v1: number):
     v2 = Undefined
     v3 = Integer integer=0
     v4 = Integer integer=1
@@ -38,7 +37,6 @@ function f0 name="char-code-at" parameters=[{type=string}, {type=number}] result
 # CHECK: v9: undefined|string = StringRangeCharacterOrUndefined [[flat1]], -, -, v5
 # CHECK-NOT: FlattenString
 function f1 name="element-read" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
-  b0(v0: string, v1: number):
     v2 = Undefined
     v3 = Integer integer=0
     v4 = Integer integer=1
@@ -65,7 +63,6 @@ function f1 name="element-read" parameters=[{type=string}, {type=number}] result
 # CHECK-NEXT: v10: string = StringRangeCharacterOrEmpty [[flat2]], -, -, v5
 # CHECK-NOT: FlattenString
 function f2 name="two-reads" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
-  b0(v0: string, v1: number):
     v2 = Undefined
     v3 = Integer integer=0
     v4 = Integer integer=1

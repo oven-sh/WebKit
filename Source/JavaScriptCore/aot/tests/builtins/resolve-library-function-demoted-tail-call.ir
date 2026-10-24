@@ -7,36 +7,29 @@
 module m0 path="main.js" displayPath="main.js"
 runtimefunction id=31 function=f0
 function f0 name="every" role=Library flags=[HasThis] enclosingRuntimeFunction=31 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = Boolean boolean=true
     Return v3
 }
 function f1 name="marked" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=function}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage, Names]>, v1: function, v2: anything):
     v3 = PropGet v0 key="every"
     v4 = Call v3, v0, v1, v2 calleeKey="every" [isDemotedTailCall]
     Return v4
-}
-# CHECK-LABEL: function f1 name="marked"
 # CHECK: v4: boolean = CallDirect v0, v1, v2 function=f0 [isDemotedTailCall]
+}
 
 function f2 name="tailCall" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=function}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage, Names]>, v1: function, v2: anything):
     v3 = PropGet v0 key="every"
     v4 = Call v3, v0, v1, v2 calleeKey="every"
     ReturnCall v4 requirement=Allowed
-}
-# CHECK-LABEL: function f2 name="tailCall"
 # CHECK: v4: boolean = CallDirect v0, v1, v2 function=f0 [isDemotedTailCall]
 # CHECK-NEXT: Return v4
+}
 
 function f3 name="ordinary" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=function}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage, Names]>, v1: function, v2: anything):
     v3 = PropGet v0 key="every"
     v4 = Call v3, v0, v1, v2 calleeKey="every"
     Return v4
-}
-# CHECK-LABEL: function f3 name="ordinary"
 # CHECK-NOT: isDemotedTailCall
 # CHECK: v4: boolean = CallDirect v0, v1, v2 function=f0
 # CHECK-NOT: isDemotedTailCall
+}

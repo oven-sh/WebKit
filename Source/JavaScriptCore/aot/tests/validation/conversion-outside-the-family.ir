@@ -16,7 +16,6 @@ layout L0 name="Range" fields=[{key="pos" declared={type=number} flags=[IsRequir
 layout L1 name="Node" fields=[{key="pos" declared={type=number} flags=[IsRequired]}]
 layout L2 name="Literal" fields=[{key="pos" declared={type=number} flags=[IsRequired]}, {key="end" declared={type=number} flags=[IsRequired]}] supertypes=[L0]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0, v0 layout=L2 fields=[0, 1]
     v2 = Convert v1 declared={type=L0 site=w0}

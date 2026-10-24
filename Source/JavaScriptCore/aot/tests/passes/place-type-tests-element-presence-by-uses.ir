@@ -4,36 +4,29 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="comparedWithNumber" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=int[0, 1000]}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Storage, Names]>, v1: int[0, 1000], v2: number):
     v3 = ElemGet v0, v1
     v4 = StrictEq v3, v2
     Return v4
-}
 # A comparison with what is never undefined looks for a value.
-# CHECK-LABEL: function f0 name="comparedWithNumber"
 # CHECK: = IsElementPresent v0, v1
+}
 
 function f1 name="comparedWithUndefined" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Storage, Names]>, v1: int[0, 1000]):
     v2 = ElemGet v0, v1
     v3 = Undefined
     v4 = StrictEq v2, v3
     Return v4
-}
-# CHECK-LABEL: function f1 name="comparedWithUndefined"
 # CHECK-NOT: IsElementPresent
+}
 
 function f2 name="comparedWithAnything" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=int[0, 1000]}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Storage, Names]>, v1: int[0, 1000], v2: anything):
     v3 = ElemGet v0, v1
     v4 = StrictEq v3, v2
     Return v4
-}
-# CHECK-LABEL: function f2 name="comparedWithAnything"
 # CHECK-NOT: IsElementPresent
+}
 
 function f3 name="switchedOn" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Storage, Names]>, v1: int[0, 1000]):
     v2 = ElemGet v0, v1
     Switch v2 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
   b1():
@@ -45,13 +38,11 @@ function f3 name="switchedOn" parameters=[{type=Array<number, pristine[Storage, 
   b3():
     v5 = Integer integer=30
     Return v5
-}
 # No case of a switch is undefined: what is absent goes where every other value goes.
-# CHECK-LABEL: function f3 name="switchedOn"
 # CHECK: = IsElementPresent v0, v1
+}
 
 function f4 name="passesTestThatAdmitsUndefined" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Storage, Names]>, v1: int[0, 1000]):
     v2 = ElemGet v0, v1
     v3 = TypeTest v2 testedType=undefined|number
     Branch v3 -> taken b1(| 0), notTaken b2()
@@ -62,13 +53,11 @@ function f4 name="passesTestThatAdmitsUndefined" parameters=[{type=Array<number,
   b2():
     v7 = Undefined
     Return v7
-}
 # The check of an element declared `number | undefined` hands an absent one on, and typed code asks for it.
-# CHECK-LABEL: function f4 name="passesTestThatAdmitsUndefined"
 # CHECK-NOT: IsElementPresent
+}
 
 function f5 name="passesTestForNumber" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Storage, Names]>, v1: int[0, 1000]):
     v2 = ElemGet v0, v1
     v3 = TypeTest v2 testedType=number
     Branch v3 -> taken b1(| 0), notTaken b2()
@@ -78,10 +67,9 @@ function f5 name="passesTestForNumber" parameters=[{type=Array<number, pristine[
   b2():
     v6 = Undefined
     Return v6
-}
 # What passed is no longer undefined, so its truth is a question about the number.
-# CHECK-LABEL: function f5 name="passesTestForNumber"
 # CHECK: = IsElementPresent v0, v1
+}
 
 function f6 name="sumOfNumbers" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
   b0(v0: Array<number, proven, pristine[Storage, Names]> ~ Array<number, proven, Double, pristine[Storage, Names]>):
@@ -101,9 +89,8 @@ function f6 name="sumOfNumbers" parameters=[{type=Array<number, proven, pristine
     Jump -> next b1(v12, v10)
   b3():
     Return v4
-}
-# CHECK-LABEL: function f6 name="sumOfNumbers"
 # CHECK: readsHoleAsNaN
+}
 
 function f7 name="sumOfIntegersInDoubleStorage" parameters=[{type=Array<i32, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
   b0(v0: Array<i32, proven, pristine[Storage, Names]> ~ Array<i32, proven, Double, pristine[Storage, Names]>):
@@ -123,7 +110,6 @@ function f7 name="sumOfIntegersInDoubleStorage" parameters=[{type=Array<i32, pro
     Jump -> next b1(v12, v10)
   b3():
     Return v4
-}
 # The type of the read admits no NaN, so a hole can't be read as one.
-# CHECK-LABEL: function f7 name="sumOfIntegersInDoubleStorage"
 # CHECK-NOT: readsHoleAsNaN
+}

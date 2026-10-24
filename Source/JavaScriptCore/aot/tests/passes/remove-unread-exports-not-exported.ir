@@ -13,7 +13,6 @@ variable g0 name="exported" module=m1 declared={type=anything}
 variable g1 name="local" module=m1 declared={type=anything}
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="name" [isFreeName]
     v2 = ModuleNamespace module=m1
@@ -24,12 +23,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="readByUnknownKey" module=m1 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     PutModuleVariable v0 variable=g0
     PutModuleVariable v0 variable=g1
     Return
-}
-# CHECK-LABEL: function f1 name="readByUnknownKey"
 # CHECK: PutModuleVariable v0 variable=g0
 # CHECK-NOT: variable=g1
+}

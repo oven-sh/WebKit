@@ -8,7 +8,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="isPristineArray" parameters=[{type=Array}, {type=object}, {type=anything}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array, v1: object, v2: anything, v3: i32, v4: boolean):
     v5 = IsPristineArray v0
     v6 = IsPristineArray v1
     v7 = IsPristineArray v2
@@ -39,7 +38,6 @@ function f0 name="isPristineArray" parameters=[{type=Array}, {type=object}, {typ
 # S: f0 b1 Fast
 # S: f0 b3 Compact
 function f1 name="isPristineArrayAsCondition" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: anything, v1: boolean):
     v2 = IsPristineArray v0
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -62,7 +60,6 @@ function f1 name="isPristineArrayAsCondition" parameters=[{type=anything}, {type
 # S: f1 b2 Fast
 # S: f1 b4 Compact
 function f2 name="arrayStorageKind" parameters=[{type=Array}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array, v1: boolean):
     v2 = ArrayStorageKind v0
     v3 = NewArray v2 contents=anything
     Jump -> next b1()
@@ -84,7 +81,6 @@ function f2 name="arrayStorageKind" parameters=[{type=Array}, {type=boolean}] re
 # S: f2 b1 Fast
 # S: f2 b3 Compact
 function f3 name="contiguousReads" parameters=[{type=Array}, {type=Array<i32, proven>}, {type=Array<string, proven>}, {type=i32}, {type=int}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array, v1: Array<i32, proven>, v2: Array<string, proven>, v3: i32, v4: int, v5: boolean):
     v6 = HasContiguousIndex v0, v3
     v7 = HasContiguousIndex v0, v4
     v8 = GetContiguousIndex v0, v3
@@ -127,7 +123,6 @@ function f3 name="contiguousReads" parameters=[{type=Array}, {type=Array<i32, pr
 # S: f3 b1 Fast
 # S: f3 b3 Compact
 function f4 name="doubleReads" parameters=[{type=Array}, {type=Array<number, proven>}, {type=i32}, {type=int}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array, v1: Array<number, proven>, v2: i32, v3: int, v4: boolean):
     v5 = GetDoubleIndex v0, v2
     v6 = GetDoubleIndex v0, v3
     v7 = GetDoubleIndex v1, v2
@@ -158,7 +153,6 @@ function f4 name="doubleReads" parameters=[{type=Array}, {type=Array<number, pro
 # S: f4 b1 Fast
 # S: f4 b3 Compact
 function f5 name="contiguousStores" parameters=[{type=Array}, {type=i32}, {type=int}, {type=i32}, {type=number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array, v1: i32, v2: int, v3: i32, v4: number, v5: string, v6: anything, v7: boolean):
     PutContiguousIndex v0, v1, v3
     PutContiguousIndex v0, v1, v4
     PutContiguousIndex v0, v1, v5
@@ -189,7 +183,6 @@ function f5 name="contiguousStores" parameters=[{type=Array}, {type=i32}, {type=
 # S: f5 b1 Fast
 # S: f5 b3 Compact
 function f6 name="doubleStores" parameters=[{type=Array}, {type=i32}, {type=int}, {type=i32}, {type=number}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array, v1: i32, v2: int, v3: i32, v4: number, v5: boolean):
     PutDoubleIndex v0, v1, v3
     PutDoubleIndex v0, v1, v4
     PutDoubleIndex v0, v2, v4
@@ -214,7 +207,6 @@ function f6 name="doubleStores" parameters=[{type=Array}, {type=i32}, {type=int}
 # S: f6 b1 Fast
 # S: f6 b3 Compact
 function f7 name="newArraysOfOneKind" parameters=[{type=int[0, 100]}, {type=i32}, {type=int}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: int[0, 100], v1: i32, v2: int, v3: boolean):
     v4 = NewContiguousArray v0
     v5 = NewContiguousArray v1
     v6 = NewContiguousArray v2
@@ -251,7 +243,6 @@ function f7 name="newArraysOfOneKind" parameters=[{type=int[0, 100]}, {type=i32}
 # S: f7 b1 Fast
 # S: f7 b3 Compact
 function f8 name="newArrayLike" parameters=[{type=int[0, 100]}, {type=Array}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: int[0, 100], v1: Array, v2: anything, v3: boolean):
     v4 = NewArrayLike v0
     v5 = NewArrayLike v0, v1
     v6 = NewArrayLike v0, v2
@@ -306,7 +297,6 @@ function f8 name="newArrayLike" parameters=[{type=int[0, 100]}, {type=Array}, {t
 # S: f8 b1 Fast
 # S: f8 b3 Compact
 function f9 name="newArrayWithCapacity" parameters=[{type=int[0, 100]}, {type=Array}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: int[0, 100], v1: Array, v2: anything, v3: boolean):
     v4 = NewArrayWithCapacity v0
     v5 = NewArrayWithCapacity v0, v1
     v6 = NewArrayWithCapacity v0, v2
@@ -361,7 +351,6 @@ function f9 name="newArrayWithCapacity" parameters=[{type=int[0, 100]}, {type=Ar
 # S: f9 b1 Fast
 # S: f9 b3 Compact
 function f10 name="tryPutByValDirectInOtherStorageOfNewArrayLike" parameters=[{type=int[0, 100]}, {type=i32}, {type=i32}, {type=number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: int[0, 100], v1: i32, v2: i32, v3: number, v4: string, v5: anything, v6: boolean):
     v7 = NewArrayLike v0
     v8 = TryPutByValDirect v7, v1, v2
     v9 = TryPutByValDirect v7, v1, v3
@@ -395,7 +384,6 @@ function f10 name="tryPutByValDirectInOtherStorageOfNewArrayLike" parameters=[{t
 # S: f10 b1 Fast
 # S: f10 b3 Compact
 function f11 name="tryPutByValDirectInInt32StorageOfNewArrayLike" parameters=[{type=int[0, 100]}, {type=i32}, {type=i32}, {type=number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: int[0, 100], v1: i32, v2: i32, v3: number, v4: string, v5: anything, v6: boolean):
     v7 = NewArrayLike v0 arrayStorage=Int32
     v8 = TryPutByValDirect v7, v1, v2 arrayStorage=Int32
     v9 = TryPutByValDirect v7, v1, v3 arrayStorage=Int32
@@ -429,7 +417,6 @@ function f11 name="tryPutByValDirectInInt32StorageOfNewArrayLike" parameters=[{t
 # S: f11 b1 Fast
 # S: f11 b3 Compact
 function f12 name="tryPutByValDirectInDoubleStorageOfNewArrayLike" parameters=[{type=int[0, 100]}, {type=i32}, {type=i32}, {type=number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: int[0, 100], v1: i32, v2: i32, v3: number, v4: string, v5: anything, v6: boolean):
     v7 = NewArrayLike v0 arrayStorage=Double
     v8 = TryPutByValDirect v7, v1, v2 arrayStorage=Double
     v9 = TryPutByValDirect v7, v1, v3 arrayStorage=Double
@@ -463,7 +450,6 @@ function f12 name="tryPutByValDirectInDoubleStorageOfNewArrayLike" parameters=[{
 # S: f12 b1 Fast
 # S: f12 b3 Compact
 function f13 name="tryPutByValDirectInContiguousStorageOfNewArrayLike" parameters=[{type=int[0, 100]}, {type=i32}, {type=i32}, {type=number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: int[0, 100], v1: i32, v2: i32, v3: number, v4: string, v5: anything, v6: boolean):
     v7 = NewArrayLike v0 arrayStorage=Contiguous
     v8 = TryPutByValDirect v7, v1, v2 arrayStorage=Contiguous
     v9 = TryPutByValDirect v7, v1, v3 arrayStorage=Contiguous
@@ -497,7 +483,6 @@ function f13 name="tryPutByValDirectInContiguousStorageOfNewArrayLike" parameter
 # S: f13 b1 Fast
 # S: f13 b3 Compact
 function f14 name="tryPutByValDirectInOtherStorageOfNewArrayWithCapacity" parameters=[{type=int[0, 100]}, {type=i32}, {type=i32}, {type=number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: int[0, 100], v1: i32, v2: i32, v3: number, v4: string, v5: anything, v6: boolean):
     v7 = NewArrayWithCapacity v0
     v8 = TryPutByValDirect v7, v1, v2
     v9 = TryPutByValDirect v7, v1, v3
@@ -531,7 +516,6 @@ function f14 name="tryPutByValDirectInOtherStorageOfNewArrayWithCapacity" parame
 # S: f14 b1 Fast
 # S: f14 b3 Compact
 function f15 name="tryPutByValDirectInInt32StorageOfNewArrayWithCapacity" parameters=[{type=int[0, 100]}, {type=i32}, {type=i32}, {type=number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: int[0, 100], v1: i32, v2: i32, v3: number, v4: string, v5: anything, v6: boolean):
     v7 = NewArrayWithCapacity v0 arrayStorage=Int32
     v8 = TryPutByValDirect v7, v1, v2 arrayStorage=Int32
     v9 = TryPutByValDirect v7, v1, v3 arrayStorage=Int32
@@ -565,7 +549,6 @@ function f15 name="tryPutByValDirectInInt32StorageOfNewArrayWithCapacity" parame
 # S: f15 b1 Fast
 # S: f15 b3 Compact
 function f16 name="tryPutByValDirectInDoubleStorageOfNewArrayWithCapacity" parameters=[{type=int[0, 100]}, {type=i32}, {type=i32}, {type=number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: int[0, 100], v1: i32, v2: i32, v3: number, v4: string, v5: anything, v6: boolean):
     v7 = NewArrayWithCapacity v0 arrayStorage=Double
     v8 = TryPutByValDirect v7, v1, v2 arrayStorage=Double
     v9 = TryPutByValDirect v7, v1, v3 arrayStorage=Double
@@ -599,7 +582,6 @@ function f16 name="tryPutByValDirectInDoubleStorageOfNewArrayWithCapacity" param
 # S: f16 b1 Fast
 # S: f16 b3 Compact
 function f17 name="tryPutByValDirectInContiguousStorageOfNewArrayWithCapacity" parameters=[{type=int[0, 100]}, {type=i32}, {type=i32}, {type=number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: int[0, 100], v1: i32, v2: i32, v3: number, v4: string, v5: anything, v6: boolean):
     v7 = NewArrayWithCapacity v0 arrayStorage=Contiguous
     v8 = TryPutByValDirect v7, v1, v2 arrayStorage=Contiguous
     v9 = TryPutByValDirect v7, v1, v3 arrayStorage=Contiguous
@@ -633,7 +615,6 @@ function f17 name="tryPutByValDirectInContiguousStorageOfNewArrayWithCapacity" p
 # S: f17 b1 Fast
 # S: f17 b3 Compact
 function f18 name="tryPutByValDirectInUnknownArray" parameters=[{type=Array}, {type=i32}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array, v1: i32, v2: anything, v3: boolean):
     v4 = TryPutByValDirect v0, v1, v2
     v5 = NewArray v4 contents=anything
     Jump -> next b1()
@@ -655,7 +636,6 @@ function f18 name="tryPutByValDirectInUnknownArray" parameters=[{type=Array}, {t
 # S: f18 b1 Fast
 # S: f18 b3 Compact
 function f19 name="tryPutIndex" parameters=[{type=Array}, {type=i32}, {type=int}, {type=i32}, {type=number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array, v1: i32, v2: int, v3: i32, v4: number, v5: string, v6: anything, v7: boolean):
     v8 = TryPutIndex v0, v1, v3
     v9 = TryPutIndex v0, v1, v4
     v10 = TryPutIndex v0, v1, v5
@@ -689,7 +669,6 @@ function f19 name="tryPutIndex" parameters=[{type=Array}, {type=i32}, {type=int}
 # S: f19 b1 Fast
 # S: f19 b3 Compact
 function f20 name="growAndTruncate" parameters=[{type=int[0, 100]}, {type=i32}, {type=int}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: int[0, 100], v1: i32, v2: int, v3: boolean):
     v4 = NewContiguousArray v0
     GrowNewArray v4, v1
     GrowNewArray v4, v2

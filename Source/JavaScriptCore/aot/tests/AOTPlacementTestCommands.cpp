@@ -113,8 +113,6 @@ PlacementInputs PlacedProgram::inputs() const
         .callingConventions = *output->callingConventions,
         .frameAllocation = *output->frameAllocation,
         .environmentReuse = *output->environmentReuse,
-        .literalStrings = *output->literalStrings,
-        .constantCollections = *output->constantCollections,
         .slots = *output->slots,
         .regExpRequests = *output->regExpRequests,
     };

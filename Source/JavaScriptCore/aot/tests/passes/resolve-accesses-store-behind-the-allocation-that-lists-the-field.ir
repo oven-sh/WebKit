@@ -7,23 +7,19 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Effect" fields=[{key="tag" declared={type=number}}, {key="inst" declared={type=undefined|string}}] flow={members=[L0]}
 
 function f0 name="listed" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
-  b0(v0: number, v1: string):
     v2 = Undefined
     v3 = NewObject -, v0, v2 layout=L0 fields=[0, 1]
     PropSet v3, v1 key="inst"
     Return v3
-}
-# CHECK-LABEL: function f0 name="listed"
 # CHECK: = NewObject
 # CHECK-NOT: Branch
 # CHECK: PutSlot v3, [[guard]], v1 key="inst" receivers=[L0] level=Expected
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
+}
 function f1 name="left-out" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
-  b0(v0: number, v1: string):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     PropSet v2, v1 key="inst"
     Return v2
-}
-# CHECK-LABEL: function f1 name="left-out"
 # CHECK: PutSlotOrAdd v2, [[guards]], v1 key="inst"
+}

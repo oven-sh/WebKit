@@ -9,38 +9,32 @@ function f0 name="operandHasSameExpectedType" parameters=[{type=number flags=[Is
   b0(v0: anything ~ number):
     v1: anything ~ number = Upcast v0 castType=anything
     Return v1
-}
-# CHECK-LABEL: function f0 name="operandHasSameExpectedType"
 # CHECK-NEXT: b0(v0: anything ~ number):
 # CHECK-NEXT: Return v0
+}
 
 function f1 name="expectedTwice" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1: anything ~ number = Upcast v0 castType=anything
     v2: anything ~ number = Upcast v1 castType=anything
     Return v2
-}
-# CHECK-LABEL: function f1 name="expectedTwice"
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: anything ~ number = Upcast v0 castType=anything
 # CHECK-NEXT: Return v1
+}
 
 function f2 name="narrowsType" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1: anything ~ number = Upcast v0 castType=anything
     Return v1
-}
-# CHECK-LABEL: function f2 name="narrowsType"
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: anything ~ number = Upcast v0 castType=anything
 # CHECK-NEXT: Return v1
+}
 
 function f3 name="narrowsExpectedType" parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ number):
     v1: anything ~ i32 = Upcast v0 castType=anything
     Return v1
-}
-# CHECK-LABEL: function f3 name="narrowsExpectedType"
 # CHECK-NEXT: b0(v0: anything ~ number):
 # CHECK-NEXT: v1: anything ~ i32 = Upcast v0 castType=anything
 # CHECK-NEXT: Return v1
+}

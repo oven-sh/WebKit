@@ -19,7 +19,6 @@ variable g3 module=m0 declared={type=anything} owner=L0
 variable g4 module=m0 declared={type=anything} owner=L0
 variable g5 module=m0 declared={type=anything} owner=L0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = NewClosure function=f2
@@ -33,28 +32,23 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Logger" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     v3 = GetModuleVariable variable=g1
     v4 = CheckInitialized v3 name="Logger"
     v5 = PropGet v4 key="prefix"
     Return v2
-}
-# CHECK-LABEL: function f1 name="Logger"
 # CHECK: = PropGet [[early]] key="prefix"
+}
 function f2 name="log" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g1
     v2 = CheckInitialized v1 name="Logger"
     v3 = PropGet v2 key="level"
     Return v3
-}
-# CHECK-LABEL: function f2 name="log"
 # CHECK: = GetModuleVariable variable=g4
 # CHECK-NOT: key="level"
+}
 function f3 name="initializeLogger" kind=Initializer flags=[HasThis] thisType={type=function} results=[{type=anything}] {
-  b0(v0: function):
     v1 = GetModuleVariable variable=g1
     v2 = CheckInitialized v1 name="Logger"
     v3 = Construct v2
@@ -66,13 +60,11 @@ function f3 name="initializeLogger" kind=Initializer flags=[HasThis] thisType={t
     Return
 }
 function f4 name="run" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = CheckInitialized v0 name="Logger"
     v2 = PropGet v1 key="instance"
     v3 = PropGet v2 key="log"
     v4 = Call v3, v2 calleeKey="log"
     Return v4
-}
-# CHECK-LABEL: function f4 name="run"
 # CHECK: = GetModuleVariable variable=g3
+}

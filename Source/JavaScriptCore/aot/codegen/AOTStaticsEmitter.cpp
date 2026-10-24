@@ -22,21 +22,6 @@ static constexpr unsigned bitsPerByte = 8;
 
 static_assert(!(MemberGuardData::bitsPerWord % bitsPerByte));
 
-StaticsEmitter::StaticsEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
-
-TypedPointer StaticsEmitter::inStatics(const B3::AbstractHeap& heap, uint32_t offsetInStatics)
-{
-    return m_out.address(heap, m_statics, offsetInStatics);
-}
-
-TypedPointer StaticsEmitter::inStatics(const B3::AbstractHeap& heap, StaticsOffset offset)
-{
-    return inStatics(heap, offset.value());
-}
-
 TypedPointer StaticsEmitter::addressOf(VariableID id)
 {
     const PlacedVariable& variable = m_placement.variable(id);

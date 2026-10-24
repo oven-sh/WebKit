@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="oneObject" parameters=[{type=object}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: object, v1: boolean):
     Branch v1 -> taken b1(v0), notTaken b3(v0)
   b1(v2: object):
     LoopHint
@@ -30,7 +29,6 @@ function f0 name="oneObject" parameters=[{type=object}, {type=boolean}] results=
 # CHECK-NEXT: v8 identity: v0
 
 function f1 name="twoObjects" parameters=[{type=object}, {type=boolean}, {type=object}] results=[{type=undefined}] {
-  b0(v0: object, v1: boolean, v2: object):
     Branch v1 -> taken b1(v0), notTaken b3(v2)
   b1(v3: object):
     LoopHint
@@ -54,7 +52,6 @@ function f1 name="twoObjects" parameters=[{type=object}, {type=boolean}, {type=o
 # CHECK-NOT: identity: v2
 
 function f2 name="loopInsideTheCycle" parameters=[{type=object}, {type=boolean}, {type=object}] results=[{type=undefined}] {
-  b0(v0: object, v1: boolean, v2: object):
     Branch v1 -> taken b1(v0), notTaken b5(v2)
   b1(v3: object):
     Jump -> next b2(v3)

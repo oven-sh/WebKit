@@ -7,7 +7,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Descriptor" fields=[{key="value" declared={type=anything}}, {key="writable" declared={type=anything}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=ObjectDefineProperty
     v1 = Builtin builtin=Object
     v2 = Builtin builtin=ArrayPrototype
@@ -30,6 +29,5 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="replacement" results=[{type=anything}] {
-  b0():
     Return
 }

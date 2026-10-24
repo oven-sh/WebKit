@@ -11,7 +11,6 @@ layout L0 kind=Instance name="Body" constructor=f1 fields=[{key="hits" declared=
 layout L1 name="Handler"
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = NewClosure function=f2
@@ -29,13 +28,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v13
 }
 function f1 name="Body" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = Integer integer=0
     v3 = NewObject v1, v2 layout=L0 fields=[0]
     Return v3
 }
 function f2 name="step" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Return v1
 }

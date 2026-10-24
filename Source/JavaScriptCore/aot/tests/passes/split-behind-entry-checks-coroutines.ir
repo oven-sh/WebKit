@@ -11,7 +11,6 @@ entry module=m0
 typesite w0 module=m0 position=15 kind=Parameter
 typesite w1 module=m0 position=55 kind=Parameter
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = Builtin builtin=GlobalThis
@@ -20,7 +19,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="later" module=m0 position=5 flags=[IsAsync, IsChecked] length=1 parameters=[{type=number site=w0}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = Integer integer=2
     v2 = Mul v0, v1
     v3 = Await v2
@@ -30,7 +28,6 @@ function f1 name="later" module=m0 position=5 flags=[IsAsync, IsChecked] length=
 # CHECK: = TypeTest v0 testedType=number
 # CHECK-NOT: Await
 function f2 name="range" module=m0 position=45 flags=[IsGenerator, TakesCallee, IsChecked] length=1 parameters=[{type=number site=w1}] results=[{type=anything}] {
-  b0(v0: function, v1: number):
     InitialYield
     v3 = Yield v1
     v4 = ResultAt v3 index=0

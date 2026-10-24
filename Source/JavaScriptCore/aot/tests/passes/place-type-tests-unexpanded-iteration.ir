@@ -21,13 +21,10 @@ function f0 name="readInIteration" parameters=[{type=Array<number, proven, Doubl
     Jump -> next b1(v8)
   b3():
     Return v4
-}
-# CHECK-LABEL: function f0 name="readInIteration"
 # CHECK-NOT: TypeTest
 # CHECK: b2():
 # CHECK-NEXT: = PropGet v1 key="k"
 # CHECK-NOT: TypeTest
-# LATER-LABEL: function f0 name="readInIteration"
 # LATER: b1(v4: anything ~ undefined|number,
 # LATER-NEXT: LoopHint
 # LATER: b2():
@@ -36,6 +33,7 @@ function f0 name="readInIteration" parameters=[{type=Array<number, proven, Doubl
 # LATER-NEXT: Jump -> next b1(
 # LATER-COUNT-1: = TypeTest v1 testedType=L0
 # LATER-NOT: = TypeTest v1
+}
 
 function f1 name="readInFrontOfIteration" parameters=[{type=Array<number, proven, Double, pristine[Storage, Names]>}, {type=object}] results=[{type=anything}] {
   b0(v0: Array<number, proven, Double, pristine[Storage, Names]>, v1: object ~ L0):
@@ -68,9 +66,8 @@ function f2 name="readInLoopWithoutIteration" parameters=[{type=boolean}, {type=
     Jump -> next b1(v5)
   b3():
     Return v3
-}
-# CHECK-LABEL: function f2 name="readInLoopWithoutIteration"
 # CHECK: b2():
 # CHECK-NEXT: [[guards]]: guard = AllGuards
 # CHECK-NEXT: = GetSlot {{*}}, [[guards]] key="k"
 # CHECK: = TypeTest v1 testedType=L0
+}

@@ -5,7 +5,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Made" fields=[{key="value" declared={type=anything}}]
 function f0 name="goodTestBehindTheBitOfTheTag" parameters=[{type=boolean}, {type=L0}] results=[{type=anything}] {
-  b0(v0: boolean, v1: L0):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v2 = Integer integer=2
@@ -24,7 +23,6 @@ function f0 name="goodTestBehindTheBitOfTheTag" parameters=[{type=boolean}, {typ
     Return
 }
 function f1 name="badTestWhereTheBitOfTheTagIsNotSet" parameters=[{type=boolean}, {type=L0}] results=[{type=anything}] {
-  b0(v0: boolean, v1: L0):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v2 = Integer integer=2
@@ -43,7 +41,6 @@ function f1 name="badTestWhereTheBitOfTheTagIsNotSet" parameters=[{type=boolean}
     Return
 }
 function f2 name="hasSecondBit" role=OutlinedBody parameters=[{type=int[1, 2]}] results=[{type=boolean}] derivation={source=f0} {
-  b0(v0: int[1, 2]):
     v1 = Integer integer=2
     v2 = BitAnd v0, v1
     v3 = ToBoolean v2

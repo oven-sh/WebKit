@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 function f0 name="slotStores" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
-  b0(v0: L0, v1: number):
     v2 = ShapeTest v0 layouts=[L0]
     v3 = HasKeyOrder v0 layout=L0 fields=[0, 1]
     v4 = IsNotFrozen v0
@@ -38,7 +37,6 @@ function f0 name="slotStores" parameters=[{type=L0}, {type=number}] results=[{ty
 # E-NEXT: v7 PutSlot: writes(ObjectFields/1)
 # E-NEXT: v8 PutSlotOrAdd: reads(ObjectFields/1, OrderWords, AllocatorState) writes(ObjectFields/1, OrderWords, AllocatorState, RuntimeState)
 function f1 name="elementStores" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=int[0, 10]}, {type=number}] results=[{type=undefined}] {
-  b0(v0: Array<number, pristine[Storage, Names]>, v1: int[0, 10], v2: number):
     v3 = HasArrayStorage v0 arrayStorage=Double
     v4 = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
     PutArrayElement v0, v1, v2 level=Proven [keyIsIntegral]
@@ -56,7 +54,6 @@ function f1 name="elementStores" parameters=[{type=Array<number, pristine[Storag
 # E-NEXT: v3 HasArrayStorage: reads(ArrayStorage)
 # E-NEXT: v4 IsPristine: reads(PrototypeLinks, NamedProperties)
 function f2 name="definition" parameters=[{type=object}, {type=function}] results=[{type=undefined}] {
-  b0(v0: object, v1: function):
     v2 = ShapeTest v0 layouts=[L0]
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3):

@@ -20,7 +20,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Stands around a parallel loop that types functions or plans their accesses.
 class ProgramCaches {
     WTF_MAKE_NONCOPYABLE(ProgramCaches);
     WTF_MAKE_NONMOVABLE(ProgramCaches);

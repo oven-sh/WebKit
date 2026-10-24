@@ -11,7 +11,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = PropGet v0 key="input" [isFreeName]
@@ -27,15 +26,12 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="calledByCompiledCode" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 function f2 name="reviver" kind=Arrow parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Return v1
 }
 function f3 name="apply" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Call v0, -, v1
     Return v2
 }

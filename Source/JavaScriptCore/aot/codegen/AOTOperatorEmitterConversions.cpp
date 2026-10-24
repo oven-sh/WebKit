@@ -13,11 +13,9 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTOperatorForms.h"
 #include "AOTStringEmitter.h"
-#include "AOTStubsPropertyKeys.h"
 #include "AOTStubsValues.h"
 #include "AOTTruthinessEmitter.h"
 #include "AOTTypeTable.h"
-#include "AOTTypeTestPlan.h"
 #include "AOTVector.h"
 #include "JSType.h"
 
@@ -32,43 +30,105 @@ public:
     {
     }
 
-    CellPointer convert(const OperationContext&, Operand, const Type&, OperatorForm);
-    CellPointer convertAddend(const OperationContext&, ValueID);
-    CellPointer convertByType(const OperationContext&, Operand, const Type&);
+    CellPointer convert(const OperationContext& context, Operand operand, const Type& type, OperatorForm form)
+    {
+        StringEmitter& strings = emitter<StringEmitter>();
+        auto orByOperation = [&](Condition isConvertedInLine, const auto& convertInLine) {
+            return either<CellPointer>(isConvertedInLine, convertInLine, [&] {
+                return callToString(context, operand.as<Boxed>(), { .isOnRarePath = true });
+            });
+        };
+        switch (form) {
+        case OperatorForm::Generic:
+            return callToString(context, operand.as<Boxed>());
+        case OperatorForm::String:
+            return operand.is<Boxed>() ? unboxCell(operand.as<Boxed>()) : operand.as<CellPointer>();
+        case OperatorForm::Number:
+        case OperatorForm::NumberByOperation:
+            switch (operand.representation) {
+            case Representation::Int32:
+                return strings.integerToString(context, operand.as<Word32>());
+            case Representation::Int64:
+                return strings.integerToString(context, operand.as<Integer>());
+            case Representation::Double:
+                return convertDouble(context, operand.as<Number>(), form);
+            case Representation::Unchosen:
+            case Representation::Void:
+            case Representation::Boolean:
+            case Representation::OptionalInt64:
+            case Representation::OptionalDouble:
+            case Representation::Cell:
+            case Representation::Cell32:
+            case Representation::JSValue:
+            case Representation::LiteralString:
+            case Representation::RawWord:
+                break;
+            }
+            break;
+        case OperatorForm::NullableString:
+            return orByOperation(isCell(operand.as<Boxed>()), [&] {
+                return unboxCell(operand.as<Boxed>());
+            });
+        case OperatorForm::NullableNumber:
+            return orByOperation(isInt32(operand.as<Boxed>()), [&] {
+                return strings.integerToString(context, unboxInt32(operand.as<Boxed>()));
+            });
+        case OperatorForm::MayBeString:
+        case OperatorForm::MayBeStringOrNumber:
+            return convertPossibleString(context, operand.as<Boxed>(), type, form);
+        case OperatorForm::Unselected:
+        case OperatorForm::Integers:
+        case OperatorForm::CheckedIntegers:
+        case OperatorForm::Numbers:
+        case OperatorForm::NumberAndValue:
+        case OperatorForm::Bits:
+        case OperatorForm::Booleans:
+        case OperatorForm::BigInts:
+        case OperatorForm::Strings:
+        case OperatorForm::StringAndValue:
+        case OperatorForm::Int32AndValue:
+        case OperatorForm::StringAndPrimitive:
+        case OperatorForm::NullableStrings:
+        case OperatorForm::NullableStringAndPrimitive:
+            break;
+        }
+        fail(context, InternalErrorKind::OpcodeWithoutCode);
+        return emitter<ConstantEmitter>().zeroOf(Representation::Cell).as<CellPointer>();
+    }
+
+    CellPointer convertAddend(const OperationContext& context, ValueID id)
+    {
+        Operand operand = get(id);
+        if (operand.is<CellPointer>())
+            return operand.as<CellPointer>();
+        return convertByType(context, operand, typeOf(id));
+    }
+
+    CellPointer convertByType(const OperationContext& context, Operand operand, const Type& type)
+    {
+        TypingContext typing { m_program, m_function, types() };
+        OperatorSite site { typing, analyses().effectContext(), context.shape() };
+        OperatorTypes operatorTypes { type, type, m_program.at(TypeTable::string) };
+        OperatorForm form = chooseConversionForm(site, Opcode::ToString, operatorTypes);
+        // The two forms for a number take it unboxed.
+        if (operand.is<Boxed>() && form == OperatorForm::Number)
+            form = OperatorForm::NullableNumber;
+        else if (operand.is<Boxed>() && form == OperatorForm::NumberByOperation)
+            form = OperatorForm::Generic;
+        return convert(context, operand, type, form);
+    }
 
 private:
-    OperatorForm formOf(const OperationContext&, const Type&);
-    OperatorForm formOfBoxedValue(const OperationContext&, const Type&);
-    CellPointer callToString(const OperationContext&, Boxed, const CallOptions& = { });
-    CellPointer convertNumber(const OperationContext&, Operand, OperatorForm);
-    CellPointer convertPossibleString(const OperationContext&, Boxed, const Type&, OperatorForm);
-    CellPointer failWithoutString(const OperationContext&);
-};
+    CellPointer callToString(const OperationContext& context, Boxed boxed, const CallOptions& options = { })
+    {
+        return callOperation<CellPointer>(context, RuntimeOperation::ToString, { boxed }, options);
+    }
 
-CellPointer ToStringEmitter::failWithoutString(const OperationContext& context)
-{
-    fail(context, InternalErrorKind::OpcodeWithoutCode);
-    return emitter<ConstantEmitter>().zeroOf(Representation::Cell).as<CellPointer>();
-}
-
-CellPointer ToStringEmitter::callToString(const OperationContext& context, Boxed boxed, const CallOptions& options)
-{
-    return callOperation<CellPointer>(context, RuntimeOperation::ToString, { boxed }, options);
-}
-
-CellPointer ToStringEmitter::convertNumber(const OperationContext& context, Operand operand, OperatorForm form)
-{
-    bool callsOperation = form == OperatorForm::NumberByOperation;
-    switch (operand.representation) {
-    case Representation::Int32:
-        return emitter<StringEmitter>().integerToString(context, operand.as<Word32>());
-    case Representation::Int64:
-        return emitter<StringEmitter>().integerToString(context, operand.as<Integer>());
-    case Representation::Double: {
-        if (callsOperation)
-            return callOperation<CellPointer>(context, RuntimeOperation::DoubleToString, { operand });
+    CellPointer convertDouble(const OperationContext& context, Number value, OperatorForm form)
+    {
+        if (form == OperatorForm::NumberByOperation)
+            return callOperation<CellPointer>(context, RuntimeOperation::DoubleToString, { value });
         ConversionEmitter& conversions = emitter<ConversionEmitter>();
-        Number value = operand.as<Number>();
         Word32 whole = low32(conversions.toInteger(value));
         return selectByBranch<CellPointer>(equal(conversions.bitsOf(toNumber(whole)), conversions.bitsOf(value)), [&] {
             return emitter<StringEmitter>().integerToString(context, whole);
@@ -76,133 +136,40 @@ CellPointer ToStringEmitter::convertNumber(const OperationContext& context, Oper
             return emitter<StringEmitter>().numberToString(context, value);
         });
     }
-    case Representation::Unchosen:
-    case Representation::Void:
-    case Representation::Boolean:
-    case Representation::OptionalInt64:
-    case Representation::OptionalDouble:
-    case Representation::Cell:
-    case Representation::Cell32:
-    case Representation::JSValue:
-    case Representation::LiteralString:
-    case Representation::RawWord:
-        break;
+
+    CellPointer convertPossibleString(const OperationContext& context, Boxed boxed, const Type& type, OperatorForm form)
+    {
+        bool everyCellIsString = !type.hasObjects() && !(type.primitives & (Primitive::AnySymbol | Primitive::BigInt));
+        LBasicBlock cellCase = newBlock();
+        LBasicBlock stringCase = newBlock();
+        LBasicBlock notCellCase = newBlock();
+        LBasicBlock otherCase = newBlock();
+        Join<CellPointer> join(m_out);
+        branch(isCell(boxed), { normalEdge(cellCase), normalEdge(notCellCase) });
+
+        m_out.appendTo(cellCase);
+        if (everyCellIsString)
+            m_out.jump(stringCase);
+        else
+            branch(hasCellType(unboxCell(boxed), StringType), { normalEdge(stringCase), normalEdge(otherCase) });
+
+        m_out.appendTo(stringCase);
+        join.add(unboxCell(boxed));
+
+        m_out.appendTo(notCellCase);
+        if (form == OperatorForm::MayBeStringOrNumber) {
+            LBasicBlock int32Case = newBlock();
+            branch(isInt32(boxed), { normalEdge(int32Case), normalEdge(otherCase) });
+            m_out.appendTo(int32Case);
+            join.add(emitter<StringEmitter>().integerToString(context, unboxInt32(boxed)));
+        } else
+            m_out.jump(otherCase);
+
+        m_out.appendTo(otherCase);
+        join.add(callToString(context, boxed));
+        return join.finish();
     }
-    return failWithoutString(context);
-}
-
-CellPointer ToStringEmitter::convertPossibleString(const OperationContext& context, Boxed boxed, const Type& type, OperatorForm form)
-{
-    bool everyCellIsString = !type.hasObjects() && !(type.primitives & (Primitive::AnySymbol | Primitive::BigInt));
-    LBasicBlock cellCase = newBlock();
-    LBasicBlock stringCase = newBlock();
-    LBasicBlock notCellCase = newBlock();
-    LBasicBlock otherCase = newBlock();
-    Join<CellPointer> join(m_out);
-    branch(isCell(boxed), { normalEdge(cellCase), normalEdge(notCellCase) });
-
-    m_out.appendTo(cellCase);
-    if (everyCellIsString)
-        m_out.jump(stringCase);
-    else
-        branch(hasCellType(unboxCell(boxed), StringType), { normalEdge(stringCase), normalEdge(otherCase) });
-
-    m_out.appendTo(stringCase);
-    join.add(unboxCell(boxed));
-
-    m_out.appendTo(notCellCase);
-    if (form == OperatorForm::MayBeStringOrNumber) {
-        LBasicBlock int32Case = newBlock();
-        branch(isInt32(boxed), { normalEdge(int32Case), normalEdge(otherCase) });
-        m_out.appendTo(int32Case);
-        join.add(emitter<StringEmitter>().integerToString(context, unboxInt32(boxed)));
-    } else
-        m_out.jump(otherCase);
-
-    m_out.appendTo(otherCase);
-    join.add(callToString(context, boxed));
-    return join.finish();
-}
-
-CellPointer ToStringEmitter::convert(const OperationContext& context, Operand operand, const Type& type, OperatorForm form)
-{
-    switch (form) {
-    case OperatorForm::Generic:
-        return callToString(context, operand.as<Boxed>());
-    case OperatorForm::String:
-        return operand.is<Boxed>() ? unboxCell(operand.as<Boxed>()) : operand.as<CellPointer>();
-    case OperatorForm::Number:
-    case OperatorForm::NumberByOperation:
-        return convertNumber(context, operand, form);
-    case OperatorForm::NullableString: {
-        Boxed boxed = operand.as<Boxed>();
-        return either<CellPointer>(isCell(boxed), [&] {
-            return unboxCell(boxed);
-        }, [&] {
-            return callToString(context, boxed, { .isOnRarePath = true });
-        });
-    }
-    case OperatorForm::NullableNumber: {
-        Boxed boxed = operand.as<Boxed>();
-        return either<CellPointer>(isInt32(boxed), [&] {
-            return emitter<StringEmitter>().integerToString(context, unboxInt32(boxed));
-        }, [&] {
-            return callToString(context, boxed, { .isOnRarePath = true });
-        });
-    }
-    case OperatorForm::MayBeString:
-    case OperatorForm::MayBeStringOrNumber:
-        return convertPossibleString(context, operand.as<Boxed>(), type, form);
-    case OperatorForm::Unselected:
-    case OperatorForm::Integers:
-    case OperatorForm::CheckedIntegers:
-    case OperatorForm::Numbers:
-    case OperatorForm::NumberAndValue:
-    case OperatorForm::Bits:
-    case OperatorForm::Booleans:
-    case OperatorForm::BigInts:
-    case OperatorForm::Strings:
-    case OperatorForm::StringAndValue:
-    case OperatorForm::Int32AndValue:
-    case OperatorForm::StringAndPrimitive:
-    case OperatorForm::NullableStrings:
-    case OperatorForm::NullableStringAndPrimitive:
-        break;
-    }
-    return failWithoutString(context);
-}
-
-OperatorForm ToStringEmitter::formOf(const OperationContext& context, const Type& type)
-{
-    TypingContext typing { m_program, m_function, types() };
-    OperatorSite site { typing, analyses().effectContext(), context.shape() };
-    OperatorTypes operatorTypes { type, type, m_program.at(TypeTable::string) };
-    return chooseConversionForm(site, Opcode::ToString, operatorTypes);
-}
-
-OperatorForm ToStringEmitter::formOfBoxedValue(const OperationContext& context, const Type& type)
-{
-    OperatorForm form = formOf(context, type);
-    // The two forms for a number take it unboxed.
-    if (form == OperatorForm::Number)
-        return OperatorForm::NullableNumber;
-    if (form == OperatorForm::NumberByOperation)
-        return OperatorForm::Generic;
-    return form;
-}
-
-CellPointer ToStringEmitter::convertAddend(const OperationContext& context, ValueID id)
-{
-    Operand operand = get(id);
-    if (operand.is<CellPointer>())
-        return operand.as<CellPointer>();
-    return convertByType(context, operand, typeOf(id));
-}
-
-CellPointer ToStringEmitter::convertByType(const OperationContext& context, Operand operand, const Type& type)
-{
-    return convert(context, operand, type, operand.is<Boxed>() ? formOfBoxedValue(context, type) : formOf(context, type));
-}
+};
 
 } // anonymous namespace
 
@@ -268,25 +235,20 @@ CellPointer OperatorEmitter::toString(const OperationContext& context, Operand o
     return ToStringEmitter(generator()).convertByType(context, operand, type);
 }
 
-void OperatorEmitter::generateStrcat(const ValueContext& value)
+CellPointer OperatorEmitter::concatenationOfParts(const ValueContext& value)
 {
     std::span<const ValueID> parts = value->partsOperands();
-    if (parts.empty()) {
-        define(value, emptyString());
-        return;
-    }
+    if (parts.empty())
+        return emptyString();
     if (!value->isLikelyKey()) {
         ToStringEmitter toStrings(generator());
         Vector<CellPointer, 8> fibers;
         for (ValueID part : parts)
             fibers.append(toStrings.convertAddend(value, part));
-        define(value, emitter<StringEmitter>().concatenate(value, fibers.span()));
-        return;
+        return emitter<StringEmitter>().concatenate(value, fibers.span());
     }
-    if (parts.size() == 1) {
-        define(value, toString(value, get(parts[0]), typeOf(parts[0])));
-        return;
-    }
+    if (parts.size() == 1)
+        return toString(value, get(parts[0]), typeOf(parts[0]));
     Vector<Boxed, 8> primitives;
     for (ValueID part : parts) {
         const Type& type = typeOf(part);
@@ -303,19 +265,17 @@ void OperatorEmitter::generateStrcat(const ValueContext& value)
         Boxed other = primitives[1 - index];
         const Type& otherType = typeOf(parts[1 - index]);
         if (otherType.isAnyString()) {
-            define(value, selectByBranch<CellPointer>(textIsEmpty, [&] {
+            return selectByBranch<CellPointer>(textIsEmpty, [&] {
                 return unboxCell(other);
-            }, concatenateAll));
-            return;
+            }, concatenateAll);
         }
         if (otherType.isNumber()) {
-            define(value, selectByBranch<CellPointer>(logicalAnd(textIsEmpty, isInt32(other)), [&] {
+            return selectByBranch<CellPointer>(logicalAnd(textIsEmpty, isInt32(other)), [&] {
                 return emitter<StringEmitter>().integerToString(value, unboxInt32(other));
-            }, concatenateAll));
-            return;
+            }, concatenateAll);
         }
     }
-    define(value, concatenateAll());
+    return concatenateAll();
 }
 
 Operand OperatorEmitter::addStrings(const ValueContext& value)
@@ -379,43 +339,7 @@ Operand OperatorEmitter::addStrings(const ValueContext& value)
     case OperatorForm::MayBeStringOrNumber:
         break;
     }
-    fail(value, InternalErrorKind::OpcodeWithoutCode);
-    return emitter<ConstantEmitter>().zeroOf(value.representation());
-}
-
-void OperatorEmitter::generateToPropertyKey(const ValueContext& value)
-{
-    ValueID operand = value->valueOperand();
-    define(value, unboxCell(toPropertyKey(value, in<Boxed>(operand), typeOf(operand))));
-}
-
-Boxed OperatorEmitter::toPropertyKey(const OperationContext& context, Boxed value, const Type& type)
-{
-    auto convert = [&] {
-        return Boxed(callStub(context, AOT::toPropertyKey(), { value.value() }).first);
-    };
-    TypeID keyType = types().intern(Type::fromPrimitives(Primitive::String | Primitive::Symbol));
-    const TypeTestPlan& plan = typeTestPlanFor(types().intern(type), Representation::JSValue, keyType);
-    switch (plan.verdict) {
-    case TypeTestVerdict::AlwaysPasses:
-        return value;
-    case TypeTestVerdict::NeverPasses:
-        return convert();
-    case TypeTestVerdict::NeedsTest:
-        break;
-    }
-
-    LBasicBlock isKey = newBlock();
-    LBasicBlock isNotKey = newBlock();
-    Join<Boxed> join(m_out);
-    branchOnType(value, plan, { normalEdge(isKey), rareEdge(isNotKey) });
-
-    m_out.appendTo(isKey);
-    join.add(value);
-
-    m_out.appendTo(isNotKey);
-    join.add(convert());
-    return join.finish();
+    return failWithZero(value);
 }
 
 } } } // namespace JSC::AOT::Typed

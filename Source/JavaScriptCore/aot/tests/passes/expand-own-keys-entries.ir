@@ -13,8 +13,6 @@ function f0 name="expected" parameters=[{type=object}] results=[{type=anything}]
   b0(v0: object ~ L0):
     v1 = CallBuiltin -, v0 overload=ObjectEntries/0
     Return v1
-}
-# CHECK-LABEL: function f0 name="expected"
 # CHECK: b0(v0: object ~ L0):
 # CHECK-NEXT: = ShapeTest v0 layouts=[L0]
 # CHECK: [[done0]](v1: Array<Array>):
@@ -33,13 +31,12 @@ function f0 name="expected" parameters=[{type=object}] results=[{type=anything}]
 # CHECK-NEXT: [[xPair]]: Array = NewArray [[xKey]], [[x]] contents=anything
 # CHECK-NEXT: [[pairs]]: Array<Array> = NewArray [[yPair]], [[xPair]] contents=Array
 # CHECK-NEXT: Jump -> next [[done0]]([[pairs]])
+}
 
 function f1 name="symbolAndPrivateFields" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L1):
     v1 = CallBuiltin -, v0 overload=ObjectEntries/0
     Return v1
-}
-# CHECK-LABEL: function f1 name="symbolAndPrivateFields"
 # CHECK: = HasKeyOrder v0, {{*}} layout=L1 fields=[0, 1, 2]
 # CHECK-NOT: GetSlot
 # CHECK: [[aKey]]: "a" = String string="a"
@@ -47,14 +44,12 @@ function f1 name="symbolAndPrivateFields" parameters=[{type=object}] results=[{t
 # CHECK-NEXT: [[aPair]]: Array = NewArray [[aKey]], [[a]] contents=anything
 # CHECK-NEXT: = NewArray [[aPair]] contents=Array
 # CHECK-NOT: GetSlot
+}
 
 function f2 name="unchangedAllocation" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
-  b0(v0: number, v1: string):
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
     v3 = CallBuiltin -, v2 overload=ObjectEntries/0
     Return v3
-}
-# CHECK-LABEL: function f2 name="unchangedAllocation"
 # CHECK: v2:{{*}}= NewObject -, v0, v1 layout=L0 fields=[0, 1]
 # CHECK-NEXT: [[xKey2]]: "x" = String string="x"
 # CHECK-NEXT: [[x2]]: undefined|null|number ~ number = GetSlot v2, v2 key="x" receivers=[L0] level=Expected
@@ -65,23 +60,21 @@ function f2 name="unchangedAllocation" parameters=[{type=number}, {type=string}]
 # CHECK-NEXT: = NewArray [[xPair2]], [[yPair2]] contents=Array
 # CHECK-NOT: HasKeyOrder
 # CHECK-NOT: CallBuiltin
+}
 
 function f3 name="nothingExpected" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = CallBuiltin -, v0 overload=ObjectEntries/0
     Return v1
-}
-# CHECK-LABEL: function f3 name="nothingExpected"
 # CHECK: b0(v0: object):
 # CHECK-NEXT: v1: Array<Array> = CallBuiltin -, v0 overload=ObjectEntries/0
 # CHECK-NEXT: Return v1
+}
 
 function f4 name="layoutWithoutKnownOrder" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L2):
     v1 = CallBuiltin -, v0 overload=ObjectEntries/0
     Return v1
-}
-# CHECK-LABEL: function f4 name="layoutWithoutKnownOrder"
 # CHECK: b0(v0: object ~ L2):
 # CHECK-NEXT: v1: Array<Array> = CallBuiltin -, v0 overload=ObjectEntries/0
 # CHECK-NEXT: Return v1
+}

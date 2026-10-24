@@ -13,11 +13,8 @@
 #include "AOTResultRules.h"
 #include "AOTSort.h"
 #include "AOTTypeArena.h"
-#include "AOTValueSubstitution.h"
-#include "AOTVector.h"
 #include <algorithm>
 #include <array>
-#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -31,12 +28,6 @@ struct ExpandedResult {
 struct ExpansionResultUse {
     uint32_t resultIndex { 0 };
     Use use;
-};
-
-struct ExpansionResultReads {
-    Vector<ExpandedResult, 2> results;
-    Vector<ExpansionResultUse, 8> uses;
-    Vector<BlockID, 4> blocks;
 };
 
 } // anonymous namespace
@@ -70,62 +61,6 @@ static void replaceProducerWithResults(Function& function, ValueID producer, std
     results.become(Opcode::Results);
     results.setValuesOperands(parameters);
     function.edit(continuation, BlockEdit::Values).values.insert(0, producer);
-}
-
-static ExpansionResultReads collectResultReads(const Program& program, const Function& function, TypeArena& types, const UseLists& useLists, ValueID producer, uint32_t numberOfResults)
-{
-    ExpansionResultReads reads;
-    for (uint32_t resultIndex = 0; resultIndex < numberOfResults; ++resultIndex)
-        reads.results.append(ExpandedResult { resultTypeAt(program, function, types, producer, resultIndex), { } });
-    for (const Use& producerUse : useLists.usesOf(producer)) {
-        if (producerUse.kind != Use::Kind::Operand || function.at(producerUse.user).opcode != Opcode::ResultAt)
-            continue;
-        ValueID read = producerUse.user;
-        uint32_t resultIndex = function.at(read).index();
-        auto& result = reads.results[resultIndex];
-        if (!result.firstRead)
-            result.firstRead = read;
-        for (const Use& use : useLists.usesOf(read))
-            reads.uses.append(ExpansionResultUse { resultIndex, use });
-        if (reads.blocks.isEmpty() || reads.blocks.last() != producerUse.block)
-            reads.blocks.append(producerUse.block);
-    }
-    return reads;
-}
-
-static Vector<ValueID, 1> replaceResultReads(IRBuilder& builder, ExpansionResultReads&& reads, ValueID producer, BlockID cutBlock, BlockID continuation)
-{
-    Function& function = builder.function();
-    auto blockAfterCut = [&](BlockID block) {
-        return block == cutBlock ? continuation : block;
-    };
-
-    Vector<ValueID, 1> parameters;
-    for (auto& result : reads.results) {
-        ValueID parameter = builder.addParameter(continuation, result.type);
-        if (result.firstRead)
-            copyExpectedType(function, parameter, result.firstRead);
-        parameters.append(parameter);
-    }
-
-    for (auto& [resultIndex, use] : reads.uses) {
-        use.block = blockAfterCut(use.block);
-        replaceUse(function, use, parameters[resultIndex]);
-    }
-
-    for (BlockID recordedBlock : reads.blocks) {
-        BlockID block = blockAfterCut(recordedBlock);
-        auto& values = function.at(block).values;
-        BitVector indexes(values.size());
-        for (uint32_t index = 0; index < values.size(); ++index) {
-            if (isResultRead(function, values[index], producer))
-                indexes.quickSet(index);
-        }
-        builder.eraseValues(block, indexes);
-    }
-
-    replaceProducerWithResults(function, producer, parameters.span(), continuation);
-    return parameters;
 }
 
 static Vector<ValueID, 1> convertResultReads(IRBuilder& builder, TypeArena& types, std::span<const ValueID> reads, ValueID producer, uint32_t numberOfResults, BlockID continuation)
@@ -203,19 +138,58 @@ IRBuilder::Expansion IRBuilder::beginExpansion(ProgramPoint point)
 {
     ValueID id = m_function.at(point.block).values[point.index];
     std::optional<uint32_t> numberOfResults = numberOfResultsOf(m_context.program, m_function, m_function.at(id));
-    ExpansionResultReads reads;
+    Vector<ExpandedResult, 2> results;
+    Vector<ExpansionResultUse, 8> uses;
+    Vector<BlockID, 4> blocksOfReads;
     if (numberOfResults) {
         RELEASE_ASSERT(m_analyses);
-        reads = collectResultReads(m_context.program, m_function, m_types, m_analyses->useLists(), id, *numberOfResults);
+        const UseLists& useLists = m_analyses->useLists();
+        for (uint32_t resultIndex = 0; resultIndex < *numberOfResults; ++resultIndex)
+            results.append(ExpandedResult { resultTypeAt(m_context.program, m_function, m_types, id, resultIndex), { } });
+        for (const Use& producerUse : useLists.usesOf(id)) {
+            if (producerUse.kind != Use::Kind::Operand || m_function.at(producerUse.user).opcode != Opcode::ResultAt)
+                continue;
+            ValueID read = producerUse.user;
+            uint32_t resultIndex = m_function.at(read).index();
+            if (!results[resultIndex].firstRead)
+                results[resultIndex].firstRead = read;
+            for (const Use& use : useLists.usesOf(read))
+                uses.append(ExpansionResultUse { resultIndex, use });
+            if (blocksOfReads.isEmpty() || blocksOfReads.last() != producerUse.block)
+                blocksOfReads.append(producerUse.block);
+        }
     }
     Vector<BlockID, 8> changedBlocks { point.block };
-    for (const ExpansionResultUse& rewritten : reads.uses)
+    for (const ExpansionResultUse& rewritten : uses)
         changedBlocks.append(rewritten.use.block);
 
     Expansion expansion = cutForExpansion(point);
-    if (numberOfResults)
-        expansion.results = replaceResultReads(*this, WTF::move(reads), id, point.block, expansion.continuation);
-    else if (resultRuleOf(m_function.at(id).opcode) == ResultRule::None)
+    if (numberOfResults) {
+        auto blockAfterCut = [&](BlockID block) {
+            return block == point.block ? expansion.continuation : block;
+        };
+        for (const ExpandedResult& result : results) {
+            ValueID parameter = addParameter(expansion.continuation, result.type);
+            if (result.firstRead)
+                copyExpectedType(m_function, parameter, result.firstRead);
+            expansion.results.append(parameter);
+        }
+        for (auto& [resultIndex, use] : uses) {
+            use.block = blockAfterCut(use.block);
+            replaceUse(m_function, use, expansion.results[resultIndex]);
+        }
+        for (BlockID recordedBlock : blocksOfReads) {
+            BlockID block = blockAfterCut(recordedBlock);
+            auto& values = m_function.at(block).values;
+            BitVector indexes(values.size());
+            for (uint32_t index = 0; index < values.size(); ++index) {
+                if (isResultRead(m_function, values[index], id))
+                    indexes.quickSet(index);
+            }
+            eraseValues(block, indexes);
+        }
+        replaceProducerWithResults(m_function, id, expansion.results.span(), expansion.continuation);
+    } else if (resultRuleOf(m_function.at(id).opcode) == ResultRule::None)
         becomeUndefined(m_function, id);
     else {
         becomeParameter(m_function, id);
@@ -233,7 +207,6 @@ IRBuilder::Expansion IRBuilder::beginExpansion(ProgramPoint point, std::span<con
     RELEASE_ASSERT(numberOfResults);
     for (ValueID read : resultReads)
         RELEASE_ASSERT(isResultRead(m_function, read, id));
-    // A read becomes a cast of a parameter where it stands, and only the lists know where that is.
     if (UseLists* useLists = m_analyses ? m_analyses->updatingUseLists() : nullptr) {
         for (ValueID read : resultReads)
             useLists->didChangeOperandsOf(read);
@@ -258,18 +231,6 @@ IRBuilder::DeferredResultReads::DeferredResultReads(IRBuilder& builder, std::spa
         }
     }
     AOT::stableSort(m_reads, { }, &Read::producer);
-}
-
-auto IRBuilder::DeferredResultReads::readsOf(ValueID producer) const -> std::span<const Read>
-{
-    auto range = std::ranges::equal_range(m_reads.span(), producer, { }, &Read::producer);
-    return { range.begin(), range.end() };
-}
-
-void IRBuilder::DeferredResultReads::replace(ValueID read, ValueID replacement)
-{
-    m_substitution.replace(read, replacement);
-    m_isReplaced.set(read.index());
 }
 
 void IRBuilder::DeferredResultReads::finish()
@@ -303,7 +264,7 @@ IRBuilder::Expansion IRBuilder::beginExpansion(ProgramPoint point, DeferredResul
     Vector<ExpandedResult, 2> results;
     for (uint32_t resultIndex = 0; resultIndex < *numberOfResults; ++resultIndex)
         results.append(ExpandedResult { resultTypeAt(m_context.program, m_function, m_types, id, resultIndex), { } });
-    std::span reads = deferred.readsOf(id);
+    auto reads = std::ranges::equal_range(deferred.m_reads.span(), id, { }, &DeferredResultReads::Read::producer);
     for (auto [producer, read] : reads) {
         ExpandedResult& result = results[m_function.at(read).index()];
         if (!result.firstRead)
@@ -317,8 +278,10 @@ IRBuilder::Expansion IRBuilder::beginExpansion(ProgramPoint point, DeferredResul
             copyExpectedType(m_function, parameter, result.firstRead);
         expansion.results.append(parameter);
     }
-    for (auto [producer, read] : reads)
-        deferred.replace(read, expansion.results[m_function.at(read).index()]);
+    for (auto [producer, read] : reads) {
+        deferred.m_substitution.replace(read, expansion.results[m_function.at(read).index()]);
+        deferred.m_isReplaced.set(read.index());
+    }
     replaceProducerWithResults(m_function, id, expansion.results.span(), expansion.continuation);
     didChangeControlFlow(singleElementSpan(point.block));
     return expansion;
@@ -328,7 +291,6 @@ void IRBuilder::endExpansion(const Expansion& expansion, std::span<const ValueID
 {
     RELEASE_ASSERT(m_insertions.isEmpty());
     RELEASE_ASSERT(results.size() == expansion.results.size());
-    // No value has the type never: what computes such a result never completes, so no edge leads on from here.
     bool neverCompletes = std::ranges::any_of(results, [&](ValueID result) {
         return m_function.at(result).type == TypeTable::never;
     });

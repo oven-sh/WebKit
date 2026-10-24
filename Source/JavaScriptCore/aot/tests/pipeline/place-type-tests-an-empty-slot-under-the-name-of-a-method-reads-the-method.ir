@@ -10,7 +10,6 @@ layout L0 kind=Instance name="Stream" constructor=f1 fields=[{key="count" declar
 layout L1 kind=Instance name="Socket" constructor=f4 fields=[{key="count" declared={type=anything}}, {key="_read" declared={type=anything}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = NewClosure function=f2
@@ -35,7 +34,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v20
 }
 function f1 name="Stream" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
     v4 = Integer integer=0
@@ -49,7 +47,6 @@ function f1 name="Stream" kind=BaseConstructor flags=[HasNewTarget] parameters=[
     Return v3
 }
 function f2 name="_read" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 
@@ -74,7 +71,6 @@ function f3 name="readOf" parameters=[{type=L0 flags=[IsExpected]}] results=[{ty
 # CHECK-NEXT: Jump -> next [[behind]]([[method]])
 
 function f4 name="Socket" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = GetConstructPrototype v0 layout=L1
     v3 = NewObject v2 layout=L1
     v4 = Integer integer=0
@@ -88,7 +84,6 @@ function f4 name="Socket" kind=BaseConstructor flags=[HasNewTarget] parameters=[
     Return v3
 }
 function f5 name="_read" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 

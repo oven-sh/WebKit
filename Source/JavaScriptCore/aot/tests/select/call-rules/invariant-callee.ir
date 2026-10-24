@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="invariant-callee" parameters=[{type=anything}, {type=boolean}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: anything, v1: boolean, v2: anything):
     Jump -> next b1()
   b1():
     LoopHint
@@ -13,15 +12,13 @@ function f0 name="invariant-callee" parameters=[{type=anything}, {type=boolean},
     Branch v1 -> taken b1(), notTaken b2()
   b2():
     Return
-}
-# CHECK-LABEL: function f0 name="invariant-callee"
 # CHECK-NEXT: b0(
 # CHECK-NEXT: [[target]]: codeaddress = ResolveCallTarget v0 argumentCount=1
 # CHECK-NEXT: Jump -> next b1()
 # CHECK: anything = CallResolved v0, [[target]], -, v2
+}
 
 function f1 name="nested-loops" parameters=[{type=anything}, {type=boolean}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: anything, v1: boolean, v2: anything):
     Jump -> next b1()
   b1():
     LoopHint
@@ -34,16 +31,14 @@ function f1 name="nested-loops" parameters=[{type=anything}, {type=boolean}, {ty
     Branch v1 -> taken b1(), notTaken b4()
   b4():
     Return
-}
-# CHECK-LABEL: function f1 name="nested-loops"
 # CHECK-NEXT: b0(
 # CHECK-NEXT: [[outer]]: codeaddress = ResolveCallTarget v0
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NOT: ResolveCallTarget
 # CHECK: anything = CallResolved v0, [[outer]], v2
+}
 
 function f2 name="call-in-rare-block" parameters=[{type=anything}, {type=boolean}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: anything, v1: boolean, v2: anything):
     Jump -> next b1()
   b1():
     LoopHint
@@ -55,13 +50,11 @@ function f2 name="call-in-rare-block" parameters=[{type=anything}, {type=boolean
     Branch v1 -> taken b1(), notTaken b4()
   b4():
     Return
-}
-# CHECK-LABEL: function f2 name="call-in-rare-block"
 # CHECK-NOT: ResolveCallTarget
 # CHECK: anything = Call v0, -, v2
+}
 
 function f3 name="call-after-loop" parameters=[{type=anything}, {type=boolean}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: anything, v1: boolean, v2: anything):
     Jump -> next b1()
   b1():
     LoopHint
@@ -69,7 +62,6 @@ function f3 name="call-after-loop" parameters=[{type=anything}, {type=boolean}, 
   b2():
     v4 = Call v0, -, v2
     Return
-}
-# CHECK-LABEL: function f3 name="call-after-loop"
 # CHECK-NOT: ResolveCallTarget
 # CHECK: anything = Call v0, -, v2
+}

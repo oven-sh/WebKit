@@ -9,7 +9,6 @@ entry module=m0
 layout L0 name="Point" fields=[{key="x" declared={type=number}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = CallDirect v1 function=f1 [isAlwaysInlined]
@@ -20,13 +19,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v7 = Call v6, -, v5
     v8 = Call v6, -, v2
     Return
-}
-# FIRST-LABEL: function f0 name="main"
 # FIRST: = CallDirect v1 function=f1
 # FIRST: v4: L0 = NewObject
 # FIRST-NEXT: = CallDirect v4 function=f1
 # FIRST-NOT: GetSlot
-# CHECK-LABEL: function f0 name="main"
 # CHECK-NOT: CallDirect
 # CHECK: = PropGet {{*}} key="x"
 # CHECK-NOT: CallDirect
@@ -36,10 +32,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK: = GetSlot {{*}} key="x" receivers=[L0] level=Proven
 # CHECK-NOT: key="x"
 # CHECK: Return
+}
 function f1 name="read" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="x"
     Return v1
-}
-# FIRST-LABEL: function f1 name="read"
 # FIRST: = PropGet v0 key="x"
+}

@@ -18,7 +18,6 @@ layout L0 kind=Instance name="Failure" constructor=f1 fields=[{key="code" declar
 layout L1 kind=Instance name="Deeper" base=L0 constructor=f2 fields=[{key="level" declared={type=anything}}] flags=[HasHeritage]
 layout L2 name="Info" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = PropGet v0 key="Error" [isFreeName]
@@ -111,7 +110,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Failure" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: function, v1: anything, v2: anything):
     v3 = GetSuperBase v0 homeKind=Object
     v4 = SuperConstruct v3, v1, v2 layout=L0
     v5 = Integer integer=7
@@ -125,7 +123,6 @@ function f1 name="Failure" kind=DerivedConstructor flags=[HasNewTarget, TakesCal
     Return v4
 }
 function f2 name="Deeper" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: function, v1: anything, v2: anything):
     v3 = GetSuperBase v0 homeKind=Object
     v4 = SuperConstruct v3, v1, v2 layout=L1
     v5 = Integer integer=2
@@ -135,7 +132,6 @@ function f2 name="Deeper" kind=DerivedConstructor flags=[HasNewTarget, TakesCall
     Return v4
 }
 function f3 name="describe" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="detail"
     v2 = String string=":"
     v3 = Add v1, v2
@@ -144,14 +140,12 @@ function f3 name="describe" kind=Method flags=[HasThis] results=[{type=anything}
     Return v5
 }
 function f4 name="twice" kind=Getter flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="code"
     v2 = Integer integer=2
     v3 = Mul v1, v2
     Return v3
 }
 function f5 name="describe" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="deep "
     v2 = PropGet v0 key="detail"
     v3 = Add v1, v2
@@ -168,7 +162,6 @@ layout L0 kind=Instance name="List" constructor=f1 fields=[{key="tag" declared={
 layout L1 kind=Instance name="Registry" constructor=f2 fields=[{key="hits" declared={type=anything}}, {key="name" declared={type=anything}}] flags=[HasHeritage]
 layout L2 kind=Instance name="Bytes" constructor=f3 fields=[{key="cursor" declared={type=anything}}] flags=[HasHeritage]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = PropGet v0 key="Array" [isFreeName]
@@ -282,7 +275,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="List" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0 homeKind=Object
     v3 = SuperConstruct v2, v1 layout=L0
     v4 = String string="t"
@@ -292,7 +284,6 @@ function f1 name="List" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee
     Return v3
 }
 function f2 name="Registry" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: function, v1: anything, v2: anything):
     v3 = GetSuperBase v0 homeKind=Object
     v4 = SuperConstruct v3, v1 layout=L1
     v5 = Integer integer=0
@@ -301,7 +292,6 @@ function f2 name="Registry" kind=DerivedConstructor flags=[HasNewTarget, TakesCa
     Return v4
 }
 function f3 name="Bytes" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: function, v1: anything, v2: anything):
     v3 = GetSuperBase v0 homeKind=Object
     v4 = SuperConstruct v3, v1, v2 layout=L2
     v5 = Integer integer=0
@@ -309,14 +299,12 @@ function f3 name="Bytes" kind=DerivedConstructor flags=[HasNewTarget, TakesCalle
     Return v4
 }
 function f4 name="label" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="tag"
     v2 = PropGet v0 key="length"
     v3 = Add v1, v2
     Return v3
 }
 function f5 name="lookup" kind=Method flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = PropGet v0 key="hits"
     v3 = Integer integer=1
     v4 = Add v2, v3
@@ -326,7 +314,6 @@ function f5 name="lookup" kind=Method flags=[HasThis] parameters=[{type=anything
     Return v7
 }
 function f6 name="next" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="cursor"
     v2 = Integer integer=1
     v3 = Add v1, v2
@@ -343,7 +330,6 @@ layout L0 kind=Instance name="Failure" constructor=f1 flags=[HasHeritage]
 layout L1 kind=Instance name="Stack" constructor=f2 flags=[HasHeritage]
 layout L2 name="Options" fields=[{key="cause" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = PropGet v0 key="Error" [isFreeName]
@@ -373,7 +359,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Failure" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: function, v1: anything, v2: anything):
     v3 = GetSuperBase v0 homeKind=Object
     v4 = Integer integer=17
     v5 = NewObject -, v4 layout=L2 fields=[0]
@@ -381,18 +366,15 @@ function f1 name="Failure" kind=DerivedConstructor flags=[HasNewTarget, TakesCal
     Return v6
 }
 function f2 name="Stack" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0 homeKind=Object
     v3 = SuperConstruct v2, v1 layout=L1
     Return v3
 }
 function f3 name="message" kind=Getter flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="from getter"
     Return v1
 }
 function f4 name="length" kind=Getter flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=42
     Return v1
 }

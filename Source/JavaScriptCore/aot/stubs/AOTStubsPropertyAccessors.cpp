@@ -110,32 +110,24 @@ static void loadCustomAccessorRecord(StubAssembler& jit, GPRReg accessorIndexAnd
     jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.customAccessors)), accessorIndexAndRecord);
 }
 
-struct RecordedAccessorCall {
-    GPRReg receiver;
-    GPRReg record;
-    GPRReg uid;
-    std::optional<GPRReg> storedValue;
-};
-
 // A0 is set last: on ARM64 it is the receiver's register.
-static void callRecordedAccessorAndReturn(StubAssembler& jit, const RecordedAccessorCall& call)
+static void callRecordedAccessorAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg record, GPRReg uid, std::optional<GPRReg> storedValue)
 {
-    const GPRReg record = call.record;
-    jit.callAndReturnPreservingRegisters({ .callee = StubCallee::HostFunction, .returnsValue = !call.storedValue, .checksException = true }, [&] {
+    jit.callAndReturnPreservingRegisters({ .callee = StubCallee::HostFunction, .returnsValue = !storedValue, .checksException = true }, [&] {
         const GPRReg A0 = jit.reuseScratch(StubRegister::A0);
         const GPRReg A1 = jit.reuseScratch(StubRegister::A1);
         const GPRReg A2 = jit.reuseScratch(StubRegister::A2);
         const GPRReg function = jit.reuseScratch(StubRegister::T11);
-        RELEASE_ASSERT(noOverlap(record, A0, A1, A2, function) && noOverlap(call.receiver, record, A1, A2, function));
+        RELEASE_ASSERT(noOverlap(record, A0, A1, A2, function) && noOverlap(receiver, record, A1, A2, function));
 
-        if (call.storedValue) {
+        if (storedValue) {
             const GPRReg A3 = jit.reuseScratch(StubRegister::A3);
-            RELEASE_ASSERT(noOverlap(A3, record, call.receiver));
-            jit.shuffleRegisters<GPRReg, 2>({ *call.storedValue, call.uid }, { A2, A3 });
+            RELEASE_ASSERT(noOverlap(A3, record, receiver));
+            jit.shuffleRegisters<GPRReg, 2>({ *storedValue, uid }, { A2, A3 });
         } else
-            jit.move(call.uid, A2);
+            jit.move(uid, A2);
         jit.loadPtr(Address(record, OBJECT_OFFSETOF(CustomAccessorRecord, slotBase)), A1);
-        jit.moveConditionallyTest64(CCallHelpers::Zero, A1, A1, call.receiver, A1);
+        jit.moveConditionallyTest64(CCallHelpers::Zero, A1, A1, receiver, A1);
         jit.loadPtr(Address(record, OBJECT_OFFSETOF(CustomAccessorRecord, function)), function);
         jit.loadPtr(Address(record, OBJECT_OFFSETOF(CustomAccessorRecord, globalObject)), A0);
         jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), record);
@@ -160,7 +152,7 @@ void callCustomGetterAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg acces
 
     hasNoCachedValue.link(&jit);
     isEmpty.link(&jit);
-    callRecordedAccessorAndReturn(jit, { receiver, record, uid, std::nullopt });
+    callRecordedAccessorAndReturn(jit, receiver, record, uid, std::nullopt);
 }
 
 void callCustomSetterAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg value, GPRReg accessorIndex, GPRReg uid)
@@ -168,64 +160,40 @@ void callCustomSetterAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg value
     const GPRReg record = jit.clobberRegister(accessorIndex);
     RELEASE_ASSERT(noOverlap(receiver, value, record, uid));
     loadCustomAccessorRecord(jit, record);
-    callRecordedAccessorAndReturn(jit, { receiver, record, uid, value });
-}
-
-static uint32_t encodeAccessorKind(MethodKind kind)
-{
-    FunctionKindData data { };
-    data.accessorKind = static_cast<unsigned>(kind);
-    return std::bit_cast<uint16_t>(data);
-}
-
-static uint32_t encodeCallableKind(CallableKind kind)
-{
-    FunctionKindData data { };
-    data.callableKind = static_cast<unsigned>(kind);
-    return std::bit_cast<uint16_t>(data);
-}
-
-struct NamePrefixTest {
-    bool hasPrefix(uint32_t functionKind) const { return (functionKind & accessorKindMask) != methodAccessorKind || (functionKind & callableKindMask) == boundCallableKind; }
-
-    uint32_t accessorKindMask { 0 };
-    uint32_t callableKindMask { 0 };
-    uint32_t methodAccessorKind { 0 };
-    uint32_t boundCallableKind { 0 };
-};
-
-static NamePrefixTest createNamePrefixTest()
-{
-    constexpr CallableKind callableKinds[] = { CallableKind::Plain, CallableKind::Arrow, CallableKind::Method, CallableKind::Bound };
-
-    NamePrefixTest test;
-    test.methodAccessorKind = encodeAccessorKind(MethodKind::Method);
-    test.boundCallableKind = encodeCallableKind(CallableKind::Bound);
-    for (MethodKind accessorKind : allMembersOf<MethodKind>)
-        test.accessorKindMask |= encodeAccessorKind(accessorKind);
-    for (CallableKind callableKind : callableKinds)
-        test.callableKindMask |= encodeCallableKind(callableKind);
-    RELEASE_ASSERT(!(test.accessorKindMask & test.callableKindMask));
-
-    for (MethodKind accessorKind : allMembersOf<MethodKind>) {
-        for (CallableKind callableKind : callableKinds) {
-            FunctionKindData data { };
-            data.accessorKind = static_cast<unsigned>(accessorKind);
-            data.callableKind = static_cast<unsigned>(callableKind);
-            RELEASE_ASSERT(test.hasPrefix(std::bit_cast<uint16_t>(data)) == data.hasInitialNamePrefix());
-        }
-    }
-    return test;
+    callRecordedAccessorAndReturn(jit, receiver, record, uid, value);
 }
 
 // functionNames has no "get ", "set " or "bound ".
 static void branchIfNameHasPrefix(StubAssembler& jit, GPRReg function, GPRReg kind, JumpList& hasPrefix)
 {
-    const NamePrefixTest test = createNamePrefixTest();
+    constexpr CallableKind callableKinds[] = { CallableKind::Plain, CallableKind::Arrow, CallableKind::Method, CallableKind::Bound };
+    auto encode = [](unsigned accessorKind, unsigned callableKind) -> uint32_t {
+        FunctionKindData data { };
+        data.accessorKind = accessorKind;
+        data.callableKind = callableKind;
+        return std::bit_cast<uint16_t>(data);
+    };
+    const uint32_t methodAccessorKind = encode(static_cast<unsigned>(MethodKind::Method), 0);
+    const uint32_t boundCallableKind = encode(0, static_cast<unsigned>(CallableKind::Bound));
+    uint32_t accessorKindMask = 0;
+    uint32_t callableKindMask = 0;
+    for (MethodKind accessorKind : allMembersOf<MethodKind>)
+        accessorKindMask |= encode(static_cast<unsigned>(accessorKind), 0);
+    for (CallableKind callableKind : callableKinds)
+        callableKindMask |= encode(0, static_cast<unsigned>(callableKind));
+    RELEASE_ASSERT(!(accessorKindMask & callableKindMask));
+    for (MethodKind accessorKind : allMembersOf<MethodKind>) {
+        for (CallableKind callableKind : callableKinds) {
+            const uint32_t functionKind = encode(static_cast<unsigned>(accessorKind), static_cast<unsigned>(callableKind));
+            const bool testFindsPrefix = (functionKind & accessorKindMask) != methodAccessorKind || (functionKind & callableKindMask) == boundCallableKind;
+            RELEASE_ASSERT(testFindsPrefix == std::bit_cast<FunctionKindData>(static_cast<uint16_t>(functionKind)).hasInitialNamePrefix());
+        }
+    }
+
     loadKindOfClosureFunction(jit, function, kind);
-    jit.xor32(TrustedImm32(test.methodAccessorKind | test.boundCallableKind), kind);
-    hasPrefix.append(jit.branchTest32(CCallHelpers::NonZero, kind, TrustedImm32(test.accessorKindMask)));
-    hasPrefix.append(jit.branchTest32(CCallHelpers::Zero, kind, TrustedImm32(test.callableKindMask)));
+    jit.xor32(TrustedImm32(methodAccessorKind | boundCallableKind), kind);
+    hasPrefix.append(jit.branchTest32(CCallHelpers::NonZero, kind, TrustedImm32(accessorKindMask)));
+    hasPrefix.append(jit.branchTest32(CCallHelpers::Zero, kind, TrustedImm32(callableKindMask)));
 }
 
 static void loadClosureFunction(StubAssembler& jit, GPRReg value, GPRReg function, JumpList& isNotClosure)

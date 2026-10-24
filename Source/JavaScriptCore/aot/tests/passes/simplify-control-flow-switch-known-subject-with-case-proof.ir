@@ -10,7 +10,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="knownInteger" parameters=[{type=boolean}, {type=number}] results=[{type=number}] {
-  b0(v0: boolean, v1: number):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v2 = Integer integer=1
@@ -24,17 +23,15 @@ function f0 name="knownInteger" parameters=[{type=boolean}, {type=number}] resul
     Return v5
   b5():
     Return v1
-}
-# CHECK-LABEL: function f0 name="knownInteger"
 # CHECK: = Integer integer=1
 # CHECK-NEXT: Jump -> next b4(v2)
 # CHECK: Jump -> next b4(v3)
 # CHECK: b4(v5: number):
 # CHECK-NEXT: Return v5
 # CHECK-NOT: Return v1
+}
 
 function f1 name="argumentsComeBeforeSubject" parameters=[{type=boolean}, {type=number}] results=[{type=number}] {
-  b0(v0: boolean, v1: number):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v2 = Integer integer=0
@@ -47,13 +44,11 @@ function f1 name="argumentsComeBeforeSubject" parameters=[{type=boolean}, {type=
     Return v6
   b4():
     Return v1
-}
-# CHECK-LABEL: function f1 name="argumentsComeBeforeSubject"
 # CHECK: = Integer
 # CHECK-NEXT: Jump -> next b3(v1, v2)
+}
 
 function f2 name="onlyPredecessor" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Integer integer=1
     Switch v1 cases=[0, 1] -> case b1(| 0), case b2(| 0), otherwise b3()
   b1(v2):
@@ -63,15 +58,13 @@ function f2 name="onlyPredecessor" parameters=[{type=number}] results=[{type=num
     Return v4
   b3():
     Return v0
-}
-# CHECK-LABEL: function f2 name="onlyPredecessor"
 # CHECK-NOT: Switch
 # CHECK: = Add v1, v0
 # CHECK-NEXT: Return v4
 # CHECK-NOT: Return v0
+}
 
 function f3 name="knownIntegerIsNoCase" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Integer integer=7
     Switch v1 cases=[0, 1] -> case b1(| 0), case b2(| 0), otherwise b3()
   b1(v2):
@@ -80,13 +73,11 @@ function f3 name="knownIntegerIsNoCase" parameters=[{type=number}] results=[{typ
     Unreachable
   b3():
     Return v0
-}
-# CHECK-LABEL: function f3 name="knownIntegerIsNoCase"
 # CHECK-NOT: Switch
 # CHECK: Return v0
+}
 
 function f4 name="knownString" parameters=[{type=boolean}, {type=string}] results=[{type=string}] {
-  b0(v0: boolean, v1: string):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v2 = String string="b"
@@ -100,14 +91,12 @@ function f4 name="knownString" parameters=[{type=boolean}, {type=string}] result
     Return v5
   b5():
     Return v1
-}
-# CHECK-LABEL: function f4 name="knownString"
 # CHECK: = String string="b"
 # CHECK-NEXT: Jump -> next b4(v2)
 # CHECK-NOT: Return v1
+}
 
 function f5 name="rangeLeavesOneCase" parameters=[{type=int[0, 1]}, {type=number}] results=[{type=number}] {
-  b0(v0: int[0, 1], v1: number):
     Switch v0 cases=[0, 5] -> case b1(| 0), case b2(| 0), otherwise b3()
   b1(v2):
     Return v2
@@ -115,13 +104,11 @@ function f5 name="rangeLeavesOneCase" parameters=[{type=int[0, 1]}, {type=number
     Unreachable
   b3():
     Return v1
-}
-# CHECK-LABEL: function f5 name="rangeLeavesOneCase"
 # CHECK: Switch v0 cases=[0] -> case b1(| 0), otherwise b3()
 # CHECK-NEXT: b1(v2: 0):
+}
 
 function f6 name="unknownSubject" parameters=[{type=i32}, {type=number}] results=[{type=number}] {
-  b0(v0: i32, v1: number):
     Switch v0 cases=[0, 1] -> case b1(| 0), case b2(| 0), otherwise b3()
   b1(v2):
     Return v2
@@ -129,23 +116,19 @@ function f6 name="unknownSubject" parameters=[{type=i32}, {type=number}] results
     Return v3
   b3():
     Return v1
-}
-# CHECK-LABEL: function f6 name="unknownSubject"
 # CHECK: Switch v0 cases=[0, 1] -> case b1(| 0), case b2(| 0), otherwise b3()
 # CHECK-NEXT: b1(v2: 0):
 # CHECK: b2(v3: 1):
+}
 
 function f7 name="caseWithProofIntoBlockOfOtherwise" parameters=[{type=i32}, {type=number}] results=[{type=number}] {
-  b0(v0: i32, v1: number):
     Switch v0 cases=[0] -> case b1(| 0), otherwise b1(v1)
   b1(v2):
     Return v2
-}
-# CHECK-LABEL: function f7 name="caseWithProofIntoBlockOfOtherwise"
 # CHECK: Switch v0 cases=[0] -> case b1(| 0), otherwise b1(v1)
+}
 
 function f8 name="unknownString" parameters=[{type=string}] results=[{type=string}] {
-  b0(v0: string):
     SwitchString v0 strings=["a", "b"] -> case b1(| 0), case b2(| 0), otherwise b3()
   b1(v1):
     Return v1
@@ -153,8 +136,7 @@ function f8 name="unknownString" parameters=[{type=string}] results=[{type=strin
     Return v2
   b3():
     Return v0
-}
-# CHECK-LABEL: function f8 name="unknownString"
 # CHECK: SwitchString v0 strings=["a", "b"] -> case b1(| 0), case b2(| 0), otherwise b3()
 # CHECK-NEXT: b1(v1: "a"):
 # CHECK: b2(v2: "b"):
+}

@@ -41,7 +41,6 @@ function f1 name="read-through-expected-type" parameters=[{type=L0|L1|L3 flags=[
 }
 # CHECK-NEXT: F1 v1 PropGet [[late]]: form=Slot level=Expected operation=GetSlotOrUndefined receivers=[L0, L1, L3] receiverTest=Type proofs=[OwnInstance] missPath member=(Field level=Proven)
 function f2 name="store-through-type" parameters=[{type=L0|L1}, {type=string}] results=[{type=anything}] {
-  b0(v0: L0|L1, v1: string):
     PropSet v0, v1 key="late"
     Return
 }

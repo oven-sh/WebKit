@@ -9,31 +9,27 @@ function f0 name="expectedPartHasNoArm" parameters=[{type=string|function}] resu
   b0(v0: string|function ~ function):
     v1 = PropGet v0 key="length"
     Return v1
-}
-# CHECK-LABEL: function f0 name="expectedPartHasNoArm"
 # CHECK: = TypeTest v0 testedType=string
 # CHECK: ([[text0]]: string) frequency=Unlikely:
 # CHECK-NEXT: = PropGet [[text0]] key="length"
 # CHECK: ([[handler0]]: function):
 # CHECK-NEXT: = PropGet [[handler0]] key="length"
+}
 
 function f1 name="expectedPartHasAnArm" parameters=[{type=string|function}] results=[{type=anything}] {
   b0(v0: string|function ~ string):
     v1 = PropGet v0 key="length"
     Return v1
-}
-# CHECK-LABEL: function f1 name="expectedPartHasAnArm"
 # CHECK: = TypeTest v0 testedType=string
 # CHECK: ([[text1]]: string):
 # CHECK-NEXT: = PropGet [[text1]] key="length"
 # CHECK: ([[handler1]]: function) frequency=Unlikely:
 # CHECK-NEXT: = PropGet [[handler1]] key="length"
+}
 
 function f2 name="nothingIsExpected" parameters=[{type=string|function}] results=[{type=anything}] {
-  b0(v0: string|function):
     v1 = PropGet v0 key="length"
     Return v1
-}
-# CHECK-LABEL: function f2 name="nothingIsExpected"
 # CHECK: ([[text2]]: string):
 # CHECK: ([[handler2]]: function) frequency=Unlikely:
+}

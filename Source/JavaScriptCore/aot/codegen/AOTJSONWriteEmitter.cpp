@@ -18,21 +18,6 @@ static_assert(StringBuilderEmitter::maxInlineDigits <= jsonIntegerBytes);
 static_assert(StringBuilderEmitter::maxInlineDigits <= jsonNumberBytes);
 static_assert(sizeof(uint32_t) + sizeof(uint8_t) <= jsonBooleanBytes);
 
-JSONWriteEmitter::JSONWriteEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
-
-void JSONWriteEmitter::generateStringBuilderReserve(const ValueContext& value)
-{
-    define(value, builders().reserve(value, builderOf(value), word32(value->size())));
-}
-
-void JSONWriteEmitter::generateStringBuilderCommit(const ValueContext& value)
-{
-    builders().commit(builderOf(value), cursorOf(value));
-}
-
 void JSONWriteEmitter::generateJSONAppendKey(const ValueContext& value)
 {
     if (!canWriteJSONKeyAtCursor(m_program, value->string()) || (value->opensObject() && value->followsMember())) {
@@ -47,9 +32,14 @@ void JSONWriteEmitter::generateJSONAppendToken(const ValueContext& value)
 {
     JSONToken token = value->jsonToken();
     switch (token) {
-    case JSONToken::CloseObjectOverComma:
-        define(value, closeObjectOverComma(cursorOf(value)));
+    case JSONToken::CloseObjectOverComma: {
+        Pointer cursor = cursorOf(value);
+        Word32 previous(m_out.load8ZeroExt32(builders().bytesAt(cursor, -1)));
+        Pointer brace(m_out.sub(cursor.value(), zeroExtended(equal(previous, word32(','))).value()));
+        m_out.store32As8(m_out.constInt32('}'), builders().bytesAt(brace));
+        define(value, offsetBy(brace, 1));
         return;
+    }
     case JSONToken::OpenObject:
     case JSONToken::CloseObject:
     case JSONToken::OpenArray:
@@ -74,49 +64,29 @@ void JSONWriteEmitter::generateJSONAppendBoolean(const ValueContext& value)
     define(value, Pointer(m_out.sub(offsetBy(cursor, 5).value(), zeroExtended(isTrue).value())));
 }
 
-void JSONWriteEmitter::generateJSONAppendInteger(const ValueContext& value)
+void JSONWriteEmitter::appendNumber(const ValueContext& value, bool isInteger)
 {
     Pointer cursor = cursorOf(value);
-    Integer appended = integerOf(value->valueOperand());
+    Operand appended = isInteger ? Operand(integerOf(value->valueOperand())) : Operand(in<Number>(value->valueOperand()));
+    Integer whole = isInteger ? appended.as<Integer>() : emitter<ConversionEmitter>().toInteger(appended.as<Number>());
     LBasicBlock hasFewDigits = newBlock();
     LBasicBlock byCall = newBlock();
     Join<Pointer> join(m_out);
 
-    branch(below(appended, integer(StringBuilderEmitter::firstIntegerWrittenByCall)), { normalEdge(hasFewDigits), unlikelyEdge(byCall) });
+    if (isInteger)
+        branch(below(whole, integer(StringBuilderEmitter::firstIntegerWrittenByCall)), { normalEdge(hasFewDigits), unlikelyEdge(byCall) });
+    else {
+        Condition isWholeWithFewDigits = logicalAnd(equal(toNumber(whole), appended.as<Number>()), below(whole, integer(StringBuilderEmitter::firstIntegerWrittenByCall)));
+        branch(isWholeWithFewDigits, { normalEdge(hasFewDigits), normalEdge(byCall) });
+    }
 
     m_out.appendTo(hasFewDigits);
-    join.add(builders().writeDigits(cursor, low32(appended)));
+    join.add(builders().writeDigits(cursor, low32(whole)));
 
     m_out.appendTo(byCall);
-    join.add(callLeaf<Pointer>(RuntimeOperation::JSONAppendInteger, { cursor, appended }));
+    join.add(callLeaf<Pointer>(isInteger ? RuntimeOperation::JSONAppendInteger : RuntimeOperation::JSONAppendNumber, { cursor, appended }));
 
     define(value, join.finish());
-}
-
-void JSONWriteEmitter::generateJSONAppendNumber(const ValueContext& value)
-{
-    Pointer cursor = cursorOf(value);
-    Number appended = in<Number>(value->valueOperand());
-    Integer truncated = emitter<ConversionEmitter>().toInteger(appended);
-    LBasicBlock hasFewDigits = newBlock();
-    LBasicBlock byCall = newBlock();
-    Join<Pointer> join(m_out);
-
-    Condition isWholeWithFewDigits = logicalAnd(equal(toNumber(truncated), appended), below(truncated, integer(StringBuilderEmitter::firstIntegerWrittenByCall)));
-    branch(isWholeWithFewDigits, { normalEdge(hasFewDigits), normalEdge(byCall) });
-
-    m_out.appendTo(hasFewDigits);
-    join.add(builders().writeDigits(cursor, low32(truncated)));
-
-    m_out.appendTo(byCall);
-    join.add(callLeaf<Pointer>(RuntimeOperation::JSONAppendNumber, { cursor, appended }));
-
-    define(value, join.finish());
-}
-
-void JSONWriteEmitter::generateJSONAppendDate(const ValueContext& value)
-{
-    define(value, callLeaf<Pointer>(RuntimeOperation::JSONAppendDate, { cursorOf(value), in<Number>(value->valueOperand()) }));
 }
 
 void JSONWriteEmitter::generateJSONAppendString(const ValueContext& value)
@@ -129,14 +99,6 @@ void JSONWriteEmitter::generateJSONAppendValue(const ValueContext& value)
     Operand arguments[] = { builderOf(value), cursorOf(value), in<Boxed>(value->valueOperand()), word32(static_cast<int32_t>(value->jsonPosition())) };
     StubCallResult cursorAndOutcome = emitter<RuntimeCallEmitter>().callOperationReturningPair(value, RuntimeOperation::JSONAppendValue, arguments);
     defineResults(value, { Word32(m_out.castToInt32(cursorAndOutcome.second)), Pointer(cursorAndOutcome.first) });
-}
-
-Pointer JSONWriteEmitter::closeObjectOverComma(Pointer cursor)
-{
-    Word32 previous(m_out.load8ZeroExt32(builders().bytesAt(cursor, -1)));
-    Pointer brace(m_out.sub(cursor.value(), zeroExtended(equal(previous, word32(','))).value()));
-    m_out.store32As8(m_out.constInt32('}'), builders().bytesAt(brace));
-    return offsetBy(brace, 1);
 }
 
 } } } // namespace JSC::AOT::Typed

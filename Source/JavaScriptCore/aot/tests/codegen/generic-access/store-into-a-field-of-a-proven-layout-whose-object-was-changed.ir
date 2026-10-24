@@ -29,7 +29,6 @@ entry module=m0
 layout L0 kind=Record name="Entry" module=m0 fields=[{key="done" declared={type=boolean} flags=[IsRequired]}, {key="label" declared={type=string} flags=[IsRequired]}]
 variable g0 name="held" module=m0 declared={type=undefined|L0} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = NewClosure function=f1
     v2 = NewClosure function=f2
@@ -38,7 +37,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="fresh" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Boolean
     v2 = NewObject -, v1, v0 layout=L0 fields=[0, 1]
     v3 = FinishObject v2
@@ -46,7 +44,6 @@ function f1 name="fresh" parameters=[{type=string}] results=[{type=anything}] {
     Return v3
 }
 function f2 name="store" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = ToBoolean v0
     Branch v2 -> taken b1(), notTaken b2()
   b1() frequency=Unlikely:

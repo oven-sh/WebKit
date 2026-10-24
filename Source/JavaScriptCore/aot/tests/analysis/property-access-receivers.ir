@@ -8,7 +8,6 @@ layout L1 name="Named" fields=[{key="x" declared={type=number}}]
 layout L2 name="NeverMade" fields=[{key="x" declared={type=number}}] flow={allocation=NeverAllocated}
 
 function f0 name="type-lists-layouts" parameters=[{type=L0|L1}] results=[{type=anything}] {
-  b0(v0: L0|L1):
     v1 = PropGet v0 key="x"
     Return v1
 }
@@ -23,7 +22,6 @@ function f1 name="expected-type-is-a-strict-subset" parameters=[{type=L0|L1}] re
 }
 # CHECK: F1 v1: proof=Type level=Proven proven=[L0, L1] predicted=[L0]
 function f2 name="type-has-members-without-layout" parameters=[{type=L0|nolayout}] results=[{type=anything}] {
-  b0(v0: L0|nolayout):
     v1 = PropGet v0 key="x"
     Return v1
 }
@@ -43,51 +41,43 @@ function f4 name="object-with-expected-type" parameters=[{type=object}] results=
 # CHECK-NEXT: F4 v1: proof=Unknown level=Expected predicted=[L0] otherParts
 # CHECK-NOT: nullish
 function f5 name="object-without-expected-type" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = PropGet v0 key="x"
     Return v1
 }
 # CHECK: F5 v1: proof=Unknown level=Unknown otherParts
 function f6 name="type-admits-no-object" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = PropGet v0 key="x" receivers=[L0]
     Return v1
 }
 # CHECK-NEXT: F6 v1: proof=Unknown level=Unknown otherParts
 function f7 name="layout-or-string" parameters=[{type=string|L0}] results=[{type=anything}] {
-  b0(v0: string|L0):
     v1 = PropGet v0 key="x"
     Return v1
 }
 # CHECK-NEXT: F7 v1: proof=Type level=Proven proven=[L0] otherParts
 # CHECK-NOT: nullish
 function f8 name="layout-or-null" parameters=[{type=null|L0}] results=[{type=anything}] {
-  b0(v0: null|L0):
     v1 = PropGet v0 key="x"
     Return v1
 }
 # CHECK: F8 v1: proof=Type level=Proven proven=[L0] nullish
 function f9 name="complete-stamp-on-proven-set" parameters=[{type=L0|L1}] results=[{type=anything}] {
-  b0(v0: L0|L1):
     v1 = PropGet v0 key="x" receivers=[L0]
     Return v1
 }
 # CHECK-NEXT: F9 v1: proof=Type level=Proven proven=[L0, L1] predicted=[L0]
 function f10 name="incomplete-stamp-on-proven-set" parameters=[{type=L0|L1}] results=[{type=anything}] {
-  b0(v0: L0|L1):
     v1 = PropGet v0 key="x" receivers=[L0, ..]
     Return v1
 }
 # CHECK-NEXT: F10 v1: proof=Type level=Proven proven=[L0, L1]
 # CHECK-NOT: predicted
 function f11 name="complete-stamp-on-object" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = PropGet v0 key="x" receivers=[L0]
     Return v1
 }
 # CHECK: F11 v1: proof=Unknown level=Expected predicted=[L0] otherParts
 function f12 name="incomplete-stamp-on-object" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = PropGet v0 key="x" receivers=[L0, ..]
     Return v1
 }
@@ -99,7 +89,6 @@ function f13 name="expected-type-and-stamp-are-joined" parameters=[{type=object}
 }
 # CHECK-NEXT: F13 v1: proof=Unknown level=Expected predicted=[L0, L1] otherParts
 function f14 name="member-never-allocated" parameters=[{type=L0|L2}] results=[{type=anything}] {
-  b0(v0: L0|L2):
     v1 = PropGet v0 key="x"
     Return v1
 }
@@ -112,14 +101,12 @@ function f15 name="expected-member-never-allocated" parameters=[{type=object}] r
 }
 # CHECK: F15 v1: proof=Unknown level=Expected predicted=[L0] otherParts
 function f16 name="check-brought-the-layouts" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Check v0 castType=L0
     v2 = PropGet v1 key="x"
     Return v2
 }
 # CHECK-NEXT: F16 v2: proof=Type level=Proven proven=[L0]
 function f17 name="check-through-upcast" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Check v0 castType=L0
     v2 = Upcast v1 castType=L0|L1
     v3 = PropGet v2 key="x"
@@ -127,14 +114,12 @@ function f17 name="check-through-upcast" parameters=[{type=anything}] results=[{
 }
 # CHECK-NEXT: F17 v3: proof=Type level=Proven proven=[L0]
 function f18 name="check-of-a-proven-set" parameters=[{type=L0|L1}] results=[{type=anything}] {
-  b0(v0: L0|L1):
     v1 = Check v0 castType=L0
     v2 = PropGet v1 key="x"
     Return v2
 }
 # CHECK-NEXT: F18 v2: proof=Type level=Proven proven=[L0]
 function f19 name="store-and-test-name-their-receiver" parameters=[{type=L0}, {type=L1}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0, v1: L1, v2: number):
     PropSet v0, v2 key="x"
     v4 = PropHas v1 key="x"
     Return v4

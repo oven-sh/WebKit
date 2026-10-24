@@ -11,7 +11,6 @@ layout L2 name="Literal" fields=[{key="first" declared={type=number} flags=[IsRe
 layout L3 kind=Instance name="NeverEnumerated" constructor=f5 fields=[{key="x" declared={type=number} flags=[IsRequired]}]
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=MathRandom
     v1 = Call v0
     v2 = ToNumber v1
@@ -38,7 +37,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Straight" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
     v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
@@ -47,12 +45,10 @@ function f1 name="Straight" kind=BaseConstructor flags=[HasNewTarget] parameters
     Return v4
 }
 function f2 name="initialize" kind=Initializer flags=[HasThis] thisType={type=L0 flags=[IsFromCompiler]} parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: L0, v1: number):
     PropDefine v0, v1 key="a"
     Return
 }
 function f3 name="Branching" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L1
     v3 = NewObject v2 layout=L1
     v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
@@ -68,12 +64,10 @@ function f3 name="Branching" kind=BaseConstructor flags=[HasNewTarget] parameter
     Return v4
 }
 function f4 name="addLate" parameters=[{type=L2}, {type=number}] results=[{type=anything}] {
-  b0(v0: L2, v1: number):
     PropSet v0, v1 key="late"
     Return
 }
 function f5 name="NeverEnumerated" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L3
     v3 = NewObject v2 layout=L3
     v4 = Convert v3 declared={type=L3 flags=[IsFromCompiler]} illTypedCause=FromLooseType

@@ -37,13 +37,11 @@ inline constexpr double eventsPerRun = 32768;
 
 } // namespace HeatModel
 
-// Blocks of one function that run equally often in one activation.
 struct HeatBlockGroup {
     double frequency { 0 };
     uint32_t size { 0 };
 };
 
-// How often a block runs each time that its function is entered.
 struct WeightOfBlock {
     BlockID block;
     double weight { 0 };
@@ -53,7 +51,6 @@ struct WeightOfBlock {
 
 class HeatGraph;
 
-// All that a heat graph takes from the graph, the cycles and the frequencies of a body: the blocks that can be reached, in reverse post order, each with its weight.
 class BodyWeights {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(BodyWeights);
     WTF_MAKE_NONCOPYABLE(BodyWeights);
@@ -66,15 +63,12 @@ public:
 private:
     friend HeatGraph buildHeatGraph(const Program&, const CallGraph&, const FlowResults&, const EffectSummaries&, BuildContext&, const BodyReferences*, const BodyWeights*, BodyWeights*);
 
-    // Empty for a function of which nothing is kept.
     Vector<Vector<WeightOfBlock>> m_blocks;
 };
 
 class HeatGraph {
 public:
     using Node = HeatNodeID;
-
-    HeatGraph() = default;
 
     unsigned numberOfFunctions() const { return m_sizes.size(); }
 
@@ -100,8 +94,6 @@ public:
 private:
     friend HeatGraph buildHeatGraph(const Program&, const CallGraph&, const FlowResults&, const EffectSummaries&, BuildContext&, const BodyReferences*, const BodyWeights*, BodyWeights*);
 
-    void computePredecessors();
-
     Vector<bool> m_isPresent;
     Vector<uint32_t> m_firstSuccessor;
     Vector<Node> m_successors;
@@ -113,7 +105,6 @@ private:
     ParallelArray<Vector<HeatBlockGroup, 4>> m_blockGroups;
 };
 
-// The references are those that the call graph was made from, of the program as it is.
 HeatGraph buildHeatGraph(const Program&, const CallGraph&, const FlowResults&, const EffectSummaries&, BuildContext&, const BodyReferences* = nullptr, const BodyWeights* kept = nullptr, BodyWeights* made = nullptr);
 Vector<double> estimateActivations(HeatGraph&);
 

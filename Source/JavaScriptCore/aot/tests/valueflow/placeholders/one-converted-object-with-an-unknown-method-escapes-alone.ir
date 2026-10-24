@@ -16,35 +16,4 @@
 # ESCAPED: escaped-layout=L0
 # ESCAPED-NEXT: escaped-layout=L1
 # ESCAPED: n0 escaped
-
-module m0 path="main.js" displayPath="main.js" body=f0
-entry module=m0
-layout L0 name="Plain" fields=[{key="held" declared={type=anything} flags=[IsRequired]}]
-layout L1 name="Odd" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}, {key="given" declared={type=anything} flags=[IsRequired]}]
-function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
-    v0 = NewClosure function=f1
-    v1 = ToString v0
-    v2 = NewClosure function=f2
-    v3 = NewObject -, v2 layout=L0 fields=[0]
-    v4 = Integer integer=1
-    v5 = Add v3, v4
-    v6 = Builtin builtin=GlobalThis
-    v7 = PropGet v6 key="somethingThatNoTableLists" [isFreeName]
-    v8 = NewClosure function=f3
-    v9 = NewObject -, v7, v8 layout=L1 fields=[0, 1]
-    v10 = Add v9, v4
-    Return
-}
-function f1 name="onlyConverted" kind=Arrow results=[{type=anything}] {
-  b0():
-    Return
-}
-function f2 name="held" kind=Arrow results=[{type=anything}] {
-  b0():
-    Return
-}
-function f3 name="given" kind=Arrow results=[{type=anything}] {
-  b0():
-    Return
-}
+# PROGRAM-OF: converted-objects-past-those-told-apart-escape-together.ir

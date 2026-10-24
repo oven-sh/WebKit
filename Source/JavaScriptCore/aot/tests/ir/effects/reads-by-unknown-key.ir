@@ -10,7 +10,6 @@ layout L2 name="MayGetProperty" fields=[{key="x" declared={type=number} flags=[I
 layout L3 name="MayGetPrototype" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}] flow={members=[L3] impossibleMutations=[RedefineProperty, AddProperty]}
 layout L4 kind=Instance name="Instance" constructor=f2 fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}] flow={baseState=None members=[L4] impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
 function f0 name="looksUp" parameters=[{type=L0}, {type=string}, {type=null|L0}, {type=string|symbol}] results=[{type=undefined}] {
-  b0(v0: L0, v1: string, v2: null|L0, v3: string|symbol):
     v4 = ElemGet v0, v1
     v5 = ElemHas v0, v1
     v6 = ElemGet v2, v1
@@ -28,7 +27,6 @@ function f0 name="looksUp" parameters=[{type=L0}, {type=string}, {type=null|L0},
 # OPERANDS-NEXT: v4 ElemGet 0: [Inspects] reads(
 # OPERANDS: v5 ElemHas 0: [Inspects] reads(
 function f1 name="runsCode" parameters=[{type=L0}, {type=string}, {type=L1}, {type=L2}, {type=L3}, {type=L4}, {type=object}, {type=L0|L1}] results=[{type=undefined}] {
-  b0(v0: L0, v1: string, v2: L1, v3: L2, v4: L3, v5: L4, v6: object, v7: L0|L1):
     v8 = ElemGet v2, v1
     v9 = ElemGet v3, v1
     v10 = ElemGet v4, v1

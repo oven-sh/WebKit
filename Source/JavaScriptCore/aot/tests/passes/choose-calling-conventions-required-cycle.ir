@@ -13,7 +13,6 @@
 module m0 path="main.js" displayPath="main.js"
 # CHECK-LABEL: function f0 name="returnsNumber"
 function f0 name="returnsNumber" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f1
     ReturnCall v1 casts=[{declared={type=number} resolution=Assume}]
 }
@@ -21,25 +20,21 @@ function f0 name="returnsNumber" parameters=[{type=number}] results=[{type=numbe
 # CHECK-LABEL: function f1 name="returnsNumberOrString"
 # CHECK: ReturnCall v1
 function f1 name="returnsNumberOrString" parameters=[{type=number}] results=[{type=number|string}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f0
     ReturnCall v1
 }
 # CHECK-LABEL: function f2 name="usesResult"
 # CHECK: v1: number = CallDirect v0 function=f0
 function f2 name="usesResult" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f0
     v2 = Add v1, v1
     Return v2
 }
 function f3 name="evenStep" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f4
     ReturnCall v1
 }
 function f4 name="oddStep" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f3
     ReturnCall v1
 }

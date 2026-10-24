@@ -84,22 +84,30 @@ static_assert(resumeModeBitsOfEngineMode(static_cast<uint32_t>(engineResumeModeO
 CodePtr<JSEntryPtrTag> savedFrameEntrypoint();
 CodePtr<JSEntryPtrTag> handlerOfJobEntrypoint();
 
-// Appends its failing branches to otherwise and falls through on success.
-void emitUnmodifiedGeneratorCheck(StubAssembler&, GPRReg generator, GPRReg scratch, JumpList& otherwise);
+// For a stub whose site reads resumeModeRegister beside the result.
+inline StubSignature signatureWithResumeMode(std::initializer_list<Reg> operands)
+{
+    StubSignature signature = StubSignature::withGPRResult(operands);
+    signature.result = StubResult::TwoGPRs;
+    signature.secondResult = gprOf(resumeModeRegister);
+    return signature;
+}
 
-#if CPU(ARM64)
-enum class PairsSavedInFrame : uint8_t { AreRestored, AreStored };
-// The pairs of suspensionClobberedGPRs that the function saves, at -16, -32, -48 from the frame pointer. The number of pairs is the field of SavedFrame::savedRegisterBits bits at bit shift of word.
-void emitMovePairsSavedInFrame(StubAssembler&, GPRReg word, unsigned shift, PairsSavedInFrame);
-#endif
+// A condition names the registers that it reads by its words.
+struct AwaitRegisters { GPRReg savedFrame, awaited, word, other; };
+struct NewSavedFrameRegisters { GPRReg saved, count, allocator, scratch; };
+struct JobRegisters { GPRReg queue, slot, next, scratch; };
+struct HeadJobRegisters { GPRReg queue, slot, word; };
+struct PromiseAllJobRegisters { GPRReg context, values, value, index; };
+struct YieldDeliveryRegisters { GPRReg yielded, producer, driver, consumerFrame, word, other; };
+struct GeneratorJobRegisters { GPRReg queue, slot, word, driver, saved, mode, value; };
 
-// AOTStubsCoroutineSuspension.cpp A condition names the registers that it reads by its words.
-struct AwaitRegisters {
-    GPRReg savedFrame;
-    GPRReg awaited;
-    GPRReg word;
-    GPRReg other;
-};
+// AOTStubsCoroutineResumption.cpp
+enum class RegistersSavedInFrame : uint8_t { AreRestored, AreStored };
+// The callee saves below the frame pointer that the SavedFrame::savedRegisterBits bits at bit shift of word name. On ARM64: a number of pairs of suspensionClobberedGPRs, at -16, -32, -48.
+void emitMoveRegistersSavedInFrame(StubAssembler&, GPRReg word, unsigned shift, RegistersSavedInFrame);
+
+// AOTStubsCoroutineSuspension.cpp
 // Leaves the tested word in registers.word after EqualsOther and HasNoBit, and after HasAnyBit on a word wider than a byte.
 void emitBranchUnlessHolds(StubAssembler&, const AwaitCondition&, const AwaitRegisters&, JumpList& doesNotHold);
 // The frame is that of the frame pointer.
@@ -108,55 +116,23 @@ void emitBranchUnlessFrameMayContinue(StubAssembler&, const AwaitRegisters&, Jum
 [[nodiscard]] Jump emitBranchIfTracksNoAsyncContext(StubAssembler&, GPRReg vm);
 // AsyncContextSwapScope::current under a VM that tracks async contexts: what a job that is scheduled now captures, and what a job that goes on now runs under.
 void emitLoadCurrentAsyncContext(StubAssembler&, GPRReg context);
-struct NewSavedFrameRegisters {
-    GPRReg saved;
-    GPRReg count;
-    GPRReg allocator;
-    GPRReg scratch;
-};
 // What SavedFrame::create does for the frame of the frame pointer, and for an async function what saveAsyncFunction does with its promise.
 [[nodiscard]] AssemblyHelpers::FreeListRefill emitAllocateSavedFrame(StubAssembler&, CoroutineKind, GPRReg siteWord, const NewSavedFrameRegisters&, JumpList& needsOperation);
-struct JobRegisters;
 // JSPromise::resolveWithInternalMicrotaskForAsyncAwait(awaited, task, generator) for a pending promise of the realm and for a value that is settled as it is: registers.savedFrame is the generator.
 void emitRunGeneratorJobWhenSettled(StubAssembler&, InternalMicrotask task, const AwaitRegisters&, const JobRegisters&, std::optional<GPRReg> siteWord, JumpList& isLeftToEngine);
 
 // AOTStubsCoroutinePromises.cpp
 void emitBranchIfMayBeThenable(StubAssembler&, GPRReg value, GPRReg structure, GPRReg scratch, JumpList& mayBeThenable);
-struct JobRegisters;
 // JSPromise::resolvePromise for a pending promise of the realm and a value that is no thenable, where the promise has no reaction, or one in its own two words whose job is queued.
 void emitFulfillPromise(StubAssembler&, GPRReg promise, GPRReg value, GPRReg other, const JobRegisters&, JumpList& needsEngine);
-struct HeadJobRegisters;
-struct PromiseAllJobRegisters {
-    GPRReg context;
-    GPRReg values;
-    GPRReg value;
-    GPRReg index;
-};
 // promiseAllResolveJob for the fulfilled job that emitLoadHeadJob has found, whole. Where it leaves the job to the job loop, nothing is stored.
 void emitRunPromiseAllResolveJob(StubAssembler&, const HeadJobRegisters&, const PromiseAllJobRegisters&, GPRReg scratch, JumpList& isLeftToJobLoop);
 
 // AOTStubsCoroutineSteps.cpp
-struct YieldDeliveryRegisters {
-    GPRReg yielded;
-    GPRReg producer;
-    GPRReg driver;
-    GPRReg consumerFrame;
-    GPRReg word;
-    GPRReg other;
-};
 // For a producer that the job loop entered and that has just suspended at a yield. Stores nothing before the last branch to slowPath.
 void emitDeliverYieldToSuspendedConsumer(StubAssembler&, const YieldDeliveryRegisters&, JumpList& slowPath);
 // What asyncGeneratorDispatchSuspend does with the value of a yield that nobody could take at once: it is awaited, and the job behind the await finishes the step. registers.savedFrame is the generator.
 void emitAwaitYieldedValue(StubAssembler&, const AwaitRegisters&, const JobRegisters&, JumpList& isLeftToEngine);
-struct GeneratorJobRegisters {
-    GPRReg queue;
-    GPRReg slot;
-    GPRReg word;
-    GPRReg driver;
-    GPRReg saved;
-    GPRReg mode;
-    GPRReg value;
-};
 // Each one is for the job at the head of the queue, as emitLoadHeadJob has left it, once its first word has named it.
 void emitTakeBodyCallJob(StubAssembler&, const GeneratorJobRegisters&, JumpList& isLeftToJobLoop);
 void emitTakeDriverResumeJob(StubAssembler&, const GeneratorJobRegisters&, JumpList& isLeftToJobLoop);
@@ -164,12 +140,7 @@ void emitTakeDriverResumeJob(StubAssembler&, const GeneratorJobRegisters&, JumpL
 void emitTakeYieldAwaitedJob(StubAssembler&, const GeneratorJobRegisters&, JumpList& isLeftToJobLoop, JumpList& hasQueuedDriver);
 
 // AOTStubsCoroutineJobs.cpp
-struct JobRegisters {
-    GPRReg queue;
-    GPRReg slot;
-    GPRReg next;
-    GPRReg scratch;
-};
+// IsStored: the job runs under a context captured earlier, which the caller stores as the last argument between emitReserveJob and emitFillJob.
 enum class JobAsyncContext : uint8_t { Current, IsStored };
 struct JobOperands {
     InternalMicrotask task;
@@ -181,15 +152,8 @@ struct JobOperands {
 };
 // Stores nothing. Between the two, scratch is free and nothing may be queued.
 void emitReserveJob(StubAssembler&, const JobRegisters&, JumpList& needsOperation);
-// For a job that runs under a context captured earlier: between the two.
-void emitStoreAsyncContextOfJob(StubAssembler&, const JobRegisters&, GPRReg asyncContext);
 // The job that JSGlobalObject::queueMicrotask(vm, task, status, first, resolution, context, asyncContext) queues.
 void emitFillJob(StubAssembler&, const JobOperands&, const JobRegisters&);
-struct HeadJobRegisters {
-    GPRReg queue;
-    GPRReg slot;
-    GPRReg word;
-};
 // For whoever runs the job at the head of the queue in the place of the job loop. Leaves the queue, the address of the job and its first word, which names the task, the status and the realm. Takes nothing.
 void emitLoadHeadJob(StubAssembler&, const HeadJobRegisters&, JumpList& noJob);
 Address argumentOfJob(GPRReg slot, unsigned index);

@@ -23,7 +23,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Dog"
 function f0 name="reads" flags=[IsAsync] parameters=[{type=Array<L0, pristine[Storage, Names]>}, {type=Array<object, proven>}, {type=i32}, {type=Map<string, L0>}, {type=Set<L0>}, {type=Promise<L0>}, {type=Array<L0, proven>}, {type=Promise<object, proven>}] results=[{type=anything}] {
-  b0(v0: Array<L0, pristine[Storage, Names]>, v1: Array<object, proven>, v2: i32, v3: Map<string, L0>, v4: Set<L0>, v5: Promise<L0>, v6: Array<L0, proven>, v7: Promise<object, proven>):
     v8 = ElemGet v0, v2
     v9 = ElemGet v1, v2
     v10 = GetArrayElement v0, v2
@@ -38,7 +37,6 @@ function f0 name="reads" flags=[IsAsync] parameters=[{type=Array<L0, pristine[St
     Return v8
 }
 function f1 name="calls" parameters=[{type=Map<string, L0>}, {type=string}, {type=Array<L0>}, {type=i32}, {type=Map<string, object, proven>}] results=[{type=anything}] {
-  b0(v0: Map<string, L0>, v1: string, v2: Array<L0>, v3: i32, v4: Map<string, object, proven>):
     v5 = CallBuiltin v0, v1 overload=MapPrototypeGet/0
     v6 = CallBuiltin v2, v3 overload=ArrayPrototypeAt/0
     v7 = CallBuiltin v2 overload=ArrayPrototypePop/0

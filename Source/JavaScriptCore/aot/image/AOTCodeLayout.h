@@ -8,16 +8,13 @@
 #if ENABLE(AOT)
 
 #include "AOTCodeTemplates.h"
+#include "AOTConstantPool.h"
+#include "AOTInstanceLayout.h"
 #include "AOTLinkedFunctions.h"
 #include "AOTOutliner.h"
-#include "AOTRegExpSection.h"
+#include "AOTRegExpCompiler.h"
 #include "AOTStubBlob.h"
 #include "AOTStubCalls.h"
-#include "AOTUnitPlacement.h"
-#include "AOTVector.h"
-#include <span>
-#include <wtf/BitVector.h>
-#include <wtf/MathExtras.h>
 
 namespace JSC { namespace AOT {
 
@@ -87,18 +84,20 @@ struct CodeLayout {
     uint64_t codeSize { 0 };
 };
 
-struct CodePositions {
-    std::span<const uint32_t> bodyStarts;
-    uint32_t regExpCodeOffset;
+struct CodeLinkerInputs {
+    const CodeLayoutInputs& layoutInputs;
+    const CodeLayout& layout;
+    const Outlining& outlining;
+    const ConstantPool& constants;
+    InstanceSizes instanceSizes;
 };
 
 unsigned chooseCodeGranuleShift(const LinkedFunctions&, BuildContext&);
 unsigned countSharedCodeCopies(const LinkedFunctions&, BuildContext&);
-size_t targetOffset(const CodeLayoutInputs&, const CodePositions&, const VeneerTarget&);
-CodeLayout layOutCode(const CodeLayoutInputs&, BuildContext&);
-
 Vector<FinalJump> findFinalJumps(const LinkedFunctions&, const ResolvedCallees&, const OutlinedCode&, BuildContext&);
+CodeLayout layOutCode(const CodeLayoutInputs&, BuildContext&);
 void removeFinalJumps(LinkedFunctions&, const BitVector& fallsIntoNext, std::span<const FinalJump>, BuildContext&);
+void linkCode(const CodeLinkerInputs&, std::span<uint8_t> code, BuildContext&);
 
 } } // namespace JSC::AOT
 

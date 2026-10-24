@@ -50,6 +50,8 @@ namespace AOT {
 
 struct Instance;
 
+void willRunInInterpreter(CodeBlock*);
+
 inline constexpr uint32_t kindsOfPresentProperties = [] {
     uint32_t kinds = 0;
     for (Slot::Kind kind : allSlotKinds) {

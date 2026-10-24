@@ -20,7 +20,6 @@ layout L5 name="NeverMade" fields=[{key="x" declared={type=undefined|null|number
 # CHECK: outcome: Changed
 # CHECK-NEXT: outcome: Unchanged
 function f0 name="allocates" results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L0
     v1 = NewObject layout=L1
     v2 = NewObject layout=L2
@@ -29,57 +28,47 @@ function f0 name="allocates" results=[{type=anything}] {
     Return
 }
 function f1 name="throughFamily" parameters=[{type=undefined|null|L0 site=w0}] results=[{type=anything}] {
-  b0(v0: undefined|null|L0):
     v1 = PropGet v0 key="x"
     v2 = Convert v1 declared={type=undefined|null|number site=w1}
     Return v2
-}
-# CHECK-LABEL: function f1 name="throughFamily"
 # CHECK: b0(v0: undefined|null|L0|L1|L2):
 # CHECK-NEXT: v1: anything ~ undefined|null|number = PropGet v0 key="x"
 # CHECK-NEXT: v2: undefined|null|number = Check v1 castType=undefined|null|number site=w1
 # CHECK-NEXT: Return v2
+}
 function f2 name="throughUnionWithUnrelatedType" parameters=[{type=undefined|null|L0|L3 site=w0}] results=[{type=anything}] {
-  b0(v0: undefined|null|L0|L3):
     v1 = PropGet v0 key="x"
     v2 = Convert v1 declared={type=undefined|null|number|string site=w1}
     Return v2
-}
-# CHECK-LABEL: function f2 name="throughUnionWithUnrelatedType"
 # CHECK: b0(v0: undefined|null|L0|L1|L2|L3):
 # CHECK-NEXT: v1: anything ~ undefined|null|number|string = PropGet v0 key="x"
 # CHECK-NEXT: v2: undefined|null|number|string = Check v1 castType=undefined|null|number|string site=w1
 # CHECK-NEXT: Return v2
+}
 function f3 name="throughTypeThatTakesStrings" parameters=[{type=undefined|null|string|L4 site=w0}] results=[{type=anything}] {
-  b0(v0: undefined|null|string|L4):
     v1 = PropGet v0 key="label"
     v2 = Convert v1 declared={type=undefined|null|string site=w1}
     Return v2
-}
-# CHECK-LABEL: function f3 name="throughTypeThatTakesStrings"
 # CHECK: b0(v0: undefined|null|string|L4):
 # CHECK-NEXT: v1: anything ~ undefined|null|string = PropGet v0 key="label"
 # CHECK-NEXT: v2: undefined|null|string = Check v1 castType=undefined|null|string site=w1
 # CHECK-NEXT: Return v2
+}
 function f4 name="throughFamilyOfExpectedFields" parameters=[{type=undefined|null|L1 site=w0}] results=[{type=anything}] {
-  b0(v0: undefined|null|L1):
     v1 = PropGet v0 key="x"
     v2 = Convert v1 declared={type=number site=w1 flags=[IsExpected]}
     Return v2
-}
-# CHECK-LABEL: function f4 name="throughFamilyOfExpectedFields"
 # CHECK: b0(v0: undefined|null|L1|L2):
 # CHECK-NEXT: v1: anything ~ undefined|number = PropGet v0 key="x"
 # CHECK-NEXT: v2: anything ~ number = Upcast v1 castType=anything
 # CHECK-NEXT: Return v2
+}
 function f5 name="throughFamilyThatNothingAllocates" parameters=[{type=undefined|null|L5 site=w0}] results=[{type=anything}] {
-  b0(v0: undefined|null|L5):
     v1 = PropGet v0 key="x"
     v2 = Convert v1 declared={type=undefined|null|number site=w1}
     Return v2
-}
-# CHECK-LABEL: function f5 name="throughFamilyThatNothingAllocates"
 # CHECK: b0(v0: undefined|null|L5):
 # CHECK-NEXT: v1: anything = PropGet v0 key="x"
 # CHECK-NEXT: v2: undefined|null|number = Check v1 castType=undefined|null|number site=w1
 # CHECK-NEXT: Return v2
+}

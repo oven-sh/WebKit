@@ -6,7 +6,6 @@
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="source" [isFreeName]
     v2 = PropGet v0 key="sink" [isFreeName]
@@ -44,7 +43,6 @@ function f2 name="expectedTrue" parameters=[{type=true flags=[IsExpected]}] resu
     Return v3
 }
 function f3 name="provenList" parameters=[{type="a"|"b"}] results=[{type=anything}] {
-  b0(v0: "a"|"b"):
     v1 = String string="c"
     v2 = StrictEq v0, v1
     Return v2

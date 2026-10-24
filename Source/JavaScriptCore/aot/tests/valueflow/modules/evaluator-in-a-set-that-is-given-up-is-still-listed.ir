@@ -19,7 +19,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 variable g0 name="tools" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = Builtin builtin=Function
@@ -32,10 +31,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="first" results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="second" results=[{type=anything}] {
-  b0():
     Return
 }

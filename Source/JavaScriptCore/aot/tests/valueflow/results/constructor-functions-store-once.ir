@@ -8,7 +8,6 @@ entry module=m0
 layout L0 kind=Instance name="OnlyConstructed" constructor=f1 fields=[{key="p" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
 layout L1 kind=Instance name="AlsoCalled" constructor=f2 fields=[{key="p" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Double number=1.5
     v1 = NewClosure function=f1
     v2 = Construct v1, -, v0
@@ -20,12 +19,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="OnlyConstructed" flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
-  b0(v0: anything, v1: anything):
     PropSet v0, v1 key="p" mode=Strict
     Return
 }
 function f2 name="AlsoCalled" flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] constructedClass=L1 {
-  b0(v0: anything, v1: anything):
     PropSet v0, v1 key="p" mode=Strict
     Return
 }

@@ -21,7 +21,6 @@ entry module=m0
 layout L0 name="Circle" fields=[{key="side" declared={type=anything} flags=[IsRequired]}, {key="length" declared={type=anything} flags=[IsRequired]}]
 layout L1 name="Square" fields=[{key="side" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     v2 = Builtin builtin=GlobalThis
@@ -45,57 +44,42 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="unknownObjectAmongReceivers" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="side"
     Return v1
-}
-# CHECK-LABEL: function f1 name="unknownObjectAmongReceivers"
 # CHECK: = PropGet {{*}}key="side" accessSite={{*}} receivers=[L0, ..]
+}
 function f2 name="arrayAmongReceivers" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="side"
     Return v1
-}
-# CHECK-LABEL: function f2 name="arrayAmongReceivers"
 # CHECK: = PropGet {{*}}key="side" accessSite={{*}} receivers=[L0, ..]
+}
 function f3 name="closureAmongReceivers" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="side"
     Return v1
-}
-# CHECK-LABEL: function f3 name="closureAmongReceivers"
 # CHECK: = PropGet {{*}}key="side" accessSite={{*}} receivers=[L0, ..]
+}
 function f4 name="noLayoutAmongReceivers" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="side"
     Return v1
-}
-# CHECK-LABEL: function f4 name="noLayoutAmongReceivers"
 # CHECK: = PropGet {{*}}key="side" accessSite=
 # CHECK-NOT: receivers=
+}
 function f5 name="onlyTheLayout" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="side"
     Return v1
-}
-# CHECK-LABEL: function f5 name="onlyTheLayout"
 # CHECK: = PropGet {{*}}key="side" accessSite={{*}} receivers=[L0]
+}
 function f6 name="callback" results=[{type=anything}] {
-  b0():
     Return
 }
 function f7 name="arrayAnswersTheName" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="length"
     Return v1
-}
-# CHECK-LABEL: function f7 name="arrayAnswersTheName"
 # CHECK: = PropGet {{*}}key="length" accessSite=
 # CHECK-NOT: receivers=
+}
 function f8 name="receiverWithType" parameters=[{type=L0|L1}] results=[{type=anything}] {
-  b0(v0: L0|L1):
     v1 = PropGet v0 key="side"
     Return v1
-}
-# CHECK-LABEL: function f8 name="receiverWithType"
 # CHECK: = PropGet {{*}}key="side" accessSite={{*}} receivers=[L0, L1]
+}

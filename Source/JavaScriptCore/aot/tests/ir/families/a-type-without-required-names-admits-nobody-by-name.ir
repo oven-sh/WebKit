@@ -25,8 +25,6 @@ layout L6 name="AlsoSealed" fields=[{key="seal" declared={type=number} flags=[Is
 # CHECK-NEXT: L6: members [L6]
 
 function f0 name="take" parameters=[{type=L0}, {type=L1}, {type=L4}] results=[{type=anything}] {
-  b0(v0: L0, v1: L1, v2: L4):
     Return
-}
-# READ-LABEL: function f0 name="take"
 # READ: parameters=[{type=L0|L3}, {type=L1}, {type=L0|L2|L3|L4}]
+}

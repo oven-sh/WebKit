@@ -8,7 +8,6 @@ module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 variable g0 name="sink" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="given" [isFreeName]
     v2 = Convert v1 declared={type=number}
@@ -17,17 +16,14 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v5 = PropGet v0 key="keep" [isFreeName]
     v6 = Call v5, -, v3
     Return
-}
-# CHECK-LABEL: function f0 name="main"
 # CHECK: v2: number = Check v1 castType=number
 # CHECK-NEXT: PutModuleVariable v2 variable=g1
 # CHECK-NEXT: = NewClosure function=f1
+}
 function f1 name="readsCapture" kind=Arrow captures=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = Add v0, v0
     Return v1
-}
-# CHECK-LABEL: function f1 name="readsCapture"
 # CHECK: [[read]]: anything ~ number = GetModuleVariable variable=g1
 # CHECK-NEXT: [[checked]]: number = Check [[read]] castType=number cause=AddedByPass
 # CHECK-NEXT: = Add [[checked]], [[checked]]
+}

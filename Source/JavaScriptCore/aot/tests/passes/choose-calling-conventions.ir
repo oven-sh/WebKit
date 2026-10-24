@@ -15,31 +15,26 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="onlyByValue" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Return v0
 }
 # CHECK-LABEL: function f1 name="onlyByValue"
 # CHECK: ReturnCall v4 requirement=Allowed
 function f1 name="onlyByValue" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0 arguments=Registers} {
-  b0(v0: f0, v1: anything, v2: anything):
     v3 = AssumeType v2 castType=number
     v4 = CallDirect v3 function=f0
     ReturnCall v4 requirement=Allowed
 }
 function f2 name="alsoCalledDirectly" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Return v0
 }
 # CHECK-LABEL: function f3 name="alsoCalledDirectly"
 # CHECK: Return v4
 function f3 name="alsoCalledDirectly" role=GenericEntrypoint flags=[HasThis] captures=[{type=f2}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers} {
-  b0(v0: f2, v1: anything, v2: anything):
     v3 = AssumeType v2 castType=number
     v4 = CallDirect v3 function=f2
     ReturnCall v4 requirement=Allowed
 }
 function f4 name="usesResult" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f2
     v2 = Add v1, v1
     Return v2
@@ -47,18 +42,15 @@ function f4 name="usesResult" parameters=[{type=number}] results=[{type=number}]
 # CHECK-LABEL: function f5 name="headOfChain"
 # CHECK: ReturnCall v1 requirement=Allowed
 function f5 name="headOfChain" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f6
     ReturnCall v1 requirement=Allowed
 }
 function f6 name="endOfChain" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Return v0
 }
 # CHECK-LABEL: function f7 name="headOfChain"
 # CHECK: ReturnCall v4 requirement=Allowed
 function f7 name="headOfChain" role=GenericEntrypoint flags=[HasThis] captures=[{type=f5}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] derivation={source=f5} creator=Entrypoint{target=f5 arguments=Registers} {
-  b0(v0: f5, v1: anything, v2: anything):
     v3 = AssumeType v2 castType=number
     v4 = CallDirect v3 function=f5
     ReturnCall v4 requirement=Allowed

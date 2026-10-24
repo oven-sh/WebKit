@@ -5,28 +5,23 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="literalOnRight" parameters=[{type=anything}] results=[{type=boolean}] {
-  b0(v0: anything):
     v1 = String string="constructor"
     v2 = Eq v0, v1
     Return v2
-}
-# CHECK-LABEL: function f0 name="literalOnRight"
 # CHECK-NOT: = Eq
 # CHECK: v1: boolean = ValueLooselyEqualsLiteral v0 literal="constructor"
 # CHECK-NEXT: Return v1
+}
 
 function f1 name="literalOnLeft" parameters=[{type=anything}] results=[{type=boolean}] {
-  b0(v0: anything):
     v1 = String string="[object Arguments]"
     v2 = Eq v1, v0
     Return v2
-}
-# CHECK-LABEL: function f1 name="literalOnLeft"
 # CHECK-NOT: = Eq
 # CHECK: v1: boolean = ValueLooselyEqualsLiteral v0 literal="[object Arguments]"
+}
 
 function f2 name="onlyBranchedOn" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     v1 = String string="NaN"
     v2 = Eq v0, v1
     Branch v2 -> taken b1(), notTaken b2()
@@ -34,35 +29,29 @@ function f2 name="onlyBranchedOn" parameters=[{type=anything}] results=[{type=un
     Return
   b2():
     Return
-}
-# CHECK-LABEL: function f2 name="onlyBranchedOn"
 # CHECK: v1: boolean = ValueLooselyEqualsLiteral v0 literal="NaN"
 # CHECK-NEXT: TestAndBranch v1 -> taken b1(), notTaken b2()
+}
 
 function f3 name="textOfTwoBytes" parameters=[{type=anything}] results=[{type=boolean}] {
-  b0(v0: anything):
     v1 = String string="\u{100}"
     v2 = Eq v0, v1
     Return v2
-}
-# CHECK-LABEL: function f3 name="textOfTwoBytes"
 # CHECK: v1: boolean = ValueLooselyEqualsLiteral v0 literal="\u{100}"
+}
 
 # 1 == "1", true == "1" and 1n == "1" hold
 function f4 name="decimalText" parameters=[{type=anything}] results=[{type=boolean}] {
-  b0(v0: anything):
     v1 = String string="1"
     v2 = Eq v0, v1
     Return v2
-}
-# CHECK-LABEL: function f4 name="decimalText"
 # CHECK-NOT: ValueLooselyEqualsLiteral
 # CHECK: v2: boolean = Eq v0, v1
 # CHECK-NOT: ValueLooselyEqualsLiteral
+}
 
 # 0 == "", 0 == " ", Infinity == "Infinity" and 16 == "0x10" hold
 function f5 name="otherNumericTexts" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string=""
     v2 = Eq v0, v1
     v3 = String string=" "
@@ -73,36 +62,30 @@ function f5 name="otherNumericTexts" parameters=[{type=anything}] results=[{type
     v8 = Eq v0, v7
     v9 = NewArray v2, v4, v6, v8 contents=anything
     Return v9
-}
-# CHECK-LABEL: function f5 name="otherNumericTexts"
 # CHECK-NOT: ValueLooselyEqualsLiteral
 # CHECK-COUNT-4: boolean = Eq v0,
 # CHECK-NOT: ValueLooselyEqualsLiteral
+}
 
 function f6 name="strictEquality" parameters=[{type=anything}] results=[{type=boolean}] {
-  b0(v0: anything):
     v1 = String string="constructor"
     v2 = StrictEq v0, v1
     Return v2
-}
-# CHECK-LABEL: function f6 name="strictEquality"
 # CHECK-NOT: ValueLooselyEqualsLiteral
 # CHECK: v1: boolean = ValueEqualsLiteral v0 literal="constructor"
 # CHECK-NOT: ValueLooselyEqualsLiteral
+}
 
 function f7 name="textIsNotConstant" parameters=[{type=anything}, {type=string}] results=[{type=boolean}] {
-  b0(v0: anything, v1: string):
     v2 = Eq v0, v1
     Return v2
-}
-# CHECK-LABEL: function f7 name="textIsNotConstant"
 # CHECK-NOT: ValueLooselyEqualsLiteral
 # CHECK: v2: boolean = Eq v0, v1
 # CHECK-NOT: ValueLooselyEqualsLiteral
+}
 
 # The branch passes on what the comparison proves, and the row proves nothing
 function f8 name="branchWithProof" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="constructor"
     v2 = Eq v0, v1
     Branch v2 -> taken b1(), notTaken b2(| 0)
@@ -110,30 +93,25 @@ function f8 name="branchWithProof" parameters=[{type=anything}] results=[{type=a
     Return v0
   b2(v3):
     Return v3
-}
-# CHECK-LABEL: function f8 name="branchWithProof"
 # CHECK-NOT: ValueLooselyEqualsLiteral
 # CHECK: v2: boolean = Eq v0, v1
 # CHECK-NOT: ValueLooselyEqualsLiteral
+}
 
 function f9 name="valueIsNeverObject" parameters=[{type=undefined|number|string}] results=[{type=boolean}] {
-  b0(v0: undefined|number|string):
     v1 = String string="constructor"
     v2 = Eq v0, v1
     Return v2
-}
-# CHECK-LABEL: function f9 name="valueIsNeverObject"
 # CHECK-NOT: = Eq
 # CHECK: v1: boolean = ValueLooselyEqualsLiteral v0 literal="constructor"
+}
 
 # Two words that stand for texts are compared without decoding either
 function f10 name="valueIsOneOfTwoTexts" parameters=[{type=undefined|"constructor"|"prototype"}] results=[{type=boolean}] {
-  b0(v0: undefined|"constructor"|"prototype"):
     v1 = String string="constructor"
     v2 = Eq v0, v1
     Return v2
-}
-# CHECK-LABEL: function f10 name="valueIsOneOfTwoTexts"
 # CHECK-NOT: ValueLooselyEqualsLiteral
 # CHECK: v2: boolean = Eq v0, v1
 # CHECK-NOT: ValueLooselyEqualsLiteral
+}

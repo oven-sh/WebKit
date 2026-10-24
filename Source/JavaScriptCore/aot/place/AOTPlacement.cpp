@@ -9,10 +9,21 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTBuiltinTable.h"
+#include "AOTCellFormat.h"
+#include "AOTClosure.h"
+#include "AOTDefinitions.h"
+#include "AOTFlowBuiltinLocations.h"
+#include "AOTFlowResults.h"
+#include "AOTGrouping.h"
 #include "AOTInterningPhases.h"
+#include "AOTLimits.h"
+#include "AOTNameClass.h"
+#include "AOTNarrowFieldTypes.h"
 #include "AOTPhaseTimes.h"
 #include "AOTPlacementSteps.h"
 #include "AOTRegExpRequests.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -20,40 +31,13 @@
 #include <initializer_list>
 #include <optional>
 #include <tuple>
-#include <type_traits>
-#include <wtf/Scope.h>
+#include <wtf/MathExtras.h>
 #include <wtf/ScopedLambda.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/StringPrintStream.h>
+
 
 namespace JSC { namespace AOT { namespace Typed {
-
-Placement::Placement(PlacementParts&& parts)
-    : m_slots(parts.slots)
-    , m_shapes(WTF::move(parts.shapes))
-    , m_fieldAccesses(WTF::move(parts.fieldAccesses))
-    , m_allocations(WTF::move(parts.allocations))
-    , m_closureLayout(parts.closureLayout)
-    , m_keyOrders(WTF::move(parts.keyOrders))
-    , m_statics(WTF::move(parts.statics))
-    , m_guardBits(WTF::move(parts.guardBits))
-    , m_methodTable(WTF::move(parts.methodTable))
-    , m_globalBindings(WTF::move(parts.globalBindings))
-    , m_constants(WTF::move(parts.constants))
-    , m_functions(WTF::move(parts.functions))
-    , m_classRanks(WTF::move(parts.classRanks))
-    , m_layoutsOutOfUse(WTF::move(parts.layoutsOutOfUse))
-    , m_typesNeededAtRunTime(WTF::move(parts.typesNeededAtRunTime))
-    , m_typesWithCells(WTF::move(parts.typesWithCells))
-    , m_numberOfRegExpRecords(parts.numberOfRegExpRecords)
-{
-}
-
-void Placement::setResolvedSites(ResolvedSites&& sites)
-{
-    m_requests = WTF::move(sites.requests);
-    m_propertyRuns = WTF::move(sites.propertyRuns);
-    m_stringConstantsInTables = WTF::move(sites.stringConstantsInTables);
-}
 
 template<typename Element, typename Key>
 static std::optional<uint32_t> findPosition(const Vector<Element>& ascending, Key key, const auto& keyOf)
@@ -162,15 +146,17 @@ std::span<const PlacedGuardBit> GuardBitTable::ofClass(LayoutID classLayout) con
     return std::span<const PlacedGuardBit>(std::ranges::equal_range(bits, classLayout, { }, &PlacedGuardBit::classLayout));
 }
 
-namespace {
-
-struct ShapeTestCounts {
-    void add(const ShapeTest& test)
-    {
-        switch (test.form) {
+static void countStatistics(const Placement& placement, const PlacedSites& sites, Statistics& statistics)
+{
+    const ShapeTable& shapes = placement.shapes();
+    auto& tests = sites.shapeTests;
+    uint64_t neverPasses = 0;
+    uint64_t ranges = 0;
+    uint64_t bitSets = 0;
+    auto countOf = [&](ShapeTestForm form) -> uint64_t& {
+        switch (form) {
         case ShapeTestForm::NeverPasses:
-            ++neverPasses;
-            return;
+            return neverPasses;
         case ShapeTestForm::AlwaysPasses:
         case ShapeTestForm::OneShape:
         case ShapeTestForm::UpTo:
@@ -178,94 +164,24 @@ struct ShapeTestCounts {
         case ShapeTestForm::Range:
         case ShapeTestForm::Block:
         case ShapeTestForm::BlockOrEarlier:
-            ++ranges;
-            return;
+            return ranges;
         case ShapeTestForm::ImmediateBits:
         case ShapeTestForm::BitSet:
-            ++bitSets;
-            return;
+            return bitSets;
         }
         RELEASE_ASSERT_NOT_REACHED();
-    }
-
-    uint64_t neverPasses { 0 };
-    uint64_t ranges { 0 };
-    uint64_t bitSets { 0 };
-};
-
-// Steps run beside each other, so each has a clock of its own.
-class StepRunner {
-public:
-    explicit StepRunner(BuildContext& build)
-        : m_build(build)
-    {
-    }
-
-    bool hasFailed() const { return m_build.diagnostics().hasErrors(); }
-
-    template<typename Step>
-    auto runStep(ASCIILiteral name, const Step& step) const
-    {
-        using Result = std::invoke_result_t<const Step&>;
-        if (hasFailed())
-            return Result();
-        PhaseTimes times(m_build, PassID::NumberAndEncode);
-        auto didFinish = makeScopeExit([&] {
-            times.didFinish(name);
-        });
-        return step();
-    }
-
-    // Each chain is a sequence of steps that reads nothing another chain writes.
-    void runBeside(std::initializer_list<ScopedLambda<void()>> chains) const
-    {
-        if (!hasFailed())
-            runTasksInParallel(m_build.parallelLoops(), chains);
-    }
-
-private:
-    BuildContext& m_build;
-};
-
-struct ShapeInputs {
-    Vector<FieldAccess> fieldAccesses;
-    ShapeVariants variants;
-    BitVector typesNeededAtRunTime;
-    BitVector typesWithCells;
-    BitVector typesThatOrderShapes;
-};
-
-} // anonymous namespace
-
-static void countStatistics(const Placement& placement, const PlacedSites& sites, Statistics& statistics)
-{
-    const ShapeTable& shapes = placement.shapes();
-    auto& tests = sites.shapeTests;
-    ShapeTestCounts shapeTests;
+    };
     for (size_t index = 0; index < tests.size(); ++index) {
-        if (index && tests[index].tested == tests[index - 1].tested)
-            continue;
-        shapeTests.add(shapes.testOf(tests[index].tested));
+        if (!index || tests[index].tested != tests[index - 1].tested)
+            ++countOf(shapes.testOf(tests[index].tested).form);
     }
 
     statistics.count(StatisticID::Shapes, shapes.shapeCountInRange(1, shapes.numberOfShapes()));
-    statistics.count(StatisticID::ShapeTestNeverPasses, shapeTests.neverPasses);
-    statistics.count(StatisticID::ShapeTestRange, shapeTests.ranges);
-    statistics.count(StatisticID::ShapeTestBitSet, shapeTests.bitSets);
+    statistics.count(StatisticID::ShapeTestNeverPasses, neverPasses);
+    statistics.count(StatisticID::ShapeTestRange, ranges);
+    statistics.count(StatisticID::ShapeTestBitSet, bitSets);
     statistics.count(StatisticID::GuardBitsPlaced, placement.guardBits().bits.size());
     statistics.count(StatisticID::RequestsShared, placement.requests().numberOfSharedRequests());
-}
-
-static LayoutID ensureClosureLayout(ProgramEditor& editor)
-{
-    auto& layouts = editor.program().layouts;
-    for (unsigned index = 0; index < layouts.size(); ++index) {
-        if (layouts[index].kind == LayoutKind::Closure)
-            return LayoutID(index);
-    }
-    Layout closure;
-    closure.kind = LayoutKind::Closure;
-    return editor.addLayout(WTF::move(closure));
 }
 
 // encodeLayoutRecords gives every layout of kind Instance that is in use a class record, in the order of the layouts.
@@ -280,105 +196,429 @@ static Vector<std::optional<uint32_t>> rankClasses(const Program& program, const
     return ranks;
 }
 
+static FieldReference fieldOf(const Program& program, LayoutID member, PropertyKeyID key)
+{
+    return { member, *program.at(member).findField(key) };
+}
+
+static LayoutID findMemberOutsideLocation(const SlotAccessKey& access, const SlotAgreement& agreement)
+{
+    if (agreement.hasOffsetByShape(access.isStore))
+        return { };
+    if (agreement.groups.size() > 1)
+        return agreement.groups[1].members[0];
+    if (access.isStore && !agreement.coversEveryMember())
+        return agreement.membersWithoutSlot[0];
+    return { };
+}
+
+static String describeDisagreement(const Program& program, const SlotAccessKey& access, const SlotAgreement& agreement)
+{
+    StringPrintStream out;
+    out.print(access.isStore ? "a store"_s : "a read"_s);
+    out.print(" through "_s, program.types.at(access.receivers).members.size(), " layouts, which keep it in "_s, agreement.groups.size(), " places; "_s);
+    out.print(agreement.membersWithoutSlot.size(), " of them have no slot for it"_s);
+    return out.toString();
+}
+
+// The uses are folded by what they access. Only the report of an error asks where one of them stands: the first, by function, block and value.
+static InternalError errorAtFirstSite(const Program& program, const SlotAccessKey& access, InternalError&& error)
+{
+    auto isSite = [&](const Value& value) {
+        if (Value::opcodesWithPlacedKeys.contains(value.opcode)) {
+            return access.isStore && value.receivers() == access.receivers && std::ranges::any_of(value.placedKeys(), [&](PlacedKey placedKey) {
+                return placedKey.key == access.key;
+            });
+        }
+        return Value::opcodesWithFieldAccess.contains(value.opcode) && value.receivers() == access.receivers && value.key() == access.key && isSlotStore(value.opcode) == access.isStore;
+    };
+    for (uint32_t functionIndex = 0; functionIndex < program.functions.size(); ++functionIndex) {
+        const Function& function = program.functions[functionIndex];
+        for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
+            for (ValueID id : function.blocks[blockIndex].values) {
+                if (!isSite(function.at(id)))
+                    continue;
+                error.function = FunctionID(functionIndex);
+                error.block = BlockID(blockIndex);
+                error.value = id;
+                return WTF::move(error);
+            }
+        }
+    }
+    return WTF::move(error);
+}
+
+// intersectionOf keeps a built-in class that may overlap a class of the other type, so its result can hold an object that one member does not declare.
+static TypeID storableContentsOf(const Program& program, TypeArena& arena, TypeID intersection, PropertyKeyID key, const SlotGroup& group)
+{
+    TypeID contents = intersection;
+    for (LayoutID member : group.members) {
+        TypeID declared = slotTypeOf(program, fieldAt(program, declarationOf(program, fieldOf(program, member, key))));
+        contents = arena.differenceOf(contents, arena.differenceOf(contents, declared));
+    }
+    return contents;
+}
+
+static FieldAccess createFieldAccess(const PlacementContext& context, TypeArena& arena, const SlotAccessKey& access)
+{
+    const Program& program = context.program;
+    FieldAccess row;
+    row.key = access.key;
+    row.receivers = access.receivers;
+    row.isStore = access.isStore;
+    row.contents = TypeTable::absent;
+
+    SlotAgreement agreement = context.slots().agreementOf(program, access.key, access.receivers);
+    if (LayoutID member = findMemberOutsideLocation(access, agreement)) {
+        context.build.diagnostics().add(errorAtFirstSite(program, access, InternalError { .kind = InternalErrorKind::SlotAccessNotPlaced, .layout = member, .detail = describeDisagreement(program, access, agreement) }));
+        return row;
+    }
+    if (agreement.groups.isEmpty())
+        return row;
+
+    row.findsOffsetByShape = agreement.hasOffsetByShape(access.isStore);
+    const SlotGroup group = row.findsOffsetByShape ? agreement.groupOfAllOffsets() : agreement.groups[0];
+    bool hasSeveralMembers = group.members.size() > 1;
+    if (agreement.coversEveryMember())
+        row.coverage = FieldAccess::Coverage::EveryMember;
+    else
+        row.coverage = agreement.membersWithoutSlotKeepBytesZero ? FieldAccess::Coverage::EveryMemberHasSlot : FieldAccess::Coverage::SomeMembers;
+    row.slot = group.slot;
+    if (hasSeveralMembers) {
+        row.slot.deferredFunction = { };
+        row.slot.indexInLayoutRecord = std::nullopt;
+    }
+    row.extensionWord = group.extensionWord;
+    bool everyReceiverIsMember = group.members.size() == program.types.at(access.receivers).members.size();
+    row.membersWithField = everyReceiverIsMember ? access.receivers : arena.completeLayoutSet(group.members.span());
+
+    TypeID contents;
+    bool isAlwaysFilled = true;
+    bool everyInnerObjectIsInPlace = !row.isStore && row.coverage == FieldAccess::Coverage::EveryMember;
+    for (LayoutID member : group.members) {
+        FieldReference field = fieldOf(program, member, access.key);
+        const PlacedSlot& slot = context.slots().slot(field);
+        row.mayBeFilledWithoutStorage |= slot.mayExistWithoutStorage;
+        if (hasSeveralMembers) {
+            // A read asks the key order where some member may list the field without storage. A store of undefined asks for no storage only where every member may.
+            if (access.isStore)
+                row.slot.mayExistWithoutStorage &= slot.mayExistWithoutStorage;
+            else
+                row.slot.mayExistWithoutStorage |= slot.mayExistWithoutStorage;
+            row.slot.deferredClosureCapturesObject |= slot.deferredClosureCapturesObject;
+            row.slot.deferredClosureCapturesEnvironment |= slot.deferredClosureCapturesEnvironment;
+        }
+        TypeID type = slotTypeOf(program, fieldAt(program, declarationOf(program, field)));
+        if (!contents)
+            contents = type;
+        else
+            contents = row.isStore ? arena.intersectionOf(contents, type) : arena.unionOf(contents, type);
+        isAlwaysFilled &= flowOf(program, field).occupancy == Occupancy::AlwaysFilled;
+        if (everyInnerObjectIsInPlace) {
+            const PlacedInnerObject* inner = context.slots().layout(member).innerObjectIn(field.field);
+            everyInnerObjectIsInPlace = inner && inner->isAlwaysInPlace && (!row.offsetOfInnerObject || *row.offsetOfInnerObject == inner->offset);
+            row.offsetOfInnerObject = everyInnerObjectIsInPlace ? std::optional(inner->offset) : std::nullopt;
+        }
+    }
+
+    // A load from an Extension that is missing or too short answers absent, whatever flow proved about the field.
+    bool slotMayBeEmpty = canLeaveSlot(row.slot.representation) && (row.slot.isOutOfLine() || !isAlwaysFilled);
+    if (row.isStore)
+        row.contents = hasSeveralMembers ? storableContentsOf(program, arena, contents, row.key, group) : contents;
+    else if (row.coverage == FieldAccess::Coverage::EveryMember && !slotMayBeEmpty)
+        row.contents = contents;
+    else
+        row.contents = arena.withPrimitives(contents, Primitive::Absent);
+    return row;
+}
+
+static AllocationTable numberAllocations(const PlacementContext& context, const PlacedSites& sites)
+{
+    static_assert(!(Closure::allocationSize(1) % 16));
+    static_assert(defaultLimitValue(LimitID::MaxCaptures, hostArchitecture()) <= Closure::maxNumberOfCaptures);
+    RELEASE_ASSERT(sites.maxClosureCaptures <= Closure::maxNumberOfCaptures);
+    auto& program = context.program;
+    AllocationTable table;
+    table.allocations.reserveInitialCapacity(sites.maxClosureCaptures / 2 + 1 + sites.allocations.size());
+    for (unsigned index = 0; index <= sites.maxClosureCaptures / 2; ++index) {
+        table.closureAllocations.append(AllocationID(index));
+        table.allocations.append(PlacedAllocation { .layout = context.closureLayout, .numberOfCaptures = static_cast<uint16_t>(2 * index + 1) });
+    }
+    for (auto& use : sites.allocations) {
+        auto& layout = program.at(declaredLayoutOf(program, use.layout));
+        table.allocations.append(PlacedAllocation {
+            .layout = use.layout,
+            .constructedBy = layout.kind == LayoutKind::Instance ? layout.constructor : FunctionID(),
+            .initialFields = use.initialFields,
+            .holdsInnerObjects = use.holdsInnerObjects,
+        });
+    }
+    groupByIndex(program.layouts.size(), table.firstOfLayout, table.byLayout, [&](const auto& visit) {
+        for (size_t i = 0; i < table.allocations.size(); ++i)
+            visit(table.allocations[i].layout.index(), AllocationID(i));
+    });
+    return table;
+}
+
+static void finishAllocations(const PlacementContext& context, const ShapeTable& shapes, const PlacedOrderWords& orderWords, std::span<const AllocationUse> uses, AllocationTable& table)
+{
+    auto& allocations = table.allocations;
+    size_t numberOfClosureAllocations = table.closureAllocations.size();
+    RELEASE_ASSERT(allocations.size() == numberOfClosureAllocations + uses.size());
+    RELEASE_ASSERT(orderWords.ofAllocation.size() == allocations.size());
+
+    for (AllocationID id : table.closureAllocations) {
+        auto& allocation = allocations[id.index()];
+        allocation.shape = shapes.generalShapeOf(context.closureLayout);
+        allocation.size = static_cast<uint32_t>(WTF::roundUpToMultipleOf<16>(Closure::allocationSize(allocation.numberOfCaptures)));
+        allocation.orderWord = 0;
+    }
+
+    for (size_t i = 0; i < uses.size(); ++i) {
+        size_t row = numberOfClosureAllocations + i;
+        auto& allocation = allocations[row];
+        ShapeRange range = shapes.shapesOf(uses[i].layout);
+        allocation.shape = range.first + (uses[i].keysAreNeverEnumerated && range.count == 2 ? 1 : 0);
+        const PlannedLayout& planned = context.slots().layout(allocation.layout);
+        allocation.size = allocation.holdsInnerObjects ? planned.sizeWithInnerObjects : planned.size;
+        bool keysAreNeverEnumerated = shapes.isAssigned(allocation.shape) && shapes.shape(allocation.shape).keysAreNeverEnumerated;
+        allocation.orderWord = keysAreNeverEnumerated ? unorderedOrderWord : orderWords.ofAllocation[row];
+    }
+}
+
+enum class TypesTestedByCode : uint8_t { Exclude, Include };
+enum class LayoutsOutOfUse : uint8_t { Exclude, Include };
+
+static BitVector computeTypesNeededAtRunTime(const PlacementContext& context, const PlacedSites& sites, TypesTestedByCode typesTestedByCode, LayoutsOutOfUse layoutsOutOfUse = LayoutsOutOfUse::Exclude)
+{
+    const Program& program = context.program;
+    BitVector neededTypes(program.types.size());
+    BitVector visitedLayouts(program.layouts.size());
+    Vector<TypeID> worklist;
+    auto addType = [&](TypeID type) {
+        if (type && neededTypes.add(type.index()))
+            worklist.append(type);
+    };
+    auto addFieldTypes = [&](LayoutID id) {
+        if (!visitedLayouts.add(id.index()) || (layoutsOutOfUse == LayoutsOutOfUse::Exclude && sites.layoutsOutOfUse.get(id.index())))
+            return;
+        FieldIndex numberOfFields = program.at(id).fields.size();
+        for (FieldIndex index = 0; index < numberOfFields; ++index)
+            addType(recordedTypeOf(program, fieldAt(program, declarationOf(program, { id, index }))));
+    };
+
+    addType(TypeTable::anything);
+    addType(TypeTable::number);
+    for (size_t index : sites.typesInRunTimePayloads)
+        addType(TypeID(index));
+    if (typesTestedByCode == TypesTestedByCode::Include) {
+        for (size_t index : sites.typesTestedByCode)
+            addType(TypeID(index));
+    }
+    // The tables name the type of a variable in two places: a static field of a class, and a binding that a direct eval sees.
+    for (const Layout& layout : program.layouts) {
+        for (const StaticField& field : layout.staticFields)
+            addType(program.at(field.variable).declared.type);
+    }
+    for (const EvalScope& scope : program.evalScopes) {
+        for (const EvalBinding& binding : scope.bindings) {
+            if (binding.variable)
+                addType(program.at(binding.variable).declared.type);
+            else if (binding.layout && binding.field && binding.kind != EvalBindingKind::MappedArgument)
+                addType(fieldAt(program, declarationOf(program, { binding.layout, *binding.field })).declared.type);
+        }
+    }
+    for (unsigned index = 0; index < program.layouts.size(); ++index) {
+        LayoutID id(index);
+        const Layout& layout = program.layouts[index];
+        if (context.receivesShape(id) || layout.kind == LayoutKind::Instance || layout.isEnvironment())
+            addFieldTypes(id);
+    }
+    while (!worklist.isEmpty()) {
+        const Type& type = program.at(worklist.takeLast());
+        for (const ClassPart& part : type.classes) {
+            for (TypeID contents : part.contents)
+                addType(contents);
+        }
+        for (LayoutID layout : membersOf(program, type))
+            addFieldTypes(layout);
+    }
+    return neededTypes;
+}
+
+static void appendCellsOfClass(const BuiltinClass& builtinClass, Vector<BuiltinCellKey>& cells)
+{
+    if (builtinClass.constructor)
+        cells.append(BuiltinCellKey::object(builtinClass.constructor));
+    if (builtinClass.prototype)
+        cells.append(BuiltinCellKey::object(builtinClass.prototype));
+}
+
+static void sortAndRemoveKeysWithoutCell(const BuiltinTable& builtins, Vector<BuiltinCellKey>& cells)
+{
+    AOT::sort(cells, { }, &BuiltinCellKey::encoded);
+    removeRepeatedElements(cells);
+    cells.removeAllMatching([&](BuiltinCellKey key) {
+        return !key.hasCell(builtins);
+    });
+}
+
+// The run time finds a cell by the names on its path, from the nearest holder that start-up found: the holder of a locked member, or an eager cell.
+static std::optional<BuiltinCellKey> findFirstReplaceableStep(const PlacementContext& context, BuiltinCellKey key)
+{
+    const BuiltinTable& builtins = context.program.builtins();
+    // The word of a value that the host makes is filled at its first read and never at start: where the member may be replaced, the test of its location answers for the word.
+    BuiltinCellKey first = key.kind() == BuiltinCellKey::Kind::Value ? BuiltinCellKey::object(builtins.at(key.builtin()).holder) : key;
+    for (BuiltinCellKey step = first; step.builtin(); step = BuiltinCellKey::object(builtins.at(step.builtin()).holder)) {
+        if (mayBeReplaced(context.program, context.inputs.flow, step.builtin()))
+            return step;
+        if (isLockedLocation(builtins, step.builtin()))
+            break;
+    }
+    return std::nullopt;
+}
+
+static Vector<BuiltinCellKey> findEagerCells(const PlacementContext& context, std::span<const BuiltinCellKey> cellsInCode)
+{
+    Vector<BuiltinCellKey> eagerCells;
+    for (BuiltinCellKey key : cellsInCode) {
+        if (std::optional<BuiltinCellKey> step = findFirstReplaceableStep(context, key))
+            eagerCells.append(*step);
+    }
+    sortAndRemoveKeysWithoutCell(context.program.builtins(), eagerCells);
+    return eagerCells;
+}
+
+static void numberBuiltinCells(const PlacementContext& context, PlacedSites& sites, const BitVector& typesWithCells, ConstantNumbering& numbering)
+{
+    const Program& program = context.program;
+    const BuiltinTable& builtins = program.builtins();
+    Vector<BuiltinCellKey> cells = WTF::move(sites.builtinCells);
+    for (const BitVector* types : { &sites.typesInRunTimePayloads, &sites.typesTestedByCode }) {
+        for (size_t index : *types) {
+            for (const ClassPart& part : program.at(TypeID(index)).classes)
+                appendCellsOfClass(builtins.at(part.builtinClass), cells);
+        }
+    }
+    for (size_t index : typesWithCells) {
+        for (BuiltinID id : program.at(TypeID(index)).builtins)
+            cells.append(BuiltinCellKey::object(id));
+    }
+    for (const Layout& layout : program.layouts) {
+        if (BuiltinID parent = builtinParentNamedByClassRecord(program, layout))
+            cells.append(BuiltinCellKey::object(parent));
+    }
+    sortAndRemoveKeysWithoutCell(builtins, cells);
+    Vector<BuiltinCellKey> eagerCells = findEagerCells(context, cells.span());
+
+    cells.appendVector(eagerCells);
+    for (const BuiltinUseRecord& use : context.inputs.flow.builtinUses())
+        cells.append(BuiltinCellKey::object(BuiltinID(use.builtin)));
+    sortAndRemoveKeysWithoutCell(builtins, cells);
+
+    numbering.eagerBuiltinCells = eagerCells.map([&](BuiltinCellKey key) {
+        return static_cast<uint32_t>(std::ranges::lower_bound(cells, key.encoded(), { }, &BuiltinCellKey::encoded) - cells.begin());
+    });
+    numbering.builtinCells = WTF::move(cells);
+}
+
+static void numberKeyCells(const PlacementContext& context, const BodyScansForPlacement& scans, ConstantNumbering& numbering)
+{
+    const Program& program = context.program;
+    const ParallelLoops& loops = context.build.parallelLoops();
+    unsigned numberOfKeys = program.types.numberOfPropertyKeys();
+    auto uses = collectInParallel<KeyCellUse>(loops, program.functions.size(), [&](unsigned index, Vector<KeyCellUse>& found) {
+        if (program.functions[index].hasBody())
+            found.appendVector(scans.keyCellUsesOf(FunctionID(index)));
+    });
+    for (unsigned index = 0; index < numberOfKeys; ++index) {
+        if (isSymbolKind(program.at(PropertyKeyID(index)).kind))
+            uses.append(KeyCellUse { .key = PropertyKeyID(index) });
+    }
+
+    parallelSort(loops, uses.mutableSpan(), std::less<KeyCellUse> { });
+    removeRepeatedElements(uses, [](const KeyCellUse& first, const KeyCellUse& later) {
+        return first.key == later.key;
+    });
+    AOT::sort(uses, { }, [](const KeyCellUse& use) {
+        return std::tuple(use.module, use.sourceFunction, use.key);
+    });
+
+    numbering.keyCells = uses.map([](const KeyCellUse& use) {
+        return use.key;
+    });
+    numbering.keyCellNumbersPlusOne.fill(0, numberOfKeys);
+    for (uint32_t number = 0; number < uses.size(); ++number)
+        numbering.keyCellNumbersPlusOne[uses[number].key.index()] = number + 1;
+}
+
+static ConstantNumbering numberConstants(const PlacementContext& context, PlacedSites& sites, const BitVector& typesWithCells, const BodyScansForPlacement& scans)
+{
+    ConstantNumbering numbering;
+    numberBuiltinCells(context, sites, typesWithCells, numbering);
+    numberKeyCells(context, scans, numbering);
+    numbering.bigIntConstants = WTF::move(sites.bigIntConstants);
+    for (const RequireEdgeUse& use : sites.requireEdges) {
+        if (!numbering.requireEdges.isEmpty() && numbering.requireEdges.last() == use.edge)
+            continue;
+        numbering.requireEdges.append(use.edge);
+        numbering.requireEdgeSpecifiers.append(use.specifier);
+    }
+    return numbering;
+}
+
 // A task is the same rows at any number of threads, and the phase gives out the final ids in the order of the tasks.
 static constexpr size_t fieldAccessesPerTask = 256;
 
-static unsigned numberOfFieldAccessTasks(size_t numberOfFieldAccesses)
+static void forEachTaskOfFieldAccesses(const ParallelLoops& loops, std::span<FieldAccess> rows, const Invocable<void(unsigned task, size_t firstRow, std::span<FieldAccess>)> auto& functor)
 {
-    return static_cast<unsigned>((numberOfFieldAccesses + fieldAccessesPerTask - 1) / fieldAccessesPerTask);
-}
-
-template<typename T>
-static std::span<T> fieldAccessesOfTask(std::span<T> all, unsigned task)
-{
-    size_t first = task * fieldAccessesPerTask;
-    return all.subspan(first, std::min(fieldAccessesPerTask, all.size() - first));
-}
-
-static Vector<FieldAccess> createFieldAccessesInTasks(const PlacementContext& context, const PlacedSites& sites, TypeInterningPhase& phase)
-{
-    Vector<FieldAccess> rows(sites.fieldAccesses.size());
-    forEachIndexInParallel(context.build.parallelLoops(), numberOfFieldAccessTasks(rows.size()), [&](unsigned task) {
-        TypeArena arena(phase, task);
-        PlacedSites sitesOfTask;
-        sitesOfTask.fieldAccesses = Vector<FieldAccessUse>(fieldAccessesOfTask(sites.fieldAccesses.span(), task));
-        Vector<FieldAccess> rowsOfTask = createFieldAccesses(context, sitesOfTask, arena);
-        std::ranges::move(rowsOfTask, fieldAccessesOfTask(rows.mutableSpan(), task).begin());
+    forEachIndexInParallel(loops, static_cast<unsigned>((rows.size() + fieldAccessesPerTask - 1) / fieldAccessesPerTask), [&](unsigned task) {
+        size_t first = task * fieldAccessesPerTask;
+        functor(task, first, rows.subspan(first, std::min(fieldAccessesPerTask, rows.size() - first)));
     });
-    return rows;
-}
-
-static void remapFieldAccesses(const ParallelLoops& loops, const TypeRemap& types, std::span<FieldAccess> rows)
-{
-    if (types.isIdentity())
-        return;
-    forEachIndexInParallel(loops, numberOfFieldAccessTasks(rows.size()), [&](unsigned task) {
-        if (types.isIdentityFor(task))
-            return;
-        for (FieldAccess& row : fieldAccessesOfTask(rows, task)) {
-            types.apply(row.membersWithField);
-            types.apply(row.contents);
-        }
-    });
-}
-
-// The rows of the field access table need new types and layout sets.
-static ShapeInputs prepareShapeInputs(const StepRunner& steps, const PlacementContext& context, const PlacedSites& sites, TypeInterningPhase& phase, NOESCAPE const ScopedLambda<void()>& chainBeside)
-{
-    ShapeInputs result;
-    if (steps.hasFailed())
-        return result;
-
-    unsigned firstTask = phase.addTasks(numberOfFieldAccessTasks(sites.fieldAccesses.size()));
-    RELEASE_ASSERT(!firstTask);
-    steps.runBeside({
-        [&] { result.fieldAccesses = steps.runStep("createFieldAccesses"_s, [&] { return createFieldAccessesInTasks(context, sites, phase); }); },
-        [&] {
-            steps.runStep("computeTypesNeededAtRunTime"_s, [&] {
-                result.typesNeededAtRunTime = computeTypesNeededAtRunTime(context, sites, TypesTestedByCode::Exclude);
-                result.typesWithCells = computeTypesNeededAtRunTime(context, sites, TypesTestedByCode::Include);
-                result.typesThatOrderShapes = sites.layoutsOutOfUse.isEmpty() ? result.typesNeededAtRunTime : computeTypesNeededAtRunTime(context, sites, TypesTestedByCode::Exclude, LayoutsOutOfUse::Include);
-            });
-        },
-        [&] { result.variants = steps.runStep("chooseShapeVariants"_s, [&] { return chooseShapeVariants(context, sites); }); },
-        [&] { chainBeside(); },
-    });
-    return result;
-}
-
-Placement numberAndEncode(ProgramEditor& editor, const PlacementInputs& inputs, BuildContext& build)
-{
-    return numberAndEncode(editor, inputs, build, [] { });
 }
 
 struct PlacementInSteps::State {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(State);
 
     State(const PlacementInputs& inputs, BuildContext& build, BodyScansForPlacement* scans)
-        : steps(build)
-        , inputs(inputs)
+        : inputs(inputs)
         , build(build)
         , scans(scans)
         , sizeClasses(build.options().sizeClassProgression)
     {
     }
 
-    StepRunner steps;
+    bool hasFailed() const { return build.diagnostics().hasErrors(); }
+
+    void run(ASCIILiteral name, NOESCAPE const ScopedLambda<void()>& step) const
+    {
+        if (hasFailed())
+            return;
+        PhaseTimes times(build, PassID::NumberAndEncode);
+        step();
+        times.didFinish(name);
+    }
+
+    // Each chain is a sequence of steps that reads nothing another chain writes.
+    void runBeside(std::initializer_list<ScopedLambda<void()>> chains) const
+    {
+        if (!hasFailed())
+            runTasksInParallel(build.parallelLoops(), chains);
+    }
+
     const PlacementInputs& inputs;
     BuildContext& build;
     BodyScansForPlacement* scans;
+    std::optional<BodyScansForPlacement> ownScans;
     CellSizeClasses sizeClasses;
     std::optional<PlacementContext> context;
-    GlobalBindingTable globalBindings;
     PlacedSites sites;
     ShapeVariants variants;
-    BitVector typesNeeded;
-    BitVector typesWithCells;
     BitVector typesThatOrderShapes;
     LiteralSites literals;
     MethodTableFunctions methodTableFunctions;
     PlacedOrderWords orderWords;
-    // By function: see resolveFieldAccesses().
     Vector<Vector<ValueID>> valuesWithOtherWords;
 };
 
@@ -392,130 +632,123 @@ PlacementInSteps::~PlacementInSteps() = default;
 Placement PlacementInSteps::numberWhatRepresentationsAsk(ProgramEditor& editor, NOESCAPE const ScopedLambda<void()>& readBodiesBesideCollectingSites)
 {
     State& state = *m_state;
-    const StepRunner& steps = state.steps;
-    BodyScansForPlacement* scans = state.scans;
-    LayoutID closureLayout = ensureClosureLayout(editor);
+    const ParallelLoops& loops = state.build.parallelLoops();
+    Placement placement;
+    placement.m_slots = &state.inputs.slots;
+    placement.m_closureLayout = findClosureLayout(editor.program());
+    if (!placement.m_closureLayout) {
+        Layout closure;
+        closure.kind = LayoutKind::Closure;
+        placement.m_closureLayout = editor.addLayout(WTF::move(closure));
+    }
     const Program& program = editor.program();
-    state.context.emplace(PlacementContext { program, state.inputs, state.sizeClasses, state.build, state.build.recordedOptions().useWideReferences(), closureLayout });
+    state.context.emplace(PlacementContext { program, state.inputs, state.sizeClasses, state.build, state.build.recordedOptions().useWideReferences(), placement.m_closureLayout });
     const PlacementContext& context = *state.context;
+    if (!state.scans) {
+        state.scans = &state.ownScans.emplace(program, state.inputs, state.build);
+        state.run("scanBodies"_s, [&] {
+            Vector<uint32_t> largestFirst = largeFunctions(program, loops);
+            forEachIndexInParallel(loops, program.functions.size(), largestFirst.span(), [&](unsigned index) {
+                if (program.functions[index].hasBody())
+                    state.scans->scan(FunctionID(index));
+            });
+        });
+    }
 
-    state.globalBindings = steps.runStep("placeGlobalBindings"_s, [&] {
+    state.run("placeGlobalBindings"_s, [&] {
         TypeArena arena(editor.types());
-        if (!scans)
-            return placeGlobalBindings(editor, context, arena);
-        auto sitesOf = [&](FunctionID id) -> const Vector<GlobalBindingSite>& {
-            return scans->globalBindingSitesOf(id);
-        };
-        GlobalBindingSitesOfBodies sitesOfBodies(sitesOf);
-        Vector<FunctionID> functionsWithOtherOperations;
-        GlobalBindingTable table = placeGlobalBindings(editor, context, arena, &sitesOfBodies, &functionsWithOtherOperations);
-        for (FunctionID id : functionsWithOtherOperations)
-            scans->scan(id);
-        return table;
+        placement.m_globalBindings = placeGlobalBindings(editor, context, arena, *state.scans);
     });
 
-    // The other readers of the bodies end on one thread, long behind the sites. Nothing here waits for what they find.
     PlacedSites& sites = state.sites;
-    GuardBitTable guardBits;
-    StaticsPlan statics;
-    ShapeInputs shapeInputs;
     // A reader of the bodies makes the types that it asks about in the phase that is open, so none is opened or closed beside it.
     auto phase = makeUniqueWithoutFastMallocCheck<TypeInterningPhase>(editor.types(), 0u);
-    steps.runBeside({
+    state.runBeside({
         [&] { readBodiesBesideCollectingSites(); },
         [&] {
-            steps.runBeside({
-                [&] { sites = steps.runStep("collectPlacedSites"_s, [&] { return scans ? scans->takeSites(context) : collectPlacedSites(context); }); },
-                [&] { state.methodTableFunctions = steps.runStep("collectMethodTableFunctions"_s, [&] { return collectMethodTableFunctions(context); }); },
+            state.runBeside({
+                [&] { state.run("collectPlacedSites"_s, [&] { sites = state.scans->takeSites(context); }); },
+                [&] { state.run("collectMethodTableFunctions"_s, [&] { state.methodTableFunctions = collectMethodTableFunctions(context); }); },
             });
-            // The statics wait for nothing that the rows of the field accesses are made from.
-            shapeInputs = prepareShapeInputs(steps, context, sites, *phase, [&] {
-                guardBits = steps.runStep("placeGuardBits"_s, [&] { return placeGuardBits(context, sites); });
-                steps.runStep("placeGuardSets"_s, [&] { placeGuardSets(context, sites, guardBits); });
-                std::tie(statics, state.literals) = steps.runStep("placeStatics"_s, [&] { return placeStatics(context, sites, guardBits); });
+            if (state.hasFailed())
+                return;
+            placement.m_fieldAccesses.grow(sites.fieldAccesses.size());
+            unsigned firstTask = phase->addTasks(static_cast<unsigned>((sites.fieldAccesses.size() + fieldAccessesPerTask - 1) / fieldAccessesPerTask));
+            RELEASE_ASSERT(!firstTask);
+            state.runBeside({
+                [&] {
+                    state.run("createFieldAccesses"_s, [&] {
+                        forEachTaskOfFieldAccesses(loops, placement.m_fieldAccesses.mutableSpan(), [&](unsigned task, size_t firstRow, std::span<FieldAccess> rows) {
+                            TypeArena arena(*phase, task);
+                            for (size_t index = 0; index < rows.size(); ++index)
+                                rows[index] = createFieldAccess(context, arena, sites.fieldAccesses[firstRow + index].access);
+                        });
+                    });
+                },
+                [&] {
+                    state.run("computeTypesNeededAtRunTime"_s, [&] {
+                        placement.m_typesNeededAtRunTime = computeTypesNeededAtRunTime(context, sites, TypesTestedByCode::Exclude);
+                        placement.m_typesWithCells = computeTypesNeededAtRunTime(context, sites, TypesTestedByCode::Include);
+                        state.typesThatOrderShapes = sites.layoutsOutOfUse.isEmpty() ? placement.m_typesNeededAtRunTime : computeTypesNeededAtRunTime(context, sites, TypesTestedByCode::Exclude, LayoutsOutOfUse::Include);
+                    });
+                },
+                [&] { state.run("chooseShapeVariants"_s, [&] { state.variants = chooseShapeVariants(context, sites); }); },
+                [&] {
+                    state.run("placeGuardBits"_s, [&] { placement.m_guardBits = placeGuardBits(context, sites); });
+                    state.run("placeGuardSets"_s, [&] { placeGuardSets(context, sites, placement.m_guardBits); });
+                    state.run("placeStatics"_s, [&] { std::tie(placement.m_statics, state.literals) = placeStatics(context, sites, placement.m_guardBits); });
+                },
             });
         },
     });
-    TypeRemap types = phase->finish(StringRemap(), &state.build.parallelLoops());
+    TypeRemap types = phase->finish(StringRemap(), &loops);
     state.build.destroyLater(WTF::move(phase));
-    remapFieldAccesses(state.build.parallelLoops(), types, shapeInputs.fieldAccesses.mutableSpan());
-    if (steps.hasFailed())
+    if (!types.isIdentity()) {
+        forEachTaskOfFieldAccesses(loops, placement.m_fieldAccesses.mutableSpan(), [&](unsigned task, size_t, std::span<FieldAccess> rows) {
+            if (types.isIdentityFor(task))
+                return;
+            for (FieldAccess& row : rows) {
+                types.apply(row.membersWithField);
+                types.apply(row.contents);
+            }
+        });
+    }
+    if (state.hasFailed())
         return { };
-    state.variants = WTF::move(shapeInputs.variants);
-    state.typesNeeded = WTF::move(shapeInputs.typesNeededAtRunTime);
-    state.typesWithCells = WTF::move(shapeInputs.typesWithCells);
-    state.typesThatOrderShapes = WTF::move(shapeInputs.typesThatOrderShapes);
-    return Placement(PlacementParts {
-        .slots = &state.inputs.slots,
-        .fieldAccesses = WTF::move(shapeInputs.fieldAccesses),
-        .closureLayout = closureLayout,
-        .statics = WTF::move(statics),
-        .guardBits = WTF::move(guardBits),
-    });
+    return placement;
 }
 
 void PlacementInSteps::numberRest(Placement& placement)
 {
     State& state = *m_state;
-    const StepRunner& steps = state.steps;
-    BodyScansForPlacement* scans = state.scans;
-    if (steps.hasFailed())
+    if (state.hasFailed())
         return;
     const PlacementContext& context = *state.context;
-    const Program& program = context.program;
     PlacedSites& sites = state.sites;
     const BitVector& typesNeeded = state.typesThatOrderShapes;
-    Vector<FieldAccess>& fieldAccesses = placement.m_fieldAccesses;
-    const GuardBitTable& guardBits = placement.m_guardBits;
 
-    // Numbering the shapes is the longest chain and mostly one thread. Nothing else waits for it but the allocations.
-    ShapeTable shapes;
-    AllocationTable allocations;
-    KeyOrders keyOrders;
-    ConstantNumbering constants;
-    FunctionNumbering functions;
-    Vector<std::optional<uint32_t>> classRanks;
-    steps.runBeside({
+    state.runBeside({
         [&] {
-            auto candidates = steps.runStep("collectShapeTestCandidates"_s, [&] { return collectShapeTestCandidates(context, sites, fieldAccesses.span(), state.variants, typesNeeded); });
-            auto numbering = steps.runStep("numberShapes"_s, [&] { return numberShapes(context, candidates, state.variants); });
-            shapes = steps.runStep("deriveShapeTests"_s, [&] { return deriveShapeTests(context, sites, numbering, state.variants, typesNeeded, fieldAccesses); });
+            ShapeTestCandidates candidates;
+            ShapeNumbering numbering;
+            state.run("collectShapeTestCandidates"_s, [&] { candidates = collectShapeTestCandidates(context, sites, placement.m_fieldAccesses.span(), state.variants, typesNeeded); });
+            state.run("numberShapes"_s, [&] { numbering = numberShapes(context, candidates, state.variants); });
+            state.run("deriveShapeTests"_s, [&] { placement.m_shapes = deriveShapeTests(context, sites, numbering, state.variants, typesNeeded, placement.m_fieldAccesses); });
         },
         [&] {
-            allocations = steps.runStep("numberAllocations"_s, [&] { return numberAllocations(context, sites); });
-            std::tie(keyOrders, state.orderWords) = steps.runStep("collectKeyOrders"_s, [&] { return collectKeyOrders(context, sites, allocations); });
+            state.run("numberAllocations"_s, [&] { placement.m_allocations = numberAllocations(context, sites); });
+            state.run("collectKeyOrders"_s, [&] { std::tie(placement.m_keyOrders, state.orderWords) = collectKeyOrders(context, sites, placement.m_allocations); });
         },
+        [&] { state.run("numberConstants"_s, [&] { placement.m_constants = numberConstants(context, sites, placement.m_typesWithCells, *state.scans); }); },
         [&] {
-            constants = steps.runStep("numberConstants"_s, [&] {
-                if (!scans)
-                    return numberConstants(context, sites, state.typesWithCells);
-                auto usesOf = [&](FunctionID id) -> const Vector<KeyCellUse>& {
-                    return scans->keyCellUsesOf(id);
-                };
-                KeyCellUsesOfBodies usesOfBodies(usesOf);
-                return numberConstants(context, sites, state.typesWithCells, &usesOfBodies);
-            });
-        },
-        [&] {
-            functions = steps.runStep("numberFunctions"_s, [&] { return numberFunctions(context, sites); });
-            classRanks = steps.runStep("rankClasses"_s, [&] { return rankClasses(program, sites.layoutsOutOfUse); });
+            state.run("numberFunctions"_s, [&] { placement.m_functions = numberFunctions(context, sites); });
+            state.run("rankClasses"_s, [&] { placement.m_classRanks = rankClasses(context.program, sites.layoutsOutOfUse); });
         },
     });
-    steps.runStep("finishAllocations"_s, [&] { finishAllocations(context, shapes, state.orderWords, sites.allocations.span(), allocations); });
-    auto methodTable = steps.runStep("placeMethodTable"_s, [&] { return placeMethodTable(context, sites, shapes, guardBits, state.methodTableFunctions); });
-
-    placement.m_shapes = WTF::move(shapes);
-    placement.m_allocations = WTF::move(allocations);
-    placement.m_keyOrders = WTF::move(keyOrders);
-    placement.m_methodTable = WTF::move(methodTable);
-    placement.m_globalBindings = WTF::move(state.globalBindings);
-    placement.m_constants = WTF::move(constants);
-    placement.m_functions = WTF::move(functions);
-    placement.m_classRanks = WTF::move(classRanks);
+    state.run("finishAllocations"_s, [&] { finishAllocations(context, placement.m_shapes, state.orderWords, sites.allocations.span(), placement.m_allocations); });
+    state.run("placeMethodTable"_s, [&] { placement.m_methodTable = placeMethodTable(context, sites, placement.m_shapes, placement.m_guardBits, state.methodTableFunctions); });
     placement.m_layoutsOutOfUse = sites.layoutsOutOfUse;
     placement.m_bodiesWithoutCodeWhenPlaced = sites.bodiesWithoutCode;
-    placement.m_typesNeededAtRunTime = WTF::move(state.typesNeeded);
-    placement.m_typesWithCells = WTF::move(state.typesWithCells);
     placement.m_numberOfRegExpRecords = static_cast<unsigned>(state.inputs.regExpRequests.all().size());
 }
 
@@ -526,35 +759,31 @@ void PlacementInSteps::prepareToResolveFieldAccesses()
 
 void PlacementInSteps::resolveFieldAccessesOf(const Placement& placement, FunctionID id, Function& function)
 {
-    State& state = *m_state;
-    resolveFieldAccesses(*state.context, { state.sites, state.literals, state.orderWords, placement }, id, function, state.valuesWithOtherWords[id.index()]);
+    resolveFieldAccesses(placement, function, m_state->valuesWithOtherWords[id.index()]);
 }
 
 void PlacementInSteps::resolveSites(ProgramEditor& editor, Placement& placement)
 {
     State& state = *m_state;
-    const StepRunner& steps = state.steps;
-    if (steps.hasFailed()) {
-        placement = { };
-        return;
-    }
-    const PlacementContext& context = *state.context;
-    SiteResolutionInputs inputs { state.sites, state.literals, state.orderWords, placement };
-    auto resolvedSites = steps.runStep("resolveSites"_s, [&] {
-        if (state.valuesWithOtherWords.isEmpty())
-            return Typed::resolveSites(editor, context, inputs);
-        return resolveOtherWords(editor, context, inputs, state.valuesWithOtherWords.span());
+    state.run("resolveSites"_s, [&] {
+        const Program& program = state.context->program;
+        if (state.valuesWithOtherWords.isEmpty()) {
+            prepareToResolveFieldAccesses();
+            forEachIndexInParallel(state.build.parallelLoops(), program.functions.size(), [&](unsigned index) {
+                if (program.functions[index].hasBody())
+                    resolveFieldAccessesOf(placement, FunctionID(index), editor.atForPlacedWords(FunctionID(index)));
+            });
+        }
+        placement.m_resolvedSites = resolveOtherWords(editor, *state.context, { state.sites, state.literals, state.orderWords, placement }, state.valuesWithOtherWords.span());
     });
-    if (steps.hasFailed()) {
+    if (state.hasFailed()) {
         placement = { };
         return;
     }
-    placement.setResolvedSites(WTF::move(resolvedSites));
     countStatistics(placement, state.sites, state.build.statistics());
     state.build.destroyLater(WTF::move(state.sites));
     state.build.destroyLater(WTF::move(state.valuesWithOtherWords));
-    if (state.scans)
-        state.scans->destroyLater();
+    state.scans->destroyLater();
 }
 
 Placement numberAndEncode(ProgramEditor& editor, const PlacementInputs& inputs, BuildContext& build, NOESCAPE const ScopedLambda<void()>& readBodiesBesideCollectingSites, BodyScansForPlacement* scans)

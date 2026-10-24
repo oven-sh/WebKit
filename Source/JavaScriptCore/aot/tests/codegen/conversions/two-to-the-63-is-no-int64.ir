@@ -16,7 +16,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = NewClosure function=f3
@@ -26,19 +25,16 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="mod8" flags=[IsChecked] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = Integer integer=8
     v2 = Mod v0, v1
     Return v2
 }
 function f2 name="mod10" flags=[IsChecked] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = Integer integer=10
     v2 = Mod v0, v1
     Return v2
 }
 function f3 name="isEven" flags=[IsChecked] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = Integer integer=2
     v2 = Mod v0, v1
     v3 = Integer integer=0

@@ -10,7 +10,6 @@ layout L1 kind=Instance name="Left" base=L0 constructor=f2 fields=[{key="small" 
 layout L2 kind=Instance name="Right" base=L0 constructor=f3 fields=[{key="first" declared={type=number} flags=[IsRequired]}, {key="second" declared={type=number} flags=[IsRequired]}, {key="third" declared={type=undefined|L0}}] flags=[HasHeritage]
 variable g0 name="Base" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=MathRandom
     v1 = Call v0
     v2 = ToNumber v1
@@ -47,7 +46,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
     v4 = Boolean boolean=true
@@ -57,7 +55,6 @@ function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] parameters=[{t
     Return v7
 }
 function f2 name="Left" kind=DerivedConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetModuleVariable variable=g0
     v3 = SuperConstruct v2, v0, v1 layout=L1
     v4 = Boolean boolean=false
@@ -66,7 +63,6 @@ function f2 name="Left" kind=DerivedConstructor flags=[HasNewTarget] parameters=
     Return v3
 }
 function f3 name="Right" kind=DerivedConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetModuleVariable variable=g0
     v3 = SuperConstruct v2, v0, v1 layout=L2
     PropSet v3, v1 key="first"

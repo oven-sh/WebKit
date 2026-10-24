@@ -15,7 +15,6 @@ variable g0 name="last" declared={type=anything} initialization=Undefined
 # CHECK-NEXT: PutModuleVariable v11 variable=g0
 # CHECK-NOT: FlattenString
 function f0 name="slice-in-loop" parameters=[{type=string}, {type=number}] results=[{type=undefined}] {
-  b0(v0: string, v1: number):
     v2 = Integer integer=0
     v3 = Integer integer=1
     Jump -> next b1(v2)

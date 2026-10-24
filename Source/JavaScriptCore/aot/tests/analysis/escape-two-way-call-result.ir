@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="freshResult" parameters=[{type=object}] results=[{type=undefined}] {
-  b0(v0: object):
     TryCallInline -, v0 inlineBuiltin=OwnPropertyKeys inlineParameters=[0] overload=ObjectKeys/0 -> done b1(), miss b2()
   b1(v1):
     v2 = IsPristine v1 builtinClass=Array aspects=[Storage]
@@ -26,7 +25,6 @@ function f0 name="freshResult" parameters=[{type=object}] results=[{type=undefin
 # CHECK: v1 may be untracked: no
 
 function f1 name="resultMayBeAnOperand" parameters=[{type=Map}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: Map, v1: anything):
     TryCallInline v0, v1 inlineBuiltin=MapGet overload=MapPrototypeGet/0 -> done b1(), miss b2()
   b1(v2):
     v3 = ToBoolean v2 form=Generic

@@ -39,42 +39,35 @@ static_assert(ClosureRequest::maxNumberOfCaptures <= ClosureRequest::maxSlimClos
 
 void ConstantEmitter::generateNewClosure(const ValueContext& value)
 {
+    defineCell(value, closureCreatedBy(value));
+}
+
+CellPointer ConstantEmitter::closureCreatedBy(const ValueContext& value)
+{
     FunctionID function = value->function();
     std::span<const ValueID> captures = value->capturesOperands();
     RELEASE_ASSERT(captures.size() == m_program.at(function).captures.size() && captures.size() <= Closure::maxNumberOfCaptures);
 
     FunctionID entrypoint = inputs().derivedFunctions.find(derivedFunctionKey(FunctionRole::GenericEntrypoint, function));
-    if (!entrypoint) {
-        failAndDefineZero(value, InternalErrorKind::OpcodeWithoutCode);
-        return;
-    }
+    if (!entrypoint)
+        return failWithoutCell(value, InternalErrorKind::OpcodeWithoutCode);
 
     NewClosureRequest request { function, entrypoint, m_placement.functionKind(entrypoint), value->allocation(), value->storage(), value->closureForm(), captures };
-    if (value->isLent() && (request.form != ClosureForm::Slim || request.storage != AllocationStorage::Frame)) {
-        failAndDefineZero(value, InternalErrorKind::OpcodeWithoutCode);
-        return;
-    }
+    if (value->isLent() && (request.form != ClosureForm::Slim || request.storage != AllocationStorage::Frame))
+        return failWithoutCell(value, InternalErrorKind::OpcodeWithoutCode);
     switch (request.form) {
     case ClosureForm::Slim:
-        defineCell(value, newSlimClosure(value, request));
-        return;
+        return newSlimClosure(value, request);
     case ClosureForm::Full:
-        if (request.storage == AllocationStorage::Heap && !request.allocation) {
-            failAndDefineZero(value, InternalErrorKind::PlacedPayloadMissing);
-            return;
-        }
-        if ((value.shape() != CodeShape::Fast || request.storage == AllocationStorage::Heap) && canUseClosureStub(request)) {
-            defineCell(value, newClosureByStub(value, request));
-            return;
-        }
-        defineCell(value, newFullClosure(value, request));
-        return;
+        if (request.storage == AllocationStorage::Heap && !request.allocation)
+            return failWithoutCell(value, InternalErrorKind::PlacedPayloadMissing);
+        if ((value.shape() != CodeShape::Fast || request.storage == AllocationStorage::Heap) && canUseClosureStub(request))
+            return newClosureByStub(value, request);
+        return newFullClosure(value, request);
     case ClosureForm::Deferred:
-        failAndDefineZero(value, InternalErrorKind::OpcodeWithoutCode);
-        return;
+        return failWithoutCell(value, InternalErrorKind::OpcodeWithoutCode);
     case ClosureForm::Singleton:
-        defineCell(value, singletonClosure(value, function));
-        return;
+        return singletonClosure(value, function);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -119,16 +112,11 @@ CellPointer ConstantEmitter::newSlimClosure(const ValueContext& value, const New
         return callClosureStub(value, request, requestWord, SlimClosure::allocationSize(count));
 
     CellPointer cell = emitter<CellAllocationEmitter>().allocateInFrame(SlimClosure::allocationSize(count));
-    initializeSlimClosure(cell, request);
-    return cell;
-}
-
-void ConstantEmitter::initializeSlimClosure(CellPointer cell, const NewClosureRequest& request)
-{
     CodeGenerator::InitializationScope scope(generator());
     emitter<CellAllocationEmitter>().storeHeader(cell, loadImmutable64(AOT_INSTANCE_OFFSET(slimClosureHeaders) + request.kind.slimClosureKind() * sizeof(uint64_t)));
     storeCaptures(cell, request, m_heaps.AOTSlimClosure_captures);
     storeField(cell, m_heaps.AOTSlimClosure_word, closureWordOf(request.entrypoint));
+    return cell;
 }
 
 CellPointer ConstantEmitter::newClosureByStub(const ValueContext& value, const NewClosureRequest& request)

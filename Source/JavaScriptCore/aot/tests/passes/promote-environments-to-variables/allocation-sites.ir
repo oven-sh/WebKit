@@ -13,7 +13,6 @@ layout L1 kind=Environment name="loopBody" fields=[{key=@"item.0" declared={type
 layout L2 kind=Environment name="loopHead" fields=[{key=@"index.0" declared={type=anything}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = Integer integer=0
@@ -34,8 +33,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Branch v15 -> taken b1(v14), notTaken b2()
   b2():
     Return
-}
-# CHECK-LABEL: function f0 name="main"
 # CHECK: PutModuleVariable v2 variable=g0
 # CHECK-NEXT: = NewClosure function=f1
 # CHECK: [[first]]: env L2 = NewObject -, v2 layout=L2
@@ -43,15 +40,15 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK: [[body]]: env L1 = NewObject -, {{*}} layout=L1
 # CHECK-NEXT: = NewClosure [[body]] function=f2
 # CHECK-NEXT: = NewClosure [[head]] function=f3
+}
 
 function f1 name="readsTotal" captures=[{type=env L0}] results=[{type=anything}] {
   b0(v0: env L0):
     v1 = GetEnvironmentField v0 layout=L0 field=0
     Return v1
-}
-# CHECK-LABEL: function f1 name="readsTotal"
 # CHECK-NOT: captures=
 # CHECK: = GetModuleVariable variable=g0
+}
 
 function f2 name="readsItem" captures=[{type=env L1}] results=[{type=anything}] {
   b0(v0: env L1):

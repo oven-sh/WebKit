@@ -10,7 +10,6 @@
 
 #include "AOTSchemaOperations.h"
 #include "AOTValueFlowBuiltinTables.h"
-#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -22,12 +21,16 @@ enum class ArithmeticForm : uint8_t {
     UnaryNumeric,
 };
 
-// What an operand may be once it has been converted to a primitive. A symbol throws.
+struct OperatorOnKinds {
+    ArithmeticForm form;
+    bool makesNoFraction { false };
+    bool answersInt32 { false };
+};
+
 struct ConvertedOperand {
     bool mayBeNumberLike { false };
     bool mayBeString { false };
     bool mayBeBigInt { false };
-    // Among what is like a number. `undefined` becomes NaN, which counts as a number without a fraction, null and the booleans become 0 and 1.
     bool mayBeNumberWithFraction { false };
 
     bool mayBeAnything() const { return mayBeNumberLike || mayBeString || mayBeBigInt; }
@@ -36,36 +39,42 @@ struct ConvertedOperand {
 
 } // anonymous namespace
 
-static std::optional<ArithmeticForm> formOf(Opcode opcode)
+static std::optional<OperatorOnKinds> operatorOnKinds(Opcode opcode)
 {
     switch (opcode) {
     case Opcode::Add:
-        return ArithmeticForm::Addition;
+        return OperatorOnKinds { ArithmeticForm::Addition, true };
     case Opcode::Sub:
     case Opcode::Mul:
-    case Opcode::Div:
     case Opcode::Mod:
+        return OperatorOnKinds { ArithmeticForm::BinaryNumeric, true };
+    case Opcode::Div:
     case Opcode::Pow:
+        return OperatorOnKinds { ArithmeticForm::BinaryNumeric };
     case Opcode::BitAnd:
     case Opcode::BitOr:
     case Opcode::BitXor:
     case Opcode::LShift:
     case Opcode::RShift:
-        return ArithmeticForm::BinaryNumeric;
+        return OperatorOnKinds { ArithmeticForm::BinaryNumeric, false, true };
     case Opcode::Negate:
     case Opcode::ToNumeric:
     case Opcode::Increment:
     case Opcode::Decrement:
+        return OperatorOnKinds { ArithmeticForm::UnaryNumeric, true };
     case Opcode::BitNot:
-        return ArithmeticForm::UnaryNumeric;
+        return OperatorOnKinds { ArithmeticForm::UnaryNumeric, false, true };
     default:
         return std::nullopt;
     }
 }
 
-bool answersByKindsOfOperands(Opcode opcode)
+bool answersByKindsOfOperands(Opcode opcode) { return operatorOnKinds(opcode) || opcode == Opcode::ToPropertyKey; }
+
+bool makesNoFraction(Opcode opcode)
 {
-    return formOf(opcode) || opcode == Opcode::ToPropertyKey;
+    std::optional<OperatorOnKinds> traits = operatorOnKinds(opcode);
+    return traits && traits->makesNoFraction;
 }
 
 static ValueSetID kinds(ValueFlowRuleContext& context, uint16_t primitives)
@@ -76,7 +85,6 @@ static ValueSetID kinds(ValueFlowRuleContext& context, uint16_t primitives)
     return context.maker().of(members.span());
 }
 
-// Code of the operand converts an object, and it may answer any primitive.
 static ConvertedOperand convert(ValueFlowRuleContext& context, const ValueFlowOperand& operand)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -90,41 +98,6 @@ static ConvertedOperand convert(ValueFlowRuleContext& context, const ValueFlowOp
     };
 }
 
-// As the types have it: see fractionFreeOperators.
-bool makesNoFraction(Opcode opcode)
-{
-    switch (opcode) {
-    case Opcode::Add:
-    case Opcode::Sub:
-    case Opcode::Mul:
-    case Opcode::Mod:
-    case Opcode::Negate:
-    case Opcode::Increment:
-    case Opcode::Decrement:
-    case Opcode::ToNumeric:
-        return true;
-    default:
-        return false;
-    }
-}
-
-// An operator on bits makes an integer of 32 bits of whatever number it is given, and answers one.
-static bool answersInt32(Opcode opcode)
-{
-    switch (opcode) {
-    case Opcode::BitAnd:
-    case Opcode::BitOr:
-    case Opcode::BitXor:
-    case Opcode::LShift:
-    case Opcode::RShift:
-    case Opcode::BitNot:
-        return true;
-    default:
-        return false;
-    }
-}
-
-// The result has the kinds that the kinds of the operands can give: a sum of numbers is a number. The mask of the result keeps what the type of the operation admits.
 void runArithmetic(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     std::span<const ValueFlowOperand> operands = context.operandsOf(statement);
@@ -137,13 +110,13 @@ void runArithmetic(const ValueFlowStatement& statement, ValueFlowRuleContext& co
     if (!statement.result)
         return;
 
-    ArithmeticForm form = *formOf(statement.opcode);
+    OperatorOnKinds traits = *operatorOnKinds(statement.opcode);
+    ArithmeticForm form = traits.form;
     ConvertedOperand left = convert(context, operands[0]);
     ConvertedOperand right = form == ArithmeticForm::UnaryNumeric ? left : convert(context, operands[1]);
 
-    // A sum, a difference and a product of numbers without a fraction have none. A sum takes a string as it is. Every other operator makes a number of it, and the text may spell a fraction.
     bool takesFraction = left.mayBeNumberWithFraction || right.mayBeNumberWithFraction || (form != ArithmeticForm::Addition && (left.mayBeString || right.mayBeString));
-    uint16_t number = answersInt32(statement.opcode) ? Primitive::Integer : makesNoFraction(statement.opcode) && !takesFraction ? Primitive::NumberWithoutFraction : Primitive::Number;
+    uint16_t number = traits.answersInt32 ? Primitive::Integer : traits.makesNoFraction && !takesFraction ? Primitive::NumberWithoutFraction : Primitive::Number;
 
     uint16_t result = 0;
     if (form == ArithmeticForm::Addition) {
@@ -159,7 +132,6 @@ void runArithmetic(const ValueFlowStatement& statement, ValueFlowRuleContext& co
         context.add(statement.result, kinds(context, result));
 }
 
-// A string and a symbol are the key themselves, so a key that the analysis knows stays known. Where nothing arrives there is no key.
 void runToPropertyKey(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     const ValueFlowUniverse& universe = context.universe();

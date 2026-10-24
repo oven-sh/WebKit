@@ -9,7 +9,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="testedFlag" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     v2 = TypeTest v1 testedType=boolean
     Branch v2 -> taken b1(| 0), notTaken b4()
   b1(v3: boolean):
@@ -27,7 +26,6 @@ function f0 name="testedFlag" parameters=[{type=number}, {type=anything}] result
 }
 
 function f1 name="testedKind" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     v2 = TypeTest v1 testedType=i32
     Branch v2 -> taken b1(| 0), notTaken b5()
   b1(v3: i32):
@@ -48,7 +46,6 @@ function f1 name="testedKind" parameters=[{type=number}, {type=anything}] result
 }
 
 function f2 name="passesFalse" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = Boolean
     v2 = CallDirect v0, v1 function=f0
     Return v2
@@ -57,7 +54,6 @@ function f2 name="passesFalse" parameters=[{type=number}] results=[{type=anythin
 # CHECK-NOT: CallDirect
 
 function f3 name="passesSomeFlag" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean):
     v2 = CallDirect v0, v1 function=f0
     Return v2
 }
@@ -65,7 +61,6 @@ function f3 name="passesSomeFlag" parameters=[{type=number}, {type=boolean}] res
 # CHECK: = CallDirect
 
 function f4 name="passesOne" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = Integer integer=1
     v2 = CallDirect v0, v1 function=f1
     Return v2
@@ -74,7 +69,6 @@ function f4 name="passesOne" parameters=[{type=number}] results=[{type=anything}
 # CHECK-NOT: CallDirect
 
 function f5 name="passesSomeKind" parameters=[{type=number}, {type=i32}] results=[{type=anything}] {
-  b0(v0: number, v1: i32):
     v2 = CallDirect v0, v1 function=f1
     Return v2
 }
@@ -82,7 +76,6 @@ function f5 name="passesSomeKind" parameters=[{type=number}, {type=i32}] results
 # CHECK: = CallDirect
 
 function f6 name="testedFlagBehindAMerge" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     v2 = TypeTest v1 testedType=boolean
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3: boolean):
@@ -107,7 +100,6 @@ function f6 name="testedFlagBehindAMerge" parameters=[{type=number}, {type=anyth
 }
 
 function f7 name="passesFalseToTheMerge" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = Boolean
     v2 = CallDirect v0, v1 function=f6
     Return v2

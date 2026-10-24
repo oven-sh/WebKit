@@ -14,7 +14,6 @@ namespace JSC { namespace AOT {
 static constexpr ASCIILiteral programText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -25,14 +24,12 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="withoutPrototype" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=ObjectCreate
     v1 = Null
     v2 = Call v0, -, v1
     Return v2
 }
 function f2 name="filledWithoutPrototype" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = Builtin builtin=ObjectCreate
     v4 = Null
     v5 = Call v3, -, v4
@@ -42,13 +39,11 @@ function f2 name="filledWithoutPrototype" parameters=[{type=anything}, {type=any
     Return v5
 }
 function f3 name="underObjectOrNull" parameters=[{type=null|object}] results=[{type=anything}] {
-  b0(v0: null|object):
     v1 = Builtin builtin=ObjectCreate
     v2 = Call v1, -, v0
     Return v2
 }
 function f4 name="underAnything" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=ObjectCreate
     v2 = Call v1, -, v0
     Return v2

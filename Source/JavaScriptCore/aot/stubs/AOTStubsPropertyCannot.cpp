@@ -11,7 +11,6 @@
 namespace JSC { namespace AOT {
 
 static constexpr StubRegister getterSetterRegister = StubRegister::T10;
-
 static constexpr unsigned firstOperandOfFinisher = 3;
 
 static_assert(noOverlap(operationArgumentGPR(4), gprOf(firstStubOperandRegister), gprOf(slotHeaderRegister), gprOf(slotPayloadRegister), gprOf(storedValueByIdRegister)));
@@ -45,14 +44,9 @@ static constexpr FinisherCall finisherCallOf(SlotFinisher finisher)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-static SlotFinisher finisherOf(StubKey key)
-{
-    return static_cast<SlotFinisher>(key.form());
-}
-
 StubSignature signatureOfSlotCannot(StubKey key)
 {
-    const FinisherCall finisherCall = finisherCallOf(finisherOf(key));
+    const FinisherCall finisherCall = finisherCallOf(static_cast<SlotFinisher>(key.form()));
     StubSignature signature = StubSignature::withoutResult({ gprOf(firstStubOperandRegister), gprOf(slotHeaderRegister), gprOf(slotPayloadRegister) });
     if (finisherCall.takesGetterSetter)
         signature.addOperand(gprOf(getterSetterRegister));
@@ -75,7 +69,7 @@ static void setUpSetterCall(StubAssembler& jit, PutMode mode, OperationCall& cal
 
 void generateSlotCannot(StubAssembler& jit)
 {
-    const SlotFinisher finisher = finisherOf(jit.key());
+    const SlotFinisher finisher = static_cast<SlotFinisher>(jit.key().form());
     const FinisherCall finisherCall = finisherCallOf(finisher);
     OperationCall call {
         .returns = finisherCall.returnsValue ? OperationCall::Returns::Value : OperationCall::Returns::Void,

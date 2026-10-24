@@ -11,12 +11,11 @@ function f0 name="keyBesideParameters" flags=[HasArgumentCount, HasHiddenRest] p
     v5 = AssumeType v4 castType=Arguments<undefined|i32|L0, proven>
     v6 = ElemGet v5, v2
     Return v6
-}
-# CHECK-LABEL: function f0 name="keyBesideParameters"
 # CHECK-NOT: CreateUnmappedArguments
 # CHECK: Switch v2 cases=[0, 1]
 # CHECK: anything = ElemGet v3,
 # CHECK: undefined|i32|L0 = AssumeType {{*}} castType=undefined|i32|L0
+}
 
 function f1 name="surplusArgument" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=L0}] results=[{type=anything}] {
   b0(v0: int[0, 4294967295], v1: L0, v2: Array):
@@ -25,11 +24,10 @@ function f1 name="surplusArgument" flags=[HasArgumentCount, HasHiddenRest] param
     v5 = Integer integer=2
     v6 = ElemGet v4, v5
     Return v6
-}
-# CHECK-LABEL: function f1 name="surplusArgument"
 # CHECK-NOT: CreateUnmappedArguments
 # CHECK: [[element1]]: anything = ElemGet v2,
 # CHECK-NEXT: undefined|L0 = AssumeType [[element1]] castType=undefined|L0
+}
 
 function f2 name="objectIsStored" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=L0}, {type=i32}] results=[{type=anything}] {
   b0(v0: int[0, 4294967295], v1: L0, v2: i32, v3: Array):
@@ -37,6 +35,5 @@ function f2 name="objectIsStored" flags=[HasArgumentCount, HasHiddenRest] parame
     v5 = AssumeType v4 castType=Arguments<undefined|i32|L0, proven>
     v6 = ElemGet v5, v2
     Return v5
-}
-# CHECK-LABEL: function f2 name="objectIsStored"
 # CHECK: v4: Arguments = CreateUnmappedArguments v0, v3, v1, v2
+}

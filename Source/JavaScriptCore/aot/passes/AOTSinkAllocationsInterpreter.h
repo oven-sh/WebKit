@@ -16,8 +16,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-enum class Execution : uint8_t { Kept, Interpreted };
-
 enum class FieldRead : uint8_t { Unknown, Value, ValueOrUndefined, Undefined, HeldObject };
 
 struct LateFieldStore {
@@ -38,7 +36,6 @@ struct CopiedField {
     uint32_t targetField { 0 };
 };
 
-// Where the values of an arguments object are: in the frame of this function from one argument on, or in the parameters and the rest list.
 struct ArgumentsParts {
     std::optional<uint32_t> firstFrameArgument;
     std::optional<uint32_t> numberOfPassedParameters;
@@ -64,13 +61,10 @@ public:
     const SinkingState& state() const { return m_state; }
     ObjectValueMap& values() { return *m_values; }
 
-    Execution execute(ValueID);
+    void execute(ValueID);
     void executeTerminator(const Terminator&);
-    // While the function is analyzed: what execute() does for an entry of AllocationSinking::relevantValuesOf().
     void executeRelevantValue(const BlockValues&, uint32_t entry);
-    // While the function is analyzed: a terminator that mentions no name is passed over.
     void executeTerminatorOf(BlockID);
-    // While the states at the heads are computed: what enterEdge() does on an edge that AllocationSinking::isPlain() holds for. False if it is left to enterEdge().
     bool tryEnterPlainEdge(BlockID target);
     void checkThatOtherValuesChangeNothing(BlockID);
     void enterEdge(const OutgoingEdge&, const Terminator*, const SinkingState* headOfTarget);
@@ -88,9 +82,13 @@ public:
     ValueID resolve(ValueID);
     ValueID cellOf(VirtualObjectID);
     ValueID resolveGuard(ValueID);
-    void resolveOperands(Value& detachedValue);
-    void resolveOperands(Terminator& detachedTerminator);
-    ValueID tagOf(VirtualObjectID, BlockID target);
+    template<typename Instruction>
+    void resolveOperands(Instruction& detached)
+    {
+        detached.forEachOperand([&](ValueID& operand, uint32_t operandIndex) {
+            operand = detached.operandKind(operandIndex) == OperandKind::Guard ? resolveGuard(operand) : resolve(operand);
+        });
+    }
     ValueID valueOfField(VirtualObjectID, uint32_t field);
     ValueID valueOfField(VirtualObjectID, uint32_t field, TypeID typeInVariants);
     ValueID emitTagTest(VirtualObjectID, uint32_t tagBits);
@@ -106,13 +104,20 @@ private:
     const VirtualShape& shapeOf(VirtualObjectID object, const ObjectVariant& variant) const LIFETIME_BOUND { return m_sinking.familyOf(object).at(variant.shape); }
     const VirtualShape& singleShapeOf(VirtualObjectID object) const LIFETIME_BOUND { return shapeOf(object, stateOf(object)->variants[0]); }
 
-    Execution executeAllocation(ValueID);
-    Execution executeCast(ValueID);
-    Execution executeGuards(ValueID);
-    Execution executeRuntimeValidation(ValueID);
-    Execution executeOther(ValueID);
+    void executeAllocation(ValueID);
+    void executeCast(ValueID);
+    void executeGuards(ValueID);
+    void executeRuntimeValidation(ValueID);
+    void executeOther(ValueID);
+    void executeOnCell(ValueID, uint32_t operandIndex);
+    void executeAccessOnCell(ValueID access, VirtualObjectID);
+    void didFoldStores(VirtualObjectID, unsigned numberOfStores);
+    bool exceedsLimit(LimitID, uint64_t amount, VirtualObjectID);
+    ObjectState stateAtAllocation(VirtualObjectID, VirtualShapeID);
+    uint32_t partOf(VirtualObjectID object, VirtualFieldKind part) const { return *m_sinking.familyOf(object).findField(VirtualField::part(part)); }
     void splitThrowingVariants(ValueID cast, VirtualObjectID, uint32_t throwingTagBits);
     void requireCellsOfOperands(ValueID);
+    void requireCellsOfOperandsBeside(ValueID, uint32_t operandIndex);
     void forgetFieldsWrittenBy(ValueID);
     BuildCause causeOf(ValueID user, uint32_t operandIndex) const;
     BuildCause causeOf(const Terminator&, uint32_t operandIndex) const;
@@ -120,10 +125,11 @@ private:
     void bind(ValueID, VirtualObjectID, AliasKind = AliasKind::Object);
     void stateDidChange(VirtualObjectID);
 
-    Execution executeRead(ValueID);
-    Execution executeStore(ValueID);
-    Execution executeDynamicElementRead(ValueID read, VirtualObjectID, ValueID index);
+    void executeRead(ValueID);
+    void executeStore(ValueID);
+    void executeDynamicElementRead(ValueID read, VirtualObjectID, ValueID index);
     std::optional<uint32_t> fieldFor(VirtualObjectID, const VirtualField&);
+    void finishRead(ValueID read, VirtualObjectID, std::optional<uint32_t> field, FieldRead);
     FieldRead classifyRead(VirtualObjectID, const VirtualFieldAccess&, std::optional<uint32_t> field) const;
     bool canStore(VirtualObjectID, const VirtualFieldAccess&, uint32_t field, ValueID stored) const;
     bool canStoreUnprovenValue(VirtualObjectID, const VirtualFieldAccess&, uint32_t namedField) const;
@@ -139,16 +145,16 @@ private:
     void replaceRead(ValueID read, ValueID replacement);
     ValueID emitUndefined();
 
-    Execution executeTest(ValueID);
+    void executeTest(ValueID);
     std::optional<TestEntry> evaluateTestOn(ValueID test) const;
     std::optional<TestEntry> evaluateComparison(ValueID test) const;
     void noteListsThatMayNotFit(ValueID test);
-    void replaceTest(ValueID test, const TestEntry&);
     void executeReturn(const Terminator&);
     void buildBeforeBranch(const Terminator&);
     void narrow(VirtualObjectID, uint32_t keptTagBits);
     void narrowOnEdge(const Terminator&, uint32_t targetIndex);
     void forgetAnswersOfTests();
+    std::optional<TestEntry> answerAtBranch(ValueID condition) const;
     std::optional<uint32_t> tagBitsOfShapeCase(const Terminator&, VirtualObjectID, uint32_t targetIndex) const;
 
     void bindParameters(const OutgoingEdge&);
@@ -161,13 +167,13 @@ private:
     void dropDeadEntries(BlockID target, const SinkingState* headOfTarget);
     void willEmitOnEdge(const OutgoingEdge&);
 
-    Execution executeListUse(ValueID);
-    Execution executeAppendElements(ValueID);
-    Execution executeCopyDataProperties(ValueID);
-    Execution executeCallWithList(ValueID);
-    Execution executeDestructuring(ValueID);
-    Execution executeResultRead(ValueID);
-    Execution abandonDestructuredRead(ValueID read, VirtualObjectID);
+    void executeListUse(ValueID);
+    void executeAppendElements(ValueID);
+    void executeCopyDataProperties(ValueID);
+    void executeCallWithList(ValueID);
+    void executeDestructuring(ValueID);
+    void executeResultRead(ValueID);
+    void abandonDestructuredRead(ValueID read, VirtualObjectID);
     const VirtualObjectDescription* singleDescriptionOf(VirtualObjectID) const;
     std::optional<uint32_t> findListedElement(VirtualObjectID, uint32_t position) const;
     bool canAppendListedElements(VirtualObjectID target, VirtualObjectID source);
@@ -178,24 +184,24 @@ private:
     Vector<ValueID, 8> listedElementsOf(VirtualObjectID);
     void requireCellsOfListedElements(VirtualObjectID, const BuildCause&);
 
-    Execution readArgumentList(ValueID read, VirtualObjectID, const VirtualFieldAccess&);
-    Execution readArguments(ValueID read, VirtualObjectID, const VirtualFieldAccess&);
-    Execution storeArgument(ValueID store, VirtualObjectID, const VirtualFieldAccess&);
-    Execution forwardArgumentList(ValueID call, VirtualObjectID);
-    Execution executeCallOnArguments(ValueID call);
-    Execution forwardArguments(ValueID call, const ForwardedCallPlan&);
-    Execution sliceArguments(ValueID call);
-    Execution listArguments(ValueID list);
+    void readArgumentList(ValueID read, VirtualObjectID, const VirtualFieldAccess&);
+    void readArguments(ValueID read, VirtualObjectID, const VirtualFieldAccess&);
+    void storeArgument(ValueID store, VirtualObjectID, const VirtualFieldAccess&);
+    void forwardArgumentList(ValueID call, VirtualObjectID);
+    void executeCallOnArguments(ValueID call);
+    void forwardArguments(ValueID call, const ForwardedCallPlan&);
+    void sliceArguments(ValueID call);
+    void listArguments(ValueID list);
     bool tryCopyArguments(ValueID copy, VirtualObjectID arguments, uint32_t first, const BuildCause&);
-    Execution passListedElements(ValueID call);
+    void passListedElements(ValueID call);
     ArgumentsParts partsOfArguments(VirtualObjectID arguments) const;
     std::optional<Vector<uint32_t, 8>> requireCellsOfNamedArguments(VirtualObjectID arguments, const ArgumentsParts&, uint32_t first, const BuildCause&);
     Vector<ValueID, 8> namedArgumentsOf(VirtualObjectID arguments, const ArgumentsParts&, std::span<const uint32_t> parameterFields, uint32_t first);
     bool requireCellOfRestList(VirtualObjectID arguments, const BuildCause&);
-    Execution destructureArgumentList(ValueID destructuring, VirtualObjectID);
+    void destructureArgumentList(ValueID destructuring, VirtualObjectID);
     std::optional<bool> isArgumentPassed(VirtualObjectID arguments, uint32_t index) const;
 
-    Execution executeBuiltinResult(ValueID call, VirtualObjectID);
+    void executeBuiltinResult(ValueID call, VirtualObjectID);
     uint32_t prefixLengthNeededBy(VirtualObjectID) const;
     ValueID emitPresenceTag(ValueID isPresent, uint8_t tagBitWhenAbsent);
 
@@ -210,7 +216,6 @@ private:
     bool isReachedOnlyThrough(VirtualObjectID holder, VirtualObjectID held) const;
     void emitLateStores(std::span<const LateFieldStore>);
     void didBuild(VirtualObjectID, const BuildCause&);
-    BlockFrequency frequencyOfBuild() const;
 
     void returnVariant(uint32_t resultVariant, VirtualObjectID, const VirtualShape*, ValueID cell);
     uint32_t findResultVariant(VirtualObjectID, const VirtualShape&) const;

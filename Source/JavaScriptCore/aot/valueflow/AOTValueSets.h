@@ -33,7 +33,6 @@ public:
     static constexpr uint32_t mostHighMembersOfShortSet = 26;
 
     explicit ValueSets(uint32_t sizeOfUniverse);
-    ~ValueSets();
 
     uint32_t sizeOfUniverse() const { return m_sizeOfUniverse; }
 
@@ -216,32 +215,8 @@ public:
     bool anyMember(ValueSetID set, NOESCAPE const Invocable<bool(ValueFlowObjectID)> auto& functor) const
     {
         RELEASE_ASSERT(!isComplement(set));
-        if (holdsOneMember(storedSetOf(set)))
-            return functor(ValueFlowObjectID(onlyMemberOf(storedSetOf(set))));
-        const Run& run = m_lists.at(storedSetOf(set));
-        if (isShort(run)) {
-            for (uint64_t bits = run.lowestMembers; bits; bits &= bits - 1) {
-                if (functor(ValueFlowObjectID(static_cast<uint32_t>(std::countr_zero(bits)))))
-                    return true;
-            }
-            for (uint32_t member : highMembersOf(run)) {
-                if (functor(ValueFlowObjectID(member)))
-                    return true;
-            }
-            return false;
-        }
-        return anyStoredBlock(run.span(), [&](uint32_t place, uint32_t block) {
-            const uint64_t* words = m_blocks.at(block).words();
-            uint32_t firstOfBlock = place * membersPerBlock;
-            const uint64_t* word = words + 1;
-            for (uint64_t present = words[0]; present; present &= present - 1, ++word) {
-                uint32_t firstOfWord = firstOfBlock + static_cast<uint32_t>(std::countr_zero(present)) * 64;
-                for (uint64_t bits = *word; bits; bits &= bits - 1) {
-                    if (functor(ValueFlowObjectID(firstOfWord + static_cast<uint32_t>(std::countr_zero(bits)))))
-                        return true;
-                }
-            }
-            return false;
+        return anyStoredMember(set, [&](uint32_t member) {
+            return functor(ValueFlowObjectID(member));
         });
     }
 
@@ -284,14 +259,10 @@ public:
             }
             return;
         }
-        const uint64_t* words = m_blocks.at(blockOf(nameOfBlock)).words();
-        uint32_t firstOfBlock = placeOf(nameOfBlock) * membersPerBlock;
-        const uint64_t* word = words + 1;
-        for (uint64_t present = words[0]; present; present &= present - 1, ++word) {
-            uint32_t firstOfWord = firstOfBlock + static_cast<uint32_t>(std::countr_zero(present)) * 64;
-            for (uint64_t bits = *word; bits; bits &= bits - 1)
-                functor(ValueFlowObjectID(firstOfWord + static_cast<uint32_t>(std::countr_zero(bits))));
-        }
+        anyMemberOfStoredBlock(placeOf(nameOfBlock), blockOf(nameOfBlock), [&](uint32_t member) {
+            functor(ValueFlowObjectID(member));
+            return false;
+        });
     }
 
     static constexpr uint64_t noBlock = UINT64_MAX;
@@ -345,7 +316,7 @@ private:
         void freeOutgrownTables();
 
         size_t size() const;
-        uint32_t endOfNumbers() const;
+        uint32_t endOfNumbers() const { return m_endOfNumbers.load(std::memory_order_relaxed); }
         size_t memoryInBytes() const;
 
     private:
@@ -361,11 +332,7 @@ private:
 
         class Table {
         public:
-            Table()
-                : m_bits(0)
-            {
-            }
-
+            Table() = default;
             Table(Slot* slots, unsigned bits)
                 : m_bits(reinterpret_cast<uintptr_t>(slots) | bits)
             {
@@ -378,7 +345,7 @@ private:
             friend bool operator==(Table, Table) = default;
 
         private:
-            uintptr_t m_bits;
+            uintptr_t m_bits { 0 };
         };
 
         struct alignas(64) Shard {
@@ -446,7 +413,10 @@ private:
     class BlocksOfEntry {
         WTF_MAKE_NONCOPYABLE(BlocksOfEntry);
     public:
-        BlocksOfEntry(const ValueSets& sets, uint64_t entry)
+        BlocksOfEntry() = default;
+        BlocksOfEntry(const ValueSets& sets, uint64_t entry) { set(sets, entry); }
+
+        ALWAYS_INLINE void set(const ValueSets& sets, uint64_t entry)
         {
             if (isGroup(entry)) {
                 const uint64_t* words = sets.m_groups.at(groupOf(entry)).words();
@@ -513,22 +483,12 @@ private:
                     m_groupOfPlaces = groupOfPlaces;
                     while (m_position < m_list.size() && groupOfPlacesOf(m_list[m_position]) < groupOfPlaces)
                         ++m_position;
-                    m_present = 0;
-                    if (m_position < m_list.size() && groupOfPlacesOf(m_list[m_position]) == groupOfPlaces) {
-                        uint64_t entry = m_list[m_position];
-                        if (isGroup(entry)) {
-                            const uint64_t* words = m_sets.m_groups.at(groupOf(entry)).words();
-                            m_present = words[0];
-                            m_blocks = blocksOfGroup(words);
-                        } else {
-                            m_block = blockOf(entry);
-                            m_present = 1ull << placeOf(entry) % placesPerGroup;
-                            m_blocks = &m_block;
-                        }
-                    }
+                    m_blocks.present = 0;
+                    if (m_position < m_list.size() && groupOfPlacesOf(m_list[m_position]) == groupOfPlaces)
+                        m_blocks.set(m_sets, m_list[m_position]);
                 }
                 uint64_t bit = 1ull << place % placesPerGroup;
-                m_words = m_present & bit ? m_sets.m_blocks.at(m_blocks[std::popcount(m_present & (bit - 1))]).words() : nullptr;
+                m_words = m_blocks.present & bit ? m_sets.m_blocks.at(m_blocks.blockAt(bit)).words() : nullptr;
             }
             if (!m_words)
                 return false;
@@ -543,41 +503,58 @@ private:
         size_t m_position { 0 };
         uint32_t m_groupOfPlaces { UINT32_MAX };
         uint32_t m_place { UINT32_MAX };
-        uint32_t m_block { 0 };
-        uint64_t m_present { 0 };
-        const uint32_t* m_blocks { nullptr };
+        BlocksOfEntry m_blocks;
         const uint64_t* m_words { nullptr };
     };
 
     uint32_t blockAt(std::span<const uint64_t> list, uint32_t place) const;
     static size_t positionOfGroupOfPlaces(std::span<const uint64_t> list, size_t from, uint32_t groupOfPlaces);
+    static bool anyEntriesOfSameGroupOfPlaces(std::span<const uint64_t>, std::span<const uint64_t>, NOESCAPE const Invocable<bool(uint64_t, uint64_t)> auto& functor);
     bool blocksMeet(uint32_t, uint32_t) const;
     bool storedSetsMeet(ValueSetID, ValueSetID) const;
     bool storedSetIsSubset(ValueSetID, ValueSetID of) const;
 
-    void forEachStoredMember(ValueSetID set, NOESCAPE const Invocable<void(uint32_t)> auto& functor) const
+    ALWAYS_INLINE bool anyMemberOfStoredBlock(uint32_t place, uint32_t block, NOESCAPE const Invocable<bool(uint32_t)> auto& functor) const
     {
-        if (holdsOneMember(storedSetOf(set))) {
-            functor(onlyMemberOf(storedSetOf(set)));
-            return;
+        const uint64_t* words = m_blocks.at(block).words();
+        uint32_t firstOfBlock = place * membersPerBlock;
+        const uint64_t* word = words + 1;
+        for (uint64_t present = words[0]; present; present &= present - 1, ++word) {
+            uint32_t firstOfWord = firstOfBlock + static_cast<uint32_t>(std::countr_zero(present)) * 64;
+            for (uint64_t bits = *word; bits; bits &= bits - 1) {
+                if (functor(firstOfWord + static_cast<uint32_t>(std::countr_zero(bits))))
+                    return true;
+            }
         }
+        return false;
+    }
+
+    ALWAYS_INLINE bool anyStoredMember(ValueSetID set, NOESCAPE const Invocable<bool(uint32_t)> auto& functor) const
+    {
+        if (holdsOneMember(storedSetOf(set)))
+            return functor(onlyMemberOf(storedSetOf(set)));
         const Run& run = m_lists.at(storedSetOf(set));
         if (isShort(run)) {
-            for (uint64_t bits = run.lowestMembers; bits; bits &= bits - 1)
-                functor(static_cast<uint32_t>(std::countr_zero(bits)));
-            for (uint32_t member : highMembersOf(run))
-                functor(member);
-            return;
-        }
-        forEachStoredBlock(run.span(), [&](uint32_t place, uint32_t block) {
-            const uint64_t* words = m_blocks.at(block).words();
-            uint32_t firstOfBlock = place * membersPerBlock;
-            const uint64_t* word = words + 1;
-            for (uint64_t present = words[0]; present; present &= present - 1, ++word) {
-                uint32_t firstOfWord = firstOfBlock + static_cast<uint32_t>(std::countr_zero(present)) * 64;
-                for (uint64_t bits = *word; bits; bits &= bits - 1)
-                    functor(firstOfWord + static_cast<uint32_t>(std::countr_zero(bits)));
+            for (uint64_t bits = run.lowestMembers; bits; bits &= bits - 1) {
+                if (functor(static_cast<uint32_t>(std::countr_zero(bits))))
+                    return true;
             }
+            for (uint32_t member : highMembersOf(run)) {
+                if (functor(member))
+                    return true;
+            }
+            return false;
+        }
+        return anyStoredBlock(run.span(), [&](uint32_t place, uint32_t block) {
+            return anyMemberOfStoredBlock(place, block, functor);
+        });
+    }
+
+    void forEachStoredMember(ValueSetID set, NOESCAPE const Invocable<void(uint32_t)> auto& functor) const
+    {
+        anyStoredMember(set, [&](uint32_t member) {
+            functor(member);
+            return false;
         });
     }
 
@@ -682,6 +659,17 @@ private:
     };
 
     struct Totals {
+        void operator+=(Totals other)
+        {
+            numberOfMembers += other.numberOfMembers;
+            hashOfMembers += other.hashOfMembers;
+        }
+        void operator-=(Totals other)
+        {
+            numberOfMembers -= other.numberOfMembers;
+            hashOfMembers -= other.hashOfMembers;
+        }
+
         uint32_t numberOfMembers { 0 };
         uint64_t hashOfMembers { 0 };
     };
@@ -720,6 +708,8 @@ private:
     void sortMembersAndRemoveRepeats();
     uint64_t combineEntries(Operation, uint64_t first, uint64_t second);
     uint32_t combineBlocks(Operation, uint32_t first, uint32_t second);
+    struct BlockBeingMade;
+    uint32_t intern(BlockBeingMade&);
     Totals totalsOfBlock(uint32_t place, uint32_t block) const;
     Totals totalsOf(uint64_t entry) const;
     uint64_t entryFor(uint32_t firstPlace, uint64_t present, std::span<const uint32_t> blocks, Totals);

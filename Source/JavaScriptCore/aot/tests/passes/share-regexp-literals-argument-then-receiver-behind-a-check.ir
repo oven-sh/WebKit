@@ -9,7 +9,6 @@ entry module=m0
 typesite w0 module=m0 position=5 kind=Parameter
 typesite w1 module=m0 position=15 kind=Parameter
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -19,7 +18,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="argumentThenReceiver" parameters=[{type=string site=w0}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = NewRegExp pattern="a" @10
     v2 = String string="b"
     v3 = PropGet v0 key="replace"
@@ -27,14 +25,12 @@ function f1 name="argumentThenReceiver" parameters=[{type=string site=w0}] resul
     v5 = PropGet v1 key="test"
     v6 = Call v5, v1, v4 calleeKey="test"
     Return v6
-}
-# CHECK-LABEL: function f1 name="argumentThenReceiver"
 # CHECK: [[shared]]:{{*}}= SharedRegExpLiteral pattern="a"
 # CHECK-NOT: NewRegExp
 # CHECK: CallBuiltin {{*}}overload=StringPrototypeReplace/0
 # CHECK: CallBuiltin {{*}}overload=RegExpPrototypeTest/0
+}
 function f2 name="globalArgumentThenReceiver" parameters=[{type=string site=w1}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = NewRegExp pattern="a" regExpFlags=[Global] @20
     v2 = String string="b"
     v3 = PropGet v0 key="replace"

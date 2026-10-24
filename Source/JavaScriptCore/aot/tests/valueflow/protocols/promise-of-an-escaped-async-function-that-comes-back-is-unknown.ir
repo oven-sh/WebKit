@@ -8,12 +8,10 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = CallDirect function=f1
     Return
 }
 function f1 name="run" flags=[IsAsync] results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="somethingThatNoTableLists" [isFreeName]
@@ -28,11 +26,9 @@ function f1 name="run" flags=[IsAsync] results=[{type=anything}] {
     Return
 }
 function f2 name="first" flags=[IsAsync] results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f3
     Return v0
 }
 function f3 name="one" results=[{type=anything}] {
-  b0():
     Return
 }

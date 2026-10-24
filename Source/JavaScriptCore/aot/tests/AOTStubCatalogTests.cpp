@@ -232,7 +232,9 @@ static void testClosureOverReferences()
 
 static void checkReadSummaries(const StubCatalog& catalog)
 {
-    RegisterSet probeRegisters = InlinePropertyCode::registersOfFrontProbe();
+    RegisterSet probeRegisters { gprOf(StubRegister::T10), gprOf(StubRegister::T11), gprOf(StubRegister::T12), gprOf(StubRegister::T13) };
+    if (isARM64())
+        probeRegisters.add(gprOf(stubImmediateRegister), IgnoreVectors);
     AOT_TEST_CHECK(!probeRegisters.isEmpty());
     for (StubKey key : { getById(), getByIdAfterFrontProbe(), putByIdAfterFrontProbe(PutMode::Strict), putByIdAfterFrontProbe(PutMode::Sloppy), putByIdAfterFrontProbe(PutMode::Define) })
         AOT_TEST_CHECK(catalog.summaryOf(key).clobbered.subsumes(probeRegisters));

@@ -7,11 +7,9 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="only" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f1 name="endsInUnreachable" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=string
     Unreachable
 }

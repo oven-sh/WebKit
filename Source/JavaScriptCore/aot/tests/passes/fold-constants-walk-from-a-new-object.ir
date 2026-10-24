@@ -16,38 +16,30 @@ function f1 name="Moved" flags=[HasThis] thisType={type=L1 flags=[IsExpected]} r
     Return
 }
 function f2 name="born-with-the-prototype-object-of-its-class" parameters=[{type=f0}] results=[{type=boolean}] {
-  b0(v0: f0):
     v1 = NewObject layout=L0
     v2 = GetClassPrototype v0 layout=L0
     v3 = HasInPrototypeChain v1, v2
     Return v3
-}
-# CHECK-LABEL: function f2 name="born-with-the-prototype-object-of-its-class"
 # CHECK: v3: true = Boolean boolean=true
+}
 function f3 name="handed-a-prototype" parameters=[{type=f0}, {type=object}] results=[{type=boolean}] {
-  b0(v0: f0, v1: object):
     v2 = NewObject v1 layout=L0
     v3 = GetClassPrototype v0 layout=L0
     v4 = HasInPrototypeChain v2, v3
     Return v4
-}
-# CHECK-LABEL: function f3 name="handed-a-prototype"
 # CHECK: = HasInPrototypeChain v2, v3
+}
 function f4 name="one-of-the-layout-may-get-another" parameters=[{type=f1}] results=[{type=boolean}] {
-  b0(v0: f1):
     v1 = NewObject layout=L1
     v2 = GetClassPrototype v0 layout=L1
     v3 = HasInPrototypeChain v1, v2
     Return v3
-}
-# CHECK-LABEL: function f4 name="one-of-the-layout-may-get-another"
 # CHECK: = HasInPrototypeChain v1, v2
+}
 function f5 name="another-class" parameters=[{type=f1}] results=[{type=boolean}] {
-  b0(v0: f1):
     v1 = NewObject layout=L0
     v2 = GetClassPrototype v0 layout=L1
     v3 = HasInPrototypeChain v1, v2
     Return v3
-}
-# CHECK-LABEL: function f5 name="another-class"
 # CHECK: = HasInPrototypeChain v1, v2
+}

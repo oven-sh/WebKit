@@ -9,7 +9,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Counter" fields=[{key="step" declared={type=f0} flow={location={deferral=CapturesNothing deferredFunction=f0}}}]
 function f0 name="step" results=[{type=undefined}]
 function f1 name="goodReadOfAnotherObjectBetween" parameters=[{type=L0}, {type=L0}] results=[{type=anything}] {
-  b0(v0: L0, v1: L0):
     v2 = IsSlotFilled v0 key="step" receivers=[L0] level=Expected [holdsDeclaredType]
     Branch v2 -> taken b1(| 0), notTaken b3()
   b1(v3: guard):
@@ -25,7 +24,6 @@ function f1 name="goodReadOfAnotherObjectBetween" parameters=[{type=L0}, {type=L
     Return v9
 }
 function f2 name="badStoreBetween" parameters=[{type=L0}, {type=L0}] results=[{type=anything}] {
-  b0(v0: L0, v1: L0):
     v2 = IsSlotFilled v0 key="step" receivers=[L0] level=Expected [holdsDeclaredType]
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3: guard):

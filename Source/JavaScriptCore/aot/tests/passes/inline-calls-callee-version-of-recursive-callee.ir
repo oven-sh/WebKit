@@ -8,12 +8,10 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="double" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Add v0, v0
     Return v1
 }
 function f1 name="repeat" parameters=[{type=function}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: function, v1: anything, v2: boolean):
     v3 = Call v0, -, v1
 # REPEAT: i = 3..14
     v%(i+1) = Add v%(i), v1
@@ -27,7 +25,6 @@ function f1 name="repeat" parameters=[{type=function}, {type=anything}, {type=bo
 }
 
 function f2 name="calleeCallsItself" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewClosure function=f0
     v3 = CallDirect v2, v0, v1 function=f1
     Return v3

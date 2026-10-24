@@ -39,7 +39,6 @@ function f1 name="expectedTypeAndCompleteStamp" parameters=[{type=L0 flags=[IsEx
 # CHECK: v1:{{*}}= GetSlot {{*}}key="x" receivers=[L0, L1] level=Expected
 
 function f2 name="stampAlone" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="x" receivers=[L1, L2]
     Return v1
 }
@@ -97,7 +96,6 @@ function f6 name="storeExpectsBoth" parameters=[{type=L0 flags=[IsExpected]}, {t
 
 # The type lists the layouts. A list that flow left open says nothing more, and the access needs no test
 function f7 name="provenTypeIsNotWidened" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="x" receivers=[L0, L1, ..]
     Return v1
 }
@@ -110,7 +108,6 @@ function f7 name="provenTypeIsNotWidened" parameters=[{type=L0}] results=[{type=
 
 # The names that a value is asked for are a third producer, which the limit of 0 turns off here
 function f8 name="nothingIsExpected" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="x"
     Return v1
 }

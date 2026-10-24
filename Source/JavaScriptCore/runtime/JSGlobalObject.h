@@ -242,6 +242,7 @@ private:
     QueuedTaskResult m_microtaskRunnability { QueuedTaskResult::Executed };
     bool m_associatedContextIsFullyActive { true };
     bool m_canFastQueueMicrotask { true };
+    bool m_typedArraysInterceptIndexedStores { false };
     Ref<MicrotaskQueue> m_microtaskQueue;
 
     ALWAYS_INLINE void updateCanFastQueueMicrotask()
@@ -1280,6 +1281,7 @@ public:
     {
         return m_havingABadTimeWatchpointSet->hasBeenInvalidated();
     }
+    bool typedArraysInterceptIndexedStores() const { return m_typedArraysInterceptIndexedStores; }
         
     void haveABadTime(VM&);
     void haveABadTime(VM&, JSObject* interceptor);

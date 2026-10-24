@@ -9,7 +9,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Node" fields=[{key="next" declared={type=L0} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="value" declared={type=number}}]
 function f0 name="objectOfTheRegion" parameters=[{type=L0}, {type=i32}, {type=boolean}] results=[{type=number}] {
-  b0(v0: L0, v1: i32, v2: boolean):
     v3 = Integer integer=0
     Jump -> next b1(v3, v0)
   b1(v4, v5):
@@ -41,7 +40,6 @@ function f0 name="objectOfTheRegion" parameters=[{type=L0}, {type=i32}, {type=bo
     Return v3
 }
 function f1 name="objectFromOutside" parameters=[{type=L0}, {type=i32}, {type=boolean}] results=[{type=number}] {
-  b0(v0: L0, v1: i32, v2: boolean):
     v3 = Integer integer=0
     Jump -> next b1(v3)
   b1(v4):

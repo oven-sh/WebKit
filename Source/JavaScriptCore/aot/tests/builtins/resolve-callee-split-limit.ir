@@ -9,12 +9,9 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Stack" fields=[{key="push" declared={type=anything} flags=[IsRequired]}]
 function f0 name="twoMethods" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = PropGet v0 key="get"
     v3 = Call v2, v0, v1 calleeKey="get"
     Return v3
-}
-# CHECK-LABEL: function f0 name="twoMethods"
 # CHECK: [[isMapGet]]: boolean = TypeTest v2 testedType=builtin(MapPrototypeGet)
 # CHECK-NEXT: Branch [[isMapGet]] -> taken [[arm]](| 0), notTaken [[rest]](| 0)
 # CHECK-NOT: TypeTest
@@ -28,21 +25,19 @@ function f0 name="twoMethods" parameters=[{type=anything}, {type=anything}] resu
 # CHECK: [[mapReceiver]]([[map]]: Map):
 # CHECK-NEXT: anything = CallBuiltin [[map]], v1 overload=MapPrototypeGet/0
 # CHECK-NOT: TypeTest
+}
 
 function f1 name="oneMethod" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = PropGet v0 key="push"
     v3 = Call v2, v0, v1 calleeKey="push"
     Return v3
-}
-# CHECK-LABEL: function f1 name="oneMethod"
 # CHECK: [[isPush]]: boolean = TypeTest v2 testedType=builtin(ArrayPrototypePush)
 # CHECK: = TypeTest v0 testedType=Array
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: anything = Call {{*}}, v0, v1 calleeKey="push"
+}
 
 function f2 name="makesStack" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     Return v1
 }

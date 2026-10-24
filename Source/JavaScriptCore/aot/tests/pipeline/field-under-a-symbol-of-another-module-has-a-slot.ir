@@ -17,7 +17,6 @@ typesite w1 module=m0 position=240 kind=Parameter
 layout L0 name="Body" fields=[{key="plain" declared={type=number} flags=[IsRequired]}, {key=symbol("mass")@m1:100 declared={type=number} flags=[IsRequired]}]
 variable g0 name="kMass" module=m1 declared={type=anything} flags=[IsImmutable]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = GetModuleVariable variable=g0
@@ -28,21 +27,18 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="make" flags=[IsChecked] parameters=[{type=number site=w0}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = Integer integer=1
     v2 = NewObject -, v1, v0 layout=L0 fields=[0, 1]
     v3 = FinishObject v2
     Return v3
 }
 function f2 name="read" flags=[IsChecked] parameters=[{type=L0 site=w1}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = GetModuleVariable variable=g0
     v2 = CheckInitialized v1 name="kMass"
     v3 = ElemGet v0, v2
     Return v3
 }
 function f3 name="keys" module=m1 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Symbol
     v1 = String string="mass"
     v2 = Call v0, -, v1 @100

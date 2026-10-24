@@ -17,9 +17,6 @@ public:
 
     void generateIntegerBound(const ValueContext&);
     void generateFulfillFreshPromise(const ValueContext&);
-
-private:
-    Integer integerBound(Opcode relationToNumber, Number);
 };
 
 } } } // namespace JSC::AOT::Typed

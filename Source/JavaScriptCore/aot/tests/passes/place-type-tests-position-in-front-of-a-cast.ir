@@ -16,9 +16,8 @@ function f0 name="slot" parameters=[{type=Array<i32, proven, pristine[Storage, N
     v5: undefined|int ~ int = AssumeType v1 castType=undefined|int
     v6 = ElemGet v0, v5
     Return v6
-}
-# CHECK-LABEL: function f0 name="slot"
 # CHECK: ([[passed]]: number):
 # CHECK: = GetArrayElement v0,
 # CHECK: [[position]]: int = AssumeType [[passed]] castType=int
 # CHECK-NEXT: = IsInBounds v0, [[position]]
+}

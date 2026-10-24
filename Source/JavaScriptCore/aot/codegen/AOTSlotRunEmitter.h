@@ -17,7 +17,7 @@ struct StateOfNewObject;
 
 class SlotRunEmitter final : public OperationEmitter {
 public:
-    explicit SlotRunEmitter(CodeGenerator&);
+    explicit SlotRunEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generatePutSlots(const ValueContext&);
 
@@ -25,7 +25,6 @@ private:
     struct Entry;
     struct Run;
 
-    void storeRun(const ValueContext&, CellPointer, const Run&);
     Condition isMissing(CellPointer, const Entry&);
     void listMissingFields(const ValueContext&, CellPointer, const Run&, const std::optional<StateOfNewObject>&);
     bool listFieldsInRuntime(const ValueContext&, CellPointer, const Run&, std::optional<uint32_t> placePlusOne);

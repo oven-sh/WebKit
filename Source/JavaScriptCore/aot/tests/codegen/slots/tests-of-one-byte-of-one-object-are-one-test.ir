@@ -11,7 +11,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
 function f0 name="asked" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = HasBirthFieldsFilled v0
     TestAndBranch v1 -> taken b1(| 0), notTaken b4()
   b1(v2: guard):
@@ -28,7 +27,6 @@ function f0 name="asked" parameters=[{type=L0}] results=[{type=anything}] {
     Return v8
 }
 function f1 name="apart" parameters=[{type=L0}, {type=L0}] results=[{type=anything}] {
-  b0(v0: L0, v1: L0):
     v2 = HasBirthFieldsFilled v0
     TestAndBranch v2 -> taken b1(| 0), notTaken b3()
   b1(v3: guard):

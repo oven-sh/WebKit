@@ -16,7 +16,6 @@
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTEffectsOfProtocols.h"
-#include "AOTEscapeAnalysis.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTGuardFactDetails.h"
 #include "AOTNarrowFieldTypes.h"
@@ -26,42 +25,19 @@
 #include "AOTSchemaValueEffects.h"
 #include "AOTSort.h"
 #include "AOTValueIdentity.h"
-#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr ProofSet proofsOfNewLayoutInstance {
-    Proof::Shape,
-    Proof::OwnInstance,
-    Proof::SlotFilled,
-    Proof::NoExtraProperties,
-    Proof::NoFieldOutsideSlot,
-    Proof::NotFrozen,
-    Proof::KeyOrder,
-};
+static constexpr ProofSet proofsOfNewLayoutInstance { Proof::Shape, Proof::OwnInstance, Proof::SlotFilled, Proof::NoExtraProperties, Proof::NoFieldOutsideSlot, Proof::NotFrozen, Proof::KeyOrder };
 static constexpr ProofSet proofsOfNewArray { Proof::Pristine, Proof::ArrayStorage };
 static constexpr ProofSet proofsOfNewBuiltinInstance { Proof::Pristine };
 
-// The run time answers with an ordinary object when the source does not fit the layout.
 static constexpr OpcodeSet allocationsWithUnprovenLayout { Opcode::CloneAs };
 
-// A compiled object keeps its shape, and with it its instance, for life.
 static constexpr ProofSet proofsThatOutlastWrites { Proof::Shape, Proof::OwnInstance, Proof::SourceOpen };
 
-// A flow record of the field, the layout or the class can stand for these, so nobody can tell whether an access takes them from its guard.
-static constexpr ProofSet proofsDecidedByFlow {
-    Proof::SlotFilled,
-    Proof::NoExtraProperties,
-    Proof::NoFieldOutsideSlot,
-    Proof::BirthFieldsFilled,
-    Proof::NotFrozen,
-    Proof::OwnInstance,
-    Proof::KeyOrder,
-    Proof::MemberUnchanged,
-    Proof::PrototypeLinkUnchanged,
-    Proof::EvaluatedOnce,
-};
+static constexpr ProofSet proofsDecidedByFlow { Proof::SlotFilled, Proof::NoExtraProperties, Proof::NoFieldOutsideSlot, Proof::BirthFieldsFilled, Proof::NotFrozen, Proof::OwnInstance, Proof::KeyOrder, Proof::MemberUnchanged, Proof::PrototypeLinkUnchanged, Proof::EvaluatedOnce };
 
 namespace {
 
@@ -88,7 +64,6 @@ struct ReadCollector {
             for (AbstractHeap heap : allMembersOf<AbstractHeap>)
                 locations.append(MemoryLocation(heap));
         } else if (locations.isEmpty()) {
-            // A test that reads nothing else depends on its bookkeeping reads, so its proof ends where those are written.
             locations = WTF::move(bookkeepingLocations);
         }
         AOT::sort(locations);
@@ -102,7 +77,7 @@ struct ReadCollector {
 
 } // anonymous namespace
 
-static OpcodeSet opcodesMatching(NOESCAPE const Invocable<bool(Opcode)> auto& predicate)
+static constexpr OpcodeSet opcodesMatching(NOESCAPE const Invocable<bool(Opcode)> auto& predicate)
 {
     OpcodeSet opcodes;
     for (Opcode opcode : allMembersOf<Opcode>) {
@@ -112,27 +87,19 @@ static OpcodeSet opcodesMatching(NOESCAPE const Invocable<bool(Opcode)> auto& pr
     return opcodes;
 }
 
-static bool hasDeclaredOperandMatching(Opcode opcode, NOESCAPE const Invocable<bool(const OperandInfo&)> auto& predicate)
-{
-    uint32_t numberOfDeclaredOperands = numberOfNamedOperandsOf(opcode) + (hasVariadicOperand(opcode) ? 1 : 0);
-    for (uint32_t operandIndex = 0; operandIndex < numberOfDeclaredOperands; ++operandIndex) {
-        if (predicate(operandInfoOf(opcode, operandIndex)))
-            return true;
-    }
-    return false;
-}
-
 static const OpcodeSet& opcodesThatNameGuards()
 {
     static const OpcodeSet opcodes = opcodesMatching([](Opcode opcode) {
-        return hasDeclaredOperandMatching(opcode, [](const OperandInfo& operand) {
-            return operand.kind == OperandKind::Guard;
-        });
+        uint32_t numberOfDeclaredOperands = numberOfNamedOperandsOf(opcode) + (hasVariadicOperand(opcode) ? 1 : 0);
+        for (uint32_t operandIndex = 0; operandIndex < numberOfDeclaredOperands; ++operandIndex) {
+            if (operandInfoOf(opcode, operandIndex).kind == OperandKind::Guard)
+                return true;
+        }
+        return false;
     });
     return opcodes;
 }
 
-// No other opcode has the result rule of an allocation, and freshnessOf() knows nothing of the result of any other.
 static const OpcodeSet& opcodesThatMayMakeObject()
 {
     static const OpcodeSet opcodes = opcodesMatching([](Opcode opcode) {
@@ -141,7 +108,6 @@ static const OpcodeSet& opcodesThatMayMakeObject()
     return opcodes;
 }
 
-// The solver of EscapeAnalysis lets a value stand for objects of the function alone only where the value defines such an object, is a cast or a conversion, or is a parameter of a block behind the entry.
 static bool isDefinedOutside(FunctionAnalyses& analyses, ValueID definition)
 {
     static const OpcodeSet opcodesThatMayGiveOwnObject = opcodesThatMayDefineObjects() | castsAndConversions | OpcodeSet { Opcode::Unspecified };
@@ -162,7 +128,6 @@ bool comesFromOutside(FunctionAnalyses& analyses, ValueID value)
 {
     constexpr size_t maxDefinitions = 24;
 
-    // What one edge brings from outside, the parameter may be, and so may the parameters that it is passed on to.
     Vector<ValueID, maxDefinitions> definitions { analyses.identityOf(value) };
     for (size_t next = 0; next < definitions.size(); ++next) {
         ValueID definition = definitions[next];
@@ -212,19 +177,10 @@ BitVector guardValuesOf(const Function& function, const CFG& cfg)
     return guards;
 }
 
-const GuardFact* GuardFacts::find(Proof proof, ValueID subject) const
+const GuardFact* GuardFacts::find(Proof proof, std::optional<ValueID> subject) const
 {
     for (const GuardFact& fact : facts) {
-        if (fact.proves(proof) && fact.subject == subject)
-            return &fact;
-    }
-    return nullptr;
-}
-
-const GuardFact* GuardFacts::find(Proof proof) const
-{
-    for (const GuardFact& fact : facts) {
-        if (fact.proves(proof))
+        if (fact.proves(proof) && (!subject || fact.subject == *subject))
             return &fact;
     }
     return nullptr;
@@ -234,7 +190,6 @@ Vector<MemoryLocation, 2> locationsBehindAllocationProof(Proof proof)
 {
     switch (proof) {
     case Proof::SlotFilled:
-    // A store that creates a field writes the order and the count of the order word, never its integrity bits. Whatever changes those writes the shape words too.
     case Proof::NotFrozen:
         return { MemoryLocation(AbstractHeap::ShapeWords) };
     case Proof::KeyOrder:
@@ -280,7 +235,6 @@ static bool hasFreshResult(const Program& program, const Function& function, con
     return freshnessOf(EffectContext { program, unknownSummaries }, function, value) == ResultFreshness::Fresh;
 }
 
-// Such a result inherits from what the call was handed, not from the prototype object of its class.
 static bool takesPrototypeFromOperand(const BuiltinTable& builtins, const Value& value)
 {
     if (value.opcode != Opcode::CallBuiltin)
@@ -291,13 +245,11 @@ static bool takesPrototypeFromOperand(const BuiltinTable& builtins, const Value&
     });
 }
 
-// The answer comes from the allocation and the program alone. What is known about new.target is a narrowing that a later pass may drop, and a value that was named as a guard has to stay one.
 bool allocatesOwnLayout(const Program& program, const Value& allocation)
 {
     return !mayAllocateOtherLayout(program, allocation);
 }
 
-// The object of a literal is born with what the literal lists. The fields of a class are stored by its constructor, and some of them hold raw values that a listed undefined would not be.
 static bool fillsEveryFieldOfBirth(const Program& program, const Function& function, const Value& allocation)
 {
     if (allocation.opcode != Opcode::NewObject)
@@ -323,7 +275,6 @@ ProofSet proofsOfAllocation(const Program& program, const Function& function, co
 {
     if (allocationsWithUnprovenLayout.contains(allocation.opcode) || !allocatesOwnLayout(program, allocation))
         return { };
-    // A template object is frozen and has `raw`: it is an array, and in nothing like a new one.
     if (allocation.opcode == Opcode::NewTemplateObject)
         return { };
     bool hasAllocationRule = resultRuleOf(allocation.opcode) == ResultRule::Allocation;
@@ -341,7 +292,6 @@ ProofSet proofsOfAllocation(const Program& program, const Function& function, co
     return classPart->builtinClass == BuiltinClasses::Array ? proofsOfNewArray : proofsOfNewBuiltinInstance;
 }
 
-// ExpandLongArrayLiterals puts an array of holes that is filled and then cut in the place of a long literal, and whoever named the literal as its guard names the cut array from then on.
 static bool isFilledArrayOfHoles(const Function& function, const Value& allocation)
 {
     return allocation.opcode == Opcode::TruncateNewArray && function.at(allocation.arrayOperand()).opcode == Opcode::NewContiguousArray;
@@ -357,13 +307,11 @@ static ArrayStorage arrayStorageOfNewArray(const Program& program, const Functio
     return allocation.opcode == Opcode::NewArray ? arrayStorageOfLiteral(program, allocation) : named;
 }
 
-// The storage of constant data is shared until the first store, and a built-in may hand out such storage again.
 static bool allocatesWritableStorage(const Function& function, const Value& allocation)
 {
     return allocation.opcode == Opcode::NewArray || isFilledArrayOfHoles(function, allocation);
 }
 
-// Such a test passes only where the slot holds a value of the field's type without undefined and null, and such a read loads the slot as one.
 static bool holdsDeclaredType(const Value& slotOperation)
 {
     return Value::opcodesWithHoldsDeclaredType.contains(slotOperation.opcode) && slotOperation.holdsDeclaredType();
@@ -426,7 +374,6 @@ bool allocationProves(const Program& program, const Function& function, const Va
     case Proof::Shape:
         return std::ranges::binary_search(program.at(test.layouts()).members, allocation.layout());
     case Proof::SlotFilled:
-        // An allocation may fill the slot with undefined.
         return !holdsDeclaredType(test) && listsFieldWithKey(program, allocation, test.key());
     case Proof::NoExtraProperties:
     case Proof::NoFieldOutsideSlot:
@@ -524,7 +471,6 @@ static bool admitsLayouts(const Program& program, const Value& user, std::span<c
     const Vector<LayoutID>& admitted = program.at(receivers).members;
     if (sortedLayouts.size() <= admitted.size() && std::ranges::includes(admitted, sortedLayouts))
         return true;
-    // The access plan leaves out a layout that has no instance.
     return std::ranges::all_of(sortedLayouts, [&](LayoutID member) {
         return program.at(member).flow.allocation == AllocationState::NeverAllocated || std::ranges::binary_search(admitted, member);
     });
@@ -585,7 +531,6 @@ ProofSet proofsNeededFromGuard(const Program& program, const Function& function,
     for (Proof proof : allMembersOf<Proof>) {
         if (!relied.contains(proof))
             continue;
-        // No flow record says which of the values that fill a slot it holds.
         bool needsTestOfSlot = proof == Proof::SlotFilled && holdsDeclaredType(user);
         if (proofsDecidedByFlow.contains(proof) && !needsTestOfSlot)
             continue;
@@ -593,7 +538,6 @@ ProofSet proofsNeededFromGuard(const Program& program, const Function& function,
             continue;
         if (proof == Proof::InBounds && !isInsideLength(user))
             continue;
-        // An own element that is present answers without the prototypes.
         if (proof == Proof::Pristine && readsPresentElement(user))
             continue;
         if (subject && isProvenByType(program, user, proof, program.typeOf(function, subject)))
@@ -621,7 +565,6 @@ static bool provesPristineForUser(const Program& program, const Function& functi
         break;
     }
 
-    // The guard adds to what the type of the object proves for good.
     OptionSet<PristineAspects> required = requiredPristineAspects(user.opcode);
     if (const ClassPart* part = program.typeOf(function, guardedOperandOf(user)).singleBuiltinClass()) {
         if (part->builtinClass != provenClass)
@@ -631,41 +574,24 @@ static bool provesPristineForUser(const Program& program, const Function& functi
     return provenAspects.containsAll(required);
 }
 
-static ArrayStorage arrayStorageProvenBy(const Program& program, const Function& function, const GuardOrigin& origin)
-{
-    switch (origin.source) {
-    case GuardSource::Test:
-        return function.at(origin.test).arrayStorage();
-    case GuardSource::SwitchCase:
-        return ArrayStorage::Other;
-    case GuardSource::Allocation:
-        return arrayStorageOfNewArray(program, function, function.at(origin.test));
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static bool provesWritableStorage(const Function& function, const GuardOrigin& origin)
-{
-    switch (origin.source) {
-    case GuardSource::Test:
-        return function.at(origin.test).isWritable();
-    case GuardSource::SwitchCase:
-        return false;
-    case GuardSource::Allocation:
-        return allocatesWritableStorage(function, function.at(origin.test));
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-// A store inside the length has no path that replaces shared storage.
 static bool provesArrayStorageForUser(const Program& program, const Function& function, const GuardOrigin& origin, const Value& user)
 {
-    if (arrayStorageProvenBy(program, function, origin) != user.arrayStorage())
-        return false;
-    return interpretedOf(user.opcode) != Interpretation::Store || !isInBounds(user) || provesWritableStorage(function, origin);
+    bool needsWritableStorage = interpretedOf(user.opcode) == Interpretation::Store && isInBounds(user);
+    switch (origin.source) {
+    case GuardSource::Test: {
+        const Value& test = function.at(origin.test);
+        return test.arrayStorage() == user.arrayStorage() && (!needsWritableStorage || test.isWritable());
+    }
+    case GuardSource::SwitchCase:
+        return user.arrayStorage() == ArrayStorage::Other && !needsWritableStorage;
+    case GuardSource::Allocation: {
+        const Value& allocation = function.at(origin.test);
+        return arrayStorageOfNewArray(program, function, allocation) == user.arrayStorage() && (!needsWritableStorage || allocatesWritableStorage(function, allocation));
+    }
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A constant is made again wherever a copy of the code needs it, so the test and the access may name two values.
 static bool isSamePosition(FunctionAnalyses& analyses, ValueID a, ValueID b)
 {
     if (analyses.identityOf(a) == analyses.identityOf(b))
@@ -679,7 +605,6 @@ static bool provesInBoundsForUser(FunctionAnalyses& analyses, const GuardOrigin&
     if (origin.source != GuardSource::Test)
         return false;
     const Value& test = analyses.function().at(origin.test);
-    // A position inside the length may hold a hole.
     if (readsPresentElement(user) && test.opcode != Opcode::IsElementPresent)
         return false;
     if (Value::opcodesWithIsInsideView.contains(user.opcode) != (test.opcode == Opcode::IsInsideView))
@@ -687,7 +612,6 @@ static bool provesInBoundsForUser(FunctionAnalyses& analyses, const GuardOrigin&
     return isSamePosition(analyses, test.positionOperand(), user.positionOperand());
 }
 
-// The mark of the cell answers for the fields that every constructor fills, and for the raw value of a number or a boolean among them.
 static bool isAnsweredByTestOfCell(const Program& program, const Value& slotOperation)
 {
     bool needsRawValue = holdsDeclaredType(slotOperation);
@@ -701,7 +625,6 @@ static bool isAnsweredByTestOfCell(const Program& program, const Value& slotOper
     });
 }
 
-// An allocation may fill the slot with undefined or null, and so may a store into what it has made.
 static bool fillsSlotWithDeclaredType(FunctionAnalyses& analyses, ValueID allocationID, PropertyKeyID key)
 {
     const Program& program = analyses.program();
@@ -782,53 +705,37 @@ bool provesForUser(FunctionAnalyses& analyses, const GuardFact& fact, Proof proo
     });
 }
 
-Vector<MemoryLocation, 2> locationsReadBy(const Value& test)
+static Vector<MemoryLocation, 2> declaredReadsOf(const auto& provingOperation, Proof proof)
 {
-    if (proofsThatOutlastWrites.contains(provesOf(test.opcode)))
+    if (proofsThatOutlastWrites.contains(proof))
         return { };
     ReadCollector collector;
-    forEachDeclaredEffect(test, collector);
-    Vector<MemoryLocation, 2> locations = collector.takeSortedLocations();
+    forEachDeclaredEffect(provingOperation, collector);
+    return collector.takeSortedLocations();
+}
+
+Vector<MemoryLocation, 2> locationsReadBy(const Value& test)
+{
+    Vector<MemoryLocation, 2> locations = declaredReadsOf(test, provesOf(test.opcode));
     if (provesOf(test.opcode) == Proof::NotFrozen)
         locations.removeAll(MemoryLocation(AbstractHeap::OrderWords));
     return locations;
 }
 
-Vector<MemoryLocation, 2> locationsReadBy(const Terminator& provingTerminator, uint32_t)
-{
-    if (proofsThatOutlastWrites.contains(provesOf(provingTerminator.kind)))
-        return { };
-    ReadCollector collector;
-    forEachDeclaredEffect(provingTerminator, collector);
-    return collector.takeSortedLocations();
-}
-
-void GuardAvailability::addGuard(ValueID guard)
-{
-    std::optional<uint32_t>& index = m_guardIndexOfValue[guard.index()];
-    if (index)
-        return;
-    index = static_cast<uint32_t>(m_guards.size());
-    m_guards.append(guard);
-}
-
-void GuardAvailability::removeGuardsFrom(size_t firstRemovedGuard)
-{
-    for (ValueID guard : m_guards.span().subspan(firstRemovedGuard))
-        m_guardIndexOfValue[guard.index()] = std::nullopt;
-    m_guards.shrink(firstRemovedGuard);
-}
-
 void GuardAvailability::collectGuards()
 {
     m_guardIndexOfValue.fill(std::nullopt, m_function.values.size());
+    auto addGuard = [&](ValueID guard) {
+        std::optional<uint32_t>& index = m_guardIndexOfValue[guard.index()];
+        if (index)
+            return;
+        index = static_cast<uint32_t>(m_guards.size());
+        m_guards.append(guard);
+    };
     for (size_t index : guardValuesOf(m_function, m_analyses.cfg()))
         addGuard(ValueID(index));
-}
+    m_numberOfNamedGuards = m_guards.size();
 
-// A call of a built-in has no guard operand, so whoever resolves it asks about the allocation of its receiver before any operation names that allocation.
-void GuardAvailability::collectUnnamedAllocations()
-{
     const Program& program = m_analyses.program();
     const OpcodeSet& opcodesOfAllocations = opcodesThatMayMakeObject();
     for (BlockID block : m_analyses.cfg().reversePostOrder()) {
@@ -855,13 +762,13 @@ static std::optional<MemoryLocation> findShapeWordsOf(const Program& program, co
     return std::nullopt;
 }
 
-GuardFacts GuardAvailability::factsOfAllocation(ValueID id) const
+static GuardFacts factsOfAllocation(FunctionAnalyses& analyses, ValueID id)
 {
     GuardFacts result { GuardKnowledge::Known, { } };
-    const Program& program = m_analyses.program();
-    const Value& allocation = m_function.at(id);
-    ProofSet proofs = proofsOfAllocation(program, m_function, allocation);
-    ValueID subject = m_analyses.identityOf(id);
+    const Program& program = analyses.program();
+    const Value& allocation = analyses.function().at(id);
+    ProofSet proofs = proofsOfAllocation(program, analyses.function(), allocation);
+    ValueID subject = analyses.identityOf(id);
     std::optional<MemoryLocation> shapeWords = findShapeWordsOf(program, allocation);
     for (Proof proof : allMembersOf<Proof>) {
         if (!proofs.contains(proof))
@@ -882,15 +789,17 @@ GuardFacts GuardAvailability::factsOfAllocation(ValueID id) const
     return result;
 }
 
-GuardFacts GuardAvailability::factsOfEdgeResult(BlockID from, uint32_t, const EdgeResult& result) const
+static GuardFacts factsOfEdgeResult(FunctionAnalyses& analyses, BlockID from, const EdgeResult& result)
 {
+    const Function& function = analyses.function();
     RELEASE_ASSERT(result.kind == EdgeResultKind::Guard);
-    ValueID subject = result.subject ? m_analyses.identityOf(result.subject) : ValueID();
+    ValueID subject = result.subject ? analyses.identityOf(result.subject) : ValueID();
     if (result.caseIndex) {
-        Vector<MemoryLocation, 2> locations = locationsReadBy(m_function.at(from).terminator, *result.caseIndex);
+        const Terminator& terminator = function.at(from).terminator;
+        Vector<MemoryLocation, 2> locations = declaredReadsOf(terminator, provesOf(terminator.kind));
         return { GuardKnowledge::Known, { GuardFact { { result.proof }, subject, WTF::move(locations), { GuardOrigin { GuardSource::SwitchCase, { }, from, *result.caseIndex } } } } };
     }
-    return { GuardKnowledge::Known, { GuardFact { { result.proof }, subject, locationsReadBy(m_function.at(result.test)), { GuardOrigin { GuardSource::Test, result.test, { }, 0 } } } } };
+    return { GuardKnowledge::Known, { GuardFact { { result.proof }, subject, locationsReadBy(function.at(result.test)), { GuardOrigin { GuardSource::Test, result.test, { }, 0 } } } } };
 }
 
 void GuardAvailability::computeFacts()
@@ -901,9 +810,7 @@ void GuardAvailability::computeFacts()
     BitVector isComputed(m_guards.size());
 
     auto isPending = [&](ValueID guard) {
-        if (guard.index() >= m_guardIndexOfValue.size())
-            return false;
-        std::optional<uint32_t> index = m_guardIndexOfValue[guard.index()];
+        std::optional<uint32_t> index = guardIndexOf(guard);
         return index && !isComputed.quickGet(*index);
     };
 
@@ -918,7 +825,7 @@ void GuardAvailability::computeFacts()
             std::optional<EdgeResult> result = tryGetEdgeResult(m_function, incoming.result);
             if (!result || result->kind != EdgeResultKind::Guard)
                 return GuardFacts { };
-            return factsAfterEdge(factsOfEdgeResult(edge.from, parameterIndex, *result), edge);
+            return factsAfterEdge(factsOfEdgeResult(m_analyses, edge.from, *result), edge);
         }
         }
         RELEASE_ASSERT_NOT_REACHED();
@@ -965,7 +872,7 @@ void GuardAvailability::computeFacts()
     for (uint32_t index = 0; index < m_guards.size(); ++index) {
         if (isGuardValue(m_function, m_guards[index]))
             continue;
-        m_facts[index] = factsOfAllocation(m_guards[index]);
+        m_facts[index] = factsOfAllocation(m_analyses, m_guards[index]);
         isComputed.quickSet(index);
     }
 
@@ -991,9 +898,7 @@ void GuardAvailability::computeFacts()
 
 const GuardFacts& GuardAvailability::factsOf(ValueID guard) const
 {
-    if (guard.index() >= m_guardIndexOfValue.size())
-        return m_unknownFacts;
-    std::optional<uint32_t> index = m_guardIndexOfValue[guard.index()];
+    std::optional<uint32_t> index = guardIndexOf(guard);
     return index ? m_facts[*index] : m_unknownFacts;
 }
 
@@ -1038,40 +943,28 @@ bool provenLayoutsAreSubsetOf(const Program& program, const Function& function, 
     return layouts.size() <= otherLayouts.size() && std::ranges::includes(otherLayouts, layouts);
 }
 
-static bool provesSlotFilled(const Program& program, const Function& function, const GuardFact& fact, const GuardOrigin& origin, PropertyKeyID key)
-{
-    switch (origin.source) {
-    case GuardSource::Test:
-        if (fact.proves(Proof::SlotFilled))
-            return function.at(origin.test).key() == key;
-        // Only a field that exists has a position in the key order.
-        return fact.proves(Proof::KeyOrder) && listsFieldWithKey(program, function.at(origin.test), key);
-    case GuardSource::SwitchCase:
-        return false;
-    case GuardSource::Allocation:
-        return fact.proves(Proof::SlotFilled) && listsFieldWithKey(program, function.at(origin.test), key);
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 bool provesSlotFilled(const Program& program, const Function& function, const GuardFact& fact, PropertyKeyID key)
 {
     return std::ranges::all_of(fact.origins, [&](const GuardOrigin& origin) {
-        return provesSlotFilled(program, function, fact, origin, key);
+        switch (origin.source) {
+        case GuardSource::Test:
+            if (fact.proves(Proof::SlotFilled))
+                return function.at(origin.test).key() == key;
+            return fact.proves(Proof::KeyOrder) && listsFieldWithKey(program, function.at(origin.test), key);
+        case GuardSource::SwitchCase:
+            return false;
+        case GuardSource::Allocation:
+            return fact.proves(Proof::SlotFilled) && listsFieldWithKey(program, function.at(origin.test), key);
+        }
+        RELEASE_ASSERT_NOT_REACHED();
     });
 }
 
-// A proof that a slot is filled begins at a test that proves it, or at an allocation that names its layout: proofOfTerminator(), proofsOfAllocation().
-static constexpr OpcodeSet opcodesBehindProofsOfFilledSlots = [] {
-    OpcodeSet opcodes;
-    for (Opcode opcode : allMembersOf<Opcode>) {
-        Proof proof = provesOf(opcode);
-        bool isTest = proof == Proof::SlotFilled || proof == Proof::KeyOrder || proof == Proof::BirthFieldsFilled;
-        if (isTest || (resultRuleOf(opcode) == ResultRule::Allocation && Value::opcodesWithLayout.contains(opcode)))
-            opcodes.add(opcode);
-    }
-    return opcodes;
-}();
+static constexpr OpcodeSet opcodesBehindProofsOfFilledSlots = opcodesMatching([](Opcode opcode) {
+    Proof proof = provesOf(opcode);
+    bool isTest = proof == Proof::SlotFilled || proof == Proof::KeyOrder || proof == Proof::BirthFieldsFilled;
+    return isTest || (resultRuleOf(opcode) == ResultRule::Allocation && Value::opcodesWithLayout.contains(opcode));
+});
 
 bool guardProvesSlotFilled(FunctionAnalyses& analyses, const Value& slotOperation)
 {
@@ -1079,7 +972,6 @@ bool guardProvesSlotFilled(FunctionAnalyses& analyses, const Value& slotOperatio
     if (!guard)
         return false;
 
-    // A build that verifies the program asks the facts all the same, and compares.
     bool mayBeProven = analyses.opcodesOfValues().intersects(opcodesBehindProofsOfFilledSlots);
     if (!mayBeProven && !analyses.context().build.options().verifiesProgram)
         return false;

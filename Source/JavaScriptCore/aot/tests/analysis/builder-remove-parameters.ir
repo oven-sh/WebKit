@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="parameters" parameters=[{type=boolean}, {type=number}, {type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: boolean, v1: number, v2: number, v3: number):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v1, v2, v3)
@@ -33,7 +32,6 @@ function f0 name="parameters" parameters=[{type=boolean}, {type=number}, {type=n
 # CHECK-NEXT: b5():
 # CHECK-NEXT: Branch v0 -> taken b3(v2), notTaken b4(v1, v2)
 function f1 name="proofAndArgument" parameters=[{type=boolean}, {type=anything}, {type=string}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: string):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v3 = TypeTest v1 testedType=string

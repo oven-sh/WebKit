@@ -15,7 +15,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="NeverFilled" fields=[{key="id" declared={type=number} flags=[IsRequired]}, {key="note" declared={type=undefined|string} flow={location={writers=AllKnown stores=Never}}}] flow={members=[L0]}
 layout L1 name="SometimesFilled" fields=[{key="id" declared={type=number} flags=[IsRequired]}, {key="note" declared={type=undefined|string}}] flow={members=[L1]}
 function f0 name="make" parameters=[{type=number}, {type=string}, {type=boolean}] results=[{type=L0|L1}] {
-  b0(v0: number, v1: string, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v3 = NewObject -, v0 layout=L0 fields=[0]
@@ -25,7 +24,6 @@ function f0 name="make" parameters=[{type=number}, {type=string}, {type=boolean}
     Return v4
 }
 function f1 name="noteOf" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = IsSlotFilled v0 key="note" receivers=[L0] level=Proven
     TestAndBranch v1 -> taken b1(| 0), notTaken b2()
   b1(v2: guard):
@@ -36,7 +34,6 @@ function f1 name="noteOf" parameters=[{type=L0}] results=[{type=anything}] {
     Return v4
 }
 function f2 name="noteOfEither" parameters=[{type=L0|L1}] results=[{type=anything}] {
-  b0(v0: L0|L1):
     v1 = TypeTest v0 testedType=L0
     TestAndBranch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2: L0):

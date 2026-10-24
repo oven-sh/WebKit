@@ -43,7 +43,6 @@ std::span<const NativeTest> savedFrameTests();
 static constexpr ASCIILiteral programText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="register" [isFreeName]
@@ -51,7 +50,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="waitFor" flags=[IsAsync] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Call v0
     v3 = Call v0
     v4 = PropGet v3 key="tag"

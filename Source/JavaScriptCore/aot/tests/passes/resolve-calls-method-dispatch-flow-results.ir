@@ -10,7 +10,6 @@ layout L0 kind=Instance name="Task" constructor=f1
 layout L1 kind=Instance name="Job" constructor=f4
 layout L2 kind=Instance name="Leaked" constructor=f6
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = NewClosure function=f2
@@ -46,7 +45,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Task" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2
@@ -60,7 +58,6 @@ function f3 name="stop" kind=Method flags=[HasThis] thisType={type=L0} results=[
     Return
 }
 function f4 name="Job" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L1
     v2 = NewObject v1 layout=L1
     Return v2
@@ -70,7 +67,6 @@ function f5 name="run" kind=Method flags=[HasThis] thisType={type=L1} results=[{
     Return
 }
 function f6 name="Leaked" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L2
     v2 = NewObject v1 layout=L2
     Return v2
@@ -80,31 +76,25 @@ function f7 name="run" kind=Method flags=[HasThis] thisType={type=L2} results=[{
     Return
 }
 function f8 name="replacement" results=[{type=anything}] {
-  b0():
     Return
 }
 
 function f9 name="two-classes" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="run"
     v2 = Call v1, v0 calleeKey="run"
     Return v2
-}
-# CHECK-LABEL: function f9 name="two-classes"
 # CHECK: b0(v0: L0|L1):
 # CHECK: = TypeTest {{*}} testedType=L0
 # CHECK: = CallDirect {{*}} function=f2
 # CHECK: = CallDirect {{*}} function=f5
 # CHECK-NOT: = Call v
+}
 function f10 name="replaced-method-and-its-neighbor" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="stop"
     v2 = Call v1, v0 calleeKey="stop"
     v3 = PropGet v0 key="run"
     v4 = Call v3, v0 calleeKey="run"
     Return v4
-}
-# CHECK-LABEL: function f10 name="replaced-method-and-its-neighbor"
 # CHECK: b0(v0: L0):
 # CHECK: = AreMembersUnchanged conditions=[{layout=L0 key="stop"}]
 # CHECK-NOT: key="run"
@@ -113,16 +103,15 @@ function f10 name="replaced-method-and-its-neighbor" parameters=[{type=anything}
 # CHECK: = CallDirect v0 function=f3
 # CHECK: = PropGet v0 key="stop"
 # CHECK: calleeKey="stop"{{*}}callees=[f3, f8]
+}
 function f11 name="object-reached-unknown-javascript" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="run"
     v2 = Call v1, v0 calleeKey="run"
     Return v2
-}
-# CHECK-LABEL: function f11 name="object-reached-unknown-javascript"
 # CHECK: b0(v0: object):
 # CHECK-NOT: CallDirect
 # CHECK: = PropGet [[leaked]] key="run"
 # CHECK: , [[leaked]] calleeKey="run"
 # CHECK-NOT: CallDirect
 # CHECK: Return
+}

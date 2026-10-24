@@ -21,7 +21,6 @@ std::span<const NativeTest> builtinLocationWatchTests();
 static constexpr ASCIILiteral usesOfMathSign = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -32,20 +31,17 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="callSign" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=Math
     v2 = PropGet v1 key="sign"
     v3 = Call v2, v1, v0 calleeKey="sign"
     Return v3
 }
 function f2 name="readSign" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Math
     v1 = PropGet v0 key="sign"
     Return v1
 }
 function f3 name="storeSign" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=Math
     PropSet v1, v0 key="sign" mode=Sloppy
     Return
@@ -56,7 +52,6 @@ function f3 name="storeSign" parameters=[{type=anything}] results=[{type=anythin
 static constexpr ASCIILiteral usesOfIntlCollator = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -65,13 +60,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="readCollator" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Intl
     v1 = PropGet v0 key="Collator"
     Return v1
 }
 function f2 name="storeCollator" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=Intl
     PropSet v1, v0 key="Collator" mode=Sloppy
     Return
@@ -82,7 +75,6 @@ function f2 name="storeCollator" parameters=[{type=anything}] results=[{type=any
 static constexpr ASCIILiteral readsOfErrors = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -91,12 +83,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="readMessage" parameters=[{type=Error flags=[IsExpected]}] results=[{type=anything}] {
-  b0(v0: Error):
     v1 = PropGet v0 key="message"
     Return v1
 }
 function f2 name="readCause" parameters=[{type=Error flags=[IsExpected]}] results=[{type=anything}] {
-  b0(v0: Error):
     v1 = PropGet v0 key="cause"
     Return v1
 }

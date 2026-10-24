@@ -28,7 +28,6 @@ function f1 name="readsCapture" kind=Arrow captures=[{type=env L0}] parameters=[
 # CHECK-NEXT: = GetEnvironmentField v0
 
 function f2 name="callsAndCloses" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     v2 = NewObject -, v1 layout=L0 fields=[0] @10
     v3 = CallDirect v2, v0, v0 function=f0
     v4 = NewObject -, v1 layout=L0 fields=[0] @20
@@ -36,14 +35,13 @@ function f2 name="callsAndCloses" parameters=[{type=number}, {type=anything}] re
     v6 = NewObject -, v5 layout=L0 fields=[0] @30
     v7 = NewClosure v6, v0 function=f0
     Return v7
-}
-# CHECK-LABEL: function f2 name="callsAndCloses"
 # CHECK-NEXT: b0(v0: number, v1: anything):
 # CHECK-NEXT: [[sum]]: number = CallDirect v0, v0 function=f3
 # CHECK-NEXT: [[read]]: env L0 = NewObject -, v1 layout=L0
 # CHECK-NEXT: [[result]]: anything = CallDirect [[read]], [[sum]] function=f1
 # CHECK-NEXT: [[closedOver]]: env L0 = NewObject -, [[result]] layout=L0
 # CHECK-NEXT: = NewClosure [[closedOver]], v0 function=f0
+}
 
 # CHECK-LABEL: function f3 name="ignoresFirstCapture"{{*}}captures=[{type=number}] thisType={type=anything} parameters=[{type=number}] results=[{type=number}]{{*}}HasOnlyDirectCallers{{*}}derivation={source=f0 parameterMap=[{original=1}, {original=2}]}
 # CHECK: b0([[capture]]: number, [[parameter]]: number):

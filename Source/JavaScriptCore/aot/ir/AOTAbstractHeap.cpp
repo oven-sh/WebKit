@@ -12,21 +12,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-void AbstractHeapSetDump::dump(PrintStream& out) const
-{
-    if (heaps.isEmpty()) {
-        out.print("none"_s);
-        return;
-    }
-    if (heaps == allHeaps) {
-        out.print("all"_s);
-        return;
-    }
-    CommaPrinter comma;
-    for (AbstractHeap heap : heaps)
-        out.print(comma, nameOf(heap));
-}
-
 namespace {
 
 constexpr bool hasDenseMaskIndexes()

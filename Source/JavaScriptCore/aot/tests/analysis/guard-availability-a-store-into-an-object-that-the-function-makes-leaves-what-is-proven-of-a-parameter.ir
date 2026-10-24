@@ -7,7 +7,6 @@ layout L0 name="Item" fields=[{key="count" declared={type=undefined|number}}]
 variable g0 name="kept" module=m0 declared={type=anything}
 
 function f0 name="anEntryParameterIsTested" parameters=[{type=L0}, {type=undefined|number}] results=[{type=anything}] {
-  b0(v0: L0, v1: undefined|number):
     v2 = IsSlotFilled v0 key="count" receivers=[L0] level=Proven [holdsDeclaredType]
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3):
@@ -25,7 +24,6 @@ function f0 name="anEntryParameterIsTested" parameters=[{type=L0}, {type=undefin
 # CHECK: v7 guard v3: Available
 
 function f1 name="oneOfTwoEntryParametersIsTestedBehindTheNewObject" parameters=[{type=L0}, {type=L0}, {type=undefined|number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: L0, v1: L0, v2: undefined|number, v3: boolean):
     v4 = NewObject layout=L0
     PutModuleVariable v4 variable=g0
     Branch v3 -> taken b1(v0), notTaken b1(v1)
@@ -45,7 +43,6 @@ function f1 name="oneOfTwoEntryParametersIsTestedBehindTheNewObject" parameters=
 # CHECK: v10 guard v8: Available
 
 function f2 name="whatAReadGaveIsTested" parameters=[{type=undefined|number}] results=[{type=anything}] {
-  b0(v0: undefined|number):
     v1 = NewObject layout=L0
     PutModuleVariable v1 variable=g0
     v3 = GetModuleVariable variable=g0
@@ -63,7 +60,6 @@ function f2 name="whatAReadGaveIsTested" parameters=[{type=undefined|number}] re
 # CHECK-NEXT: b1:1 available: []
 
 function f3 name="theParameterOrTheNewObjectIsTested" parameters=[{type=L0}, {type=undefined|number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: L0, v1: undefined|number, v2: boolean):
     v3 = NewObject layout=L0
     PutModuleVariable v3 variable=g0
     Branch v2 -> taken b1(v0), notTaken b1(v3)
@@ -81,7 +77,6 @@ function f3 name="theParameterOrTheNewObjectIsTested" parameters=[{type=L0}, {ty
 # CHECK-NEXT: b2:1 available: []
 
 function f4 name="theStoreGoesToAnotherEntryParameter" parameters=[{type=L0}, {type=L0}, {type=undefined|number}] results=[{type=anything}] {
-  b0(v0: L0, v1: L0, v2: undefined|number):
     v3 = IsSlotFilled v0 key="count" receivers=[L0] level=Proven [holdsDeclaredType]
     Branch v3 -> taken b1(| 0), notTaken b2()
   b1(v4):

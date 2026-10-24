@@ -8,7 +8,6 @@
 #if ENABLE(AOT)
 
 #include "AOTFlowResults.h"
-#include "AOTVector.h"
 #include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT {
@@ -16,10 +15,6 @@ namespace JSC { namespace AOT {
 class BuildContext;
 
 namespace Typed {
-
-class Program;
-class TypeTable;
-struct Type;
 
 using ListenerForSetsOutsideTypes = ScopedLambda<void(const String& place, const Type& held, const Type& declared)>;
 

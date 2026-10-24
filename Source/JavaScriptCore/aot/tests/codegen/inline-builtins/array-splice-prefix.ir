@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="removesOneElement" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=i32}] results=[{type=undefined}] {
-  b0(v0: Array<anything, proven, pristine[Storage, Names]>, v1: i32):
     v2 = Integer integer=1
     v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/0 builtinCallForm=Prefix prefixLength=0
     Return
@@ -18,7 +17,6 @@ function f0 name="removesOneElement" parameters=[{type=Array<anything, proven, p
 # CHECK-NOT: NewArray
 # CHECK: stub CallHostFunction
 function f1 name="removesTwoAndReadsBoth" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=i32}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: i32, v2: number):
     v3 = Integer integer=2
     v4 = CallBuiltin v0, v1, v3, v2 overload=ArrayPrototypeSplice/0 builtinCallForm=Prefix prefixLength=3
     v5 = ResultAt v4 index=0
@@ -30,7 +28,6 @@ function f1 name="removesTwoAndReadsBoth" parameters=[{type=Array<number, proven
 }
 # CHECK-LABEL: f1: size=
 function f2 name="countNotKnown" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=i32}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Array<anything, proven, pristine[Storage, Names]>, v1: i32, v2: i32):
     v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/0 builtinCallForm=Prefix prefixLength=1
     v4 = ResultAt v3 index=1
     Return v4
@@ -39,7 +36,6 @@ function f2 name="countNotKnown" parameters=[{type=Array<anything, proven, prist
 # CHECK: operation operationAOTArraySplice x1
 # CHECK: stub CallHostFunction
 function f3 name="inCompactCode" parameters=[{type=Array<anything, proven, pristine[Storage, Names]>}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, proven, pristine[Storage, Names]>, v1: i32, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v3 = Integer integer=1

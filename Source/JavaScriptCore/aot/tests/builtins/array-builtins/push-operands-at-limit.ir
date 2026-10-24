@@ -9,7 +9,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = Builtin builtin=GlobalThis
@@ -18,7 +17,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v4
 }
 function f1 name="pushesOne" parameters=[{type=Array<number>}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<number>, v1: number):
     v2 = PropGet v0 key="push"
     v3 = Call v2, v0, v1 calleeKey="push"
     Return v3
@@ -29,7 +27,6 @@ function f1 name="pushesOne" parameters=[{type=Array<number>}, {type=number}] re
 # SELECTED: [[number]]: number = AssumeType v3 castType=number
 # SELECTED: = CallInline [[array]], [[number]] inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
 function f2 name="pushesTwo" parameters=[{type=Array<number>}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<number>, v1: number):
     v2 = PropGet v0 key="push"
     v3 = Call v2, v0, v1, v1 calleeKey="push"
     Return v3

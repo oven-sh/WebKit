@@ -31,11 +31,6 @@ static uint32_t descriptorBitsOf(OptionSet<PropertyDescriptorFlags> flags)
     return std::bit_cast<uint32_t>(bits);
 }
 
-ObjectCreationEmitter::ObjectCreationEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
-
 void ObjectCreationEmitter::generateDefineOwnProperty(const ValueContext& value)
 {
     ValueID objectID = value->objectOperand();

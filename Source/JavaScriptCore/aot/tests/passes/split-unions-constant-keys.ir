@@ -10,11 +10,8 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Table" fields=[{key="one" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="two" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="three" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="four" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="five" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 
 function f0 name="read" parameters=[{type=L0}, {type="one"|"three"|"two"}] results=[{type=anything}] {
-  b0(v0: L0, v1: "one"|"three"|"two"):
     v2 = ElemGet v0, v1
     Return v2
-}
-# CHECK-LABEL: function f0 name="read"
 # CHECK-NEXT: b0(v0: L0, v1: "one"|"three"|"two"):
 # CHECK-NEXT: [[isFirst]]: boolean = TypeTest v1 testedType="one"
 # CHECK-NEXT: Branch [[isFirst]] -> taken [[firstArm]](| 0), notTaken [[others]](| 0)
@@ -23,83 +20,67 @@ function f0 name="read" parameters=[{type=L0}, {type="one"|"three"|"two"}] resul
 # CHECK: [[others]]([[secondOrThird]]: "three"|"two"):
 # CHECK-NEXT: = TypeTest [[secondOrThird]] testedType=
 # CHECK-NOT: TypeTest
-# RESOLVED-LABEL: function f0 name="read"
 # RESOLVED-NOT: ElemGet
 # RESOLVED: = GetSlot v0 key="one"
 # RESOLVED-NOT: ElemGet
 # RESOLVED: = GetSlot v0 key=
 # RESOLVED-NOT: ElemGet
 # RESOLVED: = GetSlot v0 key=
+}
 
 function f1 name="store" parameters=[{type=L0}, {type="one"|"two"}, {type=number}] results=[{type=undefined}] {
-  b0(v0: L0, v1: "one"|"two", v2: number):
     ElemSet v0, v1, v2 mode=Strict
     Return
-}
-# CHECK-LABEL: function f1 name="store"
 # CHECK: = TypeTest v1 testedType="one"
 # CHECK-NOT: TypeTest
 # CHECK: ([[storedFirst]]: "one"):
 # CHECK-NEXT: ElemSet v0, [[storedFirst]], v2
 # CHECK: ([[storedSecond]]: "two"):
 # CHECK-NEXT: ElemSet v0, [[storedSecond]], v2
-# RESOLVED-LABEL: function f1 name="store"
 # RESOLVED-NOT: ElemSet
 # RESOLVED: PutSlot v0, -, v2 key="one"
 # RESOLVED-NOT: ElemSet
 # RESOLVED: PutSlot v0, -, v2 key="two"
+}
 
 function f2 name="any-string-key" parameters=[{type=L0}, {type=string}] results=[{type=anything}] {
-  b0(v0: L0, v1: string):
     v2 = ElemGet v0, v1
     Return v2
-}
-# CHECK-LABEL: function f2 name="any-string-key"
 # CHECK-NOT: TypeTest
 # CHECK: v2: anything = ElemGet v0, v1
+}
 
 function f3 name="key-may-be-a-number" parameters=[{type=L0}, {type=int|"one"|"two"}] results=[{type=anything}] {
-  b0(v0: L0, v1: int|"one"|"two"):
     v2 = ElemGet v0, v1
     Return v2
-}
-# CHECK-LABEL: function f3 name="key-may-be-a-number"
 # CHECK-NOT: TypeTest
 # CHECK: v2: anything = ElemGet v0, v1
+}
 
 function f4 name="one-key-names-an-element" parameters=[{type=L0}, {type="1"|"one"}] results=[{type=anything}] {
-  b0(v0: L0, v1: "1"|"one"):
     v2 = ElemGet v0, v1
     Return v2
-}
-# CHECK-LABEL: function f4 name="one-key-names-an-element"
 # CHECK-NOT: TypeTest
 # CHECK: v2: anything = ElemGet v0, v1
+}
 
 function f5 name="more-keys-than-the-limit" parameters=[{type=L0}, {type="five"|"four"|"one"|"three"|"two"}] results=[{type=anything}] {
-  b0(v0: L0, v1: "five"|"four"|"one"|"three"|"two"):
     v2 = ElemGet v0, v1
     Return v2
-}
-# CHECK-LABEL: function f5 name="more-keys-than-the-limit"
 # CHECK-NOT: TypeTest
 # CHECK: v2: anything = ElemGet v0, v1
+}
 
 function f6 name="unknown-receiver" parameters=[{type=object}, {type="one"|"two"}] results=[{type=anything}] {
-  b0(v0: object, v1: "one"|"two"):
     v2 = ElemGet v0, v1
     Return v2
-}
-# CHECK-LABEL: function f6 name="unknown-receiver"
 # CHECK-NOT: TypeTest
 # CHECK: v2: anything = ElemGet v0, v1
+}
 
 function f7 name="key-read-past-the-end-of-the-names" parameters=[{type=L0}, {type=undefined|"one"|"two"}] results=[{type=anything}] {
-  b0(v0: L0, v1: undefined|"one"|"two"):
     v2 = ElemGet v0, v1
     Return v2
-}
-# CHECK-LABEL: function f7 name="key-read-past-the-end-of-the-names"
 # CHECK: = TypeTest v1 testedType="one"
 # CHECK: ([[pastFirst]]: "one"):
 # CHECK-NEXT: = ElemGet v0, [[pastFirst]]
@@ -107,15 +88,13 @@ function f7 name="key-read-past-the-end-of-the-names" parameters=[{type=L0}, {ty
 # CHECK-NEXT: = ElemGet v0, [[pastSecond]]
 # CHECK: ([[pastRest]]: undefined) frequency=Unlikely:
 # CHECK-NEXT: = ElemGet v0, [[pastRest]]
-# RESOLVED-LABEL: function f7 name="key-read-past-the-end-of-the-names"
 # RESOLVED: = GetSlot v0 key="one"
 # RESOLVED: = GetSlot v0 key="two"
+}
 
 function f8 name="key-may-be-a-boolean" parameters=[{type=L0}, {type=boolean|"one"|"two"}] results=[{type=anything}] {
-  b0(v0: L0, v1: boolean|"one"|"two"):
     v2 = ElemGet v0, v1
     Return v2
-}
-# CHECK-LABEL: function f8 name="key-may-be-a-boolean"
 # CHECK-NOT: TypeTest
 # CHECK: v2: anything = ElemGet v0, v1
+}

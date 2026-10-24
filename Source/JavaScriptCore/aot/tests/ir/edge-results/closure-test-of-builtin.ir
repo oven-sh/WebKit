@@ -5,16 +5,13 @@
 module m0 path="main.js" displayPath="main.js"
 runtimefunction id=12 function=f1
 function f0 name="callee" captures=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Return v0
 }
 function f1 name="call" role=Library flags=[HasRestParameter, HasThis] enclosingRuntimeFunction=12 thisType={type=anything} parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = CallList v0, v1, v2
     Return v3
 }
 function f2 name="builtinFunction" parameters=[{type=builtin(ArrayPrototypeSort)}] results=[{type=number}] {
-  b0(v0: builtin(ArrayPrototypeSort)):
     v1 = IsClosureOf v0 function=f0
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):
@@ -27,7 +24,6 @@ function f2 name="builtinFunction" parameters=[{type=builtin(ArrayPrototypeSort)
 # CHECK: b1(v2: never):
 # CHECK: b2(v3: builtin(ArrayPrototypeSort)):
 function f3 name="builtinOrCallee" parameters=[{type=builtin(ArrayPrototypeSort)|f0|string}] results=[{type=number}] {
-  b0(v0: builtin(ArrayPrototypeSort)|f0|string):
     v1 = IsClosureOf v0 function=f0
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):
@@ -41,7 +37,6 @@ function f3 name="builtinOrCallee" parameters=[{type=builtin(ArrayPrototypeSort)
 # CHECK: b1(v2: f0):
 # CHECK: b2(v4: string|builtin(ArrayPrototypeSort)):
 function f4 name="builtinAgainstItsOwnFunction" parameters=[{type=builtin(FunctionPrototypeCall)}] results=[{type=undefined}] {
-  b0(v0: builtin(FunctionPrototypeCall)):
     v1 = IsClosureOf v0 function=f1
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):
@@ -53,7 +48,6 @@ function f4 name="builtinAgainstItsOwnFunction" parameters=[{type=builtin(Functi
 # CHECK: b1(v2: f1):
 # CHECK: b2(v3: builtin(FunctionPrototypeCall)):
 function f5 name="instanceOfFunction" parameters=[{type=Function}] results=[{type=number}] {
-  b0(v0: Function):
     v1 = IsClosureOf v0 function=f0
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):
@@ -67,7 +61,6 @@ function f5 name="instanceOfFunction" parameters=[{type=Function}] results=[{typ
 # CHECK: b1(v2: f0):
 # CHECK: b2(v4: Function):
 function f6 name="neverClosure" parameters=[{type=string|f1}] results=[{type=undefined}] {
-  b0(v0: string|f1):
     v1 = IsClosureOf v0 function=f0
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):

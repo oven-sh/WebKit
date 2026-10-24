@@ -11,7 +11,6 @@ entry module=m0
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToBoolean v1
@@ -27,7 +26,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="handedToReader" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray v0, v0 contents=anything
     v2 = CallDirect v1 function=f19
     Return v2
@@ -36,7 +34,6 @@ function f1 name="handedToReader" parameters=[{type=anything}] results=[{type=an
 # CHECK: NewArray v0, v0 {{*}}storage=Frame
 
 function f2 name="emptyAndNamedByTheProgram" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray contents=anything
     v2 = CallDirect v1 function=f19
     Return v2
@@ -46,7 +43,6 @@ function f2 name="emptyAndNamedByTheProgram" parameters=[{type=anything}] result
 # CHECK: NewArray {{*}}storage=Frame
 
 function f3 name="handedToKeeper" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray v0 contents=anything
     v2 = CallDirect v1 function=f20
     Return v2
@@ -55,7 +51,6 @@ function f3 name="handedToKeeper" parameters=[{type=anything}] results=[{type=an
 # CHECK-NOT: storage=Frame
 
 function f4 name="returned" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray v0 contents=anything
     v2 = CallDirect v1 function=f19
     Return v1
@@ -64,7 +59,6 @@ function f4 name="returned" parameters=[{type=anything}] results=[{type=anything
 # CHECK-NOT: storage=Frame
 
 function f5 name="appendedTo" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray v0 contents=anything
     AppendElement v1, v0
     v3 = CallDirect v1 function=f19
@@ -74,7 +68,6 @@ function f5 name="appendedTo" parameters=[{type=anything}] results=[{type=anythi
 # CHECK-NOT: storage=Frame
 
 function f6 name="tooLong" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=anything
     v2 = CallDirect v1 function=f19
     Return v2
@@ -83,7 +76,6 @@ function f6 name="tooLong" parameters=[{type=anything}] results=[{type=anything}
 # CHECK-NOT: storage=Frame
 
 function f7 name="hasHole" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray v0 contents=anything holes=[1]
     v2 = CallDirect v1 function=f19
     Return v2
@@ -92,7 +84,6 @@ function f7 name="hasHole" parameters=[{type=anything}] results=[{type=anything}
 # CHECK-NOT: storage=Frame
 
 function f8 name="holdsNumbers" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     v2 = NewArray v1, v1 contents=number
     v3 = CallDirect v2 function=f28
@@ -103,7 +94,6 @@ function f8 name="holdsNumbers" parameters=[{type=anything}] results=[{type=anyt
 
 # The array holds values of the heap alone.
 function f9 name="holdsClosure" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f25
     v2 = NewArray v1 contents=anything
     v3 = CallDirect v2 function=f19
@@ -115,7 +105,6 @@ function f9 name="holdsClosure" parameters=[{type=anything}] results=[{type=anyt
 # CHECK: NewArray {{*}}storage=Frame
 
 function f10 name="handedToUnknownCode" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray v0 contents=anything
     v2 = Call v0, -, v1
     Return v2
@@ -124,7 +113,6 @@ function f10 name="handedToUnknownCode" parameters=[{type=anything}] results=[{t
 # CHECK-NOT: storage=Frame
 
 function f11 name="readHere" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray v0 contents=anything
     v2 = StrictEq v1, v0
     v3 = CallList v0, -, v1
@@ -134,7 +122,6 @@ function f11 name="readHere" parameters=[{type=anything}] results=[{type=anythin
 # CHECK: NewArray {{*}}storage=Frame
 
 function f12 name="restParameter" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray v0, v0 contents=anything
     v2 = CallDirect v0, v1 function=f21
     Return v2
@@ -143,7 +130,6 @@ function f12 name="restParameter" parameters=[{type=anything}] results=[{type=an
 # CHECK: NewArray {{*}}storage=Frame
 
 function f13 name="surplusArgument" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=2
     v2 = NewArray v0 contents=anything
     v3 = CallDirect v1, v0, v2 function=f22
@@ -153,7 +139,6 @@ function f13 name="surplusArgument" parameters=[{type=anything}] results=[{type=
 # CHECK: NewArray {{*}}storage=Frame
 
 function f14 name="oneInEachIteration" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     LoopHint
@@ -168,7 +153,6 @@ function f14 name="oneInEachIteration" parameters=[{type=anything}] results=[{ty
 # CHECK: NewArray {{*}}storage=Frame
 
 function f15 name="twoMeet" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = NewArray v0 contents=anything
@@ -185,7 +169,6 @@ function f15 name="twoMeet" parameters=[{type=anything}, {type=boolean}] results
 # CHECK: NewArray v0, v0 {{*}}storage=Frame
 
 function f16 name="carriedIntoTheNextIteration" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray contents=anything
     Jump -> next b1(v1)
   b1(v2: Array):
@@ -202,7 +185,6 @@ function f16 name="carriedIntoTheNextIteration" parameters=[{type=anything}] res
 
 # The frame would go before the callee runs. It stays: the callee returns without another tail call, so no program can tell but by the depth of the stack, which grows by one frame and no more.
 function f17 name="tailCallOfFunctionThatReturns" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray v0 contents=anything
     v2 = CallDirect v1 function=f19
     ReturnCall v2
@@ -213,7 +195,6 @@ function f17 name="tailCallOfFunctionThatReturns" parameters=[{type=anything}] r
 # CHECK-NOT: ReturnCall
 
 function f18 name="handedOnTwice" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray v0 contents=anything
     v2 = CallDirect v1 function=f23
     v3 = NewArray v0 contents=anything
@@ -226,18 +207,15 @@ function f18 name="handedOnTwice" parameters=[{type=anything}] results=[{type=an
 # CHECK-NOT: storage=Frame
 
 function f19 name="reader" parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     v1 = Integer integer=0
     v2 = ElemGet v0, v1
     Return v2
 }
 function f20 name="keeper" parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     PutModuleVariable v0 variable=g0
     Return
 }
 function f21 name="readsRest" flags=[HasRestParameter] parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
-  b0(v0: anything, v1: Array):
     v2 = CallList v0, -, v1
     Return v2
 }
@@ -248,23 +226,19 @@ function f22 name="makesArgumentsObject" flags=[HasArgumentCount, HasHiddenRest]
     Return v4
 }
 function f23 name="handsOnToReader" parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     v1 = CallDirect v0 function=f19
     Return v1
 }
 function f24 name="handsOnToKeeper" parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     v1 = CallDirect v0 function=f20
     Return v1
 }
 function f25 name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 
 # A program may count on tail calls that go round for ever.
 function f26 name="tailCallOfFunctionThatGoesOnInTailCalls" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray v0 contents=anything
     v2 = CallDirect v1 function=f27
     ReturnCall v2
@@ -273,7 +247,6 @@ function f26 name="tailCallOfFunctionThatGoesOnInTailCalls" parameters=[{type=an
 # CHECK-NOT: storage=Frame
 # CHECK: ReturnCall
 function f27 name="readsAndGoesRound" parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     v1 = Integer integer=0
     v2 = ElemGet v0, v1
     v3 = ToBoolean v2
@@ -286,7 +259,6 @@ function f27 name="readsAndGoesRound" parameters=[{type=Array}] results=[{type=a
 }
 # Beside lists of any value the list of numbers would be given their storage.
 function f28 name="readerOfNumbers" parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     v1 = Integer integer=0
     v2 = ElemGet v0, v1
     Return v2

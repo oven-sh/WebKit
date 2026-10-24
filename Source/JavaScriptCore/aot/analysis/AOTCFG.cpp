@@ -35,27 +35,6 @@ uint32_t indexAfterCaughtValues(const Function& function, const Block& block)
     return index;
 }
 
-bool returnsToCaller(TerminatorKind kind)
-{
-    switch (kind) {
-    case TerminatorKind::Return:
-    case TerminatorKind::ReturnCall:
-        return true;
-    case TerminatorKind::Jump:
-    case TerminatorKind::Branch:
-    case TerminatorKind::Switch:
-    case TerminatorKind::SwitchString:
-    case TerminatorKind::Throw:
-    case TerminatorKind::Rethrow:
-    case TerminatorKind::Unreachable:
-    case TerminatorKind::SwitchOnShape:
-    case TerminatorKind::TryCallInline:
-    case TerminatorKind::TestAndBranch:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 IncomingValue incomingValueOf(const Function& function, Edge edge, uint32_t parameterIndex)
 {
     const Target& target = targetOf(function, edge);
@@ -78,11 +57,6 @@ ValueID valuePassedOn(const Function& function, Edge edge, uint32_t parameterInd
     return operandNarrowedOnEdge(function, { edge.from, edge.targetIndex, parameterIndex - static_cast<uint32_t>(target.arguments.size()) });
 }
 
-uint32_t numberOfExplicitArguments(const Function& function, Edge edge)
-{
-    return static_cast<uint32_t>(targetOf(function, edge).arguments.size());
-}
-
 uint32_t numberOfSharedExplicitParameters(const Function& function, const CFG& cfg, BlockID block)
 {
     uint32_t largest = 0;
@@ -97,8 +71,8 @@ uint32_t numberOfSharedExplicitParameters(const Function& function, const CFG& c
 
 void BlockIDDump::dump(PrintStream& out) const
 {
-    if (m_block)
-        out.print("b", m_block.index());
+    if (block)
+        out.print("b", block.index());
     else
         out.print("-");
 }
@@ -109,32 +83,6 @@ CFG::CFG(const Function& function)
     : m_numberOfBlocks(function.blocks.size())
 {
     RELEASE_ASSERT(function.hasBody());
-    readSuccessors(function);
-    computeReversePostOrder();
-}
-
-bool CFG::describes(const Function& function) const
-{
-    if (function.blocks.size() != m_numberOfBlocks)
-        return false;
-    for (BlockID id : m_reversePostOrder) {
-        const Block& block = function.at(id);
-        std::span<const BlockID> knownSuccessors = successors(id);
-        if (hasHandler(id) != !!block.handler || knownSuccessors.size() != numberOfOutgoingEdges(block))
-            return false;
-        size_t successorIndex = 0;
-        bool hasKnownSuccessors = true;
-        block.forEachTarget([&](const Target& target) {
-            hasKnownSuccessors &= target.block == knownSuccessors[successorIndex++];
-        });
-        if (!hasKnownSuccessors)
-            return false;
-    }
-    return true;
-}
-
-void CFG::readSuccessors(const Function& function)
-{
     unsigned numberOfBlocks = m_numberOfBlocks;
     size_t sizeOfTablesByBlock = 3 * static_cast<size_t>(numberOfBlocks) + 1;
     size_t capacity = 2 * static_cast<size_t>(numberOfBlocks) + 6;
@@ -165,26 +113,18 @@ void CFG::readSuccessors(const Function& function)
     }
     RELEASE_ASSERT(end < beingWalked);
     firstSuccessor[numberOfBlocks] = static_cast<uint32_t>(end);
+    uint32_t* orderIndex = firstSuccessor + numberOfBlocks + 1;
+    uint32_t* order = orderIndex + numberOfBlocks;
     m_firstSuccessor = firstSuccessor;
-    m_reversePostOrderIndex = firstSuccessor + numberOfBlocks + 1;
+    m_reversePostOrderIndex = orderIndex;
     m_successors = reinterpret_cast<const BlockID*>(successors);
-}
 
-void CFG::computeReversePostOrder()
-{
     struct Frame {
         uint32_t block;
         uint32_t endOfUnvisitedEdges;
     };
-
-    unsigned numberOfBlocks = m_numberOfBlocks;
-    const uint32_t* firstSuccessor = m_firstSuccessor;
-    const uint32_t* successors = reinterpret_cast<const uint32_t*>(m_successors);
-    uint32_t* orderIndex = const_cast<uint32_t*>(m_reversePostOrderIndex);
-    uint32_t* order = orderIndex + numberOfBlocks;
     std::fill_n(orderIndex, numberOfBlocks, notReached);
 
-    // A block is on the stack at most once.
     Vector<Frame, 64> stackStorage(numberOfBlocks);
     Frame* stack = stackStorage.mutableSpan().data();
     size_t depth = 1;
@@ -216,6 +156,26 @@ void CFG::computeReversePostOrder()
     m_reversePostOrder = { reinterpret_cast<const BlockID*>(order) + beginOfOrder, numberOfBlocks - beginOfOrder };
     if (beginOfOrder) [[unlikely]]
         forgetUnreachableBlocks(beginOfOrder);
+}
+
+bool CFG::describes(const Function& function) const
+{
+    if (function.blocks.size() != m_numberOfBlocks)
+        return false;
+    for (BlockID id : m_reversePostOrder) {
+        const Block& block = function.at(id);
+        std::span<const BlockID> knownSuccessors = successors(id);
+        if (hasHandler(id) != !!block.handler || knownSuccessors.size() != numberOfOutgoingEdges(block))
+            return false;
+        size_t successorIndex = 0;
+        bool hasKnownSuccessors = true;
+        block.forEachTarget([&](const Target& target) {
+            hasKnownSuccessors &= target.block == knownSuccessors[successorIndex++];
+        });
+        if (!hasKnownSuccessors)
+            return false;
+    }
+    return true;
 }
 
 void CFG::forgetUnreachableBlocks(uint32_t numberOfUnreachableBlocks)
@@ -256,7 +216,6 @@ void CFG::computeIncomingEdges() const
     const uint32_t* successors = reinterpret_cast<const uint32_t*>(m_successors);
     uint32_t numberOfEdges = firstSuccessor[numberOfBlocks];
 
-    // While the edges are filed, the entry behind a block's own says where its next edge goes. At the end that is where the edges of the next block begin.
     size_t sizeOfTableByBlock = static_cast<size_t>(numberOfBlocks) + 2;
     m_incomingTables.grow(sizeOfTableByBlock + 3 * static_cast<size_t>(numberOfEdges));
     uint32_t* firstIncomingEdge = m_incomingTables.mutableSpan().data();
@@ -323,9 +282,7 @@ void CFG::computePredecessors() const
 std::optional<Edge> CFG::singleIncomingEdge(BlockID block) const
 {
     auto edges = incomingEdges(block);
-    if (edges.size() != 1)
-        return std::nullopt;
-    return edges[0];
+    return edges.size() == 1 ? std::optional(edges[0]) : std::nullopt;
 }
 
 BitVector CFG::blocksReachableFrom(BlockID start, const BitVector& barrier) const

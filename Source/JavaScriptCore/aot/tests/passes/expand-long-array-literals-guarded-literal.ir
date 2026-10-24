@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="readsAroundUnknownCode" parameters=[{type=anything}, {type=object}] results=[{type=anything}] {
-  b0(v0: anything, v1: object):
 # REPEAT: i = 2..34
     v%(i) = Call v0
 # END REPEAT

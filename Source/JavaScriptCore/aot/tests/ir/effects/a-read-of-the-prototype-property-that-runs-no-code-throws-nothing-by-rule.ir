@@ -10,7 +10,6 @@ layout L1 kind=Instance name="Legacy" constructor=f1 flags=[IsConstructorFunctio
 function f0 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}]
 function f1 name="Legacy" flags=[HasThis] thisType={type=object} results=[{type=undefined}]
 function f2 name="reads" parameters=[{type=f0}, {type=f1}, {type=anything}, {type=undefined|f1}] results=[{type=undefined}] {
-  b0(v0: f0, v1: f1, v2: anything, v3: undefined|f1):
     v4 = GetConstructPrototype v0 layout=L0
     v5 = GetConstructPrototype v1 layout=L1
     v6 = GetConstructPrototype v2 layout=L1

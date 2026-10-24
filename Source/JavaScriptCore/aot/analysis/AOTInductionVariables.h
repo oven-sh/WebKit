@@ -23,7 +23,6 @@ class FunctionAnalyses;
 inline constexpr OpcodeSet relationalOperators { Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq };
 
 Opcode mirroredComparison(Opcode relationalOperator);
-Opcode negatedComparison(Opcode relationalOperator);
 
 enum class InductionStepKind : uint8_t { Unknown, Constant, Invariant };
 enum class InductionDirection : uint8_t { Unknown, Increasing, Decreasing };
@@ -33,7 +32,6 @@ enum class EntryRelation : uint8_t { Unknown, Holds };
 enum class LoopExits : uint8_t { Unknown, AlsoElsewhere, OnlyAtTest };
 
 bool isBoundingRelation(Opcode relationalOperator, InductionDirection);
-// FunctionAnalyses::dominates(Edge, BlockID) holds only for the single edge into a block. This holds where it would once the edge has a block of its own.
 bool dominatesAfterSplit(FunctionAnalyses&, Edge, BlockID);
 
 struct InductionStep {
@@ -53,7 +51,6 @@ struct InductionTest {
     ValueID bound;
     LoopBoundKind boundKind { LoopBoundKind::Unknown };
     Edge stayingEdge;
-    Edge leavingEdge;
     EntryRelation entryRelation { EntryRelation::Unknown };
     LoopExits exits { LoopExits::Unknown };
 

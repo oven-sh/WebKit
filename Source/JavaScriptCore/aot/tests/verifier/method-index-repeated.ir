@@ -7,7 +7,6 @@ module m0 path="main.js" displayPath="main.js"
 entry module=m0
 layout L0 kind=Instance constructor=f3
 function f0 name="badIndexTwice" results=[{type=undefined}] {
-  b0():
     v0 = NewClosure function=f3
     v1 = NewClass v0 layout=L0
     v2 = NewClosure function=f4
@@ -18,7 +17,6 @@ function f0 name="badIndexTwice" results=[{type=undefined}] {
     Return
 }
 function f1 name="goodDistinctIndexes" results=[{type=undefined}] {
-  b0():
     v0 = NewClosure function=f3
     v1 = NewClass v0 layout=L0
     v2 = NewClosure function=f4
@@ -29,7 +27,6 @@ function f1 name="goodDistinctIndexes" results=[{type=undefined}] {
     Return
 }
 function f2 name="goodTwoHeads" results=[{type=undefined}] {
-  b0():
     v0 = NewClosure function=f3
     v1 = NewClass v0 layout=L0
     v2 = NewClosure function=f4

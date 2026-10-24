@@ -20,28 +20,22 @@ function f10 name="threeInOneBlock" role=CoroutineRamp flags=[IsAsync] parameter
 function f11 name="notAwaited" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f11 body=f25 entryWithoutPromise=f25 promiseType=Promise promiseParameter=1}
 function f12 name="secondUse" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f12 body=f26 entryWithoutPromise=f26 promiseType=Promise promiseParameter=1}
 function f13 name="callerIsNoCoroutine" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f0
     Return v1
-}
-# CHECK-LABEL: function f13 name="callerIsNoCoroutine"
 # CHECK: v1: Promise = CallDirect v0 function=f0
 # CHECK-NEXT: Return v1
+}
 
 function f14 name="returnsAnything" role=AsyncWorker parameters=[{type=anything}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncFunction ramp=f0 body=f14 promiseType=Promise worker=f14} {
-  b0(v0: anything):
     Return v0
 }
 function f15 name="returnsNumber" role=AsyncWorker parameters=[{type=number}] results=[{type=number}] derivation={source=f1} creator=Coroutine{kind=AsyncFunction ramp=f1 body=f15 promiseType=Promise worker=f15} {
-  b0(v0: number):
     Return v0
 }
 function f16 name="neverReturns" role=AsyncWorker parameters=[{type=anything}] results=[{type=never}] derivation={source=f2} creator=Coroutine{kind=AsyncFunction ramp=f2 body=f16 promiseType=Promise worker=f16} {
-  b0(v0: anything):
     Throw v0
 }
 function f17 name="suspends" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f3} creator=Coroutine{kind=AsyncFunction ramp=f3 body=f17 entryWithoutPromise=f17 promiseType=Promise promiseParameter=1} {
-  b0(v0: anything, v1: undefined|Promise):
     v2 = AwaitBySavingFrame v0, v1
     v3 = ReturnAsyncResult v1, v2
     Return v3
@@ -49,13 +43,10 @@ function f17 name="suspends" role=CoroutineBody flags=[IsAsync] parameters=[{typ
 
 # The call takes no driver and has a handler of its own. A result that is no thenable is awaited as it is, which takes as many turns of the job queue as the await of a promise fulfilled with it
 function f18 name="awaitsWorker" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f4} creator=Coroutine{kind=AsyncFunction ramp=f4 body=f18 entryWithoutPromise=f18 promiseType=Promise promiseParameter=1} {
-  b0(v0: anything, v1: undefined|Promise):
     v2 = CallDirect v0 function=f0 @10
     v3 = AwaitBySavingFrame v2, v1 @11
     v4 = ReturnAsyncResult v1, v3
     Return v4
-}
-# CHECK-LABEL: function f18 name="awaitsWorker"
 # CHECK-NOT: AwaitCallBySavingFrame
 # CHECK: b0(v0: anything, v1: undefined|Promise):
 # CHECK-NEXT: Jump -> next [[calling18]]()
@@ -78,16 +69,14 @@ function f18 name="awaitsWorker" role=CoroutineBody flags=[IsAsync] parameters=[
 # CHECK-NEXT: ResolvePromise [[resolved18]], [[returned18]]
 # CHECK-NEXT: Jump -> next [[awaiting18]]([[resolved18]])
 # CHECK-NOT: AwaitCallBySavingFrame
+}
 
 # A number is no thenable: no test, and no promise but the rejected one. What was expected of the await still is
 function f19 name="workerReturnsNumber" role=CoroutineBody flags=[IsAsync] parameters=[{type=number}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f5} creator=Coroutine{kind=AsyncFunction ramp=f5 body=f19 entryWithoutPromise=f19 promiseType=Promise promiseParameter=1} {
-  b0(v0: number, v1: undefined|Promise):
     v2 = CallDirect v0 function=f1 @20
     v3 = AwaitBySavingFrame v2, v1 @21
     v4 = ReturnAsyncResult v1, v3
     Return v4
-}
-# CHECK-LABEL: function f19 name="workerReturnsNumber"
 # CHECK-NOT: IsNotThenable
 # CHECK-NOT: ResolvePromise
 # CHECK: b0(v0: number, v1: undefined|Promise):
@@ -103,16 +92,14 @@ function f19 name="workerReturnsNumber" role=CoroutineBody flags=[IsAsync] param
 # CHECK-NEXT: Jump -> next [[awaiting19]]([[returned19]])
 # CHECK-NOT: IsNotThenable
 # CHECK-NOT: ResolvePromise
+}
 
 # The worker always throws, so nothing stands behind the call and only the rejected promise is awaited
 function f20 name="workerNeverReturns" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f6} creator=Coroutine{kind=AsyncFunction ramp=f6 body=f20 entryWithoutPromise=f20 promiseType=Promise promiseParameter=1} {
-  b0(v0: anything, v1: undefined|Promise):
     v2 = CallDirect v0 function=f2 @30
     v3 = AwaitBySavingFrame v2, v1 @31
     v4 = ReturnAsyncResult v1, v3
     Return v4
-}
-# CHECK-LABEL: function f20 name="workerNeverReturns"
 # CHECK-NOT: IsNotThenable
 # CHECK-NOT: ResolvePromise
 # CHECK: b0(v0: anything, v1: undefined|Promise):
@@ -129,6 +116,7 @@ function f20 name="workerNeverReturns" role=CoroutineBody flags=[IsAsync] parame
 # CHECK-NEXT: Unreachable
 # CHECK-NOT: IsNotThenable
 # CHECK-NOT: ResolvePromise
+}
 
 # Only the call has the new handler. The block that rejects, the block that resolves and the await have the handler that the await had
 function f21 name="underHandler" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f7} creator=Coroutine{kind=AsyncFunction ramp=f7 body=f21 entryWithoutPromise=f21 promiseType=Promise promiseParameter=1} {
@@ -141,8 +129,6 @@ function f21 name="underHandler" role=CoroutineBody flags=[IsAsync] parameters=[
     v6 = CatchValue
     v7 = ReturnAsyncResult v1, v5
     Return v7
-}
-# CHECK-LABEL: function f21 name="underHandler"
 # CHECK: b0(v0: anything, v1: undefined|Promise) handler=b1(v0):
 # CHECK-NEXT: Jump -> next [[calling21]]()
 # CHECK-NEXT: b1(v5{{*}}) role=CatchHandler:
@@ -157,10 +143,10 @@ function f21 name="underHandler" role=CoroutineBody flags=[IsAsync] parameters=[
 # CHECK-NEXT: = CallDirect v0 function=f14 @40
 # CHECK: [[resolving21]]() frequency=Unlikely handler=b1(v0):
 # CHECK-NEXT: = NewPromise
+}
 
 # No new block is more frequent than the block of the await
 function f22 name="inARareBlock" role=CoroutineBody flags=[IsAsync] parameters=[{type=boolean}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f8} creator=Coroutine{kind=AsyncFunction ramp=f8 body=f22 entryWithoutPromise=f22 promiseType=Promise promiseParameter=1} {
-  b0(v0: boolean, v1: undefined|Promise):
     Branch v0 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v2 = CallDirect v0 function=f0 @50
@@ -171,8 +157,6 @@ function f22 name="inARareBlock" role=CoroutineBody flags=[IsAsync] parameters=[
     v5 = Undefined
     v6 = ReturnAsyncResult v1, v5
     Return v6
-}
-# CHECK-LABEL: function f22 name="inARareBlock"
 # CHECK: b1() frequency=Rare:
 # CHECK-NEXT: Jump -> next [[calling22]]()
 # CHECK: [[rest22]](v3: anything) frequency=Rare:
@@ -181,10 +165,10 @@ function f22 name="inARareBlock" role=CoroutineBody flags=[IsAsync] parameters=[
 # CHECK: [[calling22]]() frequency=Rare handler=[[rejection22]]():
 # CHECK: [[resolving22]]() frequency=Rare:
 # CHECK-NEXT: = NewPromise
+}
 
 # The typed and the untyped version of a function that never suspends, called in two arms: the await moves into the arms first, and then each arm calls its worker
 function f23 name="behindAMerge" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f9} creator=Coroutine{kind=AsyncFunction ramp=f9 body=f23 entryWithoutPromise=f23 promiseType=Promise promiseParameter=1} {
-  b0(v0: anything, v1: undefined|Promise):
     v2 = TypeTest v0 testedType=number
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3):
@@ -197,8 +181,6 @@ function f23 name="behindAMerge" role=CoroutineBody flags=[IsAsync] parameters=[
     v7 = AwaitBySavingFrame v6, v1 @61
     v8 = ReturnAsyncResult v1, v7
     Return v8
-}
-# CHECK-LABEL: function f23 name="behindAMerge"
 # CHECK: b1(v3: number):
 # CHECK-NEXT: Jump -> next [[typedCall23]]()
 # CHECK-NEXT: b2():
@@ -213,10 +195,10 @@ function f23 name="behindAMerge" role=CoroutineBody flags=[IsAsync] parameters=[
 # CHECK: [[typedCall23]]() handler=
 # CHECK-NEXT: [[typed23]]: number = CallDirect v3 function=f15 @60
 # CHECK-NEXT: Jump -> next
+}
 
 # Two awaits of a worker with an await of a function that suspends between them. Each is rewritten at its own place, and each result reaches the next call
 function f24 name="threeInOneBlock" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f10} creator=Coroutine{kind=AsyncFunction ramp=f10 body=f24 entryWithoutPromise=f24 promiseType=Promise promiseParameter=1} {
-  b0(v0: anything, v1: undefined|Promise):
     v2 = CallDirect v0 function=f0 @70
     v3 = AwaitBySavingFrame v2, v1 @71
     v4 = CallDirect v3 function=f3 @72
@@ -225,8 +207,6 @@ function f24 name="threeInOneBlock" role=CoroutineBody flags=[IsAsync] parameter
     v7 = AwaitBySavingFrame v6, v1 @75
     v8 = ReturnAsyncResult v1, v7
     Return v8
-}
-# CHECK-LABEL: function f24 name="threeInOneBlock"
 # CHECK: b0(v0: anything, v1: undefined|Promise):
 # CHECK-NEXT: Jump -> next [[firstCall24]]()
 # CHECK-NEXT: [[rest24]](v7: anything):
@@ -242,29 +222,26 @@ function f24 name="threeInOneBlock" role=CoroutineBody flags=[IsAsync] parameter
 # CHECK-NEXT: Jump -> next [[afterFirst24]](
 # CHECK-NEXT: [[firstCall24]]() handler=
 # CHECK-NEXT: = CallDirect v0 function=f14 @70
+}
 
 # Whoever keeps the promise calls the ramp, which makes it
 function f25 name="notAwaited" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f11} creator=Coroutine{kind=AsyncFunction ramp=f11 body=f25 entryWithoutPromise=f25 promiseType=Promise promiseParameter=1} {
-  b0(v0: anything, v1: undefined|Promise):
     v2 = CallDirect v0 function=f0
     v3 = ReturnAsyncResult v1, v2
     Return v3
-}
-# CHECK-LABEL: function f25 name="notAwaited"
 # CHECK: b0(v0: anything, v1: undefined|Promise):
 # CHECK-NEXT: v2: Promise = CallDirect v0 function=f0
 # CHECK-NEXT: v3: anything = ReturnAsyncResult v1, v2
 # CHECK-NEXT: Return v3
+}
 
 function f26 name="secondUse" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f12} creator=Coroutine{kind=AsyncFunction ramp=f12 body=f26 entryWithoutPromise=f26 promiseType=Promise promiseParameter=1} {
-  b0(v0: anything, v1: undefined|Promise):
     v2 = CallDirect v0 function=f0
     v3 = AwaitBySavingFrame v2, v1
     v4 = ReturnAsyncResult v1, v2
     Return v4
-}
-# CHECK-LABEL: function f26 name="secondUse"
 # CHECK: b0(v0: anything, v1: undefined|Promise):
 # CHECK-NEXT: v2: Promise = CallDirect v0 function=f0
 # CHECK-NEXT: v3: anything = AwaitBySavingFrame v2, v1
 # CHECK-NEXT: v4: anything = ReturnAsyncResult v1, v2
+}

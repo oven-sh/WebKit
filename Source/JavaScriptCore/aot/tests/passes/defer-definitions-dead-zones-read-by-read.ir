@@ -23,7 +23,6 @@ entry module=m0
 variable g0 name="helper" module=m0 declared={type=absent|f1} flow={writers=AllKnown stores=AtMostOnce}
 variable g1 name="pattern" module=m0 declared={type=absent|RegExp} flow={writers=AllKnown stores=AtMostOnce}
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     PutModuleVariable v0 variable=g0
     v2 = NewRegExp pattern="a+"
@@ -37,11 +36,9 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="helper" module=m0 kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="early" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g0
     v2 = CheckInitialized v1 name="helper"
     v3 = Call v0, -, v2

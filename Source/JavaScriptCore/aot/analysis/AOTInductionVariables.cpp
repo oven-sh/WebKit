@@ -11,10 +11,8 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTIntegerRelations.h"
 #include "AOTSort.h"
-#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/CheckedArithmetic.h>
-#include <wtf/EnumTraits.h>
 #include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -35,7 +33,7 @@ Opcode mirroredComparison(Opcode comparison)
     }
 }
 
-Opcode negatedComparison(Opcode comparison)
+static Opcode negatedComparison(Opcode comparison)
 {
     switch (comparison) {
     case Opcode::Less:
@@ -140,508 +138,346 @@ bool dominatesAfterSplit(FunctionAnalyses& analyses, Edge edge, BlockID block)
     });
 }
 
-namespace {
-
-struct PendingValue {
-    ValueID value;
-    int64_t accumulated { 0 };
-};
-
-struct InductionSteps {
-    ValueID parameter;
-    Range totals;
-    std::optional<InductionStep> invariant;
-    bool isUnknown { false };
-    Vector<PendingValue, 8> pending;
-    UncheckedKeyHashMap<ValueID, int64_t> accumulatedAtParameter;
-};
-
-struct TestedVariable {
-    InductionVariable* variable { nullptr };
-    TestedValue tested { TestedValue::BeforeStep };
-};
-
-class InductionFinder {
-public:
-    InductionFinder(FunctionAnalyses&, const NaturalLoop&);
-
-    LoopInduction find();
-
-private:
-    using Variables = Vector<InductionVariable, 2>;
-    using EdgeArguments = Vector<ValueID, 2>;
-
-    std::optional<InductionVariable> findVariable(uint32_t parameterIndex);
-    std::optional<EdgeArguments> argumentsOn(std::span<const Edge>, uint32_t parameterIndex) const;
-    ValueID findStart(std::span<const ValueID> enteringArguments);
-    bool haveEqualValues(ValueID start, ValueID argument);
-
-    void collectSteps(ValueID stepped, InductionSteps&);
-    void visit(PendingValue, InductionSteps&);
-    void visitBlockParameter(ValueID, ValueLocation, int64_t accumulated, InductionSteps&);
-    void visitOperation(const Value&, int64_t accumulated, InductionSteps&);
-    void visitInvariantStep(const Value& sum, int64_t accumulated, InductionSteps&);
-    static void enqueueOperand(ValueID operand, CheckedInt64 accumulated, InductionSteps&);
-    static InductionStep stepOf(const InductionSteps&);
-    InductionDirection directionOf(const InductionSteps&) const;
-
-    void findTests(Variables&);
-    Vector<BlockID, 4> findTestingBlocks() const;
-    void findTestsIn(BlockID, Variables&);
-    std::optional<TestedVariable> findTestedVariable(Variables&, ValueID);
-    LoopBoundKind boundKindOf(ValueID bound);
-    bool isComputedInLoop(ValueID bound);
-    EntryRelation entryRelationOf(ValueID start, const InductionTest&);
-    IntegerRelations::Answer proveRelation(Opcode relation, ValueID left, ValueID right, BlockID at);
-    bool isOnEveryTrip(BlockID testingBlock) const;
-
-    ValueID numericIdentityOf(ValueID);
-    std::optional<int64_t> integerConstantOf(ValueID id) const { return integerConstantThroughCasts(m_program, m_function, id); }
-    bool isInLoop(BlockID block) const { return m_loops.belongsTo(block, m_loop); }
-    const Type& typeOf(ValueID id) const { return m_program.typeOf(m_function, id); }
-    bool isNeverNaN(ValueID) const;
-
-    FunctionAnalyses& m_analyses;
-    const Program& m_program;
-    const Function& m_function;
-    const CFG& m_cfg;
-    const Dominators& m_dominators;
-    const NaturalLoops& m_loops;
-    const UseLists& m_useLists;
-    const NaturalLoop& m_loop;
-    IntegerRelations m_relations;
-    Vector<Edge, 2> m_enteringEdges;
-    Vector<Edge, 2> m_backEdges;
-};
-
-InductionFinder::InductionFinder(FunctionAnalyses& analyses, const NaturalLoop& loop)
-    : m_analyses(analyses)
-    , m_program(analyses.program())
-    , m_function(analyses.function())
-    , m_cfg(analyses.cfg())
-    , m_dominators(analyses.dominators())
-    , m_loops(analyses.naturalLoops())
-    , m_useLists(analyses.useLists())
-    , m_loop(loop)
-    , m_relations(analyses)
+static LoopInduction findInduction(FunctionAnalyses& analyses, const NaturalLoop& loop)
 {
-    for (Edge edge : m_cfg.incomingEdges(loop.header()))
-        (isInLoop(edge.from) ? m_backEdges : m_enteringEdges).append(edge);
-}
+    const Program& program = analyses.program();
+    const Function& function = analyses.function();
+    const CFG& cfg = analyses.cfg();
+    const Dominators& dominators = analyses.dominators();
+    const NaturalLoops& loops = analyses.naturalLoops();
+    const UseLists& useLists = analyses.useLists();
+    IntegerRelations relations(analyses);
 
-LoopInduction InductionFinder::find()
-{
-    LoopInduction induction { .header = m_loop.header(), .loopIndex = m_loop.index(), .variables = { } };
-    size_t numberOfParameters = m_function.at(m_loop.header()).parameters.size();
-    for (uint32_t parameterIndex = 0; parameterIndex < numberOfParameters; ++parameterIndex) {
-        if (std::optional<InductionVariable> variable = findVariable(parameterIndex))
-            induction.variables.append(WTF::move(*variable));
-    }
-    findTests(induction.variables);
-    return induction;
-}
-
-std::optional<InductionVariable> InductionFinder::findVariable(uint32_t parameterIndex)
-{
-    std::optional<EdgeArguments> enteringArguments = argumentsOn(m_enteringEdges.span(), parameterIndex);
-    std::optional<EdgeArguments> carriedArguments = argumentsOn(m_backEdges.span(), parameterIndex);
-    if (!enteringArguments || !carriedArguments)
-        return std::nullopt;
-
-    InductionVariable variable;
-    variable.parameter = m_function.at(m_loop.header()).parameters[parameterIndex];
-    variable.parameterIndex = parameterIndex;
-    variable.start = findStart(enteringArguments->span());
-
-    InductionSteps steps;
-    steps.parameter = variable.parameter;
-    for (ValueID argument : *carriedArguments) {
-        if (!argument)
-            return std::nullopt;
-        ValueID stepped = m_analyses.identityOf(argument);
-        if (variable.steppedValues.contains(stepped))
-            continue;
-        variable.steppedValues.append(stepped);
-        collectSteps(stepped, steps);
-        if (steps.isUnknown)
-            return std::nullopt;
-    }
-
-    bool hasOnlyTotals = !steps.invariant;
-    if (hasOnlyTotals && (steps.totals.isEmpty() || steps.totals == Range::one(0)))
-        return std::nullopt;
-
-    variable.step = stepOf(steps);
-    variable.direction = directionOf(steps);
-    return variable;
-}
-
-std::optional<InductionFinder::EdgeArguments> InductionFinder::argumentsOn(std::span<const Edge> edges, uint32_t parameterIndex) const
-{
-    EdgeArguments arguments;
-    for (Edge edge : edges) {
-        IncomingValue incoming = incomingValueOf(m_function, edge, parameterIndex);
-        switch (incoming.kind) {
-        case IncomingValue::Kind::Argument:
-            arguments.append(incoming.argument);
-            continue;
-        case IncomingValue::Kind::EdgeResult:
-            return std::nullopt;
+    auto isInLoop = [&](BlockID block) {
+        return loops.belongsTo(block, loop);
+    };
+    auto typeOf = [&](ValueID id) -> const Type& {
+        return program.typeOf(function, id);
+    };
+    auto integerConstantOf = [&](ValueID id) {
+        return integerConstantThroughCasts(program, function, id);
+    };
+    auto isNeverNaN = [&](ValueID id) {
+        return typeOf(id).isNumber() && !typeOf(id).mayBeNaN();
+    };
+    auto numericIdentityOf = [&](ValueID id) {
+        id = analyses.identityOf(id);
+        for (;;) {
+            const Value& value = function.at(id);
+            bool isConversion = value.opcode == Opcode::ToNumber || value.opcode == Opcode::ToNumeric;
+            if (!isConversion || !typeOf(value.operand(0)).isNumber())
+                return id;
+            id = analyses.identityOf(value.operand(0));
         }
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-    return arguments;
-}
-
-ValueID InductionFinder::findStart(std::span<const ValueID> enteringArguments)
-{
-    bool isPassedOnEveryEdge = !enteringArguments.empty() && std::ranges::all_of(enteringArguments, [](ValueID argument) {
-        return !!argument;
-    });
-    if (!isPassedOnEveryEdge)
-        return { };
-
-    ValueID first = enteringArguments.front();
-    bool isOneRunTimeValue = std::ranges::all_of(enteringArguments, [&](ValueID argument) {
-        return haveEqualValues(first, argument);
-    });
-    if (!isOneRunTimeValue)
-        return { };
-
-    bool isOneDefinition = std::ranges::all_of(enteringArguments, [&](ValueID argument) {
-        return argument == first;
-    });
-    if (isOneDefinition || integerConstantOf(first))
-        return first;
-    return m_analyses.identityOf(first);
-}
-
-bool InductionFinder::haveEqualValues(ValueID start, ValueID argument)
-{
-    if (m_analyses.identities().areSameValue(start, argument))
-        return true;
-    std::optional<int64_t> constant = integerConstantOf(argument);
-    return constant && constant == integerConstantOf(start);
-}
-
-void InductionFinder::collectSteps(ValueID stepped, InductionSteps& steps)
-{
-    steps.accumulatedAtParameter.clear();
-    steps.pending.append(PendingValue { stepped, 0 });
-    while (!steps.pending.isEmpty() && !steps.isUnknown)
-        visit(steps.pending.takeLast(), steps);
-}
-
-void InductionFinder::visit(PendingValue pending, InductionSteps& steps)
-{
-    ValueID id = numericIdentityOf(pending.value);
-    if (id == steps.parameter) {
-        steps.totals = steps.totals.unionWith(Range::one(pending.accumulated));
-        return;
-    }
-
-    ValueLocation location = m_useLists.locationOf(id);
-    if (!isInLoop(location.block)) {
-        steps.isUnknown = true;
-        return;
-    }
-
-    switch (location.placement) {
-    case ValuePlacement::Detached:
-        steps.isUnknown = true;
-        return;
-    case ValuePlacement::Parameter:
-        visitBlockParameter(id, location, pending.accumulated, steps);
-        return;
-    case ValuePlacement::InBlock:
-        visitOperation(m_function.at(id), pending.accumulated, steps);
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-void InductionFinder::visitBlockParameter(ValueID parameter, ValueLocation location, int64_t accumulated, InductionSteps& steps)
-{
-    if (location.block == m_loop.header()) {
-        steps.isUnknown = true;
-        return;
-    }
-
-    auto visited = steps.accumulatedAtParameter.add(parameter, accumulated);
-    if (!visited.isNewEntry) {
-        steps.isUnknown |= visited.iterator->value != accumulated;
-        return;
-    }
-
-    for (Edge edge : m_cfg.incomingEdges(location.block)) {
-        ValueID incoming = valuePassedOn(m_function, edge, location.index);
-        if (!incoming) {
-            steps.isUnknown = true;
-            return;
-        }
-        steps.pending.append(PendingValue { incoming, accumulated });
-    }
-}
-
-void InductionFinder::visitOperation(const Value& value, int64_t accumulated, InductionSteps& steps)
-{
-    switch (value.opcode) {
-    case Opcode::Increment:
-        enqueueOperand(value.operand(0), CheckedInt64(accumulated) + int64_t { 1 }, steps);
-        return;
-    case Opcode::Decrement:
-        enqueueOperand(value.operand(0), CheckedInt64(accumulated) - int64_t { 1 }, steps);
-        return;
-    case Opcode::Add:
-        if (std::optional<int64_t> constant = integerConstantOf(value.operand(1))) {
-            enqueueOperand(value.operand(0), CheckedInt64(accumulated) + *constant, steps);
-            return;
-        }
-        if (std::optional<int64_t> constant = integerConstantOf(value.operand(0))) {
-            enqueueOperand(value.operand(1), CheckedInt64(accumulated) + *constant, steps);
-            return;
-        }
-        visitInvariantStep(value, accumulated, steps);
-        return;
-    case Opcode::Sub:
-        if (std::optional<int64_t> constant = integerConstantOf(value.operand(1))) {
-            enqueueOperand(value.operand(0), CheckedInt64(accumulated) - *constant, steps);
-            return;
-        }
-        visitInvariantStep(value, accumulated, steps);
-        return;
-    default:
-        steps.isUnknown = true;
-        return;
-    }
-}
-
-void InductionFinder::visitInvariantStep(const Value& sum, int64_t accumulated, InductionSteps& steps)
-{
-    auto isStep = [&](ValueID variable, ValueID amount) {
-        return numericIdentityOf(variable) == steps.parameter && isInvariantIn(m_analyses, m_loop, amount);
     };
 
-    ValueID amount;
-    if (isStep(sum.operand(0), sum.operand(1)))
-        amount = sum.operand(1);
-    else if (sum.opcode == Opcode::Add && isStep(sum.operand(1), sum.operand(0)))
-        amount = sum.operand(0);
-    if (!amount || accumulated) {
-        steps.isUnknown = true;
-        return;
+    Vector<Edge, 2> enteringEdges;
+    Vector<Edge, 2> backEdges;
+    for (Edge edge : cfg.incomingEdges(loop.header()))
+        (isInLoop(edge.from) ? backEdges : enteringEdges).append(edge);
+
+    auto findStart = [&](std::span<const ValueID> enteringArguments) -> ValueID {
+        if (enteringArguments.empty() || std::ranges::any_of(enteringArguments, [](ValueID argument) { return !argument; }))
+            return { };
+
+        ValueID first = enteringArguments.front();
+        bool isOneRunTimeValue = std::ranges::all_of(enteringArguments, [&](ValueID argument) {
+            if (analyses.identities().areSameValue(first, argument))
+                return true;
+            std::optional<int64_t> constant = integerConstantOf(argument);
+            return constant && constant == integerConstantOf(first);
+        });
+        if (!isOneRunTimeValue)
+            return { };
+
+        bool isOneDefinition = std::ranges::all_of(enteringArguments, [&](ValueID argument) {
+            return argument == first;
+        });
+        return isOneDefinition || integerConstantOf(first) ? first : analyses.identityOf(first);
+    };
+
+    auto findVariable = [&](uint32_t parameterIndex) -> std::optional<InductionVariable> {
+        auto argumentsOn = [&](std::span<const Edge> edges) -> std::optional<Vector<ValueID, 2>> {
+            Vector<ValueID, 2> arguments;
+            for (Edge edge : edges) {
+                IncomingValue incoming = incomingValueOf(function, edge, parameterIndex);
+                switch (incoming.kind) {
+                case IncomingValue::Kind::Argument:
+                    arguments.append(incoming.argument);
+                    continue;
+                case IncomingValue::Kind::EdgeResult:
+                    return std::nullopt;
+                }
+                RELEASE_ASSERT_NOT_REACHED();
+            }
+            return arguments;
+        };
+        auto enteringArguments = argumentsOn(enteringEdges.span());
+        auto carriedArguments = argumentsOn(backEdges.span());
+        if (!enteringArguments || !carriedArguments)
+            return std::nullopt;
+
+        InductionVariable variable;
+        variable.parameter = function.at(loop.header()).parameters[parameterIndex];
+        variable.parameterIndex = parameterIndex;
+        variable.start = findStart(enteringArguments->span());
+
+        struct PendingValue {
+            ValueID value;
+            int64_t accumulated;
+        };
+        Range totals;
+        std::optional<InductionStep> invariant;
+        bool isUnknown = false;
+        Vector<PendingValue, 8> pending;
+        UncheckedKeyHashMap<ValueID, int64_t> accumulatedAtParameter;
+
+        auto giveUp = [&] {
+            isUnknown = true;
+        };
+        auto enqueueOperand = [&](ValueID operand, CheckedInt64 accumulated) {
+            if (accumulated.hasOverflowed())
+                return giveUp();
+            pending.append(PendingValue { operand, accumulated.value() });
+        };
+        auto visitBlockParameter = [&](ValueID parameter, ValueLocation location, int64_t accumulated) {
+            if (location.block == loop.header())
+                return giveUp();
+            auto visited = accumulatedAtParameter.add(parameter, accumulated);
+            if (!visited.isNewEntry) {
+                isUnknown |= visited.iterator->value != accumulated;
+                return;
+            }
+            for (Edge edge : cfg.incomingEdges(location.block)) {
+                ValueID incoming = valuePassedOn(function, edge, location.index);
+                if (!incoming)
+                    return giveUp();
+                pending.append(PendingValue { incoming, accumulated });
+            }
+        };
+        auto visitInvariantStep = [&](const Value& sum, int64_t accumulated) {
+            auto isStep = [&](ValueID stepped, ValueID amount) {
+                return numericIdentityOf(stepped) == variable.parameter && isInvariantIn(analyses, loop, amount);
+            };
+            ValueID amount;
+            if (isStep(sum.operand(0), sum.operand(1)))
+                amount = sum.operand(1);
+            else if (sum.opcode == Opcode::Add && isStep(sum.operand(1), sum.operand(0)))
+                amount = sum.operand(0);
+            if (!amount || accumulated)
+                return giveUp();
+            InductionStep step { InductionStepKind::Invariant, 0, analyses.identityOf(amount), sum.opcode == Opcode::Sub };
+            if (!invariant)
+                invariant = step;
+            else if (*invariant != step)
+                giveUp();
+        };
+        auto visitOperation = [&](const Value& value, int64_t accumulated) {
+            switch (value.opcode) {
+            case Opcode::Increment:
+                return enqueueOperand(value.operand(0), CheckedInt64(accumulated) + int64_t { 1 });
+            case Opcode::Decrement:
+                return enqueueOperand(value.operand(0), CheckedInt64(accumulated) - int64_t { 1 });
+            case Opcode::Add:
+                if (std::optional<int64_t> constant = integerConstantOf(value.operand(1)))
+                    return enqueueOperand(value.operand(0), CheckedInt64(accumulated) + *constant);
+                if (std::optional<int64_t> constant = integerConstantOf(value.operand(0)))
+                    return enqueueOperand(value.operand(1), CheckedInt64(accumulated) + *constant);
+                return visitInvariantStep(value, accumulated);
+            case Opcode::Sub:
+                if (std::optional<int64_t> constant = integerConstantOf(value.operand(1)))
+                    return enqueueOperand(value.operand(0), CheckedInt64(accumulated) - *constant);
+                return visitInvariantStep(value, accumulated);
+            default:
+                return giveUp();
+            }
+        };
+        auto visit = [&](PendingValue next) {
+            ValueID id = numericIdentityOf(next.value);
+            if (id == variable.parameter) {
+                totals = totals.unionWith(Range::one(next.accumulated));
+                return;
+            }
+            ValueLocation location = useLists.locationOf(id);
+            if (!isInLoop(location.block))
+                return giveUp();
+            switch (location.placement) {
+            case ValuePlacement::Detached:
+                return giveUp();
+            case ValuePlacement::Parameter:
+                return visitBlockParameter(id, location, next.accumulated);
+            case ValuePlacement::InBlock:
+                return visitOperation(function.at(id), next.accumulated);
+            }
+            RELEASE_ASSERT_NOT_REACHED();
+        };
+
+        for (ValueID argument : *carriedArguments) {
+            if (!argument)
+                return std::nullopt;
+            ValueID stepped = analyses.identityOf(argument);
+            if (variable.steppedValues.contains(stepped))
+                continue;
+            variable.steppedValues.append(stepped);
+            accumulatedAtParameter.clear();
+            pending.append(PendingValue { stepped, 0 });
+            while (!pending.isEmpty() && !isUnknown)
+                visit(pending.takeLast());
+            if (isUnknown)
+                return std::nullopt;
+        }
+
+        if (!invariant) {
+            if (totals.isEmpty() || totals == Range::one(0))
+                return std::nullopt;
+            if (totals.isSingleValue())
+                variable.step = { InductionStepKind::Constant, totals.minimum, ValueID(), false };
+            variable.direction = directionOfAmounts(totals);
+            return variable;
+        }
+
+        if (totals.isEmpty())
+            variable.step = *invariant;
+        const Type& type = typeOf(invariant->invariant);
+        InductionDirection direction = type.isInteger() ? directionOfAmounts(type.integers) : InductionDirection::Unknown;
+        if (invariant->isSubtracted)
+            direction = oppositeOf(direction);
+        if (totals.isEmpty() || directionOfAmounts(totals) == direction)
+            variable.direction = direction;
+        return variable;
+    };
+
+    LoopInduction induction { .header = loop.header(), .loopIndex = loop.index(), .variables = { } };
+    Vector<InductionVariable, 2>& variables = induction.variables;
+    size_t numberOfParameters = function.at(loop.header()).parameters.size();
+    for (uint32_t parameterIndex = 0; parameterIndex < numberOfParameters; ++parameterIndex) {
+        if (std::optional<InductionVariable> variable = findVariable(parameterIndex))
+            variables.append(WTF::move(*variable));
     }
-
-    InductionStep step { InductionStepKind::Invariant, 0, m_analyses.identityOf(amount), sum.opcode == Opcode::Sub };
-    if (!steps.invariant)
-        steps.invariant = step;
-    else if (*steps.invariant != step)
-        steps.isUnknown = true;
-}
-
-void InductionFinder::enqueueOperand(ValueID operand, CheckedInt64 accumulated, InductionSteps& steps)
-{
-    if (accumulated.hasOverflowed()) {
-        steps.isUnknown = true;
-        return;
-    }
-    steps.pending.append(PendingValue { operand, accumulated.value() });
-}
-
-InductionStep InductionFinder::stepOf(const InductionSteps& steps)
-{
-    if (steps.invariant && steps.totals.isEmpty())
-        return *steps.invariant;
-    if (!steps.invariant && steps.totals.isSingleValue())
-        return { InductionStepKind::Constant, steps.totals.minimum, ValueID(), false };
-    return { };
-}
-
-InductionDirection InductionFinder::directionOf(const InductionSteps& steps) const
-{
-    if (!steps.invariant)
-        return directionOfAmounts(steps.totals);
-
-    const Type& type = typeOf(steps.invariant->invariant);
-    InductionDirection direction = type.isInteger() ? directionOfAmounts(type.integers) : InductionDirection::Unknown;
-    if (steps.invariant->isSubtracted)
-        direction = oppositeOf(direction);
-    if (!steps.totals.isEmpty() && directionOfAmounts(steps.totals) != direction)
-        return InductionDirection::Unknown;
-    return direction;
-}
-
-void InductionFinder::findTests(Variables& variables)
-{
     if (variables.isEmpty())
-        return;
-    for (BlockID block : findTestingBlocks())
-        findTestsIn(block, variables);
-}
+        return induction;
 
-Vector<BlockID, 4> InductionFinder::findTestingBlocks() const
-{
-    Vector<BlockID, 4> blocks;
-    for (unsigned i = 0; i < m_loop.size(); ++i) {
-        BlockID block = m_loop.at(i);
-        const Terminator& terminator = m_function.at(block).terminator;
+    auto findTestedVariable = [&](ValueID id) -> std::pair<InductionVariable*, TestedValue> {
+        for (InductionVariable& variable : variables) {
+            if (variable.parameter == id)
+                return { &variable, TestedValue::BeforeStep };
+        }
+        for (InductionVariable& variable : variables) {
+            if (variable.steppedValues.contains(id))
+                return { &variable, TestedValue::AfterStep };
+        }
+        const Value& sum = function.at(id);
+        if (sum.opcode != Opcode::Add)
+            return { };
+        for (InductionVariable& variable : variables) {
+            if (variable.step.kind != InductionStepKind::Constant || !variable.step.constant)
+                continue;
+            for (uint32_t side = 0; side < 2; ++side) {
+                if (numericIdentityOf(sum.operand(side)) == variable.parameter && integerConstantOf(sum.operand(1 - side)) == variable.step.constant)
+                    return { &variable, TestedValue::AfterStep };
+            }
+        }
+        return { };
+    };
+    auto isComputedInLoop = [&](ValueID bound) {
+        ValueID definition = analyses.identityOf(bound);
+        ValueLocation location = useLists.locationOf(definition);
+        if (location.placement != ValuePlacement::InBlock || !isInLoop(location.block))
+            return false;
+        if (!analyses.isUnobservable(definition))
+            return false;
+
+        bool hasInvariantOperands = true;
+        function.at(definition).forEachOperand([&](ValueID operand, uint32_t) {
+            hasInvariantOperands &= isInvariantIn(analyses, loop, operand);
+        });
+        return hasInvariantOperands;
+    };
+    auto proveRelation = [&](Opcode relation, ValueID left, ValueID right, BlockID at) {
+        switch (relation) {
+        case Opcode::Less:
+            return relations.isAtMost(left, right, -1, at);
+        case Opcode::LessEq:
+            return relations.isAtMost(left, right, 0, at);
+        case Opcode::Greater:
+            return relations.isAtMost(right, left, -1, at);
+        case Opcode::GreaterEq:
+            return relations.isAtMost(right, left, 0, at);
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+    };
+    auto entryRelationOf = [&](ValueID start, const InductionTest& test) {
+        if (!start || test.boundKind != LoopBoundKind::Invariant)
+            return EntryRelation::Unknown;
+
+        ValueID bound = isInLoop(useLists.blockOf(test.bound)) ? analyses.identityOf(test.bound) : test.bound;
+        if (!isNeverNaN(start) || !isNeverNaN(bound))
+            return EntryRelation::Unknown;
+
+        bool holdsOnEveryEdge = std::ranges::all_of(enteringEdges, [&](Edge edge) {
+            return proveRelation(test.relation, start, bound, edge.from) == IntegerRelations::Answer::Proven;
+        });
+        return holdsOnEveryEdge ? EntryRelation::Holds : EntryRelation::Unknown;
+    };
+    auto isOnEveryTrip = [&](BlockID testingBlock) {
+        return std::ranges::all_of(backEdges, [&](Edge edge) {
+            if (edge.from == testingBlock)
+                return !edge.isHandlerEdge();
+            return dominators.terminatorDominates(testingBlock, edge.from);
+        });
+    };
+
+    Vector<BlockID, 4> testingBlocks;
+    for (unsigned i = 0; i < loop.size(); ++i) {
+        BlockID block = loop.at(i);
+        const Terminator& terminator = function.at(block).terminator;
         if (!terminator.isConditionalBranch())
             continue;
         if (isInLoop(terminator.taken().block) == isInLoop(terminator.notTaken().block))
             continue;
-        if (relationalOperators.contains(m_function.at(terminator.conditionOperand()).opcode))
-            blocks.append(block);
+        if (relationalOperators.contains(function.at(terminator.conditionOperand()).opcode))
+            testingBlocks.append(block);
     }
-    AOT::sort(blocks, { }, [&](BlockID block) {
-        return m_cfg.reversePostOrderIndex(block);
+    AOT::sort(testingBlocks, { }, [&](BlockID block) {
+        return cfg.reversePostOrderIndex(block);
     });
-    return blocks;
-}
 
-void InductionFinder::findTestsIn(BlockID block, Variables& variables)
-{
-    const Terminator& terminator = m_function.at(block).terminator;
-    const Value& comparison = m_function.at(terminator.conditionOperand());
-    bool staysOnTaken = isInLoop(terminator.taken().block);
-    if (!staysOnTaken && (!isNeverNaN(comparison.operand(0)) || !isNeverNaN(comparison.operand(1))))
-        return;
-
-    std::optional<LoopExits> exits;
-    for (uint32_t side = 0; side < 2; ++side) {
-        std::optional<TestedVariable> tested = findTestedVariable(variables, numericIdentityOf(comparison.operand(side)));
-        if (!tested)
+    for (BlockID block : testingBlocks) {
+        const Terminator& terminator = function.at(block).terminator;
+        const Value& comparison = function.at(terminator.conditionOperand());
+        bool staysOnTaken = isInLoop(terminator.taken().block);
+        if (!staysOnTaken && (!isNeverNaN(comparison.operand(0)) || !isNeverNaN(comparison.operand(1))))
             continue;
-        if (!exits)
-            exits = isOnEveryTrip(block) ? exitsOf(m_analyses, m_loop, block) : LoopExits::Unknown;
 
-        Opcode relation = side ? mirroredComparison(comparison.opcode) : comparison.opcode;
-        ValueID bound = comparison.operand(1 - side);
-        InductionTest test {
-            .block = block,
-            .comparison = terminator.conditionOperand(),
-            .relation = staysOnTaken ? relation : negatedComparison(relation),
-            .tested = tested->tested,
-            .bound = bound,
-            .boundKind = boundKindOf(bound),
-            .stayingEdge = Edge { block, staysOnTaken ? 0u : 1u },
-            .leavingEdge = Edge { block, staysOnTaken ? 1u : 0u },
-            .entryRelation = EntryRelation::Unknown,
-            .exits = *exits,
-        };
-        test.entryRelation = entryRelationOf(tested->variable->start, test);
-        tested->variable->tests.append(test);
-    }
-}
-
-std::optional<TestedVariable> InductionFinder::findTestedVariable(Variables& variables, ValueID id)
-{
-    for (InductionVariable& variable : variables) {
-        if (variable.parameter == id)
-            return TestedVariable { &variable, TestedValue::BeforeStep };
-    }
-    for (InductionVariable& variable : variables) {
-        if (variable.steppedValues.contains(id))
-            return TestedVariable { &variable, TestedValue::AfterStep };
-    }
-    // `i + 2 <= n; i += 2`: another sum than the step, of the same two.
-    const Value& sum = m_function.at(id);
-    if (sum.opcode != Opcode::Add)
-        return std::nullopt;
-    for (InductionVariable& variable : variables) {
-        if (variable.step.kind != InductionStepKind::Constant || !variable.step.constant)
-            continue;
+        std::optional<LoopExits> exits;
         for (uint32_t side = 0; side < 2; ++side) {
-            if (numericIdentityOf(sum.operand(side)) == variable.parameter && integerConstantOf(sum.operand(1 - side)) == variable.step.constant)
-                return TestedVariable { &variable, TestedValue::AfterStep };
+            auto [variable, tested] = findTestedVariable(numericIdentityOf(comparison.operand(side)));
+            if (!variable)
+                continue;
+            if (!exits)
+                exits = isOnEveryTrip(block) ? exitsOf(analyses, loop, block) : LoopExits::Unknown;
+
+            Opcode relation = side ? mirroredComparison(comparison.opcode) : comparison.opcode;
+            ValueID bound = comparison.operand(1 - side);
+            LoopBoundKind boundKind = isInvariantIn(analyses, loop, bound) ? LoopBoundKind::Invariant : isComputedInLoop(bound) ? LoopBoundKind::ComputedInLoop : LoopBoundKind::Unknown;
+            InductionTest test {
+                .block = block,
+                .comparison = terminator.conditionOperand(),
+                .relation = staysOnTaken ? relation : negatedComparison(relation),
+                .tested = tested,
+                .bound = bound,
+                .boundKind = boundKind,
+                .stayingEdge = Edge { block, staysOnTaken ? 0u : 1u },
+                .entryRelation = EntryRelation::Unknown,
+                .exits = *exits,
+            };
+            test.entryRelation = entryRelationOf(variable->start, test);
+            variable->tests.append(test);
         }
     }
-    return std::nullopt;
+    return induction;
 }
-
-LoopBoundKind InductionFinder::boundKindOf(ValueID bound)
-{
-    if (isInvariantIn(m_analyses, m_loop, bound))
-        return LoopBoundKind::Invariant;
-    if (isComputedInLoop(bound))
-        return LoopBoundKind::ComputedInLoop;
-    return LoopBoundKind::Unknown;
-}
-
-bool InductionFinder::isComputedInLoop(ValueID bound)
-{
-    ValueID definition = m_analyses.identityOf(bound);
-    ValueLocation location = m_useLists.locationOf(definition);
-    if (location.placement != ValuePlacement::InBlock || !isInLoop(location.block))
-        return false;
-    if (!m_analyses.isUnobservable(definition))
-        return false;
-
-    bool hasInvariantOperands = true;
-    m_function.at(definition).forEachOperand([&](ValueID operand, uint32_t) {
-        hasInvariantOperands &= isInvariantIn(m_analyses, m_loop, operand);
-    });
-    return hasInvariantOperands;
-}
-
-EntryRelation InductionFinder::entryRelationOf(ValueID start, const InductionTest& test)
-{
-    if (!start || test.boundKind != LoopBoundKind::Invariant)
-        return EntryRelation::Unknown;
-
-    ValueID bound = isInLoop(m_useLists.blockOf(test.bound)) ? m_analyses.identityOf(test.bound) : test.bound;
-    if (!isNeverNaN(start) || !isNeverNaN(bound))
-        return EntryRelation::Unknown;
-
-    bool holdsOnEveryEdge = std::ranges::all_of(m_enteringEdges, [&](Edge edge) {
-        return proveRelation(test.relation, start, bound, edge.from) == IntegerRelations::Answer::Proven;
-    });
-    return holdsOnEveryEdge ? EntryRelation::Holds : EntryRelation::Unknown;
-}
-
-IntegerRelations::Answer InductionFinder::proveRelation(Opcode relation, ValueID left, ValueID right, BlockID at)
-{
-    switch (relation) {
-    case Opcode::Less:
-        return m_relations.isAtMost(left, right, -1, at);
-    case Opcode::LessEq:
-        return m_relations.isAtMost(left, right, 0, at);
-    case Opcode::Greater:
-        return m_relations.isAtMost(right, left, -1, at);
-    case Opcode::GreaterEq:
-        return m_relations.isAtMost(right, left, 0, at);
-    default:
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-}
-
-bool InductionFinder::isOnEveryTrip(BlockID testingBlock) const
-{
-    return std::ranges::all_of(m_backEdges, [&](Edge edge) {
-        if (edge.from == testingBlock)
-            return !edge.isHandlerEdge();
-        return m_dominators.terminatorDominates(testingBlock, edge.from);
-    });
-}
-
-ValueID InductionFinder::numericIdentityOf(ValueID id)
-{
-    id = m_analyses.identityOf(id);
-    for (;;) {
-        const Value& value = m_function.at(id);
-        bool isConversion = value.opcode == Opcode::ToNumber || value.opcode == Opcode::ToNumeric;
-        if (!isConversion || !typeOf(value.operand(0)).isNumber())
-            return id;
-        id = m_analyses.identityOf(value.operand(0));
-    }
-}
-
-bool InductionFinder::isNeverNaN(ValueID id) const
-{
-    const Type& type = typeOf(id);
-    return type.isNumber() && !type.mayBeNaN();
-}
-
-} // anonymous namespace
 
 const InductionTest* InductionVariable::controllingTest() const
 {
@@ -687,7 +523,7 @@ InductionVariables::InductionVariables(FunctionAnalyses& analyses)
     const NaturalLoops& loops = analyses.naturalLoops();
     m_loops.reserveInitialCapacity(loops.numLoops());
     for (unsigned index = 0; index < loops.numLoops(); ++index)
-        m_loops.append(InductionFinder(analyses, loops.loop(index)).find());
+        m_loops.append(findInduction(analyses, loops.loop(index)));
 }
 
 const LoopInduction& InductionVariables::of(const NaturalLoop& loop) const

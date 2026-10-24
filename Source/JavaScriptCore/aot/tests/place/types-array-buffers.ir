@@ -14,7 +14,6 @@ variable g0 name="unshared" module=m0 declared={type=anything} owner=L0
 variable g1 name="shared" module=m0 declared={type=anything} owner=L0
 variable g2 name="either" module=m0 declared={type=anything} owner=L0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=8
     v1 = Builtin builtin=ArrayBuffer
     v2 = Construct v1, -, v0
@@ -33,7 +32,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Buffers" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2

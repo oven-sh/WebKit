@@ -98,18 +98,16 @@ public:
     bool isStoredUnder(LayoutID, PropertyKeyID) const;
     HeatClass of(const Program&, FunctionID) const;
     // The third class of function, beside hot and cold: a cold function of which nothing in the structure of the program says that it may run.
-    bool isCompact(const Program&, FunctionID) const;
+    bool isCompact(const Program& program, FunctionID id) const { return !m_classOfEverything && m_entries.of(program, id).isCompact; }
     // There the classes are read off the structure of the program, and only there are functions compact.
     bool isOfVeryLargeProgram() const { return m_valuesInAllFunctions; }
     // False where HeatFor::Preparation has left something out.
     bool hasWeights() const { return m_hasWeights; }
-    // For the dump: "Compact" for a compact function, the name of its heat class for any other.
-    ASCIILiteral classNameOf(const Program&, FunctionID) const;
     // Whether some block of the function is neither cold nor runs once.
     bool hasWarmCode(const Program&, FunctionID) const;
     uint8_t percentileOf(const Program&, FunctionID) const;
     HeatClass classOf(double heat) const;
-    HeatClass classOf(const Program&, FunctionID, double frequencyInFunction) const;
+    HeatClass classOf(const Program& program, FunctionID id, double frequencyInFunction) const { return classOf(program, id, activationsOf(program, id), frequencyInFunction); }
     HeatClass classOf(const Program&, FunctionID, double activations, double frequencyInFunction) const;
     // Whether code of this heat fits MaxHotCodeValues beside all that is hotter. In a program smaller than that, all code does.
     bool isAmongHottestCode(double heat) const { return !m_thresholds || heat >= m_thresholds->coldestOfHottestCode; }

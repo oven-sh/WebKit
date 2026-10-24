@@ -46,7 +46,6 @@ static constexpr ASCIILiteral programText = R"IR(layout L0 name="Wide" fields=[{
 module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -56,7 +55,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="make" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     Jump -> next b1()
   b1():
     LoopHint
@@ -69,7 +67,6 @@ function f1 name="make" parameters=[{type=number}, {type=anything}] results=[{ty
     Return v4
 }
 function f2 name="fill" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     PropSet v0, v0 key="late0"
     PropSet v0, v0 key="late1"
     PropSet v0, v0 key="late2"
@@ -137,7 +134,6 @@ function f2 name="fill" parameters=[{type=L0}] results=[{type=anything}] {
     Return
 }
 function f3 name="clear" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = Undefined
     PropSet v0, v1 key="late5"
     PropSet v0, v1 key="late6"

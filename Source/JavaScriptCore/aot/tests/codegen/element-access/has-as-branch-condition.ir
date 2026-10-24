@@ -8,7 +8,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="inInt32StorageAtIndex" parameters=[{type=Array<anything, proven, Int32, pristine[Storage]>}, {type=int[0, 4294967294]}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, proven, Int32, pristine[Storage]>, v1: int[0, 4294967294], v2: boolean):
     v3 = HasArrayElement v0, v1 arrayStorage=Int32
     TestAndBranch v3 -> taken b1(), notTaken b2()
   b1():
@@ -31,7 +30,6 @@ function f0 name="inInt32StorageAtIndex" parameters=[{type=Array<anything, prove
 # S: f0 b2 Fast
 # S: f0 b4 Compact
 function f1 name="inInt32StorageAtInteger" parameters=[{type=Array<anything, proven, Int32, pristine[Storage]>}, {type=int}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, proven, Int32, pristine[Storage]>, v1: int, v2: boolean):
     v3 = HasArrayElement v0, v1 arrayStorage=Int32
     TestAndBranch v3 -> taken b1(), notTaken b2()
   b1():
@@ -54,7 +52,6 @@ function f1 name="inInt32StorageAtInteger" parameters=[{type=Array<anything, pro
 # S: f1 b2 Fast
 # S: f1 b4 Compact
 function f2 name="inInt32StorageAtNumber" parameters=[{type=Array<anything, proven, Int32, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, proven, Int32, pristine[Storage]>, v1: number, v2: boolean):
     v3 = HasArrayElement v0, v1 arrayStorage=Int32
     TestAndBranch v3 -> taken b1(), notTaken b2()
   b1():
@@ -77,7 +74,6 @@ function f2 name="inInt32StorageAtNumber" parameters=[{type=Array<anything, prov
 # S: f2 b2 Fast
 # S: f2 b4 Compact
 function f3 name="inInt32StorageAtWholeNumber" parameters=[{type=Array<anything, proven, Int32, pristine[Storage]>}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, proven, Int32, pristine[Storage]>, v1: whole, v2: boolean):
     v3 = HasArrayElement v0, v1 arrayStorage=Int32 [keyIsIntegral]
     TestAndBranch v3 -> taken b1(), notTaken b2()
   b1():
@@ -100,7 +96,6 @@ function f3 name="inInt32StorageAtWholeNumber" parameters=[{type=Array<anything,
 # S: f3 b2 Fast
 # S: f3 b4 Compact
 function f4 name="inDoubleStorageAtIndex" parameters=[{type=Array<anything, proven, Double, pristine[Storage]>}, {type=int[0, 4294967294]}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, proven, Double, pristine[Storage]>, v1: int[0, 4294967294], v2: boolean):
     v3 = HasArrayElement v0, v1 arrayStorage=Double
     TestAndBranch v3 -> taken b1(), notTaken b2()
   b1():
@@ -123,7 +118,6 @@ function f4 name="inDoubleStorageAtIndex" parameters=[{type=Array<anything, prov
 # S: f4 b2 Fast
 # S: f4 b4 Compact
 function f5 name="inDoubleStorageAtInteger" parameters=[{type=Array<anything, proven, Double, pristine[Storage]>}, {type=int}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, proven, Double, pristine[Storage]>, v1: int, v2: boolean):
     v3 = HasArrayElement v0, v1 arrayStorage=Double
     TestAndBranch v3 -> taken b1(), notTaken b2()
   b1():
@@ -146,7 +140,6 @@ function f5 name="inDoubleStorageAtInteger" parameters=[{type=Array<anything, pr
 # S: f5 b2 Fast
 # S: f5 b4 Compact
 function f6 name="inDoubleStorageAtNumber" parameters=[{type=Array<anything, proven, Double, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, proven, Double, pristine[Storage]>, v1: number, v2: boolean):
     v3 = HasArrayElement v0, v1 arrayStorage=Double
     TestAndBranch v3 -> taken b1(), notTaken b2()
   b1():
@@ -169,7 +162,6 @@ function f6 name="inDoubleStorageAtNumber" parameters=[{type=Array<anything, pro
 # S: f6 b2 Fast
 # S: f6 b4 Compact
 function f7 name="inDoubleStorageAtWholeNumber" parameters=[{type=Array<anything, proven, Double, pristine[Storage]>}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, proven, Double, pristine[Storage]>, v1: whole, v2: boolean):
     v3 = HasArrayElement v0, v1 arrayStorage=Double [keyIsIntegral]
     TestAndBranch v3 -> taken b1(), notTaken b2()
   b1():
@@ -192,7 +184,6 @@ function f7 name="inDoubleStorageAtWholeNumber" parameters=[{type=Array<anything
 # S: f7 b2 Fast
 # S: f7 b4 Compact
 function f8 name="inContiguousStorageAtIndex" parameters=[{type=Array<anything, proven, Contiguous, pristine[Storage]>}, {type=int[0, 4294967294]}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, proven, Contiguous, pristine[Storage]>, v1: int[0, 4294967294], v2: boolean):
     v3 = HasArrayElement v0, v1 arrayStorage=Contiguous
     TestAndBranch v3 -> taken b1(), notTaken b2()
   b1():
@@ -215,7 +206,6 @@ function f8 name="inContiguousStorageAtIndex" parameters=[{type=Array<anything, 
 # S: f8 b2 Fast
 # S: f8 b4 Compact
 function f9 name="inContiguousStorageAtInteger" parameters=[{type=Array<anything, proven, Contiguous, pristine[Storage]>}, {type=int}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, proven, Contiguous, pristine[Storage]>, v1: int, v2: boolean):
     v3 = HasArrayElement v0, v1 arrayStorage=Contiguous
     TestAndBranch v3 -> taken b1(), notTaken b2()
   b1():
@@ -238,7 +228,6 @@ function f9 name="inContiguousStorageAtInteger" parameters=[{type=Array<anything
 # S: f9 b2 Fast
 # S: f9 b4 Compact
 function f10 name="inContiguousStorageAtNumber" parameters=[{type=Array<anything, proven, Contiguous, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, proven, Contiguous, pristine[Storage]>, v1: number, v2: boolean):
     v3 = HasArrayElement v0, v1 arrayStorage=Contiguous
     TestAndBranch v3 -> taken b1(), notTaken b2()
   b1():
@@ -261,7 +250,6 @@ function f10 name="inContiguousStorageAtNumber" parameters=[{type=Array<anything
 # S: f10 b2 Fast
 # S: f10 b4 Compact
 function f11 name="inContiguousStorageAtWholeNumber" parameters=[{type=Array<anything, proven, Contiguous, pristine[Storage]>}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, proven, Contiguous, pristine[Storage]>, v1: whole, v2: boolean):
     v3 = HasArrayElement v0, v1 arrayStorage=Contiguous [keyIsIntegral]
     TestAndBranch v3 -> taken b1(), notTaken b2()
   b1():
@@ -284,7 +272,6 @@ function f11 name="inContiguousStorageAtWholeNumber" parameters=[{type=Array<any
 # S: f11 b2 Fast
 # S: f11 b4 Compact
 function f12 name="inOtherStorageAtIndex" parameters=[{type=Array<anything, pristine[Storage]>}, {type=int[0, 4294967294]}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: int[0, 4294967294], v2: boolean):
     v3 = HasArrayElement v0, v1
     TestAndBranch v3 -> taken b1(), notTaken b2()
   b1():
@@ -307,7 +294,6 @@ function f12 name="inOtherStorageAtIndex" parameters=[{type=Array<anything, pris
 # S: f12 b2 Fast
 # S: f12 b4 Compact
 function f13 name="inOtherStorageAtInteger" parameters=[{type=Array<anything, pristine[Storage]>}, {type=int}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: int, v2: boolean):
     v3 = HasArrayElement v0, v1
     TestAndBranch v3 -> taken b1(), notTaken b2()
   b1():
@@ -330,7 +316,6 @@ function f13 name="inOtherStorageAtInteger" parameters=[{type=Array<anything, pr
 # S: f13 b2 Fast
 # S: f13 b4 Compact
 function f14 name="inOtherStorageAtNumber" parameters=[{type=Array<anything, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: number, v2: boolean):
     v3 = HasArrayElement v0, v1
     TestAndBranch v3 -> taken b1(), notTaken b2()
   b1():
@@ -353,7 +338,6 @@ function f14 name="inOtherStorageAtNumber" parameters=[{type=Array<anything, pri
 # S: f14 b2 Fast
 # S: f14 b4 Compact
 function f15 name="inOtherStorageAtWholeNumber" parameters=[{type=Array<anything, pristine[Storage]>}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: whole, v2: boolean):
     v3 = HasArrayElement v0, v1 [keyIsIntegral]
     TestAndBranch v3 -> taken b1(), notTaken b2()
   b1():

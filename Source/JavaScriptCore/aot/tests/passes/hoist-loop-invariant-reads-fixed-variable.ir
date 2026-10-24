@@ -11,7 +11,6 @@ variable g2 name="bound" module=m0 declared={type=anything|absent} initializatio
 variable g3 name="late" module=m0 declared={type=anything|absent} initialization=Uninitialized
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToBoolean v1
@@ -29,7 +28,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="storedOnce" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -40,15 +38,13 @@ function f1 name="storedOnce" parameters=[{type=anything}, {type=boolean}] resul
     Jump -> next b1()
   b3():
     Return v3
-}
-# CHECK-LABEL: function f1 name="storedOnce"
 # CHECK: b0(
 # CHECK-NEXT: GetModuleVariable variable=g0
 # CHECK: b1():
 # CHECK-NOT: GetModuleVariable
+}
 
 function f2 name="storedTwice" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -59,13 +55,11 @@ function f2 name="storedTwice" parameters=[{type=anything}, {type=boolean}] resu
     Jump -> next b1()
   b3():
     Return v3
-}
-# CHECK-LABEL: function f2 name="storedTwice"
 # CHECK: b0(
 # CHECK-NEXT: Jump -> next b1()
+}
 
 function f3 name="callBeforeRead" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -76,16 +70,14 @@ function f3 name="callBeforeRead" parameters=[{type=anything}, {type=boolean}] r
     Jump -> next b1()
   b3():
     Return v4
-}
 # The one store stands outside every cycle, so the call in the loop is not what stores.
-# CHECK-LABEL: function f3 name="callBeforeRead"
 # CHECK: b0(
 # CHECK-NEXT: GetModuleVariable variable=g0
 # CHECK: b1():
 # CHECK-NOT: GetModuleVariable
+}
 
 function f4 name="initializedBeforeCall" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -97,17 +89,15 @@ function f4 name="initializedBeforeCall" parameters=[{type=anything}, {type=bool
     Jump -> next b1()
   b3():
     Return v4
-}
-# CHECK-LABEL: function f4 name="initializedBeforeCall"
 # CHECK: b0(
 # CHECK-NEXT: [[bound]]:{{*}}= GetModuleVariable variable=g2
 # CHECK: b1():
 # CHECK-NOT: GetModuleVariable
 # CHECK: = CheckInitialized [[bound]] name="bound"
 # CHECK-NOT: GetModuleVariable
+}
 
 function f5 name="initializedAfterCall" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -119,9 +109,8 @@ function f5 name="initializedAfterCall" parameters=[{type=anything}, {type=boole
     Jump -> next b1()
   b3():
     Return v4
-}
-# CHECK-LABEL: function f5 name="initializedAfterCall"
 # CHECK: b0(
 # CHECK-NEXT: Jump -> next b1()
 # CHECK: [[late]]:{{*}}= GetModuleVariable variable=g3
 # CHECK-NEXT: = CheckInitialized [[late]] name="late"
+}

@@ -6,7 +6,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Made" fields=[{key="v" declared={type=string} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = String string="x"
     v1 = Double number=1.5
     v2 = NewClosure function=f1

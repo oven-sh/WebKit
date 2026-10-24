@@ -8,7 +8,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
 
 function f0 name="fourBlocksTimesTwoFacts" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b3()
   b1(v2):
@@ -38,7 +37,6 @@ function f0 name="fourBlocksTimesTwoFacts" parameters=[{type=object}] results=[{
 # CHECK-NEXT: v5 guard v2: Available
 
 function f1 name="oneBlockTimesFourFacts" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = GetSlot v1, v1 key="x" receivers=[L0] level=Proven
     Return v2
@@ -51,7 +49,6 @@ function f1 name="oneBlockTimesFourFacts" parameters=[{type=anything}] results=[
 # CHECK-NEXT: v2 guard v1: Available
 
 function f2 name="solvedAgainWithoutUnnamedAllocation" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = NewArray v0 contents=anything
     v2 = ShapeTest v0 layouts=[L0]
     Branch v2 -> taken b1(| 0), notTaken b2()
@@ -68,7 +65,6 @@ function f2 name="solvedAgainWithoutUnnamedAllocation" parameters=[{type=object}
 # CHECK: v4 guard v3: Available
 
 function f3 name="fourBlocksTimesOneFact" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b3()
   b1(v2):

@@ -19,7 +19,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 runtimefunction id=65 function=f1
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewArray v0 contents=anything
     v2 = NewClosure function=f2
@@ -28,7 +27,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="map" role=Library flags=[HasThis] enclosingRuntimeFunction=65 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = PropGet v0 key="length"
     v4 = Integer integer=0
     v5 = ElemGet v0, v4
@@ -36,7 +34,6 @@ function f1 name="map" role=Library flags=[HasThis] enclosingRuntimeFunction=65 
     Return v6
 }
 function f2 name="double" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="x"
     Return v0
 }

@@ -15,7 +15,6 @@
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="register" [isFreeName]
@@ -23,7 +22,6 @@ function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[
     Return
 }
 function f1 name="half" module=m0 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean):
     v2 = Double number=0.5
     v3 = Mul v0, v2
     Branch v1 -> taken b1(), notTaken b2()

@@ -6,7 +6,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
 
 function f0 name="unionOfTwoTests" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b3()
   b1(v2):
@@ -23,7 +22,6 @@ function f0 name="unionOfTwoTests" parameters=[{type=object}] results=[{type=any
 # CHECK: v5 facts: [Shape of v0 by v1 reads -, SlotFilled of v0 by v3 reads ObjectFields["x"]]
 
 function f1 name="sameFactTwice" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b3()
   b1(v2):
@@ -41,7 +39,6 @@ function f1 name="sameFactTwice" parameters=[{type=object}] results=[{type=anyth
 # CHECK-NEXT: v5 facts: [Shape of v0 by v1 reads -]
 
 function f2 name="unknownOperand" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):

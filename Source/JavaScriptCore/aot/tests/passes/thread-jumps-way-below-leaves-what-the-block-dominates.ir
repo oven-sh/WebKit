@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="successorIsReachedByAnotherWay" parameters=[{type=number}, {type=number}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: number, v2: boolean, v3: boolean):
     Branch v3 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b6()
@@ -30,7 +29,6 @@ function f0 name="successorIsReachedByAnotherWay" parameters=[{type=number}, {ty
     Jump -> next b9()
   b9():
     Return v0
-}
-# CHECK-LABEL: function f0 name="successorIsReachedByAnotherWay"
 # CHECK: b3():
 # CHECK: Jump -> next b6()
+}

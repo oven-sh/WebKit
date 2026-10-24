@@ -33,7 +33,6 @@ layout L3 name="Kept" module=m0 fields=[{key="count" declared={type=number} flag
 layout L4 name="Handed" module=m0 fields=[{key="count" declared={type=number} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module flags=[IsChecked] results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="given" [isFreeName]
     v2 = Integer integer=0
@@ -60,14 +59,12 @@ function f0 name="main" kind=Module flags=[IsChecked] results=[{type=anything}] 
 }
 
 function f1 name="step" flags=[IsChecked] parameters=[{type=number}] results=[{type=L0}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = FinishObject v1
     Return v2
 }
 
 function f2 name="sizeOf" flags=[IsChecked] parameters=[{type=L1}] results=[{type=number}] {
-  b0(v0: L1):
     v1 = PropGet v0 key="size"
     Return v1
 }

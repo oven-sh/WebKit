@@ -17,6 +17,7 @@
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsRegExpFrames.h"
+#include "AOTStubsStrings.h"
 #include "AOTVector.h"
 #include "JSCJSValueInlines.h"
 #include "JSString.h"
@@ -41,6 +42,14 @@ struct LastIndexUse {
     bool isReset { false };
 };
 
+struct MatchFormTraits {
+    Entry genericOperation;
+    std::optional<RegExpMatchResult> resultOfStubForAnyRegExp;
+    bool takesStringFirst;
+    bool createsCell;
+    JSValue miss;
+};
+
 static constexpr uint16_t entryFor8BitSubjects = 0;
 static constexpr uint16_t entryFor16BitSubjects = 1;
 
@@ -54,58 +63,17 @@ StubSignature signatureOfRegExpMatchLiteral(StubKey key)
     return signature;
 }
 
-static Entry genericOperationOf(RegExpMatchForm form)
+static MatchFormTraits traitsOf(RegExpMatchForm form)
 {
     switch (form) {
     case RegExpMatchForm::Test:
-        return Entry::operationAOTRegExpTestBoxed;
+        return { Entry::operationAOTRegExpTestBoxed, RegExpMatchResult::BoxedBoolean, false, false, jsBoolean(false) };
     case RegExpMatchForm::Exec:
-        return Entry::operationAOTRegExpExec;
+        return { Entry::operationAOTRegExpExec, RegExpMatchResult::Array, false, true, jsNull() };
     case RegExpMatchForm::Search:
-        return Entry::operationAOTStringSearchRegExp;
+        return { Entry::operationAOTStringSearchRegExp, std::nullopt, true, false, jsNumber(-1) };
     case RegExpMatchForm::Match:
-        return Entry::operationAOTStringMatchRegExp;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static std::optional<RegExpMatchResult> resultOfStubForAnyRegExp(RegExpMatchForm form)
-{
-    switch (form) {
-    case RegExpMatchForm::Test:
-        return RegExpMatchResult::BoxedBoolean;
-    case RegExpMatchForm::Exec:
-        return RegExpMatchResult::Array;
-    case RegExpMatchForm::Search:
-    case RegExpMatchForm::Match:
-        return std::nullopt;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static bool takesStringFirst(RegExpMatchForm form)
-{
-    switch (form) {
-    case RegExpMatchForm::Test:
-    case RegExpMatchForm::Exec:
-        return false;
-    case RegExpMatchForm::Search:
-    case RegExpMatchForm::Match:
-        return true;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static JSValue missOf(RegExpMatchForm form)
-{
-    switch (form) {
-    case RegExpMatchForm::Test:
-        return jsBoolean(false);
-    case RegExpMatchForm::Exec:
-    case RegExpMatchForm::Match:
-        return jsNull();
-    case RegExpMatchForm::Search:
-        return jsNumber(-1);
+        return { Entry::operationAOTStringMatchRegExp, std::nullopt, true, true, jsNull() };
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -127,39 +95,31 @@ static LastIndexUse lastIndexUseOf(RegExpMatchForm form, const RegExpLiteralCons
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void callGenericOperationAndReturn(StubAssembler& jit, RegExpMatchForm form, GPRReg regExpObject, GPRReg string)
-{
-    RELEASE_ASSERT(regExpObject == operationArgumentGPR(1) && string == operationArgumentGPR(2));
-    if (takesStringFirst(form))
-        jit.swap(regExpObject, string);
-    jit.callOperationAndReturn(genericOperationOf(form), { });
-}
-
-static void callOperationWithoutObjectAndReturn(StubAssembler& jit, RegExpMatchForm form, GPRReg string)
-{
-    static_assert(operationArgumentGPR(2) == gprOf(StubRegister::A2) && operationArgumentGPR(3) == gprOf(StubRegister::A3));
-    RELEASE_ASSERT(string == operationArgumentGPR(1));
-    const GPRReg record = jit.reuseScratch(StubRegister::A2);
-    if (std::optional<uint32_t> boundRecord = jit.key().immediate())
-        jit.move(TrustedImm32(static_cast<int32_t>(*boundRecord)), record);
-    else
-        jit.move(jit.immediate(), record);
-    jit.move(TrustedImm32(static_cast<int32_t>(form)), jit.reuseScratch(StubRegister::A3));
-    jit.callOperationAndReturn(Entry::operationAOTRegExpMatchLiteralWithoutObject, { });
-}
-
 // What comes here most often is a subject that is a rope. The stub for any RegExp makes it flat and runs the code that the RegExp has. What it cannot do either it hands to the generic operation.
 static void callMatchingOperationAndReturn(StubAssembler& jit, RegExpMatchForm form, std::optional<GPRReg> regExpObject, GPRReg string)
 {
-    if (std::optional<RegExpMatchResult> result = regExpObject ? resultOfStubForAnyRegExp(form) : std::nullopt) {
-        checkStubOperands(regExpMatch(*result), { *regExpObject, string });
-        jit.jumpToStub(regExpMatch(*result));
+    static_assert(operationArgumentGPR(2) == gprOf(StubRegister::A2) && operationArgumentGPR(3) == gprOf(StubRegister::A3));
+    const MatchFormTraits traits = traitsOf(form);
+    if (!regExpObject) {
+        RELEASE_ASSERT(string == operationArgumentGPR(1));
+        const GPRReg record = jit.reuseScratch(StubRegister::A2);
+        if (std::optional<uint32_t> boundRecord = jit.key().immediate())
+            jit.move(TrustedImm32(static_cast<int32_t>(*boundRecord)), record);
+        else
+            jit.move(jit.immediate(), record);
+        jit.move(TrustedImm32(static_cast<int32_t>(form)), jit.reuseScratch(StubRegister::A3));
+        jit.callOperationAndReturn(Entry::operationAOTRegExpMatchLiteralWithoutObject, { });
         return;
     }
-    if (regExpObject)
-        callGenericOperationAndReturn(jit, form, *regExpObject, string);
-    else
-        callOperationWithoutObjectAndReturn(jit, form, string);
+    if (traits.resultOfStubForAnyRegExp) {
+        checkStubOperands(regExpMatch(*traits.resultOfStubForAnyRegExp), { *regExpObject, string });
+        jit.jumpToStub(regExpMatch(*traits.resultOfStubForAnyRegExp));
+        return;
+    }
+    RELEASE_ASSERT(*regExpObject == operationArgumentGPR(1) && string == operationArgumentGPR(2));
+    if (traits.takesStringFirst)
+        jit.swap(*regExpObject, string);
+    jit.callOperationAndReturn(traits.genericOperation, { });
 }
 
 // Returns the register that has the index where the match starts. Without one the match starts at 0.
@@ -182,36 +142,12 @@ static void emitMatch(StubAssembler& jit, const LiteralMatchRegisters& registers
     if (registers.regExpObject)
         savedOperands.append(*registers.regExpObject);
     savedOperands.append(registers.string);
-    const GPRReg startArgument = jit.reuseScratch(StubRegister::A1);
-    const GPRReg lengthArgument = jit.reuseScratch(StubRegister::A2);
-    const GPRReg output = jit.reuseScratch(StubRegister::A3);
-    const GPRReg context = jit.reuseScratch(StubRegister::A4);
     RELEASE_ASSERT(registers.characters == gprOf(StubRegister::A0));
-    pushMatchFrame(jit, savedOperands.span());
-    jit.move(registers.subjectLength, lengthArgument);
-    // start shares its register with output.
-    if (start)
-        jit.move(*start, startArgument);
-    else
-        jit.move(TrustedImm32(0), startArgument);
-    loadMatchOutput(jit, output);
-    storeMatchingContext(jit, context);
-    jit.move(CCallHelpers::stackPointerRegister, context);
-    jit.callCode(code);
-    popMatchFrame(jit, registers.scratch, savedOperands.span());
-}
-
-static bool createsCell(RegExpMatchForm form)
-{
-    switch (form) {
-    case RegExpMatchForm::Test:
-    case RegExpMatchForm::Search:
-        return false;
-    case RegExpMatchForm::Exec:
-    case RegExpMatchForm::Match:
-        return true;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    callMatchingCodeInFrame(jit, savedOperands.span(), registers.subjectLength, start, registers.scratch, [&](GPRReg output) {
+        loadMatchOutput(jit, output);
+    }, [&] {
+        jit.callCode(code);
+    });
 }
 
 // registers.scratch has the index where the match starts.
@@ -242,7 +178,7 @@ static void finishMatchWithoutCellAndReturn(StubAssembler& jit, RegExpMatchForm 
 
 static void finishMatchAndReturn(StubAssembler& jit, RegExpMatchForm form, uint32_t record, const RegExpLiteralConstants& constants, const LiteralMatchRegisters& registers)
 {
-    if (!createsCell(form)) {
+    if (!traitsOf(form).createsCell) {
         finishMatchWithoutCellAndReturn(jit, form, constants, registers);
         return;
     }
@@ -334,8 +270,7 @@ void generateRegExpMatchLiteral(StubAssembler& jit)
     miss.link(&jit);
     if (lastIndexUse.isReset)
         resetLastIndex(jit, *regExpObject);
-    jit.move(TrustedImm64(JSValue::encode(missOf(form))), jit.result());
-    jit.returnToCaller();
+    returnResult(jit, TrustedImm64(JSValue::encode(traitsOf(form).miss)));
 
     outOfLine.link(&jit);
     callMatchingOperationAndReturn(jit, form, regExpObject, string);

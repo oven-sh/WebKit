@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="constant-radix" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=number}] {
-  b0(v0: string, v1: int, v2: int):
     v3 = GetStringLength v0
     v4 = StringRange v3, v1, v2
     v5 = ResultAt v4
@@ -14,15 +13,13 @@ function f0 name="constant-radix" parameters=[{type=string}, {type=int}, {type=i
     v8 = Integer integer=16
     v9 = CallBuiltin -, v7, v8 overload=ParseInt/0
     Return v9
-}
-# CHECK-LABEL: function f0 name="constant-radix"
 # CHECK-NOT: = Substring
 # CHECK: [[sixteen]]: 16 = Integer integer=16
 # CHECK-NEXT: [[result0]]: number = StringRangeParseInt v0, v5, v6, [[sixteen]]
 # CHECK-NEXT: Return [[result0]]
+}
 
 function f1 name="radix-is-an-int32" parameters=[{type=string}, {type=int}, {type=int}, {type=i32}] results=[{type=number}] {
-  b0(v0: string, v1: int, v2: int, v3: i32):
     v4 = GetStringLength v0
     v5 = StringRange v4, v1, v2
     v6 = ResultAt v5
@@ -30,13 +27,11 @@ function f1 name="radix-is-an-int32" parameters=[{type=string}, {type=int}, {typ
     v8 = Substring v0, v6, v7
     v9 = CallBuiltin -, v8, v3 overload=ParseInt/0
     Return v9
-}
-# CHECK-LABEL: function f1 name="radix-is-an-int32"
 # CHECK-NOT: = Substring
 # CHECK: : number = StringRangeParseInt v0, v6, v7, v3
+}
 
 function f2 name="radix-may-be-undefined" parameters=[{type=string}, {type=int}, {type=int}, {type=undefined|i32}] results=[{type=number}] {
-  b0(v0: string, v1: int, v2: int, v3: undefined|i32):
     v4 = GetStringLength v0
     v5 = StringRange v4, v1, v2
     v6 = ResultAt v5
@@ -44,8 +39,7 @@ function f2 name="radix-may-be-undefined" parameters=[{type=string}, {type=int},
     v8 = Substring v0, v6, v7
     v9 = CallBuiltin -, v8, v3 overload=ParseInt/0
     Return v9
-}
-# CHECK-LABEL: function f2 name="radix-may-be-undefined"
 # CHECK-NOT: StringRangeParseInt
 # CHECK: v8: string = Substring v0, v6, v7
 # CHECK-NOT: StringRangeParseInt
+}

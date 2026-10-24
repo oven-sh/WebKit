@@ -6,7 +6,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewArray contents=anything @10
     v1 = Integer integer=0 @11
     PropSet v0, v1 key="length" @12

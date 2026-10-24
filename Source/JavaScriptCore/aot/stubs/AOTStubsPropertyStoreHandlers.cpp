@@ -13,7 +13,7 @@
 #include "AOTFunctionTables.h"
 #include "AOTInstance.h"
 #include "AOTObjectWords.h"
-#include "AOTSlowPaths.h"
+#include "AOTRuntimeTable.h"
 #include "AOTStubsBarriers.h"
 #include "AOTStubsField.h"
 #include "AOTStubsKeyed.h"
@@ -46,630 +46,16 @@ StubSignature signatureOfStoreSlot(StubKey key)
     return signatureOfSlotHandler(handlerTableOf(key));
 }
 
-struct StoreSlotBody {
-    StubAssembler& jit;
-    SlotHandlerTable table;
-    SlotHandlerTableTraits traits;
-    CachedSlot slot;
-    GPRReg receiver;
-    GPRReg value;
-    GPRReg name;
-    GPRReg T10;
-    GPRReg T11;
-    GPRReg T14;
-    JumpList miss;
-    JumpList uncached;
-};
-
-static unsigned nameOperandOf(SlotForm form)
-{
-    return form == SlotForm::Slot ? payloadOperand + 1 : payloadOperand;
-}
-
-static StoreSlotBody createStoreSlotBody(StubAssembler& jit)
-{
-    const SlotHandlerTable table = handlerTableOf(jit.key());
-    const SlotHandlerTableTraits traits = traitsOf(table);
-    const SlotHandlerOperands operands = operandsOfSlotHandler(table);
-    const GPRReg name = traits.origin == SlotOrigin::ByVal ? operands.keyCell : operands.identifierNumber;
-    RELEASE_ASSERT(jit.operand(receiverOperand) == operands.receiver && jit.operand(headerOperand) == operands.header);
-    RELEASE_ASSERT(traits.form == SlotForm::PackedSlot || jit.operand(payloadOperand) == operands.payload);
-    RELEASE_ASSERT(jit.operand(nameOperandOf(traits.form)) == name);
-    RELEASE_ASSERT(signatureOfWriteBarrier(writeBarrier()).operands[0] == Reg(operands.receiver));
-    return {
-        .jit = jit,
-        .table = table,
-        .traits = traits,
-        .slot = CachedSlot(traits.form, slotKindOf(jit.key()), operands.header, operands.payload),
-        .receiver = operands.receiver,
-        .value = operands.value,
-        .name = name,
-        .T10 = jit.allocateScratch(StubRegister::T10),
-        .T11 = jit.allocateScratch(StubRegister::T11),
-        .T14 = jit.allocateScratch(StubRegister::T14),
-        .miss = { },
-        .uncached = { },
-    };
-}
-
-static GPRReg clobberPayloadRegister(StoreSlotBody& body)
-{
-    if (body.traits.form == SlotForm::Slot)
-        return body.jit.clobberOperand(payloadOperand);
-    return body.jit.allocateScratch(slotPayloadRegister);
-}
-
-static GPRReg clobberNameRegister(StoreSlotBody& body)
-{
-    return body.jit.clobberOperand(nameOperandOf(body.traits.form));
-}
-
-static GPRReg allocateSpareRegister(StoreSlotBody& body)
-{
-    switch (body.traits.origin) {
-    case SlotOrigin::ById:
-        return body.jit.allocateScratch(StubRegister::A2);
-    case SlotOrigin::ByVal:
-        return body.jit.allocateScratch(StubRegister::T9);
-    case SlotOrigin::ByIdInStubFrame:
-    case SlotOrigin::FreeName:
-    case SlotOrigin::FreeNameForTypeOf:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void loadPropertyName(StoreSlotBody& body, GPRReg uid)
-{
-    switch (body.traits.origin) {
-    case SlotOrigin::ById:
-    case SlotOrigin::FreeName:
-        loadIdentifier(body.jit, body.name, uid, body.miss);
-        return;
-    case SlotOrigin::ByVal:
-        loadNameOfKey(body.jit, body.name, uid, body.T11, body.miss);
-        return;
-    case SlotOrigin::ByIdInStubFrame:
-    case SlotOrigin::FreeNameForTypeOf:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void storeInStorageOf(StoreSlotBody& body, GPRReg owner, GPRReg wordIndex)
-{
-    StubAssembler& jit = body.jit;
-    const GPRReg storage = body.T14;
-    RELEASE_ASSERT(noOverlap(owner, wordIndex, storage, body.value));
-    jit.move(owner, storage);
-    Jump isInline = body.slot.branchUnlessFlag(jit, Slot::isOutOfLine);
-    jit.loadPtr(Address(owner, JSObject::butterflyOffset()), storage);
-    isInline.link(&jit);
-    jit.store64(body.value, BaseIndex(storage, wordIndex, CCallHelpers::TimesEight));
-}
-
-static void emitValueStore(StoreSlotBody& body)
-{
-    StubAssembler& jit = body.jit;
-    const GPRReg wordIndex = body.T11;
-    if (body.traits.origin != SlotOrigin::FreeName) {
-        body.slot.loadOwnWordIndex(jit, wordIndex);
-        storeInStorageOf(body, body.receiver, wordIndex);
-        returnAfterStoring(jit, body.receiver, body.value);
-        return;
-    }
-    const GPRReg holder = body.T10;
-    body.slot.loadHolder(jit, holder);
-    body.slot.loadInheritedWordIndex(jit, wordIndex);
-    storeInStorageOf(body, holder, wordIndex);
-    returnAfterStoring(jit, holder, body.value);
-}
-
-static void emitFarValueStore(StoreSlotBody& body)
-{
-    StubAssembler& jit = body.jit;
-    const GPRReg butterfly = body.T10;
-    const GPRReg wordIndex = body.T11;
-    body.slot.loadOwnWordIndex(jit, wordIndex);
-    jit.loadPtr(Address(body.receiver, JSObject::butterflyOffset()), butterfly);
-    jit.store64(body.value, BaseIndex(butterfly, wordIndex, CCallHelpers::TimesEight));
-    returnAfterStoring(jit, body.receiver, body.value);
-}
-
-static SlotFinisher setterFinisherOf(SlotOperation operation)
-{
-    switch (operation) {
-    case SlotOperation::StoreStrict:
-        return SlotFinisher::CallSetterStrict;
-    case SlotOperation::StoreSloppy:
-        return SlotFinisher::CallSetterSloppy;
-    case SlotOperation::Read:
-    case SlotOperation::Define:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void callSetter(StoreSlotBody& body, GPRReg getterSetter)
-{
-    const SlotFinisher finisher = setterFinisherOf(body.traits.operation);
-    const StubSignature finisherSignature = signatureOfSlotCannot(slotCannot(finisher, body.traits.origin));
-    RELEASE_ASSERT(finisherSignature.operands[finisherSignature.numberOfOperands - 2] == Reg(getterSetter));
-    JumpList cannot;
-    callSetterAndReturn(body.jit, body.receiver, body.value, getterSetter, cannot);
-    linkToSlotCannot(body.jit, cannot, body.table, finisher, body.slot);
-}
-
-static void emitSetterCall(StoreSlotBody& body)
-{
-    const GPRReg getterSetter = body.T10;
-    loadValueBySlot(body.jit, body.slot, body.receiver, body.T10, body.T11, getterSetter);
-    callSetter(body, getterSetter);
-}
-
-static void emitCustomSetterCall(StoreSlotBody& body)
-{
-    const GPRReg accessorIndex = clobberPayloadRegister(body);
-    const GPRReg uid = body.T14;
-    loadPropertyName(body, uid);
-    body.slot.loadFirstPayloadWord(body.jit, accessorIndex);
-    callCustomSetterAndReturn(body.jit, body.receiver, body.value, accessorIndex, uid);
-}
-
+// storeField takes every general-purpose scratch register of x86-64, the name's among them, and the Uncached exit takes the name.
 struct FieldStoreArm {
     FieldStoreRegisters registers;
     FPRReg savedName;
     JumpList uncached;
 };
 
-static FieldStoreArm createFieldStoreArm(StoreSlotBody& body, GPRReg object)
-{
-    StubAssembler& jit = body.jit;
-    return {
-        .registers = {
-            .field = {
-                .object = object,
-                .slotData = body.T10,
-                .extensionWordOffset = body.T11,
-                .address = body.T11,
-                .representation = clobberNameRegister(body),
-            },
-            .value = body.value,
-            .type = body.T14,
-            .scratch = body.T10,
-            .secondScratch = allocateSpareRegister(body),
-            .number = jit.allocateScratch(FPRInfo::fpRegT0),
-        },
-        .savedName = jit.allocateScratch(FPRInfo::fpRegT1),
-        .uncached = { },
-    };
-}
-
-// storeField takes every general-purpose scratch register of x86-64, the name's among them, and the Uncached exit takes the name.
-static void saveName(StoreSlotBody& body, const FieldStoreArm& arm)
-{
-    body.jit.move64ToDouble(body.name, arm.savedName);
-}
-
-static void linkToUncachedExit(StoreSlotBody& body, FieldStoreArm& arm)
-{
-    StubAssembler& jit = body.jit;
-    if (arm.uncached.empty())
-        return;
-    arm.uncached.link(&jit);
-    jit.moveDoubleTo64(arm.savedName, body.name);
-    body.uncached.append(jit.jump());
-}
-
-static void emitFieldCreation(StoreSlotBody& body, FieldStoreArm& arm, FieldStoreExits& storeExits, JumpList& hasNoStorage, Label findStorage)
-{
-    StubAssembler& jit = body.jit;
-    const CachedSlot& slot = body.slot;
-    const FieldStoreRegisters& r = arm.registers;
-    const Address orderWord(body.receiver, offsetOfOrderWord);
-    const TrustedImm32 integrityBits(static_cast<int32_t>(orderWordIntegrityBits));
-    const KeyOrderRegisters keyOrder {
-        .object = body.receiver,
-        .slotKey = r.scratch,
-        .entry = r.field.address,
-        .words = r.type,
-        .scratch = r.field.representation,
-    };
-    const OperationCall didCreateFieldCall {
-        .returns = OperationCall::Returns::Void,
-        .saves = OperationCall::Saves::CallerSavedRegisters,
-        .checksException = false,
-        .secondArgumentIn = keyOrder.object,
-        .thirdArgumentIn = keyOrder.slotKey,
-    };
-    FieldStoreExits exits;
-    JumpList stored;
-    JumpList hasNoTransition;
-
-    // A field that is about to be created has no granule yet. With one it is a field that has storage and is absent.
-    hasNoStorage.link(&jit);
-    arm.uncached.append(jit.branchTest32(CCallHelpers::NonZero, orderWord, integrityBits));
-    // Where the key order alone says that the field exists, a field without a granule reads as undefined, so that value asks for none.
-    Jump alwaysNeedsStorage = slot.branchUnlessFlag(jit, Slot::undefinedNeedsNoStorage);
-    Jump needsNoStorage = jit.branch64(CCallHelpers::Equal, body.value, TrustedImm32(JSValue::ValueUndefined));
-    alwaysNeedsStorage.link(&jit);
-    const GPRReg granule = r.field.representation;
-    const GPRReg granuleBit = r.secondScratch;
-    const GPRReg extension = r.field.address;
-    JumpList cannotAppend;
-    jit.and32(TrustedImm32(SlotData::maxOffset), r.field.slotData, granule);
-    jit.urshift32(TrustedImm32(3), granule);
-    jit.sub32(TrustedImm32(1), granule);
-    jit.move(TrustedImm32(1), granuleBit);
-    jit.lshift64(granule, granuleBit);
-    static_assert(granuleOf(offsetOfFirstExtensionSlot) == offsetOfFirstExtensionSlot / 8 - 1 && extensionGranuleSize == 8);
-    slot.loadHiddenWordOffset(jit, r.field.extensionWordOffset);
-    if (jit.options().useWideReferences) {
-        jit.load64(BaseIndex(body.receiver, r.field.extensionWordOffset, CCallHelpers::TimesOne), extension);
-        cannotAppend.append(jit.branchTest64(CCallHelpers::Zero, extension));
-    } else {
-        jit.load32(BaseIndex(body.receiver, r.field.extensionWordOffset, CCallHelpers::TimesOne), extension);
-        cannotAppend.append(jit.branchTest32(CCallHelpers::Zero, extension));
-        decodeCell32(jit, extension, extension);
-        jit.addPtr(TrustedImm32(offsetOfEmptyExtensionInCage), extension);
-    }
-    appendGranule(jit, extension, granuleBit, granule, jit.scratchRegister(), cannotAppend);
-    jit.jump().linkTo(findStorage, &jit);
-
-    cannotAppend.link(&jit);
-    jit.preservingCallerSavedRegisters(false, [&](unsigned) {
-        const GPRReg A0 = jit.reuseScratch(StubRegister::A0);
-        const GPRReg A1 = jit.reuseScratch(StubRegister::A1);
-        const GPRReg A2 = jit.reuseScratch(StubRegister::A2);
-        RELEASE_ASSERT(body.receiver != A2 && noOverlap(instanceGPR, A1, A2));
-        jit.move(granuleBit, A2);
-        jit.move(body.receiver, A1);
-        jit.move(instanceGPR, A0);
-        jit.callOperation(Entry::operationAOTEnsureExtensionGranules, jit.reuseScratch(StubRegister::Operation));
-    });
-    jit.jump().linkTo(findStorage, &jit);
-
-    needsNoStorage.link(&jit);
-    arm.uncached.append(jit.branchTest32(CCallHelpers::NonZero, r.field.slotData, TrustedImm32(offsetBitsWithoutSlotKey)));
-    stored.append(jit.jump());
-
-    storeExits.wasAbsentAndIsNotAccepted.link(&jit);
-    arm.uncached.append(jit.branchTest32(CCallHelpers::NonZero, orderWord, integrityBits));
-    storeExits.cannot.append(jit.jump());
-
-    storeExits.wasAbsent.link(&jit);
-    arm.uncached.append(jit.branchTest32(CCallHelpers::NonZero, orderWord, integrityBits));
-    // The key order names a field by its slot key.
-    slot.loadFirstPayloadWord(jit, keyOrder.slotKey);
-    arm.uncached.append(jit.branchTest32(CCallHelpers::NonZero, keyOrder.slotKey, TrustedImm32(offsetBitsWithoutSlotKey)));
-    storeField(jit, r, FieldStoreEnd::JoinList, FieldTypeTest::HasPassed, &stored, exits);
-    RELEASE_ASSERT(exits.wasAbsent.empty() && exits.wasAbsentAndIsNotAccepted.empty());
-    storeExits.cannot.append(exits.cannot);
-
-    stored.link(&jit);
-    slot.loadFirstPayloadWord(jit, keyOrder.slotKey);
-    jit.and32(TrustedImm32(SlotData::maxOffset), keyOrder.slotKey);
-    Jump isInline = slot.branchUnlessFlag(jit, Slot::isOutOfLine);
-    jit.or32(TrustedImm32(outOfLineSlotKey), keyOrder.slotKey);
-    isInline.link(&jit);
-    appendFieldToKeyOrder(jit, keyOrder, hasNoTransition);
-    returnAfterStoring(jit, body.receiver, body.value);
-
-    // The slot key says where the slot is. The storage is there by now, or the field needs none.
-    hasNoTransition.link(&jit);
-    jit.callOperationAndReturn(Entry::operationAOTDidCreateFieldAt, didCreateFieldCall);
-}
-
-static void emitFieldStore(StoreSlotBody& body)
-{
-    StubAssembler& jit = body.jit;
-    const CachedSlot& slot = body.slot;
-    const bool createsField = slot.kind() == Slot::Kind::FieldCreation;
-    FieldStoreArm arm = createFieldStoreArm(body, body.receiver);
-    const FieldStoreRegisters& r = arm.registers;
-    FieldStoreExits exits;
-    JumpList hasNoStorage;
-
-    body.uncached.append(jit.branchTest32(CCallHelpers::NonZero, Address(body.receiver, offsetOfOrderWord), TrustedImm32(integrityBitsBlockingStore(body.traits.operation))));
-    saveName(body, arm);
-    Label findStorage = jit.label();
-    slot.loadFirstPayloadWord(jit, r.field.slotData);
-    slot.loadSecondPayloadWord(jit, r.type);
-    Jump isOutOfLine = slot.branchIfFlag(jit, Slot::isOutOfLine);
-    computeFieldAddress(jit, r.field, false, hasNoStorage);
-    // Slot::remembersOrder: nothing is asked of the value.
-    if (createsField && slot.form() == SlotForm::Slot) {
-        const GPRReg orderWordBefore = r.type;
-        const GPRReg orderAfter = r.scratch;
-        const Address valueInSlot(r.field.address);
-        const Address orderWord(body.receiver, offsetOfOrderWord);
-        Jump remembersNothing = slot.branchUnlessFlag(jit, Slot::remembersOrder);
-        Jump isAbsent = jit.branchTest64(CCallHelpers::Zero, valueInSlot);
-        jit.store64(body.value, valueInSlot);
-        returnAfterStoring(jit, body.receiver, body.value);
-
-        isAbsent.link(&jit);
-        exits.wasAbsent.append(jit.branch32(CCallHelpers::NotEqual, orderWord, orderWordBefore));
-        jit.store64(body.value, valueInSlot);
-        slot.loadHiddenWordOffset(jit, orderAfter);
-        jit.add32(TrustedImm32(1 << orderWordCountShift), orderWordBefore);
-        jit.and32(TrustedImm32(static_cast<int32_t>(~orderWordOrderMask)), orderWordBefore);
-        jit.or32(orderAfter, orderWordBefore);
-        jit.store32(orderWordBefore, orderWord);
-        returnAfterStoring(jit, body.receiver, body.value);
-        remembersNothing.link(&jit);
-    }
-    Label hasAddress = jit.label();
-    storeField(jit, r, FieldStoreEnd::ReturnAfterBarrier, FieldTypeTest::IsEmitted, nullptr, exits);
-
-    isOutOfLine.link(&jit);
-    slot.loadHiddenWordOffset(jit, r.field.extensionWordOffset);
-    computeFieldAddress(jit, r.field, true, hasNoStorage);
-    jit.jump().linkTo(hasAddress, &jit);
-
-    if (createsField)
-        emitFieldCreation(body, arm, exits, hasNoStorage, findStorage);
-    else {
-        arm.uncached.append(exits.wasAbsent);
-        arm.uncached.append(exits.wasAbsentAndIsNotAccepted);
-        arm.uncached.append(hasNoStorage);
-    }
-    linkToSlotCannot(jit, exits.cannot, body.table, createsField ? SlotFinisher::CreateField : SlotFinisher::StoreField, slot);
-    linkToUncachedExit(body, arm);
-}
-
-// The record has no room for the type of the field, so a store to a filled slot is left to the run time.
-static void emitFieldOrInheritedSetterCall(StoreSlotBody& body)
-{
-    StubAssembler& jit = body.jit;
-    const FieldAddressRegisters field {
-        .object = body.receiver,
-        .slotData = body.T10,
-        .extensionWordOffset = body.T11,
-        .address = body.T11,
-        .representation = body.T14,
-    };
-    const GPRReg getterSetter = body.T10;
-    JumpList isAbsent;
-
-    body.slot.loadFirstPayloadWord(jit, field.slotData);
-    Jump isOutOfLine = body.slot.branchIfFlag(jit, Slot::isOutOfLine);
-    computeFieldAddress(jit, field, false, isAbsent);
-    Label hasAddress = jit.label();
-    branchOnFieldPresence(jit, field, body.T10, body.uncached, isAbsent);
-
-    isOutOfLine.link(&jit);
-    loadExtensionWordOffset(jit, body.receiver, field.extensionWordOffset);
-    computeFieldAddress(jit, field, true, isAbsent);
-    jit.jump().linkTo(hasAddress, &jit);
-
-    isAbsent.link(&jit);
-    loadInheritedValueBySlot(jit, body.slot, body.T10, body.T11, getterSetter);
-    callSetter(body, getterSetter);
-}
-
-static void emitVariableStore(StoreSlotBody& body)
-{
-    StubAssembler& jit = body.jit;
-    const CachedSlot& slot = body.slot;
-    const GPRReg statics = jit.clobberOperand(headerOperand);
-    FieldStoreArm arm = createFieldStoreArm(body, statics);
-    const FieldStoreRegisters& r = arm.registers;
-    const GPRReg roundedSizeOfStatics = r.scratch;
-    const GPRReg offsetInStatics = r.field.address;
-    FieldStoreExits exits;
-    JumpList hasNoStorage;
-    JumpList isPresent;
-    JumpList stored;
-
-    saveName(body, arm);
-    loadStaticsBase(jit, statics, roundedSizeOfStatics);
-    slot.loadFirstPayloadWord(jit, r.field.slotData);
-    slot.loadSecondPayloadWord(jit, r.type);
-    computeFieldAddress(jit, r.field, false, hasNoStorage);
-    RELEASE_ASSERT(hasNoStorage.empty());
-    branchOnFieldPresence(jit, r.field, r.scratch, isPresent, arm.uncached);
-
-    isPresent.link(&jit);
-    storeField(jit, r, FieldStoreEnd::JoinList, FieldTypeTest::IsEmitted, &stored, exits);
-    RELEASE_ASSERT(exits.wasAbsent.empty() && exits.wasAbsentAndIsNotAccepted.empty());
-    arm.uncached.append(exits.cannot);
-
-    stored.link(&jit);
-    loadStaticsBase(jit, statics, roundedSizeOfStatics);
-    slot.loadFirstPayloadWord(jit, offsetInStatics);
-    jit.and32(TrustedImm32(SlotData::maxOffset), offsetInStatics);
-    markStaticsCard(jit, statics, roundedSizeOfStatics, offsetInStatics);
-    jit.returnToCaller();
-
-    linkToUncachedExit(body, arm);
-}
-
-static ExtraPropertyRegisters extraPropertyRegistersOf(const StoreSlotBody& body)
-{
-    return { .object = body.receiver, .extraProperties = body.T10, .wordIndex = body.T11, .scratch = body.T14 };
-}
-
-static void finishExtraPropertyStore(StoreSlotBody& body, GPRReg owner, bool valueMayNeedBarrier)
-{
-    if (valueMayNeedBarrier)
-        returnAfterStoring(body.jit, owner, body.value);
-    else
-        body.jit.returnToCaller();
-}
-
-static void emitExtraPropertyStore(StoreSlotBody& body)
-{
-    auto finish = [&](GPRReg owner, bool valueMayNeedBarrier) {
-        finishExtraPropertyStore(body, owner, valueMayNeedBarrier);
-    };
-    storeExtraProperty(body.jit, body.slot, extraPropertyRegistersOf(body), body.value, finish, body.miss);
-}
-
-static void emitExtraSetterCall(StoreSlotBody& body)
-{
-    const ExtraPropertyRegisters registers = extraPropertyRegistersOf(body);
-    const GPRReg getterSetter = body.T10;
-    locateExtraProperty(body.jit, body.slot, registers, body.miss);
-    body.jit.load64(BaseIndex(registers.extraProperties, registers.wordIndex, CCallHelpers::TimesEight), getterSetter);
-    callSetter(body, getterSetter);
-}
-
-static void emitExtraPropertyAddition(StoreSlotBody& body)
-{
-    StubAssembler& jit = body.jit;
-    const ExtraPropertyRegisters registers = extraPropertyRegistersOf(body);
-    ExtraPropertyAdditionExits exits;
-    JumpList cannotGrow;
-    auto finish = [&](GPRReg owner, bool valueMayNeedBarrier) {
-        finishExtraPropertyStore(body, owner, valueMayNeedBarrier);
-    };
-    addExtraProperty(jit, body.slot, registers, body.value, finish, exits);
-    body.uncached.append(exits.isNotExtensible);
-
-    // The growth takes every general-purpose scratch register of x86-64, the header's among them, and the finisher takes the header.
-    exits.growsStorage.link(&jit);
-    const GPRReg header = jit.clobberOperand(headerOperand);
-    const FPRReg savedHeader = jit.allocateScratch(FPRInfo::fpRegT0);
-    jit.move64ToDouble(header, savedHeader);
-    addExtraPropertyInNewStorage(jit, body.slot, { .access = registers, .oldCapacity = allocateSpareRegister(body), .storage = clobberNameRegister(body), .scratch = header }, body.value, finish, cannotGrow);
-
-    cannotGrow.link(&jit);
-    jit.moveDoubleTo64(savedHeader, header);
-    exits.cannot.append(jit.jump());
-    linkToSlotCannot(jit, exits.cannot, body.table, SlotFinisher::GrowStorage, body.slot);
-}
-
-static void emitAdditionInStorage(StoreSlotBody& body)
-{
-    StubAssembler& jit = body.jit;
-    const GPRReg newStructureID = body.T10;
-    const GPRReg wordIndex = body.T11;
-    body.slot.loadFirstPayloadWord(jit, newStructureID);
-    body.slot.loadOwnWordIndex(jit, wordIndex);
-    storeInStorageOf(body, body.receiver, wordIndex);
-    jit.store32(newStructureID, Address(body.receiver, JSCell::structureIDOffset()));
-    jit.jumpToStub(writeBarrier());
-}
-
 static Address closureExecutable(FunctionTables::ExecutableKind kind)
 {
     return Address(instanceGPR, static_cast<int32_t>(AOT_INSTANCE_OFFSET(closures.executables) + static_cast<unsigned>(kind) * sizeof(JSCell*)));
-}
-
-// Functions of every kind share a Structure, and only these kinds have an ordinary [[Set]].
-static void branchUnlessOrdinaryFunction(StoreSlotBody& body, GPRReg executable)
-{
-    StubAssembler& jit = body.jit;
-    Jump isNotFunction = jit.branchIfNotType(body.receiver, jsFunctionTypes);
-    jit.loadPtr(Address(body.receiver, JSFunction::offsetOfExecutableOrRareData()), executable);
-    Jump isPlainFunction = jit.branchPtr(CCallHelpers::Equal, executable, closureExecutable(FunctionTables::ExecutableKind::Constructible));
-    Jump isArrowFunction = jit.branchPtr(CCallHelpers::Equal, executable, closureExecutable(FunctionTables::ExecutableKind::NotConstructible));
-    body.uncached.append(jit.branchPtr(CCallHelpers::NotEqual, executable, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.boundFunctionExecutable))));
-    isArrowFunction.link(&jit);
-    isPlainFunction.link(&jit);
-    isNotFunction.link(&jit);
-}
-
-static void emitAdditionInNewStorage(StoreSlotBody& body)
-{
-    StubAssembler& jit = body.jit;
-    const GPRReg newStructureID = body.T10;
-    const GPRReg oldCapacity = body.T11;
-    const GPRReg newCapacity = body.T14;
-    const Address butterfly(body.receiver, JSObject::butterflyOffset());
-    JumpList cannot;
-
-    // No packed slot has the flag.
-    Jump hasIndexingHeader;
-    if (body.traits.form == SlotForm::Slot)
-        hasIndexingHeader = body.slot.branchIfFlag(jit, Slot::storageHasIndexingHeader);
-    body.slot.loadSecondPayloadWord(jit, newCapacity);
-    Jump isFirstStorage = jit.branch32(CCallHelpers::Equal, newCapacity, TrustedImm32(initialOutOfLineCapacity));
-    cannot.append(jit.branchTestPtr(CCallHelpers::Zero, butterfly));
-    jit.urshift32(newCapacity, TrustedImm32(1), oldCapacity);
-    Jump hasCapacities = jit.jump();
-
-    isFirstStorage.link(&jit);
-    cannot.append(jit.branchTestPtr(CCallHelpers::NonZero, butterfly));
-    branchUnlessOrdinaryFunction(body, newStructureID);
-    jit.move(TrustedImm32(0), oldCapacity);
-
-    hasCapacities.link(&jit);
-    body.slot.loadFirstPayloadWord(jit, newStructureID);
-    growOutOfLineStorage(jit, {
-        .object = body.receiver,
-        .newStructureID = newStructureID,
-        .oldCapacity = oldCapacity,
-        .newCapacity = newCapacity,
-        .storage = clobberNameRegister(body),
-        .scratch = allocateSpareRegister(body),
-        .addedValue = body.value,
-    }, cannot);
-    jit.jumpToStub(writeBarrier());
-
-    // An array that was born with room for its first named properties has the new storage already: the room lies in front of its indexing header.
-    if (hasIndexingHeader.isSet()) {
-        const GPRReg distanceToButterfly = oldCapacity;
-        hasIndexingHeader.link(&jit);
-        body.slot.loadSecondPayloadWord(jit, newCapacity);
-        cannot.append(jit.branch32(CCallHelpers::NotEqual, newCapacity, TrustedImm32(initialOutOfLineCapacity)));
-        jit.loadPtr(butterfly, distanceToButterfly);
-        jit.subPtr(body.receiver, distanceToButterfly);
-        cannot.append(jit.branch64(CCallHelpers::NotEqual, distanceToButterfly, TrustedImm32(static_cast<int32_t>(sizeOfArrayWithStorage(0, propertyRoomOfArray)))));
-        emitAdditionInStorage(body);
-    }
-
-    linkToSlotCannot(jit, cannot, body.table, SlotFinisher::GrowStorage, body.slot);
-}
-
-static void emitTransition(StoreSlotBody& body)
-{
-    Jump growsStorage = body.slot.branchIfFlag(body.jit, Slot::growsStorage);
-    emitAdditionInStorage(body);
-
-    growsStorage.link(&body.jit);
-    emitAdditionInNewStorage(body);
-}
-
-static void emitArrayLengthStore(StoreSlotBody& body)
-{
-    AOT_THRESHOLD(unsigned, maxElementsClearedInStub, 64);
-    StubAssembler& jit = body.jit;
-    JumpList& cannot = body.uncached;
-    const GPRReg array = body.receiver;
-    const GPRReg newLength = body.T10;
-    const GPRReg butterfly = body.T11;
-    const GPRReg length = jit.clobberOperand(headerOperand);
-    const GPRReg hole = body.T14;
-
-    cannot.append(jit.branchIfNotInt32(body.value));
-    jit.zeroExtend32ToWord(body.value, newLength);
-    cannot.append(jit.branch32(CCallHelpers::LessThan, newLength, TrustedImm32(0)));
-    jit.loadPtr(Address(array, JSObject::butterflyOffset()), butterfly);
-    jit.load32(Address(butterfly, Butterfly::offsetOfPublicLength()), length);
-    Jump isShorter = jit.branch32(CCallHelpers::Below, newLength, length);
-    cannot.append(jit.branch32(CCallHelpers::Above, newLength, Address(butterfly, Butterfly::offsetOfVectorLength())));
-    jit.store32(newLength, Address(butterfly, Butterfly::offsetOfPublicLength()));
-    jit.returnToCaller();
-
-    isShorter.link(&jit);
-    jit.sub32(length, newLength, hole);
-    cannot.append(jit.branch32(CCallHelpers::Above, hole, TrustedImm32(maxElementsClearedInStub)));
-    jit.load8(Address(array, JSCell::indexingTypeAndMiscOffset()), hole);
-    jit.and32(TrustedImm32(IndexingShapeMask), hole);
-    Jump hasDoubles = jit.branch32(CCallHelpers::Equal, hole, TrustedImm32(DoubleShape));
-    jit.move(TrustedImm32(0), hole);
-    Jump hasHole = jit.jump();
-    hasDoubles.link(&jit);
-    jit.move(TrustedImm64(std::bit_cast<int64_t>(PNaN)), hole);
-    hasHole.link(&jit);
-    Label clears = jit.label();
-    jit.sub32(TrustedImm32(1), length);
-    jit.store64(hole, BaseIndex(butterfly, length, CCallHelpers::TimesEight));
-    jit.branch32(CCallHelpers::Above, length, newLength).linkTo(clears, &jit);
-    jit.store32(newLength, Address(butterfly, Butterfly::offsetOfPublicLength()));
-    jit.returnToCaller();
 }
 
 // No StructureID is compared at a free-name site, so its tables have an arm only for the kinds that are filed there.
@@ -718,53 +104,426 @@ static bool hasStoreArm(SlotHandlerTableTraits traits, Slot::Kind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void emitStoreBySlot(StoreSlotBody& body)
+void generateStoreSlot(StubAssembler& jit)
 {
-    if (!hasStoreArm(body.traits, body.slot.kind())) {
-        body.miss.append(body.jit.jump());
-        return;
+    const SlotHandlerTable table = handlerTableOf(jit.key());
+    const SlotHandlerTableTraits traits = traitsOf(table);
+    const SlotOrigin origin = traits.origin;
+    const SlotHandlerOperands operands = operandsOfSlotHandler(table);
+    const unsigned nameOperand = traits.form == SlotForm::Slot ? payloadOperand + 1 : payloadOperand;
+    const GPRReg receiver = operands.receiver;
+    const GPRReg value = operands.value;
+    const GPRReg name = origin == SlotOrigin::ByVal ? operands.keyCell : operands.identifierNumber;
+    RELEASE_ASSERT(jit.operand(receiverOperand) == receiver && jit.operand(headerOperand) == operands.header);
+    RELEASE_ASSERT(traits.form == SlotForm::PackedSlot || jit.operand(payloadOperand) == operands.payload);
+    RELEASE_ASSERT(jit.operand(nameOperand) == name);
+    RELEASE_ASSERT(signatureOfWriteBarrier(writeBarrier()).operands[0] == Reg(receiver));
+    const CachedSlot slot(traits.form, slotKindOf(jit.key()), operands.header, operands.payload);
+    const GPRReg T10 = jit.allocateScratch(StubRegister::T10);
+    const GPRReg T11 = jit.allocateScratch(StubRegister::T11);
+    const GPRReg T14 = jit.allocateScratch(StubRegister::T14);
+    const ExtraPropertyRegisters extraPropertyRegisters { .object = receiver, .extraProperties = T10, .wordIndex = T11, .scratch = T14 };
+    JumpList miss;
+    JumpList uncached;
+
+    auto clobberNameRegister = [&] {
+        return jit.clobberOperand(nameOperand);
+    };
+    auto allocateSpareRegister = [&] {
+        RELEASE_ASSERT(origin == SlotOrigin::ById || origin == SlotOrigin::ByVal);
+        return jit.allocateScratch(origin == SlotOrigin::ById ? StubRegister::A2 : StubRegister::T9);
+    };
+    auto storeInStorageOf = [&](GPRReg owner, GPRReg wordIndex) {
+        const GPRReg storage = T14;
+        RELEASE_ASSERT(noOverlap(owner, wordIndex, storage, value));
+        jit.move(owner, storage);
+        Jump isInline = slot.branchUnlessFlag(jit, Slot::isOutOfLine);
+        jit.loadPtr(Address(owner, JSObject::butterflyOffset()), storage);
+        isInline.link(&jit);
+        jit.store64(value, BaseIndex(storage, wordIndex, CCallHelpers::TimesEight));
+    };
+    auto callSetter = [&](GPRReg getterSetter) {
+        const SlotOperation operation = traits.operation;
+        RELEASE_ASSERT(operation == SlotOperation::StoreStrict || operation == SlotOperation::StoreSloppy);
+        const SlotFinisher finisher = operation == SlotOperation::StoreStrict ? SlotFinisher::CallSetterStrict : SlotFinisher::CallSetterSloppy;
+        const StubSignature finisherSignature = signatureOfSlotCannot(slotCannot(finisher, origin));
+        RELEASE_ASSERT(finisherSignature.operands[finisherSignature.numberOfOperands - 2] == Reg(getterSetter));
+        JumpList cannot;
+        callSetterAndReturn(jit, receiver, value, getterSetter, cannot);
+        linkToSlotCannot(jit, cannot, table, finisher, slot);
+    };
+    auto createFieldStoreArm = [&](GPRReg object) -> FieldStoreArm {
+        return {
+            .registers = {
+                .field = { .object = object, .slotData = T10, .extensionWordOffset = T11, .address = T11, .representation = clobberNameRegister() },
+                .value = value,
+                .type = T14,
+                .scratch = T10,
+                .secondScratch = allocateSpareRegister(),
+                .number = jit.allocateScratch(FPRInfo::fpRegT0),
+            },
+            .savedName = jit.allocateScratch(FPRInfo::fpRegT1),
+            .uncached = { },
+        };
+    };
+    auto linkToUncachedExit = [&](FieldStoreArm& arm) {
+        if (arm.uncached.empty())
+            return;
+        arm.uncached.link(&jit);
+        jit.moveDoubleTo64(arm.savedName, name);
+        uncached.append(jit.jump());
+    };
+    auto emitFieldCreation = [&](FieldStoreArm& arm, FieldStoreExits& storeExits, JumpList& hasNoStorage, Label findStorage) {
+        const FieldStoreRegisters& r = arm.registers;
+        const Address orderWord(receiver, offsetOfOrderWord);
+        const TrustedImm32 integrityBits(static_cast<int32_t>(orderWordIntegrityBits));
+        const KeyOrderRegisters keyOrder { .object = receiver, .slotKey = r.scratch, .entry = r.field.address, .words = r.type, .scratch = r.field.representation };
+        FieldStoreExits exits;
+        JumpList stored;
+
+        // A field that is about to be created has no granule yet. With one it is a field that has storage and is absent.
+        hasNoStorage.link(&jit);
+        arm.uncached.append(jit.branchTest32(CCallHelpers::NonZero, orderWord, integrityBits));
+        // Where the key order alone says that the field exists, a field without a granule reads as undefined, so that value asks for none.
+        Jump alwaysNeedsStorage = slot.branchUnlessFlag(jit, Slot::undefinedNeedsNoStorage);
+        Jump needsNoStorage = jit.branch64(CCallHelpers::Equal, value, TrustedImm32(JSValue::ValueUndefined));
+        alwaysNeedsStorage.link(&jit);
+        createGranuleOfField(jit, r, [&] {
+            slot.loadHiddenWordOffset(jit, r.field.extensionWordOffset);
+        }, findStorage);
+
+        needsNoStorage.link(&jit);
+        arm.uncached.append(jit.branchTest32(CCallHelpers::NonZero, r.field.slotData, TrustedImm32(offsetBitsWithoutSlotKey)));
+        stored.append(jit.jump());
+
+        storeExits.wasAbsentAndIsNotAccepted.link(&jit);
+        arm.uncached.append(jit.branchTest32(CCallHelpers::NonZero, orderWord, integrityBits));
+        storeExits.cannot.append(jit.jump());
+
+        storeExits.wasAbsent.link(&jit);
+        arm.uncached.append(jit.branchTest32(CCallHelpers::NonZero, orderWord, integrityBits));
+        // The key order names a field by its slot key.
+        slot.loadFirstPayloadWord(jit, keyOrder.slotKey);
+        arm.uncached.append(jit.branchTest32(CCallHelpers::NonZero, keyOrder.slotKey, TrustedImm32(offsetBitsWithoutSlotKey)));
+        storeField(jit, r, FieldStoreEnd::JoinList, FieldTypeTest::HasPassed, &stored, exits);
+        RELEASE_ASSERT(exits.wasAbsent.empty() && exits.wasAbsentAndIsNotAccepted.empty());
+        storeExits.cannot.append(exits.cannot);
+
+        stored.link(&jit);
+        slot.loadFirstPayloadWord(jit, keyOrder.slotKey);
+        jit.and32(TrustedImm32(SlotData::maxOffset), keyOrder.slotKey);
+        Jump isInline = slot.branchUnlessFlag(jit, Slot::isOutOfLine);
+        jit.or32(TrustedImm32(outOfLineSlotKey), keyOrder.slotKey);
+        isInline.link(&jit);
+        listCreatedFieldAndReturn(jit, keyOrder, value);
+    };
+    auto finishExtraPropertyStore = [&](GPRReg owner, bool valueMayNeedBarrier) {
+        if (valueMayNeedBarrier)
+            returnAfterStoring(jit, owner, value);
+        else
+            jit.returnToCaller();
+    };
+    auto emitAdditionInStorage = [&] {
+        const GPRReg newStructureID = T10;
+        const GPRReg wordIndex = T11;
+        slot.loadFirstPayloadWord(jit, newStructureID);
+        slot.loadOwnWordIndex(jit, wordIndex);
+        storeInStorageOf(receiver, wordIndex);
+        jit.store32(newStructureID, Address(receiver, JSCell::structureIDOffset()));
+        jit.jumpToStub(writeBarrier());
+    };
+    // Functions of every kind share a Structure, and only these kinds have an ordinary [[Set]].
+    auto branchUnlessOrdinaryFunction = [&](GPRReg executable) {
+        Jump isNotFunction = jit.branchIfNotType(receiver, jsFunctionTypes);
+        jit.loadPtr(Address(receiver, JSFunction::offsetOfExecutableOrRareData()), executable);
+        Jump isPlainFunction = jit.branchPtr(CCallHelpers::Equal, executable, closureExecutable(FunctionTables::ExecutableKind::Constructible));
+        Jump isArrowFunction = jit.branchPtr(CCallHelpers::Equal, executable, closureExecutable(FunctionTables::ExecutableKind::NotConstructible));
+        uncached.append(jit.branchPtr(CCallHelpers::NotEqual, executable, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.boundFunctionExecutable))));
+        isArrowFunction.link(&jit);
+        isPlainFunction.link(&jit);
+        isNotFunction.link(&jit);
+    };
+
+    // A kind that has no arm in this table misses.
+    switch (hasStoreArm(traits, slot.kind()) ? slot.kind() : Slot::Kind::Empty) {
+    case Slot::Kind::Value: {
+        const bool isInherited = origin == SlotOrigin::FreeName;
+        const GPRReg owner = isInherited ? T10 : receiver;
+        const GPRReg wordIndex = T11;
+        if (isInherited) {
+            slot.loadHolder(jit, owner);
+            slot.loadInheritedWordIndex(jit, wordIndex);
+        } else
+            slot.loadOwnWordIndex(jit, wordIndex);
+        storeInStorageOf(owner, wordIndex);
+        returnAfterStoring(jit, owner, value);
+        break;
     }
-    switch (body.slot.kind()) {
-    case Slot::Kind::Value:
-        emitValueStore(body);
-        return;
-    case Slot::Kind::FarValue:
-        emitFarValueStore(body);
-        return;
+    case Slot::Kind::FarValue: {
+        const GPRReg butterfly = T10;
+        const GPRReg wordIndex = T11;
+        slot.loadOwnWordIndex(jit, wordIndex);
+        jit.loadPtr(Address(receiver, JSObject::butterflyOffset()), butterfly);
+        jit.store64(value, BaseIndex(butterfly, wordIndex, CCallHelpers::TimesEight));
+        returnAfterStoring(jit, receiver, value);
+        break;
+    }
     case Slot::Kind::Setter:
-        emitSetterCall(body);
-        return;
-    case Slot::Kind::CustomSetter:
-        emitCustomSetterCall(body);
-        return;
+        loadValueBySlot(jit, slot, receiver, T10, T11, T10);
+        callSetter(T10);
+        break;
+    case Slot::Kind::CustomSetter: {
+        const GPRReg accessorIndex = traits.form == SlotForm::Slot ? jit.clobberOperand(payloadOperand) : jit.allocateScratch(slotPayloadRegister);
+        const GPRReg uid = T14;
+        if (origin == SlotOrigin::ByVal)
+            loadNameOfKey(jit, name, uid, T11, miss);
+        else {
+            RELEASE_ASSERT(origin == SlotOrigin::ById || origin == SlotOrigin::FreeName);
+            loadIdentifier(jit, name, uid, miss);
+        }
+        slot.loadFirstPayloadWord(jit, accessorIndex);
+        callCustomSetterAndReturn(jit, receiver, value, accessorIndex, uid);
+        break;
+    }
     case Slot::Kind::Field:
-    case Slot::Kind::FieldCreation:
-        emitFieldStore(body);
-        return;
-    case Slot::Kind::FieldOrInheritedSetter:
-        emitFieldOrInheritedSetterCall(body);
-        return;
-    case Slot::Kind::Variable:
-        emitVariableStore(body);
-        return;
+    case Slot::Kind::FieldCreation: {
+        const bool createsField = slot.kind() == Slot::Kind::FieldCreation;
+        FieldStoreArm arm = createFieldStoreArm(receiver);
+        const FieldStoreRegisters& r = arm.registers;
+        FieldStoreExits exits;
+        JumpList hasNoStorage;
+
+        uncached.append(jit.branchTest32(CCallHelpers::NonZero, Address(receiver, offsetOfOrderWord), TrustedImm32(integrityBitsBlockingStore(traits.operation))));
+        jit.move64ToDouble(name, arm.savedName);
+        Label findStorage = jit.label();
+        slot.loadFirstPayloadWord(jit, r.field.slotData);
+        slot.loadSecondPayloadWord(jit, r.type);
+        Jump isOutOfLine = slot.branchIfFlag(jit, Slot::isOutOfLine);
+        computeFieldAddress(jit, r.field, false, hasNoStorage);
+        // Slot::remembersOrder: nothing is asked of the value.
+        if (createsField && slot.form() == SlotForm::Slot) {
+            const GPRReg orderWordBefore = r.type;
+            const GPRReg orderAfter = r.scratch;
+            const Address valueInSlot(r.field.address);
+            const Address orderWord(receiver, offsetOfOrderWord);
+            Jump remembersNothing = slot.branchUnlessFlag(jit, Slot::remembersOrder);
+            Jump isAbsent = jit.branchTest64(CCallHelpers::Zero, valueInSlot);
+            jit.store64(value, valueInSlot);
+            returnAfterStoring(jit, receiver, value);
+
+            isAbsent.link(&jit);
+            exits.wasAbsent.append(jit.branch32(CCallHelpers::NotEqual, orderWord, orderWordBefore));
+            jit.store64(value, valueInSlot);
+            slot.loadHiddenWordOffset(jit, orderAfter);
+            jit.add32(TrustedImm32(1 << orderWordCountShift), orderWordBefore);
+            jit.and32(TrustedImm32(static_cast<int32_t>(~orderWordOrderMask)), orderWordBefore);
+            jit.or32(orderAfter, orderWordBefore);
+            jit.store32(orderWordBefore, orderWord);
+            returnAfterStoring(jit, receiver, value);
+            remembersNothing.link(&jit);
+        }
+        Label hasAddress = jit.label();
+        storeField(jit, r, FieldStoreEnd::ReturnAfterBarrier, FieldTypeTest::IsEmitted, nullptr, exits);
+
+        isOutOfLine.link(&jit);
+        slot.loadHiddenWordOffset(jit, r.field.extensionWordOffset);
+        computeFieldAddress(jit, r.field, true, hasNoStorage);
+        jit.jump().linkTo(hasAddress, &jit);
+
+        if (createsField)
+            emitFieldCreation(arm, exits, hasNoStorage, findStorage);
+        else {
+            arm.uncached.append(exits.wasAbsent);
+            arm.uncached.append(exits.wasAbsentAndIsNotAccepted);
+            arm.uncached.append(hasNoStorage);
+        }
+        linkToSlotCannot(jit, exits.cannot, table, createsField ? SlotFinisher::CreateField : SlotFinisher::StoreField, slot);
+        linkToUncachedExit(arm);
+        break;
+    }
+    // The record has no room for the type of the field, so a store to a filled slot is left to the run time.
+    case Slot::Kind::FieldOrInheritedSetter: {
+        const FieldAddressRegisters field { .object = receiver, .slotData = T10, .extensionWordOffset = T11, .address = T11, .representation = T14 };
+        const GPRReg getterSetter = T10;
+        JumpList isAbsent;
+
+        slot.loadFirstPayloadWord(jit, field.slotData);
+        Jump isOutOfLine = slot.branchIfFlag(jit, Slot::isOutOfLine);
+        computeFieldAddress(jit, field, false, isAbsent);
+        Label hasAddress = jit.label();
+        branchOnFieldPresence(jit, field, T10, uncached, isAbsent);
+
+        isOutOfLine.link(&jit);
+        loadExtensionWordOffset(jit, receiver, field.extensionWordOffset);
+        computeFieldAddress(jit, field, true, isAbsent);
+        jit.jump().linkTo(hasAddress, &jit);
+
+        isAbsent.link(&jit);
+        loadInheritedValueBySlot(jit, slot, T10, T11, getterSetter);
+        callSetter(getterSetter);
+        break;
+    }
+    case Slot::Kind::Variable: {
+        const GPRReg statics = jit.clobberOperand(headerOperand);
+        FieldStoreArm arm = createFieldStoreArm(statics);
+        const FieldStoreRegisters& r = arm.registers;
+        const GPRReg roundedSizeOfStatics = r.scratch;
+        const GPRReg offsetInStatics = r.field.address;
+        FieldStoreExits exits;
+        JumpList hasNoStorage;
+        JumpList isPresent;
+        JumpList stored;
+
+        jit.move64ToDouble(name, arm.savedName);
+        loadStaticsBase(jit, statics, roundedSizeOfStatics);
+        slot.loadFirstPayloadWord(jit, r.field.slotData);
+        slot.loadSecondPayloadWord(jit, r.type);
+        computeFieldAddress(jit, r.field, false, hasNoStorage);
+        RELEASE_ASSERT(hasNoStorage.empty());
+        branchOnFieldPresence(jit, r.field, r.scratch, isPresent, arm.uncached);
+
+        isPresent.link(&jit);
+        storeField(jit, r, FieldStoreEnd::JoinList, FieldTypeTest::IsEmitted, &stored, exits);
+        RELEASE_ASSERT(exits.wasAbsent.empty() && exits.wasAbsentAndIsNotAccepted.empty());
+        arm.uncached.append(exits.cannot);
+
+        stored.link(&jit);
+        loadStaticsBase(jit, statics, roundedSizeOfStatics);
+        slot.loadFirstPayloadWord(jit, offsetInStatics);
+        jit.and32(TrustedImm32(SlotData::maxOffset), offsetInStatics);
+        markStaticsCard(jit, statics, roundedSizeOfStatics, offsetInStatics);
+        jit.returnToCaller();
+
+        linkToUncachedExit(arm);
+        break;
+    }
     case Slot::Kind::ExtraProperty:
-        emitExtraPropertyStore(body);
-        return;
+        storeExtraProperty(jit, slot, extraPropertyRegisters, value, finishExtraPropertyStore, miss);
+        break;
     case Slot::Kind::ExtraSetter:
-        emitExtraSetterCall(body);
-        return;
-    case Slot::Kind::ExtraPropertyAddition:
-        emitExtraPropertyAddition(body);
-        return;
-    case Slot::Kind::Transition:
-        emitTransition(body);
-        return;
-    case Slot::Kind::ArrayLength:
-        emitArrayLengthStore(body);
-        return;
+        locateExtraProperty(jit, slot, extraPropertyRegisters, miss);
+        jit.load64(BaseIndex(extraPropertyRegisters.extraProperties, extraPropertyRegisters.wordIndex, CCallHelpers::TimesEight), T10);
+        callSetter(T10);
+        break;
+    case Slot::Kind::ExtraPropertyAddition: {
+        ExtraPropertyAdditionExits exits;
+        JumpList cannotGrow;
+        addExtraProperty(jit, slot, extraPropertyRegisters, value, finishExtraPropertyStore, exits);
+        uncached.append(exits.isNotExtensible);
+
+        // The growth takes every general-purpose scratch register of x86-64, the header's among them, and the finisher takes the header.
+        exits.growsStorage.link(&jit);
+        const GPRReg header = jit.clobberOperand(headerOperand);
+        const FPRReg savedHeader = jit.allocateScratch(FPRInfo::fpRegT0);
+        jit.move64ToDouble(header, savedHeader);
+        addExtraPropertyInNewStorage(jit, slot, {
+            .access = extraPropertyRegisters,
+            .oldCapacity = allocateSpareRegister(),
+            .storage = clobberNameRegister(),
+            .scratch = header,
+        }, value, finishExtraPropertyStore, cannotGrow);
+
+        cannotGrow.link(&jit);
+        jit.moveDoubleTo64(savedHeader, header);
+        exits.cannot.append(jit.jump());
+        linkToSlotCannot(jit, exits.cannot, table, SlotFinisher::GrowStorage, slot);
+        break;
+    }
+    case Slot::Kind::Transition: {
+        Jump growsStorage = slot.branchIfFlag(jit, Slot::growsStorage);
+        emitAdditionInStorage();
+
+        growsStorage.link(&jit);
+        const GPRReg newStructureID = T10;
+        const GPRReg oldCapacity = T11;
+        const GPRReg newCapacity = T14;
+        const Address butterfly(receiver, JSObject::butterflyOffset());
+        JumpList cannot;
+
+        // No packed slot has the flag.
+        Jump hasIndexingHeader;
+        if (traits.form == SlotForm::Slot)
+            hasIndexingHeader = slot.branchIfFlag(jit, Slot::storageHasIndexingHeader);
+        slot.loadSecondPayloadWord(jit, newCapacity);
+        Jump isFirstStorage = jit.branch32(CCallHelpers::Equal, newCapacity, TrustedImm32(initialOutOfLineCapacity));
+        cannot.append(jit.branchTestPtr(CCallHelpers::Zero, butterfly));
+        jit.urshift32(newCapacity, TrustedImm32(1), oldCapacity);
+        Jump hasCapacities = jit.jump();
+
+        isFirstStorage.link(&jit);
+        cannot.append(jit.branchTestPtr(CCallHelpers::NonZero, butterfly));
+        branchUnlessOrdinaryFunction(newStructureID);
+        jit.move(TrustedImm32(0), oldCapacity);
+
+        hasCapacities.link(&jit);
+        slot.loadFirstPayloadWord(jit, newStructureID);
+        growOutOfLineStorage(jit, {
+            .object = receiver,
+            .newStructureID = newStructureID,
+            .oldCapacity = oldCapacity,
+            .newCapacity = newCapacity,
+            .storage = clobberNameRegister(),
+            .scratch = allocateSpareRegister(),
+            .addedValue = value,
+        }, cannot);
+        jit.jumpToStub(writeBarrier());
+
+        // An array that was born with room for its first named properties has the new storage already: the room lies in front of its indexing header.
+        if (hasIndexingHeader.isSet()) {
+            const GPRReg distanceToButterfly = oldCapacity;
+            hasIndexingHeader.link(&jit);
+            slot.loadSecondPayloadWord(jit, newCapacity);
+            cannot.append(jit.branch32(CCallHelpers::NotEqual, newCapacity, TrustedImm32(initialOutOfLineCapacity)));
+            jit.loadPtr(butterfly, distanceToButterfly);
+            jit.subPtr(receiver, distanceToButterfly);
+            cannot.append(jit.branch64(CCallHelpers::NotEqual, distanceToButterfly, TrustedImm32(static_cast<int32_t>(sizeOfArrayWithStorage(0, propertyRoomOfArray)))));
+            emitAdditionInStorage();
+        }
+
+        linkToSlotCannot(jit, cannot, table, SlotFinisher::GrowStorage, slot);
+        break;
+    }
+    case Slot::Kind::ArrayLength: {
+        AOT_THRESHOLD(unsigned, maxElementsClearedInStub, 64);
+        JumpList& cannot = uncached;
+        const GPRReg array = receiver;
+        const GPRReg newLength = T10;
+        const GPRReg butterfly = T11;
+        const GPRReg length = jit.clobberOperand(headerOperand);
+        const GPRReg hole = T14;
+
+        cannot.append(jit.branchIfNotInt32(value));
+        jit.zeroExtend32ToWord(value, newLength);
+        cannot.append(jit.branch32(CCallHelpers::LessThan, newLength, TrustedImm32(0)));
+        jit.loadPtr(Address(array, JSObject::butterflyOffset()), butterfly);
+        jit.load32(Address(butterfly, Butterfly::offsetOfPublicLength()), length);
+        Jump isShorter = jit.branch32(CCallHelpers::Below, newLength, length);
+        cannot.append(jit.branch32(CCallHelpers::Above, newLength, Address(butterfly, Butterfly::offsetOfVectorLength())));
+        jit.store32(newLength, Address(butterfly, Butterfly::offsetOfPublicLength()));
+        jit.returnToCaller();
+
+        isShorter.link(&jit);
+        jit.sub32(length, newLength, hole);
+        cannot.append(jit.branch32(CCallHelpers::Above, hole, TrustedImm32(maxElementsClearedInStub)));
+        jit.load8(Address(array, JSCell::indexingTypeAndMiscOffset()), hole);
+        jit.and32(TrustedImm32(IndexingShapeMask), hole);
+        Jump hasDoubles = jit.branch32(CCallHelpers::Equal, hole, TrustedImm32(DoubleShape));
+        jit.move(TrustedImm32(0), hole);
+        Jump hasHole = jit.jump();
+        hasDoubles.link(&jit);
+        jit.move(TrustedImm64(std::bit_cast<int64_t>(PNaN)), hole);
+        hasHole.link(&jit);
+        Label clears = jit.label();
+        jit.sub32(TrustedImm32(1), length);
+        jit.store64(hole, BaseIndex(butterfly, length, CCallHelpers::TimesEight));
+        jit.branch32(CCallHelpers::Above, length, newLength).linkTo(clears, &jit);
+        jit.store32(newLength, Address(butterfly, Butterfly::offsetOfPublicLength()));
+        jit.returnToCaller();
+        break;
+    }
     case Slot::Kind::Uncacheable:
-        body.uncached.append(body.jit.jump());
-        return;
+        uncached.append(jit.jump());
+        break;
     case Slot::Kind::Empty:
     case Slot::Kind::Absent:
     case Slot::Kind::Getter:
@@ -779,17 +538,12 @@ static void emitStoreBySlot(StoreSlotBody& body)
     case Slot::Kind::ClosureLength:
     case Slot::Kind::ClosureName:
     case Slot::Kind::Constant:
+        RELEASE_ASSERT(!hasStoreArm(traits, slot.kind()));
+        miss.append(jit.jump());
         break;
     }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-void generateStoreSlot(StubAssembler& jit)
-{
-    StoreSlotBody body = createStoreSlotBody(jit);
-    emitStoreBySlot(body);
-    linkToSlotExit(jit, body.miss, body.table, SlotExit::Miss);
-    linkToSlotExit(jit, body.uncached, body.table, SlotExit::Uncached);
+    linkToSlotExit(jit, miss, table, SlotExit::Miss);
+    linkToSlotExit(jit, uncached, table, SlotExit::Uncached);
 }
 
 struct StoreSlotExitTraits {
@@ -835,17 +589,16 @@ static OperationCall createExitCall(GPRReg second, GPRReg third, GPRReg fourth)
     };
 }
 
-static Entry uncachedOperationById(PutMode mode)
+static_assert(!static_cast<size_t>(PutMode::Strict) && static_cast<size_t>(PutMode::Sloppy) == 1 && static_cast<size_t>(PutMode::Define) == 2);
+static constexpr Entry uncachedOperationsById[] = { Entry::operationAOTPutById, Entry::operationAOTPutByIdSloppy, Entry::operationAOTDefineById };
+static constexpr Entry cachingOperationsByVal[] = { Entry::operationAOTPutByValAndCache, Entry::operationAOTPutByValAndCacheSloppy, Entry::operationAOTDefineField };
+static constexpr Entry freeNameOperations[] = { Entry::operationAOTSetFreeName, Entry::operationAOTSetFreeNameSloppy };
+
+template<size_t numberOfModes>
+static Entry entryFor(const Entry (&byMode)[numberOfModes], PutMode mode)
 {
-    switch (mode) {
-    case PutMode::Strict:
-        return Entry::operationAOTPutById;
-    case PutMode::Sloppy:
-        return Entry::operationAOTPutByIdSloppy;
-    case PutMode::Define:
-        return Entry::operationAOTDefineById;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    RELEASE_ASSERT(static_cast<size_t>(mode) < numberOfModes);
+    return byMode[static_cast<size_t>(mode)];
 }
 
 static void emitStoreByIdExit(StubAssembler& jit, PutMode mode, SlotExit exit)
@@ -853,33 +606,15 @@ static void emitStoreByIdExit(StubAssembler& jit, PutMode mode, SlotExit exit)
     const GPRReg receiver = jit.operand(receiverOperand);
     const GPRReg identifierNumber = jit.operand(exitNameOperand);
     const GPRReg value = jit.operand(exitValueOperand);
-    switch (exit) {
-    case SlotExit::Miss: {
-        OperationCall call = createExitCall(receiver, value, identifierNumber);
-        const OperationCall::ConstantArgument noSite { operationArgumentGPR(4), 0 };
-        const OperationCall::ConstantArgument putMode { operationArgumentGPR(5), static_cast<uint32_t>(mode) };
-        call.constantArguments = { noSite, putMode };
-        jit.exitOnMiss(Entry::operationAOTPutByIdAndCache, call);
+    if (exit == SlotExit::Uncached) {
+        jit.callOperationAndReturn(entryFor(uncachedOperationsById, mode), createExitCall(receiver, identifierNumber, value));
         return;
     }
-    case SlotExit::Uncached:
-        jit.callOperationAndReturn(uncachedOperationById(mode), createExitCall(receiver, identifierNumber, value));
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static Entry cachingOperationByVal(PutMode mode)
-{
-    switch (mode) {
-    case PutMode::Strict:
-        return Entry::operationAOTPutByValAndCache;
-    case PutMode::Sloppy:
-        return Entry::operationAOTPutByValAndCacheSloppy;
-    case PutMode::Define:
-        return Entry::operationAOTDefineField;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    OperationCall call = createExitCall(receiver, value, identifierNumber);
+    const OperationCall::ConstantArgument noSite { operationArgumentGPR(4), 0 };
+    const OperationCall::ConstantArgument putMode { operationArgumentGPR(5), static_cast<uint32_t>(mode) };
+    call.constantArguments = { noSite, putMode };
+    jit.exitOnMiss(Entry::operationAOTPutByIdAndCache, call);
 }
 
 static void tryStoreByLeafLookup(StubAssembler& jit, GPRReg keyCell, GPRReg value)
@@ -899,48 +634,26 @@ static void emitStoreByValExit(StubAssembler& jit, PutMode mode, SlotExit exit)
     const GPRReg keyCell = jit.operand(exitNameOperand);
     const GPRReg value = jit.operand(exitValueOperand);
     const OperationCall call = createExitCall(jit.operand(receiverOperand), keyCell, value);
-    switch (exit) {
-    case SlotExit::Miss:
-        jit.exitOnMiss(cachingOperationByVal(mode), call);
-        return;
-    case SlotExit::Uncached:
-        if (mode == PutMode::Define) {
-            jit.callOperationAndReturn(Entry::operationAOTDefineField, call);
-            return;
-        }
-        tryStoreByLeafLookup(jit, keyCell, value);
-        jit.move(TrustedImm32(mode == PutMode::Strict ? 1 : 0), jit.allocateScratch(StubRegister::A4));
-        jit.callOperationAndReturn(Entry::operationAOTPutByVal, call);
+    if (exit == SlotExit::Miss) {
+        jit.exitOnMiss(entryFor(cachingOperationsByVal, mode), call);
         return;
     }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static Entry freeNameOperation(PutMode mode)
-{
-    switch (mode) {
-    case PutMode::Strict:
-        return Entry::operationAOTSetFreeName;
-    case PutMode::Sloppy:
-        return Entry::operationAOTSetFreeNameSloppy;
-    case PutMode::Define:
-        break;
+    if (mode == PutMode::Define) {
+        jit.callOperationAndReturn(Entry::operationAOTDefineField, call);
+        return;
     }
-    RELEASE_ASSERT_NOT_REACHED();
+    tryStoreByLeafLookup(jit, keyCell, value);
+    jit.move(TrustedImm32(mode == PutMode::Strict ? 1 : 0), jit.allocateScratch(StubRegister::A4));
+    jit.callOperationAndReturn(Entry::operationAOTPutByVal, call);
 }
 
 static void emitFreeNameStoreExit(StubAssembler& jit, PutMode mode, SlotExit exit)
 {
     const OperationCall call = createExitCall(jit.operand(exitNameOperand), jit.operand(exitSiteOperand), jit.operand(exitValueOperand));
-    switch (exit) {
-    case SlotExit::Miss:
-        jit.exitOnMiss(freeNameOperation(mode), call);
-        return;
-    case SlotExit::Uncached:
-        jit.callOperationAndReturn(freeNameOperation(mode), call);
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    if (exit == SlotExit::Miss)
+        jit.exitOnMiss(entryFor(freeNameOperations, mode), call);
+    else
+        jit.callOperationAndReturn(entryFor(freeNameOperations, mode), call);
 }
 
 void generateStoreSlotExit(StubAssembler& jit)

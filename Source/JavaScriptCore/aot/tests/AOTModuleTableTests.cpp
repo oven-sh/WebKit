@@ -40,7 +40,6 @@ module m11 path="/entry.js" displayPath="entry.js" body=f11 requests=[{target=m0
 entry module=m11
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="use" [isFreeName]
     v2 = RequireModule module=m9 referrer=m0 specifier="./lib.js"
@@ -50,7 +49,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="left" module=m1 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="use" [isFreeName]
     v2 = RequireModule module=m9 referrer=m1 specifier="./lib.js"
@@ -58,11 +56,9 @@ function f1 name="left" module=m1 kind=Module results=[{type=anything}] {
     Return
 }
 function f2 name="right" module=m2 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f3 name="shared" module=m3 kind=Module results=[{type=anything}] {
-  b0():
     v0 = String string="alpha"
     v1 = Strcat v0, v0
     v2 = ModuleNamespace module=m3
@@ -75,35 +71,27 @@ function f3 name="shared" module=m3 kind=Module results=[{type=anything}] {
     Return
 }
 function f4 name="map" module=m4 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f5 name="accent" module=m5 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f6 name="tilde" module=m6 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f7 name="face" module=m7 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f8 name="short" module=m8 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f9 name="lib" module=m9 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f10 name="other" module=m10 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f11 name="entry" module=m11 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 )IR"_s;

@@ -15,88 +15,76 @@ function f2 name="Repeated" kind=BaseConstructor flags=[HasNewTarget] results=[{
 function f3 name="NeverMade" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L4
 
 function f4 name="readOfUnknownReceiver" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClassToken layout=L0
     v2 = PrivateGet v0, v1 layout=L0 field=0
     Return v2
-}
-# CHECK-LABEL: function f4 name="readOfUnknownReceiver"
 # CHECK-NEXT: b0(v0: anything ~ L0|L1):
 # CHECK: = TypeTest v0 testedType=L0|L1
 # CHECK: = GetSlot {{*}} key=#"#x"@L0 receivers=[L0, L1] level=Expected
 # CHECK: = PrivateGet v0, v1 layout=L0
+}
 
 function f5 name="storeToUnknownReceiver" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = NewClassToken layout=L0
     PrivateSet v0, v2, v1 layout=L0 field=0
     Return
-}
-# CHECK-LABEL: function f5 name="storeToUnknownReceiver"
 # CHECK-NEXT: b0(v0: anything ~ L0|L1, v1: number):
 # CHECK: = TypeTest v0 testedType=L0|L1
 # CHECK: PutSlot {{*}} key=#"#x"@L0 receivers=[L0, L1] level=Expected
 # CHECK: PrivateSet v0, v2, v1 layout=L0
+}
 
 function f6 name="testOfUnknownValue" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClassToken layout=L0
     v2 = PrivateHas v0, v1 layout=L0 field=0
     Return v2
-}
-# CHECK-LABEL: function f6 name="testOfUnknownValue"
 # CHECK-NEXT: b0(v0: anything ~ L0|L1):
 # CHECK: = TypeTest v0 testedType=L0|L1
 # CHECK: = Boolean boolean=true
 # CHECK: = PrivateHas v0, v1 layout=L0
+}
 
 function f7 name="expectedTypeWithoutTheClass" kind=Getter flags=[HasThis] thisType={type=string|L3 flags=[IsExpected]} results=[{type=anything}] {
   b0(v0: anything ~ string|L3):
     v1 = NewClassToken layout=L0
     v2 = PrivateGet v0, v1 layout=L0 field=0
     Return v2
-}
-# CHECK-LABEL: function f7 name="expectedTypeWithoutTheClass"
 # CHECK-NEXT: b0(v0: anything ~ L0|L1):
 # CHECK-NOT: L3
 # CHECK: = TypeTest v0 testedType=L0|L1
 # CHECK-NOT: L3
 # CHECK: = GetSlot {{*}} key=#"#x"@L0 receivers=[L0, L1] level=Expected
 # CHECK-NOT: L3
+}
 
 function f8 name="expectedSubclassStays" kind=Getter flags=[HasThis] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] {
   b0(v0: anything ~ L1):
     v1 = NewClassToken layout=L0
     v2 = PrivateGet v0, v1 layout=L0 field=0
     Return v2
-}
-# CHECK-LABEL: function f8 name="expectedSubclassStays"
 # CHECK-NEXT: b0(v0: anything ~ L1):
 # CHECK-NOT: testedType=L0
 # CHECK: = TypeTest v0 testedType=L1
 # CHECK-NOT: testedType=L0
 # CHECK: = GetSlot {{*}} key=#"#x"@L0 receivers=[L1] level=Expected
 # CHECK-NOT: testedType=L0
+}
 
 function f9 name="classMayBeEvaluatedAgain" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClassToken layout=L2
     v2 = PrivateGet v0, v1 layout=L2 field=0
     Return v2
-}
-# CHECK-LABEL: function f9 name="classMayBeEvaluatedAgain"
 # CHECK-NEXT: b0(v0: anything ~ L2):
 # CHECK: = TypeTest v0 testedType=L2
 # CHECK: = GetSlot {{*}} key=#"#x"@L2 receivers=[L2] level=Expected
 # CHECK: = AreMembersUnchanged conditions=[{kind=ClassEvaluatedOnce layout=L2
+}
 
 function f10 name="nobodyMakesAnInstance" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClassToken layout=L4
     v2 = PrivateGet v0, v1 layout=L4 field=0
     Return v2
-}
-# CHECK-LABEL: function f10 name="nobodyMakesAnInstance"
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NOT: TypeTest
 # CHECK: = PrivateGet v0, v1 layout=L4
+}

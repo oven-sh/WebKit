@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="oneUserBlock" parameters=[{type=boolean}, {type=string}] results=[{type=string}] {
-  b0(v0: boolean, v1: string):
     v2 = String string="cold"
     Branch v0 -> taken b1(), notTaken b2()
   b1():
@@ -15,8 +14,6 @@ function f0 name="oneUserBlock" parameters=[{type=boolean}, {type=string}] resul
     Return v3
   b2():
     Return v1
-}
-# CHECK-LABEL: function f0 name="oneUserBlock"
 # CHECK-NEXT: b0(v0: boolean, v1: string):
 # CHECK-NEXT: v2: "cold" = String string="cold"
 # CHECK-NEXT: Branch v0 -> taken b1(), notTaken b2()
@@ -26,3 +23,4 @@ function f0 name="oneUserBlock" parameters=[{type=boolean}, {type=string}] resul
 # CHECK-NEXT: b2():
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
+}

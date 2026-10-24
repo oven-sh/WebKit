@@ -8,13 +8,31 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinTableRealm.h"
 #include "AOTClosure.h"
+#include "AOTClosureTable.h"
+#include "AOTCompiledCallee.h"
 #include "AOTConvention.h"
+#include "AOTFunctionDescription.h"
+#include "AOTFunctionNames.h"
+#include "AOTImage.h"
+#include "AOTInstance.h"
+#include "AOTObjectModel.h"
 #include "AOTObjectWords.h"
+#include "AOTProgramStrings.h"
+#include "AOTSlimClosure.h"
+#include "AOTState.h"
+#include "AOTStaticFields.h"
 #include "JSCInlines.h"
 #include "NativeExecutable.h"
 #include "Options.h"
 #include <algorithm>
+#include <optional>
+#include <wtf/text/ASCIIFastPath.h>
+#include <wtf/text/MakeString.h>
+#include <wtf/text/SymbolImpl.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
 
@@ -129,6 +147,469 @@ FunctionTables& FunctionTables::of(VM& vm)
     return *tables;
 }
 
+static ClosureTable& closureTableOf(JSObject* callee)
+{
+    return State::of(callee->structure()->realm()).objects->closures;
+}
+
+static ASCIILiteral initialNamePrefix(FunctionKindData kind)
+{
+    if (kind.isBound())
+        return "bound "_s;
+    bool isGetter = kind.accessor() == MethodKind::Getter;
+    RELEASE_ASSERT(isGetter || kind.accessor() == MethodKind::Setter);
+    return isGetter ? "get "_s : "set "_s;
+}
+
+String writtenFunctionName(FunctionID function)
+{
+    const Image& image = *Image::current();
+    ASSERT(function.index() < image.programTables().numberOfFunctions());
+    StringID name(image.programTables().nameOfFunction(function.index()));
+    return !image.isObfuscated() && image.text().hasText(name) ? image.text().createString(name) : emptyString();
+}
+
+String initialNameProperty(FunctionID function)
+{
+    FunctionKindData kind = functionKindData(function);
+    String written = writtenFunctionName(function);
+    return kind.hasInitialNamePrefix() ? makeString(initialNamePrefix(kind), written) : written;
+}
+
+JSString* initialNamePropertyString(VM& vm, State& state, FunctionID function)
+{
+    if (functionKindData(function).hasInitialNamePrefix())
+        return jsString(vm, initialNameProperty(function));
+    return state.strings->writtenNameOfFunction(vm, function);
+}
+
+static void recordNameSetAtRunTime(VM& vm, FunctionID closureFunction, const String& name, bool isOnlyClosure)
+{
+    if (functionKindData(closureFunction).isBound())
+        return;
+    FunctionTables& tables = FunctionTables::of(vm);
+    FunctionID sourceFunction = sourceFunctionOf(closureFunction);
+    Locker locker { tables.namesLock };
+    if (isOnlyClosure)
+        tables.namesSetAtRunTime.set(sourceFunction, name.isolatedCopy());
+    else if (auto result = tables.namesSetAtRunTime.add(sourceFunction, String()); result.isNewEntry)
+        result.iterator->value = name.isolatedCopy();
+    else if (result.iterator->value != name)
+        result.iterator->value = String();
+    tables.hasNamesSetAtRunTime.store(true, std::memory_order_release);
+}
+
+static String nameSetAtRunTime(VM& vm, FunctionID function)
+{
+    FunctionTables& tables = FunctionTables::of(vm);
+    if (!tables.hasNamesSetAtRunTime.load(std::memory_order_acquire)) [[likely]]
+        return String();
+    FunctionID sourceFunction = sourceFunctionOf(function);
+    Locker locker { tables.namesLock };
+    return tables.namesSetAtRunTime.get(sourceFunction).isolatedCopy();
+}
+
+static bool usesOwnPropertiesForStackTraceName(JSCell* closure)
+{
+    DeclaredAs declared = declaredAs(closure);
+    return declared == DeclaredAs::Function || declared == DeclaredAs::Class;
+}
+
+// A frame does not say which closure runs in it, and a function that captures something is created more than once as a rule.
+static bool standsForEveryFrameOfItsFunction(JSObject* closure)
+{
+    return usesOwnPropertiesForStackTraceName(closure) && !captureCountsOf(*functionOf(closure)).captures;
+}
+
+static JSValue ownDisplayNameValue(VM& vm, JSObject* closure)
+{
+    UniquedStringImpl* uid = vm.propertyNames->displayName.impl();
+    if (auto* classObject = dynamicDowncast<Closure>(closure)) {
+        const FieldData* field = StaticFields::findOwnField(*classObject, uid);
+        if (field && StaticFields::isInVariable(*classObject, *field))
+            return classObject->state().objects->classes.readStaticField(*field);
+    }
+    unsigned attributes;
+    PropertyOffset offset = closure->structure()->getConcurrently(uid, attributes);
+    if (offset == invalidOffset || attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))
+        return JSValue();
+    return closure->getDirect(offset);
+}
+
+static String ownDisplayNameText(VM& vm, JSObject* closure)
+{
+    JSValue value = ownDisplayNameValue(vm, closure);
+    if (!value || !value.isString())
+        return String();
+    String text = asString(value)->tryGetValueWithoutGC();
+    return text.isEmpty() ? String() : text;
+}
+
+void didChangeDisplayName(VM& vm, JSObject* closure)
+{
+    FunctionID closureFunction = *functionOf(closure);
+    if (functionKindData(closureFunction).isBound() || !standsForEveryFrameOfItsFunction(closure))
+        return;
+    FunctionTables& tables = FunctionTables::of(vm);
+    FunctionID sourceFunction = sourceFunctionOf(closureFunction);
+    auto* classObject = dynamicDowncast<Closure>(closure);
+    bool isClassObject = classObject && classObject->classData();
+    String text = isClassObject ? String() : ownDisplayNameText(vm, closure).isolatedCopy();
+    bool mayHaveDisplayName = isClassObject || !text.isNull();
+    Locker locker { tables.namesLock };
+    if (!mayHaveDisplayName && !tables.displayNames.contains(sourceFunction))
+        return;
+    auto& entry = tables.displayNames.add(sourceFunction, FunctionTables::DisplayName { }).iterator->value;
+    if (entry.isOneOfSeveral)
+        return;
+    if (entry.functionObject && entry.functionObject != closure) {
+        if (mayHaveDisplayName) {
+            entry = { };
+            entry.isOneOfSeveral = true;
+        }
+        return;
+    }
+    entry.functionObject = closure;
+    entry.text = WTF::move(text);
+    if (isClassObject) {
+        entry.stateOfClassObject = &classObject->state();
+        entry.constructorOfClass = closureFunction;
+    }
+    tables.hasDisplayNames.store(true, std::memory_order_relaxed);
+}
+
+static String displayNameInFrames(VM& vm, FunctionID function)
+{
+    FunctionTables& tables = FunctionTables::of(vm);
+    if (!tables.hasDisplayNames.load(std::memory_order_relaxed)) [[likely]]
+        return String();
+    FunctionID sourceFunction = sourceFunctionOf(function);
+    Locker locker { tables.namesLock };
+    auto entry = tables.displayNames.find(sourceFunction);
+    if (entry == tables.displayNames.end() || entry->value.isOneOfSeveral)
+        return String();
+    if (!entry->value.stateOfClassObject)
+        return entry->value.text.isolatedCopy();
+    JSCell* classObject = entry->value.stateOfClassObject->objects->closures.closureIfCreated(entry->value.constructorOfClass);
+    return classObject == entry->value.functionObject ? ownDisplayNameText(vm, asObject(classObject)) : String();
+}
+
+static String functionNameAsWritten(FunctionID function)
+{
+    FunctionKindData kind = functionKindData(function);
+    if (FunctionDescription(function).codeType() == ModuleCode || kind.isCommonJSModule)
+        return emptyString();
+    String written = writtenFunctionName(function);
+    return kind.isBound() ? makeString("bound "_s, written) : written;
+}
+
+// The engine names a frame by the property `name` that the function object got when the literal was evaluated, "get " and "set " included. The frame of a generator has no function object to ask.
+static String nameInFramesOfFunctionNamedBySymbol(FunctionID function)
+{
+    FunctionID source = sourceFunctionOf(function);
+    return functionKindData(source).isGenerator ? emptyString() : initialNameProperty(source);
+}
+
+String functionName(VM& vm, FunctionID function, NameForm form)
+{
+    switch (form) {
+    case NameForm::AsWritten:
+        return functionNameAsWritten(function);
+    case NameForm::InFrames:
+        if (String name = nameSetAtRunTime(vm, function); !name.isEmpty()) [[unlikely]]
+            return name;
+        if (String displayName = displayNameInFrames(vm, function); !displayName.isNull()) [[unlikely]]
+            return displayName;
+        if (FunctionDescription(function).isNamedBySymbol()) [[unlikely]]
+            return nameInFramesOfFunctionNamedBySymbol(function);
+        return functionNameAsWritten(function);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static String computedFunctionName(JSGlobalObject* globalObject, const Identifier& key, MethodKind kind)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String name = key.string();
+    if (UniquedStringImpl* uid = key.impl(); uid->isSymbol()) {
+        auto& symbol = static_cast<SymbolImpl&>(*uid);
+        if (symbol.isPrivate())
+            name = StringImpl::createSubstringSharingImpl(symbol, 0, symbol.length());
+        else
+            name = symbol.isNullSymbol() ? emptyString() : tryMakeString('[', StringView(uid), ']');
+        if (!name) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope, "Function name is too long"_s);
+            return { };
+        }
+    }
+    if (kind == MethodKind::Method)
+        return name;
+    bool isGetter = kind == MethodKind::Getter;
+    name = tryMakeString(isGetter ? "get "_s : "set "_s, name);
+    if (!name) [[unlikely]]
+        throwOutOfMemoryError(globalObject, scope, isGetter ? "Getter name is too long"_s : "Setter name is too long"_s);
+    return name;
+}
+
+void didDefineNameProperty(VM& vm, JSObject* closure, const String& name)
+{
+    FunctionID function = *functionOf(closure);
+    bool isInRuntimeModule = functionKindData(function).isInRuntimeModule;
+    if (!isInRuntimeModule && !usesOwnPropertiesForStackTraceName(closure))
+        return;
+    recordNameSetAtRunTime(vm, function, name, isInRuntimeModule || closureTableOf(closure).closureIfCreated(function) == closure);
+}
+
+void setComputedFunctionName(VM& vm, JSObject* closure, const Identifier& key, MethodKind kind)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String name = computedFunctionName(closure->realm(), key, kind);
+    RETURN_IF_EXCEPTION(scope, void());
+    CompiledCallee::reifyProperties(vm, closure);
+    closure->putDirect(vm, vm.propertyNames->name, jsString(vm, name), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
+    if (isCompiledClosure(closure)) {
+        FunctionRareData* rareData = uncheckedDowncast<Closure>(closure)->ensureRareData(vm);
+        rareData->setHasReifiedName();
+        rareData->setHasModifiedNameForBoundOrNonHostFunction();
+    }
+    didDefineNameProperty(vm, closure, name);
+}
+
+JSString* functionSourceText(JSGlobalObject* globalObject, FunctionID function)
+{
+    const ProgramTables& tables = programTables();
+    auto texts = tables.functionTexts();
+    if (texts.empty())
+        return nullptr;
+    VM& vm = globalObject->vm();
+    FunctionTables::TextsByFunction& answered = FunctionTables::of(vm).sourceTexts;
+    if (auto found = answered.find(function); found != answered.end()) {
+        if (JSString* text = found->value.get())
+            return text;
+    }
+    std::span entries { tables.at<FunctionTextEntry>(texts[0].entriesOffset), texts[0].numberOfEntries };
+    auto entry = std::ranges::lower_bound(entries, function.index(), { }, &FunctionTextEntry::function);
+    if (entry == entries.end() || entry->function != function.index())
+        return nullptr;
+    std::span bytes { tables.at<Latin1Character>(texts[0].textOffset) + entry->start, entry->end - entry->start };
+    JSString* text = charactersAreAllASCII(bytes) ? jsOwnedString(vm, StringImpl::createWithoutCopying(bytes)) : jsString(vm, String::fromUTF8ReplacingInvalidSequences(bytes));
+    answered.set(function, Weak<JSString>(text));
+    return text;
+}
+
+std::optional<FunctionID> functionOf(const JSCell* cell)
+{
+    switch (cell->type()) {
+    case SlimClosureType:
+        return uncheckedDowncast<SlimClosure>(cell)->function();
+    case SlimClosureWithPropertiesType:
+        return uncheckedDowncast<ReifiedSlimClosure>(cell)->function();
+    case CompiledClosureType:
+        return uncheckedDowncast<Closure>(cell)->function();
+    default:
+        return std::nullopt;
+    }
+}
+
+static FunctionID checkedFunctionOf(const JSCell* callee)
+{
+    std::optional<FunctionID> function = functionOf(callee);
+    RELEASE_ASSERT(function);
+    return *function;
+}
+
+namespace CompiledCallee {
+
+bool isCompiledCallee(const JSCell* cell)
+{
+    return isCompiledCalleeType(cell->type());
+}
+
+String name(JSObject* callee)
+{
+    return initialNameProperty(checkedFunctionOf(callee));
+}
+
+unsigned length(JSObject* callee)
+{
+    return functionLengthOf(checkedFunctionOf(callee));
+}
+
+JSValue sourceText(JSGlobalObject* globalObject, JSObject* callee)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    FunctionID function = checkedFunctionOf(callee);
+    FunctionKindData kindData = functionKindData(function);
+    CallableKind callableKind = kindData.callable();
+    if (callableKind == CallableKind::Bound)
+        RELEASE_AND_RETURN(scope, jsMakeNontrivialString(globalObject, "function "_s, writtenFunctionName(function), "() { [native code] }"_s));
+    ASCIILiteral async = kindData.isAsync ? "async "_s : ""_s;
+    bool isProgramFunction = !kindData.isInRuntimeModule;
+    JSString* text = isProgramFunction ? functionSourceText(globalObject, function) : nullptr;
+    RETURN_IF_EXCEPTION(scope, { });
+    if (text)
+        return text;
+    if (isProgramFunction && callableKind == CallableKind::Arrow)
+        RELEASE_AND_RETURN(scope, jsMakeNontrivialString(globalObject, async, "() => { [native code] }"_s));
+    bool isWrittenWithoutName = callableKind == CallableKind::Arrow || (!isProgramFunction && kindData.hasInferredName);
+    String name = isWrittenWithoutName ? emptyString() : initialNameProperty(function);
+    if (kindData.isConstructor)
+        RELEASE_AND_RETURN(scope, jsMakeNontrivialString(globalObject, "class "_s, name, name.isEmpty() ? ""_s : " "_s, "{ [native code] }"_s));
+    if (isProgramFunction && callableKind == CallableKind::Method)
+        RELEASE_AND_RETURN(scope, jsMakeNontrivialString(globalObject, async, kindData.isGenerator ? "*"_s : ""_s, name, "() { [native code] }"_s));
+    RELEASE_AND_RETURN(scope, jsMakeNontrivialString(globalObject, async, kindData.isGenerator ? "function* "_s : "function "_s, name, "() { [native code] }"_s));
+}
+
+bool isBoundFunction(JSObject* callee)
+{
+    return functionKindData(checkedFunctionOf(callee)).isBound();
+}
+
+FunctionKind kind(JSObject* callee)
+{
+    FunctionID function = checkedFunctionOf(callee);
+    FunctionKindData kindData = functionKindData(function);
+    if (kindData.isInRuntimeModule)
+        return FunctionKind::Builtin;
+    if (kindData.isConstructor)
+        return FunctionKind::Class;
+    CallableKind callableKind = kindData.callable();
+    if (callableKind == CallableKind::Bound)
+        return FunctionKind::Strict;
+    if (kindData.isGenerator)
+        return kindData.isAsync ? FunctionKind::AsyncGenerator : FunctionKind::Generator;
+    if (kindData.isAsync)
+        return FunctionKind::Async;
+    switch (callableKind) {
+    case CallableKind::Arrow:
+        return FunctionKind::Arrow;
+    case CallableKind::Method:
+        return FunctionKind::Method;
+    case CallableKind::Plain:
+        return FunctionDescription(function).isStrict() ? FunctionKind::Strict : FunctionKind::Sloppy;
+    case CallableKind::Bound:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+String displayName(JSObject* object)
+{
+    std::optional<FunctionID> function = functionOf(object);
+    if (!function)
+        return String();
+    if (FunctionDescription(*function).isNamedBySymbol())
+        return emptyString();
+    return writtenFunctionName(*function);
+}
+
+bool reifyProperties(VM& vm, JSObject* object)
+{
+    if (object->type() != SlimClosureType)
+        return false;
+    uncheckedDowncast<SlimClosure>(object)->reify(vm);
+    return true;
+}
+
+void setPrototypeProperty(VM& vm, JSObject* callee, JSObject* prototype, unsigned attributes)
+{
+    RELEASE_ASSERT(isCompiledCallee(callee));
+    if (callee->type() == CompiledClosureType) {
+        uncheckedDowncast<Closure>(callee)->setPrototypeProperty(vm, prototype, attributes);
+        return;
+    }
+    reifyProperties(vm, callee);
+    callee->putDirect(vm, vm.propertyNames->prototype, prototype, attributes);
+}
+
+void setNameProperty(JSGlobalObject* globalObject, JSObject* callee, JSString* name, unsigned attributes)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RELEASE_ASSERT(isCompiledCallee(callee));
+    String text = name->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (callee->type() == CompiledClosureType)
+        uncheckedDowncast<Closure>(callee)->setNameProperty(vm, name, attributes);
+    else {
+        reifyProperties(vm, callee);
+        callee->putDirect(vm, vm.propertyNames->name, name, attributes);
+    }
+    didDefineNameProperty(vm, callee, text);
+}
+
+Structure* cachedBoundFunctionStructure(JSObject* callee)
+{
+    if (!isSlimClosureType(callee->type()))
+        return nullptr;
+    return closureTableOf(callee).asyncBoundFunctionStructure();
+}
+
+void setCachedBoundFunctionStructure(VM&, JSObject* callee, Structure* structure)
+{
+    if (isSlimClosureType(callee->type()))
+        closureTableOf(callee).setAsyncBoundFunctionStructure(structure);
+}
+
+} // namespace CompiledCallee
+
+DeclaredAs declaredAs(JSCell* cell)
+{
+    std::optional<FunctionID> function = functionOf(cell);
+    if (!function)
+        return DeclaredAs::NotCompiled;
+    FunctionKindData kindData = functionKindData(*function);
+    if (kindData.isConstructor)
+        return DeclaredAs::Class;
+    if (kindData.isBound())
+        return DeclaredAs::Function;
+    if (kindData.isGenerator)
+        return kindData.isAsync ? DeclaredAs::AsyncGeneratorFunction : DeclaredAs::GeneratorFunction;
+    return kindData.isAsync ? DeclaredAs::AsyncFunction : DeclaredAs::Function;
+}
+
+String closureDeclaredName(JSObject* object)
+{
+    std::optional<FunctionID> function = functionOf(object);
+    if (!function)
+        return String();
+    FunctionKindData kindData = functionKindData(*function);
+    bool takesNameFromOwner = kindData.hasInferredName || kindData.accessor() != MethodKind::Method;
+    if (takesNameFromOwner && !kindData.isBound())
+        return emptyString();
+    return writtenFunctionName(*function);
+}
+
+bool belongsToBuiltinModule(JSCell* cell)
+{
+    std::optional<FunctionID> function = functionOf(cell);
+    return function && functionKindData(*function).isInRuntimeModule;
+}
+
+bool isCompiledClassObject(JSFunction* candidate)
+{
+    std::optional<FunctionID> function = functionOf(candidate);
+    return function && functionKindData(*function).isConstructor;
+}
+
+bool isClosureOf(JSCell* cell, FunctionID function)
+{
+    if (std::optional<FunctionID> closureFunction = functionOf(cell))
+        return sourceFunctionOf(*closureFunction) == sourceFunctionOf(function);
+    std::optional<uint32_t> implemented = programTables().builtinImplementedBy(function.index());
+    JSObject* object = cell->getObject();
+    if (!implemented || !object)
+        return false;
+    JSGlobalObject* realm = object->realmMayBeNull();
+    if (!realm)
+        return false;
+    auto found = findInRealm(realm, BuiltinCellKey::object(BuiltinID(*implemented)));
+    return found && *found == cell;
+}
+
 } } // namespace JSC::AOT
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(AOT)

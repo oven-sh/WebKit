@@ -8,7 +8,6 @@
 #if ENABLE(AOT)
 
 #include "AOTGuardAvailability.h"
-#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -21,7 +20,6 @@ bool guardProvesSlotFilled(FunctionAnalyses&, const Value& slotOperation);
 bool provesForUser(FunctionAnalyses&, const GuardFact&, Proof, const Value& user);
 
 bool testReadsOnlySubject(const Program&, const Function&, const Value& test);
-// The subject, unless the fact also depends on what another object holds.
 ValueID exclusiveSubjectOf(FunctionAnalyses&, const GuardFact&);
 
 } } } // namespace JSC::AOT::Typed

@@ -8,7 +8,6 @@ layout L0 name="Point" fields=[{key="x" declared={type=undefined|number}}, {key=
 layout L1 name="Holder" fields=[{key="inner" declared={type=L0} flow={occupancy=AlwaysFilled}}]
 
 function f0 name="goodStoreIntoAnotherAllocation" parameters=[{type=number}, {type=undefined|number}] results=[{type=number}] {
-  b0(v0: number, v1: undefined|number):
     v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     v4 = GetSlot v2, v2 key="y" receivers=[L0] level=Proven [holdsDeclaredType]
@@ -16,14 +15,12 @@ function f0 name="goodStoreIntoAnotherAllocation" parameters=[{type=number}, {ty
     Return v4
 }
 function f1 name="badStoreIntoTheSameAllocation" parameters=[{type=number}, {type=undefined|number}] results=[{type=number}] {
-  b0(v0: number, v1: undefined|number):
     v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     v3 = GetSlot v2, v2 key="y" receivers=[L0] level=Proven [holdsDeclaredType]
     PutSlot v2, v2, v1 key="y" receivers=[L0] level=Proven
     Return v3
 }
 function f2 name="badStoreIntoEitherAllocation" parameters=[{type=number}, {type=undefined|number}, {type=boolean}] results=[{type=number}] {
-  b0(v0: number, v1: undefined|number, v2: boolean):
     v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     v4 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     v5 = GetSlot v3, v3 key="y" receivers=[L0] level=Proven [holdsDeclaredType]
@@ -37,14 +34,12 @@ function f2 name="badStoreIntoEitherAllocation" parameters=[{type=number}, {type
     Return v5
 }
 function f3 name="goodStoreIntoAnObjectFromOutside" parameters=[{type=number}, {type=undefined|number}, {type=L0}] results=[{type=number}] {
-  b0(v0: number, v1: undefined|number, v2: L0):
     PutSlot v2, -, v1 key="y" receivers=[L0] level=Proven
     v4 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     v5 = GetSlot v4, v4 key="y" receivers=[L0] level=Proven [holdsDeclaredType]
     Return v5
 }
 function f4 name="badStoreIntoWhatIsReadFromWhereTheAllocationWasStored" parameters=[{type=number}, {type=undefined|number}, {type=L1}] results=[{type=number}] {
-  b0(v0: number, v1: undefined|number, v2: L1):
     v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     PutSlot v2, -, v3 key="inner" receivers=[L1] level=Proven
     v5 = GetSlot v2 key="inner" receivers=[L1] level=Proven

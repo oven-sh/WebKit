@@ -5,7 +5,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="undefinedOnOneWay" parameters=[{type=anything}, {type=string}, {type=int[-1, 100]}, {type=int[-1, 100]}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: string, v2: int[-1, 100], v3: int[-1, 100], v4: boolean):
     v5 = SubstringOrUndefined v1, v2, v3
     Branch v4 -> taken b1(), notTaken b3()
   b1():
@@ -18,8 +17,7 @@ function f0 name="undefinedOnOneWay" parameters=[{type=anything}, {type=string},
     Return v7
   b4():
     Return v1
-}
-# CHECK-LABEL: function f0 name="undefinedOnOneWay"
 # CHECK-NOT: SubstringOrUndefined
 # CHECK: = Undefined
 # CHECK: = Substring
+}

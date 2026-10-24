@@ -7,7 +7,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="count" [isFreeName]
     v2 = ToNumber v1
@@ -18,7 +17,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="handsTheCounterToALargeFunction" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Integer integer=0
     Jump -> next b1(v1, v1)
   b1(v2, v3):
@@ -40,7 +38,6 @@ function f1 name="handsTheCounterToALargeFunction" parameters=[{type=number}] re
 # CHECK: = CallDirect {{*}}function=f3
 
 function f2 name="handsTheCounterToASmallFunction" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Integer integer=0
     Jump -> next b1(v1, v1)
   b1(v2, v3):
@@ -60,7 +57,6 @@ function f2 name="handsTheCounterToASmallFunction" parameters=[{type=number}] re
 # CHECK-NOT: TypeTest
 
 function f3 name="large" parameters=[{type=anything}] results=[{type=number}] {
-  b0(v0: anything):
     v1 = ToNumber v0
 # REPEAT: i = 1..120
     v%(i+1) = Mul v%(i), v1
@@ -68,7 +64,6 @@ function f3 name="large" parameters=[{type=anything}] results=[{type=number}] {
     Return v121
 }
 function f4 name="small" parameters=[{type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
     v2 = Add v1, v0
     Return v2
 }

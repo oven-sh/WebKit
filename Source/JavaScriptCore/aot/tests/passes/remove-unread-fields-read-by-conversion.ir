@@ -15,7 +15,6 @@ entry module=m0
 layout L0 name="Amount" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}, {key="unused" declared={type=anything} flags=[IsRequired]}]
 layout L1 name="Label" fields=[{key="toString" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = Integer integer=1
@@ -30,12 +29,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="valueOf" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=5
     Return v1
 }
 function f2 name="toString" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="label"
     Return v1
 }

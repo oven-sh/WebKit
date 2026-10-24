@@ -21,7 +21,6 @@ entry module=m0
 variable g0 name="input" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = ToBoolean v0
     v2 = CallDirect v0 function=f6
@@ -43,7 +42,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="calledInLoop" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 1..40
     v%(i) = ToBoolean v0
 # END REPEAT
@@ -57,7 +55,6 @@ function f1 name="calledInLoop" parameters=[{type=anything}] results=[{type=anyt
 }
 
 function f2 name="asyncCalledEveryTimeByIt" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 1..40
     v%(i) = ToBoolean v0
 # END REPEAT
@@ -65,7 +62,6 @@ function f2 name="asyncCalledEveryTimeByIt" flags=[IsAsync] parameters=[{type=an
 }
 
 function f3 name="asyncCalledOnItsUnlikelyPath" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 1..40
     v%(i) = ToBoolean v0
 # END REPEAT
@@ -73,7 +69,6 @@ function f3 name="asyncCalledOnItsUnlikelyPath" flags=[IsAsync] parameters=[{typ
 }
 
 function f4 name="asyncThatALoopCalls" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 1..40
     v%(i) = ToBoolean v0
 # END REPEAT
@@ -81,7 +76,6 @@ function f4 name="asyncThatALoopCalls" flags=[IsAsync] parameters=[{type=anythin
 }
 
 function f5 name="asyncCalledByTwo" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 1..40
     v%(i) = ToBoolean v0
 # END REPEAT
@@ -89,12 +83,10 @@ function f5 name="asyncCalledByTwo" flags=[IsAsync] parameters=[{type=anything}]
 }
 
 function f6 name="smallAsync" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 
 function f7 name="asyncWithLoop" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Jump -> next b1()
   b1():
@@ -108,7 +100,6 @@ function f7 name="asyncWithLoop" flags=[IsAsync] parameters=[{type=anything}] re
 }
 
 function f8 name="calledByTwo" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 1..40
     v%(i) = ToBoolean v0
 # END REPEAT
@@ -116,7 +107,6 @@ function f8 name="calledByTwo" parameters=[{type=anything}] results=[{type=anyth
 }
 
 function f9 name="firstCaller" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 1..40
     v%(i) = ToBoolean v0
 # END REPEAT
@@ -126,7 +116,6 @@ function f9 name="firstCaller" parameters=[{type=anything}] results=[{type=anyth
 }
 
 function f10 name="secondCaller" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 1..40
     v%(i) = ToBoolean v0
 # END REPEAT

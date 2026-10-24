@@ -5,7 +5,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype]}
 function f0 name="declaredByRow" parameters=[{type=number}, {type=Array<number, pristine[Storage, Names]>}, {type=Map}] results=[{type=undefined}] {
-  b0(v0: number, v1: Array<number, pristine[Storage, Names]>, v2: Map):
     v3 = CallInline -, v0 inlineBuiltin=MathAbs overload=MathAbs/0
     v4 = CallInline v1, v0 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
     v5 = CallInline v2, v0 inlineBuiltin=MapGet overload=MapPrototypeGet/0
@@ -17,7 +16,6 @@ function f0 name="declaredByRow" parameters=[{type=number}, {type=Array<number, 
 # A lookup may move a table that lies in the image to the heap.
 # CHECK-NEXT: v5 CallInline: reads(CollectionStorage, CollectionEntries, StringStorage, AllocatorState) writes(CollectionStorage, StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects
 function f1 name="asOverload" parameters=[{type=number}, {type=Array<number, pristine[Storage, Names]>}, {type=L0}, {type=object}] results=[{type=undefined}] {
-  b0(v0: number, v1: Array<number, pristine[Storage, Names]>, v2: L0, v3: object):
     v4 = CallBuiltin v1, v0, v0 overload=ArrayPrototypeSlice/0
     v5 = CallInline v1, v0, v0 inlineBuiltin=ArraySlice overload=ArrayPrototypeSlice/0
     v6 = CallBuiltin -, v2 overload=ObjectKeys/0
@@ -34,7 +32,6 @@ function f1 name="asOverload" parameters=[{type=number}, {type=Array<number, pri
 # CHECK-NEXT: v8 CallBuiltin: unknownCode
 # CHECK-NEXT: v9 CallInline: unknownCode
 function f2 name="terminators" parameters=[{type=number}, {type=Array<number, pristine[Storage, Names]>}, {type=object}] results=[{type=undefined}] {
-  b0(v0: number, v1: Array<number, pristine[Storage, Names]>, v2: object):
     TryCallInline v1, v0 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b1(), miss b2()
   b1(v3):
     TryCallInline -, v0 inlineBuiltin=MathAbs overload=MathAbs/0 -> done b3(), miss b2()

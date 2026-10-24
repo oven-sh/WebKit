@@ -8,12 +8,10 @@ layout L0 kind=Instance name="Safe" constructor=f0 fields=[{key=#"#code"@L0 decl
 function f0 name="Safe" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
 
 function f1 name="codeOf" parameters=[{type=undefined|null|L0}] results=[{type=number}] {
-  b0(v0: undefined|null|L0):
     v1 = NewClassToken layout=L0
     v2 = PrivateGet v0, v1 layout=L0 field=0
     Return v2
-}
-# CHECK-LABEL: function f1 name="codeOf"
 # CHECK: = TypeTest v0 testedType=object
 # CHECK: : number = GetSlot {{*}} key=#"#code"@L0
 # CHECK: : never = PrivateGet
+}

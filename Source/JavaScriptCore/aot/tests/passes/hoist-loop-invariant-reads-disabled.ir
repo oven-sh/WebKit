@@ -9,7 +9,6 @@ module m0 path="main.js" displayPath="main.js"
 variable g0 name="limit" declared={type=number}
 
 function f0 name="moduleVariableRead" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Jump -> next b1()
   b1():
     LoopHint
@@ -20,8 +19,6 @@ function f0 name="moduleVariableRead" parameters=[{type=number}] results=[{type=
     Jump -> next b1()
   b3():
     Return v2
-}
-# CHECK-LABEL: function f0 name="moduleVariableRead"
 # CHECK-NEXT: b0(v0: number):
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1():
@@ -33,3 +30,4 @@ function f0 name="moduleVariableRead" parameters=[{type=number}] results=[{type=
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b3():
 # CHECK-NEXT: Return v2
+}

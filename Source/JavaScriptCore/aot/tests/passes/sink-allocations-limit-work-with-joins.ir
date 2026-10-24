@@ -9,7 +9,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
 
 function f0 name="theWorkRunsOutWithTheJoins" parameters=[{type=anything}, {type=anything}, {type=boolean}, {type=L0}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean, v3: L0, v4: boolean, v5: boolean):
     v6 = NewObject -, v0 layout=L0 fields=[0]
     v7 = Call v0, -, v6
     v8 = NewObject -, v1 layout=L0 fields=[0]
@@ -37,8 +36,6 @@ function f0 name="theWorkRunsOutWithTheJoins" parameters=[{type=anything}, {type
   b9(v15: L0):
     v16 = Call v1, -, v15, v13, v11
     Return v16
-}
-# CHECK-LABEL: function f0 name="theWorkRunsOutWithTheJoins"
 # CHECK: b0(
 # CHECK-NEXT: v6:{{*}}= NewObject -, v0 layout=L0 fields=[0]
 # CHECK-NEXT: = Call v0, -, v6
@@ -50,3 +47,4 @@ function f0 name="theWorkRunsOutWithTheJoins" parameters=[{type=anything}, {type
 # CHECK: b6(v13: L0):
 # CHECK: b9(v15: L0):
 # CHECK-NEXT: = Call v1, -, v15, v13, v11
+}

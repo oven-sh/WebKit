@@ -17,7 +17,6 @@ entry module=m0
 layout L0 name="Parent" fields=[]
 variable g0 name="saved" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = NewObject layout=L0
@@ -34,7 +33,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="v" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     PutModuleVariable v1 variable=g0
     Return
 }
@@ -45,7 +43,6 @@ static constexpr ASCIILiteral valueOfOnPrototype = R"IR(module m0 path="main.js"
 entry module=m0
 layout L0 name="Parent" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = NewClosure function=f1
@@ -58,7 +55,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="valueOf" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=5
     Return v1
 }
@@ -69,7 +65,6 @@ static constexpr ASCIILiteral toStringOnPrototype = R"IR(module m0 path="main.js
 entry module=m0
 layout L0 name="Parent" fields=[]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = NewObject layout=L0
@@ -85,7 +80,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="toString" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="named"
     Return v1
 }
@@ -95,7 +89,6 @@ function f1 name="toString" flags=[HasThis] thisType={type=anything} results=[{t
 static constexpr ASCIILiteral getterOfNewObject = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = Builtin builtin=Object
@@ -108,7 +101,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="seven" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=7
     Return v1
 }
@@ -118,7 +110,6 @@ function f1 name="seven" kind=Getter flags=[HasThis] thisType={type=anything} re
 static constexpr ASCIILiteral errorAsArgument = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=TypeError
     v1 = String string="boom"
     v2 = Construct v0, -, v1
@@ -127,7 +118,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="show" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="print" [isFreeName]
     v3 = PropGet v0 key="message"
@@ -143,7 +133,6 @@ function f1 name="show" parameters=[{type=anything}] results=[{type=anything}] {
 static constexpr ASCIILiteral argumentsAsArgument = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Integer integer=1
     v2 = Call v0, -, v1, v1
@@ -157,7 +146,6 @@ function f1 name="outer" flags=[HasArgumentCount, HasHiddenRest] length=0 result
     Return
 }
 function f2 name="count" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="print" [isFreeName]
     v3 = PropGet v0 key="length"
@@ -171,7 +159,6 @@ static constexpr ASCIILiteral numberOrObject = R"IR(module m0 path="main.js" dis
 entry module=m0
 layout L0 name="Parent" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=3
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = Builtin builtin=ObjectCreate
@@ -182,7 +169,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="show" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="print" [isFreeName]
     v3 = PropGet v0 key="a"
@@ -197,7 +183,6 @@ entry module=m0
 layout L0 name="Parent" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
 layout L1 name="Holder" fields=[{key="cache" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = Integer integer=4
@@ -224,7 +209,6 @@ static constexpr ASCIILiteral toJSONOnPrototype = R"IR(module m0 path="main.js" 
 entry module=m0
 layout L0 name="Parent" fields=[]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = NewObject layout=L0
@@ -238,7 +222,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="toJSON" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     Return v1
 }
@@ -249,7 +232,6 @@ static constexpr ASCIILiteral getterReadsThis = R"IR(module m0 path="main.js" di
 entry module=m0
 layout L0 name="Parent" fields=[]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = NewObject layout=L0
@@ -264,7 +246,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="double" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="n"
     v2 = Integer integer=2
     v3 = Mul v1, v2
@@ -276,7 +257,6 @@ function f1 name="double" kind=Getter flags=[HasThis] thisType={type=anything} r
 static constexpr ASCIILiteral numberObjectAsArgument = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Number
     v1 = Integer integer=5
     v2 = Construct v0, -, v1
@@ -285,7 +265,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="show" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="print" [isFreeName]
     v3 = Integer integer=1
@@ -299,7 +278,6 @@ function f1 name="show" parameters=[{type=anything}] results=[{type=anything}] {
 static constexpr ASCIILiteral mapIteratorAsArgument = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Map
     v1 = Construct v0
     v2 = PropGet v1 key="entries"
@@ -309,7 +287,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="show" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="print" [isFreeName]
     v3 = PropGet v0 key="next"
@@ -324,7 +301,6 @@ function f1 name="show" parameters=[{type=anything}] results=[{type=anything}] {
 static constexpr ASCIILiteral caughtErrorAsArgument = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     Jump -> next b1()
   b1() handler=b2():
@@ -338,7 +314,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="show" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="print" [isFreeName]
     v3 = PropGet v0 key="name"

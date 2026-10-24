@@ -13,7 +13,6 @@ function f1 name="badSecondParameter" parameters=[{type=number}] results=[{type=
     Return
 }
 function f2 name="goodParameter" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     Return
 }
 function f3 name="badMissingCapture" captures=[{type=string}] parameters=[{type=number}] results=[{type=undefined}] {

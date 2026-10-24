@@ -21,9 +21,7 @@ using NaturalLoop = WTF::NaturalLoop<CFG>;
 class NaturalLoops {
     WTF_MAKE_NONCOPYABLE(NaturalLoops);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(NaturalLoops);
-    using Loops = WTF::NaturalLoops<CFG>;
 public:
-    // The edge that closes a loop closes a cycle. In a graph without a cycle nobody needs the dominators to know that there is no loop.
     NaturalLoops(CFG& cfg, Dominators& dominators, bool selfCheck)
         : m_cfg(cfg)
     {
@@ -35,43 +33,11 @@ public:
 
     unsigned numLoops() const { return m_loops ? m_loops->numLoops() : 0; }
     const NaturalLoop& loop(unsigned index) const LIFETIME_BOUND { return m_loops->loop(index); }
-
-    const NaturalLoop* headerOf(BlockID block) const
-    {
-        if (!m_loops || !m_cfg.isReachable(block))
-            return nullptr;
-        return m_loops->headerOf(block);
-    }
-
-    const NaturalLoop* innerMostLoopOf(BlockID block) const
-    {
-        if (!m_loops || !m_cfg.isReachable(block))
-            return nullptr;
-        return m_loops->innerMostLoopOf(block);
-    }
-
+    const NaturalLoop* headerOf(BlockID block) const { return mayBeInLoop(block) ? m_loops->headerOf(block) : nullptr; }
+    const NaturalLoop* innerMostLoopOf(BlockID block) const { return mayBeInLoop(block) ? m_loops->innerMostLoopOf(block) : nullptr; }
     const NaturalLoop* innerMostOuterLoop(const NaturalLoop& loop) const { return m_loops->innerMostOuterLoop(loop); }
-
-    bool belongsTo(BlockID block, const NaturalLoop& candidateLoop) const
-    {
-        if (!m_cfg.isReachable(block))
-            return false;
-        return m_loops->belongsTo(block, candidateLoop);
-    }
-
-    unsigned loopDepth(BlockID block) const
-    {
-        if (!m_loops || !m_cfg.isReachable(block))
-            return 0;
-        return m_loops->loopDepth(block);
-    }
-
-    Vector<const NaturalLoop*> loopsOf(BlockID block) const
-    {
-        if (!m_loops || !m_cfg.isReachable(block))
-            return { };
-        return m_loops->loopsOf(block);
-    }
+    bool belongsTo(BlockID block, const NaturalLoop& candidateLoop) const { return m_cfg.isReachable(block) && m_loops->belongsTo(block, candidateLoop); }
+    unsigned loopDepth(BlockID block) const { return mayBeInLoop(block) ? m_loops->loopDepth(block) : 0; }
 
     std::optional<Edge> findSingleEntry(const NaturalLoop& loop) const
     {
@@ -89,8 +55,10 @@ public:
     }
 
 private:
+    bool mayBeInLoop(BlockID block) const { return m_loops && m_cfg.isReachable(block); }
+
     const CFG& m_cfg;
-    std::optional<Loops> m_loops;
+    std::optional<WTF::NaturalLoops<CFG>> m_loops;
 };
 
 } } } // namespace JSC::AOT::Typed

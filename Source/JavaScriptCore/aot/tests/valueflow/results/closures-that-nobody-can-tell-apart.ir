@@ -14,7 +14,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f1
     v2 = StrictEq v0, v1
@@ -40,7 +39,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 # REPEAT: i = 1..5
 function f%(i) name="inner%(i)" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 # END REPEAT

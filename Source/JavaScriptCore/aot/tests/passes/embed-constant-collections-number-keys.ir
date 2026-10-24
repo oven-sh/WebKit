@@ -15,21 +15,18 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="integers" results=[{type=Set<number>}] {
-  b0():
     v0 = Integer integer=1
     v1 = Integer integer=2
     v2 = Integer integer=-3
     v3 = NewArray v0, v1, v2 contents=number
     v4 = CallBuiltin -, v3 overload=Set/2 builtinCallForm=Whole
     Return v4
-}
-# CHECK-LABEL: function f0 name="integers"
 # CHECK-NOT: NewArray
 # CHECK: [[set0]]: Set<int[-3, 2]> = NewSetFromData data=d0
 # CHECK-NEXT: Return [[set0]]
+}
 
 function f1 name="numbersThatAreNoIntegers" results=[{type=Set<number>}] {
-  b0():
     v0 = Double number=1.5
     v1 = Double number=-2.25
     v2 = Double number=NaN
@@ -38,39 +35,33 @@ function f1 name="numbersThatAreNoIntegers" results=[{type=Set<number>}] {
     v5 = NewArray v0, v1, v2, v3, v4 contents=number
     v6 = CallBuiltin -, v5 overload=Set/2 builtinCallForm=Whole
     Return v6
-}
-# CHECK-LABEL: function f1 name="numbersThatAreNoIntegers"
 # CHECK-NOT: NewArray
 # CHECK: = NewSetFromData data=d1
+}
 
 function f2 name="integersOutsideInt32" results=[{type=Set<number>}] {
-  b0():
     v0 = Integer integer=4294967296
     v1 = Integer integer=9007199254740991
     v2 = Integer integer=-9007199254740991
     v3 = NewArray v0, v1, v2 contents=number
     v4 = CallBuiltin -, v3 overload=Set/2 builtinCallForm=Whole
     Return v4
-}
-# CHECK-LABEL: function f2 name="integersOutsideInt32"
 # CHECK-NOT: NewArray
 # CHECK: = NewSetFromData data=d2
+}
 
 function f3 name="numberTextAndBigInt" results=[{type=Set<anything>}] {
-  b0():
     v0 = Integer integer=1
     v1 = String string="1"
     v2 = BigInt digits="1"
     v3 = NewArray v0, v1, v2 contents=anything
     v4 = CallBuiltin -, v3 overload=Set/2 builtinCallForm=Whole
     Return v4
-}
-# CHECK-LABEL: function f3 name="numberTextAndBigInt"
 # CHECK-NOT: NewArray
 # CHECK: = NewSetFromData data=d3
+}
 
 function f4 name="mapFromNumbers" results=[{type=Map<number, anything>}] {
-  b0():
     v0 = Integer integer=404
     v1 = String string="Not Found"
     v2 = NewArray v0, v1 contents=anything
@@ -80,24 +71,21 @@ function f4 name="mapFromNumbers" results=[{type=Map<number, anything>}] {
     v6 = NewArray v2, v5 contents=Array<anything>
     v7 = CallBuiltin -, v6 overload=Map/2 builtinCallForm=Whole
     Return v7
-}
-# CHECK-LABEL: function f4 name="mapFromNumbers"
 # CHECK-NOT: NewArray
 # CHECK: [[map4]]: Map<404|fractional, 2|string> = NewMapFromData data=d4
 # CHECK-NEXT: Return [[map4]]
+}
 
 function f5 name="computedNumber" parameters=[{type=number}] results=[{type=Set<number>}] {
-  b0(v0: number):
     v1 = Integer integer=1
     v2 = Add v0, v1
     v3 = NewArray v1, v2 contents=number
     v4 = CallBuiltin -, v3 overload=Set/2 builtinCallForm=Whole
     Return v4
-}
-# CHECK-LABEL: function f5 name="computedNumber"
 # CHECK-NOT: FromData
 # CHECK: [[list5]]:{{*}}= NewArray v1, v2 contents=number
 # CHECK-NEXT: = CallBuiltin -, [[list5]] overload=Set/2
 # CHECK: data d0 root=Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=-3}]}
 # CHECK: data d4 root=Array{contents=Array elements=[Array{contents=anything elements=[Number{value=404}, String{value="Not Found"}]}, Array{contents=number elements=[Number{value=0.5}, Number{value=2}]}]}
 # CHECK-NOT: data d5
+}

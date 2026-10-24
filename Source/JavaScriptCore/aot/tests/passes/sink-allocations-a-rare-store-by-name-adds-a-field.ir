@@ -6,7 +6,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 fields=[{key="error" declared={type=string flags=[OmitsNull]} flags=[IsEnforced] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="ok" declared={type=boolean} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=SetAtCreation isUnchangedDuringActivation=true} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="value" declared={type=int[-2147483643, 2147483647]} flags=[IsEnforced] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined]}}] declaredOrder=[1, 0, 2] ownFieldCount=3 flow={baseState=None allocationClasses=[0] constructorOrders=[{fields=[1]}] impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype] keys=NeverEnumerated addedKeysAreComplete=true}
 
 function f0 name="neverBuilt" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean):
     v2 = NewObject -, v1 layout=L0 fields=[1]
     v3 = FinishObject v2
     Branch v1 -> taken b1(), notTaken b4()
@@ -32,17 +31,15 @@ function f0 name="neverBuilt" parameters=[{type=number}, {type=boolean}] results
   b7() frequency=Rare:
     v13 = PropGet v3 key="value" receivers=[L0]
     Return v13
-}
-# CHECK-LABEL: function f0 name="neverBuilt"
 # CHECK-NOT: NewObject
 # CHECK-NOT: PropSet
 # CHECK-NOT: PutSlot
 # CHECK-NOT: IsSlotFilled
 # CHECK-NOT: PropGet
 # CHECK: Return
+}
 
 function f1 name="builtWhereItLeaves" parameters=[{type=number}, {type=boolean}, {type=anything}, {type=L0}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean, v2: anything, v3: L0):
     v4 = IsSlotFilled v3 key="value" receivers=[L0] level=Expected [holdsDeclaredType]
     Branch v4 -> taken b4(), notTaken b1()
   b1() frequency=Rare:
@@ -57,11 +54,10 @@ function f1 name="builtWhereItLeaves" parameters=[{type=number}, {type=boolean},
     Return v0
   b4():
     Return v0
-}
-# CHECK-LABEL: function f1 name="builtWhereItLeaves"
 # CHECK: b1() frequency=Rare:
 # CHECK-NOT: NewObject
 # CHECK: b2() frequency=Rare:
 # CHECK: [[object1]]: L0 = NewObject
 # CHECK: PropSet {{*}}v0 key="value"
 # CHECK: = Call v2, -,
+}

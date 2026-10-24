@@ -10,7 +10,6 @@ layout L1 kind=Instance name="Middle" module=m0 base=L0 constructor=f2 flags=[Ha
 layout L2 kind=Instance name="Other" module=m0 base=L0 constructor=f3 flags=[HasHeritage]
 layout L3 kind=Instance name="Leaf" module=m0 base=L1 constructor=f4 flags=[HasHeritage]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -32,25 +31,21 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2
 }
 function f2 name="Middle" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0 homeKind=Object
     v3 = SuperConstruct v2, v1 layout=L1
     Return v3
 }
 function f3 name="Other" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0 homeKind=Object
     v3 = SuperConstruct v2, v1 layout=L2
     Return v3
 }
 function f4 name="Leaf" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0 homeKind=Object
     v3 = SuperConstruct v2, v1 layout=L3
     Return v3

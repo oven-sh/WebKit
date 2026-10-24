@@ -7,7 +7,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 function f0 name="store" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
-  b0(v0: L0, v1: number):
     PutSlot v0, -, v1 key="x" receivers=[L0] level=Proven
     PutSlot v0, -, v1 key="y" receivers=[L0] level=Proven
     PutSlots v0, -, v1, v1 placedKeys=[{key="x" level=Proven}, {key="y" level=Proven mayAdd=true}] receivers=[L0]

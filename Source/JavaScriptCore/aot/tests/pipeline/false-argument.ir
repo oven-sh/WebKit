@@ -8,7 +8,6 @@ entry module=m0
 typesite w0 module=m0 position=17 kind=Parameter
 typesite w1 module=m0 position=57 kind=Parameter
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = Integer integer=4
     v2 = Call v0, -, v1
@@ -22,13 +21,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="double" parameters=[{type=undefined|null|number site=w0}] results=[{type=anything}] {
-  b0(v0: undefined|null|number):
     v1 = Integer integer=2
     v2 = Mul v0, v1
     Return v2
 }
 function f2 name="triple" parameters=[{type=undefined|null|number site=w1}] results=[{type=anything}] {
-  b0(v0: undefined|null|number):
     v1 = Integer integer=3
     v2 = Mul v0, v1
     Return v2

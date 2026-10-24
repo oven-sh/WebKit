@@ -4,39 +4,32 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="hasItsOwnUnknownEntry" parameters=[{type=object}] results=[{type=boolean}] {
-  b0(v0: object):
     v1 = ScopeHasBinding v0 key="other"
     Return v1
 }
 function f1 name="first" parameters=[{type=object}] results=[{type=boolean}] {
-  b0(v0: object):
     v1 = CallDirect v0 function=f2
     Return v1
 }
 function f2 name="second" parameters=[{type=object}] results=[{type=boolean}] {
-  b0(v0: object):
     v1 = CallDirect v0 function=f3
     Return v1
 }
 function f3 name="third" parameters=[{type=object}] results=[{type=boolean}] {
-  b0(v0: object):
     v1 = CallDirect v0 function=f4
     Return v1
 }
 function f4 name="fourth" parameters=[{type=object}] results=[{type=boolean}] {
-  b0(v0: object):
     v1 = CallDirect v0 function=f5
     Return v1
 }
 function f5 name="last" parameters=[{type=object}] results=[{type=boolean}] {
-  b0(v0: object):
     v1 = Integer integer=1
     v2 = Add v1, v1
     v3 = ScopeHasBinding v0 key="name"
     Return v3
 }
 function f6 name="besideTheChain" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Add v0, v0
     Return v1
 }

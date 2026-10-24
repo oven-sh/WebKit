@@ -9,12 +9,10 @@ module m0 path="main.js" displayPath="main.js"
 variable g0 name="last" declared={type=number}
 
 function f0 name="onlyBareReturn" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     PutModuleVariable v0 variable=g0
     Return
 }
 function f1 name="bareReturnAndValue" parameters=[{type=number}, {type=boolean}] results=[{type=undefined|number}] {
-  b0(v0: number, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     Return
@@ -23,13 +21,11 @@ function f1 name="bareReturnAndValue" parameters=[{type=number}, {type=boolean}]
     Return v2
 }
 function f2 name="returnsItsValue" parameters=[{type=number}] results=[{type=undefined|number}] {
-  b0(v0: number):
     PutModuleVariable v0 variable=g0
     Return v0
 }
 
 function f3 name="callsOnlyBareReturn" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f0 [isAlwaysInlined]
     Return v1
 }
@@ -43,7 +39,6 @@ function f3 name="callsOnlyBareReturn" parameters=[{type=number}] results=[{type
 # CHECK-NEXT: Jump -> next [[join3]]([[undefined3]])
 
 function f4 name="callsBareReturnAndValue" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean):
     v2 = CallDirect v0, v1 function=f1 [isAlwaysInlined]
     Return v2
 }
@@ -61,7 +56,6 @@ function f4 name="callsBareReturnAndValue" parameters=[{type=number}, {type=bool
 # CHECK-NEXT: Jump -> next [[join4]]([[sum4]])
 
 function f5 name="callsReturnsItsValue" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f2 [isAlwaysInlined]
     Return v1
 }

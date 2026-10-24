@@ -22,7 +22,6 @@ module m0 path="/a.js" displayPath="a.js" body=f0
 evalscope e0
 evalscope e1 mode=Sloppy flags=[IsInFunction, IsInArrowFunction, IsInFieldInitializer, IsInDerivedConstructor, AllowsSuperProperty, AllowsSuperCall, AllowsNewTarget] bindings=[{name="x" variable=g0}, {name="k" kind=Constant depth=1 layout=L0 field=1 operand=0}, {name="f" kind=FunctionName depth=1 operand=1}, {kind=This operand=2}, {kind=NewTarget operand=3}, {kind=HomeObject operand=4}, {kind=ClassObject operand=5}, {kind=Arguments operand=6}, {name="#p" kind=PrivateName depth=2 layout=L1 field=0 operand=7}, {name="#m" kind=PrivateMethod depth=2 operand=7 function=8}, {name="#a" kind=PrivateAccessor depth=2 operand=7 function=8 setter=9}, {kind=WithObject depth=3 operand=10}, {kind=EvalVariables depth=3 operand=11}, {name="p" kind=MappedArgument depth=3 field=1 operand=6}, {name="e" kind=SimpleCatchParameter depth=4 layout=L0 field=0 operand=0}]
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     Return
 }
 entry module=m0

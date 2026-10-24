@@ -7,7 +7,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Undefined
     v1 = NewClosure function=f1
     v2 = Call v1
@@ -31,23 +30,18 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v19
 }
 function f1 name="asCreated" results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="hasOwnProperty" results=[{type=anything}] {
-  b0():
     Return
 }
 function f3 name="hasAnotherPrototype" results=[{type=anything}] {
-  b0():
     Return
 }
 function f4 name="other" results=[{type=anything}] {
-  b0():
     Return
 }
 function f5 name="coroutine" flags=[IsAsync] results=[{type=anything}] {
-  b0():
     Return
 }
 # CHECK-LABEL: function f0 name="main"

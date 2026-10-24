@@ -9,7 +9,6 @@ layout L0 name="Plain" fields=[{key="x" declared={type=number}}] flow={impossibl
 layout L1 kind=Instance name="Amount" constructor=f1 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="valueOf" function=f2 mutability=Fixed}]}
 variable g0 name="conversions" declared={type=number} initialization=Undefined
 function f0 name="add" parameters=[{type=number}, {type=object}, {type=L0}, {type=L1}] results=[{type=undefined}] {
-  b0(v0: number, v1: object, v2: L0, v3: L1):
     v4 = Add v0, v2
     v5 = Add v0, v3
     v6 = Add v1, v2
@@ -25,7 +24,6 @@ function f0 name="add" parameters=[{type=number}, {type=object}, {type=L0}, {typ
 # OPERANDS-NEXT: v6 Add 1: [Inspects]
 function f1 name="Amount" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
 function f2 name="valueOf" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=number}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     PutModuleVariable v1 variable=g0
     Return v1

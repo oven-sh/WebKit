@@ -9,73 +9,59 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="toInt32" parameters=[{type=i32}, {type=i32}] results=[{type=i32}] {
-  b0(v0: i32, v1: i32):
     v2 = Div v0, v1
     v3 = ToInt32 v2
     Return v3
-}
-# CHECK-LABEL: function f0 name="toInt32"
 # CHECK: v2: number = Div v0, v1
 # CHECK-NEXT: [[q0]]: i32 = DivideIntegers v0, v1 rounding=ToInt32
 # CHECK-NEXT: v3: i32 = ToInt32 [[q0]]
+}
 
 function f1 name="toUint32" parameters=[{type=i32}, {type=i32}] results=[{type=int[0, 4294967295]}] {
-  b0(v0: i32, v1: i32):
     v2 = Div v0, v1
     v3 = ToUint32 v2
     Return v3
-}
-# CHECK-LABEL: function f1 name="toUint32"
 # CHECK: [[q1]]: i32 = DivideIntegers v0, v1 rounding=ToInt32
 # CHECK-NEXT: v3: int[0, 4294967295] = ToUint32 [[q1]]
+}
 
 function f2 name="conversionTakesRangeOfQuotient" parameters=[{type=int[0, 100]}, {type=int[1, 8]}] results=[{type=i32}] {
-  b0(v0: int[0, 100], v1: int[1, 8]):
     v2 = Div v0, v1
     v3 = ToInt32 v2
     Return v3
-}
-# CHECK-LABEL: function f2 name="conversionTakesRangeOfQuotient"
 # CHECK: [[q2]]: int[0, 100] = DivideIntegers v0, v1 rounding=ToInt32
 # CHECK-NEXT: v3: int[0, 100] = ToInt32 [[q2]]
+}
 
 function f3 name="quotientThroughUpcast" parameters=[{type=i32}, {type=i32}] results=[{type=i32}] {
-  b0(v0: i32, v1: i32):
     v2 = Div v0, v1
     v3 = Upcast v2 castType=number
     v4 = ToInt32 v3
     Return v4
-}
-# CHECK-LABEL: function f3 name="quotientThroughUpcast"
 # CHECK: [[q3]]: i32 = DivideIntegers v0, v1 rounding=ToInt32
 # CHECK-NEXT: v4: i32 = ToInt32 [[q3]]
+}
 
 function f4 name="toIntegerOrInfinity" parameters=[{type=i32}, {type=i32}] results=[{type=number}] {
-  b0(v0: i32, v1: i32):
     v2 = Div v0, v1
     v3 = ToIntegerOrInfinity v2
     Return v3
-}
-# CHECK-LABEL: function f4 name="toIntegerOrInfinity"
 # CHECK-NOT: DivideIntegers
 # CHECK: = ToIntegerOrInfinity v2
+}
 
 function f5 name="dividendIsNumber" parameters=[{type=number}, {type=i32}] results=[{type=i32}] {
-  b0(v0: number, v1: i32):
     v2 = Div v0, v1
     v3 = ToInt32 v2
     Return v3
-}
-# CHECK-LABEL: function f5 name="dividendIsNumber"
 # CHECK-NOT: DivideIntegers
 # CHECK: = ToInt32 v2
+}
 
 function f6 name="product" parameters=[{type=i32}, {type=i32}] results=[{type=i32}] {
-  b0(v0: i32, v1: i32):
     v2 = Mul v0, v1
     v3 = ToInt32 v2
     Return v3
-}
-# CHECK-LABEL: function f6 name="product"
 # CHECK-NOT: DivideIntegers
 # CHECK: = ToInt32 v2
+}

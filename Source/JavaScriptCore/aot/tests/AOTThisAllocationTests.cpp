@@ -49,7 +49,6 @@ variable g0 name="Point" module=m0 declared={type=function} initialization=Funct
 module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -84,7 +83,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     v3 = Integer integer=1
@@ -99,7 +97,6 @@ function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type
     Return v2
 }
 function f2 name="Derived" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0 homeKind=Object
     v3 = SuperConstruct v2, v1 layout=L1
     v4 = Integer integer=2
@@ -107,7 +104,6 @@ function f2 name="Derived" kind=DerivedConstructor flags=[HasNewTarget, TakesCal
     Return v3
 }
 function f3 name="Unrelated" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L2
     v2 = NewObject v1 layout=L2
     v3 = Integer integer=3
@@ -123,7 +119,6 @@ function f4 name="Point" flags=[HasThis] thisType={type=L3 flags=[IsExpected]} r
     Return
 }
 function f5 name="Below" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0 homeKind=Object
     v3 = SuperConstruct v2, v1 layout=L4
     v4 = Integer integer=6
@@ -138,7 +133,6 @@ layout L2 kind=Instance name="Other" module=m0 base=L0 constructor=f3 fields=[{k
 module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -171,7 +165,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     v3 = Integer integer=1
@@ -181,7 +174,6 @@ function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type
     Return v2
 }
 function f2 name="Derived" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0 homeKind=Object
     v3 = SuperConstruct v2, v1 layout=L1
     v4 = Integer integer=2
@@ -189,7 +181,6 @@ function f2 name="Derived" kind=DerivedConstructor flags=[HasNewTarget, TakesCal
     Return v3
 }
 function f3 name="Other" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0 homeKind=Object
     v3 = SuperConstruct v2, v1 layout=L2
     v4 = Integer integer=3
@@ -203,7 +194,6 @@ entry module=m0
 layout L0 kind=Instance name="Counter" constructor=f1 fields=[{key="run" declared={type=function} flags=[IsRequired]}, {key="x" declared={type=anything}}]
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = NewClosure function=f1
@@ -220,7 +210,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     v3 = NewClosure v2 function=f2
@@ -230,7 +219,6 @@ function f1 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{t
     Return v2
 }
 function f2 name="run" kind=Arrow captures=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="x"
     Return v1
 }

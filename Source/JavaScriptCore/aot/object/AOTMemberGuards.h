@@ -40,7 +40,6 @@ private:
     ClassSide m_side;
 };
 
-// The numbers of the names that a class has without declaring them. A name that the program never mentions has none.
 struct ImplicitMemberKeys {
     std::optional<uint32_t> constructor;
     std::optional<uint32_t> prototype;
@@ -56,23 +55,19 @@ public:
 
     bool tryWatch(VM&, const LayoutData& classLayout, ClassSide, JSObject* holder, UniquedStringImpl*);
     void stopWatching(const LayoutData& classLayout);
-    // For objects that stand in the chain of the class and hold no class of it.
     void watchOtherObjects(std::span<JSObject* const>, const LayoutData& classLayout, const MemberGuardData&, UniquedStringImpl*);
 
     // A guard is set at most once. One that has ended stays clear for the life of the program.
     bool hasEnded(const MemberGuardData& guard) const { return m_endedGuards.contains(&guard); }
-    // A look at the chain that found a setter or a read-only property is not repeated until something is reported under the name.
     bool wasFoundNotToHold(const MemberGuardData& guard) const { return m_guardsFoundNotToHold.contains(&guard); }
     void didFindNotToHold(const MemberGuardData& guard) { m_guardsFoundNotToHold.add(&guard); }
     void mayHoldAgain(const MemberGuardData& guard) { m_guardsFoundNotToHold.remove(&guard); }
-    // One entry a class, so that a member of a set is found by its number.
     void didLeaveGuardsOfStoresClear(uint32_t firstBitNumber, const LayoutData& classLayout)
     {
         m_classesWithClearGuardsOfStores.append({ firstBitNumber, &classLayout });
         m_classesWithClearGuardsOfStoresAreSorted = false;
     }
     bool& aStoreByNameHasAsked() { return m_aStoreByNameHasAsked; }
-    // True from the second time on.
     bool wasAskedBefore(const MemberGuardData& guard) { return !m_guardsAskedOnce.add(&guard).isNewEntry; }
     void didEnd(const MemberGuardData& guard) { m_endedGuards.add(&guard); }
 
@@ -120,13 +115,7 @@ public:
 
     // While the prototype object of a class is a stand-in, nobody knows what a member under a computed name will hide, so no name is looked up through it.
     void didLeaveMembersUnarmed(const LayoutData& classLayout) { m_classesWithMembersLeftUnarmed.set(classLayout.index); }
-    bool takeMembersLeftUnarmed(const LayoutData& classLayout)
-    {
-        if (!m_classesWithMembersLeftUnarmed.get(classLayout.index))
-            return false;
-        m_classesWithMembersLeftUnarmed.clear(classLayout.index);
-        return true;
-    }
+    bool takeMembersLeftUnarmed(const LayoutData& classLayout) { return m_classesWithMembersLeftUnarmed.clear(classLayout.index); }
 
     // An entry of the method table that depends on a guard bit holds the compiled method while the bit is set, or while the class has no objects yet, and the lookup of its selector otherwise.
     class MethodTableUpdate {
@@ -166,7 +155,6 @@ private:
     bool m_classesWithClearGuardsOfStoresAreSorted { true };
     bool tryArmGuardOfStoresInTheWay(uint32_t listEntry, bool setHeldBefore);
     bool m_aStoreByNameHasAsked { false };
-    // A bit for each word. Every member of every set that is read asks here.
     Vector<uint64_t> m_guardWordsOfExistingClasses;
     BitVector m_classSidesSpokenOf;
     BitVector m_disarmedClasses;
@@ -177,17 +165,14 @@ private:
     Vector<std::pair<const LayoutData*, ClassSide>, 2> m_createdHolders;
     void speakOfCreatedHolders();
     void setCompleteSets();
-    void setCompleteSetsNotedSoFar();
     void updateMethodTable();
 
     struct GuardSet {
         uint32_t bit;
         uint32_t offsetOfMembers;
-        // Somebody has asked for it: it held until a class was defined whose guards of stores nobody has looked at.
         bool heldBefore;
     };
 
-    // An entry counts while it bears the number of the round, so a new round writes one word and not the table.
     class RecentNumbers {
     public:
         bool add(uint32_t number)
@@ -209,7 +194,6 @@ private:
         uint32_t m_round { 1 };
     };
 
-    // Which member of a set stood in the way when the set was last found blocked: while it still does, the set is not read again.
     struct MemberInTheWay {
         uint32_t setBitPlusOne { 0 };
         uint32_t index { 0 };
@@ -232,7 +216,6 @@ private:
     AOT_CLASS_THRESHOLD(size_t, fewestMembersPassedToRemember, 16);
     std::array<MemberInTheWay, 256> m_membersInTheWay { };
     UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_otherMembersInTheWay;
-    // From the first bit that an entry of the method table hangs on to the last.
     uint32_t m_firstBitWithDependents { 0 };
     uint32_t m_numberOfBitsAmongDependents { 0 };
     Vector<GuardSet, 8> m_setsToComplete;

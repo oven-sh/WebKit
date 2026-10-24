@@ -28,9 +28,8 @@ public:
     static Structure* realmClosureStructure(VM&, JSGlobalObject*, unsigned index);
     Structure* closureStructure(VM&, unsigned index);
     Structure* closureStructureFor(VM& vm, FunctionID function) { return closureStructure(vm, functionKindData(function).closureStructure); }
-    Structure* slimClosureStructure(VM&, FunctionID);
+    Structure* slimClosureStructure(VM&, FunctionID function) { return m_slimClosureStructures[functionKindData(function).slimClosureKind()]; }
     Structure* reifiedSlimClosureStructure(VM&, FunctionID);
-    // What the `prototype` property of a slim closure with properties holds until something reads it.
     JSCell* uncreatedPrototypeProperty() const { return m_uncreatedPrototypeProperty; }
     Structure* boundClosureStructure(VM&, FunctionID);
     Structure* asyncBoundFunctionStructure() const { return m_asyncBoundFunctionStructure; }
@@ -44,7 +43,6 @@ public:
     // True for a class or constructor function that is evaluated once and captures nothing: closure() creates its class object for whoever asks first.
     bool hasSingletonClosure(FunctionID) const;
     void registerClassObject(Closure*);
-    // The closure that the program stored as a member of a class, where the table has none for the function yet.
     void registerClosureOfMember(FunctionID, JSCell*);
     void forgetClosure(FunctionID);
     JSObject* createClosure(VM&, FunctionID, std::span<const uint64_t> captures, unsigned numberOfReferences);
@@ -57,8 +55,7 @@ public:
 
 private:
     template<typename Appender> void visitRegion(Appender&, size_t begin, size_t end);
-    void ensureStructures(VM&);
-    void createSlimClosureStructures(VM&);
+    void createStructures(VM&);
     void didCreateClosureFor(FunctionID, JSCell*);
 
     static constexpr unsigned regionShift = 8;

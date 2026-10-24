@@ -8,13 +8,11 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="squares" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Mul v0, v0 @3
     Return v1 @4
 }
 
 function f1 name="threeHundredSites" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
 # REPEAT: i = 0..299
     v%(i+1) = CallDirect v%(i) function=f0 @%(i+1001)
 # END REPEAT
@@ -38,7 +36,6 @@ function f1 name="threeHundredSites" parameters=[{type=number}] results=[{type=n
 # CHECK-NOT: CallDirect
 
 function f2 name="oneSiteMore" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
 # REPEAT: i = 0..300
     v%(i+1) = CallDirect v%(i) function=f0 @%(i+1001)
 # END REPEAT

@@ -20,6 +20,7 @@ class UniquedStringImpl;
 
 namespace JSC {
 
+class JSCell;
 class JSGlobalObject;
 class JSObject;
 class Structure;
@@ -28,6 +29,7 @@ enum class LinkTimeConstant : int32_t;
 
 namespace AOT {
 
+class BuiltinTable;
 enum class BuiltinOrigin : uint8_t;
 
 struct BuiltinClassBinding {
@@ -155,6 +157,9 @@ public:
     static std::span<const BuiltinNativeFunctionBinding> nativeFunctionsOfHost();
     static std::optional<LinkTimeConstant> linkTimeConstantOf(BuiltinID);
 };
+
+// Nothing where the class has no test, or its test asks for a ClassInfo that nothing has bound.
+std::optional<bool> passesInstanceTest(const BuiltinTable&, BuiltinClassID, JSCell*);
 
 } // namespace AOT
 } // namespace JSC

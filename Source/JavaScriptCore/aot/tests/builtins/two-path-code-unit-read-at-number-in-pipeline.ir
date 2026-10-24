@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="chainOfReads" parameters=[{type=string}, {type=number}] results=[{type=number}] {
-  b0(v0: string, v1: number):
     v2 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
     v3 = CallBuiltin v0, v2 overload=StringPrototypeCharCodeAt/0
     v4 = CallBuiltin v0, v3 overload=StringPrototypeCharCodeAt/0

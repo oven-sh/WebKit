@@ -10,22 +10,19 @@ function f0 name="earlierPredictionNamesAnotherLayout" parameters=[{type=undefin
   b0(v0: anything ~ undefined|null|L0):
     v1: anything ~ undefined|null|L1 = Upcast v0 castType=anything
     Return v1
-}
-# CHECK-LABEL: function f0 name="earlierPredictionNamesAnotherLayout"
 # CHECK: v1: anything ~ undefined|null|L0 = Upcast v0
+}
 
 function f1 name="earlierPredictionIsNarrower" parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ undefined|null|L0):
     v1: anything ~ L0 = Upcast v0 castType=anything
     Return v1
-}
-# CHECK-LABEL: function f1 name="earlierPredictionIsNarrower"
 # CHECK: v1: anything ~ L0 = Upcast v0
+}
 
 function f2 name="earlierPredictionNamesNoObject" parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ undefined|null|L0):
     v1: anything ~ undefined|null|number = Upcast v0 castType=anything
     Return v1
-}
-# CHECK-LABEL: function f2 name="earlierPredictionNamesNoObject"
 # CHECK: v1: anything ~ undefined|null = Upcast v0
+}

@@ -22,7 +22,6 @@ layout L1 name="TypeLike" fields=[{key="flags" declared={type=number} flags=[IsR
 layout L2 name="Other" fields=[{key="bits" declared={type=number}}] supertypes=[L3]
 layout L3 name="OtherLike" fields=[{key="bits" declared={type=number} flags=[IsRequired]}, {key="id" declared={type=number}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewObject -, v0 layout=L2 fields=[0]
@@ -41,7 +40,6 @@ function f1 name="mark" parameters=[{type=L0|L1 flags=[IsExpected]}] results=[{t
     Return
 }
 function f2 name="markAny" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=2
     PropSet v0, v1 key="extra" mode=Strict
     Return

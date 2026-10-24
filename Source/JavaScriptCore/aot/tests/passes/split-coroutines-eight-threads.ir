@@ -9,132 +9,104 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="async0" flags=[IsAsync] parameters=[{type=int[0, 1]}] results=[{type=anything}] {
-  b0(v0: int[0, 1]):
     v1 = Await v0 @0
     Return v1
-}
-# CHECK-LABEL: function f0 name="async0"
 # CHECK: role=CoroutineRamp {{*}} parameters=[{type=int[0, 1]}] results=[{type=Promise}]
 # CHECK: creator=Coroutine{kind=AsyncFunction ramp=f0 body=f14 entryWithoutPromise=f14 promiseType=Promise promiseParameter=1}
 # CHECK: = CallDirect v0, {{*}} function=f14
+}
 function f1 name="generator0" flags=[IsGenerator, TakesCallee] parameters=[{type=int[0, 2]}] results=[{type=anything}] {
-  b0(v0: function, v1: int[0, 2]):
     InitialYield @1
     Return v1
-}
-# CHECK-LABEL: function f1 name="generator0"
 # CHECK: role=CoroutineRamp {{*}} parameters=[{type=int[0, 2]}] results=[{type=Generator}]
 # CHECK: creator=Coroutine{ramp=f1 body=f15 promiseParameter=2}
 # CHECK: = CallDirect v0, v1, {{*}} function=f15
+}
 function f2 name="callsRamps" parameters=[{type=function}, {type=0}] results=[{type=anything}] {
-  b0(v0: function, v1: 0):
     v2 = CallDirect v1 function=f0
     v3 = CallDirect v0, v1 function=f1
     v4 = CallDirect v0, v1 function=f13
     Return v2
-}
-# CHECK-LABEL: function f2 name="callsRamps"
 # CHECK-NOT: role=
 # CHECK: v2: Promise = CallDirect v1 function=f0
 # CHECK-NEXT: v3: Generator = CallDirect v0, v1 function=f1
 # CHECK-NEXT: v4: AsyncGenerator = CallDirect v0, v1 function=f13
+}
 function f3 name="asyncGenerator0" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=int[0, 4]}] results=[{type=anything}] {
-  b0(v0: function, v1: int[0, 4]):
     InitialYield @3
     Return v1
-}
-# CHECK-LABEL: function f3 name="asyncGenerator0"
 # CHECK: role=CoroutineRamp {{*}} parameters=[{type=int[0, 4]}] results=[{type=AsyncGenerator}]
 # CHECK: creator=Coroutine{kind=AsyncGenerator ramp=f3 body=f16 promiseType=Promise promiseParameter=2}
 # CHECK: = CallDirect v0, v1, {{*}} function=f16
+}
 function f4 name="async1" flags=[IsAsync] parameters=[{type=int[0, 5]}] results=[{type=anything}] {
-  b0(v0: int[0, 5]):
     v1 = Await v0 @4
     Return v1
-}
-# CHECK-LABEL: function f4 name="async1"
 # CHECK: role=CoroutineRamp {{*}} parameters=[{type=int[0, 5]}] results=[{type=Promise}]
 # CHECK: creator=Coroutine{kind=AsyncFunction ramp=f4 body=f17 entryWithoutPromise=f17 promiseType=Promise promiseParameter=1}
 # CHECK: = CallDirect v0, {{*}} function=f17
+}
 function f5 name="generator1" flags=[IsGenerator, TakesCallee] parameters=[{type=int[0, 6]}] results=[{type=anything}] {
-  b0(v0: function, v1: int[0, 6]):
     InitialYield @5
     Return v1
-}
-# CHECK-LABEL: function f5 name="generator1"
 # CHECK: role=CoroutineRamp {{*}} parameters=[{type=int[0, 6]}] results=[{type=Generator}]
 # CHECK: creator=Coroutine{ramp=f5 body=f18 promiseParameter=2}
 # CHECK: = CallDirect v0, v1, {{*}} function=f18
+}
 function f6 name="asyncGenerator1" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=int[0, 7]}] results=[{type=anything}] {
-  b0(v0: function, v1: int[0, 7]):
     InitialYield @6
     Return v1
-}
-# CHECK-LABEL: function f6 name="asyncGenerator1"
 # CHECK: role=CoroutineRamp {{*}} parameters=[{type=int[0, 7]}] results=[{type=AsyncGenerator}]
 # CHECK: creator=Coroutine{kind=AsyncGenerator ramp=f6 body=f19 promiseType=Promise promiseParameter=2}
 # CHECK: = CallDirect v0, v1, {{*}} function=f19
+}
 function f7 name="async2" flags=[IsAsync] parameters=[{type=int[0, 8]}] results=[{type=anything}] {
-  b0(v0: int[0, 8]):
     v1 = Await v0 @7
     Return v1
-}
-# CHECK-LABEL: function f7 name="async2"
 # CHECK: role=CoroutineRamp {{*}} parameters=[{type=int[0, 8]}] results=[{type=Promise}]
 # CHECK: creator=Coroutine{kind=AsyncFunction ramp=f7 body=f20 entryWithoutPromise=f20 promiseType=Promise promiseParameter=1}
 # CHECK: = CallDirect v0, {{*}} function=f20
+}
 function f8 name="generator2" flags=[IsGenerator, TakesCallee] parameters=[{type=int[0, 9]}] results=[{type=anything}] {
-  b0(v0: function, v1: int[0, 9]):
     InitialYield @8
     Return v1
-}
-# CHECK-LABEL: function f8 name="generator2"
 # CHECK: role=CoroutineRamp {{*}} parameters=[{type=int[0, 9]}] results=[{type=Generator}]
 # CHECK: creator=Coroutine{ramp=f8 body=f21 promiseParameter=2}
 # CHECK: = CallDirect v0, v1, {{*}} function=f21
-function f9 name="suspendsNowhere" parameters=[{type=int[0, 10]}] results=[{type=anything}] {
-  b0(v0: int[0, 10]):
-    Return v0
 }
-# CHECK-LABEL: function f9 name="suspendsNowhere"
+function f9 name="suspendsNowhere" parameters=[{type=int[0, 10]}] results=[{type=anything}] {
+    Return v0
 # CHECK-NOT: role=
 # CHECK: Return v0
+}
 function f10 name="asyncGenerator2" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=int[0, 11]}] results=[{type=anything}] {
-  b0(v0: function, v1: int[0, 11]):
     InitialYield @10
     Return v1
-}
-# CHECK-LABEL: function f10 name="asyncGenerator2"
 # CHECK: role=CoroutineRamp {{*}} parameters=[{type=int[0, 11]}] results=[{type=AsyncGenerator}]
 # CHECK: creator=Coroutine{kind=AsyncGenerator ramp=f10 body=f22 promiseType=Promise promiseParameter=2}
 # CHECK: = CallDirect v0, v1, {{*}} function=f22
+}
 function f11 name="async3" flags=[IsAsync] parameters=[{type=int[0, 12]}] results=[{type=anything}] {
-  b0(v0: int[0, 12]):
     v1 = Await v0 @11
     Return v1
-}
-# CHECK-LABEL: function f11 name="async3"
 # CHECK: role=CoroutineRamp {{*}} parameters=[{type=int[0, 12]}] results=[{type=Promise}]
 # CHECK: creator=Coroutine{kind=AsyncFunction ramp=f11 body=f23 entryWithoutPromise=f23 promiseType=Promise promiseParameter=1}
 # CHECK: = CallDirect v0, {{*}} function=f23
+}
 function f12 name="generator3" flags=[IsGenerator, TakesCallee] parameters=[{type=int[0, 13]}] results=[{type=anything}] {
-  b0(v0: function, v1: int[0, 13]):
     InitialYield @12
     Return v1
-}
-# CHECK-LABEL: function f12 name="generator3"
 # CHECK: role=CoroutineRamp {{*}} parameters=[{type=int[0, 13]}] results=[{type=Generator}]
 # CHECK: creator=Coroutine{ramp=f12 body=f24 promiseParameter=2}
 # CHECK: = CallDirect v0, v1, {{*}} function=f24
+}
 function f13 name="asyncGenerator3" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=int[0, 14]}] results=[{type=anything}] {
-  b0(v0: function, v1: int[0, 14]):
     InitialYield @13
     Return v1
-}
-# CHECK-LABEL: function f13 name="asyncGenerator3"
 # CHECK: role=CoroutineRamp {{*}} parameters=[{type=int[0, 14]}] results=[{type=AsyncGenerator}]
 # CHECK: creator=Coroutine{kind=AsyncGenerator ramp=f13 body=f25 promiseType=Promise promiseParameter=2}
 # CHECK: = CallDirect v0, v1, {{*}} function=f25
+}
 
 # CHECK-LABEL: function f14 name="async0"
 # CHECK: role=CoroutineBody {{*}} parameters=[{type=int[0, 1]}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f0 

@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="countIsNumber" parameters=[{type=string}, {type=number}, {type=string}] results=[{type=anything}] {
-  b0(v0: string, v1: number, v2: string):
     v3 = CallBuiltin v0, v1 overload=StringPrototypeRepeat/0
     v4 = CallBuiltin v0, v1 overload=StringPrototypePadStart/1
     v5 = CallBuiltin v0, v1, v2 overload=StringPrototypePadEnd/1
@@ -20,7 +19,6 @@ function f0 name="countIsNumber" parameters=[{type=string}, {type=number}, {type
 # CHECK-COUNT-3: TryCallInline v0, v1
 
 function f1 name="countIsInteger" parameters=[{type=string}, {type=i32}] results=[{type=anything}] {
-  b0(v0: string, v1: i32):
     v2 = CallBuiltin v0, v1 overload=StringPrototypeRepeat/0
     v3 = CallBuiltin v0, v1 overload=StringPrototypePadStart/1
     v4 = NewArray v2, v3 contents=anything
@@ -31,45 +29,37 @@ function f1 name="countIsInteger" parameters=[{type=string}, {type=i32}] results
 # FORMS-NOT: Call
 
 function f2 name="fillerIsNoString" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: number, v2: anything):
     v3 = CallBuiltin v0, v1, v2 overload=StringPrototypePadEnd/2
     Return v3
-}
-# CHECK-LABEL: function f2 name="fillerIsNoString"
 # CHECK-NOT: TryCallInline
 # CHECK: v3: string = CallBuiltin v0, v1, v2 overload=StringPrototypePadEnd/2
+}
 
 function f3 name="countMayBeNull" parameters=[{type=string}, {type=null|number}] results=[{type=anything}] {
-  b0(v0: string, v1: null|number):
     v2 = Builtin builtin=StringPrototypeRepeat
     v3 = Call v2, v0, v1
     v4 = Builtin builtin=StringPrototypePadStart
     v5 = Call v4, v0, v1
     v6 = NewArray v3, v5 contents=anything
     Return v6
-}
-# RESOLVED-LABEL: function f3 name="countMayBeNull"
 # RESOLVED: [[number]]: number = ToNumber v1
 # RESOLVED: [[count]]: int|whole = ToIntegerOrInfinity [[number]]
 # RESOLVED: TryCallInline v0, [[count]] inlineBuiltin=StringRepeat overload=StringPrototypeRepeat/0
 # RESOLVED: TryCallInline v0, {{*}} inlineBuiltin=StringPadStart overload=StringPrototypePadStart/1
+}
 
 function f4 name="countIsAnything" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: anything):
     v2 = Builtin builtin=StringPrototypeRepeat
     v3 = Call v2, v0, v1
     Return v3
-}
-# RESOLVED-LABEL: function f4 name="countIsAnything"
 # RESOLVED: [[converted]]: number = ToNumber v1
 # RESOLVED: [[truncated]]: int|whole = ToIntegerOrInfinity [[converted]]
 # RESOLVED: TryCallInline v0, [[truncated]] inlineBuiltin=StringRepeat overload=StringPrototypeRepeat/0
+}
 
 function f5 name="receiverIsAnything" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = Builtin builtin=StringPrototypeRepeat
     v3 = Call v2, v0, v1
     Return v3
-}
-# RESOLVED-LABEL: function f5 name="receiverIsAnything"
 # RESOLVED-NOT: TryCallInline
+}

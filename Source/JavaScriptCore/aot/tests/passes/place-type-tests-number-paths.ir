@@ -30,7 +30,6 @@ function f0 name="provenNumberExpectedInt32" parameters=[{type=number}] results=
 # CHECK: }
 
 function f1 name="numberWithoutExpectedType" parameters=[{type=number}] results=[{type=boolean}] {
-  b0(v0: number):
     v1 = BitOr v0, v0
     v2 = Add v0, v0
     v3 = Less v0, v1

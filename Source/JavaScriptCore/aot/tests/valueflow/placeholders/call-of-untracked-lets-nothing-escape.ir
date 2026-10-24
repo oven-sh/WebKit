@@ -34,7 +34,6 @@ entry module=m0
 layout L0 name="Box"
 variable g0 name="chosen" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     PutModuleVariable v0 variable=g0
     v2 = NewClosure function=f2
@@ -54,32 +53,25 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="one" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewClosure function=f7
     Return v2
 }
 function f2 name="two" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Return
 }
 function f3 name="three" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Return
 }
 function f4 name="handed" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0, -
     Return
 }
 function f5 name="kept" module=m0 results=[{type=anything}] {
-  b0():
     Return
 }
 function f6 name="receiver" module=m0 results=[{type=anything}] {
-  b0():
     Return
 }
 function f7 name="made" module=m0 results=[{type=anything}] {
-  b0():
     Return
 }

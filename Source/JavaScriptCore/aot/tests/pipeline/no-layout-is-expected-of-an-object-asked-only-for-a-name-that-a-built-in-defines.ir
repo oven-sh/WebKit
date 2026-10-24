@@ -13,7 +13,6 @@ layout L0 name="Rule" module=m0 fields=[{key="inner" declared={type=anything}}, 
 layout L1 name="Descriptor" module=m0 fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
 
 function f0 name="" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="register" [isFreeName]
     v2 = Integer integer=2
@@ -29,7 +28,6 @@ function f0 name="" module=m0 kind=Module results=[{type=anything}] {
 }
 
 function f1 name="Made" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     v2 = NewObject -, v1 layout=L1 fields=[0]
     v3 = String string="inner"
@@ -39,19 +37,16 @@ function f1 name="Made" module=m0 flags=[HasThis] thisType={type=anything} resul
 }
 
 function f2 name="readsOneName" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="inner"
     Return v1
 }
 
 function f3 name="readsOneNameOfAnExpectedRule" module=m0 parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] {
-  b0(v0: undefined|null|L0):
     v1 = PropGet v0 key="inner"
     Return v1
 }
 
 function f4 name="readsTwoNames" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="inner"
     v2 = PropGet v0 key="limit"
     v3 = Add v1, v2

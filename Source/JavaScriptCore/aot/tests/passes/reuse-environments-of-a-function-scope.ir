@@ -12,19 +12,17 @@ layout L2 kind=Environment name="lastUseIsATailCall" fields=[{key="x" declared={
 layout L3 kind=Environment name="diesOnAnEdge" fields=[{key="x" declared={type=anything}}]
 
 function f0 name="handedToCallees" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     v3 = CallDirect v2, v1 function=f1
     v4 = GetEnvironmentField v2 layout=L0 field=0
     v5 = Call v0, -, v4, v3
     Return v5
-}
-# CHECK-LABEL: function f0 name="handedToCallees"
 # CHECK-NOT: MarkEnvironmentEscaped
 # CHECK: = GetEnvironmentField v2 layout=L0
 # CHECK-NEXT: ReleaseEnvironment v2
 # CHECK-NEXT: = Call v0
 # CHECK-NOT: ReleaseEnvironment
+}
 
 function f1 name="callee" captures=[{type=env L0}] parameters=[{type=boolean}] results=[{type=anything}] {
   b0(v0: env L0, v1: boolean):
@@ -35,12 +33,11 @@ function f1 name="callee" captures=[{type=env L0}] parameters=[{type=boolean}] r
   b2():
     v3 = GetEnvironmentField v0 layout=L0 field=0
     Return v3
-}
-# CHECK-LABEL: function f1 name="callee"
 # CHECK-NOT: ReleaseEnvironment
 # CHECK: MarkEnvironmentEscaped v0
 # CHECK-NEXT: = NewClosure v0 function=f2
 # CHECK-NOT: MarkEnvironmentEscaped
+}
 
 function f2 name="kept" captures=[{type=env L0}] results=[{type=anything}] {
   b0(v0: env L0):
@@ -49,14 +46,12 @@ function f2 name="kept" captures=[{type=env L0}] results=[{type=anything}] {
 }
 
 function f3 name="takenOnEveryPath" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L1 fields=[0]
     v2 = NewClosure v1 function=f4
     Return v2
-}
-# CHECK-LABEL: function f3 name="takenOnEveryPath"
 # CHECK-NOT: ReleaseEnvironment
 # CHECK-NOT: MarkEnvironmentEscaped
+}
 
 function f4 name="kept" captures=[{type=env L1}] results=[{type=anything}] {
   b0(v0: env L1):
@@ -65,26 +60,22 @@ function f4 name="kept" captures=[{type=env L1}] results=[{type=anything}] {
 }
 
 function f5 name="lastUseIsATailCall" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L2 fields=[0]
     v2 = CallDirect v1 function=f6
     ReturnCall v2
-}
-# CHECK-LABEL: function f5 name="lastUseIsATailCall"
 # CHECK-NOT: ReleaseEnvironment
 # CHECK: [[tail]]: anything = CallDirect v1 function=f6
 # CHECK-NEXT: ReturnCall [[tail]]
+}
 
 function f6 name="tailCallee" captures=[{type=env L2}] results=[{type=anything}] {
   b0(v0: env L2):
     v1 = GetEnvironmentField v0 layout=L2 field=0
     Return v1
-}
-# CHECK-LABEL: function f6 name="tailCallee"
 # CHECK-NOT: ReleaseEnvironment
+}
 
 function f7 name="diesOnAnEdge" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewObject -, v0 layout=L3 fields=[0]
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -95,10 +86,9 @@ function f7 name="diesOnAnEdge" parameters=[{type=anything}, {type=boolean}] res
   b3(v4: anything):
     v5 = Call v0, -, v4
     Return v5
-}
-# CHECK-LABEL: function f7 name="diesOnAnEdge"
 # CHECK: b1():
 # CHECK-NEXT: = GetEnvironmentField v2 layout=L3
 # CHECK-NEXT: ReleaseEnvironment v2
 # CHECK: b2():
 # CHECK-NEXT: ReleaseEnvironment v2
+}

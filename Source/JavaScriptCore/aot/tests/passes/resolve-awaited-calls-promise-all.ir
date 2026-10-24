@@ -13,7 +13,6 @@ function f3 name="plainCallee" results=[{type=Promise}]
 
 # The caller need not be a coroutine. In place of a promise each body takes undefined, as it does from a caller that awaits the call
 function f4 name="twoCalls" parameters=[{type=anything}] results=[{type=Promise}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f0 @10
     v2 = CallDirect function=f1 @11
     v3 = PromiseAllOfElements v1, v2 contents=anything @12
@@ -30,7 +29,6 @@ function f4 name="twoCalls" parameters=[{type=anything}] results=[{type=Promise}
 
 # An element that is no call has no bit, and a pure value may stand between the calls
 function f5 name="valueBetweenCalls" parameters=[{type=anything}] results=[{type=Promise}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f0 @20
     v2 = Integer integer=1
     v3 = CallDirect function=f1 @21
@@ -45,7 +43,6 @@ function f5 name="valueBetweenCalls" parameters=[{type=anything}] results=[{type
 
 # What the call returns is no promise any more, so a cast that said so goes away
 function f6 name="throughCasts" parameters=[{type=anything}] results=[{type=Promise}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f0 @30
     v2 = Upcast v1 castType=undefined|Promise
     v3 = PromiseAllOfElements v2 contents=anything
@@ -59,7 +56,6 @@ function f6 name="throughCasts" parameters=[{type=anything}] results=[{type=Prom
 
 # Until the operation has it, what a call without a promise returned is held by nobody else, so nothing may run but the calls for the other elements. The call in front of the store keeps its promise, and the call behind it does not
 function f7 name="effectBetweenCalls" parameters=[{type=anything}] results=[{type=Promise}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f0 @40
     PutModuleVariable v0 variable=g0
     v3 = CallDirect function=f1 @41
@@ -75,7 +71,6 @@ function f7 name="effectBetweenCalls" parameters=[{type=anything}] results=[{typ
 # CHECK-NEXT: = PromiseAllOfElements v1, v3 contents=anything directCalls=2
 
 function f8 name="plainCalleeFirst" results=[{type=Promise}] {
-  b0():
     v0 = CallDirect function=f3 @50
     v1 = CallDirect function=f1 @51
     v2 = PromiseAllOfElements v0, v1 contents=anything
@@ -90,7 +85,6 @@ function f8 name="plainCalleeFirst" results=[{type=Promise}] {
 
 # The plain function runs behind the call of the async function
 function f9 name="plainCalleeLast" results=[{type=Promise}] {
-  b0():
     v0 = CallDirect function=f1 @60
     v1 = CallDirect function=f3 @61
     v2 = PromiseAllOfElements v0, v1 contents=anything
@@ -104,7 +98,6 @@ function f9 name="plainCalleeLast" results=[{type=Promise}] {
 # CHECK-NOT: directCalls
 
 function f10 name="sameCallTwice" parameters=[{type=anything}] results=[{type=Promise}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f0 @70
     v2 = PromiseAllOfElements v1, v1 contents=anything
     Return v2
@@ -116,7 +109,6 @@ function f10 name="sameCallTwice" parameters=[{type=anything}] results=[{type=Pr
 # CHECK-NOT: directCalls
 
 function f11 name="callInAnotherBlock" parameters=[{type=anything}] results=[{type=Promise}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f0 @80
     Jump -> next b1()
   b1():
@@ -131,7 +123,6 @@ function f11 name="callInAnotherBlock" parameters=[{type=anything}] results=[{ty
 
 # A function that never suspends has no body to enter: its ramp makes a promise that is already settled
 function f12 name="workerIsLeftAlone" results=[{type=Promise}] {
-  b0():
     v0 = CallDirect function=f2 @90
     v1 = CallDirect function=f1 @91
     v2 = PromiseAllOfElements v0, v1 contents=anything
@@ -146,7 +137,6 @@ function f12 name="workerIsLeftAlone" results=[{type=Promise}] {
 
 # The operation has a bit for each of the first 32 elements
 function f13 name="thirtyTwoCallsAndAValue" parameters=[{type=anything}] results=[{type=Promise}] {
-  b0(v0: anything):
 # REPEAT: i = 1..32
     v%(i) = CallDirect function=f1
 # END REPEAT
@@ -160,7 +150,6 @@ function f13 name="thirtyTwoCallsAndAValue" parameters=[{type=anything}] results
 
 # The call for the element without a bit keeps its promise, and it runs behind all the others
 function f14 name="thirtyThreeCalls" results=[{type=Promise}] {
-  b0():
 # REPEAT: i = 0..32
     v%(i) = CallDirect function=f1
 # END REPEAT
@@ -175,27 +164,23 @@ function f14 name="thirtyThreeCalls" results=[{type=Promise}] {
 
 function f15 name="awaitsAll" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f15 body=f19 entryWithoutPromise=f19 promiseType=Promise promiseParameter=1}
 function f16 name="first" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncFunction ramp=f0 body=f16 entryWithoutPromise=f16 promiseType=Promise promiseParameter=1} {
-  b0(v0: anything, v1: undefined|Promise):
     v2 = AwaitBySavingFrame v0, v1
     v3 = ReturnAsyncResult v1, v2
     Return v3
 }
 function f17 name="second" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|Promise}] results=[{type=anything}] derivation={source=f1} creator=Coroutine{kind=AsyncFunction ramp=f1 body=f17 entryWithoutPromise=f17 promiseType=Promise promiseParameter=0} {
-  b0(v0: undefined|Promise):
     v1 = Undefined
     v2 = AwaitBySavingFrame v1, v0
     v3 = ReturnAsyncResult v0, v2
     Return v3
 }
 function f18 name="neverAwaits" role=AsyncWorker results=[{type=undefined}] derivation={source=f2} creator=Coroutine{kind=AsyncFunction ramp=f2 body=f18 promiseType=Promise worker=f18} {
-  b0():
     v0 = Undefined
     Return v0
 }
 
 # The elements are not awaited by this frame: they take undefined, not the driver of the caller, and the await of the operation stays an await of a promise
 function f19 name="awaitsAll" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f15} creator=Coroutine{kind=AsyncFunction ramp=f15 body=f19 entryWithoutPromise=f19 promiseType=Promise promiseParameter=1} {
-  b0(v0: anything, v1: undefined|Promise):
     v2 = CallDirect v0 function=f0 @100
     v3 = CallDirect function=f1 @101
     v4 = PromiseAllOfElements v2, v3 contents=anything @102

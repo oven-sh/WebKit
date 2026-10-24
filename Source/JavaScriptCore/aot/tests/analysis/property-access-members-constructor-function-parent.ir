@@ -55,7 +55,6 @@ function f9 name="MadeBelowClass" flags=[HasThis] results=[{type=anything}] cons
 function f10 name="FirstInCircle" flags=[HasThis] results=[{type=anything}] constructedClass=L7
 function f11 name="SecondInCircle" flags=[HasThis] results=[{type=anything}] constructedClass=L8
 function f12 name="otherKeys" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="missing"
     Return v1
 }

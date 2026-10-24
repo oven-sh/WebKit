@@ -9,22 +9,18 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="double" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Add v0, v0
     Return v1
 }
 function f1 name="negate" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Negate v0
     Return v1
 }
 function f2 name="addIndex" kind=Arrow parameters=[{type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
     v2 = Add v0, v1
     Return v2
 }
 function f3 name="each" role=Library parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = TypeTest v0 testedType=function
     Branch v3 -> taken b1(| 0), notTaken b2()
   b1(v4: function):
@@ -39,7 +35,6 @@ function f3 name="each" role=Library parameters=[{type=anything}, {type=anything
 }
 
 function f4 name="outsideLoops" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f0
     v2 = NewClosure function=f1
     v3 = NewClosure function=f2
@@ -54,7 +49,6 @@ function f4 name="outsideLoops" parameters=[{type=anything}] results=[{type=anyt
 # CHECK-NEXT: v6{{*}}= CallDirect v3, v0, v0 function=[[forAnyFunction]]
 
 function f5 name="inLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewClosure function=f0
     Jump -> next b1()
   b1():

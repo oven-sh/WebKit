@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
 function f0 name="theBackEdgeBringsALaterObject" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     Jump -> next b1(v2)
   b1(v3: L0):

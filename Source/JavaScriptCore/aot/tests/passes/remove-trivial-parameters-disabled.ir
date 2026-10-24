@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="sameValueOnBothEdges" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
-  b0(v0: number, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v0)
@@ -15,8 +14,6 @@ function f0 name="sameValueOnBothEdges" parameters=[{type=number}, {type=boolean
     Jump -> next b3(v0)
   b3(v2):
     Return v2
-}
-# CHECK-LABEL: function f0 name="sameValueOnBothEdges"
 # CHECK-NEXT: b0(v0: number, v1: boolean):
 # CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
@@ -26,3 +23,4 @@ function f0 name="sameValueOnBothEdges" parameters=[{type=number}, {type=boolean
 # CHECK-NEXT: b3(v2: number):
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
+}

@@ -17,7 +17,6 @@ entry module=m0
 layout L0 kind=Instance name="Point" module=m0 constructor=f1
 layout L1 kind=Instance name="Other" module=m0 constructor=f2 flags=[HasHeritage]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = FinishClass v1 layout=L0
@@ -35,7 +34,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Point" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0 fields=[]
     v3 = Integer integer=1
@@ -43,7 +41,6 @@ function f1 name="Point" kind=BaseConstructor flags=[HasNewTarget] results=[{typ
     Return v2
 }
 function f2 name="Other" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0 homeKind=Object
     v3 = SuperConstruct v2, v1 layout=L1
     Return v3

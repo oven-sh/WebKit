@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTAsyncAwaitConditions.h"
 #include "AOTInstance.h"
 #include "AOTSavedFrame.h"
 #include "AOTStubsBarriers.h"
@@ -29,7 +28,6 @@ Address argumentOfJob(GPRReg slot, unsigned index)
     return Address(slot, static_cast<int32_t>(QueuedTask::offsetOfArguments() + index * sizeof(EncodedJSValue)));
 }
 
-// Overwrites the index with the address.
 static void emitLoadAddressOfJob(StubAssembler& jit, GPRReg queue, GPRReg indexAndResult, GPRReg scratch)
 {
     jit.lshift64(indexAndResult, TrustedImm32(2), scratch);
@@ -52,11 +50,6 @@ void emitReserveJob(StubAssembler& jit, const JobRegisters& registers, JumpList&
     jit.and64(scratch, next);
     needsOperation.append(jit.branch64(CCallHelpers::Equal, next, Address(queue, MicrotaskQueue::offsetOfStart())));
     emitLoadAddressOfJob(jit, queue, slot, scratch);
-}
-
-void emitStoreAsyncContextOfJob(StubAssembler& jit, const JobRegisters& registers, GPRReg asyncContext)
-{
-    jit.store64(asyncContext, argumentOfJob(registers.slot, 3));
 }
 
 // The collector reads the queue while the mutator is stopped, and what it has not visited yet lies behind m_markedBefore, so a new job takes no barrier.

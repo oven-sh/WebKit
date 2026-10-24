@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="erase" parameters=[{type=boolean}, {type=number}] results=[{type=number}] {
-  b0(v0: boolean, v1: number):
     v2 = Add v1, v1
     v3 = Mul v1, v1
     v4 = Sub v1, v1

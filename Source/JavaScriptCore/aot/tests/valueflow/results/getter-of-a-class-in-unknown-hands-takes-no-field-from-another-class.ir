@@ -17,7 +17,6 @@ layout L0 kind=Instance name="Made" module=m0 constructor=f1
 layout L1 kind=Instance name="Stream" module=m0 constructor=f2
 layout L2 kind=Instance name="Counted" module=m0 constructor=f4
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = FinishClass v1 layout=L0
@@ -41,7 +40,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Made" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0 fields=[]
     v3 = Integer integer=1
@@ -49,18 +47,15 @@ function f1 name="Made" kind=BaseConstructor flags=[HasNewTarget] results=[{type
     Return v2
 }
 function f2 name="Stream" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L1
     v2 = NewObject v1 layout=L1 fields=[]
     Return v2
 }
 function f3 name="id" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=2
     Return v1
 }
 function f4 name="Counted" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L2
     v2 = NewObject v1 layout=L2 fields=[]
     v3 = Integer integer=4
@@ -68,7 +63,6 @@ function f4 name="Counted" kind=BaseConstructor flags=[HasNewTarget] results=[{t
     Return v2
 }
 function f5 name="id" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=3
     Return v1
 }

@@ -13,11 +13,10 @@ function f0 name="expected-callee" parameters=[{type=f2 flags=[IsExpected]}, {ty
     Branch v1 -> taken b1(), notTaken b2()
   b2():
     Return
-}
-# CHECK-LABEL: function f0 name="expected-callee"
 # CHECK-NEXT: b0(v0: anything, v1: boolean, v2: anything):
 # CHECK-NEXT: [[target]]: codeaddress = ResolveCallTarget v0 argumentCount=1
 # CHECK: anything = CallResolved v0, [[target]], -, v2
+}
 
 function f1 name="expected-type-under-cast" parameters=[{type=f2 flags=[IsExpected]}, {type=boolean}, {type=anything}] results=[{type=undefined}] {
   b0(v0: anything ~ f2, v1: boolean, v2: anything):
@@ -29,14 +28,12 @@ function f1 name="expected-type-under-cast" parameters=[{type=f2 flags=[IsExpect
     Branch v1 -> taken b1(), notTaken b2()
   b2():
     Return
-}
-# CHECK-LABEL: function f1 name="expected-type-under-cast"
 # CHECK-NEXT: b0(v0: anything, v1: boolean, v2: anything):
 # CHECK-NEXT: [[cast]]: anything = Upcast v0 castType=anything
 # CHECK-NEXT: [[second]]: codeaddress = ResolveCallTarget [[cast]] argumentCount=1
 # CHECK: anything = CallResolved [[cast]], [[second]], -, v2
+}
 
 function f2 name="target" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }

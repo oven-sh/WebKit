@@ -10,7 +10,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Bag" fields=[{key="x" declared={type=number}}]
 
 function f0 name="leftEarly" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
     v2 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -36,8 +35,6 @@ function f0 name="leftEarly" parameters=[{type=object}, {type=anything}] results
     Rethrow v10
   b7():
     Return v1
-}
-# CHECK-LABEL: function f0 name="leftEarly"
 # CHECK: LoopHint
 # CHECK: LoopHint
 # CHECK-NEXT: [[result1]]: anything = Call [[next1]], [[iterator1]]
@@ -49,14 +46,13 @@ function f0 name="leftEarly" parameters=[{type=object}, {type=anything}] results
 # CHECK: [[open1]]: undefined = CallDirect {{*}} function=f3 [isNeverInlined]
 # CHECK-NEXT: [[iterator1]]: object = ResultAt [[open1]]
 # CHECK-NEXT: [[next1]]: anything = ResultAt [[open1]] index=1
-# ABSENT-LABEL: function f0 name="leftEarly"
 # ABSENT-NOT: @@iterator
 # ABSENT-NOT: key="next"
 # ABSENT-NOT: key="return"
 # ABSENT-NOT: role=CatchHandler
+}
 
 function f1 name="number" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = IteratorOpen v0
     v2 = IteratorResume v1
     v3 = ResultAt v2 index=1
@@ -68,21 +64,18 @@ function f1 name="number" parameters=[{type=number}] results=[{type=anything}] {
 # ABSENT-LABEL: function f1 name="number"
 
 function f2 name="layoutOfTheProgram" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = IteratorOpen v0
     v2 = IteratorResume v1
     v3 = ResultAt v2 index=1
     IteratorClose v1
     Return v3
-}
 # The methods of a layout are code of the program, which later passes call directly.
-# CHECK-LABEL: function f2 name="layoutOfTheProgram"
 # CHECK: b0(v0: L0):
 # CHECK: = PropGet v0 key=@@iterator
 # CHECK: key="next"
 # CHECK: key="return"
-# ABSENT-LABEL: function f2 name="layoutOfTheProgram"
 # ABSENT-NOT: [isNeverInlined]
+}
 
 # CHECK-LABEL: function f3 name="openIterator"
 # CHECK: b0(v0: anything):

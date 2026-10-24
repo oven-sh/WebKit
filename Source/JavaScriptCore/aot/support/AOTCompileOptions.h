@@ -145,10 +145,7 @@ struct LoggingOptions {
     bool dumpsDisassembly { false };
     UTF8CString functionToDump;
     UTF8CString mapFilePath;
-    uint8_t dumpedForms { 0 };
     std::optional<PassID> dumpedPass;
-
-    bool dumps(Typed::IRForm form) const { return dumpedForms & (1u << static_cast<unsigned>(form)); }
 
     JS_EXPORT_PRIVATE static LoggingOptions fromJSCOptions();
 };

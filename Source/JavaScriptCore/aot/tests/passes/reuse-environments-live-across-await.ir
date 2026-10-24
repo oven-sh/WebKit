@@ -9,7 +9,6 @@ layout L0 kind=Environment name="allocatedBeforeAwait" fields=[{key="x" declared
 layout L1 kind=Environment name="capturedBeforeAwait" fields=[{key="x" declared={type=anything}}]
 
 function f0 name="allocatedBeforeAwait" flags=[IsAsync] parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -19,17 +18,15 @@ function f0 name="allocatedBeforeAwait" flags=[IsAsync] parameters=[{type=anythi
     Branch v1 -> taken b1(), notTaken b2()
   b2():
     Return v5
-}
-# CHECK-LABEL: function f0 name="allocatedBeforeAwait"
 # CHECK-NOT: ReleaseEnvironment
 # CHECK-NOT: MarkEnvironmentEscaped
 # CHECK: GetEnvironmentField v3
 # CHECK-NEXT: ReleaseEnvironment v3
 # CHECK-NOT: ReleaseEnvironment
 # CHECK-NOT: MarkEnvironmentEscaped
+}
 
 function f1 name="passesCapture" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -38,24 +35,22 @@ function f1 name="passesCapture" parameters=[{type=anything}, {type=boolean}] re
     Branch v1 -> taken b1(), notTaken b2()
   b2():
     Return v4
-}
-# CHECK-LABEL: function f1 name="passesCapture"
 # CHECK-NOT: ReleaseEnvironment
 # CHECK-NOT: MarkEnvironmentEscaped
 # CHECK: CallDirect
 # CHECK-NEXT: ReleaseEnvironment v3
 # CHECK-NOT: ReleaseEnvironment
 # CHECK-NOT: MarkEnvironmentEscaped
+}
 
 function f2 name="capturedBeforeAwait" kind=Arrow flags=[IsAsync] captures=[{type=env L1}] parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: env L1, v1: anything):
     v2 = Await v1
     v3 = GetEnvironmentField v0 layout=L1 field=0
     Return v3
-}
-# CHECK-LABEL: function f2 name="capturedBeforeAwait"
 # CHECK: b0(
 # CHECK-NEXT: MarkEnvironmentEscaped v0
 # CHECK-NEXT: Await
 # CHECK-NOT: ReleaseEnvironment
 # CHECK-NOT: MarkEnvironmentEscaped
+}

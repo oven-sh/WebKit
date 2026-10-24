@@ -16,7 +16,6 @@ layout L1 name="Holder" fields=[{key="held" declared={type=anything} flags=[IsRe
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -25,13 +24,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="makeEmpty" results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L0 fields=[]
     v1 = FinishObject v0
     Return v1
 }
 function f2 name="makeHolder" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L1 fields=[0]
     v2 = FinishObject v1
     Return v2

@@ -6,7 +6,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
 
 function f0 name="writeBetweenTestAndBranch" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     v2 = HasKeyOrder v0 layout=L0 fields=[0]
     PutSlotOrAdd v0, -, v1 key="y" receivers=[L0] level=Proven
     Branch v2 -> taken b1(| 0), notTaken b2()
@@ -21,7 +20,6 @@ function f0 name="writeBetweenTestAndBranch" parameters=[{type=L0}, {type=anythi
 # CHECK: b1:0 available: []
 
 function f1 name="writeBeforeTest" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     PutSlotOrAdd v0, -, v1 key="y" receivers=[L0] level=Proven
     v3 = HasKeyOrder v0 layout=L0 fields=[0]
     Branch v3 -> taken b1(| 0), notTaken b2()
@@ -36,7 +34,6 @@ function f1 name="writeBeforeTest" parameters=[{type=L0}, {type=anything}] resul
 # CHECK: b1:0 available: [v4]
 
 function f2 name="addedFieldIsNoExtraProperty" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     v2 = HasNoExtraProperties v0
     PutSlotOrAdd v0, -, v1 key="y" receivers=[L0] level=Proven
     Branch v2 -> taken b1(| 0), notTaken b2()
@@ -51,7 +48,6 @@ function f2 name="addedFieldIsNoExtraProperty" parameters=[{type=L0}, {type=anyt
 # CHECK: b1:0 available: [v4]
 
 function f3 name="definedAccessorIsExtraProperty" parameters=[{type=L0}, {type=function}] results=[{type=anything}] {
-  b0(v0: L0, v1: function):
     v2 = HasNoExtraProperties v0
     DefineGetter v0, v1 key="z"
     Branch v2 -> taken b1(| 0), notTaken b2()
@@ -66,7 +62,6 @@ function f3 name="definedAccessorIsExtraProperty" parameters=[{type=L0}, {type=f
 # CHECK: b1:0 available: []
 
 function f4 name="testInEarlierBlock" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = HasNoExtraProperties v0
     Jump -> next b1()
   b1():
@@ -82,7 +77,6 @@ function f4 name="testInEarlierBlock" parameters=[{type=L0}] results=[{type=anyt
 # CHECK: b2:0 available: [v2]
 
 function f5 name="writeBehindTestInEarlierBlock" parameters=[{type=L0}, {type=function}] results=[{type=anything}] {
-  b0(v0: L0, v1: function):
     v2 = HasNoExtraProperties v0
     DefineGetter v0, v1 key="z"
     Jump -> next b1()
@@ -99,7 +93,6 @@ function f5 name="writeBehindTestInEarlierBlock" parameters=[{type=L0}, {type=fu
 # CHECK: b2:0 available: []
 
 function f6 name="writeInBlockOfBranch" parameters=[{type=L0}, {type=function}] results=[{type=anything}] {
-  b0(v0: L0, v1: function):
     v2 = HasNoExtraProperties v0
     Jump -> next b1()
   b1():
@@ -116,7 +109,6 @@ function f6 name="writeInBlockOfBranch" parameters=[{type=L0}, {type=function}] 
 # CHECK: b2:0 available: []
 
 function f7 name="writeInBlockBetween" parameters=[{type=L0}, {type=function}] results=[{type=anything}] {
-  b0(v0: L0, v1: function):
     v2 = HasNoExtraProperties v0
     Jump -> next b1()
   b1():
@@ -135,7 +127,6 @@ function f7 name="writeInBlockBetween" parameters=[{type=L0}, {type=function}] r
 # CHECK: b3:0 available: []
 
 function f8 name="allocationBehindTestInEarlierBlock" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     v2 = HasNoExtraProperties v0
     v3 = NewObject -, v1 layout=L0 fields=[0]
     Jump -> next b1()
@@ -151,7 +142,6 @@ function f8 name="allocationBehindTestInEarlierBlock" parameters=[{type=L0}, {ty
 # CHECK: b2 available at head: [{{*}}v4.0
 
 function f9 name="otherBranchBetween" parameters=[{type=L0}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: L0, v1: boolean):
     v2 = HasNoExtraProperties v0
     Branch v1 -> taken b1(), notTaken b3()
   b1():
@@ -167,7 +157,6 @@ function f9 name="otherBranchBetween" parameters=[{type=L0}, {type=boolean}] res
 # CHECK: b2:0 available: [v3]
 
 function f10 name="twoWaysFromTestToBranch" parameters=[{type=L0}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: L0, v1: boolean):
     v2 = HasNoExtraProperties v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -187,7 +176,6 @@ function f10 name="twoWaysFromTestToBranch" parameters=[{type=L0}, {type=boolean
 # CHECK: b4:0 available: []
 
 function f11 name="definedAccessorKeepsShape" parameters=[{type=object}, {type=function}] results=[{type=anything}] {
-  b0(v0: object, v1: function):
     v2 = ShapeTest v0 layouts=[L0]
     DefineGetter v0, v1 key="z"
     Branch v2 -> taken b1(| 0), notTaken b2()
@@ -202,7 +190,6 @@ function f11 name="definedAccessorKeepsShape" parameters=[{type=object}, {type=f
 # CHECK: b1:0 available: [v4]
 
 function f12 name="addedFieldKeepsNotFrozen" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     v2 = IsNotFrozen v0
     PutSlotOrAdd v0, -, v1 key="y" receivers=[L0] level=Proven
     Branch v2 -> taken b1(| 0), notTaken b2()

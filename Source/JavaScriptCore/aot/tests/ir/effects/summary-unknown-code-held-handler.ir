@@ -9,16 +9,13 @@ layout L1 name="Handlers" fields=[{key="message" declared={type=anything} flags=
 variable g0 name="nothingWrites" module=m0 declared={type=anything} initialization=Undefined flow={writers=AllKnown}
 variable g1 name="closeHandlerWrites" module=m0 declared={type=anything} initialization=Undefined flow={writers=AllKnown}
 function f0 name="calledByCompiledCode" results=[{type=anything}] {
-  b0():
     Return
 }
 function f1 name="close" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     PutModuleVariable v1 variable=g1
     Return
 }
 function f2 name="message" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = GetModuleVariable variable=g0
     v3 = GetModuleVariable variable=g1
     v4 = PropGet v0 key="close"
@@ -27,7 +24,6 @@ function f2 name="message" parameters=[{type=anything}, {type=anything}] results
     Return v6
 }
 function f3 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = CallDirect function=f0
     v1 = NewClosure function=f2
     v2 = NewClosure function=f1

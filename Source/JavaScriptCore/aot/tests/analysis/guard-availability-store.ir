@@ -7,7 +7,6 @@ layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" decl
 variable g0 name="published" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="storeToAnotherField" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
     v2 = ShapeTest v0 layouts=[L0]
     Branch v2 -> taken b1(| 0), notTaken b3()
   b1(v3):
@@ -30,7 +29,6 @@ function f0 name="storeToAnotherField" parameters=[{type=object}, {type=anything
 # CHECK: v8 guard v7: Available
 
 function f1 name="storeToTestedField" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
     v2 = ShapeTest v0 layouts=[L0]
     Branch v2 -> taken b1(| 0), notTaken b3()
   b1(v3):
@@ -50,7 +48,6 @@ function f1 name="storeToTestedField" parameters=[{type=object}, {type=anything}
 # CHECK: v7 guard v3: Available
 
 function f2 name="accessorDefinedOnPossibleAlias" parameters=[{type=L0}, {type=object}, {type=function}] results=[{type=anything}] {
-  b0(v0: L0, v1: object, v2: function):
     v3 = HasNoExtraProperties v0
     Branch v3 -> taken b1(| 0), notTaken b2()
   b1(v4):
@@ -68,7 +65,6 @@ function f2 name="accessorDefinedOnPossibleAlias" parameters=[{type=L0}, {type=o
 # CHECK: v5 guard v4: Available
 
 function f3 name="accessorDefinedWhileTestedObjectIsConfined" parameters=[{type=object}, {type=anything}, {type=function}] results=[{type=anything}] {
-  b0(v0: object, v1: anything, v2: function):
     v3 = NewObject -, v1 layout=L0 fields=[0]
     v4 = HasNoExtraProperties v3
     Branch v4 -> taken b1(| 0), notTaken b2()
@@ -86,7 +82,6 @@ function f3 name="accessorDefinedWhileTestedObjectIsConfined" parameters=[{type=
 # CHECK: v7 guard v5: Available
 
 function f4 name="fieldAddedToPossibleAlias" parameters=[{type=object}, {type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: object, v2: anything):
     v3 = ShapeTest v0 layouts=[L0]
     Branch v3 -> taken b1(| 0), notTaken b4()
   b1(v4):
@@ -110,7 +105,6 @@ function f4 name="fieldAddedToPossibleAlias" parameters=[{type=object}, {type=ob
 # CHECK: v10 guard v4: Available
 
 function f5 name="fieldAddedToOwnAllocation" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
     v2 = NewObject -, v1 layout=L0 fields=[0]
     v3 = ShapeTest v0 layouts=[L0]
     Branch v3 -> taken b1(| 0), notTaken b3()
@@ -133,7 +127,6 @@ function f5 name="fieldAddedToOwnAllocation" parameters=[{type=object}, {type=an
 # CHECK: v9 guard v8: Available
 
 function f6 name="accessorDefinedAfterTestedObjectEscaped" parameters=[{type=object}, {type=anything}, {type=function}] results=[{type=anything}] {
-  b0(v0: object, v1: anything, v2: function):
     v3 = NewObject -, v1 layout=L0 fields=[0]
     PutModuleVariable v3 variable=g0
     v5 = HasNoExtraProperties v3
@@ -152,7 +145,6 @@ function f6 name="accessorDefinedAfterTestedObjectEscaped" parameters=[{type=obj
 # CHECK: v7 guard v6: Available
 
 function f7 name="allGuardsOfEndedGuard" parameters=[{type=object}, {type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: object, v2: anything):
     v3 = ShapeTest v0 layouts=[L0]
     Branch v3 -> taken b1(| 0), notTaken b4()
   b1(v4):
@@ -176,7 +168,6 @@ function f7 name="allGuardsOfEndedGuard" parameters=[{type=object}, {type=object
 # CHECK-NEXT: b3:3 available: [v4 v8 v11]
 
 function f8 name="fieldAddedThroughMergeOfTestedAndOwnObject" parameters=[{type=L0}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything, v2: boolean):
     v3 = NewObject -, v1 layout=L0 fields=[0]
     Branch v2 -> taken b1(v0), notTaken b1(v3)
   b1(v4):
@@ -193,7 +184,6 @@ function f8 name="fieldAddedThroughMergeOfTestedAndOwnObject" parameters=[{type=
 # CHECK-NEXT: b2:1 available: []
 
 function f9 name="accessorDefinedOnTestedObject" parameters=[{type=object}, {type=function}] results=[{type=anything}] {
-  b0(v0: object, v1: function):
     v2 = ShapeTest v0 layouts=[L0]
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3):
@@ -211,7 +201,6 @@ function f9 name="accessorDefinedOnTestedObject" parameters=[{type=object}, {typ
 # CHECK: v5 guard v3: Available
 
 function f10 name="fieldAddedToObjectTestedNotFrozen" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     v2 = IsNotFrozen v0
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3):

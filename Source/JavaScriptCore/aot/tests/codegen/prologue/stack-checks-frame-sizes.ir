@@ -21,7 +21,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = Builtin builtin=GlobalThis
@@ -30,12 +29,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v4
 }
 function f1 name="callsOnce" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0
     Return v1
 }
 function f2 name="manyLiveValues" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 1..520
     v%(i) = Call v0
 # END REPEAT

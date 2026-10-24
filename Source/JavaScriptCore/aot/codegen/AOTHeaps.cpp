@@ -26,120 +26,6 @@ using Typed::LocationMasks;
 using Typed::MemoryLocation;
 using Typed::Program;
 using IRHeap = Typed::AbstractHeap;
-using Repository = B3::AbstractHeapRepository;
-
-template<typename Heap, typename Parent>
-struct NestedHeap {
-    Heap Repository::* heap;
-    Parent parent;
-};
-
-static constexpr NestedHeap<B3::AbstractHeap, IRHeap> nestedFieldHeaps[] = {
-    { &Repository::JSCell_header, IRHeap::ShapeWords },
-    { &Repository::Structure_prototype, IRHeap::PrototypeLinks },
-    { &Repository::JSObject_butterfly, IRHeap::ArrayStorage },
-    { &Repository::Butterfly_publicLength, IRHeap::ArrayStorage },
-    { &Repository::Butterfly_vectorLength, IRHeap::ArrayStorage },
-    { &Repository::ArrayStorage_numValuesInVector, IRHeap::ArrayStorage },
-    { &Repository::JSArrayBufferView_byteOffset, IRHeap::TypedArrayStorage },
-    { &Repository::JSArrayBufferView_length, IRHeap::TypedArrayStorage },
-    { &Repository::JSArrayBufferView_mode, IRHeap::TypedArrayStorage },
-    { &Repository::JSArrayBufferView_vector, IRHeap::TypedArrayStorage },
-    { &Repository::ArrayBuffer_data, IRHeap::TypedArrayStorage },
-    { &Repository::Butterfly_arrayBuffer, IRHeap::TypedArrayStorage },
-    { &Repository::TypedArrayProperties, IRHeap::TypedArrayElements },
-    { &Repository::JSMap_storage, IRHeap::CollectionStorage },
-    { &Repository::JSSet_storage, IRHeap::CollectionStorage },
-    { &Repository::DateInstance_internalNumber, IRHeap::InternalFields },
-    { &Repository::DateInstance_cachedGregorianDateTime, IRHeap::InternalFields },
-    { &Repository::DateInstance_cachedGregorianDateTimeUTC, IRHeap::InternalFields },
-    { &Repository::RegExp_flags, IRHeap::RegExpState },
-    { &Repository::RegExp_minimumSize, IRHeap::RegExpState },
-    { &Repository::RegExpObject_regExpAndFlags, IRHeap::RegExpState },
-    { &Repository::RegExpObject_lastIndex, IRHeap::RegExpState },
-    { &Repository::JSGlobalObject_regExpGlobalData_cachedResult_lastRegExp, IRHeap::RegExpState },
-    { &Repository::JSGlobalObject_regExpGlobalData_cachedResult_lastInput, IRHeap::RegExpState },
-    { &Repository::JSGlobalObject_regExpGlobalData_cachedResult_result_start, IRHeap::RegExpState },
-    { &Repository::JSGlobalObject_regExpGlobalData_cachedResult_result_end, IRHeap::RegExpState },
-    { &Repository::JSGlobalObject_regExpGlobalData_cachedResult_reified, IRHeap::RegExpState },
-    { &Repository::JSGlobalObject_regExpGlobalData_cachedResult_oneCharacterMatch, IRHeap::RegExpState },
-    { &Repository::JSPromise_packed, IRHeap::PromiseState },
-    { &Repository::JSPromise_slot, IRHeap::PromiseState },
-    { &Repository::JSRopeString_fiber0, IRHeap::StringStorage },
-    { &Repository::JSRopeString_fiber1, IRHeap::StringStorage },
-    { &Repository::JSRopeString_fiber2, IRHeap::StringStorage },
-    { &Repository::StringImpl_data, IRHeap::StringStorage },
-    { &Repository::StringImpl_hashAndFlags, IRHeap::StringStorage },
-    { &Repository::StringImpl_length, IRHeap::StringStorage },
-};
-
-static constexpr NestedHeap<B3::AbstractHeap, B3::AbstractHeap AOTHeaps::*> weakTableHeaps[] = {
-    { &Repository::WeakMapImpl_capacity, &AOTHeaps::weakTableStorage },
-    { &Repository::WeakMapImpl_buffer, &AOTHeaps::weakTableStorage },
-    { &Repository::WeakMapImpl_keyCount, &AOTHeaps::weakTableStorage },
-    { &Repository::WeakMapImpl_deleteCount, &AOTHeaps::weakTableStorage },
-    { &Repository::WeakMapBucket_key, &AOTHeaps::weakTableEntries },
-    { &Repository::WeakMapBucket_value, &AOTHeaps::weakTableEntries },
-};
-
-static constexpr NestedHeap<B3::IndexedAbstractHeap, IRHeap> nestedIndexedHeaps[] = {
-    { &Repository::JSInternalFieldObjectImpl_internalFields, IRHeap::InternalFields },
-    { &Repository::CompleteSubspace_allocatorForSizeStep, IRHeap::AllocatorState },
-    { &Repository::characters8, IRHeap::StringStorage },
-    { &Repository::characters16, IRHeap::StringStorage },
-};
-
-static constexpr NestedHeap<B3::NumberedAbstractHeap, IRHeap> nestedNumberedHeaps[] = {
-    { &Repository::properties, IRHeap::NamedProperties },
-};
-
-static constexpr NestedHeap<B3::AbstractHeap, ElementBase> elementFieldHeaps[] = {
-    { &Repository::DirectArguments_callee, ElementBase::Arguments },
-    { &Repository::DirectArguments_length, ElementBase::Arguments },
-    { &Repository::DirectArguments_minCapacity, ElementBase::Arguments },
-    { &Repository::DirectArguments_mappedArguments, ElementBase::Arguments },
-    { &Repository::DirectArguments_modifiedArgumentsDescriptor, ElementBase::Arguments },
-    { &Repository::ScopedArguments_overrodeThings, ElementBase::Arguments },
-    { &Repository::ScopedArguments_scope, ElementBase::Arguments },
-    { &Repository::ScopedArguments_storage, ElementBase::Arguments },
-    { &Repository::ScopedArguments_table, ElementBase::Arguments },
-    { &Repository::ScopedArguments_totalLength, ElementBase::Arguments },
-    { &Repository::ScopedArgumentsTable_arguments, ElementBase::Arguments },
-    { &Repository::ScopedArgumentsTable_length, ElementBase::Arguments },
-};
-
-static constexpr NestedHeap<B3::IndexedAbstractHeap, ElementBase> elementIndexedHeaps[] = {
-    { &Repository::indexedInt32Properties, ElementBase::Array },
-    { &Repository::indexedDoubleProperties, ElementBase::Array },
-    { &Repository::indexedContiguousProperties, ElementBase::Array },
-    { &Repository::ArrayStorage_vector, ElementBase::Array },
-    { &Repository::DirectArguments_storage, ElementBase::Arguments },
-    { &Repository::ScopedArguments_Storage_storage, ElementBase::Arguments },
-    { &Repository::scopedArgumentsTableArguments, ElementBase::Arguments },
-};
-
-static constexpr B3::AbstractHeap Repository::* immutableFieldHeaps[] = {
-    // It does change in place, between the types of a row of cellTypeChangesInPlace(): PrimitiveEmitter::hasCellTypeIn() keeps every test under this heap to ranges that cannot tell.
-    &Repository::JSCell_typeInfoType,
-    &Repository::Structure_classInfo,
-    &Repository::Structure_realm,
-    &Repository::ClassInfo_parentClass,
-};
-
-// The repository declares these mutable, yet nothing writes them once the enumerator is created.
-static constexpr B3::AbstractHeap Repository::* fieldHeapsFixedAtCreation[] = {
-    &Repository::JSPropertyNameEnumerator_cachedInlineCapacity,
-    &Repository::JSPropertyNameEnumerator_cachedPropertyNamesVector,
-    &Repository::JSPropertyNameEnumerator_cachedStructureID,
-    &Repository::JSPropertyNameEnumerator_endGenericPropertyIndex,
-    &Repository::JSPropertyNameEnumerator_endStructurePropertyIndex,
-    &Repository::JSPropertyNameEnumerator_indexLength,
-};
-
-static constexpr B3::IndexedAbstractHeap Repository::* immutableIndexedHeaps[] = {
-    &Repository::JSPropertyNameEnumerator_cachedPropertyNamesVectorContents,
-    &Repository::singleCharacterStrings,
-};
 
 struct SharedHeap {
     B3::AbstractHeap AOTHeaps::* heap;
@@ -246,12 +132,26 @@ AOTHeaps::AOTHeaps()
     , AOTClosure_captures(&root, "AOTClosure_captures", offsetOfClosureCaptures, sizeof(EncodedJSValue))
     , AOTSlimClosure_captures(&root, "AOTSlimClosure_captures", offsetOfSlimClosureCaptures, sizeof(EncodedJSValue))
 {
-    initializeEntireHeaps();
-    initializeBuckets();
-    initializeFieldHeaps();
+    for (IRHeap heap : Typed::allHeaps)
+        mutableEntire(heap).initialize(&root, nameOf(heap).characters());
+    for (IRHeap heap : Typed::indexedHeaps) {
+        for (Bucket& bucket : m_buckets[Typed::maskIndexOf(heap)])
+            bucket.heap.initialize(&mutableEntire(heap), "bucket");
+    }
+
+#define AOT_NEST_FIELD_HEAP(name, offset, irHeap) name.changeParent(&mutableEntire(IRHeap::irHeap));
+    FOR_EACH_AOT_MUTABLE_FIELD_HEAP(AOT_NEST_FIELD_HEAP)
+#undef AOT_NEST_FIELD_HEAP
+    for (B3::IndexedAbstractHeap* captures : { &AOTClosure_captures, &AOTSlimClosure_captures }) {
+        nestAsImmutable(captures->atAnyIndex(), mutableEntire(IRHeap::EnvironmentFields));
+        captures->retainCurrentHeaps();
+    }
+
     nestUpstreamHeaps();
-    nestUnclaimedHeaps();
-    retainBucketChildren();
+    for (Buckets& buckets : m_buckets) {
+        for (Bucket& bucket : buckets)
+            bucket.numberOfRetainedChildren = bucket.heap.numberOfChildren();
+    }
     indexHeaps();
     keepRangesAcrossProcedures();
 }
@@ -263,90 +163,78 @@ AOTHeaps& AOTHeaps::of(B3::Procedure& procedure)
     return static_cast<AOTHeaps&>(procedure.heaps());
 }
 
-void AOTHeaps::initializeEntireHeaps()
-{
-    for (IRHeap heap : Typed::allHeaps)
-        mutableEntire(heap).initialize(&root, nameOf(heap).characters());
-}
-
-void AOTHeaps::initializeBuckets()
-{
-    for (IRHeap heap : Typed::indexedHeaps) {
-        for (Bucket& bucket : m_buckets[Typed::maskIndexOf(heap)])
-            bucket.heap.initialize(&mutableEntire(heap), "bucket");
-    }
-}
-
-void AOTHeaps::initializeFieldHeaps()
-{
-#define AOT_NEST_FIELD_HEAP(name, offset, irHeap) name.changeParent(&mutableEntire(IRHeap::irHeap));
-    FOR_EACH_AOT_MUTABLE_FIELD_HEAP(AOT_NEST_FIELD_HEAP)
-#undef AOT_NEST_FIELD_HEAP
-
-    for (B3::IndexedAbstractHeap* captures : { &AOTClosure_captures, &AOTSlimClosure_captures }) {
-        nestAsImmutable(captures->atAnyIndex(), mutableEntire(IRHeap::EnvironmentFields));
-        captures->retainCurrentHeaps();
-    }
-}
-
 void AOTHeaps::nestUpstreamHeaps()
 {
-    for (const auto& row : nestedFieldHeaps)
-        (this->*row.heap).changeParent(&mutableEntire(row.parent));
-    for (const auto& row : weakTableHeaps)
-        (this->*row.heap).changeParent(&(this->*row.parent));
-    for (const auto& row : nestedIndexedHeaps)
-        (this->*row.heap).atAnyIndex().changeParent(&mutableEntire(row.parent));
-    for (const auto& row : nestedNumberedHeaps)
-        (this->*row.heap).atAnyNumber().changeParent(&mutableEntire(row.parent));
-    for (const auto& row : elementFieldHeaps)
-        (this->*row.heap).changeParent(&bucketOf(IRHeap::Elements, bucketIndexOf(row.parent)).heap);
-    for (const auto& row : elementIndexedHeaps)
-        (this->*row.heap).atAnyIndex().changeParent(&bucketOf(IRHeap::Elements, bucketIndexOf(row.parent)).heap);
+    auto nest = [](B3::AbstractHeap& parent, std::initializer_list<B3::AbstractHeap*> heaps) {
+        for (B3::AbstractHeap* heap : heaps)
+            heap->changeParent(&parent);
+    };
+    B3::AbstractHeap& elementsOfArrays = bucketOf(IRHeap::Elements, bucketIndexOf(ElementBase::Array)).heap;
+    B3::AbstractHeap& elementsOfArguments = bucketOf(IRHeap::Elements, bucketIndexOf(ElementBase::Arguments)).heap;
 
-    JSCell_cellState.changeParent(&collectorState);
-    cards.changeParent(&collectorState);
-    VM_heapState.changeParent(&collectorState);
-    WriteBarrierBuffer_bufferContents.atAnyIndex().changeParent(&collectorState);
+    nest(mutableEntire(IRHeap::ShapeWords), { &JSCell_header });
+    nest(mutableEntire(IRHeap::PrototypeLinks), { &Structure_prototype });
+    nest(mutableEntire(IRHeap::ArrayStorage), { &JSObject_butterfly, &Butterfly_publicLength, &Butterfly_vectorLength, &ArrayStorage_numValuesInVector });
+    nest(mutableEntire(IRHeap::TypedArrayStorage), {
+        &JSArrayBufferView_byteOffset, &JSArrayBufferView_length, &JSArrayBufferView_mode, &JSArrayBufferView_vector, &ArrayBuffer_data, &Butterfly_arrayBuffer,
+    });
+    nest(mutableEntire(IRHeap::TypedArrayElements), { &TypedArrayProperties });
+    nest(mutableEntire(IRHeap::CollectionStorage), { &JSMap_storage, &JSSet_storage });
+    nest(mutableEntire(IRHeap::InternalFields), { &DateInstance_internalNumber, &DateInstance_cachedGregorianDateTime, &DateInstance_cachedGregorianDateTimeUTC });
+    nest(mutableEntire(IRHeap::RegExpState), {
+        &RegExp_flags, &RegExp_minimumSize, &RegExpObject_regExpAndFlags, &RegExpObject_lastIndex,
+        &JSGlobalObject_regExpGlobalData_cachedResult_lastRegExp, &JSGlobalObject_regExpGlobalData_cachedResult_lastInput,
+        &JSGlobalObject_regExpGlobalData_cachedResult_result_start, &JSGlobalObject_regExpGlobalData_cachedResult_result_end,
+        &JSGlobalObject_regExpGlobalData_cachedResult_reified, &JSGlobalObject_regExpGlobalData_cachedResult_oneCharacterMatch,
+    });
+    nest(mutableEntire(IRHeap::PromiseState), { &JSPromise_packed, &JSPromise_slot });
+    nest(mutableEntire(IRHeap::StringStorage), { &JSRopeString_fiber0, &JSRopeString_fiber1, &JSRopeString_fiber2, &StringImpl_data, &StringImpl_hashAndFlags, &StringImpl_length });
+    nest(weakTableStorage, { &WeakMapImpl_capacity, &WeakMapImpl_buffer, &WeakMapImpl_keyCount, &WeakMapImpl_deleteCount });
+    nest(weakTableEntries, { &WeakMapBucket_key, &WeakMapBucket_value });
+    nest(mutableEntire(IRHeap::InternalFields), { &JSInternalFieldObjectImpl_internalFields.atAnyIndex() });
+    nest(mutableEntire(IRHeap::AllocatorState), { &CompleteSubspace_allocatorForSizeStep.atAnyIndex() });
+    nest(mutableEntire(IRHeap::StringStorage), { &characters8.atAnyIndex(), &characters16.atAnyIndex() });
+    nest(mutableEntire(IRHeap::NamedProperties), { &properties.atAnyNumber() });
+    nest(elementsOfArguments, {
+        &DirectArguments_callee, &DirectArguments_length, &DirectArguments_minCapacity, &DirectArguments_mappedArguments, &DirectArguments_modifiedArgumentsDescriptor,
+        &ScopedArguments_overrodeThings, &ScopedArguments_scope, &ScopedArguments_storage, &ScopedArguments_table, &ScopedArguments_totalLength,
+        &ScopedArgumentsTable_arguments, &ScopedArgumentsTable_length,
+    });
+    nest(elementsOfArrays, {
+        &indexedInt32Properties.atAnyIndex(), &indexedDoubleProperties.atAnyIndex(), &indexedContiguousProperties.atAnyIndex(), &ArrayStorage_vector.atAnyIndex(),
+    });
+    nest(elementsOfArguments, { &DirectArguments_storage.atAnyIndex(), &ScopedArguments_Storage_storage.atAnyIndex(), &scopedArgumentsTableArguments.atAnyIndex() });
+    nest(collectorState, { &JSCell_cellState, &cards, &VM_heapState, &WriteBarrierBuffer_bufferContents.atAnyIndex() });
 
-    for (auto heap : immutableFieldHeaps) {
-        RELEASE_ASSERT((this->*heap).mutability() == B3::Mutability::Immutable);
-        (this->*heap).changeParent(&root);
-    }
-    for (auto heap : fieldHeapsFixedAtCreation)
-        nestAsImmutable(this->*heap, root);
-    for (auto heap : immutableIndexedHeaps)
-        nestAsImmutable((this->*heap).atAnyIndex(), root);
-}
-
-void AOTHeaps::nestUnclaimedHeaps()
-{
-    UncheckedKeyHashSet<const B3::AbstractHeap*> claimedHeaps;
-#define AOT_CLAIM_HEAP(name, ...) claimedHeaps.add(&name);
-    FOR_EACH_AOT_HEAP_OUTSIDE_IR(AOT_CLAIM_HEAP)
-    FOR_EACH_AOT_IMMUTABLE_FIELD_HEAP(AOT_CLAIM_HEAP)
-#undef AOT_CLAIM_HEAP
+    UncheckedKeyHashSet<const B3::AbstractHeap*> heapsThatStayUnderRoot;
+#define AOT_KEEP_UNDER_ROOT(name, ...) heapsThatStayUnderRoot.add(&name);
+    FOR_EACH_AOT_HEAP_OUTSIDE_IR(AOT_KEEP_UNDER_ROOT)
+    FOR_EACH_AOT_IMMUTABLE_FIELD_HEAP(AOT_KEEP_UNDER_ROOT)
+#undef AOT_KEEP_UNDER_ROOT
     for (const B3::AbstractHeap& heap : m_entireHeaps)
-        claimedHeaps.add(&heap);
-    for (auto heap : immutableFieldHeaps)
-        claimedHeaps.add(&(this->*heap));
-    for (auto heap : fieldHeapsFixedAtCreation)
-        claimedHeaps.add(&(this->*heap));
-    for (auto heap : immutableIndexedHeaps)
-        claimedHeaps.add(&(this->*heap).atAnyIndex());
+        heapsThatStayUnderRoot.add(&heap);
+
+    // JSCell_typeInfoType does change in place, between the types of a row of cellTypeChangesInPlace(): PrimitiveEmitter::hasCellTypeIn() keeps every test under this heap to ranges that cannot tell.
+    for (B3::AbstractHeap* heap : { &JSCell_typeInfoType, &Structure_classInfo, &Structure_realm, &ClassInfo_parentClass }) {
+        RELEASE_ASSERT(heap->mutability() == B3::Mutability::Immutable);
+        heap->changeParent(&root);
+        heapsThatStayUnderRoot.add(heap);
+    }
+    // The repository declares these mutable, yet nothing writes them once their owner is created.
+    B3::AbstractHeap* const heapsFixedAtCreation[] = {
+        &JSPropertyNameEnumerator_cachedInlineCapacity, &JSPropertyNameEnumerator_cachedPropertyNamesVector, &JSPropertyNameEnumerator_cachedStructureID,
+        &JSPropertyNameEnumerator_endGenericPropertyIndex, &JSPropertyNameEnumerator_endStructurePropertyIndex, &JSPropertyNameEnumerator_indexLength,
+        &JSPropertyNameEnumerator_cachedPropertyNamesVectorContents.atAnyIndex(), &singleCharacterStrings.atAnyIndex(),
+    };
+    for (B3::AbstractHeap* heap : heapsFixedAtCreation) {
+        nestAsImmutable(*heap, root);
+        heapsThatStayUnderRoot.add(heap);
+    }
 
     Vector<B3::AbstractHeap*> children = root.children();
     for (B3::AbstractHeap* child : children) {
-        if (!claimedHeaps.contains(child))
+        if (!heapsThatStayUnderRoot.contains(child))
             child->changeParent(&mutableEntire(IRHeap::RuntimeState));
-    }
-}
-
-void AOTHeaps::retainBucketChildren()
-{
-    for (Buckets& buckets : m_buckets) {
-        for (Bucket& bucket : buckets)
-            bucket.numberOfRetainedChildren = bucket.heap.numberOfChildren();
     }
 }
 
@@ -362,16 +250,6 @@ void AOTHeaps::indexHeaps()
             m_locationsOfHeap.add(&bucket, CoveredLocations { heap, uint64_t { 1 } << bit });
         }
     }
-}
-
-auto AOTHeaps::bucketOf(IRHeap heap, unsigned bit) -> Bucket&
-{
-    return m_buckets[Typed::maskIndexOf(heap)][bit];
-}
-
-auto AOTHeaps::bucketOf(IRHeap heap, unsigned bit) const -> const Bucket&
-{
-    return m_buckets[Typed::maskIndexOf(heap)][bit];
 }
 
 const B3::AbstractHeap& AOTHeaps::at(const Program& program, const MemoryLocation& location)
@@ -497,10 +375,8 @@ bool AOTHeaps::isCoveredBy(const B3::AbstractHeap& written, const LocationMasks&
 
 void AOTHeaps::removeTemporaryClientHeaps()
 {
-    for (unsigned index = 0; index < Typed::numberOfIndexedHeaps; ++index) {
-        if (m_exactHeaps[index].isEmpty())
-            continue;
-        for (auto& exactHeap : m_exactHeaps[index].values())
+    for (ExactHeaps& heaps : m_exactHeaps) {
+        for (auto& exactHeap : heaps.values())
             exactHeap->removeChildrenFrom(0);
     }
     for (Bucket* bucket : m_bucketsWithExactHeaps)

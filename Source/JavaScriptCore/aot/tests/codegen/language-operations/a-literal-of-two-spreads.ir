@@ -24,7 +24,6 @@ entry module=m0
 layout L0 name="State" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}, {key="c" declared={type=anything}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = NewClosure function=f3
@@ -35,25 +34,21 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v6
 }
 function f1 name="both" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = CopyObject v0
     CopyDataProperties v2, v1
     Return v2
 }
 function f2 name="bothOfState" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     v2 = CopyObject v0
     CopyDataProperties v2, v1
     Return v2
 }
 function f3 name="withoutA" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = CopyObject v0 excludedKeys=["a"]
     CopyDataProperties v2, v1
     Return v2
 }
 function f4 name="makeState" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = NewObject -, v0, v1, v2 layout=L0 fields=[0, 1, 2]
     v4 = FinishObject v3
     Return v4

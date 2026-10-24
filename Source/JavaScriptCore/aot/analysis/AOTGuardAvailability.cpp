@@ -16,11 +16,9 @@
 #include "AOTSort.h"
 #include "AOTThreshold.h"
 #include "AOTTypeRelations.h"
-#include "AOTVector.h"
 #include <algorithm>
 #include <functional>
 #include <utility>
-#include <wtf/CommaPrinter.h>
 #include <wtf/Hasher.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -73,19 +71,16 @@ DependedLocations::DependedLocations(const Program& program, Vector<MemoryLocati
 
 namespace {
 
-enum class WriteExtent : uint8_t { Nothing, InSomeObjects, Everywhere };
+using WriteExtent = GuardWriter::EndedProofs;
 
-// What a writer may write on one edge of the locations that proofs depend on. It is the same for every object that such a proof is about.
 struct WrittenLocations {
-    WriteExtent extent { WriteExtent::Nothing };
+    WriteExtent extent { WriteExtent::None };
     EdgeKind edge { EdgeKind::Normal };
     LocationMasks written;
-    // Found when somebody asks: KillQuery::mayWriteBeyondOperands(), KillQuery::operandsWrittenThrough().
     std::optional<bool> mayWriteBeyondOperands;
     std::optional<Vector<ValueID, 4>> operandsWrittenThrough;
 };
 
-// The writer is the value at the point, or the terminator of the block where the point stands behind its last value.
 class KillQuery {
     WTF_MAKE_NONCOPYABLE(KillQuery);
 public:
@@ -100,11 +95,82 @@ public:
             m_writer = values[point.index];
     }
 
-    WrittenLocations writtenOf(const DependedLocations&, EdgeKind);
-    bool mayEndProofAbout(ValueID subject, WrittenLocations&);
-    bool mayEndProofAbout(ValueID subject, bool subjectComesFromOutside, WrittenLocations&);
-    bool reachesObjects(WrittenLocations&);
-    bool mayWriteBeyondOperands(WrittenLocations&);
+    WrittenLocations writtenOf(const DependedLocations& depended, EdgeKind edge)
+    {
+        WrittenLocations result;
+        result.edge = edge;
+
+        const Effects& effects = effectsOn(m_effects, edge);
+        if (effects.maySuspend) {
+            result.extent = WriteExtent::All;
+            return result;
+        }
+        if (!effects.writes.overlaps(depended.masks))
+            return result;
+        if (m_writer && leavesSlotsAsTested(m_analyses.program(), m_function, m_function.at(m_writer), effects, depended.slotState))
+            return result;
+
+        for (size_t index = 0; index < depended.locations.size(); ++index) {
+            const MemoryLocation& location = depended.locations[index];
+            uint64_t mask = depended.masksOfLocations[index];
+            if (!mayWrite(effects, location, mask))
+                continue;
+            if (!perObjectHeaps.contains(location.heap())) {
+                result.extent = WriteExtent::All;
+                return result;
+            }
+            result.written.add(location.heap(), mask);
+        }
+        if (!result.written.isEmpty())
+            result.extent = WriteExtent::AboutSomeObjects;
+        return result;
+    }
+
+    bool mayEndProofAbout(ValueID subject, WrittenLocations& written)
+    {
+        switch (written.extent) {
+        case WriteExtent::None:
+            return false;
+        case WriteExtent::All:
+            return true;
+        case WriteExtent::AboutSomeObjects:
+            break;
+        }
+        if (!subject)
+            return true;
+
+        if (!reachesObjects(written))
+            return false;
+
+        std::optional<bool> mayEndProof = mayEndProofJudgedByDefinitions(subject, written);
+        if (!mayEndProof)
+            return mayEndProofJudgedByObjects(subject, written);
+        if (m_analyses.context().build.options().verifiesAfterEveryPass) [[unlikely]]
+            RELEASE_ASSERT(*mayEndProof == mayEndProofJudgedByObjects(subject, written));
+        return *mayEndProof;
+    }
+
+    bool mayEndProofAbout(ValueID subject, bool subjectComesFromOutside, WrittenLocations& written)
+    {
+        m_lastSubjectJudgedByDefinition = subject;
+        m_lastSubjectComesFromOutside = subjectComesFromOutside;
+        return mayEndProofAbout(subject, written);
+    }
+
+    bool reachesObjects(WrittenLocations& written)
+    {
+        return mayWriteBeyondOperands(written) || !operandsWrittenThrough(written).empty();
+    }
+
+    bool mayWriteBeyondOperands(WrittenLocations& written)
+    {
+        if (!written.mayWriteBeyondOperands) {
+            if (!m_beyondOperands)
+                m_beyondOperands = m_writer ? effectsBeyondOperands(m_analyses.effectContext(), m_function, m_function.at(m_writer), m_effects) : m_effects;
+            written.mayWriteBeyondOperands = effectsOn(*m_beyondOperands, written.edge).writes.overlaps(written.written);
+        }
+        return *written.mayWriteBeyondOperands;
+    }
 
 private:
     struct WrittenOperand {
@@ -113,21 +179,201 @@ private:
     };
 
     const Terminator& terminator() const LIFETIME_BOUND { return m_function.at(m_point.block).terminator; }
-    bool mayWrite(const Effects&, const MemoryLocation&, uint64_t maskOfLocation);
-    std::span<const ValueID> operandsWrittenThrough(WrittenLocations&);
-    bool isConfined(ValueID subject);
-    bool isConfined(ObjectID);
-    bool escapesAtWriter(ObjectID);
-    bool isContainedInOperand(ObjectID);
-    bool namesOnlyObjectsOfKind(ObjectKind, ValueID);
-    std::optional<bool> mayEndProofJudgedByDefinitions(ValueID subject, WrittenLocations&);
-    bool mayEndProofJudgedByObjects(ValueID subject, WrittenLocations&);
 
-    const MemoryAccess& exactAccess();
-    const EffectsOnEdges& beyondOperands();
-    std::span<const WrittenOperand> writtenOperands();
-    const BitVector& operandObjects();
-    const BitVector& objectsInsideOperands();
+    bool mayWrite(const Effects& effects, const MemoryLocation& location, uint64_t maskOfLocation)
+    {
+        if (!m_exactAccess)
+            m_exactAccess = m_writer ? memoryAccessOf(m_function, m_function.at(m_writer)) : MemoryAccess { };
+        switch (m_exactAccess->kind) {
+        case MemoryAccess::Kind::NotExact:
+            return effects.writes.overlaps(location.heap(), maskOfLocation);
+        case MemoryAccess::Kind::Read:
+            return false;
+        case MemoryAccess::Kind::Write:
+            return overlapOf(m_analyses.program(), m_exactAccess->location, location) != LocationOverlap::None;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    std::optional<bool> mayEndProofJudgedByDefinitions(ValueID subject, WrittenLocations& written)
+    {
+        if (m_lastSubjectJudgedByDefinition != subject) {
+            m_lastSubjectJudgedByDefinition = subject;
+            m_lastSubjectComesFromOutside = comesFromOutside(m_analyses, subject);
+        }
+        if (!m_lastSubjectComesFromOutside)
+            return std::nullopt;
+        if (mayWriteBeyondOperands(written))
+            return true;
+
+        const Program& program = m_analyses.program();
+        const Type& typeOfSubject = program.typeOf(m_function, subject);
+        bool isSettled = true;
+        for (ValueID operand : operandsWrittenThrough(written)) {
+            if (m_analyses.sameObjectThroughCasts(operand) == m_analyses.sameObjectThroughCasts(subject))
+                return true;
+            if (!mayBeSameObject(program.typeOf(m_function, operand), typeOfSubject, program.types))
+                continue;
+            if (comesFromOutside(m_analyses, operand))
+                return true;
+            isSettled = false;
+        }
+        if (!isSettled)
+            return std::nullopt;
+        return false;
+    }
+
+    bool mayEndProofJudgedByObjects(ValueID subject, WrittenLocations& written)
+    {
+        const EscapeAnalysis& escape = m_analyses.escape();
+        if (!isConfined(subject)) {
+            bool wasThereAtEntry = namesOnlyObjectsOfKind(ObjectKind::EntryParameter, subject);
+            return mayWriteBeyondOperands(written) || std::ranges::any_of(operandsWrittenThrough(written), [&](ValueID operand) {
+                return escape.mayAlias(operand, subject) && !(wasThereAtEntry && namesOnlyObjectsOfKind(ObjectKind::Allocation, operand));
+            });
+        }
+
+        ObjectSet objects = escape.pointsTo(subject).objects;
+        return std::ranges::any_of(operandsWrittenThrough(written), [&](ValueID operand) {
+            return escape.pointsTo(operand).objects.overlaps(objects);
+        });
+    }
+
+    bool namesOnlyObjectsOfKind(ObjectKind kind, ValueID value)
+    {
+        const EscapeAnalysis& escape = m_analyses.escape();
+        PointsToSet set = escape.pointsTo(value);
+        if (set.mayBeUntracked)
+            return false;
+        for (ObjectID object : set.objects) {
+            if (escape.at(object).kind != kind)
+                return false;
+        }
+        return true;
+    }
+
+    std::span<const ValueID> operandsWrittenThrough(WrittenLocations& written)
+    {
+        if (!written.operandsWrittenThrough) {
+            written.operandsWrittenThrough.emplace();
+            for (const WrittenOperand& operand : writtenOperands()) {
+                if (operand.writes.overlaps(written.written))
+                    written.operandsWrittenThrough->append(operand.operand);
+            }
+        }
+        return written.operandsWrittenThrough->span();
+    }
+
+    bool isConfined(ValueID subject)
+    {
+        if (m_lastSubject == subject)
+            return m_isLastSubjectConfined;
+
+        const EscapeAnalysis& escape = m_analyses.escape();
+        bool isConfinedSubject = false;
+        if (!escape.tracksOnlyEntryParameters() || m_analyses.context().build.options().verifiesAfterEveryPass) {
+            PointsToSet set = escape.pointsTo(subject);
+            isConfinedSubject = !set.mayBeUntracked;
+            for (ObjectID object : set.objects) {
+                if (!isConfinedSubject)
+                    break;
+                isConfinedSubject = isConfined(object);
+            }
+            RELEASE_ASSERT(!escape.tracksOnlyEntryParameters() || !isConfinedSubject);
+        }
+        m_lastSubject = subject;
+        m_isLastSubjectConfined = isConfinedSubject;
+        return isConfinedSubject;
+    }
+
+    bool isConfined(ObjectID object)
+    {
+        const TrackedObject& tracked = m_analyses.escape().at(object);
+        bool cameFromOutside = tracked.kind == ObjectKind::EntryParameter && tracked.definition != findFreshEntryParameter(m_function, m_analyses.cfg());
+        if (cameFromOutside && !m_analyses.context().build.options().verifiesAfterEveryPass)
+            return false;
+        if (!m_history)
+            m_history.emplace(m_analyses.escapeHistory(), m_point);
+        if (m_history->occurrenceOf(object) != Occurrence::HasNotOccurred)
+            return false;
+        RELEASE_ASSERT(!cameFromOutside);
+        return !escapesAtWriter(object) && !objectsInsideOperands().get(object.index());
+    }
+
+    bool escapesAtWriter(ObjectID object)
+    {
+        if (!operandObjects().get(object.index()))
+            return false;
+        auto isUseByWriter = [&](const Use& use) {
+            if (m_writer)
+                return use.kind == Use::Kind::Operand && use.user == m_writer;
+            return use.kind == Use::Kind::TerminatorOperand && use.block == m_point.block;
+        };
+        return std::ranges::any_of(m_analyses.escape().usesOf(object), [&](const ObjectUse& objectUse) {
+            return objectUse.isEscape && isUseByWriter(objectUse.use);
+        });
+    }
+
+    std::span<const WrittenOperand> writtenOperands()
+    {
+        if (m_writtenOperands)
+            return m_writtenOperands->span();
+
+        m_writtenOperands.emplace();
+        if (!m_writer) {
+            LocationMasks writes = m_effects.onAnyEdge().writes.restrictedTo(perObjectHeaps);
+            terminator().forEachOperand([&](ValueID operand, uint32_t) {
+                if (!writes.isEmpty() && mayBeReference(m_analyses.program().typeOf(m_function, operand)))
+                    m_writtenOperands->append(WrittenOperand { operand, writes });
+            });
+            return m_writtenOperands->span();
+        }
+
+        const Value& writer = m_function.at(m_writer);
+        writer.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+            OperandMemory memory = memoryAccessedThrough(m_analyses.effectContext(), m_function, writer, operandIndex, m_effects);
+            if (!memory.writes.isEmpty())
+                m_writtenOperands->append(WrittenOperand { operand, memory.writes });
+        });
+        return m_writtenOperands->span();
+    }
+
+    const BitVector& operandObjects()
+    {
+        if (!m_operandObjects) {
+            m_operandObjects.emplace();
+            const EscapeAnalysis& escape = m_analyses.escape();
+            auto addObjectsOf = [&](ValueID operand) {
+                m_operandObjects->merge(escape.pointsTo(operand).objects.bits());
+            };
+            if (m_writer)
+                m_function.at(m_writer).forEachChild(addObjectsOf);
+            else {
+                terminator().forEachOperand([&](ValueID operand, uint32_t) {
+                    addObjectsOf(operand);
+                });
+            }
+        }
+        return *m_operandObjects;
+    }
+
+    const BitVector& objectsInsideOperands()
+    {
+        if (!m_objectsInsideOperands) {
+            m_objectsInsideOperands.emplace();
+            const EscapeAnalysis& escape = m_analyses.escape();
+            Vector<ObjectID, 8> worklist;
+            for (size_t object : operandObjects())
+                worklist.append(ObjectID(object));
+            while (!worklist.isEmpty()) {
+                for (ObjectID content : escape.contentsOf(worklist.takeLast())) {
+                    if (!m_objectsInsideOperands->set(content.index()))
+                        worklist.append(content);
+                }
+            }
+        }
+        return *m_objectsInsideOperands;
+    }
 
     FunctionAnalyses& m_analyses;
     const Function& m_function;
@@ -145,298 +391,6 @@ private:
     ValueID m_lastSubjectJudgedByDefinition;
     bool m_lastSubjectComesFromOutside { false };
 };
-
-WrittenLocations KillQuery::writtenOf(const DependedLocations& depended, EdgeKind edge)
-{
-    WrittenLocations result;
-    result.edge = edge;
-
-    const Effects& effects = effectsOn(m_effects, edge);
-    if (effects.maySuspend) {
-        result.extent = WriteExtent::Everywhere;
-        return result;
-    }
-    if (!effects.writes.overlaps(depended.masks))
-        return result;
-    if (m_writer && leavesSlotsAsTested(m_analyses.program(), m_function, m_function.at(m_writer), effects, depended.slotState))
-        return result;
-
-    for (size_t index = 0; index < depended.locations.size(); ++index) {
-        const MemoryLocation& location = depended.locations[index];
-        uint64_t mask = depended.masksOfLocations[index];
-        if (!mayWrite(effects, location, mask))
-            continue;
-        if (!perObjectHeaps.contains(location.heap())) {
-            result.extent = WriteExtent::Everywhere;
-            return result;
-        }
-        result.written.add(location.heap(), mask);
-    }
-    if (!result.written.isEmpty())
-        result.extent = WriteExtent::InSomeObjects;
-    return result;
-}
-
-// overlapOfWrites() for one writer and many locations.
-bool KillQuery::mayWrite(const Effects& effects, const MemoryLocation& location, uint64_t maskOfLocation)
-{
-    const MemoryAccess& access = exactAccess();
-    switch (access.kind) {
-    case MemoryAccess::Kind::NotExact:
-        return effects.writes.overlaps(location.heap(), maskOfLocation);
-    case MemoryAccess::Kind::Read:
-        return false;
-    case MemoryAccess::Kind::Write:
-        return overlapOf(m_analyses.program(), access.location, location) != LocationOverlap::None;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-bool KillQuery::mayEndProofAbout(ValueID subject, WrittenLocations& written)
-{
-    switch (written.extent) {
-    case WriteExtent::Nothing:
-        return false;
-    case WriteExtent::Everywhere:
-        return true;
-    case WriteExtent::InSomeObjects:
-        break;
-    }
-    if (!subject)
-        return true;
-
-    if (!reachesObjects(written))
-        return false;
-
-    std::optional<bool> mayEndProof = mayEndProofJudgedByDefinitions(subject, written);
-    if (!mayEndProof)
-        return mayEndProofJudgedByObjects(subject, written);
-    if (m_analyses.context().build.options().verifiesAfterEveryPass) [[unlikely]]
-        RELEASE_ASSERT(*mayEndProof == mayEndProofJudgedByObjects(subject, written));
-    return *mayEndProof;
-}
-
-bool KillQuery::mayEndProofAbout(ValueID subject, bool subjectComesFromOutside, WrittenLocations& written)
-{
-    m_lastSubjectJudgedByDefinition = subject;
-    m_lastSubjectComesFromOutside = subjectComesFromOutside;
-    return mayEndProofAbout(subject, written);
-}
-
-bool KillQuery::reachesObjects(WrittenLocations& written)
-{
-    return mayWriteBeyondOperands(written) || !operandsWrittenThrough(written).empty();
-}
-
-// An object from outside is confined nowhere, and two values from outside may name one object wherever their types allow it.
-std::optional<bool> KillQuery::mayEndProofJudgedByDefinitions(ValueID subject, WrittenLocations& written)
-{
-    if (m_lastSubjectJudgedByDefinition != subject) {
-        m_lastSubjectJudgedByDefinition = subject;
-        m_lastSubjectComesFromOutside = comesFromOutside(m_analyses, subject);
-    }
-    if (!m_lastSubjectComesFromOutside)
-        return std::nullopt;
-    if (mayWriteBeyondOperands(written))
-        return true;
-
-    const Program& program = m_analyses.program();
-    const Type& typeOfSubject = program.typeOf(m_function, subject);
-    bool isSettled = true;
-    for (ValueID operand : operandsWrittenThrough(written)) {
-        if (m_analyses.sameObjectThroughCasts(operand) == m_analyses.sameObjectThroughCasts(subject))
-            return true;
-        if (!mayBeSameObject(program.typeOf(m_function, operand), typeOfSubject, program.types))
-            continue;
-        if (comesFromOutside(m_analyses, operand))
-            return true;
-        isSettled = false;
-    }
-    if (!isSettled)
-        return std::nullopt;
-    return false;
-}
-
-bool KillQuery::mayEndProofJudgedByObjects(ValueID subject, WrittenLocations& written)
-{
-    const EscapeAnalysis& escape = m_analyses.escape();
-    if (!isConfined(subject)) {
-        // What the function makes was not there when it was entered, wherever it goes afterwards.
-        bool wasThereAtEntry = namesOnlyObjectsOfKind(ObjectKind::EntryParameter, subject);
-        return mayWriteBeyondOperands(written) || std::ranges::any_of(operandsWrittenThrough(written), [&](ValueID operand) {
-            return escape.mayAlias(operand, subject) && !(wasThereAtEntry && namesOnlyObjectsOfKind(ObjectKind::Allocation, operand));
-        });
-    }
-
-    ObjectSet objects = escape.pointsTo(subject).objects;
-    return std::ranges::any_of(operandsWrittenThrough(written), [&](ValueID operand) {
-        return escape.pointsTo(operand).objects.overlaps(objects);
-    });
-}
-
-bool KillQuery::namesOnlyObjectsOfKind(ObjectKind kind, ValueID value)
-{
-    const EscapeAnalysis& escape = m_analyses.escape();
-    PointsToSet set = escape.pointsTo(value);
-    if (set.mayBeUntracked)
-        return false;
-    for (ObjectID object : set.objects) {
-        if (escape.at(object).kind != kind)
-            return false;
-    }
-    return true;
-}
-
-bool KillQuery::mayWriteBeyondOperands(WrittenLocations& written)
-{
-    if (!written.mayWriteBeyondOperands)
-        written.mayWriteBeyondOperands = effectsOn(beyondOperands(), written.edge).writes.overlaps(written.written);
-    return *written.mayWriteBeyondOperands;
-}
-
-std::span<const ValueID> KillQuery::operandsWrittenThrough(WrittenLocations& written)
-{
-    if (!written.operandsWrittenThrough) {
-        written.operandsWrittenThrough.emplace();
-        for (const WrittenOperand& operand : writtenOperands()) {
-            if (operand.writes.overlaps(written.written))
-                written.operandsWrittenThrough->append(operand.operand);
-        }
-    }
-    return written.operandsWrittenThrough->span();
-}
-
-bool KillQuery::isConfined(ValueID subject)
-{
-    if (m_lastSubject == subject)
-        return m_isLastSubjectConfined;
-
-    const EscapeAnalysis& escape = m_analyses.escape();
-    bool isConfinedSubject = false;
-    // All that can happen to an entry parameter may have happened before the function was entered. A checking build looks whether that is what the history says.
-    if (!escape.tracksOnlyEntryParameters() || m_analyses.context().build.options().verifiesAfterEveryPass) {
-        PointsToSet set = escape.pointsTo(subject);
-        isConfinedSubject = !set.mayBeUntracked;
-        for (ObjectID object : set.objects) {
-            if (!isConfinedSubject)
-                break;
-            isConfinedSubject = isConfined(object);
-        }
-        RELEASE_ASSERT(!escape.tracksOnlyEntryParameters() || !isConfinedSubject);
-    }
-    m_lastSubject = subject;
-    m_isLastSubjectConfined = isConfinedSubject;
-    return isConfinedSubject;
-}
-
-bool KillQuery::isConfined(ObjectID object)
-{
-    // Its history begins with all that can happen to it and never starts over. A checking build looks whether that is what the history says.
-    const TrackedObject& tracked = m_analyses.escape().at(object);
-    bool cameFromOutside = tracked.kind == ObjectKind::EntryParameter && tracked.definition != findFreshEntryParameter(m_function, m_analyses.cfg());
-    if (cameFromOutside && !m_analyses.context().build.options().verifiesAfterEveryPass)
-        return false;
-    if (!m_history)
-        m_history.emplace(m_analyses.escapeHistory(), m_point);
-    if (m_history->occurrenceOf(object) != Occurrence::HasNotOccurred)
-        return false;
-    RELEASE_ASSERT(!cameFromOutside);
-    return !escapesAtWriter(object) && !isContainedInOperand(object);
-}
-
-bool KillQuery::escapesAtWriter(ObjectID object)
-{
-    if (!operandObjects().get(object.index()))
-        return false;
-    auto isUseByWriter = [&](const Use& use) {
-        if (m_writer)
-            return use.kind == Use::Kind::Operand && use.user == m_writer;
-        return use.kind == Use::Kind::TerminatorOperand && use.block == m_point.block;
-    };
-    return std::ranges::any_of(m_analyses.escape().usesOf(object), [&](const ObjectUse& objectUse) {
-        return objectUse.isEscape && isUseByWriter(objectUse.use);
-    });
-}
-
-bool KillQuery::isContainedInOperand(ObjectID object)
-{
-    return objectsInsideOperands().get(object.index());
-}
-
-const MemoryAccess& KillQuery::exactAccess()
-{
-    if (!m_exactAccess)
-        m_exactAccess = m_writer ? memoryAccessOf(m_function, m_function.at(m_writer)) : MemoryAccess { };
-    return *m_exactAccess;
-}
-
-const EffectsOnEdges& KillQuery::beyondOperands()
-{
-    if (!m_beyondOperands)
-        m_beyondOperands = m_writer ? effectsBeyondOperands(m_analyses.effectContext(), m_function, m_function.at(m_writer), m_effects) : m_effects;
-    return *m_beyondOperands;
-}
-
-auto KillQuery::writtenOperands() -> std::span<const WrittenOperand>
-{
-    if (m_writtenOperands)
-        return m_writtenOperands->span();
-
-    m_writtenOperands.emplace();
-    if (!m_writer) {
-        LocationMasks writes = m_effects.onAnyEdge().writes.restrictedTo(perObjectHeaps);
-        terminator().forEachOperand([&](ValueID operand, uint32_t) {
-            if (!writes.isEmpty() && mayBeReference(m_analyses.program().typeOf(m_function, operand)))
-                m_writtenOperands->append(WrittenOperand { operand, writes });
-        });
-        return m_writtenOperands->span();
-    }
-
-    const Value& writer = m_function.at(m_writer);
-    writer.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        OperandMemory memory = memoryAccessedThrough(m_analyses.effectContext(), m_function, writer, operandIndex, m_effects);
-        if (!memory.writes.isEmpty())
-            m_writtenOperands->append(WrittenOperand { operand, memory.writes });
-    });
-    return m_writtenOperands->span();
-}
-
-const BitVector& KillQuery::operandObjects()
-{
-    if (!m_operandObjects) {
-        m_operandObjects.emplace();
-        const EscapeAnalysis& escape = m_analyses.escape();
-        auto addObjectsOf = [&](ValueID operand) {
-            m_operandObjects->merge(escape.pointsTo(operand).objects.bits());
-        };
-        if (m_writer)
-            m_function.at(m_writer).forEachChild(addObjectsOf);
-        else {
-            terminator().forEachOperand([&](ValueID operand, uint32_t) {
-                addObjectsOf(operand);
-            });
-        }
-    }
-    return *m_operandObjects;
-}
-
-const BitVector& KillQuery::objectsInsideOperands()
-{
-    if (!m_objectsInsideOperands) {
-        m_objectsInsideOperands.emplace();
-        const EscapeAnalysis& escape = m_analyses.escape();
-        Vector<ObjectID, 8> worklist;
-        for (size_t object : operandObjects())
-            worklist.append(ObjectID(object));
-        while (!worklist.isEmpty()) {
-            for (ObjectID content : escape.contentsOf(worklist.takeLast())) {
-                if (!m_objectsInsideOperands->set(content.index()))
-                    worklist.append(content);
-            }
-        }
-    }
-    return *m_objectsInsideOperands;
-}
 
 } // anonymous namespace
 
@@ -489,14 +443,8 @@ auto GuardWriter::writtenOf(const DependedLocations& depended) -> WrittenDepende
     if (!m_query)
         return { EndedProofs::All, 0 };
     WrittenLocations written = m_query->query.writtenOf(depended, EdgeKind::Normal);
-    switch (written.extent) {
-    case WriteExtent::Nothing:
-        return { EndedProofs::None, 0 };
-    case WriteExtent::Everywhere:
-        return { EndedProofs::All, 0 };
-    case WriteExtent::InSomeObjects:
-        break;
-    }
+    if (written.extent != EndedProofs::AboutSomeObjects)
+        return { written.extent, 0 };
     m_query->written.append(WTF::move(written));
     return { EndedProofs::AboutSomeObjects, static_cast<uint32_t>(m_query->written.size() - 1) };
 }
@@ -526,16 +474,15 @@ GuardAvailability::GuardAvailability(FunctionAnalyses& analyses)
     , m_function(analyses.function())
 {
     collectGuards();
-    m_numberOfNamedGuards = m_guards.size();
-    collectUnnamedAllocations();
-
     describeGuards();
     if (!exceedsWorkLimit())
         return;
 
     reportWorkLimit();
     if (m_guards.size() > m_numberOfNamedGuards) {
-        removeGuardsFrom(m_numberOfNamedGuards);
+        for (ValueID guard : m_guards.span().subspan(m_numberOfNamedGuards))
+            m_guardIndexOfValue[guard.index()] = std::nullopt;
+        m_guards.shrink(m_numberOfNamedGuards);
         describeGuards();
         if (!exceedsWorkLimit())
             return;
@@ -543,7 +490,6 @@ GuardAvailability::GuardAvailability(FunctionAnalyses& analyses)
     leaveOutGuardsInRarerBlocks();
 }
 
-// Every guard keeps its facts. Where they hold is solved for the guards in the most frequent blocks, each with the guards behind it, as far as the limit goes. The state of the others is unknown.
 void GuardAvailability::leaveOutGuardsInRarerBlocks()
 {
     const UseLists& useLists = m_analyses.useLists();
@@ -590,12 +536,6 @@ void GuardAvailability::leaveOutGuardsInRarerBlocks()
         if (!solved.get(guardIndex) && !componentsOfGuardAt(guardIndex).empty())
             m_guardsLeftOut.set(guardIndex);
     }
-    m_components.clear();
-    m_firstComponent.clear();
-    m_dependedLocations.clear();
-    m_killClasses.clear();
-    m_killClassesBySubject.clear();
-    m_numberOfKillClassesOfNamedGuards = 0;
     numberComponents();
     m_solution.gaveUp = m_components.isEmpty();
 }
@@ -603,6 +543,12 @@ void GuardAvailability::leaveOutGuardsInRarerBlocks()
 void GuardAvailability::describeGuards()
 {
     m_facts.clear();
+    computeFacts();
+    numberComponents();
+}
+
+void GuardAvailability::numberComponents()
+{
     m_components.clear();
     m_firstComponent.clear();
     m_dependedLocations.clear();
@@ -610,14 +556,49 @@ void GuardAvailability::describeGuards()
     m_killClassesBySubject.clear();
     m_numberOfKillClassesOfNamedGuards = 0;
 
-    computeFacts();
-    numberComponents();
-}
-
-void GuardAvailability::numberComponents()
-{
     HashedIndex locationsIndex;
+    auto internLocations = [&](const Vector<MemoryLocation, 2>& locations, TestedSlotState slotState) -> uint32_t {
+        uint32_t hash = computeHash(hashOf(locations.span()), slotState);
+        std::optional<uint32_t> existing = locationsIndex.find(hash, [&](uint32_t position) {
+            return m_dependedLocations[position].locations == locations && m_dependedLocations[position].slotState == slotState;
+        });
+        if (existing)
+            return *existing;
+
+        uint32_t position = m_dependedLocations.size();
+        m_dependedLocations.append(DependedLocations(m_analyses.program(), Vector<MemoryLocation, 2>(locations)));
+        m_dependedLocations.last().slotState = slotState;
+        locationsIndex.add(hash, position);
+        return position;
+    };
+
     HashedIndex killClassIndex;
+    auto internKillClassWith = [&](const GuardFact& fact, TestedSlotState slotState) -> uint32_t {
+        uint32_t locations = internLocations(fact.dependsOn, slotState);
+        ValueID subject = exclusiveSubjectOf(m_analyses, fact);
+        uint32_t hash = computeHash(locations, subject);
+        std::optional<uint32_t> existing = killClassIndex.find(hash, [&](uint32_t position) {
+            const KillClass& killClass = m_killClasses[position];
+            return killClass.locations == locations && killClass.subject == subject;
+        });
+        if (existing)
+            return *existing;
+
+        uint32_t position = m_killClasses.size();
+        m_killClasses.append(KillClass { locations, subject, { }, position });
+        killClassIndex.add(hash, position);
+        return position;
+    };
+    auto internKillClass = [&](const GuardFact& fact) {
+        TestedSlotState slotState = slotStateProvenBy(m_function, fact);
+        uint32_t killClass = internKillClassWith(fact, slotState);
+        if (slotState != TestedSlotState::None) {
+            uint32_t classBetweenTestAndBranch = internKillClassWith(fact, TestedSlotState::None);
+            m_killClasses[killClass].classBetweenTestAndBranch = classBetweenTestAndBranch;
+        }
+        return killClass;
+    };
+
     m_firstComponent.reserveInitialCapacity(m_guards.size() + 1);
     for (uint32_t guardIndex = 0; guardIndex < m_guards.size(); ++guardIndex) {
         m_firstComponent.append(m_components.size());
@@ -625,7 +606,7 @@ void GuardAvailability::numberComponents()
         if (!facts.isKnown() || m_guardsLeftOut.get(guardIndex))
             continue;
         for (uint32_t factIndex = 0; factIndex < facts.facts.size(); ++factIndex) {
-            uint32_t killClass = internKillClass(facts.facts[factIndex], locationsIndex, killClassIndex);
+            uint32_t killClass = internKillClass(facts.facts[factIndex]);
             m_killClasses[killClass].components.set(m_components.size());
             m_components.append(Component { m_guards[guardIndex], factIndex, killClass });
         }
@@ -642,57 +623,11 @@ void GuardAvailability::numberComponents()
     });
 }
 
-uint32_t GuardAvailability::internLocations(const Vector<MemoryLocation, 2>& locations, TestedSlotState slotState, HashedIndex& index)
-{
-    uint32_t hash = computeHash(hashOf(locations.span()), slotState);
-    std::optional<uint32_t> existing = index.find(hash, [&](uint32_t position) {
-        return m_dependedLocations[position].locations == locations && m_dependedLocations[position].slotState == slotState;
-    });
-    if (existing)
-        return *existing;
-
-    uint32_t position = m_dependedLocations.size();
-    m_dependedLocations.append(DependedLocations(m_analyses.program(), Vector<MemoryLocation, 2>(locations)));
-    m_dependedLocations.last().slotState = slotState;
-    index.add(hash, position);
-    return position;
-}
-
-uint32_t GuardAvailability::internKillClass(const GuardFact& fact, HashedIndex& locationsIndex, HashedIndex& killClassIndex)
-{
-    TestedSlotState slotState = slotStateProvenBy(m_function, fact);
-    uint32_t killClass = internKillClass(fact, slotState, locationsIndex, killClassIndex);
-    if (slotState != TestedSlotState::None) {
-        uint32_t classBetweenTestAndBranch = internKillClass(fact, TestedSlotState::None, locationsIndex, killClassIndex);
-        m_killClasses[killClass].classBetweenTestAndBranch = classBetweenTestAndBranch;
-    }
-    return killClass;
-}
-
-uint32_t GuardAvailability::internKillClass(const GuardFact& fact, TestedSlotState slotState, HashedIndex& locationsIndex, HashedIndex& killClassIndex)
-{
-    uint32_t locations = internLocations(fact.dependsOn, slotState, locationsIndex);
-    ValueID subject = exclusiveSubjectOf(m_analyses, fact);
-    uint32_t hash = computeHash(locations, subject);
-    std::optional<uint32_t> existing = killClassIndex.find(hash, [&](uint32_t position) {
-        const KillClass& killClass = m_killClasses[position];
-        return killClass.locations == locations && killClass.subject == subject;
-    });
-    if (existing)
-        return *existing;
-
-    uint32_t position = m_killClasses.size();
-    m_killClasses.append(KillClass { locations, subject, { }, position });
-    killClassIndex.add(hash, position);
-    return position;
-}
-
 bool GuardAvailability::exceedsWorkLimit(uint64_t work) const
 {
     return work > m_analyses.context().build.limit(LimitID::MaxGuardAvailabilityWork);
 }
 
-// A solve holds a bit for each component at each block, and at most every writer is asked about every class. Every operation and every terminator may be a writer: they are counted only where that many would be too many.
 bool GuardAvailability::exceedsWorkLimit() const
 {
     uint64_t numberOfBlocks = m_analyses.cfg().reversePostOrder().size();
@@ -734,7 +669,6 @@ bool GuardAvailability::gaveUp() const
     return m_solution.gaveUp;
 }
 
-// What is given up is decided for all guards together, so that it is the same whichever of them are asked about.
 void GuardAvailability::prepareToSolve() const
 {
     Solution& solution = m_solution;
@@ -768,7 +702,6 @@ void GuardAvailability::prepareToSolve() const
         };
         const BlockValues& values = m_function.at(block).values;
         for (uint32_t index = 0; index < values.size(); ++index) {
-            // The read that makes the closure a slot stands for writes the slot. The object has the same property with the same value as before, and no proof is about more than that.
             Opcode opcode = m_function.at(values[index]).opcode;
             if (isNeverWriter(opcode))
                 continue;
@@ -777,7 +710,6 @@ void GuardAvailability::prepareToSolve() const
         addWriter(values.size(), m_analyses.effectsOfTerminator(block));
     }
 
-    // At most every writer is asked about every class, so the work is bounded before any of it is done.
     if (exceedsWorkLimit(static_cast<uint64_t>(solution.writers.size()) * m_killClasses.size())) {
         reportWorkLimit();
         bool hasUnnamedAllocations = m_guards.size() > m_numberOfNamedGuards;
@@ -819,8 +751,15 @@ void GuardAvailability::solveFor(ValueID guard) const
     if (solution.solvedGuards.get(guardIndex))
         return;
 
-    if (!isWorthSolvingAlone(guardIndex)) {
-        if (guardIndex < m_numberOfNamedGuards)
+    bool isNamed = guardIndex < m_numberOfNamedGuards;
+    uint32_t firstKillClass = isNamed ? 0 : m_numberOfKillClassesOfNamedGuards;
+    uint32_t endKillClass = isNamed ? m_numberOfKillClassesOfNamedGuards : m_killClasses.size();
+    uint64_t numberOfKillClassesLeft = 0;
+    for (uint32_t killClass = firstKillClass; killClass < endKillClass; ++killClass)
+        numberOfKillClassesLeft += !solution.killClassesWithKills.get(killClass);
+    uint64_t costOfWalks = static_cast<uint64_t>(solution.numberOfSeparateSolves + 1) * m_function.values.size();
+    if (costOfWalks > solution.writers.size() * numberOfKillClassesLeft) {
+        if (isNamed)
             solveNamedGuards();
         else
             solveUnnamedAllocations();
@@ -831,21 +770,6 @@ void GuardAvailability::solveFor(ValueID guard) const
     BitVector guardIndexes;
     addGuardsBehind(guard, guardIndexes);
     solve(guardIndexes);
-}
-
-// Every solve walks over the whole function, and solving all guards also asks every writer about every class.
-bool GuardAvailability::isWorthSolvingAlone(uint32_t guardIndex) const
-{
-    const Solution& solution = m_solution;
-    bool isNamed = guardIndex < m_numberOfNamedGuards;
-    uint32_t firstKillClass = isNamed ? 0 : m_numberOfKillClassesOfNamedGuards;
-    uint32_t endKillClass = isNamed ? m_numberOfKillClassesOfNamedGuards : m_killClasses.size();
-    uint64_t numberOfKillClassesLeft = 0;
-    for (uint32_t killClass = firstKillClass; killClass < endKillClass; ++killClass)
-        numberOfKillClassesLeft += !solution.killClassesWithKills.get(killClass);
-
-    uint64_t costOfWalks = static_cast<uint64_t>(solution.numberOfSeparateSolves + 1) * m_function.values.size();
-    return costOfWalks <= solution.writers.size() * numberOfKillClassesLeft;
 }
 
 void GuardAvailability::solveNamedGuards() const
@@ -866,7 +790,6 @@ void GuardAvailability::solveUnnamedAllocations() const
         solveGuardsBetween(m_numberOfNamedGuards, m_guards.size());
 }
 
-// No named guard holds what an unnamed allocation proves, so either half is solved without the other.
 void GuardAvailability::solveGuardsBetween(uint32_t firstGuardIndex, uint32_t endGuardIndex) const
 {
     BitVector guardIndexes;
@@ -881,7 +804,6 @@ void GuardAvailability::solveGuardsBetween(uint32_t firstGuardIndex, uint32_t en
         solve(guardIndexes);
 }
 
-// A list holds what its operands hold, and a parameter what is passed for it.
 void GuardAvailability::addGuardsBehind(ValueID guard, BitVector& guardIndexes) const
 {
     const CFG& cfg = m_analyses.cfg();
@@ -911,7 +833,6 @@ void GuardAvailability::addGuardsBehind(ValueID guard, BitVector& guardIndexes) 
     }
 }
 
-// The guards come with every guard behind them.
 void GuardAvailability::solve(const BitVector& guardIndexes) const
 {
     BitVector killClasses;
@@ -964,14 +885,6 @@ void GuardAvailability::solve(const BitVector& guardIndexes) const
     ++solution.numberOfSolves;
 }
 
-void GuardAvailability::collectKillsOf(ValueID guard) const
-{
-    BitVector killClasses;
-    for (const Component& component : componentsOf(guard))
-        killClasses.set(component.killClass);
-    collectKills(killClasses);
-}
-
 void GuardAvailability::collectKills(const BitVector& wantedKillClasses) const
 {
     Solution& solution = m_solution;
@@ -981,7 +894,6 @@ void GuardAvailability::collectKills(const BitVector& wantedKillClasses) const
         return;
     solution.killClassesWithKills.merge(added);
 
-    // The classes about one subject follow each other, so a writer finds out once whether it can reach that subject.
     Vector<uint32_t, 16> killClasses;
     LocationMasks dependedOn;
     for (uint32_t killClass : m_killClassesBySubject) {
@@ -991,7 +903,6 @@ void GuardAvailability::collectKills(const BitVector& wantedKillClasses) const
         dependedOn.merge(m_dependedLocations[m_killClasses[killClass].locations].masks);
     }
 
-    // What a writer writes of some locations is the same for all classes that depend on them, and so is the answer wherever it does not hang on the object: nearly every writer is unknown code, which reaches every object from outside.
     struct ClassesOfLocations {
         uint32_t locations { 0 };
         bool hasSubjects { false };
@@ -1062,15 +973,15 @@ void GuardAvailability::collectKills(const BitVector& wantedKillClasses) const
             writtenOfGroups.append(query.writtenOf(m_dependedLocations[classes.locations], edge));
             WrittenLocations& written = writtenOfGroups.last();
             switch (written.extent) {
-            case WriteExtent::Nothing:
+            case WriteExtent::None:
                 break;
-            case WriteExtent::Everywhere:
+            case WriteExtent::All:
                 killed.merge(classes.all);
                 break;
-            case WriteExtent::InSomeObjects:
+            case WriteExtent::AboutSomeObjects:
                 killed.merge(classes.withoutSubject);
                 if (!classes.hasSubjects || !query.reachesObjects(written)) {
-                    written.extent = WriteExtent::Nothing;
+                    written.extent = WriteExtent::None;
                     break;
                 }
                 if (query.mayWriteBeyondOperands(written))
@@ -1082,7 +993,7 @@ void GuardAvailability::collectKills(const BitVector& wantedKillClasses) const
         if (hangsOnObjects) {
             for (const ClassAboutSubject& entry : classesAboutSubjects) {
                 WrittenLocations& written = writtenOfGroups[entry.group];
-                if (written.extent != WriteExtent::InSomeObjects || (entry.comesFromOutside && query.mayWriteBeyondOperands(written)))
+                if (written.extent != WriteExtent::AboutSomeObjects || (entry.comesFromOutside && query.mayWriteBeyondOperands(written)))
                     continue;
                 if (query.mayEndProofAbout(entry.subject, entry.comesFromOutside, written))
                     killed.set(entry.killClass);
@@ -1120,34 +1031,28 @@ void GuardAvailability::collectKills(const BitVector& wantedKillClasses) const
 
 void GuardAvailability::addKill(BlockID block, uint32_t index, BitVector&& killClasses) const
 {
-    Kill kill { index, internKillSet(WTF::move(killClasses)) };
-    Vector<Kill>& kills = m_solution.killsOfBlock[block.index()];
+    Solution& solution = m_solution;
+    uint32_t hash = killClasses.hash();
+    std::optional<uint32_t> killSet = solution.killSetIndex.find(hash, [&](uint32_t position) {
+        return solution.killSets[position].killClasses == killClasses;
+    });
+    if (!killSet) {
+        BitVector components;
+        for (size_t killClass : killClasses)
+            components.merge(m_killClasses[killClass].components);
+        killSet = solution.killSets.size();
+        solution.killSets.append(KillSet { WTF::move(killClasses), WTF::move(components) });
+        solution.killSetIndex.add(hash, *killSet);
+    }
+
+    Kill kill { index, *killSet };
+    Vector<Kill>& kills = solution.killsOfBlock[block.index()];
     if (kills.isEmpty() || kills.last().index <= index) {
         kills.append(kill);
         return;
     }
     size_t position = std::ranges::upper_bound(kills, index, { }, &Kill::index) - kills.begin();
     kills.insert(position, kill);
-}
-
-uint32_t GuardAvailability::internKillSet(BitVector&& killClasses) const
-{
-    Solution& solution = m_solution;
-    uint32_t hash = killClasses.hash();
-    std::optional<uint32_t> existing = solution.killSetIndex.find(hash, [&](uint32_t position) {
-        return solution.killSets[position].killClasses == killClasses;
-    });
-    if (existing)
-        return *existing;
-
-    BitVector components;
-    for (size_t killClass : killClasses)
-        components.merge(m_killClasses[killClass].components);
-
-    uint32_t position = solution.killSets.size();
-    solution.killSets.append(KillSet { WTF::move(killClasses), WTF::move(components) });
-    solution.killSetIndex.add(hash, position);
-    return position;
 }
 
 void GuardAvailability::applyKills(BitVector& available, BlockID block, uint32_t index) const
@@ -1169,7 +1074,7 @@ void GuardAvailability::applyDefinitions(BitVector& available, const BitVector& 
     bool unitesGuards = VariadicOperandPosition::guards(value.opcode).has_value();
     for (const Component& component : components) {
         bool isAvailable = !unitesGuards || std::ranges::any_of(value.guardsOperands(), [&](ValueID operand) {
-            return isAvailableIn(available, operand, facts.facts[component.factIndex]);
+            return isAvailableIn(available, operand, facts.facts[component.factIndex], facts.facts[component.factIndex].subject);
         });
         available.quickSet(firstComponent + component.factIndex, isAvailable);
     }
@@ -1199,7 +1104,7 @@ void GuardAvailability::enterEdge(BitVector& available, const BitVector& guardIn
             const GuardFact& fact = facts.facts[component.factIndex];
             bool isAvailable = leavesUnspecified(edge, fact.subject);
             if (!isAvailable)
-                isAvailable = result ? isProvenOnEdge(edge, *result, component) : isAvailableBeforeEdge(available, edge, incoming.argument, fact);
+                isAvailable = result ? isProvenOnEdge(edge, *result, component, KillsOfSolve::Yes) : isAvailableBeforeEdge(available, edge, incoming.argument, fact);
             assignments.append({ firstComponent + component.factIndex, isAvailable });
         }
     }
@@ -1208,44 +1113,40 @@ void GuardAvailability::enterEdge(BitVector& available, const BitVector& guardIn
         available.quickSet(bit, isAvailable);
 }
 
-bool GuardAvailability::isProvenOnEdge(Edge edge, const EdgeResult& result, const Component& component) const
+bool GuardAvailability::isProvenOnEdge(Edge edge, const EdgeResult& result, const Component& component, KillsOfSolve killsOfSolve) const
 {
     if (result.kind != EdgeResultKind::Guard)
         return false;
-    return result.caseIndex || !mayEndBetweenTestAndBranch(result.test, edge.from, m_killClasses[component.killClass].classBetweenTestAndBranch);
-}
-
-bool GuardAvailability::mayEndBetweenTestAndBranch(ValueID test, BlockID branch, uint32_t killClass) const
-{
-    ValueLocation location = m_analyses.useLists().locationOf(test);
-    if (location.placement != ValuePlacement::InBlock)
+    if (result.caseIndex)
         return true;
+    ValueLocation location = m_analyses.useLists().locationOf(result.test);
+    if (location.placement != ValuePlacement::InBlock)
+        return false;
 
-    auto endsProof = [&](const Kill& kill) {
-        return ends(kill, killClass);
+    uint32_t killClass = m_killClasses[component.killClass].classBetweenTestAndBranch;
+    auto mayEndIn = [&](BlockID block, uint32_t firstIndex) {
+        if (killsOfSolve == KillsOfSolve::No)
+            return hasWriterThatEndsProofsOfClass(block, firstIndex, killClass);
+        std::span<const Kill> kills = killsIn(block);
+        std::ranges::subrange killsFromIndex(std::ranges::lower_bound(kills, firstIndex, { }, &Kill::index), kills.end());
+        return std::ranges::any_of(killsFromIndex, [&](const Kill& kill) {
+            return ends(kill, killClass);
+        });
     };
     const CFG& cfg = m_analyses.cfg();
-    for (BlockID block = branch; block != location.block;) {
+    for (BlockID block = edge.from; block != location.block;) {
         std::optional<Edge> onlyWayIn = cfg.singleIncomingEdge(block);
-        if (!onlyWayIn || onlyWayIn->isHandlerEdge() || std::ranges::any_of(killsIn(block), endsProof))
-            return true;
+        if (!onlyWayIn || onlyWayIn->isHandlerEdge() || mayEndIn(block, 0))
+            return false;
         block = onlyWayIn->from;
     }
-
-    std::span<const Kill> kills = killsIn(location.block);
-    std::ranges::subrange killsAfterTest(std::ranges::upper_bound(kills, location.index, { }, &Kill::index), kills.end());
-    return std::ranges::any_of(killsAfterTest, endsProof);
+    return !mayEndIn(location.block, location.index + 1);
 }
 
 bool GuardAvailability::isAvailableBeforeEdge(const BitVector& available, Edge edge, ValueID guard, const GuardFact& factAfterEdge) const
 {
     std::optional<ValueID> subject = subjectBeforeEdge(factAfterEdge.subject, edge);
     return subject && isAvailableIn(available, guard, factAfterEdge, *subject);
-}
-
-bool GuardAvailability::isAvailableIn(const BitVector& available, ValueID guard, const GuardFact& fact) const
-{
-    return isAvailableIn(available, guard, fact, fact.subject);
 }
 
 bool GuardAvailability::isAvailableIn(const BitVector& available, ValueID guard, const GuardFact& fact, ValueID subject) const
@@ -1263,52 +1164,11 @@ bool GuardAvailability::isAvailableIn(const BitVector& available, ValueID guard,
     return false;
 }
 
-bool GuardAvailability::ends(const Kill& kill, uint32_t killClass) const
-{
-    return m_solution.killSets[kill.killSet].killClasses.get(killClass);
-}
-
-auto GuardAvailability::killsIn(BlockID block) const -> std::span<const Kill>
-{
-    return m_solution.killsOfBlock[block.index()].span();
-}
-
-auto GuardAvailability::killsAt(ProgramPoint point) const -> std::span<const Kill>
-{
-    return std::span<const Kill>(std::ranges::equal_range(killsIn(point.block), point.index, { }, &Kill::index));
-}
-
-std::optional<uint32_t> GuardAvailability::guardIndexOf(ValueID guard) const
-{
-    if (guard.index() >= m_guardIndexOfValue.size())
-        return std::nullopt;
-    return m_guardIndexOfValue[guard.index()];
-}
-
-auto GuardAvailability::componentsOfGuardAt(uint32_t guardIndex) const -> std::span<const Component>
-{
-    uint32_t first = m_firstComponent[guardIndex];
-    return m_components.subspan(first, m_firstComponent[guardIndex + 1] - first);
-}
-
-auto GuardAvailability::componentsOf(ValueID guard) const -> std::span<const Component>
-{
-    std::optional<uint32_t> guardIndex = guardIndexOf(guard);
-    if (!guardIndex)
-        return { };
-    return componentsOfGuardAt(*guardIndex);
-}
-
 uint32_t GuardAvailability::firstComponentOf(ValueID guard) const
 {
     std::optional<uint32_t> guardIndex = guardIndexOf(guard);
     RELEASE_ASSERT(guardIndex);
     return m_firstComponent[*guardIndex];
-}
-
-GuardState GuardAvailability::stateIn(const BitVector& available, ValueID guard, const ProofSet* reliedOn) const
-{
-    return stateIn(available, guard, reliedOn, ValueID());
 }
 
 GuardState GuardAvailability::stateIn(const BitVector& available, ValueID guard, const ProofSet* reliedOn, ValueID subject) const
@@ -1347,7 +1207,6 @@ GuardState GuardAvailability::stateOfSolvableGuardIn(const BitVector& available,
         if (available.get(firstComponent + factIndex))
             continue;
 
-        // Another fact may prove the same about this subject with another payload, and only the user knows which of the two it needs.
         foundUnavailable = true;
         for (Proof proof : allMembersOf<Proof>) {
             bool isAskedFor = fact.proves(proof) && (!reliedOn || reliedOn->contains(proof));
@@ -1398,13 +1257,15 @@ bool GuardAvailability::mayBeEndedAt(ValueID guard, const Value& user, ProgramPo
     const GuardFacts& facts = factsOf(guard);
     if (!canSolve(guard) || !facts.isKnown() || !m_analyses.cfg().isReachable(writer.block))
         return true;
-    // Only what is listed as a writer ends anything, and the list is there. What each writer ends takes a walk over all of them.
     auto placeOf = [](const Writer& listed) {
         return std::pair { listed.blockOrder, listed.index };
     };
     if (!std::ranges::binary_search(m_solution.writers, std::pair { m_analyses.cfg().reversePostOrderIndex(writer.block), writer.index }, { }, placeOf))
         return false;
-    collectKillsOf(guard);
+    BitVector killClasses;
+    for (const Component& component : componentsOf(guard))
+        killClasses.set(component.killClass);
+    collectKills(killClasses);
 
     const Program& program = m_analyses.program();
     ProofSet needed = proofsNeededFromGuard(program, m_function, user);
@@ -1435,12 +1296,6 @@ GuardState GuardAvailability::stateAt(ValueID guard, ProgramPoint point) const
     return Cursor(*this, point).stateOf(guard);
 }
 
-GuardState GuardAvailability::stateAt(ValueID guard, ProofSet reliedOn, ProgramPoint point) const
-{
-    return stateAt(guard, reliedOn, ValueID(), point);
-}
-
-// What canSolve() says, where that is seen without the walk that lists the writers: every operation and every terminator may be one.
 bool GuardAvailability::canSolveForAnyWriters(uint32_t guardIndex) const
 {
     if (m_solution.isPrepared)
@@ -1451,48 +1306,27 @@ bool GuardAvailability::canSolveForAnyWriters(uint32_t guardIndex) const
     return !exceedsWorkLimit(mostWriters * m_killClasses.size());
 }
 
-// What collectKills() finds for one writer and one class on the normal edge.
-bool GuardAvailability::endsProofsOfClass(ProgramPoint writer, const EffectsOnEdges& effects, uint32_t killClassIndex) const
+bool GuardAvailability::hasWriterThatEndsProofsOfClass(BlockID block, uint32_t firstIndex, uint32_t killClassIndex) const
 {
     const KillClass& killClass = m_killClasses[killClassIndex];
     const DependedLocations& locations = m_dependedLocations[killClass.locations];
-    if (!mayEndProofOver(effects.normal, locations.masks))
-        return false;
-    if (effects.normal.maySuspend)
-        return true;
-    KillQuery query(m_analyses, writer, effects);
-    WrittenLocations written = query.writtenOf(locations, EdgeKind::Normal);
-    return query.mayEndProofAbout(killClass.subject, written);
-}
-
-bool GuardAvailability::hasWriterThatEndsProofsOfClass(BlockID block, uint32_t firstIndex, uint32_t killClass) const
-{
+    auto endsProofs = [&](uint32_t index, const EffectsOnEdges& effects) {
+        if (!mayEndProofOver(effects.normal, locations.masks))
+            return false;
+        if (effects.normal.maySuspend)
+            return true;
+        KillQuery query(m_analyses, { block, index }, effects);
+        WrittenLocations written = query.writtenOf(locations, EdgeKind::Normal);
+        return query.mayEndProofAbout(killClass.subject, written);
+    };
     const BlockValues& values = m_function.at(block).values;
     for (uint32_t index = firstIndex; index < values.size(); ++index) {
-        if (!isNeverWriter(m_function.at(values[index]).opcode) && endsProofsOfClass({ block, index }, m_analyses.effectsOf(values[index]), killClass))
+        if (!isNeverWriter(m_function.at(values[index]).opcode) && endsProofs(index, m_analyses.effectsOf(values[index])))
             return true;
     }
-    return endsProofsOfClass({ block, static_cast<uint32_t>(values.size()) }, m_analyses.effectsOfTerminator(block), killClass);
+    return endsProofs(values.size(), m_analyses.effectsOfTerminator(block));
 }
 
-// mayEndBetweenTestAndBranch() without the kills of a solve.
-bool GuardAvailability::hasWriterBetweenTestAndBranch(ValueID test, BlockID branch, uint32_t killClass) const
-{
-    ValueLocation location = m_analyses.useLists().locationOf(test);
-    if (location.placement != ValuePlacement::InBlock)
-        return true;
-
-    const CFG& cfg = m_analyses.cfg();
-    for (BlockID block = branch; block != location.block;) {
-        std::optional<Edge> onlyWayIn = cfg.singleIncomingEdge(block);
-        if (!onlyWayIn || onlyWayIn->isHandlerEdge() || hasWriterThatEndsProofsOfClass(block, 0, killClass))
-            return true;
-        block = onlyWayIn->from;
-    }
-    return hasWriterThatEndsProofsOfClass(location.block, location.index + 1, killClass);
-}
-
-// What applyDefinitions() and enterEdge() set where the guard is defined. Nothing where that is not seen from here.
 std::optional<BitVector> GuardAvailability::componentsProvenAtDefinition(ValueID guard, ValueLocation location, unsigned depth) const
 {
     std::span<const Component> components = componentsOf(guard);
@@ -1508,7 +1342,6 @@ std::optional<BitVector> GuardAvailability::componentsProvenAtDefinition(ValueID
             return available;
         }
 
-        // The solve lets the value end proofs before it looks at its operands.
         const Effects& effects = m_analyses.effectsOf(guard).normal;
         if (effects.maySuspend || !effects.writes.isEmpty())
             return std::nullopt;
@@ -1525,7 +1358,7 @@ std::optional<BitVector> GuardAvailability::componentsProvenAtDefinition(ValueID
         heldByOperands.ensureSize(m_components.size());
         for (const Component& component : components) {
             bool isAvailable = std::ranges::any_of(value.guardsOperands(), [&](ValueID operand) {
-                return isAvailableIn(heldByOperands, operand, facts.facts[component.factIndex]);
+                return isAvailableIn(heldByOperands, operand, facts.facts[component.factIndex], facts.facts[component.factIndex].subject);
             });
             if (isAvailable)
                 available.set(firstComponent + component.factIndex);
@@ -1555,7 +1388,7 @@ std::optional<BitVector> GuardAvailability::componentsProvenAtDefinition(ValueID
                 continue;
             bool isAvailable = false;
             if (result)
-                isAvailable = result->kind == EdgeResultKind::Guard && (result->caseIndex || !hasWriterBetweenTestAndBranch(result->test, edge.from, m_killClasses[component.killClass].classBetweenTestAndBranch));
+                isAvailable = isProvenOnEdge(edge, *result, component, KillsOfSolve::No);
             else if (!componentsOf(incoming.argument).empty()) {
                 if (!heldBeforeEdge) {
                     heldBeforeEdge = componentsHeldAt(incoming.argument, { edge.from, static_cast<uint32_t>(m_function.at(edge.from).values.size()) }, BehindTerminator::Yes, depth + 1);
@@ -1572,12 +1405,6 @@ std::optional<BitVector> GuardAvailability::componentsProvenAtDefinition(ValueID
     return available;
 }
 
-std::optional<BitVector> GuardAvailability::componentsHeldSinceDefinition(ValueID guard, ProgramPoint point) const
-{
-    return componentsHeldAt(guard, point, BehindTerminator::No, 0);
-}
-
-// A guard holds what it is given where it is defined, whatever held in front of that, and nothing else gives it anything.
 std::optional<BitVector> GuardAvailability::componentsHeldAt(ValueID guard, ProgramPoint point, BehindTerminator behindTerminator, unsigned depth) const
 {
     AOT_THRESHOLD(unsigned, maxDepth, 3);
@@ -1587,7 +1414,6 @@ std::optional<BitVector> GuardAvailability::componentsHeldAt(ValueID guard, Prog
     uint32_t guardIndex = *guardIndexOf(guard);
     if (m_solution.solvedGuards.get(guardIndex))
         return std::nullopt;
-    // In a long function the writers have to be counted to see that nothing is given up. That is one walk, where solving asks each of them about each class.
     if (!canSolveForAnyWriters(guardIndex) && !canSolve(guard))
         return std::nullopt;
 
@@ -1629,7 +1455,6 @@ std::optional<BitVector> GuardAvailability::componentsHeldAt(ValueID guard, Prog
                 available.clear(firstComponent + offset);
         }
     };
-    // What lies on a way to the point and ends a fact ends it for the point, wherever the other ways come from: the nearest writers are asked first, and most of them end everything.
     enum class Walk : uint8_t { GoesOn, IsOver, CostsTooMuch };
     auto walkThrough = [&](BlockID block, uint32_t begin, uint32_t end, bool includesTerminator) {
         uint64_t& numberOfValuesWalked = m_solution.valuesWalkedSinceDefinition[guardIndex];
@@ -1685,7 +1510,7 @@ std::optional<BitVector> GuardAvailability::componentsHeldAt(ValueID guard, Prog
 
 std::optional<GuardState> GuardAvailability::stateSeenWithoutSolving(ValueID guard, ProofSet reliedOn, ValueID subject, ProgramPoint point) const
 {
-    std::optional<BitVector> available = componentsHeldSinceDefinition(guard, point);
+    std::optional<BitVector> available = componentsHeldAt(guard, point, BehindTerminator::No, 0);
     if (!available)
         return std::nullopt;
     GuardState state = stateOfSolvableGuardIn(*available, guard, &reliedOn, subject);
@@ -1710,39 +1535,6 @@ GuardState GuardAvailability::stateAt(ValueID guard, const Value& user, ProgramP
     return Cursor(*this, point).stateOf(guard, user);
 }
 
-GuardState GuardAvailability::stateOnEdge(ValueID guard, Edge edge) const
-{
-    solveFor(guard);
-    const Solution& solution = m_solution;
-    BlockID block = edge.from;
-    if (!solution.solvedBlocks.get(block.index()))
-        return GuardState::Unknown;
-
-    const BlockValues& values = m_function.at(block).values;
-    BitVector available = solution.availableAtHead[block.index()];
-    BitVector availableOnThrow = available;
-    for (uint32_t index = 0; index <= values.size(); ++index) {
-        bool isTerminator = index == values.size();
-        bool mayThrow = edge.isHandlerEdge() && (isTerminator ? m_analyses.effectsOfTerminator(block) : m_analyses.effectsOf(values[index])).mayThrow();
-        if (mayThrow)
-            availableOnThrow.filter(available);
-        applyKills(available, block, index);
-        if (!isTerminator)
-            applyDefinitions(available, solution.solvedGuards, block, index);
-        if (mayThrow)
-            availableOnThrow.filter(available);
-    }
-
-    switch (edge.kind) {
-    case EdgeKind::Normal:
-        return stateIn(available, guard, nullptr);
-    case EdgeKind::Handler:
-        availableOnThrow.exclude(solution.killedOnThrow[block.index()]);
-        return stateIn(availableOnThrow, guard, nullptr);
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 GuardAvailability::Cursor::Cursor(const GuardAvailability& availability, BlockID block)
     : m_availability(availability)
     , m_block(block)
@@ -1758,11 +1550,6 @@ GuardAvailability::Cursor::Cursor(const GuardAvailability& availability, Program
 {
     RELEASE_ASSERT(point.index <= availability.m_function.at(point.block).values.size());
     replay();
-}
-
-bool GuardAvailability::Cursor::isInSolvedBlock() const
-{
-    return m_availability.m_solution.solvedBlocks.get(m_block.index());
 }
 
 void GuardAvailability::Cursor::replay() const
@@ -1799,25 +1586,12 @@ void GuardAvailability::Cursor::advanceTo(uint32_t index)
     }
 }
 
-GuardState GuardAvailability::Cursor::stateOf(ValueID guard) const
+GuardState GuardAvailability::Cursor::stateOf(ValueID guard, const ProofSet* reliedOn, ValueID subject) const
 {
     solveFor(guard);
     if (!isInSolvedBlock())
         return GuardState::Unknown;
-    return m_availability.stateIn(m_available, guard, nullptr);
-}
-
-GuardState GuardAvailability::Cursor::stateOf(ValueID guard, ProofSet reliedOn) const
-{
-    return stateOf(guard, reliedOn, ValueID());
-}
-
-GuardState GuardAvailability::Cursor::stateOf(ValueID guard, ProofSet reliedOn, ValueID subject) const
-{
-    solveFor(guard);
-    if (!isInSolvedBlock())
-        return GuardState::Unknown;
-    return m_availability.stateIn(m_available, guard, &reliedOn, subject);
+    return m_availability.stateIn(m_available, guard, reliedOn, subject);
 }
 
 GuardState GuardAvailability::Cursor::stateOf(ValueID guard, const Value& user) const

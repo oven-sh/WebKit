@@ -8,12 +8,10 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = CallDirect function=f1
     Return
 }
 function f1 name="steps" role=Library results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = NewArray v0 contents=anything
     v2 = Builtin builtin=ArrayPrototypeValues
@@ -49,18 +47,14 @@ function f1 name="steps" role=Library results=[{type=anything}] {
     Return
 }
 function f2 name="one" results=[{type=anything}] {
-  b0():
     Return
 }
 function f3 name="key" results=[{type=anything}] {
-  b0():
     Return
 }
 function f4 name="two" results=[{type=anything}] {
-  b0():
     Return
 }
 function f5 name="three" results=[{type=anything}] {
-  b0():
     Return
 }

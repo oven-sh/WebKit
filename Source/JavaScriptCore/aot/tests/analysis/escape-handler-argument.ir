@@ -5,7 +5,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point"
 function f0 name="thrownInLandingBlock" parameters=[{type=function}] results=[{type=undefined}] {
-  b0(v0: function):
     v1 = NewObject layout=L0 fields=[]
     Jump -> next b1()
   b1() handler=b3(v1):
@@ -35,7 +34,6 @@ function f0 name="thrownInLandingBlock" parameters=[{type=function}] results=[{t
 # CHECK: v3 points to: [o1]
 # CHECK-NEXT: v3 may be untracked: no
 function f1 name="readInLandingBlock" parameters=[{type=function}] results=[{type=undefined}] {
-  b0(v0: function):
     v1 = NewObject layout=L0 fields=[]
     Jump -> next b1()
   b1() handler=b3(v1):
@@ -64,7 +62,6 @@ function f1 name="readInLandingBlock" parameters=[{type=function}] results=[{typ
 # CHECK: v3 points to: [o1]
 # CHECK-NEXT: v3 may be untracked: no
 function f2 name="twoCoveredBlocksPassDifferentObjects" parameters=[{type=function}] results=[{type=undefined}] {
-  b0(v0: function):
     v1 = NewObject layout=L0 fields=[]
     v2 = NewObject layout=L0 fields=[]
     v3 = NewObject layout=L0 fields=[]

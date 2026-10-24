@@ -10,7 +10,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
 
 function f0 name="coldGuardedRead" parameters=[{type=boolean}, {type=object}] results=[{type=anything}] {
-  b0(v0: boolean, v1: object):
     Branch v0 -> taken b1(), notTaken b5()
   b1() frequency=Rare:
     v2 = ShapeTest v1 layouts=[L0]
@@ -39,7 +38,6 @@ function f0 name="coldGuardedRead" parameters=[{type=boolean}, {type=object}] re
 # REPEAT: i = 1..3
 
 function f%(i) name="coldGuardedRead%(i+1)" parameters=[{type=boolean}, {type=object}] results=[{type=anything}] {
-  b0(v0: boolean, v1: object):
     Branch v0 -> taken b1(), notTaken b5()
   b1() frequency=Rare:
     v2 = ShapeTest v1 layouts=[L0]
@@ -61,7 +59,6 @@ function f%(i) name="coldGuardedRead%(i+1)" parameters=[{type=boolean}, {type=ob
 # END REPEAT
 
 function f4 name="onlyMissIsCold" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):

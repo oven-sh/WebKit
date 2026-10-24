@@ -9,7 +9,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = Builtin builtin=GlobalThis
@@ -18,7 +17,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v4
 }
 function f1 name="insertsOne" parameters=[{type=Array<number>}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<number>, v1: number):
     v2 = Integer integer=0
     v3 = PropGet v0 key="splice"
     v4 = Call v3, v0, v2, v2, v1 calleeKey="splice"
@@ -30,7 +28,6 @@ function f1 name="insertsOne" parameters=[{type=Array<number>}, {type=number}] r
 # SELECTED: [[number]]: number = AssumeType v3 castType=number
 # SELECTED: TryCallInline [[array]], {{*}}, [[number]] inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/
 function f2 name="insertsOneWithUnknownDeleteCount" parameters=[{type=Array<number>}, {type=number}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Array<number>, v1: number, v2: i32):
     v3 = Integer integer=0
     v4 = PropGet v0 key="splice"
     v5 = Call v4, v0, v3, v2, v1 calleeKey="splice"

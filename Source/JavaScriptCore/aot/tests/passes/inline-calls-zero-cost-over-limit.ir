@@ -12,20 +12,17 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}]
 
 function f0 name="getter" parameters=[{type=L0}] results=[{type=number}] {
-  b0(v0: L0):
     v1 = GetSlot v0 key="x" receivers=[L0] level=Proven
     Return v1
 }
 
 function f1 name="getterAndOneOperation" parameters=[{type=L0}] results=[{type=number}] {
-  b0(v0: L0):
     v1 = GetSlot v0 key="x" receivers=[L0] level=Proven
     v2 = Mul v1, v1
     Return v2
 }
 
 function f2 name="thirteenOperations" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
 # REPEAT: i = 0..12
     v%(i+1) = Mul v%(i), v0
 # END REPEAT
@@ -33,7 +30,6 @@ function f2 name="thirteenOperations" parameters=[{type=number}] results=[{type=
 }
 
 function f3 name="largeCallerOfLargerCallee" parameters=[{type=L0}] results=[{type=number}] {
-  b0(v0: L0):
     v1 = CallDirect v0 function=f1
 # REPEAT: i = 1..13
     v%(i+1) = Mul v%(i), v1
@@ -46,7 +42,6 @@ function f3 name="largeCallerOfLargerCallee" parameters=[{type=L0}] results=[{ty
 # CHECK-NOT: CallDirect
 
 function f4 name="getterBehindAllThatTheLimitAllows" parameters=[{type=L0}, {type=number}, {type=boolean}] results=[{type=number}] {
-  b0(v0: L0, v1: number, v2: boolean):
     v3 = CallDirect v0 function=f0
     Jump -> next b1()
   b1():
@@ -63,7 +58,6 @@ function f4 name="getterBehindAllThatTheLimitAllows" parameters=[{type=L0}, {typ
 # CHECK-NOT: CallDirect
 
 function f5 name="largerCalleeBehindAllThatTheLimitAllows" parameters=[{type=L0}, {type=number}, {type=boolean}] results=[{type=number}] {
-  b0(v0: L0, v1: number, v2: boolean):
     v3 = CallDirect v0 function=f1
     Jump -> next b1()
   b1():

@@ -9,7 +9,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Item" constructor=f1 fields=[{key="next" declared={type=null flags=[IsExpected]} flags=[IsRequired]}, {key="size" declared={type=number} flags=[IsRequired]}] flags=[IsConstructorFunction]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Construct v0, -
     v2 = Builtin builtin=GlobalThis
@@ -22,7 +21,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Item" flags=[HasThis] results=[{type=anything}] constructedClass=L0 {
-  b0(v0: anything):
     v1 = Null
     PropSet v0, v1 key="next" mode=Strict
     v3 = Integer integer=1

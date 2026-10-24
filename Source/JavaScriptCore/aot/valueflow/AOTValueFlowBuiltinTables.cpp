@@ -20,8 +20,19 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Listing keys and walking the chain of prototypes run the traps of a proxy and nothing else.
 static constexpr Protocols protocolsWithoutHub { Protocol::OwnKeys, Protocol::PrototypeChain, Protocol::Species };
+
+static void appendKindsOfPrimitives(const BuiltinType& type, bool withNumbers, auto& members)
+{
+    static constexpr std::pair<BuiltinPrimitive, PrimitiveSet> kinds[] {
+        { BuiltinPrimitive::Undefined, PrimitiveSet::Undefined }, { BuiltinPrimitive::Null, PrimitiveSet::Null }, { BuiltinPrimitive::Boolean, PrimitiveSet::False }, { BuiltinPrimitive::Boolean, PrimitiveSet::True },
+        { BuiltinPrimitive::Number, PrimitiveSet::Integer }, { BuiltinPrimitive::Number, PrimitiveSet::WholeNumber }, { BuiltinPrimitive::Number, PrimitiveSet::FractionalNumber }, { BuiltinPrimitive::BigInt, PrimitiveSet::BigInt },
+    };
+    for (auto [listed, kind] : kinds) {
+        if (type.primitives.contains(listed) && (withNumbers || listed != BuiltinPrimitive::Number))
+            members.append(ValueFlowUniverse::primitive(kind));
+    }
+}
 
 static ValueSetID maskOf(const Program& program, const ValueFlowUniverse& universe, ValueSetMaker& maker, const BuiltinType& type)
 {
@@ -30,29 +41,11 @@ static ValueSetID maskOf(const Program& program, const ValueFlowUniverse& univer
 
     Vector<ValueFlowObjectID, 32> members;
     Vector<ValueSetID, 8> parts;
-    auto addKind = [&](PrimitiveSet kind) {
-        members.append(ValueFlowUniverse::primitive(kind));
-    };
-    if (type.primitives.contains(BuiltinPrimitive::Undefined))
-        addKind(PrimitiveSet::Undefined);
-    if (type.primitives.contains(BuiltinPrimitive::Null))
-        addKind(PrimitiveSet::Null);
-    if (type.primitives.contains(BuiltinPrimitive::Boolean)) {
-        addKind(PrimitiveSet::False);
-        addKind(PrimitiveSet::True);
-    }
-    if (type.primitives.contains(BuiltinPrimitive::Number)) {
-        addKind(PrimitiveSet::Integer);
-        addKind(PrimitiveSet::WholeNumber);
-        addKind(PrimitiveSet::FractionalNumber);
-    }
-    if (type.primitives.contains(BuiltinPrimitive::BigInt))
-        addKind(PrimitiveSet::BigInt);
+    appendKindsOfPrimitives(type, true, members);
     if (type.primitives.contains(BuiltinPrimitive::String))
         parts.append(universe.strings());
     else if (!type.stringLiterals.empty()) {
-        // A string whose text nobody knows may be one of the literals.
-        addKind(PrimitiveSet::String);
+        members.append(ValueFlowUniverse::primitive(PrimitiveSet::String));
         for (BuiltinName literal : type.stringLiterals)
             members.append(universe.keyConstant(program.keyOf(literal)));
     }
@@ -103,24 +96,7 @@ static ValueSetID membersSurelyOf(const Program& program, const ValueFlowUnivers
 
     Vector<ValueFlowObjectID, 16> members;
     Vector<ValueSetID, 8> parts;
-    auto addKind = [&](PrimitiveSet kind) {
-        members.append(ValueFlowUniverse::primitive(kind));
-    };
-    if (type.primitives.contains(BuiltinPrimitive::Undefined))
-        addKind(PrimitiveSet::Undefined);
-    if (type.primitives.contains(BuiltinPrimitive::Null))
-        addKind(PrimitiveSet::Null);
-    if (type.primitives.contains(BuiltinPrimitive::Boolean)) {
-        addKind(PrimitiveSet::False);
-        addKind(PrimitiveSet::True);
-    }
-    if (type.primitives.contains(BuiltinPrimitive::Number) && !type.flags.contains(BuiltinTypeFlag::HasOnlyIntegers) && type.integers.isEmpty()) {
-        addKind(PrimitiveSet::Integer);
-        addKind(PrimitiveSet::WholeNumber);
-        addKind(PrimitiveSet::FractionalNumber);
-    }
-    if (type.primitives.contains(BuiltinPrimitive::BigInt))
-        addKind(PrimitiveSet::BigInt);
+    appendKindsOfPrimitives(type, !type.flags.contains(BuiltinTypeFlag::HasOnlyIntegers) && type.integers.isEmpty(), members);
     if (type.primitives.contains(BuiltinPrimitive::String))
         parts.append(universe.strings());
     else {
@@ -140,14 +116,12 @@ static ValueSetID membersSurelyOf(const Program& program, const ValueFlowUnivers
         for (const BuiltinTypePart& part : type.parts) {
             switch (part.kind) {
             case BuiltinTypePartKind::Instance:
-                // Whether an instance is pristine, and what it holds, is known only when the program runs.
                 if (part.pristine.isEmpty() && part.contents.empty())
                     parts.append(universe.sureInstancesOf(part.builtinClass));
                 break;
             case BuiltinTypePartKind::Builtin:
                 members.append(universe.objectOf(part.builtin));
                 break;
-            // An object that is allocated with the layout loses it when a property is deleted or redefined.
             case BuiltinTypePartKind::InstanceOfReceiverClass:
             case BuiltinTypePartKind::TypedArrayOfReceiverElementType:
             case BuiltinTypePartKind::Layout:
@@ -174,13 +148,23 @@ ValueFlowBuiltinTables::ValueFlowBuiltinTables(const BuiltinTable& builtins, uin
             m_classesAtOrBelow[current.index()].append(BuiltinClassID(index));
     }
 
+    auto intern = [&](const ValueFlowBehavior& behavior) {
+        auto found = std::ranges::find_if(m_behaviors, [&](const ValueFlowBehavior& other) {
+            return other.protocols == behavior.protocols && other.isTransitive == behavior.isTransitive
+                && std::ranges::equal(other.namedMembers, behavior.namedMembers) && std::ranges::equal(other.calledMembers, behavior.calledMembers);
+        });
+        if (found == m_behaviors.end()) {
+            m_behaviors.append(behavior);
+            return ValueFlowBehaviorID(m_behaviors.size() - 1);
+        }
+        return ValueFlowBehaviorID(static_cast<uint32_t>(found - m_behaviors.begin()));
+    };
     m_conversionToPrimitive = intern({ Protocol::ToPrimitive, false, { }, { } });
     auto behaviorFor = [&](OperandUses uses, Protocols declaredProtocols, std::span<const BuiltinName> namedMembers, std::span<const BuiltinName> calledMembers) -> ValueFlowBehaviorID {
         Protocols protocols = declaredProtocols - protocolsWithoutHub;
         if (uses == OperandUses::all() || protocols.isEmpty())
             return { };
         bool isTransitive = uses.containsAny({ OperandUse::AppliesTransitively, OperandUse::AppliesToContents });
-        // Whoever looks through what its receivers hold and climbs their chains looks through what they inherit: that much of the walk is the hub's.
         if (isTransitive && declaredProtocols.containsAll({ Protocol::OwnValues, Protocol::PrototypeChain }))
             protocols.add(Protocol::PrototypeChain);
         return intern({ protocols, isTransitive, namedMembers, calledMembers });
@@ -226,7 +210,6 @@ static bool usesPutValueInto(const BuiltinTable& builtins, const BuiltinHostUses
     });
 }
 
-// The function that the body of the module puts under the name on the object that it exports: a declaration of the module, over which nothing can be stored, or a closure that is made for the store.
 static FunctionID functionExportedUnder(const Program& program, ModuleID module, BuiltinName name)
 {
     const Function& body = program.at(program.at(module).body);
@@ -263,9 +246,9 @@ static FunctionID functionExportedUnder(const Program& program, ModuleID module,
 
 BuiltinID ValueFlowBuiltinTables::entryDescribing(ValueFlowObjectID closure) const
 {
-    for (const DescribedClosure& described : m_describedClosures) {
-        if (described.closure == closure)
-            return described.entry;
+    for (auto [described, entry] : m_describedClosures) {
+        if (described == closure)
+            return entry;
     }
     return { };
 }
@@ -273,9 +256,7 @@ BuiltinID ValueFlowBuiltinTables::entryDescribing(ValueFlowObjectID closure) con
 static BitVector findCodeThatRecordsDescribe(const Program& program)
 {
     enum class NamedFunctions : uint8_t { None, AllDescribed, SomeNotDescribed };
-    Vector<NamedFunctions> namedFunctionsOfModule(program.modules.size(), [](size_t) {
-        return NamedFunctions::None;
-    });
+    Vector<NamedFunctions> namedFunctionsOfModule(FillWith { }, program.modules.size(), NamedFunctions::None);
     for (const RuntimeFunctionEntry& entry : program.runtimeFunctions) {
         ModuleID module = entry.function ? program.at(entry.function).module : ModuleID();
         if (!module)
@@ -319,7 +300,6 @@ void ValueFlowBuiltinTables::makeSets(const Program& program, const ValueFlowUni
                 bool isValue = std::ranges::any_of(load.usesOfExports[position].list, [&](const BuiltinHostUse& use) {
                     return use.use == BuiltinHostReadUse::IsValueOf && use.memberPath.empty() && builtins.canonicalID(use.builtin) == entry;
                 });
-                // The first object of the entry stands for the operands, so no overload may allocate it.
                 bool isDescribed = std::ranges::all_of(builtins.overloadsOf(entry), [&](const BuiltinOverload& overload) {
                     return doRecordsDescribe(builtins, overload) && builtins.at(overload.result.type).parts.empty();
                 });
@@ -330,13 +310,7 @@ void ValueFlowBuiltinTables::makeSets(const Program& program, const ValueFlowUni
                 describedClosures.append(universe.closureOf(function));
             }
         }
-    }
-    m_closuresThatEntriesDescribe = maker.of(describedClosures.span());
 
-    for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
-        BuiltinID entry(index);
-        if (builtins.canonicalID(entry) != entry)
-            continue;
         bool hasValue = false;
         bool hasEveryValue = true;
         for (const BuiltinCalledFunction& called : builtins.calledFunctionsOf(entry)) {
@@ -349,6 +323,7 @@ void ValueFlowBuiltinTables::makeSets(const Program& program, const ValueFlowUni
         if (hasValue && hasEveryValue)
             m_entriesHoldingValueFromLibrary.set(index);
     }
+    m_closuresThatEntriesDescribe = maker.of(describedClosures.span());
 
     HashMap<uint32_t, unsigned, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> classesWithPrototype;
     for (uint32_t index = 0; index < builtins.classCount(); ++index) {
@@ -390,7 +365,6 @@ void ValueFlowBuiltinTables::makeSets(const Program& program, const ValueFlowUni
         m_classesSurelyOfType.append(classesSurelyOfType);
         m_classesOfTypeWhilePristine.append(classesWhilePristine);
 
-        // A part that stands for an operand, or for what an operand holds, admits everything and makes nothing: a transfer or a callback brings what it stands for.
         BuiltinType typeWithoutParts = type;
         typeWithoutParts.parts = { };
         ValueSetID maskWithoutParts = Typed::maskOf(program, universe, maker, typeWithoutParts);
@@ -403,29 +377,6 @@ void ValueFlowBuiltinTables::makeSets(const Program& program, const ValueFlowUni
     }
 
     m_heap = makeUnique<ValueFlowHeapTables>(program, universe, sets, maker, loops, runBesideSets);
-}
-
-ValueFlowBehaviorID ValueFlowBuiltinTables::intern(const ValueFlowBehavior& behavior)
-{
-    auto found = std::ranges::find_if(m_behaviors, [&](const ValueFlowBehavior& other) {
-        return other.protocols == behavior.protocols && other.isTransitive == behavior.isTransitive
-            && std::ranges::equal(other.namedMembers, behavior.namedMembers) && std::ranges::equal(other.calledMembers, behavior.calledMembers);
-    });
-    if (found == m_behaviors.end()) {
-        m_behaviors.append(behavior);
-        return ValueFlowBehaviorID(m_behaviors.size() - 1);
-    }
-    return ValueFlowBehaviorID(static_cast<uint32_t>(found - m_behaviors.begin()));
-}
-
-ValueFlowBehaviorID ValueFlowBuiltinTables::behaviorOf(const BuiltinParameter& parameter) const
-{
-    return m_behaviorOfParameter.get(&parameter);
-}
-
-ValueFlowBehaviorID ValueFlowBuiltinTables::behaviorOf(const OperandInfo& operand) const
-{
-    return m_behaviorOfOperand.get(&operand);
 }
 
 } } } // namespace JSC::AOT::Typed

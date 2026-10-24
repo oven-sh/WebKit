@@ -5,22 +5,18 @@
 module m0 path="main.js" displayPath="main.js"
 function f0 name="noBody" parameters=[{type=object}] results=[{type=anything}]
 function f1 name="returnsResultOfNoBody" parameters=[{type=object}, {type=object}] results=[{type=anything}] {
-  b0(v0: object, v1: object):
     v2 = CallDirect v0 function=f0
     Return v2
 }
 function f2 name="dropsResultOfNoBody" parameters=[{type=object}] results=[{type=undefined}] {
-  b0(v0: object):
     v1 = CallDirect v0 function=f0
     Return
 }
 function f3 name="callsAsync" results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f4
     Return
 }
 function f4 name="awaits" flags=[IsAsync] results=[{type=anything}] {
-  b0():
     v0 = Undefined
     v1 = Await v0
     Return v1

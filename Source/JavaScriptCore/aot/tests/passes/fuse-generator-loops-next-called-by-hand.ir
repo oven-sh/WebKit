@@ -8,13 +8,11 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="countsUp" position=10 role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=number}] results=[{type=Generator}] creator=Coroutine{ramp=f0 body=f1 promiseParameter=2} {
-  b0(v0: function, v1: number):
     v2 = NewGenerator v0 function=f0 @10
     v3 = CallDirect v0, v1, v2 function=f1 @10
     Return v2 @10
 }
 function f1 name="countsUp" position=10 role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=number}, {type=Generator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{ramp=f0 body=f1 promiseParameter=2} {
-  b0(v0: function, v1: number, v2: Generator):
     v3 = Undefined @10
     v4 = YieldBySavingFrame v2, v3 @10
     v5 = ResultAt v4 index=0 @10
@@ -49,7 +47,6 @@ function f1 name="countsUp" position=10 role=CoroutineBody flags=[IsGenerator, T
     Return v16
 }
 function f2 name="createdHere" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     v2 = NewClosure function=f0
     v3 = NewGenerator v2 function=f0 @40
     v4 = CallDirect v2, v0, v3 function=f1 @40
@@ -100,7 +97,6 @@ function f2 name="createdHere" parameters=[{type=number}, {type=anything}] resul
 # SIMPLE-NOT: NewObject
 
 function f3 name="createdElsewhere" parameters=[{type=Generator}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Generator, v1: anything):
     Jump -> next b1()
   b1():
     LoopHint
@@ -130,7 +126,6 @@ function f3 name="createdElsewhere" parameters=[{type=Generator}, {type=anything
 # CHECK: = ResumeGenerator v0, v3
 
 function f4 name="handedOnBeforeTheStep" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     v2 = NewClosure function=f0
     v3 = NewGenerator v2 function=f0 @40
     v4 = CallDirect v2, v0, v3 function=f1 @40

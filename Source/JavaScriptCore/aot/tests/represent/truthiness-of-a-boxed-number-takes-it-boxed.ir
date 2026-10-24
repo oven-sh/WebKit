@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="testedNumber" parameters=[{type=anything}] results=[{type=i32}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=number
     TestAndBranch v1 -> taken b1(| 0), notTaken b3()
   b1(v2: number):
@@ -18,13 +17,11 @@ function f0 name="testedNumber" parameters=[{type=anything}] results=[{type=i32}
   b3():
     v5 = Integer integer=2
     Return v5
-}
-# CHECK-LABEL: function f0 name="testedNumber"
 # CHECK: b1(v2: number @JSValue):
 # CHECK-NEXT: v3: boolean @Boolean = ToBoolean v2 form=Numbers
+}
 
 function f1 name="doubleStaysDouble" parameters=[{type=number}] results=[{type=boolean}] {
-  b0(v0: number):
     v1 = Mul v0, v0 form=Numbers
     v2 = ToBoolean v1 form=Numbers
     Return v2

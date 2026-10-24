@@ -6,73 +6,60 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="resultUnused" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=i32}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage, Names]>, v1: i32):
     v2 = Integer integer=1
     v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/0
     Return
-}
-# CHECK-LABEL: function f0 name="resultUnused"
 # CHECK: v3:{{*}}= CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/0 builtinCallForm=Prefix prefixLength=0
+}
 
 function f1 name="firstRemovedElementRead" parameters=[{type=Array<string, pristine[Storage, Names]>}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Array<string, pristine[Storage, Names]>, v1: i32):
     v2 = Integer integer=1
     v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/0
     v4 = Integer integer=0
     v5 = ElemGet v3, v4
     Return v5
-}
-# CHECK-LABEL: function f1 name="firstRemovedElementRead"
 # CHECK: v3:{{*}}= CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/0 builtinCallForm=Prefix prefixLength=1
 # CHECK: [[first1]]:{{*}}= ResultAt v3 index=1
 # CHECK-NOT: ElemGet
 # CHECK: v5:{{*}}= Upcast [[first1]]
+}
 
 function f2 name="numberOfRemovedElementsRead" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=i32}, {type=i32}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage, Names]>, v1: i32, v2: i32, v3: anything):
     v4 = CallBuiltin v0, v1, v2, v3 overload=ArrayPrototypeSplice/0
     v5 = PropGet v4 key="length"
     Return v5
-}
-# CHECK-LABEL: function f2 name="numberOfRemovedElementsRead"
 # CHECK: v4:{{*}}= CallBuiltin v0, v1, v2, v3 overload=ArrayPrototypeSplice/0 builtinCallForm=Prefix prefixLength=0
 # CHECK-NEXT: [[length2]]:{{*}}= ResultAt v4
 # CHECK-NEXT: v5:{{*}}= Upcast [[length2]]
+}
 
 function f3 name="resultReturned" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage, Names]>, v1: i32):
     v2 = Integer integer=1
     v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/0
     Return v3
-}
-# CHECK-LABEL: function f3 name="resultReturned"
 # CHECK-NOT: builtinCallForm=
 # CHECK: v3:{{*}}= CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/0
+}
 
 function f4 name="presenceOfRemovedElementTested" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage, Names]>, v1: i32):
     v2 = Integer integer=1
     v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/0
     v4 = Integer integer=0
     v5 = ElemHas v3, v4
     Return v5
-}
-# CHECK-LABEL: function f4 name="presenceOfRemovedElementTested"
 # CHECK-NOT: builtinCallForm=
 # CHECK: v5:{{*}}= ElemHas v3, v4
+}
 
 function f5 name="receiverThatMayHaveSpecies" parameters=[{type=object}, {type=i32}] results=[{type=undefined}] {
-  b0(v0: object, v1: i32):
     v2 = Integer integer=1
     v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/1
     Return
-}
-# CHECK-LABEL: function f5 name="receiverThatMayHaveSpecies"
 # CHECK-NOT: builtinCallForm=
 # CHECK: v3:{{*}}= CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/1
+}
 
 function f6 name="elementReadAfterStorageTest" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: i32):
     v2 = Integer integer=1
     v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/0
     v4 = Integer integer=0
@@ -87,16 +74,14 @@ function f6 name="elementReadAfterStorageTest" parameters=[{type=Array<number, p
     Jump -> next b3(v9)
   b3(v10):
     Return v10
-}
-# CHECK-LABEL: function f6 name="elementReadAfterStorageTest"
 # CHECK: v3:{{*}}= CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/0 builtinCallForm=Prefix prefixLength=1
 # CHECK-NOT: HasArrayStorage
 # CHECK-NOT: GetArrayElement
 # CHECK-NOT: ElemGet
 # CHECK: Return
+}
 
 function f7 name="storageTestOfResultThatIsReturned" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Storage, Names]>, v1: i32):
     v2 = Integer integer=1
     v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/0
     v4 = HasArrayStorage v3 arrayStorage=Double
@@ -105,13 +90,11 @@ function f7 name="storageTestOfResultThatIsReturned" parameters=[{type=Array<num
     Return v3
   b2():
     Return v1
-}
-# CHECK-LABEL: function f7 name="storageTestOfResultThatIsReturned"
 # CHECK-NOT: builtinCallForm=
 # CHECK: = HasArrayStorage v3 arrayStorage=Double
+}
 
 function f8 name="storageTestOfLiteralThatIsReturned" parameters=[{type=number}, {type=i32}] results=[{type=anything}] {
-  b0(v0: number, v1: i32):
     v2 = NewArray v0 contents=number
     v3 = HasArrayStorage v2 arrayStorage=Double
     Branch v3 -> taken b1(), notTaken b2()
@@ -119,12 +102,10 @@ function f8 name="storageTestOfLiteralThatIsReturned" parameters=[{type=number},
     Return v2
   b2():
     Return v1
-}
-# CHECK-LABEL: function f8 name="storageTestOfLiteralThatIsReturned"
 # CHECK: = HasArrayStorage {{*}} arrayStorage=Double
+}
 
 function f9 name="storageTestNarrowsElementType" parameters=[{type=Array<number|null, proven, pristine[Storage, Names]>}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Array<number|null, proven, pristine[Storage, Names]>, v1: i32):
     v2 = Integer integer=1
     v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/0
     v4 = Integer integer=0
@@ -139,8 +120,7 @@ function f9 name="storageTestNarrowsElementType" parameters=[{type=Array<number|
     Jump -> next b3(v9)
   b3(v10):
     Return v10
-}
-# CHECK-LABEL: function f9 name="storageTestNarrowsElementType"
 # CHECK-NOT: builtinCallForm=
 # CHECK: = HasArrayStorage v5 arrayStorage=Double
 # CHECK: v8: undefined|number = GetArrayElement v5, v4
+}

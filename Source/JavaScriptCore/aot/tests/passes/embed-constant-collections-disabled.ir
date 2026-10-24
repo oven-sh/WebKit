@@ -10,15 +10,12 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="setOfStrings" results=[{type=Set<string>}] {
-  b0():
     v0 = String string="a"
     v1 = String string="b"
     v2 = String string="c"
     v3 = NewArray v0, v1, v2 contents=string
     v4 = CallBuiltin -, v3 overload=Set/2 builtinCallForm=Whole
     Return v4
-}
-# CHECK-LABEL: function f0 name="setOfStrings"
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "a" = String string="a"
 # CHECK-NEXT: v1: "b" = String string="b"
@@ -27,3 +24,4 @@ function f0 name="setOfStrings" results=[{type=Set<string>}] {
 # CHECK-NEXT: v4:{{*}}= CallBuiltin -, v3 overload=Set/2
 # CHECK-NEXT: Return v4
 # CHECK-NOT: data d0
+}

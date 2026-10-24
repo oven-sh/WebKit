@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <array>
 #include <wtf/CommaPrinter.h>
+#include <wtf/EnumTraits.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -85,40 +86,17 @@ static Opcode namedOperationWith(Access access)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static std::optional<Opcode> elementOperationFor(ElementAccessForm form, Access access)
+static Opcode arrayOperationFor(Access access)
 {
-    switch (form) {
-    case ElementAccessForm::Array:
-        switch (access) {
-        case Access::Read:
-            return Opcode::GetArrayElement;
-        case Access::Store:
-        case Access::Define:
-            return Opcode::PutArrayElement;
-        case Access::Has:
-            return Opcode::HasArrayElement;
-        case Access::None:
-            break;
-        }
-        break;
-    case ElementAccessForm::TypedArray:
-        switch (access) {
-        case Access::Read:
-            return Opcode::GetTypedArrayElement;
-        case Access::Store:
-            return Opcode::PutTypedArrayElement;
-        case Access::Define:
-        case Access::Has:
-            return std::nullopt;
-        case Access::None:
-            break;
-        }
-        break;
-    case ElementAccessForm::ByKey:
-    case ElementAccessForm::NamedKey:
-    case ElementAccessForm::String:
-    case ElementAccessForm::ArgumentsElement:
-    case ElementAccessForm::Split:
+    switch (access) {
+    case Access::Read:
+        return Opcode::GetArrayElement;
+    case Access::Store:
+    case Access::Define:
+        return Opcode::PutArrayElement;
+    case Access::Has:
+        return Opcode::HasArrayElement;
+    case Access::None:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -182,11 +160,7 @@ void becomeNamedAccess(Value& access, PropertyKeyID key)
 
 static ElementAccessPlan planWithoutElementOperation(const ElementAccessQuery& query, ElementAccessForm form, KnowledgeLevel level)
 {
-    ElementAccessPlan plan;
-    plan.form = form;
-    plan.level = level;
-    plan.keyIsIntegral = query.key.isNumberWithoutFraction();
-    return plan;
+    return { .form = form, .level = level, .keyIsIntegral = query.key.isNumberWithoutFraction() };
 }
 
 static ElementAccessPlan planByKey(const ElementAccessQuery& query, UnprovenCause cause = UnprovenCause::Unknown)
@@ -198,12 +172,7 @@ static ElementAccessPlan planByKey(const ElementAccessQuery& query, UnprovenCaus
 
 static ElementAccessPlan planNamedKey(ConstantKey constantKey, Opcode operation)
 {
-    ElementAccessPlan plan;
-    plan.form = ElementAccessForm::NamedKey;
-    plan.level = KnowledgeLevel::Proven;
-    plan.operation = operation;
-    plan.constantKey = constantKey;
-    return plan;
+    return { .form = ElementAccessForm::NamedKey, .level = KnowledgeLevel::Proven, .operation = operation, .constantKey = constantKey };
 }
 
 static ElementAccessPlan finishElementPlan(ElementAccessPlan plan, ElementAccessForm form, Opcode operation)
@@ -220,14 +189,6 @@ TypeID testedNumberTypeContaining(const Type& expectedNumber)
     return expectedNumber.isInt32() ? TypeTable::int32 : TypeTable::number;
 }
 
-static Type numbersThatPassTest(const Type& value, const Type& expectedNumber)
-{
-    Type numbers = value.withoutObjects().withoutPrimitives(static_cast<uint16_t>(~Primitive::Number));
-    if (testedNumberTypeContaining(expectedNumber) == TypeTable::number)
-        return numbers;
-    return Type::integer(numbers.integers.intersectWith(Range::int32()));
-}
-
 static TypedArrayType typedArrayTypeOf(const BuiltinTable& builtins, BuiltinClassID builtinClass)
 {
     BuiltinClassID typedArrayClass = builtins.typedArrayClassOf(builtinClass);
@@ -241,7 +202,9 @@ static bool hasIndexedElements(const BuiltinTable& builtins, BuiltinClassID buil
 
 static NumberKey testedNumberKey(const Type& key, const Type& expectedNumber)
 {
-    Type tested = numbersThatPassTest(key, expectedNumber);
+    Type tested = key.withoutObjects().withoutPrimitives(static_cast<uint16_t>(~Primitive::Number));
+    if (testedNumberTypeContaining(expectedNumber) != TypeTable::number)
+        tested = Type::integer(tested.integers.intersectWith(Range::int32()));
     return { KnowledgeLevel::Expected, tested.isNumberWithoutFraction(), isArrayIndex(tested) };
 }
 
@@ -251,7 +214,6 @@ static NumberKey expectedIndexKey(const Program& program, const ElementAccessQue
     if (!part || !hasIndexedElements(program.builtins(), part->builtinClass))
         return { };
 
-    // SplitUnions gives the number part of a closed union an arm of its own, which takes every number.
     const Type& testedType = program.at(TypeTable::int32);
     if (!query.key.overlaps(testedType, program) || isClosedUnion(unionPartsOf(query.key)))
         return { };
@@ -271,27 +233,6 @@ static NumberKey numberKeyOf(const Program& program, const ElementAccessQuery& q
     return testedNumberKey(query.key, expected);
 }
 
-static bool mayHaveElementForm(UnionPartKind kind)
-{
-    switch (kind) {
-    case UnionPartKind::String:
-    case UnionPartKind::BuiltinClass:
-        return true;
-    case UnionPartKind::OtherObjects:
-    case UnionPartKind::Nullish:
-    case UnionPartKind::Boolean:
-    case UnionPartKind::Number:
-    case UnionPartKind::Symbol:
-    case UnionPartKind::BigInt:
-    case UnionPartKind::Absent:
-    case UnionPartKind::Layouts:
-    case UnionPartKind::Functions:
-    case UnionPartKind::Builtins:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static bool canSplitReceiver(const Type& receiver)
 {
     if (receiver.anyObject)
@@ -299,7 +240,7 @@ static bool canSplitReceiver(const Type& receiver)
 
     UnionParts parts = unionPartsOf(receiver);
     return parts.size() > 1 && isClosedUnion(parts) && std::ranges::any_of(parts, [](const UnionPart& part) {
-        return mayHaveElementForm(part.kind);
+        return part.kind == UnionPartKind::String || part.kind == UnionPartKind::BuiltinClass;
     });
 }
 
@@ -365,7 +306,6 @@ static ElementAccessPlan planArrayAccess(const Program& program, const ElementAc
 {
     const ClassPart& part = *receiver.part;
     plan.requiredAspects = PristineAspects::Storage;
-    // -1 and 1.5 name properties, and an accessor on the array or on its prototypes may answer to such a name.
     if (!key.isArrayIndex)
         plan.requiredAspects.add(PristineAspects::Names);
     if (!receiver.isExpected)
@@ -377,7 +317,7 @@ static ElementAccessPlan planArrayAccess(const Program& program, const ElementAc
         plan.arrayStorage = expected;
         plan.testsArrayStorage = !isProven;
     }
-    return finishElementPlan(plan, ElementAccessForm::Array, *elementOperationFor(ElementAccessForm::Array, query.access));
+    return finishElementPlan(plan, ElementAccessForm::Array, arrayOperationFor(query.access));
 }
 
 static bool fitsContentType(const Type& stored, TypedArrayContentType contentType)
@@ -393,7 +333,6 @@ static bool fitsContentType(const Type& stored, TypedArrayContentType contentTyp
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The conversion of any other value can run code.
 static KnowledgeLevel storedFitOf(const Program& program, const ElementAccessQuery& query, TypedArrayContentType contentType)
 {
     if (!query.stored)
@@ -411,18 +350,24 @@ static KnowledgeLevel storedFitOf(const Program& program, const ElementAccessQue
 
 static ElementAccessPlan planTypedArrayAccess(const Program& program, const ElementAccessQuery& query, TypedArrayType typedArrayType, ElementAccessPlan plan)
 {
-    std::optional<Opcode> operation = elementOperationFor(ElementAccessForm::TypedArray, query.access);
-    if (!operation)
-        return planByKey(query);
-    if (query.access == Access::Store) {
+    plan.typedArrayType = typedArrayType;
+    switch (query.access) {
+    case Access::Read:
+        return finishElementPlan(plan, ElementAccessForm::TypedArray, Opcode::GetTypedArrayElement);
+    case Access::Store: {
         KnowledgeLevel storedFit = storedFitOf(program, query, contentType(typedArrayType));
         if (storedFit == KnowledgeLevel::Unknown)
             return planByKey(query);
         plan.testsStoredValue = storedFit == KnowledgeLevel::Expected;
+        return finishElementPlan(plan, ElementAccessForm::TypedArray, Opcode::PutTypedArrayElement);
     }
-
-    plan.typedArrayType = typedArrayType;
-    return finishElementPlan(plan, ElementAccessForm::TypedArray, *operation);
+    case Access::Define:
+    case Access::Has:
+        return planByKey(query);
+    case Access::None:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static ElementAccessPlan planClassAccess(const Program& program, const ElementAccessQuery& query, NumberKey key, const ElementReceiver& receiver)
@@ -432,7 +377,6 @@ static ElementAccessPlan planClassAccess(const Program& program, const ElementAc
     plan.keyIsIntegral = key.isIntegral;
     plan.testsKeyIsNumber = key.level != KnowledgeLevel::Proven;
     plan.testsReceiverClass = receiver.isExpected;
-    // The test of an expected receiver fails for undefined and null.
     plan.checksNullish = !receiver.isExpected && query.receiver.mayBeUndefinedOrNull();
 
     if (plan.builtinClass == BuiltinClasses::Array)
@@ -491,9 +435,7 @@ std::optional<ElementAccessPlan> planElementAccessOf(const Program& program, con
         const Type& keyType = program.at(key.type);
         if (ConstantKey constantKey = constantKeyOf(program, keyType))
             return planNamedKey(constantKey, namedOperationFor(access.opcode));
-        ElementAccessPlan byKey;
-        byKey.keyIsIntegral = keyType.isNumberWithoutFraction();
-        return byKey;
+        return ElementAccessPlan { .keyIsIntegral = keyType.isNumberWithoutFraction() };
     }
 
     const Value& receiver = function.at(access.objectOperand());
@@ -509,62 +451,9 @@ std::optional<ElementAccessPlan> planElementAccessOf(const Program& program, con
     });
 }
 
-static ASCIILiteral nameOf(ElementAccessForm form)
-{
-    switch (form) {
-    case ElementAccessForm::ByKey:
-        return "ByKey"_s;
-    case ElementAccessForm::NamedKey:
-        return "NamedKey"_s;
-    case ElementAccessForm::Array:
-        return "Array"_s;
-    case ElementAccessForm::TypedArray:
-        return "TypedArray"_s;
-    case ElementAccessForm::String:
-        return "String"_s;
-    case ElementAccessForm::ArgumentsElement:
-        return "ArgumentsElement"_s;
-    case ElementAccessForm::Split:
-        return "Split"_s;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void dumpTests(PrintStream& out, const ElementAccessPlan& plan)
-{
-    out.print(" tests=[");
-    CommaPrinter comma;
-    if (plan.testsReceiverClass)
-        out.print(comma, "class");
-    if (plan.checksNullish)
-        out.print(comma, "nullish");
-    if (plan.testsReceiverIsString)
-        out.print(comma, "string");
-    if (plan.testsKeyIsNumber)
-        out.print(comma, "key");
-    if (plan.testsStoredValue)
-        out.print(comma, "stored");
-    if (!plan.requiredAspects.isEmpty()) {
-        out.print(comma, "pristine(");
-        CommaPrinter plus("+"_s);
-        for (PristineAspects aspect : allMembersOf<PristineAspects>) {
-            if (plan.requiredAspects.contains(aspect))
-                out.print(plus, nameOf(aspect));
-        }
-        out.print(")");
-    }
-    if (plan.testsArrayStorage)
-        out.print(comma, "storage");
-    if (plan.testsInBounds)
-        out.print(comma, "bounds");
-    if (plan.testsPresence)
-        out.print(comma, "presence");
-    out.print("]");
-}
-
 void ElementAccessPlan::dump(PrintStream& out) const
 {
-    out.print("form=", nameOf(form), " level=", nameOf(level));
+    out.print("form=", enumName(form), " level=", nameOf(level));
     if (isResolved())
         out.print(" operation=", nameOf(operation));
     if (builtinClass)
@@ -581,8 +470,36 @@ void ElementAccessPlan::dump(PrintStream& out) const
         out.print(" holeIsNaN");
     if (isInsideView)
         out.print(" insideView");
-    if (!needsNoTest())
-        dumpTests(out, *this);
+    if (!needsNoTest()) {
+        out.print(" tests=[");
+        CommaPrinter comma;
+        if (testsReceiverClass)
+            out.print(comma, "class");
+        if (checksNullish)
+            out.print(comma, "nullish");
+        if (testsReceiverIsString)
+            out.print(comma, "string");
+        if (testsKeyIsNumber)
+            out.print(comma, "key");
+        if (testsStoredValue)
+            out.print(comma, "stored");
+        if (!requiredAspects.isEmpty()) {
+            out.print(comma, "pristine(");
+            CommaPrinter plus("+"_s);
+            for (PristineAspects aspect : allMembersOf<PristineAspects>) {
+                if (requiredAspects.contains(aspect))
+                    out.print(plus, nameOf(aspect));
+            }
+            out.print(")");
+        }
+        if (testsArrayStorage)
+            out.print(comma, "storage");
+        if (testsInBounds)
+            out.print(comma, "bounds");
+        if (testsPresence)
+            out.print(comma, "presence");
+        out.print("]");
+    }
     if (cause != UnprovenCause::Unknown)
         out.print(" cause=", nameOf(cause));
 }

@@ -7,8 +7,10 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInductionVariables.h"
 #include "AOTRuleSupport.h"
 #include "AOTStringRanges.h"
+#include <array>
 #include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -33,18 +35,14 @@ struct LiteralArgument {
 std::optional<LiteralArgument> literalArgumentOf(SelectionContext&, ValueID);
 std::optional<LiteralArgument> comparedLiteralOf(SelectionContext&, const Use& useInComparison);
 
-enum class StringBuilderPartForm : uint8_t {
-    Value,
-    Constant,
-    Integer,
-    Number,
-    Boolean,
-    String,
-    StringRange,
-    StringOrNullish,
-};
+inline constexpr std::array relationalOpcodesOfStrings { Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq };
 
-StringBuilderPartForm partFormOf(SelectionContext&, ValueID part, CodeShape shapeAtAppend);
+static_assert([] {
+    OpcodeSet opcodes;
+    for (Opcode opcode : relationalOpcodesOfStrings)
+        opcodes.add(opcode);
+    return opcodes == relationalOperators;
+}());
 
 } } } // namespace JSC::AOT::Typed
 

@@ -7,7 +7,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="outer" parameters=[{type=number}] results=[{type=number}] inlineFrames=[{}, {callee=f1 callPosition=10 isTailCall=true module=m0}] {
-  b0(v0: number):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -15,21 +14,18 @@ function f0 name="outer" parameters=[{type=number}] results=[{type=number}] inli
     ReturnCall v2 @20:1
   b2():
     Return v0
-}
-# CHECK-LABEL: function f0 name="outer"
 # CHECK-NOT: CallDirect
 # CHECK: Jump -> next [[header]](v0)
 # CHECK: Jump -> next [[header]]([[carried]]) @20:1
 # CHECK: [[header]]([[carried]]: number):
 # CHECK-NEXT: LoopHint
 # CHECK-NOT: CallDirect
+}
 
 function f1 name="inlined" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f0 @20
     ReturnCall v1 @20
-}
-# CHECK-LABEL: function f1 name="inlined"
 # CHECK-NOT: LoopHint
 # CHECK: v1: number = CallDirect v0 function=f0 @20
 # CHECK-NEXT: ReturnCall v1 @20
+}

@@ -8,7 +8,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="callsWhatItIsHanded" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = Call v0, -, v1
     v3 = Mul v1, v1
     v4 = Mul v3, v1
@@ -21,13 +20,11 @@ function f0 name="callsWhatItIsHanded" parameters=[{type=anything}, {type=number
 }
 
 function f1 name="handed" kind=Arrow captures=[{type=number}] parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
     v2 = Mul v0, v1
     Return v2
 }
 
 function f2 name="makesTheClosureForTheCall" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1() frequency=Unlikely:
     v2 = NewClosure v0 function=f1
@@ -35,12 +32,10 @@ function f2 name="makesTheClosureForTheCall" parameters=[{type=number}, {type=bo
     Return v3
   b2():
     Return v0
-}
-# CHECK-LABEL: function f2 name="makesTheClosureForTheCall"
 # CHECK-NOT: CallDirect
+}
 
 function f3 name="returnsTheClosureToo" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1() frequency=Unlikely:
     v2 = NewClosure v0 function=f1
@@ -48,6 +43,5 @@ function f3 name="returnsTheClosureToo" parameters=[{type=number}, {type=boolean
     Return v2
   b2():
     Return v0
-}
-# CHECK-LABEL: function f3 name="returnsTheClosureToo"
 # CHECK: = CallDirect v2, v0
+}

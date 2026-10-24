@@ -83,53 +83,46 @@ static std::optional<Word32> convertedInt32Of(Number number)
     return Word32(value->child(0));
 }
 
-namespace {
-
-class MarkerEmitter final : public OperationEmitter {
-public:
-    explicit MarkerEmitter(CodeGenerator& generator)
-        : OperationEmitter(generator)
-    {
-    }
-
-    Operand convertMarkers(Operand source, const Type&, Representation to, std::optional<Operand> unmarked);
-    Integer integerPartOf(Operand, const Type&);
-    Number numberPartOf(Operand, const Type&);
-};
-
-Operand MarkerEmitter::convertMarkers(Operand source, const Type& type, Representation to, std::optional<Operand> unmarked)
+static B3::PatchpointValue* conversionInRegisters(Output& out, LType result, Number operand, B3::PureFunction function)
 {
-    ConversionEmitter& conversions = emitter<ConversionEmitter>();
+    B3::PatchpointValue* patchpoint = out.patchpoint(result);
+    patchpoint->append(B3::ConstrainedValue(operand.value(), B3::ValueRep::SomeRegister));
+    patchpoint->effects = B3::Effects::none();
+    patchpoint->pureFunction = function;
+    patchpoint->setRunsWithoutFrame(true);
+    return patchpoint;
+}
+
+Operand ConversionEmitter::convertMarkers(Operand source, const Type& type, Representation to, std::optional<Operand> result)
+{
     bool sourceHasMarkers = markersOf(source.representation).has_value();
-    std::optional<Operand> result = unmarked;
     for (uint16_t primitive : markerKinds) {
         if (!(type.primitives & primitive))
             continue;
-        Operand marker = conversions.fromBits(integer(static_cast<int64_t>(ConversionEmitter::markerBits(primitive, to))), to);
+        Operand marker = fromBits(integer(static_cast<int64_t>(markerBits(primitive, to))), to);
         if (!result) {
             result = marker;
             continue;
         }
         if (!sourceHasMarkers)
             continue;
-        Condition holdsMarker = conversions.isMarker(source, ConversionEmitter::markerBits(primitive, source.representation));
+        Condition holdsMarker = isMarker(source, markerBits(primitive, source.representation));
         result = Operand(to, m_out.select(holdsMarker.value(), marker.value, result->value));
     }
-    return result ? *result : conversions.fromBits(integer(0), to);
+    return result ? *result : fromBits(integer(0), to);
 }
 
-Integer MarkerEmitter::integerPartOf(Operand operand, const Type& type)
+Integer ConversionEmitter::integerPartOf(Operand operand, const Type& type)
 {
-    ConversionEmitter& conversions = emitter<ConversionEmitter>();
     switch (operand.representation) {
     case Representation::Int32:
-        return conversions.widen(operand.as<Word32>(), type.integers);
+        return widen(operand.as<Word32>(), type.integers);
     case Representation::Int64:
     case Representation::OptionalInt64:
         return Integer(operand.value);
     case Representation::Double:
     case Representation::OptionalDouble:
-        return conversions.toInteger(Number(operand.value));
+        return toInteger(Number(operand.value));
     case Representation::Unchosen:
     case Representation::Void:
     case Representation::Boolean:
@@ -143,17 +136,16 @@ Integer MarkerEmitter::integerPartOf(Operand operand, const Type& type)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-Number MarkerEmitter::numberPartOf(Operand operand, const Type& type)
+Number ConversionEmitter::numberPartOf(Operand operand, const Type& type)
 {
-    ConversionEmitter& conversions = emitter<ConversionEmitter>();
     switch (operand.representation) {
     case Representation::Int32:
         return toNumber(operand.as<Word32>());
     case Representation::Int64:
     case Representation::OptionalInt64:
-        return conversions.toNumber(Integer(operand.value), type.integers);
+        return toNumber(Integer(operand.value), type.integers);
     case Representation::Double:
-        return type.mayBeNaN() ? conversions.purified(operand.as<Number>()) : operand.as<Number>();
+        return type.mayBeNaN() ? purified(operand.as<Number>()) : operand.as<Number>();
     case Representation::OptionalDouble:
         return Number(operand.value);
     case Representation::Unchosen:
@@ -169,30 +161,13 @@ Number MarkerEmitter::numberPartOf(Operand operand, const Type& type)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-} // anonymous namespace
-
-ConversionEmitter::ConversionEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
-
-Boxed ConversionEmitter::box(const OperationContext& context, Operand operand, const Type& type)
-{
-    return box(context, operand, type, isSeldomEntered(context));
-}
-
-Boxed ConversionEmitter::boxInArm(const OperationContext& context, Operand operand, const Type& type)
-{
-    return box(context, operand, type, true);
-}
-
 Boxed ConversionEmitter::box(const OperationContext& context, Operand operand, const Type& type, bool isSeldomEntered)
 {
     switch (operand.representation) {
     case Representation::Void:
         if (!isValueWithoutBits(type))
             break;
-        return MarkerEmitter(generator()).convertMarkers(operand, type, Representation::JSValue, std::nullopt).as<Boxed>();
+        return convertMarkers(operand, type, Representation::JSValue).as<Boxed>();
     case Representation::Boolean:
         return boxBoolean(operand.as<Condition>());
     case Representation::Int32:
@@ -238,15 +213,10 @@ Boxed ConversionEmitter::boxByStub(BoxedNumberForm form, LValue number)
     return Boxed(emitter<RuntimeCallEmitter>().callStubWithoutSite(AOT::boxNumber(form), singleElementSpan(number), options).first);
 }
 
-Boxed ConversionEmitter::boxNumberByStub(Number value)
-{
-    return boxByStub(BoxedNumberForm::Double, value.value());
-}
-
 Boxed ConversionEmitter::boxOptional(Operand operand, const Type& type, bool isSeldomEntered)
 {
     auto boxMarker = [&] {
-        return MarkerEmitter(generator()).convertMarkers(operand, type, Representation::JSValue, std::nullopt).as<Boxed>();
+        return convertMarkers(operand, type, Representation::JSValue).as<Boxed>();
     };
     auto boxUnmarked = [&] {
         return operand.is<OptionalInteger>() ? boxInteger(Integer(operand.value), type.integers) : boxNumber(Number(operand.value));
@@ -322,7 +292,7 @@ Operand ConversionEmitter::unbox(Boxed value, const Type& type, Representation t
 Operand ConversionEmitter::unboxOptional(Boxed value, const Type& type, Representation to, NumberUnboxing numberUnboxing)
 {
     auto unboxMarker = [&] {
-        return MarkerEmitter(generator()).convertMarkers(value, type, to, std::nullopt);
+        return convertMarkers(value, type, to);
     };
     auto unboxNumber = [&] {
         return Operand(to, unbox(value, type, to == Representation::OptionalInt64 ? Representation::Int64 : Representation::Double, numberUnboxing).value);
@@ -352,13 +322,10 @@ Operand ConversionEmitter::toOptional(Operand operand, const Type& type, Represe
         return unbox(operand.as<Boxed>(), type, to);
     RELEASE_ASSERT(operand.representation != Representation::Void || isValueWithoutBits(type));
 
-    MarkerEmitter markers(generator());
     std::optional<Operand> number;
-    if (type.primitives & Primitive::Number) {
-        LValue converted = to == Representation::OptionalInt64 ? markers.integerPartOf(operand, type).value() : markers.numberPartOf(operand, type).value();
-        number = Operand(to, converted);
-    }
-    return markers.convertMarkers(operand, type, to, number);
+    if (type.primitives & Primitive::Number)
+        number = Operand(to, to == Representation::OptionalInt64 ? integerPartOf(operand, type).value() : numberPartOf(operand, type).value());
+    return convertMarkers(operand, type, to, number);
 }
 
 Operand ConversionEmitter::inRepresentation(const OperationContext& context, Operand produced, const Type& producedType, Representation wanted)
@@ -432,25 +399,11 @@ Boxed ConversionEmitter::boxNumber(Number value)
         return boxInt32(*converted);
 
     Word32 low = low32(toInteger(value));
-    LBasicBlock int32Case = newBlock();
-    LBasicBlock doubleCase = newBlock();
-    Join<Boxed> join(m_out);
-    m_out.branch(equal(bitsOf(toNumber(low)), bitsOf(value)).value(), normalEdge(int32Case), normalEdge(doubleCase));
-    m_out.appendTo(int32Case);
-    join.add(boxInt32(low));
-    m_out.appendTo(doubleCase);
-    join.add(boxDouble(value));
-    return join.finish();
-}
-
-Boxed ConversionEmitter::boxDouble(Number value)
-{
-    return boxBitsOfPurifiedDouble(purified(value));
-}
-
-Boxed ConversionEmitter::boxBitsOfPurifiedDouble(Number value)
-{
-    return Boxed(m_out.sub(m_out.bitCast(value.value(), B3::Int64), m_numberTag));
+    return selectByBranch<Boxed>(equal(bitsOf(toNumber(low)), bitsOf(value)), [&] {
+        return boxInt32(low);
+    }, [&] {
+        return boxDouble(value);
+    });
 }
 
 Boxed ConversionEmitter::boxInteger(Integer value, Range range)
@@ -484,11 +437,7 @@ Integer ConversionEmitter::toInteger(Number value)
         return integer(static_cast<int64_t>(value.value()->asDouble()));
     if (std::optional<Word32> converted = convertedInt32Of(value))
         return signExtended(*converted);
-    B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Int64);
-    patchpoint->append(value.value(), B3::ValueRep::SomeRegister);
-    patchpoint->effects = B3::Effects::none();
-    patchpoint->pureFunction = pureFunction(PureOperation::TruncateToInt64, 0, true);
-    patchpoint->setRunsWithoutFrame(true);
+    B3::PatchpointValue* patchpoint = conversionInRegisters(m_out, B3::Int64, value, pureFunction(PureOperation::TruncateToInt64, 0, true));
     patchpoint->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         jit.truncateDoubleToInt64(params[1].fpr(), params[0].gpr());
 #if CPU(ARM64)
@@ -503,11 +452,7 @@ Integer ConversionEmitter::toInteger(Number value)
 #if CPU(ARM64)
 Integer ConversionEmitter::toNearestInteger(Number value)
 {
-    B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Int64);
-    patchpoint->append(value.value(), B3::ValueRep::SomeRegister);
-    patchpoint->effects = B3::Effects::none();
-    patchpoint->pureFunction = pureFunction(PureOperation::TruncateToInt64, 1, true);
-    patchpoint->setRunsWithoutFrame(true);
+    B3::PatchpointValue* patchpoint = conversionInRegisters(m_out, B3::Int64, value, pureFunction(PureOperation::TruncateToInt64, 1, true));
     patchpoint->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         jit.truncateDoubleToInt64(params[1].fpr(), params[0].gpr());
     });
@@ -635,11 +580,6 @@ Integer ConversionEmitter::widen(Word32 value, Range range)
     return isNonNegative(range) ? zeroExtended(value) : signExtended(value);
 }
 
-Word32 ConversionEmitter::narrow(Integer value)
-{
-    return low32(value);
-}
-
 Word32 ConversionEmitter::toInt32(Number value)
 {
     if (std::optional<Word32> converted = convertedInt32Of(value))
@@ -657,11 +597,7 @@ Word32 ConversionEmitter::toInt32(Number value)
     }
 #if CPU(ARM64)
     if (MacroAssembler::supportsDoubleToInt32ConversionUsingJavaScriptSemantics(build().targetFeatures())) {
-        B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Int32);
-        patchpoint->append(B3::ConstrainedValue(value.value(), B3::ValueRep::SomeRegister));
-        patchpoint->effects = B3::Effects::none();
-        patchpoint->pureFunction = pureFunction(PureOperation::ToInt32, 0, true);
-        patchpoint->setRunsWithoutFrame(true);
+        B3::PatchpointValue* patchpoint = conversionInRegisters(m_out, B3::Int32, value, pureFunction(PureOperation::ToInt32, 0, true));
         patchpoint->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
             jit.convertDoubleToInt32UsingJavaScriptSemantics(params[1].fpr(), params[0].gpr());
         });
@@ -722,7 +658,7 @@ NarrowReference ConversionEmitter::compress(Operand operand, const Type& type)
     switch (operand.representation) {
     case Representation::Void:
         RELEASE_ASSERT(isValueWithoutBits(type));
-        return MarkerEmitter(generator()).convertMarkers(operand, type, Representation::Cell32, std::nullopt).as<NarrowReference>();
+        return convertMarkers(operand, type, Representation::Cell32).as<NarrowReference>();
     case Representation::Cell:
         return compress(operand.as<CellPointer>());
     case Representation::Cell32:
@@ -820,11 +756,6 @@ Condition ConversionEmitter::isMarker(Operand operand)
     return greaterThanOrEqual(bitsOf(operand), integer(static_cast<int64_t>(markerBits(Primitive::Undefined, operand.representation))));
 }
 
-Condition ConversionEmitter::isMarker(Operand operand, uint64_t marker)
-{
-    return equal(bitsOf(operand), integer(static_cast<int64_t>(marker)));
-}
-
 Condition ConversionEmitter::isAbsent(Operand operand)
 {
     switch (operand.representation) {
@@ -888,7 +819,7 @@ LiteralStringWord ConversionEmitter::toLiteralString(Operand operand, const Type
     switch (operand.representation) {
     case Representation::Void:
         RELEASE_ASSERT(isValueWithoutBits(type));
-        return MarkerEmitter(generator()).convertMarkers(operand, type, Representation::LiteralString, std::nullopt).as<LiteralStringWord>();
+        return convertMarkers(operand, type, Representation::LiteralString).as<LiteralStringWord>();
     case Representation::Cell:
     case Representation::JSValue: {
         if (!(type.primitives & Primitive::AnyString))
@@ -923,20 +854,9 @@ Boxed ConversionEmitter::boxLiteralString(const OperationContext& context, Liter
     };
     const ptrdiff_t offsetOfCells = isNarrow ? AOT_INSTANCE_OFFSET(runtime.constants.literalStrings) : AOT_INSTANCE_OFFSET(runtime.constants.wideLiteralStrings);
     auto loadOrCreateCell = [&](LiteralStringWord literal, TypedPointer cellWord) {
-        auto create = [&] {
-            return boxCell(callOperation<CellPointer>(context, RuntimeOperation::LiteralStringToString, { literal }, { .pureFunction = pureFunction(PureOperation::LiteralStringToString, 0, true), .isOnRarePath = true }));
-        };
-        if (isNarrow) {
-            NarrowReference reference(m_out.load32(cellWord));
-            Boxed created = boxCell(decode(reference));
-            return either<Boxed>(isNotZero(Word32(reference.value())), [&] {
-                return created;
-            }, create);
-        }
-        Boxed created(m_out.load64(cellWord));
-        return either<Boxed>(isNotEmpty(created), [&] {
-            return created;
-        }, create);
+        return boxCell(emitter<ConstantEmitter>().permanentCell(cellWord, isNarrow, [&] {
+            return callOperation<CellPointer>(context, RuntimeOperation::LiteralStringToString, { literal }, { .pureFunction = pureFunction(PureOperation::LiteralStringToString, 0, true), .isOnRarePath = true });
+        }));
     };
 
     std::optional<uint32_t> number;

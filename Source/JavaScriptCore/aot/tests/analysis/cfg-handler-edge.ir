@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="sharedLandingBlock" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     Jump -> next b1()
   b1() handler=b4(v1):
     v2 = Call v0
@@ -84,7 +83,6 @@ function f1 name="branchAndHandler" parameters=[{type=anything}, {type=boolean}]
 # CHECK-NEXT: b0 handler: b3()
 # CHECK-NEXT: b0 terminator dominates: [b1 b2]
 function f2 name="uncovered" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     Jump -> next b1()
   b1():
     v2 = Call v0

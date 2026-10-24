@@ -14,7 +14,6 @@ layout L3 name="HoldsFunction" fields=[{key="length" declared={type=function} fl
 layout L4 kind=Instance name="Measured" constructor=f2 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="length" function=f5 mutability=Fixed}]}
 layout L5 kind=Instance name="Lazy" constructor=f3 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="length" kind=Getter function=f6 mutability=Fixed}]}
 function f0 name="operands" parameters=[{type=L0}, {type=L1}, {type=L2}, {type=L3}, {type=L4}, {type=L5}] results=[{type=undefined}] {
-  b0(v0: L0, v1: L1, v2: L2, v3: L3, v4: L4, v5: L5):
     Return
 }
 function f1 name="Amount" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2

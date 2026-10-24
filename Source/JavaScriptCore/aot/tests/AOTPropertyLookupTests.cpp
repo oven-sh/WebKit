@@ -19,7 +19,7 @@
 #include "AOTPropertyWalk.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTSchemaRuntimeOperations.h"
-#include "AOTSlowPaths.h"
+#include "AOTRuntimeTable.h"
 #include "AOTVector.h"
 #include "DeferGCInlines.h"
 #include "GetterSetter.h"

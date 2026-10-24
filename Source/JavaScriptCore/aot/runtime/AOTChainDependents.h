@@ -11,26 +11,14 @@
 #include "AOTVector.h"
 #include "CollectionScope.h"
 #include "JSObject.h"
-#include "PropertyOffset.h"
 #include "RememberedSlot.h"
 #include <memory>
 #include <span>
-#include <wtf/HashFunctions.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
-#include <wtf/HashTraits.h>
-#include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
-#include <wtf/text/UniquedStringImpl.h>
 
-namespace JSC {
-
-class JSGlobalObject;
-class JSObject;
-class Structure;
-class VM;
-
-namespace AOT {
+namespace JSC { namespace AOT {
 
 struct State;
 
@@ -86,67 +74,47 @@ public:
     virtual bool hasChainDependent(VM&, uint32_t subject, UniquedStringImpl* uidOrNull) const = 0;
 };
 
-class ChainDependentOwnerID {
-public:
-    constexpr ChainDependentOwnerID() = default;
-    explicit constexpr ChainDependentOwnerID(uint8_t index)
-        : m_index(index)
-    {
-    }
-
-    constexpr uint8_t index() const { return m_index; }
-    friend constexpr bool operator==(ChainDependentOwnerID, ChainDependentOwnerID) = default;
-
-private:
-    uint8_t m_index { 0 };
-};
+enum class ChainDependentOwnerID : uint8_t { NoOwner = UINT8_MAX };
 
 struct ChainDependent {
     friend bool operator==(const ChainDependent&, const ChainDependent&) = default;
 
     UniquedStringImpl* uidOrNull { nullptr };
     uint32_t subject { 0 };
-    ChainDependentOwnerID owner;
-    bool isHashTableDeletedValue { false };
+    ChainDependentOwnerID owner { };
 };
 static_assert(sizeof(ChainDependent) == 16);
 
-struct ChainDependentHashTraits : WTF::GenericHashTraits<ChainDependent> {
-    static constexpr bool emptyValueIsZero = false;
-    static constexpr bool hasIsEmptyValueFunction = true;
-    static ChainDependent emptyValue() { return { nullptr, UINT32_MAX, ChainDependentOwnerID(UINT8_MAX), false }; }
-    static bool isEmptyValue(const ChainDependent& value) { return value == emptyValue(); }
-    static void constructDeletedValue(ChainDependent& slot) { slot = { nullptr, UINT32_MAX, ChainDependentOwnerID(UINT8_MAX), true }; }
-    static bool isDeletedValue(const ChainDependent& value) { return value.isHashTableDeletedValue; }
-};
-
-struct ChainDependentHash {
-    static unsigned hash(const ChainDependent& dependent) { return WTF::pairIntHash(WTF::PtrHash<UniquedStringImpl*>::hash(dependent.uidOrNull), WTF::intHash(dependent.subject) + dependent.owner.index()); }
-    static bool equal(const ChainDependent& a, const ChainDependent& b) { return a == b; }
-    static constexpr bool safeToCompareToEmptyOrDeleted = true;
-};
-
-class ChainDependents {
+class ChainDependents final : ChainDependentOwner {
     WTF_MAKE_NONCOPYABLE(ChainDependents);
     WTF_MAKE_TZONE_ALLOCATED(ChainDependents);
 public:
-    static constexpr unsigned maxNumberOfOwners = UINT8_MAX;
-
     explicit ChainDependents(State&);
-    ~ChainDependents();
 
     ChainDependentOwnerID addOwner(ChainDependentOwner&);
-    ChainDependentOwnerID structureStateOwner() const { return m_structureStateOwner; }
 
     void add(std::span<JSObject* const> chainObjects, const ChainDependent&);
+    // What the engine remembers in the Structure about names above its objects is forgotten with the dependent.
+    void addStateOfStructure(std::span<JSObject* const> chainObjects, Structure*, UniquedStringImpl*);
     void didChange(JSObject* changed, UniquedStringImpl* uidOrNull);
-    bool hasDependents(JSObject*) const;
+    bool hasDependents(JSObject* object) const { return m_dependentsByObject.contains(object); }
     size_t numberOfDependents(JSObject*) const;
 
     size_t removeDeadEntries(VM&, CollectionScope);
 
 private:
-    using DependentSet = UncheckedKeyHashSet<ChainDependent, ChainDependentHash, ChainDependentHashTraits>;
+    struct HashTraits : WTF::GenericHashTraits<ChainDependent> {
+        static constexpr bool emptyValueIsZero = false;
+        static ChainDependent emptyValue() { return { nullptr, 0, ChainDependentOwnerID::NoOwner }; }
+        static void constructDeletedValue(ChainDependent& slot) { slot = { nullptr, 1, ChainDependentOwnerID::NoOwner }; }
+        static bool isDeletedValue(const ChainDependent& value) { return value == ChainDependent { nullptr, 1, ChainDependentOwnerID::NoOwner }; }
+    };
+    struct Hash {
+        static unsigned hash(const ChainDependent& dependent) { return WTF::pairIntHash(WTF::PtrHash<UniquedStringImpl*>::hash(dependent.uidOrNull), WTF::intHash(dependent.subject) + static_cast<unsigned>(dependent.owner)); }
+        static bool equal(const ChainDependent& a, const ChainDependent& b) { return a == b; }
+        static constexpr bool safeToCompareToEmptyOrDeleted = true;
+    };
+    using DependentSet = UncheckedKeyHashSet<ChainDependent, Hash, HashTraits>;
     struct NameIndex {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(NameIndex);
         void add(const ChainDependent&);
@@ -159,14 +127,14 @@ private:
         std::unique_ptr<NameIndex> index;
     };
     static constexpr unsigned maxSizeWithoutIndex = 64;
-    class StructureStateOwner;
 
-    ChainDependentOwner& ownerOf(const ChainDependent& dependent) { return *m_owners[dependent.owner.index()]; }
+    void dropChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl*) final;
+    bool hasChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl*) const final;
+    ChainDependentOwner& ownerOf(const ChainDependent& dependent) { return *m_owners[static_cast<unsigned>(dependent.owner)]; }
 
     State& m_state;
     Vector<ChainDependentOwner*, 8> m_owners;
-    std::unique_ptr<StructureStateOwner> m_structureState;
-    ChainDependentOwnerID m_structureStateOwner;
+    UncheckedKeyHashSet<StructureID> m_structuresWithState;
     UncheckedKeyHashMap<JSObject*, ObjectDependents> m_dependentsByObject;
     size_t m_numberOfDependentsAddedSinceOwnersWereAsked { 0 };
     size_t m_numberOfDependentsLeftWhenOwnersWereAsked { 0 };
@@ -174,11 +142,6 @@ private:
 };
 
 void didChangeChainObject(VM&, JSObject* changed, UniquedStringImpl* uidOrNull);
-// A cacheable dictionary becomes an ordinary object: every name finds what it found, at the offset where it lay, and the prototype stays.
-void didFlattenChainObject(VM&, JSObject* flattened);
-void didFlattenStructure(VM&, Structure*);
-void didChangeGlobalLexicalBindings(JSGlobalObject*);
-
 bool storeCreatesOwnProperty(JSGlobalObject*, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl*);
 bool storeCreatesOwnProperty(JSGlobalObject*, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl*, const ChainDependent&);
 

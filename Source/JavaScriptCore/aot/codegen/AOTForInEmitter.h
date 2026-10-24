@@ -13,7 +13,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class ForInEmitter final : public OperationEmitter {
 public:
-    explicit ForInEmitter(CodeGenerator&);
+    explicit ForInEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generateForInOpen(const ValueContext&);
     void generateForInStep(const ValueContext&);
@@ -26,11 +26,10 @@ public:
     };
 
     EnumeratorFields loadFields(CellPointer enumerator);
-    Integer nameIndexOf(const EnumeratorFields&, Integer position);
-    Condition isInStructurePart(const EnumeratorFields&, Integer nameIndex);
+    Integer nameIndexOf(const EnumeratorFields& fields, Integer position) { return sub(position, zeroExtended(fields.indexedLength)); }
+    Condition isInStructurePart(const EnumeratorFields& fields, Integer nameIndex) { return below(nameIndex, zeroExtended(fields.endStructurePropertyIndex)); }
     Condition hasCachedKeys(CellPointer enumerator, const EnumeratorFields&, CellPointer object);
-    Condition describesOrdinaryObject(CellPointer enumerator);
-    CellPointer nameAt(CellPointer enumerator, Integer nameIndex);
+    Condition describesOrdinaryObject(CellPointer enumerator) { return isZero(loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_cachedOrderWordMask)); }
 };
 
 } } } // namespace JSC::AOT::Typed

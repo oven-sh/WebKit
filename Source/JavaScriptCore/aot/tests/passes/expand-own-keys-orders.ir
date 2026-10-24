@@ -21,33 +21,29 @@ function f0 name="fiveOrders" parameters=[{type=object}] results=[{type=anything
   b0(v0: object ~ L0):
     v1 = CallBuiltin -, v0 overload=ObjectValues/0
     Return v1
-}
-# CHECK-LABEL: function f0 name="fiveOrders"
 # CHECK: = CallBuiltin -, v0 overload=ObjectValues/0
 # CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[0, 1, 2]
 # CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[0, 2, 1]
 # CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[1, 0, 2]
 # CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[1, 2, 0]
 # CHECK-NOT: HasKeyOrder
+}
 
 function f1 name="fourOrdersOneListedTwice" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L1):
     v1 = CallBuiltin -, v0 overload=ObjectValues/0
     Return v1
-}
-# CHECK-LABEL: function f1 name="fourOrdersOneListedTwice"
 # CHECK: = HasKeyOrder v0, {{*}} layout=L1 fields=[0, 1, 2]
 # CHECK: = HasKeyOrder v0, {{*}} layout=L1 fields=[0, 2, 1]
 # CHECK: = HasKeyOrder v0, {{*}} layout=L1 fields=[1, 2, 0]
 # CHECK: = HasKeyOrder v0, {{*}} layout=L1 fields=[2, 0, 1]
 # CHECK-NOT: HasKeyOrder
+}
 
 function f2 name="orderOfFortyNineFields" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L2):
     v1 = CallBuiltin -, v0 overload=ObjectValues/0
     Return v1
-}
-# CHECK-LABEL: function f2 name="orderOfFortyNineFields"
 # CHECK: = CallBuiltin -, v0 overload=ObjectValues/0
 # CHECK-NOT: HasKeyOrder
 # CHECK: = HasKeyOrder v0, {{*}} layout=L2 fields=[7]
@@ -55,13 +51,12 @@ function f2 name="orderOfFortyNineFields" parameters=[{type=object}] results=[{t
 # CHECK: [[k7]]: undefined|null|number ~ number = GetSlot v0, {{*}} key="k7" receivers=[L2] level=Expected
 # CHECK-NEXT: = NewArray [[k7]] contents=anything
 # CHECK-NOT: HasKeyOrder
+}
 
 function f3 name="twoLayoutsWithThreeOrdersEach" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L3|L4):
     v1 = CallBuiltin -, v0 overload=ObjectValues/0
     Return v1
-}
-# CHECK-LABEL: function f3 name="twoLayoutsWithThreeOrdersEach"
 # CHECK: = CallBuiltin -, v0 overload=ObjectValues/0
 # CHECK: = HasKeyOrder v0, {{*}} layout=L3 fields=[0, 1, 2]
 # CHECK: = HasKeyOrder v0, {{*}} layout=L3 fields=[0, 2, 1]
@@ -71,13 +66,11 @@ function f3 name="twoLayoutsWithThreeOrdersEach" parameters=[{type=object}] resu
 # CHECK: [[lastArm]]([[guardOfSecondLayout]]: guard):
 # CHECK-NEXT: = HasKeyOrder v0, [[guardOfSecondLayout]] layout=L4 fields=[2, 1, 0]
 # CHECK-NOT: HasKeyOrder
+}
 
 function f4 name="oneProvenOrder" parameters=[{type=L5}] results=[{type=anything}] {
-  b0(v0: L5):
     v1 = CallBuiltin -, v0 overload=ObjectValues/0
     Return v1
-}
-# CHECK-LABEL: function f4 name="oneProvenOrder"
 # CHECK: b0(v0: L5):
 # CHECK-NEXT: [[b4]]: undefined|null|number ~ number = GetSlot v0 key="b" receivers=[L5] level=Proven
 # CHECK-NEXT: [[a4]]: undefined|null|number ~ number = GetSlot v0 key="a" receivers=[L5] level=Proven
@@ -85,67 +78,57 @@ function f4 name="oneProvenOrder" parameters=[{type=L5}] results=[{type=anything
 # CHECK-NOT: HasKeyOrder
 # CHECK-NOT: HasNoExtraProperties
 # CHECK-NOT: CallBuiltin
+}
 
 function f5 name="twoProvenOrders" parameters=[{type=L6}] results=[{type=anything}] {
-  b0(v0: L6):
     v1 = CallBuiltin -, v0 overload=ObjectValues/0
     Return v1
-}
-# CHECK-LABEL: function f5 name="twoProvenOrders"
 # CHECK-NOT: CallBuiltin
 # CHECK: = HasKeyOrder v0 layout=L6 fields=[0, 1]
 # CHECK-NOT: CallBuiltin
 # CHECK: = HasKeyOrder v0 layout=L6 fields=[1, 0]
 # CHECK-NOT: CallBuiltin
+}
 
 function f6 name="provenOrderOfExpectedLayout" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L5):
     v1 = CallBuiltin -, v0 overload=ObjectValues/0
     Return v1
-}
-# CHECK-LABEL: function f6 name="provenOrderOfExpectedLayout"
 # CHECK: = ShapeTest v0 layouts=[L5]
 # CHECK: = CallBuiltin -, v0 overload=ObjectValues/0
 # CHECK: = HasKeyOrder v0, {{*}} layout=L5 fields=[1, 0]
+}
 
 function f7 name="fieldMayBeDeleted" parameters=[{type=L7}] results=[{type=anything}] {
-  b0(v0: L7):
     v1 = CallBuiltin -, v0 overload=ObjectValues/0
     Return v1
-}
-# CHECK-LABEL: function f7 name="fieldMayBeDeleted"
 # CHECK: = HasKeyOrder v0 layout=L7 fields=[1, 0]
 # CHECK: frequency=Rare:
 # CHECK-NEXT: = CallBuiltin -, v0 overload=ObjectValues/0
+}
 
 function f8 name="fieldMayBeCreatedLater" parameters=[{type=L8}] results=[{type=anything}] {
-  b0(v0: L8):
     v1 = CallBuiltin -, v0 overload=ObjectValues/0
     Return v1
-}
-# CHECK-LABEL: function f8 name="fieldMayBeCreatedLater"
 # CHECK: = HasKeyOrder v0 layout=L8 fields=[1, 0]
 # CHECK: frequency=Rare:
 # CHECK-NEXT: = CallBuiltin -, v0 overload=ObjectValues/0
+}
 
 function f9 name="baseIsUnknown" parameters=[{type=L9}] results=[{type=anything}] {
-  b0(v0: L9):
     v1 = CallBuiltin -, v0 overload=ObjectValues/0
     Return v1
-}
-# CHECK-LABEL: function f9 name="baseIsUnknown"
 # CHECK: = HasKeyOrder v0 layout=L9 fields=[1, 0]
 # CHECK: frequency=Rare:
 # CHECK-NEXT: = CallBuiltin -, v0 overload=ObjectValues/0
+}
 
 function f10 name="slotMayBeEmpty" parameters=[{type=L10}] results=[{type=anything}] {
-  b0(v0: L10):
     v1 = CallBuiltin -, v0 overload=ObjectValues/0
     Return v1
-}
-# CHECK-LABEL: function f10 name="slotMayBeEmpty"
 # CHECK-NOT: CallBuiltin
 # CHECK: = HasKeyOrder v0 layout=L10 fields=[1, 0]
 # CHECK-NOT: CallBuiltin
 # CHECK: = GetSlot v0, {{*}} key="b" receivers=[L10] level=Expected
 # CHECK-NOT: CallBuiltin
+}

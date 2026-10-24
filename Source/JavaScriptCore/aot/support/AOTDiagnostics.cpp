@@ -8,13 +8,16 @@
 
 #if ENABLE(AOT)
 
-#include "AOTDiagnosticMessages.h"
+#include "AOTIDPrefix.h"
 #include "AOTIR.h"
 #include "AOTSort.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <tuple>
 #include <utility>
+#include <wtf/EnumSet.h>
+#include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
 
 namespace JSC { namespace AOT {
 
@@ -113,22 +116,6 @@ static auto orderKey(const InternalError& error)
 }
 
 template<typename Record>
-static void sortRecords(Vector<Record>& records)
-{
-    AOT::sort(records, { }, [](const Record& record) {
-        return orderKey(record);
-    });
-}
-
-template<typename Record>
-static void removeDuplicates(Vector<Record>& records)
-{
-    removeRepeatedElements(records, [](const Record& a, const Record& b) {
-        return orderKey(a) == orderKey(b);
-    });
-}
-
-template<typename Record>
 static void convertToIDsAsRead(Vector<Record>& records, const Typed::Program* program)
 {
     if (!program)
@@ -144,24 +131,194 @@ static void convertToIDsAsRead(Vector<Record>& records, const Typed::Program* pr
     }
 }
 
+using Typed::IDPrefix;
+
+namespace {
+
+enum class Placeholder : uint8_t { Function, Block, Value, Layout, Limit, Count, Pass, TextPosition };
+
+struct PlaceholderText {
+    Placeholder placeholder;
+    ASCIILiteral name;
+    ASCIILiteral label;
+};
+
+} // anonymous namespace
+
+static constexpr PlaceholderText placeholderTexts[] = {
+    { Placeholder::Function, "function"_s, "function "_s },
+    { Placeholder::Block, "block"_s, "block "_s },
+    { Placeholder::Value, "value"_s, "value "_s },
+    { Placeholder::Layout, "layout"_s, "layout "_s },
+    { Placeholder::Limit, "limit"_s, "limit "_s },
+    { Placeholder::Count, "count"_s, { } },
+    { Placeholder::Pass, "pass"_s, "after pass "_s },
+    { Placeholder::TextPosition, { }, "line "_s },
+};
+
+static Placeholder findPlaceholder(StringView name)
+{
+    for (auto& entry : placeholderTexts) {
+        if (!entry.name.isNull() && name == entry.name)
+            return entry.placeholder;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static bool isSet(Placeholder placeholder, const InternalError& fields)
+{
+    switch (placeholder) {
+    case Placeholder::Function:
+        return !!fields.function;
+    case Placeholder::Block:
+        return !!fields.block;
+    case Placeholder::Value:
+        return !!fields.value;
+    case Placeholder::Layout:
+        return !!fields.layout;
+    case Placeholder::Limit:
+        return fields.limit != LimitID::None;
+    case Placeholder::Count:
+        return true;
+    case Placeholder::Pass:
+        return fields.pass != PassID::None;
+    case Placeholder::TextPosition:
+        return fields.textPosition.has_value();
+    }
+    return false;
+}
+
+template<typename Declaration>
+static void appendNameAndID(StringBuilder& builder, const Typed::Program* program, const Declaration* declaration, IDPrefix prefix, uint32_t index)
+{
+    std::span<const uint8_t> name;
+    if (declaration && declaration->name.index() < program->strings.size())
+        name = program->string(declaration->name);
+    if (name.empty()) {
+        builder.append(letterOf(prefix), index);
+        return;
+    }
+    builder.append('\'', String::fromUTF8ReplacingInvalidSequences(name), "' ("_s, letterOf(prefix), index, ')');
+}
+
+static void appendPlaceholder(StringBuilder& builder, Placeholder placeholder, const InternalError& fields, const Typed::Program* program)
+{
+    if (!isSet(placeholder, fields))
+        return;
+    switch (placeholder) {
+    case Placeholder::Function:
+        appendNameAndID(builder, program, functionIfPresent(program, fields.function), IDPrefix::Function, fields.function.index());
+        return;
+    case Placeholder::Block: {
+        builder.append(letterOf(IDPrefix::Block), fields.block.index());
+        auto* function = functionIfPresent(program, fields.function);
+        if (function && !fields.value && fields.block.index() < function->blocks.size())
+            builder.append(" (ends in "_s, nameOf(function->at(fields.block).terminator.kind), ')');
+        return;
+    }
+    case Placeholder::Value: {
+        builder.append(letterOf(IDPrefix::Value), fields.value.index());
+        auto* function = functionIfPresent(program, fields.function);
+        if (function && fields.value.index() < function->values.size())
+            builder.append(" ("_s, nameOf(function->at(fields.value).opcode), ')');
+        return;
+    }
+    case Placeholder::Layout:
+        appendNameAndID(builder, program, layoutIfPresent(program, fields.layout), IDPrefix::Layout, fields.layout.index());
+        return;
+    case Placeholder::Limit:
+        builder.append(nameOf(fields.limit), " ("_s, purposeOf(fields.limit), ')');
+        return;
+    case Placeholder::Count:
+        builder.append(fields.count);
+        return;
+    case Placeholder::Pass:
+        builder.append(nameOf(fields.pass));
+        return;
+    case Placeholder::TextPosition:
+        builder.append(fields.textPosition->line, ", column "_s, fields.textPosition->column, " of the IR text"_s);
+        return;
+    }
+}
+
+static EnumSet<Placeholder> appendTemplate(StringBuilder& builder, ASCIILiteral messageTemplate, const InternalError& fields, const Typed::Program* program)
+{
+    EnumSet<Placeholder> namedPlaceholders;
+    StringView remainder = messageTemplate;
+    while (true) {
+        size_t open = remainder.find('{');
+        size_t close = open == notFound ? notFound : remainder.find('}', open);
+        if (close == notFound)
+            break;
+        Placeholder placeholder = findPlaceholder(remainder.substring(open + 1, close - open - 1));
+        builder.append(remainder.left(open));
+        appendPlaceholder(builder, placeholder, fields, program);
+        namedPlaceholders.add(placeholder);
+        remainder = remainder.substring(close + 1);
+    }
+    builder.append(remainder);
+    return namedPlaceholders;
+}
+
+static void appendContext(StringBuilder& builder, EnumSet<Placeholder> namedPlaceholders, const InternalError& fields, const Typed::Program* program)
+{
+    ASCIILiteral separator = "; "_s;
+    for (auto& clause : placeholderTexts) {
+        if (clause.label.isNull() || namedPlaceholders.contains(clause.placeholder) || !isSet(clause.placeholder, fields))
+            continue;
+        builder.append(separator, clause.label);
+        appendPlaceholder(builder, clause.placeholder, fields, program);
+        separator = ", "_s;
+    }
+}
+
+static String format(ASCIILiteral messageTemplate, const InternalError& fields, const Typed::Program* program, EnumSet<Placeholder> omittedContext)
+{
+    StringBuilder builder;
+    EnumSet<Placeholder> namedPlaceholders = appendTemplate(builder, messageTemplate, fields, program);
+    appendContext(builder, namedPlaceholders | omittedContext, fields, program);
+    return builder.toString();
+}
+
+static String formatMessage(const UserDiagnostic& diagnostic, const Typed::Program* program)
+{
+    // The message is printed under the line of source it is about, for a reader who has never seen the IR.
+    constexpr EnumSet<Placeholder> positionsInIR { Placeholder::Function, Placeholder::Block, Placeholder::Value, Placeholder::Layout };
+    InternalError fields {
+        .kind = { },
+        .function = diagnostic.function,
+        .block = diagnostic.block,
+        .value = diagnostic.value,
+        .layout = diagnostic.layout,
+        .limit = diagnostic.limit,
+        .count = diagnostic.count,
+    };
+    return format(Wire::messageOf(diagnostic.kind), fields, program, positionsInIR);
+}
+
+static String formatMessage(const InternalError& error, const Typed::Program* program)
+{
+    String message = format(Wire::messageOf(error.kind), error, program, { });
+    if (error.detail.isNull())
+        return message;
+    return makeString(message, "; "_s, error.detail);
+}
+
 template<typename Record>
 static Vector<String> finishRecords(Vector<Record>& records, const Typed::Program* program)
 {
     resolveLocations(records, program);
-    sortRecords(records);
-    removeDuplicates(records);
+    AOT::sort(records, { }, [](const Record& record) {
+        return orderKey(record);
+    });
+    removeRepeatedElements(records, [](const Record& a, const Record& b) {
+        return orderKey(a) == orderKey(b);
+    });
     Vector<String> messages = WTF::map(records, [&](const Record& record) {
         return formatMessage(record, program);
     });
     convertToIDsAsRead(records, program);
     return messages;
-}
-
-template<typename Record>
-static void assertNoProvisionalFunctions(const Vector<Record>& records)
-{
-    for (const Record& record : records)
-        RELEASE_ASSERT(!Typed::ProvisionalFunctions::contains(record.function));
 }
 
 Diagnostics::Diagnostics(Diagnostics&& other)
@@ -182,53 +339,44 @@ Diagnostics& Diagnostics::operator=(Diagnostics&& other) WTF_IGNORES_THREAD_SAFE
     return *this;
 }
 
-void Diagnostics::add(const UserDiagnostic& diagnostic)
+static constexpr bool failsBuild(InternalErrorKind) { return true; }
+
+template<typename Record>
+void Diagnostics::appendTo(Vector<Record> Diagnostics::* list, Vector<Record>&& records)
 {
-    RELEASE_ASSERT(!Typed::ProvisionalFunctions::contains(diagnostic.function));
-
-    Locker locker { m_lock };
-    RELEASE_ASSERT(!m_isFinished);
-    m_userDiagnostics.append(diagnostic);
-    if (failsBuild(diagnostic.kind))
-        m_hasErrors.store(true, std::memory_order_relaxed);
-}
-
-void Diagnostics::add(const InternalError& error)
-{
-    RELEASE_ASSERT(!Typed::ProvisionalFunctions::contains(error.function));
-
-    Locker locker { m_lock };
-    RELEASE_ASSERT(!m_isFinished);
-    m_internalErrors.append(error);
-    m_hasErrors.store(true, std::memory_order_relaxed);
-}
-
-void Diagnostics::append(Vector<UserDiagnostic>&& diagnostics)
-{
-    if (diagnostics.isEmpty())
+    if (records.isEmpty())
         return;
-    assertNoProvisionalFunctions(diagnostics);
-    bool containsError = diagnostics.containsIf([](const UserDiagnostic& diagnostic) {
-        return failsBuild(diagnostic.kind);
-    });
+    bool containsError = false;
+    for (const Record& record : records) {
+        RELEASE_ASSERT(!Typed::ProvisionalFunctions::contains(record.function));
+        containsError |= failsBuild(record.kind);
+    }
 
     Locker locker { m_lock };
     RELEASE_ASSERT(!m_isFinished);
-    m_userDiagnostics.appendVector(WTF::move(diagnostics));
+    (this->*list).appendVector(WTF::move(records));
     if (containsError)
         m_hasErrors.store(true, std::memory_order_relaxed);
 }
 
+void Diagnostics::add(const UserDiagnostic& diagnostic)
+{
+    append(Vector<UserDiagnostic> { diagnostic });
+}
+
+void Diagnostics::add(const InternalError& error)
+{
+    append(Vector<InternalError> { error });
+}
+
+void Diagnostics::append(Vector<UserDiagnostic>&& diagnostics)
+{
+    appendTo(&Diagnostics::m_userDiagnostics, WTF::move(diagnostics));
+}
+
 void Diagnostics::append(Vector<InternalError>&& errors)
 {
-    if (errors.isEmpty())
-        return;
-    assertNoProvisionalFunctions(errors);
-
-    Locker locker { m_lock };
-    RELEASE_ASSERT(!m_isFinished);
-    m_internalErrors.appendVector(WTF::move(errors));
-    m_hasErrors.store(true, std::memory_order_relaxed);
+    appendTo(&Diagnostics::m_internalErrors, WTF::move(errors));
 }
 
 void Diagnostics::resolveLocations(const Typed::Program& program)

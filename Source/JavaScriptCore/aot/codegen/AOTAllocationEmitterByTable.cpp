@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBarrierEmitter.h"
 #include "AOTBranchCounterNumbers.h"
 #include "AOTCFG.h"
 #include "AOTFunctionAnalyses.h"
@@ -17,7 +16,6 @@
 #include "AOTSlotEmitter.h"
 #include "AOTStubsAllocation.h"
 #include "AOTThreshold.h"
-#include "AOTVector.h"
 #include <algorithm>
 #include <limits>
 #include <wtf/MathExtras.h>

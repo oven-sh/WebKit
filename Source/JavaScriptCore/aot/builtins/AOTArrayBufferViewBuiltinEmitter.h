@@ -16,11 +16,7 @@ class ArrayBufferViewBuiltinEmitter final : public BuiltinFamilyEmitter {
 public:
     explicit ArrayBufferViewBuiltinEmitter(CodeGenerator&);
 
-    void generateArrayFrom(const InlineCall&);
-    void generateTypedArrayLength(const InlineCall&);
-    void generateTypedArrayByteLength(const InlineCall&);
-    void generateTypedArrayByteOffset(const InlineCall&);
-    void generateTypedArrayWithLength(const InlineCall&);
+    FOR_EACH_AOT_INLINE_BUILTIN_IN_ARRAY_BUFFER_VIEW_BUILTIN(AOT_DECLARE_INLINE_BUILTIN_GENERATOR)
 
     Condition hasFixedLength(CellPointer view);
     Integer lengthOf(CellPointer view);

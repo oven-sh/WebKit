@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="testBetween" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     v2 = String string=","
     v3 = Add v0, v2
     v4 = TypeTest v1 testedType=number
@@ -18,8 +17,6 @@ function f0 name="testBetween" parameters=[{type=number}, {type=anything}] resul
   b2(v7: string) frequency=Unlikely:
     v8 = Add v7, v1
     Return v8
-}
-# CHECK-LABEL: function f0 name="testBetween"
 # CHECK: b0(v0: number, v1: anything):
 # CHECK-NOT: = Add
 # CHECK: Branch v4 -> taken b1(| 0), notTaken [[edge0]]()
@@ -28,9 +25,9 @@ function f0 name="testBetween" parameters=[{type=number}, {type=anything}] resul
 # CHECK: [[edge0]]() frequency=Unlikely:
 # CHECK-NEXT: [[copy0]]: string = Add v0, v2
 # CHECK-NEXT: Jump -> next b2([[copy0]])
+}
 
 function f1 name="callBetweenShortParts" parameters=[{type=number}, {type=function}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: function, v2: boolean):
     v3 = String string=":"
     v4 = Add v0, v3
     v5 = Call v1
@@ -38,26 +35,22 @@ function f1 name="callBetweenShortParts" parameters=[{type=number}, {type=functi
   b1():
     v6 = Add v4, v2
     Return v6
-}
-# CHECK-LABEL: function f1 name="callBetweenShortParts"
 # CHECK-NOT: = Add
 # CHECK: string = Strcat v0, v3, v2
+}
 
 function f2 name="callBetweenLongParts" parameters=[{type=string}, {type=function}, {type=string}] results=[{type=anything}] {
-  b0(v0: string, v1: function, v2: string):
     v3 = Add v0, v2
     v4 = Call v1
     Jump -> next b1()
   b1():
     v5 = Add v3, v2
     Return v5
-}
-# CHECK-LABEL: function f2 name="callBetweenLongParts"
 # CHECK-COUNT-2: = Add
 # CHECK-NOT: Strcat
+}
 
 function f3 name="threeBlocks" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything, v2: anything):
     v3 = String string=","
     v4 = Add v0, v3
     v5 = TypeTest v1 testedType=number
@@ -71,17 +64,15 @@ function f3 name="threeBlocks" parameters=[{type=number}, {type=anything}, {type
     Return v10
   b3(v11: string) frequency=Unlikely:
     Return v11
-}
-# CHECK-LABEL: function f3 name="threeBlocks"
 # CHECK: b2(v9: number):
 # CHECK-NEXT: string = Strcat v0, v3, v6, v9
 # CHECK: [[first3]]: string = Add v0, v3
 # CHECK-NEXT: Jump -> next b3([[first3]])
 # CHECK: [[second3]]: string = Strcat v0, v3, v6
 # CHECK-NEXT: Jump -> next b3([[second3]])
+}
 
 function f4 name="joinBetween" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean):
     v2 = String string=","
     v3 = Add v0, v2
     Branch v1 -> taken b1(), notTaken b2()
@@ -90,13 +81,11 @@ function f4 name="joinBetween" parameters=[{type=number}, {type=boolean}] result
   b2():
     v4 = Add v3, v0
     Return v4
-}
-# CHECK-LABEL: function f4 name="joinBetween"
 # CHECK-COUNT-2: = Add
 # CHECK-NOT: Strcat
+}
 
 function f5 name="readOnTheWay" parameters=[{type=number}, {type=function}] results=[{type=anything}] {
-  b0(v0: number, v1: function):
     v2 = String string=","
     v3 = Add v0, v2
     Jump -> next b1()
@@ -104,13 +93,11 @@ function f5 name="readOnTheWay" parameters=[{type=number}, {type=function}] resu
     v4 = Call v1, -, v3
     v5 = Add v3, v0
     Return v5
-}
-# CHECK-LABEL: function f5 name="readOnTheWay"
 # CHECK-COUNT-2: = Add
 # CHECK-NOT: Strcat
+}
 
 function f6 name="passedAlongTheWay" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = String string=","
     v2 = Add v0, v1
     Jump -> next b1(v2)
@@ -118,12 +105,11 @@ function f6 name="passedAlongTheWay" parameters=[{type=number}] results=[{type=a
     v4 = Add v2, v0
     v5 = Add v4, v3
     Return v5
-}
-# CHECK-LABEL: function f6 name="passedAlongTheWay"
 # CHECK: b0(v0: number):
 # CHECK: = Add v0, v1
 # CHECK: b1(v3: string):
 # CHECK-NEXT: string = Strcat v2, v0, v3
+}
 
 function f7 name="underHandler" parameters=[{type=number}, {type=function}] results=[{type=anything}] {
   b0(v0: number, v1: function) handler=b2():
@@ -136,13 +122,11 @@ function f7 name="underHandler" parameters=[{type=number}, {type=function}] resu
   b2() role=CatchHandler:
     v5 = CatchValue
     Return v5
-}
-# CHECK-LABEL: function f7 name="underHandler"
 # CHECK-COUNT-2: = Add
 # CHECK-NOT: Strcat
+}
 
 function f8 name="inLoop" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean):
     v2 = String string=","
     v3 = Add v0, v2
     Jump -> next b1()
@@ -152,13 +136,11 @@ function f8 name="inLoop" parameters=[{type=number}, {type=boolean}] results=[{t
     Branch v1 -> taken b1(), notTaken b2()
   b2():
     Return v5
-}
-# CHECK-LABEL: function f8 name="inLoop"
 # CHECK-COUNT-2: = Add
 # CHECK-NOT: Strcat
+}
 
 function f9 name="leavesBehindTheOuter" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean):
     v2 = String string=","
     v3 = Add v0, v2
     Jump -> next b1()
@@ -167,13 +149,11 @@ function f9 name="leavesBehindTheOuter" parameters=[{type=number}, {type=boolean
     Branch v1 -> taken b2(v3), notTaken b2(v4)
   b2(v5: string):
     Return v5
-}
-# CHECK-LABEL: function f9 name="leavesBehindTheOuter"
 # CHECK-COUNT-2: = Add
 # CHECK-NOT: Strcat
+}
 
 function f10 name="readBesideTheWay" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     v2 = String string=","
     v3 = Add v0, v2
     v4 = TypeTest v1 testedType=number
@@ -185,8 +165,6 @@ function f10 name="readBesideTheWay" parameters=[{type=number}, {type=anything}]
     v7 = Add v3, v1
     v8 = Add v7, v3
     Return v8
-}
-# CHECK-LABEL: function f10 name="readBesideTheWay"
 # CHECK: b0(v0: number, v1: anything):
 # CHECK-NOT: = Add
 # CHECK: b1(v5: number):
@@ -195,9 +173,9 @@ function f10 name="readBesideTheWay" parameters=[{type=number}, {type=anything}]
 # CHECK-NEXT: [[copy10]]: string = Add v0, v2
 # CHECK-NEXT: = Add [[copy10]], v1
 # CHECK-NEXT: = Add v7, [[copy10]]
+}
 
 function f11 name="longPartsReadBesideTheWay" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: anything):
     v2 = Add v0, v0
     v3 = TypeTest v1 testedType=number
     Branch v3 -> taken b1(| 0), notTaken b2()
@@ -207,8 +185,7 @@ function f11 name="longPartsReadBesideTheWay" parameters=[{type=string}, {type=a
   b2() frequency=Unlikely:
     v6 = Add v2, v1
     Return v6
-}
-# CHECK-LABEL: function f11 name="longPartsReadBesideTheWay"
 # CHECK: b0(v0: string, v1: anything):
 # CHECK-NEXT: string = Add v0, v0
 # CHECK-NOT: Strcat
+}

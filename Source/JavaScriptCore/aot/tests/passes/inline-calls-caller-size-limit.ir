@@ -9,7 +9,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="thirteenOperations" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
 # REPEAT: i = 0..12
     v%(i+1) = Mul v%(i), v0
 # END REPEAT
@@ -17,7 +16,6 @@ function f0 name="thirteenOperations" parameters=[{type=number}] results=[{type=
 }
 
 function f1 name="callsThreeTimes" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f0
     v2 = CallDirect v1 function=f0
     v3 = CallDirect v2 function=f0

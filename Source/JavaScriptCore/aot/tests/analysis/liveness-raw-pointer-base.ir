@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="cursor" results=[{type=number}] {
-  b0():
     v0 = StringBuilderBegin
     v1 = StringBuilderReserve v0 size=8
     Jump -> next b1()
@@ -28,7 +27,6 @@ function f0 name="cursor" results=[{type=number}] {
 # CHECK-NEXT: b2:0 live: [v2]
 
 function f1 name="cursorAmongSeveralResults" parameters=[{type=anything}] results=[{type=number}] {
-  b0(v0: anything):
     v1 = StringBuilderBegin
     v2 = StringBuilderReserve v1 size=4096
     v3 = JSONAppendValue v1, v2, v0 jsonPosition=Element

@@ -34,14 +34,12 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Node" fields=[{key="next" declared={type=null|L0} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="left" declared={type=null|L0} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="right" declared={type=null|L0} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="up" declared={type=null|L0} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="down" declared={type=undefined|null|L0} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="count" declared={type=i32} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L0] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 function f0 name="readsThroughReference" parameters=[{type=L0}] results=[{type=i32}] {
-  b0(v0: L0):
     v1 = GetSlot v0 key="next" receivers=[L0] level=Proven
     v2 = RequireObjectCoercible v1 name="count"
     v3 = GetSlot v2 key="count" receivers=[L0] level=Proven
     Return v3
 }
 function f1 name="readsThroughTwoReferences" parameters=[{type=L0}] results=[{type=i32}] {
-  b0(v0: L0):
     v1 = GetSlot v0 key="next" receivers=[L0] level=Proven
     v2 = RequireObjectCoercible v1 name="next"
     v3 = GetSlot v2 key="next" receivers=[L0] level=Proven
@@ -50,20 +48,17 @@ function f1 name="readsThroughTwoReferences" parameters=[{type=L0}] results=[{ty
     Return v5
 }
 function f2 name="onlyChecks" parameters=[{type=L0}] results=[{type=i32}] {
-  b0(v0: L0):
     v1 = GetSlot v0 key="next" receivers=[L0] level=Proven
     v2 = RequireObjectCoercible v1 name="count"
     v3 = Integer integer=2
     Return v3
 }
 function f3 name="returnsTheReference" parameters=[{type=L0}] results=[{type=L0}] {
-  b0(v0: L0):
     v1 = GetSlot v0 key="next" receivers=[L0] level=Proven
     v2 = RequireObjectCoercible v1 name="count"
     Return v2
 }
 function f4 name="walks" parameters=[{type=L0}] results=[{type=i32}] {
-  b0(v0: L0):
     v1 = Integer integer=0
     Jump -> next b1(v0, v1)
   b1(v2: null|L0, v3: i32):
@@ -79,7 +74,6 @@ function f4 name="walks" parameters=[{type=L0}] results=[{type=i32}] {
     Return v3
 }
 function f5 name="walksAReferenceWithTwoMarkers" parameters=[{type=L0}] results=[{type=i32}] {
-  b0(v0: L0):
     v1 = Integer integer=0
     Jump -> next b1(v0, v1)
   b1(v2: undefined|null|L0, v3: i32):
@@ -96,7 +90,6 @@ function f5 name="walksAReferenceWithTwoMarkers" parameters=[{type=L0}] results=
     Return v3
 }
 function f6 name="nullIsKnown" parameters=[{type=L0}] results=[{type=i32}] {
-  b0(v0: L0):
     v1 = GetSlot v0 key="next" receivers=[L0] level=Proven
     v2 = Null
     v3 = StrictEq v1, v2 form=Bits
@@ -110,7 +103,6 @@ function f6 name="nullIsKnown" parameters=[{type=L0}] results=[{type=i32}] {
     Return v6
 }
 function f7 name="undefinedIsKnown" parameters=[{type=L0}] results=[{type=i32}] {
-  b0(v0: L0):
     v1 = GetSlot v0 key="down" receivers=[L0] level=Proven
     v2 = Undefined
     v3 = StrictEq v1, v2 form=Bits
@@ -124,7 +116,6 @@ function f7 name="undefinedIsKnown" parameters=[{type=L0}] results=[{type=i32}] 
     Return v6
 }
 function f8 name="askedForThePointerWhereATestFails" parameters=[{type=L0}, {type=L0}] results=[{type=null|L0}] {
-  b0(v0: L0, v1: L0):
     v2 = GetSlot v0 key="next" receivers=[L0] level=Proven
     v3 = RequireObjectCoercible v2 name="left"
     v4 = GetSlot v3 key="left" receivers=[L0] level=Proven

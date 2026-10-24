@@ -5,16 +5,13 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Box" fields=[{key="value" declared={type=object} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 function f0 name="storesIntoThis" kind=Method flags=[HasThis] thisType={type=L0} parameters=[{type=object}] results=[{type=undefined}] {
-  b0(v0: L0, v1: object):
     PutSlot v0, -, v1 key="value" receivers=[L0] level=Proven
     Return
 }
 function f1 name="returnsArgument" parameters=[{type=object}] results=[{type=object}] {
-  b0(v0: object):
     Return v0
 }
 function f2 name="ignoresArgument" parameters=[{type=object}] results=[{type=undefined}] {
-  b0(v0: object):
     Return
 }
 function f3 name="countsArguments" flags=[HasArgumentCount] parameters=[{type=object}] results=[{type=undefined}] {
@@ -22,11 +19,9 @@ function f3 name="countsArguments" flags=[HasArgumentCount] parameters=[{type=ob
     Return
 }
 function f4 name="returnsItself" flags=[TakesCallee] results=[{type=function}] {
-  b0(v0: function):
     Return v0
 }
 function f5 name="directCalls" parameters=[{type=L0}, {type=object}] results=[{type=undefined}] {
-  b0(v0: L0, v1: object):
     v2 = CallDirect v0, v1 function=f0
     v3 = CallDirect v1 function=f1
     v4 = CallDirect v1 function=f2
@@ -39,7 +34,6 @@ function f5 name="directCalls" parameters=[{type=L0}, {type=object}] results=[{t
 # CHECK-NEXT: v4 CallDirect 0: [Inspects]
 # CHECK-NOT: writes
 function f6 name="callsByValue" parameters=[{type=f0}, {type=L0}, {type=object}, {type=object}, {type=f1|f2}] results=[{type=undefined}] {
-  b0(v0: f0, v1: L0, v2: object, v3: object, v4: f1|f2):
     v5 = Call v0, v1, v2 callees=[f0]
     v6 = Call v4, -, v2 callees=[f1, f2]
     v7 = Call v0, v1, v2, v3 callees=[f0]
@@ -60,7 +54,6 @@ function f6 name="callsByValue" parameters=[{type=f0}, {type=L0}, {type=object},
 # CHECK-NEXT: v8 Call 1: [Inspects, Retains, Returns, Calls, CallsPerElement, CallsRepeatedly, ReadsContents, WritesContents, RetainsContents, MovesElements, StoresByKey, DeletesByKey, AssignsFrom, DefinesName, TakesDescriptor, ChangesIntegrity, ChangesPrototype, BecomesPrototype, PassesToUserCode, AppliesTransitively, AppliesToContents]
 # CHECK-NEXT: v8 Call 2: [Inspects, Retains, Returns, Calls, CallsPerElement, CallsRepeatedly, ReadsContents, WritesContents, RetainsContents, MovesElements, StoresByKey, DeletesByKey, AssignsFrom, DefinesName, TakesDescriptor, ChangesIntegrity, ChangesPrototype, BecomesPrototype, PassesToUserCode, AppliesTransitively, AppliesToContents]
 function f7 name="otherCalleeSets" parameters=[{type=f3}, {type=f4}, {type=object}] results=[{type=undefined}] {
-  b0(v0: f3, v1: f4, v2: object):
     v3 = Call v0, -, v2 callees=[f3]
     v4 = Call v1 callees=[f4]
     v5 = Call v2, v2, v2 callees=[]

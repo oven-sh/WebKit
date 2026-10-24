@@ -8,7 +8,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 module=m0 position=10 fields=[{key="close" declared={type=undefined flags=[IsExpected]} flags=[IsRequired]}, {key="data" declared={type=undefined flags=[IsExpected]} flags=[IsRequired]}, {key="end" declared={type=undefined flags=[IsExpected]} flags=[IsRequired]}, {key="error" declared={type=undefined flags=[IsExpected]} flags=[IsRequired]}, {key="readable" declared={type=undefined flags=[IsExpected]} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=MathRandom
     v1 = Call v0
     v2 = ToString v1

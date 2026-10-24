@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Instance name="Holder" constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"p"@L0 declared={type=anything} flags=[IsPrivate]}]
 function f0 name="inFastCode" captures=[{type=classtoken}] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: classtoken, v1: anything):
     v2 = PrivateGet v1, v0 layout=L0 field=1
     Return v2
 }
@@ -14,7 +13,6 @@ function f0 name="inFastCode" captures=[{type=classtoken}] parameters=[{type=any
 # CHECK-NOT: operation operationAOTPrivateGet
 # CHECK: stub PrivateGet x1
 function f1 name="Holder" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2

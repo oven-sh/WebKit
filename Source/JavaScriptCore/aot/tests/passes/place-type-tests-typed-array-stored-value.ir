@@ -7,33 +7,30 @@ function f0 name="expectedNumber" parameters=[{type=Uint8Array}, {type=int[0, 9]
   b0(v0: Uint8Array, v1: int[0, 9], v2: undefined|null|number ~ number):
     ElemSet v0, v1, v2
     Return
-}
-# CHECK-LABEL: function f0 name="expectedNumber"
 # CHECK: [[isNumber0]]: boolean{{*}} = TypeTest v2 testedType=number
 # CHECK-NEXT: Branch [[isNumber0]] -> taken [[passed0]](| 0), notTaken [[failed0]]()
 # CHECK: PutTypedArrayElement v0, v1, [[number0]]{{*}} typedArrayType=
 # CHECK: [[failed0]]() frequency=Unlikely:
 # CHECK-NEXT: ElemSet v0, v1,
 # CHECK: [[passed0]]([[number0]]: number):
+}
 
 function f1 name="keyIsTheStoredValue" parameters=[{type=Uint8Array}, {type=undefined|int[0, 255]}] results=[{type=undefined}] {
   b0(v0: Uint8Array, v1: undefined|int[0, 255] ~ int[0, 255]):
     ElemSet v0, v1, v1
     Return
-}
-# CHECK-LABEL: function f1 name="keyIsTheStoredValue"
 # CHECK-COUNT-1: = TypeTest v1 testedType=i32
 # CHECK: PutTypedArrayElement v0, [[byte1]], [[byte1]]{{*}} typedArrayType=
 # CHECK: ([[byte1]]: int[0, 255]):
+}
 
 function f2 name="noNumberExpected" parameters=[{type=Uint8Array}, {type=int[0, 9]}, {type=anything}, {type=string flags=[IsExpected]}] results=[{type=undefined}] {
   b0(v0: Uint8Array, v1: int[0, 9], v2: anything, v3: anything ~ string):
     ElemSet v0, v1, v2
     ElemSet v0, v1, v3
     Return
-}
-# CHECK-LABEL: function f2 name="noNumberExpected"
 # CHECK-NOT: TypeTest
 # CHECK-NOT: PutTypedArrayElement
 # CHECK: ElemSet v0, v1, v2
 # CHECK-NEXT: ElemSet v0, v1, v3
+}

@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="uses" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
-  b0(v0: anything, v1: number):
     v2 = Add v1, v1
     Switch v1 cases=[0] -> case b1(v1), otherwise b3(v2)
   b1(v3) handler=b2(v1):

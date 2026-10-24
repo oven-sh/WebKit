@@ -170,14 +170,14 @@ static Vector<OrderedKey, 32> collectKeysInOrder(VM& vm, const Object& typed, JS
     return ordered;
 }
 
-static Result visitKeysInOrder(VM& vm, const Object& typed, JSObject* extra, Filter filter, const Visitor& visitor)
+static Result visitKeysInOrder(VM& vm, const Object& typed, JSObject* extra, std::optional<Filter> filter, const Visitor& visitor)
 {
     auto ordered = collectKeysInOrder(vm, typed, extra);
     if (std::ranges::any_of(ordered, [](const OrderedKey& key) { return key.attributes & PropertyAttribute::Accessor; }))
         return Result::NeedsGenericPath;
-    auto visitKeys = [&](bool visitsSymbols) {
+    auto visitKeys = [&](std::optional<bool> visitsSymbols) {
         for (auto& key : ordered) {
-            if (key.name->isSymbol() != visitsSymbols || (filter == Filter::EnumerableStrings && key.attributes & PropertyAttribute::DontEnum))
+            if ((visitsSymbols && key.name->isSymbol() != *visitsSymbols) || (filter == Filter::EnumerableStrings && key.attributes & PropertyAttribute::DontEnum))
                 continue;
             JSValue value = key.field ? typed.read(*key.field) : extra->getDirect(key.offsetInExtraProperties);
             if (value && visitor(OwnProperty { key.name, value, key.attributes }) == IterationStatus::Done)
@@ -185,9 +185,8 @@ static Result visitKeysInOrder(VM& vm, const Object& typed, JSObject* extra, Fil
         }
         return true;
     };
-    if (!visitKeys(false) || (filter == Filter::StringsAndSymbols && !visitKeys(true)))
-        return Result::Stopped;
-    return Result::Completed;
+    bool isCompleted = filter ? visitKeys(false) && (filter != Filter::StringsAndSymbols || visitKeys(true)) : visitKeys(std::nullopt);
+    return isCompleted ? Result::Completed : Result::Stopped;
 }
 
 static Presence compiledObjectHasProperty(const Object& typed, UniquedStringImpl* name)
@@ -292,7 +291,6 @@ Result forEachOwnPropertyAsCreated(VM& vm, JSObject* object, const Visitor& visi
         }, Object::SymbolKeys::Include);
         if (isListed)
             return isStopped ? Result::Stopped : Result::Completed;
-        // A field can be a data property that is not enumerable, read-only or not configurable, as `__esModule` is where Object.defineProperty() made it. The ordinary object lists that too.
         State& state = typed->state();
         RuntimeLayoutTable& layouts = state.objects->layouts;
         std::span<const FieldData> fields = typed->layout().fields();
@@ -313,15 +311,7 @@ Result forEachOwnPropertyAsCreated(VM& vm, JSObject* object, const Visitor& visi
     }
     if (extraPropertiesNeedGenericPath(extra))
         return Result::NeedsGenericPath;
-    auto ordered = collectKeysInOrder(vm, *typed, extra);
-    if (std::ranges::any_of(ordered, [](const OrderedKey& key) { return key.attributes & PropertyAttribute::Accessor; }))
-        return Result::NeedsGenericPath;
-    for (auto& key : ordered) {
-        JSValue value = key.field ? typed->read(*key.field) : extra->getDirect(key.offsetInExtraProperties);
-        if (value && visitor(OwnProperty { key.name, value, key.attributes }) == IterationStatus::Done)
-            return Result::Stopped;
-    }
-    return Result::Completed;
+    return visitKeysInOrder(vm, *typed, extra, std::nullopt, visitor);
 }
 
 bool hasOwnEnumerableProperty(JSGlobalObject* globalObject, JSObject* object)

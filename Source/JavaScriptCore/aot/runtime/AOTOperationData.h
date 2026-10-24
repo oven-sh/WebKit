@@ -364,6 +364,13 @@ static_assert(static_cast<unsigned>(ThrowKind::ErrorWithMessage) < 1u << 3 && nu
     v(globalBindings, uint32_t) \
     v(entryPoints, uint32_t)
 
+enum class TrimmedEnds : uint8_t { Start, End, Both };
+
+enum class URICoding : uint8_t { DecodeURI, DecodeURIComponent, EncodeURI, EncodeURIComponent };
+
+// Both bounds of an element that an array does not have, or that is undefined, where the elements are delivered as bounds in a string.
+constexpr int32_t absentBound = -1;
+
 } } // namespace JSC::AOT
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

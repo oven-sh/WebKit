@@ -8,7 +8,6 @@ module m0 path="main.js" displayPath="main.js"
 typesite w0 kind=Assertion
 
 function f0 name="castThatDoesNothing" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -16,17 +15,15 @@ function f0 name="castThatDoesNothing" parameters=[{type=number}] results=[{type
     ReturnCall v2 casts=[{declared={type=number} resolution=Nothing}]
   b2():
     Return v0
-}
-# CHECK-LABEL: function f0 name="castThatDoesNothing"
 # CHECK-NOT: CallDirect
 # CHECK: Jump -> next [[header0]](v0)
 # CHECK: Jump -> next [[header0]]([[carried0]])
 # CHECK: [[header0]]([[carried0]]: number):
 # CHECK-NEXT: LoopHint
 # CHECK-NOT: CallDirect
+}
 
 function f1 name="upcast" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -34,8 +31,6 @@ function f1 name="upcast" parameters=[{type=number}] results=[{type=number}] {
     ReturnCall v2 casts=[{declared={type=anything} resolution=Upcast}]
   b2():
     Return v0
-}
-# CHECK-LABEL: function f1 name="upcast"
 # CHECK-NOT: Upcast
 # CHECK: Jump -> next [[header1]](v0)
 # CHECK-NOT: Upcast
@@ -44,9 +39,9 @@ function f1 name="upcast" parameters=[{type=number}] results=[{type=number}] {
 # CHECK: [[header1]]([[carried1]]: number):
 # CHECK-NEXT: LoopHint
 # CHECK-NOT: Upcast
+}
 
 function f2 name="expectedType" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -54,8 +49,6 @@ function f2 name="expectedType" parameters=[{type=number}] results=[{type=number
     ReturnCall v2 casts=[{declared={type=i32 flags=[IsExpected]} resolution=Nothing}]
   b2():
     Return v0
-}
-# CHECK-LABEL: function f2 name="expectedType"
 # CHECK-NOT: Upcast
 # CHECK: Jump -> next [[header2]](v0)
 # CHECK-NOT: Upcast
@@ -64,9 +57,9 @@ function f2 name="expectedType" parameters=[{type=number}] results=[{type=number
 # CHECK: [[header2]]([[carried2]]: number):
 # CHECK-NEXT: LoopHint
 # CHECK-NOT: Upcast
+}
 
 function f3 name="severalCasts" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -74,17 +67,15 @@ function f3 name="severalCasts" parameters=[{type=number}] results=[{type=number
     ReturnCall v2 casts=[{declared={type=anything} resolution=Upcast}, {declared={type=i32 flags=[IsExpected]} resolution=Nothing}, {declared={type=number} resolution=Nothing}]
   b2():
     Return v0
-}
-# CHECK-LABEL: function f3 name="severalCasts"
 # CHECK-NOT: CallDirect
 # CHECK: Jump -> next [[header3]](v0)
 # CHECK: b1():
 # CHECK-NEXT: Jump -> next [[header3]]([[carried3]])
 # CHECK: [[header3]]([[carried3]]: number):
 # CHECK-NEXT: LoopHint
+}
 
 function f4 name="proofOfFlow" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -92,8 +83,6 @@ function f4 name="proofOfFlow" parameters=[{type=number}] results=[{type=number}
     ReturnCall v2 casts=[{declared={type=i32} resolution=Assume}]
   b2():
     Return v0
-}
-# CHECK-LABEL: function f4 name="proofOfFlow"
 # CHECK-NOT: AssumeType
 # CHECK: Jump -> next [[header4]](v0)
 # CHECK: b1():
@@ -101,9 +90,9 @@ function f4 name="proofOfFlow" parameters=[{type=number}] results=[{type=number}
 # CHECK: [[header4]]([[carried4]]: number):
 # CHECK-NEXT: LoopHint
 # CHECK-NOT: AssumeType
+}
 
 function f5 name="castThatTests" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -112,9 +101,8 @@ function f5 name="castThatTests" parameters=[{type=number}] results=[{type=numbe
     Return v3
   b2():
     Return v0
-}
-# CHECK-LABEL: function f5 name="castThatTests"
 # CHECK-NOT: LoopHint
 # CHECK: v2: number = CallDirect v0 function=f5
 # CHECK-NEXT: = Check v2 castType=i32
 # CHECK-NOT: LoopHint
+}

@@ -8,7 +8,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="isNumber" parameters=[{type=anything}] results=[{type=int}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=number
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -20,7 +19,6 @@ function f0 name="isNumber" parameters=[{type=anything}] results=[{type=int}] {
 }
 # X64: f0: size=[[sizeOfMaskTest]] frame=none
 function f1 name="isNullish" parameters=[{type=anything}] results=[{type=int}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=undefined|null
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -32,7 +30,6 @@ function f1 name="isNullish" parameters=[{type=anything}] results=[{type=int}] {
 }
 # X64-NEXT: f1: size=[[sizeOfMaskTest]] frame=none
 function f2 name="isNotNullish" parameters=[{type=anything}] results=[{type=int}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=boolean|number|bigint|string|symbol|object
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -44,13 +41,11 @@ function f2 name="isNotNullish" parameters=[{type=anything}] results=[{type=int}
 }
 # X64-NEXT: f2: size=[[sizeOfMaskTest]] frame=none
 function f3 name="requiresPresentValue" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = RequireObjectCoercible v0 nullishAccess=Read
     Return v1
 }
 # X64-NEXT: f3: size=[[sizeOfRequirement]] frame=
 function f4 name="requiresValueThatMayBeEmpty" parameters=[{type=anything|absent}] results=[{type=anything|absent}] {
-  b0(v0: anything|absent):
     v1 = RequireObjectCoercible v0 nullishAccess=Read
     Return v1
 }

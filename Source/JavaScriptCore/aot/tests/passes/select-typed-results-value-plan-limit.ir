@@ -13,20 +13,16 @@ layout L0 name="Outer" fields=[{key="a" declared={type=number}}, {key="b" declar
 layout L1 name="Inner" fields=[{key="x" declared={type=number}}]
 
 function f0 name="threeNodes" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallBuiltin -, v0 overload=BunBundleValidate/0 expectedResult=x0
     Return v1
-}
-# CHECK-LABEL: function f0 name="threeNodes"
 # CHECK-NOT: CallDirect
 # CHECK: = CallBuiltin -, v0, {{*}} overload=CompilerHelpersValidateByPlan/0
 # CHECK-NOT: CallDirect
+}
 
 function f1 name="twoNodes" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallBuiltin -, v0 overload=BunBundleValidate/0 expectedResult=x1
     Return v1
-}
-# CHECK-LABEL: function f1 name="twoNodes"
 # CHECK: = CallDirect v0 function=[[validator]]
 # CHECK: function [[validator]] {{*}}role=Validator {{*}}creator=Validator{type=L1 layout=L1 expectedResult=x1}
+}

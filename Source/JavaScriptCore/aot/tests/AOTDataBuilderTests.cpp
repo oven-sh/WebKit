@@ -8,7 +8,6 @@
 #if ENABLE(AOT)
 
 #include "AOTChildProcess.h"
-#include "AOTDataBuilder.h"
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTObject.h"
@@ -16,6 +15,7 @@
 #include "AOTProgramStatics.h"
 #include "AOTProgramStrings.h"
 #include "AOTPropertyWalk.h"
+#include "AOTRuntimeFunctions.h"
 #include "AOTTemporaryFile.h"
 #include "AOTVector.h"
 #include "JSArrayInlines.h"
@@ -48,7 +48,6 @@ layout L7 name="DeclaredTypeOfFirst" fields=[{key="first" declared={type=number}
 module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = Data data=d0 @10
@@ -71,7 +70,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="runsTwice" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Data data=d3 @40
     Return v1
 }
@@ -88,7 +86,6 @@ data d6 root=Object{layout=L4 members=[{key="first" value=Number{value=1}}, {key
 static constexpr ASCIILiteral programWithDictionaryLiteralsText = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = Integer integer=1

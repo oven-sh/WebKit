@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="tail-call-after-loop" parameters=[{type=anything}, {type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean, v2: anything):
     Jump -> next b1()
   b1():
     LoopHint

@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="inFlatString" parameters=[{type=string}, {type=i32}] results=[{type=i32}] {
-  b0(v0: string, v1: i32):
     v2 = FlattenString v0
     v3 = StringIndexOfCharacter v2, v1 codeUnit=47
     Return v3
@@ -17,7 +16,6 @@ function f0 name="inFlatString" parameters=[{type=string}, {type=i32}] results=[
 # CHECK: stub FindCharacter8 x1
 
 function f1 name="inStringThatMayBeARope" parameters=[{type=string}, {type=i32}] results=[{type=i32}] {
-  b0(v0: string, v1: i32):
     v2 = StringIndexOfCharacter v0, v1 codeUnit=47
     Return v2
 }
@@ -29,7 +27,6 @@ function f1 name="inStringThatMayBeARope" parameters=[{type=string}, {type=i32}]
 # CHECK: stub FindCharacter8 x1
 
 function f2 name="characterAbove0xFF" parameters=[{type=string}, {type=i32}] results=[{type=i32}] {
-  b0(v0: string, v1: i32):
     v2 = FlattenString v0
     v3 = StringIndexOfCharacter v2, v1 codeUnit=8232
     Return v3
@@ -41,7 +38,6 @@ function f2 name="characterAbove0xFF" parameters=[{type=string}, {type=i32}] res
 
 # From the end the leaves search both widths
 function f3 name="fromTheEnd" parameters=[{type=string}, {type=i32}] results=[{type=i32}] {
-  b0(v0: string, v1: i32):
     v2 = FlattenString v0
     v3 = StringLastIndexOfLiteral v2, v1 literal="/"
     Return v3

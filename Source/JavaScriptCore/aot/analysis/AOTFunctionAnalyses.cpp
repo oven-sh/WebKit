@@ -12,10 +12,8 @@
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsDescription.h"
 #include "AOTEffectsOfOperands.h"
-#include "AOTAnalysisDump.h"
 #include "AOTFlowResults.h"
 #include "AOTThreshold.h"
-#include "AOTVector.h"
 #include <algorithm>
 #include <atomic>
 #include <bit>
@@ -28,58 +26,39 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-class AnalysisWordHasher {
-public:
+struct AnalysisWordHasher {
     void add(uint64_t word)
     {
-        m_hash = (m_hash ^ word) * 0x9e3779b97f4a7c15ull;
-        m_hash ^= m_hash >> 32;
+        hash = (hash ^ word) * 0x9e3779b97f4a7c15ull;
+        hash ^= hash >> 32;
     }
-
     void add(uint32_t first, uint32_t second) { add(static_cast<uint64_t>(first) << 32 | second); }
 
-    uint64_t hash() const { return m_hash; }
-
-private:
-    uint64_t m_hash { 0x243f6a8885a308d3ull };
+    uint64_t hash { 0x243f6a8885a308d3ull };
 };
 
-// What declaredBoundOf() does not tell about a row.
-class DeclaredRowScan {
-public:
-    void reads(const MemoryLocation& location) { m_readHeaps.add(location.heap()); }
-    void writes(const MemoryLocation& location) { m_writtenHeaps.add(location.heap()); }
-
-    void readsAtPayload(AbstractHeap heap)
-    {
-        m_hasEffectAtPayload = true;
-        if (heap != AbstractHeap::ShapeWords)
-            m_readHeaps.add(heap);
-    }
-
-    void writesAtPayload(AbstractHeap heap)
-    {
-        m_hasEffectAtPayload = true;
-        // An empty set of layouts names no shape word.
-        if (heap != AbstractHeap::ShapeWords)
-            m_writtenHeaps.add(heap);
-    }
-
-    void readsAllHeaps() { m_readHeaps = allHeaps; }
+struct DeclaredRowScan {
+    void reads(const MemoryLocation& location) { readHeaps.add(location.heap()); }
+    void writes(const MemoryLocation& location) { writtenHeaps.add(location.heap()); }
+    void readsAtPayload(AbstractHeap heap) { addAtPayload(readHeaps, heap); }
+    void writesAtPayload(AbstractHeap heap) { addAtPayload(writtenHeaps, heap); }
+    void readsAllHeaps() { readHeaps = allHeaps; }
     void throws() { }
     void collects() { }
     void suspends() { }
     void terminates() { }
-    void unknownCode() { m_writtenHeaps = allHeaps; }
+    void unknownCode() { writtenHeaps = allHeaps; }
 
-    bool hasEffectAtPayload() const { return m_hasEffectAtPayload; }
-    AbstractHeapSet readHeaps() const { return m_readHeaps; }
-    AbstractHeapSet writtenHeaps() const { return m_writtenHeaps; }
+    void addAtPayload(AbstractHeapSet& heaps, AbstractHeap heap)
+    {
+        hasEffectAtPayload = true;
+        if (heap != AbstractHeap::ShapeWords)
+            heaps.add(heap);
+    }
 
-private:
-    AbstractHeapSet m_readHeaps;
-    AbstractHeapSet m_writtenHeaps;
-    bool m_hasEffectAtPayload { false };
+    AbstractHeapSet readHeaps;
+    AbstractHeapSet writtenHeaps;
+    bool hasEffectAtPayload { false };
 };
 
 } // anonymous namespace
@@ -94,10 +73,8 @@ static DeclaredRowScan scanDeclaredRow(Entry entry)
 
 static EffectInputs inputsOfRule(Opcode opcode)
 {
-    // Whether a validation is redundant depends on where the type of its operand comes from, up to the parameters of the function.
     if (familyOf(opcode) == OperationFamily::RuntimeValidation)
         return EffectInputs::Function;
-    // An access of a field that the allocation of its receiver lists finds the field.
     if (effectRuleOf(opcode) == EffectRule::Access)
         return EffectInputs::DefinitionsBehindCasts;
     return EffectInputs::Operands;
@@ -111,7 +88,6 @@ static OpcodeEffectFacts computeEffectFactsOf(Opcode opcode)
 
     Effects bound = declaredBoundOf(opcode);
     bool runsNoOperandCode = !mayRunOperandCode(opcode);
-    // What unknown code does is for the summaries to say, unless the frame is suspended meanwhile.
     facts.staysWithinDeclaredBound = runsNoOperandCode && !bound.mayCallUnknownCode;
     if (facts.staysWithinDeclaredBound)
         facts.traits.atMost = EffectTraits(bound);
@@ -121,16 +97,16 @@ static OpcodeEffectFacts computeEffectFactsOf(Opcode opcode)
     DeclaredRowScan scan = scanDeclaredRow(opcode);
     if (!bound.mayCallUnknownCode) {
         Effects least = bound;
-        least.reads = LocationMasks(scan.readHeaps());
-        least.writes = LocationMasks(scan.writtenHeaps());
+        least.reads = LocationMasks(scan.readHeaps);
+        least.writes = LocationMasks(scan.writtenHeaps);
         facts.traits.atLeast = EffectTraits(least);
     }
     if (!bound.mayCallUnknownCode || bound.maySuspend) {
         facts.mayExitSideways = bound.mayExitSideways();
-        facts.writtenHeaps = scan.writtenHeaps();
+        facts.writtenHeaps = scan.writtenHeaps;
     }
     if (runsNoOperandCode)
-        facts.inputs = scan.hasEffectAtPayload() ? EffectInputs::Payload : EffectInputs::Row;
+        facts.inputs = scan.hasEffectAtPayload ? EffectInputs::Payload : EffectInputs::Row;
     return facts;
 }
 
@@ -150,7 +126,7 @@ static EffectInputs effectInputsOf(TerminatorKind kind)
     static const std::array<EffectInputs, numberOfTerminatorKinds> inputsOfKinds = [] {
         std::array<EffectInputs, numberOfTerminatorKinds> result { };
         for (TerminatorKind member : allMembersOf<TerminatorKind>) {
-            bool isDescribedByRow = effectRuleOf(member) != EffectRule::Inline && !mayRunOperandCode(member) && !scanDeclaredRow(member).hasEffectAtPayload();
+            bool isDescribedByRow = effectRuleOf(member) != EffectRule::Inline && !mayRunOperandCode(member) && !scanDeclaredRow(member).hasEffectAtPayload;
             result[static_cast<unsigned>(member)] = isDescribedByRow ? EffectInputs::Row : EffectInputs::Operands;
         }
         return result;
@@ -173,7 +149,6 @@ static void addPayload(AnalysisWordHasher& hasher, const Instruction& instructio
         hasher.add(word);
 }
 
-// False where the casts go round in a circle, as they may in code that nothing reaches.
 static bool addDefinitionBehindCasts(AnalysisWordHasher& hasher, const Function& function, ValueID id)
 {
     for (size_t remainingSteps = function.values.size(); remainingSteps; --remainingSteps) {
@@ -234,8 +209,7 @@ static uint64_t finishStamp(AnalysisWordHasher& hasher, const Function& function
     addPayload(hasher, instruction);
     if (inputs != EffectInputs::Payload && !addOperands(hasher, function, instruction, inputs))
         return 0;
-    uint64_t hash = hasher.hash();
-    return hash && hash < std::numeric_limits<uint64_t>::max() - 1 ? hash : 1;
+    return hasher.hash && hasher.hash < std::numeric_limits<uint64_t>::max() - 1 ? hasher.hash : 1;
 }
 
 static uint64_t stampOf(const Function& function, const Value& value, EffectInputs inputs)
@@ -262,7 +236,7 @@ static uint32_t hashOf(const EffectsOnEdges& effectsOnEdges)
         hasher.add(effects->writes.mixedWords());
         hasher.add(WTF::packBools(static_cast<bool>(effects->mayThrow), effects->mayThrowByRule(), effects->mayCollect, effects->mayCallUnknownCode, effects->maySuspend, effects->mayBeTerminated));
     }
-    return static_cast<uint32_t>(hasher.hash());
+    return static_cast<uint32_t>(hasher.hash);
 }
 
 EffectsCache::EffectsCache(const EffectContext& context, const Function& function, bool verifiesAnswers)
@@ -467,10 +441,7 @@ FunctionAnalyses::FunctionAnalyses(const AnalysisContext& context, Function& fun
     function.attach(m_ownChanges);
 }
 
-ChangeLog& changeLogOf(FunctionAnalyses& analyses)
-{
-    return analyses.changes();
-}
+ChangeLog& changeLogOf(FunctionAnalyses& analyses) { return analyses.changes(); }
 
 FunctionAnalyses::~FunctionAnalyses()
 {
@@ -506,10 +477,7 @@ Subject FunctionAnalyses::subject(ValueID value) const
     return result;
 }
 
-static constexpr unsigned indexOf(FunctionAnalysis analysis)
-{
-    return std::countr_zero(static_cast<unsigned>(analysis));
-}
+static constexpr unsigned indexOf(FunctionAnalysis analysis) { return std::countr_zero(static_cast<unsigned>(analysis)); }
 
 static_assert(indexOf(FunctionAnalysis::Induction) + 1 == numberOfFunctionAnalyses);
 
@@ -660,7 +628,6 @@ void FunctionAnalyses::dropFrequencies()
     m_values.frequenciesMayDescribeFormerFunction = false;
 }
 
-// The estimate reads little of a function beside its graph, and few changes touch that.
 void FunctionAnalyses::dropFrequenciesOfFormerFunction()
 {
     if (!m_values.frequenciesMayDescribeFormerFunction) [[likely]]
@@ -735,6 +702,18 @@ void FunctionAnalyses::willComputeValueAnalysis()
     m_values.mayHoldResults = true;
 }
 
+template<typename Result>
+const Result& FunctionAnalyses::valueResult(std::optional<Result>& result, const Invocable<void()> auto& make)
+{
+    if (!result) {
+        willComputeValueAnalysis();
+        make();
+    }
+    checkBlockCount();
+    checkValueCount();
+    return *result;
+}
+
 const UseLists& FunctionAnalyses::useLists()
 {
     if (m_values.useLists && m_values.useLists->isUpToDate() && !m_values.didDropBesideUseLists) [[likely]] {
@@ -754,8 +733,7 @@ const UseLists& FunctionAnalyses::useLists()
         didBringUseListsUpToDate(update);
     } else if (m_values.didDropBesideUseLists) [[unlikely]] {
         m_values.didDropBesideUseLists = false;
-        m_values.useLists->didHandOut();
-        if (m_verifiesUpdates && !m_values.useLists->hasSilentChanges())
+        if (m_verifiesUpdates)
             verifyUseLists();
     }
     checkBlockCount();
@@ -763,11 +741,7 @@ const UseLists& FunctionAnalyses::useLists()
     return *m_values.useLists;
 }
 
-// Other passes, and whoever holds analyses outside a pass, rewrite operands, arguments, lists and terminators themselves and rely on the next call of IRBuilder, ValueSubstitution or SSARepair to drop the lists.
-static constexpr bool reportsEveryChangeToUseListInputs(PassID pass)
-{
-    return pass == PassID::EliminateDeadCode || pass == PassID::CompactBlocks;
-}
+static constexpr bool reportsEveryChangeToUseListInputs(PassID pass) { return pass == PassID::EliminateDeadCode || pass == PassID::CompactBlocks; }
 
 UseLists* FunctionAnalyses::updatingUseLists()
 {
@@ -778,18 +752,13 @@ UseLists* FunctionAnalyses::updatingUseLists()
     return &*m_values.useLists;
 }
 
-static constexpr bool asksForIdentitiesOnlyBeforeEditing(PassID pass)
-{
-    return pass == PassID::SimplifyControlFlow || pass == PassID::RemoveTrivialParameters;
-}
+static constexpr bool asksForIdentitiesOnlyBeforeEditing(PassID pass) { return pass == PassID::SimplifyControlFlow || pass == PassID::RemoveTrivialParameters; }
 
-// These passes see the same identities whether the table is completed before they start or when they first ask.
 static constexpr EnumeratorBitSet<PassID, numberOfPasses> passesThatMayCompleteIdentitiesLate {
     PassID::FoldConstants, PassID::PropagateBranchConditions, PassID::HoistTestsIntoPredecessors, PassID::ThreadJumps, PassID::EliminateDeadCode,
     PassID::EliminateRedundantReads, PassID::RetypeValues, PassID::CompactBlocks,
 };
 
-// Any other pass may edit the function without reporting it and ask afterwards. It has to get the identities from before its edits.
 void FunctionAnalyses::completeIdentitiesBeforePass()
 {
     if (asksForIdentitiesOnlyBeforeEditing(m_runningPass) || passesThatMayCompleteIdentitiesLate.contains(m_runningPass))
@@ -833,18 +802,14 @@ ValueID FunctionAnalyses::identityOf(ValueID id)
 
 const Liveness& FunctionAnalyses::liveness()
 {
-    if (!m_values.liveness) {
-        willComputeValueAnalysis();
+    return valueResult(m_values.liveness, [&] {
         LivenessOptions options;
         options.opcodesOfValues = &opcodesOfValues();
         m_values.liveness.emplace(m_function, cfg(), useLists(), options);
         didBuild(FunctionAnalysis::Liveness);
         if (m_verifiesUpdates) [[unlikely]]
             verifyLiveness();
-    }
-    checkBlockCount();
-    checkValueCount();
-    return *m_values.liveness;
+    });
 }
 
 EffectsCache& FunctionAnalyses::effectsCache()
@@ -861,14 +826,10 @@ EffectsCache& FunctionAnalyses::effectsCache()
 
 const EscapeAnalysis& FunctionAnalyses::escape()
 {
-    if (!m_values.escape) {
-        willComputeValueAnalysis();
+    return valueResult(m_values.escape, [&] {
         cfg();
         m_values.escape.emplace(*this);
-    }
-    checkBlockCount();
-    checkValueCount();
-    return *m_values.escape;
+    });
 }
 
 EscapeAnalysisInputs FunctionAnalyses::inputsOfEscapeAnalysis()
@@ -880,54 +841,40 @@ const EscapeAnalysis& FunctionAnalyses::escapeWithLiveInstances()
 {
     escape();
     if (!m_values.escape->hasLiveInstances()) {
-        auto computeCycles = [&]() -> const BlockCycles& {
+        m_values.escape->computeLiveInstances(cfg(), useLists(), [&]() -> const BlockCycles& {
             return blockCycles();
-        };
-        ScopedLambda<const BlockCycles&()> cycles(computeCycles);
-        m_values.escape->computeLiveInstances(cfg(), useLists(), cycles);
+        });
     }
     return *m_values.escape;
 }
 
 const UseEffectHistory& FunctionAnalyses::escapeHistory()
 {
-    if (!m_values.escapeHistory) {
-        willComputeValueAnalysis();
+    return valueResult(m_values.escapeHistory, [&] {
         escapeWithLiveInstances();
         m_values.escapeHistory.emplace(*this);
         didBuild(FunctionAnalysis::EscapeHistory);
-    }
-    checkBlockCount();
-    checkValueCount();
-    return *m_values.escapeHistory;
+    });
 }
 
 const BlockFrequencies& FunctionAnalyses::blockFrequencies()
 {
     dropFrequenciesOfFormerFunction();
-    if (!m_values.blockFrequencies) {
-        willComputeValueAnalysis();
+    return valueResult(m_values.blockFrequencies, [&] {
         m_values.blockFrequencies.emplace(m_context, m_function, cfg(), blockCycles());
         didBuild(FunctionAnalysis::Frequencies);
-    }
-    checkBlockCount();
-    checkValueCount();
-    return *m_values.blockFrequencies;
+    });
 }
 
 const GuardAvailability& FunctionAnalyses::guards()
 {
-    if (!m_values.guards) {
-        willComputeValueAnalysis();
+    return valueResult(m_values.guards, [&] {
         cfg();
         useLists();
         identities();
         m_values.guards.emplace(*this);
         didBuild(FunctionAnalysis::Guards);
-    }
-    checkBlockCount();
-    checkValueCount();
-    return *m_values.guards;
+    });
 }
 
 const OpcodeSet& FunctionAnalyses::opcodesOfValues()
@@ -944,46 +891,18 @@ const OpcodeSet& FunctionAnalyses::opcodesOfValues()
 
 const FailedTests& FunctionAnalyses::failedTests()
 {
-    if (!m_values.failedTests) {
-        willComputeValueAnalysis();
+    return valueResult(m_values.failedTests, [&] {
         m_values.failedTests.emplace(*this);
         didBuild(FunctionAnalysis::FailedTests);
-    }
-    checkBlockCount();
-    checkValueCount();
-    return *m_values.failedTests;
+    });
 }
 
 const InductionVariables& FunctionAnalyses::inductionVariables()
 {
-    if (!m_values.inductionVariables) {
-        willComputeValueAnalysis();
+    return valueResult(m_values.inductionVariables, [&] {
         m_values.inductionVariables.emplace(*this);
         didBuild(FunctionAnalysis::Induction);
-    }
-    checkBlockCount();
-    checkValueCount();
-    return *m_values.inductionVariables;
-}
-
-const EffectsOnEdges& FunctionAnalyses::effectsOf(ValueID id)
-{
-    return effectsCache().of(id);
-}
-
-const EffectsOnEdges& FunctionAnalyses::effectsOfTerminator(BlockID block)
-{
-    return effectsCache().ofTerminator(block);
-}
-
-EffectTraitsOnEdges FunctionAnalyses::effectTraitsFromCache(ValueID id)
-{
-    return effectsCache().traitsOf(id);
-}
-
-EffectTraitsOnEdges FunctionAnalyses::effectTraitsOfTerminator(BlockID block)
-{
-    return effectsCache().traitsOfTerminator(block);
+    });
 }
 
 GuardState FunctionAnalyses::guardStateAt(ValueID guard, const Use& use)
@@ -1003,32 +922,6 @@ GuardState FunctionAnalyses::guardStateAt(ValueID guard, const Use& use)
         return GuardState::Available;
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-bool FunctionAnalyses::isGuardAvailable(ValueID guard, ValueID user)
-{
-    const Value& value = m_function.at(user);
-    std::optional<uint32_t> guardOperandIndex;
-    value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        if (!guardOperandIndex && operand == guard && value.operandKind(operandIndex) == OperandKind::Guard)
-            guardOperandIndex = operandIndex;
-    });
-    RELEASE_ASSERT(guardOperandIndex);
-
-    ValueLocation location = useLists().locationOf(user);
-    if (location.placement != ValuePlacement::InBlock)
-        return false;
-    return guardStateAt(guard, Use { Use::Kind::Operand, location.block, user, *guardOperandIndex, 0 }) == GuardState::Available;
-}
-
-EarlierTest FunctionAnalyses::findEarlierTest(const Value& test, BlockID at)
-{
-    return failedTests().find(test, at);
-}
-
-bool FunctionAnalyses::hasFailedTestOf(ValueID value)
-{
-    return failedTests().hasTestOf(value);
 }
 
 ExecutionCount FunctionAnalyses::executionCountOf(BlockID block)
@@ -1059,11 +952,6 @@ bool FunctionAnalyses::dominates(ValueID definition, ProgramPoint point)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-bool FunctionAnalyses::dominates(ValueID definition, const Use& use)
-{
-    return dominates(definition, useLists().pointOf(use));
-}
-
 bool FunctionAnalyses::dominates(Edge edge, BlockID block)
 {
     CFG& graph = cfg();
@@ -1073,21 +961,12 @@ bool FunctionAnalyses::dominates(Edge edge, BlockID block)
     return graph.singleIncomingEdge(target) == edge && dominators().dominates(target, block);
 }
 
-void FunctionAnalyses::invalidate(AnalysisSet requested)
-{
-    drop(addDependentAnalyses(requested));
-}
-
 void FunctionAnalyses::invalidate(AnalysisSet requested, AnalysisSet broughtUpToDate)
 {
     drop(addDependentAnalyses(requested - broughtUpToDate) - broughtUpToDate);
 }
 
-// Other passes have values typed again behind edits of their own, and an opcode or a payload that such a pass has changed may be covered by nothing but this call.
-static constexpr bool changesTypesAlone(PassID pass)
-{
-    return pass == PassID::RetypeValues;
-}
+static constexpr bool changesTypesAlone(PassID pass) { return pass == PassID::RetypeValues; }
 
 void FunctionAnalyses::didRetypeValues()
 {
@@ -1096,45 +975,31 @@ void FunctionAnalyses::didRetypeValues()
         return;
     }
     invalidate(valueAnalyses - analysesThatReadNoTypes, FunctionAnalysis::Escape);
-    // It asks for effects, which are those of the types as they are now that the former ones are dropped.
     if (m_values.escape && !m_values.escape->didRetypeValues())
         invalidate(FunctionAnalysis::Escape);
 }
 
+template<typename... Arguments>
+AnalysisSet FunctionAnalyses::tellUseLists(void (UseLists::*didChange)(Arguments...), std::type_identity_t<Arguments>... arguments)
+{
+    UseLists* useLists = updatingUseLists();
+    if (!useLists)
+        return { };
+    (useLists->*didChange)(arguments...);
+    return FunctionAnalysis::UseLists;
+}
+
 void FunctionAnalyses::didAddDetachedValue(ValueID)
 {
-    AnalysisSet broughtUpToDate;
-    if (UseLists* useLists = updatingUseLists()) {
-        useLists->didAddValues();
-        broughtUpToDate.add(FunctionAnalysis::UseLists);
-    }
-    invalidate(valueAnalyses, broughtUpToDate);
+    invalidate(valueAnalyses, tellUseLists(&UseLists::didAddValues));
     m_values.numberOfValues = m_function.values.size();
 }
 
-void FunctionAnalyses::didListValues(BlockID block, std::span<const ValueID>)
-{
-    AnalysisSet broughtUpToDate;
-    if (UseLists* useLists = updatingUseLists()) {
-        useLists->didChangeBlock(block);
-        broughtUpToDate.add(FunctionAnalysis::UseLists);
-    }
-    invalidate(valueAnalyses, broughtUpToDate);
-}
-
-// Other passes rewrite cast operands or edge arguments themselves and rely on the next IRBuilder call to drop the identities.
-static constexpr bool reportsEveryChangeToIdentityInputs(PassID pass)
-{
-    return pass == PassID::EliminateDeadCode;
-}
+static constexpr bool reportsEveryChangeToIdentityInputs(PassID pass) { return pass == PassID::EliminateDeadCode; }
 
 void FunctionAnalyses::didEraseValues(BlockID block, std::span<const ValueID> erased)
 {
-    AnalysisSet broughtUpToDate;
-    if (UseLists* useLists = updatingUseLists()) {
-        useLists->didChangeBlock(block);
-        broughtUpToDate.add(FunctionAnalysis::UseLists);
-    }
+    AnalysisSet broughtUpToDate = tellUseLists(&UseLists::didChangeBlock, block);
     if (m_values.identities && reportsEveryChangeToIdentityInputs(m_runningPass)) {
         m_values.identities->didEraseValues(erased);
         m_values.didUpdateIdentities = true;
@@ -1145,30 +1010,17 @@ void FunctionAnalyses::didEraseValues(BlockID block, std::span<const ValueID> er
 
 void FunctionAnalyses::didChangeBlock(BlockID block)
 {
-    AnalysisSet broughtUpToDate;
-    if (UseLists* useLists = updatingUseLists()) {
-        useLists->didChangeBlock(block);
-        broughtUpToDate.add(FunctionAnalysis::UseLists);
-    }
-    invalidate(valueAnalyses, broughtUpToDate);
+    invalidate(valueAnalyses, tellUseLists(&UseLists::didChangeBlock, block));
 }
 
 void FunctionAnalyses::didReplaceUses(ValueID from, ValueID to)
 {
-    AnalysisSet broughtUpToDate;
-    if (UseLists* useLists = updatingUseLists()) {
-        useLists->didReplaceUses(from, to);
-        broughtUpToDate.add(FunctionAnalysis::UseLists);
-    }
-    invalidate(valueAnalyses, broughtUpToDate);
+    invalidate(valueAnalyses, tellUseLists(&UseLists::didReplaceUses, from, to));
 }
 
 void FunctionAnalyses::didChangeValuesButNotUses()
 {
-    AnalysisSet broughtUpToDate;
-    if (updatingUseLists())
-        broughtUpToDate.add(FunctionAnalysis::UseLists);
-    invalidate(valueAnalyses, broughtUpToDate);
+    invalidate(valueAnalyses, updatingUseLists() ? AnalysisSet(FunctionAnalysis::UseLists) : AnalysisSet());
 }
 
 void FunctionAnalyses::didChangeControlFlow(std::span<const BlockID> changedBlocks)
@@ -1185,27 +1037,7 @@ void FunctionAnalyses::didChangeControlFlow(std::span<const BlockID> changedBloc
 
 void FunctionAnalyses::didRenumber(const Renumbering& renumbering)
 {
-    AnalysisSet broughtUpToDate;
-    if (UseLists* useLists = updatingUseLists()) {
-        useLists->didRenumber(renumbering.blocks.span(), renumbering.values.span());
-        broughtUpToDate.add(FunctionAnalysis::UseLists);
-    }
-    if (m_values.identities && m_values.identities->didRenumber(renumbering)) {
-        m_values.didUpdateIdentities = true;
-        broughtUpToDate.add(FunctionAnalysis::Identities);
-    }
-    // It refers to no other analysis. Where it gave up, the reasons that it had found by then depend on the order of the numbers.
-    if (m_values.escape && !m_values.escape->gaveUp()) {
-        m_values.escape->didRenumber(renumbering);
-        broughtUpToDate.add(FunctionAnalysis::Escape);
-        // Its history names objects, blocks and places in their lists, and refers to the graph, which still describes the function where no block has moved.
-        if (renumbering.blocks.isEmpty())
-            broughtUpToDate.add(FunctionAnalysis::EscapeHistory);
-    }
-    // They name blocks and no value.
-    if (renumbering.blocks.isEmpty())
-        broughtUpToDate.add(controlFlowAnalyses | FunctionAnalysis::Frequencies);
-    invalidate(allAnalyses, broughtUpToDate);
+    invalidate(allAnalyses, renumbering.blocks.isEmpty() ? controlFlowAnalyses | FunctionAnalysis::Frequencies : AnalysisSet());
     m_values.numberOfValues = m_function.values.size();
     m_controlFlow.numberOfBlocks = m_function.blocks.size();
 }
@@ -1214,9 +1046,6 @@ void FunctionAnalyses::drop(AnalysisSet set)
 {
     willDrop(set);
     m_values.didDropBesideUseLists = true;
-    // Liveness goes wherever a value may have changed. Where the use lists stay beside it, somebody has kept them.
-    if (set.contains(FunctionAnalysis::Liveness) && !set.contains(FunctionAnalysis::UseLists) && m_values.useLists)
-        m_values.useLists->didOutliveDrop();
     if (set.contains(FunctionAnalysis::ControlFlow)) {
         set.remove(controlFlowAnalyses);
         m_controlFlow.edgesFromUnreachableBlocks.reset();
@@ -1248,7 +1077,6 @@ void FunctionAnalyses::drop(AnalysisSet set)
         m_values.liveness.reset();
     if (set.contains(FunctionAnalysis::Identities))
         m_values.identities.reset();
-    // They keep their memory for the next time they are made.
     if (set.contains(FunctionAnalysis::UseLists) && m_values.useLists)
         m_values.useLists->didChangeEverything();
     if (set.contains(FunctionAnalysis::NaturalLoops))
@@ -1291,8 +1119,17 @@ AnalysisSet FunctionAnalyses::computed() const
 
 std::span<const Edge> FunctionAnalyses::edgesFromUnreachableBlocks()
 {
-    if (!m_controlFlow.edgesFromUnreachableBlocks)
-        m_controlFlow.edgesFromUnreachableBlocks.emplace(collectEdgesFromUnreachableBlocks(m_function, cfg()));
+    if (!m_controlFlow.edgesFromUnreachableBlocks) {
+        const CFG& graph = cfg();
+        Vector<Edge>& edges = m_controlFlow.edgesFromUnreachableBlocks.emplace();
+        for (unsigned blockIndex = 0; blockIndex < graph.numNodes(); ++blockIndex) {
+            if (graph.isReachable(BlockID(blockIndex)))
+                continue;
+            forEachOutgoingEdge(m_function, BlockID(blockIndex), [&](Edge edge, const Target&) {
+                edges.append(edge);
+            });
+        }
+    }
     checkBlockCount();
     return m_controlFlow.edgesFromUnreachableBlocks->span();
 }
@@ -1302,25 +1139,6 @@ bool FunctionAnalyses::isEnteredFromUnreachableBlock(BlockID block)
     return std::ranges::any_of(edgesFromUnreachableBlocks(), [&](Edge edge) {
         return targetOf(m_function, edge).block == block;
     });
-}
-
-bool FunctionAnalyses::hasSingleIncomingEdge(BlockID block)
-{
-    return cfg().singleIncomingEdge(block) && !isEnteredFromUnreachableBlock(block);
-}
-
-Vector<Edge> FunctionAnalyses::collectEdgesFromUnreachableBlocks(const Function& function, const CFG& graph)
-{
-    Vector<Edge> edges;
-    for (unsigned blockIndex = 0; blockIndex < graph.numNodes(); ++blockIndex) {
-        BlockID block(blockIndex);
-        if (graph.isReachable(block))
-            continue;
-        forEachOutgoingEdge(function, block, [&](Edge edge, const Target&) {
-            edges.append(edge);
-        });
-    }
-    return edges;
 }
 
 } } } // namespace JSC::AOT::Typed

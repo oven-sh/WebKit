@@ -18,47 +18,16 @@
 #include "AOTHeatGraph.h"
 #include "AOTPassRunner.h"
 #include "AOTPhaseTimes.h"
-#include "AOTProgramCaches.h"
 #include "AOTRecordUsers.h"
 #include "AOTSummarizeForInlining.h"
 #include "AOTThreads.h"
-#include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 #include <utility>
-
 #include <wtf/DataLog.h>
 
 namespace JSC { namespace AOT { namespace Typed {
-
-namespace {
-
-class CachesForAnalyses {
-    WTF_MAKE_NONCOPYABLE(CachesForAnalyses);
-public:
-    CachesForAnalyses(const Program& program, BuildContext& build, bool isNeeded)
-    {
-        if (!isNeeded)
-            return;
-        if (!program.types.hasOpenPhase())
-            m_scratch.emplace(program.types, 0u, TypeInterningPhase::Scratch);
-        m_caches.emplace(program, build);
-    }
-
-    ~CachesForAnalyses()
-    {
-        m_caches.reset();
-        if (m_scratch)
-            m_scratch->discard();
-    }
-
-private:
-    std::optional<TypeInterningPhase> m_scratch;
-    std::optional<ProgramCaches> m_caches;
-};
-
-} // anonymous namespace
 
 // What each body does with its parameters, as it was when the table of borrowed parameters was last made from this.
 struct ProgramAnalyses::BorrowingBodiesOfHeat {
@@ -77,12 +46,14 @@ struct ProgramAnalyses::BorrowingBodiesOfHeat {
     Vector<uint64_t> stampsOfRecords;
 };
 
-template<typename Result>
-static void destroyResultLater(BuildContext& build, std::unique_ptr<Result>& result)
+template<typename... Results>
+static void destroyResultsLater(BuildContext& build, std::unique_ptr<Results>&... results)
 {
-    if (!result)
-        return;
-    build.destroyLater(std::exchange(result, nullptr));
+    auto destroyLater = [&](auto& result) {
+        if (result)
+            build.destroyLater(std::exchange(result, nullptr));
+    };
+    (destroyLater(results), ...);
 }
 
 ProgramAnalyses::ProgramAnalyses(const Program& program, PassRunner& runner, DerivedFunctions& derivedFunctions)
@@ -101,23 +72,14 @@ ProgramAnalyses::ProgramAnalyses(const Program& program, PassRunner& runner, Der
 
 ProgramAnalyses::~ProgramAnalyses()
 {
-    BuildContext& build = m_runner.build();
     m_program.setBodyIndex(nullptr);
-    destroyResultLater(build, m_bodyIndex);
-    destroyResultLater(build, m_bodyReferences);
-    destroyResultLater(build, m_bodyWeights);
-    destroyResultLater(build, m_borrowingBodiesOfHeat);
-    destroyResultLater(build, m_bodySummaries);
-    destroyResultLater(build, m_effects);
-    destroyResultLater(build, m_inlining);
-    destroyResultLater(build, m_heat);
-    destroyResultLater(build, m_callGraph);
+    destroyResultsLater(m_runner.build(), m_bodyIndex, m_bodyReferences, m_bodyWeights, m_borrowingBodiesOfHeat, m_bodySummaries, m_effects, m_inlining, m_heat, m_callGraph);
 }
 
 const CallGraph& ProgramAnalyses::callGraph(const FlowResults& flow) const
 {
     if (!m_callGraph) {
-        CachesForAnalyses caches(m_program, m_runner.build(), true);
+        ProgramCachesWithScratchTypes caches(m_program, m_runner.build());
         if (!m_bodyReferences)
             m_bodyReferences = makeUnique<BodyReferences>();
         m_callGraph = makeUniqueWithoutFastMallocCheck<CallGraph>(m_runner.runAnalysis(PassID::BuildCallGraph, m_program, [&] {
@@ -134,7 +96,7 @@ void ProgramAnalyses::prepareToUpdateEffects() const
     if (m_bodySummaries)
         return;
     m_bodySummaries = makeUnique<BodySummaries>();
-    destroyResultLater(m_runner.build(), m_effects);
+    destroyResultsLater(m_runner.build(), m_effects);
     m_effects = makeUniqueWithoutFastMallocCheck<EffectSummaries>();
 }
 
@@ -165,13 +127,13 @@ EffectSummaries ProgramAnalyses::createSummariesFromFlowWithKeptBodies(const Flo
         });
         m_borrowingBodiesOfHeat = WTF::move(kept);
     } else
-        destroyResultLater(build, kept);
+        destroyResultsLater(build, kept);
     return createSummariesFromFlow(m_program, flow, table, build);
 }
 
 const EffectSummaries& ProgramAnalyses::effects(const FlowResults& flow) const
 {
-    CachesForAnalyses caches(m_program, m_runner.build(), !m_effectsAreUpToDate);
+    ProgramCachesWithScratchTypes caches(m_program, m_runner.build(), !m_effectsAreUpToDate);
     if (!m_effectsAreUpToDate && m_summarizesNoBodies) {
         m_effectsAreUpToDate = m_runner.runAnalysis(PassID::ComputeEffectSummaries, m_program, [&] {
             m_effects = makeUniqueWithoutFastMallocCheck<EffectSummaries>(createSummariesFromFlowWithKeptBodies(flow));
@@ -195,7 +157,7 @@ void ProgramAnalyses::estimateHeatFor(HeatFor heatFor)
     m_heatFor = heatFor;
     // A runner that has stopped makes no other.
     if (heatFor == HeatFor::Everything && m_heat && !m_heat->hasWeights() && !m_runner.isStopped()) {
-        destroyResultLater(m_runner.build(), m_heat);
+        destroyResultsLater(m_runner.build(), m_heat);
         m_runner.didInvalidate(ProgramResult::Heat);
     }
 }
@@ -204,7 +166,7 @@ const Heat& ProgramAnalyses::heat(const FlowResults& flow) const
 {
     if (!m_heat) {
         BuildContext& build = m_runner.build();
-        CachesForAnalyses caches(m_program, build, true);
+        ProgramCachesWithScratchTypes caches(m_program, build);
         const CallGraph& graph = callGraph(flow);
         const EffectSummaries* summariesFromFlow = m_effectsAreUpToDate && m_summarizesNoBodies ? m_effects.get() : m_seedOfUpdateUnderWay;
         const BodyReferences* references = m_bodyReferencesAreUpToDate ? m_bodyReferences.get() : nullptr;
@@ -221,7 +183,7 @@ const Heat& ProgramAnalyses::heat(const FlowResults& flow) const
         }));
         m_keepsPartsOfBodies = false;
         m_bodyWeights = WTF::move(madeWeights);
-        destroyResultLater(build, keptWeights);
+        destroyResultsLater(build, keptWeights);
     }
     return *m_heat;
 }
@@ -229,7 +191,7 @@ const Heat& ProgramAnalyses::heat(const FlowResults& flow) const
 const InliningSummaries& ProgramAnalyses::inlining(const FlowResults& flow) const
 {
     if (!m_inlining) {
-        CachesForAnalyses caches(m_program, m_runner.build(), true);
+        ProgramCachesWithScratchTypes caches(m_program, m_runner.build());
         const CallGraph& graph = callGraph(flow);
         const Heat& estimatedHeat = heat(flow);
         m_inlining = makeUniqueWithoutFastMallocCheck<InliningSummaries>(m_runner.runAnalysis(PassID::SummarizeForInlining, m_program, [&] {
@@ -239,15 +201,15 @@ const InliningSummaries& ProgramAnalyses::inlining(const FlowResults& flow) cons
     return *m_inlining;
 }
 
+bool ProgramAnalyses::lacksAnyOf(OptionSet<ProgramResult> needed) const
+{
+    return (needed.contains(ProgramResult::CallGraph) && !m_callGraph) || (needed.contains(ProgramResult::Heat) && !m_heat) || (needed.contains(ProgramResult::InliningSummaries) && !m_inlining);
+}
+
 // The effect summaries ask nothing of the call graph, nor of what is computed from it, much of which runs on one thread.
 void ProgramAnalyses::computeEffectsBesideOtherResults(const FlowResults& flow, OptionSet<ProgramResult> needed)
 {
-    if (m_effectsAreUpToDate || !needed.contains(ProgramResult::EffectSummaries) || !m_runner.mayRunAnalysesTogether())
-        return;
-    bool lacksAnotherResult = (needed.contains(ProgramResult::CallGraph) && !m_callGraph)
-        || (needed.contains(ProgramResult::Heat) && !m_heat)
-        || (needed.contains(ProgramResult::InliningSummaries) && !m_inlining);
-    if (!lacksAnotherResult)
+    if (m_effectsAreUpToDate || !needed.contains(ProgramResult::EffectSummaries) || !m_runner.mayRunAnalysesTogether() || !lacksAnyOf(needed))
         return;
 
     // estimateHeat() starts from these summaries, so only the call graph is built beside them.
@@ -297,11 +259,7 @@ OptimizationInputs ProgramAnalyses::inputs(const FlowResults& flow, OptionSet<Pr
         needed.remove(ProgramResult::EffectSummaries);
         m_runner.didCompute(ProgramResult::EffectSummaries);
     }
-    bool lacksResult = (needed.contains(ProgramResult::CallGraph) && !m_callGraph)
-        || (needed.contains(ProgramResult::Heat) && !m_heat)
-        || (needed.contains(ProgramResult::InliningSummaries) && !m_inlining)
-        || (needed.contains(ProgramResult::EffectSummaries) && !m_effectsAreUpToDate);
-    CachesForAnalyses caches(m_program, m_runner.build(), lacksResult);
+    ProgramCachesWithScratchTypes caches(m_program, m_runner.build(), lacksAnyOf(needed) || (needed.contains(ProgramResult::EffectSummaries) && !m_effectsAreUpToDate));
     computeEffectsBesideOtherResults(flow, needed);
     return {
         flow,
@@ -346,7 +304,7 @@ std::unique_ptr<EffectSummaries> ProgramAnalyses::takeEffects(const FlowResults&
     effects(flow);
     m_runner.didInvalidate(ProgramResult::EffectSummaries);
     bool wereUpToDate = std::exchange(m_effectsAreUpToDate, false);
-    destroyResultLater(m_runner.build(), m_bodySummaries);
+    destroyResultsLater(m_runner.build(), m_bodySummaries);
     std::unique_ptr<EffectSummaries> result = std::exchange(m_effects, nullptr);
     return wereUpToDate ? WTF::move(result) : makeUniqueWithoutFastMallocCheck<EffectSummaries>();
 }
@@ -380,11 +338,7 @@ void ProgramAnalyses::invalidate(OptionSet<ProgramResult> results)
     else
         m_bodyIndex->forgetAll();
     m_effectsAreUpToDate = false;
-    destroyResultLater(m_runner.build(), m_bodySummaries);
-    destroyResultLater(m_runner.build(), m_effects);
-    destroyResultLater(m_runner.build(), m_bodyReferences);
-    destroyResultLater(m_runner.build(), m_bodyWeights);
-    destroyResultLater(m_runner.build(), m_borrowingBodiesOfHeat);
+    destroyResultsLater(m_runner.build(), m_bodySummaries, m_effects, m_bodyReferences, m_bodyWeights, m_borrowingBodiesOfHeat);
     destroyResults(results | ProgramResult::EffectSummaries);
 }
 
@@ -427,10 +381,8 @@ void ProgramAnalyses::invalidate(OptionSet<ProgramResult> results, const Program
     ChangedRecords changedRecords { changedLayouts.span(), changedFields.span(), changedVariables.span() };
     size_t numberOfEditedFunctions = changedFunctions.size();
     // The references say which bodies came to a record by way of the fields of others. Without them nobody knows who sees a record that changed.
-    if (!m_bodyReferences && !changedRecords.isEmpty()) {
-        destroyResultLater(m_runner.build(), m_bodyWeights);
-        destroyResultLater(m_runner.build(), m_borrowingBodiesOfHeat);
-    }
+    if (!m_bodyReferences && !changedRecords.isEmpty())
+        destroyResultsLater(m_runner.build(), m_bodyWeights, m_borrowingBodiesOfHeat);
     if ((m_bodySummaries || m_bodyReferences) && !changedRecords.isEmpty()) {
         constexpr size_t functionsPerShare = 4096;
         Vector<uint8_t> followsFieldsOfOperands(m_program.functions.size());
@@ -555,11 +507,11 @@ void ProgramAnalyses::destroyResults(OptionSet<ProgramResult> results)
 
     BuildContext& build = m_runner.build();
     if (results.contains(ProgramResult::InliningSummaries))
-        destroyResultLater(build, m_inlining);
+        destroyResultsLater(build, m_inlining);
     if (results.contains(ProgramResult::Heat))
-        destroyResultLater(build, m_heat);
+        destroyResultsLater(build, m_heat);
     if (results.contains(ProgramResult::CallGraph))
-        destroyResultLater(build, m_callGraph);
+        destroyResultsLater(build, m_callGraph);
     if (results.contains(ProgramResult::EffectSummaries)) {
         m_effectsAreUpToDate = false;
         m_summarizesNoBodies = false;

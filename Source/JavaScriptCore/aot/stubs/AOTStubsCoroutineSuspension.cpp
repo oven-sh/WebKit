@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTAsyncAwaitConditions.h"
 #include "AOTConvention.h"
 #include "AOTInstance.h"
 #include "AOTSavedFrame.h"
@@ -92,20 +91,18 @@ void emitBranchUnlessHolds(StubAssembler& jit, const AwaitCondition& condition, 
     RELEASE_ASSERT(noOverlap(savedFrame, awaited, word, other, instanceGPR));
     switch (condition.test) {
     case AwaitConditionTest::HasAnyBit:
-        if (sizeInBytes == 1) {
+    case AwaitConditionTest::HasNoBit: {
+        const bool wantsBit = condition.test == AwaitConditionTest::HasAnyBit;
+        if (wantsBit && sizeInBytes == 1) {
             RELEASE_ASSERT(condition.bits <= UINT8_MAX);
             doesNotHold.append(jit.branchTest8(CCallHelpers::Zero, emitAddressOf(jit, condition.word, registers), TrustedImm32(static_cast<int32_t>(condition.bits))));
             return;
         }
         emitLoadWord(jit, emitAddressOf(jit, condition.word, registers), sizeInBytes, word);
         jit.move(TrustedImm64(static_cast<int64_t>(condition.bits)), other);
-        doesNotHold.append(jit.branchTest64(CCallHelpers::Zero, word, other));
+        doesNotHold.append(jit.branchTest64(wantsBit ? CCallHelpers::Zero : CCallHelpers::NonZero, word, other));
         return;
-    case AwaitConditionTest::HasNoBit:
-        emitLoadWord(jit, emitAddressOf(jit, condition.word, registers), sizeInBytes, word);
-        jit.move(TrustedImm64(static_cast<int64_t>(condition.bits)), other);
-        doesNotHold.append(jit.branchTest64(CCallHelpers::NonZero, word, other));
-        return;
+    }
     case AwaitConditionTest::IsZero:
         doesNotHold.append(branchIfNotZero(jit, emitAddressOf(jit, condition.word, registers), sizeInBytes));
         return;
@@ -178,23 +175,7 @@ static Label emitFunctionReturn(StubAssembler& jit)
 // Returns to the caller of the suspended function, so the callee saves reloaded here are not clobbers of the stub.
 static void emitLeaveFunction(StubAssembler& jit, GPRReg siteWord, GPRReg scratch, Label returnToCallerOfFunction)
 {
-#if CPU(X86_64)
-    constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
-    constexpr GPRReg fp = GPRInfo::callFrameRegister;
-    Jump doesNotSaveR15 = jit.branchTest32(CCallHelpers::Zero, siteWord, TrustedImm32(SavedFrame::functionSavesR15));
-    jit.loadPtr(Address(fp, -static_cast<int>(sizeof(CPURegister))), X86Registers::r15);
-    Jump savedOnlyR15 = jit.branchTest32(CCallHelpers::Zero, siteWord, TrustedImm32(SavedFrame::functionSavesPreservedRegister));
-    jit.loadPtr(Address(fp, -2 * static_cast<int>(sizeof(CPURegister))), SavedFrame::preservedRegister);
-    Jump hasRestoredBoth = jit.jump();
-    doesNotSaveR15.link(&jit);
-    Jump hasSavedNothing = jit.branchTest32(CCallHelpers::Zero, siteWord, TrustedImm32(SavedFrame::functionSavesPreservedRegister));
-    jit.loadPtr(Address(fp, -static_cast<int>(sizeof(CPURegister))), SavedFrame::preservedRegister);
-    hasSavedNothing.link(&jit);
-    savedOnlyR15.link(&jit);
-    hasRestoredBoth.link(&jit);
-#else
-    emitMovePairsSavedInFrame(jit, siteWord, SavedFrame::liveSlotMapOffsetBits, PairsSavedInFrame::AreRestored);
-#endif
+    emitMoveRegistersSavedInFrame(jit, siteWord, SavedFrame::liveSlotMapOffsetBits, RegistersSavedInFrame::AreRestored);
     // Returning through the label keeps calls and returns paired for the return address predictor.
     jit.loadLabelAddress(returnToCallerOfFunction, scratch);
 #if CPU(X86_64)
@@ -208,7 +189,6 @@ static void emitLeaveFunction(StubAssembler& jit, GPRReg siteWord, GPRReg scratc
 // Calls the operation with the instance as its first and the suspension words as its sixth argument. The others are already in their registers.
 static void emitCallOperationAndLeaveFunction(StubAssembler& jit, Entry operation, GPRReg siteWord, Label returnToCallerOfFunction, GPRReg valueToReturn = InvalidGPRReg)
 {
-    constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
     constexpr int32_t offsetOfSiteWord = OBJECT_OFFSETOF(SuspensionWords, siteWord);
     const GPRReg instance = jit.reuseScratch(StubRegister::A0);
     const GPRReg suspensionWords = jit.reuseScratch(StubRegister::A5);
@@ -245,8 +225,6 @@ static void emitCallOperationAndLeaveFunction(StubAssembler& jit, Entry operatio
 // Calls operation(instance, subject, frame, bottom, resumeAddress, suspensionWords). The subject, an awaited value or a generator, is already in its argument register.
 static void emitSuspend(StubAssembler& jit, Entry operation, GPRReg siteWord, Label returnToCallerOfFunction, GPRReg valueToReturn = InvalidGPRReg)
 {
-    constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
-    constexpr GPRReg fp = GPRInfo::callFrameRegister;
     const GPRReg frame = jit.reuseScratch(StubRegister::A2);
     const GPRReg bottom = jit.reuseScratch(StubRegister::A3);
     const GPRReg resumeAddress = jit.reuseScratch(StubRegister::A4);
@@ -260,31 +238,16 @@ static void emitSuspend(StubAssembler& jit, Entry operation, GPRReg siteWord, La
     emitCallOperationAndLeaveFunction(jit, operation, siteWord, returnToCallerOfFunction, valueToReturn);
 }
 
-struct FrameCopyRegisters {
-    GPRReg subject;
-    GPRReg saved;
-    GPRReg count;
-    GPRReg cursor;
-    GPRReg word;
-    GPRReg second;
-};
-
-static void emitWillWrite(StubAssembler& jit, GPRReg saved)
-{
-    jit.add32(TrustedImm32(1), Address(saved, SavedFrame::offsetOfVersion()));
-    jit.storeFence();
-}
-
-static void emitDidWrite(StubAssembler& jit, GPRReg saved)
-{
-    jit.storeFence();
-    jit.add32(TrustedImm32(1), Address(saved, SavedFrame::offsetOfVersion()));
-}
+struct FrameCopyRegisters { GPRReg subject, saved, count, cursor, word, second; };
+#if CPU(X86_64)
+static constexpr StubRegister secondRegisterOfFrameCopy = StubRegister::A0;
+#elif CPU(ARM64)
+static constexpr StubRegister secondRegisterOfFrameCopy = StubRegister::T10;
+#endif
 
 // The stack is as at the entry of the stub. The number of words kept is even and may be zero. The words skipped at the bottom of the frame lie below them.
 static void emitCopyFrameWords(StubAssembler& jit, const FrameCopyRegisters& registers)
 {
-    constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
     const auto [subject, saved, count, cursor, word, second] = registers;
     const GPRReg source = cursor;
     jit.load16(Address(saved, SavedFrame::offsetOfNumberOfWords()), count);
@@ -339,7 +302,9 @@ static void emitSaveFrame(StubAssembler& jit, const FrameCopyRegisters& register
 {
     const GPRReg saved = registers.saved;
     const GPRReg word = registers.word;
-    emitWillWrite(jit, saved);
+    const Address version(saved, SavedFrame::offsetOfVersion());
+    jit.add32(TrustedImm32(1), version);
+    jit.storeFence();
     emitCopyFrameWords(jit, registers);
 #if CPU(X86_64)
     jit.store64(SavedFrame::preservedRegister, Address(saved, SavedFrame::offsetOfPreservedRegister()));
@@ -350,7 +315,8 @@ static void emitSaveFrame(StubAssembler& jit, const FrameCopyRegisters& register
     jit.and32(TrustedImm32((1 << SavedFrame::liveSlotMapOffsetBits) - 1), siteWord, word);
     jit.add32(TrustedImm32(1), word);
     jit.store32(word, Address(saved, SavedFrame::offsetOfLiveSlotMapOffsetPlusOne()));
-    emitDidWrite(jit, saved);
+    jit.storeFence();
+    jit.add32(TrustedImm32(1), version);
 }
 
 // SavedFrame::skippedAtTopOf as code.
@@ -375,8 +341,6 @@ static void emitLoadNumberOfWordsSkippedAtTop(StubAssembler& jit, GPRReg siteWor
 AssemblyHelpers::FreeListRefill emitAllocateSavedFrame(StubAssembler& jit, CoroutineKind kind, GPRReg siteWord, const NewSavedFrameRegisters& registers, JumpList& needsOperation)
 {
     using Continuation = SavedFrame::Continuation;
-    constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
-    constexpr GPRReg fp = GPRInfo::callFrameRegister;
     constexpr unsigned sizeStepShift = getLSBSet(MarkedSpace::sizeStep);
     const auto [saved, count, allocator, scratch] = registers;
     const GPRReg skippedAtTop = allocator;
@@ -550,10 +514,7 @@ StubSignature signatureOfAwaitBySavingFrame(StubKey key)
 }
 
 // The awaited value, the SavedFrame, the site word.
-StubSignature signatureOfAwaitWithSavedFrame(StubKey)
-{
-    return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::T9) });
-}
+StubSignature signatureOfAwaitWithSavedFrame(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::T9) }); }
 
 struct AwaitOperations {
     Entry withNewSavedFrame;
@@ -584,7 +545,6 @@ static void emitReturnAwaitedValue(StubAssembler& jit, GPRReg siteWord)
 
 void generateAwaitBySavingFrame(StubAssembler& jit)
 {
-    constexpr GPRReg fp = GPRInfo::callFrameRegister;
     const auto form = static_cast<AwaitedOperand>(jit.key().form());
     const bool awaitsCallWithoutPromise = form == AwaitedOperand::ResultOfCallWithoutPromise;
     const AwaitOperations operations = operationsOf(form);
@@ -595,11 +555,7 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
     const GPRReg count = jit.allocateScratch(StubRegister::A3);
     const GPRReg word = jit.allocateScratch(StubRegister::A4);
     const GPRReg other = jit.allocateScratch(StubRegister::A5);
-#if CPU(X86_64)
-    const GPRReg second = jit.allocateScratch(StubRegister::A0);
-#elif CPU(ARM64)
-    const GPRReg second = jit.allocateScratch(StubRegister::T10);
-#endif
+    const GPRReg second = jit.allocateScratch(secondRegisterOfFrameCopy);
     const AwaitRegisters registers { savedFrame, awaited, word, other };
     RELEASE_ASSERT(awaited == operationArgumentGPR(1) && savedFrame == operationArgumentGPR(2));
 
@@ -812,13 +768,7 @@ static std::optional<CoroutineKind> kindOfGeneratorAtInitialYield(GeneratorSuspe
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-StubSignature signatureOfSuspendGenerator(StubKey)
-{
-    StubSignature signature = StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::R0), gprOf(StubRegister::T9) });
-    signature.result = StubResult::TwoGPRs;
-    signature.secondResult = gprOf(resumeModeRegister);
-    return signature;
-}
+StubSignature signatureOfSuspendGenerator(StubKey) { return signatureWithResumeMode({ gprOf(StubRegister::A1), gprOf(StubRegister::R0), gprOf(StubRegister::T9) }); }
 
 // Where it suspends it writes neither result: RestoreSavedFrameToStack does, when control comes back to the site.
 void generateSuspendGenerator(StubAssembler& jit)
@@ -831,11 +781,7 @@ void generateSuspendGenerator(StubAssembler& jit)
     const GPRReg count = jit.allocateScratch(StubRegister::A3);
     const GPRReg cursor = jit.allocateScratch(StubRegister::A4);
     const GPRReg word = jit.allocateScratch(StubRegister::A5);
-#if CPU(X86_64)
-    const GPRReg second = jit.allocateScratch(StubRegister::A0);
-#elif CPU(ARM64)
-    const GPRReg second = jit.allocateScratch(StubRegister::T10);
-#endif
+    const GPRReg second = jit.allocateScratch(secondRegisterOfFrameCopy);
     RELEASE_ASSERT(generator == operationArgumentGPR(1));
     RELEASE_ASSERT(noOverlap(generator, value, siteWord, saved, count, cursor, word, second, instanceGPR));
 

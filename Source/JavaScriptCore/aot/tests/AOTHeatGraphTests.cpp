@@ -40,7 +40,6 @@ entry module=m0
 variable g0 name="setUp" module=m0 declared={type=function} initialization=Function function=f7
 variable g1 name="log" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Boolean boolean=true
     v1 = CallDirect function=f7
     v2 = NewClosure function=f5
@@ -58,37 +57,29 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="fetch" results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f2
     Return v0
 }
 function f2 name="route" results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f3
     Return v0
 }
 function f3 name="respond" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f4 name="registerRoute" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f5 name="onMessage" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f6 name="job" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f7 name="setUp" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f8 name="escaped" results=[{type=undefined}] {
-  b0():
     Return
 }
 )IR"_s;

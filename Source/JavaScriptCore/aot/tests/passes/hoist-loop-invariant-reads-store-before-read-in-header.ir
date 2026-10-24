@@ -10,7 +10,6 @@ variable g2 name="storedOnce" declared={type=number} flow={writers=AllKnown stor
 layout L0 kind=Environment name="scope" fields=[{key="x" declared={type=number}}, {key="y" declared={type=number}}]
 
 function f0 name="storeBeforeRead" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Jump -> next b1()
   b1():
     LoopHint
@@ -20,15 +19,13 @@ function f0 name="storeBeforeRead" parameters=[{type=number}] results=[{type=num
     Branch v4 -> taken b1(), notTaken b2()
   b2():
     Return v3
-}
-# CHECK-LABEL: function f0 name="storeBeforeRead"
 # CHECK: b0(
 # CHECK-NEXT: Jump -> next b1()
 # CHECK: PutModuleVariable v0 variable=g0
 # CHECK-NEXT: v3: number = GetModuleVariable variable=g0
+}
 
 function f1 name="storeToAnotherVariableBeforeRead" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Jump -> next b1()
   b1():
     LoopHint
@@ -38,16 +35,14 @@ function f1 name="storeToAnotherVariableBeforeRead" parameters=[{type=number}] r
     Branch v4 -> taken b1(), notTaken b2()
   b2():
     Return v3
-}
-# CHECK-LABEL: function f1 name="storeToAnotherVariableBeforeRead"
 # CHECK: b0(
 # CHECK-NEXT: v3: number = GetModuleVariable variable=g0
 # CHECK-NEXT: Jump -> next b1()
 # CHECK: PutModuleVariable v0 variable=g1
 # CHECK-NEXT: = Less v0, v3
+}
 
 function f2 name="unknownCallBeforeReadOfStoredOnce" parameters=[{type=number}, {type=anything}] results=[{type=number}] {
-  b0(v0: number, v1: anything):
     Jump -> next b1()
   b1():
     LoopHint
@@ -57,15 +52,13 @@ function f2 name="unknownCallBeforeReadOfStoredOnce" parameters=[{type=number}, 
     Branch v5 -> taken b1(), notTaken b2()
   b2():
     Return v4
-}
-# CHECK-LABEL: function f2 name="unknownCallBeforeReadOfStoredOnce"
 # CHECK: b0(
 # CHECK-NEXT: Jump -> next b1()
 # CHECK: = Call v1
 # CHECK-NEXT: v4: number = GetModuleVariable variable=g2
+}
 
 function f3 name="unknownCallBehindReadOfStoredOnce" parameters=[{type=number}, {type=anything}] results=[{type=number}] {
-  b0(v0: number, v1: anything):
     Jump -> next b1()
   b1():
     LoopHint
@@ -75,15 +68,13 @@ function f3 name="unknownCallBehindReadOfStoredOnce" parameters=[{type=number}, 
     Branch v5 -> taken b1(), notTaken b2()
   b2():
     Return v3
-}
-# CHECK-LABEL: function f3 name="unknownCallBehindReadOfStoredOnce"
 # CHECK: b0(
 # CHECK-NEXT: v3: number = GetModuleVariable variable=g2
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NOT: GetModuleVariable
+}
 
 function f4 name="ownStoreBeforeReadOfStoredOnce" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Jump -> next b1()
   b1():
     LoopHint
@@ -93,12 +84,11 @@ function f4 name="ownStoreBeforeReadOfStoredOnce" parameters=[{type=number}] res
     Branch v4 -> taken b1(), notTaken b2()
   b2():
     Return v3
-}
-# CHECK-LABEL: function f4 name="ownStoreBeforeReadOfStoredOnce"
 # CHECK: b0(
 # CHECK-NEXT: Jump -> next b1()
 # CHECK: PutModuleVariable v0 variable=g2
 # CHECK-NEXT: v3: number = GetModuleVariable variable=g2
+}
 
 function f5 name="fieldStoreBeforeRead" captures=[{type=env L0}] parameters=[{type=number}] results=[{type=number}] {
   b0(v0: env L0, v1: number):
@@ -111,12 +101,11 @@ function f5 name="fieldStoreBeforeRead" captures=[{type=env L0}] parameters=[{ty
     Branch v5 -> taken b1(), notTaken b2()
   b2():
     Return v4
-}
-# CHECK-LABEL: function f5 name="fieldStoreBeforeRead"
 # CHECK: b0(
 # CHECK-NEXT: Jump -> next b1()
 # CHECK: PutEnvironmentField v0, v1 layout=L0
 # CHECK-NEXT: v4: number = GetEnvironmentField v0 layout=L0
+}
 
 function f6 name="storeToAnotherFieldBeforeRead" captures=[{type=env L0}] parameters=[{type=number}] results=[{type=number}] {
   b0(v0: env L0, v1: number):
@@ -129,13 +118,12 @@ function f6 name="storeToAnotherFieldBeforeRead" captures=[{type=env L0}] parame
     Branch v5 -> taken b1(), notTaken b2()
   b2():
     Return v4
-}
-# CHECK-LABEL: function f6 name="storeToAnotherFieldBeforeRead"
 # CHECK: b0(
 # CHECK-NEXT: v4: number = GetEnvironmentField v0 layout=L0
 # CHECK-NEXT: Jump -> next b1()
 # CHECK: PutEnvironmentField v0, v1 layout=L0 field=1
 # CHECK-NEXT: = Less v1, v4
+}
 
 function f7 name="fieldStoreThroughAnotherBase" captures=[{type=env L0}] parameters=[{type=env L0}, {type=number}] results=[{type=number}] {
   b0(v0: env L0, v1: env L0, v2: number):
@@ -148,9 +136,8 @@ function f7 name="fieldStoreThroughAnotherBase" captures=[{type=env L0}] paramet
     Branch v6 -> taken b1(), notTaken b2()
   b2():
     Return v5
-}
-# CHECK-LABEL: function f7 name="fieldStoreThroughAnotherBase"
 # CHECK: b0(
 # CHECK-NEXT: Jump -> next b1()
 # CHECK: PutEnvironmentField v1, v2 layout=L0
 # CHECK-NEXT: v5: number = GetEnvironmentField v0 layout=L0
+}

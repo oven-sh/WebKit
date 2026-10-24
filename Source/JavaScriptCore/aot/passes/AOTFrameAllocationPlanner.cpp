@@ -15,13 +15,14 @@
 #include "AOTEffectsDescription.h"
 #include "AOTEffectsOfAccesses.h"
 #include "AOTFlowResults.h"
-#include "AOTFrameAllocationMaterialization.h"
 #include "AOTFunctionKinds.h"
 #include "AOTHeat.h"
 #include "AOTSort.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <ranges>
+#include <wtf/Noncopyable.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -38,14 +39,63 @@ struct PendingMove {
     Use use;
 };
 
-struct HolderReference {
-    enum class Kind : uint8_t { EnvironmentField, Capture, Key };
+class FramePlanner {
+    WTF_MAKE_NONCOPYABLE(FramePlanner);
+public:
+    FramePlanner(FunctionAnalyses&, const Heat&);
 
-    Kind kind { Kind::Key };
-    uint32_t owner { 0 };
-    uint32_t index { 0 };
+    FramePlan run();
 
-    friend bool operator==(const HolderReference&, const HolderReference&) = default;
+private:
+    ObjectSet candidates() const { return ObjectSet(m_isCandidate); }
+    ValueID allocationOf(ObjectID object) const { return m_escape.at(object).definition; }
+    const Value& definitionOf(ObjectID object) const LIFETIME_BOUND { return m_function.at(allocationOf(object)); }
+    bool isCandidate(ObjectID object) const { return m_isCandidate.get(object.index()); }
+    bool isArray(ObjectID object) const { return arrayAllocationsWithStorage.contains(definitionOf(object).opcode); }
+    bool isClosure(ObjectID object) const { return definitionOf(object).opcode == Opcode::NewClosure; }
+    bool isInFrame(ObjectID object) const { return m_decisions[object.index()].storage == AllocationStorage::Frame; }
+    bool mayBeInFrame(ObjectID object) const { return m_decisions[object.index()].storage != AllocationStorage::Heap; }
+    bool hasOneLiveInstance(ObjectID object) const { return m_escape.liveInstancesOf(object) == LiveInstances::AtMostOne; }
+    bool isLent(ObjectID object) const { return m_decisions[object.index()].isLent; }
+    bool isKeptUntilItLeaves(ObjectID object) const { return isLent(object) || !m_decisions[object.index()].madeAgainAt.isEmpty(); }
+    bool mayGiveFrameCell(ValueID) const;
+    void moveToHeap(ObjectID, AllocationHeapCause, std::optional<Use> = std::nullopt, LimitID = LimitID::None);
+
+    bool isHiddenRestOfEveryCallee(const Use&) const;
+    void collectCandidates();
+    void decideByEscapeState(ObjectID);
+    bool hasUntrackedAlias(ObjectID) const;
+    bool escapesOnlyIntoClosures(ObjectID) const;
+    bool keepClosureUntilItLeaves(ObjectID closure);
+    bool willHaveLongFormsInLine(BlockID);
+    bool mayFindBorrowingCallee(const Value& call, uint32_t operandIndex) const;
+    bool isOnlyCalled(ObjectID closure) const;
+    void checkCellForms();
+    void checkUses();
+    AllocationHeapCause checkUse(ObjectID, const ObjectUse&) const;
+    bool mayLeakContentsThrough(const ObjectUse&) const;
+    bool leaksContents(ObjectID cell) const;
+    void checkUsesOfArrays();
+    void checkSuspensions();
+    void checkReturnCalls();
+    void checkHolders();
+    std::optional<ObjectID> findHolder(const Use&) const;
+    bool dieTogether(ObjectID holder, ObjectID held) const;
+    CellPlace placeStoredBy(const Use&) const;
+    void addHolder(ObjectID holder, const Use&);
+    void checkMaterialization();
+    void finishPlan();
+
+    FunctionAnalyses& m_analyses;
+    const Heat& m_heat;
+    BuildContext& m_build;
+    const Program& m_program;
+    const Function& m_function;
+    const FlowResults* m_flow;
+    const EscapeAnalysis& m_escape;
+    BitVector m_isCandidate;
+    Vector<FrameDecision> m_decisions;
+    FramePlan m_plan;
 };
 
 } // anonymous namespace
@@ -59,7 +109,16 @@ static constexpr OptionSet<ObjectMutation> mutationsChangingFrameCells {
     ObjectMutation::ChangePrototype,
     ObjectMutation::StoreOfOtherType,
 };
-
+static constexpr OperandUses usesChangingFrameCells {
+    OperandUse::MovesElements,
+    OperandUse::StoresByKey,
+    OperandUse::DeletesByKey,
+    OperandUse::AssignsFrom,
+    OperandUse::DefinesName,
+    OperandUse::TakesDescriptor,
+    OperandUse::ChangesIntegrity,
+    OperandUse::ChangesPrototype,
+};
 static constexpr OperandUses usesOfSharedLists { OperandUse::Inspects, OperandUse::ReadsContents, OperandUse::RetainsContents };
 
 static LimitID reachedLimitOf(const EscapeAnalysis& escape)
@@ -81,68 +140,12 @@ static bool mayChangeForm(const Program& program, const FlowResults* flow, const
 
 static bool canRetainInitialValue(const Program& program, const FlowResults* flow, const Value& cell, uint32_t operandIndex)
 {
-    std::optional<uint32_t> position = cell.variadicOperandIndex(operandIndex);
-    if (!position)
+    std::optional<CellPlace> place = placeStoredTo(cell, operandIndex);
+    if (!place || !Value::opcodesWithStorage.contains(cell.opcode))
         return false;
-    if (cell.opcode == Opcode::NewClosure)
-        return !mayLeakCapture(program, flow, cell, *position);
-    if (cell.opcode != Opcode::NewObject || program.at(cell.layout()).kind != LayoutKind::Environment || *position >= cell.fields().size())
-        return false;
-    return !mayLeakStoredValue(flow, FieldReference { cell.layout(), cell.fields()[*position] });
-}
-
-static bool hasFieldStoredBy(const Program& program, const Value& cell, const Value& store)
-{
-    if (cell.opcode != Opcode::NewObject)
-        return false;
-    if (store.opcode == Opcode::PutEnvironmentField)
-        return cell.layout() == store.layout();
-    return program.at(cell.layout()).findField(store.key()).has_value();
-}
-
-static HolderReference referenceStoredBy(const Value& user, uint32_t operandIndex)
-{
-    switch (user.opcode) {
-    case Opcode::NewClosure:
-        return { HolderReference::Kind::Capture, user.function().index(), *user.variadicOperandIndex(operandIndex) };
-    case Opcode::NewObject:
-        return { HolderReference::Kind::EnvironmentField, user.layout().index(), user.fields()[*user.variadicOperandIndex(operandIndex)] };
-    case Opcode::PutEnvironmentField:
-        return { HolderReference::Kind::EnvironmentField, user.layout().index(), user.field() };
-    case Opcode::PutSlot:
-    case Opcode::PutSlotOrAdd:
-        return { HolderReference::Kind::Key, user.key().index(), 0 };
-    default:
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-}
-
-static HolderReference referenceReadBy(const Value& read)
-{
-    switch (read.opcode) {
-    case Opcode::GetEnvironmentField:
-        return { HolderReference::Kind::EnvironmentField, read.layout().index(), read.field() };
-    case Opcode::GetCapture:
-        return { HolderReference::Kind::Capture, read.function().index(), read.index() };
-    case Opcode::GetSlot:
-    case Opcode::GetSlotOrUndefined:
-        return { HolderReference::Kind::Key, read.key().index(), 0 };
-    default:
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-}
-
-static bool mayBeHeldIn(const Program& program, const Value& cell, const HolderReference& reference)
-{
-    switch (reference.kind) {
-    case HolderReference::Kind::EnvironmentField:
-        return cell.opcode == Opcode::NewObject && cell.layout().index() == reference.owner;
-    case HolderReference::Kind::Capture:
-        return cell.opcode == Opcode::NewClosure && cell.function().index() == reference.owner;
-    case HolderReference::Kind::Key:
-        return cell.opcode == Opcode::NewObject && program.at(cell.layout()).findField(PropertyKeyID(reference.owner)).has_value();
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    if (place->kind == CellPlace::Kind::Capture)
+        return !mayLeakCapture(program, flow, cell, place->index);
+    return program.at(cell.layout()).kind == LayoutKind::Environment && !mayLeakStoredValue(flow, FieldReference { cell.layout(), place->index });
 }
 
 // The closure that such a field makes on demand is a cell of the heap. It holds the object, or the environment that the object keeps for its closures.
@@ -164,8 +167,8 @@ static bool isEnvironmentOfDeferredClosures(const Program& program, const Value&
     if (user.opcode != Opcode::NewObject)
         return false;
     std::optional<uint32_t> field = program.at(user.layout()).flow.closureEnvironmentField;
-    std::optional<uint32_t> position = user.variadicOperandIndex(operandIndex);
-    return field && position && *position < user.fields().size() && user.fields()[*position] == *field;
+    std::optional<CellPlace> place = placeStoredTo(user, operandIndex);
+    return field && place && place->index == *field;
 }
 
 // The slot of a field that leaves a closure unmade is a narrow reference, which reaches no frame.
@@ -175,8 +178,8 @@ static bool isValueOfDeferringField(const Program& program, const Value& user, u
         return flowOf(program, FieldReference { layout, field }).location.deferral != ClosureDeferral::Unknown;
     };
     if (user.opcode == Opcode::NewObject) {
-        std::optional<uint32_t> position = user.variadicOperandIndex(operandIndex);
-        return position && *position < user.fields().size() && defersClosure(user.layout(), user.fields()[*position]);
+        std::optional<CellPlace> place = placeStoredTo(user, operandIndex);
+        return place && defersClosure(user.layout(), place->index);
     }
     if ((user.opcode != Opcode::PutSlot && user.opcode != Opcode::PutSlotOrAdd) || operandIndex != OperandIndex::PutSlot::value)
         return false;
@@ -206,51 +209,47 @@ static FrameDecision createHeapDecision(const EscapeAnalysis& escape, ValueID al
 {
     FrameDecision decision { .allocation = allocation, .cause = AllocationHeapCause::HasNoFrameForm, .limit = reachedLimitOf(escape) };
     if (std::optional<ObjectID> object = escape.objectDefinedBy(allocation)) {
-        const TrackedObject& tracked = escape.at(*object);
-        decision.forcedBy = tracked.firstEscape;
-        decision.reasons = tracked.reasons;
+        decision.forcedBy = escape.at(*object).firstEscape;
+        decision.reasons = escape.at(*object).reasons;
     }
     return decision;
 }
 
-static void addAllocation(FramePlan& plan, const Program& program, const Value& allocation, AllocationStorage storage, bool isLent = false, bool isMadeAgain = false)
+void FramePlan::add(const Program& program, const Value& allocation, AllocationStorage storage, bool isLent, bool isMadeAgain)
 {
+    bool isInFrame = storage == AllocationStorage::Frame;
     if (arrayAllocationsWithStorage.contains(allocation.opcode)) {
-        if (storage == AllocationStorage::Frame)
-            ++(allocation.opcode == Opcode::CreateRest ? plan.restArraysInFrames : plan.arraysInFrames);
+        if (isInFrame)
+            count(allocation.opcode == Opcode::CreateRest ? StatisticID::RestArraysInFrames : StatisticID::ArraysInFrames);
         return;
     }
     if (allocation.opcode == Opcode::NewClosure) {
-        plan.allocation.addClosure(allocation.function(), storage);
-        if (storage == AllocationStorage::Frame)
-            ++plan.closuresInFrames;
-        // The copy that a callee gets which does not borrow.
-        if (isLent) {
-            plan.allocation.addClosure(allocation.function(), AllocationStorage::Heap);
-            ++plan.closuresLent;
-        }
-        if (isMadeAgain)
-            plan.allocation.addClosure(allocation.function(), AllocationStorage::Heap);
+        closures.append({ allocation.function(), storage });
+        if (isLent || isMadeAgain)
+            closures.append({ allocation.function(), AllocationStorage::Heap });
+        if (isInFrame)
+            count(StatisticID::ClosuresInFrames);
+        if (isLent)
+            count(StatisticID::ClosuresLent);
         return;
     }
 
-    LayoutID layout = allocation.layout();
-    plan.allocation.addCell(layout, storage);
-    if (program.at(layout).kind != LayoutKind::Environment) {
-        if (storage == AllocationStorage::Frame)
-            ++plan.objectsInFrames;
+    cells.append({ allocation.layout(), storage });
+    if (program.at(allocation.layout()).kind != LayoutKind::Environment) {
+        if (isInFrame)
+            count(StatisticID::ObjectsInFrames);
         return;
     }
 
     switch (storage) {
     case AllocationStorage::Heap:
-        ++plan.environmentsOnHeap;
+        count(StatisticID::EnvironmentsOnHeap);
         return;
     case AllocationStorage::Frame:
-        ++plan.environmentsInFrames;
+        count(StatisticID::EnvironmentsInFrames);
         return;
     case AllocationStorage::FrameUntilMaterialized:
-        ++plan.environmentsMaterializedLate;
+        count(StatisticID::EnvironmentsMaterializedLate);
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -266,9 +265,15 @@ bool isEmptyArrayLiteral(const Value& value)
     return value.opcode == Opcode::NewArray && value.elementsOperands().empty() && value.holes().empty() && !value.capacityOperand();
 }
 
+FramePlan planFrame(FunctionAnalyses& analyses, const Heat& heat)
+{
+    return FramePlanner(analyses, heat).run();
+}
+
 FramePlanner::FramePlanner(FunctionAnalyses& analyses, const Heat& heat)
     : m_analyses(analyses)
     , m_heat(heat)
+    , m_build(analyses.context().build)
     , m_program(analyses.program())
     , m_function(analyses.function())
     , m_flow(analyses.context().flow)
@@ -276,31 +281,45 @@ FramePlanner::FramePlanner(FunctionAnalyses& analyses, const Heat& heat)
     , m_isCandidate(m_escape.numberOfObjects())
     , m_decisions(FillWith { }, m_escape.numberOfObjects(), FrameDecision { .cause = AllocationHeapCause::NotTracked })
 {
+    m_plan.function = analyses.context().id;
 }
 
 FramePlan FramePlanner::run()
 {
-    shareEmptyArgumentLists();
     collectCandidates();
-    if (m_isCandidate.isEmpty()) {
-        finishPlan();
-        return WTF::move(m_plan);
+    if (!m_isCandidate.isEmpty()) {
+        for (ObjectID object : candidates())
+            decideByEscapeState(object);
+        checkCellForms();
+        checkUses();
+        checkUsesOfArrays();
+        checkSuspensions();
+        checkReturnCalls();
+        checkHolders();
+        checkMaterialization();
+        for (ObjectID object : candidates()) {
+            if (!mayBeInFrame(object) && (isOnlyCalled(object) || isLikeEveryClosureOfItsFunction(m_program, m_flow, m_function, definitionOf(object))))
+                m_decisions[object.index()].isHeldByClosureTable = true;
+        }
+        m_plan.demotedReturnCalls.removeAllMatching([&](BlockID block) {
+            bool passesCellOfFrame = false;
+            m_function.at(m_function.at(block).terminator.callOperand()).forEachOperand([&](ValueID operand, uint32_t) {
+                passesCellOfFrame |= mayGiveFrameCell(operand);
+            });
+            return !passesCellOfFrame;
+        });
     }
-
-    applyEscapeAnalysis();
-    checkCellForms();
-    checkUses();
-    checkUsesOfArrays();
-    checkSuspensions();
-    checkReturnCalls();
-    checkHolders();
-    checkMaterialization();
-    takeClosuresOfTable();
-    m_plan.demotedReturnCalls.removeAllMatching([&](BlockID block) {
-        return !passesCellOfFrame(m_function.at(m_function.at(block).terminator.callOperand()));
-    });
     finishPlan();
     return WTF::move(m_plan);
+}
+
+bool FramePlanner::mayGiveFrameCell(ValueID value) const
+{
+    for (ObjectID object : m_escape.pointsTo(value).objects) {
+        if (isCandidate(object) && mayBeInFrame(object))
+            return true;
+    }
+    return false;
 }
 
 void FramePlanner::moveToHeap(ObjectID object, AllocationHeapCause cause, std::optional<Use> use, LimitID limit)
@@ -315,29 +334,6 @@ void FramePlanner::moveToHeap(ObjectID object, AllocationHeapCause cause, std::o
     decision.forcedBy = use;
     decision.reasons = m_escape.at(object).reasons;
     decision.limit = limit;
-}
-
-void FramePlanner::shareEmptyArgumentLists()
-{
-    for (BlockID block : m_analyses.cfg().reversePostOrder()) {
-        for (ValueID id : m_function.at(block).values) {
-            if (!isEmptyArrayLiteral(m_function.at(id)))
-                continue;
-            std::optional<ObjectID> list = m_escape.objectDefinedBy(id);
-            if (list && isOnlyReadAsHiddenRest(*list))
-                m_plan.emptyArgumentLists.append(id);
-        }
-    }
-}
-
-// The language has no name for the list of surplus arguments, so nothing tells one empty list from another.
-bool FramePlanner::isOnlyReadAsHiddenRest(ObjectID list) const
-{
-    if (!m_escape.at(list).uses.containsOnly(usesOfSharedLists))
-        return false;
-    return std::ranges::all_of(m_escape.usesOf(list), [&](const ObjectUse& entry) {
-        return isHiddenRestOfEveryCallee(entry.use);
-    });
 }
 
 bool FramePlanner::isHiddenRestOfEveryCallee(const Use& use) const
@@ -362,14 +358,21 @@ void FramePlanner::collectCandidates()
     for (BlockID block : m_analyses.cfg().reversePostOrder()) {
         for (ValueID id : m_function.at(block).values) {
             const Value& value = m_function.at(id);
-            if (!hasStorageChoice(value) || value.storage() != AllocationStorage::Heap)
-                continue;
-            if (staysOnHeapForValidation(m_program, m_analyses.context().build, value))
-                continue;
-            if (arrayAllocationsWithStorage.contains(value.opcode) && (!canLieInFrame(m_program, m_analyses.context().build, value) || m_plan.emptyArgumentLists.contains(id)))
-                continue;
-            std::optional<ObjectID> object = m_escape.objectDefinedBy(id);
+            std::optional<ObjectID> object = hasStorageChoice(value) ? m_escape.objectDefinedBy(id) : std::nullopt;
             if (!object)
+                continue;
+            // The language has no name for the list of surplus arguments, so nothing tells one empty list from another.
+            bool isOnlyReadAsHiddenRest = isEmptyArrayLiteral(value) && m_escape.at(*object).uses.containsOnly(usesOfSharedLists) && std::ranges::all_of(m_escape.usesOf(*object), [&](const ObjectUse& entry) {
+                return isHiddenRestOfEveryCallee(entry.use);
+            });
+            if (isOnlyReadAsHiddenRest) {
+                m_plan.emptyArgumentLists.append(id);
+                m_plan.count(StatisticID::EmptyArgumentListsShared);
+                continue;
+            }
+            if (value.storage() != AllocationStorage::Heap || staysOnHeapForValidation(m_program, m_build, value))
+                continue;
+            if (arrayAllocationsWithStorage.contains(value.opcode) && !canLieInFrame(m_program, m_build, value))
                 continue;
             m_isCandidate.quickSet(object->index());
             m_decisions[object->index()] = FrameDecision { .allocation = id, .storage = AllocationStorage::Frame };
@@ -377,93 +380,55 @@ void FramePlanner::collectCandidates()
     }
 }
 
-void FramePlanner::applyEscapeAnalysis()
-{
-    for (size_t index : m_isCandidate)
-        decideByEscapeState(ObjectID(index));
-}
-
 // Whether an array escapes is decided use by use: the summaries of the callees know no path that an array in a frame never takes.
-void FramePlanner::decideArrayByLiveInstances(ObjectID array)
-{
-    const TrackedObject& tracked = m_escape.at(array);
-    if (tracked.state == EscapeState::Unknown)
-        moveToHeap(array, AllocationHeapCause::NotTracked, std::nullopt, reachedLimitOf(m_escape));
-    else if (m_escape.liveInstancesOf(array) != LiveInstances::AtMostOne)
-        moveToHeap(array, AllocationHeapCause::SeveralLiveInstances);
-}
-
 void FramePlanner::decideByEscapeState(ObjectID object)
 {
-    if (isArray(object)) {
-        decideArrayByLiveInstances(object);
-        return;
-    }
-
     const TrackedObject& tracked = m_escape.at(object);
-    bool hasOneLiveInstance = m_escape.liveInstancesOf(object) == LiveInstances::AtMostOne;
     switch (tracked.state) {
     case EscapeState::Unknown:
         moveToHeap(object, AllocationHeapCause::NotTracked, std::nullopt, reachedLimitOf(m_escape));
         return;
     case EscapeState::Escapes:
-        if (hasOneLiveInstance && escapesOnlyIntoClosures(object))
+        if (isArray(object))
+            break;
+        if (hasOneLiveInstance(object) && escapesOnlyIntoClosures(object))
             m_decisions[object.index()].storage = AllocationStorage::FrameUntilMaterialized;
         else if (!keepClosureUntilItLeaves(object))
             moveToHeap(object, AllocationHeapCause::Escapes, tracked.firstEscape);
         return;
     case EscapeState::DoesNotEscape:
-        if (!hasOneLiveInstance)
-            moveToHeap(object, AllocationHeapCause::SeveralLiveInstances);
-        else if (hasUntrackedAlias(object))
-            moveToHeap(object, AllocationHeapCause::HasUntrackedAlias);
-        return;
+        break;
     }
-    RELEASE_ASSERT_NOT_REACHED();
+    RELEASE_ASSERT(tracked.state == EscapeState::DoesNotEscape || isArray(object));
+    if (!hasOneLiveInstance(object))
+        moveToHeap(object, AllocationHeapCause::SeveralLiveInstances);
+    else if (!isArray(object) && hasUntrackedAlias(object))
+        moveToHeap(object, AllocationHeapCause::HasUntrackedAlias);
 }
 
 bool FramePlanner::hasUntrackedAlias(ObjectID object) const
 {
     return std::ranges::any_of(m_escape.aliasesOf(object), [&](ValueID alias) {
-        if (m_program.typeOf(m_function, alias).isOpaque(OpaqueKind::Guard))
-            return false;
-        return !propagatesFramePointers(m_function.at(alias).opcode);
+        return !m_program.typeOf(m_function, alias).isOpaque(OpaqueKind::Guard) && !propagatesFramePointers(m_function.at(alias).opcode);
     });
 }
 
 bool FramePlanner::escapesOnlyIntoClosures(ObjectID object) const
 {
-    const TrackedObject& tracked = m_escape.at(object);
     const Value& definition = definitionOf(object);
     if (definition.opcode != Opcode::NewObject || m_program.at(definition.layout()).kind != LayoutKind::Environment)
         return false;
-    bool escapesOnlyAsCapture = std::ranges::all_of(m_escape.usesOf(object), [&](const ObjectUse& entry) {
+    return std::ranges::all_of(m_escape.usesOf(object), [&](const ObjectUse& entry) {
         return !entry.isEscape || (entry.use.kind == Use::Kind::Operand && m_function.at(entry.use.user).opcode == Opcode::NewClosure);
+    }) && std::ranges::all_of(m_escape.containersOf(object), [&](ObjectID container) {
+        return isClosure(container);
+    }) && std::ranges::all_of(m_escape.aliasesOf(object), [&](ValueID alias) {
+        return m_analyses.sameObjectThroughCasts(alias) == allocationOf(object);
     });
-    if (!escapesOnlyAsCapture)
-        return false;
-    bool hasOnlyClosureContainers = std::ranges::all_of(m_escape.containersOf(object), [&](ObjectID container) {
-        return definitionOf(container).opcode == Opcode::NewClosure;
-    });
-    if (!hasOnlyClosureContainers)
-        return false;
-    return std::ranges::all_of(m_escape.aliasesOf(object), [&](ValueID alias) {
-        return m_analyses.sameObjectThroughCasts(alias) == tracked.definition;
-    });
-}
-
-// A read of a method that is called at once ends as a closure that goes through a join into a call by value.
-void FramePlanner::takeClosuresOfTable()
-{
-    for (size_t index : m_isCandidate) {
-        ObjectID object(index);
-        if (!mayBeInFrame(object) && (isOnlyCalled(object) || isLikeEveryClosureOfItsFunction(definitionOf(object))))
-            m_decisions[index].isHeldByClosureTable = true;
-    }
 }
 
 // Flow has followed the closures of the function to every place that they reach.
-bool FramePlanner::isLikeEveryClosureOfItsFunction(const Program& program, const FlowResults* flow, const Function& maker, const Value& closure)
+bool isLikeEveryClosureOfItsFunction(const Program& program, const FlowResults* flow, const Function& maker, const Value& closure)
 {
     if (!flow || closure.opcode != Opcode::NewClosure || !closure.capturesOperands().empty() || closure.isMadeOnDemand())
         return false;
@@ -475,6 +440,16 @@ bool FramePlanner::isLikeEveryClosureOfItsFunction(const Program& program, const
     if (program.at(function).has(FunctionFlags::TakesCallee) || program.at(function).constructorForm() != ConstructorForm::NotConstructor)
         return false;
     return flow->function(function).closureUse == ClosureUse::CalledOnly && flow->closuresAreNeverCompared(function);
+}
+
+static AllocationHeapCause checkClosureForm(const Program& program, const Value& closure)
+{
+    const Function& callee = program.at(closure.function());
+    if (closure.isMadeOnDemand())
+        return AllocationHeapCause::LayoutDefersClosures;
+    if (callee.has(FunctionFlags::TakesCallee) || !callee.hasOrdinaryFrame())
+        return AllocationHeapCause::ClosureIsNotOnlyCalled;
+    return AllocationHeapCause::None;
 }
 
 // Without captures one closure of a function does what any other does, and the function does not get hold of the closure it is entered through.
@@ -499,33 +474,26 @@ bool FramePlanner::isOnlyCalled(ObjectID closure) const
 
 AOT_THRESHOLD(unsigned, maxUsesOfClosureKeptUntilItLeaves, 8);
 
-// Where a closure of the heap is one call of a stub, a closure of the frame is more code than it, and so is every closure that is made again.
 bool FramePlanner::willHaveLongFormsInLine(BlockID block)
 {
     BlockFrequency frequency = m_function.at(block).frequency;
     if (frequency != BlockFrequency::Normal)
         return false;
-    double activations = m_heat.activationsOf(m_program, m_analyses.context().id);
+    double activations = m_heat.activationsOf(m_program, m_plan.function);
     if (codeShapeFor(activations * roundingOfFrequencySums, false, frequency) != CodeShape::Fast && runsNoBlockMoreOftenThanEntry(m_analyses.cfg()))
         return false;
     if (m_analyses.executionCountOf(block) == ExecutionCount::AtMostOnce)
         return false;
     double frequencyInFunction = m_analyses.blockFrequencies().frequencyOf(block);
     double heat = activations * frequencyInFunction;
-    return codeShapeFor(heat, false, frequency, m_heat.leastHeatOfFastCode(m_program, m_analyses.context().id, frequencyInFunction)) == CodeShape::Fast && m_heat.isAmongHottestCode(heat);
-}
-
-// A use on the way that every run takes from where the closure is made would only add the closure of the frame to the one of the heap.
-static bool liesOffTheWay(const Function& function, BlockID blockOfDefinition, const Use& use)
-{
-    return use.block != blockOfDefinition || (use.kind == Use::Kind::EdgeArgument && function.at(use.block).terminator.targets.size() > 1);
+    return codeShapeFor(heat, false, frequency, m_heat.leastHeatOfFastCode(m_program, m_plan.function, frequencyInFunction)) == CodeShape::Fast && m_heat.isAmongHottestCode(heat);
 }
 
 // Whoever borrows the closure cannot tell it from another one afterwards.
 bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
 {
-    ValueID definition = m_escape.at(closure).definition;
-    if (!m_flow || m_function.at(definition).opcode != Opcode::NewClosure)
+    ValueID definition = allocationOf(closure);
+    if (!m_flow || !isClosure(closure))
         return false;
     const UseLists& useLists = m_analyses.useLists();
     std::span<const Use> uses = useLists.usesOf(definition);
@@ -551,13 +519,14 @@ bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
             continue;
         }
         lastUses.append(use);
-        // Code that seldom runs is small with a closure of the heap.
         bool runsOften = m_function.at(use.block).frequency == BlockFrequency::Normal;
         if (runsOften && use.kind == Use::Kind::Operand && mayLendArgument(m_function.at(use.user), use.operandIndex) && mayFindBorrowingCallee(m_function.at(use.user), use.operandIndex)) {
             isLent = true;
             continue;
         }
-        if (!liesOffTheWay(m_function, blockOfDefinition, use))
+        // A use on the way that every run takes from where the closure is made would only add the closure of the frame to the one of the heap.
+        bool liesOffTheWay = use.block != blockOfDefinition || (use.kind == Use::Kind::EdgeArgument && m_function.at(use.block).terminator.targets.size() > 1);
+        if (!liesOffTheWay)
             return false;
         madeAgainAt.append(use);
     }
@@ -576,7 +545,6 @@ bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
     return true;
 }
 
-// A copy costs more than a closure that is made on the heap at once.
 bool FramePlanner::mayFindBorrowingCallee(const Value& call, uint32_t operandIndex) const
 {
     auto borrows = [&](FunctionID id) {
@@ -598,40 +566,7 @@ bool FramePlanner::mayFindBorrowingCallee(const Value& call, uint32_t operandInd
     });
 }
 
-void FramePlanner::checkCellForms()
-{
-    for (size_t index : m_isCandidate) {
-        ObjectID object(index);
-        if (!mayBeInFrame(object))
-            continue;
-
-        if (isArray(object))
-            continue;
-
-        const Value& allocation = definitionOf(object);
-        AllocationHeapCause cause = allocation.opcode == Opcode::NewClosure ? checkClosureForm(m_program, allocation) : checkObjectForm(m_program, allocation);
-        if (cause != AllocationHeapCause::None) {
-            moveToHeap(object, cause);
-            continue;
-        }
-        if (fitsInFrame(m_program, m_analyses.context().build, allocation))
-            continue;
-        GaveUp gaveUp = m_analyses.context().build.gaveUp(LimitID::MaxFrameEnvironmentFields, m_analyses.subject(m_escape.at(object).definition));
-        moveToHeap(object, AllocationHeapCause::ExceedsLimit, std::nullopt, gaveUp.limit);
-    }
-}
-
-AllocationHeapCause FramePlanner::checkClosureForm(const Program& program, const Value& closure)
-{
-    const Function& callee = program.at(closure.function());
-    if (closure.isMadeOnDemand())
-        return AllocationHeapCause::LayoutDefersClosures;
-    if (callee.has(FunctionFlags::TakesCallee) || !callee.hasOrdinaryFrame())
-        return AllocationHeapCause::ClosureIsNotOnlyCalled;
-    return AllocationHeapCause::None;
-}
-
-AllocationHeapCause FramePlanner::checkObjectForm(const Program& program, const Value& object)
+static AllocationHeapCause checkObjectForm(const Program& program, const Value& object)
 {
     LayoutID id = object.layout();
     const Layout& layout = program.at(id);
@@ -660,28 +595,39 @@ AllocationHeapCause FramePlanner::checkObjectForm(const Program& program, const 
     return AllocationHeapCause::None;
 }
 
-bool FramePlanner::fitsInFrame(const Program& program, const BuildContext& build, const Value& allocation)
+static AllocationHeapCause checkCellForm(const Program& program, const Value& allocation)
 {
-    if (allocation.opcode != Opcode::NewObject)
-        return true;
-    return program.at(allocation.layout()).fields.size() <= build.limit(LimitID::MaxFrameEnvironmentFields);
+    return allocation.opcode == Opcode::NewClosure ? checkClosureForm(program, allocation) : checkObjectForm(program, allocation);
 }
 
-// checkCellForms() moves the first two kinds to the heap. It gives up on an object that does not fit, which is recorded, and checkUses() moves every other object that may change its form.
-bool FramePlanner::staysOnHeapByForm(const Program& program, const FlowResults& flow, const BuildContext& build, const Value& allocation)
+static bool fitsInFrame(const Program& program, const BuildContext& build, const Value& allocation)
 {
-    if (allocation.opcode == Opcode::NewClosure)
-        return checkClosureForm(program, allocation) != AllocationHeapCause::None;
-    RELEASE_ASSERT(allocation.opcode == Opcode::NewObject);
-    if (checkObjectForm(program, allocation) != AllocationHeapCause::None)
-        return true;
-    return fitsInFrame(program, build, allocation) && mayChangeForm(program, &flow, allocation);
+    return allocation.opcode != Opcode::NewObject || program.at(allocation.layout()).fields.size() <= build.limit(LimitID::MaxFrameEnvironmentFields);
+}
+
+void FramePlanner::checkCellForms()
+{
+    for (ObjectID object : candidates()) {
+        if (!mayBeInFrame(object) || isArray(object))
+            continue;
+        const Value& allocation = definitionOf(object);
+        if (AllocationHeapCause cause = checkCellForm(m_program, allocation); cause != AllocationHeapCause::None)
+            moveToHeap(object, cause);
+        else if (!fitsInFrame(m_program, m_build, allocation))
+            moveToHeap(object, AllocationHeapCause::ExceedsLimit, std::nullopt, m_build.gaveUp(LimitID::MaxFrameEnvironmentFields, m_analyses.subject(allocationOf(object))).limit);
+    }
+}
+
+// checkCellForms() gives up on an object that does not fit, which is recorded, and checkUses() moves every other object that may change its form.
+bool staysOnHeapByForm(const Program& program, const FlowResults& flow, const BuildContext& build, const Value& allocation)
+{
+    RELEASE_ASSERT(allocation.opcode == Opcode::NewClosure || allocation.opcode == Opcode::NewObject);
+    return checkCellForm(program, allocation) != AllocationHeapCause::None || (fitsInFrame(program, build, allocation) && mayChangeForm(program, &flow, allocation));
 }
 
 void FramePlanner::checkUses()
 {
-    for (size_t index : m_isCandidate) {
-        ObjectID object(index);
+    for (ObjectID object : candidates()) {
         if (!mayBeInFrame(object) || isArray(object) || isKeptUntilItLeaves(object))
             continue;
         for (const ObjectUse& entry : m_escape.usesOf(object)) {
@@ -703,15 +649,15 @@ AllocationHeapCause FramePlanner::checkUse(ObjectID object, const ObjectUse& ent
 
     const Value& user = m_function.at(entry.use.user);
     uint32_t operandIndex = entry.use.operandIndex;
+    EffectRule rule = effectRuleOf(user.opcode);
     if (user.operandKind(operandIndex) == OperandKind::Guard)
         return AllocationHeapCause::None;
     if (isEnvironmentOfDeferredClosures(m_program, user, operandIndex) || isValueOfDeferringField(m_program, user, operandIndex))
         return AllocationHeapCause::HeldByHeapCell;
-    if (effectRuleOf(user.opcode) == EffectRule::Access && provenAccessOf(m_program, m_function, user).isLookupByKey)
+    if (rule == EffectRule::Access && provenAccessOf(m_program, m_function, user).isLookupByKey)
         return AllocationHeapCause::SeenByNativeCode;
 
-    // The pointer goes nowhere. What is wrong is where the cell lies.
-    if (!mayLookAtFrameCells(effectRuleOf(user.opcode)) && effectRuleOf(user.opcode) == EffectRule::Builtin && entry.uses.containsOnly(inlineUsesOfFrameCells))
+    if (!mayLookAtFrameCells(rule) && rule == EffectRule::Builtin && entry.uses.containsOnly(inlineUsesOfFrameCells))
         return AllocationHeapCause::SeenByNativeCode;
     if (mayLeakFramePointer(m_program, m_flow, m_function, user, operandIndex)) {
         bool isDecidedByHolder = isInFrame(object)
@@ -725,21 +671,20 @@ AllocationHeapCause FramePlanner::checkUse(ObjectID object, const ObjectUse& ent
 
     const Value& allocation = definitionOf(object);
     bool isClosure = allocation.opcode == Opcode::NewClosure;
+    bool isEnvironment = !isClosure && m_program.at(allocation.layout()).isEnvironment();
     // What is read out of an environment that never holds a pointer into a frame may go anywhere.
     if (mayLeakContentsThrough(entry) && !holdsOnlyHeapValues(m_program, m_flow, allocation.type)) {
         // What the cell holds goes to the heap in checkHolders(). The verifier knows what an operand holds only where it sees the allocation, and of an environment by its layout alone.
-        bool isSeenAsAllocation = m_analyses.sameObjectThroughCasts(user.operand(operandIndex)) == m_escape.at(object).definition;
-        if (!isSeenAsAllocation || (!isClosure && m_program.at(allocation.layout()).isEnvironment()))
+        if (isEnvironment || m_analyses.sameObjectThroughCasts(user.operand(operandIndex)) != allocationOf(object))
             return AllocationHeapCause::Escapes;
     }
-    switch (effectRuleOf(user.opcode)) {
+    switch (rule) {
     case EffectRule::Builtin:
     case EffectRule::Inline:
-        if (!isClosure || !mayLookAtFrameCells(effectRuleOf(user.opcode)) || !entry.uses.containsOnly(inlineUsesOfFrameCells))
+        if (!isClosure || !mayLookAtFrameCells(rule) || !entry.uses.containsOnly(inlineUsesOfFrameCells))
             return AllocationHeapCause::SeenByNativeCode;
         break;
     case EffectRule::Access:
-        // A read of a property of a function makes the function an object with properties.
         if (isClosure && receiverOf(user.opcode) == operandIndex)
             return AllocationHeapCause::SeenByNativeCode;
         break;
@@ -751,13 +696,11 @@ AllocationHeapCause FramePlanner::checkUse(ObjectID object, const ObjectUse& ent
     case EffectRule::Call:
         break;
     }
-    if (isClosure || m_program.at(allocation.layout()).isEnvironment())
+    if (isClosure || isEnvironment)
         return AllocationHeapCause::None;
 
     OperandMemory memory = memoryAccessedThrough(m_analyses.effectContext(), m_function, user, operandIndex, m_analyses.effectsOf(entry.use.user));
-    if (!memory.writes.containsOnly(heapsInsideFrameCells))
-        return AllocationHeapCause::ChangedByUse;
-    return AllocationHeapCause::None;
+    return memory.writes.containsOnly(heapsInsideFrameCells) ? AllocationHeapCause::None : AllocationHeapCause::ChangedByUse;
 }
 
 bool FramePlanner::mayLeakContentsThrough(const ObjectUse& entry) const
@@ -765,9 +708,7 @@ bool FramePlanner::mayLeakContentsThrough(const ObjectUse& entry) const
     if (entry.use.kind != Use::Kind::Operand)
         return false;
     const Value& user = m_function.at(entry.use.user);
-    if (user.operandKind(entry.use.operandIndex) == OperandKind::Guard)
-        return false;
-    return mayLeakContents(m_program, m_flow, m_function, user, entry.use.operandIndex);
+    return user.operandKind(entry.use.operandIndex) != OperandKind::Guard && mayLeakContents(m_program, m_flow, m_function, user, entry.use.operandIndex);
 }
 
 bool FramePlanner::leaksContents(ObjectID cell) const
@@ -781,7 +722,6 @@ static AllocationHeapCause checkUseOfArray(const Program& program, const FlowRes
 {
     if (mayBeGivenFrameArray(program, flow, function, user, operandIndex))
         return AllocationHeapCause::None;
-
     if (user.operandUses(operandIndex).containsAny(operandWritingUses))
         return AllocationHeapCause::ChangedByUse;
     switch (effectRuleOf(user.opcode)) {
@@ -805,30 +745,20 @@ static void forEachUseThatKeepsArraysOnHeap(const Program& program, const FlowRe
     for (unsigned index = 0; index < arrays.size(); ++index)
         mayBe[arrays[index].index()] = 1u << index;
 
-    auto add = [&](ValueID id, uint32_t given) {
-        if (!(given & ~mayBe[id.index()]))
-            return false;
-        mayBe[id.index()] |= given;
-        return true;
+    auto add = [&](ValueID id, ValueID given) {
+        uint32_t before = mayBe[id.index()];
+        mayBe[id.index()] |= mayBe[given.index()];
+        return mayBe[id.index()] != before;
     };
-    for (bool changed = true; changed;) {
-        changed = false;
-        for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
-            BlockID block(blockIndex);
-            for (ValueID id : function.at(block).values) {
-                forEachReturnedOperand(function, function.at(id), [&](ValueID operand) {
-                    changed |= add(id, mayBe[operand.index()]);
-                });
-            }
-            forEachOutgoingEdge(function, block, [&](Edge edge, const Target& target) {
-                const CompactList<ValueID>& parameters = function.at(target.block).parameters;
-                for (uint32_t index = 0; index < parameters.size(); ++index) {
-                    if (ValueID passed = valuePassedOn(function, edge, index))
-                        changed |= add(parameters[index], mayBe[passed.index()]);
-                }
-            });
-        }
-    }
+    propagateUntilNothingChanges(function, std::views::iota(0u, function.blocks.size()), [&](BlockID, ValueID id) {
+        bool changed = false;
+        forEachReturnedOperand(function, function.at(id), [&](ValueID operand) {
+            changed |= add(id, operand);
+        });
+        return changed;
+    }, [&](Edge, ValueID passed, ValueID parameter) {
+        return add(parameter, passed);
+    });
 
     for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
         BlockID block(blockIndex);
@@ -869,8 +799,7 @@ void FramePlanner::checkUsesOfArrays()
 {
     Vector<ObjectID, 8> arrays;
     Vector<ValueID, 8> definitions;
-    for (size_t index : m_isCandidate) {
-        ObjectID array(index);
+    for (ObjectID array : candidates()) {
         if (!isArray(array) || !mayBeInFrame(array))
             continue;
         if (arrays.size() == maxFollowedArrays) {
@@ -878,7 +807,7 @@ void FramePlanner::checkUsesOfArrays()
             continue;
         }
         arrays.append(array);
-        definitions.append(m_escape.at(array).definition);
+        definitions.append(allocationOf(array));
     }
     if (arrays.isEmpty())
         return;
@@ -907,8 +836,7 @@ void FramePlanner::checkSuspensions()
         return;
 
     BitVector aliases(m_function.values.size());
-    for (size_t index : m_isCandidate) {
-        ObjectID object(index);
+    for (ObjectID object : candidates()) {
         if (!mayBeInFrame(object))
             continue;
         for (ValueID alias : m_escape.aliasesOf(object))
@@ -932,26 +860,6 @@ void FramePlanner::checkSuspensions()
     }
 }
 
-bool FramePlanner::calleesEndTheirTailCalls(const Value& call) const
-{
-    if (!m_flow)
-        return false;
-    CalleeList callees = calleesOfCall(m_program, call);
-    return callees.isComplete && callees.builtins.isEmpty() && std::ranges::all_of(callees.functions, [&](FunctionID callee) {
-        return m_flow->frameArrayParameters().endsItsTailCalls(callee);
-    });
-}
-
-bool FramePlanner::passesCellOfFrame(const Value& call) const
-{
-    bool passesCell = false;
-    call.forEachOperand([&](ValueID operand, uint32_t) {
-        for (ObjectID object : m_escape.pointsTo(operand).objects)
-            passesCell |= isCandidate(object) && mayBeInFrame(object);
-    });
-    return passesCell;
-}
-
 void FramePlanner::checkReturnCalls()
 {
     for (BlockID block : m_analyses.cfg().reversePostOrder()) {
@@ -959,24 +867,29 @@ void FramePlanner::checkReturnCalls()
         if (terminator.kind != TerminatorKind::ReturnCall)
             continue;
 
-        ValueID call = terminator.callOperand();
-        BlockID callBlock = m_analyses.useLists().blockOf(call);
+        ValueID callID = terminator.callOperand();
+        const Value& call = m_function.at(callID);
+        BlockID callBlock = m_analyses.useLists().blockOf(callID);
         std::optional<bool> answer;
-        auto mayKeepFrame = [&] {
-            if (!answer)
-                answer = calleesEndTheirTailCalls(m_function.at(call));
+        auto calleesEndTheirTailCalls = [&] {
+            if (!answer) {
+                CalleeList callees = calleesOfCall(m_program, call);
+                answer = m_flow && callees.isComplete && callees.builtins.isEmpty() && std::ranges::all_of(callees.functions, [&](FunctionID callee) {
+                    return m_flow->frameArrayParameters().endsItsTailCalls(callee);
+                });
+            }
             return *answer;
         };
         bool keepsFrame = false;
-        m_function.at(call).forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-            Use use { .kind = Use::Kind::Operand, .block = callBlock, .user = call, .operandIndex = operandIndex };
+        call.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+            Use use { .kind = Use::Kind::Operand, .block = callBlock, .user = callID, .operandIndex = operandIndex };
             for (ObjectID object : m_escape.pointsTo(operand).objects) {
                 // The code of such a tail call keeps the frame only for a callee that ends its tail calls, and moves the closure to the heap for every other.
-                if (isCandidate(object) && isLent(object) && m_escape.at(object).definition == operand && mayLendArgument(m_function.at(call), operandIndex))
+                if (isCandidate(object) && isLent(object) && allocationOf(object) == operand && mayLendArgument(call, operandIndex))
                     continue;
                 if (isCandidate(object) && m_decisions[object.index()].madeAgainAt.contains(use))
                     continue;
-                if (isCandidate(object) && mayKeepFrame())
+                if (isCandidate(object) && calleesEndTheirTailCalls())
                     keepsFrame |= mayBeInFrame(object);
                 else
                     moveToHeap(object, AllocationHeapCause::LiveAtReturnCall, use);
@@ -991,24 +904,19 @@ void FramePlanner::checkHolders()
 {
     Vector<Vector<RetainedObject, 1>> retainedObjects(m_decisions.size());
     Vector<PendingMove, 8> worklist;
-    for (size_t index : m_isCandidate) {
-        ObjectID object(index);
+    for (ObjectID object : candidates()) {
         if (!isInFrame(object) || isArray(object) || isKeptUntilItLeaves(object))
             continue;
         for (const ObjectUse& entry : m_escape.usesOf(object)) {
             if (!entry.uses.contains(OperandUse::Retains))
                 continue;
             std::optional<ObjectID> holder = findHolder(entry.use);
-            if (!holder || !isInFrame(*holder)) {
+            if (!holder || !isInFrame(*holder))
                 worklist.append(PendingMove { object, AllocationHeapCause::HeldByHeapCell, entry.use });
-                continue;
-            }
-            bool isInitialValue = m_escape.at(*holder).definition == entry.use.user;
-            if (!isInitialValue && !dieTogether(*holder, object)) {
+            else if (allocationOf(*holder) != entry.use.user && !dieTogether(*holder, object))
                 worklist.append(PendingMove { object, AllocationHeapCause::HeldAcrossIterations, entry.use });
-                continue;
-            }
-            retainedObjects[holder->index()].append(RetainedObject { object, entry.use });
+            else
+                retainedObjects[holder->index()].append(RetainedObject { object, entry.use });
         }
     }
 
@@ -1024,29 +932,21 @@ void FramePlanner::checkHolders()
     };
     moveToHeapWithRetainedObjects();
 
-    // What a cell holds leaves the frame through such a use. FramePointers knows what a cell holds by the reference of the store alone.
-    for (size_t index : m_isCandidate) {
-        ObjectID cell(index);
+    // What a cell holds leaves the frame through a use that lets its contents out. FramePointers knows what a cell holds by the place of the store alone.
+    for (ObjectID cell : candidates()) {
         bool mayHoldFrameCells = isInFrame(cell) && !isArray(cell) && !holdsOnlyHeapValues(m_program, m_flow, definitionOf(cell).type);
         if (!mayHoldFrameCells || !leaksContents(cell))
             continue;
         for (const Vector<RetainedObject, 1>& retainedInHolder : retainedObjects) {
             for (const RetainedObject& retained : retainedInHolder) {
-                if (mayBeHeldIn(m_program, definitionOf(cell), referenceStoredBy(m_function.at(retained.use.user), retained.use.operandIndex)))
+                if (cellHasPlace(m_program, definitionOf(cell), placeStoredBy(retained.use)))
                     worklist.append(PendingMove { retained.object, AllocationHeapCause::Escapes, retained.use });
             }
         }
     }
     moveToHeapWithRetainedObjects();
 
-    // FramePointers follows a read of a frame cell by its reference alone, whichever cell the pointer was stored in.
-    auto mayGiveFrameCell = [&](ValueID value) {
-        for (ObjectID object : m_escape.pointsTo(value).objects) {
-            if (isCandidate(object) && mayBeInFrame(object))
-                return true;
-        }
-        return false;
-    };
+    // FramePointers follows a read of a frame cell by its place alone, whichever cell the pointer was stored in.
     Vector<ValueID, 8> readsOfFrameCells;
     for (BlockID block : m_analyses.cfg().reversePostOrder()) {
         for (ValueID id : m_function.at(block).values) {
@@ -1059,12 +959,12 @@ void FramePlanner::checkHolders()
         for (ValueID read : readsOfFrameCells) {
             if (mayGiveFrameCell(read))
                 continue;
-            HolderReference reference = referenceReadBy(m_function.at(read));
-            for (size_t index : m_isCandidate) {
-                if (!isInFrame(ObjectID(index)))
+            CellPlace place = placeReadBy(m_function.at(read));
+            for (ObjectID holder : candidates()) {
+                if (!isInFrame(holder))
                     continue;
-                for (const RetainedObject& retained : retainedObjects[index]) {
-                    if (isInFrame(retained.object) && referenceStoredBy(m_function.at(retained.use.user), retained.use.operandIndex) == reference)
+                for (const RetainedObject& retained : retainedObjects[holder.index()]) {
+                    if (isInFrame(retained.object) && placeStoredBy(retained.use) == place)
                         worklist.append(PendingMove { retained.object, AllocationHeapCause::HasUntrackedAlias, retained.use });
                 }
             }
@@ -1073,11 +973,10 @@ void FramePlanner::checkHolders()
         moveToHeapWithRetainedObjects();
     }
 
-    for (size_t index : m_isCandidate) {
-        ObjectID holder(index);
+    for (ObjectID holder : candidates()) {
         if (!isInFrame(holder))
             continue;
-        for (const RetainedObject& retained : retainedObjects[index]) {
+        for (const RetainedObject& retained : retainedObjects[holder.index()]) {
             if (isInFrame(retained.object))
                 addHolder(holder, retained.use);
         }
@@ -1104,7 +1003,8 @@ std::optional<ObjectID> FramePlanner::findHolder(const Use& use) const
         if (user.opcode == Opcode::PutEnvironmentField && mayLeakStoredValue(m_flow, FieldReference { user.layout(), user.field() }))
             return std::nullopt;
         std::optional<ObjectID> holder = m_escape.objectDefinedBy(m_analyses.sameObjectThroughCasts(user.operand(summary.retainingOperand)));
-        if (!holder || !hasFieldStoredBy(m_program, definitionOf(*holder), user))
+        std::optional<CellPlace> place = placeStoredTo(user, use.operandIndex);
+        if (!holder || !place || !cellHasPlace(m_program, definitionOf(*holder), *place))
             return std::nullopt;
         return holder;
     }
@@ -1115,38 +1015,38 @@ std::optional<ObjectID> FramePlanner::findHolder(const Use& use) const
 bool FramePlanner::dieTogether(ObjectID holder, ObjectID retained) const
 {
     const BlockCycles& cycles = m_analyses.blockCycles();
-    const UseLists& useLists = m_analyses.useLists();
-    BlockID holderBlock = useLists.blockOf(m_escape.at(holder).definition);
-    BlockID retainedBlock = useLists.blockOf(m_escape.at(retained).definition);
+    BlockID holderBlock = m_analyses.useLists().blockOf(allocationOf(holder));
+    BlockID retainedBlock = m_analyses.useLists().blockOf(allocationOf(retained));
     if (!cycles.isInCycle(holderBlock) && !cycles.isInCycle(retainedBlock))
         return true;
-    return cycles.innermostCycleOf(holderBlock) == cycles.innermostCycleOf(retainedBlock)
-        && m_escape.liveInstancesOf(holder) == LiveInstances::AtMostOne
-        && m_escape.liveInstancesOf(retained) == LiveInstances::AtMostOne;
+    return cycles.innermostCycleOf(holderBlock) == cycles.innermostCycleOf(retainedBlock) && hasOneLiveInstance(holder) && hasOneLiveInstance(retained);
+}
+
+CellPlace FramePlanner::placeStoredBy(const Use& use) const
+{
+    const Value& user = m_function.at(use.user);
+    std::optional<CellPlace> place = placeStoredTo(user, use.operandIndex);
+    RELEASE_ASSERT(place && user.opcode != Opcode::PutSlots);
+    return *place;
 }
 
 void FramePlanner::addHolder(ObjectID holder, const Use& use)
 {
-    const Value& user = m_function.at(use.user);
-    switch (user.opcode) {
-    case Opcode::NewClosure:
-        m_plan.allocation.addHolder(CaptureReference { user.function(), *user.variadicOperandIndex(use.operandIndex) });
+    CellPlace place = placeStoredBy(use);
+    switch (place.kind) {
+    case CellPlace::Kind::Capture:
+        m_plan.capturesHoldingFramePointers.append(CaptureReference { FunctionID(place.owner), place.index });
         return;
-    case Opcode::NewObject:
-        m_plan.allocation.addHolder(FieldReference { user.layout(), user.fields()[*user.variadicOperandIndex(use.operandIndex)] });
+    case CellPlace::Kind::Field:
+        m_plan.fieldsHoldingFramePointers.append(FieldReference { LayoutID(place.owner), place.index });
         return;
-    case Opcode::PutEnvironmentField:
-        m_plan.allocation.addHolder(FieldReference { user.layout(), user.field() });
-        return;
-    case Opcode::PutSlot:
-    case Opcode::PutSlotOrAdd: {
+    case CellPlace::Kind::Key: {
         LayoutID layout = definitionOf(holder).layout();
-        m_plan.allocation.addHolder(FieldReference { layout, *m_program.at(layout).findField(user.key()) });
+        m_plan.fieldsHoldingFramePointers.append(FieldReference { layout, *m_program.at(layout).findField(PropertyKeyID(place.owner)) });
         return;
     }
-    default:
-        RELEASE_ASSERT_NOT_REACHED();
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 void FramePlanner::checkMaterialization()
@@ -1157,75 +1057,57 @@ void FramePlanner::checkMaterialization()
     if (!hasLateMaterialization)
         return;
 
-    BitVector frameClosures = findFrameClosures();
-    for (size_t index : m_isCandidate) {
-        ObjectID closure(index);
-        if (isInFrame(closure) && definitionOf(closure).opcode == Opcode::NewClosure && !frameClosures.get(m_escape.at(closure).definition.index()))
-            m_plan.frameClosuresOverHeapCells.append(m_escape.at(closure).definition);
+    // A closure that lets out what it holds takes the environment of the heap, as a closure of the heap does. FramePointers knows what a closure holds by its function alone.
+    Vector<FunctionID, 4> functionsLettingCapturesOut;
+    for (ObjectID closure : candidates()) {
+        if (isInFrame(closure) && isClosure(closure) && leaksContents(closure))
+            functionsLettingCapturesOut.append(definitionOf(closure).function());
     }
-    for (size_t index : m_isCandidate) {
-        ObjectID environment(index);
-        if (m_decisions[index].storage != AllocationStorage::FrameUntilMaterialized)
+    BitVector frameClosures(m_function.values.size());
+    Vector<ClosureMadeAgain, 2> closuresMadeAgain;
+    for (ObjectID object : candidates()) {
+        if (!isInFrame(object))
             continue;
-        if (!canMaterializeLate(environment, frameClosures)) {
+        for (const Use& use : m_decisions[object.index()].madeAgainAt)
+            closuresMadeAgain.append({ allocationOf(object), use });
+        if (!isClosure(object))
+            continue;
+        if (functionsLettingCapturesOut.contains(definitionOf(object).function()))
+            m_plan.frameClosuresOverHeapCells.append(allocationOf(object));
+        else
+            frameClosures.quickSet(allocationOf(object).index());
+    }
+
+    for (ObjectID environment : candidates()) {
+        if (m_decisions[environment.index()].storage != AllocationStorage::FrameUntilMaterialized)
+            continue;
+        std::span<const ObjectUse> uses = m_escape.usesOf(environment);
+        auto isCaptureOfFrameClosure = [&](const ObjectUse& entry) {
+            return entry.use.kind == Use::Kind::Operand && frameClosures.get(entry.use.user.index());
+        };
+        bool isLeakedByFrameClosure = std::ranges::any_of(uses, [&](const ObjectUse& entry) {
+            return isCaptureOfFrameClosure(entry) && mayLeakCapture(m_program, m_flow, m_function.at(entry.use.user), *m_function.at(entry.use.user).variadicOperandIndex(entry.use.operandIndex));
+        });
+        if (isLeakedByFrameClosure || !canMaterializeEnvironmentLate(m_analyses, allocationOf(environment), frameClosures, closuresMadeAgain.span())) {
             moveToHeap(environment, AllocationHeapCause::MaterializationDoesNotPay);
             continue;
         }
-        for (const ObjectUse& entry : m_escape.usesOf(environment)) {
-            if (entry.use.kind == Use::Kind::Operand && frameClosures.get(entry.use.user.index()))
+        for (const ObjectUse& entry : uses) {
+            if (isCaptureOfFrameClosure(entry))
                 addHolder(*m_escape.objectDefinedBy(entry.use.user), entry.use);
         }
     }
 }
 
-// A closure that lets out what it holds takes the environment of the heap, as a closure of the heap does. FramePointers knows what a closure holds by its function alone.
-BitVector FramePlanner::findFrameClosures() const
-{
-    Vector<FunctionID, 4> functionsLettingCapturesOut;
-    for (size_t index : m_isCandidate) {
-        ObjectID object(index);
-        if (isInFrame(object) && definitionOf(object).opcode == Opcode::NewClosure && leaksContents(object))
-            functionsLettingCapturesOut.append(definitionOf(object).function());
-    }
-
-    BitVector frameClosures(m_function.values.size());
-    for (size_t index : m_isCandidate) {
-        ObjectID object(index);
-        if (isInFrame(object) && definitionOf(object).opcode == Opcode::NewClosure && !functionsLettingCapturesOut.contains(definitionOf(object).function()))
-            frameClosures.quickSet(m_escape.at(object).definition.index());
-    }
-    return frameClosures;
-}
-
-bool FramePlanner::canMaterializeLate(ObjectID environment, const BitVector& frameClosures)
-{
-    bool isLeakedByFrameClosure = std::ranges::any_of(m_escape.usesOf(environment), [&](const ObjectUse& entry) {
-        if (entry.use.kind != Use::Kind::Operand || !frameClosures.get(entry.use.user.index()))
-            return false;
-        const Value& closure = m_function.at(entry.use.user);
-        return mayLeakCapture(m_program, m_flow, closure, *closure.variadicOperandIndex(entry.use.operandIndex));
-    });
-    if (isLeakedByFrameClosure)
-        return false;
-    Vector<EnvironmentMaterialization::ClosureMadeAgain, 2> closuresMadeAgain;
-    for (size_t index : m_isCandidate) {
-        if (!isInFrame(ObjectID(index)))
-            continue;
-        for (const Use& use : m_decisions[index].madeAgainAt)
-            closuresMadeAgain.append({ m_escape.at(ObjectID(index)).definition, use });
-    }
-    return EnvironmentMaterialization(m_analyses, m_escape.at(environment).definition, frameClosures, closuresMadeAgain.span()).canRun();
-}
-
 void FramePlanner::finishPlan()
 {
-    bool collectsRemarks = m_analyses.context().build.options().collectsAllocationRemarks();
+    bool collectsRemarks = m_build.options().collectsAllocationRemarks();
     for (BlockID block : m_analyses.cfg().reversePostOrder()) {
         for (ValueID id : m_function.at(block).values) {
             const Value& value = m_function.at(id);
             if (m_plan.emptyArgumentLists.contains(id))
                 continue;
-            bool isArrayWithoutFrameForm = arrayAllocationsWithStorage.contains(value.opcode) && !canLieInFrame(m_program, m_analyses.context().build, value);
+            bool isArrayWithoutFrameForm = arrayAllocationsWithStorage.contains(value.opcode) && !canLieInFrame(m_program, m_build, value);
             if (!hasStorageChoice(value) || isArrayWithoutFrameForm) {
                 if (collectsRemarks && Value::opcodesWithAllocationSite.contains(value.opcode) && value.allocationSite())
                     m_plan.decisions.append(createHeapDecision(m_escape, id));
@@ -1236,12 +1118,12 @@ void FramePlanner::finishPlan()
             if (object && isCandidate(*object)) {
                 const FrameDecision& decision = m_decisions[object->index()];
                 m_plan.decisions.append(decision);
-                addAllocation(m_plan, m_program, value, decision.storage, decision.isLent, !decision.madeAgainAt.isEmpty());
+                m_plan.add(m_program, value, decision.storage, decision.isLent, !decision.madeAgainAt.isEmpty());
                 continue;
             }
             if (value.storage() == AllocationStorage::Heap)
-                m_plan.decisions.append(FrameDecision { .allocation = id, .cause = AllocationHeapCause::NotTracked, .isHeldByClosureTable = isLikeEveryClosureOfItsFunction(value), .limit = reachedLimitOf(m_escape) });
-            addAllocation(m_plan, m_program, value, value.storage(), value.opcode == Opcode::NewClosure && value.isLent());
+                m_plan.decisions.append(FrameDecision { .allocation = id, .cause = AllocationHeapCause::NotTracked, .isHeldByClosureTable = isLikeEveryClosureOfItsFunction(m_program, m_flow, m_function, value), .limit = reachedLimitOf(m_escape) });
+            m_plan.add(m_program, value, value.storage(), value.opcode == Opcode::NewClosure && value.isLent());
         }
     }
     AOT::sort(m_plan.decisions, { }, &FrameDecision::allocation);

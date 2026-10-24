@@ -16,7 +16,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
 # REPEAT: i = 0..64
     v%(i*2) = String string="many%(i)+"
     v%(i*2+1) = CallDirect v%(i*2) function=f1
@@ -29,14 +28,12 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="oneTextTooMany" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Builtin builtin=RegExp
     v2 = Construct v1, -, v0 @10
     Return v2
 }
 
 function f2 name="asManyAsAllowed" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Builtin builtin=RegExp
     v2 = Construct v1, -, v0 @20
     Return v2

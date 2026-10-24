@@ -26,17 +26,9 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-enum class ProgramInstances : uint8_t {
-    Unknown,
-    AtMostOne,
-};
+enum class ProgramInstances : uint8_t { Unknown, AtMostOne };
 
-enum class FlowIndirectCallKind : uint8_t {
-    Accessor,
-    BuiltinCallback,
-    Protocol,
-    Host,
-};
+enum class FlowIndirectCallKind : uint8_t { Accessor, BuiltinCallback, Protocol, Host };
 
 struct FlowIndirectCall {
     FunctionID caller;
@@ -49,7 +41,6 @@ struct FlowIndirectCall {
     friend bool operator==(const FlowIndirectCall&, const FlowIndirectCall&) = default;
 };
 
-// What becomes of the results of the calls of bind that bind this many arguments to a closure of the target.
 struct FlowBoundFunctionUse {
     FunctionID target;
     uint32_t numberOfBoundArguments { 0 };
@@ -62,9 +53,7 @@ struct FlowSiteLoss {
     UnprovenCause cause { UnprovenCause::Unknown };
     LimitID limit { LimitID::None };
     Witness witness { noWitness };
-    // Of an access: what a plain function without a layout constructs arrives as the receiver.
     bool seesConstructedObject { false };
-    // What the witness has made also comes from somewhere else.
     bool hasOtherRoots { false };
 
     friend bool operator==(const FlowSiteLoss&, const FlowSiteLoss&) = default;
@@ -97,7 +86,6 @@ struct FlowDataNodeStamp {
     AllocationClassID allocationClass;
     TypeID elements;
     ArrayStorage arrayStorage { ArrayStorage::Other };
-    // What is proven of the array that the node becomes. None for an object with a layout, whose allocation says all there is, and where nothing is proven.
     TypeID type;
 
     friend bool operator==(const FlowDataNodeStamp&, const FlowDataNodeStamp&) = default;
@@ -111,15 +99,8 @@ struct FlowDataNode {
     friend bool operator==(const FlowDataNode&, const FlowDataNode&) = default;
 };
 
-enum class LegacyRegExpStatics : uint8_t {
-    Unknown,
-    NeverRead,
-};
-
-enum class BuiltinHolderState : uint8_t {
-    Unknown,
-    Intact,
-};
+enum class LegacyRegExpStatics : uint8_t { Unknown, NeverRead };
+enum class BuiltinHolderState : uint8_t { Unknown, Intact };
 
 struct FlowLocaleUse {
     LocaleUseKind kind { LocaleUseKind::Unknown };
@@ -129,9 +110,6 @@ struct FlowLocaleUse {
 
     friend bool operator==(const FlowLocaleUse&, const FlowLocaleUse&) = default;
 };
-
-// Whether the closures keep the prototype they were created with and what they were created with under the keys.
-bool keepsCreatedMembers(const AllocationClass& closures, std::span<const PropertyKeyID> ownKeys);
 
 struct FlowApplication;
 
@@ -146,7 +124,6 @@ struct FlowFunctionTables {
     Vector<Vector<OperandUses>> storedValueUses;
     Vector<Vector<OperandUses>> storedFramePointerUses;
     Vector<FlowIndirectCall> indirectCalls;
-    // Ascending by target and number of bound arguments.
     Vector<FlowBoundFunctionUse> boundFunctionUses;
     BitVector functionsSeeingOnlyFinishedObjects;
     BitVector functionsWhoseClosuresAreNeverCompared;
@@ -159,7 +136,6 @@ struct FlowSiteTables {
     Vector<bool> callsOfBoundFunctions;
     Vector<AllocationSite> allocationSites;
     Vector<AllocationClass> allocationClasses;
-    // By allocation site of an instance of a built-in class: nothing is stored to, added to, taken from or redefined on an object of the site once it is made, its prototype stays, and no unknown code gets it.
     BitVector sitesOfObjectsThatNeverChange;
     Vector<FlowSinkOperand> sinkOperands;
     Vector<FlowTypedResultCall> typedResultCalls;
@@ -178,13 +154,11 @@ struct FlowBuiltinTables {
     bool areFilled { false };
 };
 
-// The holder is intact, nobody has it in hand whom the analysis does not follow, and no record says that the program puts something under the key.
 bool builtinHolderNeverGains(const FlowBuiltinTables&, BuiltinID holder, PropertyKeyID);
 
 struct FlowProgramTables {
     Vector<ModuleFlow> modules;
     Vector<UnseenCodeRecord> unseenCode;
-    // Machine code is no JavaScript that nobody has seen: no fact falls for it, and the run time admits no text for its sake, so it is none of the records above.
     Vector<UnseenCodeRecord> loadsOfMachineCode;
     ProgramInstances instances { ProgramInstances::Unknown };
     Vector<PropertyKeyID> keysStoredThroughUnknownReceivers;
@@ -201,7 +175,6 @@ struct FlowResultTables {
     std::unique_ptr<FlowApplication, FlowApplicationDeleter> application;
 };
 
-// Ascending by variable.
 struct ConstantLists {
     struct Entry {
         VariableID variable;
@@ -235,31 +208,23 @@ public:
     bool mayBeReached(FunctionID function) const { return this->function(function).reachability != FunctionReachability::Unreached; }
     bool runsAtMostOnce(FunctionID function) const { return this->function(function).executions == ExecutionCount::AtMostOnce; }
     bool runsAtMostOnce(const Program&, FunctionID) const;
-    // A bound function is derived from its target, so function() answers for closures of the target.
     ClosureUse closureUseOfBoundFunction(FunctionID target, uint32_t numberOfBoundArguments) const;
-    // No operation and no built-in that flow has followed can tell two closures of the function apart: none stands on both sides of `==` or `===`, none is looked at by a built-in, none is a key of a Map or a Set.
     bool closuresAreNeverCompared(FunctionID) const;
-    // The program makes a closure of the function at one place, which runs at most once: two values that are closures of it are one object.
-    bool hasOneClosure(FunctionID) const;
+    bool hasOneClosure(FunctionID id) const { return id.index() < m_tables.functions.functionCountAsRead && m_tables.functions.functionsWithOneClosure.get(id.index()); }
     OperandSummary parameterSummary(FunctionID, uint32_t entryParameter) const;
     void removeEntryParameters(FunctionID, const BitVector& removedEntryParameters);
-    // By function as read and entry parameter, and by layout and field.
     void setOperandSummaries(Vector<Vector<OperandSummary>>&& parameterSummaries, Vector<Vector<OperandUses>>&& storedValueUses);
     OperandUses storedValueUses(FieldReference) const;
-    // The same two answers for a value that may be in no cell of the heap: a store into any cell retains it, also a cell that dies with the activation.
-    OperandSummary framePointerSummary(FunctionID, uint32_t entryParameter) const;
+    OperandSummary framePointerSummary(FunctionID function, uint32_t entryParameter) const { return m_borrowedParameters.summaryOf(function, entryParameter); }
     OperandUses storedFramePointerUses(FieldReference) const;
     void setBorrowedParameters(BorrowedParameters&& table) { m_borrowedParameters = WTF::move(table); }
     const BorrowedParameters& borrowedParameters() const { return m_borrowedParameters; }
     void addBorrowedParameters(FunctionID function, uint64_t word) { m_borrowedParameters.add(function, word); }
-    // Whether an array that lies in a frame of a caller may be handed to the entry parameter. Says no before the table is set.
     bool mayTakeFrameArray(FunctionID function, uint32_t entryParameter) const { return m_frameArrayParameters.mayTake(function, entryParameter); }
     const FrameArrayParameters& frameArrayParameters() const LIFETIME_BOUND { return m_frameArrayParameters; }
     void setFrameArrayParameters(FrameArrayParameters&& table) { m_frameArrayParameters = WTF::move(table); }
-    // AOTWholeLiterals.h says what this is and who asks it. False before the table is set.
     bool isSiteOfWholeLiterals(AllocationSiteID site) const { return site && m_sitesOfWholeLiterals.get(site.index()); }
     void setSitesOfWholeLiterals(BitVector&& sites) { m_sitesOfWholeLiterals = WTF::move(sites); }
-    // What the list holds that a variable of a module has from its one store on: primitive constants, and nothing ever changes the list. Null: nobody knows, as before the table is set.
     const Vector<KnownValue>* constantListIn(VariableID variable) const LIFETIME_BOUND { return m_constantLists.find(variable); }
     void setConstantLists(ConstantLists&& table) { m_constantLists = WTF::move(table); }
     std::span<const FlowIndirectCall> indirectCalls() const LIFETIME_BOUND { return m_tables.functions.indirectCalls.span(); }
@@ -267,8 +232,8 @@ public:
 
     const ModuleFlow& module(ModuleID) const LIFETIME_BOUND;
 
-    BuiltinLocationState builtinLocation(BuiltinID member) const;
-    BuiltinHolderState builtinHolder(BuiltinID holder) const;
+    BuiltinLocationState builtinLocation(BuiltinID member) const { return member && m_tables.builtins.constantMembers.get(member.index()) ? BuiltinLocationState::Constant : BuiltinLocationState::Unknown; }
+    BuiltinHolderState builtinHolder(BuiltinID holder) const { return holder && m_tables.builtins.intactHolders.get(holder.index()) ? BuiltinHolderState::Intact : BuiltinHolderState::Unknown; }
     const BuiltinLocationFlow* findBuiltinLocation(BuiltinID holder, PropertyKeyID) const LIFETIME_BOUND;
     bool builtinHolderNeverGains(BuiltinID holder, PropertyKeyID key) const { return hasResults() && Typed::builtinHolderNeverGains(m_tables.builtins, holder, key); }
     std::span<const BuiltinLocationFlow> builtinLocations() const LIFETIME_BOUND { return m_tables.builtins.locations.span(); }
@@ -285,14 +250,11 @@ public:
     const AllocationClass& classOf(AllocationSiteID site) const LIFETIME_BOUND { return at(at(site).allocationClass); }
     bool objectsNeverChange(AllocationSiteID site) const { return m_tables.sites.sitesOfObjectsThatNeverChange.get(site.index()); }
     bool areClosuresAsCreated(FunctionID closureFunction, std::span<const PropertyKeyID> ownKeys) const;
-    // A lookup of the key that starts at a closure of the function comes to Function.prototype.
     bool closuresInheritFromFunctionPrototype(FunctionID closureFunction, PropertyKeyID) const;
-    // The program itself stores into the closures of the function, defines something on them or puts them below another object: a test that they are as created fails from then on.
-    bool closuresAreChangedByProgram(FunctionID closureFunction) const;
-    bool closuresAreRelinkedByProgram(FunctionID closureFunction) const;
+    bool closuresAreChangedByProgram(FunctionID closureFunction) const { return closuresMeetOneOf(closureFunction, { ObjectMutation::AddProperty, ObjectMutation::RedefineProperty, ObjectMutation::ChangePrototype, ObjectMutation::StoreAfterCreation }); }
+    bool closuresAreRelinkedByProgram(FunctionID closureFunction) const { return closuresMeetOneOf(closureFunction, { ObjectMutation::ChangePrototype }); }
     const FlowSiteLoss& lossOf(AccessSiteID) const LIFETIME_BOUND;
     bool seesOnlyFinishedObjects(AccessSiteID) const;
-    // Such a call enters the target, and its callee is no closure of the target.
     bool mayCallBoundFunction(AccessSiteID) const;
     const SinkCandidates& sinkCandidates(AccessSiteID call, uint32_t operandIndex) const LIFETIME_BOUND;
     TypeID typedResultType(AccessSiteID call) const;
@@ -302,9 +264,7 @@ public:
     bool mayReadLegacyRegExpStatics() const { return m_tables.builtins.legacyRegExpStatics != LegacyRegExpStatics::NeverRead; }
 
     bool mayRunUnseenCode() const { return !hasResults() || !m_tables.wholeProgram.unseenCode.isEmpty(); }
-    // Code that the build has not seen can run: text that is evaluated, machine code that is loaded. A record that only names a module at run time lets none in.
     bool unseenCodeCanRun() const { return m_unseenCodeCanRun; }
-    // Such code can be a script, which adds let, const and class bindings to the realm.
     bool unseenScriptsCanRun() const { return m_unseenScriptsCanRun; }
     std::span<const UnseenCodeRecord> unseenCode() const LIFETIME_BOUND { return m_tables.wholeProgram.unseenCode.span(); }
     std::span<const UnseenCodeRecord> loadsOfMachineCode() const LIFETIME_BOUND { return m_tables.wholeProgram.loadsOfMachineCode.span(); }

@@ -16,11 +16,18 @@ set(JavaScriptCore_AOT_RUNTIME_FACTS_GENERATED_HEADERS
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTRuntimeFactsOfLayoutsIncludes.h"
 )
 
+# What aot/support/generator/vector.ts writes.
+set(JavaScriptCore_AOT_VECTOR_GENERATED_HEADERS "${JavaScriptCore_AOT_GENERATED_DIR}/AOTVector.h")
+
 # WEBKIT_COMPUTE_SOURCES bundles aot/ as it bundles the rest of JavaScriptCore. There are two lists because a bundle is compiled with one set of options.
 set(JavaScriptCoreAOT_UNIFIED_SOURCE_LIST_FILES "aot/Sources.txt")
 # People keep this list. Build-only sources: nothing of them is left in an executable without the compiler. What a build runs once (the emitters of stubs), never (verifiers, printers) or hardly ever (passes for rare forms).
 set(JavaScriptCoreAOTCompiledForSize_UNIFIED_SOURCE_LIST_FILES "aot/SourcesCompiledForSize.txt")
 set(JavaScriptCoreAOTCompiledForSize_UNIFIED_SOURCE_BUNDLE_PREFIX "CompiledForSize")
+# All that a build without AoT (-DENABLE_AOT=0 among the compiler's flags) compiles of the two lists: what the rest of JavaScriptCore calls either way.
+set(JavaScriptCore_AOT_SOURCES_WITHOUT_AOT
+    aot/runtime/AOTRemovableFeature.cpp
+)
 
 list(APPEND JavaScriptCore_SOURCES
     ${JavaScriptCore_AOT_SCHEMA_GENERATED_SOURCES}
@@ -62,14 +69,12 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/image/AOTCodeSites.h
     aot/image/AOTCompile.h
     aot/image/AOTFaultTable.h
-    aot/image/AOTHandlerTable.h
     aot/image/AOTImage.h
     aot/image/AOTImageFormat.h
     aot/image/AOTImageForward.h
     aot/image/AOTImageLoading.h
     aot/image/AOTImageText.h
     aot/image/AOTObfuscatedSites.h
-    aot/image/AOTPositionTable.h
     aot/image/AOTRuntimeDescription.h
     aot/image/AOTVarint.h
     aot/image/AOTWasmInterface.h
@@ -107,7 +112,6 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/runtime/AOTCompiledCaller.h
     aot/runtime/AOTCompiledFrame.h
     aot/runtime/AOTCompiledFrameExit.h
-    aot/runtime/AOTCoroutineData.h
     aot/runtime/AOTFunctionDescription.h
     aot/runtime/AOTGenerator.h
     aot/runtime/AOTHeapCellClasses.h
@@ -157,7 +161,6 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/support/AOTLosses.h
     aot/support/AOTStatistics.h
     aot/support/AOTThreshold.h
-    aot/support/AOTVector.h
     aot/valueflow/AOTFlowReport.h
 )
 
@@ -189,11 +192,12 @@ list(APPEND JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     ${JavaScriptCore_AOT_SCHEMA_EXPORTED_HEADERS}
     ${JavaScriptCore_AOT_BUILTIN_TABLE_EXPORTED_HEADERS}
     ${JavaScriptCore_AOT_BUILTIN_TABLE_EXPORTED_GENERATED_HEADERS}
+    ${JavaScriptCore_AOT_VECTOR_GENERATED_HEADERS}
 )
 
-# Written by aot-source-lists.ts: every .cpp under aot/tests/ but AOTShell.cpp, every AOT*TestCommands.cpp, and what else is there for tests alone: the runs of
-# single passes, the dumps that only test commands print. Linked into testaot only, with JavaScriptCore_AOT_SCHEMA_GENERATED_TEST_SOURCES.
+# Written by aot-source-lists.ts: every .cpp under aot/tests/ but AOTShell.cpp. Linked into testaot only, with JavaScriptCore_AOT_SCHEMA_GENERATED_TEST_SOURCES.
 set(JavaScriptCore_AOT_TEST_SOURCES
+    aot/tests/AOTAnalysisDump.cpp
     aot/tests/AOTAnalysisTestCommands.cpp
     aot/tests/AOTArrayTests.cpp
     aot/tests/AOTArrivalCountTests.cpp
@@ -242,11 +246,9 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTFFIStubTests.cpp
     aot/tests/AOTFalseTypeProgramTests.cpp
     aot/tests/AOTFieldMoveTests.cpp
-    aot/tests/AOTFlowApplyTestCommands.cpp
     aot/tests/AOTFlowReportTestCommands.cpp
     aot/tests/AOTFlowResultsDump.cpp
     aot/tests/AOTFlowResultsTests.cpp
-    aot/tests/AOTFlowTestCommands.cpp
     aot/tests/AOTFlowWorkLimitProgramTests.cpp
     aot/tests/AOTForInExpansionProgramTests.cpp
     aot/tests/AOTFrameAllocationTestCommands.cpp
@@ -267,9 +269,9 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTIRParserFunctions.cpp
     aot/tests/AOTIRParserTests.cpp
     aot/tests/AOTIRParserTypes.cpp
-    aot/tests/AOTIRPrinterForTestaot.cpp
+    aot/tests/AOTIRPrinter.cpp
     aot/tests/AOTIRPrinterTests.cpp
-    aot/tests/AOTIRPrinterTypesForTestaot.cpp
+    aot/tests/AOTIRPrinterTypes.cpp
     aot/tests/AOTIRProgramTests.cpp
     aot/tests/AOTIRTestCommands.cpp
     aot/tests/AOTIRTests.cpp
@@ -324,6 +326,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTPassTestCommands.cpp
     aot/tests/AOTPipelineTestCommands.cpp
     aot/tests/AOTPipelineTesting.cpp
+    aot/tests/AOTPlaceTypeTestsDump.cpp
     aot/tests/AOTPlaceTypeTestsTestCommands.cpp
     aot/tests/AOTPlacementDump.cpp
     aot/tests/AOTPlacementTestCommands.cpp
@@ -458,8 +461,6 @@ set(JavaScriptCore_AOT_SHELL_SOURCES
 
 # Compiled for size like aot/SourcesCompiledForSize.txt.
 set(JavaScriptCore_AOT_GENERATED_SOURCES_COMPILED_FOR_SIZE
-    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaEntryPrinter.cpp"
-    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaRecordPrinter.cpp"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaRecords.cpp"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaVerifier.cpp"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTWire.cpp"
@@ -467,6 +468,10 @@ set(JavaScriptCore_AOT_GENERATED_SOURCES_COMPILED_FOR_SIZE
 
 # 16 in a bundle, not 8: an object repeats the debug info of the headers it includes, and that is most of a tarball.
 function(AOT_COMPUTE_SOURCES)
+    if ("${CMAKE_CXX_FLAGS}" MATCHES "-DENABLE_AOT=0")
+        set(JavaScriptCore_SOURCES ${JavaScriptCore_SOURCES} ${JavaScriptCore_AOT_SOURCES_WITHOUT_AOT} PARENT_SCOPE)
+        return ()
+    endif ()
     set(WEBKIT_MAX_BUNDLE_SIZE 16)
     foreach (list IN ITEMS JavaScriptCoreAOT JavaScriptCoreAOTCompiledForSize)
         set(${list}_DERIVED_SOURCES_DIR "${JavaScriptCore_DERIVED_SOURCES_DIR}")
@@ -533,6 +538,13 @@ function(AOT_GENERATE_BUILTIN_TABLE)
         ${JavaScriptCore_AOT_BUILTIN_TABLE_DATA_SOURCES}
         "${JavaScriptCore_AOT_GENERATED_DIR}/AOTBuiltinEngineDeclarations.json"
     )
+endfunction()
+
+function(AOT_GENERATE_VECTOR)
+    set(generator "${JAVASCRIPTCORE_DIR}/aot/support/generator/vector.ts")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${generator}" "${WTF_DIR}/wtf/Vector.h")
+    execute_process(COMMAND "${NODE_EXECUTABLE}" "${generator}" --wtf "${WTF_DIR}" --out "${JavaScriptCore_AOT_GENERATED_DIR}" COMMAND_ERROR_IS_FATAL ANY)
+    AOT_REQUIRE_GENERATED_FILES(aot/support/generator/vector.ts ${JavaScriptCore_AOT_VECTOR_GENERATED_HEADERS})
 endfunction()
 
 # It reads the text of the compiler's sources, so it is a step of the build. Windows takes a .def among the sources for the linker's.
@@ -604,6 +616,7 @@ function(AOT_CHECK_EXPORTED_HEADERS)
         ${JavaScriptCore_AOT_SCHEMA_EXPORTED_HEADERS}
         ${JavaScriptCore_AOT_BUILTIN_TABLE_EXPORTED_HEADERS}
         ${JavaScriptCore_AOT_BUILTIN_TABLE_EXPORTED_GENERATED_HEADERS}
+        ${JavaScriptCore_AOT_VECTOR_GENERATED_HEADERS}
     )
     set(problems)
     set(exportedNames)
@@ -646,6 +659,7 @@ endfunction()
 
 AOT_GENERATE_FROM_SCHEMA()
 AOT_GENERATE_BUILTIN_TABLE()
+AOT_GENERATE_VECTOR()
 AOT_GENERATE_RUNTIME_FACTS()
 AOT_COMPUTE_SOURCES()
 AOT_CHECK_SOURCE_LISTS()

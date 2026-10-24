@@ -9,7 +9,6 @@
 
 module m0 path="main.ts" displayPath="main.ts"
 function f0 name="double" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Add v0, v0
     Return v1
 }
@@ -25,7 +24,6 @@ function f1 name="apply" role=EntryChecks flags=[IsChecked] length=2 thisType={t
     ReturnCall v5 requirement=Allowed
 }
 function f2 name="apply" flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number}, {type=function}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1} {
-  b0(v0: number, v1: function):
     v2 = Call v1, -, v0
 # REPEAT: i = 2..41
     v%(i+1) = Add v%(i), v0
@@ -42,7 +40,6 @@ function f3 name="apply" role=GenericVersion flags=[IsChecked] length=2 thisType
 }
 
 function f4 name="passesKnownFunction" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f0
     v2 = CallDirect v0, v1 function=f1
     Return v2
@@ -55,7 +52,6 @@ function f4 name="passesKnownFunction" parameters=[{type=anything}] results=[{ty
 # CHECK: = CallDirect {{*}} function=f3
 
 function f5 name="passesUnknownFunction" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
-  b0(v0: anything, v1: function):
     v2 = CallDirect v0, v1 function=f1
     Return v2
 }

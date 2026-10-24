@@ -14,7 +14,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class ClassEmitter final : public OperationEmitter {
 public:
-    explicit ClassEmitter(CodeGenerator&);
+    explicit ClassEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generateResolveHeritage(const ValueContext&);
     void generateNewClass(const ValueContext&);

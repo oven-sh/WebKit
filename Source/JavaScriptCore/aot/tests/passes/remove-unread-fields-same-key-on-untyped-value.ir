@@ -13,34 +13,28 @@ layout L3 name="Token" fields=[{key="id" declared={type=anything} flags=[IsRequi
 # CHECK: layout L2 name="SpanInReceiverSet" fields=[{key="id"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
 
 function f0 name="receiverSetWithoutSpan" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     v3 = PropGet v1 key="id" receivers=[L3]
     v4 = Call v3, -, v2
     Return v4
-}
-# CHECK-LABEL: function f0 name="receiverSetWithoutSpan"
 # CHECK: = NewObject -, v0 layout=L0 fields=[1]
 # CHECK-NEXT: = PropGet v1 key="id" receivers=[L3]
+}
 
 function f1 name="noReceiverSet" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
     v3 = PropGet v1 key="id"
     v4 = Call v3, -, v2
     Return v4
-}
-# CHECK-LABEL: function f1 name="noReceiverSet"
 # CHECK: = NewObject -, v0 layout=L1 fields=[1]
 # CHECK-NEXT: = PropGet v1 key="id"
+}
 
 function f2 name="receiverSetWithSpan" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewObject -, v0, v0 layout=L2 fields=[0, 1]
     v3 = PropGet v1 key="id" receivers=[L2, L3]
     v4 = Call v3, -, v2
     Return v4
-}
-# CHECK-LABEL: function f2 name="receiverSetWithSpan"
 # CHECK: = NewObject -, v0, v0 layout=L2 fields=[0, 1]
 # CHECK-NEXT: = PropGet v1 key="id" receivers=[L2, L3]
+}

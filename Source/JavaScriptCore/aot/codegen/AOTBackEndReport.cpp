@@ -121,40 +121,28 @@ static StatisticID statisticOf(B3::Counter counter)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void collectFindings(const B3::CompilationReport& report, std::span<const FrameAddressViolation> violations, Vector<BackEndFinding, 1>& findings)
-{
-    if (report.failure)
-        findings.append(BackEndFinding { internalErrorKindOf(report.failure->kind), report.failure->origin });
-    for (const FrameAddressViolation& violation : violations)
-        findings.append(BackEndFinding { InternalErrorKind::FrameAddressAcrossSuspension, violation.address });
-}
-
-static void collectDeclines(const B3::CompilationReport& report, Vector<BackEndDecline>& declines)
-{
-    for (const B3::Remark& remark : report.remarks) {
-        std::optional<Wire::DeclineKind> kind = declineKindOf(remark.kind);
-        if (!kind || remark.reason == B3::GaveUpReason::NotInnermost)
-            continue;
-        declines.append(BackEndDecline { *kind, remark.limit ? limitIDOf(*remark.limit) : LimitID::None, declineReasonOf(remark.reason), remark.origin });
-    }
-}
-
-static void collectLimitHits(const B3::CompilationReport& report, Vector<BackEndLimitHit, 2>& limitHits)
-{
-    for (unsigned i = 0; i < B3::numberOfLimits; ++i) {
-        auto limit = static_cast<B3::Limit>(i);
-        if (uint32_t count = report.hitsOf(limit))
-            limitHits.append(BackEndLimitHit { limitIDOf(limit), count, report.firstOriginOf(limit) });
-    }
-}
-
 BackEndReport collectBackEndReport(const B3::CompilationReport& report, std::span<const FrameAddressViolation> violations, bool collectsDeclines)
 {
     BackEndReport result;
-    collectFindings(report, violations, result.findings);
-    if (collectsDeclines)
-        collectDeclines(report, result.declines);
-    collectLimitHits(report, result.limitHits);
+    if (report.failure)
+        result.findings.append(BackEndFinding { internalErrorKindOf(report.failure->kind), report.failure->origin });
+    for (const FrameAddressViolation& violation : violations)
+        result.findings.append(BackEndFinding { InternalErrorKind::FrameAddressAcrossSuspension, violation.address });
+
+    if (collectsDeclines) {
+        for (const B3::Remark& remark : report.remarks) {
+            std::optional<Wire::DeclineKind> kind = declineKindOf(remark.kind);
+            if (!kind || remark.reason == B3::GaveUpReason::NotInnermost)
+                continue;
+            result.declines.append(BackEndDecline { *kind, remark.limit ? limitIDOf(*remark.limit) : LimitID::None, declineReasonOf(remark.reason), remark.origin });
+        }
+    }
+
+    for (unsigned i = 0; i < B3::numberOfLimits; ++i) {
+        auto limit = static_cast<B3::Limit>(i);
+        if (uint32_t count = report.hitsOf(limit))
+            result.limitHits.append(BackEndLimitHit { limitIDOf(limit), count, report.firstOriginOf(limit) });
+    }
     return result;
 }
 
@@ -183,15 +171,6 @@ static Subject subjectOf(Typed::FunctionID id, const Typed::Function& function, 
     return { .function = id, .value = value, .location = function.locationOf(value) };
 }
 
-static void countStatistics(Statistics& statistics, const B3::CompilationReport& report)
-{
-    for (unsigned i = 0; i < B3::numberOfCounters; ++i) {
-        auto counter = static_cast<B3::Counter>(i);
-        if (uint32_t amount = report.countOf(counter))
-            statistics.count(statisticOf(counter), amount);
-    }
-}
-
 bool reportBackEnd(BuildContext& build, Typed::FunctionID id, const Typed::Function& function, const BackEndReport& report, const B3::CompilationReport& raw)
 {
     for (const BackEndFinding& finding : report.findings) {
@@ -212,7 +191,11 @@ bool reportBackEnd(BuildContext& build, Typed::FunctionID id, const Typed::Funct
         for (uint32_t i = 0; i < hit.count; ++i)
             build.gaveUp(hit.limit, subject);
     }
-    countStatistics(build.statistics(), raw);
+    for (unsigned i = 0; i < B3::numberOfCounters; ++i) {
+        auto counter = static_cast<B3::Counter>(i);
+        if (uint32_t amount = raw.countOf(counter))
+            build.statistics().count(statisticOf(counter), amount);
+    }
     return !report.findings.isEmpty();
 }
 

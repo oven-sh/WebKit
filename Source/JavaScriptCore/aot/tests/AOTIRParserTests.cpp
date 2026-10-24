@@ -576,7 +576,6 @@ static void parserAppliesEngineFieldsAfterTheRead()
     auto program = parseProgram(makeString(moduleLine, R"IR(variable g0 declared={type=anything} flow={writers=AllKnown}
 variable g1 declared={type=anything}
 function f0 results=[{type=anything}] capabilities=[MayBeInlined] {
-  b0():
     v0: number ~ i32 @Double = Integer integer=5 @12:3
     v1 = Integer integer=6 @13
     Return v0

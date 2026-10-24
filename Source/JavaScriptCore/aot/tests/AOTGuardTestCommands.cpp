@@ -8,14 +8,12 @@
 
 #if ENABLE(AOT)
 
-#include "AOTEffectSummaries.h"
 #include "AOTForwardDataflow.h"
-#include "AOTVector.h"
 #include <wtf/EnumTraits.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static void runOnRequestedFunctions(TestCommandContext& context, CommandWords& words, NOESCAPE const Invocable<void(Session&)> auto& run)
+static void runOnRequestedFunctions(TestCommandContext& context, CommandWords words, NOESCAPE const Invocable<void(Session&)> auto& run)
 {
     Program& program = *context.program;
     FlowPreparation preparation = prepareFlow(context, words);
@@ -94,8 +92,7 @@ void runGuardAvailability(TestCommandContext& context)
 
 void runFailedTests(TestCommandContext& context)
 {
-    CommandWords words(context);
-    runOnRequestedFunctions(context, words, [&](Session& session) {
+    runOnRequestedFunctions(context, CommandWords(context), [&](Session& session) {
         std::span<const BlockID> order = session.analyses.cfg().reversePostOrder();
         Vector<ValueID> tests;
         for (BlockID block : order) {
@@ -116,8 +113,7 @@ void runFailedTests(TestCommandContext& context)
 
 void runInductionVariables(TestCommandContext& context)
 {
-    CommandWords words(context);
-    runOnRequestedFunctions(context, words, [&](Session& session) {
+    runOnRequestedFunctions(context, CommandWords(context), [&](Session& session) {
         const InductionVariables& inductionVariables = session.analyses.inductionVariables();
         inductionVariables.dump(context.out);
         for (const LoopInduction& loop : inductionVariables.loops()) {
@@ -129,56 +125,43 @@ void runInductionVariables(TestCommandContext& context)
 
 void runBlockFrequencies(TestCommandContext& context)
 {
-    CommandWords words(context);
-    runOnRequestedFunctions(context, words, [&](Session& session) {
+    runOnRequestedFunctions(context, CommandWords(context), [&](Session& session) {
         session.analyses.blockFrequencies().dump(context.out, session.function);
     });
 }
 
 namespace {
 
-struct ExecutedOnEveryPath {
+template<bool meetsByUnion, bool hasThrowTransfer>
+struct ExecutedValues {
     using State = BitVector;
 
     State stateAtEntry() { return { }; }
     void execute(State& state, const DataflowStep& step) { state.set(step.id.index()); }
+    void executeThrow(State&, const DataflowStep&) requires hasThrowTransfer { }
     void executeTerminator(State&, const DataflowTerminatorStep&) { }
     void enterEdge(State&, Edge) { }
 
     bool merge(State& into, const State& from)
     {
         State before = into;
-        into.filter(from);
+        if constexpr (meetsByUnion)
+            into.merge(from);
+        else
+            into.filter(from);
         return into != before;
     }
-};
-
-struct ExecutedOnEveryPathWithThrowTransfer : ExecutedOnEveryPath {
-    void executeThrow(State&, const DataflowStep&) { }
-};
-
-struct ExecutedOnSomePath : ExecutedOnEveryPath {
-    bool merge(State& into, const State& from)
-    {
-        State before = into;
-        into.merge(from);
-        return into != before;
-    }
-};
-
-struct ExecutedOnSomePathWithThrowTransfer : ExecutedOnSomePath {
-    void executeThrow(State&, const DataflowStep&) { }
 };
 
 } // anonymous namespace
 
-static_assert(!HasThrowTransfer<ExecutedOnEveryPath> && HasThrowTransfer<ExecutedOnEveryPathWithThrowTransfer>);
-static_assert(!HasThrowTransfer<ExecutedOnSomePath> && HasThrowTransfer<ExecutedOnSomePathWithThrowTransfer>);
+static_assert(!HasThrowTransfer<ExecutedValues<false, false>> && HasThrowTransfer<ExecutedValues<false, true>>);
+static_assert(!HasThrowTransfer<ExecutedValues<true, false>> && HasThrowTransfer<ExecutedValues<true, true>>);
 
-template<typename Problem>
+template<bool meetsByUnion, bool hasThrowTransfer>
 static void printStatesAtHeads(PrintStream& out, Session& session)
 {
-    Problem problem;
+    ExecutedValues<meetsByUnion, hasThrowTransfer> problem;
     Vector<std::optional<BitVector>> heads = session.analyses.solveForward(problem);
     for (BlockID block : session.analyses.cfg().reversePostOrder()) {
         const std::optional<BitVector>& head = heads[block.index()];
@@ -194,13 +177,13 @@ void runForwardDataflow(TestCommandContext& context)
     bool meetsByUnion = words.parseFlag("some-path"_s);
     runOnRequestedFunctions(context, words, [&](Session& session) {
         if (meetsByUnion && hasThrowTransfer)
-            printStatesAtHeads<ExecutedOnSomePathWithThrowTransfer>(context.out, session);
+            printStatesAtHeads<true, true>(context.out, session);
         else if (meetsByUnion)
-            printStatesAtHeads<ExecutedOnSomePath>(context.out, session);
+            printStatesAtHeads<true, false>(context.out, session);
         else if (hasThrowTransfer)
-            printStatesAtHeads<ExecutedOnEveryPathWithThrowTransfer>(context.out, session);
+            printStatesAtHeads<false, true>(context.out, session);
         else
-            printStatesAtHeads<ExecutedOnEveryPath>(context.out, session);
+            printStatesAtHeads<false, false>(context.out, session);
     });
 }
 

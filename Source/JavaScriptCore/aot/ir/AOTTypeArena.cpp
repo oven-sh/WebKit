@@ -1147,29 +1147,6 @@ LayoutSetID TypeArena::differenceOf(LayoutSetID a, LayoutSetID b)
     return cachedResult(LayoutSetOperation::Difference, a, b);
 }
 
-bool TypeArena::isSubsetOf(LayoutSetID a, LayoutSetID b)
-{
-    if (!a || a == b)
-        return true;
-    if (!b)
-        return false;
-
-    auto isIncluded = [&] {
-        const LayoutSet& first = at(a);
-        const LayoutSet& second = at(b);
-        return (!first.hasMembersWithoutLayout || second.hasMembersWithoutLayout) && Typed::isSubsetOf(first, second);
-    };
-    if (!shouldCacheResult(a, b))
-        return isIncluded();
-
-    auto known = m_layoutSubsetCache.find(pairKey(a, b));
-    if (known != m_layoutSubsetCache.end())
-        return known->value;
-    bool result = isIncluded();
-    m_layoutSubsetCache.add(pairKey(a, b), result);
-    return result;
-}
-
 ScratchTypeArena::Attachment::Attachment(const TypeTable& table)
     : table(table)
     , phase(table.attachScratchArena())

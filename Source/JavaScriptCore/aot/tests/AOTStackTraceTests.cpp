@@ -30,7 +30,6 @@ namespace JSC { namespace AOT {
 static constexpr ASCIILiteral programText = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="registry" [isFreeName]
     v2 = NewClosure function=f1
@@ -52,7 +51,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="recurse" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Check v0 castType=i32
     v3 = Integer integer=0
     v4 = StrictEq v2, v3
@@ -67,7 +65,6 @@ function f1 name="recurse" parameters=[{type=anything}, {type=anything}] results
     Return v8
 }
 function f2 name="outerCapture" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Builtin builtin=GlobalThis
     v3 = PropGet v2 key="registry" [isFreeName]
     v4 = PropGet v3 key="middleCapture"
@@ -75,7 +72,6 @@ function f2 name="outerCapture" parameters=[{type=anything}, {type=anything}] re
     Return v5
 }
 function f3 name="middleCapture" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Builtin builtin=GlobalThis
     v3 = PropGet v2 key="registry" [isFreeName]
     v4 = PropGet v3 key="innerCapture"
@@ -83,37 +79,31 @@ function f3 name="middleCapture" parameters=[{type=anything}, {type=anything}] r
     Return v5
 }
 function f4 name="innerCapture" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Builtin builtin=GlobalThis
     v3 = PropGet v2 key="capture" [isFreeName]
     v4 = Call v3, -, v0, v1 @50
     Return v4
 }
 function f5 name="callsBack" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0 @60
     Return v1
 }
 function f6 name="asyncOuter" flags=[IsAsync, HasExplicitName] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f7 @70
     v2 = Await v1 @75
     Return v2
 }
 function f7 name="asyncInner" flags=[IsAsync, HasExplicitName] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     v2 = Await v1 @80
     v3 = Call v0 @85
     Return v3
 }
 function f8 name="reads" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="missing" @90
     Return v1
 }
 function f9 name="recurseAndRead" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Check v0 castType=i32
     v3 = Integer integer=0
     v4 = StrictEq v2, v3

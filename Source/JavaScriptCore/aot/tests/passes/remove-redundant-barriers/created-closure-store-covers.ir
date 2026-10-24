@@ -8,27 +8,22 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}] flow={members=[L0]}
 function f0 name="created-closure-store-covers" parameters=[{type=L0}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: L0, v1: anything):
     v2 = NewClosure function=f2
     PutSlot v0, -, v1 key="x" receivers=[L0] level=Proven
     PutSlot v0, -, v2 key="y" receivers=[L0] level=Proven
     Return
-}
-# CHECK-LABEL: function f0 name="created-closure-store-covers"
 # CHECK: PutSlot v0, -, v1 key="x"{{*}}[laterBarrierCovers]
 # CHECK: PutSlot v0, -,{{*}}key="y"
 # CHECK-NOT: laterBarrierCovers
+}
 function f1 name="closure-created-between" parameters=[{type=L0}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: L0, v1: anything):
     PutSlot v0, -, v1 key="x" receivers=[L0] level=Proven
     v3 = NewClosure function=f2
     PutSlot v0, -, v3 key="y" receivers=[L0] level=Proven
     Return
-}
-# CHECK-LABEL: function f1 name="closure-created-between"
 # CHECK: PutSlot v0, -, v1 key="x"
 # CHECK-NOT: laterBarrierCovers
+}
 function f2 name="stored" kind=Arrow results=[{type=undefined}] {
-  b0():
     Return
 }

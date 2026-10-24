@@ -16,7 +16,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
 
 function f0 name="read" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: object, v1: anything):
     v2 = ForInOpen v0
     Jump -> next b1()
   b1():
@@ -32,8 +31,6 @@ function f0 name="read" parameters=[{type=object}, {type=anything}] results=[{ty
   b3():
     v9 = Undefined
     Return v9
-}
-# CHECK-LABEL: function f0 name="read"
 # CHECK: [[position0]]: {{*}} = ResultAt v4 index=2
 # CHECK: [[test0]]: boolean = IsEnumeratorCurrent v2, v0, [[position0]]
 # CHECK-NEXT: Branch [[test0]] -> taken [[current0]](| 0), notTaken [[other0]]()
@@ -45,9 +42,9 @@ function f0 name="read" parameters=[{type=object}, {type=anything}] results=[{ty
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: [[slow0]]: anything = ElemGet v0, v6
 # CHECK-NEXT: Jump -> next [[rest0]]([[slow0]])
+}
 
 function f1 name="in" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: object, v1: anything):
     v2 = ForInOpen v0
     Jump -> next b1()
   b1():
@@ -63,8 +60,6 @@ function f1 name="in" parameters=[{type=object}, {type=anything}] results=[{type
   b3():
     v9 = Undefined
     Return v9
-}
-# CHECK-LABEL: function f1 name="in"
 # CHECK: [[position1]]: {{*}} = ResultAt v4 index=2
 # CHECK: [[test1]]: boolean = IsEnumeratorCurrent v2, v0, [[position1]]
 # CHECK-NEXT: Branch [[test1]] -> taken [[current1]](| 0), notTaken [[other1]]()
@@ -77,9 +72,9 @@ function f1 name="in" parameters=[{type=object}, {type=anything}] results=[{type
 # CHECK-NEXT: Jump -> next [[copy1]]()
 # CHECK-NEXT: [[copy1]]() frequency=Unlikely:
 # CHECK-NEXT: = Call v1, -, [[slow1]]
+}
 
 function f2 name="hasOwn" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: object, v1: anything):
     v2 = ForInOpen v0
     Jump -> next b1()
   b1():
@@ -95,8 +90,6 @@ function f2 name="hasOwn" parameters=[{type=object}, {type=anything}] results=[{
   b3():
     v9 = Undefined
     Return v9
-}
-# CHECK-LABEL: function f2 name="hasOwn"
 # CHECK: [[position2]]: {{*}} = ResultAt v4 index=2
 # CHECK: [[test2]]: boolean = IsEnumeratorCurrent v2, v0, [[position2]]
 # CHECK-NEXT: Branch [[test2]] -> taken [[current2]](| 0), notTaken [[other2]]()
@@ -109,9 +102,9 @@ function f2 name="hasOwn" parameters=[{type=object}, {type=anything}] results=[{
 # CHECK-NEXT: Jump -> next [[copy2]]()
 # CHECK-NEXT: [[copy2]]() frequency=Unlikely:
 # CHECK-NEXT: = Call v1, -, [[slow2]]
+}
 
 function f3 name="hasOwnProperty" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: object, v1: anything):
     v2 = ForInOpen v0
     Jump -> next b1()
   b1():
@@ -127,8 +120,6 @@ function f3 name="hasOwnProperty" parameters=[{type=object}, {type=anything}] re
   b3():
     v9 = Undefined
     Return v9
-}
-# CHECK-LABEL: function f3 name="hasOwnProperty"
 # CHECK: [[position3]]: {{*}} = ResultAt v4 index=2
 # CHECK: [[test3]]: boolean = IsEnumeratorCurrent v2, v0, [[position3]]
 # CHECK-NEXT: Branch [[test3]] -> taken [[current3]](| 0), notTaken [[other3]]()
@@ -141,9 +132,9 @@ function f3 name="hasOwnProperty" parameters=[{type=object}, {type=anything}] re
 # CHECK-NEXT: Jump -> next [[copy3]]()
 # CHECK-NEXT: [[copy3]]() frequency=Unlikely:
 # CHECK-NEXT: = Call v1, -, [[slow3]]
+}
 
 function f4 name="otherObject" parameters=[{type=object}, {type=object}] results=[{type=undefined}] {
-  b0(v0: object, v1: object):
     v2 = ForInOpen v0
     Jump -> next b1()
   b1():
@@ -159,8 +150,6 @@ function f4 name="otherObject" parameters=[{type=object}, {type=object}] results
   b3():
     v9 = Undefined
     Return v9
-}
-# CHECK-LABEL: function f4 name="otherObject"
 # CHECK: [[position4]]: {{*}} = ResultAt v4 index=2
 # CHECK: [[test4]]: boolean = IsEnumeratorCurrent v2, v1, [[position4]]
 # CHECK-NOT: IsEnumeratorCurrent
@@ -170,9 +159,9 @@ function f4 name="otherObject" parameters=[{type=object}, {type=object}] results
 # CHECK: = ElemGet v1, v6
 # CHECK-NEXT: = ElemHas v1, v6
 # CHECK-NOT: IsEnumeratorCurrent
+}
 
 function f5 name="untypedObject" parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: anything, v1: anything):
     v2 = ForInOpen v0
     Jump -> next b1()
   b1():
@@ -187,14 +176,12 @@ function f5 name="untypedObject" parameters=[{type=anything}, {type=anything}] r
   b3():
     v8 = Undefined
     Return v8
-}
-# CHECK-LABEL: function f5 name="untypedObject"
 # CHECK: [[position5]]: {{*}} = ResultAt v4 index=2
 # CHECK: = IsEnumeratorCurrent v2, v0, [[position5]]
 # CHECK: = EnumeratorGetByVal v0, v6, v2, [[position5]],
+}
 
 function f6 name="array" parameters=[{type=Array<anything>}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: Array<anything>, v1: anything):
     v2 = ForInOpen v0
     Jump -> next b1()
   b1():
@@ -209,14 +196,12 @@ function f6 name="array" parameters=[{type=Array<anything>}, {type=anything}] re
   b3():
     v8 = Undefined
     Return v8
-}
-# CHECK-LABEL: function f6 name="array"
 # CHECK: [[position6]]: {{*}} = ResultAt v4 index=2
 # CHECK: = IsEnumeratorCurrent v2, v0, [[position6]]
 # CHECK: = EnumeratorGetByVal v0, v6, v2, [[position6]],
+}
 
 function f7 name="throughCast" parameters=[{type=undefined|object}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: undefined|object, v1: anything):
     v2 = ForInOpen v0
     Jump -> next b1()
   b1():
@@ -233,15 +218,13 @@ function f7 name="throughCast" parameters=[{type=undefined|object}, {type=anythi
   b3():
     v10 = Undefined
     Return v10
-}
-# CHECK-LABEL: function f7 name="throughCast"
 # CHECK: [[position7]]: {{*}} = ResultAt v4 index=2
 # CHECK: = IsEnumeratorCurrent v2, v7, [[position7]]
 # CHECK: = EnumeratorGetByVal v7, v8, v2, [[position7]],
 # CHECK: = ElemGet v7, v8
+}
 
 function f8 name="readAfterStore" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: object, v1: anything):
     v2 = ForInOpen v0
     Jump -> next b1()
   b1():
@@ -257,17 +240,15 @@ function f8 name="readAfterStore" parameters=[{type=object}, {type=anything}] re
   b3():
     v9 = Undefined
     Return v9
-}
-# CHECK-LABEL: function f8 name="readAfterStore"
 # CHECK: [[position8]]: {{*}} = ResultAt v4 index=2
 # CHECK: ElemSet v0, v6, v1
 # CHECK-NEXT: Jump -> next [[tests8]]()
 # CHECK: = EnumeratorGetByVal v0, v6, v2, [[position8]],
 # CHECK: [[tests8]]():
 # CHECK-NEXT: = IsEnumeratorCurrent v2, v0, [[position8]]
+}
 
 function f9 name="store" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: object, v1: anything):
     v2 = ForInOpen v0
     Jump -> next b1()
   b1():
@@ -282,16 +263,14 @@ function f9 name="store" parameters=[{type=object}, {type=anything}] results=[{t
   b3():
     v8 = Undefined
     Return v8
-}
-# CHECK-LABEL: function f9 name="store"
 # CHECK-NOT: IsEnumeratorCurrent
 # CHECK-NOT: EnumeratorGetByVal
 # CHECK: ElemSet v0, v6, v1
 # CHECK-NOT: IsEnumeratorCurrent
 # CHECK-NOT: EnumeratorGetByVal
+}
 
 function f10 name="typedObject" parameters=[{type=L0}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: L0, v1: anything):
     v2 = ForInOpen v0
     Jump -> next b1()
   b1():
@@ -306,16 +285,14 @@ function f10 name="typedObject" parameters=[{type=L0}, {type=anything}] results=
   b3():
     v8 = Undefined
     Return v8
-}
-# CHECK-LABEL: function f10 name="typedObject"
 # CHECK-NOT: IsEnumeratorCurrent
 # CHECK-NOT: EnumeratorGetByVal
 # CHECK: v7: anything = ElemGet v0, v6
 # CHECK-NOT: IsEnumeratorCurrent
 # CHECK-NOT: EnumeratorGetByVal
+}
 
 function f11 name="otherKey" parameters=[{type=object}, {type=string}] results=[{type=undefined}] {
-  b0(v0: object, v1: string):
     v2 = ForInOpen v0
     Jump -> next b1()
   b1():
@@ -332,8 +309,6 @@ function f11 name="otherKey" parameters=[{type=object}, {type=string}] results=[
   b3():
     v10 = Undefined
     Return v10
-}
-# CHECK-LABEL: function f11 name="otherKey"
 # CHECK-NOT: IsEnumeratorCurrent
 # CHECK-NOT: EnumeratorGetByVal
 # CHECK: = ElemGet v0, v1
@@ -341,9 +316,9 @@ function f11 name="otherKey" parameters=[{type=object}, {type=string}] results=[
 # CHECK-NEXT: = CallBuiltin -, v0, v1 overload=ObjectHasOwn/0
 # CHECK-NOT: IsEnumeratorCurrent
 # CHECK-NOT: EnumeratorGetByVal
+}
 
 function f12 name="concatenatedKey" parameters=[{type=object}, {type=string}] results=[{type=undefined}] {
-  b0(v0: object, v1: string):
     v2 = ForInOpen v0
     Jump -> next b1()
   b1():
@@ -359,16 +334,14 @@ function f12 name="concatenatedKey" parameters=[{type=object}, {type=string}] re
   b3():
     v9 = Undefined
     Return v9
-}
-# CHECK-LABEL: function f12 name="concatenatedKey"
 # CHECK-NOT: IsEnumeratorCurrent
 # CHECK-NOT: EnumeratorGetByVal
 # CHECK: = ElemGet v0, v7
 # CHECK-NOT: IsEnumeratorCurrent
 # CHECK-NOT: EnumeratorGetByVal
+}
 
 function f13 name="methodCalledByName" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: object, v1: anything):
     v2 = ForInOpen v0
     Jump -> next b1()
   b1():
@@ -384,16 +357,14 @@ function f13 name="methodCalledByName" parameters=[{type=object}, {type=anything
   b3():
     v9 = Undefined
     Return v9
-}
-# CHECK-LABEL: function f13 name="methodCalledByName"
 # CHECK-NOT: IsEnumeratorCurrent
 # CHECK-NOT: EnumeratorGetByVal
 # CHECK: = Call v7, v0, v6
 # CHECK-NOT: IsEnumeratorCurrent
 # CHECK-NOT: EnumeratorGetByVal
+}
 
 function f14 name="keyThroughMerge" parameters=[{type=object}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: object, v1: boolean):
     v2 = ForInOpen v0
     Jump -> next b1()
   b1():
@@ -413,16 +384,14 @@ function f14 name="keyThroughMerge" parameters=[{type=object}, {type=boolean}] r
   b5(v9):
     v10 = ElemGet v0, v9
     Jump -> next b1()
-}
-# CHECK-LABEL: function f14 name="keyThroughMerge"
 # CHECK-NOT: IsEnumeratorCurrent
 # CHECK-NOT: EnumeratorGetByVal
 # CHECK: = ElemGet v0, v9
 # CHECK-NOT: IsEnumeratorCurrent
 # CHECK-NOT: EnumeratorGetByVal
+}
 
 function f15 name="threeUsesUnderOneTest" parameters=[{type=object}, {type=object}] results=[{type=undefined}] {
-  b0(v0: object, v1: object):
     v2 = ForInOpen v0
     Jump -> next b1()
   b1():
@@ -444,8 +413,6 @@ function f15 name="threeUsesUnderOneTest" parameters=[{type=object}, {type=objec
   b5():
     v11 = Undefined
     Return v11
-}
-# CHECK-LABEL: function f15 name="threeUsesUnderOneTest"
 # CHECK: [[position15]]: {{*}} = ResultAt v4 index=2
 # CHECK: = IsEnumeratorCurrent v2, v0, [[position15]]
 # CHECK-NOT: IsEnumeratorCurrent
@@ -458,9 +425,9 @@ function f15 name="threeUsesUnderOneTest" parameters=[{type=object}, {type=objec
 # CHECK-NEXT: = ElemHas v0, v6
 # CHECK-NEXT: = ElemGet v0, v6
 # CHECK-NOT: IsEnumeratorCurrent
+}
 
 function f16 name="storeBetweenReads" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: object, v1: anything):
     v2 = ForInOpen v0
     Jump -> next b1()
   b1():
@@ -477,8 +444,6 @@ function f16 name="storeBetweenReads" parameters=[{type=object}, {type=anything}
   b3():
     v10 = Undefined
     Return v10
-}
-# CHECK-LABEL: function f16 name="storeBetweenReads"
 # CHECK: [[position16]]: {{*}} = ResultAt v4 index=2
 # CHECK: = IsEnumeratorCurrent v2, v0, [[position16]]
 # CHECK: v7: anything = EnumeratorGetByVal v0, v6, v2, [[position16]],
@@ -487,9 +452,9 @@ function f16 name="storeBetweenReads" parameters=[{type=object}, {type=anything}
 # CHECK: v9: anything = EnumeratorGetByVal v0, v6, v2, [[position16]],
 # CHECK: [[tests16]]():
 # CHECK-NEXT: = IsEnumeratorCurrent v2, v0, [[position16]]
+}
 
 function f17 name="callBetweenReads" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: object, v1: anything):
     v2 = ForInOpen v0
     Jump -> next b1()
   b1():
@@ -506,12 +471,10 @@ function f17 name="callBetweenReads" parameters=[{type=object}, {type=anything}]
   b3():
     v10 = Undefined
     Return v10
-}
-# CHECK-LABEL: function f17 name="callBetweenReads"
 # CHECK-COUNT-2: = IsEnumeratorCurrent v2, v0,
+}
 
 function f18 name="twoObjects" parameters=[{type=object}, {type=object}] results=[{type=undefined}] {
-  b0(v0: object, v1: object):
     v2 = ForInOpen v0
     Jump -> next b1()
   b1():
@@ -527,8 +490,6 @@ function f18 name="twoObjects" parameters=[{type=object}, {type=object}] results
   b3():
     v9 = Undefined
     Return v9
-}
-# CHECK-LABEL: function f18 name="twoObjects"
 # CHECK: [[position18]]: {{*}} = ResultAt v4 index=2
 # CHECK: [[firstTest18]]: boolean = IsEnumeratorCurrent v2, v0, [[position18]]
 # CHECK-NEXT: Branch [[firstTest18]] -> taken [[firstCurrent18]](| 0), notTaken [[firstOther18]]()
@@ -538,6 +499,7 @@ function f18 name="twoObjects" parameters=[{type=object}, {type=object}] results
 # CHECK: v8: anything = EnumeratorGetByVal v1, v6, v2, [[position18]], [[secondGuard18]]
 # CHECK: [[secondTest18]]: boolean = IsEnumeratorCurrent v2, v1, [[position18]]
 # CHECK-NEXT: Branch [[secondTest18]] -> taken [[secondCurrent18]](| 0), notTaken [[secondOther18]]()
+}
 
 # TWICE-LABEL: function f0 name="read"
 # TWICE-COUNT-1: IsEnumeratorCurrent

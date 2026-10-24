@@ -107,7 +107,7 @@ static Origin parseOrigin(TextParser& parser)
     return origin;
 }
 
-Wire::Body TextParser::parseBody(const TextItem& item)
+Wire::Body TextParser::parseBody(const TextItem& item, const Wire::Function& function)
 {
     if (!item.hasBody)
         return { };
@@ -125,20 +125,77 @@ Wire::Body TextParser::parseBody(const TextItem& item)
 
     seek(item.body);
     for (uint32_t blockIndex = 0; blockIndex < m_body.scan.numberOfBlocks && !hasFailed(); ++blockIndex)
-        parseBlock(blockIndex);
+        parseBlock(blockIndex, function);
     expect(TokenKind::RightBrace);
     if (hasFailed())
         return { };
     return { builder().appendCode(code().span()), m_body.scan.numberOfBlocks, numberOfDefinedValues(m_body.value) };
 }
 
-void TextParser::parseBlock(uint32_t blockIndex)
+void TextParser::parseBlock(uint32_t blockIndex, const Wire::Function& function)
 {
     m_body.block = BlockID(blockIndex);
-    expectID(*this, IDPrefix::Block, blockIndex);
-
     Wire::BlockHead head;
     size_t headPosition = appendRecord(code(), head);
+    if (!blockIndex && m_body.scan.leavesOutEntryHead)
+        appendEntryParameters(function, head);
+    else
+        parseBlockHead(blockIndex, head);
+
+    while (!hasFailed() && !isAtTerminator(*this)) {
+        parseValue();
+        ++head.valueCount;
+    }
+    parseTerminator();
+    overwriteRecord(code(), headPosition, head);
+}
+
+void TextParser::appendEntryParameters(const Wire::Function& function, Wire::BlockHead& head)
+{
+    auto append = [&](uint32_t typeWord) {
+        appendBlockParameter(ValueID(numberOfDefinedValues(m_body.value)), typeWord, { });
+        ++head.parameterCount;
+        ++m_body.scan.numberOfValues;
+    };
+    auto appendEach = [&](Wire::Span declaredTypes) {
+        for (uint32_t index = 0; index < declaredTypes.count; ++index)
+            append(builder().sections().listOf<Wire::DeclaredType>()[declaredTypes.start + index].type);
+    };
+
+    auto flags = OptionSet<FunctionFlags>::fromRaw(static_cast<OptionSet<FunctionFlags>::StorageType>(function.flags));
+    for (EntryParameter kind : allMembersOf<EntryParameter>) {
+        bool isPresent = flags.containsAll(presentWithOf(kind));
+        switch (kind) {
+        case EntryParameter::Capture:
+            appendEach(function.captures);
+            break;
+        case EntryParameter::Parameter:
+            appendEach(function.parameters);
+            break;
+        case EntryParameter::This:
+            if (isPresent)
+                append(function.thisType.type);
+            break;
+        case EntryParameter::Callee:
+            if (isPresent)
+                append(typeWordOfAnyFunction());
+            break;
+        case EntryParameter::NewTarget:
+            if (isPresent)
+                append(typeWordOfAnything());
+            break;
+        case EntryParameter::ArgumentCount:
+        case EntryParameter::HiddenRest:
+            if (isPresent)
+                fail();
+            break;
+        }
+    }
+}
+
+void TextParser::parseBlockHead(uint32_t blockIndex, Wire::BlockHead& head)
+{
+    expectID(*this, IDPrefix::Block, blockIndex);
     parseList(TokenKind::LeftParenthesis, TokenKind::RightParenthesis, [&] {
         parseBlockParameter();
         ++head.parameterCount;
@@ -169,13 +226,6 @@ void TextParser::parseBlock(uint32_t blockIndex)
     head.hasHandler = seenAttributes.contains(BlockAttribute::Handler);
     expect(TokenKind::Colon);
     expectEndOfLine();
-
-    while (!hasFailed() && !isAtTerminator(*this)) {
-        parseValue();
-        ++head.valueCount;
-    }
-    parseTerminator();
-    overwriteRecord(code(), headPosition, head);
 }
 
 void TextParser::parseBlockParameter()
@@ -185,16 +235,22 @@ void TextParser::parseBlockParameter()
     m_body.value = id;
 
     uint32_t typeWord = accept(TokenKind::Colon) ? parseTypeWord() : Wire::none;
-    appendRecord(code(), Wire::ParameterHead { typeWord });
     if (at(TokenKind::Colon)) {
         fail();
         return;
     }
 
     ValueEngineFields engineFields;
+    parseEngineValueFields(engineFields);
+    appendBlockParameter(id, typeWord, WTF::move(engineFields));
+}
+
+void TextParser::appendBlockParameter(ValueID id, uint32_t typeWord, ValueEngineFields&& engineFields)
+{
+    m_body.value = id;
+    appendRecord(code(), Wire::ParameterHead { typeWord });
     engineFields.function = m_body.function;
     engineFields.value = id;
-    parseEngineValueFields(engineFields);
     if (m_form != IRForm::AsRead)
         engineFields.typeWord = typeWord;
     if (hasAnyField(engineFields))

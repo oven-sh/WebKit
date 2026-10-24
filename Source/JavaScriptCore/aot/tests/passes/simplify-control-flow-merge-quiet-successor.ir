@@ -10,7 +10,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="callee" results=[{type=number}] {
-  b0():
     v0 = Integer integer=1
     Return v0
 }
@@ -24,11 +23,10 @@ function f1 name="successorOnlyReturns" parameters=[{type=function}] results=[{t
   b2() role=CatchHandler:
     v2 = CatchValue
     Return v2
-}
-# CHECK-LABEL: function f1 name="successorOnlyReturns"
 # CHECK: b0(v0: function) handler=b2():
 # CHECK-NEXT: = Call v0
 # CHECK-NEXT: Return v1
+}
 
 function f2 name="successorComputesNumbers" parameters=[{type=function}, {type=number}] results=[{type=anything}] {
   b0(v0: function, v1: number) handler=b2(v1):
@@ -41,13 +39,12 @@ function f2 name="successorComputesNumbers" parameters=[{type=function}, {type=n
   b2(v5) role=CatchHandler:
     v6 = CatchValue
     Return v5
-}
-# CHECK-LABEL: function f2 name="successorComputesNumbers"
 # CHECK: b0(v0: function, v1: number) handler=b2(v1):
 # CHECK-NEXT: = Call v0
 # CHECK-NEXT: = Add v1, v1
 # CHECK-NEXT: = Negate v3
 # CHECK-NEXT: Return v4
+}
 
 function f3 name="parameterTakesItsArgument" parameters=[{type=function}] results=[{type=anything}] {
   b0(v0: function) handler=b2():
@@ -59,12 +56,11 @@ function f3 name="parameterTakesItsArgument" parameters=[{type=function}] result
   b2() role=CatchHandler:
     v4 = CatchValue
     Return v4
-}
-# CHECK-LABEL: function f3 name="parameterTakesItsArgument"
 # CHECK: b0(v0: function) handler=b2():
 # CHECK-NEXT: = Call v0
 # CHECK-NEXT: = TypeTest v1 testedType=number
 # CHECK-NEXT: Return v3
+}
 
 function f4 name="successorCalls" parameters=[{type=function}] results=[{type=anything}] {
   b0(v0: function) handler=b2():
@@ -76,13 +72,12 @@ function f4 name="successorCalls" parameters=[{type=function}] results=[{type=an
   b2() role=CatchHandler:
     v3 = CatchValue
     Return v3
-}
-# CHECK-LABEL: function f4 name="successorCalls"
 # CHECK: b0(v0: function) handler=b2():
 # CHECK-NEXT: = Call v0
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: = Call v0, -, v1
+}
 
 function f5 name="successorThrows" parameters=[{type=function}] results=[{type=anything}] {
   b0(v0: function) handler=b2():
@@ -93,13 +88,12 @@ function f5 name="successorThrows" parameters=[{type=function}] results=[{type=a
   b2() role=CatchHandler:
     v2 = CatchValue
     Return v2
-}
-# CHECK-LABEL: function f5 name="successorThrows"
 # CHECK: b0(v0: function) handler=b2():
 # CHECK-NEXT: = Call v0
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: Throw v1
+}
 
 function f6 name="successorHasCastThatMayThrow" parameters=[{type=function}] results=[{type=anything}] {
   b0(v0: function) handler=b2():
@@ -111,11 +105,10 @@ function f6 name="successorHasCastThatMayThrow" parameters=[{type=function}] res
   b2() role=CatchHandler:
     v3 = CatchValue
     Return v3
-}
-# CHECK-LABEL: function f6 name="successorHasCastThatMayThrow"
 # CHECK: Jump -> next b1()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: = RequireObjectCoercible v1
+}
 
 function f7 name="successorEndsInTailCall" parameters=[{type=function}] results=[{type=anything}] {
   b0(v0: function) handler=b2():
@@ -127,12 +120,11 @@ function f7 name="successorEndsInTailCall" parameters=[{type=function}] results=
   b2() role=CatchHandler:
     v3 = CatchValue
     Return v3
-}
-# CHECK-LABEL: function f7 name="successorEndsInTailCall"
 # CHECK: Jump -> next b1()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: = CallDirect function=f0
 # CHECK-NEXT: ReturnCall v2
+}
 
 function f8 name="successorChecks" parameters=[{type=function}] results=[{type=anything}] {
   b0(v0: function) handler=b2():
@@ -144,10 +136,9 @@ function f8 name="successorChecks" parameters=[{type=function}] results=[{type=a
   b2() role=CatchHandler:
     v3 = CatchValue
     Return v3
-}
 # A check that fails throws nothing.
-# CHECK-LABEL: function f8 name="successorChecks"
 # CHECK: b0(v0: function) handler=b2():
 # CHECK-NEXT: = Call v0
 # CHECK-NEXT: = Check v1 castType=number
 # CHECK-NEXT: Return v2
+}

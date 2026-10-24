@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="bothArmsAbsorb" parameters=[{type=number}, {type=boolean}, {type=number}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean, v2: number):
     v3 = String string=":"
     v4 = Add v0, v3
     Branch v1 -> taken b1(), notTaken b2()
@@ -16,8 +15,6 @@ function f0 name="bothArmsAbsorb" parameters=[{type=number}, {type=boolean}, {ty
   b2():
     v6 = Add v4, v0
     Return v6
-}
-# CHECK-LABEL: function f0 name="bothArmsAbsorb"
 # CHECK-NOT: = Add
 # CHECK: b1():
 # CHECK-NEXT: string = Strcat v0, v3, v2
@@ -25,9 +22,9 @@ function f0 name="bothArmsAbsorb" parameters=[{type=number}, {type=boolean}, {ty
 # CHECK: b2():
 # CHECK-NEXT: string = Strcat v0, v3, v0
 # CHECK-NOT: = Add
+}
 
 function f1 name="armThatAbsorbedAnotherStringFirst" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean):
     v2 = String string=":"
     v3 = Add v0, v2
     v4 = Add v2, v0
@@ -39,16 +36,14 @@ function f1 name="armThatAbsorbedAnotherStringFirst" parameters=[{type=number}, 
     v6 = Add v4, v3
     v7 = Add v6, v3
     Return v7
-}
-# CHECK-LABEL: function f1 name="armThatAbsorbedAnotherStringFirst"
 # CHECK: b1():
 # CHECK-NEXT: string = Strcat v0, v2, v0
 # CHECK: b2():
 # CHECK-NEXT: [[copy1]]: string = Add v0, v2
 # CHECK-NEXT: string = Strcat v2, v0, [[copy1]], [[copy1]]
+}
 
 function f2 name="readerThatAnotherHasAbsorbed" parameters=[{type=number}, {type=boolean}, {type=boolean}, {type=number}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean, v2: boolean, v3: number):
     v4 = String string=":"
     v5 = Add v0, v4
     Branch v1 -> taken b1(), notTaken b6()
@@ -67,8 +62,6 @@ function f2 name="readerThatAnotherHasAbsorbed" parameters=[{type=number}, {type
   b6():
     v8 = Add v5, v0
     Return v8
-}
-# CHECK-LABEL: function f2 name="readerThatAnotherHasAbsorbed"
 # CHECK: v5: string = Add v0, v4
 # CHECK: b3():
 # CHECK-NEXT: Branch v2
@@ -76,3 +69,4 @@ function f2 name="readerThatAnotherHasAbsorbed" parameters=[{type=number}, {type
 # CHECK-NEXT: string = Strcat v5, v3, v0
 # CHECK: b6():
 # CHECK-NEXT: string = Add v5, v0
+}

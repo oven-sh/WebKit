@@ -7,7 +7,6 @@ module m0 path="main.js" displayPath="main.js"
 # CHECK-LABEL: function f0 name="third-link-compares-another-value"
 # CHECK-NOT: Switch
 function f0 name="third-link-compares-another-value" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = String string="a"
     v3 = StrictEq v0, v2
     Branch v3 -> taken b1(), notTaken b2()
@@ -40,7 +39,6 @@ function f0 name="third-link-compares-another-value" parameters=[{type=anything}
 # CHECK: b4():
 # CHECK-NEXT: = ValueEqualsLiteral v1 literal="d"
 function f1 name="fourth-link-compares-another-value" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = String string="a"
     v3 = StrictEq v0, v2
     Branch v3 -> taken b1(), notTaken b2()

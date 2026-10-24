@@ -44,9 +44,9 @@ class TestFileParser {
     WTF_FORBID_HEAP_ALLOCATION;
     WTF_MAKE_NONCOPYABLE(TestFileParser);
 public:
-    TestFileParser(String&& text, Architecture architecture)
+    TestFileParser(String&& text, Architecture architecture, const String& folder)
         : m_architecture(architecture)
-        , m_writtenOut(writeOutRepeats(WTF::move(text)))
+        , m_writtenOut(writeOut(WTF::move(text), folder))
     {
         m_file.text = WTF::move(m_writtenOut.text);
         if (!m_writtenOut.error.isNull())
@@ -685,9 +685,9 @@ std::span<const CheckLine> TestFile::checkLinesFor(StringView prefix) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-TestFile parseTestFile(String&& text, Architecture architecture)
+TestFile parseTestFile(String&& text, Architecture architecture, const String& folder)
 {
-    return TestFileParser(WTF::move(text), architecture).parse();
+    return TestFileParser(WTF::move(text), architecture, folder).parse();
 }
 
 bool holds(StatisticComparison comparison, uint64_t actual, uint64_t expected)

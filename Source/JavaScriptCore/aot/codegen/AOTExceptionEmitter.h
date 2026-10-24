@@ -51,17 +51,14 @@ private:
     using LandingPadsBySuccessor = UncheckedKeyHashMap<CCallHelpers::Label*, uint32_t>;
 
     LBasicBlock landingPadFor(const Target& handler);
-    void generateLandingPad(const Target& handler, LBasicBlock landingPad);
     HandlerType handlerTypeOf(BlockID handler) const;
     bool isEnteredByJump(BlockID handler) const { return m_handlersEnteredByJump.get(handler.index()); }
     B3::Variable* caughtVariableFor(BlockID handler);
-    LValue getCaughtVariable(BlockID handler);
     void setCaughtVariable(BlockID handler, LValue);
     void jumpToHandler(const Target& handler, LValue caught);
     void throwByOperation(const TerminatorContext&, RuntimeOperation, Boxed thrown);
     LValue caughtWord(const ValueContext&);
     Boxed valueOfException(CellPointer exception);
-    RegisterSet registersClobberedAtLandingPads() const;
 
     BitVector m_handlersEnteredByJump;
     BlockMap<B3::Variable*> m_caughtVariables;

@@ -23,10 +23,8 @@ using SiteWeight = uint64_t;
 inline constexpr unsigned siteWeightFractionBits = 8;
 inline constexpr SiteWeight minSiteWeight = 1;
 inline constexpr SiteWeight maxSiteWeight = 1ull << 40;
-// In a function that is entered this often, a block that runs once per activation has the largest weight.
 inline constexpr double maxSiteActivations = static_cast<double>(maxSiteWeight >> siteWeightFractionBits);
 
-// The heat of a block is how often its function is entered times how often the block runs per activation.
 constexpr SiteWeight quantizeHeat(double activations, double frequency)
 {
     constexpr double scale = static_cast<double>(1u << siteWeightFractionBits);
@@ -61,9 +59,7 @@ public:
     FunctionSiteWeights(const Program&, const Heat&, FunctionID, FunctionAnalyses&);
 
     SiteWeight weightOf(BlockID) const;
-    // Without the limit: half the functions of a large program are entered more often than maxSiteActivations by this estimate, and their weights say nothing about one another.
     double heatOf(BlockID) const;
-    // Whether the block is taken to run more than once in an activation of the function.
     bool isInLoop(BlockID) const;
 
 private:

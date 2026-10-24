@@ -17,7 +17,6 @@ expectedresult x0 type=L1 layouts=[L0, L1] validation=[{shape=Object{layout=L1 m
 layout L0 name="Inner" fields=[{key="id" declared={type=number}}, {key="note" declared={type=undefined|string}}]
 layout L1 name="Kinds" fields=[{key="always" declared={type=number}}, {key="count" declared={type=undefined|number}}, {key="name" declared={type=undefined|string}}, {key="flag" declared={type=undefined|boolean}}, {key="inner" declared={type=undefined|L0}}, {key="list" declared={type=undefined|Array<number>}}, {key="orNull" declared={type=undefined|null|string}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="show" [isFreeName]
     v2 = PropGet v0 key="store" [isFreeName]
@@ -90,13 +89,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="parse" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Builtin builtin=JSONParse
     v2 = Call v1, -, v0 expectedResult=x0
     Return v2
 }
 function f2 name="storeTyped" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Convert v0 declared={type=L1} illTypedCause=FromLooseType
     v2 = String string="typed"
     PropSet v1, v2 key="name"
@@ -107,7 +104,6 @@ function f2 name="storeTyped" parameters=[{type=anything}] results=[{type=anythi
     Return
 }
 function f3 name="storeBackwards" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Convert v0 declared={type=L1} illTypedCause=FromLooseType
     v2 = Null
     PropSet v1, v2 key="orNull"
@@ -125,7 +121,6 @@ entry module=m0
 layout L0 name="Inner" fields=[{key="id" declared={type=number}}, {key="note" declared={type=undefined|string}}]
 layout L1 name="Kinds" fields=[{key="always" declared={type=number}}, {key="count" declared={type=undefined|number}}, {key="name" declared={type=undefined|string}}, {key="flag" declared={type=undefined|boolean}}, {key="inner" declared={type=undefined|L0}}, {key="list" declared={type=undefined|Array<number>}}, {key="orNull" declared={type=undefined|null|string}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="show" [isFreeName]
     v2 = PropGet v0 key="store" [isFreeName]
@@ -198,14 +193,12 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="parse" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Builtin builtin=JSONParse
     v2 = Call v1, -, v0
     v3 = Convert v2 declared={type=undefined|null|L1} illTypedCause=FromLooseType
     Return v3
 }
 function f2 name="storeTyped" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Convert v0 declared={type=L1} illTypedCause=FromLooseType
     v2 = String string="typed"
     PropSet v1, v2 key="name"
@@ -216,7 +209,6 @@ function f2 name="storeTyped" parameters=[{type=anything}] results=[{type=anythi
     Return
 }
 function f3 name="storeBackwards" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Convert v0 declared={type=L1} illTypedCause=FromLooseType
     v2 = Null
     PropSet v1, v2 key="orNull"

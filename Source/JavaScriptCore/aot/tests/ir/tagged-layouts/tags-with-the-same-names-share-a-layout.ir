@@ -34,22 +34,18 @@ layout L6 name="NotOrOther" fields=[{key="kind" declared={type=int[3, 4]} flags=
 # READ-NEXT: module m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f1 name="NodeObject" flags=[HasThis] thisType={type=undefined|null|L1} parameters=[{type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: undefined|null|L1, v1: number, v2: number):
     PropSet v0, v1 key="kind" mode=Strict
     PropSet v0, v2 key="pos" mode=Strict
     Return
 }
 function f2 name="operandOf" parameters=[{type=undefined|null|L2}] results=[{type=anything}] {
-  b0(v0: undefined|null|L2):
     v1 = PropGet v0 key="operand"
     Return v1
 }
 function f3 name="take" parameters=[{type=undefined|null|L3}, {type=undefined|null|L6}] results=[{type=anything}] {
-  b0(v0: undefined|null|L3, v1: undefined|null|L6):
     Return
 }
 # READ-LABEL: function f2 name="operandOf"

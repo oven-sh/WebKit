@@ -15,7 +15,6 @@ static constexpr ASCIILiteral programText = R"IR(layout L0 name="Triple" fields=
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -30,13 +29,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="makeTriple" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0, v0, v0 layout=L0 fields=[0, 1, 2]
     v2 = FinishObject v1
     Return v2
 }
 function f2 name="makeReversed" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0, v0, v0 layout=L0 fields=[2, 1, 0]
     v2 = FinishObject v1
     Return v2
@@ -91,17 +88,14 @@ function f5 name="firstKey" parameters=[{type=L0 flags=[IsExpected]}] results=[{
     Return v6
 }
 function f6 name="set" parameters=[{type=anything}, {type=string}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: string, v2: anything):
     ElemSet v0, v1, v2
     Return v0
 }
 function f7 name="remove" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
-  b0(v0: anything, v1: string):
     v2 = ElemDelete v0, v1
     Return v0
 }
 function f8 name="setPrototype" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Builtin builtin=ObjectSetPrototypeOf
     v3 = Call v2, -, v0, v1
     Return v0

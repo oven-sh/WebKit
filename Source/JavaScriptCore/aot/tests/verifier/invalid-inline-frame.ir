@@ -5,28 +5,22 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="badValueFrame" results=[{type=undefined}] inlineFrames=[{}, {callee=f6 module=m0}] {
-  b0():
     v0 = Undefined @3:2
     Return
 }
 function f1 name="badTerminatorFrame" results=[{type=undefined}] inlineFrames=[{}, {callee=f6 module=m0}] {
-  b0():
     Return @3:2
 }
 function f2 name="badParent" results=[{type=undefined}] inlineFrames=[{}, {callee=f6 parent=1 module=m0}] {
-  b0():
     Return
 }
 function f3 name="badModule" results=[{type=undefined}] inlineFrames=[{}, {callee=f6}] {
-  b0():
     Return
 }
 function f4 name="badNoCallee" results=[{type=undefined}] inlineFrames=[{}, {module=m0}] {
-  b0():
     Return
 }
 function f5 name="good" results=[{type=undefined}] inlineFrames=[{}, {callee=f6 module=m0}, {callee=f6 parent=1 module=m0}] {
-  b0():
     v0 = Undefined @3:2
     Return @3:2
 }

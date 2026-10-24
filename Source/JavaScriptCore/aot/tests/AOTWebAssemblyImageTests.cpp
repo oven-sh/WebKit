@@ -18,9 +18,7 @@
 #include "AOTIRParser.h"
 #include "AOTIRProgram.h"
 #include "AOTProgramFile.h"
-#include "AOTWasmModuleCompiler.h"
 #include "AOTWasmModules.h"
-#include "AOTWasmSection.h"
 #include "B3RelocatableValue.h"
 #include "JSLock.h"
 #include "Options.h"
@@ -207,11 +205,9 @@ entry module=m0
 webassemblymodule module=m0
 webassemblymodule module=m1
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f1 name="other" module=m1 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 )IR"_s;
@@ -252,10 +248,7 @@ static const CodeTemplates& templates()
 static CompiledModule compileModule(std::span<const uint8_t> source, BuildContext& context)
 {
     TestVM vm;
-    auto compiler = WasmModuleCompiler::create(vm.get(), source);
-    if (!compiler)
-        return makeUnexpected(compiler.error());
-    return (*compiler)->compile(templates(), context);
+    return compileWasmModule(vm.get(), source, templates(), context);
 }
 
 static WebAssemblyImageInputs layOut(Vector<Wasm::ModuleForImage>&& modules)

@@ -12,13 +12,11 @@ layout L0 name="FilledBehindItsAllocation" fields=[{key="name" declared={type=un
 layout L1 name="StoredThroughParameter" fields=[{key="name" declared={type=undefined|string}}, {key="after" declared={type=undefined|null|function} flags=[IsRequired, IsMethod] flow={location={writers=AllKnown stores=Never}}}] flow={members=[L1] observedUses=[ReachesTypedParse]}
 
 function f0 name="parse" parameters=[{type=undefined|null}] results=[{type=L0}] {
-  b0(v0: undefined|null):
     v1 = NewObject layout=L0
     PutSlot v1, v1, v0 key="after" receivers=[L0] level=Expected
     Return v1
 }
 function f1 name="store-through-parameter" parameters=[{type=L1}, {type=undefined|null}] results=[{type=anything}] {
-  b0(v0: L1, v1: undefined|null):
     PutSlot v0, -, v1 key="after" receivers=[L1] level=Proven
     Return
 }

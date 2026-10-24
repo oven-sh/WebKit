@@ -15,7 +15,6 @@ layout L5 name="IsFull" fields=[{key="first" declared={type=anything} flags=[IsR
 variable g0 name="shared" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="other" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = NewObject -, v1 layout=L0 fields=[0]
@@ -34,7 +33,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="read" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = PropGet v0 key="shared"
     v2 = GetModuleVariable variable=g1

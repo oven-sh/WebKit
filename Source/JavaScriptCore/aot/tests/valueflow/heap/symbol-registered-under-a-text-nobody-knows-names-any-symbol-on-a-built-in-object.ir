@@ -12,7 +12,6 @@ layout L0 fields=[{key="run" declared={type=anything}}] ownFieldCount=1
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Symbol
     v1 = Builtin builtin=SymbolFor
     v2 = Builtin builtin=GlobalThis
@@ -29,6 +28,5 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="run" results=[{type=anything}] {
-  b0():
     Return
 }

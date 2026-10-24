@@ -23,9 +23,7 @@ namespace JSC { namespace AOT {
 // A store by name into a compiled object that has a field of the name.
 StubSignature signatureOfPutKnownField(StubKey)
 {
-    StubSignature signature;
-    signature.addOperand(gprOf(firstStubOperandRegister));
-    signature.addOperand(gprOf(storedValueByIdRegister));
+    StubSignature signature = StubSignature::withoutResult({ gprOf(firstStubOperandRegister), gprOf(storedValueByIdRegister) });
     signature.immediate = gprOf(slotNameRegister);
     return signature;
 }
@@ -88,7 +86,7 @@ static void branchIfChainMayHaveName(StubAssembler& jit, GPRReg object, GPRReg s
     isAbsent.link(&jit);
 }
 
-// The guard of compiled code holds once the run time has looked, and it looks for a store by name that gets there. So one such store in 16 goes there.
+// The guard of compiled code holds once the run time has looked, and it looks for a store by name that gets there. So one such store in 16 goes there: code that comes again and again gets its guard, and code that runs a few times pays for no look.
 static void leaveNowAndThenForGuardOfStores(StubAssembler& jit, GPRReg record, GPRReg scratch, JumpList& leaves)
 {
     static_assert(sizeof(PropertyCacheWords::storesToGuardedFields) == sizeof(uint8_t));
@@ -125,7 +123,6 @@ static void generatePutKnownFieldThatTakesAnyValue(StubAssembler& jit)
     const BaseIndex slot(object, offset, CCallHelpers::TimesOne);
     constexpr uint32_t flagsOfUnusualFields = fieldAttributeFlags | fieldIsPrivate | fieldIsBrand | fieldIsOutOfLine | fieldMayExistWithoutStorage;
     JumpList isLeftToStubForAnyField;
-    JumpList hasNoTransition;
 
     loadStructure(jit, object, structure);
     jit.loadPtr(Address(structure, CompiledStructure::offsetOfLayout()), record);
@@ -156,29 +153,13 @@ static void generatePutKnownFieldThatTakesAnyValue(StubAssembler& jit)
     jit.store64(value, slot);
 
     static_assert(sizeof(FieldData) == 1 << 4 && slotKeyFor(8, false) == 8);
-    const KeyOrderRegisters keyOrder {
-        .object = object,
-        .slotKey = offset,
-        .entry = T11,
-        .words = T14,
-        .scratch = structure,
-    };
+    const KeyOrderRegisters keyOrder { .object = object, .slotKey = offset, .entry = T11, .words = T14, .scratch = structure };
     const GPRReg layout = record;
     const GPRReg fieldIndex = offsetOfRecord;
     jit.subPtr(offsetOfRecord, layout);
     jit.sub32(TrustedImm32(sizeof(LayoutData)), fieldIndex);
     jit.urshift32(TrustedImm32(4), fieldIndex);
-    appendFieldToKeyOrder(jit, keyOrder, layout, fieldIndex, hasNoTransition);
-    returnAfterStoring(jit, object, value);
-
-    hasNoTransition.link(&jit);
-    jit.callOperationAndReturn(Entry::operationAOTDidCreateFieldAt, OperationCall {
-        .returns = OperationCall::Returns::Void,
-        .saves = OperationCall::Saves::CallerSavedRegisters,
-        .checksException = false,
-        .secondArgumentIn = keyOrder.object,
-        .thirdArgumentIn = keyOrder.slotKey,
-    });
+    listCreatedFieldAndReturn(jit, keyOrder, value, FieldOfLayout { layout, fieldIndex });
 
     jit.linkToStub(isLeftToStubForAnyField, putKnownField(mode));
 }
@@ -199,13 +180,7 @@ void generatePutKnownField(StubAssembler& jit)
     const GPRReg structure = jit.allocateScratch(slotPayloadRegister);
     const GPRReg T14 = jit.allocateScratch(StubRegister::T14);
     const FieldStoreRegisters registers {
-        .field = {
-            .object = object,
-            .slotData = T10,
-            .extensionWordOffset = T11,
-            .address = T11,
-            .representation = name,
-        },
+        .field = { .object = object, .slotData = T10, .extensionWordOffset = T11, .address = T11, .representation = name },
         .value = value,
         .type = T14,
         .scratch = T10,
@@ -246,30 +221,18 @@ void generatePutKnownField(StubAssembler& jit)
     goesByName.append(exits.wasAbsentAndIsNotAccepted);
     goesByName.append(exits.cannot);
 
+    auto loadOffsetOfExtensionWord = [&] {
+        jit.load32(Address(structure, CompiledStructure::offsetOfExtensionSlot()), registers.field.extensionWordOffset);
+        jit.and32(TrustedImm32(SlotData::maxOffset), registers.field.extensionWordOffset);
+    };
     isOutOfLine.link(&jit);
-    jit.load32(Address(structure, CompiledStructure::offsetOfExtensionSlot()), registers.field.extensionWordOffset);
-    jit.and32(TrustedImm32(SlotData::maxOffset), registers.field.extensionWordOffset);
+    loadOffsetOfExtensionWord();
     computeFieldAddress(jit, registers.field, true, hasNoStorage);
     jit.jump().linkTo(hasAddress, &jit);
 
-    const KeyOrderRegisters keyOrder {
-        .object = object,
-        .slotKey = T10,
-        .entry = T11,
-        .words = T14,
-        .scratch = name,
-    };
-    const OperationCall didCreateFieldCall {
-        .returns = OperationCall::Returns::Void,
-        .saves = OperationCall::Saves::CallerSavedRegisters,
-        .checksException = false,
-        .secondArgumentIn = keyOrder.object,
-        .thirdArgumentIn = keyOrder.slotKey,
-    };
+    const KeyOrderRegisters keyOrder { .object = object, .slotKey = T10, .entry = T11, .words = T14, .scratch = name };
     FieldStoreExits creationExits;
     JumpList stored;
-    JumpList hasNoTransition;
-    JumpList cannotAppend;
 
     // A field that is about to be created has no granule yet. With one it is a field that has storage and is absent.
     hasNoStorage.link(&jit);
@@ -281,41 +244,7 @@ void generatePutKnownField(StubAssembler& jit)
     Jump needsNoStorage = jit.jump();
     isNotUndefined.link(&jit);
     alwaysNeedsStorage.link(&jit);
-    const GPRReg granule = registers.field.representation;
-    const GPRReg granuleBit = registers.secondScratch;
-    const GPRReg extension = registers.field.address;
-    jit.and32(TrustedImm32(SlotData::maxOffset), registers.field.slotData, granule);
-    jit.urshift32(TrustedImm32(3), granule);
-    jit.sub32(TrustedImm32(1), granule);
-    jit.move(TrustedImm32(1), granuleBit);
-    jit.lshift64(granule, granuleBit);
-    static_assert(granuleOf(offsetOfFirstExtensionSlot) == offsetOfFirstExtensionSlot / 8 - 1 && extensionGranuleSize == 8);
-    jit.load32(Address(structure, CompiledStructure::offsetOfExtensionSlot()), registers.field.extensionWordOffset);
-    jit.and32(TrustedImm32(SlotData::maxOffset), registers.field.extensionWordOffset);
-    if (jit.options().useWideReferences) {
-        jit.load64(BaseIndex(object, registers.field.extensionWordOffset, CCallHelpers::TimesOne), extension);
-        cannotAppend.append(jit.branchTest64(CCallHelpers::Zero, extension));
-    } else {
-        jit.load32(BaseIndex(object, registers.field.extensionWordOffset, CCallHelpers::TimesOne), extension);
-        cannotAppend.append(jit.branchTest32(CCallHelpers::Zero, extension));
-        decodeCell32(jit, extension, extension);
-        jit.addPtr(TrustedImm32(offsetOfEmptyExtensionInCage), extension);
-    }
-    appendGranule(jit, extension, granuleBit, granule, jit.scratchRegister(), cannotAppend);
-    jit.jump().linkTo(findStorage, &jit);
-
-    cannotAppend.link(&jit);
-    jit.preservingCallerSavedRegisters(false, [&](unsigned) {
-        const GPRReg A0 = jit.reuseScratch(StubRegister::A0);
-        const GPRReg A1 = jit.reuseScratch(StubRegister::A1);
-        const GPRReg A2 = jit.reuseScratch(StubRegister::A2);
-        RELEASE_ASSERT(object != A2 && noOverlap(instanceGPR, A1, A2));
-        jit.move(granuleBit, A2);
-        jit.move(object, A1);
-        jit.move(instanceGPR, A0);
-        jit.callOperation(Entry::operationAOTEnsureExtensionGranules, jit.reuseScratch(StubRegister::Operation));
-    });
-    jit.jump().linkTo(findStorage, &jit);
+    createGranuleOfField(jit, registers, loadOffsetOfExtensionWord, findStorage);
 
     // While no field lies outside its slot an empty slot says that the object has no such property. What is cached about the objects below a prototype relies on the run time's report of a field that the prototype gets.
     auto leaveUnlessFieldIsCreatedHere = [&] {
@@ -324,21 +253,7 @@ void generatePutKnownField(StubAssembler& jit)
         // The key order names a field by its slot key.
         goesByName.append(jit.branchTest32(CCallHelpers::NonZero, Address(record, OBJECT_OFFSETOF(FieldData, slot)), TrustedImm32(offsetBitsWithoutSlotKey)));
         if (mode != PutMode::Define) {
-            // The guard of compiled code holds once the run time has looked, and it looks for a store by name that gets there. So one such store in 16 goes there: code that comes again and again gets its guard, and code that runs a few times pays for no look.
-            static_assert(sizeof(PropertyCacheWords::storesToGuardedFields) == sizeof(uint8_t));
-            constexpr int32_t offsetOfCounter = AOT_INSTANCE_OFFSET(propertyCaches.storesToGuardedFields);
-            constexpr int32_t step = (UINT8_MAX + 1) / 16;
-            Jump hasNoGuard = jit.branchTest32(CCallHelpers::Zero, Address(record), TrustedImm32(hasGuardOfStoresInFirstWord));
-#if CPU(ARM64)
-            jit.load8(Address(instanceGPR, offsetOfCounter), registers.scratch);
-            jit.add32(TrustedImm32(step), registers.scratch);
-            jit.store8(registers.scratch, Address(instanceGPR, offsetOfCounter));
-            goesByName.append(jit.branchTest32(CCallHelpers::NonZero, registers.scratch, TrustedImm32(UINT8_MAX + 1)));
-#else
-            jit.m_assembler.addb_im(step, offsetOfCounter, instanceGPR);
-            goesByName.append(Jump(jit.m_assembler.jCC(X86Assembler::ConditionC)));
-#endif
-            hasNoGuard.link(&jit);
+            leaveNowAndThenForGuardOfStores(jit, record, registers.scratch, goesByName);
             // The type has passed, and the store below takes its register for a scratch register.
             const GPRReg nameOfField = registers.type;
             loadNameOfField(jit, record, nameOfField);
@@ -368,11 +283,7 @@ void generatePutKnownField(StubAssembler& jit)
     Jump isInCell = jit.branchTest32(CCallHelpers::Zero, Address(record, offsetOfFlagsWord), TrustedImm32(fieldIsOutOfLine));
     jit.or32(TrustedImm32(outOfLineSlotKey), keyOrder.slotKey);
     isInCell.link(&jit);
-    appendFieldToKeyOrder(jit, keyOrder, hasNoTransition);
-    returnAfterStoring(jit, object, value);
-
-    hasNoTransition.link(&jit);
-    jit.callOperationAndReturn(Entry::operationAOTDidCreateFieldAt, didCreateFieldCall);
+    listCreatedFieldAndReturn(jit, keyOrder, value);
 
     // The caller has seen that the slot, which lies in the cell, is empty, and that the field takes the value: its type does and its slot does.
     jit.bindEntry(createKnownField(mode));

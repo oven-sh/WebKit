@@ -12,7 +12,6 @@ layout L3 name="NumbersHaveRoom" fields=[{key="count" declared={type=null|int[0,
 layout L4 name="NumbersFull" fields=[{key="total" declared={type=null|int[0, 100]} flags=[IsRequired]}, {key="count" declared={type=null|int[0, 100]} flags=[IsRequired]}, {key="rest" declared={type=i32} flags=[IsRequired]}, {key="more" declared={type=i32} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = Null
     v2 = NewObject -, v0 layout=L0 fields=[0]

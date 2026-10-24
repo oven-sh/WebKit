@@ -7,14 +7,12 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 module=m0 fields=[{key="high" declared={type=int} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=SetAtCreation} occupancy=FilledAtBirth stability=[IsNeverDeleted, IsNeverRedefined]}}, {key="low" declared={type=int} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=SetAtCreation} occupancy=FilledAtBirth stability=[IsNeverDeleted, IsNeverRedefined]}}] declaredOrder=[1, 0] ownFieldCount=2 flow={baseState=None constructorOrders=[{fields=[1, 0]}] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation] keys=NeverEnumerated addedKeysAreComplete=true}
 
 function f0 name="worker" parameters=[{type=L0}, {type=int}] results=[{type=i32}, {type=L0}, {type=int}, {type=int}] {
-  b0(v0: L0, v1: int):
     v2 = Integer integer=1
     v3 = Results v2, v0, v1, v1
     Return v3
 }
 
 function f1 name="handedOnToASecondJoin" parameters=[{type=L0}, {type=int}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: L0, v1: int, v2: boolean):
     Branch v2 -> taken b1(), notTaken b4()
   b1():
     v3 = CallDirect v0, v1 function=f0
@@ -50,8 +48,7 @@ function f1 name="handedOnToASecondJoin" parameters=[{type=L0}, {type=int}, {typ
   b9() frequency=Rare:
     v22 = Undefined
     Return v22
-}
-# CHECK-LABEL: function f1 name="handedOnToASecondJoin"
 # CHECK: b2():
 # CHECK-NOT: NewObject
 # CHECK: frequency=Rare
+}

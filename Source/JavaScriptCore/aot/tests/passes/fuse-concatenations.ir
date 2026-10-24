@@ -5,77 +5,63 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="chain" parameters=[{type=string}, {type=string}, {type=string}, {type=string}] results=[{type=string}] {
-  b0(v0: string, v1: string, v2: string, v3: string):
     v4 = Add v0, v1
     v5 = Add v4, v2
     v6 = Add v5, v3
     Return v6
-}
-# CHECK-LABEL: function f0 name="chain"
 # CHECK-NOT: = Add
 # CHECK: string = Strcat v0, v1, v2, v3
+}
 
 function f1 name="nested" parameters=[{type=string}, {type=string}, {type=string}] results=[{type=string}] {
-  b0(v0: string, v1: string, v2: string):
     v3 = Strcat v0, v1
     v4 = Strcat v3, v2
     Return v4
-}
-# CHECK-LABEL: function f1 name="nested"
 # CHECK: string = Strcat v0, v1, v2
 # CHECK-NOT: Strcat
+}
 
 function f2 name="primitiveParts" parameters=[{type=string}, {type=number}, {type=undefined}] results=[{type=string}] {
-  b0(v0: string, v1: number, v2: undefined):
     v3 = Add v0, v1
     v4 = Add v3, v2
     Return v4
-}
-# CHECK-LABEL: function f2 name="primitiveParts"
 # CHECK: string = Strcat v0, v1, v2
+}
 
 function f3 name="twoUses" parameters=[{type=string}, {type=string}] results=[{type=string}] {
-  b0(v0: string, v1: string):
     v2 = Add v0, v1
     v3 = Add v2, v2
     Return v3
-}
-# CHECK-LABEL: function f3 name="twoUses"
 # CHECK-COUNT-2: = Add
 # CHECK-NOT: Strcat
+}
 
 function f4 name="callBetween" parameters=[{type=string}, {type=string}, {type=function}] results=[{type=string}] {
-  b0(v0: string, v1: string, v2: function):
     v3 = Add v0, v1
     v4 = Call v2
     v5 = Add v3, v0
     Return v5
-}
-# CHECK-LABEL: function f4 name="callBetween"
 # CHECK-COUNT-2: = Add
 # CHECK-NOT: Strcat
+}
 
 function f5 name="unknownOperand" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: anything):
     v2 = Add v0, v0
     v3 = Add v2, v1
     Return v3
-}
-# CHECK-LABEL: function f5 name="unknownOperand"
 # CHECK-COUNT-2: = Add
 # CHECK-NOT: Strcat
+}
 
 function f6 name="otherBlock" parameters=[{type=string}, {type=string}] results=[{type=string}] {
-  b0(v0: string, v1: string):
     v2 = Add v0, v1
     Jump -> next b1()
   b1():
     v3 = Add v2, v0
     Return v3
-}
-# CHECK-LABEL: function f6 name="otherBlock"
 # CHECK-NOT: = Add
 # CHECK: string = Strcat v0, v1, v0
+}
 
 function f7 name="underHandler" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
   b0(v0: string, v1: string) handler=b2():
@@ -87,18 +73,15 @@ function f7 name="underHandler" parameters=[{type=string}, {type=string}] result
   b2() role=CatchHandler:
     v4 = CatchValue
     Return v4
-}
-# CHECK-LABEL: function f7 name="underHandler"
 # CHECK: b0(v0: string, v1: string) handler=b2():
 # CHECK-NEXT: string = Strcat v0, v1, v0
 # CHECK-NEXT: Jump
+}
 
 function f8 name="arithmeticInner" parameters=[{type=number}, {type=number}, {type=string}] results=[{type=string}] {
-  b0(v0: number, v1: number, v2: string):
     v3 = Add v0, v1
     v4 = Add v3, v2
     Return v4
-}
-# CHECK-LABEL: function f8 name="arithmeticInner"
 # CHECK-COUNT-2: = Add
 # CHECK-NOT: Strcat
+}

@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="sumOfWordsKeptToAWord" parameters=[{type=i32}, {type=int[1, 9]}, {type=int[0, 16777215]}] results=[{type=i32}] {
-  b0(v0: i32, v1: int[1, 9], v2: int[0, 16777215]):
     v3 = Integer integer=0
     v4 = Integer integer=0
     Jump -> next b1(v3, v4)
@@ -23,6 +22,5 @@ function f0 name="sumOfWordsKeptToAWord" parameters=[{type=i32}, {type=int[1, 9]
     v15 = Integer integer=16777215
     v16 = BitAnd v14, v15 form=Numbers
     Return v16
-}
-# CHECK-LABEL: function f0 name="sumOfWordsKeptToAWord"
 # CHECK: b1(v5: i32 @Int32,
+}

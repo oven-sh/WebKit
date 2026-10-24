@@ -38,27 +38,22 @@ layout L10 kind=Instance name="Recorder" constructor=f4 fields=[{key="tape" decl
 # CHECK-NEXT: L10: members [L10]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f1 name="FiberNode" flags=[HasThis] thisType={type=undefined|null|L2} results=[{type=anything}] {
-  b0(v0: undefined|null|L2):
     v1 = Null
     PropSet v0, v1 key="next" mode=Strict
     PropSet v0, v1 key="state" mode=Strict
     Return
 }
 function f2 name="RootNode" flags=[HasThis] thisType={type=undefined|null|L3} parameters=[{type=undefined|null|L2}] results=[{type=anything}] {
-  b0(v0: undefined|null|L3, v1: undefined|null|L2):
     PropSet v0, v1 key="current" mode=Strict
     Return
 }
 function f3 name="take" parameters=[{type=undefined|null|L2}, {type=undefined|null|L3}, {type=undefined|null|L4}, {type=undefined|null|L6}] results=[{type=anything}] {
-  b0(v0: undefined|null|L2, v1: undefined|null|L3, v2: undefined|null|L4, v3: undefined|null|L6):
     Return
 }
 function f4 name="Recorder" flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Null
     PropSet v0, v1 key="tape" mode=Strict
     Return

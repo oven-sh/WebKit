@@ -7,7 +7,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number}}]
 
 function f0 name="takenEdgePassesGuard" parameters=[{type=anything}, {type=boolean}, {type=number}] results=[{type=number}] {
-  b0(v0: anything, v1: boolean, v2: number):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v3 = NewObject -, v2 layout=L0 fields=[0]
@@ -22,17 +21,15 @@ function f0 name="takenEdgePassesGuard" parameters=[{type=anything}, {type=boole
   b5():
     v7 = Integer integer=0
     Return v7
-}
-# CHECK-LABEL: function f0 name="takenEdgePassesGuard"
 # CHECK: b1():
 # CHECK: Jump -> next b3(v3)
 # CHECK-NEXT: b2():
 # CHECK-NEXT: Jump -> next b3(v0)
 # CHECK: Branch v5 -> taken b4(| 0), notTaken b5()
 # CHECK-NEXT: b4(v6: guard):
+}
 
 function f1 name="takenEdgePassesNarrowedOperand" parameters=[{type=anything}, {type=boolean}, {type=number}] results=[{type=number}] {
-  b0(v0: anything, v1: boolean, v2: number):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v3 = NewObject -, v2 layout=L0 fields=[0]
@@ -47,9 +44,8 @@ function f1 name="takenEdgePassesNarrowedOperand" parameters=[{type=anything}, {
   b5():
     v7 = Integer integer=0
     Return v7
-}
-# CHECK-LABEL: function f1 name="takenEdgePassesNarrowedOperand"
 # CHECK: b1():
 # CHECK: Jump -> next b4(v3)
 # CHECK-NEXT: b2():
 # CHECK-NEXT: Jump -> next b3(v0)
+}

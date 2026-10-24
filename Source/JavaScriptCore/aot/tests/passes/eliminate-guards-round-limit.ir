@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="oneTestDropsOutPerRound" parameters=[{type=anything}, {type=boolean}, {type=Array<anything>}] results=[{type=undefined}] {
-  b0(v0: anything, v1: boolean, v2: Array<anything>):
     v3 = NewArray contents=anything
     v4 = NewArray contents=anything
     v5 = NewArray contents=anything

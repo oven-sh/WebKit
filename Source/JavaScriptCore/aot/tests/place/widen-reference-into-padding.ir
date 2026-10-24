@@ -13,7 +13,6 @@ layout L4 name="Full" fields=[{key="left" declared={type=null|L0} flags=[IsRequi
 layout L5 name="GetsOtherProperties" fields=[{key="link" declared={type=null|L0} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToString v1

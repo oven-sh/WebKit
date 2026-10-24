@@ -5,11 +5,9 @@
 expectedresult x0 type=anything
 module m0 path="main.js" displayPath="main.js"
 function f0 name="callList" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewArray v1, v0 contents=anything
     v3 = CallList v0, v1, v2 calleeKey="m" calleeName="o.m" expectedResult=x0
     Return v3
-}
-# CHECK-LABEL: function f0 name="callList"
 # CHECK-NOT: NewArray
 # CHECK: = Call v0, v1, v1, v0 calleeKey="m" calleeName="o.m" expectedResult=x0
+}

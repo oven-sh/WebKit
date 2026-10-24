@@ -9,8 +9,6 @@ function f0 name="mulOfExpectedNumbers" parameters=[{type=number flags=[IsExpect
   b0(v0: anything ~ number, v1: anything ~ number):
     v2 = Mul v0, v1
     Return v2
-}
-# CHECK-LABEL: function f0 name="mulOfExpectedNumbers"
 # CHECK-NEXT: b0(v0: anything ~ number, v1: anything ~ number):
 # CHECK-NEXT: [[fails]]: boolean = ShouldFailPrediction
 # CHECK-NEXT: Branch [[fails]] -> taken [[copy]](), notTaken [[tests]]()
@@ -21,3 +19,4 @@ function f0 name="mulOfExpectedNumbers" parameters=[{type=number flags=[IsExpect
 # CHECK-NEXT: Branch [[first]] -> taken [[next]](| 0), notTaken [[copy]]()
 # CHECK: [[second]]:{{*}}= TypeTest v1 testedType=number
 # CHECK-NEXT: Branch [[second]] -> taken {{*}}(| 0), notTaken [[copy]]()
+}

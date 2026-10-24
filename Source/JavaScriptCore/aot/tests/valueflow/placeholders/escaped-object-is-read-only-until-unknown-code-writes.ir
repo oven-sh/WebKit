@@ -15,7 +15,6 @@ entry module=m0 hostReads=[{exportName="default"}]
 layout L0 name="Shown" fields=[{key="go" declared={type=anything} flags=[IsRequired]}, {key="spare" declared={type=anything} flags=[IsRequired]}]
 variable g0 name="default" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
@@ -26,15 +25,12 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="one" results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="two" results=[{type=anything}] {
-  b0():
     Return
 }
 function f3 name="never" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="somethingThatNoTableLists" [isFreeName]
     v2 = Call v1, -

@@ -9,7 +9,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="arrayIndices" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="0"
     v2 = String string="7"
     v3 = String string="42"
@@ -29,7 +28,6 @@ function f0 name="arrayIndices" parameters=[{type=anything}] results=[{type=anyt
 # CHECK-NEXT: Return v5
 
 function f1 name="canonicalNumericStrings" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="4294967295"
     v2 = String string="-1"
     v3 = String string="1.5"
@@ -61,7 +59,6 @@ function f1 name="canonicalNumericStrings" parameters=[{type=anything}] results=
 # CHECK-NEXT: Return v9
 
 function f2 name="everyAccess" parameters=[{type=object}, {type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: object, v2: anything):
     v3 = String string="0"
     v4 = ElemGet v0, v3
     ElemSet v0, v3, v2
@@ -84,7 +81,6 @@ function f2 name="everyAccess" parameters=[{type=object}, {type=object}, {type=a
 # CHECK-NEXT: Return v4
 
 function f3 name="indexComputedFromParts" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="1"
     v2 = String string="0"
     v3 = Add v1, v2
@@ -97,7 +93,6 @@ function f3 name="indexComputedFromParts" parameters=[{type=anything}] results=[
 # CHECK-NEXT: v4:{{*}}= ElemGet v0, v3
 
 function f4 name="numbers" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=0
     v2 = Double number=1.5
     v3 = ElemGet v0, v1
@@ -110,7 +105,6 @@ function f4 name="numbers" parameters=[{type=anything}] results=[{type=anything}
 # CHECK-NEXT: v4:{{*}}= ElemGet v0, v2
 
 function f5 name="textNoNumberIsPrintedAs" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="01"
     v2 = String string="1.0"
     v3 = String string="+1"

@@ -7,7 +7,6 @@ layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
 layout L1 name="Size" fields=[{key="x" declared={type=anything}}]
 
 function f0 name="sameLayoutsSameObject" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: object, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = ShapeTest v0 layouts=[L0]
@@ -25,7 +24,6 @@ function f0 name="sameLayoutsSameObject" parameters=[{type=object}, {type=boolea
 # CHECK-NEXT: v4 facts: [Shape of v0 by v2 reads -]
 
 function f1 name="differentLayouts" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: object, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = ShapeTest v0 layouts=[L0]
@@ -42,7 +40,6 @@ function f1 name="differentLayouts" parameters=[{type=object}, {type=boolean}] r
 # CHECK-NEXT: v4 facts: [Shape of v0 by v2 or v3 reads -]
 
 function f2 name="differentObjects" parameters=[{type=object}, {type=object}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: object, v1: object, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v3 = ShapeTest v0 layouts=[L0]
@@ -59,7 +56,6 @@ function f2 name="differentObjects" parameters=[{type=object}, {type=object}, {t
 # CHECK-NEXT: v5 facts: []
 
 function f3 name="carriedAroundLoop" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b4()
   b1(v2):
@@ -78,7 +74,6 @@ function f3 name="carriedAroundLoop" parameters=[{type=object}] results=[{type=a
 # CHECK-NEXT: v2 facts: [Shape of v0 by v1 reads -]
 
 function f4 name="testedAgainInLoop" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b3()
   b1(v2):
@@ -96,7 +91,6 @@ function f4 name="testedAgainInLoop" parameters=[{type=object}] results=[{type=a
 # CHECK-NEXT: v6 facts: [Shape of v0 by v5 reads -]
 
 function f5 name="loopPassesAnotherLayout" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b3()
   b1(v2):
@@ -113,7 +107,6 @@ function f5 name="loopPassesAnotherLayout" parameters=[{type=object}] results=[{
 # CHECK-NEXT: v5 facts: [Shape of v0 by v4 reads -]
 
 function f6 name="allocationMeetsTest" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     Branch v1 -> taken b1(), notTaken b3()
   b1():

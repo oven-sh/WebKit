@@ -17,7 +17,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class AccessEmitter final : public OperationEmitter {
 public:
-    explicit AccessEmitter(CodeGenerator&);
+    explicit AccessEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generatePropGet(const ValueContext&);
     void generatePropSet(const ValueContext&);
@@ -54,18 +54,24 @@ public:
     // The Structure that the same change of prototype led to before. Storing it is the whole change only for an object that is extensible and is no prototype itself.
     Word32 findPrototypeTransition(CellPointer object, Boxed prototype, LBasicBlock isUnknown);
     void storeStructureAfterPrototypeTransition(CellPointer object, Word32 structureID);
-    static PutMode putModeOf(ECMAMode);
+    static PutMode putModeOf(ECMAMode mode) { return forMode(mode, PutMode::Strict, PutMode::Sloppy); }
     std::optional<CellPointer> tryAllocateCopyOfFields(const ValueContext& allocation, ValueID copy, WholeCell, const ScopedLambda<CellPointer()>& allocateEmpty);
 
 private:
+    template<typename T> static T forMode(ECMAMode mode, T whenStrict, T whenSloppy)
+    {
+        switch (mode) {
+        case ECMAMode::Strict:
+            return whenStrict;
+        case ECMAMode::Sloppy:
+            return whenSloppy;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
     std::optional<uint32_t> findIdentifierNumber(const OperationContext&, PropertyKeyID);
     bool comesAgain(const OperationContext&);
-    std::optional<uint32_t> findRecordOfStoredField(const ValueContext&);
-    StubKey stubForStoreByRecord(const ValueContext&, PutMode);
-    Boxed getByIdThroughSiteCache(const OperationContext&, Boxed receiver, uint32_t identifier, SiteCacheID, std::optional<Origin>);
-    Boxed getByIdThroughTables(const OperationContext&, Boxed receiver, uint32_t identifier, std::optional<Origin>);
-    void putByIdThroughSiteCache(const OperationContext&, Boxed receiver, uint32_t identifier, Boxed value, PutMode, SiteCacheID);
-    void putByIdThroughTables(const OperationContext&, Boxed receiver, uint32_t identifier, Boxed value, PutMode);
+    void putNamedProperty(const ValueContext&, Boxed object, PutMode);
     Boxed getFreeName(const ValueContext&);
     void putFreeName(const ValueContext&);
     CellPointer globalObject();
@@ -73,8 +79,13 @@ private:
     TypedPointer globalBindingLocationOrElse(Pointer record, bool seesScriptBindings, LBasicBlock miss);
     void validateGlobalBinding(const ValueContext&, Boxed read);
     void defineAccessor(const ValueContext&, uint32_t accessorFlags);
+    // An index in a register, or any value.
+    struct ElementKey {
+        LValue value;
+        bool isInteger;
+    };
+    std::optional<ElementKey> elementKeyOf(const ValueContext&);
     Boxed keyOperand(const OperationContext&, PropertyKeyID key, ValueID computedKey);
-    Boxed identifierOperand(const OperationContext&, PropertyKeyID);
     struct ExcludedKeys {
         Word32 run;
         Word32 count;

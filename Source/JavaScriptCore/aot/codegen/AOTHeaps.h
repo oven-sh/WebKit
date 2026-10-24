@@ -117,17 +117,12 @@ private:
     bool hasTemporaryClientHeaps() const final;
     void appendGrownClientHeaps(WTF::Vector<GrownHeap, 16>&) final;
 
-    void initializeEntireHeaps();
-    void initializeBuckets();
-    void initializeFieldHeaps();
     void nestUpstreamHeaps();
-    void nestUnclaimedHeaps();
-    void retainBucketChildren();
     void indexHeaps();
 
     B3::AbstractHeap& mutableEntire(Typed::AbstractHeap heap) LIFETIME_BOUND { return m_entireHeaps[static_cast<size_t>(heap)]; }
-    Bucket& bucketOf(Typed::AbstractHeap, unsigned bit) LIFETIME_BOUND;
-    const Bucket& bucketOf(Typed::AbstractHeap, unsigned bit) const LIFETIME_BOUND;
+    Bucket& bucketOf(Typed::AbstractHeap heap, unsigned bit) LIFETIME_BOUND { return m_buckets[Typed::maskIndexOf(heap)][bit]; }
+    const Bucket& bucketOf(Typed::AbstractHeap heap, unsigned bit) const LIFETIME_BOUND { return m_buckets[Typed::maskIndexOf(heap)][bit]; }
 
     std::array<B3::AbstractHeap, Typed::numberOfHeaps> m_entireHeaps;
     std::array<Buckets, Typed::numberOfIndexedHeaps> m_buckets;

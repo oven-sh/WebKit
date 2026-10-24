@@ -35,14 +35,12 @@ enum class OwnPropertyGain : uint8_t { Unknown, Impossible };
 
 OwnPropertyGain ownPropertyGainOf(const Program&, LayoutID, PropertyKeyID);
 
-enum class LayoutTestKind : uint8_t { Type };
-
 enum class InstanceCount : uint8_t { Unknown, AtMostOne };
 
 InstanceCount instanceCountOf(const PropertyAccessContext&);
 
 struct MemberCondition {
-    enum class Kind : uint8_t { MemberUnchanged, PrototypeLinkUnchanged, ClassEvaluatedOnce, InstancePrototypeUnchanged, MemberNotHidden, MemberPassedByStores };
+    using Kind = MemberConditionKind;
 
     Kind kind { Kind::MemberUnchanged };
     LayoutID layout;
@@ -65,7 +63,6 @@ struct ReceiverCandidates {
     KnowledgeLevel level { KnowledgeLevel::Unknown };
     LayoutList proven;
     LayoutList predicted;
-    // Of the predicted ones: those that the expected type lists.
     LayoutList ofExpectedType;
     bool hasOtherParts { false };
     bool mayBeNullish { false };
@@ -77,27 +74,13 @@ struct ReceiverCandidates {
     void dump(PrintStream&) const;
 };
 
-// The allocated layouts whose objects have every one of the names, each as a field or as a member of a class above them.
 bool hasMemberToFindUnder(const Program&, LayoutID, PropertyKeyID name);
 LayoutList allocatedLayoutsWith(const Program&, std::span<const PropertyKeyID> names, size_t stopsCountingAbove = std::numeric_limits<size_t>::max());
 
 ReceiverCandidates candidatesOf(const Program&, const Type& receiver, const Type* expected, LayoutSetID stamp);
 ReceiverCandidates receiverCandidates(const Program&, const Function&, ValueID receiver, LayoutSetID stamp = { });
 
-enum class UnionPartKind : uint8_t {
-    OtherObjects,
-    Nullish,
-    Boolean,
-    Number,
-    String,
-    Symbol,
-    BigInt,
-    Absent,
-    Layouts,
-    BuiltinClass,
-    Functions,
-    Builtins,
-};
+enum class UnionPartKind : uint8_t { OtherObjects, Nullish, Boolean, Number, String, Symbol, BigInt, Absent, Layouts, BuiltinClass, Functions, Builtins };
 
 struct UnionPart {
     UnionPartKind kind { UnionPartKind::OtherObjects };
@@ -107,10 +90,8 @@ struct UnionPart {
 using UnionParts = Vector<UnionPart, 4>;
 
 UnionParts unionPartsOf(const Type&);
-// No fewer than unionPartsOf() gives, without the parts. Whoever needs two of them asks first.
 size_t maxNumberOfUnionParts(const Type&);
 bool isClosedUnion(const UnionParts&);
-// The same answer without the parts. Whoever gives up at the part OtherObjects asks first: most operands of untyped code have it, and the parts are a dozen types to build.
 inline bool isClosedUnion(const Type& type) { return !type.anyObject && !type.anyFunction && !type.environment && !type.opaque; }
 
 } } } // namespace JSC::AOT::Typed

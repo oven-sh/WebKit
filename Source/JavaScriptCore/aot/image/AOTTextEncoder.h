@@ -8,16 +8,13 @@
 #if ENABLE(AOT)
 
 #include "AOTImageForward.h"
+#include "AOTIdentifierNumbering.h"
 #include "AOTImageText.h"
-#include "AOTStringConstantNumbering.h"
-#include "AOTStringUses.h"
 #include "AOTVector.h"
 #include <span>
 #include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT {
-
-class IdentifierNumbering;
 
 struct TextInputs {
     const Typed::Program& program;
@@ -29,8 +26,6 @@ struct TextInputs {
 };
 
 struct EncodedText {
-    unsigned hashOf(StringID) const;
-
     Vector<uint8_t> strings;
     Vector<uint8_t> longStrings;
     Vector<uint8_t> text;

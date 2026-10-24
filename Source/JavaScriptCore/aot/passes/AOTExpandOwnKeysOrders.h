@@ -9,24 +9,15 @@
 
 #include "AOTIR.h"
 #include "AOTVector.h"
-#include <optional>
-#include <span>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-class FunctionAnalyses;
-
 using KeyOrderFields = Vector<uint32_t, 8>;
-
-enum class KeyOrderCoverage : uint8_t {
-    Unknown,
-    EveryObject,
-};
 
 struct ExpectedKeyOrders {
     LayoutID layout;
     Vector<KeyOrderFields, 4> orders;
-    KeyOrderCoverage coverage { KeyOrderCoverage::Unknown };
+    bool coversEveryObject { false };
     uint32_t numberOfOrdersLeftOut { 0 };
 };
 
@@ -38,8 +29,6 @@ struct KeyOrderLimits {
 bool isEnumerableStringField(const Program&, const Field&);
 
 ExpectedKeyOrders expectedKeyOrdersOf(const Program&, LayoutID, KeyOrderLimits);
-
-std::optional<KeyOrderFields> keyOrderAtCreation(const Program&, const Function&, FunctionAnalyses&, ValueID object);
 
 } } } // namespace JSC::AOT::Typed
 

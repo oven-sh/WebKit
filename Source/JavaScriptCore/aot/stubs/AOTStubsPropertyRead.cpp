@@ -26,6 +26,7 @@ namespace JSC { namespace AOT {
 
 static_assert(slotNameRegister == StubRegister::T9 && slotHeaderRegister == StubRegister::T12 && slotPayloadRegister == StubRegister::T13);
 static_assert(!PackedSlot::offsetOfPayload() && PackedSlot::offsetOfLocation() == sizeof(uint32_t) && sizeof(PackedSlot) == sizeof(uint64_t));
+static_assert(PackedSlot::offsetOfName() + sizeof(uint16_t) == sizeof(PackedSlot));
 
 static StubSignature signatureReturningValue(std::initializer_list<StubRegister> operands)
 {
@@ -51,29 +52,6 @@ StubSignature signatureOfGetByIdOfNarrowCellInExtension(StubKey) { return signat
 StubSignature signatureOfGetByIdOfEmptySlot(StubKey) { return signatureReturningValue({ firstStubOperandRegister }); }
 StubSignature signatureOfGetByIdBehindFieldTable(StubKey) { return signatureReturningValue({ firstStubOperandRegister }); }
 StubSignature signatureOfInById(StubKey) { return signatureReturningValue({ firstStubOperandRegister }); }
-
-struct ReadProbeRegisters {
-    GPRReg R0;
-    GPRReg T9;
-    GPRReg T10;
-    GPRReg T11;
-    GPRReg T12;
-    GPRReg T13;
-    GPRReg T14;
-};
-
-static ReadProbeRegisters allocateReadProbeRegisters(StubAssembler& jit)
-{
-    return {
-        .R0 = jit.operand(0),
-        .T9 = jit.immediate(),
-        .T10 = jit.allocateScratch(StubRegister::T10),
-        .T11 = jit.allocateScratch(StubRegister::T11),
-        .T12 = jit.allocateScratch(StubRegister::T12),
-        .T13 = jit.allocateScratch(StubRegister::T13),
-        .T14 = jit.allocateScratch(StubRegister::T14),
-    };
-}
 
 static void returnOwnInlineValue(StubAssembler& jit, GPRReg receiver, GPRReg cell)
 {
@@ -112,10 +90,20 @@ void findInPropertyTable(StubAssembler& jit, const ObjectLookupRegisters& r, Jum
     const GPRReg entry = r.structure;
     RELEASE_ASSERT(noOverlap(r.receiver, r.name, r.uid, r.object, r.structure, r.size, r.vector, r.index));
 
-    // In the loop size is one less, the mask, and index has the number of the word in its upper half and how many words have been passed in its lower half. At least half of the words of an index are empty, so the loop ends.
-    const GPRReg mask = r.size;
-    const GPRReg position = r.index;
-    auto beginLoop = [&] {
+    // PropertyTable::findImpl(). loadWord leaves in entry the word of the index with the given number. branchIfEntryHasName is told by how much r.size is below the size of the index.
+    auto search = [&](JumpList EmptyWordsOfPropertyTable::* words, auto loadWord, auto branchIfEntryHasName) {
+        for (unsigned probe = 0; probe < numberOfWordsBeforeLoop; ++probe) {
+            if (probe)
+                jit.add32(TrustedImm32(probe), r.index);
+            jit.add32(TrustedImm32(-1), r.size, entry);
+            jit.and32(entry, r.index);
+            loadWord(r.index);
+            (emptyWords ? emptyWords->*words : isAbsentHere).append(jit.branchTest32(CCallHelpers::Zero, entry));
+            branchIfEntryHasName(0);
+        }
+        // In the loop size is one less, the mask, and index has the number of the word in its upper half and how many words have been passed in its lower half. At least half of the words of an index are empty, so the loop ends.
+        const GPRReg mask = r.size;
+        const GPRReg position = r.index;
         jit.sub32(TrustedImm32(1), mask);
         jit.lshift64(TrustedImm32(32), position);
         jit.add64(TrustedImm32(numberOfWordsBeforeLoop - 1), position);
@@ -125,9 +113,10 @@ void findInPropertyTable(StubAssembler& jit, const ObjectLookupRegisters& r, Jum
         jit.add64(entry, position);
         jit.urshift64(position, TrustedImm32(32), entry);
         jit.and32(mask, entry);
-        return nextWord;
-    };
-    auto leaveLoopAtEmptyWord = [&](Jump isEmpty, JumpList EmptyWordsOfPropertyTable::* words) {
+        loadWord(entry);
+        Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, entry);
+        branchIfEntryHasName(1);
+        jit.jump().linkTo(nextWord, &jit);
         if (!emptyWords) {
             isAbsentHere.append(isEmpty);
             return;
@@ -158,34 +147,18 @@ void findInPropertyTable(StubAssembler& jit, const ObjectLookupRegisters& r, Jum
     jit.urshift32(TrustedImm32(StringImpl::s_flagCount), r.index);
     Jump isWide = jit.branchTestPtr(CCallHelpers::Zero, r.vector, TrustedImm32(PropertyTable::flagOfCompactIndexVector));
 
-    // PropertyTable::findImpl(). The address in vector is one too high, by the flag. The entries lie behind the index, and their numbers begin at one.
+    // The address in vector is one too high, by the flag. The entries lie behind the index, and their numbers begin at one.
     JumpList isFound;
-    for (unsigned probe = 0; probe < numberOfWordsBeforeLoop; ++probe) {
-        if (probe)
-            jit.add32(TrustedImm32(probe), r.index);
-        jit.add32(TrustedImm32(-1), r.size, entry);
-        jit.and32(entry, r.index);
-        jit.load8(BaseIndex(r.vector, r.index, CCallHelpers::TimesOne, -1), entry);
-        (emptyWords ? emptyWords->inCompactIndex : isAbsentHere).append(jit.branchTest32(CCallHelpers::Zero, entry));
-        jit.getEffectiveAddress(BaseIndex(r.vector, entry, CCallHelpers::TimesEight, -1 - static_cast<int32_t>(sizeof(CompactPropertyTableEntry))), entry);
+    search(&EmptyWordsOfPropertyTable::inCompactIndex, [&](GPRReg word) {
+        jit.load8(BaseIndex(r.vector, word, CCallHelpers::TimesOne, -1), entry);
+    }, [&](int32_t missingFromSize) {
+        jit.getEffectiveAddress(BaseIndex(r.vector, entry, CCallHelpers::TimesEight, missingFromSize - 1 - static_cast<int32_t>(sizeof(CompactPropertyTableEntry))), entry);
         jit.load64(BaseIndex(entry, r.size, CCallHelpers::TimesOne), entry);
         // The name is in the low 48 bits. Above it: the offset, then the attributes.
         jit.xor64(r.uid, entry);
         jit.rotateRight64(TrustedImm32(typeShift), entry);
         isFound.append(jit.branch64(CCallHelpers::BelowOrEqual, entry, TrustedImm32(UINT16_MAX)));
-    }
-    {
-        Label nextWord = beginLoop();
-        jit.load8(BaseIndex(r.vector, entry, CCallHelpers::TimesOne, -1), entry);
-        Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, entry);
-        jit.getEffectiveAddress(BaseIndex(r.vector, entry, CCallHelpers::TimesEight, -static_cast<int32_t>(sizeof(CompactPropertyTableEntry))), entry);
-        jit.load64(BaseIndex(entry, mask, CCallHelpers::TimesOne), entry);
-        jit.xor64(r.uid, entry);
-        jit.rotateRight64(TrustedImm32(typeShift), entry);
-        isFound.append(jit.branch64(CCallHelpers::BelowOrEqual, entry, TrustedImm32(UINT16_MAX)));
-        jit.jump().linkTo(nextWord, &jit);
-        leaveLoopAtEmptyWord(isEmpty, &EmptyWordsOfPropertyTable::inCompactIndex);
-    }
+    });
 
     // A table with room for 255 names or more: the index has words of 32 bits, and an entry has the name, the offset and the attributes each by itself.
     isWide.link(&jit);
@@ -202,29 +175,14 @@ void findInPropertyTable(StubAssembler& jit, const ObjectLookupRegisters& r, Jum
         RELEASE_ASSERT(offsetOfSample == sample.offset() && attributesOfSample == sample.attributes());
     }
     JumpList isFoundInWideEntry;
-    for (unsigned probe = 0; probe < numberOfWordsBeforeLoop; ++probe) {
-        if (probe)
-            jit.add32(TrustedImm32(probe), r.index);
-        jit.add32(TrustedImm32(-1), r.size, entry);
-        jit.and32(entry, r.index);
-        jit.load32(BaseIndex(r.vector, r.index, CCallHelpers::TimesFour), entry);
-        (emptyWords ? emptyWords->inWideIndex : isAbsentHere).append(jit.branchTest32(CCallHelpers::Zero, entry));
+    search(&EmptyWordsOfPropertyTable::inWideIndex, [&](GPRReg word) {
+        jit.load32(BaseIndex(r.vector, word, CCallHelpers::TimesFour), entry);
+    }, [&](int32_t missingFromSize) {
         jit.lshift64(TrustedImm32(WTF::fastLog2(static_cast<unsigned>(sizeof(PropertyTableEntry)))), entry);
-        jit.getEffectiveAddress(BaseIndex(entry, r.size, CCallHelpers::TimesFour, -static_cast<int32_t>(sizeof(PropertyTableEntry))), entry);
+        jit.getEffectiveAddress(BaseIndex(entry, r.size, CCallHelpers::TimesFour, missingFromSize * static_cast<int32_t>(sizeof(uint32_t)) - static_cast<int32_t>(sizeof(PropertyTableEntry))), entry);
         jit.addPtr(r.vector, entry);
         isFoundInWideEntry.append(jit.branchPtr(CCallHelpers::Equal, Address(entry), r.uid));
-    }
-    {
-        Label nextWord = beginLoop();
-        jit.load32(BaseIndex(r.vector, entry, CCallHelpers::TimesFour), entry);
-        Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, entry);
-        jit.lshift64(TrustedImm32(WTF::fastLog2(static_cast<unsigned>(sizeof(PropertyTableEntry)))), entry);
-        jit.getEffectiveAddress(BaseIndex(entry, mask, CCallHelpers::TimesFour, static_cast<int32_t>(sizeof(uint32_t)) - static_cast<int32_t>(sizeof(PropertyTableEntry))), entry);
-        jit.addPtr(r.vector, entry);
-        isFoundInWideEntry.append(jit.branchPtr(CCallHelpers::Equal, Address(entry), r.uid));
-        jit.jump().linkTo(nextWord, &jit);
-        leaveLoopAtEmptyWord(isEmpty, &EmptyWordsOfPropertyTable::inWideIndex);
-    }
+    });
 
     isFoundInWideEntry.link(&jit);
     jit.load32(Address(entry, offsetOfOffsetInWideEntry), r.index);
@@ -236,7 +194,6 @@ void findInPropertyTable(StubAssembler& jit, const ObjectLookupRegisters& r, Jum
     isFound.link(&jit);
 }
 
-// A read returns the value of a data property and what a getter answers.
 template<typename Functor>
 static void answerByPropertyTableAndReturn(StubAssembler& jit, ObjectLookupQuestion question, const ObjectLookupRegisters& r, JumpList& isAbsentHere, JumpList& isUnknown, JumpList& cannotCallGetter, const Functor& beforeGetter, const ScopedLambda<void()>* willReturnValue = nullptr)
 {
@@ -791,88 +748,6 @@ void countMissOfPair(StubAssembler& jit, GPRReg structureID, GPRReg uid, GPRReg 
     isNotDue.link(&jit);
 }
 
-struct GetByIdBody {
-    StubAssembler& jit;
-    ReadProbeRegisters registers;
-    CallerFrame callerFrame;
-    SlotHandlerTable packedTable;
-    SlotHandlerTable unpackedTable;
-    Box<JumpList> miss;
-    // Where the receiver is a cell that the table of fields does not answer for.
-    Label behindFieldTable { };
-};
-
-static JumpList emitFrontProbe(GetByIdBody& body)
-{
-    StubAssembler& jit = body.jit;
-    const GPRReg R0 = body.registers.R0;
-    const GPRReg name = body.registers.T9;
-    const GPRReg T10 = body.registers.T10;
-    const GPRReg T11 = body.registers.T11;
-    const GPRReg cell = body.registers.T12;
-    const GPRReg T13 = body.registers.T13;
-    loadStructureIDOfReceiver(jit, R0, T11, *body.miss, [&] {
-        JumpList isNotInFieldTable;
-        returnFieldByTable(jit, { R0, name, T11, cell, std::nullopt, true, true, false, body.callerFrame }, isNotInFieldTable);
-        isNotInFieldTable.link(&jit);
-        body.behindFieldTable = jit.label();
-        jit.bindEntry(getByIdBehindFieldTable().withCallerFrame(body.callerFrame));
-    });
-    JumpList hasOtherName;
-#if CPU(X86_64)
-    UNUSED_PARAM(T13);
-    locateFrontCell(jit, SlotAccess::Read, T11, name, T10);
-    returnByFrontCell(jit, R0, name, T10, T11, cell, hasOtherName);
-    jumpToSlotHandler(jit, body.packedTable, cell, T10);
-#else
-    loadFrontCell(jit, SlotAccess::Read, { T11, name, T13, cell, T10 });
-    Jump isNotOwnInlineValue = branchUnlessOwnInlineValue(jit, name, cell, T10);
-    returnOwnInlineValue(jit, R0, cell);
-
-    isNotOwnInlineValue.link(&jit);
-#endif
-    jit.bindEntry(getByIdAfterFrontProbe().withCallerFrame(body.callerFrame));
-    hasOtherName.append(branchIfCellNameDiffers(jit, name, cell, T10));
-#if CPU(ARM64)
-    Jump isNotValue = branchIfSlotKindDiffers(jit, { SlotForm::PackedSlot, cell }, Slot::Kind::Value, T10);
-    loadValueBySlot(jit, CachedSlot(SlotForm::PackedSlot, Slot::Kind::Value, cell, InvalidGPRReg), R0, T13, T11, R0);
-    jit.returnToCaller();
-
-    isNotValue.link(&jit);
-#endif
-    jumpToSlotHandler(jit, body.packedTable, cell, T10);
-    return hasOtherName;
-}
-
-static void emitHashedProbe(GetByIdBody& body, JumpList hasOtherNameInFront)
-{
-    StubAssembler& jit = body.jit;
-    const GPRReg R0 = body.registers.R0;
-    const GPRReg name = body.registers.T9;
-    const GPRReg uid = body.registers.T10;
-    const GPRReg structureID = body.registers.T11;
-    const GPRReg header = body.registers.T12;
-    const GPRReg payload = body.registers.T13;
-    const GPRReg entry = body.registers.T14;
-    hasOtherNameInFront.link(&jit);
-    jit.bindEntry(getByIdHashed().withCallerFrame(body.callerFrame));
-    loadStructureIDOfReceiver(jit, R0, structureID, *body.miss);
-    loadIdentifier(jit, name, uid, *body.miss);
-    JumpList isInNoTable;
-    findHashedSlot(jit, SlotAccess::Read, { structureID, uid, entry, header, payload, payload }, isInNoTable);
-    jumpToSlotHandler(jit, body.unpackedTable, header, uid);
-
-    // No table has the pair: mostly because it is asked for the first time. What follows costs a read that hits a table nothing.
-    isInNoTable.link(&jit);
-    // What answers from here on files nothing, so a pair that comes again and again has to leave for the operation that files: one miss in MissesOfPairs::missesBetweenFilings.
-    countMissOfPair(jit, structureID, uid, header, *body.miss);
-    JumpList isNotAnsweredByLayout;
-    returnFieldByTable(jit, { R0, name, header, payload, std::nullopt, false, false, true }, isNotAnsweredByLayout);
-    isNotAnsweredByLayout.link(&jit);
-    // Each object says by the bits of the names that its Structure has seen, or by its row, that it has no such name.
-    answerFromObjectsAndReturn(jit, ObjectLookupQuestion::Read, { R0, name, uid, header, structureID, payload, entry, indexRegisterOfObjectLookup(jit) }, ObjectLookupName::IsGivenByNumber, *body.miss);
-}
-
 #if CPU(X86_64)
 static void emitAlternateReceiverProbe(StubAssembler& jit)
 {
@@ -959,54 +834,92 @@ static void emitBoundNameProbe(StubAssembler& jit, uint32_t number)
 #endif
 }
 
-static bool tryEmitSpecializedProbe(StubAssembler& jit)
+void generateGetById(StubAssembler& jit)
 {
     if (std::optional<uint32_t> number = jit.key().immediate()) {
         emitBoundNameProbe(jit, *number);
-        return true;
+        return;
     }
 #if CPU(X86_64)
     if (jit.key().operandRegister()) {
         emitAlternateReceiverProbe(jit);
-        return true;
+        return;
     }
 #endif
-    return false;
-}
-
-void generateGetById(StubAssembler& jit)
-{
-    if (tryEmitSpecializedProbe(jit))
-        return;
     const CallerFrame callerFrame = jit.key().callerFrame();
     const SlotOrigin origin = callerFrame == CallerFrame::StubFrame ? SlotOrigin::ByIdInStubFrame : SlotOrigin::ById;
-    GetByIdBody body {
-        jit,
-        allocateReadProbeRegisters(jit),
-        callerFrame,
-        slotHandlerTable(SlotOperation::Read, origin, SlotForm::PackedSlot),
-        slotHandlerTable(SlotOperation::Read, origin, SlotForm::Slot),
-        Box<JumpList>::create(),
-    };
-    JumpList hasOtherNameInFront = emitFrontProbe(body);
-    emitHashedProbe(body, hasOtherNameInFront);
-    JumpList isNotAnswered;
-    answerMissingField(jit, callerFrame, body.registers.R0, body.registers.T9, body.registers.T10, body.registers.T11, body.registers.T12, isNotAnswered);
-    isNotAnswered.linkTo(body.behindFieldTable, &jit);
+    const SlotHandlerTable packedTable = slotHandlerTable(SlotOperation::Read, origin, SlotForm::PackedSlot);
+    const SlotHandlerTable unpackedTable = slotHandlerTable(SlotOperation::Read, origin, SlotForm::Slot);
+    const GPRReg R0 = jit.operand(0);
+    const GPRReg name = jit.immediate();
+    const GPRReg T10 = jit.allocateScratch(StubRegister::T10);
+    const GPRReg T11 = jit.allocateScratch(StubRegister::T11);
+    const GPRReg T12 = jit.allocateScratch(StubRegister::T12);
+    const GPRReg T13 = jit.allocateScratch(StubRegister::T13);
+    const GPRReg T14 = jit.allocateScratch(StubRegister::T14);
     // loadStructureIDOfReceiver adds to the list in an out-of-line part, which runs after this function has returned.
-    jit.addOutOfLinePart([miss = body.miss, table = body.unpackedTable](StubAssembler& jit) {
-        linkToSlotExit(jit, *miss, table, SlotExit::Miss);
+    Box<JumpList> miss = Box<JumpList>::create();
+    // Where the receiver is a cell that the table of fields does not answer for.
+    Label behindFieldTable;
+
+    const GPRReg cell = T12;
+    loadStructureIDOfReceiver(jit, R0, T11, *miss, [&] {
+        JumpList isNotInFieldTable;
+        returnFieldByTable(jit, { R0, name, T11, cell, std::nullopt, true, true, false, callerFrame }, isNotInFieldTable);
+        isNotInFieldTable.link(&jit);
+        behindFieldTable = jit.label();
+        jit.bindEntry(getByIdBehindFieldTable().withCallerFrame(callerFrame));
     });
-}
+    JumpList hasOtherName;
+#if CPU(X86_64)
+    locateFrontCell(jit, SlotAccess::Read, T11, name, T10);
+    returnByFrontCell(jit, R0, name, T10, T11, cell, hasOtherName);
+    jumpToSlotHandler(jit, packedTable, cell, T10);
+#else
+    loadFrontCell(jit, SlotAccess::Read, { T11, name, T13, cell, T10 });
+    Jump isNotOwnInlineValue = branchUnlessOwnInlineValue(jit, name, cell, T10);
+    returnOwnInlineValue(jit, R0, cell);
 
-static void emitPresenceBySlot(StubAssembler& jit, PresenceQuestion question, const ProbedSlot& probed, const ReadProbeRegisters& registers, JumpList& isUnknown, JumpList& miss)
-{
-    const GPRReg R0 = registers.R0;
-    Jump isNotField = branchUnlessSlotNamesField(jit, probed, registers.T10);
-    returnFieldPresence(jit, CachedSlot(probed.form, Slot::Kind::Field, probed.header, probed.payload), { R0, registers.T10, registers.T11, registers.T11, registers.T14 }, miss);
+    isNotOwnInlineValue.link(&jit);
+#endif
+    jit.bindEntry(getByIdAfterFrontProbe().withCallerFrame(callerFrame));
+    hasOtherName.append(branchIfCellNameDiffers(jit, name, cell, T10));
+#if CPU(ARM64)
+    Jump isNotValue = branchIfSlotKindDiffers(jit, { SlotForm::PackedSlot, cell }, Slot::Kind::Value, T10);
+    loadValueBySlot(jit, CachedSlot(SlotForm::PackedSlot, Slot::Kind::Value, cell, InvalidGPRReg), R0, T13, T11, R0);
+    jit.returnToCaller();
 
-    isNotField.link(&jit);
-    returnPresenceBySlot(jit, question, probed, R0, isUnknown);
+    isNotValue.link(&jit);
+#endif
+    jumpToSlotHandler(jit, packedTable, cell, T10);
+
+    const GPRReg uid = T10;
+    const GPRReg structureID = T11;
+    const GPRReg header = T12;
+    const GPRReg payload = T13;
+    const GPRReg entry = T14;
+    hasOtherName.link(&jit);
+    jit.bindEntry(getByIdHashed().withCallerFrame(callerFrame));
+    loadStructureIDOfReceiver(jit, R0, structureID, *miss);
+    loadIdentifier(jit, name, uid, *miss);
+    JumpList isInNoTable;
+    findHashedSlot(jit, SlotAccess::Read, { structureID, uid, entry, header, payload, payload }, isInNoTable);
+    jumpToSlotHandler(jit, unpackedTable, header, uid);
+
+    isInNoTable.link(&jit);
+    // What answers from here on files nothing, so a pair that comes again and again has to leave for the operation that files: one miss in MissesOfPairs::missesBetweenFilings.
+    countMissOfPair(jit, structureID, uid, header, *miss);
+    JumpList isNotAnsweredByLayout;
+    returnFieldByTable(jit, { R0, name, header, payload, std::nullopt, false, false, true }, isNotAnsweredByLayout);
+    isNotAnsweredByLayout.link(&jit);
+    answerFromObjectsAndReturn(jit, ObjectLookupQuestion::Read, { R0, name, uid, header, structureID, payload, entry, indexRegisterOfObjectLookup(jit) }, ObjectLookupName::IsGivenByNumber, *miss);
+
+    JumpList isNotAnswered;
+    answerMissingField(jit, callerFrame, R0, name, T10, T11, T12, isNotAnswered);
+    isNotAnswered.linkTo(behindFieldTable, &jit);
+    jit.addOutOfLinePart([miss, unpackedTable](StubAssembler& jit) {
+        linkToSlotExit(jit, *miss, unpackedTable, SlotExit::Miss);
+    });
 }
 
 static Entry cachingOperationByNameFor(PresenceQuestion question)
@@ -1023,17 +936,24 @@ static Entry cachingOperationByNameFor(PresenceQuestion question)
 void generateInById(StubAssembler& jit)
 {
     const PresenceQuestion question = static_cast<PresenceQuestion>(jit.key().form());
-    const ReadProbeRegisters registers = allocateReadProbeRegisters(jit);
-    const GPRReg R0 = registers.R0;
-    const GPRReg name = registers.T9;
-    const GPRReg T10 = registers.T10;
-    const GPRReg structureID = registers.T11;
-    const GPRReg T12 = registers.T12;
-    const GPRReg T13 = registers.T13;
-    const GPRReg T14 = registers.T14;
+    const GPRReg R0 = jit.operand(0);
+    const GPRReg name = jit.immediate();
+    const GPRReg T10 = jit.allocateScratch(StubRegister::T10);
+    const GPRReg structureID = jit.allocateScratch(StubRegister::T11);
+    const GPRReg T12 = jit.allocateScratch(StubRegister::T12);
+    const GPRReg T13 = jit.allocateScratch(StubRegister::T13);
+    const GPRReg T14 = jit.allocateScratch(StubRegister::T14);
     JumpList isNotInFront;
     JumpList miss;
     JumpList isNotInFieldTable;
+    auto emitPresenceBySlot = [&](const ProbedSlot& probed, JumpList& isUnknown) {
+        Jump isNotField = branchUnlessSlotNamesField(jit, probed, T10);
+        returnFieldPresence(jit, CachedSlot(probed.form, Slot::Kind::Field, probed.header, probed.payload), { R0, T10, structureID, structureID, T14 }, miss);
+
+        isNotField.link(&jit);
+        returnPresenceBySlot(jit, question, probed, R0, isUnknown);
+    };
+
     miss.append(jit.branchIfNotCell(R0));
     auto emitReturnFalse = [&] {
         jit.move(TrustedImm32(0), R0);
@@ -1051,13 +971,13 @@ void generateInById(StubAssembler& jit)
     loadFrontCell(jit, SlotAccess::Read, { structureID, name, T13, T12, T10 });
     isNotInFront.append(branchIfCellNameDiffers(jit, name, T12, T10));
     // A reserved cell has the name and no slot, and a slot that does not pack is in the hashed table.
-    emitPresenceBySlot(jit, question, { SlotForm::PackedSlot, T12 }, registers, isNotInFront, miss);
+    emitPresenceBySlot({ SlotForm::PackedSlot, T12 }, isNotInFront);
 
     isNotInFront.link(&jit);
     loadIdentifier(jit, name, T10, miss);
     JumpList isInNoTable;
     findHashedSlot(jit, SlotAccess::Read, { structureID, T10, T14, T12, T13, T13 }, isInNoTable);
-    emitPresenceBySlot(jit, question, { SlotForm::Slot, T12, T13 }, registers, miss, miss);
+    emitPresenceBySlot({ SlotForm::Slot, T12, T13 }, miss);
 
     isInNoTable.link(&jit);
     countMissOfPair(jit, structureID, T10, T12, miss);

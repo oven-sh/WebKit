@@ -24,7 +24,6 @@ variable g3 name="besideNamedRead" module=m4 declared={type=anything}
 variable g4 name="shown" module=m4 declared={type=anything}
 
 function f0 name="main" kind=Module flags=[IsAsync] results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="name" [isFreeName]
     v2 = ModuleNamespace module=m1
@@ -41,45 +40,36 @@ function f0 name="main" kind=Module flags=[IsAsync] results=[{type=anything}] {
 }
 
 function f1 name="readByUnknownKey" module=m1 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     PutModuleVariable v0 variable=g0
     Return
-}
-# CHECK-LABEL: function f1 name="readByUnknownKey"
 # CHECK: PutModuleVariable v0 variable=g0
+}
 
 function f2 name="exportsAgain" module=m2 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 
 function f3 name="awaited" module=m3 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     PutModuleVariable v0 variable=g2
     Return
-}
-# CHECK-LABEL: function f3 name="awaited"
 # CHECK-NOT: variable=g2
+}
 
 function f4 name="readByNameOnly" module=m4 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     PutModuleVariable v0 variable=g3
     PutModuleVariable v0 variable=g4
     Return
-}
-# CHECK-LABEL: function f4 name="readByNameOnly"
 # CHECK-NOT: variable=g3
 # CHECK: PutModuleVariable v0 variable=g4
 # CHECK-NOT: variable=g3
+}
 
 function f5 name="declares" module=m5 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     PutModuleVariable v0 variable=g1
     Return
-}
-# CHECK-LABEL: function f5 name="declares"
 # CHECK: PutModuleVariable v0 variable=g1
+}

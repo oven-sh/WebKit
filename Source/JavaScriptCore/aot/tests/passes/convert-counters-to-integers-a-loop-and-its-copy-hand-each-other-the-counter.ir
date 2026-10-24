@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="handed" parameters=[{type=int[0, 4294967295]}, {type=int[0, 9007199254740991]}, {type=boolean}, {type=boolean}] results=[{type=number}] {
-  b0(v0: int[0, 4294967295], v1: int[0, 9007199254740991], v2: boolean, v3: boolean):
     v4 = Integer integer=0
     Branch v2 -> taken b1(v4), notTaken b5(v4)
   b1(v5):
@@ -34,8 +33,6 @@ function f0 name="handed" parameters=[{type=int[0, 4294967295]}, {type=int[0, 90
     Jump -> next b1(v14)
   b9(v15):
     Return v15
-}
-# CHECK-LABEL: function f0 name="handed"
 # CHECK: b1(v5: int[0, 9007199254740991]
 # CHECK: b2(v6: int[0, 9007199254740991]
 # CHECK: Branch v8 -> taken b3(| 0), notTaken b9(v6)
@@ -46,3 +43,4 @@ function f0 name="handed" parameters=[{type=int[0, 4294967295]}, {type=int[0, 90
 # CHECK-NEXT: b6([[copied]]: int[0, 9007199254740990]
 # CHECK: b7(v13: int[0, 9007199254740990]
 # CHECK-NEXT: v14: int[1, 9007199254740991]
+}

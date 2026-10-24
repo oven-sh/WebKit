@@ -11,7 +11,6 @@ layout L0 name="Link" fields=[{key="x" declared={type=number} flow={location={wr
 layout L1 name="HoldsAnything" fields=[{key="member" declared={type=anything} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={constructorOrders=[{fields=[0]}] impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
 
 function f0 name="guardAcrossTheSerializer" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=L0}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: L0):
     v2 = HasArrayStorage v0 arrayStorage=Int32
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3: guard):
@@ -23,13 +22,11 @@ function f0 name="guardAcrossTheSerializer" parameters=[{type=Array<number, prov
   b2():
     v8 = Undefined
     Return v8
-}
-# CHECK-LABEL: function f0 name="guardAcrossTheSerializer"
 # CHECK: = CallDirect v1, {{*}} function=
 # CHECK: = GetArrayElement v0, v6, v3 arrayStorage=Int32
+}
 
 function f1 name="testedAgainBehindUnknownCode" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=L1}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: L1):
     v2 = Undefined
     v3 = CallBuiltin -, v1, v2, v2 overload=JSONStringify/0
     v4 = HasArrayStorage v0 arrayStorage=Int32
@@ -40,6 +37,5 @@ function f1 name="testedAgainBehindUnknownCode" parameters=[{type=Array<number, 
     Return v7
   b2():
     Return v2
-}
-# CHECK-LABEL: function f1 name="testedAgainBehindUnknownCode"
 # CHECK: = CallDirect v1, {{*}} function=
+}

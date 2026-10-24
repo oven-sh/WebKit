@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="denseReadInInt32" parameters=[{type=Array<i32, proven, pristine[Storage, Dense]>}, {type=int[0, 1000]}] results=[{type=anything}] {
-  b0(v0: Array<i32, proven, pristine[Storage, Dense]>, v1: int[0, 1000]):
     v2 = HasArrayStorage v0 arrayStorage=Int32
     Branch v2 -> taken b1(| 0), notTaken b3()
   b1(v3):
@@ -22,7 +21,6 @@ function f0 name="denseReadInInt32" parameters=[{type=Array<i32, proven, pristin
     Return v8
 }
 function f1 name="mayHaveHolesReadInInt32" parameters=[{type=Array<i32, proven, pristine[Storage]>}, {type=int[0, 1000]}] results=[{type=anything}] {
-  b0(v0: Array<i32, proven, pristine[Storage]>, v1: int[0, 1000]):
     v2 = HasArrayStorage v0 arrayStorage=Int32
     Branch v2 -> taken b1(| 0), notTaken b3()
   b1(v3):
@@ -37,7 +35,6 @@ function f1 name="mayHaveHolesReadInInt32" parameters=[{type=Array<i32, proven, 
     Return v8
 }
 function f2 name="storeInInt32" parameters=[{type=Array<i32, proven, pristine[Storage, Dense]>}, {type=int[0, 1000]}, {type=i32}] results=[{type=undefined}] {
-  b0(v0: Array<i32, proven, pristine[Storage, Dense]>, v1: int[0, 1000], v2: i32):
     v3 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
     Branch v3 -> taken b1(| 0), notTaken b3()
   b1(v4):
@@ -51,7 +48,6 @@ function f2 name="storeInInt32" parameters=[{type=Array<i32, proven, pristine[St
     Return
 }
 function f3 name="denseReadInDouble" parameters=[{type=Array<number, proven, pristine[Storage, Dense]>}, {type=int[0, 1000]}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Dense]>, v1: int[0, 1000]):
     v2 = HasArrayStorage v0 arrayStorage=Double
     Branch v2 -> taken b1(| 0), notTaken b3()
   b1(v3):
@@ -66,7 +62,6 @@ function f3 name="denseReadInDouble" parameters=[{type=Array<number, proven, pri
     Return v8
 }
 function f4 name="mayHaveHolesReadInDouble" parameters=[{type=Array<number, proven, pristine[Storage]>}, {type=int[0, 1000]}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage]>, v1: int[0, 1000]):
     v2 = HasArrayStorage v0 arrayStorage=Double
     Branch v2 -> taken b1(| 0), notTaken b3()
   b1(v3):
@@ -81,7 +76,6 @@ function f4 name="mayHaveHolesReadInDouble" parameters=[{type=Array<number, prov
     Return v8
 }
 function f5 name="storeInDouble" parameters=[{type=Array<number, proven, pristine[Storage, Dense]>}, {type=int[0, 1000]}, {type=fractional}] results=[{type=undefined}] {
-  b0(v0: Array<number, proven, pristine[Storage, Dense]>, v1: int[0, 1000], v2: fractional):
     v3 = HasArrayStorage v0 arrayStorage=Double [isWritable]
     Branch v3 -> taken b1(| 0), notTaken b3()
   b1(v4):
@@ -95,7 +89,6 @@ function f5 name="storeInDouble" parameters=[{type=Array<number, proven, pristin
     Return
 }
 function f6 name="denseReadInContiguous" parameters=[{type=Array<string, proven, pristine[Storage, Dense]>}, {type=int[0, 1000]}] results=[{type=anything}] {
-  b0(v0: Array<string, proven, pristine[Storage, Dense]>, v1: int[0, 1000]):
     v2 = HasArrayStorage v0 arrayStorage=Contiguous
     Branch v2 -> taken b1(| 0), notTaken b3()
   b1(v3):
@@ -110,7 +103,6 @@ function f6 name="denseReadInContiguous" parameters=[{type=Array<string, proven,
     Return v8
 }
 function f7 name="mayHaveHolesReadInContiguous" parameters=[{type=Array<string, proven, pristine[Storage]>}, {type=int[0, 1000]}] results=[{type=anything}] {
-  b0(v0: Array<string, proven, pristine[Storage]>, v1: int[0, 1000]):
     v2 = HasArrayStorage v0 arrayStorage=Contiguous
     Branch v2 -> taken b1(| 0), notTaken b3()
   b1(v3):
@@ -125,7 +117,6 @@ function f7 name="mayHaveHolesReadInContiguous" parameters=[{type=Array<string, 
     Return v8
 }
 function f8 name="storeInContiguous" parameters=[{type=Array<string, proven, pristine[Storage, Dense]>}, {type=int[0, 1000]}, {type=string}] results=[{type=undefined}] {
-  b0(v0: Array<string, proven, pristine[Storage, Dense]>, v1: int[0, 1000], v2: string):
     v3 = HasArrayStorage v0 arrayStorage=Contiguous [isWritable]
     Branch v3 -> taken b1(| 0), notTaken b3()
   b1(v4):

@@ -8,7 +8,6 @@ typesite w0 module=m0 position=10 kind=Parameter
 typesite w1 module=m0 position=20 kind=Result
 typesite w2 module=m0 position=30 kind=Variable
 function f0 name="wrappedSum" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}, {type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
-  b0(v0: i32, v1: i32):
     v2 = Add v0, v1
     v3 = Integer
     v4 = BitOr v2, v3
@@ -18,7 +17,6 @@ function f0 name="wrappedSum" parameters=[{type=i32 site=w0 flags=[IsInt32Promis
 # CHECK-LABEL: function f0
 # CHECK-NEXT: v5: integers [-2147483648, 2147483647]
 function f1 name="maskedNumber" parameters=[{type=number}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
-  b0(v0: number):
     v1 = Integer integer=255
     v2 = BitAnd v0, v1
     v3 = Convert v2 declared={type=i32 site=w1 flags=[IsInt32Promise]}
@@ -27,7 +25,6 @@ function f1 name="maskedNumber" parameters=[{type=number}] results=[{type=i32 si
 # CHECK-LABEL: function f1
 # CHECK-NEXT: v3: integers [0, 255]
 function f2 name="upperBitsOfNumber" parameters=[{type=number}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
-  b0(v0: number):
     v1 = Integer integer=1
     v2 = URShift v0, v1
     v3 = Convert v2 declared={type=i32 site=w1 flags=[IsInt32Promise]}
@@ -36,7 +33,6 @@ function f2 name="upperBitsOfNumber" parameters=[{type=number}] results=[{type=i
 # CHECK-LABEL: function f2
 # CHECK-NEXT: v3: integers [0, 2147483647]
 function f3 name="unsigned" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
-  b0(v0: i32):
     v1 = Integer
     v2 = URShift v0, v1
     v3 = Convert v2 declared={type=i32 site=w1 flags=[IsInt32Promise]}
@@ -45,7 +41,6 @@ function f3 name="unsigned" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]
 # CHECK-LABEL: function f3
 # CHECK-NEXT: v3: integers [0, 4294967295]
 function f4 name="shiftedByUnknownCount" parameters=[{type=number}, {type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
-  b0(v0: number, v1: i32):
     v2 = URShift v0, v1
     v3 = Convert v2 declared={type=i32 site=w1 flags=[IsInt32Promise]}
     Return v3

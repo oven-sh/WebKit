@@ -8,9 +8,6 @@
 #if ENABLE(AOT)
 
 #include "AOTRelocation.h"
-#include "AOTVector.h"
-#include <expected>
-#include <span>
 
 namespace JSC { namespace AOT {
 

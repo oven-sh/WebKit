@@ -21,14 +21,12 @@ module m0 path="main.js" displayPath="main.js"
 layout L%(i) name="T%(i)" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
 # END REPEAT
 function f0 name="allocate" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
 # REPEAT: i = 0..69
     v%(i+1) = NewObject -, v0 layout=L%(i) fields=[0]
 # END REPEAT
     Return
 }
 function f1 name="neighbors" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     LoopHint
@@ -40,7 +38,6 @@ function f1 name="neighbors" parameters=[{type=anything}] results=[{type=undefin
     Return
 }
 function f2 name="oneShape" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ShapeTest v0 layouts=[L5]
     v2 = ShapeTest v0 layouts=[L5]
     TestAndBranch v2 -> taken b1(), notTaken b2()
@@ -50,7 +47,6 @@ function f2 name="oneShape" parameters=[{type=anything}] results=[{type=anything
     Return
 }
 function f3 name="upTo" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ShapeTest v0 layouts=[L0, L1, L2]
     v2 = ShapeTest v0 layouts=[L0, L1, L2]
     TestAndBranch v2 -> taken b1(), notTaken b2()
@@ -60,7 +56,6 @@ function f3 name="upTo" parameters=[{type=anything}] results=[{type=anything}] {
     Return
 }
 function f4 name="range" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ShapeTest v0 layouts=[L5, L6, L7]
     v2 = ShapeTest v0 layouts=[L5, L6, L7]
     TestAndBranch v2 -> taken b1(), notTaken b2()
@@ -70,7 +65,6 @@ function f4 name="range" parameters=[{type=anything}] results=[{type=anything}] 
     Return
 }
 function f5 name="immediateBits" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ShapeTest v0 layouts=[L5, L7, L9]
     v2 = ShapeTest v0 layouts=[L5, L7, L9]
     TestAndBranch v2 -> taken b1(), notTaken b2()
@@ -80,7 +74,6 @@ function f5 name="immediateBits" parameters=[{type=anything}] results=[{type=any
     Return
 }
 function f6 name="bitSet" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ShapeTest v0 layouts=[L0, L69]
     v2 = ShapeTest v0 layouts=[L0, L69]
     TestAndBranch v2 -> taken b1(), notTaken b2()

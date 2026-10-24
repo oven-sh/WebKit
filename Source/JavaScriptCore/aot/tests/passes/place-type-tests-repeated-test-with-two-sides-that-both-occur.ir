@@ -60,8 +60,7 @@ function f1 name="theOtherSideIsASurprise" parameters=[{type=string flags=[IsExp
     Return v9
   b5():
     Return v5
-}
-# SURPRISE-LABEL: function f1 name="theOtherSideIsASurprise"
 # SURPRISE: [[inFront]]: boolean{{*}} = TypeTest v0 testedType=string
 # SURPRISE: : true = TypeTest {{*}} testedType=string
 # SURPRISE: : true = TypeTest {{*}} testedType=string
+}

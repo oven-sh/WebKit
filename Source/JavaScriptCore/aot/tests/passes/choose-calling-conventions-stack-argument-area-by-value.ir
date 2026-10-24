@@ -13,12 +13,10 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="passesTen" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
     ReturnCall v1
 }
 function f1 name="passesFour" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0, -, v0, v0, v0, v0
     ReturnCall v1
 }

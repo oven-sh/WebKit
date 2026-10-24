@@ -21,7 +21,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = NewObject -, v0 layout=L0 fields=[0]
@@ -32,13 +31,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v6
 }
 function f1 name="balanced" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewClosure v1 function=f3
     Return v2
 }
 function f2 name="fast" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Jump -> next b1(v0)
   b1(v2: anything):
@@ -50,6 +47,5 @@ function f2 name="fast" parameters=[{type=anything}] results=[{type=anything}] {
     Return v5
 }
 function f3 name="captures" captures=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }

@@ -44,7 +44,6 @@ function f0 name="loopBetweenTheStores" flags=[HasThis] thisType={type=L0 flags=
 # CHECK-NEXT: Return v2
 
 function f1 name="objectMadeInFrontOfALoop" parameters=[{type=anything}] results=[{type=L0}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     Jump -> next b1()
   b1():

@@ -7,7 +7,6 @@ module m0 path="main.js" displayPath="main.js"
 variable g0 name="target" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="plainData" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Storage, Names]>):
     v1 = IteratorOpen v0 elementCount=2 [isDestructuring]
     Jump -> next b1()
   b1() handler=b4():
@@ -26,8 +25,6 @@ function f0 name="plainData" parameters=[{type=Array<number, pristine[Storage, N
     v8 = CatchException
     IteratorClose v1 completion=Throw
     Rethrow v8
-}
-# CHECK-LABEL: function f0 name="plainData"
 # CHECK-NOT: Branch
 # CHECK: [[zero0]]: 0 = Integer
 # CHECK: = ElemGet v0, [[zero0]] [keyIsIntegral]
@@ -35,9 +32,9 @@ function f0 name="plainData" parameters=[{type=Array<number, pristine[Storage, N
 # CHECK: [[one0]]: 1 = Integer integer=1
 # CHECK: = ElemGet v0, [[one0]] [keyIsIntegral]
 # CHECK-NOT: Branch
+}
 
 function f1 name="doneIsRead" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Storage, Names]>):
     v1 = IteratorOpen v0 elementCount=1 [isDestructuring]
     Jump -> next b1()
   b1():
@@ -47,16 +44,14 @@ function f1 name="doneIsRead" parameters=[{type=Array<number, pristine[Storage, 
   b2():
     IteratorClose v1
     Return v3
-}
-# CHECK-LABEL: function f1 name="doneIsRead"
 # CHECK: [[inRange1]]: boolean = Less {{*}},
 # CHECK-NEXT: [[done1]]: boolean = LogicalNot [[inRange1]]
 # CHECK: Jump -> next [[after1]]([[done1]],
 # CHECK: Return [[result1]]
 # CHECK: [[after1]]([[result1]]: boolean,
+}
 
 function f2 name="elementsMayBeAccessors" parameters=[{type=Array<number, pristine[Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Names]>):
     v1 = IteratorOpen v0 elementCount=2 [isDestructuring]
     Jump -> next b1()
   b1():
@@ -69,13 +64,11 @@ function f2 name="elementsMayBeAccessors" parameters=[{type=Array<number, pristi
     IteratorClose v1
     v7 = Add v3, v5
     Return v7
-}
-# CHECK-LABEL: function f2 name="elementsMayBeAccessors"
 # CHECK: [[inRange2]]: boolean = Less
 # CHECK-NEXT: Branch [[inRange2]]
+}
 
 function f3 name="callBetweenTheSteps" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=function}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Storage, Names]>, v1: function):
     v2 = IteratorOpen v0 elementCount=2 [isDestructuring]
     Jump -> next b1()
   b1():
@@ -89,13 +82,11 @@ function f3 name="callBetweenTheSteps" parameters=[{type=Array<number, pristine[
     IteratorClose v2
     v9 = Add v4, v7
     Return v9
-}
-# CHECK-LABEL: function f3 name="callBetweenTheSteps"
 # CHECK: [[inRange3]]: boolean = Less
 # CHECK-NEXT: Branch [[inRange3]]
+}
 
 function f4 name="testedArray" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = IteratorOpen v0 elementCount=2 [isDestructuring]
     Jump -> next b1()
   b1():
@@ -108,18 +99,16 @@ function f4 name="testedArray" parameters=[{type=anything}] results=[{type=anyth
     IteratorClose v1
     v7 = Add v3, v5
     Return v7
-}
 # The elements are tested with the names, on the edge that leads to the copy for any iterable
-# CHECK-LABEL: function f4 name="testedArray"
 # CHECK: = TypeTest v0 testedType=Array
 # CHECK: = ElemGet [[array4]], {{*}} [keyIsIntegral]
 # CHECK: = DestructureIterable
 # CHECK: ([[array4]]: Array):
 # CHECK-NEXT: = IsPristine [[array4]] builtinClass=Array aspects=[Storage, Names]
 # CHECK: = ElemGet [[array4]], {{*}} [keyIsIntegral]
+}
 
 function f5 name="testsBetweenTheSteps" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Storage, Names]>):
     v1 = IteratorOpen v0 elementCount=2 [isDestructuring]
     Jump -> next b1()
   b1() handler=b4():
@@ -140,9 +129,7 @@ function f5 name="testsBetweenTheSteps" parameters=[{type=Array<number, pristine
     v10 = CatchException
     IteratorClose v1 completion=Throw
     Rethrow v10
-}
 # A test that throws changes no array, and closing the iterator of an array does nothing
-# CHECK-LABEL: function f5 name="testsBetweenTheSteps"
 # CHECK-NOT: Branch
 # CHECK-NOT: handler=
 # CHECK: = ElemGet v0, {{*}} [keyIsIntegral]
@@ -151,9 +138,9 @@ function f5 name="testsBetweenTheSteps" parameters=[{type=Array<number, pristine
 # CHECK-NOT: Branch
 # CHECK: = ElemGet v0, {{*}} [keyIsIntegral]
 # CHECK-NOT: Branch
+}
 
 function f6 name="storeElsewhereBetweenTheSteps" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Storage, Names]>):
     v1 = IteratorOpen v0 elementCount=2 [isDestructuring]
     Jump -> next b1()
   b1():
@@ -166,8 +153,6 @@ function f6 name="storeElsewhereBetweenTheSteps" parameters=[{type=Array<number,
   b2():
     IteratorClose v1
     Return v6
-}
-# CHECK-LABEL: function f6 name="storeElsewhereBetweenTheSteps"
 # CHECK-NOT: Branch
 # CHECK: = ElemGet v0, {{*}} [keyIsIntegral]
 # CHECK-NOT: Branch
@@ -175,9 +160,9 @@ function f6 name="storeElsewhereBetweenTheSteps" parameters=[{type=Array<number,
 # CHECK-NOT: Branch
 # CHECK: = ElemGet v0, {{*}} [keyIsIntegral]
 # CHECK-NOT: Branch
+}
 
 function f7 name="lengthStoredBetweenTheSteps" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Storage, Names]>):
     v1 = IteratorOpen v0 elementCount=2 [isDestructuring]
     Jump -> next b1()
   b1():
@@ -190,13 +175,11 @@ function f7 name="lengthStoredBetweenTheSteps" parameters=[{type=Array<number, p
   b2():
     IteratorClose v1
     Return v6
-}
-# CHECK-LABEL: function f7 name="lengthStoredBetweenTheSteps"
 # CHECK: [[inRange7]]: boolean = Less
 # CHECK-NEXT: Branch [[inRange7]]
+}
 
 function f8 name="elementStoredThroughAnotherNameBetweenTheSteps" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Storage, Names]>, v1: Array<number, pristine[Storage, Names]>):
     v2 = IteratorOpen v0 elementCount=2 [isDestructuring]
     Jump -> next b1()
   b1():
@@ -210,14 +193,12 @@ function f8 name="elementStoredThroughAnotherNameBetweenTheSteps" parameters=[{t
   b2():
     IteratorClose v2
     Return v8
-}
 # The two names may be one array, and a store past the end makes it longer
-# CHECK-LABEL: function f8 name="elementStoredThroughAnotherNameBetweenTheSteps"
 # CHECK: [[inRange8]]: boolean = Less
 # CHECK-NEXT: Branch [[inRange8]]
+}
 
 function f9 name="testedArrayWithTestsBetweenTheSteps" parameters=[{type=Array<number>}] results=[{type=anything}] {
-  b0(v0: Array<number>):
     v1 = IteratorOpen v0 elementCount=2 [isDestructuring]
     Jump -> next b1()
   b1() handler=b4():
@@ -238,10 +219,9 @@ function f9 name="testedArrayWithTestsBetweenTheSteps" parameters=[{type=Array<n
     v10 = CatchException
     IteratorClose v1 completion=Throw
     Rethrow v10
-}
 # The copy for arrays reads by index. In the copy for any iterable a step would move across a test that throws, so it keeps its steps
-# CHECK-LABEL: function f9 name="testedArrayWithTestsBetweenTheSteps"
 # CHECK: = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
 # CHECK-NOT: DestructureIterable
 # CHECK-COUNT-2: = ElemGet v0, {{*}} [keyIsIntegral]
 # CHECK-NOT: DestructureIterable
+}

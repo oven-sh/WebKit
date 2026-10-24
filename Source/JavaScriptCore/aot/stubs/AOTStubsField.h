@@ -151,6 +151,11 @@ struct KeyOrderRegisters {
     GPRReg scratch;
 };
 
+struct FieldOfLayout {
+    GPRReg layout;
+    GPRReg fieldIndex;
+};
+
 void loadExtensionWordOffset(StubAssembler&, GPRReg object, GPRReg result);
 // Keeps object and slotData, at hasNoStorage too. Out of line it also takes the scratch register of the assembler and fpTempRegister.
 void computeFieldAddress(StubAssembler&, const FieldAddressRegisters&, bool isOutOfLine, JumpList& hasNoStorage);
@@ -165,10 +170,12 @@ void returnFieldPresence(StubAssembler&, const CachedSlot&, const FieldAddressRe
 void branchUnlessTypeAccepts(StubAssembler&, const TypeTestRegisters&, JumpList& isRejected, JumpList& cannot);
 // At wasAbsent the slot admits the value: the type accepts it, or it is undefined or null and the representation has a marker for it.
 void storeField(StubAssembler&, const FieldStoreRegisters&, FieldStoreEnd, FieldTypeTest, JumpList* stored, FieldStoreExits&);
-// As appendFieldToKeyOrder(), for whoever knows the layout and which of its fields it is: fieldIndex is kept, layout is written.
-void appendFieldToKeyOrder(StubAssembler&, const KeyOrderRegisters&, GPRReg layout, GPRReg fieldIndex, JumpList& hasNoTransition);
-// Falls through with the new order word stored. Keeps object and slotKey, and writes nothing to memory before it jumps to hasNoTransition.
-void appendFieldToKeyOrder(StubAssembler&, const KeyOrderRegisters&, JumpList& hasNoTransition);
+// Falls through with the new order word stored. Keeps object and slotKey, and writes nothing to memory before it jumps to hasNoTransition. Of a known field fieldIndex is kept and layout is written.
+void appendFieldToKeyOrder(StubAssembler&, const KeyOrderRegisters&, JumpList& hasNoTransition, std::optional<FieldOfLayout> known = std::nullopt);
+// Behind the store that creates a field: lists its key, in the stub or by the run time, and returns behind the barrier.
+void listCreatedFieldAndReturn(StubAssembler&, const KeyOrderRegisters&, GPRReg value, std::optional<FieldOfLayout> known = std::nullopt);
+// Gives the field of slotData its granule, in the stub or by the run time, and goes on at findStorage. Writes address, representation and secondScratch.
+void createGranuleOfField(StubAssembler&, const FieldStoreRegisters&, const ScopedLambda<void()>& loadOffsetOfExtensionWord, Label findStorage);
 
 inline constexpr uint32_t offsetBitsWithoutSlotKey = SlotData::maxOffset & ~(outOfLineSlotKey - 1);
 

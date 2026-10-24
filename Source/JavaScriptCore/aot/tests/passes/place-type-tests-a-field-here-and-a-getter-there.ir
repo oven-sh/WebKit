@@ -13,12 +13,10 @@ layout L2 name="Context" fields=[{key="limit" declared={type=anything} flags=[Is
 layout L3 name="Bare" fields=[{key="url" declared={type=anything} flags=[IsRequired]}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 function f0 name="Incoming" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
 function f1 name="headers" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=number}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     Return v1
 }
 function f2 name="sealed" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything, v1: anything):
     v2 = Undefined
     Return v2
 }
@@ -30,38 +28,33 @@ function f3 name="oneTestForBoth" parameters=[{type=L0|L1 flags=[IsExpected]}, {
     v4 = PropGet v0 key="url"
     v5 = NewArray v2, v3, v4
     Return v5
-}
-# CHECK-LABEL: function f3 name="oneTestForBoth"
 # CHECK: = TypeTest v0 testedType=L0|L1
 # CHECK-NOT: TypeTest v0
-# SPLIT-LABEL: function f3 name="oneTestForBoth"
 # SPLIT: = TypeTest v0 testedType=L0|L1
 # SPLIT: = TypeTest {{*}} testedType=L1
 # SPLIT: = PropGet {{*}} key="headers" receivers=[L1]
 # SPLIT: = PropGet {{*}} key="headers" receivers=[L0]
+}
 
 function f4 name="aNameThatOneOfThemLacks" parameters=[{type=L0|L1|L3 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ L0|L1|L3):
     v1 = PropGet v0 key="headers"
     Return v1
-}
 # Whoever lacks the name is not waited for: the heaviest arm alone, as before.
-# CHECK-LABEL: function f4 name="aNameThatOneOfThemLacks"
 # CHECK-NOT: testedType=L0|L1
+}
 
 function f5 name="anAccessorWithoutGetter" parameters=[{type=L0|L1 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ L0|L1):
     v1 = PropGet v0 key="sealed"
     Return v1
-}
-# CHECK-LABEL: function f5 name="anAccessorWithoutGetter"
 # CHECK-NOT: testedType=L0|L1
+}
 
 function f6 name="aStore" parameters=[{type=L0|L1 flags=[IsExpected]}, {type=anything}] results=[{type=undefined}] {
   b0(v0: anything ~ L0|L1, v1: anything):
     PropSet v0, v1 key="sealed"
     v3 = Undefined
     Return v3
-}
-# CHECK-LABEL: function f6 name="aStore"
 # CHECK-NOT: testedType=L0|L1
+}

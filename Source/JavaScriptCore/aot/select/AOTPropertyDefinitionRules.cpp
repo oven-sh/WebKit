@@ -47,17 +47,21 @@ struct DescriptorMatch {
     OptionSet<PropertyDescriptorFlags> descriptorFlags;
 };
 
-struct AccessorMember {
-    ValueID definition;
-    ValueID function;
-    PropertyKeyID key;
-    bool isGetter;
+// A descriptor that reaches its call as a parameter of the block: on every way in it is a literal of one layout, made for this call alone.
+struct DescriptorsMeetingInParameter {
+    ValueID call;
+    uint32_t operandIndex { 0 };
+    ValueID parameter;
+    uint32_t parameterIndex { 0 };
+    // One for each edge into the block, in the order of the edges.
+    Vector<ValueID, 2> finishes;
+    Vector<ValueID, 2> literals;
+    // The one member that differs from way to way.
+    std::optional<size_t> differingMember;
 };
 
 struct AccessorMatch {
     SelectionGroup group;
-    ValueID object;
-    Vector<AccessorMember, 4> members;
 };
 
 } // anonymous namespace
@@ -232,11 +236,7 @@ static std::optional<DescriptorMatch> matchDescriptorCall(SelectionContext& cont
         return std::nullopt;
 
     std::optional<DescriptorCallOperands> operands = descriptorCallOperandsOf(program, call);
-    if (!operands)
-        return std::nullopt;
-    if (!context.typeOf(operands->object).isObject())
-        return std::nullopt;
-    if (!context.typeOf(operands->key).hasOnlyPrimitives(Primitive::AnyString | Primitive::AnySymbol))
+    if (!operands || !context.typeOf(operands->object).isObject() || !context.typeOf(operands->key).hasOnlyPrimitives(Primitive::AnyString | Primitive::AnySymbol))
         return std::nullopt;
 
     ValueID finishID = operands->descriptor;
@@ -248,10 +248,7 @@ static std::optional<DescriptorMatch> matchDescriptorCall(SelectionContext& cont
     if (context.singleUser(literalID) != finishID || !isDescriptorLiteral(program, literal))
         return std::nullopt;
 
-    DescriptorMatch match;
-    match.group = groupOf({ literalID, finishID, id });
-    match.object = operands->object;
-    match.key = operands->key;
+    DescriptorMatch match { .group = groupOf({ literalID, finishID, id }), .object = operands->object, .key = operands->key };
     std::optional<uint32_t> closureEnvironmentField = program.at(literal.layout()).flow.closureEnvironmentField;
     std::span<const ValueID> values = literal.valuesOperands();
     for (size_t index = 0; index < values.size(); ++index) {
@@ -265,29 +262,10 @@ static std::optional<DescriptorMatch> matchDescriptorCall(SelectionContext& cont
 
     if (match.descriptorFlags.containsAny(dataDescriptorFlags) && match.descriptorFlags.containsAny(accessorDescriptorFlags))
         return std::nullopt;
-    if (!canCreateClosuresAtDefinition(context, match))
-        return std::nullopt;
-    if (!hasEffectsOfDefinition(context, id, match))
+    if (!canCreateClosuresAtDefinition(context, match) || !hasEffectsOfDefinition(context, id, match))
         return std::nullopt;
     return match;
 }
-
-namespace {
-
-// A descriptor that reaches its call as a parameter of the block: on every way in it is a literal of one layout, made for this call alone.
-struct DescriptorsMeetingInParameter {
-    ValueID call;
-    uint32_t operandIndex { 0 };
-    ValueID parameter;
-    uint32_t parameterIndex { 0 };
-    // One for each edge into the block, in the order of the edges.
-    Vector<ValueID, 2> finishes;
-    Vector<ValueID, 2> literals;
-    // The one member that differs from way to way.
-    std::optional<size_t> differingMember;
-};
-
-} // anonymous namespace
 
 static bool areSameMember(const Program& program, const Function& function, ValueID a, ValueID b)
 {
@@ -330,9 +308,7 @@ static std::optional<DescriptorsMeetingInParameter> findDescriptorsMeetingInPara
             return std::nullopt;
         ValueID literalID = finish.objectOperand();
         const Value& literal = function.at(literalID);
-        if (uses.useCount(literalID) != 1 || !isDescriptorLiteral(program, literal))
-            return std::nullopt;
-        if (uses.blockOf(finishID) == location.block || uses.blockOf(literalID) == location.block)
+        if (uses.useCount(literalID) != 1 || !isDescriptorLiteral(program, literal) || uses.blockOf(finishID) == location.block || uses.blockOf(literalID) == location.block)
             return std::nullopt;
         if (!found.literals.isEmpty()) {
             const Value& first = function.at(found.literals[0]);
@@ -360,7 +336,6 @@ static std::optional<DescriptorsMeetingInParameter> findDescriptorsMeetingInPara
     return found;
 }
 
-// `for (..) Object.defineProperty(object, key, { get.
 PassOutcome makeDescriptorLiteralsBehindJoins(FunctionPassContext& pass)
 {
     Function& function = pass.function;
@@ -448,28 +423,21 @@ void selectDescriptorLiteral(SelectionContext& context)
     });
 }
 
-static std::optional<AccessorMember> accessorMemberOf(SelectionContext& context, ValueID id)
+static bool canJoinAccessorGroup(SelectionContext& context, ValueID id)
 {
     const Value& definition = context.function().at(id);
     if (context.isClaimed(id) || !context.typeOf(definition.objectOperand()).isObject())
-        return std::nullopt;
-
-    PropertyKeyID key = definition.key();
-    if (!key || !isOrdinaryKey(context.program(), key))
-        return std::nullopt;
-    return AccessorMember { id, definition.functionOperand(), key, definition.opcode == Opcode::DefineGetter };
+        return false;
+    return definition.key() && isOrdinaryKey(context.program(), definition.key());
 }
 
-static void closeAccessorList(SelectionContext& context, ValueID object, std::span<const AccessorMember> list, Vector<AccessorMatch>& matches)
+static void closeAccessorList(SelectionContext& context, std::span<const ValueID> list, Vector<AccessorMatch>& matches)
 {
     for (; list.size() >= minMembersInAccessorGroup; list = list.subspan(1)) {
         AccessorMatch match;
-        match.group.root = list.back().definition;
-        match.object = object;
-        for (const AccessorMember& member : list) {
-            match.group.members.append(GroupMember { member.definition });
-            match.members.append(member);
-        }
+        match.group.root = list.back();
+        for (ValueID definition : list)
+            match.group.members.append(GroupMember { definition });
         if (context.tryClaim(SelectionRuleID::AccessorGroup, match.group) == ClaimResult::Claimed) {
             matches.append(WTF::move(match));
             return;
@@ -479,23 +447,25 @@ static void closeAccessorList(SelectionContext& context, ValueID object, std::sp
 
 static void rewriteAccessorGroup(GroupRewriter& rewriter, const AccessorMatch& match)
 {
-    RELEASE_ASSERT(match.members.size() <= maxKeysInAccessorMasks);
+    std::span<const GroupMember> members = match.group.members.span();
+    RELEASE_ASSERT(members.size() <= maxKeysInAccessorMasks);
 
     Vector<PropertyKeyID, 4> keys;
     Vector<ValueID, 4> functions;
     uint32_t getterMask = 0;
     uint32_t enumerableMask = 0;
-    for (uint32_t index = 0; index < match.members.size(); ++index) {
-        const AccessorMember& member = match.members[index];
-        keys.append(member.key);
-        functions.append(member.function);
-        if (member.isGetter)
+    for (uint32_t index = 0; index < members.size(); ++index) {
+        const Value& definition = rewriter.original(members[index].value);
+        keys.append(definition.key());
+        functions.append(definition.functionOperand());
+        if (definition.opcode == Opcode::DefineGetter)
             getterMask |= 1u << index;
         enumerableMask |= 1u << index;
     }
 
+    ValueID object = rewriter.original(match.group.root).objectOperand();
     Value& root = rewriter.replaceRoot(Opcode::DefineAccessors);
-    root.setObjectOperand(match.object);
+    root.setObjectOperand(object);
     root.setKeys(keys.span());
     root.setFunctionsOperands(functions.span());
     root.setGetterMask(getterMask);
@@ -511,25 +481,24 @@ void selectAccessorGroup(SelectionContext& context)
     uint64_t maxMembers = std::min(context.pass().limit(LimitID::MaxSelectionGroupMembers), maxKeysInAccessorMasks);
     Vector<AccessorMatch> matches;
     for (BlockID block : context.analyses().cfg().reversePostOrder()) {
-        Vector<AccessorMember, 4> list;
+        Vector<ValueID, 4> list;
         ValueID listObject;
         for (ValueID id : function.at(block).values) {
             const Value& value = function.at(id);
             if (value.opcode != Opcode::DefineGetter && value.opcode != Opcode::DefineSetter)
                 continue;
 
-            std::optional<AccessorMember> member = accessorMemberOf(context, id);
-            ValueID object = value.objectOperand();
-            if (!member || object != listObject || list.size() >= maxMembers) {
-                closeAccessorList(context, listObject, list.span(), matches);
+            bool canJoin = canJoinAccessorGroup(context, id);
+            if (!canJoin || value.objectOperand() != listObject || list.size() >= maxMembers) {
+                closeAccessorList(context, list.span(), matches);
                 list.shrink(0);
             }
-            if (member) {
-                listObject = object;
-                list.append(*member);
+            if (canJoin) {
+                listObject = value.objectOperand();
+                list.append(id);
             }
         }
-        closeAccessorList(context, listObject, list.span(), matches);
+        closeAccessorList(context, list.span(), matches);
     }
 
     context.rewriteGroups(SelectionRuleID::AccessorGroup, matches, rewriteAccessorGroup);

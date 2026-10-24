@@ -20,11 +20,9 @@ layout L4 kind=Instance name="Label" base=L3 constructor=f4 fields=[{key="pos" d
 # CHECK-NEXT: L4: members [L4]
 
 function f0 name="take" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     Return
-}
-# READ-LABEL: function f0 name="take"
 # READ: parameters=[{type=L0|L3|L4}]
+}
 function f1 name="Statement" kind=BaseConstructor flags=[HasNewTarget] results=[{type=L1 flags=[IsFromCompiler]}]
 function f2 name="Loop" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=L2 flags=[IsFromCompiler]}]
 function f3 name="Name" kind=BaseConstructor flags=[HasNewTarget] results=[{type=L3 flags=[IsFromCompiler]}]

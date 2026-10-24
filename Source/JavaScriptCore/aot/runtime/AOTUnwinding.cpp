@@ -8,8 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCallSiteTable.h"
 #include "AOTGenerator.h"
-#include "AOTHandlerTable.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTInstanceLayout.h"

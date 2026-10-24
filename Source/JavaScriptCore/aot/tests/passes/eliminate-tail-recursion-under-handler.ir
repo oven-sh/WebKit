@@ -7,7 +7,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="returnsInCoveredBlock" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Jump -> next b1()
   b1() handler=b2():
     v1 = CallDirect v0 function=f0
@@ -15,16 +14,14 @@ function f0 name="returnsInCoveredBlock" parameters=[{type=number}] results=[{ty
   b2() role=CatchHandler:
     v2 = CatchValue
     Return v0
-}
-# CHECK-LABEL: function f0 name="returnsInCoveredBlock"
 # CHECK-NOT: LoopHint
 # CHECK: b1() handler=b2():
 # CHECK-NEXT: v1: number = CallDirect v0 function=f0
 # CHECK-NEXT: Return v1
 # CHECK-NOT: LoopHint
+}
 
 function f1 name="returnsBehindCoveredBlock" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Jump -> next b1()
   b1() handler=b3():
     v1 = CallDirect v0 function=f1
@@ -34,8 +31,6 @@ function f1 name="returnsBehindCoveredBlock" parameters=[{type=number}] results=
   b3() role=CatchHandler:
     v2 = CatchValue
     Return v0
-}
-# CHECK-LABEL: function f1 name="returnsBehindCoveredBlock"
 # CHECK-NOT: LoopHint
 # CHECK: b1() handler=b3():
 # CHECK-NEXT: v1: number = CallDirect v0 function=f1
@@ -43,9 +38,9 @@ function f1 name="returnsBehindCoveredBlock" parameters=[{type=number}] results=
 # CHECK-NEXT: b2():
 # CHECK-NEXT: Return v1
 # CHECK-NOT: LoopHint
+}
 
 function f2 name="handlerThrowsAgain" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1() handler=b3():
@@ -56,10 +51,9 @@ function f2 name="handlerThrowsAgain" parameters=[{type=number}] results=[{type=
   b3() role=CatchHandler:
     v3 = CatchException
     Rethrow v3
-}
-# CHECK-LABEL: function f2 name="handlerThrowsAgain"
 # CHECK-NOT: LoopHint
 # CHECK: b1() handler=b3():
 # CHECK-NEXT: v2: number = CallDirect v0 function=f2
 # CHECK-NEXT: Return v2
 # CHECK-NOT: LoopHint
+}

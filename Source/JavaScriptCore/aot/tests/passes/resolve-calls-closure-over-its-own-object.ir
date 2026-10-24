@@ -9,7 +9,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Panel" constructor=f1 fields=[{key="handler" declared={type=anything}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = FinishClass v1 layout=L0
@@ -18,7 +17,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Panel" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     v3 = NewClosure v2 function=f2
@@ -30,14 +28,12 @@ function f2 name="handler" kind=Arrow captures=[{type=anything}] results=[{type=
     Return
 }
 function f3 name="closure-over-its-own-object" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="handler"
     v2 = Call v1, v0 calleeKey="handler"
     Return v2
-}
-# CHECK-LABEL: function f3 name="closure-over-its-own-object"
 # CHECK: b0(v0: L0):
 # CHECK-NOT: key="handler"
 # CHECK: = CallDirect {{*}} function=f2
 # CHECK-NOT: key="handler"
 # CHECK: Return
+}

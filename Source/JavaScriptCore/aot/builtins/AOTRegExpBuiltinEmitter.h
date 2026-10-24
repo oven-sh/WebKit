@@ -17,21 +17,7 @@ class RegExpBuiltinEmitter final : public BuiltinFamilyEmitter {
 public:
     explicit RegExpBuiltinEmitter(CodeGenerator&);
 
-    void generateNewRegExp(const InlineCall&);
-    void generateStringMatch(const InlineCall&);
-    void generateStringSearch(const InlineCall&);
-    void generateRegExpExec(const InlineCall&);
-    void generateRegExpTest(const InlineCall&);
-    void generateRegExpFlags(const InlineCall&);
-    void generateRegExpSource(const InlineCall&);
-    void generateStringReplace(const InlineCall&);
-    void generateStringReplaceAll(const InlineCall&);
-    void generateStringSplit(const InlineCall&);
-    void generateRegExpFlag(const InlineCall&);
-    void generateRegExpGetLastIndex(const InlineCall&);
-    void generateRegExpSetLastIndex(const InlineCall&);
-    void generateRegExpExecPrefix(const InlineCall&);
-    void generateStringMatchPrefix(const InlineCall&);
+    FOR_EACH_AOT_INLINE_BUILTIN_IN_REG_EXP_BUILTIN(AOT_DECLARE_INLINE_BUILTIN_GENERATOR)
 
 private:
     using Results = Vector<Operand, 36>;

@@ -12,7 +12,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="callsItself" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Integer integer=0
     v2 = Less v0, v1
     Branch v2 -> taken b1(), notTaken b2()
@@ -22,62 +21,50 @@ function f0 name="callsItself" parameters=[{type=number}] results=[{type=number}
     v3 = Sub v0, v0
     v4 = CallDirect v3 function=f0
     Return v4
-}
-# CHECK-LABEL: function f0 name="callsItself"
 # CHECK-NOT: inlineFrames=
 # CHECK: v4: number = CallDirect v3 function=f0 [isNeverInlined]
 # CHECK-NEXT: Return v4
+}
 
 function f1 name="doubles" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Add v0, v0
     Return v1
 }
 function f2 name="squares" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Mul v0, v0
     Return v1
 }
 
 function f3 name="calleeIsTheFrameOfTheCall" parameters=[{type=number}] results=[{type=number}] inlineFrames=[{}, {callee=f1 callPosition=4 module=m0}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f1 @7:1
     Return v1
-}
-# CHECK-LABEL: function f3 name="calleeIsTheFrameOfTheCall"
 # CHECK: inlineFrames=[{}, {callee=f1 callPosition=4 module=m0}] {
 # CHECK: v1: number = CallDirect v0 function=f1 [isNeverInlined] @7:1
+}
 
 function f4 name="callOutsideTheFrame" parameters=[{type=number}] results=[{type=number}] inlineFrames=[{}, {callee=f1 callPosition=4 module=m0}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f1 @7
     Return v1
-}
-# CHECK-LABEL: function f4 name="callOutsideTheFrame"
 # CHECK: inlineFrames=[{}, {callee=f1 callPosition=4 module=m0}, {callee=f1 callPosition=7 module=m0}] {
 # CHECK-NOT: CallDirect
 # CHECK: = Add v0, v0 @0:2
+}
 
 function f5 name="calleeIsTheParentFrame" parameters=[{type=number}] results=[{type=number}] inlineFrames=[{}, {callee=f1 callPosition=4 module=m0}, {callee=f2 callPosition=5 parent=1 module=m0}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f1 @7:2
     Return v1
-}
-# CHECK-LABEL: function f5 name="calleeIsTheParentFrame"
 # CHECK: v1: number = CallDirect v0 function=f1 [isNeverInlined] @7:2
+}
 
 function f6 name="calleeIsASiblingFrame" parameters=[{type=number}] results=[{type=number}] inlineFrames=[{}, {callee=f1 callPosition=4 module=m0}, {callee=f2 callPosition=5 module=m0}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f1 @7:2
     Return v1
-}
-# CHECK-LABEL: function f6 name="calleeIsASiblingFrame"
 # CHECK: {callee=f2 callPosition=5 module=m0}, {callee=f1 callPosition=7 parent=2 module=m0}] {
 # CHECK-NOT: CallDirect
 # CHECK: = Add v0, v0 @0:3
+}
 
 function f7 name="isEven" parameters=[{type=number}] results=[{type=boolean}] {
-  b0(v0: number):
     v1 = Integer integer=0
     v2 = StrictEq v0, v1
     Branch v2 -> taken b1(), notTaken b2()
@@ -89,15 +76,13 @@ function f7 name="isEven" parameters=[{type=number}] results=[{type=boolean}] {
     v5 = Sub v0, v4
     v6 = CallDirect v5 function=f8 [isAlwaysInlined] @9
     Return v6
-}
-# CHECK-LABEL: function f7 name="isEven"
 # CHECK: inlineFrames=[{}, {callee=f8 callPosition=9 module=m0}] {
 # CHECK-NOT: function=f8
 # CHECK: = CallDirect {{*}} function=f7 [isNeverInlined, isAlwaysInlined] @8:1
 # CHECK-NOT: function=f8
+}
 
 function f8 name="isOdd" parameters=[{type=number}] results=[{type=boolean}] {
-  b0(v0: number):
     v1 = Integer integer=0
     v2 = StrictEq v0, v1
     Branch v2 -> taken b1(), notTaken b2()
@@ -109,9 +94,8 @@ function f8 name="isOdd" parameters=[{type=number}] results=[{type=boolean}] {
     v5 = Sub v0, v4
     v6 = CallDirect v5 function=f7 [isAlwaysInlined] @8
     Return v6
-}
-# CHECK-LABEL: function f8 name="isOdd"
 # CHECK: inlineFrames=[{}, {callee=f7 callPosition=8 module=m0}] {
 # CHECK-NOT: function=f7
 # CHECK: = CallDirect {{*}} function=f8 [isNeverInlined, isAlwaysInlined] @9:1
 # CHECK-NOT: function=f7
+}

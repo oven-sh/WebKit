@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="invariant-number" parameters=[{type=int}, {type=number}] results=[{type=int}] {
-  b0(v0: int, v1: number):
     v2 = Integer integer=1
     v3 = Integer integer=0
     Jump -> next b1(v0)
@@ -21,24 +20,20 @@ function f0 name="invariant-number" parameters=[{type=int}, {type=number}] resul
     Jump -> next b1(v8)
   b3():
     Return v4
-}
-# CHECK-LABEL: function f0 name="invariant-number"
 # CHECK: [[bound]]: int = IntegerBound v1 comparison=Less
 # CHECK-NEXT: Jump -> next b1(v0)
 # CHECK-NOT: IntegerBound
 # CHECK: boolean = Less v4, [[bound]]
+}
 
 function f1 name="outside-loop" parameters=[{type=int}, {type=number}] results=[{type=boolean}] {
-  b0(v0: int, v1: number):
     v2 = Less v0, v1
     Return v2
-}
-# CHECK-LABEL: function f1 name="outside-loop"
 # CHECK-NOT: IntegerBound
 # CHECK: boolean = Less v0, v1
+}
 
 function f2 name="number-counter" parameters=[{type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
     v2 = Integer integer=1
     Jump -> next b1(v0)
   b1(v3):
@@ -50,13 +45,11 @@ function f2 name="number-counter" parameters=[{type=number}, {type=number}] resu
     Jump -> next b1(v6)
   b3():
     Return v3
-}
-# CHECK-LABEL: function f2 name="number-counter"
 # CHECK-NOT: IntegerBound
 # CHECK: boolean = Less v3, v1
+}
 
 function f3 name="two-entry-edges" parameters=[{type=int}, {type=number}, {type=boolean}] results=[{type=int}] {
-  b0(v0: int, v1: number, v2: boolean):
     v3 = Integer integer=1
     v4 = Integer integer=0
     Branch v2 -> taken b1(), notTaken b2()
@@ -74,7 +67,6 @@ function f3 name="two-entry-edges" parameters=[{type=int}, {type=number}, {type=
     Jump -> next b3(v9)
   b5():
     Return v5
-}
-# CHECK-LABEL: function f3 name="two-entry-edges"
 # CHECK-NOT: IntegerBound
 # CHECK: boolean = Less v5, v1
+}

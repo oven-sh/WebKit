@@ -22,12 +22,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-enum class PromiseOperand : uint8_t {
-    Unknown,
-    Promise,
-    NoPromise,
-    PromiseOrUndefined,
-};
+enum class PromiseOperand : uint8_t { Unknown, Promise, NoPromise, PromiseOrUndefined };
 
 struct PromiseMatch {
     SelectionGroup group;
@@ -41,9 +36,41 @@ struct AwaitOfPrimitive {
 
 class PointsBeforeSuspension {
 public:
-    explicit PointsBeforeSuspension(SelectionContext&);
+    explicit PointsBeforeSuspension(SelectionContext& context)
+        : m_context(context)
+    {
+        const Function& function = context.function();
+        FunctionAnalyses& analyses = context.analyses();
+        const CFG& cfg = analyses.cfg();
+        auto suspendsOnSomeEdge = [](const EffectsOnEdges& effects) {
+            return effects.normal.maySuspend || effects.handler.maySuspend;
+        };
+        for (BlockID block : cfg.reversePostOrder()) {
+            bool hasSuspension = declaredBoundOf(function.at(block).terminator.kind).maySuspend && suspendsOnSomeEdge(analyses.effectsOfTerminator(block));
+            for (ValueID id : function.at(block).values) {
+                if (!maySuspend(function.at(id).opcode) || !suspendsOnSomeEdge(analyses.effectsOf(id)))
+                    continue;
+                m_suspensions.set(id.index());
+                hasSuspension = true;
+            }
+            if (!hasSuspension)
+                continue;
+            for (BlockID successor : cfg.successors(block)) {
+                if (!m_blocksAfterSuspension.get(successor.index()))
+                    m_blocksAfterSuspension.merge(cfg.blocksReachableFrom(successor, m_blocksAfterSuspension));
+            }
+        }
+    }
 
-    bool contains(ValueID user) const;
+    bool contains(ValueID user) const
+    {
+        ValueLocation location = m_context.analyses().useLists().locationOf(user);
+        if (location.placement != ValuePlacement::InBlock || m_blocksAfterSuspension.get(location.block.index()))
+            return false;
+        return std::ranges::none_of(m_context.function().at(location.block).values.span().first(location.index), [&](ValueID earlier) {
+            return m_suspensions.get(earlier.index());
+        });
+    }
 
 private:
     SelectionContext& m_context;
@@ -53,40 +80,9 @@ private:
 
 } // anonymous namespace
 
-PointsBeforeSuspension::PointsBeforeSuspension(SelectionContext& context)
-    : m_context(context)
+static bool isAsyncFunctionBody(const Function& function)
 {
-    const Function& function = context.function();
-    FunctionAnalyses& analyses = context.analyses();
-    const CFG& cfg = analyses.cfg();
-    auto suspendsOnSomeEdge = [](const EffectsOnEdges& effects) {
-        return effects.normal.maySuspend || effects.handler.maySuspend;
-    };
-    for (BlockID block : cfg.reversePostOrder()) {
-        bool hasSuspension = declaredBoundOf(function.at(block).terminator.kind).maySuspend && suspendsOnSomeEdge(analyses.effectsOfTerminator(block));
-        for (ValueID id : function.at(block).values) {
-            if (!maySuspend(function.at(id).opcode) || !suspendsOnSomeEdge(analyses.effectsOf(id)))
-                continue;
-            m_suspensions.set(id.index());
-            hasSuspension = true;
-        }
-        if (!hasSuspension)
-            continue;
-        for (BlockID successor : cfg.successors(block)) {
-            if (!m_blocksAfterSuspension.get(successor.index()))
-                m_blocksAfterSuspension.merge(cfg.blocksReachableFrom(successor, m_blocksAfterSuspension));
-        }
-    }
-}
-
-bool PointsBeforeSuspension::contains(ValueID user) const
-{
-    ValueLocation location = m_context.analyses().useLists().locationOf(user);
-    if (location.placement != ValuePlacement::InBlock || m_blocksAfterSuspension.get(location.block.index()))
-        return false;
-    return std::ranges::none_of(m_context.function().at(location.block).values.span().first(location.index), [&](ValueID earlier) {
-        return m_suspensions.get(earlier.index());
-    });
+    return function.role == FunctionRole::CoroutineBody && coroutineOfBody(function).kind == CoroutineKind::AsyncFunction;
 }
 
 // Until an operation takes it, a promise is known to nobody: it is pending and has no reaction, whatever runs after its allocation.
@@ -147,6 +143,17 @@ static void replaceRootWithUpcast(GroupRewriter& rewriter, ValueID result)
     root.setCastType(TypeTable::anything);
 }
 
+// Leaves the builder in the arm of a value that may be thenable.
+static IRBuilder::ProvenBranch emitThenableTest(IRBuilder& builder, ValueID value)
+{
+    BlockID failedUnasked = builder.beginPrediction();
+    ValueID test = builder.append(Opcode::IsNotThenable, { value });
+    IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, 0, BlockFrequency::Normal, BlockFrequency::Rare);
+    builder.endPrediction(failedUnasked, branch.notTaken);
+    builder.moveToEndOf(branch.notTaken);
+    return branch;
+}
+
 static void emitArms(GroupRewriter& rewriter, const PromiseMatch& match, ValueID promise, ValueID value)
 {
     rewriter.beginArms();
@@ -154,12 +161,8 @@ static void emitArms(GroupRewriter& rewriter, const PromiseMatch& match, ValueID
 
     ValueID guard;
     if (match.testsThenable) {
-        BlockID failedUnasked = builder.beginPrediction();
-        ValueID test = builder.append(Opcode::IsNotThenable, { value });
-        IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, 0, BlockFrequency::Normal, BlockFrequency::Rare);
-        builder.endPrediction(failedUnasked, branch.notTaken);
+        IRBuilder::ProvenBranch branch = emitThenableTest(builder, value);
         guard = branch.provenOnTaken;
-        builder.moveToEndOf(branch.notTaken);
         rewriter.endArm(rewriter.appendOriginals());
         builder.moveToEndOf(branch.taken);
     }
@@ -199,11 +202,7 @@ static void rewriteResolution(GroupRewriter& rewriter, const PromiseMatch& match
 
     rewriter.beginArms();
     IRBuilder& builder = rewriter.builder();
-    BlockID failedUnasked = builder.beginPrediction();
-    ValueID test = builder.append(Opcode::IsNotThenable, { value });
-    IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, 0, BlockFrequency::Normal, BlockFrequency::Rare);
-    builder.endPrediction(failedUnasked, branch.notTaken);
-    builder.moveToEndOf(branch.notTaken);
+    IRBuilder::ProvenBranch branch = emitThenableTest(builder, value);
     rewriter.appendOriginals();
     rewriter.endArm(std::nullopt);
 
@@ -212,7 +211,7 @@ static void rewriteResolution(GroupRewriter& rewriter, const PromiseMatch& match
     rewriter.endArm(std::nullopt);
 }
 
-static void rewrite(GroupRewriter& rewriter, const PromiseMatch& match)
+static void rewriteFulfillment(GroupRewriter& rewriter, const PromiseMatch& match)
 {
     const Value& original = rewriter.original(match.group.root);
     ValueID promise = original.promiseOperand();
@@ -241,12 +240,18 @@ static void rewrite(GroupRewriter& rewriter, const PromiseMatch& match)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static void claimFulfillment(SelectionContext& context, Vector<PromiseMatch>& matches, ValueID id, PromiseOperand promise, bool testsThenable)
+{
+    PromiseMatch match { groupOfOne(id), promise, testsThenable };
+    match.group.hasSlowPath = testsThenable || promise == PromiseOperand::PromiseOrUndefined;
+    if (context.tryClaim(SelectionRuleID::FreshPromiseFulfillment, match.group) == ClaimResult::Claimed)
+        matches.append(WTF::move(match));
+}
+
 static void matchResultsOfAsyncFunction(SelectionContext& context, Vector<PromiseMatch>& matches)
 {
     const Function& function = context.function();
-    if (function.role != FunctionRole::CoroutineBody || coroutineOfBody(function).kind != CoroutineKind::AsyncFunction)
-        return;
-    if (context.candidates(Opcode::ReturnAsyncResult).empty())
+    if (!isAsyncFunctionBody(function) || context.candidates(Opcode::ReturnAsyncResult).empty())
         return;
 
     ValueID driver = driverOf(function);
@@ -266,17 +271,10 @@ static void matchResultsOfAsyncFunction(SelectionContext& context, Vector<Promis
 
         bool testsThenable = mayBeThenable(context, value.valueOperand());
         bool needsArms = testsThenable || promise == PromiseOperand::PromiseOrUndefined;
-        if (needsArms && context.shapeAt(id) != CodeShape::Fast)
-            continue;
-
         // Each copy of a ReturnAsyncResult must be returned by its own block.
-        if (needsArms && !context.isOnlyReturned(id))
+        if (needsArms && (context.shapeAt(id) != CodeShape::Fast || !context.isOnlyReturned(id)))
             continue;
-
-        PromiseMatch match { groupOfOne(id), promise, testsThenable };
-        match.group.hasSlowPath = needsArms;
-        if (context.tryClaim(SelectionRuleID::FreshPromiseFulfillment, match.group) == ClaimResult::Claimed)
-            matches.append(WTF::move(match));
+        claimFulfillment(context, matches, id, promise, testsThenable);
     }
 }
 
@@ -288,13 +286,8 @@ static void matchResolutionsOfNewPromises(SelectionContext& context, Vector<Prom
         bool testsThenable = mayBeThenable(context, value.valueOperand());
         if (testsThenable && context.shapeAt(id) != CodeShape::Fast)
             continue;
-        if (!isFirstUseOfNewPromise(context, id, value.promiseOperand()))
-            continue;
-
-        PromiseMatch match { groupOfOne(id), PromiseOperand::Promise, testsThenable };
-        match.group.hasSlowPath = testsThenable;
-        if (context.tryClaim(SelectionRuleID::FreshPromiseFulfillment, match.group) == ClaimResult::Claimed)
-            matches.append(WTF::move(match));
+        if (isFirstUseOfNewPromise(context, id, value.promiseOperand()))
+            claimFulfillment(context, matches, id, PromiseOperand::Promise, testsThenable);
     }
 }
 
@@ -303,9 +296,7 @@ void selectFreshPromiseFulfillment(SelectionContext& context)
     Vector<PromiseMatch> matches;
     matchResultsOfAsyncFunction(context, matches);
     matchResolutionsOfNewPromises(context, matches);
-    context.rewriteGroups(SelectionRuleID::FreshPromiseFulfillment, matches, [](GroupRewriter& rewriter, const PromiseMatch& match) {
-        rewrite(rewriter, match);
-    });
+    context.rewriteGroups(SelectionRuleID::FreshPromiseFulfillment, matches, rewriteFulfillment);
 }
 
 static bool awaitsPrimitive(SelectionContext& context, ValueID await)
@@ -335,8 +326,7 @@ static void rewriteAwaitOfPrimitive(GroupRewriter& rewriter, const AwaitOfPrimit
 // An await of a primitive queues the job that resumes the function.
 void selectAwaitInPlace(SelectionContext& context)
 {
-    const Function& function = context.function();
-    if (function.role != FunctionRole::CoroutineBody || coroutineOfBody(function).kind != CoroutineKind::AsyncFunction)
+    if (!isAsyncFunctionBody(context.function()))
         return;
 
     Vector<AwaitOfPrimitive> matches;
@@ -349,9 +339,7 @@ void selectAwaitInPlace(SelectionContext& context)
         if (context.tryClaim(SelectionRuleID::AwaitInPlace, match.group) == ClaimResult::Claimed)
             matches.append(WTF::move(match));
     }
-    context.rewriteGroups(SelectionRuleID::AwaitInPlace, matches, [](GroupRewriter& rewriter, const AwaitOfPrimitive& match) {
-        rewriteAwaitOfPrimitive(rewriter, match);
-    });
+    context.rewriteGroups(SelectionRuleID::AwaitInPlace, matches, rewriteAwaitOfPrimitive);
 }
 
 } } } // namespace JSC::AOT::Typed

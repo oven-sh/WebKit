@@ -9,7 +9,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=JSON
     v1 = Builtin builtin=JSONParse
     v2 = String string="{}"
@@ -22,10 +21,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="handed" results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="reviver" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Return v1
 }

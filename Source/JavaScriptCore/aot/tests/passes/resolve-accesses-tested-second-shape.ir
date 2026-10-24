@@ -18,7 +18,6 @@ layout L5 kind=Instance name="SubComputed" base=L4 constructor=f1 flags=[HasHeri
 function f0 name="Computed" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L4
 function f1 name="SubComputed" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L5
 function f2 name="x" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=number}] {
-  b0(v0: anything):
     v1 = Double number=1.5
     Return v1
 }
@@ -27,8 +26,6 @@ function f3 name="field-then-absent" parameters=[{type=L1|L3 flags=[IsExpected]}
   b0(v0: anything ~ L1|L3):
     v1 = PropGet v0 key="x"
     Return v1
-}
-# FIRST-LABEL: function f3 name="field-then-absent"
 # FIRST-NEXT: b0(
 # FIRST-NEXT: [[first3]]: boolean{{*}}= TypeTest v0 testedType=L1
 # FIRST-NEXT: Branch [[first3]] -> taken
@@ -36,7 +33,6 @@ function f3 name="field-then-absent" parameters=[{type=L1|L3 flags=[IsExpected]}
 # FIRST: frequency=Unlikely:
 # FIRST-NEXT: = PropGet v0 key="x"
 # FIRST-NOT: TypeTest
-# SECOND-LABEL: function f3 name="field-then-absent"
 # SECOND-NEXT: b0(
 # SECOND-NEXT: = TypeTest v0 testedType=L1
 # SECOND: = GetSlot [[object3]], [[guard3]] key="x" receivers=[L1] level=Expected
@@ -47,18 +43,16 @@ function f3 name="field-then-absent" parameters=[{type=L1|L3 flags=[IsExpected]}
 # SECOND: frequency=Rare:
 # SECOND-NEXT: = PropGet v0 key="x"
 # SECOND-NOT: TypeTest
+}
 function f4 name="first-arm-also-tests-the-slot" parameters=[{type=L1|L3 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ L1|L3):
     v1 = PropGet v0 key="y"
     Return v1
-}
-# FIRST-LABEL: function f4 name="first-arm-also-tests-the-slot"
 # FIRST: = TypeTest v0 testedType=L1
 # FIRST: frequency=Unlikely:
 # FIRST-NEXT: = PropGet v0 key="y"
 # FIRST: = IsSlotFilled [[object4]], {{*}} key="y" receivers=[L1] level=Expected [holdsDeclaredType]
 # FIRST-NOT: TypeTest
-# SECOND-LABEL: function f4 name="first-arm-also-tests-the-slot"
 # SECOND: = TypeTest v0 testedType=L1
 # SECOND: frequency=Unlikely:
 # SECOND-NEXT: [[second4]]: boolean{{*}}= TypeTest v0 testedType=L3
@@ -66,39 +60,36 @@ function f4 name="first-arm-also-tests-the-slot" parameters=[{type=L1|L3 flags=[
 # SECOND: = Undefined
 # SECOND: frequency=Rare:
 # SECOND-NEXT: = PropGet v0 key="y"
+}
 function f5 name="field-then-getter" parameters=[{type=L1|L4 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ L1|L4):
     v1 = PropGet v0 key="x"
     Return v1
-}
 # A field and a getter are tested for together, and nothing that has failed that test is tested for either of them.
-# FIRST-LABEL: function f5 name="field-then-getter"
 # FIRST: = TypeTest v0 testedType=L1|L4
 # FIRST: : L1|L4):
 # FIRST-NEXT: = PropGet {{*}} key="x"
 # FIRST-NOT: TypeTest
-# SECOND-LABEL: function f5 name="field-then-getter"
 # SECOND: = TypeTest v0 testedType=L1|L4
 # SECOND-NOT: TypeTest
 # SECOND: frequency=Unlikely:
 # SECOND-NEXT: = PropGet v0 key="x"
 # SECOND-NOT: TypeTest
+}
 function f6 name="getter-then-field" parameters=[{type=L1|L4|L5 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ L1|L4|L5):
     v1 = PropGet v0 key="x"
     Return v1
-}
-# FIRST-LABEL: function f6 name="getter-then-field"
 # FIRST: = TypeTest v0 testedType=L1|L4|L5
 # FIRST: : L1|L4|L5):
 # FIRST-NEXT: = PropGet {{*}} key="x"
 # FIRST-NOT: TypeTest
-# SECOND-LABEL: function f6 name="getter-then-field"
 # SECOND: = TypeTest v0 testedType=L1|L4|L5
 # SECOND-NOT: TypeTest
 # SECOND: frequency=Unlikely:
 # SECOND-NEXT: = PropGet v0 key="x"
 # SECOND-NEXT: Return
+}
 function f7 name="third-shape-stays-by-name" parameters=[{type=L1|L3|L4 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ L1|L3|L4):
     v1 = PropGet v0 key="x"
@@ -128,8 +119,6 @@ function f9 name="other-arm-is-not-resolved" parameters=[{type=L1|L3 flags=[IsEx
   b0(v0: anything ~ L1|L3, v1: number):
     PropSet v0, v1 key="x"
     Return
-}
-# SECOND-LABEL: function f9 name="other-arm-is-not-resolved"
 # SECOND: = TypeTest v0 testedType=L1
 # SECOND-NOT: TypeTest
 # SECOND: PutSlot [[object9]], [[guard9]], v1 key="x" receivers=[L1] level=Expected
@@ -137,3 +126,4 @@ function f9 name="other-arm-is-not-resolved" parameters=[{type=L1|L3 flags=[IsEx
 # SECOND: frequency=Unlikely:
 # SECOND-NEXT: PropSet v0, v1 key="x"
 # SECOND-NOT: TypeTest
+}

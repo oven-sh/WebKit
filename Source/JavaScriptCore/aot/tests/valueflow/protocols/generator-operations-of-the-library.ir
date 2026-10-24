@@ -8,12 +8,10 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = CallDirect function=f1
     Return
 }
 function f1 name="steps" role=Library results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = Call v0
     v2 = NewClosure function=f6
@@ -30,7 +28,6 @@ function f1 name="steps" role=Library results=[{type=anything}] {
     Return
 }
 function f2 name="first" flags=[IsGenerator, TakesCallee] results=[{type=anything}] {
-  b0(v0: function):
     InitialYield
     v2 = NewClosure function=f4
     v3 = Yield v2
@@ -39,21 +36,17 @@ function f2 name="first" flags=[IsGenerator, TakesCallee] results=[{type=anythin
     Return
 }
 function f3 name="second" flags=[IsGenerator, TakesCallee] results=[{type=anything}] {
-  b0(v0: function):
     InitialYield
     v2 = NewClosure function=f5
     v3 = Yield v2
     Return
 }
 function f4 name="one" results=[{type=anything}] {
-  b0():
     Return
 }
 function f5 name="two" results=[{type=anything}] {
-  b0():
     Return
 }
 function f6 name="sent" results=[{type=anything}] {
-  b0():
     Return
 }

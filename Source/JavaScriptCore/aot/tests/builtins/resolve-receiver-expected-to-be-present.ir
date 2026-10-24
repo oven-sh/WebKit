@@ -6,44 +6,36 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="patternMayBeMissing" parameters=[{type=undefined|RegExp<pristine[Storage, Names, AsCreated]>}, {type=string}] results=[{type=anything}] {
-  b0(v0: undefined|RegExp<pristine[Storage, Names, AsCreated]>, v1: string):
     v2 = Builtin builtin=RegExpPrototypeExec
     v3 = Call v2, v0, v1
     Return v3
-}
-# CHECK-LABEL: function f0 name="patternMayBeMissing"
 # CHECK: TypeTest v0 testedType=RegExp
 # CHECK: ([[pattern0]]: RegExp<pristine[Storage, Names, AsCreated]>):
 # CHECK: = CallBuiltin [[pattern0]], v1 overload=RegExpPrototypeExec/0
 # CHECK-NEXT: Return
 # CHECK: CallBuiltin [[missing0]], v1 overload=RegExpPrototypeExec/0 builtinCallForm=AnyReceiver
 # CHECK: ([[missing0]]: undefined) frequency=Unlikely:
+}
 
 function f1 name="textMayBeMissing" parameters=[{type=undefined|null|string}, {type=number}] results=[{type=anything}] {
-  b0(v0: undefined|null|string, v1: number):
     v2 = Builtin builtin=StringPrototypeCharCodeAt
     v3 = Call v2, v0, v1
     Return v3
-}
-# CHECK-LABEL: function f1 name="textMayBeMissing"
 # CHECK: TypeTest v0 testedType=string
 # CHECK: ([[text1]]: string):
 # CHECK: = CallBuiltin [[text1]], v1 overload=StringPrototypeCharCodeAt/0
+}
 
 function f2 name="everyReceiverIsTaken" parameters=[{type=undefined|RegExp<pristine[Storage, Names, AsCreated]>}] results=[{type=anything}] {
-  b0(v0: undefined|RegExp<pristine[Storage, Names, AsCreated]>):
     v1 = Builtin builtin=ObjectPrototypeToString
     v2 = Call v1, v0
     Return v2
-}
-# CHECK-LABEL: function f2 name="everyReceiverIsTaken"
 # CHECK-NOT: TypeTest
+}
 
 function f3 name="onlyMissing" parameters=[{type=undefined|null}, {type=string}] results=[{type=anything}] {
-  b0(v0: undefined|null, v1: string):
     v2 = Builtin builtin=RegExpPrototypeExec
     v3 = Call v2, v0, v1
     Return v3
-}
-# CHECK-LABEL: function f3 name="onlyMissing"
 # CHECK-NOT: TypeTest
+}

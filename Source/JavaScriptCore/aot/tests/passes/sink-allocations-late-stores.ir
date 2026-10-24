@@ -11,7 +11,6 @@ layout L4 name="Listed" fields=[{key="run" declared={type=function} flags=[IsReq
 layout L5 name="Created" fields=[{key="run" declared={type=function}}, {key="count" declared={type=number}}]
 
 function f0 name="sharedObjectInListedFields" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: number, v2: boolean):
     v3 = NewObject -, v0 layout=L0 fields=[0]
     v4 = NewObject -, v0, v3, v1 layout=L1 fields=[0, 1, 2]
     v5 = NewObject -, v3, v4 layout=L2 fields=[0, 1]
@@ -21,16 +20,14 @@ function f0 name="sharedObjectInListedFields" parameters=[{type=anything}, {type
     Return v6
   b2():
     Return v0
-}
-# CHECK-LABEL: function f0 name="sharedObjectInListedFields"
 # CHECK: b1():
 # CHECK-NEXT: [[leaf0]]:{{*}}= NewObject -, v0 layout=L0 fields=[0]
 # CHECK-NEXT: [[middle0]]:{{*}}= NewObject -, v0, [[leaf0]], v1 layout=L1 fields=[0, 1, 2]
 # CHECK-NEXT: [[top0]]:{{*}}= NewObject -, [[leaf0]], [[middle0]] layout=L2 fields=[0, 1]
 # CHECK-NEXT: = Call v0, -, [[top0]]
+}
 
 function f1 name="sharedObjectInCreatedFields" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: number, v2: boolean):
     v3 = NewObject -, v0 layout=L0 fields=[0]
     v4 = NewObject layout=L1
     PropDefine v4, v0 key="id" receivers=[L1]
@@ -43,14 +40,13 @@ function f1 name="sharedObjectInCreatedFields" parameters=[{type=anything}, {typ
     Return v9
   b2():
     Return v0
-}
 # Nothing refers back, so every object is built before its holders and the definitions fold into the allocation.
-# CHECK-LABEL: function f1 name="sharedObjectInCreatedFields"
 # CHECK: b1():
 # CHECK-NEXT: [[leaf1]]:{{*}}= NewObject -, v0 layout=L0 fields=[0]
 # CHECK-NEXT: [[middle1]]:{{*}}= NewObject -, v0, [[leaf1]], v1 layout=L1 fields=[0, 1, 2]
 # CHECK-NEXT: [[top1]]:{{*}}= NewObject -, [[leaf1]], [[middle1]] layout=L2 fields=[0, 1]
 # CHECK-NEXT: = Call v0, -, [[top1]]
+}
 
 function f2 name="run" kind=Arrow captures=[{type=env L3}] results=[{type=anything}] {
   b0(v0: env L3):
@@ -59,7 +55,6 @@ function f2 name="run" kind=Arrow captures=[{type=env L3}] results=[{type=anythi
 }
 
 function f3 name="listedFieldInCycle" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: number, v2: boolean):
     v3 = NewObject layout=L3
     v4 = NewClosure v3 function=f2
     v5 = NewObject -, v4, v1 layout=L4 fields=[0, 1]
@@ -70,18 +65,16 @@ function f3 name="listedFieldInCycle" parameters=[{type=anything}, {type=number}
     Return v7
   b2():
     Return v0
-}
 # Every allocation of the layout lists both fields, which is what their occupancy says. The cycle is closed by the store to the environment.
-# CHECK-LABEL: function f3 name="listedFieldInCycle"
 # CHECK: b1():
 # CHECK-NEXT: [[scope3]]: env L3 = NewObject layout=L3
 # CHECK-NEXT: [[closure3]]:{{*}}= NewClosure [[scope3]] function=f2
 # CHECK-NEXT: [[listed3]]:{{*}}= NewObject -, [[closure3]], v1 layout=L4 fields=[0, 1]
 # CHECK-NEXT: PutEnvironmentField [[scope3]], [[listed3]] layout=L3
 # CHECK-NEXT: = Call v0, -, [[closure3]]
+}
 
 function f4 name="createdFieldInCycle" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: number, v2: boolean):
     v3 = NewObject layout=L3
     v4 = NewClosure v3 function=f2
     v5 = NewObject layout=L5
@@ -94,8 +87,6 @@ function f4 name="createdFieldInCycle" parameters=[{type=anything}, {type=number
     Return v9
   b2():
     Return v0
-}
-# CHECK-LABEL: function f4 name="createdFieldInCycle"
 # CHECK: b1():
 # CHECK-NEXT: [[created4]]:{{*}}= NewObject layout=L5
 # CHECK-NEXT: [[scope4]]: env L3 = NewObject -, [[created4]] layout=L3 fields=[0]
@@ -103,3 +94,4 @@ function f4 name="createdFieldInCycle" parameters=[{type=anything}, {type=number
 # CHECK-NEXT: PutSlotOrAdd [[created4]], [[created4]], [[closure4]] key="run" receivers=[L5] level=Proven
 # CHECK-NEXT: PutSlotOrAdd [[created4]], [[created4]], v1 key="count" receivers=[L5] level=Proven
 # CHECK-NEXT: = Call v0, -, [[closure4]]
+}

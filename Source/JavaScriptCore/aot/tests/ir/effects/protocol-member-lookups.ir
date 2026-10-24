@@ -9,7 +9,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="HoldsThen" fields=[{key="then" declared={type=undefined|f1} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] ownFieldCount=1 flow={baseState=None members=[L0] impossibleMutations=[ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreOfOtherType] addedKeysAreComplete=true ownAccessorsAreComplete=true}
 layout L1 name="Record" fields=[{key="done" declared={type=boolean} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] ownFieldCount=1 flow={baseState=None members=[L1] impossibleMutations=[ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreOfOtherType] addedKeysAreComplete=true ownAccessorsAreComplete=true}
 function f0 name="resolutions" parameters=[{type=1|L0}, {type=L1}, {type=number}] results=[{type=undefined}] {
-  b0(v0: 1|L0, v1: L1, v2: number):
     v3 = NewPromise
     v4 = Builtin builtin=Promise
     ResolvePromise v3, v0
@@ -22,7 +21,6 @@ function f0 name="resolutions" parameters=[{type=1|L0}, {type=L1}, {type=number}
     Return v11
 }
 function f1 name="then" kind=Method parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     v1 = Undefined
     Return v1
 }

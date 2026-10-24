@@ -22,10 +22,9 @@ function f0 name="carriedAround" parameters=[{type=L0 flags=[IsExpected]}, {type
     Jump -> next b3(v4)
   b5():
     Return v4
-}
-# CHECK-LABEL: function f0 name="carriedAround"
 # CHECK: b3(v4: anything ~ L0):
 # CHECK-NEXT: LoopHint
+}
 
 function f1 name="otherLayoutStoredInLoop" parameters=[{type=L0 flags=[IsExpected]}, {type=boolean}, {type=anything}, {type=L1 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ L0, v1: boolean, v2: anything, v3: anything ~ L1):
@@ -42,10 +41,9 @@ function f1 name="otherLayoutStoredInLoop" parameters=[{type=L0 flags=[IsExpecte
     Jump -> next b3(v3)
   b5():
     Return v5
-}
-# CHECK-LABEL: function f1 name="otherLayoutStoredInLoop"
 # CHECK: b3(v5: anything ~ L0|L1):
 # CHECK-NEXT: LoopHint
+}
 
 function f2 name="objectOfNoExpectedLayoutStoredInLoop" parameters=[{type=L0 flags=[IsExpected]}, {type=boolean}, {type=anything}, {type=object}] results=[{type=anything}] {
   b0(v0: anything ~ L0, v1: boolean, v2: anything, v3: object):
@@ -62,7 +60,6 @@ function f2 name="objectOfNoExpectedLayoutStoredInLoop" parameters=[{type=L0 fla
     Jump -> next b3(v3)
   b5():
     Return v5
-}
-# CHECK-LABEL: function f2 name="objectOfNoExpectedLayoutStoredInLoop"
 # CHECK: b3(v5: anything ~ object):
 # CHECK-NEXT: LoopHint
+}

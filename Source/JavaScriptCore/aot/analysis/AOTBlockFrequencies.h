@@ -26,7 +26,6 @@ constexpr bool isRarerThan(BlockFrequency a, BlockFrequency b) { return b < a; }
 
 inline constexpr WTF::FrequencyEstimatorConstants frequencyConstants { };
 
-// All that an estimate reads of a function beside its graph and the cycles of the graph. It names blocks and no value.
 struct FrequencyFacts {
     enum class BranchSide : uint8_t { Unknown, Taken, NotTaken };
 
@@ -35,7 +34,6 @@ struct FrequencyFacts {
         bool isRare() const { return applied == BlockFrequency::Rare || isInherentlyRare; }
 
         BlockFrequency recorded { BlockFrequency::Normal };
-        // It follows from what is recorded for the block and for the blocks that jump to it.
         BlockFrequency applied { BlockFrequency::Normal };
         bool isInherentlyRare { false };
         bool isNormalExit { false };
@@ -43,7 +41,6 @@ struct FrequencyFacts {
         BranchSide sideOffUsualPath { BranchSide::Unknown };
     };
 
-    // The predecessor jumps to the block with the constant that selects one successor of the block.
     struct DecidedPredecessor {
         BlockID block;
         BlockID predecessor;
@@ -53,7 +50,6 @@ struct FrequencyFacts {
     };
 
     Vector<BlockFacts> blocks;
-    // In the order of their blocks.
     Vector<DecidedPredecessor> decidedPredecessors;
 };
 
@@ -64,22 +60,16 @@ public:
     BlockFrequencies(const AnalysisContext&, const Function&, CFG&, const BlockCycles&);
     ~BlockFrequencies();
 
-    // For a function with the graph that this was made of. Where the estimate would read of the function what it has read, one made anew would answer the same.
     bool describes(const AnalysisContext&, const Function&) const;
 
     double frequencyOf(BlockID) const;
     BlockFrequency classOf(BlockID) const;
     BlockFrequency classOf(Edge) const;
-    // A side that is unlikely here alone does run: it is laid out of the way, and gets the code of the usual path.
     BlockFrequency classForBlockOrder(Edge) const;
     void dump(PrintStream&, const Function&) const;
 
 private:
-    class Counts;
-
     const BlockCycles& cycles() const LIFETIME_BOUND { return m_cyclesByLikelihood ? *m_cyclesByLikelihood : m_sharedCycles; }
-    void classifyEdges();
-    void estimateWeights();
     void computeClassesOfBlocks() const;
     void estimateCounts() const;
 
@@ -89,7 +79,6 @@ private:
     FrequencyFacts m_facts;
     Vector<BlockFrequency> m_edges;
     Vector<uint8_t> m_weights;
-    // Some who ask want classes, some want counts, few want both. Each is made for the first who wants it.
     mutable Vector<BlockFrequency> m_blocks;
     mutable bool m_hasClassesOfBlocks { false };
     mutable bool m_hasCounts { false };
@@ -100,7 +89,6 @@ enum class RecordedFrequencyUse : uint8_t { NotRecorded, Ignored, Applied };
 
 RecordedFrequencyUse recordedFrequencyUseOf(const Function&, const CFG&, BlockID, bool ignoresBranchHints);
 
-// Of a reachable block for which this holds, classOf() says Rare.
 inline bool isRecordedAsRare(const Function& function, BlockID block)
 {
     return block != entryBlock && function.at(block).frequency == BlockFrequency::Rare;

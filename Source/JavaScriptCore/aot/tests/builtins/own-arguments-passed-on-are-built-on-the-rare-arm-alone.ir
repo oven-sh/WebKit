@@ -11,8 +11,6 @@ function f0 name="tailCall" flags=[HasThis, HasArgumentCount, HasHiddenRest] cap
     v6 = Builtin builtin=FunctionPrototypeApply
     v7 = Call v6, v0, v1, v5
     ReturnCall v7
-}
-# CHECK-LABEL: function f0 name="tailCall"
 # CHECK-NOT: CreateUnmappedArguments
 # CHECK: Switch v2 cases=[0, 1] -> case [[none0]](), case [[one0]](), otherwise [[more0]]()
 # CHECK-NOT: CreateUnmappedArguments
@@ -30,6 +28,7 @@ function f0 name="tailCall" flags=[HasThis, HasArgumentCount, HasHiddenRest] cap
 # CHECK-NEXT: [[list0]]: Array = NewArgumentList v0, [[object0]]
 # CHECK-NEXT: [[call0]]: anything = CallList v0, v1, [[list0]]
 # CHECK-NEXT: ReturnCall [[call0]]
+}
 
 # The typed version of a function hands the object to the generic copy where a check fails.
 function f1 name="handedToTheGenericCopy" flags=[HasThis, HasArgumentCount, HasHiddenRest] captures=[{type=function}] thisType={type=anything} parameters=[{type=boolean}] results=[{type=anything}] {
@@ -44,8 +43,6 @@ function f1 name="handedToTheGenericCopy" flags=[HasThis, HasArgumentCount, HasH
     v9 = Builtin builtin=FunctionPrototypeApply
     v10 = Call v9, v0, v1, v8
     ReturnCall v10
-}
-# CHECK-LABEL: function f1 name="handedToTheGenericCopy"
 # CHECK-NOT: CreateUnmappedArguments
 # CHECK: Switch v2 cases=[0, 1] -> case [[none1]](), case [[one1]](), otherwise [[more1]]()
 # CHECK: [[none1]]():
@@ -56,6 +53,7 @@ function f1 name="handedToTheGenericCopy" flags=[HasThis, HasArgumentCount, HasH
 # CHECK-NEXT: ReturnCall [[callOne1]]
 # CHECK: [[more1]]() frequency=Unlikely:
 # CHECK-NEXT: [[object1]]: Arguments = CreateUnmappedArguments v2, v4, v3
+}
 
 function f2 name="resultIsUsed" flags=[HasThis, HasArgumentCount, HasHiddenRest] captures=[{type=function}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: function, v1: anything, v2: int[0, 4294967295], v3: anything, v4: Array):
@@ -64,8 +62,6 @@ function f2 name="resultIsUsed" flags=[HasThis, HasArgumentCount, HasHiddenRest]
     v7 = Call v6, v0, v1, v5
     v8 = Call v0, v1, v7
     Return v8
-}
-# CHECK-LABEL: function f2 name="resultIsUsed"
 # CHECK-NOT: CreateUnmappedArguments
 # CHECK: Switch v2 cases=[0, 1] -> case [[none2]](), case [[one2]](), otherwise [[more2]]()
 # CHECK-NOT: CreateUnmappedArguments
@@ -77,3 +73,4 @@ function f2 name="resultIsUsed" flags=[HasThis, HasArgumentCount, HasHiddenRest]
 # CHECK: frequency=Rare:
 # CHECK-NEXT: [[object2]]: Arguments = CreateUnmappedArguments v2, v4, v3
 # CHECK-NEXT: [[call2]]: anything = CallBuiltin v0, v1, [[object2]] overload=FunctionPrototypeApply/0
+}

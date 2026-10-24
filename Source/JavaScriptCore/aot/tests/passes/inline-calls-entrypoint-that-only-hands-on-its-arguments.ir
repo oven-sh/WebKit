@@ -9,7 +9,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToNumber v1
@@ -23,7 +22,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="passesItsArgumentsOn" flags=[HasRestParameter] captures=[{type=f2}] parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
-  b0(v0: f2, v1: Array):
     v2 = CallList v0, -, v1
     v3 = StrictEq v2, v0
     v4 = StrictEq v3, v2
@@ -31,7 +29,6 @@ function f1 name="passesItsArgumentsOn" flags=[HasRestParameter] captures=[{type
 }
 
 function f2 name="takesTwo" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Builtin builtin=GlobalThis
     v3 = PropGet v2 key="publish" [isFreeName]
     v4 = Call v3, -, v0, v1

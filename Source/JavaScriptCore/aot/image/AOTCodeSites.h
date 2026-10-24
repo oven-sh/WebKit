@@ -9,7 +9,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <type_traits>
 #include <wtf/Assertions.h>
 
 namespace JSC::AOT {

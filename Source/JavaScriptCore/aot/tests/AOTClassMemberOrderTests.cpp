@@ -35,7 +35,6 @@ layout L5 kind=Instance name="MethodTwice" module=m0 constructor=f30
 layout L6 kind=Instance name="StaticName" module=m0 constructor=f34
 layout L7 kind=Instance name="Patched" module=m0 constructor=f38
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="show" [isFreeName]
     v2 = PropGet v0 key="showValue" [isFreeName]
@@ -208,215 +207,174 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Descending" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2
 }
 function f2 name="zebra" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="Descending prototype zebra 0"
     Return v1
 }
 function f3 name="yak" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="Descending prototype yak 1"
     Return v1
 }
 function f4 name="walrus" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="Descending static walrus 2"
     Return v1
 }
 function f5 name="viper" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="Descending prototype viper 3"
     Return v1
 }
 function f6 name="viper" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = String string="Descending prototype viper 4"
     Return v2
 }
 function f7 name="ant" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="Descending prototype ant 5"
     Return v1
 }
 function f8 name="bee" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="Descending static bee 6"
     Return v1
 }
 function f9 name="Ascending" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L1
     v2 = NewObject v1 layout=L1
     Return v2
 }
 function f10 name="ant" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="Ascending prototype ant 0"
     Return v1
 }
 function f11 name="zebra" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="Ascending prototype zebra 1"
     Return v1
 }
 function f12 name="bee" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="Ascending static bee 2"
     Return v1
 }
 function f13 name="walrus" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="Ascending static walrus 3"
     Return v1
 }
 function f14 name="ComputedInTheMiddle" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L2
     v2 = NewObject v1 layout=L2
     Return v2
 }
 function f15 name="zebra" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="ComputedInTheMiddle prototype zebra 0"
     Return v1
 }
 function f16 name="computed" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="ComputedInTheMiddle prototype computed 1"
     Return v1
 }
 function f17 name="ant" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="ComputedInTheMiddle prototype ant 2"
     Return v1
 }
 function f18 name="zebra" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="ComputedInTheMiddle static zebra 3"
     Return v1
 }
 function f19 name="ant" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="ComputedInTheMiddle static ant 4"
     Return v1
 }
 function f20 name="MethodThenGetter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L3
     v2 = NewObject v1 layout=L3
     Return v2
 }
 function f21 name="first" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="MethodThenGetter prototype first 0"
     Return v1
 }
 function f22 name="member" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="MethodThenGetter prototype member 1"
     Return v1
 }
 function f23 name="last" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="MethodThenGetter prototype last 2"
     Return v1
 }
 function f24 name="member" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="MethodThenGetter prototype member 3"
     Return v1
 }
 function f25 name="GetterThenMethod" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L4
     v2 = NewObject v1 layout=L4
     Return v2
 }
 function f26 name="first" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="GetterThenMethod prototype first 0"
     Return v1
 }
 function f27 name="member" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="GetterThenMethod prototype member 1"
     Return v1
 }
 function f28 name="last" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="GetterThenMethod prototype last 2"
     Return v1
 }
 function f29 name="member" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="GetterThenMethod prototype member 3"
     Return v1
 }
 function f30 name="MethodTwice" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L5
     v2 = NewObject v1 layout=L5
     Return v2
 }
 function f31 name="member" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="MethodTwice prototype member 0"
     Return v1
 }
 function f32 name="other" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="MethodTwice prototype other 1"
     Return v1
 }
 function f33 name="member" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="MethodTwice prototype member 2"
     Return v1
 }
 function f34 name="StaticName" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L6
     v2 = NewObject v1 layout=L6
     Return v2
 }
 function f35 name="zebra" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="StaticName static zebra 0"
     Return v1
 }
 function f36 name="name" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="StaticName static name 1"
     Return v1
 }
 function f37 name="ant" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="StaticName static ant 2"
     Return v1
 }
 function f38 name="Patched" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L7
     v2 = NewObject v1 layout=L7
     Return v2
 }
 function f39 name="zebra" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="Patched prototype zebra 0"
     Return v1
 }
 function f40 name="ant" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="Patched prototype ant 1"
     Return v1
 }
 function f41 name="callMembers" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="zebra"
     v2 = Call v1, v0 calleeKey="zebra"
     v3 = PropGet v0 key="ant"
@@ -427,7 +385,6 @@ function f41 name="callMembers" parameters=[{type=anything}] results=[{type=anyt
     Return v7
 }
 function f42 name="patch" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="patched"
     Return v1
 }

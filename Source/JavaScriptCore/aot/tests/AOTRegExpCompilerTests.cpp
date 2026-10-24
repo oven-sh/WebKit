@@ -8,7 +8,7 @@
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
 
 #include "AOTIRTestSupport.h"
-#include "AOTRegExpCodeAddressing.h"
+#include "AOTRegExpCompiler.h"
 #include "AOTRegExpTestSupport.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"

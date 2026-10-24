@@ -11,7 +11,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Date
     v1 = NewClosure function=f1
     PropSet v0, v1 key="now"
@@ -23,7 +22,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="now" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=0
     Return v0
 }

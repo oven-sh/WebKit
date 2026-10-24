@@ -8,7 +8,6 @@ layout L0 name="Record" fields=[{key="x" declared={type=anything} flags=[IsRequi
 layout L1 kind=Environment name="scope" fields=[{key="x" declared={type=anything}}]
 
 function f0 name="record" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = ShapeTest v1 layouts=[L0]
     Return v2
@@ -17,7 +16,6 @@ function f0 name="record" parameters=[{type=anything}] results=[{type=anything}]
 # CHECK-NEXT: v1: Heap
 
 function f1 name="closure" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f3
     v1 = ShapeTest v0 layouts=[L0]
     Return v1
@@ -26,7 +24,6 @@ function f1 name="closure" results=[{type=anything}] {
 # CHECK-NEXT: v0: Heap
 
 function f2 name="environment" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L1 fields=[0]
     v2 = GetEnvironmentField v1 layout=L1 field=0
     v3 = ToBoolean v2
@@ -36,12 +33,10 @@ function f2 name="environment" parameters=[{type=anything}] results=[{type=anyth
 # CHECK-NEXT: v1: Frame
 
 function f3 name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 
 function f4 name="array" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray v0 contents=anything
     v2 = StrictEq v1, v0
     Return v2

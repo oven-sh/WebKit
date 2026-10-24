@@ -24,7 +24,6 @@ variable g0 name="takeArgument" module=m0 declared={type=anything} initializatio
 variable g1 name="parse" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="text" [isFreeName]
     v2 = ToString v1
@@ -48,7 +47,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="intoVariable" parameters=[{type=undefined|null|string}] results=[{type=anything}] {
-  b0(v0: undefined|null|string):
     v1 = Builtin builtin=JSON
     v2 = PropGet v1 key="parse"
     v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]}
@@ -60,7 +58,6 @@ function f1 name="intoVariable" parameters=[{type=undefined|null|string}] result
 }
 
 function f2 name="intoArgument" parameters=[{type=undefined|null|string}] results=[{type=anything}] {
-  b0(v0: undefined|null|string):
     v1 = GetModuleVariable variable=g0
     v2 = Builtin builtin=JSON
     v3 = PropGet v2 key="parse"
@@ -72,7 +69,6 @@ function f2 name="intoArgument" parameters=[{type=undefined|null|string}] result
 }
 
 function f3 name="returned" parameters=[{type=undefined|null|string}] results=[{type=undefined|null|L2}] {
-  b0(v0: undefined|null|string):
     v1 = Builtin builtin=JSON
     v2 = PropGet v1 key="parse"
     v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]}
@@ -81,7 +77,6 @@ function f3 name="returned" parameters=[{type=undefined|null|string}] results=[{
 }
 
 function f4 name="intoField" parameters=[{type=undefined|null|string}] results=[{type=anything}] {
-  b0(v0: undefined|null|string):
     v1 = Null
     v2 = NewObject -, v1 layout=L4 fields=[0]
     v3 = Builtin builtin=JSON
@@ -96,13 +91,11 @@ function f4 name="intoField" parameters=[{type=undefined|null|string}] results=[
 }
 
 function f5 name="takeArgument" parameters=[{type=undefined|null|L1 flags=[IsExpected]}] results=[{type=anything}] {
-  b0(v0: undefined|null|L1):
     v1 = PropGet v0 key="argumentId"
     Return v1
 }
 
 function f6 name="calleeOutOfAVariable" parameters=[{type=undefined|null|string}] results=[{type=anything}] {
-  b0(v0: undefined|null|string):
     v1 = GetModuleVariable variable=g1
     v2 = Call v1, -, v0 calleeName="parse"
     v3 = Convert v2 declared={type=undefined|null|L0} illTypedCause=FromLooseType

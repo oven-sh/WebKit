@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="checkMovesToEdge" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = Integer integer=1
@@ -16,8 +15,6 @@ function f0 name="checkMovesToEdge" parameters=[{type=anything}, {type=boolean}]
   b3(v3):
     v4 = Check v3 castType=number
     Return v4
-}
-# CHECK-LABEL: function f0 name="checkMovesToEdge"
 # CHECK: b1():
 # CHECK-NEXT: v2: 1 = Integer integer=1
 # CHECK-NEXT: Jump -> next b3(v2)
@@ -26,9 +23,9 @@ function f0 name="checkMovesToEdge" parameters=[{type=anything}, {type=boolean}]
 # CHECK-NEXT: Jump -> next b3([[onEdge]])
 # CHECK-NEXT: b3(v3: number):
 # CHECK-NEXT: Return v3
+}
 
 function f1 name="sameHandlerOnEdgeAndMerge" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = Integer integer=1
@@ -42,16 +39,14 @@ function f1 name="sameHandlerOnEdgeAndMerge" parameters=[{type=anything}, {type=
     v6 = CatchValue
     v7 = Integer integer=0
     Return v7
-}
-# CHECK-LABEL: function f1 name="sameHandlerOnEdgeAndMerge"
 # CHECK: b2() handler=b4(v1):
 # CHECK-NEXT: [[covered]]: number = Check v0 castType=number
 # CHECK-NEXT: Jump -> next b3([[covered]])
 # CHECK-NEXT: b3(v3: number) handler=b4(v1):
 # CHECK-NEXT: Return v3
+}
 
 function f2 name="secondParameterIsChecked" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = Integer integer=1
@@ -62,17 +57,15 @@ function f2 name="secondParameterIsChecked" parameters=[{type=anything}, {type=b
     v5 = Check v4 castType=number
     v6 = TypeOf v3
     Return v5
-}
-# CHECK-LABEL: function f2 name="secondParameterIsChecked"
 # CHECK: b2():
 # CHECK-NEXT: [[second]]: number = Check v0 castType=number
 # CHECK-NEXT: Jump -> next b3(v0, [[second]])
 # CHECK-NEXT: b3(v3: anything, v4: number):
 # CHECK-NOT: Check
 # CHECK: Return v4
+}
 
 function f3 name="twoEdgesNeedIt" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=number}] {
-  b0(v0: anything, v1: anything, v2: anything):
     Switch v2 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
   b1():
     v3 = Integer integer=1
@@ -84,8 +77,6 @@ function f3 name="twoEdgesNeedIt" parameters=[{type=anything}, {type=anything}, 
   b4(v4):
     v5 = Check v4 castType=number
     Return v5
-}
-# CHECK-LABEL: function f3 name="twoEdgesNeedIt"
 # CHECK: b2():
 # CHECK-NEXT: Jump -> next b4(v0)
 # CHECK-NEXT: b3():
@@ -93,9 +84,9 @@ function f3 name="twoEdgesNeedIt" parameters=[{type=anything}, {type=anything}, 
 # CHECK-NEXT: b4(v4: anything):
 # CHECK-NEXT: v5: number = Check v4 castType=number
 # CHECK-NEXT: Return v5
+}
 
 function f4 name="checkIsNotFirstValue" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = Integer integer=1
@@ -106,25 +97,22 @@ function f4 name="checkIsNotFirstValue" parameters=[{type=anything}, {type=boole
     v4 = Call v0
     v5 = Check v3 castType=number
     Return v5
-}
-# CHECK-LABEL: function f4 name="checkIsNotFirstValue"
 # CHECK: b2():
 # CHECK-NEXT: Jump -> next b3(v0)
 # CHECK-NEXT: b3(v3: anything):
 # CHECK-NEXT: = Call v0
 # CHECK-NEXT: v5: number = Check v3 castType=number
 # CHECK-NEXT: Return v5
+}
 
 function f5 name="everyEdgeNeedsIt" parameters=[{type=anything}] results=[{type=number}] {
-  b0(v0: anything):
     Jump -> next b1(v0)
   b1(v1):
     v2 = Check v1 castType=number
     Return v2
-}
-# CHECK-LABEL: function f5 name="everyEdgeNeedsIt"
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: Jump -> next b1(v0)
 # CHECK-NEXT: b1(v1: anything):
 # CHECK-NEXT: v2: number = Check v1 castType=number
 # CHECK-NEXT: Return v2
+}

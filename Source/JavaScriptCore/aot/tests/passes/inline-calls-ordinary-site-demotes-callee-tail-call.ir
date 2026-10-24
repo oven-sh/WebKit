@@ -9,21 +9,18 @@ module m0 path="main.js" displayPath="main.js"
 function f0 name="withoutBody" parameters=[{type=number}] results=[{type=anything}]
 
 function f1 name="mustTailCall" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Mul v0, v0
     v2 = CallDirect v1 function=f0
     ReturnCall v2 casts=[{declared={type=number} resolution=Assume}]
 }
 
 function f2 name="mayTailCall" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Mul v0, v0
     v2 = CallDirect v1 function=f0
     ReturnCall v2 casts=[{declared={type=number} resolution=Assume}] requirement=Allowed
 }
 
 function f3 name="resultIsUsed" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f1
     v2 = Mul v1, v1
     Return v2
@@ -40,7 +37,6 @@ function f3 name="resultIsUsed" parameters=[{type=number}] results=[{type=number
 # CHECK-NOT: ReturnCall
 
 function f4 name="resultIsReturned" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f2
     Return v1
 }
@@ -76,7 +72,6 @@ function f5 name="siteUnderHandler" parameters=[{type=number}] results=[{type=an
 # CHECK-NOT: ReturnCall
 
 function f6 name="siteIsTailCall" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f1
     ReturnCall v1
 }

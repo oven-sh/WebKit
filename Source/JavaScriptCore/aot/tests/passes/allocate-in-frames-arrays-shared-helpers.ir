@@ -5,7 +5,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="handedToSharedHelper" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray contents=anything
     v2 = CallDirect v1, v0 function=f1
     v3 = CallList v0, -, v1
@@ -15,7 +14,6 @@ function f0 name="handedToSharedHelper" parameters=[{type=anything}] results=[{t
 # CHECK-NEXT: v1: Heap
 
 function f1 name="appends" role=OutlinedBody parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything):
     AppendElement v0, v1
     Return
 }

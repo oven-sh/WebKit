@@ -14,7 +14,6 @@ layout L3 name="TestedInner" module=m0 fields=[{key="x" declared={type=anything}
 layout L4 name="TestedOuter" module=m0 fields=[{key="inner" declared={type=anything} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = CallDirect v1 function=f1
@@ -23,52 +22,43 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="fieldGivenBack" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = CallDirect v1 function=f4
     Return v2
-}
-# CHECK-LABEL: function f1 name="fieldGivenBack"
 # CHECK: NewObject {{*}}layout=L0 {{*}}storage=Frame
+}
 
 function f2 name="heldObjectGivenBack" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L1 fields=[0]
     v2 = NewObject -, v0 layout=L2 fields=[0]
     PropSet v2, v0 key="inner" mode=Strict
     PropSet v2, v1 key="inner" mode=Strict
     v5 = CallDirect v2 function=f5
     Return v5
-}
-# CHECK-LABEL: function f2 name="heldObjectGivenBack"
 # CHECK-NOT: layout=L1 {{*}}storage=
 # CHECK: NewObject {{*}}layout=L2 {{*}}storage=Frame
+}
 
 function f3 name="heldObjectTested" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L3 fields=[0]
     v2 = NewObject -, v0 layout=L4 fields=[0]
     PropSet v2, v0 key="inner" mode=Strict
     PropSet v2, v1 key="inner" mode=Strict
     v5 = CallDirect v2 function=f6
     Return v5
-}
-# CHECK-LABEL: function f3 name="heldObjectTested"
 # CHECK: NewObject {{*}}layout=L3 {{*}}storage=Frame
 # CHECK: NewObject {{*}}layout=L4 {{*}}storage=Frame
+}
 
 function f4 name="givesFieldBack" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="x"
     Return v1
 }
 function f5 name="givesInnerBack" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="inner"
     Return v1
 }
 function f6 name="testsInner" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="inner"
     v2 = ToBoolean v1
     Return v2

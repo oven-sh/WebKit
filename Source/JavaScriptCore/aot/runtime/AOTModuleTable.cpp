@@ -14,6 +14,7 @@
 #include <array>
 #include <atomic>
 #include <compare>
+#include <ranges>
 #include <utility>
 #include <wtf/text/StringBuilder.h>
 
@@ -32,63 +33,33 @@ static std::strong_ordering compareCodePoints(StringView first, StringView secon
 ModuleTable::ModuleTable(const ProgramTables& tables)
     : m_tables(&tables)
     , m_modules(tables.modules())
-    , m_requests(tables.moduleRequests())
-    , m_linkRequests(tables.linkRequests(), tables.modules().size())
-    , m_evaluationRequests(tables.evaluationRequests(), tables.modules().size())
-    , m_exports(tables.moduleExports())
-    , m_syntheticExports(tables.syntheticExports())
-    , m_requiredNames(tables.requiredNames())
-    , m_failures(tables.moduleFailures())
-    , m_modulesByPath(tables.modulesByPath(), tables.modules().size())
-    , m_runtimeModules(tables.compiledRuntimeModules())
-    , m_runtimeFunctions(tables.compiledRuntimeFunctions())
 {
     RELEASE_ASSERT(!m_modules.empty());
 }
 
-std::span<const ModuleExportData> ModuleTable::exports(ModuleID module) const
-{
-    return listOf(m_exports, module, &ModuleData::firstExport);
-}
-
 const ModuleFailureData& ModuleTable::failure(ModuleFailureID id) const
 {
-    RELEASE_ASSERT(id.index() < m_failures.size());
-    return m_failures[id.index()];
-}
-
-std::optional<ModuleID> ModuleTable::findPlaceOfPath(StringView publicPath) const
-{
-    static std::array<std::atomic<uint32_t>, 256> placesFoundLast;
-    std::atomic<uint32_t>& placeFoundLast = placesFoundLast[publicPath.hash() % placesFoundLast.size()];
-    size_t from = placeFoundLast.load(std::memory_order_relaxed);
-    if (from < m_modulesByPath.size() && comparePath(ModuleID(m_modulesByPath[from]), publicPath) == 0)
-        return ModuleID(m_modulesByPath[from]);
-
-    from = 0;
-    size_t to = m_modulesByPath.size();
-    while (from < to) {
-        size_t middle = from + (to - from) / 2;
-        if (comparePath(ModuleID(m_modulesByPath[middle]), publicPath) < 0)
-            from = middle + 1;
-        else
-            to = middle;
-    }
-    if (from == m_modulesByPath.size())
-        return std::nullopt;
-    ModuleID found(m_modulesByPath[from]);
-    if (comparePath(found, publicPath) != 0)
-        return std::nullopt;
-    placeFoundLast.store(static_cast<uint32_t>(from), std::memory_order_relaxed);
-    return found;
+    std::span<const ModuleFailureData> failures = m_tables->moduleFailures();
+    RELEASE_ASSERT(id.index() < failures.size());
+    return failures[id.index()];
 }
 
 std::optional<ModuleID> ModuleTable::findByPath(StringView publicPath) const
 {
-    std::optional<ModuleID> place = findPlaceOfPath(publicPath);
-    if (!place)
-        return std::nullopt;
-    ModuleID found = *place;
+    static std::array<std::atomic<uint32_t>, 256> placesFoundLast;
+    std::atomic<uint32_t>& placeFoundLast = placesFoundLast[publicPath.hash() % placesFoundLast.size()];
+    ModuleNumbers byPath = modulesByPath();
+    size_t place = placeFoundLast.load(std::memory_order_relaxed);
+    if (place >= byPath.size() || comparePath(ModuleID(byPath[place]), publicPath) != 0) {
+        auto places = std::views::iota(size_t(0), byPath.size());
+        place = static_cast<size_t>(std::ranges::partition_point(places, [&](size_t candidate) {
+            return comparePath(ModuleID(byPath[candidate]), publicPath) < 0;
+        }) - places.begin());
+        if (place == byPath.size() || comparePath(ModuleID(byPath[place]), publicPath) != 0)
+            return std::nullopt;
+        placeFoundLast.store(static_cast<uint32_t>(place), std::memory_order_relaxed);
+    }
+    ModuleID found(byPath[place]);
     std::optional<uint32_t> registryID = data(found).registryID();
     if (registryID && !BuiltinTable::singleton().at(RuntimeModuleID(*registryID)).flags.contains(RuntimeModuleFlag::IsPublic))
         return std::nullopt;
@@ -97,8 +68,9 @@ std::optional<ModuleID> ModuleTable::findByPath(StringView publicPath) const
 
 std::optional<ModuleID> ModuleTable::findRuntimeSource(uint32_t registryID) const
 {
-    auto found = std::ranges::lower_bound(m_runtimeModules, registryID, { }, &CompiledRuntimeModuleData::registryID);
-    if (found == m_runtimeModules.end() || found->registryID != registryID)
+    std::span<const CompiledRuntimeModuleData> runtimeModules = m_tables->compiledRuntimeModules();
+    auto found = std::ranges::lower_bound(runtimeModules, registryID, { }, &CompiledRuntimeModuleData::registryID);
+    if (found == runtimeModules.end() || found->registryID != registryID)
         return std::nullopt;
     return ModuleID(found->module);
 }
@@ -152,13 +124,14 @@ auto ModuleTable::linkPlanOfRoot(ModuleID module) const -> std::optional<LinkPla
 
 const CompiledRuntimeFunctionData* ModuleTable::findRuntimeFunction(uint32_t id) const
 {
-    auto found = std::ranges::lower_bound(m_runtimeFunctions, id, { }, &CompiledRuntimeFunctionData::id);
-    return found != m_runtimeFunctions.end() && found->id == id ? &*found : nullptr;
+    std::span<const CompiledRuntimeFunctionData> runtimeFunctions = m_tables->compiledRuntimeFunctions();
+    auto found = std::ranges::lower_bound(runtimeFunctions, id, { }, &CompiledRuntimeFunctionData::id);
+    return found != runtimeFunctions.end() && found->id == id ? &*found : nullptr;
 }
 
 bool ModuleTable::isRuntimeFunction(FunctionID function) const
 {
-    return std::ranges::contains(m_runtimeFunctions, function.index(), &CompiledRuntimeFunctionData::function);
+    return std::ranges::contains(m_tables->compiledRuntimeFunctions(), function.index(), &CompiledRuntimeFunctionData::function);
 }
 
 // From the start of the path.
@@ -216,26 +189,9 @@ String ModuleTable::pathTextForLineColumns(ModuleID module) const
 // The name of a file ends its public path, whether or not the directory stands apart.
 bool ModuleTable::hasFileWithExtension(StringView extension) const
 {
-    for (size_t index = 0; index < m_modulesByPath.size(); ++index) {
-        if (ProgramStrings::viewInImage(*m_tables, StringID(m_modules[m_modulesByPath[index]].publicPathOrName)).endsWith(extension))
-            return true;
-    }
-    return false;
-}
-
-bool ModuleTable::hasFilePath(ModuleID module) const
-{
-    switch (data(module).kind) {
-    case ModuleKind::SourceText:
-    case ModuleKind::CommonJs:
-    case ModuleKind::Data:
-        return true;
-    case ModuleKind::RuntimeSource:
-    case ModuleKind::Runtime:
-    case ModuleKind::External:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    return std::ranges::any_of(modulesByPath(), [&](uint32_t module) {
+        return ProgramStrings::viewInImage(*m_tables, StringID(m_modules[module].publicPathOrName)).endsWith(extension);
+    });
 }
 
 ModuleRequestWalk::ModuleRequestWalk(const ModuleTable& table, ModuleID root)

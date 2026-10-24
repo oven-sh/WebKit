@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="slice-of-slice" parameters=[{type=string}, {type=int}, {type=int}, {type=int}] results=[{type=boolean}] {
-  b0(v0: string, v1: int, v2: int, v3: int):
     v4 = GetStringLength v0
     v5 = StringRange v4, v1, v2
     v6 = ResultAt v5
@@ -19,8 +18,6 @@ function f0 name="slice-of-slice" parameters=[{type=string}, {type=int}, {type=i
     v14 = String string="ab"
     v15 = StrictEq v13, v14
     Return v15
-}
-# CHECK-LABEL: function f0 name="slice-of-slice"
 # CHECK-NOT: = Substring
 # CHECK: v7: {{*}} = ResultAt v5 index=1
 # CHECK-NEXT: [[differenceInner0]]: int[-2147483647, 2147483647] = Sub v7, v6
@@ -33,9 +30,9 @@ function f0 name="slice-of-slice" parameters=[{type=string}, {type=int}, {type=i
 # CHECK-NEXT: [[innerTo0]]: {{*}} = Add v6, [[relativeTo0]]
 # CHECK-NEXT: [[result0]]: boolean = StringRangeEqualsLiteral v0, [[innerFrom0]], [[innerTo0]] literal="ab"
 # CHECK-NEXT: Return [[result0]]
+}
 
 function f1 name="character-of-slice" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=boolean}] {
-  b0(v0: string, v1: int, v2: int):
     v3 = GetStringLength v0
     v4 = StringRange v3, v1
     v5 = ResultAt v4

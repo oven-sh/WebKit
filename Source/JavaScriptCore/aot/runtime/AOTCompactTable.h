@@ -107,6 +107,22 @@ public:
         return capacity <= maxCapacityWithLongSlots ? SlotKind::Long : SlotKind::Huge;
     }
 
+    template<typename Functor>
+    static ALWAYS_INLINE decltype(auto) withSlotKind(SlotKind kind, NOESCAPE const Functor& functor)
+    {
+        switch (kind) {
+        case SlotKind::Tag:
+            return functor(std::integral_constant<SlotKind, SlotKind::Tag> { });
+        case SlotKind::Short:
+            return functor(std::integral_constant<SlotKind, SlotKind::Short> { });
+        case SlotKind::Long:
+            return functor(std::integral_constant<SlotKind, SlotKind::Long> { });
+        case SlotKind::Huge:
+            return functor(std::integral_constant<SlotKind, SlotKind::Huge> { });
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
     static Structure* createStructure(VM&);
     static Structure* structureOf(VM&);
     static CompactTable* tryCreate(JSGlobalObject*, Width key, Width value, uint32_t minCapacity);
@@ -235,17 +251,7 @@ public:
     {
         if (impl.is8Bit() == (sizeof(CharacterType) == 1))
             return hasCharacters(impl, characters);
-        using OtherCharacterType = std::conditional_t<sizeof(CharacterType) == 1, char16_t, Latin1Character>;
-        size_t length = characters.size();
-        if (impl.length() != length)
-            return false;
-        const OtherCharacterType* a = impl.span<OtherCharacterType>().data();
-        const CharacterType* b = characters.data();
-        for (size_t i = 0; i < length; ++i) {
-            if (a[i] != b[i])
-                return false;
-        }
-        return true;
+        return StringView { impl } == StringView { characters };
     }
 
     enum class QuickLookup : uint8_t { Unknown, Found, Absent };
@@ -352,17 +358,9 @@ public:
     template<typename Matches>
     static ALWAYS_INLINE std::optional<uint32_t> probeIndex(SlotKind kind, const uint8_t* index, unsigned indexBits, uint32_t used, unsigned hash, NOESCAPE const Matches& matches)
     {
-        switch (kind) {
-        case SlotKind::Tag:
-            return probeIndex<SlotKind::Tag>(index, indexBits, used, hash, matches);
-        case SlotKind::Short:
-            return probeIndex<SlotKind::Short>(index, indexBits, used, hash, matches);
-        case SlotKind::Long:
-            return probeIndex<SlotKind::Long>(index, indexBits, used, hash, matches);
-        case SlotKind::Huge:
-            return probeIndex<SlotKind::Huge>(index, indexBits, used, hash, matches);
-        }
-        RELEASE_ASSERT_NOT_REACHED();
+        return withSlotKind(kind, [&](auto constantKind) ALWAYS_INLINE_LAMBDA {
+            return probeIndex<constantKind()>(index, indexBits, used, hash, matches);
+        });
     }
 
     template<SlotKind kind>
@@ -491,15 +489,14 @@ private:
     std::optional<uint32_t> findInImage(JSGlobalObject*, JSString*) const;
     JS_EXPORT_PRIVATE JSValue valueInImage(uint32_t entry) const;
     void addToIndex(uint32_t entry, unsigned hash);
-    template<SlotKind> void fillIndexOfKind(uint32_t count);
     void fillIndex(uint32_t count);
     uint32_t copyAliveEntriesTo(CompactTable&) const;
     template<SlotKind> uint32_t fillWithHashedStrings(uintptr_t cageBase, std::span<const WriteBarrier<Unknown>>);
     template<SlotKind> uint32_t fillWithPairsOfHashedStrings(uintptr_t cageBase, std::span<const WriteBarrier<Unknown>>);
     template<SlotKind> uint32_t fillWithNumbers(std::span<const EncodedJSValue>);
     void append(VM&, JSValue key, unsigned hash, JSValue value);
-    enum class QuickAddition : uint8_t { Unknown, Done };
-    QuickAddition tryAddQuickly(JSGlobalObject*, JSValue normalizedKey, JSValue);
+    bool tryAddQuickly(JSGlobalObject*, JSValue normalizedKey, JSValue);
+    void crashUnlessSameEntriesAs(VM&, JSObject* expectedOwner) const;
     CompactTable* tryCopyWithWidths(JSGlobalObject*, Width key, Width value, std::optional<uint32_t> capacity = std::nullopt) const;
     CompactTable* copyWithAbsentKey(VM&, JSString* key, JSValue) const;
     void becomeObsolete(VM&, Status, JSCell* successor);

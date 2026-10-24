@@ -10,39 +10,32 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="foldable" results=[{type=number}] {
-  b0():
     v0 = Integer integer=1
     v1 = Integer integer=2
     v2 = Add v0, v1
     v3 = Integer integer=7
     Return v2
-}
-# CHECK-LABEL: function f0 name="foldable"
 # CHECK: = Add v0, v1
-# OTHER-LABEL: function f0 name="foldable"
 # OTHER: = Add v0, v1
 # OTHER-NOT: integer=7
+}
 
 function f1 name="triple" role=ResultWrapper parameters=[{type=number}] results=[{type=Array<number>}] creator=ResultWrapper{worker=f4}
 
 function f2 name="readsFirst" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f4
     v2 = ResultAt v1 index=0
     Return v2
 }
 
 function f3 name="readsThird" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f4
     v2 = ResultAt v1 index=2
     Return v2
-}
-# PROGRAM-LABEL: function f3 name="readsThird"
 # PROGRAM: = ResultAt v1 index=2
+}
 
 function f4 name="triple" role=ResultWorker parameters=[{type=number}] results=[{type=number}, {type=number}, {type=number}] derivation={source=f1} creator=ResultWorker{origin=f1} {
-  b0(v0: number):
     v1 = Integer integer=1
     v2 = Integer integer=2
     v3 = Add v1, v2

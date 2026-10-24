@@ -9,7 +9,6 @@ module m0 path="main.js" displayPath="main.js"
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="bothElementsAreAsked" parameters=[{type=undefined|i32}, {type=undefined|i32}] results=[{type=anything}] {
-  b0(v0: undefined|i32, v1: undefined|i32):
     v2 = NewArray v0, v1 contents=undefined|i32
     v3 = AssumeType v2 castType=Array<undefined|i32, proven, pristine[Storage, Names, Dense]>
     v4 = Integer integer=1
@@ -25,8 +24,6 @@ function f0 name="bothElementsAreAsked" parameters=[{type=undefined|i32}, {type=
   b3() frequency=Rare:
     v11 = ElemGet v3, v4 [keyIsIntegral]
     Return v11
-}
-# ONCE-LABEL: function f0 name="bothElementsAreAsked"
 # ONCE: = TypeTest v0 testedType=i32
 # ONCE: = HasArrayStorage
 # ONCE: = TypeTest v1 testedType=i32
@@ -34,14 +31,13 @@ function f0 name="bothElementsAreAsked" parameters=[{type=undefined|i32}, {type=
 # ONCE: = NewArray v0, v1 contents=anything
 # ONCE: ([[second0]]: i32):
 # ONCE-NEXT: = NewArray {{*}}, [[second0]] contents=i32
-# TWICE-LABEL: function f0 name="bothElementsAreAsked"
 # TWICE-NOT: contents=i32
 # TWICE-NOT: HasArrayStorage
 # TWICE-NOT: GetArrayElement
 # TWICE: = AssumeType {{*}} castType=i32
+}
 
 function f1 name="onlyTheElementThatMayBeSomethingElseIsAsked" parameters=[{type=number}, {type=undefined|number}] results=[{type=anything}] {
-  b0(v0: number, v1: undefined|number):
     v2 = NewArray v0, v1 contents=undefined|number
     v3 = AssumeType v2 castType=Array<undefined|number, proven, pristine[Storage, Names, Dense]>
     v4 = Integer integer=0
@@ -53,18 +49,15 @@ function f1 name="onlyTheElementThatMayBeSomethingElseIsAsked" parameters=[{type
   b2() frequency=Rare:
     v8 = ElemGet v3, v4 [keyIsIntegral]
     Return v8
-}
-# ONCE-LABEL: function f1 name="onlyTheElementThatMayBeSomethingElseIsAsked"
 # ONCE-NOT: TypeTest v0
 # ONCE: = TypeTest v1 testedType=number
 # ONCE-NOT: TypeTest
 # ONCE: = NewArray v0, {{*}} contents=number
-# TWICE-LABEL: function f1 name="onlyTheElementThatMayBeSomethingElseIsAsked"
 # TWICE-NOT: contents=number
 # TWICE-NOT: HasArrayStorage
+}
 
 function f2 name="listThatIsItsOwnGuardStaysOne" parameters=[{type=undefined|i32}, {type=undefined|i32}, {type=i32}] results=[{type=anything}] {
-  b0(v0: undefined|i32, v1: undefined|i32, v2: i32):
     v3 = NewArray v0, v1 contents=undefined|i32
     v4 = HasArrayStorage v3 arrayStorage=Int32
     Branch v4 -> taken b1(| 0), notTaken b2()
@@ -83,7 +76,6 @@ function f2 name="listThatIsItsOwnGuardStaysOne" parameters=[{type=undefined|i32
 # ONCE-NEXT: v4: boolean = HasArrayStorage v3 arrayStorage=Int32
 
 function f3 name="listThatIsBuiltBeforeItIsAskedStaysOne" parameters=[{type=undefined|i32}, {type=undefined|i32}, {type=i32}] results=[{type=anything}] {
-  b0(v0: undefined|i32, v1: undefined|i32, v2: i32):
     v3 = NewArray v0, v1 contents=undefined|i32
     v4 = AssumeType v3 castType=Array<undefined|i32, proven, pristine[Storage, Names, Dense]>
     PutModuleVariable v4 variable=g0
@@ -102,7 +94,6 @@ function f3 name="listThatIsBuiltBeforeItIsAskedStaysOne" parameters=[{type=unde
 # ONCE: v3:{{*}}= NewArray v0, v1 contents=undefined|i32
 
 function f4 name="noElementIsAskedWhereEachIsANumber" parameters=[{type=i32}, {type=i32}] results=[{type=anything}] {
-  b0(v0: i32, v1: i32):
     v2 = NewArray v0, v1 contents=undefined|i32
     v3 = AssumeType v2 castType=Array<undefined|i32, proven, pristine[Storage, Names, Dense]>
     v4 = Integer integer=1
@@ -114,11 +105,9 @@ function f4 name="noElementIsAskedWhereEachIsANumber" parameters=[{type=i32}, {t
   b2() frequency=Rare:
     v8 = ElemGet v3, v4 [keyIsIntegral]
     Return v8
-}
-# ONCE-LABEL: function f4 name="noElementIsAskedWhereEachIsANumber"
 # ONCE-NOT: TypeTest
 # ONCE-NOT: contents=anything
 # ONCE: = NewArray v0, v1 contents=i32
-# TWICE-LABEL: function f4 name="noElementIsAskedWhereEachIsANumber"
 # TWICE-NOT: NewArray
 # TWICE-NOT: HasArrayStorage
+}

@@ -8,7 +8,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="proofOnOneEdge" parameters=[{type=anything}, {type=number}, {type=number}] results=[{type=string}] {
-  b0(v0: anything, v1: number, v2: number):
     Jump -> next b1()
   b1():
     v3 = TypeTest v0 testedType=string
@@ -38,7 +37,6 @@ function f0 name="proofOnOneEdge" parameters=[{type=anything}, {type=number}, {t
 # TWO-NEXT: b3(v5: anything, [[first]]: number, [[second]]: anything, v6: string):
 # TWO-NEXT: Return v6
 function f1 name="argumentsOnEveryEdge" parameters=[{type=anything}, {type=number}, {type=number}] results=[{type=string}] {
-  b0(v0: anything, v1: number, v2: number):
     Jump -> next b1()
   b1():
     v3 = TypeTest v0 testedType=string
@@ -75,7 +73,6 @@ function f2 name="landingBlock" parameters=[{type=anything}, {type=number}, {typ
 # LANDING-NEXT: v5: anything = CatchValue
 # LANDING-NEXT: Return v5
 function f3 name="twoProofsOnOneEdge" parameters=[{type=number|string}, {type=string}, {type=number}, {type=number}] results=[{type=string}] {
-  b0(v0: number|string, v1: string, v2: number, v3: number):
     Jump -> next b1()
   b1():
     v4 = StrictEq v0, v1

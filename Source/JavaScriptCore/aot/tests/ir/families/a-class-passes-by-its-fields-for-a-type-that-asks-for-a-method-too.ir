@@ -15,6 +15,5 @@ layout L5 name="Declared" fields=[{key="run" declared={type=anything} flags=[IsR
 # CHECK: L5: members [L0, L1, L4, L5]
 
 function f0 name="take" parameters=[{type=L0}, {type=L1}] results=[{type=anything}] {
-  b0(v0: L0, v1: L1):
     Return
 }

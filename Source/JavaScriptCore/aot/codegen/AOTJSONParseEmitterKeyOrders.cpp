@@ -10,7 +10,6 @@
 
 #include "AOTCellFormat.h"
 #include "AOTFlowResults.h"
-#include "AOTInstance.h"
 #include "AOTJSONKeyOrder.h"
 #include "AOTObjectWords.h"
 #include "AOTPlacement.h"
@@ -43,32 +42,7 @@ static_assert([] {
     return KeyOrderTransition::hashOf(3ull << 32 | 5, 7) == (product ^ product >> KeyOrderTransition::hashFoldShift);
 }());
 
-namespace {
-
-class KeyOrderTransitionProbe final : public OperationEmitter {
-public:
-    explicit KeyOrderTransitionProbe(CodeGenerator& generator)
-        : OperationEmitter(generator)
-    {
-    }
-
-    Pointer findOrderAfter(Pointer numberedOrder, uint32_t shape, uint32_t slotKey, LBasicBlock miss);
-
-private:
-    void forgetTableOfEarlierProbes();
-};
-
-// A table that grows moves, and the pages it leaves are unmapped.
-void KeyOrderTransitionProbe::forgetTableOfEarlierProbes()
-{
-    B3::PatchpointValue* clobber = m_out.patchpoint(B3::Void);
-    clobber->effects = B3::Effects::none();
-    m_heaps.decoratePatchpointWrite(&m_heaps.AOTInstance_mutableFields, clobber);
-    clobber->setRunsWithoutFrame(true);
-    clobber->setGenerator([](CCallHelpers&, const B3::StackmapGenerationParams&) { });
-}
-
-Pointer KeyOrderTransitionProbe::findOrderAfter(Pointer numberedOrder, uint32_t shape, uint32_t slotKey, LBasicBlock miss)
+Pointer JSONParseEmitter::findOrderAfter(Pointer numberedOrder, uint32_t shape, uint32_t slotKey, LBasicBlock miss)
 {
     uint32_t shapeWord = shapeWordOf(shape);
     Integer orderAndCount(numberedOrder.value());
@@ -81,7 +55,12 @@ Pointer KeyOrderTransitionProbe::findOrderAfter(Pointer numberedOrder, uint32_t 
     Integer wordsBefore = bitOr(orderAndCount, integer(static_cast<int64_t>(static_cast<uint64_t>(shapeWord) << 32)));
     Word32 product = mul(bitXor(low32(orderAndCount), word32(static_cast<int32_t>(constantHashTerms(shapeWord, slotKey)))), word32(static_cast<int32_t>(KeyOrderTransition::hashMultiplier)));
     Word32 hash = bitXor(product, shiftRightUnsigned(product, word32(KeyOrderTransition::hashFoldShift)));
-    forgetTableOfEarlierProbes();
+    // A table that grows moves, and the pages it leaves are unmapped: what an earlier probe loaded is loaded again.
+    B3::PatchpointValue* clobber = m_out.patchpoint(B3::Void);
+    clobber->effects = B3::Effects::none();
+    m_heaps.decoratePatchpointWrite(&m_heaps.AOTInstance_mutableFields, clobber);
+    clobber->setRunsWithoutFrame(true);
+    clobber->setGenerator([](CCallHelpers&, const B3::StackmapGenerationParams&) { });
     Word32 mask = loadMutable32(AOT_INSTANCE_OFFSET(objects.keyOrderTransitionMask));
     Pointer transitions(loadMutable64(AOT_INSTANCE_OFFSET(objects.keyOrderTransitions)).value());
     ValueFromBlock firstIndex = m_out.anchor(hash.value());
@@ -112,23 +91,23 @@ Pointer KeyOrderTransitionProbe::findOrderAfter(Pointer numberedOrder, uint32_t 
     return Pointer(zeroExtended(orderAndCountAfter).value());
 }
 
-} // anonymous namespace
-
-uint32_t JSONParseEmitter::shapeOfParsedObject(LayoutID layout) const
+uint32_t JSONParseEmitter::shapeOfParsedObject(const ValueContext& value)
 {
     const FlowResults& flow = inputs().flow;
+    LayoutID layout = value->layout();
     AllocationSiteID site = flow.typedResultSite(layout);
-    return m_placement.shapes().shapeOf(layout, site ? flow.at(site).allocationClass : AllocationClassID());
+    uint32_t shape = m_placement.shapes().shapeOf(layout, site ? flow.at(site).allocationClass : AllocationClassID());
+    if (!shape)
+        fail(value, InternalErrorKind::SlotAccessNotPlaced);
+    return shape;
 }
 
-Pointer JSONParseEmitter::advanceKeyOrder(const ValueContext& value, Pointer order, LayoutID layout, uint32_t field)
+Pointer JSONParseEmitter::advanceKeyOrder(const ValueContext& value, Pointer order)
 {
-    uint32_t shape = shapeOfParsedObject(layout);
-    if (!shape) {
-        fail(value, InternalErrorKind::SlotAccessNotPlaced);
+    uint32_t shape = shapeOfParsedObject(value);
+    if (!shape)
         return order;
-    }
-    const PlacedSlot& slot = m_placement.slot(layout, field);
+    const PlacedSlot& slot = m_placement.slot(value->layout(), value->field());
     if (m_placement.shapes().shape(shape).keysAreNeverEnumerated || !slot.indexInLayoutRecord)
         return order;
 
@@ -145,7 +124,7 @@ Pointer JSONParseEmitter::advanceKeyOrder(const ValueContext& value, Pointer ord
     branch(below(order, pointerConstant(JSONKeyOrder::isListedBit)), { normalEdge(isNumbered), rareEdge(miss) });
 
     m_out.appendTo(isNumbered);
-    next.add(KeyOrderTransitionProbe(generator()).findOrderAfter(order, shape, slotKey, miss));
+    next.add(findOrderAfter(order, shape, slotKey, miss));
 
     m_out.appendTo(miss);
     next.add(advanceByOperation(true));
@@ -168,18 +147,11 @@ void JSONParseEmitter::generateJSONObjectBegin(const ValueContext& value)
     define(value, pointerConstant(JSONKeyOrder().word()));
 }
 
-void JSONParseEmitter::generateJSONObjectKey(const ValueContext& value)
-{
-    define(value, advanceKeyOrder(value, in<Pointer>(value->orderOperand()), value->layout(), value->field()));
-}
-
 void JSONParseEmitter::generateJSONObjectFinish(const ValueContext& value)
 {
-    uint32_t shape = shapeOfParsedObject(value->layout());
-    if (!shape) {
-        fail(value, InternalErrorKind::SlotAccessNotPlaced);
+    uint32_t shape = shapeOfParsedObject(value);
+    if (!shape)
         return;
-    }
     Pointer order = in<Pointer>(value->orderOperand());
     CellPointer object = in<CellPointer>(value->objectOperand());
     Boxed extra = in<Boxed>(value->extraOperand());
@@ -214,12 +186,10 @@ void JSONParseEmitter::generateJSONObjectFinish(const ValueContext& value)
 
 void JSONParseEmitter::generateJSONParseExtraMembers(const ValueContext& value)
 {
-    uint32_t shape = shapeOfParsedObject(value->layout());
-    if (!shape) {
-        fail(value, InternalErrorKind::SlotAccessNotPlaced);
+    uint32_t shape = shapeOfParsedObject(value);
+    if (!shape)
         return;
-    }
-    Pointer cursor = cursorOf(value->cursorOperand());
+    Pointer cursor = cursorOf(value);
     ExtraMemberState state { in<Boxed>(value->extraOperand()), in<Pointer>(value->orderOperand()) };
     Pointer next;
     state = updateInBuffer(state, [&](Pointer buffer) {
@@ -232,11 +202,9 @@ void JSONParseEmitter::generateJSONParseExtraMembers(const ValueContext& value)
 
 void JSONParseEmitter::generateJSONAddExtraMember(const ValueContext& value)
 {
-    uint32_t shape = shapeOfParsedObject(value->layout());
-    if (!shape) {
-        fail(value, InternalErrorKind::SlotAccessNotPlaced);
+    uint32_t shape = shapeOfParsedObject(value);
+    if (!shape)
         return;
-    }
     ExtraMemberState state { in<Boxed>(value->extraOperand()), in<Pointer>(value->orderOperand()) };
     CellPointer name = in<CellPointer>(value->memberNameOperand());
     Boxed member = in<Boxed>(value->valueOperand());

@@ -15,8 +15,8 @@
 #include "AOTCreateEntrypoints.h"
 #include "AOTFlowResults.h"
 #include "AOTFunctionDescription.h"
+#include "AOTPlacementSteps.h"
 #include "AOTRepresentation.h"
-#include "AOTSlotPlanSteps.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -276,7 +276,7 @@ bool isInRuntimeModule(const Program& program, const Function& function)
     return function.module && program.at(function.module).kind == ModuleKind::RuntimeSource;
 }
 
-FunctionKindData functionKindOf(const Program& program, const SlotPlan& slots, FunctionID id)
+static FunctionKindData functionKindOf(const Program& program, const SlotPlan& slots, FunctionID id)
 {
     FunctionID targetID = closureTargetOf(program, id);
     auto& described = describedFunctionOf(program, targetID);
@@ -329,7 +329,7 @@ static bool hasClosureWord(FunctionRole role)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-ClosureFunctionRange closureFunctionRangeOf(const Program& program)
+static ClosureFunctionRange closureFunctionRangeOf(const Program& program)
 {
     uint32_t firstClosureFunction = program.functions.size();
     uint32_t endOfClosureFunctions = program.functions.size();
@@ -342,36 +342,6 @@ ClosureFunctionRange closureFunctionRangeOf(const Program& program)
     return { FunctionID(firstClosureFunction), FunctionID(endOfClosureFunctions), firstClosureFunction };
 }
 
-static BitVector collectLayoutConstructors(const Program& program)
-{
-    BitVector constructors(program.functions.size());
-    for (const Layout& layout : program.layouts) {
-        if (layout.constructor)
-            constructors.quickSet(layout.constructor.index());
-    }
-    return constructors;
-}
-
-static BitVector collectFunctionsWithRuntimeCreatedClosures(const Program& program, const BitVector& layoutConstructors)
-{
-    BitVector functions = layoutConstructors;
-    auto add = [&](FunctionID function) {
-        if (function)
-            functions.quickSet(function.index());
-    };
-    for (const Variable& variable : program.variables) {
-        if (variable.initialization == VariableInitialization::Function)
-            add(variable.function);
-    }
-    for (const Layout& layout : program.layouts) {
-        for (const ClassMember& member : layout.classFlow.members)
-            add(member.function);
-    }
-    for (const RuntimeFunctionEntry& entry : program.runtimeFunctions)
-        add(entry.function);
-    return functions;
-}
-
 static bool hasClosureCell(const Program& program, const BitVector& layoutConstructors, const Function& function)
 {
     if (function.role != FunctionRole::GenericEntrypoint || function.derivation.parameter != callEntrypointParameter || !function.hasBody())
@@ -381,10 +351,23 @@ static bool hasClosureCell(const Program& program, const BitVector& layoutConstr
 }
 
 // Source order keeps the cells that a module fills at startup on the same pages. Rarely filled cells go last.
-Vector<uint32_t> numberClosureCells(const Program& program, const ParallelLoops& loops)
+static Vector<uint32_t> numberClosureCells(const Program& program, const ParallelLoops& loops, const BitVector& declaredByVariables)
 {
-    BitVector layoutConstructors = collectLayoutConstructors(program);
-    BitVector runtimeCreated = collectFunctionsWithRuntimeCreatedClosures(program, layoutConstructors);
+    BitVector layoutConstructors(program.functions.size());
+    BitVector runtimeCreated = declaredByVariables;
+    auto addRuntimeCreated = [&](FunctionID function) {
+        if (function)
+            runtimeCreated.quickSet(function.index());
+    };
+    for (const Layout& layout : program.layouts) {
+        if (layout.constructor)
+            layoutConstructors.quickSet(layout.constructor.index());
+        addRuntimeCreated(layout.constructor);
+        for (const ClassMember& member : layout.classFlow.members)
+            addRuntimeCreated(member.function);
+    }
+    for (const RuntimeFunctionEntry& entry : program.runtimeFunctions)
+        addRuntimeCreated(entry.function);
     auto keys = collectInParallel<ClosureCellSortKey>(loops, program.functions.size(), [&](unsigned index, Vector<ClosureCellSortKey>& found) {
         if (!hasClosureCell(program, layoutConstructors, program.functions[index]))
             return;
@@ -399,6 +382,33 @@ Vector<uint32_t> numberClosureCells(const Program& program, const ParallelLoops&
     for (uint32_t index = 0; index < keys.size(); ++index)
         numbers[keys[index].functionIndex] = index + 1;
     return numbers;
+}
+
+FunctionNumbering numberFunctions(const PlacementContext& context, const PlacedSites& sites)
+{
+    const Program& program = context.program;
+    const ParallelLoops& loops = context.build.parallelLoops();
+    unsigned numberOfFunctions = program.functions.size();
+    BitVector declaredByVariables(numberOfFunctions);
+    for (const Variable& variable : program.variables) {
+        if (variable.initialization == VariableInitialization::Function && variable.function)
+            declaredByVariables.quickSet(variable.function.index());
+    }
+    FunctionNumbering numbering;
+    numbering.kinds.grow(numberOfFunctions);
+    numbering.constructedClasses.grow(numberOfFunctions);
+    numbering.closureIdentities.grow(numberOfFunctions);
+    forEachIndexInParallel(loops, numberOfFunctions, [&](unsigned index) {
+        FunctionID id(index);
+        numbering.kinds[index] = functionKindOf(program, context.slots(), id);
+        numbering.constructedClasses[index] = program.at(id).constructedClass;
+        bool isCreatedByTable = declaredByVariables.quickGet(index) || hasSingletonClosure(program, id);
+        bool isOnlyTableCell = isCreatedByTable && program.at(id).captures.isEmpty() && !sites.functionsWithAllocatedClosures.get(index);
+        numbering.closureIdentities[index] = isOnlyTableCell ? ClosureIdentity::TableCell : ClosureIdentity::Unknown;
+    });
+    numbering.closureCellNumbers = numberClosureCells(program, loops, declaredByVariables);
+    numbering.closureFunctions = closureFunctionRangeOf(program);
+    return numbering;
 }
 
 static TraceVisibility visibilityOf(const Function& function)

@@ -6,7 +6,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
 
 function f0 name="bothEdgesOfTest" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=string
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):
@@ -23,7 +22,6 @@ function f0 name="bothEdgesOfTest" parameters=[{type=anything}] results=[{type=a
 # CHECK: v3 same object: v3
 
 function f1 name="chainOfThreeTests" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=undefined|number|string
     Branch v1 -> taken b1(| 0), notTaken b4()
   b1(v2):
@@ -45,7 +43,6 @@ function f1 name="chainOfThreeTests" parameters=[{type=anything}] results=[{type
 # CHECK-NEXT: value-identity:
 
 function f2 name="mergeOfTwoNarrowedCopies" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=string
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):
@@ -67,7 +64,6 @@ function f2 name="mergeOfTwoNarrowedCopies" parameters=[{type=anything}] results
 # CHECK: v5 same object: v5
 
 function f3 name="mergeOfTwoDifferentValues" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = TypeTest v0 testedType=string
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3):
@@ -84,7 +80,6 @@ function f3 name="mergeOfTwoDifferentValues" parameters=[{type=anything}, {type=
 # CHECK: v4 identity: v4
 
 function f4 name="carriedAroundLoopUnchanged" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Jump -> next b1(v0)
   b1(v2):
     LoopHint
@@ -98,7 +93,6 @@ function f4 name="carriedAroundLoopUnchanged" parameters=[{type=anything}, {type
 # CHECK-NEXT: value-identity:
 
 function f5 name="narrowedCopyCarriedAroundLoop" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1(v0)
   b1(v1):
     LoopHint
@@ -117,7 +111,6 @@ function f5 name="narrowedCopyCarriedAroundLoop" parameters=[{type=anything}] re
 # CHECK: v1 identity: v0
 
 function f6 name="guardParameter" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
@@ -132,7 +125,6 @@ function f6 name="guardParameter" parameters=[{type=object}] results=[{type=anyt
 # CHECK: v2 identity: v2
 
 function f7 name="twoParametersFilledAlike" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v3 = Upcast v0 castType=anything

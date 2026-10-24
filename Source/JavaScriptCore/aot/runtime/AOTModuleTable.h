@@ -30,28 +30,28 @@ public:
     unsigned size() const { return static_cast<unsigned>(m_modules.size() - 1); }
     static bool isImport(const ModuleRequestData& request) { return !request.isRequire; }
 
-    const ModuleData& data(ModuleID) const;
-    std::span<const ModuleRequestData> requests(ModuleID) const;
+    const ModuleData& data(ModuleID module) const { return m_modules[checkedIndex(module)]; }
+    std::span<const ModuleRequestData> requests(ModuleID module) const { return listOf(m_tables->moduleRequests(), module, &ModuleData::firstRequest); }
     // What is evaluated in front of the module.
     auto imports(ModuleID module) const { return requests(module) | std::views::filter(isImport); }
-    std::span<const ModuleRequestData> allRequests() const { return m_requests; }
-    uint32_t endOfRequests(ModuleID) const;
-    ModuleNumbers linkRequests(ModuleID) const;
-    ModuleNumbers allLinkRequests() const { return m_linkRequests; }
-    uint32_t endOfLinkRequests(ModuleID) const;
-    ModuleNumbers evaluationRequests(ModuleID) const;
-    ModuleNumbers allEvaluationRequests() const { return m_evaluationRequests; }
-    uint32_t endOfEvaluationRequests(ModuleID) const;
+    std::span<const ModuleRequestData> allRequests() const { return m_tables->moduleRequests(); }
+    uint32_t endOfRequests(ModuleID module) const { return m_modules[checkedIndex(module) + 1].firstRequest; }
+    ModuleNumbers linkRequests(ModuleID module) const { return listOf(allLinkRequests(), module, &ModuleData::firstLinkRequest); }
+    ModuleNumbers allLinkRequests() const { return { m_tables->linkRequests(), m_modules.size() }; }
+    uint32_t endOfLinkRequests(ModuleID module) const { return m_modules[checkedIndex(module) + 1].firstLinkRequest; }
+    ModuleNumbers evaluationRequests(ModuleID module) const { return listOf(allEvaluationRequests(), module, &ModuleData::firstEvaluationRequest); }
+    ModuleNumbers allEvaluationRequests() const { return { m_tables->evaluationRequests(), m_modules.size() }; }
+    uint32_t endOfEvaluationRequests(ModuleID module) const { return m_modules[checkedIndex(module) + 1].firstEvaluationRequest; }
     std::span<const LinkPlanStepData> entryPointLinkPlan() const { return m_tables->entryPointLinkPlan(); }
     struct LinkPlanOfRoot {
         std::span<const LinkPlanStepData> steps;
         ModuleID memberOfCycle;
     };
     std::optional<LinkPlanOfRoot> linkPlanOfRoot(ModuleID) const;
-    std::span<const ModuleExportData> exports(ModuleID) const;
+    std::span<const ModuleExportData> exports(ModuleID module) const { return listOf(m_tables->moduleExports(), module, &ModuleData::firstExport); }
     const IndirectExportData& indirectExport(const ModuleExportData&) const;
-    std::span<const SyntheticExportData> syntheticExports(ModuleID) const;
-    std::span<const RequiredNameData> requiredNames(ModuleID) const;
+    std::span<const SyntheticExportData> syntheticExports(ModuleID module) const { return listOf(m_tables->syntheticExports(), module, &ModuleData::firstSyntheticExport); }
+    std::span<const RequiredNameData> requiredNames(ModuleID module) const { return listOf(m_tables->requiredNames(), module, &ModuleData::firstRequiredName); }
     const ModuleFailureData& failure(ModuleFailureID) const;
 
     std::optional<ModuleID> findByPath(StringView publicPath) const;
@@ -68,7 +68,7 @@ public:
     String pathText(ModuleID) const;
     String displayPathText(ModuleID) const;
     String pathTextForLineColumns(ModuleID) const;
-    bool hasFilePath(ModuleID) const;
+    bool hasFilePath(ModuleID module) const { return data(module).hasExportTable() || data(module).kind == ModuleKind::CommonJs; }
     bool hasFileWithExtension(StringView) const;
 
 private:
@@ -77,21 +77,11 @@ private:
     size_t checkedIndex(ModuleID) const;
     PiecesOfPath piecesOfPath(ModuleID) const;
     std::strong_ordering comparePath(ModuleID, StringView) const;
-    std::optional<ModuleID> findPlaceOfPath(StringView publicPath) const;
+    ModuleNumbers modulesByPath() const { return { m_tables->modulesByPath(), m_modules.size() }; }
     template<typename List> List listOf(List, ModuleID, Number24 ModuleData::* first) const;
 
     const ProgramTables* m_tables;
     std::span<const ModuleData> m_modules;
-    std::span<const ModuleRequestData> m_requests;
-    ModuleNumbers m_linkRequests;
-    ModuleNumbers m_evaluationRequests;
-    std::span<const ModuleExportData> m_exports;
-    std::span<const SyntheticExportData> m_syntheticExports;
-    std::span<const RequiredNameData> m_requiredNames;
-    std::span<const ModuleFailureData> m_failures;
-    ModuleNumbers m_modulesByPath;
-    std::span<const CompiledRuntimeModuleData> m_runtimeModules;
-    std::span<const CompiledRuntimeFunctionData> m_runtimeFunctions;
 };
 
 class ModuleRequestWalk {
@@ -136,51 +126,6 @@ inline List ModuleTable::listOf(List list, ModuleID module, Number24 ModuleData:
     size_t index = checkedIndex(module);
     uint32_t start = m_modules[index].*first;
     return list.subspan(start, m_modules[index + 1].*first - start);
-}
-
-inline const ModuleData& ModuleTable::data(ModuleID module) const
-{
-    return m_modules[checkedIndex(module)];
-}
-
-inline uint32_t ModuleTable::endOfRequests(ModuleID module) const
-{
-    return m_modules[checkedIndex(module) + 1].firstRequest;
-}
-
-inline std::span<const ModuleRequestData> ModuleTable::requests(ModuleID module) const
-{
-    return listOf(m_requests, module, &ModuleData::firstRequest);
-}
-
-inline uint32_t ModuleTable::endOfLinkRequests(ModuleID module) const
-{
-    return m_modules[checkedIndex(module) + 1].firstLinkRequest;
-}
-
-inline ModuleNumbers ModuleTable::linkRequests(ModuleID module) const
-{
-    return listOf(m_linkRequests, module, &ModuleData::firstLinkRequest);
-}
-
-inline uint32_t ModuleTable::endOfEvaluationRequests(ModuleID module) const
-{
-    return m_modules[checkedIndex(module) + 1].firstEvaluationRequest;
-}
-
-inline ModuleNumbers ModuleTable::evaluationRequests(ModuleID module) const
-{
-    return listOf(m_evaluationRequests, module, &ModuleData::firstEvaluationRequest);
-}
-
-inline std::span<const SyntheticExportData> ModuleTable::syntheticExports(ModuleID module) const
-{
-    return listOf(m_syntheticExports, module, &ModuleData::firstSyntheticExport);
-}
-
-inline std::span<const RequiredNameData> ModuleTable::requiredNames(ModuleID module) const
-{
-    return listOf(m_requiredNames, module, &ModuleData::firstRequiredName);
 }
 
 inline const IndirectExportData& ModuleTable::indirectExport(const ModuleExportData& moduleExport) const

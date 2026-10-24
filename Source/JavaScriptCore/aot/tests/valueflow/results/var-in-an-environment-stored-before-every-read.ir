@@ -14,7 +14,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Environment module=m0 fields=[{key="early" declared={type=anything}}, {key="late" declared={type=anything}}, {key="cleared" declared={type=anything}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = Undefined
     v2 = NewObject -, v1, v1, v1 layout=L0 fields=[0, 1, 2]

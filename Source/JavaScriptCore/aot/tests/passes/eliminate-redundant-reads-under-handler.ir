@@ -20,10 +20,9 @@ function f0 name="readInFrontOfCoveredBlock" captures=[{type=env L0}] parameters
     v4 = CatchValue
     v5 = GetEnvironmentField v0 layout=L0 field=0
     Return v5
-}
-# CHECK-LABEL: function f0 name="readInFrontOfCoveredBlock"
 # CHECK: = CatchValue
 # CHECK-NEXT: v5: anything = Upcast v2
+}
 
 function f1 name="readInCoveredBlock" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: env L0, v1: anything):
@@ -39,12 +38,11 @@ function f1 name="readInCoveredBlock" captures=[{type=env L0}] parameters=[{type
     v5 = CatchValue
     v6 = GetEnvironmentField v0 layout=L0 field=0
     Return v6
-}
-# CHECK-LABEL: function f1 name="readInCoveredBlock"
 # CHECK: b2():
 # CHECK-NEXT: v4: anything = Upcast v2
 # CHECK: = CatchValue
 # CHECK-NEXT: v6: anything = GetEnvironmentField v0
+}
 
 function f2 name="storeInFrontOfCoveredBlock" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: env L0, v1: anything):
@@ -59,10 +57,9 @@ function f2 name="storeInFrontOfCoveredBlock" captures=[{type=env L0}] parameter
     v4 = CatchValue
     v5 = GetEnvironmentField v0 layout=L0 field=0
     Return v5
-}
-# CHECK-LABEL: function f2 name="storeInFrontOfCoveredBlock"
 # CHECK: = CatchValue
 # CHECK-NEXT: v5: anything = Upcast v1
+}
 
 function f3 name="storeInFrontOfThrowingOperation" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: env L0, v1: anything):
@@ -78,10 +75,9 @@ function f3 name="storeInFrontOfThrowingOperation" captures=[{type=env L0}] para
     v5 = CatchValue
     v6 = GetEnvironmentField v0 layout=L0 field=0
     Return v6
-}
-# CHECK-LABEL: function f3 name="storeInFrontOfThrowingOperation"
 # CHECK: = CatchValue
 # CHECK-NEXT: v6: anything = GetEnvironmentField v0
+}
 
 function f4 name="storeBehindThrowingOperation" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: env L0, v1: anything):
@@ -97,7 +93,6 @@ function f4 name="storeBehindThrowingOperation" captures=[{type=env L0}] paramet
     v5 = CatchValue
     v6 = GetEnvironmentField v0 layout=L0 field=0
     Return v6
-}
-# CHECK-LABEL: function f4 name="storeBehindThrowingOperation"
 # CHECK: = CatchValue
 # CHECK-NEXT: v6: anything = Upcast v2
+}

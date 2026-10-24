@@ -10,10 +10,9 @@
 #include "AOTIRTestSupport.h"
 #include "AOTIdentifierNumbering.h"
 #include "AOTImageTestSupport.h"
-#include "AOTRegExpRecordEncoder.h"
+#include "AOTRegExpCompiler.h"
 #include "AOTRegExpRecords.h"
 #include "AOTRegExpSummary.h"
-#include "AOTStringConstantNumbering.h"
 #include "AOTStringUses.h"
 #include "AOTTextEncoder.h"
 #include "AOTVector.h"
@@ -358,7 +357,7 @@ static void testForms()
     const ImageRegExp* withoutMetadata = findRegExpRecord(regExps.vm(), nested, { });
     AOT_TEST_CHECK(withoutMetadata && withoutMetadata->form() == Form::NoMetadata);
     AOT_TEST_CHECK(!withoutMetadata->numSubpatterns && !withoutMetadata->minimumSize && !withoutMetadata->details);
-    AOT_TEST_CHECK(regExps.sections.maxOutputSize == minRegExpOutputSize);
+    AOT_TEST_CHECK(regExps.sections.maxOutputSize == regExpOutputSizeWithoutSubpatterns);
 }
 
 static void testCandidates()
@@ -447,7 +446,7 @@ static void testEmptyTable()
 {
     RegExpImage regExps { std::span<const Pattern> { } };
     AOT_TEST_CHECK(regExps.sections.records.isEmpty() && regExps.sections.hashes.isEmpty() && regExps.sections.details.isEmpty());
-    AOT_TEST_CHECK(regExps.sections.maxOutputSize == minRegExpOutputSize);
+    AOT_TEST_CHECK(regExps.sections.maxOutputSize == regExpOutputSizeWithoutSubpatterns);
     AOT_TEST_CHECK(!findRegExpRecord(regExps.vm(), "abcd"_s, { }));
 }
 

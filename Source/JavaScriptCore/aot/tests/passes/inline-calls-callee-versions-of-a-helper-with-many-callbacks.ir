@@ -8,22 +8,18 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="double" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Add v0, v0
     Return v1
 }
 function f1 name="square" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Mul v0, v0
     Return v1
 }
 function f2 name="negate" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Sub v0, v0
     Return v1
 }
 function f3 name="handedTwoFunctions" parameters=[{type=f0|f1}, {type=anything}] results=[{type=anything}] {
-  b0(v0: f0|f1, v1: anything):
     v2 = Call v0, -, v1
     v3 = Call v0, -, v2
     v4 = Call v0, -, v3
@@ -35,7 +31,6 @@ function f3 name="handedTwoFunctions" parameters=[{type=f0|f1}, {type=anything}]
     Return v9
 }
 function f4 name="handedThreeFunctions" parameters=[{type=f0|f1|f2}, {type=anything}] results=[{type=anything}] {
-  b0(v0: f0|f1|f2, v1: anything):
     v2 = Call v0, -, v1
     v3 = Call v0, -, v2
     v4 = Call v0, -, v3
@@ -47,7 +42,6 @@ function f4 name="handedThreeFunctions" parameters=[{type=f0|f1|f2}, {type=anyth
     Return v9
 }
 function f5 name="caller" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f0
     v2 = NewClosure function=f1
     v3 = CallDirect v1, v0 function=f3

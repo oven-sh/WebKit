@@ -9,7 +9,6 @@ layout L0 name="First" fields=[{key="x" declared={type=number} flow={occupancy=A
 layout L1 name="Second" fields=[{key="x" declared={type=number}}]
 layout L2 name="Third" fields=[{key="x" declared={type=number}}]
 function f0 name="tests" parameters=[{type=object}, {type=L0}, {type=function}] results=[{type=undefined}] {
-  b0(v0: object, v1: L0, v2: function):
     v3 = ShapeTest v0 layouts=[L0]
     v4 = ShapeTest v0 layouts=[L0, L1]
     v5 = ShapeTest v0 layouts=[L2]

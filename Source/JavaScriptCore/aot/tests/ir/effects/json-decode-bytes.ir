@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="decodes" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = JSONDecodeBytes v0
     v2 = JSONSourceOpen v0
     Return v1

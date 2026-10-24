@@ -44,7 +44,6 @@ function f6 name="ComputedKeyMayNameMember" kind=BaseConstructor flags=[HasNewTa
 function f7 name="ComputedKeyHasOneName" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L7
 function f8 name="BelowOnlyStored" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L8
 function f9 name="otherKeys" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="other"
     Return v1
 }

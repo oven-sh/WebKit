@@ -7,7 +7,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = NewClosure function=f3
@@ -29,36 +28,29 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v12
 }
 function f1 name="first" results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="second" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=2
     Return v0
 }
 function f3 name="callsExpected" parameters=[{type=f1 flags=[IsExpected]}] results=[{type=anything}] {
-  b0(v0: f1):
     v1 = Call v0
     Return v1
 }
 function f4 name="callsOneOfTwoThatEscaped" parameters=[{type=f1|f2}] results=[{type=anything}] {
-  b0(v0: f1|f2):
     v1 = Call v0
     Return v1
 }
 function f5 name="onlyCalled" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=5
     Return v0
 }
 function f6 name="alsoOnlyCalled" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=6
     Return v0
 }
 function f7 name="callsOneOfTwoOnlyCalled" parameters=[{type=f5|f6}] results=[{type=anything}] {
-  b0(v0: f5|f6):
     v1 = Call v0
     Return v1
 }

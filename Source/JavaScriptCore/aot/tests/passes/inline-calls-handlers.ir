@@ -8,7 +8,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="catchesInside" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1() handler=b3():
     v1 = PropGet v0 key="p"
@@ -21,13 +20,11 @@ function f0 name="catchesInside" parameters=[{type=anything}] results=[{type=any
 }
 
 function f1 name="readsProperty" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="p"
     Return v1
 }
 
 function f2 name="throwsOrReturns" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     Throw v0
@@ -36,7 +33,6 @@ function f2 name="throwsOrReturns" parameters=[{type=anything}, {type=boolean}] 
 }
 
 function f3 name="callerWithoutHandlers" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f0
     Return v1
 }
@@ -49,7 +45,6 @@ function f3 name="callerWithoutHandlers" parameters=[{type=anything}] results=[{
 # CHECK-NOT: CallDirect
 
 function f4 name="callerWithHandlers" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1() handler=b3():
     v1 = CallDirect v0 function=f0
@@ -72,7 +67,6 @@ function f4 name="callerWithHandlers" parameters=[{type=anything}] results=[{typ
 # CHECK-NOT: CallDirect
 
 function f5 name="callsUnderHandler" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Jump -> next b1()
   b1() handler=b3():
     v2 = CallDirect v0 function=f1

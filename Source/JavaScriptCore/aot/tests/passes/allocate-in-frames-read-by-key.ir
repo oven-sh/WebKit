@@ -11,7 +11,6 @@ layout L1 name="ReadByKey" fields=[{key="x" declared={type=number} flags=[IsRequ
 layout L2 name="TestedByKey" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToNumber v1
@@ -23,7 +22,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="readByName" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = CallDirect v1 function=f4
     Return v2
@@ -34,7 +32,6 @@ function f1 name="readByName" parameters=[{type=number}] results=[{type=anything
 # PLAN-NEXT: v1: Frame
 
 function f2 name="readByKey" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
-  b0(v0: number, v1: string):
     v2 = NewObject -, v0 layout=L1 fields=[0]
     v3 = ElemGet v2, v1
     v4 = TypeOf v3
@@ -46,7 +43,6 @@ function f2 name="readByKey" parameters=[{type=number}, {type=string}] results=[
 # PLAN-NEXT: v2: Heap SeenByNativeCode by v3(0)
 
 function f3 name="testedByKey" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
-  b0(v0: number, v1: string):
     v2 = NewObject -, v0 layout=L2 fields=[0]
     v3 = ElemHas v2, v1
     Return v3
@@ -57,7 +53,6 @@ function f3 name="testedByKey" parameters=[{type=number}, {type=string}] results
 # PLAN-NEXT: v2: Heap SeenByNativeCode by v3(0)
 
 function f4 name="reader" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="x"
     v2 = Add v1, v1
     Return v2

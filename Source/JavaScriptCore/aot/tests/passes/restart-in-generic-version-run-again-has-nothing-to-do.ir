@@ -9,7 +9,6 @@ variable g0 name="calls" module=m0 declared={type=anything} initialization=Undef
 layout L0 kind=Record name="Point" fields=[{key="x" declared={type=number}}, {key="y" declared={type=number}}]
 
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 
@@ -26,7 +25,6 @@ function f1 name="sum" module=m0 role=EntryChecks flags=[IsChecked] length=1 thi
 }
 
 function f2 name="sum" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1} {
-  b0(v0: L0):
     v1 = IsSlotFilled v0 key="x" receivers=[L0] level=Expected
     Branch v1 -> taken b1(| 0), notTaken b3()
   b1(v2: guard):

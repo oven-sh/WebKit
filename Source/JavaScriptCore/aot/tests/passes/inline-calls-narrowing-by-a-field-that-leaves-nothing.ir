@@ -10,18 +10,15 @@ module m0 path="main.js" displayPath="main.js" body=f0
 layout L0 name="Failure" fields=[{key="success" declared={type=false} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="remainder" declared={type=string} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
 layout L1 name="Success" fields=[{key="success" declared={type=true} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="remainder" declared={type=string} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     Return
 }
 function f1 name="inner" parameters=[{type=string}] results=[{type=L0|L1}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
-  b0(v0: string):
     v1 = Boolean boolean=true
     v2 = NewObject -, v1, v0 layout=L1 fields=[0, 1]
     Return v2
 }
 function f2 name="outer" parameters=[{type=string}] results=[{type=string}] {
-  b0(v0: string):
     v1 = CallDirect v0 function=f1
     v2 = GetSlot v1 key="success" receivers=[L0, L1] level=Proven
     v3 = Boolean
@@ -35,7 +32,6 @@ function f2 name="outer" parameters=[{type=string}] results=[{type=string}] {
     v9 = NarrowByField v1, v8 key="success"
     v10 = GetSlot v9 key="remainder" receivers=[L1] level=Proven
     Return v10
-}
-# CHECK-LABEL: function f2 name="outer"
 # CHECK-NOT: receivers=[L0] level=Proven
 # CHECK: receivers=[L1] level=Proven
+}

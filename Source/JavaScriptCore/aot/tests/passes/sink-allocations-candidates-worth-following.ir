@@ -11,7 +11,6 @@ layout L1 name="Holder" fields=[{key="item" declared={type=anything}}]
 layout L2 kind=Environment name="scope" fields=[{key="value" declared={type=anything}}]
 
 function f0 name="heldByAnObjectThatIsBuiltInsideALoop" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     v3 = NewObject layout=L2
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -34,16 +33,14 @@ function f0 name="heldByAnObjectThatIsBuiltInsideALoop" parameters=[{type=anythi
     v12 = NewObject -, v11 layout=L1 fields=[0]
     v13 = Call v1, -, v12
     Return v13
-}
-# CHECK-LABEL: function f0 name="heldByAnObjectThatIsBuiltInsideALoop"
 # CHECK: b0(
 # CHECK-NEXT: Branch v2
 # CHECK: b2():
 # CHECK-NEXT: [[scope0]]: env L2 = NewObject -, v1 layout=L2 fields=[0]
 # CHECK-NEXT: Jump -> next b3([[scope0]])
+}
 
 function f1 name="appendedToFromARealArrayOnOneOfTwoWays" parameters=[{type=anything}, {type=Array<anything>}, {type=int[0, 2]}] results=[{type=anything}] {
-  b0(v0: anything, v1: Array<anything>, v2: int[0, 2]):
     v3 = NewArray contents=anything
     Switch v2 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
   b1():
@@ -61,8 +58,6 @@ function f1 name="appendedToFromARealArrayOnOneOfTwoWays" parameters=[{type=anyt
   b5(v8: guard):
     AppendElements v3, v1, v8
     Jump -> next b4()
-}
-# CHECK-LABEL: function f1 name="appendedToFromARealArrayOnOneOfTwoWays"
 # CHECK: b0(
 # CHECK-NOT: NewArray
 # CHECK: b2():
@@ -71,25 +66,23 @@ function f1 name="appendedToFromARealArrayOnOneOfTwoWays" parameters=[{type=anyt
 # CHECK-NEXT: Return v0
 # CHECK: b5(v8
 # CHECK-NEXT: = NewArray contents=anything
+}
 
 function f2 name="storedIntoThroughAValueReadOutOfAVirtualArray" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewArray v1 contents=anything
     v3 = Integer integer=0
     v4 = ElemGet v2, v3
     PropSet v4, v2 key="y" mode=Sloppy receivers=[L0]
     Return v2
-}
-# CHECK-LABEL: function f2 name="storedIntoThroughAValueReadOutOfAVirtualArray"
 # CHECK-NOT: ElemGet
 # CHECK-NOT: PropSet
 # CHECK: [[point2]]: L0 = NewObject -, v0, {{*}} layout=L0 fields=[0, 1]
 # CHECK-NEXT: [[list2]]: Array = NewArray [[point2]] contents=anything
 # CHECK-NEXT: PutSlotOrAdd [[point2]], [[point2]], [[list2]] key="y"
+}
 
 function f3 name="heldByOneOfTwoObjectsThatMeet" parameters=[{type=anything}, {type=anything}, {type=int[0, 2]}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: int[0, 2]):
     v3 = NewClosure function=f5
     Switch v2 cases=[0, 1] -> case b1(), case b2(), otherwise b6()
   b1():
@@ -110,8 +103,6 @@ function f3 name="heldByOneOfTwoObjectsThatMeet" parameters=[{type=anything}, {t
     Return v10
   b6():
     Return v0
-}
-# CHECK-LABEL: function f3 name="heldByOneOfTwoObjectsThatMeet"
 # CHECK: b0(
 # CHECK-NEXT: Switch v2
 # CHECK: b1():
@@ -120,6 +111,7 @@ function f3 name="heldByOneOfTwoObjectsThatMeet" parameters=[{type=anything}, {t
 # CHECK-NEXT: = NewClosure function=f5
 # CHECK: b6():
 # CHECK-NEXT: Return v0
+}
 
 function f4 name="capturesScope" kind=Arrow captures=[{type=env L2}] results=[{type=anything}] {
   b0(v0: env L2):
@@ -128,7 +120,6 @@ function f4 name="capturesScope" kind=Arrow captures=[{type=env L2}] results=[{t
 }
 
 function f5 name="capturesNothing" kind=Arrow results=[{type=anything}] {
-  b0():
     v0 = Undefined
     Return v0
 }

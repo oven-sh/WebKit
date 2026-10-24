@@ -10,8 +10,7 @@
 
 #include "AOTEnvironment.h"
 #include "AOTErrorMessages.h"
-#include "AOTEvalScope.h"
-#include "AOTImmortalCells.h"
+#include "AOTHeapCacheRegistry.h"
 #include "AOTInstance.h"
 #include "AOTModules.h"
 #include "AOTObjectModel.h"
@@ -55,6 +54,7 @@ enum class EvalBindingForm : uint8_t { ModuleVariable, EnvironmentSlot, MappedAr
 
 static EvalBindingKind kindOf(const EvalBindingData& binding)
 {
+    RELEASE_ASSERT(binding.kind <= static_cast<uint32_t>(EvalBindingKind::SimpleCatchParameter));
     return static_cast<EvalBindingKind>(binding.kind);
 }
 
@@ -67,13 +67,7 @@ static EvalBindingForm formOf(const EvalBindingData& binding)
     return binding.slot.offset ? EvalBindingForm::EnvironmentSlot : EvalBindingForm::Operand;
 }
 
-static JSValue operandOf(JSCellButterfly* operands, const EvalBindingData& binding)
-{
-    RELEASE_ASSERT(binding.operand < operands->length());
-    return operands->get(binding.operand);
-}
-
-static JSValue functionOperandOrEmpty(JSCellButterfly* operands, uint32_t operand)
+static JSValue operandOrEmpty(JSCellButterfly* operands, uint32_t operand)
 {
     if (operand == EvalBindingData::noOperand)
         return JSValue();
@@ -81,19 +75,19 @@ static JSValue functionOperandOrEmpty(JSCellButterfly* operands, uint32_t operan
     return operands->get(operand);
 }
 
-static Environment* environmentOf(JSCellButterfly* operands, const EvalBindingData& binding)
+template<typename CellType>
+static CellType* cellOperandOf(JSCellButterfly* operands, const EvalBindingData& binding)
 {
-    JSValue value = operandOf(operands, binding);
-    auto* environment = value && value.isCell() ? dynamicDowncast<Environment>(value.asCell()) : nullptr;
-    RELEASE_ASSERT(environment);
-    return environment;
+    JSValue value = operandOrEmpty(operands, binding.operand);
+    auto* cell = value && value.isCell() ? dynamicDowncast<CellType>(value.asCell()) : nullptr;
+    RELEASE_ASSERT(cell);
+    return cell;
 }
 
 static DirectArguments* mappedArgumentsOf(JSCellButterfly* operands, const EvalBindingData& binding)
 {
-    JSValue value = operandOf(operands, binding);
-    auto* arguments = value && value.isCell() ? dynamicDowncast<DirectArguments>(value.asCell()) : nullptr;
-    RELEASE_ASSERT(arguments && DirectArguments::offsetOfSlot(binding.slot.offset) < cellSize(arguments));
+    auto* arguments = cellOperandOf<DirectArguments>(operands, binding);
+    RELEASE_ASSERT(DirectArguments::offsetOfSlot(binding.slot.offset) < cellSize(arguments));
     return arguments;
 }
 
@@ -103,11 +97,11 @@ static JSValue readBinding(Instance* instance, JSCellButterfly* operands, const 
     case EvalBindingForm::ModuleVariable:
         return ProgramStatics::readVariable(*instance, binding.slot);
     case EvalBindingForm::EnvironmentSlot:
-        return readSlot(binding.slot.representation(), &environmentOf(operands, binding)->at<uint8_t>(binding.slot.offset), *instance->state->strings);
+        return readSlot(binding.slot.representation(), &cellOperandOf<Environment>(operands, binding)->at<uint8_t>(binding.slot.offset), *instance->state->strings);
     case EvalBindingForm::MappedArgument:
         return mappedArgumentsOf(operands, binding)->argument(DirectArgumentsOffset(binding.slot.offset)).get();
     case EvalBindingForm::Operand:
-        return operandOf(operands, binding);
+        return operandOrEmpty(operands, binding.operand);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -126,53 +120,21 @@ static const EvalBindingData* findBinding(std::span<const EvalBindingData> bindi
     return nullptr;
 }
 
+static bool isAssignableBinding(EvalBindingKind kind)
+{
+    return kind == EvalBindingKind::Variable || kind == EvalBindingKind::Arguments || kind == EvalBindingKind::MappedArgument || kind == EvalBindingKind::SimpleCatchParameter;
+}
+
 static bool isNamedBinding(EvalBindingKind kind)
 {
-    switch (kind) {
-    case EvalBindingKind::Variable:
-    case EvalBindingKind::Constant:
-    case EvalBindingKind::FunctionName:
-    case EvalBindingKind::Arguments:
-    case EvalBindingKind::PrivateName:
-    case EvalBindingKind::PrivateMethod:
-    case EvalBindingKind::PrivateAccessor:
-    case EvalBindingKind::MappedArgument:
-    case EvalBindingKind::SimpleCatchParameter:
-        return true;
-    case EvalBindingKind::This:
-    case EvalBindingKind::NewTarget:
-    case EvalBindingKind::HomeObject:
-    case EvalBindingKind::ClassObject:
-    case EvalBindingKind::WithObject:
-    case EvalBindingKind::EvalVariables:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    return isAssignableBinding(kind) || kind == EvalBindingKind::Constant || kind == EvalBindingKind::FunctionName
+        || kind == EvalBindingKind::PrivateName || kind == EvalBindingKind::PrivateMethod || kind == EvalBindingKind::PrivateAccessor;
 }
 
 static unsigned attributesOf(EvalBindingKind kind)
 {
-    switch (kind) {
-    case EvalBindingKind::Variable:
-    case EvalBindingKind::Arguments:
-    case EvalBindingKind::MappedArgument:
-    case EvalBindingKind::SimpleCatchParameter:
-        return static_cast<unsigned>(PropertyAttribute::DontDelete);
-    case EvalBindingKind::Constant:
-    case EvalBindingKind::FunctionName:
-    case EvalBindingKind::PrivateName:
-    case EvalBindingKind::PrivateMethod:
-    case EvalBindingKind::PrivateAccessor:
-    case EvalBindingKind::This:
-    case EvalBindingKind::HomeObject:
-        return PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly;
-    case EvalBindingKind::NewTarget:
-    case EvalBindingKind::ClassObject:
-    case EvalBindingKind::WithObject:
-    case EvalBindingKind::EvalVariables:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    RELEASE_ASSERT(isNamedBinding(kind) || kind == EvalBindingKind::This || kind == EvalBindingKind::HomeObject);
+    return isAssignableBinding(kind) ? static_cast<unsigned>(PropertyAttribute::DontDelete) : PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly;
 }
 
 static bool isStaticPrivateField(const EvalBindingData& binding)
@@ -235,28 +197,6 @@ static JSObject* createAccessorPair(VM& vm, JSGlobalObject* globalObject, JSValu
     return pair;
 }
 
-static bool isNameInquiry(const PropertySlot& slot)
-{
-    switch (slot.internalMethodType()) {
-    case PropertySlot::InternalMethodType::HasProperty:
-    case PropertySlot::InternalMethodType::GetOwnProperty:
-    case PropertySlot::InternalMethodType::VMInquiry:
-        return true;
-    case PropertySlot::InternalMethodType::Get:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-struct EvalBindingContext {
-    Instance* instance;
-    JSCellButterfly* operands;
-    JSObject* homeObjectHolder;
-    const DirectEvalRequest* request;
-    uint32_t firstPrivateValue;
-    bool isInDerivedConstructor;
-};
-
 class EvalBindings final : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;
@@ -265,8 +205,8 @@ public:
     template<typename CellType, SubspaceAccess>
     static CompleteSubspace* subspaceFor(VM& vm) { return &vm.cellSpace(); }
 
-    static Structure* createStructure(VM&, JSGlobalObject*);
-    static EvalBindings* create(VM&, Structure*, const EvalBindingContext&, std::span<const EvalBindingData>);
+    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject) { return Structure::create(vm, globalObject, jsNull(), TypeInfo(ObjectType, StructureFlags), info()); }
+    static EvalBindings* create(VM&, Structure*, Instance*, const DirectEvalRequest&, JSCellButterfly* operands, JSObject* homeObjectHolder, std::span<const EvalBindingData>);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -279,56 +219,35 @@ public:
     JSValue read(const EvalBindingData&) const;
 
 private:
-    EvalBindings(VM&, Structure*, const EvalBindingContext&, std::span<const EvalBindingData>);
-    void finishCreation(VM&);
+    EvalBindings(VM& vm, Structure* structure, Instance* instance, const DirectEvalRequest& request, JSCellButterfly* operands, JSObject* homeObjectHolder, std::span<const EvalBindingData> bindings)
+        : Base(vm, structure)
+        , m_instance(instance)
+        , m_request(&request)
+        , m_first(bindings.empty() ? 0 : static_cast<uint32_t>(bindings.data() - request.bindings))
+        , m_count(bindings.size())
+        , m_operands(operands, WriteBarrierEarlyInit)
+        , m_homeObjectHolder(homeObjectHolder, WriteBarrierEarlyInit)
+    {
+    }
 
     std::span<const EvalBindingData> bindings() const { return unsafeMakeSpan(m_request->bindings + m_first, m_count); }
-    uint32_t privateValueIndexOf(const EvalBindingData&) const;
+    uint32_t privateValueIndexOf(const EvalBindingData& binding) const { return m_operands->length() - m_request->numberOfBindings + static_cast<uint32_t>(&binding - m_request->bindings); }
     JSCell* createPrivateValue(VM&, const EvalBindingData&);
     JSObject* createStaticFieldAccessors(VM&, const EvalBindingData&);
     JSValue readStaticField(JSGlobalObject*, const EvalBindingData&) const;
     void storeStaticField(JSGlobalObject*, const EvalBindingData&, JSValue);
     bool storeVariable(JSGlobalObject*, const EvalBindingData&, PropertyName, JSValue);
-    bool tryWriteBinding(VM&, const EvalBindingData&, JSValue);
+    void writeBinding(VM&, const EvalBindingData&, JSValue);
 
     Instance* m_instance;
     const DirectEvalRequest* m_request;
     uint32_t m_first;
     uint32_t m_count;
-    uint32_t m_firstPrivateValue;
-    bool m_isInDerivedConstructor;
     WriteBarrier<JSCellButterfly> m_operands;
     WriteBarrier<JSObject> m_homeObjectHolder;
 };
 
 const ClassInfo EvalBindings::s_info = { "EvalBindings"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(EvalBindings) };
-
-EvalBindings::EvalBindings(VM& vm, Structure* structure, const EvalBindingContext& context, std::span<const EvalBindingData> bindings)
-    : Base(vm, structure)
-    , m_instance(context.instance)
-    , m_request(context.request)
-    , m_first(bindings.empty() ? 0 : static_cast<uint32_t>(bindings.data() - context.request->bindings))
-    , m_count(bindings.size())
-    , m_firstPrivateValue(bindings.empty() ? 0 : context.firstPrivateValue + m_first)
-    , m_isInDerivedConstructor(context.isInDerivedConstructor)
-    , m_operands(context.operands, WriteBarrierEarlyInit)
-    , m_homeObjectHolder(context.homeObjectHolder, WriteBarrierEarlyInit)
-{
-}
-
-void EvalBindings::finishCreation(VM& vm)
-{
-    Base::finishCreation(vm);
-    for (auto& binding : bindings()) {
-        if (JSCell* value = createPrivateValue(vm, binding))
-            m_operands->setIndex(vm, privateValueIndexOf(binding), value);
-    }
-}
-
-uint32_t EvalBindings::privateValueIndexOf(const EvalBindingData& binding) const
-{
-    return m_firstPrivateValue + static_cast<uint32_t>(&binding - bindings().data());
-}
 
 JSCell* EvalBindings::createPrivateValue(VM& vm, const EvalBindingData& binding)
 {
@@ -339,7 +258,7 @@ JSCell* EvalBindings::createPrivateValue(VM& vm, const EvalBindingData& binding)
     if (kindOf(binding) != EvalBindingKind::PrivateAccessor)
         return nullptr;
     JSCellButterfly* operands = m_operands.get();
-    return createAccessorPair(vm, realm(), functionOperandOrEmpty(operands, binding.function), functionOperandOrEmpty(operands, binding.setter));
+    return createAccessorPair(vm, realm(), operandOrEmpty(operands, binding.function), operandOrEmpty(operands, binding.setter));
 }
 
 JSObject* EvalBindings::createStaticFieldAccessors(VM& vm, const EvalBindingData& binding)
@@ -375,15 +294,14 @@ void EvalBindings::storeStaticField(JSGlobalObject* globalObject, const EvalBind
     storeVariable(globalObject, binding, identifierAt(m_instance, binding.name), value);
 }
 
-Structure* EvalBindings::createStructure(VM& vm, JSGlobalObject* globalObject)
+EvalBindings* EvalBindings::create(VM& vm, Structure* structure, Instance* instance, const DirectEvalRequest& request, JSCellButterfly* operands, JSObject* homeObjectHolder, std::span<const EvalBindingData> bindings)
 {
-    return Structure::create(vm, globalObject, jsNull(), TypeInfo(ObjectType, StructureFlags), info());
-}
-
-EvalBindings* EvalBindings::create(VM& vm, Structure* structure, const EvalBindingContext& context, std::span<const EvalBindingData> bindings)
-{
-    auto* result = new (NotNull, allocateCell<EvalBindings>(vm)) EvalBindings(vm, structure, context, bindings);
+    auto* result = new (NotNull, allocateCell<EvalBindings>(vm)) EvalBindings(vm, structure, instance, request, operands, homeObjectHolder, bindings);
     result->finishCreation(vm);
+    for (auto& binding : bindings) {
+        if (JSCell* value = result->createPrivateValue(vm, binding))
+            operands->setIndex(vm, result->privateValueIndexOf(binding), value);
+    }
     return result;
 }
 
@@ -430,10 +348,10 @@ JSValue EvalBindings::read(const EvalBindingData& binding) const
     if (kind == EvalBindingKind::PrivateName || kind == EvalBindingKind::PrivateAccessor)
         return m_operands->get(privateValueIndexOf(binding));
     if (kind == EvalBindingKind::PrivateMethod)
-        return functionOperandOrEmpty(m_operands.get(), binding.function);
+        return operandOrEmpty(m_operands.get(), binding.function);
     JSValue value = readBinding(m_instance, m_operands.get(), binding);
     if (kind == EvalBindingKind::This)
-        return boundThisOrEmpty(value, m_isInDerivedConstructor);
+        return boundThisOrEmpty(value, m_request->isInDerivedConstructor);
     return value;
 }
 
@@ -446,7 +364,7 @@ bool EvalBindings::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalOb
     if (!binding)
         return false;
     EvalBindingKind kind = kindOf(*binding);
-    if (isNameInquiry(slot)) {
+    if (slot.internalMethodType() != PropertySlot::InternalMethodType::Get) {
         slot.setValue(object, attributesOf(kind), jsUndefined());
         return true;
     }
@@ -459,7 +377,7 @@ bool EvalBindings::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalOb
     return true;
 }
 
-bool EvalBindings::tryWriteBinding(VM& vm, const EvalBindingData& binding, JSValue value)
+void EvalBindings::writeBinding(VM& vm, const EvalBindingData& binding, JSValue value)
 {
     ProgramStrings& strings = *m_instance->state->strings;
     SlotRepresentation representation = binding.slot.representation();
@@ -469,23 +387,21 @@ bool EvalBindings::tryWriteBinding(VM& vm, const EvalBindingData& binding, JSVal
         RELEASE_ASSERT(representation != SlotRepresentation::DeferredClosure);
         ProgramStatics& statics = *m_instance->state->statics;
         statics.ensureProgramStaticsInitialized();
-        if (!tryWriteSlot(strings, representation, m_instance->statics() + offset, value))
-            return false;
+        RELEASE_ASSERT(tryWriteSlot(strings, representation, m_instance->statics() + offset, value));
         if (traitsOf(representation).holdsCell)
             statics.didStoreRootInStatics(offset);
-        return true;
+        return;
     }
     case EvalBindingForm::EnvironmentSlot: {
-        Environment* environment = environmentOf(m_operands.get(), binding);
-        if (!tryWriteSlot(strings, representation, &environment->at<uint8_t>(offset), value))
-            return false;
+        auto* environment = cellOperandOf<Environment>(m_operands.get(), binding);
+        RELEASE_ASSERT(tryWriteSlot(strings, representation, &environment->at<uint8_t>(offset), value));
         vm.writeBarrier(environment, value);
-        return true;
+        return;
     }
     case EvalBindingForm::MappedArgument: {
         DirectArguments* arguments = mappedArgumentsOf(m_operands.get(), binding);
         arguments->argument(DirectArgumentsOffset(offset)).set(vm, arguments, value);
-        return true;
+        return;
     }
     case EvalBindingForm::Operand:
         break;
@@ -505,7 +421,7 @@ bool EvalBindings::storeVariable(JSGlobalObject* globalObject, const EvalBinding
         throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
         return false;
     }
-    RELEASE_ASSERT(tryWriteBinding(vm, binding, value));
+    writeBinding(vm, binding, value);
     return true;
 }
 
@@ -517,34 +433,17 @@ bool EvalBindings::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName 
     const EvalBindingData* binding = thisObject->find(vm, name);
     if (!binding)
         return false;
-    switch (kindOf(*binding)) {
-    case EvalBindingKind::Constant:
-    case EvalBindingKind::PrivateName:
-    case EvalBindingKind::PrivateMethod:
-    case EvalBindingKind::PrivateAccessor:
-        throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
-        return false;
-    case EvalBindingKind::FunctionName:
-        if (!slot.isStrictMode())
-            return true;
-        throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
-        return false;
-    case EvalBindingKind::This:
-        throwException(globalObject, scope, createSuperCallInDirectEvalError(globalObject));
-        return false;
-    case EvalBindingKind::Variable:
-    case EvalBindingKind::Arguments:
-    case EvalBindingKind::MappedArgument:
-    case EvalBindingKind::SimpleCatchParameter:
+    EvalBindingKind kind = kindOf(*binding);
+    if (isAssignableBinding(kind))
         RELEASE_AND_RETURN(scope, thisObject->storeVariable(globalObject, *binding, name, value));
-    case EvalBindingKind::NewTarget:
-    case EvalBindingKind::HomeObject:
-    case EvalBindingKind::ClassObject:
-    case EvalBindingKind::WithObject:
-    case EvalBindingKind::EvalVariables:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    if (kind == EvalBindingKind::FunctionName && !slot.isStrictMode())
+        return true;
+    RELEASE_ASSERT(isNamedBinding(kind) || kind == EvalBindingKind::This);
+    if (kind == EvalBindingKind::This)
+        throwException(globalObject, scope, createSuperCallInDirectEvalError(globalObject));
+    else
+        throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
+    return false;
 }
 
 bool EvalBindings::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, DeletePropertySlot&)
@@ -563,7 +462,7 @@ class EvalVariableScope final : public JSLexicalEnvironment {
 public:
     using Base = JSLexicalEnvironment;
 
-    static Structure* createStructure(VM&, JSGlobalObject*);
+    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject) { return Structure::create(vm, globalObject, jsNull(), TypeInfo(LexicalEnvironmentType, StructureFlags), info()); }
     static EvalVariableScope* create(VM&, Structure*, JSScope* next, SymbolTable::ScopeType, const EvalVariableScopeContents&);
 
     DECLARE_INFO;
@@ -599,11 +498,6 @@ private:
 };
 
 const ClassInfo EvalVariableScope::s_info = { "EvalVariableScope"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(EvalVariableScope) };
-
-Structure* EvalVariableScope::createStructure(VM& vm, JSGlobalObject* globalObject)
-{
-    return Structure::create(vm, globalObject, jsNull(), TypeInfo(LexicalEnvironmentType, StructureFlags), info());
-}
 
 EvalVariableScope* EvalVariableScope::create(VM& vm, Structure* structure, JSScope* next, SymbolTable::ScopeType scopeType, const EvalVariableScopeContents& contents)
 {
@@ -667,43 +561,7 @@ bool EvalVariableScope::deleteProperty(JSCell* cell, JSGlobalObject* globalObjec
     return variables->methodTable()->deleteProperty(variables, globalObject, name, slot);
 }
 
-class EvalScopeChainBuilder {
-    WTF_FORBID_HEAP_ALLOCATION;
-    WTF_MAKE_NONCOPYABLE(EvalScopeChainBuilder);
-public:
-    EvalScopeChainBuilder(JSGlobalObject* globalObject, VM& vm, const EvalBindingContext& context, JSValue newTarget)
-        : m_globalObject(globalObject)
-        , m_vm(vm)
-        , m_context(context)
-        , m_newTarget(newTarget)
-        , m_scope(globalObject->globalScope())
-    {
-    }
-
-    JSScope* innermost() const { return m_scope; }
-
-    void addWithScope(const EvalBindingData&);
-    void addSimpleCatchParameterScope(std::span<const EvalBindingData> parameter);
-    void addBindingsRun(std::span<const EvalBindingData>);
-    void addVariableScope(std::span<const EvalBindingData> ownBindings, const EvalBindingData& variables);
-    void addEmptyVariableScope();
-    void addClassScope(std::span<const EvalBindingData> ownBindings);
-
-private:
-    EvalBindings* createBindings(std::span<const EvalBindingData>);
-    void pushEvalScope(EvalBindings*);
-    void pushVariableScope(SymbolTable::ScopeType, const EvalVariableScopeContents&);
-
-    JSGlobalObject* m_globalObject;
-    VM& m_vm;
-    EvalBindingContext m_context;
-    JSValue m_newTarget;
-    JSScope* m_scope;
-};
-
-using StructureCreator = Structure* (*)(VM&, JSGlobalObject*);
-
-static Structure* ensureStructure(VM& vm, Instance& instance, Structure* DirectEvalStructures::* member, StructureCreator create)
+static Structure* ensureStructure(VM& vm, Instance& instance, Structure* DirectEvalStructures::* member, Structure* (*create)(VM&, JSGlobalObject*))
 {
     Structure*& structure = instance.state->objects->caches->directEvalStructures.*member;
     if (!structure) {
@@ -713,132 +571,9 @@ static Structure* ensureStructure(VM& vm, Instance& instance, Structure* DirectE
     return structure;
 }
 
-void EvalScopeChainBuilder::addWithScope(const EvalBindingData& binding)
-{
-    JSValue object = readBinding(m_context.instance, m_context.operands, binding);
-    RELEASE_ASSERT(object.isObject());
-    m_scope = JSWithScope::create(m_vm, m_globalObject, m_scope, asObject(object));
-}
-
-EvalBindings* EvalScopeChainBuilder::createBindings(std::span<const EvalBindingData> bindings)
-{
-    Structure* structure = ensureStructure(m_vm, *m_context.instance, &DirectEvalStructures::bindings, EvalBindings::createStructure);
-    return EvalBindings::create(m_vm, structure, m_context, bindings);
-}
-
-void EvalScopeChainBuilder::pushEvalScope(EvalBindings* bindings)
-{
-    Structure* structure = ensureStructure(m_vm, *m_context.instance, &DirectEvalStructures::scope, EvalScope::createStructure);
-    m_scope = EvalScope::create(m_vm, structure, m_scope, bindings, m_newTarget);
-}
-
-void EvalScopeChainBuilder::addBindingsRun(std::span<const EvalBindingData> bindings)
-{
-    if (!bindings.empty())
-        pushEvalScope(createBindings(bindings));
-}
-
-void EvalScopeChainBuilder::pushVariableScope(SymbolTable::ScopeType scopeType, const EvalVariableScopeContents& contents)
-{
-    if (m_scope == m_globalObject->globalScope())
-        pushEvalScope(createBindings({ }));
-    Structure* structure = ensureStructure(m_vm, *m_context.instance, &DirectEvalStructures::variableScope, EvalVariableScope::createStructure);
-    m_scope = EvalVariableScope::create(m_vm, structure, m_scope, scopeType, contents);
-}
-
-void EvalScopeChainBuilder::addSimpleCatchParameterScope(std::span<const EvalBindingData> parameter)
-{
-    pushVariableScope(SymbolTable::ScopeType::CatchScopeWithSimpleParameter, { .ownBindings = createBindings(parameter) });
-}
-
-void EvalScopeChainBuilder::addVariableScope(std::span<const EvalBindingData> ownBindings, const EvalBindingData& variables)
-{
-    JSValue object = readBinding(m_context.instance, m_context.operands, variables);
-    RELEASE_ASSERT(object.isObject() && std::ranges::none_of(ownBindings, needsPrivateBrand));
-    pushVariableScope(SymbolTable::ScopeType::VarScope, { .ownBindings = createBindings(ownBindings), .variables = asObject(object) });
-}
-
-void EvalScopeChainBuilder::addEmptyVariableScope()
-{
-    pushVariableScope(SymbolTable::ScopeType::VarScope, { .variables = constructEmptyObject(m_vm, m_globalObject->nullPrototypeObjectStructure()) });
-}
-
-void EvalScopeChainBuilder::addClassScope(std::span<const EvalBindingData> ownBindings)
-{
-    EvalVariableScopeContents contents { .ownBindings = createBindings(ownBindings) };
-    if (const EvalBindingData* classObject = findBinding(ownBindings, EvalBindingKind::ClassObject))
-        contents.privateClassBrand = readBinding(m_context.instance, m_context.operands, *classObject);
-    auto instanceMember = std::ranges::find_if(ownBindings, [](const EvalBindingData& binding) {
-        return binding.privateKey && needsPrivateBrand(binding);
-    });
-    if (instanceMember != ownBindings.end())
-        contents.privateBrand = privateSymbolAt(m_context.instance, instanceMember->privateKey);
-    pushVariableScope(SymbolTable::ScopeType::LexicalScope, contents);
-}
-
 static bool hasOwnScope(const EvalBindingData& binding)
 {
     return kindOf(binding) == EvalBindingKind::WithObject || kindOf(binding) == EvalBindingKind::SimpleCatchParameter;
-}
-
-static void addBindingsToChain(EvalScopeChainBuilder& builder, std::span<const EvalBindingData> bindings)
-{
-    size_t index = bindings.size();
-    size_t runEnd = index;
-    while (index) {
-        const EvalBindingData& outermost = bindings[index - 1];
-        if (hasOwnScope(outermost)) {
-            builder.addBindingsRun(bindings.subspan(index, runEnd - index));
-            if (kindOf(outermost) == EvalBindingKind::WithObject)
-                builder.addWithScope(outermost);
-            else
-                builder.addSimpleCatchParameterScope(bindings.subspan(index - 1, 1));
-            runEnd = --index;
-            continue;
-        }
-        size_t groupStart = index - 1;
-        while (groupStart && bindings[groupStart - 1].depth == outermost.depth && !hasOwnScope(bindings[groupStart - 1]))
-            --groupStart;
-        auto group = bindings.subspan(groupStart, index - groupStart);
-        if (const EvalBindingData* variables = findBinding(group, EvalBindingKind::EvalVariables)) {
-            builder.addBindingsRun(bindings.subspan(index, runEnd - index));
-            builder.addVariableScope(group, *variables);
-            runEnd = groupStart;
-        } else if (std::ranges::any_of(group, needsPrivateBrand)) {
-            builder.addBindingsRun(bindings.subspan(index, runEnd - index));
-            builder.addClassScope(group);
-            runEnd = groupStart;
-        }
-        index = groupStart;
-    }
-    builder.addBindingsRun(bindings.first(runEnd));
-}
-
-static JSCellButterfly* copyOperands(VM& vm, std::span<const EncodedJSValue> operands, size_t numberOfPrivateValues)
-{
-    auto* copy = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, operands.size() + numberOfPrivateValues);
-    for (size_t i = 0; i < operands.size(); ++i)
-        copy->setIndex(vm, i, JSValue::decode(operands[i]));
-    return copy;
-}
-
-static JSObject* createHomeObjectHolder(Instance* instance, JSGlobalObject* globalObject, VM& vm, std::span<const EvalBindingData> bindings, JSCellButterfly* operands)
-{
-    const EvalBindingData* homeObject = findBinding(bindings, EvalBindingKind::HomeObject);
-    if (!homeObject)
-        return nullptr;
-    JSObject* holder = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
-    holder->putDirect(vm, vm.propertyNames->builtinNames().homeObjectPrivateName(), readBinding(instance, operands, *homeObject));
-    return holder;
-}
-
-static JSValue computeNewTarget(Instance* instance, const DirectEvalRequest& request, std::span<const EvalBindingData> bindings, JSCellButterfly* operands)
-{
-    if (!request.allowsNewTarget)
-        return JSValue();
-    const EvalBindingData* binding = findBinding(bindings, EvalBindingKind::NewTarget);
-    JSValue newTarget = binding ? readBinding(instance, operands, *binding) : operands->get(1);
-    return newTarget ? newTarget : jsUndefined();
 }
 
 struct EvalScopeChain {
@@ -849,37 +584,101 @@ struct EvalScopeChain {
 
 static EvalScopeChain buildScopeChain(Instance* instance, JSGlobalObject* globalObject, VM& vm, const DirectEvalRequest& request, std::span<const EncodedJSValue> operands)
 {
+    using ScopeType = SymbolTable::ScopeType;
     auto bindings = unsafeMakeSpan(request.bindings, request.numberOfBindings);
-    JSCellButterfly* operandCopy = copyOperands(vm, operands, bindings.size());
-    JSObject* holder = createHomeObjectHolder(instance, globalObject, vm, bindings, operandCopy);
-    EvalBindingContext context { instance, operandCopy, holder, &request, static_cast<uint32_t>(operands.size()), !!request.isInDerivedConstructor };
-    EvalScopeChainBuilder builder(globalObject, vm, context, computeNewTarget(instance, request, bindings, operandCopy));
-    addBindingsToChain(builder, bindings);
+    auto* operandCopy = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, operands.size() + bindings.size());
+    for (size_t i = 0; i < operands.size(); ++i)
+        operandCopy->setIndex(vm, i, JSValue::decode(operands[i]));
+    auto read = [&](const EvalBindingData& binding) {
+        return readBinding(instance, operandCopy, binding);
+    };
+    auto readObject = [&](const EvalBindingData& binding) {
+        JSValue object = read(binding);
+        RELEASE_ASSERT(object.isObject());
+        return asObject(object);
+    };
+
+    JSObject* homeObjectHolder = nullptr;
+    if (const EvalBindingData* homeObject = findBinding(bindings, EvalBindingKind::HomeObject)) {
+        homeObjectHolder = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+        homeObjectHolder->putDirect(vm, vm.propertyNames->builtinNames().homeObjectPrivateName(), read(*homeObject));
+    }
+    JSValue newTarget;
+    if (request.allowsNewTarget) {
+        const EvalBindingData* binding = findBinding(bindings, EvalBindingKind::NewTarget);
+        newTarget = binding ? read(*binding) : operandCopy->get(1);
+        if (!newTarget)
+            newTarget = jsUndefined();
+    }
+
+    JSScope* innermost = globalObject->globalScope();
+    auto createBindings = [&](std::span<const EvalBindingData> own) {
+        return EvalBindings::create(vm, ensureStructure(vm, *instance, &DirectEvalStructures::bindings, EvalBindings::createStructure), instance, request, operandCopy, homeObjectHolder, own);
+    };
+    auto pushBindings = [&](std::span<const EvalBindingData> run) {
+        EvalBindings* own = createBindings(run);
+        innermost = EvalScope::create(vm, ensureStructure(vm, *instance, &DirectEvalStructures::scope, EvalScope::createStructure), innermost, own, newTarget);
+    };
+    auto pushRun = [&](std::span<const EvalBindingData> run) {
+        if (!run.empty())
+            pushBindings(run);
+    };
+    auto pushVariableScope = [&](ScopeType scopeType, const EvalVariableScopeContents& contents) {
+        if (innermost == globalObject->globalScope())
+            pushBindings({ });
+        innermost = EvalVariableScope::create(vm, ensureStructure(vm, *instance, &DirectEvalStructures::variableScope, EvalVariableScope::createStructure), innermost, scopeType, contents);
+    };
+
+    size_t index = bindings.size();
+    size_t runEnd = index;
+    while (index) {
+        const EvalBindingData& outermost = bindings[index - 1];
+        auto run = bindings.subspan(index, runEnd - index);
+        if (hasOwnScope(outermost)) {
+            pushRun(run);
+            if (kindOf(outermost) == EvalBindingKind::WithObject)
+                innermost = JSWithScope::create(vm, globalObject, innermost, readObject(outermost));
+            else
+                pushVariableScope(ScopeType::CatchScopeWithSimpleParameter, { .ownBindings = createBindings(bindings.subspan(index - 1, 1)) });
+            runEnd = --index;
+            continue;
+        }
+        size_t groupStart = index - 1;
+        while (groupStart && bindings[groupStart - 1].depth == outermost.depth && !hasOwnScope(bindings[groupStart - 1]))
+            --groupStart;
+        auto group = bindings.subspan(groupStart, index - groupStart);
+        if (const EvalBindingData* variables = findBinding(group, EvalBindingKind::EvalVariables)) {
+            pushRun(run);
+            JSObject* variablesObject = readObject(*variables);
+            RELEASE_ASSERT(std::ranges::none_of(group, needsPrivateBrand));
+            pushVariableScope(ScopeType::VarScope, { .ownBindings = createBindings(group), .variables = variablesObject });
+            runEnd = groupStart;
+        } else if (std::ranges::any_of(group, needsPrivateBrand)) {
+            pushRun(run);
+            EvalVariableScopeContents contents { .ownBindings = createBindings(group) };
+            if (const EvalBindingData* classObject = findBinding(group, EvalBindingKind::ClassObject))
+                contents.privateClassBrand = read(*classObject);
+            auto instanceMember = std::ranges::find_if(group, [](const EvalBindingData& binding) {
+                return binding.privateKey && needsPrivateBrand(binding);
+            });
+            if (instanceMember != group.end())
+                contents.privateBrand = privateSymbolAt(instance, instanceMember->privateKey);
+            pushVariableScope(ScopeType::LexicalScope, contents);
+            runEnd = groupStart;
+        }
+        index = groupStart;
+    }
+    pushRun(bindings.first(runEnd));
     if (!request.isStrict && request.isInFunction && !findBinding(bindings, EvalBindingKind::EvalVariables))
-        builder.addEmptyVariableScope();
+        pushVariableScope(ScopeType::VarScope, { .variables = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure()) });
 
     const EvalBindingData* thisBinding = findBinding(bindings, EvalBindingKind::This);
-    JSValue thisValue = thisBinding ? readBinding(instance, operandCopy, *thisBinding) : operandCopy->get(0);
-    EvalScopeChain chain { builder.innermost(), boundThisOrEmpty(thisValue, context.isInDerivedConstructor), { } };
+    EvalScopeChain chain { innermost, boundThisOrEmpty(thisBinding ? read(*thisBinding) : operandCopy->get(0), request.isInDerivedConstructor), { } };
     for (auto& binding : bindings) {
         if (std::optional<PrivateNameEntry> entry = privateNameEntryOf(binding))
             chain.privateNames.add(RefPtr<UniquedStringImpl> { identifierAt(instance, binding.name).impl() }, *entry);
     }
     return chain;
-}
-
-static DerivedContextType derivedContextTypeOf(const DirectEvalRequest& request)
-{
-    if (request.isInDerivedConstructor)
-        return DerivedContextType::DerivedConstructorContext;
-    return request.allowsSuperProperty ? DerivedContextType::DerivedMethodContext : DerivedContextType::None;
-}
-
-static EvalContextType evalContextTypeOf(const DirectEvalRequest& request)
-{
-    if (request.isInFieldInitializer)
-        return EvalContextType::InstanceFieldEvalContext;
-    return request.isInFunction ? EvalContextType::FunctionEvalContext : EvalContextType::None;
 }
 
 class DirectEvalCaches final : public JSDestructibleObject {
@@ -890,7 +689,7 @@ public:
     static CompleteSubspace* subspaceFor(VM& vm) { return &vm.destructibleObjectSpace(); }
 
     static DirectEvalCaches* create(VM&, JSGlobalObject*);
-    static void destroy(JSCell*);
+    static void destroy(JSCell* cell) { static_cast<DirectEvalCaches*>(cell)->~DirectEvalCaches(); }
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -914,11 +713,6 @@ DirectEvalCaches* DirectEvalCaches::create(VM& vm, JSGlobalObject* globalObject)
     auto* result = new (NotNull, allocateCell<DirectEvalCaches>(vm)) DirectEvalCaches(vm, structure);
     result->finishCreation(vm);
     return result;
-}
-
-void DirectEvalCaches::destroy(JSCell* cell)
-{
-    static_cast<DirectEvalCaches*>(cell)->~DirectEvalCaches();
 }
 
 template<typename Visitor>
@@ -945,16 +739,6 @@ DirectEvalCodeCache& DirectEvalCaches::ensureCacheOf(uint32_t requestOffset)
     return cache;
 }
 
-static DirectEvalCaches& ensureCodeCaches(VM& vm, Instance& instance)
-{
-    DirectEvalCaches*& caches = instance.state->objects->caches->directEvalCaches;
-    if (!caches) {
-        caches = DirectEvalCaches::create(vm, instance.globalObject);
-        instance.state->immortalCells->add(caches);
-    }
-    return *caches;
-}
-
 JSC_DEFINE_JIT_OPERATION(operationAOTDirectEval, EncodedJSValue, (Instance* instance, EncodedJSValue text, uint32_t requestOffset, uint32_t count, const EncodedJSValue* operands))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTDirectEval);
@@ -969,23 +753,27 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDirectEval, EncodedJSValue, (Instance* inst
 
     bool hasThisBinding = findBinding(unsafeMakeSpan(request.bindings, request.numberOfBindings), EvalBindingKind::This);
     RELEASE_ASSERT(!request.isInDerivedConstructor || hasThisBinding);
-    DirectEvalCaches& caches = ensureCodeCaches(vm, *instance);
+    DirectEvalCaches*& caches = instance->state->objects->caches->directEvalCaches;
+    if (!caches) {
+        caches = DirectEvalCaches::create(vm, instance->globalObject);
+        instance->state->immortalCells->add(caches);
+    }
     DirectEvalCaller caller {
         .callFrame = std::bit_cast<CallFrame*>(frameRecord),
         .scope = chain.innermost,
         .thisValue = chain.thisValue,
         .sourceOrigin = instance->state->modules->sourceOrigin(ModuleID(request.module)),
         .lexicallyScopedFeatures = request.isStrict ? StrictModeLexicallyScopedFeature : NoLexicallyScopedFeatures,
-        .derivedContextType = derivedContextTypeOf(request),
-        .evalContextType = evalContextTypeOf(request),
+        .derivedContextType = request.isInDerivedConstructor ? DerivedContextType::DerivedConstructorContext : request.allowsSuperProperty ? DerivedContextType::DerivedMethodContext : DerivedContextType::None,
+        .evalContextType = request.isInFieldInitializer ? EvalContextType::InstanceFieldEvalContext : request.isInFunction ? EvalContextType::FunctionEvalContext : EvalContextType::None,
         .needsClassFieldInitializer = NeedsClassFieldInitializer::No,
         .privateBrandRequirement = PrivateBrandRequirement::None,
         .isArrowFunctionContext = hasThisBinding,
         .isInsideOrdinaryFunction = !!request.allowsNewTarget,
         .privateNames = &chain.privateNames,
         .codeBlockWithCache = nullptr,
-        .cache = &caches.ensureCacheOf(requestOffset),
-        .cacheOwner = &caches,
+        .cache = &caches->ensureCacheOf(requestOffset),
+        .cacheOwner = caches,
         .callSite = BytecodeIndex::fromBits(requestOffset),
     };
     OPERATION_RETURN(scope, JSValue::encode(evaluateDirectEval(globalObject, program, caller)));

@@ -7,7 +7,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -17,7 +16,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="numberOfSlice" parameters=[{type=string}, {type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: string, v1: number, v2: number):
     v3 = PropGet v0 key="slice"
     v4 = Call v3, v0, v1, v2 calleeKey="slice"
     v5 = Builtin builtin=GlobalThis
@@ -36,7 +34,6 @@ function f1 name="numberOfSlice" parameters=[{type=string}, {type=number}, {type
 # CHECK-NEXT: Return [[number1]]
 
 function f2 name="numberOfSliceThatIsKept" parameters=[{type=string}, {type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: string, v1: number, v2: number):
     v3 = PropGet v0 key="slice"
     v4 = Call v3, v0, v1, v2 calleeKey="slice"
     v5 = Builtin builtin=GlobalThis

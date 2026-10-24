@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="oneUnit" parameters=[{type=string}, {type=i32}] results=[{type=i32}] {
-  b0(v0: string, v1: i32):
     v2 = FlattenString v0
     v3 = StringLastIndexOfLiteral v2, v1 literal="/"
     Return v3
@@ -16,7 +15,6 @@ function f0 name="oneUnit" parameters=[{type=string}, {type=i32}] results=[{type
 # CHECK-NOT: Literal
 
 function f1 name="twoUnits" parameters=[{type=string}, {type=i32}] results=[{type=i32}] {
-  b0(v0: string, v1: i32):
     v2 = FlattenString v0
     v3 = StringLastIndexOfLiteral v2, v1 literal="::"
     Return v3
@@ -27,7 +25,6 @@ function f1 name="twoUnits" parameters=[{type=string}, {type=i32}] results=[{typ
 # CHECK-NOT: ReverseFindCharacter
 
 function f2 name="stringThatMayBeARope" parameters=[{type=string}, {type=i32}] results=[{type=i32}] {
-  b0(v0: string, v1: i32):
     v2 = StringLastIndexOfLiteral v0, v1 literal="/"
     Return v2
 }
@@ -40,7 +37,6 @@ function f2 name="stringThatMayBeARope" parameters=[{type=string}, {type=i32}] r
 
 # Backward from position 0 the text stands at the start or nowhere: the characters are compared in place and nothing is searched.
 function f3 name="fromPositionZero" parameters=[{type=string}] results=[{type=i32}] {
-  b0(v0: string):
     v1 = FlattenString v0
     v2 = Integer integer=0
     v3 = StringLastIndexOfLiteral v1, v2 literal="::"
@@ -51,7 +47,6 @@ function f3 name="fromPositionZero" parameters=[{type=string}] results=[{type=i3
 # CHECK-NOT: LastIndexOfLiteral
 
 function f4 name="fromPositionOne" parameters=[{type=string}] results=[{type=i32}] {
-  b0(v0: string):
     v1 = FlattenString v0
     v2 = Integer integer=1
     v3 = StringLastIndexOfLiteral v1, v2 literal="::"

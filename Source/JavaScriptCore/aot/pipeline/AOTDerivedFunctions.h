@@ -7,7 +7,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTDerivedFunctionList.h"
 #include "AOTIR.h"
 #include "AOTProvisionalFunctions.h"
 #include "AOTVector.h"
@@ -15,6 +14,7 @@
 #include <atomic>
 #include <compare>
 #include <memory>
+#include <utility>
 #include <wtf/Atomics.h>
 #include <wtf/BitVector.h>
 #include <wtf/ConcurrentVector.h>
@@ -28,6 +28,22 @@
 #include <wtf/ScopedLambda.h>
 #include <wtf/Threading.h>
 #include <wtf/UniqueArray.h>
+
+#define FOR_EACH_AOT_FUNCTION_ROLE_DERIVED_ON_REQUEST(v) \
+    v(GenericEntrypoint, buildGenericEntrypoint, Function, GenericEntrypoints) \
+    v(AllocatedThisVersion, buildAllocatedThisVersion, Function, None) \
+    v(ConstructBody, buildConstructBody, Function, None) \
+    v(CalleeVersion, buildCalleeVersion, FunctionAndCallee, CalleeVersions) \
+    v(TableEntrypoint, buildTableEntrypoint, FunctionAndSelector, TableEntrypoints) \
+    v(TableLookup, buildTableLookup, Selector, TableLookups) \
+    v(BoundFunction, buildBoundFunction, Function, BoundFunctions) \
+    v(ResultWorker, buildResultWorker, Function, FreshResultsSplit) \
+    v(ChainStep, buildChainStep, Function, None) \
+    v(OutlinedBody, buildOutlinedIteration, ValidationNode, None) \
+    v(Serializer, buildSerializer, Layout, SerializersCreated) \
+    v(Parser, buildParser, Type, ParsersCreated) \
+    v(ValidatingParser, buildValidatingParser, ValidationNode, ParsersCreated) \
+    v(Validator, buildValidator, ValidationNode, ValidatorsCreated)
 
 namespace JSC { namespace AOT {
 
@@ -102,15 +118,19 @@ class DerivedFunctions final : public ProvisionalFunctions {
     WTF_MAKE_NONCOPYABLE(DerivedFunctions);
     WTF_MAKE_NONMOVABLE(DerivedFunctions);
 public:
-    explicit DerivedFunctions(BuildContext&);
-    ~DerivedFunctions();
+    explicit DerivedFunctions(BuildContext& build)
+        : m_build(build)
+    {
+    }
+
+    ~DerivedFunctions() { RELEASE_ASSERT(!m_phase); }
 
     FunctionID find(const DerivedFunctionKey&) const;
     FunctionID ensure(const DerivedFunctionKey&);
     const Function& at(FunctionID) const final;
     // Of the function as at() answers it. The first who asks makes it, once.
     const InliningSummary& inliningSummaryOf(FunctionID provisional, NOESCAPE const ScopedLambda<InliningSummary()>& summarize) const;
-    DerivedFunctionKey keyOf(FunctionID provisional) const;
+    DerivedFunctionKey keyOf(FunctionID provisional) const { return entryOf(provisional).key; }
     std::weak_ordering compare(FunctionID, FunctionID) const;
 
     void record(const DerivedFunctionKey&, FunctionID);
@@ -155,20 +175,35 @@ private:
         WTF_MAKE_NONCOPYABLE(RequestRecorder);
         WTF_MAKE_NONMOVABLE(RequestRecorder);
     public:
-        explicit RequestRecorder(RequestHandling);
-        ~RequestRecorder();
+        explicit RequestRecorder(RequestHandling handling)
+            : handling(handling)
+            , m_outer(std::exchange(s_current, this))
+        {
+        }
 
-        static RequestRecorder* current();
+        ~RequestRecorder()
+        {
+            RELEASE_ASSERT(s_current == this);
+            s_current = m_outer;
+        }
 
-        RequestHandling handling() const { return m_handling; }
-        void record(uint32_t ordinal);
-        Vector<uint32_t> takeRequests();
+        void record(uint32_t ordinal)
+        {
+            if (m_recordedOrdinals.add(ordinal).isNewEntry)
+                m_requests.append(ordinal);
+        }
+
+        Vector<uint32_t> takeRequests()
+        {
+            m_recordedOrdinals.clear();
+            return std::exchange(m_requests, { });
+        }
+
+        static thread_local RequestRecorder* s_current;
+        const RequestHandling handling;
 
     private:
-        static thread_local RequestRecorder* s_current;
-
         RequestRecorder* const m_outer;
-        const RequestHandling m_handling;
         Vector<uint32_t> m_requests;
         UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_recordedOrdinals;
     };
@@ -187,7 +222,6 @@ private:
         uint32_t add(const DerivedFunctionKey&);
         void createEntriesAheadOf(uint32_t ordinal);
         void createEntries() WTF_REQUIRES_LOCK(creationLock);
-        void didRequest(uint32_t ordinal);
         void confirm(uint32_t ordinal);
 
         Program& program;
@@ -247,12 +281,12 @@ private:
     static constexpr unsigned numberOfShardsLog2 = 10;
 
     static uint32_t hashOf(const DerivedFunctionKey& key) { return computeHash(static_cast<uint32_t>(key.role), key.target.index(), key.parameter, key.node); }
-    Shard& shardOf(uint32_t hash) const;
+    // The high bits: a shard's table places its keys by the low ones.
+    Shard& shardOf(uint32_t hash) const { return m_shards[hash >> (32 - numberOfShardsLog2)]; }
     FunctionID findOrAdd(const DerivedFunctionKey&);
     void removeIDsIf(NOESCAPE const ScopedLambda<bool(FunctionID)>&);
     Entry& entryOf(FunctionID) const;
     const Function& buildOrWait(Entry&) const;
-    std::unique_ptr<Function> build(const Entry&) const;
     std::weak_ordering compareKeys(const DerivedFunctionKey&, const DerivedFunctionKey&) const;
 
     BuildContext& m_build;
@@ -267,19 +301,14 @@ public:
     DerivedFunctionPhase(DerivedFunctions&, Program&, const FlowResults&, InterningPhases&);
     ~DerivedFunctionPhase();
 
-    unsigned numberOfRequests() const;
-    bool isConfirmed(FunctionID provisional) const;
-    unsigned taskOf(FunctionID provisional) const;
-    void setOptimizedBody(FunctionID provisional, std::unique_ptr<Function>);
+    unsigned numberOfRequests() const { return m_table.m_phase->size(); }
+    unsigned taskOf(FunctionID provisional) const { return m_table.entryOf(provisional).optimizeTask(); }
+    void setOptimizedBody(FunctionID provisional, std::unique_ptr<Function> function) { m_table.entryOf(provisional).optimized = WTF::move(function); }
     void confirmRequestsOf(FunctionID requester);
     DerivedFunctionCommit commit(const BitVector& reachedOrdinals);
 
 private:
     friend class DerivedFunctionRequester;
-
-    void buildConfirmedFunctions();
-    Vector<uint32_t> confirmedOrdinalsInKeyOrder() const;
-    void replaceProvisionalIDs(const BitVector& reachedOrdinals, const FunctionRemap&);
 
     DerivedFunctions& m_table;
     bool m_didCommit { false };

@@ -5,7 +5,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="oneOrTwoThroughMerge" parameters=[{type=int[0, 1000]}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: int[0, 1000], v1: boolean):
     v2 = Integer integer=0
     Jump -> next b1(v2)
   b1(v3):
@@ -33,7 +32,6 @@ function f0 name="oneOrTwoThroughMerge" parameters=[{type=int[0, 1000]}, {type=b
 # CHECK-NEXT: loop b1 counter: none
 
 function f1 name="sameAmountThroughMerge" parameters=[{type=int[0, 1000]}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: int[0, 1000], v1: boolean):
     v2 = Integer integer=0
     Jump -> next b1(v2)
   b1(v3):
@@ -60,7 +58,6 @@ function f1 name="sameAmountThroughMerge" parameters=[{type=int[0, 1000]}, {type
 # CHECK-NEXT: loop b1 counter: v3
 
 function f2 name="upOrDown" parameters=[{type=int[0, 1000]}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: int[0, 1000], v1: boolean):
     v2 = Integer integer=0
     Jump -> next b1(v2)
   b1(v3):
@@ -86,7 +83,6 @@ function f2 name="upOrDown" parameters=[{type=int[0, 1000]}, {type=boolean}] res
 # CHECK-NEXT: loop b1 counter: none
 
 function f3 name="backEdgeWithoutStep" parameters=[{type=int[0, 1000]}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: int[0, 1000], v1: boolean):
     v2 = Integer integer=0
     Jump -> next b1(v2)
   b1(v3):
@@ -107,7 +103,6 @@ function f3 name="backEdgeWithoutStep" parameters=[{type=int[0, 1000]}, {type=bo
 # CHECK-NEXT: loop b1 counter: none
 
 function f4 name="backEdgesStepDifferently" parameters=[{type=int[0, 1000]}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: int[0, 1000], v1: boolean):
     v2 = Integer integer=0
     Jump -> next b1(v2)
   b1(v3):
@@ -133,7 +128,6 @@ function f4 name="backEdgesStepDifferently" parameters=[{type=int[0, 1000]}, {ty
 # CHECK-NEXT: loop b1 counter: none
 
 function f5 name="backEdgesReachOneMergeWithDifferentAmounts" parameters=[{type=int[0, 1000]}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: int[0, 1000], v1: boolean):
     v2 = Integer integer=0
     Jump -> next b1(v2)
   b1(v3):
@@ -164,7 +158,6 @@ function f5 name="backEdgesReachOneMergeWithDifferentAmounts" parameters=[{type=
 # CHECK-NEXT: loop b1 counter: none
 
 function f6 name="handlerGoesAroundWithoutStep" parameters=[{type=int[0, 1000]}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: int[0, 1000], v1: anything):
     v2 = Integer integer=0
     Jump -> next b1(v2)
   b1(v3):
@@ -187,7 +180,6 @@ function f6 name="handlerGoesAroundWithoutStep" parameters=[{type=int[0, 1000]},
 # CHECK-NEXT: loop b1 counter: none
 
 function f7 name="innerLoopStepsOuterValue" parameters=[{type=int[0, 1000]}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: int[0, 1000], v1: boolean):
     v2 = Integer integer=0
     Jump -> next b1(v2)
   b1(v3):

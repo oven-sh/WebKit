@@ -4,18 +4,15 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="truncatedThenOr" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = CallBuiltin -, v0 overload=MathTrunc/0
     v2 = Integer integer=0
     v3 = BitOr v1, v2
     Return v3
-}
-# CHECK-LABEL: function f0 name="truncatedThenOr"
 # CHECK-NOT: CallBuiltin
 # CHECK: v3: i32 = BitOr v0, v2
+}
 
 function f1 name="bothOperands" parameters=[{type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: number, v1: number):
     v2 = CallBuiltin -, v0 overload=MathTrunc/0
     v3 = CallBuiltin -, v1 overload=MathTrunc/0
     v4 = LShift v2, v3
@@ -23,51 +20,43 @@ function f1 name="bothOperands" parameters=[{type=number}, {type=number}] result
     v6 = BitNot v2
     v7 = NewArray v4, v5, v6 contents=anything
     Return v7
-}
-# CHECK-LABEL: function f1 name="bothOperands"
 # CHECK-NOT: CallBuiltin
 # CHECK: = LShift v0, v1
 # CHECK-NEXT: = URShift v0, v1
 # CHECK-NEXT: = BitNot v0
+}
 
 function f2 name="throughCast" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = CallBuiltin -, v0 overload=MathTrunc/0
     v2 = Upcast v1 castType=number
     v3 = ToInt32 v2
     v4 = ToUint32 v2
     v5 = NewArray v3, v4 contents=anything
     Return v5
-}
-# CHECK-LABEL: function f2 name="throughCast"
 # CHECK-NOT: CallBuiltin
 # CHECK: = ToInt32 v0
 # CHECK-NEXT: = ToUint32 v0
+}
 
 function f3 name="integerOrInfinity" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = ToIntegerOrInfinity v0
     v2 = ToInt32 v1
     Return v2
-}
-# CHECK-LABEL: function f3 name="integerOrInfinity"
 # CHECK-NOT: ToIntegerOrInfinity
 # CHECK: = ToInt32 v0
+}
 
 function f4 name="truncationHasOtherUse" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = CallBuiltin -, v0 overload=MathTrunc/0
     v2 = Integer integer=0
     v3 = BitOr v1, v2
     v4 = NewArray v1, v3 contents=anything
     Return v4
-}
-# CHECK-LABEL: function f4 name="truncationHasOtherUse"
 # CHECK: v1: {{*}} = CallBuiltin -, v0 overload=MathTrunc/0
 # CHECK: v3: i32 = BitOr v0, v2
+}
 
 function f5 name="otherRoundingStays" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = CallBuiltin -, v0 overload=MathFloor/0
     v2 = CallBuiltin -, v0 overload=MathCeil/0
     v3 = CallBuiltin -, v0 overload=MathRound/0
@@ -77,44 +66,37 @@ function f5 name="otherRoundingStays" parameters=[{type=number}] results=[{type=
     v7 = BitOr v3, v4
     v8 = NewArray v5, v6, v7 contents=anything
     Return v8
-}
-# CHECK-LABEL: function f5 name="otherRoundingStays"
 # CHECK: = BitOr v1, v4
 # CHECK-NEXT: = BitOr v2, v4
 # CHECK-NEXT: = BitOr v3, v4
+}
 
 function f6 name="conversionOfOperandStays" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToNumber v0
     v2 = CallBuiltin -, v1 overload=MathTrunc/0
     v3 = Integer integer=0
     v4 = BitOr v2, v3
     Return v4
-}
-# CHECK-LABEL: function f6 name="conversionOfOperandStays"
 # CHECK: v1: number = ToNumber v0
 # CHECK-NOT: CallBuiltin
 # CHECK: = BitOr v1, v3
+}
 
 function f7 name="otherOperatorStays" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = CallBuiltin -, v0 overload=MathTrunc/0
     v2 = Integer integer=0
     v3 = Add v1, v2
     v4 = Mul v1, v1
     v5 = NewArray v3, v4 contents=anything
     Return v5
-}
-# CHECK-LABEL: function f7 name="otherOperatorStays"
 # CHECK: = Add v1, v2
 # CHECK-NEXT: = Mul v1, v1
+}
 
 function f8 name="unmatchedCallStays" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = CallBuiltin -, v0 overload=MathTrunc/0 builtinCallForm=AnyReceiver
     v2 = Integer integer=0
     v3 = BitOr v1, v2
     Return v3
-}
-# CHECK-LABEL: function f8 name="unmatchedCallStays"
 # CHECK: = BitOr v1, v2
+}

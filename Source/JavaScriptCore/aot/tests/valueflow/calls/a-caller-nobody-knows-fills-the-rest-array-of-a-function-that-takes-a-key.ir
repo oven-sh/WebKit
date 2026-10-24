@@ -8,7 +8,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="give" [isFreeName]
     v2 = NewClosure function=f1
@@ -16,7 +15,6 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="emit" module=m0 flags=[HasRestParameter] parameters=[{type=anything}, {type=anything}, {type=Array}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: Array):
     v3 = ElemGet v0, v1
     v4 = Integer integer=0
     v5 = ElemGet v2, v4

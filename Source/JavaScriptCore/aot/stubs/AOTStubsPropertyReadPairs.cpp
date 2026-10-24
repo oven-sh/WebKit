@@ -36,41 +36,9 @@ static_assert([] {
 
 enum class SecondStep : uint8_t { Read, TestTruthiness, CompareWithLiteral };
 
-struct TwoReads {
-    SecondReceiver secondReceiver;
-    bool returnsBoth;
-    SecondStep step;
-    unsigned literalLength;
-};
-
 struct SecondReadExits {
     JumpList isNotOwnInline;
     JumpList hasNoStructure;
-};
-
-struct TwoReadsBody {
-    bool readsSameReceiver() const { return reads.secondReceiver == SecondReceiver::FirstReceiver; }
-
-    StubAssembler& jit;
-    TwoReads reads;
-    GPRReg R0;
-    GPRReg first;
-    GPRReg second;
-    GPRReg names;
-    GPRReg name;
-    GPRReg cell;
-    GPRReg row;
-    GPRReg T11;
-    GPRReg T14;
-    Box<SecondReadExits> secondReadExits;
-};
-
-struct FirstProbeExits {
-    Box<JumpList> hasNoStructure;
-    JumpList isGeneric;
-    Jump isAbsent;
-    Jump needsFrame;
-    Label genericRead;
 };
 
 static constexpr StubKey literalComparison(unsigned length)
@@ -78,270 +46,193 @@ static constexpr StubKey literalComparison(unsigned length)
     return equalsLiteralOfLength(ComparedOperand::Value, length, CallerFrame::HasFrame);
 }
 
-static StubSignature calleeSignature(StubKey callee)
+static void generateTwoReads(StubAssembler& jit, SecondReceiver secondReceiver, bool returnsBoth, SecondStep step, unsigned literalLength = 0)
 {
-    return signatureOf(callee);
-}
+    static_assert(secondNameShift == 16 && RowDisplacementTable::maxColumn < 1u << secondNameShift);
+    RELEASE_ASSERT((step == SecondStep::CompareWithLiteral) == !!literalLength);
+    RELEASE_ASSERT(!returnsBoth || step == SecondStep::Read);
+    RELEASE_ASSERT(returnsBoth || secondReceiver == SecondReceiver::FirstResult);
 
-static void emitSecondRead(const TwoReadsBody& body, bool rowIsLoaded)
-{
-    StubAssembler& jit = body.jit;
-    const GPRReg T11 = body.T11;
-    const GPRReg T14 = body.T14;
-    const GPRReg second = body.second;
-    const GPRReg names = body.names;
-    const GPRReg cell = body.cell;
+    const bool readsSameReceiver = secondReceiver == SecondReceiver::FirstReceiver;
+    const GPRReg R0 = jit.operand(0);
+    const GPRReg first = returnsBoth ? jit.result() : R0;
+    const GPRReg second = secondReceiver == SecondReceiver::Other ? jit.operand(1) : secondReceiver == SecondReceiver::FirstResult ? first : R0;
+    if (step != SecondStep::Read)
+        jit.clobberOperand(0);
+    const GPRReg names = jit.immediate();
+    const GPRReg name = jit.allocateScratch(StubRegister::T10);
+    const GPRReg cell = jit.allocateScratch(slotHeaderRegister);
+    const GPRReg row = jit.allocateScratch(StubRegister::T13);
+    const GPRReg T11 = jit.allocateScratch(StubRegister::T11);
+    const GPRReg T14 = jit.allocateScratch(StubRegister::T14);
+    RELEASE_ASSERT(signatureOf(getByIdAfterFrontProbe()).operands[1].gpr() == cell);
+    // loadStructureIDOfReceiver adds to its list in an out-of-line part, which runs after this function has returned.
+    Box<SecondReadExits> secondReadExits = Box<SecondReadExits>::create();
+    Box<JumpList> firstHasNoStructure = Box<JumpList>::create();
 
-    jit.urshift32(TrustedImm32(secondNameShift), names);
-    if (rowIsLoaded)
-        jit.load64(BaseIndex(body.row, names, CCallHelpers::TimesEight), cell);
-    else {
-        loadStructureIDOfReceiver(jit, second, T11, body.secondReadExits->hasNoStructure, [&] {
-            JumpList isNotInFieldTable;
-            readFieldByTable(jit, { second, names, T11, cell, std::nullopt, true, true }, body.R0, isNotInFieldTable, [&] {
-                jit.returnToCaller();
-            });
-            isNotInFieldTable.link(&jit);
+    auto emitSecondStep = [&](bool rowIsLoaded) {
+        switch (step) {
+        case SecondStep::CompareWithLiteral: {
+            const StubKey comparison = literalComparison(literalLength);
+            const StubSignature signature = signatureOf(comparison);
+            const GPRReg subject = signature.operands[0].gpr();
+            const GPRReg text = signature.operands[1].gpr();
+            RELEASE_ASSERT(subject == T11 && text == names);
+            jit.move(R0, subject);
+            jit.move(jit.operand(1), text);
+            jit.jumpToStub(comparison);
+            return;
+        }
+        case SecondStep::TestTruthiness:
+            RELEASE_ASSERT(signatureOf(valueIsTruthy()).operands[0].gpr() == R0);
+            jit.jumpToStub(valueIsTruthy());
+            return;
+        case SecondStep::Read:
+            jit.urshift32(TrustedImm32(secondNameShift), names);
+            if (rowIsLoaded)
+                jit.load64(BaseIndex(row, names, CCallHelpers::TimesEight), cell);
+            else {
+                loadStructureIDOfReceiver(jit, second, T11, secondReadExits->hasNoStructure, [&] {
+                    JumpList isNotInFieldTable;
+                    readFieldByTable(jit, { second, names, T11, cell, std::nullopt, true, true }, R0, isNotInFieldTable, [&] {
+                        jit.returnToCaller();
+                    });
+                    isNotInFieldTable.link(&jit);
+                });
+                loadFrontCell(jit, SlotAccess::Read, { T11, names, row, cell, T14 });
+            }
+            secondReadExits->isNotOwnInline.append(branchUnlessOwnInlineValue(jit, names, cell, T14));
+            loadOwnInlineValue(jit, second, cell, R0);
+            jit.returnToCaller();
+            return;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    };
+
+    jit.zeroExtend16To32(names, name);
+    loadStructureIDOfReceiver(jit, R0, T11, *firstHasNoStructure, [&] {
+        JumpList isNotInFieldTable;
+        readFieldByTable(jit, { R0, name, T11, cell, std::nullopt, true, true }, first, isNotInFieldTable, [&] {
+            emitSecondStep(false);
         });
-        loadFrontCell(jit, SlotAccess::Read, { T11, names, body.row, cell, T14 });
-    }
-    body.secondReadExits->isNotOwnInline.append(branchUnlessOwnInlineValue(jit, names, cell, T14));
-    loadOwnInlineValue(jit, second, cell, body.R0);
-    jit.returnToCaller();
-}
-
-static void emitSecondStep(const TwoReadsBody& body, bool rowIsLoaded)
-{
-    StubAssembler& jit = body.jit;
-    const GPRReg R0 = body.R0;
-
-    switch (body.reads.step) {
-    case SecondStep::CompareWithLiteral: {
-        const StubKey comparison = literalComparison(body.reads.literalLength);
-        const StubSignature signature = calleeSignature(comparison);
-        const GPRReg subject = signature.operands[0].gpr();
-        const GPRReg text = signature.operands[1].gpr();
-        RELEASE_ASSERT(subject == body.T11 && text == body.names);
-        jit.move(R0, subject);
-        jit.move(jit.operand(1), text);
-        jit.jumpToStub(comparison);
-        return;
-    }
-    case SecondStep::TestTruthiness:
-        RELEASE_ASSERT(calleeSignature(valueIsTruthy()).operands[0].gpr() == R0);
-        jit.jumpToStub(valueIsTruthy());
-        return;
-    case SecondStep::Read:
-        emitSecondRead(body, rowIsLoaded);
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void emitFirstProbe(const TwoReadsBody& body, FirstProbeExits& exits)
-{
-    StubAssembler& jit = body.jit;
-    const GPRReg R0 = body.R0;
-    const GPRReg T11 = body.T11;
-    const GPRReg T14 = body.T14;
-    const GPRReg first = body.first;
-    const GPRReg name = body.name;
-    const GPRReg cell = body.cell;
-    const bool readsSameReceiver = body.readsSameReceiver();
-
+        isNotInFieldTable.link(&jit);
+    });
     if (readsSameReceiver) {
-        loadFrontRow(jit, SlotAccess::Read, T11, body.row, T14);
-        jit.load64(BaseIndex(body.row, name, CCallHelpers::TimesEight), cell);
+        loadFrontRow(jit, SlotAccess::Read, T11, row, T14);
+        jit.load64(BaseIndex(row, name, CCallHelpers::TimesEight), cell);
     } else
-        loadFrontCell(jit, SlotAccess::Read, { T11, name, body.row, cell, T14 });
+        loadFrontCell(jit, SlotAccess::Read, { T11, name, row, cell, T14 });
     Jump isNotOwnInline = branchUnlessOwnInlineValue(jit, name, cell, T14);
     loadOwnInlineValue(jit, R0, cell, first);
-    emitSecondStep(body, readsSameReceiver);
+    emitSecondStep(readsSameReceiver);
 
     isNotOwnInline.link(&jit);
-    exits.isGeneric.append(branchIfCellNameDiffers(jit, name, cell, T14));
+    Jump isGeneric = branchIfCellNameDiffers(jit, name, cell, T14);
     Jump isNotValue = branchIfSlotKindDiffers(jit, { SlotForm::PackedSlot, cell }, Slot::Kind::Value, T14);
     loadValueBySlot(jit, CachedSlot(SlotForm::PackedSlot, Slot::Kind::Value, cell, InvalidGPRReg), R0, name, T11, first);
-    emitSecondStep(body, readsSameReceiver);
+    emitSecondStep(readsSameReceiver);
 
     isNotValue.link(&jit);
     loadSlotKind(jit, { SlotForm::PackedSlot, cell }, T11);
-    exits.isAbsent = jit.branch32(CCallHelpers::Equal, T11, TrustedImm32(static_cast<int32_t>(Slot::Kind::Absent)));
-    exits.needsFrame = jit.jump();
-}
+    Jump isAbsent = jit.branch32(CCallHelpers::Equal, T11, TrustedImm32(static_cast<int32_t>(Slot::Kind::Absent)));
+    Jump needsFrame = jit.jump();
 
-static void emitFirstReadInFrame(const TwoReadsBody& body, FirstProbeExits& exits)
-{
-    StubAssembler& jit = body.jit;
-    const TwoReads& reads = body.reads;
-    const GPRReg R0 = body.R0;
+    isAbsent.link(&jit);
+    jit.move(TrustedImm64(JSValue::ValueUndefined), first);
+    emitSecondStep(readsSameReceiver);
 
     Vector<GPRReg, 2> saved;
-    if (reads.step == SecondStep::Read)
-        saved.append(body.names);
-    if (body.readsSameReceiver())
+    if (step == SecondStep::Read)
+        saved.append(names);
+    if (readsSameReceiver)
         saved.append(R0);
-
     // The callees are HasFrame variants: a stack walker sees the label only as the return address in a callee's own frame record.
     auto readFirstInFrame = [&](const auto& emitCall) {
         jit.emitFunctionPrologue();
         jit.preserving(saved.span(), [&] {
-            jit.move(body.name, body.names);
+            jit.move(name, names);
             emitCall();
-            if (reads.step == SecondStep::Read)
+            if (step == SecondStep::Read)
                 jit.bindReturnLabel(StubFrameKind::FirstOfTwoReads);
-            jit.move(R0, body.first);
+            jit.move(R0, first);
         });
         jit.emitFunctionEpilogueWithEmptyFrame();
     };
 
-    exits.needsFrame.link(&jit);
+    needsFrame.link(&jit);
     readFirstInFrame([&] {
-        callSlotHandler(jit, firstReadHandlerTable, body.T11);
+        callSlotHandler(jit, firstReadHandlerTable, T11);
     });
     Jump didRead = jit.jump();
 
-    exits.isGeneric.link(&jit);
-    exits.genericRead = jit.label();
+    isGeneric.link(&jit);
+    Label genericRead = jit.label();
     readFirstInFrame([&] {
         jit.callStub(getByIdHashed());
     });
     didRead.link(&jit);
-    emitSecondStep(body, false);
-}
+    emitSecondStep(false);
 
-static void emitSecondReadExit(const TwoReadsBody& body, JumpList& jumps, StubKey stub)
-{
-    StubAssembler& jit = body.jit;
-
-    if (body.second == body.R0) {
-        jit.linkToStub(jumps, stub);
-        return;
-    }
-    if (jumps.empty())
-        return;
-
-    jumps.link(&jit);
-    jit.move(body.second, body.R0);
-    jit.jumpToStub(stub);
-}
-
-static void generateTwoReads(StubAssembler& jit, const TwoReads& reads)
-{
-    static_assert(secondNameShift == 16 && RowDisplacementTable::maxColumn < 1u << secondNameShift);
-    RELEASE_ASSERT((reads.step == SecondStep::CompareWithLiteral) == !!reads.literalLength);
-    RELEASE_ASSERT(!reads.returnsBoth || reads.step == SecondStep::Read);
-    RELEASE_ASSERT(reads.returnsBoth || reads.secondReceiver == SecondReceiver::FirstResult);
-
-    const GPRReg R0 = jit.operand(0);
-    const GPRReg first = reads.returnsBoth ? jit.result() : R0;
-    const GPRReg second = reads.secondReceiver == SecondReceiver::Other ? jit.operand(1) : reads.secondReceiver == SecondReceiver::FirstResult ? first : R0;
-    if (reads.step != SecondStep::Read)
-        jit.clobberOperand(0);
-
-    const TwoReadsBody body {
-        jit,
-        reads,
-        R0,
-        first,
-        second,
-        jit.immediate(),
-        jit.allocateScratch(StubRegister::T10),
-        jit.allocateScratch(slotHeaderRegister),
-        jit.allocateScratch(StubRegister::T13),
-        jit.allocateScratch(StubRegister::T11),
-        jit.allocateScratch(StubRegister::T14),
-        Box<SecondReadExits>::create(),
-    };
-    RELEASE_ASSERT(calleeSignature(getByIdAfterFrontProbe()).operands[1].gpr() == body.cell);
-
-    FirstProbeExits exits;
-    exits.hasNoStructure = Box<JumpList>::create();
-    jit.zeroExtend16To32(body.names, body.name);
-    loadStructureIDOfReceiver(jit, R0, body.T11, *exits.hasNoStructure, [&] {
-        JumpList isNotInFieldTable;
-        readFieldByTable(jit, { R0, body.name, body.T11, body.cell, std::nullopt, true, true }, first, isNotInFieldTable, [&] {
-            emitSecondStep(body, false);
-        });
-        isNotInFieldTable.link(&jit);
-    });
-    emitFirstProbe(body, exits);
-
-    exits.isAbsent.link(&jit);
-    jit.move(TrustedImm64(JSValue::ValueUndefined), first);
-    emitSecondStep(body, body.readsSameReceiver());
-
-    emitFirstReadInFrame(body, exits);
-
-    // loadStructureIDOfReceiver adds to its list in an out-of-line part, which runs after this function has returned.
-    jit.addOutOfLinePart([body, firstHasNoStructure = exits.hasNoStructure, genericRead = exits.genericRead](StubAssembler& jit) {
+    jit.addOutOfLinePart([R0, second, secondReadExits, firstHasNoStructure, genericRead](StubAssembler& jit) {
         firstHasNoStructure->linkTo(genericRead, &jit);
-        emitSecondReadExit(body, body.secondReadExits->isNotOwnInline, getByIdAfterFrontProbe());
-        emitSecondReadExit(body, body.secondReadExits->hasNoStructure, slotExit(SlotHandlerTable::ReadById, SlotExit::Miss));
+        auto leaveForSecondRead = [&](JumpList& jumps, StubKey stub) {
+            if (second == R0) {
+                jit.linkToStub(jumps, stub);
+                return;
+            }
+            if (jumps.empty())
+                return;
+            jumps.link(&jit);
+            jit.move(second, R0);
+            jit.jumpToStub(stub);
+        };
+        leaveForSecondRead(secondReadExits->isNotOwnInline, getByIdAfterFrontProbe());
+        leaveForSecondRead(secondReadExits->hasNoStructure, slotExit(SlotHandlerTable::ReadById, SlotExit::Miss));
     });
 }
 
-static StubSignature signatureOfFirstRead()
+void generateGetByIdChain(StubAssembler& jit) { generateTwoReads(jit, SecondReceiver::FirstResult, false, SecondStep::Read); }
+void generateGetByIdPair(StubAssembler& jit) { generateTwoReads(jit, static_cast<SecondReceiver>(jit.key().form()), true, SecondStep::Read); }
+void generateGetByIdIsTruthy(StubAssembler& jit) { generateTwoReads(jit, SecondReceiver::FirstResult, false, SecondStep::TestTruthiness); }
+void generateGetByIdEqualsLiteral(StubAssembler& jit) { generateTwoReads(jit, SecondReceiver::FirstResult, false, SecondStep::CompareWithLiteral, jit.key().count()); }
+
+static StubSignature signatureOfTwoReads(StubResult result, bool hasSecondOperand)
 {
     StubSignature signature;
     signature.addOperand(gprOf(firstStubOperandRegister));
+    if (hasSecondOperand)
+        signature.addOperand(gprOf(secondOperandRegister));
     signature.immediate = gprOf(slotNameRegister);
+    signature.result = result;
     return signature;
-}
-
-void generateGetByIdChain(StubAssembler& jit)
-{
-    generateTwoReads(jit, { SecondReceiver::FirstResult, false, SecondStep::Read, 0 });
 }
 
 StubSignature signatureOfGetByIdChain(StubKey)
 {
-    StubSignature signature = signatureOfFirstRead();
-    signature.result = StubResult::GPR;
+    StubSignature signature = signatureOfTwoReads(StubResult::GPR, false);
     signature.firstResult = gprOf(firstStubOperandRegister);
     return signature;
 }
 
-void generateGetByIdPair(StubAssembler& jit)
-{
-    generateTwoReads(jit, { static_cast<SecondReceiver>(jit.key().form()), true, SecondStep::Read, 0 });
-}
-
 StubSignature signatureOfGetByIdPair(StubKey key)
 {
-    StubSignature signature = signatureOfFirstRead();
-    if (static_cast<SecondReceiver>(key.form()) == SecondReceiver::Other)
-        signature.addOperand(gprOf(secondOperandRegister));
-    signature.result = StubResult::TwoGPRs;
+    StubSignature signature = signatureOfTwoReads(StubResult::TwoGPRs, static_cast<SecondReceiver>(key.form()) == SecondReceiver::Other);
     signature.firstResult = gprOf(firstResultRegister);
     signature.secondResult = gprOf(firstStubOperandRegister);
     return signature;
 }
 
-void generateGetByIdIsTruthy(StubAssembler& jit)
-{
-    generateTwoReads(jit, { SecondReceiver::FirstResult, false, SecondStep::TestTruthiness, 0 });
-}
-
 StubSignature signatureOfGetByIdIsTruthy(StubKey)
 {
-    StubSignature signature = signatureOfFirstRead();
-    signature.result = StubResult::Flags;
-    signature.trueCondition = calleeSignature(valueIsTruthy()).trueCondition;
+    StubSignature signature = signatureOfTwoReads(StubResult::Flags, false);
+    signature.trueCondition = signatureOf(valueIsTruthy()).trueCondition;
     return signature;
-}
-
-void generateGetByIdEqualsLiteral(StubAssembler& jit)
-{
-    generateTwoReads(jit, { SecondReceiver::FirstResult, false, SecondStep::CompareWithLiteral, jit.key().count() });
 }
 
 StubSignature signatureOfGetByIdEqualsLiteral(StubKey key)
 {
-    StubSignature signature = signatureOfFirstRead();
-    signature.addOperand(gprOf(secondOperandRegister));
-    signature.result = StubResult::Flags;
-    signature.trueCondition = calleeSignature(literalComparison(key.count())).trueCondition;
+    StubSignature signature = signatureOfTwoReads(StubResult::Flags, true);
+    signature.trueCondition = signatureOf(literalComparison(key.count())).trueCondition;
     return signature;
 }
 

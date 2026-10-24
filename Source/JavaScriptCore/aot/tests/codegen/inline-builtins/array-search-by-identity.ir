@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="indexOfBoolean" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: Array<anything, proven, pristine[Storage]>, v1: boolean, v2: boolean):
     Branch v2 -> taken b1(), notTaken b4()
   b1():
     TryCallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/1 -> done b2(), miss b3()
@@ -24,7 +23,6 @@ function f0 name="indexOfBoolean" parameters=[{type=Array<anything, proven, pris
 # CALLS-LABEL: f0: size=
 # CALLS: operation operationAOTArrayIndexOfInt32 x1
 function f1 name="indexOfBooleanInCompactCode" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: Array<anything, proven, pristine[Storage]>, v1: boolean, v2: boolean):
     Branch v2 -> taken b1(), notTaken b4()
   b1() frequency=Rare:
     TryCallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/1 -> done b2(), miss b3()
@@ -41,7 +39,6 @@ function f1 name="indexOfBooleanInCompactCode" parameters=[{type=Array<anything,
 # CALLS-LABEL: f1: size=
 # CALLS: operation operationAOTArrayIndexOfInt32 x1
 function f2 name="indexOfAnything" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: Array<anything, proven, pristine[Storage]>, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b4()
   b1():
     TryCallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/1 -> done b2(), miss b3()

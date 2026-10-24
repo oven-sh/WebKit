@@ -9,12 +9,10 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Failure" fields=[{key="describe" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = CallDirect function=f1
     Return
 }
 function f1 name="run" flags=[IsAsync] results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = Call v0
     Jump -> next b1()
@@ -28,12 +26,10 @@ function f1 name="run" flags=[IsAsync] results=[{type=anything}] {
     Return
 }
 function f2 name="fails" flags=[IsAsync] results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f3
     v1 = NewObject -, v0 layout=L0 fields=[0]
     Throw v1
 }
 function f3 name="describe" results=[{type=anything}] {
-  b0():
     Return
 }

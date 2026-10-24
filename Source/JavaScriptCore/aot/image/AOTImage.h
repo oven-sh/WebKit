@@ -13,11 +13,9 @@
 #include "AOTCallSiteTable.h"
 #include "AOTCodeSites.h"
 #include "AOTFaultTable.h"
-#include "AOTHandlerTable.h"
 #include "AOTImageFormat.h"
 #include "AOTImageForward.h"
 #include "AOTImageText.h"
-#include "AOTPositionTable.h"
 #include "AOTProgramTables.h"
 #include "AOTStubFrames.h"
 #include "AOTStubKey.h"
@@ -77,12 +75,10 @@ struct ReturnSiteInfo {
     ImageFrame frame { };
 };
 
-// A uint32_t function is an image function index, a position in ImageSection::Functions. A FunctionID is the program's.
 class Image {
     WTF_MAKE_TZONE_ALLOCATED(Image);
     WTF_MAKE_NONCOPYABLE(Image);
 public:
-    // The image of the program that this thread runs, or collects for. In a process with one image every thread has the same answer.
     static const Image* current()
     {
         const Image* image = s_current.load(std::memory_order_acquire);
@@ -92,42 +88,37 @@ public:
     }
     static bool isRegistered() { return !!s_current.load(std::memory_order_acquire); }
     JS_EXPORT_PRIVATE static void setCurrentOfThread(const Image*);
-    // The image that was published with these bytes.
     JS_EXPORT_PRIVATE static const Image* find(std::span<const uint8_t> bytes);
 
     JS_EXPORT_PRIVATE static Wire::ImageVerdict check(std::span<const uint8_t> bytes, const std::array<uint8_t, 16>& identity);
-    // A host reads its start-up options before it can call useImage(). Nothing for bytes whose header check() refuses under every identity.
     JS_EXPORT_PRIVATE static std::optional<Wire::AdmittedCode> admittedCode(std::span<const uint8_t> bytes);
     JS_EXPORT_PRIVATE static std::optional<OptionSet<ImageFlag>> flags(std::span<const uint8_t> bytes);
     JS_EXPORT_PRIVATE static std::unique_ptr<Image> create(std::span<const uint8_t> bytes, const uint8_t* code);
-    // It becomes the image of the calling thread. The images of a process lie in allImages, which the first call says.
     JS_EXPORT_PRIVATE static void publish(std::unique_ptr<Image>&&, std::span<const uint8_t> allImages);
 
     struct PositionInFile {
         int descriptor { -1 };
         int64_t offset { 0 };
     };
-    // Where the image begins in a file that stays open: the file it was loaded from, or the executable whose loader mapped it.
     const std::optional<PositionInFile>& positionInFile() const { return m_positionInFile; }
     void setPositionInFile(std::optional<PositionInFile> position) { m_positionInFile = position; }
-    // Its place among the images of the process.
     unsigned number() const { return m_number; }
 
     const ImageHeader& header() const { return *reinterpret_cast<const ImageHeader*>(m_bytes.data()); }
     template<typename T> std::span<const T> section(ImageSection) const;
     std::span<const uint8_t> code() const { return { m_code, static_cast<size_t>(header().codeSize) }; }
-    std::span<const uint8_t> regExpCode() const;
-    std::span<const uint8_t> webAssemblyCode() const;
-    std::span<const uint8_t> ffiCode() const;
+    std::span<const uint8_t> regExpCode() const { return code().subspan(header().code.regExpCodeOffset, header().code.constantsOffset - header().code.regExpCodeOffset); }
+    std::span<const uint8_t> webAssemblyCode() const { return code().subspan(header().code.webAssemblyCodeOffset, header().code.webAssemblyCodeSize); }
+    std::span<const uint8_t> ffiCode() const { return code().subspan(header().code.ffiCodeOffset, header().code.ffiCodeSize); }
     std::span<const uint8_t> ffiDirectory() const;
     const ProgramTables& programTables() const { return *reinterpret_cast<const ProgramTables*>(section<uint8_t>(ImageSection::ProgramTables).data()); }
     const ImageText& text() const { return m_text; }
-    bool isObfuscated() const { return header().isObfuscated(); }
-    bool admitsUnknownJavaScript() const { return header().admitsUnknownJavaScript(); }
-    bool loadsModulesByName() const { return header().loadsModulesByName(); }
-    bool admitsLibraryText() const { return header().admitsLibraryText(); }
-    bool loadsCodeOutsideImage() const { return header().loadsCodeOutsideImage(); }
-    bool showsWaysBetweenModuleObjects() const { return header().showsWaysBetweenModuleObjects(); }
+    bool isObfuscated() const { return header().has(ImageFlag::IsObfuscated); }
+    bool admitsUnknownJavaScript() const { return header().has(ImageFlag::AdmitsUnknownJavaScript); }
+    bool loadsModulesByName() const { return header().has(ImageFlag::LoadsModulesByName); }
+    bool admitsLibraryText() const { return header().has(ImageFlag::AdmitsLibraryText); }
+    bool loadsCodeOutsideImage() const { return !runsOnlyCodeOfImage && header().has(ImageFlag::LoadsCodeOutsideImage); }
+    bool showsWaysBetweenModuleObjects() const { return header().has(ImageFlag::ShowsWaysBetweenModuleObjects); }
 
     JS_EXPORT_PRIVATE CodeLocation locate(const void* pc) const;
 
@@ -139,7 +130,6 @@ public:
     uint64_t closureWord(FunctionID) const;
 
     JS_EXPORT_PRIVATE const void* stubAddress(StubKey) const;
-    // The stubs that the run time enters again and again. The functor finds the address, with the tag its user wants, at the first request.
     enum class FrequentStub : uint8_t { EnterClosure, EnterSlimClosure, EnterModuleBody, EnterClosureForConstruct, EnterHandlerOfJob, EnterSavedFrame, RejectInFrame, RejectInFrameBelowSpilledArguments };
     template<typename Functor> void* frequentStub(FrequentStub, const Functor&) const;
     JS_EXPORT_PRIVATE std::span<const StubAddressInImage> stubAddressesOf(StubFamily) const;
@@ -168,7 +158,6 @@ public:
 
     std::optional<FaultSite> faultSiteAt(const void* pc) const;
 
-    std::optional<HandlerRecord> handlerAt(uint32_t function, CallSiteIndex) const;
     std::optional<SourcePosition> positionOf(uint32_t function, CallSiteIndex) const;
 
 private:
@@ -177,7 +166,6 @@ private:
     static const Image* differsByThread() { return std::bit_cast<const Image*>(static_cast<uintptr_t>(1)); }
     JS_EXPORT_PRIVATE static const Image* currentOfThread();
 
-    // The only image, or differsByThread().
     JS_EXPORT_PRIVATE static std::atomic<const Image*> s_current;
 
     mutable std::array<std::atomic<void*>, 8> m_frequentStubs { };
@@ -291,7 +279,6 @@ inline bool Image::isBackedByStaticData(const StringImpl& string)
 JS_EXPORT_PRIVATE bool isCompiledCodePC(const void*);
 JS_EXPORT_PRIVATE std::optional<uint32_t> imageCodeOffset(const void* address);
 JS_EXPORT_PRIVATE uintptr_t imageCodeStart();
-// For a walk of the machine stack that reads memory in its own way (a crash report): the frame of the compiled code that returnAddress runs in. No answer outside compiled code.
 JS_EXPORT_PRIVATE std::optional<ImageFrame> imageFrameAtReturnAddress(const void* returnAddress);
 
 } } // namespace JSC::AOT

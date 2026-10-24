@@ -9,7 +9,6 @@ module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 layout L0 kind=Environment module=m0 fields=[{key="flags" declared={type=undefined|number}}, {key="cleared" declared={type=undefined|number}}, {key="fed" declared={type=undefined|number}}]
 function f0 name="main" kind=Module flags=[IsChecked] results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = Undefined
     v2 = NewObject -, v1, v1, v1 layout=L0 fields=[0, 1, 2]
@@ -36,9 +35,8 @@ function f1 name="around" flags=[IsChecked] captures=[{type=env L0 flags=[IsFrom
     v11 = GetEnvironmentField v0 layout=L0 field=2
     v12 = NewArray v10, v6, v11 contents=anything holes=[]
     Return v12
-}
-# CHECK-LABEL: function f1 name="around"
 # CHECK: : int = GetEnvironmentField {{*}}layout=L0
 # CHECK: : undefined|1 = GetEnvironmentField {{*}}layout=L0 field=1
 # CHECK: : int = GetEnvironmentField {{*}}layout=L0
 # CHECK: : undefined|1 = GetEnvironmentField {{*}}layout=L0 field=2
+}

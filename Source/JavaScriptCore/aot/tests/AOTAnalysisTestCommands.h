@@ -14,12 +14,11 @@
 #include "AOTSupportTestCommands.h"
 #include "AOTTestCommand.h"
 #include "AOTTypeArena.h"
-#include "AOTVector.h"
-#include <optional>
 #include <type_traits>
 #include <utility>
 #include <wtf/BitVector.h>
 #include <wtf/OptionSet.h>
+#include <wtf/StringPrintStream.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -91,9 +90,6 @@ auto collectionParser(auto parseItem)
     };
 }
 
-inline size_t numberOfTargets(const Block& block) { return block.terminator.targets.size(); }
-inline size_t numberOfInsertionPoints(const Block& block) { return block.values.size() + 1; }
-
 auto listParser(auto parseItem) { return collectionParser<Vector<ParsedType<decltype(parseItem)>>>(parseItem); }
 inline auto indexParser(size_t limit) { return [limit](StringView text) { return parseIndexBelow(text, limit); }; }
 inline auto blockParser(const Function& function) { return idParser<BlockID>('b', function.blocks.size()); }
@@ -109,31 +105,40 @@ inline auto functionParser(const Program& program)
     return filterParser(idParser<FunctionID>('f', program.functions.size()), [&program](FunctionID id) { return program.at(id).hasBody(); });
 }
 
-template<typename Result>
-auto blockAndIndexParser(const Function& function, char separator, size_t (*numberOfIndexes)(const Block&))
-{
-    return [=, &function](StringView text) -> std::optional<Result> {
-        auto parts = pairParser(separator, blockParser(function), indexParser(UINT32_MAX))(text);
-        if (!parts || parts->second >= numberOfIndexes(function.at(parts->first)))
-            return std::nullopt;
-        return Result { parts->first, parts->second };
-    };
-}
-
 inline auto edgeParser(const Function& function)
 {
     return [&function](StringView text) -> std::optional<Edge> {
         constexpr ASCIILiteral handlerSuffix = ".handler"_s;
-        if (!text.endsWith(handlerSuffix))
-            return blockAndIndexParser<Edge>(function, '.', numberOfTargets)(text);
-        std::optional<BlockID> block = blockParser(function)(text.left(text.length() - handlerSuffix.length()));
-        if (!block || !function.at(*block).handler)
-            return std::nullopt;
-        return Edge::toHandlerOf(*block);
+        if (text.endsWith(handlerSuffix)) {
+            std::optional<BlockID> block = blockParser(function)(text.left(text.length() - handlerSuffix.length()));
+            return block && function.at(*block).handler ? std::optional(Edge::toHandlerOf(*block)) : std::nullopt;
+        }
+        auto edge = pairParser('.', blockParser(function), indexParser(UINT32_MAX))(text);
+        return edge && edge->second < function.at(edge->first).terminator.targets.size() ? std::optional(Edge { edge->first, edge->second }) : std::nullopt;
     };
 }
 
-inline auto insertionPointParser(const Function& function) { return blockAndIndexParser<ProgramPoint>(function, ':', numberOfInsertionPoints); }
+inline auto insertionPointParser(const Function& function)
+{
+    return [&function](StringView text) -> std::optional<ProgramPoint> {
+        auto point = pairParser(':', blockParser(function), indexParser(UINT32_MAX))(text);
+        return point && point->second <= function.at(point->first).values.size() ? std::optional(ProgramPoint { point->first, point->second }) : std::nullopt;
+    };
+}
+
+template<typename IDType>
+auto printedIDParser(size_t tableSize, auto print)
+{
+    return [=](StringView text) -> std::optional<IDType> {
+        for (size_t index = 0; index < tableSize; ++index) {
+            StringPrintStream printed;
+            print(printed, IDType(index));
+            if (printed.toString() == text)
+                return IDType(index);
+        }
+        return std::nullopt;
+    };
+}
 
 template<typename IDType>
 Vector<IDType> idsMatching(size_t tableSize, NOESCAPE const Invocable<bool(IDType)> auto& matches)
@@ -150,27 +155,6 @@ Vector<IDType> idsIn(const BitVector& set)
     for (size_t index : set)
         ids.append(IDType(index));
     return ids;
-}
-
-inline void dumpItem(PrintStream& out, ASCIILiteral text) { out.print(text); }
-inline void dumpItem(PrintStream& out, uint32_t number) { out.print(number); }
-inline void dumpItem(PrintStream& out, bool answer) { dumpBoolean(out, answer); }
-inline void dumpItem(PrintStream& out, ValueID id) { dumpID(out, id); }
-inline void dumpItem(PrintStream& out, BlockID id) { dumpID(out, id); }
-inline void dumpItem(PrintStream& out, ObjectID id) { dumpID(out, id); }
-inline void dumpItem(PrintStream& out, Edge edge) { dumpEdge(out, edge); }
-inline void dumpItem(PrintStream& out, ProgramPoint point) { dumpPoint(out, point); }
-inline void dumpItem(PrintStream& out, const Use& use) { dumpUse(out, use); }
-inline void dumpItem(PrintStream& out, OperandUses uses) { dumpOperandUses(out, uses); }
-inline void dumpItem(PrintStream& out, const Vector<ValueID>& values) { dumpValues(out, values.span()); }
-inline void dumpItem(PrintStream& out, const Vector<BlockID>& blocks) { dumpBlocks(out, blocks.span()); }
-inline void dumpItem(PrintStream& out, const Vector<ObjectID>& objects) { dumpObjects(out, objects.span()); }
-
-template<typename... Items>
-void dumpLine(PrintStream& out, const Items&... items)
-{
-    (dumpItem(out, items), ...);
-    out.print("\n");
 }
 
 class CommandWords {

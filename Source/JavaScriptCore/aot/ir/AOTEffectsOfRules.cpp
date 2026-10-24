@@ -59,13 +59,6 @@ EffectsOnEdges effectsOfCallees(const EffectContext& context, const CalleeList& 
     return resolveEffects(context, description);
 }
 
-EffectsOnEdges effectsOfCallees(const EffectContext& context, const CalleeList& callees, BuiltinCallMode mode, const EnteringOperands& operands)
-{
-    EffectDescription description;
-    describeCallees(context.program, callees, mode, operands, description);
-    return resolveEffects(context, description);
-}
-
 EffectsOnEdges effectsOfOverload(const EffectContext& context, BuiltinOverloadID overload, const Type* receiver, std::span<const TypeID> arguments)
 {
     EffectDescription description;

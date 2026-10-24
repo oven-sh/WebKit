@@ -32,7 +32,6 @@ String writtenFunctionName(FunctionID);
 String initialNameProperty(FunctionID);
 JSString* initialNamePropertyString(VM&, State&, FunctionID);
 
-String computedFunctionName(JSGlobalObject*, const Identifier& key, MethodKind);
 void setComputedFunctionName(VM&, JSObject* closure, const Identifier& key, MethodKind);
 
 void didDefineNameProperty(VM&, JSObject* closure, const String& name);

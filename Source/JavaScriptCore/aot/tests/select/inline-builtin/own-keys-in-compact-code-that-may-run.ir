@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="keysOf" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: object, v1: boolean):
     v2 = CallBuiltin -, v0 overload=ObjectKeys/0
     Branch v1 -> taken b1(), notTaken b2()
   b1() frequency=Rare:

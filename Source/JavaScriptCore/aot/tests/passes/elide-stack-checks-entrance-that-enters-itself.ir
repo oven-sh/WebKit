@@ -8,7 +8,6 @@ module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = CallDirect v0 function=f1
     v2 = CallDirect v0 function=f3
@@ -17,7 +16,6 @@ function f0 kind=Module results=[{type=anything}] {
 }
 
 function f1 name="entersItself" role=ParameterWrapper parameters=[{type=anything}] results=[{type=anything}] creator=ParameterWrapper{body=f2 parameter=0} {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -29,7 +27,6 @@ function f1 name="entersItself" role=ParameterWrapper parameters=[{type=anything
 }
 
 function f2 name="entersItself" parameters=[{type=anything}] results=[{type=anything}] derivation={source=f1} {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f1
     v2 = CallDirect v1 function=f3
     v3 = CallDirect v2 function=f6
@@ -37,7 +34,6 @@ function f2 name="entersItself" parameters=[{type=anything}] results=[{type=anyt
 }
 
 function f3 name="entersTheOther" role=ParameterWrapper parameters=[{type=anything}] results=[{type=anything}] creator=ParameterWrapper{body=f5 parameter=0} {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -49,7 +45,6 @@ function f3 name="entersTheOther" role=ParameterWrapper parameters=[{type=anythi
 }
 
 function f4 name="entersTheFirst" role=ParameterWrapper parameters=[{type=anything}] results=[{type=anything}] creator=ParameterWrapper{body=f8 parameter=0} {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -61,13 +56,11 @@ function f4 name="entersTheFirst" role=ParameterWrapper parameters=[{type=anythi
 }
 
 function f5 name="entersTheOther" parameters=[{type=anything}] results=[{type=anything}] derivation={source=f3} {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f2
     Return v1
 }
 
 function f6 name="firstOfChain" role=ParameterWrapper parameters=[{type=anything}] results=[{type=anything}] creator=ParameterWrapper{body=f9 parameter=0} {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -79,25 +72,21 @@ function f6 name="firstOfChain" role=ParameterWrapper parameters=[{type=anything
 }
 
 function f7 name="secondOfChain" role=ParameterWrapper parameters=[{type=anything}] results=[{type=anything}] creator=ParameterWrapper{body=f10 parameter=0} {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f10
     ReturnCall v1 requirement=Allowed
 }
 
 function f8 name="entersTheFirst" parameters=[{type=anything}] results=[{type=anything}] derivation={source=f4} {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f2
     Return v1
 }
 
 function f9 name="firstOfChain" parameters=[{type=anything}] results=[{type=anything}] derivation={source=f6} {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f2
     Return v1
 }
 
 function f10 name="secondOfChain" parameters=[{type=anything}] results=[{type=anything}] derivation={source=f7} {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f2
     Return v1
 }

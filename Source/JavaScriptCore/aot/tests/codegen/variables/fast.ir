@@ -16,7 +16,6 @@ variable g3 name="Counter" module=m0 declared={type=function|absent} initializat
 variable g4 module=m0 declared={type=number} initialization=Uninitialized owner=L3
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = NewClosure function=f3
@@ -46,7 +45,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="moduleVariables" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g1
     PutModuleVariable v0 variable=g1
     v2 = GetModuleVariable variable=g2
@@ -58,7 +56,6 @@ function f1 name="moduleVariables" results=[{type=anything}] {
     Return v7
 }
 function f2 name="freeNames" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="counter" [isFreeName]
     v2 = PropGet v0 key="missing" [isFreeName, isForTypeOf]
@@ -68,7 +65,6 @@ function f2 name="freeNames" results=[{type=anything}] {
     Return v5
 }
 function f3 name="environmentFields" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Absent
     v2 = NewObject -, v1, v0 layout=L0 fields=[0, 1]
     v3 = NewClosure v2 function=f4
@@ -85,7 +81,6 @@ function f4 name="closure" captures=[{type=env L0}] results=[{type=anything}] {
     Return v4
 }
 function f5 name="scopeObject" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject layout=L1 fields=[]
     v2 = FinishObject v1
     v3 = ScopeHasBinding v2 key="counter"
@@ -114,7 +109,6 @@ function f7 name="readsOwnClosure" captures=[{type=env L2}] results=[{type=anyth
     Return v2
 }
 function f8 name="storesClosureInOwnEnvironment" results=[{type=anything}] {
-  b0():
     v0 = Absent
     v1 = NewObject -, v0 layout=L2 fields=[0]
     v2 = NewClosure v1 function=f7
@@ -122,20 +116,17 @@ function f8 name="storesClosureInOwnEnvironment" results=[{type=anything}] {
     Return v2
 }
 function f9 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L3
     v2 = NewObject v1 layout=L3
     Return v2
 }
 function f10 name="readStaticField" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g3
     v1 = CheckInitialized v0 name="Counter"
     v2 = PropGet v1 key="count"
     Return v2
 }
 function f11 name="storeStaticField" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g3
     v1 = CheckInitialized v0 name="Counter"
     v2 = Double number=2

@@ -13,7 +13,6 @@ module m0 path="main.js" displayPath="main.js"
 entry module=m0
 layout L0 name="Point" fields=[{key="x" declared={type=number}}]
 function f0 name="nothingUpcastCheck" parameters=[{type=boolean}, {type=Array<number|string>}] results=[{type=Array<number|string>}] {
-  b0(v0: boolean, v1: Array<number|string>):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v2 = CallDirect function=f5
@@ -32,7 +31,6 @@ function f0 name="nothingUpcastCheck" parameters=[{type=boolean}, {type=Array<nu
 # RETURN: error: bad argument block=b2
 # RETURN-NOT: function f0
 function f1 name="checkOfLayout" parameters=[{type=anything}] results=[{type=L0}] {
-  b0(v0: anything):
     v1 = Call v0
     ReturnCall v1 casts=[{declared={type=L0} resolution=Check}]
 }
@@ -41,7 +39,6 @@ function f1 name="checkOfLayout" parameters=[{type=anything}] results=[{type=L0}
 # LAYOUT-NEXT: [[check]]: L0 = Check v1 castType=L0
 # LAYOUT-NEXT: Return [[check]]
 function f2 name="checkOfType" parameters=[{type=anything}] results=[{type=object}] {
-  b0(v0: anything):
     v1 = Call v0
     ReturnCall v1 casts=[{declared={type=object} resolution=Check}]
 }
@@ -50,7 +47,6 @@ function f2 name="checkOfType" parameters=[{type=anything}] results=[{type=objec
 # TYPE-NEXT: [[check]]: object = Check v1 castType=object
 # TYPE-NEXT: Return [[check]]
 function f3 name="expectedType" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0
     ReturnCall v1 casts=[{declared={type=number flags=[IsExpected]} resolution=Nothing}]
 }
@@ -59,7 +55,6 @@ function f3 name="expectedType" parameters=[{type=anything}] results=[{type=anyt
 # EXPECTED-NEXT: [[expected]]: anything ~ number = Upcast v1 castType=anything
 # EXPECTED-NEXT: Return [[expected]]
 function f4 name="noCast" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0
     ReturnCall v1
 }
@@ -67,11 +62,9 @@ function f4 name="noCast" parameters=[{type=anything}] results=[{type=anything}]
 # NONE: v1: anything = Call v0 [isDemotedTailCall]
 # NONE-NEXT: Return v1
 function f5 name="callee" results=[{type=undefined|Array<number>}] {
-  b0():
     Return
 }
 function f6 name="callBesideTailCall" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0
     v2 = Call v0, -, v1
     ReturnCall v2
@@ -82,7 +75,6 @@ function f6 name="callBesideTailCall" parameters=[{type=anything}] results=[{typ
 # BESIDE: v2: anything = Call v0, -, v1 [isDemotedTailCall]
 # BESIDE-NEXT: Return v2
 function f7 name="callWithList" parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
-  b0(v0: anything, v1: Array):
     v2 = CallList v0, -, v1
     ReturnCall v2
 }

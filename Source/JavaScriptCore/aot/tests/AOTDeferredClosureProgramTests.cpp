@@ -16,7 +16,6 @@ entry module=m0
 layout L0 name="Record" fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="m" declared={type=function} flags=[IsRequired]}]
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = CallDirect function=f2
@@ -37,12 +36,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="m" kind=Arrow results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     Return v0
 }
 function f2 name="readsTwice" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewClosure function=f1
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
@@ -53,7 +50,6 @@ function f2 name="readsTwice" results=[{type=anything}] {
     Return v6
 }
 function f3 name="readsTwoObjects" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewClosure function=f1
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
@@ -67,7 +63,6 @@ function f3 name="readsTwoObjects" results=[{type=anything}] {
     Return v9
 }
 function f4 name="readsInCallee" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewClosure function=f1
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
@@ -78,12 +73,10 @@ function f4 name="readsInCallee" results=[{type=anything}] {
     Return v6
 }
 function f5 name="reads" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="m"
     Return v1
 }
 function f6 name="collectsBetweenReads" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewClosure function=f1
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
@@ -99,7 +92,6 @@ function f6 name="collectsBetweenReads" results=[{type=anything}] {
     Return v11
 }
 function f7 name="escapesAfterRead" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewClosure function=f1
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
@@ -111,7 +103,6 @@ function f7 name="escapesAfterRead" results=[{type=anything}] {
     Return v7
 }
 function f8 name="calls" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewClosure function=f1
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
@@ -121,13 +112,11 @@ function f8 name="calls" results=[{type=anything}] {
     Return v5
 }
 function f9 name="readsKept" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = PropGet v0 key="m"
     Return v1
 }
 function f10 name="readsJoined" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     v2 = NewClosure function=f1
     v3 = NewObject -, v1, v2 layout=L0 fields=[0, 1]
@@ -161,7 +150,6 @@ entry module=m0
 layout L0 kind=Instance name="Counter" constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="run" declared={type=function} flags=[IsRequired]}]
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = FinishClass v1 layout=L0
@@ -180,7 +168,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     v3 = Integer integer=7
@@ -190,12 +177,10 @@ function f1 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{t
     Return v2
 }
 function f2 name="run" kind=Arrow captures=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="x"
     Return v1
 }
 function f3 name="readsTwice" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Construct v0
     v2 = PropGet v1 key="run"
     v3 = PropGet v1 key="run"
@@ -203,7 +188,6 @@ function f3 name="readsTwice" parameters=[{type=anything}] results=[{type=anythi
     Return v4
 }
 function f4 name="readsTwoObjects" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Construct v0
     v2 = Construct v0
     v3 = PropGet v1 key="run"
@@ -212,7 +196,6 @@ function f4 name="readsTwoObjects" parameters=[{type=anything}] results=[{type=a
     Return v5
 }
 function f5 name="readsInCallee" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Construct v0
     v2 = CallDirect v1 function=f6 [isNeverInlined]
     v3 = PropGet v1 key="run"
@@ -220,12 +203,10 @@ function f5 name="readsInCallee" parameters=[{type=anything}] results=[{type=any
     Return v4
 }
 function f6 name="reads" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="run"
     Return v1
 }
 function f7 name="callsWhatItRead" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Construct v0
     v2 = PropGet v1 key="run"
     v3 = Builtin builtin=GlobalThis
@@ -237,7 +218,6 @@ function f7 name="callsWhatItRead" parameters=[{type=anything}] results=[{type=a
     Return v8
 }
 function f8 name="escapesAfterRead" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Construct v0
     v2 = PropGet v1 key="run"
     PutModuleVariable v1 variable=g0
@@ -246,7 +226,6 @@ function f8 name="escapesAfterRead" parameters=[{type=anything}] results=[{type=
     Return v5
 }
 function f9 name="readsKept" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = PropGet v0 key="run"
     Return v1
@@ -263,7 +242,6 @@ layout L1 name="Holder" fields=[{key="held" declared={type=anything} flags=[IsRe
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="alsoKept" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = CallDirect function=f1
@@ -275,7 +253,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="readsHeld" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=7
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = FinishObject v1
@@ -288,7 +265,6 @@ function f1 name="readsHeld" results=[{type=anything}] {
     Return v8
 }
 function f2 name="readsHeldInCallee" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=8
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = FinishObject v1
@@ -300,13 +276,11 @@ function f2 name="readsHeldInCallee" results=[{type=anything}] {
     Return v7
 }
 function f3 name="reads" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="held"
     v2 = PropGet v1 key="y"
     Return v2
 }
 function f4 name="storesHeld" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=7
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = FinishObject v1

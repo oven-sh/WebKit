@@ -15,7 +15,6 @@ typesite w6 module=m0 position=70 kind=Parameter
 typesite w7 module=m0 position=80 kind=Parameter
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = NewClosure function=f3
@@ -27,16 +26,13 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v7
 }
 function f1 name="widen" parameters=[{type="a"|"b" site=w0}] results=[{type=string}] {
-  b0(v0: "a"|"b"):
     v1 = Upcast v0 castType=string
     Return v1
 }
 function f2 name="widenNullable" parameters=[{type=null|"a"|"b" site=w1}] results=[{type=anything}] {
-  b0(v0: null|"a"|"b"):
     Return v0
 }
 function f3 name="merge" parameters=[{type="a"|"b" site=w2}, {type=string site=w3}, {type=boolean site=w4}] results=[{type=string}] {
-  b0(v0: "a"|"b", v1: string, v2: boolean):
     v3 = ToBoolean v2
     Branch v3 -> taken b1(), notTaken b2()
   b1():
@@ -48,12 +44,10 @@ function f3 name="merge" parameters=[{type="a"|"b" site=w2}, {type=string site=w
     Return v5
 }
 function f4 name="test" parameters=[{type=string site=w5}] results=[{type=boolean}] {
-  b0(v0: string):
     v1 = TypeTest v0 testedType="a"|"b"
     Return v1
 }
 function f5 name="passInTailCall" parameters=[{type="a"|"b" site=w6}, {type=function site=w7}] results=[{type=anything}] {
-  b0(v0: "a"|"b", v1: function):
     v2 = Call v1, -, v0
     Return v2
 }

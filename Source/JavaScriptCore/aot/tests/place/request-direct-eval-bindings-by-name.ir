@@ -10,14 +10,12 @@ layout L1 kind=Environment name="outer" fields=[{key="x" declared={type=anything
 evalscope e0 flags=[IsInFunction] bindings=[{name="x" layout=L0 field=0 operand=0}, {name="y" layout=L0 field=1 operand=0}, {name="x" depth=1 layout=L1 field=0 operand=1}, {kind=This operand=2}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = CallDirect v1 function=f1
     Return
 }
 function f1 name="evaluates" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Undefined
     v2 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
     v3 = NewObject -, v1 layout=L1 fields=[0]

@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="anotherArray" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: int[0, 100]):
     v2 = NewArray contents=number
     v3 = HasArrayStorage v0 arrayStorage=Int32
     Branch v3 -> taken b1(| 0), notTaken b2()
@@ -22,7 +21,6 @@ function f0 name="anotherArray" parameters=[{type=Array<number, proven, pristine
 # CHECK-NEXT: b1:1 available: [{{*}}v4]
 
 function f1 name="theArrayItself" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: int[0, 100]):
     v2 = HasArrayStorage v0 arrayStorage=Int32
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3: guard):
@@ -36,7 +34,6 @@ function f1 name="theArrayItself" parameters=[{type=Array<number, proven, pristi
 # CHECK-NEXT: b1:1 available: []
 
 function f2 name="perhapsTheSameArray" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=int[0, 100]}, {type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=undefined}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: int[0, 100], v2: Array<number, proven, pristine[Storage, Names]>):
     v3 = HasArrayStorage v0 arrayStorage=Int32
     Branch v3 -> taken b1(| 0), notTaken b2()
   b1(v4: guard):

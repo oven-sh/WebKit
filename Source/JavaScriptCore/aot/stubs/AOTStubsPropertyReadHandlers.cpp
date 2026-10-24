@@ -42,341 +42,6 @@ StubSignature signatureOfReadSlot(StubKey key)
     return signatureOfSlotHandler(handlerTableOf(isInHandlerTable(key) ? key : key.withCallerFrame(CallerFrame::HasFrame)));
 }
 
-struct ReadSlotBody {
-    StubAssembler& jit;
-    SlotHandlerTable table;
-    SlotOrigin origin;
-    SlotHandlerOperands operands;
-    CachedSlot slot;
-    GPRReg R0;
-    GPRReg T10;
-    GPRReg T11;
-    GPRReg T14;
-    JumpList miss;
-    JumpList uncached;
-};
-
-static ReadSlotBody createReadSlotBody(StubAssembler& jit)
-{
-    const SlotHandlerTable table = handlerTableOf(jit.key());
-    const SlotHandlerTableTraits traits = traitsOf(table);
-    const SlotHandlerOperands operands = operandsOfSlotHandler(table);
-    RELEASE_ASSERT(jit.operand(receiverOperand) == operands.receiver && jit.result() == operands.receiver);
-    RELEASE_ASSERT(jit.operand(headerOperand) == operands.header);
-    RELEASE_ASSERT(traits.form == SlotForm::PackedSlot || jit.operand(payloadOperand) == operands.payload);
-    return {
-        .jit = jit,
-        .table = table,
-        .origin = traits.origin,
-        .operands = operands,
-        .slot = CachedSlot(traits.form, slotKindOf(jit.key()), operands.header, operands.payload),
-        .R0 = operands.receiver,
-        .T10 = jit.allocateScratch(StubRegister::T10),
-        .T11 = jit.allocateScratch(StubRegister::T11),
-        .T14 = jit.allocateScratch(StubRegister::T14),
-        .miss = { },
-        .uncached = { },
-    };
-}
-
-static GPRReg clobberPayloadRegister(ReadSlotBody& body)
-{
-    if (body.slot.form() == SlotForm::Slot)
-        return body.jit.clobberOperand(payloadOperand);
-    return body.jit.allocateScratch(slotPayloadRegister);
-}
-
-static void returnUndefined(ReadSlotBody& body)
-{
-    body.jit.move(TrustedImm64(JSValue::ValueUndefined), body.R0);
-    body.jit.returnToCaller();
-}
-
-static void returnInt32(ReadSlotBody& body, GPRReg int32)
-{
-    boxInt32(body.jit, int32, body.R0);
-    body.jit.returnToCaller();
-}
-
-static void loadPropertyName(ReadSlotBody& body, GPRReg uid)
-{
-    switch (body.origin) {
-    case SlotOrigin::ById:
-    case SlotOrigin::ByIdInStubFrame:
-    case SlotOrigin::FreeName:
-    case SlotOrigin::FreeNameForTypeOf:
-        loadIdentifier(body.jit, body.operands.identifierNumber, uid, body.miss);
-        return;
-    case SlotOrigin::ByVal:
-        loadNameOfKey(body.jit, body.operands.keyCell, uid, body.T11, body.miss);
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void emitFarValueRead(ReadSlotBody& body)
-{
-    StubAssembler& jit = body.jit;
-    const GPRReg butterfly = body.T10;
-    const GPRReg wordIndex = body.T11;
-    body.slot.loadFirstPayloadWord(jit, wordIndex);
-    jit.signExtend32ToPtr(wordIndex, wordIndex);
-    jit.loadPtr(Address(body.R0, JSObject::butterflyOffset()), butterfly);
-    jit.load64(BaseIndex(butterfly, wordIndex, CCallHelpers::TimesEight), body.R0);
-    jit.returnToCaller();
-}
-
-static void callGetter(ReadSlotBody& body, GPRReg getterSetter)
-{
-    const StubSignature finisher = signatureOfSlotCannot(slotCannot(SlotFinisher::CallGetter, body.origin));
-    RELEASE_ASSERT(finisher.operands[finisher.numberOfOperands - 1] == Reg(getterSetter));
-    // Whoever jumps to a handler has written the two registers of the slot itself, and the number of the name is an immediate of the call: no caller keeps a value in them.
-    RegisterSet lostToEveryCaller;
-    for (GPRReg reg : { body.operands.header, body.operands.payload, body.operands.identifierNumber }) {
-        if (reg != InvalidGPRReg)
-            lostToEveryCaller.add(reg, IgnoreVectors);
-    }
-    body.jit.recordClobbers(lostToEveryCaller);
-    JumpList cannot;
-    callGetterAndReturn(body.jit, body.R0, getterSetter, cannot);
-    linkToSlotCannot(body.jit, cannot, body.table, SlotFinisher::CallGetter, body.slot);
-}
-
-static void emitGetterCall(ReadSlotBody& body)
-{
-    const GPRReg getterSetter = body.T10;
-    loadValueBySlot(body.jit, body.slot, body.R0, body.T10, body.T11, getterSetter);
-    callGetter(body, getterSetter);
-}
-
-// The slot of an accessor field holds the GetterSetter. Many an object of the same Structure has it empty: the accessor is defined on some objects of the layout only.
-static void emitFieldGetterCall(ReadSlotBody& body)
-{
-    JumpList isAbsent;
-    StubAssembler& jit = body.jit;
-    const CachedSlot& slot = body.slot;
-    const FieldAddressRegisters field { .object = body.R0, .slotData = body.T10, .extensionWordOffset = body.T11, .address = body.T11, .representation = body.T14 };
-    const GPRReg getterSetter = body.T10;
-
-    slot.loadFirstPayloadWord(jit, field.slotData);
-    Jump isOutOfLine = slot.branchIfFlag(jit, Slot::isOutOfLine);
-    computeFieldAddress(jit, field, false, isAbsent);
-    Label hasAddress = jit.label();
-    loadGetterSetterInField(jit, field.address, field.representation, getterSetter, isAbsent);
-    callGetter(body, getterSetter);
-
-    isOutOfLine.link(&jit);
-    slot.loadHiddenWordOffset(jit, field.extensionWordOffset);
-    computeFieldAddress(jit, field, true, isAbsent);
-    jit.jump().linkTo(hasAddress, &jit);
-
-    isAbsent.link(&jit);
-    body.uncached.append(slot.branchUnlessFlag(jit, Slot::absentIsUndefined));
-    returnUndefined(body);
-}
-
-static void emitCustomGetterCall(ReadSlotBody& body)
-{
-    const GPRReg accessorIndex = clobberPayloadRegister(body);
-    const GPRReg uid = body.T10;
-    body.slot.loadFirstPayloadWord(body.jit, accessorIndex);
-    loadPropertyName(body, uid);
-    callCustomGetterAndReturn(body.jit, body.R0, accessorIndex, uid);
-}
-
-static FieldReadRegisters allocateFieldReadRegisters(ReadSlotBody& body, GPRReg object, GPRReg slotData)
-{
-    return {
-        .field = {
-            .object = object,
-            .slotData = slotData,
-            .extensionWordOffset = body.T11,
-            .address = body.T11,
-            .representation = body.T14,
-        },
-        .value = body.T10,
-        .result = body.R0,
-        .number = body.jit.allocateScratch(FPRInfo::fpRegT0),
-        .numberScratch = body.jit.allocateScratch(FPRInfo::fpRegT1),
-    };
-}
-
-// The value of a data property does not depend on the receiver, so the holder takes the receiver's place and the lookup tables answer for its own Structure.
-static void readFromHolder(ReadSlotBody& body)
-{
-    StubAssembler& jit = body.jit;
-    body.slot.loadHolder(jit, body.R0);
-    switch (body.origin) {
-    case SlotOrigin::ById:
-    case SlotOrigin::ByIdInStubFrame: {
-        const CallerFrame callerFrame = callerFrameOf(body.origin);
-        const StubKey frontProbe = getById().withCallerFrame(callerFrame);
-        const StubSignature signature = signatureOfGetById(frontProbe);
-        RELEASE_ASSERT(signature.operands[receiverOperand] == Reg(body.R0) && signature.immediate == body.operands.identifierNumber);
-        if (body.slot.form() == SlotForm::Slot)
-            jit.linkToStub(jit.branch32(CCallHelpers::Above, body.operands.identifierNumber, TrustedImm32(RowDisplacementTable::maxColumn)), getByIdHashed().withCallerFrame(callerFrame));
-        jit.jumpToStub(frontProbe);
-        return;
-    }
-    case SlotOrigin::ByVal: {
-        // The probe by key clobbers like a call, and a handler does not.
-        const GPRReg uid = body.T10;
-        const GPRReg structureID = body.T11;
-        const GPRReg header = jit.clobberOperand(headerOperand);
-        const GPRReg payload = clobberPayloadRegister(body);
-        loadNameOfKey(jit, body.operands.keyCell, uid, structureID, body.miss);
-        jit.load32(Address(body.R0, JSCell::structureIDOffset()), structureID);
-        findHashedSlot(jit, SlotAccess::Read, { .structureID = structureID, .uid = uid, .entry = body.T14, .header = header, .payload = payload, .scratch = payload }, body.miss);
-        jumpToSlotHandler(jit, body.table, header, uid);
-        return;
-    }
-    case SlotOrigin::FreeName:
-    case SlotOrigin::FreeNameForTypeOf:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void emitFieldRead(ReadSlotBody& body)
-{
-    StubAssembler& jit = body.jit;
-    const CachedSlot& slot = body.slot;
-    const FieldReadRegisters registers = allocateFieldReadRegisters(body, body.R0, slot.registerOfFirstPayloadWord());
-    FieldReadExits exits;
-
-    Jump isOutOfLine = slot.branchIfFlag(jit, Slot::isOutOfLine);
-    computeFieldAddress(jit, registers.field, false, exits.isAbsent);
-    Label hasAddress = jit.label();
-    readFieldAndReturn(jit, registers, exits);
-
-    isOutOfLine.link(&jit);
-    slot.loadHiddenWordOffset(jit, registers.field.extensionWordOffset);
-    computeFieldAddress(jit, registers.field, true, exits.isAbsent);
-    jit.jump().linkTo(hasAddress, &jit);
-
-    exits.isAbsent.link(&jit);
-    if (slot.kind() == Slot::Kind::FieldOrInheritedField)
-        readFromHolder(body);
-    else {
-        // No cell of the front table has room for the second flag.
-        Jump isUndefinedEitherWay;
-        if (slot.form() == SlotForm::Slot)
-            isUndefinedEitherWay = slot.branchIfFlag(jit, Slot::emptySlotMayBeUndefined);
-        body.uncached.append(slot.branchUnlessFlag(jit, Slot::absentIsUndefined));
-        if (isUndefinedEitherWay.isSet())
-            isUndefinedEitherWay.link(&jit);
-        returnUndefined(body);
-    }
-
-    linkToSlotCannot(jit, exits.cannot, body.table, SlotFinisher::ReadField, slot);
-}
-
-static void emitFieldOrInheritedRead(ReadSlotBody& body)
-{
-    StubAssembler& jit = body.jit;
-    const CachedSlot& slot = body.slot;
-    const FieldReadRegisters registers = allocateFieldReadRegisters(body, body.R0, slot.registerOfFirstPayloadWord());
-    const GPRReg inherited = body.T10;
-    FieldReadExits exits;
-
-    Jump isOutOfLine = slot.branchIfFlag(jit, Slot::isOutOfLine);
-    computeFieldAddress(jit, registers.field, false, exits.isAbsent);
-    Label hasAddress = jit.label();
-    readFieldAndReturn(jit, registers, exits);
-
-    isOutOfLine.link(&jit);
-    loadExtensionWordOffset(jit, body.R0, registers.field.extensionWordOffset);
-    computeFieldAddress(jit, registers.field, true, exits.isAbsent);
-    jit.jump().linkTo(hasAddress, &jit);
-
-    exits.isAbsent.link(&jit);
-    loadInheritedValueBySlot(jit, slot, body.T10, body.T11, inherited);
-    Jump isGetter = slot.branchIfFlag(jit, Slot::inheritsGetter);
-    Jump isAbsentWhereEmpty = slot.branchUnlessFlag(jit, Slot::emptySlotMayBeUndefined);
-    body.uncached.append(jit.branchIfNotUndefined(inherited));
-    isAbsentWhereEmpty.link(&jit);
-    jit.move(inherited, body.R0);
-    jit.returnToCaller();
-
-    isGetter.link(&jit);
-    callGetter(body, inherited);
-
-    linkToSlotCannot(jit, exits.cannot, body.table, SlotFinisher::ReadField, slot);
-}
-
-static void emitVariableRead(ReadSlotBody& body)
-{
-    StubAssembler& jit = body.jit;
-    const GPRReg statics = jit.clobberOperand(headerOperand);
-    const FieldReadRegisters registers = allocateFieldReadRegisters(body, statics, body.T10);
-    FieldReadExits exits;
-
-    body.slot.loadFirstPayloadWord(jit, registers.field.slotData);
-    loadStaticsBase(jit, statics, body.T11);
-    computeFieldAddress(jit, registers.field, false, exits.isAbsent);
-    readFieldAndReturn(jit, registers, exits);
-
-    body.uncached.append(exits.isAbsent);
-    body.uncached.append(exits.cannot);
-}
-
-static ExtraPropertyRegisters extraPropertyRegistersOf(const ReadSlotBody& body)
-{
-    return { .object = body.R0, .extraProperties = body.T10, .wordIndex = body.T11, .scratch = body.T14 };
-}
-
-static void emitExtraGetterCall(ReadSlotBody& body)
-{
-    const ExtraPropertyRegisters registers = extraPropertyRegistersOf(body);
-    const GPRReg getterSetter = body.T10;
-    locateExtraProperty(body.jit, body.slot, registers, body.miss);
-    body.jit.load64(BaseIndex(registers.extraProperties, registers.wordIndex, CCallHelpers::TimesEight), getterSetter);
-    callGetter(body, getterSetter);
-}
-
-static void emitArrayLengthRead(ReadSlotBody& body)
-{
-    StubAssembler& jit = body.jit;
-    const GPRReg length = body.T10;
-    jit.loadPtr(Address(body.R0, JSObject::butterflyOffset()), length);
-    jit.load32(Address(length, Butterfly::offsetOfPublicLength()), length);
-    body.uncached.append(jit.branch32(CCallHelpers::LessThan, length, TrustedImm32(0)));
-    returnInt32(body, length);
-}
-
-static void emitTypedArrayLengthRead(ReadSlotBody& body)
-{
-    StubAssembler& jit = body.jit;
-    const GPRReg length = body.T10;
-    body.uncached.append(jit.branchTest8(CCallHelpers::NonZero, Address(body.R0, JSArrayBufferView::offsetOfMode()), TrustedImm32(resizabilityAndAutoLengthMask)));
-    jit.load64(Address(body.R0, JSArrayBufferView::offsetOfLength()), length);
-    body.uncached.append(jit.branch64(CCallHelpers::Above, length, TrustedImm64(std::numeric_limits<int32_t>::max())));
-    returnInt32(body, length);
-}
-
-static void emitStringLengthRead(ReadSlotBody& body)
-{
-    StubAssembler& jit = body.jit;
-    const GPRReg length = body.T11;
-    jit.loadPtr(Address(body.R0, JSString::offsetOfValue()), length);
-    Jump isRope = jit.branchIfRopeStringImpl(length);
-    jit.load32(Address(length, StringImpl::lengthMemoryOffset()), length);
-    returnInt32(body, length);
-
-    isRope.link(&jit);
-    jit.load32(Address(body.R0, JSRopeString::offsetOfLength()), length);
-    returnInt32(body, length);
-}
-
-// A cell of the front that is only reserved for its name has no slot, and a slot that does not pack is in the hashed table.
-static void jumpToHashedProbe(ReadSlotBody& body)
-{
-    const StubKey hashedProbe = getByIdHashed().withCallerFrame(callerFrameOf(body.origin));
-    const StubSignature signature = signatureOfGetByIdHashed(hashedProbe);
-    RELEASE_ASSERT(signature.operands[receiverOperand] == Reg(body.R0) && signature.immediate == body.operands.identifierNumber);
-    body.jit.jumpToStub(hashedProbe);
-}
-
 // No StructureID is compared at a free-name site, so its tables have an arm only for the kinds that are filed there.
 static bool hasReadArm(SlotHandlerTableTraits traits, Slot::Kind kind)
 {
@@ -422,101 +87,295 @@ static bool hasReadArm(SlotHandlerTableTraits traits, Slot::Kind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void emitReadBySlot(ReadSlotBody& body)
-{
-    StubAssembler& jit = body.jit;
-    if (!hasReadArm(traitsOf(body.table), body.slot.kind())) {
-        body.miss.append(jit.jump());
-        return;
-    }
-    switch (body.slot.kind()) {
-    case Slot::Kind::Empty:
-        jumpToHashedProbe(body);
-        return;
-    case Slot::Kind::Value:
-        loadValueBySlot(jit, body.slot, body.R0, body.T10, body.T11, body.R0);
-        jit.returnToCaller();
-        return;
-    case Slot::Kind::FarValue:
-        emitFarValueRead(body);
-        return;
-    case Slot::Kind::Absent:
-        if (body.origin == SlotOrigin::ByVal)
-            rememberAbsenceOfKey(jit, body.operands.keyCell, body.slot.header(), body.T10, body.T11);
-        returnUndefined(body);
-        return;
-    case Slot::Kind::Getter:
-        emitGetterCall(body);
-        return;
-    case Slot::Kind::CustomGetter:
-        emitCustomGetterCall(body);
-        return;
-    case Slot::Kind::Field:
-    case Slot::Kind::FieldOrInheritedField:
-        emitFieldRead(body);
-        return;
-    case Slot::Kind::FieldGetter:
-        emitFieldGetterCall(body);
-        return;
-    case Slot::Kind::FieldOrInherited:
-        emitFieldOrInheritedRead(body);
-        return;
-    case Slot::Kind::InheritedField:
-        readFromHolder(body);
-        return;
-    case Slot::Kind::Variable:
-        emitVariableRead(body);
-        return;
-    case Slot::Kind::ExtraProperty:
-        readExtraPropertyAndReturn(jit, body.slot, extraPropertyRegistersOf(body), body.R0, body.miss);
-        return;
-    case Slot::Kind::ExtraGetter:
-        emitExtraGetterCall(body);
-        return;
-    case Slot::Kind::ArrayLength:
-        emitArrayLengthRead(body);
-        return;
-    case Slot::Kind::TypedArrayLength:
-        emitTypedArrayLengthRead(body);
-        return;
-    case Slot::Kind::StringLength:
-        emitStringLengthRead(body);
-        return;
-    case Slot::Kind::ClosureLength:
-        readClosureLengthAndReturn(jit, body.R0, body.miss);
-        return;
-    case Slot::Kind::ClosureName:
-        readClosureNameAndReturn(jit, body.R0, body.miss);
-        return;
-    case Slot::Kind::Constant:
-        body.slot.loadPayloadBits(jit, body.R0);
-        jit.returnToCaller();
-        return;
-    case Slot::Kind::Uncacheable:
-        body.uncached.append(jit.jump());
-        return;
-    case Slot::Kind::Setter:
-    case Slot::Kind::CustomSetter:
-    case Slot::Kind::FieldCreation:
-    case Slot::Kind::FieldOrInheritedSetter:
-    case Slot::Kind::ExtraSetter:
-    case Slot::Kind::ExtraPropertyAddition:
-    case Slot::Kind::Transition:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 void generateReadSlot(StubAssembler& jit)
 {
     if (!isInHandlerTable(jit.key())) {
         jit.breakpoint();
         return;
     }
-    ReadSlotBody body = createReadSlotBody(jit);
-    emitReadBySlot(body);
-    linkToSlotExit(jit, body.miss, body.table, SlotExit::Miss);
-    linkToSlotExit(jit, body.uncached, body.table, SlotExit::Uncached);
+    const SlotHandlerTable table = handlerTableOf(jit.key());
+    const SlotHandlerTableTraits traits = traitsOf(table);
+    const SlotOrigin origin = traits.origin;
+    const SlotHandlerOperands operands = operandsOfSlotHandler(table);
+    RELEASE_ASSERT(jit.operand(receiverOperand) == operands.receiver && jit.result() == operands.receiver);
+    RELEASE_ASSERT(jit.operand(headerOperand) == operands.header);
+    RELEASE_ASSERT(traits.form == SlotForm::PackedSlot || jit.operand(payloadOperand) == operands.payload);
+    const CachedSlot slot(traits.form, slotKindOf(jit.key()), operands.header, operands.payload);
+    const GPRReg R0 = operands.receiver;
+    const GPRReg T10 = jit.allocateScratch(StubRegister::T10);
+    const GPRReg T11 = jit.allocateScratch(StubRegister::T11);
+    const GPRReg T14 = jit.allocateScratch(StubRegister::T14);
+    const ExtraPropertyRegisters extraPropertyRegisters { .object = R0, .extraProperties = T10, .wordIndex = T11, .scratch = T14 };
+    JumpList miss;
+    JumpList uncached;
+
+    auto clobberPayloadRegister = [&] {
+        return slot.form() == SlotForm::Slot ? jit.clobberOperand(payloadOperand) : jit.allocateScratch(slotPayloadRegister);
+    };
+    auto returnUndefined = [&] {
+        jit.move(TrustedImm64(JSValue::ValueUndefined), R0);
+        jit.returnToCaller();
+    };
+    auto returnInt32 = [&](GPRReg int32) {
+        boxInt32(jit, int32, R0);
+        jit.returnToCaller();
+    };
+    auto loadPropertyName = [&](GPRReg uid) {
+        switch (origin) {
+        case SlotOrigin::ById:
+        case SlotOrigin::ByIdInStubFrame:
+        case SlotOrigin::FreeName:
+        case SlotOrigin::FreeNameForTypeOf:
+            loadIdentifier(jit, operands.identifierNumber, uid, miss);
+            return;
+        case SlotOrigin::ByVal:
+            loadNameOfKey(jit, operands.keyCell, uid, T11, miss);
+            return;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    };
+    auto callGetter = [&](GPRReg getterSetter) {
+        const StubSignature finisher = signatureOfSlotCannot(slotCannot(SlotFinisher::CallGetter, origin));
+        RELEASE_ASSERT(finisher.operands[finisher.numberOfOperands - 1] == Reg(getterSetter));
+        // Whoever jumps to a handler has written the two registers of the slot itself, and the number of the name is an immediate of the call: no caller keeps a value in them.
+        RegisterSet lostToEveryCaller;
+        for (GPRReg reg : { operands.header, operands.payload, operands.identifierNumber }) {
+            if (reg != InvalidGPRReg)
+                lostToEveryCaller.add(reg, IgnoreVectors);
+        }
+        jit.recordClobbers(lostToEveryCaller);
+        JumpList cannot;
+        callGetterAndReturn(jit, R0, getterSetter, cannot);
+        linkToSlotCannot(jit, cannot, table, SlotFinisher::CallGetter, slot);
+    };
+    auto allocateFieldReadRegisters = [&](GPRReg object, GPRReg slotData) -> FieldReadRegisters {
+        return {
+            .field = { .object = object, .slotData = slotData, .extensionWordOffset = T11, .address = T11, .representation = T14 },
+            .value = T10,
+            .result = R0,
+            .number = jit.allocateScratch(FPRInfo::fpRegT0),
+            .numberScratch = jit.allocateScratch(FPRInfo::fpRegT1),
+        };
+    };
+    // Goes on where the slot of the field is empty.
+    auto useFieldAndReturn = [&](const FieldAddressRegisters& field, JumpList& isAbsent, auto useAddressAndReturn) {
+        Jump isOutOfLine = slot.branchIfFlag(jit, Slot::isOutOfLine);
+        computeFieldAddress(jit, field, false, isAbsent);
+        Label hasAddress = jit.label();
+        useAddressAndReturn();
+
+        isOutOfLine.link(&jit);
+        if (slot.kind() == Slot::Kind::FieldOrInherited)
+            loadExtensionWordOffset(jit, R0, field.extensionWordOffset);
+        else
+            slot.loadHiddenWordOffset(jit, field.extensionWordOffset);
+        computeFieldAddress(jit, field, true, isAbsent);
+        jit.jump().linkTo(hasAddress, &jit);
+
+        isAbsent.link(&jit);
+    };
+    // The value of a data property does not depend on the receiver, so the holder takes the receiver's place and the lookup tables answer for its own Structure.
+    auto readFromHolder = [&] {
+        slot.loadHolder(jit, R0);
+        switch (origin) {
+        case SlotOrigin::ById:
+        case SlotOrigin::ByIdInStubFrame: {
+            const CallerFrame callerFrame = callerFrameOf(origin);
+            const StubKey frontProbe = getById().withCallerFrame(callerFrame);
+            const StubSignature signature = signatureOfGetById(frontProbe);
+            RELEASE_ASSERT(signature.operands[receiverOperand] == Reg(R0) && signature.immediate == operands.identifierNumber);
+            if (slot.form() == SlotForm::Slot)
+                jit.linkToStub(jit.branch32(CCallHelpers::Above, operands.identifierNumber, TrustedImm32(RowDisplacementTable::maxColumn)), getByIdHashed().withCallerFrame(callerFrame));
+            jit.jumpToStub(frontProbe);
+            return;
+        }
+        case SlotOrigin::ByVal: {
+            // The probe by key clobbers like a call, and a handler does not.
+            const GPRReg uid = T10;
+            const GPRReg structureID = T11;
+            const GPRReg header = jit.clobberOperand(headerOperand);
+            const GPRReg payload = clobberPayloadRegister();
+            loadNameOfKey(jit, operands.keyCell, uid, structureID, miss);
+            jit.load32(Address(R0, JSCell::structureIDOffset()), structureID);
+            findHashedSlot(jit, SlotAccess::Read, { .structureID = structureID, .uid = uid, .entry = T14, .header = header, .payload = payload, .scratch = payload }, miss);
+            jumpToSlotHandler(jit, table, header, uid);
+            return;
+        }
+        case SlotOrigin::FreeName:
+        case SlotOrigin::FreeNameForTypeOf:
+            break;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    };
+
+    auto emitReadBySlot = [&] {
+        if (!hasReadArm(traits, slot.kind())) {
+            miss.append(jit.jump());
+            return;
+        }
+        switch (slot.kind()) {
+        case Slot::Kind::Empty: {
+            // A cell of the front that is only reserved for its name has no slot, and a slot that does not pack is in the hashed table.
+            const StubKey hashedProbe = getByIdHashed().withCallerFrame(callerFrameOf(origin));
+            const StubSignature signature = signatureOfGetByIdHashed(hashedProbe);
+            RELEASE_ASSERT(signature.operands[receiverOperand] == Reg(R0) && signature.immediate == operands.identifierNumber);
+            jit.jumpToStub(hashedProbe);
+            return;
+        }
+        case Slot::Kind::Value:
+            loadValueBySlot(jit, slot, R0, T10, T11, R0);
+            jit.returnToCaller();
+            return;
+        case Slot::Kind::FarValue: {
+            const GPRReg butterfly = T10;
+            const GPRReg wordIndex = T11;
+            slot.loadFirstPayloadWord(jit, wordIndex);
+            jit.signExtend32ToPtr(wordIndex, wordIndex);
+            jit.loadPtr(Address(R0, JSObject::butterflyOffset()), butterfly);
+            jit.load64(BaseIndex(butterfly, wordIndex, CCallHelpers::TimesEight), R0);
+            jit.returnToCaller();
+            return;
+        }
+        case Slot::Kind::Absent:
+            if (origin == SlotOrigin::ByVal)
+                rememberAbsenceOfKey(jit, operands.keyCell, slot.header(), T10, T11);
+            returnUndefined();
+            return;
+        case Slot::Kind::Getter:
+            loadValueBySlot(jit, slot, R0, T10, T11, T10);
+            callGetter(T10);
+            return;
+        case Slot::Kind::CustomGetter: {
+            const GPRReg accessorIndex = clobberPayloadRegister();
+            const GPRReg uid = T10;
+            slot.loadFirstPayloadWord(jit, accessorIndex);
+            loadPropertyName(uid);
+            callCustomGetterAndReturn(jit, R0, accessorIndex, uid);
+            return;
+        }
+        case Slot::Kind::Field:
+        case Slot::Kind::FieldOrInheritedField:
+        case Slot::Kind::FieldOrInherited: {
+            const FieldReadRegisters registers = allocateFieldReadRegisters(R0, slot.registerOfFirstPayloadWord());
+            FieldReadExits exits;
+            useFieldAndReturn(registers.field, exits.isAbsent, [&] {
+                readFieldAndReturn(jit, registers, exits);
+            });
+            if (slot.kind() == Slot::Kind::FieldOrInheritedField)
+                readFromHolder();
+            else if (slot.kind() == Slot::Kind::FieldOrInherited) {
+                const GPRReg inherited = T10;
+                loadInheritedValueBySlot(jit, slot, T10, T11, inherited);
+                Jump isGetter = slot.branchIfFlag(jit, Slot::inheritsGetter);
+                Jump isAbsentWhereEmpty = slot.branchUnlessFlag(jit, Slot::emptySlotMayBeUndefined);
+                uncached.append(jit.branchIfNotUndefined(inherited));
+                isAbsentWhereEmpty.link(&jit);
+                jit.move(inherited, R0);
+                jit.returnToCaller();
+
+                isGetter.link(&jit);
+                callGetter(inherited);
+            } else {
+                // No cell of the front table has room for the second flag.
+                Jump isUndefinedEitherWay;
+                if (slot.form() == SlotForm::Slot)
+                    isUndefinedEitherWay = slot.branchIfFlag(jit, Slot::emptySlotMayBeUndefined);
+                uncached.append(slot.branchUnlessFlag(jit, Slot::absentIsUndefined));
+                if (isUndefinedEitherWay.isSet())
+                    isUndefinedEitherWay.link(&jit);
+                returnUndefined();
+            }
+            linkToSlotCannot(jit, exits.cannot, table, SlotFinisher::ReadField, slot);
+            return;
+        }
+        case Slot::Kind::FieldGetter: {
+            // The slot of an accessor field holds the GetterSetter. Many an object of the same Structure has it empty: the accessor is defined on some objects of the layout only.
+            const FieldAddressRegisters field { .object = R0, .slotData = T10, .extensionWordOffset = T11, .address = T11, .representation = T14 };
+            const GPRReg getterSetter = T10;
+            JumpList isAbsent;
+            slot.loadFirstPayloadWord(jit, field.slotData);
+            useFieldAndReturn(field, isAbsent, [&] {
+                loadGetterSetterInField(jit, field.address, field.representation, getterSetter, isAbsent);
+                callGetter(getterSetter);
+            });
+            uncached.append(slot.branchUnlessFlag(jit, Slot::absentIsUndefined));
+            returnUndefined();
+            return;
+        }
+        case Slot::Kind::InheritedField:
+            readFromHolder();
+            return;
+        case Slot::Kind::Variable: {
+            const GPRReg statics = jit.clobberOperand(headerOperand);
+            const FieldReadRegisters registers = allocateFieldReadRegisters(statics, T10);
+            FieldReadExits exits;
+            slot.loadFirstPayloadWord(jit, registers.field.slotData);
+            loadStaticsBase(jit, statics, T11);
+            computeFieldAddress(jit, registers.field, false, exits.isAbsent);
+            readFieldAndReturn(jit, registers, exits);
+
+            uncached.append(exits.isAbsent);
+            uncached.append(exits.cannot);
+            return;
+        }
+        case Slot::Kind::ExtraProperty:
+            readExtraPropertyAndReturn(jit, slot, extraPropertyRegisters, R0, miss);
+            return;
+        case Slot::Kind::ExtraGetter:
+            locateExtraProperty(jit, slot, extraPropertyRegisters, miss);
+            jit.load64(BaseIndex(extraPropertyRegisters.extraProperties, extraPropertyRegisters.wordIndex, CCallHelpers::TimesEight), T10);
+            callGetter(T10);
+            return;
+        case Slot::Kind::ArrayLength:
+            jit.loadPtr(Address(R0, JSObject::butterflyOffset()), T10);
+            jit.load32(Address(T10, Butterfly::offsetOfPublicLength()), T10);
+            uncached.append(jit.branch32(CCallHelpers::LessThan, T10, TrustedImm32(0)));
+            returnInt32(T10);
+            return;
+        case Slot::Kind::TypedArrayLength:
+            uncached.append(jit.branchTest8(CCallHelpers::NonZero, Address(R0, JSArrayBufferView::offsetOfMode()), TrustedImm32(resizabilityAndAutoLengthMask)));
+            jit.load64(Address(R0, JSArrayBufferView::offsetOfLength()), T10);
+            uncached.append(jit.branch64(CCallHelpers::Above, T10, TrustedImm64(std::numeric_limits<int32_t>::max())));
+            returnInt32(T10);
+            return;
+        case Slot::Kind::StringLength: {
+            jit.loadPtr(Address(R0, JSString::offsetOfValue()), T11);
+            Jump isRope = jit.branchIfRopeStringImpl(T11);
+            jit.load32(Address(T11, StringImpl::lengthMemoryOffset()), T11);
+            returnInt32(T11);
+
+            isRope.link(&jit);
+            jit.load32(Address(R0, JSRopeString::offsetOfLength()), T11);
+            returnInt32(T11);
+            return;
+        }
+        case Slot::Kind::ClosureLength:
+            readClosureLengthAndReturn(jit, R0, miss);
+            return;
+        case Slot::Kind::ClosureName:
+            readClosureNameAndReturn(jit, R0, miss);
+            return;
+        case Slot::Kind::Constant:
+            slot.loadPayloadBits(jit, R0);
+            jit.returnToCaller();
+            return;
+        case Slot::Kind::Uncacheable:
+            uncached.append(jit.jump());
+            return;
+        case Slot::Kind::Setter:
+        case Slot::Kind::CustomSetter:
+        case Slot::Kind::FieldCreation:
+        case Slot::Kind::FieldOrInheritedSetter:
+        case Slot::Kind::ExtraSetter:
+        case Slot::Kind::ExtraPropertyAddition:
+        case Slot::Kind::Transition:
+            break;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    };
+    emitReadBySlot();
+    linkToSlotExit(jit, miss, table, SlotExit::Miss);
+    linkToSlotExit(jit, uncached, table, SlotExit::Uncached);
 }
 
 struct ReadSlotExitTraits {
@@ -553,12 +412,7 @@ StubSignature signatureOfReadSlotExit(StubKey key)
 
 static OperationCall createExitCall(GPRReg second, GPRReg third, std::optional<GPRReg> fourth = std::nullopt)
 {
-    return {
-        .saves = OperationCall::Saves::CallerSavedRegisters,
-        .secondArgumentIn = second,
-        .thirdArgumentIn = third,
-        .fourthArgumentIn = fourth,
-    };
+    return { .saves = OperationCall::Saves::CallerSavedRegisters, .secondArgumentIn = second, .thirdArgumentIn = third, .fourthArgumentIn = fourth };
 }
 
 static void tryLeafLookup(StubAssembler& jit, Entry leafLookup, GPRReg second)
@@ -573,17 +427,8 @@ static void tryLeafLookup(StubAssembler& jit, Entry leafLookup, GPRReg second)
     jit.move(receiverAfterCall, receiver);
 }
 
-static void emitMissById(StubAssembler& jit)
+static void emitUncachedReadById(StubAssembler& jit, GPRReg receiver, GPRReg identifierNumber)
 {
-    const GPRReg noSite = jit.allocateScratch(StubRegister::T10);
-    jit.move(CCallHelpers::TrustedImmPtr(nullptr), noSite);
-    jit.exitOnMiss(Entry::operationAOTGetByIdAndCache, createExitCall(jit.operand(receiverOperand), jit.operand(nameOperandOfExit), noSite));
-}
-
-static void emitUncachedReadById(StubAssembler& jit)
-{
-    const GPRReg receiver = jit.operand(receiverOperand);
-    const GPRReg identifierNumber = jit.operand(nameOperandOfExit);
     const GPRReg uid = jit.allocateScratch(StubRegister::T10);
     JumpList needsOperation;
     needsOperation.append(jit.branchIfNotCell(receiver));
@@ -609,66 +454,52 @@ static void emitUncachedReadById(StubAssembler& jit)
     jit.callOperationAndReturn(Entry::operationAOTGetById, createExitCall(receiver, identifierNumber));
 }
 
-static void emitExitOfReadById(StubAssembler& jit, SlotExit exit)
-{
-    switch (exit) {
-    case SlotExit::Miss:
-        emitMissById(jit);
-        return;
-    case SlotExit::Uncached:
-        emitUncachedReadById(jit);
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void emitExitOfReadByVal(StubAssembler& jit, SlotExit exit)
-{
-    const GPRReg receiver = jit.operand(receiverOperand);
-    const GPRReg keyCell = jit.operand(nameOperandOfExit);
-    switch (exit) {
-    case SlotExit::Miss:
-        jit.exitOnMiss(Entry::operationAOTGetByValAndCache, createExitCall(receiver, keyCell));
-        return;
-    case SlotExit::Uncached:
-        tryLeafLookup(jit, Entry::operationAOTGetByValGeneric, keyCell);
-        jit.callOperationAndReturn(Entry::operationAOTGetByVal, createExitCall(receiver, keyCell));
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void emitExitOfFreeNameRead(StubAssembler& jit, Entry operation, SlotExit exit)
-{
-    const OperationCall call = createExitCall(jit.operand(nameOperandOfExit), jit.operand(siteOperandOfExit));
-    switch (exit) {
-    case SlotExit::Miss:
-        jit.exitOnMiss(operation, call);
-        return;
-    case SlotExit::Uncached:
-        jit.callOperationAndReturn(operation, call);
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 void generateReadSlotExit(StubAssembler& jit)
 {
     const ReadSlotExitTraits traits = traitsOfReadSlotExit(jit.key());
-    switch (traitsOf(traits.table).origin) {
+    const SlotOrigin origin = traitsOf(traits.table).origin;
+    const GPRReg receiver = jit.operand(receiverOperand);
+    const GPRReg name = jit.operand(nameOperandOfExit);
+    switch (origin) {
     case SlotOrigin::ById:
     case SlotOrigin::ByIdInStubFrame:
-        emitExitOfReadById(jit, traits.exit);
-        return;
+        switch (traits.exit) {
+        case SlotExit::Miss: {
+            const GPRReg noSite = jit.allocateScratch(StubRegister::T10);
+            jit.move(CCallHelpers::TrustedImmPtr(nullptr), noSite);
+            jit.exitOnMiss(Entry::operationAOTGetByIdAndCache, createExitCall(receiver, name, noSite));
+            return;
+        }
+        case SlotExit::Uncached:
+            emitUncachedReadById(jit, receiver, name);
+            return;
+        }
+        break;
     case SlotOrigin::ByVal:
-        emitExitOfReadByVal(jit, traits.exit);
-        return;
+        switch (traits.exit) {
+        case SlotExit::Miss:
+            jit.exitOnMiss(Entry::operationAOTGetByValAndCache, createExitCall(receiver, name));
+            return;
+        case SlotExit::Uncached:
+            tryLeafLookup(jit, Entry::operationAOTGetByValGeneric, name);
+            jit.callOperationAndReturn(Entry::operationAOTGetByVal, createExitCall(receiver, name));
+            return;
+        }
+        break;
     case SlotOrigin::FreeName:
-        emitExitOfFreeNameRead(jit, Entry::operationAOTGetFreeName, traits.exit);
-        return;
-    case SlotOrigin::FreeNameForTypeOf:
-        emitExitOfFreeNameRead(jit, Entry::operationAOTGetFreeNameForTypeOf, traits.exit);
-        return;
+    case SlotOrigin::FreeNameForTypeOf: {
+        const Entry operation = origin == SlotOrigin::FreeName ? Entry::operationAOTGetFreeName : Entry::operationAOTGetFreeNameForTypeOf;
+        const OperationCall call = createExitCall(name, jit.operand(siteOperandOfExit));
+        switch (traits.exit) {
+        case SlotExit::Miss:
+            jit.exitOnMiss(operation, call);
+            return;
+        case SlotExit::Uncached:
+            jit.callOperationAndReturn(operation, call);
+            return;
+        }
+        break;
+    }
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

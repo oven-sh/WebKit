@@ -10,12 +10,12 @@
 #include "AOTImageBuildSteps.h"
 #include "AOTImageTestBodies.h"
 #include "AOTImageTestSupport.h"
-#include "AOTRegExpSection.h"
+#include "AOTRegExpCompiler.h"
 #include "AOTStubsBarriers.h"
 #include "AOTStubsExceptions.h"
 #include "AOTStubsPropertyKeys.h"
 #include "AOTVector.h"
-#include "AOTWasmSection.h"
+#include "AOTWasmModules.h"
 #include "CPU.h"
 #include <algorithm>
 #include <array>

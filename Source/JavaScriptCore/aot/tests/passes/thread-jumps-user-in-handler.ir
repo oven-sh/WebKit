@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="handlerUsesParameter" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: number, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v3 = Undefined
@@ -25,14 +24,12 @@ function f0 name="handlerUsesParameter" parameters=[{type=anything}, {type=numbe
   b7() role=CatchHandler:
     v7 = CatchValue
     Return v4
-}
-# CHECK-LABEL: function f0 name="handlerUsesParameter"
 # CHECK: b1():
 # CHECK: Jump -> next b3(v3)
 # CHECK: Return v4
+}
 
 function f1 name="handlerUsesTest" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: number, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v3 = Undefined
@@ -52,14 +49,12 @@ function f1 name="handlerUsesTest" parameters=[{type=anything}, {type=number}, {
   b7() role=CatchHandler:
     v7 = CatchValue
     Return v5
-}
-# CHECK-LABEL: function f1 name="handlerUsesTest"
 # CHECK: b1():
 # CHECK: Jump -> next b3(v3)
 # CHECK: Return v5
+}
 
 function f2 name="handlerEdgePassesParameter" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: number, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v3 = Undefined
@@ -81,14 +76,12 @@ function f2 name="handlerEdgePassesParameter" parameters=[{type=anything}, {type
   b8(v7) role=CatchHandler:
     v8 = CatchValue
     Return v7
-}
-# CHECK-LABEL: function f2 name="handlerEdgePassesParameter"
 # CHECK: b1():
 # CHECK: Jump -> next b3(v3)
 # CHECK: handler=b8(v4):
+}
 
 function f3 name="handlerUsesCaughtValue" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: number, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v3 = Undefined
@@ -108,9 +101,8 @@ function f3 name="handlerUsesCaughtValue" parameters=[{type=anything}, {type=num
   b7() role=CatchHandler:
     v7 = CatchValue
     Return v7
-}
-# CHECK-LABEL: function f3 name="handlerUsesCaughtValue"
 # CHECK: b1():
 # CHECK: Jump -> next b5()
 # CHECK: b2():
 # CHECK-NEXT: Jump -> next b3(v1)
+}

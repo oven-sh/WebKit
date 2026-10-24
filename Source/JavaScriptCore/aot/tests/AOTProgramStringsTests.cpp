@@ -41,7 +41,6 @@ layout L1 name="Holder" fields=[]
 module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -49,7 +48,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="constants" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="first constant"
     v2 = Call v0, -, v1
     v3 = String string="\u{65e5}\u{672c}\u{8a9e}"
@@ -79,7 +77,6 @@ function f1 name="constants" parameters=[{type=anything}] results=[{type=anythin
     Return
 }
 function f2 name="readHue" flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     Return v1
 }

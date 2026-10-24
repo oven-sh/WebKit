@@ -8,42 +8,33 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="first" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 function f1 name="second" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f2 name="oneFunctionIsListed" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Call v0, -, v1 callees=[f0, ..]
     Return v2
-}
-# CHECK-LABEL: function f2 name="oneFunctionIsListed"
 # CHECK-NEXT: b0(v0: anything, v1: anything):
 # CHECK-NEXT: v2: anything = Call v0, -, v1 callees=[f0, ..]
 # CHECK-NEXT: Return v2
-# PLACED-LABEL: function f2 name="oneFunctionIsListed"
 # PLACED: = IsClosureOf v0 function=f0
 # PLACED: = CallDirect v1 function=f0
 # PLACED: frequency=Unlikely:
 # PLACED-NEXT: = Call v0, -, v1 callees=[f0, ..]
+}
 function f3 name="twoFunctionsAreListed" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Call v0, -, v1 callees=[f0, f1, ..]
     Return v2
-}
-# CHECK-LABEL: function f3 name="twoFunctionsAreListed"
 # CHECK-NEXT: b0(v0: anything, v1: anything):
 # CHECK-NEXT: v2: anything = Call v0, -, v1 callees=[f0, f1, ..]
 # CHECK-NEXT: Return v2
+}
 function f4 name="noFunctionIsListed" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Call v0, -, v1 callees=[builtin(MathMax), ..]
     Return v2
-}
-# CHECK-LABEL: function f4 name="noFunctionIsListed"
 # CHECK-NEXT: b0(v0: anything, v1: anything):
 # CHECK-NEXT: v2: anything = Call v0, -, v1 callees=[builtin(MathMax), ..]
 # CHECK-NEXT: Return v2
+}

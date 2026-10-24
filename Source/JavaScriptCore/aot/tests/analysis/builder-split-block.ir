@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="cuts" parameters=[{type=boolean}, {type=number}] results=[{type=number}] {
-  b0(v0: boolean, v1: number):
     Branch v0 -> taken b1(v1), notTaken b2()
   b1(v2) frequency=Unlikely:
     v3 = Add v2, v2

@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
 #include "AOTDiagnostics.h"
 #include "AOTEffectSummaries.h"
@@ -19,11 +18,8 @@
 #include "AOTFlowResults.h"
 #include "AOTLargeVectors.h"
 #include "AOTPhaseTimes.h"
-#include "AOTSort.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTThreads.h"
-#include "AOTThreshold.h"
-#include "AOTVector.h"
 #include <atomic>
 #include <functional>
 #include <numeric>
@@ -38,26 +34,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-struct CollectedReferences {
-    CollectedReferences(unsigned numberOfFunctions, unsigned numberOfCalleeSets)
-        : calleeOffsets(FillWith { }, numberOfFunctions + 1, 0u)
-        , directCallSites(FillWith { }, numberOfFunctions, 0u)
-        , linkedCallSites(FillWith { }, numberOfFunctions, 0u)
-        , calleeSetCallSites(FillWith { }, numberOfCalleeSets, 0u)
-        , hasOtherReference(FillWith { }, numberOfFunctions, static_cast<uint8_t>(0))
-        , callsUnknownCode(FillWith { }, numberOfFunctions, static_cast<uint8_t>(0))
-    {
-    }
-
-    Vector<uint32_t> calleeOffsets;
-    Vector<FunctionID> callees;
-    Vector<uint32_t> directCallSites;
-    Vector<uint32_t> linkedCallSites;
-    Vector<uint32_t> calleeSetCallSites;
-    Vector<uint8_t> hasOtherReference;
-    Vector<uint8_t> callsUnknownCode;
-};
-
 struct CallEdge {
     uint32_t target;
     uint32_t source;
@@ -70,28 +46,15 @@ struct FunctionRanks {
     uint32_t numberOfRanks { 0 };
 };
 
-class SuccessorList {
-public:
-    SuccessorList(std::span<const FunctionID> functions, std::optional<unsigned> unknownCodeNode)
-        : m_functions(functions)
-        , m_unknownCodeNode(unknownCodeNode)
-    {
-    }
+struct SuccessorList {
+    size_t size() const { return functions.size() + (unknownCodeNode ? 1 : 0); }
+    unsigned operator[](size_t position) const { return position < functions.size() ? functions[position].index() : *unknownCodeNode; }
 
-    size_t size() const { return m_functions.size() + (m_unknownCodeNode ? 1 : 0); }
-    unsigned operator[](size_t position) const { return position < m_functions.size() ? m_functions[position].index() : *m_unknownCodeNode; }
-
-private:
-    std::span<const FunctionID> m_functions;
-    std::optional<unsigned> m_unknownCodeNode;
+    std::span<const FunctionID> functions;
+    std::optional<unsigned> unknownCodeNode;
 };
 
 } // anonymous namespace
-
-BodyReferenceCollector::BodyReferenceCollector(const Program& program)
-    : m_program(program)
-{
-}
 
 void BodyReferenceCollector::add(FunctionID callee)
 {
@@ -102,13 +65,8 @@ void BodyReferenceCollector::add(FunctionID callee)
         return;
     }
     callees.append(callee);
-    if (callees.size() >= deduplicationThreshold)
-        startDeduplicating();
-}
-
-void BodyReferenceCollector::startDeduplicating()
-{
-    Vector<FunctionID>& callees = m_references.callees;
+    if (callees.size() < deduplicationThreshold)
+        return;
     m_seen.fill(0, m_program.functions.size());
     size_t end = 0;
     for (size_t index = 0; index < callees.size(); ++index) {
@@ -153,12 +111,8 @@ void BodyReferenceCollector::readInstruction(const auto& instruction, const Effe
         m_references.callsUnknownCode = true;
     if (description.followsFieldsOfOperands)
         m_references.followsFieldsOfOperands = true;
-    if (description.callsUnknownCode || !description.functions.isEmpty())
-        noteSite(description);
-}
-
-void BodyReferenceCollector::noteSite(const EffectDescription& description)
-{
+    if (!description.callsUnknownCode && description.functions.isEmpty())
+        return;
     RELEASE_ASSERT(m_indexInBlock < 1u << 30);
     bool listsManyFunctions = description.functions.size() > mostFunctionsKeptOfSite;
     if (!listsManyFunctions)
@@ -179,7 +133,7 @@ void BodyReferenceCollector::read(const Terminator& terminator, const EffectDesc
     m_indexInBlock = 0;
 }
 
-void BodyReferenceCollector::addMembersOfCalleeSets()
+ReferencesOfBody BodyReferenceCollector::finish(const FlowResults& flow, FunctionID id)
 {
     Vector<CalleeSetID>& sets = m_references.calleeSets;
     AOT::sort(sets);
@@ -189,10 +143,7 @@ void BodyReferenceCollector::addMembersOfCalleeSets()
         for (FunctionID callee : m_program.at(sets[index]).functions)
             add(callee);
     }
-}
 
-void BodyReferenceCollector::addIndirectCallees(const FlowResults& flow, FunctionID id)
-{
     Vector<FunctionID, 8> sources;
     auto addSource = [&](FunctionID source) {
         if (FunctionID asRead = findFunctionAsRead(&m_program, source))
@@ -207,28 +158,18 @@ void BodyReferenceCollector::addIndirectCallees(const FlowResults& flow, Functio
         for (const FlowIndirectCall& call : flow.indirectCallsFrom(source))
             add(call.callee);
     }
-}
 
-void BodyReferenceCollector::addExpectedFunctionTypes(FunctionID id)
-{
-    if (!mayHoldExpectedTypes(m_program, id))
-        return;
-    Vector<TypeID>& types = m_references.expectedFunctionTypes;
-    for (const Value& value : m_program.at(id).values) {
-        TypeID expected = value.expected();
-        if (expected && (types.isEmpty() || types.last() != expected) && !m_program.at(expected).functions.isEmpty())
-            types.append(expected);
+    if (mayHoldExpectedTypes(m_program, id)) {
+        Vector<TypeID>& types = m_references.expectedFunctionTypes;
+        for (const Value& value : m_program.at(id).values) {
+            TypeID expected = value.expected();
+            if (expected && (types.isEmpty() || types.last() != expected) && !m_program.at(expected).functions.isEmpty())
+                types.append(expected);
+        }
+        AOT::sort(types);
+        removeRepeatedElements(types);
+        moveToExactBuffer(types);
     }
-    AOT::sort(types);
-    removeRepeatedElements(types);
-    moveToExactBuffer(types);
-}
-
-ReferencesOfBody BodyReferenceCollector::finish(const FlowResults& flow, FunctionID id)
-{
-    addMembersOfCalleeSets();
-    addIndirectCallees(flow, id);
-    addExpectedFunctionTypes(id);
     AOT::sort(m_references.callees);
     removeRepeatedElements(m_references.callees);
     AOT::sort(m_references.otherReferences);
@@ -264,28 +205,23 @@ ReferencesOfBody collectReferencesOf(const Program& program, const FlowResults& 
         return { };
     BodyReferenceCollector collector(program);
     const EffectDescription descriptionWithoutCode;
+    auto read = [&](const auto& entry) {
+        if (entriesThatRunNoCode.contains(entry))
+            collector.read(entry, descriptionWithoutCode);
+        else
+            collector.read(entry, describeCodeRunBy(program, function, entry));
+    };
     if (!mayEndBlockWith(program, id, entriesThatRunNoCode.otherTerminatorKinds)) {
         forEachListedValue(program, id, entriesThatRunNoCode.opcodesWithReferences, [&](BlockID block, uint32_t indexInBlock, ValueID, const Value& value) {
             collector.skipTo(block, indexInBlock);
-            if (entriesThatRunNoCode.opcodes.contains(value.opcode))
-                collector.read(value, descriptionWithoutCode);
-            else
-                collector.read(value, describeCodeRunBy(program, function, value));
+            read(value);
         });
         return collector.finish(flow, id);
     }
     for (const Block& block : function.blocks) {
-        for (ValueID listed : block.values) {
-            const Value& value = function.at(listed);
-            if (entriesThatRunNoCode.opcodes.contains(value.opcode))
-                collector.read(value, descriptionWithoutCode);
-            else
-                collector.read(value, describeCodeRunBy(program, function, value));
-        }
-        if (entriesThatRunNoCode.terminatorKinds.contains(block.terminator.kind))
-            collector.read(block.terminator, descriptionWithoutCode);
-        else
-            collector.read(block.terminator, describeCodeRunBy(program, function, block.terminator));
+        for (ValueID listed : block.values)
+            read(function.at(listed));
+        read(block.terminator);
     }
     return collector.finish(flow, id);
 }
@@ -300,7 +236,6 @@ void BodyReferences::prepareToTake(const Program& program, const ParallelLoops& 
     m_isChanged.insertFill(numberOfKeptBodies, 1, numberOfBodies - numberOfKeptBodies);
     reserveCapacityInParallel(loops, m_stampsOfRecords, numberOfBodies);
     m_stampsOfRecords.append(stampsOfRecords.subspan(numberOfKeptBodies));
-    // The record of a function lies in lines of its own, which nobody has read of late.
     growInParallel(loops, m_stampsOfRecordsForCallers, numberOfBodies);
     forEachIndexInParallel(loops, static_cast<unsigned>(numberOfBodies - numberOfKeptBodies), [&](unsigned added) {
         size_t index = numberOfKeptBodies + added;
@@ -324,60 +259,6 @@ void BodyReferences::didChange(std::span<const FunctionID> functions)
         if (id.index() < m_isChanged.size())
             m_isChanged[id.index()] = 1;
     }
-}
-
-static CollectedReferences addUpReferences(const Program& program, const Vector<ReferencesOfBody>& bodies, const ParallelLoops& loops)
-{
-    unsigned count = program.functions.size();
-    CollectedReferences references(count, program.types.numberOfCalleeSets());
-    Vector<uint8_t> hasBodyByFunction(count);
-    forEachIndexInParallel(loops, count, [&](unsigned index) {
-        hasBodyByFunction[index] = Typed::hasBody(program, FunctionID(index));
-    });
-    auto hasBody = [&](FunctionID id) {
-        return !!hasBodyByFunction[id.index()];
-    };
-    // The lists of a body lie anywhere in memory. Those of a body that the loop comes to soon are asked for ahead of time.
-    constexpr unsigned prefetchDistance = 4;
-    forEachIndexInParallel(loops, count, [&](unsigned index) {
-        if (index + prefetchDistance < count) {
-            const ReferencesOfBody& next = bodies[index + prefetchDistance];
-            __builtin_prefetch(next.callees.span().data());
-            __builtin_prefetch(next.directCallees.span().data());
-            __builtin_prefetch(next.otherReferences.span().data());
-            __builtin_prefetch(next.calleeSets.span().data());
-        }
-        const ReferencesOfBody& body = bodies[index];
-        references.calleeOffsets[index + 1] = static_cast<uint32_t>(std::ranges::count_if(body.callees, hasBody));
-        references.callsUnknownCode[index] = body.callsUnknownCode;
-        for (FunctionID target : body.directCallees)
-            WTF::atomicExchangeAdd(&references.directCallSites[target.index()], 1u, std::memory_order_relaxed);
-        for (FunctionID target : body.otherReferences) {
-            if (!WTF::atomicLoad(&references.hasOtherReference[target.index()], std::memory_order_relaxed))
-                WTF::atomicStore(&references.hasOtherReference[target.index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
-        }
-        for (CalleeSetID set : body.calleeSets)
-            WTF::atomicExchangeAdd(&references.calleeSetCallSites[set.index()], 1u, std::memory_order_relaxed);
-    });
-    std::partial_sum(references.calleeOffsets.begin(), references.calleeOffsets.end(), references.calleeOffsets.begin());
-    references.callees.grow(references.calleeOffsets[count]);
-    forEachIndexInParallel(loops, count, [&](unsigned index) {
-        if (index + prefetchDistance < count)
-            __builtin_prefetch(bodies[index + prefetchDistance].callees.span().data());
-        uint32_t next = references.calleeOffsets[index];
-        for (FunctionID callee : bodies[index].callees) {
-            if (hasBody(callee))
-                references.callees[next++] = callee;
-        }
-    });
-    forEachIndexInParallel(loops, references.calleeSetCallSites.size(), [&](unsigned index) {
-        uint32_t numberOfSites = references.calleeSetCallSites[index];
-        if (!numberOfSites)
-            return;
-        for (FunctionID callee : program.at(CalleeSetID(index)).functions)
-            WTF::atomicExchangeAdd(&references.linkedCallSites[callee.index()], numberOfSites, std::memory_order_relaxed);
-    });
-    return references;
 }
 
 static BitVector findFunctionsExpectedByCode(const Program& program, const Vector<ReferencesOfBody>& bodies)
@@ -422,7 +303,6 @@ static void markRecordReferences(const Program& program, Vector<uint8_t>& hasOth
             }
         }
     });
-    // Nobody takes the closure out of a variable that is never read: a function declaration that is only called has its direct callers and no other.
     forEachIndexInParallel(loops, program.variables.size(), [&](unsigned index) {
         const Variable& variable = program.variables[index];
         if (variable.flow.reads != ReadState::NeverRead)
@@ -441,20 +321,6 @@ static void markRecordReferences(const Program& program, Vector<uint8_t>& hasOth
     });
 }
 
-static BitVector findRoots(const Program& program, const FlowResults& flow, const BitVector& isEnteredFromOutside)
-{
-    BitVector isRoot = isEnteredFromOutside;
-    for (const Variable& variable : program.variables) {
-        if (variable.function)
-            isRoot.set(variable.function.index());
-    }
-    for (const FlowIndirectCall& call : flow.indirectCalls()) {
-        if (call.kind == FlowIndirectCallKind::Host)
-            isRoot.set(call.callee.index());
-    }
-    return isRoot;
-}
-
 static BitVector createBitVector(const Vector<uint8_t>& flags)
 {
     BitVector bits(flags.size());
@@ -465,7 +331,6 @@ static BitVector createBitVector(const Vector<uint8_t>& flags)
     return bits;
 }
 
-// Kahn-style peeling from the leaves, one parallel round per rank. Each round scans everything that remains, so it stops once a round peels too little to pay for the next scan.
 static Vector<uint32_t> peelAcyclicFunctions(const CallGraph& graph, const ParallelLoops& loops, Vector<uint8_t>& isRanked, FunctionRanks& result)
 {
     AOT_THRESHOLD(size_t, maxRemainingPerPeeledFunction, 16);
@@ -539,7 +404,6 @@ static void rankRemainingFunctions(const CallGraph& graph, const ParallelLoops& 
         return successors.subspan(successorOffsets[node], successorOffsets[node + 1] - successorOffsets[node]);
     };
 
-    // Components come out in reverse topological order: callees first.
     StronglyConnectedComponents components = computeStronglyConnectedComponents(count, successorsOf);
     for (uint32_t component = 0; component < components.numberOfComponents; ++component) {
         std::span<const uint32_t> members = components.membersOf(component);
@@ -560,20 +424,6 @@ static void rankRemainingFunctions(const CallGraph& graph, const ParallelLoops& 
     result.numberOfRanks += components.numberOfComponents;
 }
 
-static FunctionRanks computeRanksIgnoringUnknownCode(const CallGraph& graph, const ParallelLoops& loops)
-{
-    unsigned count = graph.numberOfFunctions();
-    FunctionRanks result;
-    result.ranks.fill(0u, count);
-    result.isInCycle.fill(0, count);
-    result.reachesUnknownCode.fill(0, count);
-    Vector<uint8_t> isRanked(FillWith { }, count, static_cast<uint8_t>(0));
-    Vector<uint32_t> remaining = peelAcyclicFunctions(graph, loops, isRanked, result);
-    rankRemainingFunctions(graph, loops, remaining.span(), isRanked, result);
-    return result;
-}
-
-// Parallel BFS. The order within a frontier depends on thread timing; the set of reachable functions does not.
 static Vector<uint8_t> findFunctionsReachableFromUnknownCode(const CallGraph& graph, const ParallelLoops& loops)
 {
     Vector<uint8_t> isReachable(FillWith { }, graph.numberOfFunctions(), static_cast<uint8_t>(0));
@@ -592,21 +442,6 @@ static Vector<uint8_t> findFunctionsReachableFromUnknownCode(const CallGraph& gr
     return isReachable;
 }
 
-// With unknown code as a node, almost every function is in one SCC, and Tarjan's algorithm is serial.
-static void addUnknownCodeComponent(const Vector<uint8_t>& isReachableFromUnknownCode, const ParallelLoops& loops, FunctionRanks& result)
-{
-    uint32_t unknownCodeRank = result.numberOfRanks;
-    forEachIndexInParallel(loops, result.ranks.size(), [&](unsigned index) {
-        if (!result.reachesUnknownCode[index])
-            return;
-        if (isReachableFromUnknownCode[index]) {
-            result.ranks[index] = unknownCodeRank;
-            result.isInCycle[index] = 1;
-        } else
-            result.ranks[index] += unknownCodeRank + 1;
-    });
-}
-
 void CallGraph::computeRanks(BuildContext& build) const
 {
     if (m_hasRanks)
@@ -617,13 +452,28 @@ void CallGraph::computeRanks(BuildContext& build) const
     Vector<uint8_t> isReachableFromUnknownCode;
     runTasksInParallel(loops, {
         [&] {
-            ranks = computeRanksIgnoringUnknownCode(*this, loops);
+            unsigned count = numberOfFunctions();
+            ranks.ranks.fill(0u, count);
+            ranks.isInCycle.fill(0, count);
+            ranks.reachesUnknownCode.fill(0, count);
+            Vector<uint8_t> isRanked(FillWith { }, count, static_cast<uint8_t>(0));
+            Vector<uint32_t> remaining = peelAcyclicFunctions(*this, loops, isRanked, ranks);
+            rankRemainingFunctions(*this, loops, remaining.span(), isRanked, ranks);
         },
         [&] {
             isReachableFromUnknownCode = findFunctionsReachableFromUnknownCode(*this, loops);
         },
     });
-    addUnknownCodeComponent(isReachableFromUnknownCode, loops, ranks);
+    uint32_t unknownCodeRank = ranks.numberOfRanks;
+    forEachIndexInParallel(loops, ranks.ranks.size(), [&](unsigned index) {
+        if (!ranks.reachesUnknownCode[index])
+            return;
+        if (isReachableFromUnknownCode[index]) {
+            ranks.ranks[index] = unknownCodeRank;
+            ranks.isInCycle[index] = 1;
+        } else
+            ranks.ranks[index] += unknownCodeRank + 1;
+    });
     m_isInCycle = createBitVector(ranks.isInCycle);
     m_bottomUpRanks = WTF::move(ranks.ranks);
     m_hasRanks = true;
@@ -669,7 +519,6 @@ static void verifyRanks(const CallGraph& graph)
     }
 }
 
-// Two-pass parallel counting sort of the edges by target: first into buckets of consecutive targets, then within each bucket.
 CallGraph::Adjacency CallGraph::Adjacency::inverse(const ParallelLoops& loops) const
 {
     AOT_THRESHOLD(unsigned, maxBuckets, 256);
@@ -759,7 +608,6 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
         bool isKept = index < numberOfKeptBodies;
         bool looksDifferent = isKept && stamp != bodies.m_stampsOfRecords[index];
         bodies.m_stampsOfRecords[index] = stamp;
-        // A record with the stamp that it had looks to callers as it did.
         bool looksDifferentToCallers = false;
         if (!isKept || looksDifferent) {
             uint64_t stampForCallers = stampOfRecordForCallers(function);
@@ -803,12 +651,73 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
     if (logsCounts) [[unlikely]]
         dataLogLn("AOT body references: of ", count, " functions | bodies read ", numberOfBodiesCollected.load(), " | with the same references as before ", numberOfBodiesCollectedAsBefore.load());
     times.didFinish("collectBodyReferences"_s);
-    CollectedReferences references = addUpReferences(program, bodies.m_bodies, loops);
+
+    Vector<uint32_t> calleeOffsets(FillWith { }, count + 1, 0u);
+    Vector<FunctionID> callees;
+    Vector<uint32_t> directCallSites(FillWith { }, count, 0u);
+    Vector<uint32_t> linkedCallSites(FillWith { }, count, 0u);
+    Vector<uint32_t> calleeSetCallSites(FillWith { }, program.types.numberOfCalleeSets(), 0u);
+    Vector<uint8_t> hasOtherReference(FillWith { }, count, static_cast<uint8_t>(0));
+    Vector<uint8_t> callsUnknownCode(FillWith { }, count, static_cast<uint8_t>(0));
+    Vector<uint8_t> hasBodyByFunction(count);
+    forEachIndexInParallel(loops, count, [&](unsigned index) {
+        hasBodyByFunction[index] = hasBody(program, FunctionID(index));
+    });
+    auto isCalleeWithBody = [&](FunctionID id) {
+        return !!hasBodyByFunction[id.index()];
+    };
+    constexpr unsigned prefetchDistance = 4;
+    forEachIndexInParallel(loops, count, [&](unsigned index) {
+        if (index + prefetchDistance < count) {
+            const ReferencesOfBody& next = bodies.m_bodies[index + prefetchDistance];
+            __builtin_prefetch(next.callees.span().data());
+            __builtin_prefetch(next.directCallees.span().data());
+            __builtin_prefetch(next.otherReferences.span().data());
+            __builtin_prefetch(next.calleeSets.span().data());
+        }
+        const ReferencesOfBody& body = bodies.m_bodies[index];
+        calleeOffsets[index + 1] = static_cast<uint32_t>(std::ranges::count_if(body.callees, isCalleeWithBody));
+        callsUnknownCode[index] = body.callsUnknownCode;
+        for (FunctionID target : body.directCallees)
+            WTF::atomicExchangeAdd(&directCallSites[target.index()], 1u, std::memory_order_relaxed);
+        for (FunctionID target : body.otherReferences) {
+            if (!WTF::atomicLoad(&hasOtherReference[target.index()], std::memory_order_relaxed))
+                WTF::atomicStore(&hasOtherReference[target.index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
+        }
+        for (CalleeSetID set : body.calleeSets)
+            WTF::atomicExchangeAdd(&calleeSetCallSites[set.index()], 1u, std::memory_order_relaxed);
+    });
+    std::partial_sum(calleeOffsets.begin(), calleeOffsets.end(), calleeOffsets.begin());
+    callees.grow(calleeOffsets[count]);
+    forEachIndexInParallel(loops, count, [&](unsigned index) {
+        if (index + prefetchDistance < count)
+            __builtin_prefetch(bodies.m_bodies[index + prefetchDistance].callees.span().data());
+        uint32_t next = calleeOffsets[index];
+        for (FunctionID callee : bodies.m_bodies[index].callees) {
+            if (isCalleeWithBody(callee))
+                callees[next++] = callee;
+        }
+    });
+    forEachIndexInParallel(loops, calleeSetCallSites.size(), [&](unsigned index) {
+        uint32_t numberOfSites = calleeSetCallSites[index];
+        if (!numberOfSites)
+            return;
+        for (FunctionID callee : program.at(CalleeSetID(index)).functions)
+            WTF::atomicExchangeAdd(&linkedCallSites[callee.index()], numberOfSites, std::memory_order_relaxed);
+    });
     times.didFinish("addUpReferences"_s);
-    markRecordReferences(program, references.hasOtherReference, loops);
+    markRecordReferences(program, hasOtherReference, loops);
     times.didFinish("markRecordReferences"_s);
     BitVector isEnteredFromOutside = functionsCalledByHost(program, loops);
-    BitVector isRoot = findRoots(program, flow, isEnteredFromOutside);
+    BitVector isRoot = isEnteredFromOutside;
+    for (const Variable& variable : program.variables) {
+        if (variable.function)
+            isRoot.set(variable.function.index());
+    }
+    for (const FlowIndirectCall& call : flow.indirectCalls()) {
+        if (call.kind == FlowIndirectCallKind::Host)
+            isRoot.set(call.callee.index());
+    }
     times.didFinish("findRoots"_s);
 
     Vector<uint8_t> hasCompleteCallerSet(FillWith { }, count, static_cast<uint8_t>(0));
@@ -817,7 +726,7 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
     Vector<uint8_t> hasCompleteCallSiteSet(FillWith { }, count, static_cast<uint8_t>(0));
     Vector<uint32_t> callSitesOfHost(FillWith { }, count, 0u);
     for (const FlowIndirectCall& call : flow.indirectCalls()) {
-        ++references.linkedCallSites[call.callee.index()];
+        ++linkedCallSites[call.callee.index()];
         if (call.kind == FlowIndirectCallKind::Host)
             ++callSitesOfHost[call.callee.index()];
     }
@@ -827,28 +736,27 @@ CallGraph buildCallGraph(const Program& program, const FlowResults& flow, BuildC
             return;
         hasCompleteCallerSet[index] = !isRoot.get(index)
             && (function.hasOnlyDirectCallers() || callerStateOf(flow, FunctionID(index)) == CallerState::AllKnown);
-        hasCompleteCalleeSet[index] = !references.callsUnknownCode[index];
+        hasCompleteCalleeSet[index] = !callsUnknownCode[index];
         hasOnlyDirectCallers[index] = !isEnteredFromOutside.get(index)
-            && (function.hasOnlyDirectCallers() || !references.hasOtherReference[index]);
-        // Flow has followed every closure of the function to its calls, and none is kept as a value: a reference to a closure adds no way in that is not counted.
+            && (function.hasOnlyDirectCallers() || !hasOtherReference[index]);
         const FunctionFlow& functionFlow = flow.function(FunctionID(index));
         hasCompleteCallSiteSet[index] = hasOnlyDirectCallers[index]
             || (!isEnteredFromOutside.get(index) && functionFlow.callers == CallerState::AllKnown && functionFlow.closureUse == ClosureUse::CalledOnly);
     });
 
     CallGraph graph;
-    graph.m_callees.offsets = WTF::move(references.calleeOffsets);
-    graph.m_callees.targets = WTF::move(references.callees);
+    graph.m_callees.offsets = WTF::move(calleeOffsets);
+    graph.m_callees.targets = WTF::move(callees);
     graph.m_calledByUnknownCode = collectInParallel<FunctionID>(loops, count, [&](unsigned index, Vector<FunctionID>& called) {
         if (!hasCompleteCallerSet[index] && hasBody(program, FunctionID(index)))
             called.append(FunctionID(index));
     });
     graph.m_hasCompleteCalleeSet = createBitVector(hasCompleteCalleeSet);
-    graph.m_callSites = WTF::move(references.linkedCallSites);
+    graph.m_callSites = WTF::move(linkedCallSites);
     graph.m_callSitesOfHost = WTF::move(callSitesOfHost);
     for (unsigned index = 0; index < count; ++index)
-        graph.m_callSites[index] += references.directCallSites[index];
-    graph.m_directCallSites = WTF::move(references.directCallSites);
+        graph.m_callSites[index] += directCallSites[index];
+    graph.m_directCallSites = WTF::move(directCallSites);
     times.didFinish("describeFunctions"_s);
 
     runTasksInParallel(loops, {

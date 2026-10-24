@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="definedInArmOfLoop" parameters=[{type=boolean}, {type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: boolean, v1: boolean, v2: number, v3: number):
     v4 = Add v2, v3
     Jump -> next b1()
   b1():
@@ -48,7 +47,6 @@ function f0 name="definedInArmOfLoop" parameters=[{type=boolean}, {type=boolean}
 # OTHER: b4():
 
 function f1 name="definedInBothArms" parameters=[{type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: boolean, v1: number, v2: number):
     v3 = Add v1, v2
     v4 = Negate v3
     Branch v0 -> taken b1(), notTaken b2()
@@ -71,7 +69,6 @@ function f1 name="definedInBothArms" parameters=[{type=boolean}, {type=number}, 
 # ARMS: v7: number = Add [[J]], v4
 
 function f2 name="usedInHandler" parameters=[{type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
     v2 = Add v0, v1
     Jump -> next b1()
   b1() handler=b3():

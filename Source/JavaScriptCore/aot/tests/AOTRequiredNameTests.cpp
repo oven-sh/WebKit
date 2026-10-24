@@ -35,31 +35,24 @@ entry module=m2
 entry module=m3
 
 function f0 name="absentAllowed" kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f1 name="absentRequired" module=m1 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="ambiguous" module=m2 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f3 name="found" module=m3 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f4 name="barrel" module=m4 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f5 name="one" module=m5 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f6 name="two" module=m6 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 )IR"_s;

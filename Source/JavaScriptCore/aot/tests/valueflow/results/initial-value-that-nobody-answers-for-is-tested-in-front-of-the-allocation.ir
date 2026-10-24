@@ -17,7 +17,6 @@ layout L1 name="Other" fields=[{key="second" declared={type=anything} flags=[IsR
 layout L2 name="Made" fields=[{key="flag" declared={type=boolean} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = NewObject -, v1 layout=L0 fields=[0]
@@ -28,7 +27,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v6
 }
 function f1 name="make" parameters=[{type=undefined|null|L0}, {type=string}] results=[{type=anything}] {
-  b0(v0: undefined|null|L0, v1: string):
     v2 = Convert v0 declared={type=undefined|null|L1} illTypedCause=Assertion
     v3 = ElemGet v2, v1
     v4 = Convert v3 declared={type=boolean}

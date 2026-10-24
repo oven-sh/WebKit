@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="receiverOfInlineCode" parameters=[{type=anything}, {type=string}] results=[{type=string}] {
-  b0(v0: anything, v1: string):
     v2 = TypeTest v0 testedType=Array
     Branch v2 -> taken b1(| 0), notTaken b3()
   b1(v3: Array):
@@ -17,15 +16,13 @@ function f0 name="receiverOfInlineCode" parameters=[{type=anything}, {type=strin
     Return v5
   b3():
     Return v1
-}
-# CHECK-LABEL: function f0 name="receiverOfInlineCode"
 # CHECK-NOT: TryCallInline
 # CHECK-NOT: needsPristineReceiver
 # CHECK: [[joined]]: string = CallBuiltin v3, v1 overload=ArrayPrototypeJoin/0 builtinCallForm=AnyReceiver
 # CHECK-NEXT: Return [[joined]]
+}
 
 function f1 name="receiverAndLiteralSeparator" parameters=[{type=anything}] results=[{type=string}] {
-  b0(v0: anything):
     v1 = String string=", "
     v2 = TypeTest v0 testedType=Array
     Branch v2 -> taken b1(| 0), notTaken b3()
@@ -37,14 +34,12 @@ function f1 name="receiverAndLiteralSeparator" parameters=[{type=anything}] resu
     Return v5
   b3():
     Return v1
-}
-# CHECK-LABEL: function f1 name="receiverAndLiteralSeparator"
 # CHECK-NOT: TryCallInline
 # CHECK-NOT: literalSeparator
 # CHECK: CallBuiltin v3, {{*}} overload=ArrayPrototypeJoin/0 builtinCallForm=AnyReceiver
+}
 
 function f2 name="receiverThatKeptItsType" parameters=[{type=anything}, {type=string}] results=[{type=string}] {
-  b0(v0: anything, v1: string):
     v2 = TypeTest v0 testedType=Array
     Branch v2 -> taken b1(| 0), notTaken b3()
   b1(v3: Array):
@@ -55,6 +50,5 @@ function f2 name="receiverThatKeptItsType" parameters=[{type=anything}, {type=st
     Return v5
   b3():
     Return v1
-}
-# CHECK-LABEL: function f2 name="receiverThatKeptItsType"
 # CHECK: TryCallInline v3, v1 inlineBuiltin=ArrayJoin overload=ArrayPrototypeJoin/0
+}

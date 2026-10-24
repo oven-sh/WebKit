@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="arrayStaysLocal" parameters=[{type=RegExp<"a(b)"[], pristine[Storage, Names, AsCreated]>}, {type=string}, {type=object}] results=[{type=anything}] {
-  b0(v0: RegExp<"a(b)"[], pristine[Storage, Names, AsCreated]>, v1: string, v2: object):
     v3 = RegExpMatchLiteral v1, v0 overload=RegExpPrototypeExec/0 pattern="a(b)" matchForm=Exec
     v4 = ToBoolean v3 form=Bits
     TestAndBranch v4 -> taken b1(| 0), notTaken b3()
@@ -22,7 +21,6 @@ function f0 name="arrayStaysLocal" parameters=[{type=RegExp<"a(b)"[], pristine[S
 # CHECK-NEXT: b2:1 available: [v7]
 
 function f1 name="arrayIsStored" parameters=[{type=RegExp<"a(b)"[], pristine[Storage, Names, AsCreated]>}, {type=string}, {type=object}] results=[{type=anything}] {
-  b0(v0: RegExp<"a(b)"[], pristine[Storage, Names, AsCreated]>, v1: string, v2: object):
     v3 = RegExpMatchLiteral v1, v0 overload=RegExpPrototypeExec/0 pattern="a(b)" matchForm=Exec
     v4 = ToBoolean v3 form=Bits
     TestAndBranch v4 -> taken b1(| 0), notTaken b3()

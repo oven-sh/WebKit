@@ -9,22 +9,19 @@
 #if ENABLE(AOT)
 
 #include "AOTForwardDataflow.h"
-#include "AOTJSONVerificationCapacity.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTStringBuilderCursor.h"
-#include "AOTVector.h"
+#include "AOTThreshold.h"
+#include "AOTValueIdentity.h"
 #include <algorithm>
 #include <optional>
-#include <span>
 #include <wtf/BitVector.h>
-#include <wtf/Noncopyable.h>
-#include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-using OperationFamilySet = EnumeratorBitSet<OperationFamily, numberOfEnumerators<OperationFamily>>;
+AOT_THRESHOLD(unsigned, maxCapacityRounds, 4);
 
-static constexpr OperationFamilySet familiesWithTypedDataRules {
+static constexpr EnumeratorBitSet<OperationFamily, numberOfEnumerators<OperationFamily>> familiesWithTypedDataRules {
     OperationFamily::JSONParse,
     OperationFamily::JSONWrite,
     OperationFamily::Validation,
@@ -38,78 +35,23 @@ static bool mayMoveBuilderBuffer(const EffectsOnEdges& effects)
     return onAnyEdge.mayRunOtherCode() || onAnyEdge.writes.contains(AbstractHeap::StringBuilderContents);
 }
 
-static ValueID findStaleValue(const Terminator& terminator, const BitVector& stale)
-{
-    ValueID found;
-    terminator.forEachChild([&](ValueID child) {
-        if (!found && stale.get(child.index()))
-            found = child;
-    });
-    return found;
-}
-
 namespace {
 
-enum class KeyOrderOrigin : uint8_t { Unknown, SameLayout, Other };
-
+// The pointers of one kind and what invalidates them. To the solver it is the problem of which of them are stale.
 struct PointerSummary {
-    PointerSummary(OpaqueKind kind, const Function& function)
-        : kind(kind)
-        , pointers(function.values.size())
-        , sessions(function.values.size())
-        , invalidations(function.values.size())
-        , invalidatingTerminators(function.blocks.size())
-    {
-    }
-
-    bool canBecomeStale() const
-    {
-        bool hasTrackedValue = !pointers.isEmpty() || !sessions.isEmpty();
-        return hasTrackedValue && (!invalidations.isEmpty() || !invalidatingTerminators.isEmpty());
-    }
-
-    // Every tracked value, unless the operation works on one object and leaves the pointers into the others as they are.
-    const BitVector* pointersInvalidatedBy(ValueID id) const
-    {
-        if (groupInvalidatedBy.isEmpty() || groupInvalidatedBy[id.index()] == everyGroup)
-            return nullptr;
-        return &pointersOfGroup[groupInvalidatedBy[id.index()]];
-    }
-
-    static constexpr uint32_t everyGroup = UINT32_MAX;
-
-    OpaqueKind kind;
-    BitVector pointers;
-    BitVector sessions;
-    BitVector invalidations;
-    BitVector invalidatingTerminators;
-    // By operation that invalidates. Empty where every such operation invalidates every pointer.
-    Vector<uint32_t> groupInvalidatedBy;
-    Vector<BitVector> pointersOfGroup;
-};
-
-class StalePointerProblem {
-    WTF_MAKE_NONCOPYABLE(StalePointerProblem);
-public:
     using State = BitVector;
-
-    StalePointerProblem(const Function& function, const PointerSummary& summary)
-        : m_function(function)
-        , m_summary(summary)
-        , m_tracked(summary.pointers)
-    {
-        m_tracked.merge(summary.sessions);
-    }
+    static constexpr uint32_t everyGroup = UINT32_MAX;
 
     State stateAtEntry() const { return { }; }
 
     void execute(State& stale, ValueID id) const
     {
-        if (m_summary.invalidations.get(id.index())) {
-            if (const BitVector* invalidated = m_summary.pointersInvalidatedBy(id))
-                stale.merge(*invalidated);
+        if (invalidations.get(id.index())) {
+            // Every tracked value, unless the operation works on one object and leaves the pointers into the others as they are.
+            if (groupInvalidatedBy.isEmpty() || groupInvalidatedBy[id.index()] == everyGroup)
+                stale = tracked;
             else
-                stale = m_tracked;
+                stale.merge(pointersOfGroup[groupInvalidatedBy[id.index()]]);
         }
         stale.clear(id.index());
     }
@@ -118,19 +60,19 @@ public:
 
     void executeTerminator(State& stale, const DataflowTerminatorStep& step) const
     {
-        if (m_summary.invalidatingTerminators.get(step.block.index()))
-            stale = m_tracked;
+        if (invalidatingTerminators.get(step.block.index()))
+            stale = tracked;
     }
 
     void enterEdge(State& stale, Edge edge) const
     {
-        const Target& target = targetOf(m_function, edge);
+        const Target& target = targetOf(function, edge);
         BitVector staleArguments;
         for (uint32_t index = 0; index < target.arguments.size(); ++index) {
             if (stale.get(target.arguments[index].index()))
                 staleArguments.set(index);
         }
-        auto& parameters = m_function.at(target.block).parameters;
+        auto& parameters = function.at(target.block).parameters;
         for (uint32_t index = 0; index < parameters.size(); ++index)
             stale.set(parameters[index].index(), staleArguments.get(index));
     }
@@ -142,29 +84,39 @@ public:
         return into.bitCount() != previousCount;
     }
 
-private:
-    const Function& m_function;
-    const PointerSummary& m_summary;
-    BitVector m_tracked;
+    const Function& function;
+    OpaqueKind kind;
+    BitVector pointers { function.values.size() };
+    BitVector sessions { function.values.size() };
+    BitVector tracked { };
+    BitVector invalidations { function.values.size() };
+    BitVector invalidatingTerminators { function.blocks.size() };
+    // By operation that invalidates. Empty where every such operation invalidates every pointer.
+    Vector<uint32_t> groupInvalidatedBy { };
+    Vector<BitVector> pointersOfGroup { };
 };
 
-class TypedDataVerifier {
-    WTF_MAKE_NONCOPYABLE(TypedDataVerifier);
-public:
-    TypedDataVerifier(const Program&, FunctionID, const Function&, FunctionAnalyses&, Vector<InternalError>&);
+struct TypedDataVerifier {
+    std::optional<OpaqueKind> kindOf(ValueID value) const { return program.typeOf(function, value).opaque; }
 
-    void run(IRForm);
-
-private:
-    std::optional<OpaqueKind> kindOf(ValueID id) const { return m_program.typeOf(m_function, id).opaque; }
-    void report(InternalErrorKind, BlockID, ValueID, uint32_t count = 0);
+    void report(InternalErrorKind kind, BlockID block, ValueID value, uint32_t count = 0)
+    {
+        errors.append(InternalError {
+            .kind = kind,
+            .function = id,
+            .block = block,
+            .value = value,
+            .count = count,
+            .location = value ? function.locationOf(value) : noSourceLocation,
+        });
+    }
 
     bool reportFirstViolation(InternalErrorKind kind, NOESCAPE const Invocable<bool(BlockID, ValueID)> auto& isViolation)
     {
-        for (BlockID block : m_cfg.reversePostOrder()) {
-            for (ValueID id : m_function.at(block).values) {
-                if (isViolation(block, id)) {
-                    report(kind, block, id);
+        for (BlockID block : cfg.reversePostOrder()) {
+            for (ValueID value : function.at(block).values) {
+                if (isViolation(block, value)) {
+                    report(kind, block, value);
                     return true;
                 }
             }
@@ -172,395 +124,368 @@ private:
         return false;
     }
 
-    void collectSummary();
-    void addIfPointer(ValueID);
-    void collectSourceGuards(std::span<const ValueID> guards);
-    void collectBuilderInvalidations();
-    void groupCursorsByBuilder();
-    bool invalidatesBuilderCursors(ValueID);
+    void run(IRForm form)
+    {
+        collectSummary();
+        verifyFunctionReferences();
+        verifyCursorGuards();
+        verifyPointersAreNotStale(cursors, InternalErrorKind::CursorUsedAfterClose);
+        verifyKeyOrderObjects();
+        if (form < IRForm::Prepared || builderCursors.pointers.isEmpty())
+            return;
+        collectBuilderInvalidations();
+        verifyBuilderCapacity();
+        verifyPointersAreNotStale(builderCursors, InternalErrorKind::BuilderCursorUsedAfterMove);
+    }
 
-    bool isReturnedCall(BlockID, ValueID) const;
-    bool isUnderMatchingTest(const Value& advance);
-    KeyOrderOrigin originOfKeyOrder(LayoutID, ValueID order);
-    bool isNewObjectOf(LayoutID, ValueID object);
-    bool usesStalePointer(const PointerSummary&, ValueID, const BitVector& stale) const;
+    void collectSummary()
+    {
+        Vector<ValueID, 8> guards;
+        auto add = [&](ValueID value) {
+            if (isGuardValue(function, value)) {
+                guards.append(value);
+                return;
+            }
+            std::optional<OpaqueKind> kind = kindOf(value);
+            if (kind != cursors.kind && kind != builderCursors.kind)
+                return;
+            BitVector& pointers = (kind == cursors.kind ? cursors : builderCursors).pointers;
+            pointers.quickSet(value.index());
+            if (function.at(value).opcode == Opcode::ResultAt)
+                pointers.quickSet(function.at(value).resultsOperand().index());
+        };
 
-    void verifyFunctionReferences();
-    void verifyCursorGuards();
-    void verifyPointersAreNotStale(const PointerSummary&, InternalErrorKind);
-    void verifyKeyOrderObjects();
-    void verifyBuilderCapacity();
-
-    const Program& m_program;
-    FunctionID m_id;
-    const Function& m_function;
-    FunctionAnalyses& m_analyses;
-    const CFG& m_cfg;
-    Vector<InternalError>& m_errors;
-    PointerSummary m_cursors;
-    PointerSummary m_builderCursors;
-    OpcodeSet m_usedOpcodes;
-};
-
-TypedDataVerifier::TypedDataVerifier(const Program& program, FunctionID id, const Function& function, FunctionAnalyses& analyses, Vector<InternalError>& errors)
-    : m_program(program)
-    , m_id(id)
-    , m_function(function)
-    , m_analyses(analyses)
-    , m_cfg(analyses.cfg())
-    , m_errors(errors)
-    , m_cursors(OpaqueKind::Cursor, function)
-    , m_builderCursors(OpaqueKind::BuilderCursor, function)
-{
-}
-
-void TypedDataVerifier::run(IRForm form)
-{
-    collectSummary();
-    verifyFunctionReferences();
-    verifyCursorGuards();
-    verifyPointersAreNotStale(m_cursors, InternalErrorKind::CursorUsedAfterClose);
-    verifyKeyOrderObjects();
-    if (form < IRForm::Prepared || m_builderCursors.pointers.isEmpty())
-        return;
-    collectBuilderInvalidations();
-    verifyBuilderCapacity();
-    verifyPointersAreNotStale(m_builderCursors, InternalErrorKind::BuilderCursorUsedAfterMove);
-}
-
-void TypedDataVerifier::report(InternalErrorKind kind, BlockID block, ValueID value, uint32_t count)
-{
-    m_errors.append(InternalError {
-        .kind = kind,
-        .function = m_id,
-        .block = block,
-        .value = value,
-        .count = count,
-        .location = value ? m_function.locationOf(value) : noSourceLocation,
-    });
-}
-
-void TypedDataVerifier::collectSummary()
-{
-    Vector<ValueID, 8> guards;
-    auto add = [&](ValueID id) {
-        if (isGuardValue(m_function, id))
-            guards.append(id);
-        else
-            addIfPointer(id);
-    };
-
-    for (BlockID blockID : m_cfg.reversePostOrder()) {
-        const Block& block = m_function.at(blockID);
-        for (ValueID parameter : block.parameters)
-            add(parameter);
-        for (ValueID id : block.values) {
-            Opcode opcode = m_function.at(id).opcode;
-            m_usedOpcodes.add(opcode);
-            add(id);
-            if (cursorInvalidatingOpcodes.contains(opcode))
-                m_cursors.invalidations.quickSet(id.index());
+        for (BlockID blockID : cfg.reversePostOrder()) {
+            const Block& block = function.at(blockID);
+            for (ValueID parameter : block.parameters)
+                add(parameter);
+            for (ValueID value : block.values) {
+                Opcode opcode = function.at(value).opcode;
+                usedOpcodes.add(opcode);
+                add(value);
+                if (cursorInvalidatingOpcodes.contains(opcode))
+                    cursors.invalidations.quickSet(value.index());
+            }
+        }
+        if (!usedOpcodes.contains(Opcode::JSONSourceOpen))
+            return;
+        for (ValueID guard : guards) {
+            if (analyses.guardFacts(guard).find(Proof::SourceOpen))
+                cursors.sessions.quickSet(guard.index());
         }
     }
-    collectSourceGuards(guards.span());
-}
 
-void TypedDataVerifier::addIfPointer(ValueID id)
-{
-    std::optional<OpaqueKind> kind = kindOf(id);
-    if (kind != m_cursors.kind && kind != m_builderCursors.kind)
-        return;
-    PointerSummary& summary = kind == m_cursors.kind ? m_cursors : m_builderCursors;
-    const Value& value = m_function.at(id);
-    ValueID producer = value.opcode == Opcode::ResultAt ? value.resultsOperand() : id;
-    for (ValueID tracked : { id, producer })
-        summary.pointers.quickSet(tracked.index());
-}
-
-void TypedDataVerifier::collectSourceGuards(std::span<const ValueID> guards)
-{
-    if (!m_usedOpcodes.contains(Opcode::JSONSourceOpen))
-        return;
-    for (ValueID guard : guards) {
-        if (m_analyses.guardFacts(guard).find(Proof::SourceOpen))
-            m_cursors.sessions.quickSet(guard.index());
-    }
-}
-
-void TypedDataVerifier::collectBuilderInvalidations()
-{
-    for (BlockID block : m_cfg.reversePostOrder()) {
-        for (ValueID id : m_function.at(block).values) {
-            if (invalidatesBuilderCursors(id))
-                m_builderCursors.invalidations.quickSet(id.index());
+    void collectBuilderInvalidations()
+    {
+        for (BlockID block : cfg.reversePostOrder()) {
+            for (ValueID value : function.at(block).values) {
+                Opcode opcode = function.at(value).opcode;
+                bool invalidates = familyOf(opcode) == OperationFamily::JSONWrite ? renewsReservation(opcode) || opcode == Opcode::StringBuilderCommit : mayMoveBuilderBuffer(analyses.effectsOf(value));
+                if (invalidates)
+                    builderCursors.invalidations.quickSet(value.index());
+            }
+            if (mayMoveBuilderBuffer(analyses.effectsOfTerminator(block)))
+                builderCursors.invalidatingTerminators.quickSet(block.index());
         }
-        if (mayMoveBuilderBuffer(m_analyses.effectsOfTerminator(block)))
-            m_builderCursors.invalidatingTerminators.quickSet(block.index());
+        groupCursorsByBuilder();
     }
-    groupCursorsByBuilder();
-}
 
-// Each builder has a buffer of its own, so what is done to one builder moves no other's. Builders that meet in a parameter of a block count as one, and a cursor belongs to the builder that it was reserved in.
-void TypedDataVerifier::groupCursorsByBuilder()
-{
-    uint32_t numberOfValues = m_function.values.size();
-    Vector<uint32_t> parent(numberOfValues, [](size_t index) {
-        return static_cast<uint32_t>(index);
-    });
-    auto find = [&](uint32_t value) {
-        while (parent[value] != value)
-            value = parent[value] = parent[parent[value]];
-        return value;
-    };
-    auto unite = [&](ValueID first, ValueID second) {
-        uint32_t a = find(first.index());
-        uint32_t b = find(second.index());
-        parent[std::max(a, b)] = std::min(a, b);
-    };
-    auto isBuilderOrCursor = [&](ValueID id) {
-        std::optional<OpaqueKind> kind = kindOf(id);
-        return kind == OpaqueKind::StringBuilder || kind == OpaqueKind::BuilderCursor || m_builderCursors.pointers.get(id.index());
-    };
+    // Each builder has a buffer of its own, so what is done to one builder moves no other's. Builders that meet in a parameter of a block count as one, and a cursor belongs to the builder that it was reserved in.
+    void groupCursorsByBuilder()
+    {
+        uint32_t numberOfValues = function.values.size();
+        Vector<uint32_t> parent(numberOfValues, [](size_t index) { return static_cast<uint32_t>(index); });
+        auto find = [&](uint32_t value) {
+            while (parent[value] != value)
+                value = parent[value] = parent[parent[value]];
+            return value;
+        };
+        auto unite = [&](ValueID first, ValueID second) {
+            uint32_t a = find(first.index());
+            uint32_t b = find(second.index());
+            parent[std::max(a, b)] = std::min(a, b);
+        };
+        auto isBuilderOrCursor = [&](ValueID value) {
+            std::optional<OpaqueKind> kind = kindOf(value);
+            return kind == OpaqueKind::StringBuilder || kind == OpaqueKind::BuilderCursor || builderCursors.pointers.get(value.index());
+        };
 
-    for (BlockID block : m_cfg.reversePostOrder()) {
-        for (ValueID id : m_function.at(block).values) {
-            ValueID first = isBuilderOrCursor(id) ? id : ValueID();
-            m_function.at(id).forEachOperand([&](ValueID operand, uint32_t) {
-                if (!isBuilderOrCursor(operand))
-                    return;
-                if (first)
-                    unite(first, operand);
-                first = operand;
+        for (BlockID block : cfg.reversePostOrder()) {
+            for (ValueID value : function.at(block).values) {
+                ValueID first = isBuilderOrCursor(value) ? value : ValueID();
+                function.at(value).forEachOperand([&](ValueID operand, uint32_t) {
+                    if (!isBuilderOrCursor(operand))
+                        return;
+                    if (first)
+                        unite(first, operand);
+                    first = operand;
+                });
+            }
+            forEachOutgoingEdge(function, block, [&](Edge, const Target& target) {
+                auto& parameters = function.at(target.block).parameters;
+                for (uint32_t index = 0; index < target.arguments.size(); ++index) {
+                    if (isBuilderOrCursor(parameters[index]))
+                        unite(parameters[index], target.arguments[index]);
+                }
             });
         }
-        forEachOutgoingEdge(m_function, block, [&](Edge, const Target& target) {
-            auto& parameters = m_function.at(target.block).parameters;
-            for (uint32_t index = 0; index < target.arguments.size(); ++index) {
-                if (isBuilderOrCursor(parameters[index]))
-                    unite(parameters[index], target.arguments[index]);
+
+        Vector<uint32_t> numberOfGroup(FillWith { }, numberOfValues, PointerSummary::everyGroup);
+        auto groupOf = [&](ValueID value) {
+            uint32_t& number = numberOfGroup[find(value.index())];
+            if (number == PointerSummary::everyGroup) {
+                number = builderCursors.pointersOfGroup.size();
+                builderCursors.pointersOfGroup.append(BitVector(numberOfValues));
             }
-        });
-    }
+            return number;
+        };
+        for (size_t pointer : builderCursors.pointers)
+            builderCursors.pointersOfGroup[groupOf(ValueID(static_cast<uint32_t>(pointer)))].quickSet(pointer);
 
-    Vector<uint32_t> numberOfGroup(FillWith { }, numberOfValues, PointerSummary::everyGroup);
-    auto groupOf = [&](ValueID id) {
-        uint32_t& number = numberOfGroup[find(id.index())];
-        if (number == PointerSummary::everyGroup) {
-            number = m_builderCursors.pointersOfGroup.size();
-            m_builderCursors.pointersOfGroup.append(BitVector(numberOfValues));
+        builderCursors.groupInvalidatedBy.fill(PointerSummary::everyGroup, numberOfValues);
+        for (size_t index : builderCursors.invalidations) {
+            ValueID value(static_cast<uint32_t>(index));
+            if (analyses.mayRunOtherCodeOnAnyEdge(value))
+                continue;
+            ValueID builder = kindOf(value) == OpaqueKind::StringBuilder ? value : ValueID();
+            function.at(value).forEachOperand([&](ValueID operand, uint32_t) {
+                if (kindOf(operand) == OpaqueKind::StringBuilder)
+                    builder = operand;
+            });
+            if (builder)
+                builderCursors.groupInvalidatedBy[index] = groupOf(builder);
         }
-        return number;
-    };
-    for (size_t pointer : m_builderCursors.pointers)
-        m_builderCursors.pointersOfGroup[groupOf(ValueID(static_cast<uint32_t>(pointer)))].quickSet(pointer);
-
-    m_builderCursors.groupInvalidatedBy.fill(PointerSummary::everyGroup, numberOfValues);
-    for (size_t index : m_builderCursors.invalidations) {
-        ValueID id(static_cast<uint32_t>(index));
-        if (m_analyses.mayRunOtherCodeOnAnyEdge(id))
-            continue;
-        ValueID builder = kindOf(id) == OpaqueKind::StringBuilder ? id : ValueID();
-        m_function.at(id).forEachOperand([&](ValueID operand, uint32_t) {
-            if (kindOf(operand) == OpaqueKind::StringBuilder)
-                builder = operand;
-        });
-        if (builder)
-            m_builderCursors.groupInvalidatedBy[index] = groupOf(builder);
     }
-}
 
-bool TypedDataVerifier::invalidatesBuilderCursors(ValueID id)
-{
-    Opcode opcode = m_function.at(id).opcode;
-    if (familyOf(opcode) == OperationFamily::JSONWrite)
-        return renewsReservation(opcode) || opcode == Opcode::StringBuilderCommit;
-    return mayMoveBuilderBuffer(m_analyses.effectsOf(id));
-}
-
-bool TypedDataVerifier::isReturnedCall(BlockID block, ValueID id) const
-{
-    const Terminator& terminator = m_function.at(block).terminator;
-    return terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == id;
-}
-
-void TypedDataVerifier::verifyFunctionReferences()
-{
-    bool didReport = reportFirstViolation(InternalErrorKind::CursorInFunctionValue, [&](BlockID block, ValueID id) {
-        const Value& value = m_function.at(id);
-        bool isViolation = false;
-        forEachFunctionReference(value, [&](FunctionID referenced, FunctionReferenceKind kind) {
-            if (!hasCursorInSignature(m_program, m_program.at(referenced)))
-                return;
-            bool isReturningDirectCall = kind == FunctionReferenceKind::Call && value.opcode == Opcode::CallDirect && !isReturnedCall(block, id);
-            isViolation |= !isReturningDirectCall;
+    void verifyFunctionReferences()
+    {
+        bool didReport = reportFirstViolation(InternalErrorKind::CursorInFunctionValue, [&](BlockID block, ValueID valueID) {
+            const Value& value = function.at(valueID);
+            bool isViolation = false;
+            forEachFunctionReference(value, [&](FunctionID referenced, FunctionReferenceKind kind) {
+                if (!hasCursorInSignature(program, program.at(referenced)))
+                    return;
+                const Terminator& terminator = function.at(block).terminator;
+                bool isReturnedCall = terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == valueID;
+                isViolation |= kind != FunctionReferenceKind::Call || value.opcode != Opcode::CallDirect || isReturnedCall;
+            });
+            return isViolation;
         });
-        return isViolation;
-    });
-    if (didReport || !hasCursorInSignature(m_program, m_function))
-        return;
-    if (!m_function.hasOnlyDirectCallers())
-        report(InternalErrorKind::CursorInFunctionValue, { }, { });
-}
+        if (!didReport && hasCursorInSignature(program, function) && !function.hasOnlyDirectCallers())
+            report(InternalErrorKind::CursorInFunctionValue, { }, { });
+    }
 
-bool TypedDataVerifier::isUnderMatchingTest(const Value& advance)
-{
-    ValueID cursor = m_analyses.identityOf(advance.cursorOperand());
-    return std::ranges::any_of(m_analyses.guardFacts(advance.guardOperand()).facts, [&](const GuardFact& fact) {
-        if (!fact.proves(Proof::TextMatches) || fact.subject != cursor)
-            return false;
-        return std::ranges::all_of(fact.origins, [&](const GuardOrigin& origin) {
-            if (origin.source != GuardSource::Test)
+    bool isUnderMatchingTest(const Value& advance)
+    {
+        ValueID cursor = analyses.identityOf(advance.cursorOperand());
+        return std::ranges::any_of(analyses.guardFacts(advance.guardOperand()).facts, [&](const GuardFact& fact) {
+            if (!fact.proves(Proof::TextMatches) || fact.subject != cursor)
                 return false;
-            const Value& test = m_function.at(origin.test);
-            return test.opcode == Opcode::JSONStartsWith && test.string() == advance.string();
+            return std::ranges::all_of(fact.origins, [&](const GuardOrigin& origin) {
+                if (origin.source != GuardSource::Test)
+                    return false;
+                const Value& test = function.at(origin.test);
+                return test.opcode == Opcode::JSONStartsWith && test.string() == advance.string();
+            });
         });
-    });
-}
+    }
 
-void TypedDataVerifier::verifyCursorGuards()
-{
-    reportFirstViolation(InternalErrorKind::CursorGuardMismatch, [&](BlockID, ValueID id) {
-        const Value& value = m_function.at(id);
-        ProofSet relied = reliesOf(value.opcode);
-        if (relied.contains(Proof::TextMatches))
-            return !isUnderMatchingTest(value);
-        if (relied.contains(Proof::SourceOpen))
-            return !m_analyses.guardFacts(value.guardOperand()).find(Proof::SourceOpen);
-        return false;
-    });
-}
+    void verifyCursorGuards()
+    {
+        reportFirstViolation(InternalErrorKind::CursorGuardMismatch, [&](BlockID, ValueID valueID) {
+            const Value& value = function.at(valueID);
+            ProofSet relied = reliesOf(value.opcode);
+            if (relied.contains(Proof::TextMatches))
+                return !isUnderMatchingTest(value);
+            return relied.contains(Proof::SourceOpen) && !analyses.guardFacts(value.guardOperand()).find(Proof::SourceOpen);
+        });
+    }
 
-bool TypedDataVerifier::usesStalePointer(const PointerSummary& summary, ValueID id, const BitVector& stale) const
-{
-    const Value& value = m_function.at(id);
-    if (value.opcode == Opcode::ResultAt && kindOf(id) != summary.kind)
-        return false;
-    bool result = false;
-    value.forEachOperand([&](ValueID operand, uint32_t) {
-        result |= stale.get(operand.index());
-    });
-    return result;
-}
+    void verifyPointersAreNotStale(PointerSummary& summary, InternalErrorKind violation)
+    {
+        bool canBecomeStale = (!summary.pointers.isEmpty() || !summary.sessions.isEmpty()) && (!summary.invalidations.isEmpty() || !summary.invalidatingTerminators.isEmpty());
+        if (!canBecomeStale)
+            return;
 
-void TypedDataVerifier::verifyPointersAreNotStale(const PointerSummary& summary, InternalErrorKind violation)
-{
-    if (!summary.canBecomeStale())
-        return;
-
-    StalePointerProblem problem(m_function, summary);
-    Vector<std::optional<BitVector>> staleAtHead = m_analyses.solveForward(problem);
-    for (BlockID blockID : m_cfg.reversePostOrder()) {
-        const Block& block = m_function.at(blockID);
-        BitVector& stale = *staleAtHead[blockID.index()];
-        for (ValueID id : block.values) {
-            if (usesStalePointer(summary, id, stale)) {
-                report(violation, blockID, id);
+        summary.tracked = summary.pointers;
+        summary.tracked.merge(summary.sessions);
+        Vector<std::optional<BitVector>> staleAtHead = analyses.solveForward(summary);
+        for (BlockID blockID : cfg.reversePostOrder()) {
+            const Block& block = function.at(blockID);
+            BitVector& stale = *staleAtHead[blockID.index()];
+            ValueID user;
+            for (ValueID valueID : block.values) {
+                const Value& value = function.at(valueID);
+                if (value.opcode != Opcode::ResultAt || kindOf(valueID) == summary.kind) {
+                    value.forEachOperand([&](ValueID operand, uint32_t) {
+                        if (stale.get(operand.index()))
+                            user = valueID;
+                    });
+                }
+                if (user)
+                    break;
+                summary.execute(stale, valueID);
+            }
+            block.terminator.forEachChild([&](ValueID child) {
+                if (!user && stale.get(child.index()))
+                    user = child;
+            });
+            if (user) {
+                report(violation, blockID, user);
                 return;
             }
-            problem.execute(stale, id);
-        }
-        if (ValueID leaving = findStaleValue(block.terminator, stale)) {
-            report(violation, blockID, leaving);
-            return;
         }
     }
-}
 
-KeyOrderOrigin TypedDataVerifier::originOfKeyOrder(LayoutID layout, ValueID order)
-{
-    const UseLists& useLists = m_analyses.useLists();
-    KeyOrderOrigin origin = KeyOrderOrigin::SameLayout;
-    BitVector isVisited;
-    Vector<ValueID, 8> worklist { order };
-    while (!worklist.isEmpty()) {
-        ValueID id = m_analyses.identityOf(worklist.takeLast());
-        if (isVisited.set(id.index()))
-            continue;
+    // Whether all that may arrive as the value passes: an operation is shown to the functor, which may name more values, and a parameter of a block stands for the arguments of the edges into the block.
+    bool holdsForOriginsOf(ValueID start, bool holdsForParametersOfFunction, const auto& canonicalOf, const auto& holdsFor)
+    {
+        const UseLists& useLists = analyses.useLists();
+        BitVector isVisited;
+        Vector<ValueID, 8> worklist { start };
+        while (!worklist.isEmpty()) {
+            ValueID value = canonicalOf(worklist.takeLast());
+            if (isVisited.set(value.index()))
+                continue;
 
-        ValueLocation location = useLists.locationOf(id);
-        switch (location.placement) {
-        case ValuePlacement::Detached:
-            return KeyOrderOrigin::Other;
-        case ValuePlacement::Parameter:
-            if (location.block == entryBlock) {
-                origin = KeyOrderOrigin::Unknown;
-                break;
+            ValueLocation location = useLists.locationOf(value);
+            if (location.placement == ValuePlacement::InBlock) {
+                if (!holdsFor(function.at(value), worklist))
+                    return false;
+                continue;
             }
-            for (Edge edge : m_cfg.incomingEdges(location.block)) {
-                IncomingValue incoming = incomingValueOf(m_function, edge, location.index);
+            if (location.placement != ValuePlacement::Parameter)
+                return false;
+            if (location.block == entryBlock) {
+                if (!holdsForParametersOfFunction)
+                    return false;
+                continue;
+            }
+            for (Edge edge : cfg.incomingEdges(location.block)) {
+                IncomingValue incoming = incomingValueOf(function, edge, location.index);
                 if (incoming.kind != IncomingValue::Kind::Argument)
-                    return KeyOrderOrigin::Other;
+                    return false;
                 worklist.append(incoming.argument);
             }
-            break;
-        case ValuePlacement::InBlock: {
-            const Value& value = m_function.at(id);
-            const Value& row = value.opcode == Opcode::ResultAt ? m_function.at(value.resultsOperand()) : value;
-            if (row.opcode == Opcode::CallDirect) {
-                origin = KeyOrderOrigin::Unknown;
-                break;
-            }
+        }
+        return true;
+    }
+
+    // What a caller hands in, or a callee answers, is not followed.
+    enum class KeyOrderOrigin : uint8_t { SameLayoutOrUnknown, Other };
+    KeyOrderOrigin originOfKeyOrder(LayoutID layout, ValueID order)
+    {
+        bool isOfLayoutWhereFollowed = holdsForOriginsOf(order, true, [&](ValueID value) { return analyses.identityOf(value); }, [&](const Value& value, auto& worklist) {
+            const Value& row = value.opcode == Opcode::ResultAt ? function.at(value.resultsOperand()) : value;
+            if (row.opcode == Opcode::CallDirect)
+                return true;
             bool answersKeyOrder = familyOf(row.opcode) == OperationFamily::JSONParse || row.opcode == Opcode::FindSourcePlan;
             if (!answersKeyOrder || !Value::opcodesWithLayout.contains(row.opcode) || row.layout() != layout)
-                return KeyOrderOrigin::Other;
+                return false;
             if (OperandPosition::order(row.opcode))
                 worklist.append(row.orderOperand());
-            break;
-        }
-        }
-    }
-    return origin;
-}
-
-// An allocation that is made again on several ways arrives as the parameter of the block where they meet.
-bool TypedDataVerifier::isNewObjectOf(LayoutID layout, ValueID object)
-{
-    const UseLists& useLists = m_analyses.useLists();
-    BitVector isVisited;
-    Vector<ValueID, 4> worklist { object };
-    while (!worklist.isEmpty()) {
-        ValueID id = m_analyses.sameObjectThroughCasts(worklist.takeLast());
-        if (isVisited.set(id.index()))
-            continue;
-
-        ValueLocation location = useLists.locationOf(id);
-        if (location.placement == ValuePlacement::InBlock) {
-            const Value& value = m_function.at(id);
-            if (value.opcode != Opcode::NewObject || value.layout() != layout)
-                return false;
-            continue;
-        }
-        if (location.placement != ValuePlacement::Parameter || location.block == entryBlock)
-            return false;
-        for (Edge edge : m_cfg.incomingEdges(location.block)) {
-            IncomingValue incoming = incomingValueOf(m_function, edge, location.index);
-            if (incoming.kind != IncomingValue::Kind::Argument)
-                return false;
-            worklist.append(incoming.argument);
-        }
-    }
-    return true;
-}
-
-void TypedDataVerifier::verifyKeyOrderObjects()
-{
-    if (!m_usedOpcodes.contains(Opcode::JSONObjectFinish))
-        return;
-    reportFirstViolation(InternalErrorKind::KeyOrderOfOtherObject, [&](BlockID, ValueID id) {
-        const Value& finish = m_function.at(id);
-        if (finish.opcode != Opcode::JSONObjectFinish)
-            return false;
-        if (!isNewObjectOf(finish.layout(), finish.objectOperand()))
             return true;
-        return originOfKeyOrder(finish.layout(), finish.orderOperand()) == KeyOrderOrigin::Other;
-    });
-}
+        });
+        return isOfLayoutWhereFollowed ? KeyOrderOrigin::SameLayoutOrUnknown : KeyOrderOrigin::Other;
+    }
 
-void TypedDataVerifier::verifyBuilderCapacity()
-{
-    if (auto violation = findBuilderCapacityViolation(m_program, m_function, m_cfg))
-        report(InternalErrorKind::BuilderCapacityExceeded, violation->block, violation->value, violation->requiredBytes);
-}
+    // An allocation that is made again on several ways arrives as the parameter of the block where they meet.
+    bool isNewObjectOf(LayoutID layout, ValueID object)
+    {
+        return holdsForOriginsOf(object, false, [&](ValueID value) { return analyses.sameObjectThroughCasts(value); }, [&](const Value& value, auto&) {
+            return value.opcode == Opcode::NewObject && value.layout() == layout;
+        });
+    }
+
+    void verifyKeyOrderObjects()
+    {
+        if (!usedOpcodes.contains(Opcode::JSONObjectFinish))
+            return;
+        reportFirstViolation(InternalErrorKind::KeyOrderOfOtherObject, [&](BlockID, ValueID value) {
+            const Value& finish = function.at(value);
+            return finish.opcode == Opcode::JSONObjectFinish && (!isNewObjectOf(finish.layout(), finish.objectOperand()) || originOfKeyOrder(finish.layout(), finish.orderOperand()) == KeyOrderOrigin::Other);
+        });
+    }
+
+    // No row takes more bytes than the rows before it have left of the reservation of its cursor.
+    void verifyBuilderCapacity()
+    {
+        Vector<std::optional<uint32_t>> reservedBytes(function.values.size());
+        auto isCursor = [&](ValueID value) { return kindOf(value) == OpaqueKind::BuilderCursor; };
+        auto reservedBytesOf = [&](ValueID value) { return reservedBytes[value.index()].value_or(0); };
+        struct {
+            BlockID block;
+            ValueID value;
+            uint32_t requiredBytes { 0 };
+        } violation;
+
+        auto mergeParameters = [&](BlockID block, bool shouldWiden) {
+            bool didChange = false;
+            auto& parameters = function.at(block).parameters;
+            for (uint32_t index = 0; index < parameters.size(); ++index) {
+                if (!isCursor(parameters[index]))
+                    continue;
+                std::optional<uint32_t>& reserved = reservedBytes[parameters[index].index()];
+                std::optional<uint32_t> merged = reserved;
+                for (Edge edge : cfg.incomingEdges(block)) {
+                    IncomingValue incoming = incomingValueOf(function, edge, index);
+                    if (std::optional<uint32_t> onEdge = incoming.kind == IncomingValue::Kind::Argument ? reservedBytes[incoming.argument.index()] : std::optional<uint32_t>(0))
+                        merged = std::min(merged.value_or(*onEdge), *onEdge);
+                }
+                if (merged == reserved)
+                    continue;
+                if (shouldWiden)
+                    merged = 0;
+                reserved = merged;
+                didChange = true;
+            }
+            return didChange;
+        };
+        auto reservedBytesBehind = [&](BlockID block, ValueID value) -> uint32_t {
+            const Value& row = function.at(value);
+            if (row.opcode == Opcode::StringBuilderReserve)
+                return row.size();
+
+            uint32_t taken = bytesTakenFromReservation(program, row);
+            uint32_t reserved = reservedBytesOf(row.cursorOperand());
+            if (taken > reserved && !violation.value)
+                violation = { block, value, taken };
+            if (renewsReservation(row.opcode))
+                return maxStringBuilderReservation;
+            return taken > reserved ? 0 : reserved - taken;
+        };
+
+        bool didChange = true;
+        for (unsigned round = 1; didChange; ++round) {
+            didChange = false;
+            violation = { };
+            for (BlockID block : cfg.reversePostOrder()) {
+                didChange |= mergeParameters(block, round >= maxCapacityRounds);
+                for (ValueID valueID : function.at(block).values) {
+                    const Value& value = function.at(valueID);
+                    if (familyOf(value.opcode) == OperationFamily::JSONWrite)
+                        reservedBytes[valueID.index()] = reservedBytesBehind(block, valueID);
+                    else if (isCursor(valueID)) {
+                        ValueID forwarded = value.opcode == Opcode::ResultAt || isCast(value.opcode) ? value.operand(0) : ValueID();
+                        reservedBytes[valueID.index()] = forwarded ? reservedBytesOf(forwarded) : 0;
+                    }
+                }
+            }
+        }
+        if (violation.value)
+            report(InternalErrorKind::BuilderCapacityExceeded, violation.block, violation.value, violation.requiredBytes);
+    }
+
+    const Program& program;
+    FunctionID id;
+    const Function& function;
+    FunctionAnalyses& analyses;
+    Vector<InternalError>& errors;
+    const CFG& cfg { analyses.cfg() };
+    PointerSummary cursors { function, OpaqueKind::Cursor };
+    PointerSummary builderCursors { function, OpaqueKind::BuilderCursor };
+    OpcodeSet usedOpcodes { };
+};
 
 } // anonymous namespace
 
@@ -591,7 +516,7 @@ bool referencesFunctionWithCursor(const Program& program, const Value& value)
 
 void verifyTypedDataRules(const Program& program, FunctionID id, const Function& function, FunctionAnalyses& analyses, IRForm form, Vector<InternalError>& errors)
 {
-    TypedDataVerifier(program, id, function, analyses, errors).run(form);
+    TypedDataVerifier { program, id, function, analyses, errors }.run(form);
 }
 
 } } } // namespace JSC::AOT::Typed

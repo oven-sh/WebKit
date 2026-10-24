@@ -19,7 +19,6 @@ layout L5 kind=Instance name="MethodBase" constructor=f7
 layout L6 kind=Instance name="BelowMethod" base=L5 constructor=f9 staticFields=[{key="count" variable=g3}] flags=[HasHeritage]
 layout L7 kind=Instance name="StoredEarlyBelowSetter" base=L3 constructor=f15 staticFields=[{key="count" variable=g4}] flags=[HasHeritage]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Double number=1.5
     v1 = NewClosure function=f1
     v2 = NewClass v1 layout=L0
@@ -67,108 +66,85 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v44 = FinishClass v41 layout=L7
     v45 = CallDirect v44, v0 function=f16
     Return
-}
-# CHECK-LABEL: function f0 name="main"
 # CHECK: PropSet [[storedEarly]], v0 key="count"
 # CHECK-NEXT: PutModuleVariable v0 variable=g4
+}
 function f1 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2
 }
 function f2 name="Child" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f3 name="Redeclaring" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f4 name="SetterBase" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L3
     v2 = NewObject v1 layout=L3
     Return v2
 }
 function f5 name="count" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Return
 }
 function f6 name="BelowSetter" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f7 name="MethodBase" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L5
     v2 = NewObject v1 layout=L5
     Return v2
 }
 function f8 name="count" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f9 name="BelowMethod" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 
 function f10 name="holder-without-base" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = PropGet v0 key="count"
     PropSet v0, v1 key="count"
     Return v2
-}
-# CHECK-LABEL: function f10 name="holder-without-base"
 # CHECK: = GetModuleVariable variable=g0
 # CHECK: PutModuleVariable v1 variable=g0
+}
 function f11 name="stored-through-subclass" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = PropGet v0 key="count"
     PropSet v0, v1 key="count"
     Return v2
-}
-# CHECK-LABEL: function f11 name="stored-through-subclass"
 # CHECK: = PropGet [[subclass]] key="count"
 # CHECK: PropSet [[subclass]], v1 key="count"
+}
 function f12 name="subclass-declares-the-name-again" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = PropGet v0 key="count"
     PropSet v0, v1 key="count"
     Return v2
-}
-# CHECK-LABEL: function f12 name="subclass-declares-the-name-again"
 # CHECK: = GetModuleVariable variable=g1
 # CHECK: PutModuleVariable v1 variable=g1
+}
 function f13 name="below-setter" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = PropGet v0 key="count"
     PropSet v0, v1 key="count"
     Return v2
-}
-# CHECK-LABEL: function f13 name="below-setter"
 # CHECK: = GetModuleVariable variable=g2
 # CHECK: PutModuleVariable v1 variable=g2
+}
 function f14 name="below-method" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = PropGet v0 key="count"
     PropSet v0, v1 key="count"
     Return v2
-}
-# CHECK-LABEL: function f14 name="below-method"
 # CHECK: = GetModuleVariable variable=g3
 # CHECK: PutModuleVariable v1 variable=g3
+}
 function f15 name="StoredEarlyBelowSetter" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f16 name="stored-before-the-definition" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = PropGet v0 key="count"
     PropSet v0, v1 key="count"
     Return v2
-}
-# CHECK-LABEL: function f16 name="stored-before-the-definition"
 # CHECK: = PropGet [[holder]] key="count"
 # CHECK: PropSet [[holder]], v1 key="count"
+}

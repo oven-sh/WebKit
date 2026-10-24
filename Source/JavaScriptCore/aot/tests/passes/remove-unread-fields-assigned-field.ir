@@ -15,7 +15,6 @@ layout L2 name="Source" fields=[{key="id" declared={type=anything} flags=[IsRequ
 # CHECK: layout L1 name="Stored" fields=[{key="id"{{*}}stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = NewObject -, v1 layout=L0 fields=[1]
@@ -36,7 +35,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v17 = PropGet v0 key="print" [isFreeName]
     v18 = Call v17, -, v11, v16
     Return
-}
-# CHECK-LABEL: function f0 name="main"
 # CHECK: = Call {{*}}
 # CHECK-NOT: key="id"
+}

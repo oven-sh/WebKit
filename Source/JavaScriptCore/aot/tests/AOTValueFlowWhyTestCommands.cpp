@@ -8,29 +8,15 @@
 
 #if ENABLE(AOT)
 
-#include "AOTAddGenericVersion.h"
-#include "AOTCFG.h"
 #include "AOTSort.h"
 #include "AOTSupportTestCommands.h"
-#include "AOTTypeArena.h"
 #include "AOTValueFlowAnalysis.h"
-#include "AOTValueFlowLog.h"
-#include "AOTValueFlowPositions.h"
-#include "AOTValueFlowResultsInternal.h"
-#include "AOTVector.h"
-#include <algorithm>
-#include <array>
-#include <wtf/BitVector.h>
-#include <wtf/EnumSet.h>
-#include <wtf/HashMap.h>
 #include <wtf/text/MakeString.h>
-#include <wtf/text/StringBuilder.h>
-#include <wtf/text/StringHash.h>
 #include <wtf/text/StringToIntegerConversion.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static ASCIILiteral nameOf(ValueFlowStatementKind kind)
+ASCIILiteral nameOf(ValueFlowStatementKind kind)
 {
     switch (kind) {
     case ValueFlowStatementKind::Operation:
@@ -192,7 +178,46 @@ static void printWhyReached(PrintStream& out, ValueFlowSolution& solution, Funct
     }
 }
 
-static void printValue(PrintStream&, ValueFlowSolution&, ValueSetID);
+static void printObject(PrintStream& out, ValueFlowSolution& solution, ValueFlowObjectID object)
+{
+    const ValueFlowUniverse& universe = solution.bodies().universe();
+    if (object == ValueFlowUniverse::unknownObject())
+        out.print("unknown");
+    else if (object == ValueFlowUniverse::untrackedObject())
+        out.print("untracked");
+    else if (FunctionID function = universe.closureFunction(object))
+        out.print("f", function.index());
+    else if (BuiltinID builtin = universe.builtinOf(object))
+        out.print(solution.program().builtins().tokenOf(builtin));
+    else if (universe.kindOf(object) == ValueFlowObjectKind::FunctionPrototype)
+        out.print("prototype@f", universe.functionOf(object).index());
+    else if (universe.kindOf(object) == ValueFlowObjectKind::ConstructedObject)
+        out.print("constructed@f", universe.functionOf(object).index());
+    else if (FunctionID function = universe.functionOf(object))
+        out.print("object", object.index(), "@f", function.index());
+    else
+        out.print("object", object.index());
+}
+
+static void printValue(PrintStream& out, ValueFlowSolution& solution, ValueSetID value)
+{
+    constexpr unsigned numberOfMembersPrinted = 24;
+    const ValueFlowUniverse& universe = solution.bodies().universe();
+    unsigned printed = 0;
+    out.print(solution.sets().size(value), " members:");
+    solution.sets().forEachMember(value, [&](ValueFlowObjectID member) {
+        if (++printed > numberOfMembersPrinted)
+            return;
+        out.print(" ");
+        if (universe.isObject(member))
+            printObject(out, solution, member);
+        else if (PropertyKeyID key = universe.keyOf(member))
+            out.print("key", key.index());
+        else
+            out.print("primitive", member.index());
+    });
+    out.println(printed > numberOfMembersPrinted ? " .." : "");
+}
 
 static void printTimeline(PrintStream& out, ValueFlowSolution& solution)
 {
@@ -251,59 +276,6 @@ static void printTimeline(PrintStream& out, ValueFlowSolution& solution)
     }
 }
 
-static void printUsedBuiltinsBehind(PrintStream& out, ValueFlowSolution& solution, FunctionID function)
-{
-    const Program& program = solution.program();
-    const BuiltinTable& builtins = program.builtins();
-    const ValueFlowSolver& solver = solution.solver();
-    for (const RuntimeFunctionEntry& entry : program.runtimeFunctions) {
-        if (entry.function != function || !builtins.contains(entry.id))
-            continue;
-        for (BuiltinID builtin : builtins.at(entry.id).implements) {
-            if (!solver.usesOf(builtin).isEmpty())
-                out.print(" code-of:", builtins.tokenOf(builtin));
-        }
-        for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
-            BuiltinID builtin(index);
-            if (builtins.canonicalID(builtin) != builtin || solver.usesOf(builtin).isEmpty())
-                continue;
-            for (const BuiltinCalledFunction& called : builtins.calledFunctionsOf(builtin)) {
-                if (called.function == entry.id)
-                    out.print(" row-of:", builtins.tokenOf(builtin));
-            }
-        }
-    }
-}
-
-static void printFunctionsInOrderReached(PrintStream& out, ValueFlowSolution& solution)
-{
-    const ValueFlowSolver& solver = solution.solver();
-    const Program& program = solution.program();
-    Vector<FunctionID> reached;
-    for (uint32_t index = 0; index < program.functions.size(); ++index) {
-        if (program.functions[index].hasBody() && solver.isReached(FunctionID(index)))
-            reached.append(FunctionID(index));
-    }
-    AOT::stableSort(reached, { }, [&](FunctionID function) {
-        return solver.reachedBy(function).round;
-    });
-    for (FunctionID function : reached) {
-        ValueFlowReachWitness witness = solver.reachedBy(function);
-        out.print("round ", witness.round, " f", function.index(), " <- ");
-        if (witness.statement) {
-            printStatement(out, solver, witness.statement);
-            if (solver.statementAt(witness.statement).kind == ValueFlowStatementKind::UsedBuiltins)
-                printUsedBuiltinsBehind(out, solution, function);
-        }
-        else if (witness.enteringBody >= program.functions.size())
-            out.print("the host");
-        else
-            out.print("entered by f", witness.enteringBody);
-        out.println();
-    }
-    out.println("reached ", reached.size());
-}
-
 static void printWhyHeld(PrintStream& out, ValueFlowSolution& solution, ValueFlowNodeID node, ValueFlowObjectID member)
 {
     const ValueFlowSolver& solver = solution.solver();
@@ -327,216 +299,51 @@ static void printWhyHeld(PrintStream& out, ValueFlowSolution& solution, ValueFlo
     }
 }
 
-enum class SortOfObject : uint8_t {
-    Builtin,
-    Closure,
-    PrototypeObject,
-    Instance,
-    RecordSite,
-    InstanceSite,
-    OtherLayoutSite,
-    BuiltinClassSite,
-    ResultOfBuiltin,
-    Other,
-};
-constexpr size_t numberOfSortsOfObjects = 10;
-constexpr ASCIILiteral namesOfSortsOfObjects[numberOfSortsOfObjects] { "built-in"_s, "closure"_s, "prototype-object"_s, "instance"_s, "record-site"_s, "instance-site"_s, "other-layout-site"_s, "built-in-class-site"_s, "result-of-built-in"_s, "other"_s };
-
-static SortOfObject sortOf(const Program& program, const ValueFlowUniverse& universe, ValueFlowObjectID object)
-{
-    switch (universe.kindOf(object)) {
-    case ValueFlowObjectKind::Builtin:
-    case ValueFlowObjectKind::ModuleBuiltin:
-        return SortOfObject::Builtin;
-    case ValueFlowObjectKind::Closure:
-        return SortOfObject::Closure;
-    case ValueFlowObjectKind::Prototype:
-        return SortOfObject::PrototypeObject;
-    case ValueFlowObjectKind::Instance:
-        return SortOfObject::Instance;
-    case ValueFlowObjectKind::ResultOfBuiltin:
-        return SortOfObject::ResultOfBuiltin;
-    case ValueFlowObjectKind::Site: {
-        const ValueFlowSite& site = *universe.siteOf(object);
-        if (site.origin == ValueFlowSiteOrigin::BuiltinResult)
-            return SortOfObject::ResultOfBuiltin;
-        if (site.builtinClass)
-            return SortOfObject::BuiltinClassSite;
-        if (!site.layout)
-            return SortOfObject::Other;
-        switch (program.at(site.layout).kind) {
-        case LayoutKind::Record:
-            return SortOfObject::RecordSite;
-        case LayoutKind::Instance:
-            return SortOfObject::InstanceSite;
-        case LayoutKind::Container:
-        case LayoutKind::Environment:
-        case LayoutKind::Closure:
-        case LayoutKind::CoroutineFrame:
-        case LayoutKind::BuiltinResult:
-        case LayoutKind::ModuleNamespace:
-            return SortOfObject::OtherLayoutSite;
-        }
-    }
-    case ValueFlowObjectKind::Primitive:
-    case ValueFlowObjectKind::UnknownObject:
-    case ValueFlowObjectKind::Namespace:
-    case ValueFlowObjectKind::CoroutineResult:
-    case ValueFlowObjectKind::RestArray:
-    case ValueFlowObjectKind::FunctionPrototype:
-    case ValueFlowObjectKind::ConstructedObject:
-    case ValueFlowObjectKind::Key:
-        return SortOfObject::Other;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void printObject(PrintStream& out, ValueFlowSolution& solution, ValueFlowObjectID object)
-{
-    const ValueFlowUniverse& universe = solution.bodies().universe();
-    if (object == ValueFlowUniverse::unknownObject())
-        out.print("unknown");
-    else if (object == ValueFlowUniverse::untrackedObject())
-        out.print("untracked");
-    else if (FunctionID function = universe.closureFunction(object))
-        out.print("f", function.index());
-    else if (BuiltinID builtin = universe.builtinOf(object))
-        out.print(solution.program().builtins().tokenOf(builtin));
-    else if (universe.kindOf(object) == ValueFlowObjectKind::FunctionPrototype)
-        out.print("prototype@f", universe.functionOf(object).index());
-    else if (universe.kindOf(object) == ValueFlowObjectKind::ConstructedObject)
-        out.print("constructed@f", universe.functionOf(object).index());
-    else if (FunctionID function = universe.functionOf(object))
-        out.print("object", object.index(), "@f", function.index());
-    else
-        out.print("object", object.index());
-}
-
-namespace {
-
-class WaysOfEscape {
-public:
-    struct Step {
-        ValueFlowStatementID logger;
-        ValueFlowObjectID holder;
-        String takers;
-    };
-
-    explicit WaysOfEscape(ValueFlowSolution& solution)
-        : m_solver(solution.solver())
-        , m_bodies(solution.bodies())
-    {
-    }
-
-    Step stepOf(ValueFlowObjectID object)
-    {
-        auto found = m_steps.find(object.index());
-        if (found != m_steps.end())
-            return found->value;
-        ValueFlowNodeID escapedNode = ValueFlowProgramNodes::escaped();
-        ValueSetID escaped = m_solver.valueOf(escapedNode);
-        Step step;
-        Vector<ValueFlowNodeID> way = m_solver.explain(escapedNode, object);
-        if (way.size() > 1)
-            step.logger = m_solver.statementThatLogged({ way[1], way[0] });
-        auto holdsWhatIsWritten = [&](ValueFlowNodeID node) {
-            const ValueFlowNodeKey* key = m_solver.keyOfMadeNode(node);
-            return key && (key->kind == ValueFlowMadeNodeKind::Written || key->kind == ValueFlowMadeNodeKind::WrittenUnderKind) && key->set;
-        };
-        if (!step.logger && way.size() > 1 && !holdsWhatIsWritten(way[1]))
-            step.logger = loggerOfEdgeIntoRetiredNode(way[1]);
-        if (step.logger ? isStatementOfEscape(step.logger) : way.size() > 1 && holdsWhatIsWritten(way[1])) {
-            for (ValueFlowNodeID node : way) {
-                if (!holdsWhatIsWritten(node))
-                    continue;
-                const ValueFlowNodeKey* key = m_solver.keyOfMadeNode(node);
-                m_solver.sets().forEachMember(key->set, [&](ValueFlowObjectID member) {
-                    if (!step.holder && member != object && m_solver.sets().contains(escaped, member))
-                        step.holder = member;
-                });
-                break;
-            }
-        }
-        if (!step.logger)
-            step.takers = step.holder ? String("what is written into an escaped object"_s) : way.size() > 1 ? takersOf(way[1]) : String("nothing"_s);
-        m_steps.add(object.index(), step);
-        return step;
-    }
-
-    ValueFlowObjectID rootOf(ValueFlowObjectID object)
-    {
-        for (unsigned steps = 0; steps < 64; ++steps) {
-            ValueFlowObjectID holder = stepOf(object).holder;
-            if (!holder)
-                break;
-            object = holder;
-        }
-        return object;
-    }
-
-private:
-    bool isStatementOfEscape(ValueFlowStatementID id) const
-    {
-        ValueFlowStatementKind kind = m_solver.statementAt(id).kind;
-        return kind == ValueFlowStatementKind::Escape || (kind == ValueFlowStatementKind::Lookup && m_solver.keyOf(id).name().kind == ValueFlowNameKind::FoundThroughEscapedInstances);
-    }
-
-    ValueFlowStatementID loggerOfEdgeIntoRetiredNode(ValueFlowNodeID from)
-    {
-        if (!std::exchange(m_hasLookedForRetiredNodes, true)) {
-            for (const ValueFlowSolver::LoggedEdge& logged : m_solver.edgesInOrderLogged()) {
-                if (m_solver.graph().isRetired(logged.edge.to))
-                    m_loggerOfEdgeIntoRetiredNode.add(logged.edge.from.index(), logged.statement);
-            }
-        }
-        return m_loggerOfEdgeIntoRetiredNode.get(from.index());
-    }
-
-    String takersOf(ValueFlowNodeID node) const
-    {
-        if (const ValueFlowNodeKey* key = m_solver.keyOfMadeNode(node)) {
-            if (key->kind != ValueFlowMadeNodeKind::Masked)
-                return makeString("a node that a rule has made: "_s, nameOf(key->kind));
-            node = key->maskedNode();
-            if (m_solver.keyOfMadeNode(node))
-                return "a node that a rule has made, behind a mask"_s;
-        }
-        FunctionID function = m_bodies.nodes().functionOf(node);
-        if (!function)
-            return "a variable or a field"_s;
-        Vector<Opcode, 4> opcodes;
-        for (const ValueFlowStatement& statement : m_bodies.statementsOf(function.index())) {
-            if (statement.kind != ValueFlowStatementKind::Operation || opcodes.contains(statement.opcode))
-                continue;
-            if (std::ranges::contains(m_bodies.operandsOf(statement), node, &ValueFlowOperand::node))
-                opcodes.append(statement.opcode);
-        }
-        if (opcodes.isEmpty())
-            return "a node that no operation with a rule takes"_s;
-        AOT::sort(opcodes);
-        StringBuilder names;
-        for (Opcode opcode : opcodes)
-            names.append(names.isEmpty() ? ""_s : "+"_s, nameOf(opcode));
-        return names.toString();
-    }
-
-    const ValueFlowSolver& m_solver;
-    const ValueFlowBodies& m_bodies;
-    HashMap<uint32_t, Step, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_steps;
-    bool m_hasLookedForRetiredNodes { false };
-    HashMap<uint32_t, ValueFlowStatementID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_loggerOfEdgeIntoRetiredNode;
-};
-
-} // anonymous namespace
-
 static void printRootsOfEscape(PrintStream& out, ValueFlowSolution& solution)
 {
     constexpr size_t numberOfRootsPrinted = 30;
+    using ByNumber = WTF::UnsignedWithZeroKeyHashTraits<uint32_t>;
     const ValueFlowSolver& solver = solution.solver();
     const ValueFlowUniverse& universe = solution.bodies().universe();
     ValueFlowNodeID escapedNode = ValueFlowProgramNodes::escaped();
     ValueSetID escaped = solver.valueOf(escapedNode);
-    WaysOfEscape ways(solution);
+
+    HashMap<uint32_t, ValueFlowStatementID, IntHash<uint32_t>, ByNumber> loggerOfEdgeIntoRetiredNode;
+    for (const ValueFlowSolver::LoggedEdge& logged : solver.edgesInOrderLogged()) {
+        if (solver.graph().isRetired(logged.edge.to))
+            loggerOfEdgeIntoRetiredNode.add(logged.edge.from.index(), logged.statement);
+    }
+    auto holdsWhatIsWritten = [&](ValueFlowNodeID node) {
+        const ValueFlowNodeKey* key = solver.keyOfMadeNode(node);
+        return key && (key->kind == ValueFlowMadeNodeKind::Written || key->kind == ValueFlowMadeNodeKind::WrittenUnderKind) && key->set;
+    };
+    auto isStatementOfEscape = [&](ValueFlowStatementID id) {
+        ValueFlowStatementKind kind = solver.statementAt(id).kind;
+        return kind == ValueFlowStatementKind::Escape || (kind == ValueFlowStatementKind::Lookup && solver.keyOf(id).name().kind == ValueFlowNameKind::FoundThroughEscapedInstances);
+    };
+    HashMap<uint32_t, ValueFlowObjectID, IntHash<uint32_t>, ByNumber> holders;
+    auto holderOf = [&](ValueFlowObjectID object) {
+        if (auto found = holders.find(object.index()); found != holders.end())
+            return found->value;
+        ValueFlowObjectID holder;
+        Vector<ValueFlowNodeID> way = solver.explain(escapedNode, object);
+        if (way.size() > 1) {
+            ValueFlowStatementID logger = solver.statementThatLogged({ way[1], way[0] });
+            if (!logger && !holdsWhatIsWritten(way[1]))
+                logger = loggerOfEdgeIntoRetiredNode.get(way[1].index());
+            if (logger ? isStatementOfEscape(logger) : holdsWhatIsWritten(way[1])) {
+                size_t written = way.findIf(holdsWhatIsWritten);
+                if (written != notFound) {
+                    solver.sets().forEachMember(solver.keyOfMadeNode(way[written])->set, [&](ValueFlowObjectID member) {
+                        if (!holder && member != object && solver.sets().contains(escaped, member))
+                            holder = member;
+                    });
+                }
+            }
+        }
+        holders.add(object.index(), holder);
+        return holder;
+    };
 
     struct Root {
         ValueFlowObjectID object;
@@ -546,7 +353,13 @@ static void printRootsOfEscape(PrintStream& out, ValueFlowSolution& solution)
     solver.sets().forEachMember(escaped, [&](ValueFlowObjectID object) {
         if (!universe.closureFunction(object))
             return;
-        ValueFlowObjectID root = ways.rootOf(object);
+        ValueFlowObjectID root = object;
+        for (unsigned steps = 0; steps < 64; ++steps) {
+            ValueFlowObjectID holder = holderOf(root);
+            if (!holder)
+                break;
+            root = holder;
+        }
         size_t place = roots.findIf([&](const Root& other) {
             return other.object == root;
         });
@@ -567,855 +380,9 @@ static void printRootsOfEscape(PrintStream& out, ValueFlowSolution& solution)
     }
 }
 
-static void printValue(PrintStream& out, ValueFlowSolution& solution, ValueSetID value)
+static void printMembersByName(PrintStream& out, ValueFlowSolution& solution, ValueSetID set)
 {
-    constexpr unsigned numberOfMembersPrinted = 24;
-    const ValueFlowUniverse& universe = solution.bodies().universe();
-    unsigned printed = 0;
-    out.print(solution.sets().size(value), " members:");
-    solution.sets().forEachMember(value, [&](ValueFlowObjectID member) {
-        if (++printed > numberOfMembersPrinted)
-            return;
-        if (member == ValueFlowUniverse::unknownObject())
-            out.print(" unknown");
-        else if (member == ValueFlowUniverse::untrackedObject())
-            out.print(" untracked");
-        else if (FunctionID function = universe.closureFunction(member))
-            out.print(" f", function.index());
-        else if (BuiltinID builtin = universe.builtinOf(member))
-            out.print(" ", solution.program().builtins().tokenOf(builtin));
-        else if (PropertyKeyID key = universe.keyOf(member))
-            out.print(" key", key.index());
-        else if (!universe.isObject(member))
-            out.print(" primitive", member.index());
-        else if (universe.kindOf(member) == ValueFlowObjectKind::FunctionPrototype)
-            out.print(" prototype@f", universe.functionOf(member).index());
-        else if (universe.kindOf(member) == ValueFlowObjectKind::ConstructedObject)
-            out.print(" constructed@f", universe.functionOf(member).index());
-        else if (FunctionID function = universe.functionOf(member))
-            out.print(" object", member.index(), "@f", function.index());
-        else
-            out.print(" object", member.index());
-    });
-    out.println(printed > numberOfMembersPrinted ? " .." : "");
-}
-
-enum class EscapeIsCountedFor : uint8_t { ObjectItself, Root };
-
-static void printWhoLetsEscape(PrintStream& out, ValueFlowSolution& solution, WaysOfEscape& ways, EscapeIsCountedFor countedFor, NOESCAPE const Invocable<bool(ValueFlowObjectID)> auto& isCounted)
-{
-    struct Line {
-        ValueFlowStatementKind kind;
-        Opcode opcode;
-        uint8_t detail { 0 };
-        uint32_t objects { 0 };
-        uint32_t closures { 0 };
-        ValueFlowStatementID example;
-        std::array<uint32_t, numberOfSortsOfObjects> sorts { };
-    };
-    struct StatementLine {
-        ValueFlowStatementID statement;
-        uint32_t objects { 0 };
-    };
-    const ValueFlowSolver& solver = solution.solver();
-    const ValueFlowUniverse& universe = solution.bodies().universe();
-    ValueFlowNodeID escaped = ValueFlowProgramNodes::escaped();
-
-    Vector<Line> lines;
-    HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> objectsOfStatement;
-    uint32_t byEdgesOfNoStatement = 0;
-    HashMap<String, uint32_t> objectsOfTakers;
-    solver.sets().forEachMember(solver.valueOf(escaped), [&](ValueFlowObjectID object) {
-        if (!universe.isObject(object) || ValueFlowResultInputs::isPlaceholder(object) || !isCounted(object))
-            return;
-        ValueFlowObjectID subject = countedFor == EscapeIsCountedFor::Root ? ways.rootOf(object) : object;
-        ValueFlowStatementID logger = ways.stepOf(subject).logger;
-        if (!logger) {
-            ++byEdgesOfNoStatement;
-            ++objectsOfTakers.add(ways.stepOf(subject).takers, 0).iterator->value;
-            return;
-        }
-        const ValueFlowStatement& statement = solver.statementAt(logger);
-        uint8_t detail = solver.isMadeByRule(logger) && statement.kind != ValueFlowStatementKind::Escape ? solver.keyOf(logger).detail : 0;
-        size_t found = lines.findIf([&](const Line& line) {
-            return line.kind == statement.kind && line.opcode == statement.opcode && line.detail == detail;
-        });
-        if (found == notFound) {
-            found = lines.size();
-            lines.append({ statement.kind, statement.opcode, detail, 0, 0, logger, { } });
-        }
-        ++lines[found].objects;
-        lines[found].closures += !!universe.closureFunction(object);
-        ++lines[found].sorts[static_cast<size_t>(sortOf(solution.program(), universe, subject))];
-        ++objectsOfStatement.add(logger.index(), 0).iterator->value;
-    });
-
-    AOT::sort(lines, std::greater { }, &Line::objects);
-    out.println("by an edge that no statement has logged: ", byEdgesOfNoStatement, "; by the operations that take the node from which it starts:");
-    Vector<std::pair<String, uint32_t>> takers;
-    for (auto& entry : objectsOfTakers)
-        takers.append({ entry.key, entry.value });
-    AOT::sort(takers, [](const auto& first, const auto& second) {
-        return first.second != second.second ? first.second > second.second : codePointCompareLessThan(first.first, second.first);
-    });
-    for (auto& [names, objects] : takers)
-        out.println("  ", names, ": ", objects);
-    for (const Line& line : lines) {
-        if (line.kind == ValueFlowStatementKind::Operation)
-            out.print(line.opcode);
-        else
-            out.print(nameOf(line.kind));
-        out.print(": ", line.objects, " objects, ", line.closures, " closures; for one: ");
-        printStatement(out, solver, line.example);
-        out.println();
-        out.print("   ");
-        for (size_t sort = 0; sort < numberOfSortsOfObjects; ++sort) {
-            if (line.sorts[sort])
-                out.print(" ", namesOfSortsOfObjects[sort], " ", line.sorts[sort]);
-        }
-        out.println();
-    }
-
-    Vector<StatementLine> statements;
-    for (auto& entry : objectsOfStatement)
-        statements.append({ ValueFlowStatementID(entry.key), entry.value });
-    AOT::sort(statements, [](const StatementLine& first, const StatementLine& second) {
-        return std::pair { second.objects, first.statement.index() } < std::pair { first.objects, second.statement.index() };
-    });
-    constexpr size_t numberOfStatementsPrinted = 16;
-    out.println("the statements that let most objects escape:");
-    for (const StatementLine& line : statements.span().first(std::min(statements.size(), numberOfStatementsPrinted))) {
-        out.print("  ", line.objects, ": ");
-        printStatement(out, solver, line.statement);
-        out.println();
-        if (solver.isMadeByRule(line.statement) && solver.statementAt(line.statement).kind != ValueFlowStatementKind::Escape && solver.keyOf(line.statement).set) {
-            out.print("    its set: ");
-            printValue(out, solution, solver.keyOf(line.statement).set);
-        }
-    }
-}
-
-static void printBirthsOfUnknownObject(PrintStream& out, ValueFlowSolution& solution, BuildContext& build, NOESCAPE const Invocable<bool(Opcode)> auto& isCounted)
-{
-    constexpr size_t numberOfBirthsPrinted = 40;
-    struct Birth {
-        Witness witness;
-        uint32_t operands { 0 };
-    };
-    const Program& program = solution.program();
-    const ValueFlowSolver& solver = solution.solver();
-    const ValueFlowBodies& bodies = solution.bodies();
-    ValueFlowResultInputs inputs { program, solution, build };
-    ValueFlowBirthsOfUnknownObject birthOfNode(inputs);
-
-    Vector<Birth> births;
-    HashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> placeOfBirth;
-    std::array<uint32_t, numberOfUnknownSources> operandsOfSource { };
-    uint32_t counted = 0;
-    uint32_t withUntrackedObject = 0;
-    uint32_t withUnknownObject = 0;
-    uint32_t withoutSource = 0;
-    uint32_t withoutBirth = 0;
-    enum Part : uint8_t { Program, GenericVersions, Library, NumberOfParts };
-    std::array<uint32_t, NumberOfParts> countedInPart { };
-    std::array<uint32_t, NumberOfParts> withUnknownObjectInPart { };
-    HashMap<String, uint32_t> producersOfOperandsWithUnknownObject;
-    for (uint32_t index = 0; index < program.functions.size(); ++index) {
-        if (!solver.isReached(FunctionID(index)))
-            continue;
-        FunctionRole role = program.functions[index].role;
-        Part part = role == FunctionRole::GenericVersion ? GenericVersions : isWrittenInProgram(program.functions[index]) ? Program : Library;
-        for (const ValueFlowStatement& statement : bodies.statementsOf(index)) {
-            if (statement.kind != ValueFlowStatementKind::Operation || !isCounted(statement.opcode) || !statement.operandCount)
-                continue;
-            ++counted;
-            ++countedInPart[part];
-            const ValueFlowOperand& operand = bodies.operandsOf(statement)[0];
-            ValueSetID held = solution.valueOf(operand);
-            withUntrackedObject += solution.sets().contains(held, ValueFlowUniverse::untrackedObject());
-            if (!solution.sets().contains(held, ValueFlowUniverse::unknownObject()))
-                continue;
-            ++withUnknownObject;
-            ++withUnknownObjectInPart[part];
-            if (part == Program) {
-                const Function& function = program.functions[index];
-                ValueID value = function.at(statement.site).operand(0);
-                const Value& producer = function.at(value);
-                const Type& type = program.at(producer.type);
-                ASCIILiteral kindOfType = type.isAnything() ? "anything"_s : type.anyObject ? "any object"_s : (type.anyFunction || !type.functions.isEmpty()) ? "functions"_s : !type.classes.isEmpty() ? "built-in classes"_s : type.layouts ? "layouts"_s : "primitives"_s;
-                uint32_t count = ++producersOfOperandsWithUnknownObject.add(makeString(kindOfType, ", "_s, nameOf(producer.opcode)), 0).iterator->value;
-                if (type.isAnything() && !(count % 300))
-                    out.println("typed anything: ", nameOf(producer.opcode), " f", index, ":v", value.index(), " read at v", statement.site.index(), " position ", function.at(statement.site).position);
-            }
-            if (std::optional<ValueFlowUnknownSource> source = operand.node ? solver.unknownSourceOf(operand.node) : std::nullopt)
-                ++operandsOfSource[static_cast<size_t>(*source)];
-            else
-                ++withoutSource;
-
-            Witness witness = birthOfNode.witnessOf(operand.node);
-            if (!hasFunction(witness)) {
-                ++withoutBirth;
-                continue;
-            }
-            uint32_t place = placeOfBirth.ensure(static_cast<uint64_t>(witness.function) << 32 | witness.value, [&] {
-                births.append({ witness, 0 });
-                return static_cast<uint32_t>(births.size() - 1);
-            }).iterator->value;
-            ++births[place].operands;
-        }
-    }
-
-    out.println("operations ", counted, " with the untracked object ", withUntrackedObject, " with the unknown object ", withUnknownObject, " from no operation ", withoutBirth);
-    out.println("in the program ", countedInPart[Program], " with ", withUnknownObjectInPart[Program], "; in its generic versions ", countedInPart[GenericVersions], " with ", withUnknownObjectInPart[GenericVersions], "; in the library ", countedInPart[Library], " with ", withUnknownObjectInPart[Library]);
-    Vector<std::pair<String, uint32_t>> producers;
-    for (auto& [name, count] : producersOfOperandsWithUnknownObject)
-        producers.append({ name, count });
-    AOT::sort(producers, [](const auto& a, const auto& b) {
-        return a.second != b.second ? a.second > b.second : codePointCompareLessThan(a.first, b.first);
-    });
-    for (auto& [name, count] : producers)
-        out.println("made by: ", count, " ", name);
-    for (size_t source = 0; source < numberOfUnknownSources; ++source) {
-        if (operandsOfSource[source])
-            out.println(nameOf(static_cast<ValueFlowUnknownSource>(source)), ": ", operandsOfSource[source], " operands");
-    }
-    if (withoutSource)
-        out.println("a seed of a body: ", withoutSource, " operands");
-
-    AOT::stableSort(births, std::greater { }, &Birth::operands);
-    out.println("births ", births.size());
-    for (const Birth& birth : births.span().first(std::min(births.size(), numberOfBirthsPrinted))) {
-        out.print(birth.operands, " <- f", birth.witness.function);
-        if (birth.witness.value != Wire::none)
-            out.print(" v", birth.witness.value, " ", program.functions[birth.witness.function].at(ValueID(birth.witness.value)).opcode);
-        out.println();
-    }
-}
-
-namespace {
-
-enum class ArrivalAtCheck : uint8_t { UnknownObject, UntrackedObject, SomeDoNotFit, AllFit, Nothing };
-constexpr size_t numberOfArrivalsAtChecks = 5;
-
-enum class StrangerAtCheck : uint8_t {
-    OtherLayoutOfProgram,
-    AllocationThatPicksItsLayout,
-    InstanceOfBuiltinClass,
-    OtherLayoutOfTable,
-    ObjectWithoutLayout,
-    BuiltinObject,
-    Closure,
-    UndefinedOrNull,
-    Absent,
-    OtherPrimitive,
-};
-constexpr size_t numberOfStrangersAtChecks = 10;
-constexpr ASCIILiteral namesOfStrangersAtChecks[numberOfStrangersAtChecks] { "another-layout-of-the-program"_s, "allocation-that-picks-its-layout"_s, "instance-of-a-built-in-class"_s, "another-layout-of-the-table"_s, "object-without-a-layout"_s, "built-in-object"_s, "closure"_s, "undefined-or-null"_s, "absent"_s, "another-primitive"_s };
-
-struct CountsOfChecks {
-    std::array<uint32_t, numberOfArrivalsAtChecks> arrivals { };
-    std::array<uint32_t, numberOfStrangersAtChecks> strangers { };
-
-    uint32_t total() const { return arrivals[0] + arrivals[1] + arrivals[2] + arrivals[3] + arrivals[4]; }
-};
-
-enum class CallersOfCheckedFunction : uint8_t { ClosureHasEscaped, ClosureIsLost, ClosureIsHeldByNativeCode, PassUnknownObject, PassUntrackedObject, PassStranger, PassWhatFits, PassNothing };
-constexpr size_t numberOfCallersOfCheckedFunctions = 8;
-constexpr ASCIILiteral namesOfCallersOfCheckedFunctions[numberOfCallersOfCheckedFunctions] {
-    "the closure has escaped"_s,
-    "the closure is lost"_s,
-    "native code holds the closure"_s,
-    "none of these, and the unknown object arrives"_s,
-    "none of these, and the untracked object arrives"_s,
-    "every set is closed, some member does not surely fit"_s,
-    "every set is closed, all fit"_s,
-    "nothing arrives"_s,
-};
-
-} // anonymous namespace
-
-static void printChecks(PrintStream& out, ValueFlowSolution& solution, BuildContext& build)
-{
-    constexpr size_t numberOfSiteKinds = numberOfEnumerators<TypeSiteKind>;
-    constexpr size_t rowWithoutSite = numberOfSiteKinds;
-    constexpr size_t rowOfStoresToParameters = numberOfSiteKinds + 1;
-    constexpr size_t numberOfRows = numberOfSiteKinds + 2;
-    constexpr size_t numberOfBirthsPrinted = 24;
-    enum Part : uint8_t { OfProgram, OfGenericVersions, OfLibrary, NumberOfParts };
-    constexpr ASCIILiteral namesOfParts[NumberOfParts] { "the program"_s, "its generic versions"_s, "the library"_s };
-
-    const Program& program = solution.program();
-    const ValueFlowBodies& bodies = solution.bodies();
-    const ValueFlowUniverse& universe = bodies.universe();
-    const ValueFlowSolver& solver = solution.solver();
-    const ValueSets& sets = solution.sets();
-    ValueFlowResultInputs inputs { program, solution, build };
-    ValueFlowClassesOfBuiltinResults classesOfBuiltinResults = computeClassesOfBuiltinResults(inputs);
-    inputs.classesOfBuiltinResults = &classesOfBuiltinResults;
-    BorrowedValueSetMaker borrowedMaker(inputs.makerPool());
-    ValueSetMaker& maker = borrowedMaker.get();
-    ScratchTypeArena arena(program.types);
-    ValueFlowPositionCounts positionCounts(nullptr);
-    ValueFlowPositions positions(inputs, arena.arena(), positionCounts, 0, &maker);
-
-    auto kindOfStranger = [&](ValueFlowObjectID member) {
-        if (!universe.isObject(member)) {
-            if (member == ValueFlowUniverse::primitive(PrimitiveSet::Undefined) || member == ValueFlowUniverse::primitive(PrimitiveSet::Null))
-                return StrangerAtCheck::UndefinedOrNull;
-            return member == ValueFlowUniverse::primitive(PrimitiveSet::Absent) ? StrangerAtCheck::Absent : StrangerAtCheck::OtherPrimitive;
-        }
-        if (universe.closureFunction(member))
-            return StrangerAtCheck::Closure;
-        if (universe.builtinOf(member))
-            return StrangerAtCheck::BuiltinObject;
-        if (sets.contains(universe.objectsThatPickTheirLayout(), member))
-            return StrangerAtCheck::AllocationThatPicksItsLayout;
-        if (sets.contains(universe.placeholders().objectsWithLayoutOfProgram, member))
-            return StrangerAtCheck::OtherLayoutOfProgram;
-        if (inputs.classOf(member))
-            return StrangerAtCheck::InstanceOfBuiltinClass;
-        return universe.layoutOf(member) ? StrangerAtCheck::OtherLayoutOfTable : StrangerAtCheck::ObjectWithoutLayout;
-    };
-    auto strangersIn = [&](ValueSetID held, const Type& type) {
-        uint32_t kinds = 0;
-        sets.forEachMember(maker.intersect(held, ValueSets::complement(universe.membersSurelyInside(maker, program, type))), [&](ValueFlowObjectID member) {
-            if (sets.contains(universe.objectsThatPickTheirLayout(), member) && positions.isSurelyInside(maker.of(member), type))
-                return;
-            kinds |= 1u << static_cast<unsigned>(kindOfStranger(member));
-        });
-        return kinds;
-    };
-
-    struct CheckedFunction {
-        FunctionID function;
-        ArrivalAtCheck worst { ArrivalAtCheck::Nothing };
-        uint32_t checks { 0 };
-        uint32_t strangers { 0 };
-        ValueFlowNodeID node;
-    };
-    Vector<CheckedFunction> checkedFunctions;
-    std::array<std::array<CountsOfChecks, numberOfRows>, NumberOfParts> counts { };
-    for (const ValueFlowObservedValue& observed : bodies.observedValues()) {
-        if (!observed.test || !solver.isReached(observed.function))
-            continue;
-        const Function& function = program.at(observed.function);
-        const Value& test = function.at(observed.test);
-        if (test.opcode != Opcode::Check)
-            continue;
-        Part part = function.role == FunctionRole::GenericVersion ? OfGenericVersions : isWrittenInProgram(function) ? OfProgram : OfLibrary;
-        const Type& type = program.at(test.castType());
-        ValueSetID held = inputs.valueOf(maker, observed.operand);
-        ArrivalAtCheck arrival = sets.contains(held, ValueFlowUniverse::unknownObject()) ? ArrivalAtCheck::UnknownObject
-            : sets.contains(held, ValueFlowUniverse::untrackedObject()) ? ArrivalAtCheck::UntrackedObject
-            : sets.isEmpty(held) ? ArrivalAtCheck::Nothing
-            : positions.isSurelyInside(held, type) ? ArrivalAtCheck::AllFit : ArrivalAtCheck::SomeDoNotFit;
-        uint32_t strangers = arrival == ArrivalAtCheck::SomeDoNotFit ? strangersIn(held, type) : 0;
-
-        TypeSiteID site = test.site();
-        bool checksParameter = site && program.at(site).kind == TypeSiteKind::Parameter;
-        bool isAtHead = function.at(entryBlock).parameters.find(test.operand(0)) != notFound;
-        size_t row = !site ? rowWithoutSite : checksParameter && !isAtHead ? rowOfStoresToParameters : static_cast<size_t>(program.at(site).kind);
-        CountsOfChecks& countsOfRow = counts[part][row];
-        ++countsOfRow.arrivals[static_cast<size_t>(arrival)];
-        for (size_t kind = 0; kind < numberOfStrangersAtChecks; ++kind)
-            countsOfRow.strangers[kind] += strangers >> kind & 1;
-
-        if (part != OfProgram || !checksParameter || !isAtHead)
-            continue;
-        if (checkedFunctions.isEmpty() || checkedFunctions.last().function != observed.function)
-            checkedFunctions.append({ observed.function, ArrivalAtCheck::Nothing, 0, 0, { } });
-        CheckedFunction& checked = checkedFunctions.last();
-        ++checked.checks;
-        checked.strangers |= strangers;
-        if (arrival < checked.worst) {
-            checked.worst = arrival;
-            checked.node = observed.operand.node;
-        }
-    }
-
-    for (size_t part = 0; part < NumberOfParts; ++part) {
-        CountsOfChecks all;
-        for (const CountsOfChecks& row : counts[part]) {
-            for (size_t arrival = 0; arrival < numberOfArrivalsAtChecks; ++arrival)
-                all.arrivals[arrival] += row.arrivals[arrival];
-        }
-        out.println("checks in ", namesOfParts[part], ": with a placeholder ", all.arrivals[0] + all.arrivals[1], "; without one: all fit ", all.arrivals[3], ", some do not ", all.arrivals[2], ", nothing arrives ", all.arrivals[4]);
-    }
-    for (size_t part = 0; part < NumberOfParts; ++part) {
-        out.println("checks in ", namesOfParts[part], " by the kind of site: all | the unknown object | the untracked object alone | closed, all fit | closed, some do not | nothing arrives");
-        for (size_t row = 0; row < numberOfRows; ++row) {
-            const CountsOfChecks& line = counts[part][row];
-            if (!line.total())
-                continue;
-            out.print("  ", row == rowWithoutSite ? "no site"_s : row == rowOfStoresToParameters ? "Parameter, stored to in the body"_s : nameOf(static_cast<TypeSiteKind>(row)));
-            out.println(": ", line.total(), " | ", line.arrivals[0], " | ", line.arrivals[1], " | ", line.arrivals[3], " | ", line.arrivals[2], " | ", line.arrivals[4]);
-            if (!line.arrivals[2])
-                continue;
-            out.print("    what does not fit:");
-            for (size_t kind = 0; kind < numberOfStrangersAtChecks; ++kind) {
-                if (line.strangers[kind])
-                    out.print(" ", namesOfStrangersAtChecks[kind], " ", line.strangers[kind]);
-            }
-            out.println();
-        }
-    }
-
-    struct CountsOfFunctions {
-        uint32_t functions { 0 };
-        uint32_t checks { 0 };
-    };
-    std::array<CountsOfFunctions, numberOfCallersOfCheckedFunctions> byCallers { };
-    std::array<uint32_t, numberOfStrangersAtChecks> functionsWithStranger { };
-    std::array<uint32_t, numberOfUnknownSources> functionsOfSource { };
-    uint32_t functionsWithoutSource = 0;
-    uint32_t functionsWithoutBirth = 0;
-    uint32_t numberOfChecks = 0;
-    struct Birth {
-        Witness witness;
-        uint32_t functions { 0 };
-    };
-    Vector<Birth> births;
-    HashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> placeOfBirth;
-    ValueFlowBirthsOfUnknownObject birthOfNode(inputs);
-    BitVector isClosureThatHasEscaped(universe.numberOfObjects());
-    for (const CheckedFunction& checked : checkedFunctions) {
-        ValueFlowObjectID closure = universe.closureOf(checked.function);
-        CallersOfCheckedFunction callers = static_cast<CallersOfCheckedFunction>(static_cast<size_t>(CallersOfCheckedFunction::PassUnknownObject) + static_cast<size_t>(checked.worst));
-        if (inputs.hasEscaped(closure))
-            callers = CallersOfCheckedFunction::ClosureHasEscaped;
-        else if (inputs.isLost(closure))
-            callers = CallersOfCheckedFunction::ClosureIsLost;
-        else if (inputs.isHeldByNativeCode(closure))
-            callers = CallersOfCheckedFunction::ClosureIsHeldByNativeCode;
-        ++byCallers[static_cast<size_t>(callers)].functions;
-        byCallers[static_cast<size_t>(callers)].checks += checked.checks;
-        numberOfChecks += checked.checks;
-        switch (callers) {
-        case CallersOfCheckedFunction::ClosureHasEscaped:
-            isClosureThatHasEscaped.quickSet(closure.index());
-            break;
-        case CallersOfCheckedFunction::PassStranger:
-            for (size_t kind = 0; kind < numberOfStrangersAtChecks; ++kind)
-                functionsWithStranger[kind] += checked.strangers >> kind & 1;
-            break;
-        case CallersOfCheckedFunction::PassUnknownObject: {
-            if (std::optional<ValueFlowUnknownSource> source = checked.node ? solver.unknownSourceOf(checked.node) : std::nullopt)
-                ++functionsOfSource[static_cast<size_t>(*source)];
-            else
-                ++functionsWithoutSource;
-            Witness witness = birthOfNode.witnessOf(checked.node);
-            if (!hasFunction(witness)) {
-                ++functionsWithoutBirth;
-                break;
-            }
-            uint32_t place = placeOfBirth.ensure(static_cast<uint64_t>(witness.function) << 32 | witness.value, [&] {
-                births.append({ witness, 0 });
-                return static_cast<uint32_t>(births.size() - 1);
-            }).iterator->value;
-            ++births[place].functions;
-            break;
-        }
-        case CallersOfCheckedFunction::ClosureIsLost:
-        case CallersOfCheckedFunction::ClosureIsHeldByNativeCode:
-        case CallersOfCheckedFunction::PassUntrackedObject:
-        case CallersOfCheckedFunction::PassWhatFits:
-        case CallersOfCheckedFunction::PassNothing:
-            break;
-        }
-    }
-
-    out.println("functions of the program with a check of a parameter at their head: ", checkedFunctions.size(), " with ", numberOfChecks, " such checks");
-    for (size_t callers = 0; callers < numberOfCallersOfCheckedFunctions; ++callers)
-        out.println("  ", namesOfCallersOfCheckedFunctions[callers], ": ", byCallers[callers].functions, " functions, ", byCallers[callers].checks, " checks");
-    out.print("what does not fit, by function, once for each kind:");
-    for (size_t kind = 0; kind < numberOfStrangersAtChecks; ++kind) {
-        if (functionsWithStranger[kind])
-            out.print(" ", namesOfStrangersAtChecks[kind], " ", functionsWithStranger[kind]);
-    }
-    out.println();
-
-    out.println("where the unknown object that a known caller passes was born, by function:");
-    for (size_t source = 0; source < numberOfUnknownSources; ++source) {
-        if (functionsOfSource[source])
-            out.println("  ", nameOf(static_cast<ValueFlowUnknownSource>(source)), ": ", functionsOfSource[source]);
-    }
-    if (functionsWithoutSource)
-        out.println("  a seed of a body: ", functionsWithoutSource);
-    AOT::stableSort(births, std::greater { }, &Birth::functions);
-    out.println("  births ", births.size(), ", from no operation ", functionsWithoutBirth);
-    for (const Birth& birth : births.span().first(std::min(births.size(), numberOfBirthsPrinted))) {
-        out.print("  ", birth.functions, " <- f", birth.witness.function);
-        if (birth.witness.value != Wire::none)
-            out.print(" v", birth.witness.value, " ", program.functions[birth.witness.function].at(ValueID(birth.witness.value)).opcode);
-        out.println();
-    }
-
-    WaysOfEscape ways(solution);
-    auto isCounted = [&](ValueFlowObjectID object) {
-        return isClosureThatHasEscaped.quickGet(object.index());
-    };
-    out.println("who has let the closures of these functions escape:");
-    printWhoLetsEscape(out, solution, ways, EscapeIsCountedFor::ObjectItself, isCounted);
-    out.println("who has let escape what holds them in the end:");
-    printWhoLetsEscape(out, solution, ways, EscapeIsCountedFor::Root, isCounted);
-}
-
-static void printPlaceOfNode(PrintStream& out, ValueFlowSolution& solution, ValueFlowNodeID node)
-{
-    const Program& program = solution.program();
-    const ValueFlowProgramNodes& nodes = solution.bodies().nodes();
-    auto printText = [&](StringID text) {
-        if (text)
-            out.print(" \"", String::fromUTF8(program.string(text)), "\"");
-    };
-    printNode(out, solution, node);
-    if (solution.solver().keyOfMadeNode(node) || node.index() < 2)
-        return;
-    if (FunctionID id = nodes.functionOf(node); id && id.index() < program.functions.size()) {
-        const Function& function = program.at(id);
-        printText(function.name);
-        uint32_t offset = node.index() - nodes.firstNodeOf(id);
-        if (offset < function.numberOfEntryParameters())
-            out.print(" entry parameter ", offset);
-        else if (node == nodes.thrown(id))
-            out.print(" thrown");
-        else if (node.index() < nodes.thrown(id).index())
-            out.print(" result");
-        if (function.module)
-            printText(program.at(function.module).displayPath);
-        out.print(" @", function.position);
-        return;
-    }
-    uint32_t firstVariable = nodes.variable(VariableID(0u)).index();
-    if (node.index() >= firstVariable && node.index() - firstVariable < program.variables.size()) {
-        out.print(" g", node.index() - firstVariable);
-        printText(program.variables[node.index() - firstVariable].name);
-        return;
-    }
-    for (uint32_t layout = 0; layout < program.layouts.size(); ++layout) {
-        uint32_t firstField = nodes.field(LayoutID(layout), 0).index();
-        if (node.index() < firstField || node.index() - firstField >= program.layouts[layout].fields.size())
-            continue;
-        out.print(" L", layout, ".", node.index() - firstField);
-        printText(program.at(program.layouts[layout].fields[node.index() - firstField].key).text);
-        return;
-    }
-}
-
-static void printChokePoints(PrintStream& out, ValueFlowSolution& solution, BuildContext& build)
-{
-    constexpr size_t numberOfChildrenPrinted = 40;
-    constexpr unsigned numberOfStepsPrinted = 8;
-    constexpr uint32_t none = UINT32_MAX;
-    const Program& program = solution.program();
-    const ValueFlowBodies& bodies = solution.bodies();
-    const ValueFlowSolver& solver = solution.solver();
-    const ValueFlowGraph& graph = solver.graph();
-    const ValueSets& sets = solution.sets();
-    ValueFlowResultInputs inputs { program, solution, build };
-    BorrowedValueSetMaker borrowedMaker(inputs.makerPool());
-    ValueSetMaker& maker = borrowedMaker.get();
-    uint32_t numberOfNodes = graph.numberOfNodes();
-    uint32_t root = numberOfNodes;
-
-    BitVector carries(numberOfNodes);
-    BitVector isConstant(numberOfNodes);
-    for (uint32_t index = 0; index < numberOfNodes; ++index) {
-        if (!sets.contains(solver.valueOf(ValueFlowNodeID(index)), ValueFlowUniverse::unknownObject()))
-            continue;
-        const ValueFlowNodeKey* key = solver.keyOfMadeNode(ValueFlowNodeID(index));
-        if (key && key->kind == ValueFlowMadeNodeKind::Constant)
-            isConstant.quickSet(index);
-        else
-            carries.quickSet(index);
-    }
-    BitVector isBirth(numberOfNodes);
-    Vector<uint32_t> births;
-    for (uint32_t index : carries) {
-        bool hasCarryingPredecessor = false;
-        bool hasConstantPredecessor = false;
-        graph.forEachPredecessor(ValueFlowNodeID(index), [&](ValueFlowNodeID predecessor) {
-            hasCarryingPredecessor |= carries.quickGet(predecessor.index());
-            hasConstantPredecessor |= isConstant.quickGet(predecessor.index());
-        });
-        if (hasConstantPredecessor || !hasCarryingPredecessor) {
-            isBirth.quickSet(index);
-            births.append(index);
-        }
-    }
-
-    Vector<uint32_t> firstSuccessorOf(FillWith { }, numberOfNodes + 2, 0u);
-    for (uint32_t index : carries) {
-        graph.forEachPredecessor(ValueFlowNodeID(index), [&](ValueFlowNodeID predecessor) {
-            if (carries.quickGet(predecessor.index()))
-                ++firstSuccessorOf[predecessor.index() + 2];
-        });
-    }
-    for (uint32_t index = 2; index < firstSuccessorOf.size(); ++index)
-        firstSuccessorOf[index] += firstSuccessorOf[index - 1];
-    Vector<uint32_t> successors(FillWith { }, firstSuccessorOf.last(), 0u);
-    for (uint32_t index : carries) {
-        graph.forEachPredecessor(ValueFlowNodeID(index), [&](ValueFlowNodeID predecessor) {
-            if (carries.quickGet(predecessor.index()))
-                successors[firstSuccessorOf[predecessor.index() + 1]++] = index;
-        });
-    }
-
-    Vector<uint32_t> postorder;
-    Vector<uint32_t> numberInPostorder(FillWith { }, numberOfNodes + 1, none);
-    {
-        struct Frame {
-            uint32_t node;
-            uint32_t next;
-        };
-        BitVector isSeen(numberOfNodes);
-        Vector<Frame> stack;
-        for (uint32_t birth : births) {
-            if (isSeen.quickSet(birth))
-                continue;
-            stack.append({ birth, firstSuccessorOf[birth] });
-            while (!stack.isEmpty()) {
-                Frame& frame = stack.last();
-                if (frame.next == firstSuccessorOf[frame.node + 1]) {
-                    numberInPostorder[frame.node] = postorder.size();
-                    postorder.append(frame.node);
-                    stack.removeLast();
-                    continue;
-                }
-                uint32_t successor = successors[frame.next++];
-                if (!isSeen.quickSet(successor))
-                    stack.append({ successor, firstSuccessorOf[successor] });
-            }
-        }
-        numberInPostorder[root] = postorder.size();
-        postorder.append(root);
-    }
-
-    Vector<uint32_t> dominatorOf(FillWith { }, numberOfNodes + 1, none);
-    dominatorOf[root] = root;
-    auto meet = [&](uint32_t first, uint32_t second) {
-        while (first != second) {
-            while (numberInPostorder[first] < numberInPostorder[second])
-                first = dominatorOf[first];
-            while (numberInPostorder[second] < numberInPostorder[first])
-                second = dominatorOf[second];
-        }
-        return first;
-    };
-    unsigned sweeps = 0;
-    for (bool hasChanged = true; hasChanged; ++sweeps) {
-        hasChanged = false;
-        for (size_t position = postorder.size() - 1; position--;) {
-            uint32_t node = postorder[position];
-            uint32_t dominator = isBirth.quickGet(node) ? root : none;
-            if (dominator == none) {
-                graph.forEachPredecessor(ValueFlowNodeID(node), [&](ValueFlowNodeID predecessor) {
-                    if (!carries.quickGet(predecessor.index()) || dominatorOf[predecessor.index()] == none)
-                        return;
-                    dominator = dominator == none ? predecessor.index() : meet(predecessor.index(), dominator);
-                });
-            }
-            if (dominator != none && dominatorOf[node] != dominator) {
-                dominatorOf[node] = dominator;
-                hasChanged = true;
-            }
-        }
-    }
-
-    struct Weight {
-        uint32_t checks { 0 };
-        uint32_t accesses { 0 };
-    };
-    Vector<Weight> weightBelow(numberOfNodes + 1);
-    uint32_t withoutNode = 0;
-    auto count = [&](const ValueFlowOperand& operand, uint32_t Weight::* weight) {
-        if (!sets.contains(inputs.valueOf(maker, operand), ValueFlowUniverse::unknownObject()))
-            return;
-        if (!operand.node || dominatorOf[operand.node.index()] == none) {
-            ++withoutNode;
-            return;
-        }
-        ++(weightBelow[operand.node.index()].*weight);
-    };
-    auto isCounted = [&](FunctionID id) {
-        const Function& function = program.at(id);
-        return solver.isReached(id) && isWrittenInProgram(function) && function.role != FunctionRole::GenericVersion;
-    };
-    for (const ValueFlowObservedValue& observed : bodies.observedValues()) {
-        if (observed.test && isCounted(observed.function) && program.at(observed.function).at(observed.test).opcode == Opcode::Check)
-            count(observed.operand, &Weight::checks);
-    }
-    for (uint32_t index = 0; index < program.functions.size(); ++index) {
-        if (!isCounted(FunctionID(index)))
-            continue;
-        for (const ValueFlowStatement& statement : bodies.statementsOf(index)) {
-            if (statement.kind != ValueFlowStatementKind::Operation || !statement.operandCount)
-                continue;
-            unsigned operandIndex = receiverOf(statement.opcode).value_or(0);
-            if ((PayloadWord::receivers(statement.opcode) || PayloadWord::callees(statement.opcode)) && operandIndex < statement.operandCount)
-                count(bodies.operandsOf(statement)[operandIndex], &Weight::accesses);
-        }
-    }
-    for (uint32_t node : postorder) {
-        if (node == root)
-            continue;
-        weightBelow[dominatorOf[node]].checks += weightBelow[node].checks;
-        weightBelow[dominatorOf[node]].accesses += weightBelow[node].accesses;
-    }
-
-    Vector<uint32_t> heaviestChildOf(FillWith { }, numberOfNodes + 1, none);
-    Vector<uint32_t> childrenOfRoot;
-    auto weighs = [&](uint32_t node) {
-        return static_cast<uint64_t>(weightBelow[node].checks) + weightBelow[node].accesses;
-    };
-    for (uint32_t node : postorder) {
-        if (node == root)
-            continue;
-        uint32_t dominator = dominatorOf[node];
-        if (dominator == root)
-            childrenOfRoot.append(node);
-        if (heaviestChildOf[dominator] == none || weighs(node) > weighs(heaviestChildOf[dominator]))
-            heaviestChildOf[dominator] = node;
-    }
-    AOT::sort(childrenOfRoot, [&](uint32_t first, uint32_t second) {
-        return std::pair { weighs(second), first } < std::pair { weighs(first), second };
-    });
-
-    uint32_t birthsAmongChildren = 0;
-    uint32_t childrenWithWeight = 0;
-    for (uint32_t child : childrenOfRoot) {
-        birthsAmongChildren += isBirth.quickGet(child);
-        childrenWithWeight += !!weighs(child);
-    }
-    out.println("nodes that carry the unknown object ", carries.bitCount(), ", births ", births.size(), ", sweeps ", sweeps);
-    out.println("checks of the program with it ", weightBelow[root].checks, ", receivers and callees with it ", weightBelow[root].accesses, ", at no node ", withoutNode);
-    out.println("children of the root ", childrenOfRoot.size(), ", births among them ", birthsAmongChildren, ", with a check or an access below them ", childrenWithWeight);
-
-    struct BirthLine {
-        String name;
-        uint32_t births { 0 };
-        Weight weight;
-    };
-    Vector<BirthLine> birthLines;
-    for (uint32_t birth : births) {
-        StringBuilder name;
-        graph.forEachPredecessor(ValueFlowNodeID(birth), [&](ValueFlowNodeID predecessor) {
-            if (!isConstant.quickGet(predecessor.index()) || !name.isEmpty())
-                return;
-            std::optional<ValueFlowUnknownSource> source = solver.unknownSourceOf(ValueFlowEdge { predecessor, ValueFlowNodeID(birth) });
-            name.append(source ? nameOf(*source) : "no source"_s, " by "_s);
-            if (ValueFlowStatementID logger = solver.statementThatLogged({ predecessor, ValueFlowNodeID(birth) })) {
-                const ValueFlowStatement& statement = solver.statementAt(logger);
-                name.append(statement.kind == ValueFlowStatementKind::Operation ? nameOf(statement.opcode) : nameOf(statement.kind));
-            } else
-                name.append("no statement"_s);
-        });
-        if (name.isEmpty())
-            name.append("from the start"_s);
-        String line = name.toString();
-        size_t place = birthLines.findIf([&](const BirthLine& other) {
-            return other.name == line;
-        });
-        if (place == notFound) {
-            place = birthLines.size();
-            birthLines.append({ line, 0, { } });
-        }
-        ++birthLines[place].births;
-        birthLines[place].weight.checks += weightBelow[birth].checks;
-        birthLines[place].weight.accesses += weightBelow[birth].accesses;
-    }
-    AOT::sort(birthLines, std::greater { }, &BirthLine::births);
-    for (const BirthLine& line : birthLines)
-        out.println("  births: ", line.births, " ", line.name, "; below them alone ", line.weight.checks, " checks ", line.weight.accesses, " accesses");
-    auto printLine = [&](uint32_t node) {
-        out.print(weightBelow[node].checks, " checks ", weightBelow[node].accesses, " accesses below ");
-        printPlaceOfNode(out, solution, ValueFlowNodeID(node));
-        if (!isBirth.quickGet(node)) {
-            out.println();
-            return;
-        }
-        out.print("   BIRTH");
-        graph.forEachPredecessor(ValueFlowNodeID(node), [&](ValueFlowNodeID predecessor) {
-            if (!isConstant.quickGet(predecessor.index()))
-                return;
-            if (std::optional<ValueFlowUnknownSource> source = solver.unknownSourceOf(ValueFlowEdge { predecessor, ValueFlowNodeID(node) }))
-                out.print(" ", nameOf(*source));
-            if (ValueFlowStatementID statement = solver.statementThatLogged({ predecessor, ValueFlowNodeID(node) })) {
-                out.print(" by ");
-                printStatement(out, solver, statement);
-            }
-        });
-        out.println();
-    };
-    for (uint32_t child : childrenOfRoot.span().first(std::min(childrenOfRoot.size(), numberOfChildrenPrinted))) {
-        printLine(child);
-        uint32_t node = child;
-        for (unsigned step = 0; step < numberOfStepsPrinted; ++step) {
-            uint32_t next = heaviestChildOf[node];
-            if (next == none || weighs(next) * 10 < weighs(child) * 5 || weighs(child) < 200)
-                break;
-            out.print("    ");
-            printLine(next);
-            node = next;
-        }
-    }
-}
-
-static void printLayoutsOfReceivers(PrintStream& out, ValueFlowSolution& solution)
-{
-    const Program& program = solution.program();
-    const ValueFlowBodies& bodies = solution.bodies();
-    const ValueFlowUniverse& universe = bodies.universe();
-    uint32_t withPlaceholder = 0;
-    uint32_t withoutObject = 0;
-    uint32_t withObjectWithoutLayout = 0;
-    uint32_t onlyBuiltinObjects = 0;
-    std::array<uint32_t, 6> byNumberOfLayouts { };
-    for (uint32_t index = 0; index < program.functions.size(); ++index) {
-        const Function& function = program.functions[index];
-        if (!solution.solver().isReached(FunctionID(index)) || !isWrittenInProgram(function) || function.role == FunctionRole::GenericVersion)
-            continue;
-        for (const ValueFlowStatement& statement : bodies.statementsOf(index)) {
-            if (statement.kind != ValueFlowStatementKind::Operation || (statement.opcode != Opcode::PropGet && statement.opcode != Opcode::PropSet))
-                continue;
-            ValueSetID held = solution.valueOf(bodies.operandsOf(statement)[0]);
-            if (solution.sets().contains(held, ValueFlowUniverse::unknownObject()) || solution.sets().contains(held, ValueFlowUniverse::untrackedObject())) {
-                ++withPlaceholder;
-                continue;
-            }
-            Vector<LayoutID, 8> layouts;
-            bool holdsObject = false;
-            bool holdsObjectWithoutLayout = false;
-            bool holdsOtherThanBuiltin = false;
-            solution.sets().forEachMember(held, [&](ValueFlowObjectID member) {
-                if (!universe.isObject(member))
-                    return;
-                holdsObject = true;
-                if (universe.builtinOf(member))
-                    return;
-                holdsOtherThanBuiltin = true;
-                if (LayoutID layout = universe.layoutOf(member)) {
-                    if (!layouts.contains(layout))
-                        layouts.append(layout);
-                } else
-                    holdsObjectWithoutLayout = true;
-            });
-            if (!holdsObject)
-                ++withoutObject;
-            else if (!holdsOtherThanBuiltin)
-                ++onlyBuiltinObjects;
-            else if (holdsObjectWithoutLayout)
-                ++withObjectWithoutLayout;
-            else
-                ++byNumberOfLayouts[layouts.size() <= 4 ? layouts.size() : 5];
-        }
-    }
-    out.println("receivers of named reads and stores: with a placeholder ", withPlaceholder, "; no object ", withoutObject, "; built-in objects alone ", onlyBuiltinObjects, "; some object without a layout ", withObjectWithoutLayout,
-        "; layouts: one ", byNumberOfLayouts[1], ", two ", byNumberOfLayouts[2], ", three ", byNumberOfLayouts[3], ", four ", byNumberOfLayouts[4], ", more ", byNumberOfLayouts[5]);
-}
-
-static void printMembersByName(PrintStream& out, ValueFlowSolution& solution, ValueSetID set, unsigned numberOfMembersPrinted = 6)
-{
+    constexpr unsigned numberOfMembersPrinted = 6;
     const ValueFlowUniverse& universe = solution.bodies().universe();
     if (!set || ValueSets::isComplement(set))
         return;
@@ -1827,72 +794,24 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
 {
     prepareForFlow(context);
     const Program& program = *context.program;
-    uint32_t mostRounds = UINT32_MAX;
-    for (const String& word : context.arguments) {
-        if (word.startsWith("rounds="_s))
-            mostRounds = parseInteger<uint32_t>(StringView(word).substring(7)).value_or(UINT32_MAX);
-    }
-    EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut;
-    for (const String& word : context.arguments) {
-        if (!word.startsWith("without="_s))
-            continue;
-        for (StringView name : StringView(word).substring(8).split(',')) {
-            for (size_t source = 0; source < numberOfUnknownSources; ++source) {
-                if (name == nameOf(static_cast<ValueFlowUnknownSource>(source)))
-                    unknownSourcesLeftOut.add(static_cast<ValueFlowUnknownSource>(source));
-            }
-        }
-    }
-    ValueFlowSolution solution(*context.program, context.build, ValueFlowSolver::Rounds::Due, ValueFlowSolution::Witnesses::ForEveryEdge, mostRounds, unknownSourcesLeftOut);
+    PrintStream& out = context.out;
+    ValueFlowSolution solution(*context.program, context.build, ValueFlowSolver::Rounds::Due, ValueFlowSolution::Witnesses::ForEveryEdge);
     if (!solution.hasResult()) {
-        context.out.println("stopped at a limit");
+        out.println("stopped at a limit");
         return;
     }
     const ValueFlowSolver& solver = solution.solver();
     const ValueFlowBodies& bodies = solution.bodies();
+    const ValueFlowUniverse& universe = bodies.universe();
+    const BuiltinTable& builtins = program.builtins();
+    ValueFlowNodeID escaped = ValueFlowProgramNodes::escaped();
+    ValueFlowNodeID lost = ValueFlowProgramNodes::lost();
 
-    if (context.arguments.empty()) {
-        struct Line {
-            ValueFlowStatementKind kind;
-            Opcode opcode;
-            uint32_t functions { 0 };
-        };
-        Vector<Line> lines;
-        uint32_t enteredByBodies = 0;
-        for (uint32_t index = 0; index < program.functions.size(); ++index) {
-            if (!program.functions[index].hasBody() || !solver.isReached(FunctionID(index)))
-                continue;
-            ValueFlowReachWitness witness = solver.reachedBy(FunctionID(index));
-            if (!witness.statement) {
-                ++enteredByBodies;
-                continue;
-            }
-            const ValueFlowStatement& statement = solver.statementAt(witness.statement);
-            size_t found = lines.findIf([&](const Line& line) {
-                return line.kind == statement.kind && line.opcode == statement.opcode;
-            });
-            if (found == notFound) {
-                found = lines.size();
-                lines.append({ statement.kind, statement.opcode, 0 });
-            }
-            ++lines[found].functions;
-        }
-        AOT::sort(lines, std::greater { }, &Line::functions);
-        context.out.println("entered by a body or the host: ", enteredByBodies);
-        for (const Line& line : lines) {
-            if (line.kind == ValueFlowStatementKind::Operation)
-                context.out.println(line.opcode, ": ", line.functions);
-            else
-                context.out.println(nameOf(line.kind), ": ", line.functions);
-        }
-        return;
-    }
-
+    if (context.arguments.empty())
+        return printBadArgument(out, "valueflow-why takes at least one word"_s);
     for (const String& word : context.arguments) {
-        if (word.startsWith("rounds="_s) || word.startsWith("without="_s) || word == "guarded"_s || word == "unguarded"_s)
-            continue;
         if (word == "seeds"_s) {
-            printSeeds(context.out, solution);
+            printSeeds(out, solution);
             continue;
         }
         if (word.startsWith("falsifiers="_s)) {
@@ -1901,137 +820,47 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
                 if (std::optional<uint32_t> number = parseInteger<uint32_t>(name.substring(1)); number && *number < program.layouts.size())
                     layouts.append(LayoutID(*number));
             }
-            printFalsifiers(context.out, solution, layouts.span());
+            printFalsifiers(out, solution, layouts.span());
             continue;
         }
         if (word == "timeline"_s) {
-            printTimeline(context.out, solution);
-            continue;
-        }
-        if (word == "order"_s) {
-            printFunctionsInOrderReached(context.out, solution);
-            continue;
-        }
-        if (word == "escapes"_s) {
-            WaysOfEscape ways(solution);
-            printWhoLetsEscape(context.out, solution, ways, EscapeIsCountedFor::ObjectItself, [](ValueFlowObjectID) {
-                return true;
-            });
-            continue;
-        }
-        if (word == "callee-births"_s) {
-            printBirthsOfUnknownObject(context.out, solution, context.build, [](Opcode opcode) {
-                return opcode == Opcode::Call || opcode == Opcode::CallList || opcode == Opcode::Construct || opcode == Opcode::ConstructList;
-            });
-            continue;
-        }
-        if (word == "awaited-births"_s) {
-            printBirthsOfUnknownObject(context.out, solution, context.build, [](Opcode opcode) {
-                return opcode == Opcode::Await;
-            });
-            continue;
-        }
-        if (word == "receiver-births"_s) {
-            printBirthsOfUnknownObject(context.out, solution, context.build, [](Opcode opcode) {
-                return opcode == Opcode::PropGet || opcode == Opcode::PropSet || opcode == Opcode::ElemGet || opcode == Opcode::ElemSet;
-            });
+            printTimeline(out, solution);
             continue;
         }
         if (word == "escape-roots"_s) {
-            printRootsOfEscape(context.out, solution);
+            printRootsOfEscape(out, solution);
             continue;
         }
         if (word.startsWith("holds="_s)) {
             size_t colon = word.find(':');
             std::optional<uint32_t> node = numberAfter(word, 7);
             std::optional<uint32_t> object = colon == notFound ? std::nullopt : numberAfter(word, colon + 2);
-            if (!node || !object || *node >= solver.graph().numberOfNodes() || *object >= bodies.universe().numberOfObjects())
-                return printBadArgument(context.out, word);
-            context.out.println(word);
-            printWhyHeld(context.out, solution, ValueFlowNodeID(*node), ValueFlowObjectID(*object));
-            continue;
-        }
-        if (word == "receiver-layouts"_s) {
-            printLayoutsOfReceivers(context.out, solution);
-            continue;
-        }
-        if (word == "checks"_s) {
-            printChecks(context.out, solution, context.build);
-            continue;
-        }
-        if (word == "choke-points"_s) {
-            printChokePoints(context.out, solution, context.build);
+            if (!node || !object || *node >= solver.graph().numberOfNodes() || *object >= universe.numberOfObjects())
+                return printBadArgument(out, word);
+            out.println(word);
+            printWhyHeld(out, solution, ValueFlowNodeID(*node), ValueFlowObjectID(*object));
             continue;
         }
         if (word == "evaluators"_s) {
-            const BuiltinTable& builtins = program.builtins();
-            solver.sets().forEachMember(solver.valueOf(ValueFlowProgramNodes::escaped()), [&](ValueFlowObjectID object) {
-                BuiltinID builtin = bodies.universe().builtinOf(object);
+            solver.sets().forEachMember(solver.valueOf(escaped), [&](ValueFlowObjectID object) {
+                BuiltinID builtin = universe.builtinOf(object);
                 if (!builtin || !builtins.letsInUnseenCode(builtin))
                     return;
-                context.out.println("escaped ", builtins.tokenOf(builtin));
-                printWhyHeld(context.out, solution, ValueFlowProgramNodes::escaped(), object);
+                out.println("escaped ", builtins.tokenOf(builtin));
+                printWhyHeld(out, solution, escaped, object);
             });
             continue;
         }
         size_t equals = word.find('=');
-        if (word.startsWith("flag="_s) || word.startsWith("held="_s) || word.startsWith("untracked-in="_s)) {
-            bool namesHostNode = !word.startsWith("held="_s);
-            std::optional<uint32_t> number = numberAfter(word, equals + 2);
-            if (!number || *number >= (namesHostNode ? numberOfValueFlowHostNodes : solver.graph().numberOfNodes()))
-                return printBadArgument(context.out, word);
-            context.out.println(word);
-            printWhyHeld(context.out, solution, namesHostNode ? bodies.nodes().ofHost(static_cast<ValueFlowHostNode>(*number)) : ValueFlowNodeID(*number), word.startsWith("untracked-in="_s) ? ValueFlowUniverse::untrackedObject() : ValueFlowUniverse::unknownObject());
-            continue;
-        }
-        if (word.startsWith("raisers=h"_s)) {
+        if (word.startsWith("flag="_s)) {
             std::optional<uint32_t> number = numberAfter(word, equals + 2);
             if (!number || *number >= numberOfValueFlowHostNodes)
-                return printBadArgument(context.out, word);
-            context.out.println(word);
-            ValueFlowNodeID node = bodies.nodes().ofHost(static_cast<ValueFlowHostNode>(*number));
-            Vector<uint32_t> raisers;
-            solver.graph().forEachPredecessor(node, [&](ValueFlowNodeID predecessor) {
-                if (solver.valueOf(predecessor) == ValueSets::nothing)
-                    return;
-                if (ValueFlowStatementID logger = solver.statementThatLogged({ predecessor, node }))
-                    raisers.append(logger.index());
-            });
-            AOT::sort(raisers);
-            removeRepeatedElements(raisers);
-            for (uint32_t raiser : raisers) {
-                context.out.print("  ");
-                printStatement(context.out, solver, ValueFlowStatementID(raiser));
-                context.out.println();
-            }
-            continue;
-        }
-        if (word.startsWith("field="_s) || word.startsWith("variable="_s)) {
-            std::optional<uint32_t> owner = numberAfter(word, equals + 2);
-            size_t colon = word.find(':');
-            std::optional<uint32_t> field = colon == notFound ? std::nullopt : numberAfter(word, colon + 1);
-            bool isField = word.startsWith("field="_s);
-            if (!owner || (isField ? *owner >= program.layouts.size() || !field || *field >= program.layouts[*owner].fields.size() : *owner >= program.variables.size()))
-                return printBadArgument(context.out, word);
-            ValueFlowNodeID node = isField ? bodies.nodes().field(LayoutID(*owner), *field) : bodies.nodes().variable(VariableID(*owner));
-            TypeID declared = isField ? program.layouts[*owner].fields[*field].declared.type : program.variables[*owner].declared.type;
-            context.out.print(word, " n", node.index(), " ");
-            printValue(context.out, solution, solver.valueOf(node));
-            ValueFlowResultInputs inputs { program, solution, context.build };
-            BorrowedValueSetMaker borrowedMaker(inputs.makerPool());
-            ValueSetID outside = borrowedMaker.get().intersect(solver.valueOf(node), ValueSets::complement(bodies.universe().membersSurelyInside(borrowedMaker.get(), program, declared)));
-            unsigned printed = 0;
-            solver.sets().forEachMember(outside, [&](ValueFlowObjectID member) {
-                if (++printed > 8)
-                    return;
-                context.out.print("outside the declared type: ");
-                printValue(context.out, solution, borrowedMaker.get().of(member));
-                printWhyHeld(context.out, solution, node, member);
-            });
+                return printBadArgument(out, word);
+            out.println(word);
+            printWhyHeld(out, solution, bodies.nodes().ofHost(static_cast<ValueFlowHostNode>(*number)), ValueFlowUniverse::unknownObject());
             continue;
         }
         if (word.startsWith("escaped-builtin="_s) || word.startsWith("lost-builtin="_s) || word.startsWith("used-builtin="_s) || word.startsWith("written-builtin="_s)) {
-            const BuiltinTable& builtins = program.builtins();
             StringView token = StringView(word).substring(equals + 1);
             BuiltinID named;
             for (uint32_t index = 0; index < builtins.builtinCount() && !named; ++index) {
@@ -2039,181 +868,64 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
                     named = BuiltinID(index);
             }
             if (!named)
-                return printBadArgument(context.out, word);
-            context.out.println(word);
-            ValueFlowNodeID holding = word.startsWith("used"_s) ? bodies.nodes().ofHost(ValueFlowHostNode::UsedBuiltins) : word.startsWith("written"_s) ? bodies.nodes().ofHost(ValueFlowHostNode::WrittenBuiltins) : word.startsWith("lost"_s) ? ValueFlowProgramNodes::lost() : ValueFlowProgramNodes::escaped();
-            printWhyHeld(context.out, solution, holding, bodies.universe().objectOf(named));
+                return printBadArgument(out, word);
+            out.println(word);
+            ValueFlowNodeID holding = word.startsWith("used"_s) ? bodies.nodes().ofHost(ValueFlowHostNode::UsedBuiltins) : word.startsWith("written"_s) ? bodies.nodes().ofHost(ValueFlowHostNode::WrittenBuiltins) : word.startsWith("lost"_s) ? lost : escaped;
+            printWhyHeld(out, solution, holding, universe.objectOf(named));
             Vector<ValueFlowObjectID, 32> objects;
-            bodies.universe().appendObjectsOf(named, objects);
+            universe.appendObjectsOf(named, objects);
             unsigned held = 0;
             for (ValueFlowObjectID object : objects.span().subspan(1)) {
                 if (!solution.sets().contains(solver.valueOf(holding), object))
                     continue;
                 if (++held > 6)
                     continue;
-                context.out.println("  of module m", bodies.universe().moduleOf(object).index());
-                printWhyHeld(context.out, solution, holding, object);
+                out.println("  of module m", universe.moduleOf(object).index());
+                printWhyHeld(out, solution, holding, object);
             }
             if (objects.size() > 1)
-                context.out.println("  held: those of ", held, " of ", objects.size() - 1, " modules");
+                out.println("  held: those of ", held, " of ", objects.size() - 1, " modules");
             continue;
         }
-        if (word.startsWith("escaped-layout="_s) || word.startsWith("lost-layout="_s)) {
+        if (word.startsWith("escaped-layout="_s)) {
             std::optional<uint32_t> layout = numberAfter(word, equals + 2);
             if (!layout || *layout >= program.layouts.size())
-                return printBadArgument(context.out, word);
-            context.out.println(word);
-            ValueFlowNodeID holding = word.startsWith("lost"_s) ? ValueFlowProgramNodes::lost() : ValueFlowProgramNodes::escaped();
-            solver.sets().forEachMember(solver.valueOf(holding), [&](ValueFlowObjectID object) {
-                if (bodies.universe().layoutOf(object) != LayoutID(*layout))
+                return printBadArgument(out, word);
+            out.println(word);
+            solver.sets().forEachMember(solver.valueOf(escaped), [&](ValueFlowObjectID object) {
+                if (universe.layoutOf(object) != LayoutID(*layout))
                     return;
-                printObject(context.out, solution, object);
-                context.out.println();
-                printWhyHeld(context.out, solution, holding, object);
+                printObject(out, solution, object);
+                out.println();
+                printWhyHeld(out, solution, escaped, object);
             });
-            continue;
-        }
-        constexpr unsigned mostCalleesPrinted = 256;
-        if (word.startsWith("group-askers=o"_s)) {
-            std::optional<uint32_t> object = numberAfter(word, equals + 2);
-            if (!object || *object >= bodies.universe().numberOfObjects())
-                return printBadArgument(context.out, word);
-            context.out.println(word);
-            for (uint32_t index = 0; index < solver.numberOfStatements(); ++index) {
-                ValueFlowStatementID id(index);
-                solver.forEachMadeNodeAskedForBy(id, [&](const ValueFlowNodeKey& asked, ValueFlowStatementID) {
-                    if (asked.kind != ValueFlowMadeNodeKind::CallGroup || ValueSets::isComplement(asked.set) || !solver.sets().contains(asked.set, ValueFlowObjectID(*object)))
-                        return;
-                    context.out.print("  ");
-                    printStatement(context.out, solver, id);
-                    context.out.print(" asks for ");
-                    printKey(context.out, solver, asked);
-                    context.out.print(" of");
-                    printMembersByName(context.out, solution, asked.set, mostCalleesPrinted);
-                    context.out.println();
-                });
-            }
-            continue;
-        }
-        if (word.startsWith("groups=d"_s)) {
-            std::optional<uint32_t> kind = numberAfter(word, equals + 2);
-            if (!kind)
-                return printBadArgument(context.out, word);
-            context.out.println(word);
-            for (uint32_t index = 0; index < solver.numberOfStatements(); ++index) {
-                ValueFlowStatementID id(index);
-                if (solver.statementAt(id).kind != ValueFlowStatementKind::CallGroup || !solver.isMadeByRule(id) || solver.keyOf(id).detail != *kind)
-                    continue;
-                context.out.print("  ");
-                printKey(context.out, solver, solver.keyOf(id));
-                context.out.print(" of");
-                printMembersByName(context.out, solution, solver.keyOf(id).set, mostCalleesPrinted);
-                context.out.println();
-            }
-            continue;
-        }
-        if (word.startsWith("askers=k"_s)) {
-            size_t colon = word.find(':');
-            std::optional<uint32_t> key = numberAfter(word, equals + 2);
-            std::optional<uint32_t> object = colon == notFound ? std::nullopt : numberAfter(word, colon + 2);
-            if (!key || !object || *object >= bodies.universe().numberOfObjects())
-                return printBadArgument(context.out, word);
-            context.out.println(word);
-            for (uint32_t index = 0; index < solver.numberOfStatements(); ++index) {
-                ValueFlowStatementID id(index);
-                bool hasAsked = false;
-                solver.forEachMadeNodeAskedForBy(id, [&](const ValueFlowNodeKey& asked, ValueFlowStatementID) {
-                    hasAsked |= asked.kind == ValueFlowMadeNodeKind::Lookup && asked.payload == *key && solver.sets().contains(asked.set, ValueFlowObjectID(*object));
-                });
-                if (!hasAsked)
-                    continue;
-                context.out.print("  ");
-                printStatement(context.out, solver, id);
-                context.out.println();
-            }
-            continue;
-        }
-        if (word.startsWith("asked=d"_s) || word.startsWith("asked=l"_s) || word.startsWith("asked=g"_s)) {
-            bool asksForGroups = word.startsWith("asked=g"_s);
-            bool asksForLookupsAlone = word.startsWith("asked=l"_s);
-            size_t colon = word.find(':');
-            std::optional<uint32_t> kind = numberAfter(word, equals + 2);
-            std::optional<uint32_t> object = colon == notFound ? std::nullopt : numberAfter(word, colon + 2);
-            if (!kind || !object || *object >= bodies.universe().numberOfObjects())
-                return printBadArgument(context.out, word);
-            context.out.println(word);
-            for (uint32_t index = 0; index < solver.numberOfStatements(); ++index) {
-                ValueFlowStatementID id(index);
-                bool hasAsked = false;
-                solver.forEachMadeNodeAskedForBy(id, [&](const ValueFlowNodeKey& asked, ValueFlowStatementID) {
-                    if (asksForGroups ? asked.kind != ValueFlowMadeNodeKind::CallGroup : asked.kind != ValueFlowMadeNodeKind::Lookup && (asksForLookupsAlone || asked.kind != ValueFlowMadeNodeKind::Read))
-                        return;
-                    hasAsked |= static_cast<uint32_t>(asked.detail) == *kind && !ValueSets::isComplement(asked.set) && solver.sets().size(asked.set) <= 8 && solver.sets().contains(asked.set, ValueFlowObjectID(*object));
-                });
-                if (!hasAsked)
-                    continue;
-                context.out.print("  ");
-                printStatement(context.out, solver, id);
-                context.out.println();
-                ValueFlowStatementID made = id;
-                for (unsigned depth = 0; depth < 6 && solver.isMadeByRule(made) && solver.statementAt(made).kind != ValueFlowStatementKind::Escape; ++depth) {
-                    context.out.print("      of");
-                    printMembersByName(context.out, solution, solver.keyOf(made).set, 16);
-                    context.out.println();
-                    ValueFlowStatementID asker;
-                    for (uint32_t other = 0; other < solver.numberOfStatements() && !asker; ++other) {
-                        solver.forEachMadeNodeAskedForBy(ValueFlowStatementID(other), [&](const ValueFlowNodeKey&, ValueFlowStatementID statementOfNode) {
-                            if (statementOfNode == made && other != made.index())
-                                asker = ValueFlowStatementID(other);
-                        });
-                    }
-                    if (!asker)
-                        break;
-                    context.out.print("      asked for by ");
-                    printStatement(context.out, solver, asker);
-                    context.out.println();
-                    made = asker;
-                }
-            }
-            continue;
-        }
-        if (word.startsWith("escaped-object="_s) || word.startsWith("lost-object="_s)) {
-            std::optional<uint32_t> object = numberAfter(word, equals + 2);
-            if (!object || *object >= bodies.universe().numberOfObjects())
-                return printBadArgument(context.out, word);
-            context.out.print(word, " ");
-            printObject(context.out, solution, ValueFlowObjectID(*object));
-            context.out.println();
-            printWhyHeld(context.out, solution, word.startsWith("lost"_s) ? ValueFlowProgramNodes::lost() : ValueFlowProgramNodes::escaped(), ValueFlowObjectID(*object));
             continue;
         }
         std::optional<uint32_t> function = equals == notFound ? std::nullopt : numberAfter(word, equals + 2);
         if (!function || *function >= program.functions.size())
-            return printBadArgument(context.out, word);
-        context.out.println(word);
+            return printBadArgument(out, word);
+        out.println(word);
         if (word.startsWith("reached="_s))
-            printWhyReached(context.out, solution, FunctionID(*function));
+            printWhyReached(out, solution, FunctionID(*function));
         else if (word.startsWith("escaped="_s))
-            printWhyHeld(context.out, solution, ValueFlowProgramNodes::escaped(), bodies.universe().closureOf(FunctionID(*function)));
+            printWhyHeld(out, solution, escaped, universe.closureOf(FunctionID(*function)));
         else if (word.startsWith("lost="_s))
-            printWhyHeld(context.out, solution, ValueFlowProgramNodes::lost(), bodies.universe().closureOf(FunctionID(*function)));
-        else if (word.startsWith("unknown="_s) || word.startsWith("untracked="_s) || word.startsWith("values="_s) || word.startsWith("asks="_s)) {
+            printWhyHeld(out, solution, lost, universe.closureOf(FunctionID(*function)));
+        else if (word.startsWith("values="_s) || word.startsWith("asks="_s)) {
             size_t colon = word.find(':');
             std::optional<uint32_t> site = colon == notFound ? std::nullopt : numberAfter(word, colon + 2);
             if (!site)
-                return printBadArgument(context.out, word);
+                return printBadArgument(out, word);
             for (const ValueFlowStatement& statement : bodies.statementsOf(*function)) {
                 if (statement.site.index() != *site)
                     continue;
                 if (word.startsWith("values="_s))
-                    printValuesAt(context.out, solution, statement);
-                else if (word.startsWith("asks="_s))
-                    printWhatIsAskedFor(context.out, solution, ValueFlowStatementID(static_cast<uint32_t>(&statement - bodies.statements().data())), 0);
-                else if (statement.operandCount && bodies.operandsOf(statement)[0].node)
-                    printWhyHeld(context.out, solution, bodies.operandsOf(statement)[0].node, word.startsWith("untracked="_s) ? ValueFlowUniverse::untrackedObject() : ValueFlowUniverse::unknownObject());
+                    printValuesAt(out, solution, statement);
+                else
+                    printWhatIsAskedFor(out, solution, ValueFlowStatementID(static_cast<uint32_t>(&statement - bodies.statements().data())), 0);
             }
         } else
-            return printBadArgument(context.out, word);
+            return printBadArgument(out, word);
     }
 }
 

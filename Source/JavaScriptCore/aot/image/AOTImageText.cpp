@@ -8,8 +8,8 @@
 
 #if ENABLE(AOT)
 
-#include "AOTGuardedPages.h"
 #include "AOTImage.h"
+#include "AOTState.h"
 #include "AOTVector.h"
 #include <array>
 #include <bit>
@@ -36,8 +36,7 @@ namespace JSC { namespace AOT {
 
 static_assert(ImageString::hashMask == StringHasher::maskHash && ImageIdentifier::hashMask == StringHasher::maskHash);
 
-#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-static_assert(!(imageSectionAlignment % alignof(ImageStringRecord)));
+static_assert(!(imageSectionAlignment % alignof(ImageStringRecord)) && !(imageSectionAlignment % alignof(ImageStringHeader)));
 
 ImageText::ImageText(const Image& image)
     : m_strings(image.section<ImageStringWord>(ImageSection::Strings))
@@ -45,6 +44,12 @@ ImageText::ImageText(const Image& image)
     , m_text(image.section<uint8_t>(ImageSection::Text))
     , m_identifiers(image.section<ImageIdentifierWord>(ImageSection::Identifiers))
     , m_stringConstants(image.section<uint32_t>(ImageSection::StringConstants))
+#if !ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
+    , m_stringHeaders(image.section<ImageStringHeader>(ImageSection::StringHeaders))
+    , m_addressOfText(image.header().address + image.header().sections[static_cast<unsigned>(ImageSection::Text)].offset)
+{
+}
+#else
     , m_stringRecords(image.section<ImageStringRecord>(ImageSection::StringHeaders))
 {
     m_lazyHeaderOffsets = static_cast<std::atomic<uint32_t>*>(reserveGuardedPages(lazyHeaderOffsetsSize(), OSAllocator::UnknownUsage));
@@ -125,38 +130,19 @@ uint32_t ImageText::literalStringWordFor(const ImageStringRecord& record) const
     return words[ImageListedString::numberOfWords(ImageListedString::read(words))];
 }
 
-const ImageStringRecord& ImageText::recordFor(StringID string) const
+#endif
+
+StringImpl* ImageText::headerOf(StringID string) const
 {
     ImageStringWord word = m_strings[string.index()];
     RELEASE_ASSERT_WITH_MESSAGE(word.hasText(), "AOT: the image has no text for this string because nothing referenced it at build time");
     RELEASE_ASSERT(word.hasHeader());
-    return m_stringRecords[word.number()];
+#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
+    return m_stringRecords[word.number()].hasText() ? &ensureLazyHeader(word.number()) : nullptr;
 #else
-static_assert(!(imageSectionAlignment % alignof(ImageStringHeader)));
-
-static StringImpl& stringImplOf(const ImageStringHeader& header)
-{
-    ASSERT(header.length && header.refCount == StringImpl::refCountOfStaticString());
-    return *reinterpret_cast<StringImpl*>(const_cast<ImageStringHeader*>(&header));
-}
-
-ImageText::ImageText(const Image& image)
-    : m_strings(image.section<ImageStringWord>(ImageSection::Strings))
-    , m_listedStrings(image.section<uint32_t>(ImageSection::LongStrings))
-    , m_text(image.section<uint8_t>(ImageSection::Text))
-    , m_identifiers(image.section<ImageIdentifierWord>(ImageSection::Identifiers))
-    , m_stringConstants(image.section<uint32_t>(ImageSection::StringConstants))
-    , m_stringHeaders(image.section<ImageStringHeader>(ImageSection::StringHeaders))
-    , m_addressOfText(image.header().address + image.header().sections[static_cast<unsigned>(ImageSection::Text)].offset)
-{
-}
-
-const ImageStringHeader& ImageText::headerOf(StringID string) const
-{
-    ImageStringWord word = m_strings[string.index()];
-    RELEASE_ASSERT_WITH_MESSAGE(word.hasText(), "AOT: the image has no text for this string because nothing referenced it at build time");
-    RELEASE_ASSERT(word.hasHeader());
-    return m_stringHeaders[word.number()];
+    const ImageStringHeader& header = m_stringHeaders[word.number()];
+    ASSERT(!header.length || header.refCount == StringImpl::refCountOfStaticString());
+    return header.length ? reinterpret_cast<StringImpl*>(const_cast<ImageStringHeader*>(&header)) : nullptr;
 #endif
 }
 
@@ -193,7 +179,6 @@ unsigned ImageText::hash(StringID string) const
 {
     ImageStringWord word = m_strings[string.index()];
 #if !ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-    // The header of an identifier's text is its atom. The text without characters has none.
     if (word.hasIdentifierNumber()) {
         const ImageStringHeader& header = m_stringHeaders[word.number()];
         return header.length ? header.hash() : StringImpl::empty()->hash();
@@ -222,41 +207,20 @@ String ImageText::createString(StringID string) const
 {
     if (!hasHeader(string))
         return createStringWithoutHeader(string);
-#if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-    if (!recordFor(string).hasText())
-        return emptyString();
-    return String(ensureLazyHeader(m_strings[string.index()].number()));
+    StringImpl* header = headerOf(string);
+    return header ? String(*header) : emptyString();
 }
 
 String ImageText::createAtom(StringID string) const
 {
     if (!hasHeader(string))
         return AtomString(createStringWithoutHeader(string)).string();
-    if (!recordFor(string).hasText())
+    StringImpl* header = headerOf(string);
+    if (!header)
         return emptyString();
-    StringImpl& impl = ensureLazyHeader(m_strings[string.index()].number());
-    if (impl.isAtom())
-        return String(impl);
-    return AtomStringImpl::add(&impl);
-#else
-    const ImageStringHeader& header = headerOf(string);
-    if (!header.length)
-        return emptyString();
-    return String(stringImplOf(header));
-}
-
-String ImageText::createAtom(StringID string) const
-{
-    if (!hasHeader(string))
-        return AtomString(createStringWithoutHeader(string)).string();
-    const ImageStringHeader& header = headerOf(string);
-    if (!header.length)
-        return emptyString();
-    StringImpl& impl = stringImplOf(header);
-    if (impl.isAtom())
-        return String(impl);
-    return AtomStringImpl::add(&impl);
-#endif
+    if (header->isAtom())
+        return String(*header);
+    return AtomStringImpl::add(header);
 }
 
 static const ImageHeader& headerOfImage(std::span<const uint8_t> image)
@@ -329,7 +293,6 @@ static bool allowWrites(std::span<uint8_t> pages)
 {
     if (!mprotect(pages.data(), pages.size(), PROT_READ | PROT_WRITE))
         return true;
-    // A segment that the loader of a Mach-O executable maps with code in it never gets write access. Memory of the process takes the place of its pages.
     Vector<uint8_t> contents(std::span<const uint8_t> { pages });
     if (mmap(pages.data(), pages.size(), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0) == MAP_FAILED)
         return false;
@@ -356,7 +319,6 @@ bool relocateLoadedImage(std::span<const uint8_t> image)
             return false;
     }
     relocateImage({ const_cast<uint8_t*>(image.data()), image.size() }, address);
-    // The first and the last page of an image that does not start on a page may hold what is not the image's.
     if (address % WTF::pageSize())
         return true;
     for (std::span<uint8_t> pages : writtenPages) {

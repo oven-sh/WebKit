@@ -10,7 +10,6 @@ module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = CallDirect function=f1
     v1 = CallDirect function=f3
     v2 = CallDirect function=f6
@@ -20,76 +19,64 @@ function f0 kind=Module results=[{type=anything}] {
 }
 
 function f1 name="pair0" results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f2
     Return v0
 }
 
 function f2 name="pair1" results=[{type=undefined}] {
-  b0():
     v0 = Undefined
     Return v0
 }
 
 function f3 name="triple0" results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f4
     Return v0
 }
 
 function f4 name="triple1" results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f5
     Return v0
 }
 
 function f5 name="triple2" results=[{type=undefined}] {
-  b0():
     v0 = Undefined
     Return v0
 }
 # REPEAT: i = 0..3
 
 function f%(i+6) name="five%(i)" results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f%(i+7)
     Return v0
 }
 # END REPEAT
 
 function f10 name="five4" results=[{type=undefined}] {
-  b0():
     v0 = Undefined
     Return v0
 }
 
 function f11 name="callsLeafAndPair" results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f12
     v1 = CallDirect function=f1
     Return v1
 }
 
 function f12 name="leaf" results=[{type=undefined}] {
-  b0():
     v0 = Undefined
     Return v0
 }
 
 function f13 name="tail0" results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f14
     ReturnCall v0
 }
 
 function f14 name="tail1" results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f15
     ReturnCall v0
 }
 
 function f15 name="tail2" results=[{type=undefined}] {
-  b0():
     v0 = Undefined
     Return v0
 }

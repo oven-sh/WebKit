@@ -19,7 +19,6 @@ layout L0 fields=[{key="x" declared={type=number}}, {key="y" declared={type=anyt
 module m0 path="/a.ts" displayPath="a.ts" body=f0
 module m1 path="/d.json" displayPath="d.json" kind=Data requireResult=DefaultExport data=d1
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = Data data=d1
     Return
 }

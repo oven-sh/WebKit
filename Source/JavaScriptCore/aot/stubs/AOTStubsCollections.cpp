@@ -47,11 +47,6 @@ static_assert(!JSValue::ValueEmpty && !absentCell32);
 enum class WeakTableLookup : uint8_t { MapGet, MapHas, SetHas };
 enum class InsertionPoint : uint8_t { AmongTags, AtShortSlot, AtLongSlot };
 
-struct ColumnEntry {
-    GPRReg column;
-    GPRReg entry;
-};
-
 static StubSignature signatureOfLookup()
 {
     return StubSignature::withGPRResult({ thisGPR, argumentGPR(0) });
@@ -144,24 +139,24 @@ static void emitEncodeForNarrowColumn(StubAssembler& jit, GPRReg value, GPRReg w
 }
 
 // isWide is taken for a column of 64-bit words. Nothing is stored when the value does not fit.
-static void emitStoreInColumn(StubAssembler& jit, Jump isWide, ColumnEntry at, GPRReg value, GPRReg word, JumpList* doesNotFit)
+static void emitStoreInColumn(StubAssembler& jit, Jump isWide, GPRReg column, GPRReg entry, GPRReg value, GPRReg word, JumpList* doesNotFit)
 {
     emitEncodeForNarrowColumn(jit, value, word, doesNotFit);
-    jit.store32(word, BaseIndex(at.column, at.entry, CCallHelpers::TimesFour));
+    jit.store32(word, BaseIndex(column, entry, CCallHelpers::TimesFour));
     Jump isStored = jit.jump();
 
     isWide.link(&jit);
-    jit.store64(value, BaseIndex(at.column, at.entry, CCallHelpers::TimesEight));
+    jit.store64(value, BaseIndex(column, entry, CCallHelpers::TimesEight));
     isStored.link(&jit);
 }
 
-static void emitClearInColumn(StubAssembler& jit, Jump isWide, ColumnEntry at)
+static void emitClearInColumn(StubAssembler& jit, Jump isWide, GPRReg column, GPRReg entry)
 {
-    jit.store32(TrustedImm32(0), BaseIndex(at.column, at.entry, CCallHelpers::TimesFour));
+    jit.store32(TrustedImm32(0), BaseIndex(column, entry, CCallHelpers::TimesFour));
     Jump isCleared = jit.jump();
 
     isWide.link(&jit);
-    jit.store64(TrustedImm32(0), BaseIndex(at.column, at.entry, CCallHelpers::TimesEight));
+    jit.store64(TrustedImm32(0), BaseIndex(column, entry, CCallHelpers::TimesEight));
     isCleared.link(&jit);
 }
 
@@ -185,7 +180,7 @@ static void emitStoreValueOfCompactTable(StubAssembler& jit, const HashTableRegi
 {
     const GPRReg values = registers.keys;
     emitLoadValuesOfCompactTable(jit, registers, values, keysAreNarrow);
-    emitStoreInColumn(jit, branchIfValuesAreWide(jit, registers), { values, registers.entry }, value, registers.candidate, doesNotFit);
+    emitStoreInColumn(jit, branchIfValuesAreWide(jit, registers), values, registers.entry, value, registers.candidate, doesNotFit);
 }
 
 static void emitStoreInIndex(StubAssembler& jit, const HashTableRegisters& registers, InsertionPoint point)
@@ -222,7 +217,7 @@ static void emitAppendToCompactTable(StubAssembler& jit, const HashTableRegister
             emitBranchUnlessNarrowColumnHolds(jit, *value, cannotAppend);
             valuesAreWide.link(&jit);
         }
-        emitStoreInColumn(jit, branchIfKeysAreWide(jit, registers), { registers.keys, entry }, registers.key, registers.candidate, keyFitsEveryColumn ? nullptr : &cannotAppend);
+        emitStoreInColumn(jit, branchIfKeysAreWide(jit, registers), registers.keys, entry, registers.key, registers.candidate, keyFitsEveryColumn ? nullptr : &cannotAppend);
         emitStoreInIndex(jit, registers, point);
     };
     if (insertionPoints.amongTags.empty())
@@ -246,9 +241,27 @@ static void emitAppendToCompactTable(StubAssembler& jit, const HashTableRegister
     emitBarrierAndReturnOwner(jit, registers, table);
 }
 
-static void emitInsertAbsentKey(StubAssembler& jit, const HashTableRegisters& registers, HashTableExits& exits, CompactTableOwner owner, std::optional<GPRReg> value)
+// set() of a map, which has a value, and add() of a set.
+static void emitInsert(StubAssembler& jit, CompactTableOwner owner)
 {
-    RELEASE_ASSERT(exits.absent.empty() && value.has_value() == (owner == CompactTableOwner::Map));
+    const HashTableRegisters registers = HashTableRegisters::take(jit);
+    std::optional<GPRReg> value;
+    if (owner == CompactTableOwner::Map)
+        value = jit.operand(2);
+    HashTableExits exits;
+    emitFindInHashTable(jit, registers, { .comparison = keyComparisonOf(jit), .searchesTablesInImage = false, .findsInsertionPoint = true }, exits);
+    if (!value)
+        exits.foundInCompactTable.append(exits.foundAmongNarrowKeys);
+    emitAtExit(jit, exits.foundInCompactTable, [&] {
+        if (!value) {
+            returnOwner(jit, registers);
+            return;
+        }
+        emitStoreValueOfCompactTable(jit, registers, *value, &exits.unknown, &exits.foundAmongNarrowKeys);
+        emitBarrierAndReturnOwner(jit, registers, registers.table);
+    });
+
+    RELEASE_ASSERT(exits.absent.empty());
     JumpList isFull;
     emitAppendToCompactTable(jit, registers, exits.insertionPoints, value, isFull, exits.unknown);
     if (value) {
@@ -261,25 +274,32 @@ static void emitInsertAbsentKey(StubAssembler& jit, const HashTableRegisters& re
     jit.linkToStub(exits.hasNoStorage, newCompactTable(owner));
     jit.linkToStub(isFull, growCompactTable(owner));
     emitAtExit(jit, exits.unknown, [&] {
-        emitCallTableOperation(jit, registers, owner == CompactTableOwner::Map ? Entry::operationAOTMapSet : Entry::operationAOTSetAdd, value);
+        emitCallTableOperation(jit, registers, value ? Entry::operationAOTMapSet : Entry::operationAOTSetAdd, value);
     });
 }
 
-static void emitHas(StubAssembler& jit, Entry entry)
+// Answers whether the table has the key. emitAtEntry() falls through.
+static void emitTestForKey(StubAssembler& jit, bool searchesTablesInImage, Entry operation, const Invocable<void(const HashTableRegisters&)> auto& emitAtEntry)
 {
     const HashTableRegisters registers = HashTableRegisters::take(jit);
     HashTableExits exits;
-    emitFindInHashTable(jit, registers, { .comparison = keyComparisonOf(jit), .searchesTablesInImage = true }, exits);
+    emitFindInHashTable(jit, registers, { .comparison = keyComparisonOf(jit), .searchesTablesInImage = searchesTablesInImage }, exits);
     exits.foundInCompactTable.append(exits.foundAmongNarrowKeys);
     emitAtExit(jit, exits.foundInCompactTable, [&] {
+        emitAtEntry(registers);
         returnConstant(jit, jsBoolean(true));
     });
     emitAtExit(jit, exits.absent, [&] {
         returnConstant(jit, jsBoolean(false));
     });
     emitAtExit(jit, exits.unknown, [&] {
-        emitCallTableOperation(jit, registers, entry, std::nullopt);
+        emitCallTableOperation(jit, registers, operation, std::nullopt);
     });
+}
+
+static void emitHas(StubAssembler& jit, Entry operation)
+{
+    emitTestForKey(jit, true, operation, [](const HashTableRegisters&) { });
 }
 
 static void emitLookupInWeakTable(StubAssembler& jit, WeakTableLookup lookup)
@@ -355,91 +375,38 @@ void generateMapGet(StubAssembler& jit)
     });
 }
 
-void generateMapHas(StubAssembler& jit)
-{
-    emitHas(jit, Entry::operationAOTMapHas);
-}
-
-void generateSetHas(StubAssembler& jit)
-{
-    emitHas(jit, Entry::operationAOTSetHas);
-}
-
-void generateMapSet(StubAssembler& jit)
-{
-    const HashTableRegisters registers = HashTableRegisters::take(jit);
-    const GPRReg value = jit.operand(2);
-    HashTableExits exits;
-    emitFindInHashTable(jit, registers, { .comparison = keyComparisonOf(jit), .searchesTablesInImage = false, .findsInsertionPoint = true }, exits);
-    emitAtExit(jit, exits.foundInCompactTable, [&] {
-        emitStoreValueOfCompactTable(jit, registers, value, &exits.unknown, &exits.foundAmongNarrowKeys);
-        emitBarrierAndReturnOwner(jit, registers, registers.table);
-    });
-    emitInsertAbsentKey(jit, registers, exits, CompactTableOwner::Map, value);
-}
-
-void generateSetAdd(StubAssembler& jit)
-{
-    const HashTableRegisters registers = HashTableRegisters::take(jit);
-    HashTableExits exits;
-    emitFindInHashTable(jit, registers, { .comparison = keyComparisonOf(jit), .searchesTablesInImage = false, .findsInsertionPoint = true }, exits);
-    exits.foundInCompactTable.append(exits.foundAmongNarrowKeys);
-    emitAtExit(jit, exits.foundInCompactTable, [&] {
-        returnOwner(jit, registers);
-    });
-    emitInsertAbsentKey(jit, registers, exits, CompactTableOwner::Set, std::nullopt);
-}
+void generateMapHas(StubAssembler& jit) { emitHas(jit, Entry::operationAOTMapHas); }
+void generateSetHas(StubAssembler& jit) { emitHas(jit, Entry::operationAOTSetHas); }
+void generateMapSet(StubAssembler& jit) { emitInsert(jit, CompactTableOwner::Map); }
+void generateSetAdd(StubAssembler& jit) { emitInsert(jit, CompactTableOwner::Set); }
 
 static void emitDelete(StubAssembler& jit, CompactTableOwner owner)
 {
-    const HashTableRegisters registers = HashTableRegisters::take(jit);
-    HashTableExits exits;
-    emitFindInHashTable(jit, registers, { .comparison = keyComparisonOf(jit), .searchesTablesInImage = false }, exits);
-    exits.foundInCompactTable.append(exits.foundAmongNarrowKeys);
-    emitAtExit(jit, exits.foundInCompactTable, [&] {
-        emitClearInColumn(jit, branchIfKeysAreWide(jit, registers), { registers.keys, registers.entry });
-        if (owner == CompactTableOwner::Map) {
+    const bool hasValues = owner == CompactTableOwner::Map;
+    emitTestForKey(jit, false, hasValues ? Entry::operationAOTMapDelete : Entry::operationAOTSetDelete, [&](const HashTableRegisters& registers) {
+        emitClearInColumn(jit, branchIfKeysAreWide(jit, registers), registers.keys, registers.entry);
+        if (hasValues) {
             const GPRReg values = registers.keys;
             emitLoadValuesOfCompactTable(jit, registers, values);
-            emitClearInColumn(jit, branchIfValuesAreWide(jit, registers), { values, registers.entry });
+            emitClearInColumn(jit, branchIfValuesAreWide(jit, registers), values, registers.entry);
         }
         jit.sub32(TrustedImm32(1), Address(registers.table, CompactTable::offsetOfAliveCount()));
-        returnConstant(jit, jsBoolean(true));
-    });
-    emitAtExit(jit, exits.absent, [&] {
-        returnConstant(jit, jsBoolean(false));
-    });
-    emitAtExit(jit, exits.unknown, [&] {
-        emitCallTableOperation(jit, registers, owner == CompactTableOwner::Map ? Entry::operationAOTMapDelete : Entry::operationAOTSetDelete, std::nullopt);
     });
 }
 
-void generateMapDelete(StubAssembler& jit)
-{
-    emitDelete(jit, CompactTableOwner::Map);
-}
-
-void generateSetDelete(StubAssembler& jit)
-{
-    emitDelete(jit, CompactTableOwner::Set);
-}
+void generateMapDelete(StubAssembler& jit) { emitDelete(jit, CompactTableOwner::Map); }
+void generateSetDelete(StubAssembler& jit) { emitDelete(jit, CompactTableOwner::Set); }
 
 static void emitStoreFirstEntry(StubAssembler& jit, const HashTableRegisters& registers, CompactTable::Width width, ptrdiff_t offsetOfColumn, GPRReg value)
 {
     const Address first(registers.table, static_cast<int32_t>(offsetOfColumn));
-    switch (width) {
-    case CompactTable::Width::Narrow:
-        emitEncodeForNarrowColumn(jit, value, registers.candidate, nullptr);
-        jit.store32(registers.candidate, first);
-        return;
-    case CompactTable::Width::Wide:
+    if (width == CompactTable::Width::Wide) {
         jit.store64(value, first);
         return;
-    case CompactTable::Width::None:
-    case CompactTable::Width::InImage:
-        break;
     }
-    RELEASE_ASSERT_NOT_REACHED();
+    RELEASE_ASSERT(width == CompactTable::Width::Narrow);
+    emitEncodeForNarrowColumn(jit, value, registers.candidate, nullptr);
+    jit.store32(registers.candidate, first);
 }
 
 // hash has the tag of the key. Never falls through.
@@ -474,60 +441,62 @@ static void emitCreateTableWithEntry(StubAssembler& jit, const HashTableRegister
 
 static constexpr GPRReg ownerAfterLookup = hashTableRegisterPlan.copyOfOwner ? gprOf(*hashTableRegisterPlan.copyOfOwner) : thisGPR;
 
-StubSignature signatureOfNewCompactTable(StubKey key)
+// The last operand of a map's stub is the value.
+static StubSignature signatureAfterLookup(StubKey key, std::initializer_list<Reg> operands)
 {
-    StubSignature signature = StubSignature::withGPRResult({ ownerAfterLookup, argumentGPR(0), gprOf(hashTableRegisterPlan.hash) });
+    StubSignature signature = StubSignature::withGPRResult(operands);
     if (static_cast<CompactTableOwner>(key.form()) == CompactTableOwner::Map)
         signature.addOperand(argumentGPR(1));
     return signature;
 }
 
-// The columns of the first table are as wide as the first entry needs them.
-void generateNewCompactTable(StubAssembler& jit)
+StubSignature signatureOfNewCompactTable(StubKey key) { return signatureAfterLookup(key, { ownerAfterLookup, argumentGPR(0), gprOf(hashTableRegisterPlan.hash) }); }
+StubSignature signatureOfGrowCompactTable(StubKey key) { return signatureAfterLookup(key, { ownerAfterLookup, argumentGPR(0) }); }
+
+static HashTableRegisters registersAfterLookup(StubAssembler& jit, GPRReg hash)
 {
-    using Width = CompactTable::Width;
     constexpr HashTableRegisterPlan plan = hashTableRegisterPlan;
-    const auto owner = static_cast<CompactTableOwner>(jit.key().form());
-    const HashTableRegisters registers {
+    return {
         .owner = jit.operand(0),
         .key = jit.operand(1),
-        .hash = jit.clobberOperand(2),
+        .hash = hash,
         .table = jit.allocateScratch(plan.table),
         .cursor = jit.allocateScratch(plan.cursor),
         .keys = jit.allocateScratch(plan.keys),
         .entry = jit.allocateScratch(plan.entry),
         .candidate = jit.allocateScratch(plan.candidate),
     };
+}
+
+// The columns of the first table are as wide as the first entry needs them.
+void generateNewCompactTable(StubAssembler& jit)
+{
+    using Width = CompactTable::Width;
+    const auto owner = static_cast<CompactTableOwner>(jit.key().form());
+    const HashTableRegisters registers = registersAfterLookup(jit, jit.clobberOperand(2));
+    std::optional<GPRReg> value;
+    if (owner == CompactTableOwner::Map)
+        value = jit.operand(3);
     JumpList isCreated;
     JumpList slowPath;
     JumpList keyIsWide;
+    auto createTableWithKeys = [&](Width keyWidth) {
+        if (!value) {
+            emitCreateTableWithEntry(jit, registers, keyWidth, Width::None, value, isCreated, slowPath);
+            return;
+        }
+        JumpList valueIsWide;
+        emitBranchUnlessNarrowColumnHolds(jit, *value, valueIsWide);
+        emitCreateTableWithEntry(jit, registers, keyWidth, Width::Narrow, value, isCreated, slowPath);
+        valueIsWide.link(&jit);
+        emitCreateTableWithEntry(jit, registers, keyWidth, Width::Wide, value, isCreated, slowPath);
+    };
 
     jit.urshift32(TrustedImm32(CompactTable::tagShiftOfTags), registers.hash);
     emitBranchUnlessNarrowColumnHolds(jit, registers.key, keyIsWide);
-    std::optional<GPRReg> value;
-    switch (owner) {
-    case CompactTableOwner::Set:
-        emitCreateTableWithEntry(jit, registers, Width::Narrow, Width::None, value, isCreated, slowPath);
-        keyIsWide.link(&jit);
-        emitCreateTableWithEntry(jit, registers, Width::Wide, Width::None, value, isCreated, slowPath);
-        break;
-    case CompactTableOwner::Map: {
-        value = jit.operand(3);
-        JumpList valueIsWide;
-        emitBranchUnlessNarrowColumnHolds(jit, *value, valueIsWide);
-        emitCreateTableWithEntry(jit, registers, Width::Narrow, Width::Narrow, value, isCreated, slowPath);
-        valueIsWide.link(&jit);
-        emitCreateTableWithEntry(jit, registers, Width::Narrow, Width::Wide, value, isCreated, slowPath);
-
-        keyIsWide.link(&jit);
-        JumpList valueOfWideKeyIsWide;
-        emitBranchUnlessNarrowColumnHolds(jit, *value, valueOfWideKeyIsWide);
-        emitCreateTableWithEntry(jit, registers, Width::Wide, Width::Narrow, value, isCreated, slowPath);
-        valueOfWideKeyIsWide.link(&jit);
-        emitCreateTableWithEntry(jit, registers, Width::Wide, Width::Wide, value, isCreated, slowPath);
-        break;
-    }
-    }
+    createTableWithKeys(Width::Narrow);
+    keyIsWide.link(&jit);
+    createTableWithKeys(Width::Wide);
 
     isCreated.link(&jit);
     fenceAfterAllocation(jit);
@@ -536,14 +505,6 @@ void generateNewCompactTable(StubAssembler& jit)
 
     slowPath.link(&jit);
     emitCallTableOperation(jit, registers, owner == CompactTableOwner::Map ? Entry::operationAOTMapSet : Entry::operationAOTSetAdd, value);
-}
-
-StubSignature signatureOfGrowCompactTable(StubKey key)
-{
-    StubSignature signature = StubSignature::withGPRResult({ ownerAfterLookup, argumentGPR(0) });
-    if (static_cast<CompactTableOwner>(key.form()) == CompactTableOwner::Map)
-        signature.addOperand(argumentGPR(1));
-    return signature;
 }
 
 // from and to end behind what is copied. There is at least one word.
@@ -571,22 +532,12 @@ static void emitFillWords(StubAssembler& jit, GPRReg to, GPRReg end, int32_t wor
 void generateGrowCompactTable(StubAssembler& jit)
 {
     using ShortSlots = CompactTable::SlotFormat<CompactTable::SlotKind::Short>;
-    constexpr HashTableRegisterPlan plan = hashTableRegisterPlan;
     constexpr int32_t index = CompactTable::offsetOfIndex();
     static_assert(CompactTable::growthPlansPerValueWidth * sizeof(uint64_t) == static_cast<unsigned>(CompactTable::Width::Narrow) << 6);
     static_assert(sizeof(Allocator) == sizeof(uint64_t) && !static_cast<uint8_t>(CompactTable::Status::Live) && sizeof(ShortSlots::Slot) == 2);
     static_assert(CompactTable::offsetOfKeysShift() == CompactTable::offsetOfCapacity() + 5);
     const auto kindOfOwner = static_cast<CompactTableOwner>(jit.key().form());
-    const HashTableRegisters registers {
-        .owner = jit.operand(0),
-        .key = jit.operand(1),
-        .hash = jit.allocateScratch(plan.hash),
-        .table = jit.allocateScratch(plan.table),
-        .cursor = jit.allocateScratch(plan.cursor),
-        .keys = jit.allocateScratch(plan.keys),
-        .entry = jit.allocateScratch(plan.entry),
-        .candidate = jit.allocateScratch(plan.candidate),
-    };
+    const HashTableRegisters registers = registersAfterLookup(jit, jit.allocateScratch(hashTableRegisterPlan.hash));
     const GPRReg owner = registers.owner;
     const GPRReg key = registers.key;
     const GPRReg table = registers.table;
@@ -949,30 +900,11 @@ static void emitNextFrontEnd(StubAssembler& jit, CompactTableOwner kind, Entry r
     jit.tailCallOperation(rawOperation, OperationCall::FirstArgument::Instance);
 }
 
-void generateMapNextFrontEnd(StubAssembler& jit)
-{
-    emitNextFrontEnd(jit, CompactTableOwner::Map, Entry::RawMapNext);
-}
-
-void generateSetNextFrontEnd(StubAssembler& jit)
-{
-    emitNextFrontEnd(jit, CompactTableOwner::Set, Entry::RawSetNext);
-}
-
-void generateWeakMapGet(StubAssembler& jit)
-{
-    emitLookupInWeakTable(jit, WeakTableLookup::MapGet);
-}
-
-void generateWeakMapHas(StubAssembler& jit)
-{
-    emitLookupInWeakTable(jit, WeakTableLookup::MapHas);
-}
-
-void generateWeakSetHas(StubAssembler& jit)
-{
-    emitLookupInWeakTable(jit, WeakTableLookup::SetHas);
-}
+void generateMapNextFrontEnd(StubAssembler& jit) { emitNextFrontEnd(jit, CompactTableOwner::Map, Entry::RawMapNext); }
+void generateSetNextFrontEnd(StubAssembler& jit) { emitNextFrontEnd(jit, CompactTableOwner::Set, Entry::RawSetNext); }
+void generateWeakMapGet(StubAssembler& jit) { emitLookupInWeakTable(jit, WeakTableLookup::MapGet); }
+void generateWeakMapHas(StubAssembler& jit) { emitLookupInWeakTable(jit, WeakTableLookup::MapHas); }
+void generateWeakSetHas(StubAssembler& jit) { emitLookupInWeakTable(jit, WeakTableLookup::SetHas); }
 
 template<InlineAllocation allocation, typename Cell>
 static void emitNewHashTable(StubAssembler& jit, Entry slowPath)
@@ -996,15 +928,8 @@ static void emitNewHashTable(StubAssembler& jit, Entry slowPath)
     jit.tailCallOperation(slowPath, OperationCall::FirstArgument::Instance);
 }
 
-void generateNewMap(StubAssembler& jit)
-{
-    emitNewHashTable<InlineAllocation::Map, JSMap>(jit, Entry::operationAOTNewMap);
-}
-
-void generateNewSet(StubAssembler& jit)
-{
-    emitNewHashTable<InlineAllocation::Set, JSSet>(jit, Entry::operationAOTNewSet);
-}
+void generateNewMap(StubAssembler& jit) { emitNewHashTable<InlineAllocation::Map, JSMap>(jit, Entry::operationAOTNewMap); }
+void generateNewSet(StubAssembler& jit) { emitNewHashTable<InlineAllocation::Set, JSSet>(jit, Entry::operationAOTNewSet); }
 
 } } // namespace JSC::AOT
 

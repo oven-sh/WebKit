@@ -12,14 +12,12 @@ layout L0 kind=Environment name="wrapper" fields=[{key=@"count.0" declared={type
 layout L1 kind=Instance name="Counter" module=m0 constructor=f2 fields=[{key="start" declared={type=anything}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Call v0
     Return
 }
 
 function f1 name="wrapper" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=0
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewClosure v1 function=f2
@@ -33,13 +31,12 @@ function f1 name="wrapper" results=[{type=anything}] {
     v10 = PropGet v9 key="publish" [isFreeName]
     v11 = Call v10, -, v7, v8
     Return
-}
-# CHECK-LABEL: function f1 name="wrapper"
 # CHECK-NOT: NewObject
 # CHECK: [[constructor]]:{{*}}= NewClosure function=f2
 # CHECK-NEXT: [[class]]:{{*}}= NewClass [[constructor]] layout=L1
 # CHECK-NEXT: [[method]]:{{*}}= NewClosure function=f3
 # CHECK-NEXT: DefineMethod [[class]], [[method]] layout=L1 key="bump"
+}
 
 function f2 name="Counter" kind=BaseConstructor flags=[HasNewTarget] captures=[{type=env L0}] results=[{type=anything}] {
   b0(v0: env L0, v1: anything):
@@ -48,11 +45,10 @@ function f2 name="Counter" kind=BaseConstructor flags=[HasNewTarget] captures=[{
     v4 = GetEnvironmentField v0 layout=L0 field=0
     PropSet v3, v4 key="start"
     Return v3
-}
-# CHECK-LABEL: function f2 name="Counter"
 # CHECK-NOT: captures=
 # CHECK: b0([[newTarget]]:
 # CHECK: = GetModuleVariable variable=g0
+}
 
 function f3 name="bump" kind=Method flags=[HasThis] captures=[{type=env L0}] thisType={type=anything} results=[{type=anything}] {
   b0(v0: env L0, v1: anything):
@@ -61,8 +57,7 @@ function f3 name="bump" kind=Method flags=[HasThis] captures=[{type=env L0}] thi
     v4 = Add v2, v3
     PutEnvironmentField v0, v4 layout=L0 field=0
     Return v4
-}
-# CHECK-LABEL: function f3 name="bump"
 # CHECK-NOT: captures=
 # CHECK: b0([[this]]:
 # CHECK-NEXT: = GetModuleVariable variable=g0
+}

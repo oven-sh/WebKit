@@ -9,7 +9,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="guards" parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=boolean}] results=[{type=int}] {
-  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: boolean):
     v6 = TypeTest v0 testedType=number
     Branch v6 -> taken b1(), notTaken b12()
   b1():

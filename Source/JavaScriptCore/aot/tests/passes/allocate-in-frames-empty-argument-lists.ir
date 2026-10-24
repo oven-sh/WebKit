@@ -10,7 +10,6 @@ entry module=m0
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToBoolean v1
@@ -23,7 +22,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="calleeMakesArgumentsObject" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     v2 = NewArray contents=anything
     v3 = CallDirect v1, v0, v2 function=f13
@@ -35,7 +33,6 @@ function f1 name="calleeMakesArgumentsObject" parameters=[{type=anything}] resul
 # CHECK: CallDirect v1, v0, [[list1]] function=f13
 
 function f2 name="surplusArgument" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=2
     v2 = NewArray v0 contents=anything
     v3 = CallDirect v1, v0, v2 function=f13
@@ -46,7 +43,6 @@ function f2 name="surplusArgument" parameters=[{type=anything}] results=[{type=a
 # CHECK: NewArray v0
 
 function f3 name="calleeAppends" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     v2 = NewArray contents=anything
     v3 = CallDirect v1, v0, v2 function=f14
@@ -57,7 +53,6 @@ function f3 name="calleeAppends" parameters=[{type=anything}] results=[{type=any
 # CHECK: NewArray
 
 function f4 name="calleeKeeps" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     v2 = NewArray contents=anything
     v3 = CallDirect v1, v0, v2 function=f15
@@ -68,7 +63,6 @@ function f4 name="calleeKeeps" parameters=[{type=anything}] results=[{type=anyth
 # CHECK: NewArray
 
 function f5 name="calleeReturns" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     v2 = NewArray contents=anything
     v3 = CallDirect v1, v0, v2 function=f16
@@ -79,7 +73,6 @@ function f5 name="calleeReturns" parameters=[{type=anything}] results=[{type=any
 # CHECK: NewArray
 
 function f6 name="calleeHandsOnToReader" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     v2 = NewArray contents=anything
     v3 = CallDirect v1, v0, v2 function=f17
@@ -90,7 +83,6 @@ function f6 name="calleeHandsOnToReader" parameters=[{type=anything}] results=[{
 # CHECK: EmptyArgumentList
 
 function f7 name="calleeHandsOnToWriter" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     v2 = NewArray contents=anything
     v3 = CallDirect v1, v0, v2 function=f18
@@ -102,7 +94,6 @@ function f7 name="calleeHandsOnToWriter" parameters=[{type=anything}] results=[{
 
 # The program names this array, and may compare it with another.
 function f8 name="ordinaryParameter" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray contents=anything
     v2 = CallDirect v1 function=f19
     Return v2
@@ -112,7 +103,6 @@ function f8 name="ordinaryParameter" parameters=[{type=anything}] results=[{type
 # CHECK: NewArray
 
 function f9 name="restParameter" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray contents=anything
     v2 = CallDirect v1 function=f20
     Return v2
@@ -122,7 +112,6 @@ function f9 name="restParameter" parameters=[{type=anything}] results=[{type=any
 # CHECK: NewArray
 
 function f10 name="alsoUsedByCaller" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     v2 = NewArray contents=anything
     v3 = CallDirect v1, v0, v2 function=f13
@@ -134,7 +123,6 @@ function f10 name="alsoUsedByCaller" parameters=[{type=anything}] results=[{type
 # CHECK: NewArray
 
 function f11 name="meetsAnotherList" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = Integer integer=1
@@ -155,7 +143,6 @@ function f11 name="meetsAnotherList" parameters=[{type=anything}, {type=boolean}
 # CHECK: NewArray v0
 
 function f12 name="calleeCallsWithTheList" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     v2 = NewArray contents=anything
     v3 = CallDirect v1, v0, v2 function=f21
@@ -198,12 +185,10 @@ function f18 name="handsOnToWriter" flags=[HasArgumentCount, HasHiddenRest] para
     Return v3
 }
 function f19 name="readsParameter" parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     v1 = PropGet v0 key="length"
     Return v1
 }
 function f20 name="readsRest" flags=[HasRestParameter] parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     v1 = PropGet v0 key="length"
     Return v1
 }

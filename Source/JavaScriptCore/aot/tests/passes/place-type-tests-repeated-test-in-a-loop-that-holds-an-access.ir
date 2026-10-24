@@ -28,14 +28,12 @@ function f0 name="loopHoldsRead" parameters=[{type=number|string}, {type=boolean
     Branch v1 -> taken b1(), notTaken b5()
   b5():
     Return
-}
-# CHECK-LABEL: function f0 name="loopHoldsRead"
 # CHECK-NOT: TypeTest v0
 # CHECK: LoopHint
 # CHECK: = TypeTest v0 testedType=string
+}
 
 function f1 name="loopHoldsNone" parameters=[{type=number|string}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: number|string, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -52,8 +50,7 @@ function f1 name="loopHoldsNone" parameters=[{type=number|string}, {type=boolean
     Branch v1 -> taken b1(), notTaken b5()
   b5():
     Return
-}
-# CHECK-LABEL: function f1 name="loopHoldsNone"
 # CHECK: b0(v0: number|string, v1: boolean):
 # CHECK: = TypeTest v0 testedType=string
 # CHECK: LoopHint
+}

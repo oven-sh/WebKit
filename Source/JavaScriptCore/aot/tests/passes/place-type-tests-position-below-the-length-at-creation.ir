@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="arrayLikeItsSource" parameters=[{type=Array<string, proven, pristine[Storage, Names, Dense]>}] results=[{type=anything}] {
-  b0(v0: Array<string, proven, pristine[Storage, Names, Dense]>):
     v1: int[0, 4294967295] = GetArrayLength v0
     v2 = NewArrayLike v1, v0
     v3 = Integer
@@ -27,7 +26,6 @@ function f0 name="arrayLikeItsSource" parameters=[{type=Array<string, proven, pr
 # PLAN: test HasArrayStorage v0 arrayStorage=Contiguous on b0.0; test HasArrayStorage v2 arrayStorage=Contiguous on b0.0; test IsInBounds v0, v4 before v8; test IsInBounds v2, v4 before v9
 
 function f1 name="arrayOfValues" parameters=[{type=int[0, 1000]}, {type=string}] results=[{type=anything}] {
-  b0(v0: int[0, 1000], v1: string):
     v2 = NewContiguousArray v0
     v3 = Integer
     Jump -> next b1(v3)
@@ -47,7 +45,6 @@ function f1 name="arrayOfValues" parameters=[{type=int[0, 1000]}, {type=string}]
 
 # The limit of the loop is another number than the length: the store may append
 function f2 name="comparedWithAnotherNumber" parameters=[{type=int[0, 1000]}, {type=int[0, 1000]}, {type=string}] results=[{type=anything}] {
-  b0(v0: int[0, 1000], v1: int[0, 1000], v2: string):
     v3 = NewContiguousArray v0
     v4 = Integer
     Jump -> next b1(v4)
@@ -67,7 +64,6 @@ function f2 name="comparedWithAnotherNumber" parameters=[{type=int[0, 1000]}, {t
 
 # One beyond the length
 function f3 name="atMostTheLength" parameters=[{type=int[0, 1000]}, {type=string}] results=[{type=anything}] {
-  b0(v0: int[0, 1000], v1: string):
     v2 = NewContiguousArray v0
     v3 = Integer
     Jump -> next b1(v3)

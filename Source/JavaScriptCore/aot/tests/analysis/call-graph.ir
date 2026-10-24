@@ -11,7 +11,6 @@ runtimefunction id=65 function=f17
 runtimefunction id=131088 function=f20
 
 function f0 name="" kind=Module results=[{type=anything}] {
-  b0():
     v0 = CallDirect function=f1
     v1 = NewClosure function=f4
     v2 = NewClosure function=f5
@@ -25,62 +24,49 @@ function f0 name="" kind=Module results=[{type=anything}] {
     Return v9
 }
 function f1 name="chainMiddle" results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f2
     ReturnCall v0
 }
 function f2 name="chainBottom" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f3 name="hoisted" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f4 name="closureCalledDirectly" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f5 name="closure" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f6 name="comparedOnly" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f7 name="memberOfOpenSet" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f8 name="Holder" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0 fields=[]
     Return v2
 }
 function f9 name="y" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=undefined}] {
-  b0(v0: anything):
     Return
 }
 function f10 name="z" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=undefined}] {
-  b0(v0: anything):
     Return
 }
 function f11 name="readsAccessor" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="y"
     v2 = PropGet v0 key="z"
     v3 = Call v2, v0 callees=[f10]
     Return v1
 }
 function f12 name="readsUnknownReceiver" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="y"
     Return v1
 }
 function f13 name="callsByValue" parameters=[{type=boolean}] results=[{type=anything}] {
-  b0(v0: boolean):
     v1 = NewClosure function=f14
     v2 = NewClosure function=f15
     Branch v0 -> taken b1(v1), notTaken b1(v2)
@@ -89,83 +75,67 @@ function f13 name="callsByValue" parameters=[{type=boolean}] results=[{type=anyt
     Return v4
 }
 function f14 name="firstCandidate" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f15 name="secondCandidate" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f16 name="mapsArray" parameters=[{type=Array<number>}] results=[{type=anything}] {
-  b0(v0: Array<number>):
     v1 = NewClosure function=f18
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeMap/0
     Return v2
 }
 function f17 name="map" role=Library flags=[HasThis] enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Call v1 callees=[f18]
     Return v2
 }
 function f18 name="callback" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f19 name="storedAndCallsUnknownCode" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="other" [isFreeName]
     v2 = Call v1
     Return v2
 }
 function f20 name="sort" role=Library enclosingRuntimeFunction=131088 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 function f21 name="sortsArray" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f20
     Return v1
 }
 function f22 name="callsTwice" results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f27
     v1 = CallDirect function=f27
     v2 = CallDirect function=f4
     Return v2
 }
 function f23 name="" role=GenericEntrypoint captures=[{type=f4}] results=[{type=undefined}] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} {
-  b0(v0: f4):
     v1 = CallDirect function=f4
     Return v1
 }
 function f24 name="selfRecursive" role=OutlinedBody results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f24
     Return v0
 }
 function f25 name="cycleA" role=OutlinedBody results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f26
     Return v0
 }
 function f26 name="cycleB" role=OutlinedBody results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f25
     Return v0
 }
 function f27 name="calledTwice" role=OutlinedBody results=[{type=undefined}] {
-  b0():
     Return
 }
 function f28 name="pair" role=ResultWrapper results=[{type=number}] creator=ResultWrapper{worker=f29} {
-  b0():
     v0 = CallDirect function=f29
     v1 = ResultAt v0 index=0
     Return v1
 }
 function f29 name="pair" role=ResultWorker results=[{type=number}, {type=number}] creator=ResultWorker{origin=f28} {
-  b0():
     v0 = Integer integer=1
     v1 = Results v0, v0
     Return v1

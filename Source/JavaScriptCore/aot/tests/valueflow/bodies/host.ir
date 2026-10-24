@@ -12,6 +12,5 @@ variable g0 name="declared" module=m0 declared={type=anything} initialization=Fu
 variable g1 name="hoisted" module=m0 declared={type=anything} initialization=Undefined
 variable g2 name="lexical" module=m0 declared={type=anything}
 function f0 name="declared" results=[{type=anything}] {
-  b0():
     Return
 }

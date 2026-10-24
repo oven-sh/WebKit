@@ -4,7 +4,7 @@
  */
 
 #include "config.h"
-#include "AOTGlobalBindingPlacement.h"
+#include "AOTPlacementSteps.h"
 
 #if ENABLE(AOT)
 
@@ -13,7 +13,6 @@
 #include "AOTFlowResults.h"
 #include "AOTHeat.h"
 #include "AOTIRBuilder.h"
-#include "AOTPlacementSteps.h"
 #include "AOTProgramTableEncoder.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
@@ -29,8 +28,6 @@ static_assert(defaultLimitValue(LimitID::MaxIdentifiers, hostArchitecture()) <= 
 
 namespace {
 
-using BindingSite = GlobalBindingSite;
-
 struct FirstUse {
     GlobalBindingKey key;
     uint32_t functionRank { 0 };
@@ -44,46 +41,14 @@ struct NumberedBinding {
 
 } // anonymous namespace
 
-void collectGlobalBindingSites(const Program& program, FunctionID id, Vector<GlobalBindingSite>& sites)
+static Vector<FirstUse> findFirstUses(const PlacementContext& context, std::span<const GlobalBindingSite> sites)
 {
-    const Function& function = program.at(id);
-    for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
-        auto& values = function.blocks[blockIndex].values;
-        for (uint32_t index = 0; index < values.size(); ++index) {
-            const Value& value = function.at(values[index]);
-            ProgramPoint point { BlockID(blockIndex), index };
-            switch (value.opcode) {
-            case Opcode::GetGlobalBinding:
-                sites.append(BindingSite { { value.key(), value.seesScriptBindings(), false, value.isForTypeOf() }, id, point, values[index] });
-                break;
-            case Opcode::SetGlobalBinding:
-                sites.append(BindingSite { { value.key(), value.seesScriptBindings(), true }, id, point, values[index] });
-                break;
-            case Opcode::PropSet:
-                if (value.isFreeName())
-                    sites.append(BindingSite { { value.key(), true, true }, id, point, values[index], true });
-                break;
-            default:
-                break;
-            }
-        }
-    }
-}
-
-static Vector<uint32_t> rankFunctionsByHeat(const Program& program, const Heat& heat)
-{
-    Vector<uint32_t> ranks(FillWith { }, program.functions.size(), UINT32_MAX);
-    std::span<const FunctionID> hottestFirst = heat.hottestFirst();
+    Vector<uint32_t> ranks(FillWith { }, context.program.functions.size(), UINT32_MAX);
+    std::span<const FunctionID> hottestFirst = context.inputs.heat.hottestFirst();
     for (uint32_t rank = 0; rank < hottestFirst.size(); ++rank) {
         if (hottestFirst[rank].index() < ranks.size())
             ranks[hottestFirst[rank].index()] = rank;
     }
-    return ranks;
-}
-
-static Vector<FirstUse> findFirstUses(const PlacementContext& context, std::span<const BindingSite> sites)
-{
-    Vector<uint32_t> ranks = rankFunctionsByHeat(context.program, context.inputs.heat);
     Vector<FirstUse> uses(sites.size(), [&](size_t index) {
         return FirstUse { sites[index].key, ranks[sites[index].function.index()], static_cast<uint32_t>(index) };
     });
@@ -105,59 +70,18 @@ static GlobalBindingID findBinding(std::span<const NumberedBinding> ascendingBin
     return found != ascendingBindings.end() && found->key == key ? found->id : GlobalBindingID();
 }
 
-static Vector<uint32_t> findFunctionBoundaries(std::span<const BindingSite> sites)
-{
-    Vector<uint32_t> boundaries;
-    for (uint32_t index = 0; index < sites.size(); ++index) {
-        if (!index || sites[index].function != sites[index - 1].function)
-            boundaries.append(index);
-    }
-    boundaries.append(static_cast<uint32_t>(sites.size()));
-    return boundaries;
-}
-
-static void writeBindings(ProgramEditor& editor, const ParallelLoops& loops, std::span<const BindingSite> sites, std::span<const NumberedBinding> ascendingBindings)
-{
-    Vector<uint32_t> boundaries = findFunctionBoundaries(sites);
-    forEachIndexInParallel(loops, boundaries.size() - 1, [&](unsigned group) {
-        auto sitesOfFunction = sites.subspan(boundaries[group], boundaries[group + 1] - boundaries[group]);
-        Function& function = editor.atForPlacedWords(sitesOfFunction.front().function);
-        for (const BindingSite& site : sitesOfFunction)
-            function.edit(site.value, ValueEdit::Definition).setBinding(findBinding(ascendingBindings, site.key));
-    });
-}
-
-static void convertToNamedAccesses(ProgramEditor& editor, const PlacementContext& context, TypeArena& types, std::span<const BindingSite> sites)
-{
-    Vector<uint32_t> boundaries = findFunctionBoundaries(sites);
-    for (size_t group = 0; group + 1 < boundaries.size(); ++group) {
-        auto sitesOfFunction = sites.subspan(boundaries[group], boundaries[group + 1] - boundaries[group]);
-        FunctionID id = sitesOfFunction.front().function;
-        IRBuilder builder(AnalysisContext { context.build, context.program, &context.inputs.flow, nullptr, id }, editor.at(id), types);
-        for (const BindingSite& site : sitesOfFunction) {
-            convertGlobalBindingToNamedAccess(builder, site.point, site.value);
-            context.build.gaveUp(LimitID::MaxGlobalBindings, { .function = id, .value = site.value });
-        }
-        builder.applyInsertions();
-    }
-}
-
-GlobalBindingTable placeGlobalBindings(ProgramEditor& editor, const PlacementContext& context, TypeArena& types, const GlobalBindingSitesOfBodies* sitesOfBodies, Vector<FunctionID>* functionsWithOtherOperations)
+GlobalBindingTable placeGlobalBindings(ProgramEditor& editor, const PlacementContext& context, TypeArena& types, BodyScansForPlacement& scans)
 {
     const Program& program = context.program;
     const ParallelLoops& loops = context.build.parallelLoops();
 
-    auto sites = collectInParallel<BindingSite>(loops, program.functions.size(), [&](unsigned index, Vector<BindingSite>& found) {
-        if (!program.functions[index].hasBody())
-            return;
-        if (sitesOfBodies)
-            found.appendVector((*sitesOfBodies)(FunctionID(index)));
-        else
-            collectGlobalBindingSites(program, FunctionID(index), found);
+    auto sites = collectInParallel<GlobalBindingSite>(loops, program.functions.size(), [&](unsigned index, Vector<GlobalBindingSite>& found) {
+        if (program.functions[index].hasBody())
+            found.appendVector(scans.globalBindingSitesOf(FunctionID(index)));
     });
 
     BitVector keysStoredByName(program.types.numberOfPropertyKeys());
-    sites.removeAllMatching([&](const BindingSite& site) {
+    sites.removeAllMatching([&](const GlobalBindingSite& site) {
         if (site.isNamedStore)
             keysStoredByName.quickSet(site.key.key.index());
         return site.isNamedStore;
@@ -174,8 +98,8 @@ GlobalBindingTable placeGlobalBindings(ProgramEditor& editor, const PlacementCon
     AOT::sort(ascendingBindings, { }, &NumberedBinding::key);
 
     if (exceedsLimit) {
-        Vector<BindingSite> sitesWithoutBinding;
-        sites.removeAllMatching([&](const BindingSite& site) {
+        Vector<GlobalBindingSite> sitesWithoutBinding;
+        sites.removeAllMatching([&](const GlobalBindingSite& site) {
             if (findBinding(ascendingBindings.span(), site.key))
                 return false;
             if (site.key.isStore && site.key.seesScriptBindings)
@@ -183,15 +107,25 @@ GlobalBindingTable placeGlobalBindings(ProgramEditor& editor, const PlacementCon
             sitesWithoutBinding.append(site);
             return true;
         });
-        convertToNamedAccesses(editor, context, types, sitesWithoutBinding.span());
-        if (functionsWithOtherOperations) {
-            for (const BindingSite& site : sitesWithoutBinding) {
-                if (functionsWithOtherOperations->isEmpty() || functionsWithOtherOperations->last() != site.function)
-                    functionsWithOtherOperations->append(site.function);
+        auto groupsWithoutBinding = groupSitesByFunction(sitesWithoutBinding.span());
+        for (std::span<const GlobalBindingSite> sitesOfFunction : groupsWithoutBinding) {
+            FunctionID id = sitesOfFunction.front().function;
+            IRBuilder builder(AnalysisContext { context.build, program, &context.inputs.flow, nullptr, id }, editor.at(id), types);
+            for (const GlobalBindingSite& site : sitesOfFunction) {
+                convertGlobalBindingToNamedAccess(builder, site.point, site.value);
+                context.build.gaveUp(LimitID::MaxGlobalBindings, { .function = id, .value = site.value });
             }
+            builder.applyInsertions();
         }
+        for (std::span<const GlobalBindingSite> sitesOfFunction : groupsWithoutBinding)
+            scans.scan(sitesOfFunction.front().function);
     }
-    writeBindings(editor, loops, sites.span(), ascendingBindings.span());
+    auto groups = groupSitesByFunction(sites.span());
+    forEachIndexInParallel(loops, groups.size(), [&](unsigned group) {
+        Function& function = editor.atForPlacedWords(groups[group].front().function);
+        for (const GlobalBindingSite& site : groups[group])
+            function.edit(site.value, ValueEdit::Definition).setBinding(findBinding(ascendingBindings.span(), site.key));
+    });
 
     GlobalBindingTable table;
     table.bindings = Vector<PlacedGlobalBinding>(count, [&](size_t index) {

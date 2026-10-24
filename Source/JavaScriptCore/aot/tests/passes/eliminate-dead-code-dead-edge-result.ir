@@ -5,67 +5,58 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="unusedNarrowedParameter" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=number
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
     Return v0
   b2():
     Return
-}
-# CHECK-LABEL: function f0 name="unusedNarrowedParameter"
 # CHECK: v1: boolean = TypeTest v0 testedType=number
 # CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: Return v0
+}
 
 function f1 name="usedOnOneSideOnly" parameters=[{type=undefined|number}] results=[{type=anything}] {
-  b0(v0: undefined|number):
     v1 = TypeTest v0 testedType=number
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):
     Return v2
   b2(v3):
     Return
-}
-# CHECK-LABEL: function f1 name="usedOnOneSideOnly"
 # CHECK: v1: boolean = TypeTest v0 testedType=number
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v2: number):
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: b2():
+}
 
 function f2 name="firstOfTwoProofs" parameters=[{type=i32}, {type=int[0, 10]}] results=[{type=number}] {
-  b0(v0: i32, v1: int[0, 10]):
     v2 = Less v0, v1
     Branch v2 -> taken b1(| 0, 1), notTaken b2()
   b1(v3, v4):
     Return v4
   b2():
     Return v0
-}
-# CHECK-LABEL: function f2 name="firstOfTwoProofs"
 # CHECK: v2: boolean = Less v0, v1
 # CHECK-NEXT: Branch v2 -> taken b1(| 1), notTaken b2()
 # CHECK-NEXT: b1(v4: int[0, 10]):
 # CHECK-NEXT: Return v4
+}
 
 function f3 name="proofBehindUsedArgument" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
-  b0(v0: anything, v1: number):
     v2 = TypeTest v0 testedType=number
     Branch v2 -> taken b1(v1 | 0), notTaken b2()
   b1(v3, v4):
     Return v3
   b2():
     Return v1
-}
-# CHECK-LABEL: function f3 name="proofBehindUsedArgument"
 # CHECK: Branch v2 -> taken b1(v1), notTaken b2()
 # CHECK-NEXT: b1(v3: number):
 # CHECK-NEXT: Return v3
+}
 
 function f4 name="usedProofBehindUnusedArgument" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
-  b0(v0: anything, v1: number):
     v2 = Add v1, v1
     v3 = TypeTest v0 testedType=number
     Branch v3 -> taken b1(v2 | 0), notTaken b2()
@@ -73,16 +64,14 @@ function f4 name="usedProofBehindUnusedArgument" parameters=[{type=anything}, {t
     Return v5
   b2():
     Return v1
-}
-# CHECK-LABEL: function f4 name="usedProofBehindUnusedArgument"
 # CHECK-NEXT: b0(v0: anything, v1: number):
 # CHECK-NEXT: v3: boolean = TypeTest v0 testedType=number
 # CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v5: number):
 # CHECK-NEXT: Return v5
+}
 
 function f5 name="proofOnOneEdgeArgumentOnTheOther" parameters=[{type=anything}, {type=boolean}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean, v2: number):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v3 = TypeTest v0 testedType=number
@@ -94,17 +83,15 @@ function f5 name="proofOnOneEdgeArgumentOnTheOther" parameters=[{type=anything},
     Return v0
   b4():
     Return
-}
-# CHECK-LABEL: function f5 name="proofOnOneEdgeArgumentOnTheOther"
 # CHECK: v3: boolean = TypeTest v0 testedType=number
 # CHECK-NEXT: Branch v3 -> taken b3(), notTaken b4()
 # CHECK-NEXT: b2():
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b3():
 # CHECK-NEXT: Return v0
+}
 
 function f6 name="caseOfSwitch" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Switch v0 cases=[1, 2] -> case b1(| 0), case b2(| 0), otherwise b3()
   b1(v1):
     Return v0
@@ -112,16 +99,14 @@ function f6 name="caseOfSwitch" parameters=[{type=number}] results=[{type=number
     Return v2
   b3():
     Return v0
-}
-# CHECK-LABEL: function f6 name="caseOfSwitch"
 # CHECK: Switch v0 cases=[1, 2] -> case b1(), case b2(| 0), otherwise b3()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: b2(v2: 2):
 # CHECK-NEXT: Return v2
+}
 
 function f7 name="everyProofIsRead" parameters=[{type=i32}, {type=int[0, 10]}] results=[{type=number}] {
-  b0(v0: i32, v1: int[0, 10]):
     v2 = Less v0, v1
     Branch v2 -> taken b1(| 0, 1), notTaken b2(| 0)
   b1(v3, v4):
@@ -129,8 +114,7 @@ function f7 name="everyProofIsRead" parameters=[{type=i32}, {type=int[0, 10]}] r
     Return v5
   b2(v6):
     Return v6
-}
-# CHECK-LABEL: function f7 name="everyProofIsRead"
 # CHECK: Branch v2 -> taken b1(| 0, 1), notTaken b2(| 0)
 # CHECK-NEXT: b1(v3: int[-2147483648, 9], v4: int[0, 10]):
 # CHECK: b2(v6: int[0, 2147483647]):
+}

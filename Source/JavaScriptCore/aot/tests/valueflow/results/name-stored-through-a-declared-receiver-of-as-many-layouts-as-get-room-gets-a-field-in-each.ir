@@ -8,40 +8,4 @@
 # CHECK: layout L1 name="Made1" {{*}}{key="marked" {{*}} flags=[IsAddedLate
 # CHECK: layout L2 name="Made2" {{*}}{key="marked" {{*}} flags=[IsAddedLate
 # CHECK: function f0
-
-module m0 path="main.ts" displayPath="main.ts" body=f0
-entry module=m0
-layout L0 name="Made0" fields=[{key="flags" declared={type=number}}, {key="own0" declared={type=number}}] supertypes=[L3]
-layout L1 name="Made1" fields=[{key="flags" declared={type=number}}, {key="own1" declared={type=number}}] supertypes=[L3]
-layout L2 name="Made2" fields=[{key="flags" declared={type=number}}, {key="own2" declared={type=number}}] supertypes=[L3]
-layout L3 name="Markable" fields=[{key="flags" declared={type=number} flags=[IsRequired]}, {key="marked" declared={type=number}}]
-function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
-    v0 = Integer integer=1
-    v1 = NewObject -, v0 layout=L0 fields=[0]
-    v2 = NewObject -, v0 layout=L1 fields=[0]
-    v3 = NewObject -, v0 layout=L2 fields=[0]
-    v4 = NewClosure function=f1
-    v5 = NewClosure function=f2
-    v6 = NewClosure function=f3
-    v7 = NewClosure function=f4
-    v8 = Builtin builtin=GlobalThis
-    v9 = PropGet v8 key="publish" [isFreeName]
-    v10 = Call v9, -, v1, v2, v3, v4, v5, v6, v7
-    Return
-}
-function f1 name="mark" parameters=[{type=L0|L1|L2|L3 flags=[IsExpected]}] results=[{type=anything}] {
-  b0(v0: anything):
-    v1 = Check v0 castType=L0|L1|L2|L3
-    v2 = Integer integer=2
-    PropSet v1, v2 key="marked" mode=Strict
-    Return
-}
-# REPEAT: i = 0..2
-function f%(i+2) name="isMarked%(i)" parameters=[{type=L%(i) flags=[IsExpected]}] results=[{type=anything}] {
-  b0(v0: anything):
-    v1 = Check v0 castType=L%(i)
-    v2 = PropGet v1 key="marked"
-    Return v2
-}
-# END REPEAT
+# PROGRAM-OF: name-stored-through-a-declared-receiver-of-one-layout-too-many-gets-a-field-in-all-but-one.ir

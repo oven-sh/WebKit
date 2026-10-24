@@ -9,7 +9,6 @@ module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = CallDirect function=f1
     v1 = CallDirect function=f3
     v2 = CallDirect function=f4
@@ -25,75 +24,63 @@ function f0 kind=Module results=[{type=anything}] {
 }
 
 function f1 name="outer" results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f2
     Return v0
 }
 
 function f2 name="inner" results=[{type=undefined}] {
-  b0():
     v0 = Undefined
     Return v0
 }
 
 function f3 name="selfRecursive" results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f3
     Return v0
 }
 
 function f4 name="cycleA" results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f5
     Return v0
 }
 
 function f5 name="cycleB" results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f4
     Return v0
 }
 # REPEAT: i = 0..8
 
 function f%(i+6) name="chain%(i)" results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f%(i+7)
     Return v0
 }
 # END REPEAT
 
 function f15 name="chain9" results=[{type=undefined}] {
-  b0():
     v0 = Undefined
     Return v0
 }
 
 function f16 name="closure" results=[{type=undefined}] {
-  b0():
     v0 = Undefined
     Return v0
 }
 
 function f17 name="closure" role=GenericEntrypoint flags=[HasThis] captures=[{type=f16}] thisType={type=anything} results=[{type=anything}] derivation={source=f16} creator=Entrypoint{target=f16 arguments=Registers} {
-  b0(v0: f16, v1: anything):
     v2 = CallDirect function=f16
     ReturnCall v2
 }
 
 function f18 name="closureNeverCalledByValue" results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
-  b0():
     v0 = Undefined
     Return v0
 }
 
 function f19 name="closureNeverCalledByValue" role=GenericEntrypoint flags=[HasThis] captures=[{type=f18}] thisType={type=anything} results=[{type=anything}] derivation={source=f18} creator=Entrypoint{target=f18 arguments=Registers} {
-  b0(v0: f18, v1: anything):
     v2 = CallDirect function=f18
     ReturnCall v2
 }
 
 function f20 name="closure" role=GenericEntrypoint flags=[HasThis] captures=[{type=f16}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] derivation={source=f16} creator=Entrypoint{target=f16 arguments=Registers} {
-  b0(v0: f16, v1: anything, v2: anything):
     v3 = Call v2
     v4 = CallDirect function=f16
     ReturnCall v4

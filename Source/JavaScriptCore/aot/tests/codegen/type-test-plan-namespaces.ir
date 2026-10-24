@@ -41,7 +41,6 @@ variable g6 name="t6" declared={type=L0|L(m1)|L(m2)} initialization=Undefined
 variable g7 name="a" module=m1 declared={type=number}
 variable g8 name="b" module=m2 declared={type=number}
 function f0 name="allocatePoint" parameters=[{type=number}] results=[{type=L0}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     Return v1
 }

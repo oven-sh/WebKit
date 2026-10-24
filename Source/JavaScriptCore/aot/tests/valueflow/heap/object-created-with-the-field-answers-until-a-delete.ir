@@ -30,7 +30,6 @@ variable g2 name="fromDeletedByKey" module=m0 declared={type=anything} initializ
 variable g3 name="fromBelow" module=m0 declared={type=anything} initialization=Undefined
 variable g4 name="fromOther" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = PropGet v1 key="a"
@@ -62,7 +61,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="show" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="print" [isFreeName]
     v3 = Call v2, -, v0

@@ -12,7 +12,6 @@ layout L3 kind=Environment name="scope" fields=[{key="leaf" declared={type=L0}}]
 layout L4 name="GetsOtherProperties" fields=[{key="value" declared={type=number} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToNumber v1

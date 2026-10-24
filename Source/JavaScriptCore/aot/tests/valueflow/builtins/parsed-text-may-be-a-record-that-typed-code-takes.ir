@@ -21,7 +21,6 @@ typesite w1 module=m0 position=90 kind=Parameter
 layout L0 name="Body" fields=[{key="id" declared={type=number} flags=[IsRequired]}, {key="name" declared={type=string} flags=[IsRequired]}]
 layout L1 name="Kept" fields=[{key="key" declared={type=string} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = String string="a"
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
@@ -42,12 +41,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="handle" flags=[IsChecked] parameters=[{type=L0 site=w0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="name"
     Return v1
 }
 function f2 name="keep" flags=[IsChecked] parameters=[{type=L1 site=w1}] results=[{type=anything}] {
-  b0(v0: L1):
     v1 = PropGet v0 key="key"
     Return v1
 }

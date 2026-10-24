@@ -55,8 +55,12 @@ struct OriginalCopy {
 class SiteExpansion {
     WTF_MAKE_NONCOPYABLE(SiteExpansion);
 public:
-    SiteExpansion(FunctionPassContext&, IRBuilder&);
-    ~SiteExpansion();
+    SiteExpansion(FunctionPassContext& context, IRBuilder& builder)
+        : m_context(context)
+        , m_builder(builder)
+    {
+    }
+    ~SiteExpansion() { RELEASE_ASSERT(!isOpen()); }
 
     void begin(const ValueSite&);
     void end();
@@ -65,7 +69,6 @@ public:
     FunctionPassContext& context() { return m_context; }
     IRBuilder& builder() { return m_builder; }
     Function& function() { return m_builder.function(); }
-    const ValueSite& site() const LIFETIME_BOUND { return m_site; }
     const Value& original() const LIFETIME_BOUND { return m_original; }
     BlockFrequency frequency() const { return m_frequency; }
     bool isTailCall() const { return m_tailCall || (FlagMask::isDemotedTailCall(m_original.opcode) && m_original.isDemotedTailCall()); }
@@ -82,10 +85,6 @@ public:
     void finishArmAsUnreachable();
 
 private:
-    ValueID appendOperationsBeforeOriginal(const OriginalCopy&);
-    void checkAppendedOperations();
-    void takeTailCall();
-    bool canEndWithTailCall(ValueID result);
     void finishArmWithReturn(ValueID result);
 
     FunctionPassContext& m_context;
@@ -128,41 +127,6 @@ struct AccessesResolvedOnParts {
 };
 
 AccessesResolvedOnParts countAccessesResolvedOnParts(FunctionPassContext&, std::span<const ValueID> receivers, const UnionParts&);
-
-struct PlannedSplit {
-    ValueSite site;
-    uint32_t operandIndex { 0 };
-    ValueSplit split;
-    Vector<LayoutSetID, 4> armReceivers;
-    LayoutSetID restReceivers;
-    // The site is a call, and these are the read of its callee and the casts of what was read. Each arm reads the callee from its own receiver.
-    Vector<ValueSite, 2> memberRead;
-};
-
-class UnionSplitter {
-    WTF_MAKE_NONCOPYABLE(UnionSplitter);
-public:
-    explicit UnionSplitter(FunctionPassContext&);
-
-    PassOutcome run();
-
-private:
-    Vector<PlannedSplit> planSplits();
-    std::optional<PlannedSplit> planSplit(const ValueSite&);
-    std::optional<PlannedSplit> planSplitByParts(const ValueSite&, uint32_t operandIndex);
-    std::optional<PlannedSplit> planSplitByArms(const ValueSite&, const PropertyAccessQuery&, const PropertyAccessPlan&);
-    std::optional<PlannedSplit> planSplitByKeys(const ValueSite&);
-    std::optional<PlannedSplit> planSplitOfNumberKey(const ValueSite&);
-    std::optional<PlannedSplit> planSplitOfSymbolKey(const ValueSite&);
-    void moveToMemberCall(PlannedSplit&);
-    void rewrite(const PlannedSplit&);
-
-    FunctionPassContext& m_context;
-    const Program& m_program;
-    Function& m_function;
-    IRBuilder m_builder;
-    SiteExpansion m_expansion;
-};
 
 } } } // namespace JSC::AOT::Typed
 

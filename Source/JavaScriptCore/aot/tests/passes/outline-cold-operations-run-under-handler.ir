@@ -8,7 +8,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="underHandler" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: anything):
     Branch v0 -> taken b1(), notTaken b4()
   b1() frequency=Rare handler=b3():
     v3 = String string="bad"
@@ -33,7 +32,6 @@ function f0 name="underHandler" parameters=[{type=boolean}, {type=anything}, {ty
 # CHECK-NEXT: b3() role=CatchHandler:
 
 function f1 name="underHandlerWithArgument" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: anything):
     Branch v0 -> taken b1(), notTaken b4()
   b1() frequency=Rare handler=b3(v1):
     v3 = String string="bad"
@@ -55,7 +53,6 @@ function f1 name="underHandlerWithArgument" parameters=[{type=boolean}, {type=an
 # CHECK-NEXT: Jump -> next b2()
 
 function f2 name="withoutHandler" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything, v2: anything):
     Switch v0 cases=[0, 1, 2] -> case b1(), case b2(), case b3(), otherwise b4()
 # REPEAT: i = 1..3
   b%(i)() frequency=Rare:
@@ -74,7 +71,6 @@ function f2 name="withoutHandler" parameters=[{type=number}, {type=anything}, {t
 # CHECK-NOT: CallMethod
 
 function f3 name="valueIsArgumentOfLaterHandler" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: anything):
     Branch v0 -> taken b1(), notTaken b5()
   b1() frequency=Rare handler=b4(v1):
     v3 = String string="bad"

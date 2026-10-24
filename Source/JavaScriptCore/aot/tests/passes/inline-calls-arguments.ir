@@ -9,18 +9,15 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="oneOperation" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Mul v0, v0
     Return v1
 }
 
 function f1 name="returnsNothing" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     Return
 }
 
 function f2 name="returnsTwoResults" parameters=[{type=number}] results=[{type=number}, {type=number}] {
-  b0(v0: number):
     v1 = Mul v0, v0
     v2 = Results v1, v0
     Return v2
@@ -33,23 +30,19 @@ function f3 name="takesNumberExpectedToBeInt32" parameters=[{type=number}] resul
 }
 
 function f4 name="usesCaptureThisAndParameter" kind=Method flags=[HasThis] captures=[{type=number}] thisType={type=string} parameters=[{type=boolean}] results=[{type=string}] {
-  b0(v0: number, v1: string, v2: boolean):
     v3 = Strcat v1, v0, v2
     Return v3
 }
 
 function f5 name="returnsRest" flags=[HasRestParameter] parameters=[{type=number}, {type=Array<anything>}] results=[{type=Array<anything>}] {
-  b0(v0: number, v1: Array<anything>):
     Return v1
 }
 
 function f6 name="returnsSecond" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Return v1
 }
 
 function f7 name="readsNoResult" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f1
     Return v1
 }
@@ -59,7 +52,6 @@ function f7 name="readsNoResult" parameters=[{type=number}] results=[{type=undef
 # CHECK-NEXT: Jump -> next b1([[nothing7]])
 
 function f8 name="readsTwoResults" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f2
     v2 = ResultAt v1 index=0
     v3 = ResultAt v1 index=1
@@ -74,7 +66,6 @@ function f8 name="readsTwoResults" parameters=[{type=number}] results=[{type=num
 # CHECK-NEXT: Jump -> next b1([[square8]], v0)
 
 function f9 name="twoSitesInOneBlock" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f0
     v2 = CallDirect v1 function=f0
     Return v2
@@ -87,7 +78,6 @@ function f9 name="twoSitesInOneBlock" parameters=[{type=number}] results=[{type=
 # CHECK-NOT: = Mul
 
 function f10 name="argumentNeedsUpcast" parameters=[{type=int[0, 9]}] results=[{type=number}] {
-  b0(v0: int[0, 9]):
     v1 = CallDirect v0 function=f3
     Return v1
 }
@@ -97,7 +87,6 @@ function f10 name="argumentNeedsUpcast" parameters=[{type=int[0, 9]}] results=[{
 # CHECK: : int[0, 81] = Mul [[upcast10]], [[upcast10]]
 
 function f11 name="passesCaptureThisAndArgument" parameters=[{type=number}, {type=string}, {type=boolean}] results=[{type=string}] {
-  b0(v0: number, v1: string, v2: boolean):
     v3 = CallDirect v0, v1, v2 function=f4
     Return v3
 }
@@ -106,7 +95,6 @@ function f11 name="passesCaptureThisAndArgument" parameters=[{type=number}, {typ
 # CHECK: = Strcat v1, v0, v2
 
 function f12 name="passesRestArray" parameters=[{type=number}, {type=anything}] results=[{type=Array<anything>}] {
-  b0(v0: number, v1: anything):
     v2 = NewArray v1, v1 contents=anything
     v3 = CallDirect v0, v2 function=f5
     Return v3
@@ -116,7 +104,6 @@ function f12 name="passesRestArray" parameters=[{type=number}, {type=anything}] 
 # CHECK: Jump -> next b1(v2)
 
 function f13 name="passesUndefinedForMissingArgument" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Undefined
     v2 = CallDirect v0, v1 function=f6
     Return v2

@@ -24,7 +24,6 @@ variable g6 name="unknownWriters" module=m0 declared={type=string|absent} flow={
 variable g7 name="object" module=m0 declared={type=absent|RegExp} flow={writers=AllKnown stores=AtMostOnce}
 variable g8 name="onlyExpected" module=m0 declared={type=string|absent flags=[IsExpected]} flow={writers=AllKnown stores=AtMostOnce}
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = String string="a+b"
     PutModuleVariable v0 variable=g0
     v2 = Integer integer=7
@@ -37,7 +36,6 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="storesInAnotherFunction" module=m0 parameters=[{type=boolean}, {type=string}] results=[{type=anything}] {
-  b0(v0: boolean, v1: string):
     PutModuleVariable v1 variable=g4
     Branch v0 -> taken b1(), notTaken b2()
   b1():

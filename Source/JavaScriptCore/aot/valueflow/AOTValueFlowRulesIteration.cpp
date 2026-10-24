@@ -9,81 +9,76 @@
 #if ENABLE(AOT)
 
 #include "AOTValueFlowBuiltins.h"
-#include "AOTVector.h"
-#include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {
-
-// The state of an iteration holds its iterators.
 
 namespace {
 
 struct BuiltinIteration {
     BuiltinClassID iteratorClass;
     IterationKind kind { IterationKind::Values };
-    // What the method takes as its receiver.
     ValueSetID containers { ValueSets::nothing };
 };
 
-// Takes the values that steps hand out.
-class StepTarget {
-public:
-    StepTarget(ValueFlowRuleContext& context, IteratorKind kind, ValueFlowNodeID node)
-        : m_context(context)
-        , m_kind(kind)
-        , m_node(node)
-    {
-    }
-
-    void take(ValueFlowNodeID values) const
-    {
-        m_context.connect(m_kind == IteratorKind::Async ? m_context.lookup(m_context.valueOf(values), awaitedValueName) : values, m_node);
-    }
+struct StepTarget {
+    void take(ValueFlowNodeID values) const { context.connect(kind == IteratorKind::Async ? context.lookup(context.valueOf(values), awaitedValueName) : values, node); }
 
     void take(ClimbingSet values) const
     {
-        if (m_kind == IteratorKind::Async)
-            m_context.connect(m_context.lookup(values, awaitedValueName), m_node);
+        if (kind == IteratorKind::Async)
+            context.connect(context.lookup(values, awaitedValueName), node);
         else
-            m_context.add(m_node, values);
+            context.add(node, values);
     }
 
     void takeContentsOfSlot(ClimbingSet objects, ValueFlowName name) const
     {
-        forEachNodeOfSlotReadThrough(m_context, objects, name, [&](ValueFlowNodeID held) {
-            take(held);
-        });
-        if (mayBeUnknownObject(m_context, objects))
-            m_context.add(m_node, unknownValue(m_context, ValueFlowUnknownSource::ContentsOfEscapedObject));
+        const ValueFlowUniverse& universe = context.universe();
+        ClimbingSet unknownObject(universe.unknownObjectAlone());
+        ClimbingSet untrackedObject(universe.untrackedObjectAlone());
+        if (mayBeUntrackedObject(context, objects)) {
+            take(context.read(ClimbingSet(universe.knownObjects()), name));
+            take(context.read(untrackedObject, name));
+            take(context.read(unknownObject, name));
+        } else {
+            ClimbingSet followed = known(context, objects);
+            take(context.read(followed, name));
+            bool followsSomething = holdsSomething(context, followed);
+            if (followsSomething && context.holdsAnyOf(followed, ValueFlowProgramNodes::escaped()))
+                take(context.read(unknownObject, name));
+            if (followsSomething && context.holdsAnyOf(followed, ValueFlowProgramNodes::lost()))
+                take(context.read(untrackedObject, name));
+        }
+        if (mayBeUnknownObject(context, objects))
+            context.add(node, unknownValue(context, ValueFlowUnknownSource::ContentsOfEscapedObject));
     }
 
-private:
-    ValueFlowRuleContext& m_context;
-    IteratorKind m_kind;
-    ValueFlowNodeID m_node;
+    ValueFlowRuleContext& context;
+    IteratorKind kind;
+    ValueFlowNodeID node;
 };
 
 struct IteratorStep {
     IteratorKind kind { IteratorKind::Sync };
     ResumeMode mode { ResumeMode::Next };
-    // The step also answers what an iterator that has finished returned.
     bool takesReturnedValue { false };
-    // The array that a step allocates for a key and its value.
     ValueFlowObjectID pair;
-    // Of a step of an array pattern: how many steps of the pattern come in front of it.
     std::optional<uint32_t> indexInPattern { };
+};
+
+struct StepOfBuiltinIterator {
+    BuiltinClassID iteratorClass;
+    ResumeMode mode { ResumeMode::Next };
 };
 
 } // anonymous namespace
 
+void connectContentsOfSlot(ValueFlowRuleContext& context, ClimbingSet objects, ValueFlowName name, ValueFlowNodeID target) { StepTarget { context, IteratorKind::Sync, target }.takeContentsOfSlot(objects, name); }
+
 static constexpr ValueFlowName openedByName = ValueFlowName::of(ValueFlowNameKind::OpenedBy);
 
-static constexpr ValueFlowName openedIteratorsName(IteratorKind kind)
-{
-    return { ValueFlowNameKind::OpenedIterators, static_cast<uint32_t>(kind) };
-}
+static constexpr ValueFlowName openedIteratorsName(IteratorKind kind) { return { ValueFlowNameKind::OpenedIterators, static_cast<uint32_t>(kind) }; }
 
-// Who steps: an operation or a built-in that seen code has handed the iterator, or whoever holds an iterator that has escaped.
 enum class Stepper : uint8_t {
     NamedBySeenCode,
     HolderOfEscapedIterator,
@@ -91,10 +86,7 @@ enum class Stepper : uint8_t {
 
 static constexpr uint32_t numberOfResumeModes = 3;
 
-static constexpr ValueFlowName iteratorResultsName(ResumeMode mode, Stepper stepper = Stepper::NamedBySeenCode)
-{
-    return { ValueFlowNameKind::IteratorResults, static_cast<uint32_t>(mode) + numberOfResumeModes * static_cast<uint32_t>(stepper) };
-}
+static constexpr ValueFlowName iteratorResultsName(ResumeMode mode, Stepper stepper = Stepper::NamedBySeenCode) { return { ValueFlowNameKind::IteratorResults, static_cast<uint32_t>(mode) + numberOfResumeModes * static_cast<uint32_t>(stepper) }; }
 
 static BuiltinName methodNameOf(ResumeMode mode)
 {
@@ -117,21 +109,7 @@ static ClimbingSet kinds(ValueFlowRuleContext& context, std::initializer_list<Pr
     return ClimbingSet(context.maker().of(members.span()));
 }
 
-static ClimbingSet unknownObjectAlone(ValueFlowRuleContext& context)
-{
-    return ClimbingSet(context.universe().unknownObjectAlone());
-}
-
-static ClimbingSet untrackedObjectAlone(ValueFlowRuleContext& context)
-{
-    return ClimbingSet(context.universe().untrackedObjectAlone());
-}
-
-// Where nobody reads what a protocol gives, its code runs all the same.
-static ValueFlowNodeID nodeThatNobodyReads(ValueFlowRuleContext& context)
-{
-    return context.written(ClimbingSet(), steppedValuesName);
-}
+static ValueFlowNodeID nodeThatNobodyReads(ValueFlowRuleContext& context) { return context.written(ClimbingSet(), steppedValuesName); }
 
 static BuiltinClassID classOfResult(const BuiltinTable& builtins, const BuiltinOverload& overload)
 {
@@ -142,12 +120,8 @@ static BuiltinClassID classOfResult(const BuiltinTable& builtins, const BuiltinO
     return { };
 }
 
-static bool goesOverContainer(BuiltinClassID iteratorClass)
-{
-    return iteratorClass == BuiltinClasses::ArrayIterator || iteratorClass == BuiltinClasses::MapIterator || iteratorClass == BuiltinClasses::SetIterator || iteratorClass == BuiltinClasses::StringIterator;
-}
+static bool goesOverContainer(BuiltinClassID iteratorClass) { return iteratorClass == BuiltinClasses::ArrayIterator || iteratorClass == BuiltinClasses::MapIterator || iteratorClass == BuiltinClasses::SetIterator || iteratorClass == BuiltinClasses::StringIterator; }
 
-// For a built-in whose call makes an iterator of the engine over the receiver of the call.
 static std::optional<BuiltinIteration> iterationOverReceiverBy(ValueFlowRuleContext& context, BuiltinID builtin)
 {
     const BuiltinTable& builtins = context.program().builtins();
@@ -169,24 +143,18 @@ static void takeKeys(ValueFlowRuleContext& context, ClimbingSet containers, Buil
 {
     if (iteratorClass == BuiltinClasses::ArrayIterator)
         target.take(kinds(context, { PrimitiveSet::Integer, PrimitiveSet::WholeNumber }));
-    else if (iteratorClass == BuiltinClasses::MapIterator)
-        target.takeContentsOfSlot(containers, nameOf(BuiltinSlots::MapKey));
     else
-        target.takeContentsOfSlot(containers, nameOf(BuiltinSlots::SetElement));
-}
-
-// Each of them is an array of a key and its value that a step over entries or Object.entries has made, and nobody has done anything to it but read it: it still holds the key at 0 and the value at 1.
-static bool areUntouchedPairs(ValueFlowRuleContext& context, ClimbingSet containers)
-{
-    const ValueFlowProgramNodes& nodes = context.nodes();
-    ClimbingSet others = context.membersMissingFrom(nodes.ofHost(ValueFlowHostNode::PairsOfSteps), context.membersMissingFrom(nodes.ofHost(ValueFlowHostNode::PairsOfEntries), containers));
-    return !holdsSomething(context, others) && !context.holdsAnyOf(containers, ValueFlowProgramNodes::escaped()) && !context.holdsAnyOf(containers, ValueFlowProgramNodes::lost())
-        && !holdsSomething(context, context.markedAmong(containers, OptionSet<ObjectMutation>::all()));
+        target.takeContentsOfSlot(containers, nameOf(iteratorClass == BuiltinClasses::MapIterator ? BuiltinSlots::MapKey : BuiltinSlots::SetElement));
 }
 
 static bool readsKeyOrValueOfPair(ValueFlowRuleContext& context, ClimbingSet containers, std::optional<uint32_t> indexInPattern)
 {
-    return indexInPattern && *indexInPattern < 2 && areUntouchedPairs(context, containers);
+    if (!indexInPattern || *indexInPattern >= 2)
+        return false;
+    const ValueFlowProgramNodes& nodes = context.nodes();
+    ClimbingSet others = context.membersMissingFrom(nodes.ofHost(ValueFlowHostNode::PairsOfSteps), context.membersMissingFrom(nodes.ofHost(ValueFlowHostNode::PairsOfEntries), containers));
+    return !holdsSomething(context, others) && !context.holdsAnyOf(containers, ValueFlowProgramNodes::escaped()) && !context.holdsAnyOf(containers, ValueFlowProgramNodes::lost())
+        && !holdsSomething(context, context.markedAmong(containers, OptionSet<ObjectMutation>::all()));
 }
 
 static void takeValues(ValueFlowRuleContext& context, ClimbingSet containers, BuiltinClassID iteratorClass, const StepTarget& target, std::optional<uint32_t> indexInPattern = std::nullopt)
@@ -199,17 +167,13 @@ static void takeValues(ValueFlowRuleContext& context, ClimbingSet containers, Bu
         }
         ClimbingSet objects = context.restrict(containers, universe.objects());
         target.take(context.lookup(objects, elementsName));
-        // Of what is no array the iterator reads `length` like any other property.
         context.lookup(context.restrict(objects, ValueSets::complement(universe.sureInstancesOf(BuiltinClasses::Array))), nameOf(context, BuiltinNames::length));
         if (context.meet(containers, universe.strings()))
             target.take(kinds(context, { PrimitiveSet::String }));
-    } else if (iteratorClass == BuiltinClasses::MapIterator)
-        target.takeContentsOfSlot(containers, nameOf(BuiltinSlots::MapValue));
-    else
-        target.takeContentsOfSlot(containers, nameOf(BuiltinSlots::SetElement));
+    } else
+        target.takeContentsOfSlot(containers, nameOf(iteratorClass == BuiltinClasses::MapIterator ? BuiltinSlots::MapValue : BuiltinSlots::SetElement));
 }
 
-// What the steps of a built-in iterator over the containers hand out.
 static void takeContents(ValueFlowRuleContext& context, ClimbingSet containers, const BuiltinIteration& iteration, ValueFlowObjectID pair, const StepTarget& target, std::optional<uint32_t> indexInPattern = std::nullopt)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -229,11 +193,10 @@ static void takeContents(ValueFlowRuleContext& context, ClimbingSet containers, 
         ClimbingSet pairs = only(context, pair);
         if (!universe.classOf(pair))
             context.add(context.written(pairs, prototypeLinkName), only(context, universe.objectOf(Builtins::ArrayPrototype)));
-        // The two lie together under the indexes of the pair as in any array, and each by itself for whoever knows which of the two it reads.
         for (ValueFlowName name : { elementsName, keyOfEntriesPair })
-            takeKeys(context, containers, iteratorClass, StepTarget(context, IteratorKind::Sync, context.written(pairs, name)));
+            takeKeys(context, containers, iteratorClass, StepTarget { context, IteratorKind::Sync, context.written(pairs, name) });
         for (ValueFlowName name : { elementsName, valueOfEntriesPair })
-            takeValues(context, containers, iteratorClass, StepTarget(context, IteratorKind::Sync, context.written(pairs, name)));
+            takeValues(context, containers, iteratorClass, StepTarget { context, IteratorKind::Sync, context.written(pairs, name) });
         context.add(context.nodes().ofHost(ValueFlowHostNode::PairsOfSteps), pairs);
         target.take(pairs);
         return;
@@ -250,70 +213,59 @@ static void useStepOf(ValueFlowRuleContext& context, BuiltinClassID iteratorClas
         context.use(builtins.canonicalID(next), BuiltinUse::Called);
 }
 
-static void openIteratorsOf(ValueFlowRuleContext& context, ClimbingSet receivers, IteratorKind kind, ValueFlowNodeID state)
-{
-    const ValueFlowUniverse& universe = context.universe();
-
-    // Where there is no method under @@asyncIterator the iteration goes over what the one under @@iterator answers.
-    if (kind == IteratorKind::Async)
-        callInProtocol(context, { .callees = context.valueOf(context.lookup(receivers, nameOf(context, BuiltinNames::asyncIteratorSymbol))), .thisValue = receivers, .result = state });
-
-    ClimbingSet methods = context.valueOf(context.lookup(receivers, nameOf(context, BuiltinNames::iteratorSymbol)));
-    ClimbingSet calledMethods = methods;
-    ValueSetID containersOfAnyIteration = ValueSets::nothing;
-    context.forEachMember(context.restrict(methods, universe.builtinFunctions()), [&](ValueFlowObjectID method) {
-        BuiltinID builtin = universe.builtinOf(method);
-        std::optional<BuiltinIteration> iteration = iterationOverReceiverBy(context, builtin);
-        if (!iteration)
-            return;
-        calledMethods = without(context, calledMethods, method);
-        containersOfAnyIteration = context.maker().unite(containersOfAnyIteration, iteration->containers);
-        ClimbingSet containers = context.restrict(receivers, iteration->containers);
-        if (!holdsSomething(context, containers))
-            return;
-        context.add(state, containers);
-        context.add(context.written(containers, openedByName), only(context, method));
-        context.use(builtin, BuiltinUse::Called);
-        useStepOf(context, iteration->iteratorClass);
-    });
-    callInProtocol(context, { .callees = calledMethods, .thisValue = receivers, .result = state });
-
-    // A receiver that an overload converts first is no container: a String object under String.prototype[@@iterator].
-    ClimbingSet otherReceivers = context.restrict(context.restrict(receivers, universe.knownObjects()), ValueSets::complement(containersOfAnyIteration));
-    if (containersOfAnyIteration == ValueSets::nothing || !holdsSomething(context, otherReceivers))
-        return;
-    ClimbingSet methodsOfOthers = context.valueOf(context.lookup(otherReceivers, nameOf(context, BuiltinNames::iteratorSymbol)));
-    context.forEachMember(context.restrict(methodsOfOthers, universe.builtinFunctions()), [&](ValueFlowObjectID method) {
-        if (iterationOverReceiverBy(context, universe.builtinOf(method)))
-            callInProtocol(context, { .callees = only(context, method), .thisValue = otherReceivers, .result = state });
-    });
-}
-
 static void openIterators(ValueFlowRuleContext& context, ClimbingSet iterables, IteratorKind kind, ValueFlowNodeID state)
 {
+    const ValueFlowUniverse& universe = context.universe();
     forEachPlaceholderAndOthers(context, iterables, [&](ClimbingSet receivers) {
-        openIteratorsOf(context, receivers, kind, state);
+        if (kind == IteratorKind::Async)
+            callInProtocol(context, { .callees = context.valueOf(context.lookup(receivers, nameOf(context, BuiltinNames::asyncIteratorSymbol))), .thisValue = receivers, .result = state });
+
+        ClimbingSet methods = context.valueOf(context.lookup(receivers, nameOf(context, BuiltinNames::iteratorSymbol)));
+        ClimbingSet calledMethods = methods;
+        ValueSetID containersOfAnyIteration = ValueSets::nothing;
+        context.forEachMember(context.restrict(methods, universe.builtinFunctions()), [&](ValueFlowObjectID method) {
+            BuiltinID builtin = universe.builtinOf(method);
+            std::optional<BuiltinIteration> iteration = iterationOverReceiverBy(context, builtin);
+            if (!iteration)
+                return;
+            calledMethods = without(context, calledMethods, method);
+            containersOfAnyIteration = context.maker().unite(containersOfAnyIteration, iteration->containers);
+            ClimbingSet containers = context.restrict(receivers, iteration->containers);
+            if (!holdsSomething(context, containers))
+                return;
+            context.add(state, containers);
+            context.add(context.written(containers, openedByName), only(context, method));
+            context.use(builtin, BuiltinUse::Called);
+            useStepOf(context, iteration->iteratorClass);
+        });
+        callInProtocol(context, { .callees = calledMethods, .thisValue = receivers, .result = state });
+
+        ClimbingSet otherReceivers = context.restrict(context.restrict(receivers, universe.knownObjects()), ValueSets::complement(containersOfAnyIteration));
+        if (containersOfAnyIteration == ValueSets::nothing || !holdsSomething(context, otherReceivers))
+            return;
+        ClimbingSet methodsOfOthers = context.valueOf(context.lookup(otherReceivers, nameOf(context, BuiltinNames::iteratorSymbol)));
+        context.forEachMember(context.restrict(methodsOfOthers, universe.builtinFunctions()), [&](ValueFlowObjectID method) {
+            if (iterationOverReceiverBy(context, universe.builtinOf(method)))
+                callInProtocol(context, { .callees = only(context, method), .thisValue = otherReceivers, .result = state });
+        });
     });
 }
 
 static void stepIterators(ValueFlowRuleContext& context, ClimbingSet state, const IteratorStep& step, ValueFlowNodeID values)
 {
     const ValueFlowUniverse& universe = context.universe();
-    StepTarget target(context, step.kind, values);
-    // The state does not say whether an iterator came from the method under @@asyncIterator or, to be wrapped, from the one under @@iterator. So its values arrive both ways: awaited and as they are.
-    StepTarget unawaited(context, IteratorKind::Sync, values);
+    StepTarget target { context, step.kind, values };
+    StepTarget unawaited { context, IteratorKind::Sync, values };
     if (mayBeUnknownObject(context, state)) {
         context.add(values, unknownValue(context, ValueFlowUnknownSource::ResultOfUnknownCallee));
-        context.lookup(unknownObjectAlone(context), iteratorResultsName(step.mode));
+        context.lookup(ClimbingSet(context.universe().unknownObjectAlone()), iteratorResultsName(step.mode));
     }
 
-    // The untracked object among them answers by the name of the slot.
     ClimbingSet holders = context.restrict(without(context, state, ValueFlowUniverse::unknownObject()), universe.objects());
     target.takeContentsOfSlot(holders, steppedValuesName);
     if (step.takesReturnedValue)
         target.takeContentsOfSlot(holders, returnedValueName);
     if (step.kind == IteratorKind::Async) {
-        // An async generator has awaited what it yields by itself. What it yields for another iterator, by `yield*`, it hands on as it got it. A synchronous iterator of the engine is always wrapped.
         ClimbingSet holdersNotSurelyWrapped = context.restrict(holders, ValueSets::complement(universe.sureInstancesOf(BuiltinClasses::Iterator)));
         unawaited.takeContentsOfSlot(holdersNotSurelyWrapped, steppedValuesName);
         if (step.takesReturnedValue)
@@ -322,10 +274,9 @@ static void stepIterators(ValueFlowRuleContext& context, ClimbingSet state, cons
 
     auto stepContainers = [&](ClimbingSet containers, ValueFlowNodeID openedBy) {
         ClimbingSet methods = context.valueOf(openedBy);
-        // The analysis has stopped following which methods have opened them, so it does not know what a step gives.
         if (mayBeUntrackedObject(context, methods)) {
             context.add(values, universe.anyPrimitive());
-            context.add(values, untrackedObjectAlone(context));
+            context.add(values, universe.untrackedObjectAlone());
         }
         context.forEachMember(context.restrict(methods, universe.builtinFunctions()), [&](ValueFlowObjectID method) {
             std::optional<BuiltinIteration> iteration = iterationOverReceiverBy(context, universe.builtinOf(method));
@@ -336,7 +287,6 @@ static void stepIterators(ValueFlowRuleContext& context, ClimbingSet state, cons
                 context.add(values, universe.undefinedValue());
         });
     };
-    // The methods of an asynchronous iterator answer promises of iterator results.
     auto takeResultsOf = [&](ClimbingSet iterators) {
         ClimbingSet results = context.valueOf(context.lookup(iterators, iteratorResultsName(step.mode)));
         if (step.kind == IteratorKind::Async)
@@ -354,8 +304,7 @@ static void stepIterators(ValueFlowRuleContext& context, ClimbingSet state, cons
     if (!mayBeUntrackedObject(context, state))
         return;
 
-    // It may be any container that was opened anywhere, gone over in any of the ways in which one was.
-    ClimbingSet untracked = untrackedObjectAlone(context);
+    ClimbingSet untracked(universe.untrackedObjectAlone());
     stepContainers(untracked, context.read(ClimbingSet(universe.knownObjects()), openedByName));
     stepContainers(untracked, context.read(untracked, openedByName));
     takeResultsOf(untracked);
@@ -364,19 +313,18 @@ static void stepIterators(ValueFlowRuleContext& context, ClimbingSet state, cons
 static void closeIterators(ValueFlowRuleContext& context, ClimbingSet state, IteratorKind kind)
 {
     if (mayBeUnknownObject(context, state))
-        context.lookup(unknownObjectAlone(context), iteratorResultsName(ResumeMode::Return));
+        context.lookup(ClimbingSet(context.universe().unknownObjectAlone()), iteratorResultsName(ResumeMode::Return));
     auto close = [&](ClimbingSet iterators) {
         ValueFlowNodeID results = context.lookup(iterators, iteratorResultsName(ResumeMode::Return));
         if (kind != IteratorKind::Async)
             return;
-        // The state does not say whether an iterator is wrapped. %AsyncFromSyncIteratorPrototype%.return reads `done` and `value` of what the `return` of a synchronous iterator answers, and awaits the value.
         ClimbingSet answers = context.valueOf(context.lookup(context.valueOf(results), awaitedValueName));
         context.lookup(answers, nameOf(context, BuiltinNames::done));
         context.lookup(context.valueOf(context.lookup(answers, nameOf(context, BuiltinNames::value))), awaitedValueName);
     };
     close(known(context, state));
     if (mayBeUntrackedObject(context, state))
-        close(untrackedObjectAlone(context));
+        close(ClimbingSet(context.universe().untrackedObjectAlone()));
 }
 
 static void sendToIterators(ValueFlowRuleContext& context, ClimbingSet iterators, const ValueFlowOperand& sent)
@@ -388,10 +336,8 @@ static void sendToIterators(ValueFlowRuleContext& context, ClimbingSet iterators
 
 static ValueFlowObjectID pairAllocatedAt(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
-    const ValueFlowUniverse& universe = context.universe();
-    if (ValueFlowObjectID pair = universe.siteObject(statement))
-        return pair;
-    return universe.resultOf(Builtins::MapIteratorPrototypeNext, 1);
+    ValueFlowObjectID pair = context.universe().siteObject(statement);
+    return pair ? pair : context.universe().resultOf(Builtins::MapIteratorPrototypeNext, 1);
 }
 
 void runIterationOperation(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
@@ -401,7 +347,6 @@ void runIterationOperation(const ValueFlowStatement& statement, ValueFlowRuleCon
     if (statement.thrown)
         context.add(statement.thrown, unknownValue(context, ValueFlowUnknownSource::ThrownByRunTime));
 
-    // The library's code behind a described built-in is entered with operands nobody knows.
     bool isDescribedByRecords = isCodeThatRecordsDescribe(context.universe(), statement.function);
     auto iterated = [&](const ValueFlowOperand& operand, ValueFlowNodeID answer) {
         ClimbingSet held = context.valueOf(operand);
@@ -423,10 +368,8 @@ void runIterationOperation(const ValueFlowStatement& statement, ValueFlowRuleCon
         if (operation.operand(OperandIndex::IteratorResume::sent))
             sendToIterators(context, state, operands[1]);
         stepIterators(context, state, { operation.iteratorKind(), mode, operation.readsValueWhenDone() || mode != ResumeMode::Next, pairAllocatedAt(statement, context), operation.stepIndex() }, values);
-        // The step that finds the end answers undefined. Neither of the first two steps over a pair does. Of a step outside a pattern the body says whether anybody reads that value: readsValueOfStepThatFindsEnd().
         if (!operation.readsValueWhenDone() && operation.stepIndex() && !readsKeyOrValueOfPair(context, state, operation.stepIndex()))
             context.add(values, context.universe().undefinedValue());
-        // An iterator without the method: the value comes back, and the exception goes on.
         if (mode == ResumeMode::Return && operation.iteratorKind() == IteratorKind::Async)
             context.connect(context.lookup(context.valueOf(operands[1]), awaitedValueName), values);
         else if (mode == ResumeMode::Return)
@@ -454,32 +397,17 @@ void runIterationOperation(const ValueFlowStatement& statement, ValueFlowRuleCon
     }
 }
 
-void runOpenedIterators(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
-{
-    openIterators(context, context.setOfKey(), static_cast<IteratorKind>(context.nameOfKey().payload), statement.result);
-}
+void runOpenedIterators(const ValueFlowStatement& statement, ValueFlowRuleContext& context) { openIterators(context, context.setOfKey(), static_cast<IteratorKind>(context.nameOfKey().payload), statement.result); }
 
-// What an iteration over any member of the set hands out, from its first step to its end.
 void runIteratedValues(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     IteratorKind kind = static_cast<IteratorKind>(context.nameOfKey().payload);
     ClimbingSet state = context.valueOf(context.lookup(context.setOfKey(), openedIteratorsName(kind)));
-    // The methods of Iterator.prototype step their receiver as it is, whether or not it can be opened: `Iterator.prototype.find.call({ next() { .. } }, ..)`.
     state = context.unite(state, context.restrict(context.setOfKey(), context.universe().objects()));
     stepIterators(context, state, { kind, ResumeMode::Next, false, context.universe().resultOf(Builtins::MapIteratorPrototypeNext, 1) }, statement.result);
     closeIterators(context, state, kind);
 }
 
-namespace {
-
-struct StepOfBuiltinIterator {
-    BuiltinClassID iteratorClass;
-    ResumeMode mode { ResumeMode::Next };
-};
-
-} // anonymous namespace
-
-// For next, return and throw of the built-in iterators and generators that hold what they hand out.
 static std::optional<StepOfBuiltinIterator> stepOfBuiltinIterator(const BuiltinTable& builtins, BuiltinID builtin)
 {
     BuiltinID holder = builtins.at(builtin).holder;
@@ -495,7 +423,6 @@ static std::optional<StepOfBuiltinIterator> stepOfBuiltinIterator(const BuiltinT
     return std::nullopt;
 }
 
-// What the methods of the iterators in the set answer.
 void runIteratorResults(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -506,11 +433,9 @@ void runIteratorResults(const ValueFlowStatement& statement, ValueFlowRuleContex
 
     ClimbingSet methods = context.valueOf(context.lookup(iterators, nameOf(context, methodNameOf(mode))));
     ClimbingSet calledMethods = methods;
-    // Nobody has seen such a holder call anything.
     if (stepper == Stepper::HolderOfEscapedIterator)
         calledMethods = context.restrict(calledMethods, ValueSets::complement(universe.unknownObjectAlone()));
     context.forEachMember(context.restrict(methods, universe.builtinFunctions()), [&](ValueFlowObjectID method) {
-        // Whoever steps such an iterator reads what it holds. The built-in runs all the same.
         if (!stepOfBuiltinIterator(builtins, universe.builtinOf(method)))
             return;
         calledMethods = without(context, calledMethods, method);
@@ -519,7 +444,6 @@ void runIteratorResults(const ValueFlowStatement& statement, ValueFlowRuleContex
     ValueFlowNodeID sent = context.read(iterators, sentValuesName);
     callInProtocol(context, { .callees = calledMethods, .thisValue = iterators, .arguments = singleElementSpan(sent), .result = statement.result });
 
-    // An iterator without a method under `throw` is closed.
     if (mode == ResumeMode::Throw)
         context.lookup(iterators, iteratorResultsName(ResumeMode::Return, stepper));
 }
@@ -527,7 +451,6 @@ void runIteratorResults(const ValueFlowStatement& statement, ValueFlowRuleContex
 void letNativeCodeStepIterators(ValueFlowRuleContext& context, ClimbingSet escaped)
 {
     const ValueFlowUniverse& universe = context.universe();
-    // A built-in iterator is what a built-in has allocated, a generator what a generator function answers.
     ValueSetID builtinIterators = context.maker().unite(universe.sureInstancesOf(BuiltinClasses::Iterator), universe.objectsThatMayBeAnything());
     ClimbingSet iterators = context.restrict(escaped, context.maker().intersect(builtinIterators, universe.knownObjects()));
     for (ResumeMode mode : { ResumeMode::Next, ResumeMode::Throw, ResumeMode::Return })
@@ -582,17 +505,14 @@ bool applyStepOfBuiltinIterator(BuiltinID builtin, const ValueFlowBuiltinCall& c
         }
     }
 
-    // An async generator awaits the value that it is told to return.
     bool answersPromise = step->iteratorClass == BuiltinClasses::AsyncGenerator;
     if (answersPromise) {
         for (ValueFlowOperand& operand : sent) {
             operand = { context.lookup(context.valueOf(operand), awaitedValueName), ValueSets::nothing, ValueSets::anything };
-            // The body is resumed with what the await has answered, and returns it from where it stands.
             if (step->mode == ResumeMode::Return)
                 sendToIterators(context, iterators, operand);
         }
     }
-    // A call without objects of its own shares those of the built-in.
     ValueFlowObjectID resultObject = call.resultObject ? call.resultObject : universe.resultOf(builtin, 0);
     ValueFlowObjectID contentsObject = call.contentsObject ? call.contentsObject : universe.resultOf(builtin, 1);
     ClimbingSet result = makeIteratorResult(context, answersPromise ? contentsObject : resultObject, iterators, step->mode, sent.span());
@@ -615,15 +535,13 @@ void holdContentsIteratedByResult(BuiltinID builtin, const ValueFlowBuiltinCall&
     std::optional<BuiltinIteration> iteration = iterationOverReceiverBy(context, builtin);
     if (!iteration)
         return;
-    // A call without objects of its own shares those of the built-in.
     const ValueFlowUniverse& universe = context.universe();
     ClimbingSet iterator = only(context, call.resultObject ? call.resultObject : universe.resultOf(builtin, 0));
-    StepTarget held(context, IteratorKind::Sync, context.written(iterator, steppedValuesName));
+    StepTarget held { context, IteratorKind::Sync, context.written(iterator, steppedValuesName) };
     takeContents(context, context.restrict(context.valueOf(call.thisValue), iteration->containers), *iteration, call.contentsObject ? call.contentsObject : universe.resultOf(builtin, 1), held);
     context.add(context.written(iterator, returnedValueName), universe.undefinedValue());
 }
 
-// StepArrayIterator, MapNext, SetNext: what the functions of the library step built-in iterators and collections with.
 void runStepOfLibrary(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     const ValueFlowUniverse& universe = context.universe();

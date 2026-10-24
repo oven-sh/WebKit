@@ -8,7 +8,6 @@ layout L1 name="Size" fields=[{key="x" declared={type=anything}}]
 layout L2 name="Box" fields=[{key="x" declared={type=anything}}]
 
 function f0 name="twoCases" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=object
     Branch v1 -> taken b1(| 0), notTaken b5()
   b1(v2):
@@ -35,7 +34,6 @@ function f0 name="twoCases" parameters=[{type=anything}] results=[{type=anything
 # CHECK-NEXT: b5 available at head: []
 
 function f1 name="caseWithoutProof" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     SwitchOnShape v0 layoutSets=[[L0], [L1]] -> case b1(| 0), case b2(), otherwise b3()
   b1(v1):
     v2 = GetSlotOrUndefined v0, v1 key="x" receivers=[L0] level=Proven
@@ -53,7 +51,6 @@ function f1 name="caseWithoutProof" parameters=[{type=object}] results=[{type=an
 # CHECK-NEXT: b3 available at head: []
 
 function f2 name="casesOfEqualSetsMeet" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: object, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     SwitchOnShape v0 layoutSets=[[L0]] -> case b3(| 0), otherwise b4()

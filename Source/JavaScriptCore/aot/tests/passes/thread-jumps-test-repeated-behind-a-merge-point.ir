@@ -9,7 +9,6 @@
 
 module m0 path="main.ts" displayPath="main.ts"
 function f0 name="sameTestTwice" parameters=[{type=function|f4}, {type=number}] results=[{type=anything}] {
-  b0(v0: function|f4, v1: number):
     v2 = TypeTest v0 testedType=f4
     Branch v2 -> taken b1(| 0), notTaken b2(| 0)
   b1(v3):
@@ -27,8 +26,6 @@ function f0 name="sameTestTwice" parameters=[{type=function|f4}, {type=number}] 
   b5(v11):
     v12 = Call v11, -, v7
     Return v12
-}
-# CHECK-LABEL: function f0 name="sameTestTwice"
 # CHECK: b1(v3: f4):
 # CHECK: Jump -> next [[afterDirectCall]](v4)
 # CHECK: b2(v5: function):
@@ -37,7 +34,6 @@ function f0 name="sameTestTwice" parameters=[{type=function|f4}, {type=number}] 
 # CHECK-NEXT: = TypeTest v0 testedType=f4
 # CHECK: [[afterCallByValue]]({{*}}):
 # CHECK-NEXT: = TypeTest v0 testedType=f4
-# FOLDED-LABEL: function f0 name="sameTestTwice"
 # FOLDED: : i32 = CallDirect v1 function=f4
 # FOLDED-NOT: TypeTest
 # FOLDED: : i32 = CallDirect {{*}} function=f4
@@ -45,9 +41,9 @@ function f0 name="sameTestTwice" parameters=[{type=function|f4}, {type=number}] 
 # FOLDED: [[other]]: anything = Call {{*}}, -, v1
 # FOLDED-NOT: TypeTest
 # FOLDED: = Call {{*}}, -, [[other]]
+}
 
 function f1 name="testOfAnotherValue" parameters=[{type=function|f4}, {type=function|f4}, {type=number}] results=[{type=anything}] {
-  b0(v0: function|f4, v1: function|f4, v2: number):
     v3 = TypeTest v0 testedType=f4
     Branch v3 -> taken b1(| 0), notTaken b2(| 0)
   b1(v4):
@@ -65,13 +61,11 @@ function f1 name="testOfAnotherValue" parameters=[{type=function|f4}, {type=func
   b5(v12):
     v13 = Call v12, -, v8
     Return v13
-}
-# CHECK-LABEL: function f1 name="testOfAnotherValue"
 # CHECK: Jump -> next b3(v5)
 # CHECK: Jump -> next b3(v7)
+}
 
 function f2 name="codeBesideTheTest" parameters=[{type=function|f4}, {type=number}] results=[{type=anything}] {
-  b0(v0: function|f4, v1: number):
     v2 = TypeTest v0 testedType=f4
     Branch v2 -> taken b1(| 0), notTaken b2(| 0)
   b1(v3):
@@ -88,13 +82,11 @@ function f2 name="codeBesideTheTest" parameters=[{type=function|f4}, {type=numbe
     Return v8
   b5(v11):
     Return v7
-}
-# CHECK-LABEL: function f2 name="codeBesideTheTest"
 # CHECK: Jump -> next b3(v4)
 # CHECK: Jump -> next b3(v6)
+}
 
 function f3 name="noEarlierTestOnTheWay" parameters=[{type=function|f4}, {type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: function|f4, v1: number, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v1)
@@ -113,19 +105,16 @@ function f3 name="noEarlierTestOnTheWay" parameters=[{type=function|f4}, {type=n
     Return v10
   b6(v11):
     Return v7
-}
-# CHECK-LABEL: function f3 name="noEarlierTestOnTheWay"
 # CHECK: Jump -> next b3(v1)
 # CHECK: Jump -> next b3(v3)
+}
 
 function f4 name="listed" parameters=[{type=anything}] results=[{type=i32}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     Return v1
 }
 
 function f5 name="testForAString" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = TypeTest v0 testedType=string
     Branch v2 -> taken b1(| 0), notTaken b2(| 0)
   b1(v3):
@@ -140,7 +129,6 @@ function f5 name="testForAString" parameters=[{type=anything}, {type=number}] re
     Return v6
   b5(v9):
     Return v1
-}
-# CHECK-LABEL: function f5 name="testForAString"
 # CHECK: Jump -> next b3(v4)
 # CHECK: Jump -> next b3(v1)
+}

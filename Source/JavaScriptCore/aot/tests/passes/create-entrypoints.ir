@@ -11,7 +11,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 variable g0 name="hoisted" module=m0 declared={type=anything} initialization=Function function=f2
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="sink" [isFreeName]
     v2 = NewClosure function=f3
@@ -20,23 +19,18 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="registered" role=Library enclosingRuntimeFunction=0 results=[{type=undefined}] {
-  b0():
     Return
 }
 function f2 name="hoisted" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f3 name="namedByClosure" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f4 name="onlyCalledDirectly" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f5 name="calledByCompiledCodeOnly" role=Library enclosingRuntimeFunction=131072 results=[{type=undefined}] {
-  b0():
     Return
 }
 runtimefunction id=0 function=f1

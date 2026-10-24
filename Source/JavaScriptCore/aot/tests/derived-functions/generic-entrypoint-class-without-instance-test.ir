@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point"
 function f0 name="narrowed" flags=[HasThis] thisType={type=Object} parameters=[{type=TypeError}, {type=undefined|Arguments}, {type=Function}, {type=L0|Object}, {type=Error}, {type=undefined|Map}] results=[{type=undefined}] {
-  b0(v0: Object, v1: TypeError, v2: undefined|Arguments, v3: Function, v4: L0|Object, v5: Error, v6: undefined|Map):
     Return
 }
 # CHECK: name="narrowed" module=m0 role=GenericEntrypoint

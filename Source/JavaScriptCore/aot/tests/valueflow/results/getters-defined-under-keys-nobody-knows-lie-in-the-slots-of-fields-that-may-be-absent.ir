@@ -10,7 +10,6 @@ entry module=m0
 layout L0 name="Flags" fields=[{key="first" declared={type=undefined|boolean}}, {key="second" declared={type=undefined|boolean}}, {key="size" declared={type=number} flags=[IsRequired]}]
 layout L1 name="Descriptor" fields=[{key="get" declared={type=anything} flags=[IsRequired]}, {key="enumerable" declared={type=anything} flags=[IsRequired]}, {key="configurable" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L0 fields=[2]
     v2 = Boolean boolean=true
@@ -26,7 +25,6 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return v11
 }
 function f1 name="one" module=m0 results=[{type=anything}] {
-  b0():
     v0 = Boolean boolean=true
     Return v0
 }

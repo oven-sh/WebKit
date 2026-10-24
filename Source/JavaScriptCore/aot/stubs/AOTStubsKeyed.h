@@ -11,9 +11,7 @@
 
 namespace JSC { namespace AOT {
 
-StubSignature signatureOfKeyedOperands(unsigned numberOfOperands, StubResult);
 void loadNameOfKey(StubAssembler&, GPRReg key, GPRReg uid, GPRReg scratch, JumpList& hasNoName);
-void callOperationOnOperandsAndReturn(StubAssembler&, Entry, unsigned numberOfOperands, OperationCall::Returns);
 void callLeafLookup(StubAssembler&, Entry, GPRReg second, std::optional<GPRReg> value, GPRReg baseAfterCall);
 // A slot for reads has said that nothing is found under the key. Its header names the Structure.
 void rememberAbsenceOfKey(StubAssembler&, GPRReg key, GPRReg header, GPRReg place, GPRReg scratch);

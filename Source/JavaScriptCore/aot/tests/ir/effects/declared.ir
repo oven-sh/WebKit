@@ -39,7 +39,6 @@ function f0 name="items" captures=[{type=env L2}] parameters=[{type=object}, {ty
 # CHECK-NEXT: v15 ScopeHasBinding: unknownCode
 # CHECK-NEXT: b0 Throw: throws
 function f1 name="generator" flags=[IsGenerator, TakesCallee] results=[{type=anything}] {
-  b0(v0: function):
     InitialYield
     v2 = Undefined
     v3 = Yield v2

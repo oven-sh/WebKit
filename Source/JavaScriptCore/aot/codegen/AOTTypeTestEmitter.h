@@ -18,7 +18,10 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class TypeTestEmitter final : public OperationEmitter {
 public:
-    explicit TypeTestEmitter(CodeGenerator&);
+    explicit TypeTestEmitter(CodeGenerator& generator)
+        : OperationEmitter(generator)
+    {
+    }
 
     const TypeTestPlan& planFor(TypeID from, Representation, TypeID to);
 
@@ -34,13 +37,10 @@ public:
     Condition isIntegerIn(Number, Range);
 
 private:
-    struct Failure {
-        B3::FrequentedBlock target;
-    };
     using PlanMap = UncheckedKeyHashMap<uint64_t, std::unique_ptr<TypeTestPlan>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
 
-    void leaveUnless(Condition, const Failure&);
-    void leave(const Failure&);
+    void leaveUnless(Condition, B3::FrequentedBlock failure);
+    void leave(B3::FrequentedBlock failure);
     void jump(B3::FrequentedBlock);
 
     std::optional<Condition> tryGetSingleCondition(Operand, const TypeTestPlan&);
@@ -52,33 +52,22 @@ private:
     // A value passes when one of its cases does. visit takes a function that emits the test of one case, likeliest case first.
     void forEachNonCellCase(Boxed, const TypeTestPlan&, const auto& visit);
     void forEachCellCase(CellPointer, const TypeTestPlan&, const auto& visit);
-    void testCases(const Failure&, const auto& forEachCase);
+    void testCases(B3::FrequentedBlock failure, const auto& forEachCase);
 
-    void test(Operand, const TypeTestPlan&, const Failure&);
-    void testBoxed(Boxed, const TypeTestPlan&, const Failure&);
-    void testNonCell(Boxed, const TypeTestPlan&, const Failure&);
+    void test(Operand, const TypeTestPlan&, B3::FrequentedBlock failure);
+    void testBoxed(Boxed, const TypeTestPlan&, B3::FrequentedBlock failure);
+    void testNonCell(Boxed, const TypeTestPlan&, B3::FrequentedBlock failure);
     enum class BoxedValue : uint8_t { IsNumber, MayBeNoNumber };
-    void testBoxedNumber(Boxed, BoxedValue, const TypeTestPlan&, const Failure&);
-    void testCell(CellPointer, const TypeTestPlan&, const Failure&);
-    void testNarrowReference(NarrowReference, const TypeTestPlan&, const Failure&);
-    void testNumber(Number, const TypeTestPlan&, const Failure&);
-    void testInteger(Integer, const TypeTestPlan&, const Failure&);
-    void testWord32(Word32, const TypeTestPlan&, const Failure&);
-    void testCondition(Condition, const TypeTestPlan&, const Failure&);
-    void testOptionalNumber(OptionalNumber, const TypeTestPlan&, const Failure&);
-    void testOptionalInteger(OptionalInteger, const TypeTestPlan&, const Failure&);
-    void testLiteralString(LiteralStringWord, const TypeTestPlan&, const Failure&);
-    void testWithMarkers(Operand, const TypeTestPlan&, const Failure&, NOESCAPE const Invocable<void()> auto& testPayload);
+    void testBoxedNumber(Boxed, BoxedValue, const TypeTestPlan&, B3::FrequentedBlock failure);
+    void testCell(CellPointer, const TypeTestPlan&, B3::FrequentedBlock failure);
+    void testWithMarkers(Operand, const TypeTestPlan&, B3::FrequentedBlock failure, NOESCAPE const Invocable<void()> auto& testPayload);
 
     Condition isMarker(Operand);
     Condition isMarker(Operand, uint16_t primitive);
     Condition passesByMarker(Operand, const TypeTestPlan&, bool payloadPasses);
-    Condition nonCellPasses(Boxed, const TypeTestPlan&);
-    Condition boxedNumberPasses(Boxed, const TypeTestPlan&);
     Condition doublePasses(Number, const TypeTestPlan&);
     // heldByForm: what the form that the integer was taken out of can hold.
     Condition integerPasses(Integer, const TypeTestPlan&, Range heldByForm = Range::full());
-    Condition booleanPasses(Condition, const TypeTestPlan&);
     Condition isInRange(Integer, Range);
     Condition isExactIntegerIn(Number, Integer truncated, Range);
     Condition cellPasses(CellPointer, const TypeTestPlan&);
@@ -89,14 +78,13 @@ private:
     std::optional<BuiltinID> onlyBuiltinThatPasses(const TypeTestPlan&) const;
     std::optional<FunctionID> functionDecidedByClosureStub(const TypeTestPlan&);
     Condition isCallableByStub(LValue cellOrOtherValue);
-    Condition isOneOfStringLiterals(CellPointer string, const TypeTestPlan&);
     Condition isOneOfLiteralStringWords(LiteralStringWord, const TypeTestPlan&);
 
     std::array<PlanMap, numberOfEnumerators<Representation>> m_plans;
     CodeShape m_shape { CodeShape::Fast };
 };
 
-void TypeTestEmitter::testCases(const Failure& failure, const auto& forEachCase)
+void TypeTestEmitter::testCases(B3::FrequentedBlock failure, const auto& forEachCase)
 {
     unsigned numberOfCasesLeft = 0;
     forEachCase([&](const auto&) {

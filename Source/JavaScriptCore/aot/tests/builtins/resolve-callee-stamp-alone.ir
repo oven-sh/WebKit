@@ -6,19 +6,15 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="stampAndType" parameters=[{type=anything}, {type=Array<anything, pristine[Storage, Names]>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: Array<anything, pristine[Storage, Names]>, v2: anything):
     v3 = AssumeType v0 castType=builtin(ArrayPrototypePush)
     v4 = Call v3, v1, v2 callees=[builtin(ArrayPrototypePush)]
     Return v4
-}
-# CHECK-LABEL: function f0 name="stampAndType"
 # CHECK: v4: int[0, 4294967295] = CallBuiltin v1, v2 overload=ArrayPrototypePush/0
+}
 
 function f1 name="stampAlone" parameters=[{type=anything}, {type=Array<anything, pristine[Storage, Names]>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: Array<anything, pristine[Storage, Names]>, v2: anything):
     v3 = Call v0, v1, v2 callees=[builtin(ArrayPrototypePush)]
     Return v3
-}
-# CHECK-LABEL: function f1 name="stampAlone"
 # CHECK-NOT: CallBuiltin
 # CHECK: v3: anything = Call v0, v1, v2 callees=[builtin(ArrayPrototypePush)]
+}

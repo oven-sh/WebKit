@@ -8,7 +8,6 @@ entry module=m0
 layout L0 name="Literal"
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = NewClosure function=f3
@@ -19,7 +18,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v6
 }
 function f1 name="accessors" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject layout=L0
     v2 = ToPropertyKey v0
     v3 = NewClosure function=f5
@@ -31,7 +29,6 @@ function f1 name="accessors" parameters=[{type=anything}] results=[{type=anythin
     Return v8
 }
 function f2 name="functionNames" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToPropertyKey v0
     v2 = NewClosure function=f5
     SetFunctionName v2, v1
@@ -40,14 +37,12 @@ function f2 name="functionNames" parameters=[{type=anything}] results=[{type=any
     Return v2
 }
 function f3 name="literalPrototype" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject layout=L0
     SetLiteralPrototype v1, v0
     v3 = FinishObject v1
     Return v3
 }
 function f4 name="copiedProperties" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewObject layout=L0
     v3 = ToPropertyKey v1
     CopyDataProperties v2, v0
@@ -56,6 +51,5 @@ function f4 name="copiedProperties" parameters=[{type=anything}, {type=anything}
     Return v6
 }
 function f5 name="callee" results=[{type=anything}] {
-  b0():
     Return
 }

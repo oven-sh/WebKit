@@ -8,7 +8,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Holder" fields=[{key="next" declared={type=anything}}]
 
 function f0 name="secondParameterIsUsedBehindTheTest" parameters=[{type=i32}, {type=anything}, {type=boolean}, {type=L0}, {type=L0}] results=[{type=anything}] {
-  b0(v0: i32, v1: anything, v2: boolean, v3: L0, v4: L0):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v0, v3)
@@ -22,8 +21,6 @@ function f0 name="secondParameterIsUsedBehindTheTest" parameters=[{type=i32}, {t
     Return v6
   b5(v10) frequency=Rare:
     Return v10
-}
-# CHECK-LABEL: function f0 name="secondParameterIsUsedBehindTheTest"
 # CHECK: b1():
 # CHECK-NEXT: Jump -> next [[skipping]](v0, v3)
 # CHECK: b2() frequency=Unlikely:
@@ -34,9 +31,9 @@ function f0 name="secondParameterIsUsedBehindTheTest" parameters=[{type=i32}, {t
 # CHECK-NEXT: Return [[holder]]
 # CHECK: [[skipping]]([[number]]: i32, [[passed]]: L0):
 # CHECK-NEXT: Jump -> next b4([[passed]], [[number]])
+}
 
 function f1 name="testedParameterIsUsedBehindTheTest" parameters=[{type=string}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: string, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v0)
@@ -51,8 +48,6 @@ function f1 name="testedParameterIsUsedBehindTheTest" parameters=[{type=string},
     Return v7
   b5(v8):
     Return v8
-}
-# CHECK-LABEL: function f1 name="testedParameterIsUsedBehindTheTest"
 # CHECK: b1():
 # CHECK-NEXT: Jump -> next [[skipping]](v0)
 # CHECK: b2():
@@ -62,9 +57,9 @@ function f1 name="testedParameterIsUsedBehindTheTest" parameters=[{type=string},
 # CHECK: = Add v6, [[untested]]
 # CHECK: [[skipping]]([[text]]: string):
 # CHECK-NEXT: Jump -> next b4([[text]], [[text]])
+}
 
 function f2 name="blockComputesWhatIsUsedBehindIt" parameters=[{type=i32}, {type=anything}, {type=boolean}, {type=L0}, {type=L0}] results=[{type=anything}] {
-  b0(v0: i32, v1: anything, v2: boolean, v3: L0, v4: L0):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v0, v3)
@@ -78,13 +73,11 @@ function f2 name="blockComputesWhatIsUsedBehindIt" parameters=[{type=i32}, {type
     Return v7
   b5(v10):
     Return v10
-}
-# CHECK-LABEL: function f2 name="blockComputesWhatIsUsedBehindIt"
 # CHECK: b1():
 # CHECK-NEXT: Jump -> next b3(v0, v3)
+}
 
 function f3 name="functionHasHandler" parameters=[{type=i32}, {type=anything}, {type=boolean}, {type=L0}, {type=L0}] results=[{type=anything}] {
-  b0(v0: i32, v1: anything, v2: boolean, v3: L0, v4: L0):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v0, v3)
@@ -101,7 +94,6 @@ function f3 name="functionHasHandler" parameters=[{type=i32}, {type=anything}, {
   b6() role=CatchHandler:
     v11 = CatchValue
     Return v6
-}
-# CHECK-LABEL: function f3 name="functionHasHandler"
 # CHECK: b1():
 # CHECK-NEXT: Jump -> next b3(v0, v3)
+}

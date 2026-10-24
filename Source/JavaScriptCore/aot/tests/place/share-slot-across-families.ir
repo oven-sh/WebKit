@@ -16,7 +16,6 @@ variable g1 name="Token" module=m0 declared={type=anything} initialization=Undef
 variable g2 name="any" module=m0 declared={type=anything} initialization=Undefined
 variable g3 name="below" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=MathRandom
     v1 = Call v0
     v2 = ToNumber v1
@@ -57,7 +56,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Node" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
     PropSet v3, v1 key="pos"
@@ -67,14 +65,12 @@ function f1 name="Node" kind=BaseConstructor flags=[HasNewTarget] parameters=[{t
     Return v7
 }
 function f2 name="NodeBelow" kind=DerivedConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetModuleVariable variable=g0
     v3 = SuperConstruct v2, v0, v1 layout=L1
     PropSet v3, v1 key="name"
     Return v3
 }
 function f3 name="Token" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L2
     v3 = NewObject v2 layout=L2
     PropSet v3, v1 key="parent"
@@ -85,7 +81,6 @@ function f3 name="Token" kind=BaseConstructor flags=[HasNewTarget] parameters=[{
     Return v8
 }
 function f4 name="TokenBelow" kind=DerivedConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetModuleVariable variable=g1
     v3 = SuperConstruct v2, v0, v1 layout=L3
     PropSet v3, v1 key="text"

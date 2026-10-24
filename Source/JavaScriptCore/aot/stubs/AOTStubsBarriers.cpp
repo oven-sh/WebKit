@@ -9,8 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTConvention.h"
+#include "AOTHeapHooks.h"
 #include "AOTInstance.h"
-#include "AOTMutatorMarkStackLayout.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
 #include "Butterfly.h"
@@ -19,6 +19,9 @@
 #include "StoredCellLog.h"
 
 namespace JSC { namespace AOT {
+
+using Returns = OperationCall::Returns;
+using Saves = OperationCall::Saves;
 
 Jump branchIfBarrierIsNeeded(StubAssembler& jit, GPRReg owner, GPRReg scratch)
 {
@@ -71,20 +74,12 @@ static void returnUnlessOperationRemembers(StubAssembler& jit, GPRReg owner, GPR
 
 static void rememberOwnerAndReturn(StubAssembler& jit, GPRReg owner)
 {
-    jit.callOperationAndReturn(Entry::operationAOTBarrierSlow, {
-        .returns = OperationCall::Returns::Void,
-        .firstArgument = OperationCall::FirstArgument::Instance,
-        .saves = OperationCall::Saves::CallerSavedRegisters,
-        .checksException = false,
-        .secondArgumentIn = owner,
-    });
+    jit.callOperationAndReturn(Entry::operationAOTBarrierSlow, { .returns = Returns::Void, .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = owner });
 }
 
 StubSignature signatureOfWriteBarrier(StubKey key)
 {
-    StubSignature signature;
-    signature.addOperand(key.operandRegister().value_or(gprOf(firstStubOperandRegister)));
-    return signature;
+    return StubSignature::withoutResult({ key.operandRegister().value_or(gprOf(firstStubOperandRegister)) });
 }
 
 void generateWriteBarrier(StubAssembler& jit)
@@ -109,10 +104,7 @@ void generateWriteBarrier(StubAssembler& jit)
 
 StubSignature signatureOfRememberElement(StubKey)
 {
-    StubSignature signature;
-    signature.addOperand(gprOf(StubRegister::T9));
-    signature.addOperand(gprOf(StubRegister::T11));
-    return signature;
+    return StubSignature::withoutResult({ gprOf(StubRegister::T9), gprOf(StubRegister::T11) });
 }
 
 void generateRememberElement(StubAssembler& jit)
@@ -145,14 +137,8 @@ void generateRememberElement(StubAssembler& jit)
     jit.returnToCaller();
 
     slowPath.link(&jit);
-    jit.callOperationAndReturn(Entry::operationAOTRememberElement, {
-        .returns = OperationCall::Returns::Void,
-        .firstArgument = OperationCall::FirstArgument::Instance,
-        .saves = OperationCall::Saves::CallerSavedRegisters,
-        .checksException = false,
-        .secondArgumentIn = array,
-        .thirdArgumentIn = value,
-    });
+    jit.callOperationAndReturn(Entry::operationAOTRememberElement,
+        { .returns = Returns::Void, .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = array, .thirdArgumentIn = value });
 }
 
 Label returnAfterStoring(StubAssembler& jit, GPRReg owner, GPRReg value)

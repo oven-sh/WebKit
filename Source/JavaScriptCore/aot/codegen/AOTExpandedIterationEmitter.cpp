@@ -20,11 +20,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-ExpandedIterationEmitter::ExpandedIterationEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
-
 void ExpandedIterationEmitter::generateDestructureIterable(const ValueContext& value)
 {
     uint32_t count = value->count();
@@ -96,11 +91,6 @@ void ExpandedIterationEmitter::generateRequireAttachedTypedArray(const ValueCont
 void ExpandedIterationEmitter::generateCreateAsyncFromSyncIterator(const ValueContext& value)
 {
     define(value, callOperation<CellPointer>(value, RuntimeOperation::CreateAsyncFromSyncIterator, { in<CellPointer>(value->iteratorOperand()), in<Boxed>(value->nextOperand()) }));
-}
-
-void ExpandedIterationEmitter::generateThrowNotIterable(const ValueContext& value)
-{
-    callVoidOperation(value, RuntimeOperation::ThrowNotIterable, { in<Boxed>(value->iterableOperand()), word32(value->isSpread()) });
 }
 
 } } } // namespace JSC::AOT::Typed

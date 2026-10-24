@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="joinWithDifferentContents" parameters=[{type=number}, {type=string}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: string, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v3 = NewArray v0 contents=number
@@ -18,8 +17,6 @@ function f0 name="joinWithDifferentContents" parameters=[{type=number}, {type=st
     v6 = Integer integer=0
     v7 = ElemGet v5, v6
     Return v7
-}
-# CHECK-LABEL: function f0 name="joinWithDifferentContents"
 # CHECK-NOT: NewArray
 # CHECK: Jump -> next b3({{*}}, v0, 
 # CHECK-NOT: NewArray
@@ -27,3 +24,4 @@ function f0 name="joinWithDifferentContents" parameters=[{type=number}, {type=st
 # CHECK: b3({{*}}: i32, [[element5]]: number|string, 
 # CHECK-NOT: ElemGet
 # CHECK: v7: anything{{*}}= Upcast [[element5]] castType=anything
+}

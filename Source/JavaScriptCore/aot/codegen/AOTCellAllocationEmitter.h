@@ -28,7 +28,7 @@ private:
 
 class CellAllocationEmitter final : public OperationEmitter {
 public:
-    explicit CellAllocationEmitter(CodeGenerator&);
+    explicit CellAllocationEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     CellPointer allocateHeapCell(Pointer allocatorOrNull, LBasicBlock slowPath);
     // cellSize is the size of the allocator's cells, which is the size asked for only up to MarkedSpace::preciseCutoff.
@@ -54,10 +54,9 @@ public:
 
     // The elements below the length are the caller's to store before anything can collect.
     std::pair<CellPointer, Pointer> allocateArray(const OperationContext&, Word32 length, Word32 vectorLength, IndexingType, LBasicBlock slowPath);
-    CellPointer newArrayOf(const OperationContext&, std::span<const Boxed> elements);
+    // In a frame the cell, the indexing header and the elements lie one after the other. On the heap where the realm has no pristine arrays, or the buffer holds more than the frame has room for.
+    CellPointer newArrayOf(const OperationContext&, std::span<const Boxed> elements, AllocationStorage = AllocationStorage::Heap);
     CellPointer newArrayFromBuffer(const OperationContext&, Word32 count, Pointer buffer);
-    // The cell, the indexing header and the elements lie in the frame one after the other. On the heap where the realm has no pristine arrays, or the buffer holds more than the frame has room for.
-    CellPointer newArrayInFrameOf(const OperationContext&, std::span<const Boxed> elements);
     CellPointer newArrayInFrameFromBuffer(const OperationContext&, Word32 count, Pointer buffer, unsigned capacity);
 
 private:
@@ -69,9 +68,8 @@ private:
     };
 
     std::pair<CellPointer, Pointer> allocateArrayInFrame(Word32 length, unsigned capacity, LBasicBlock isOnHeap);
+    void copyFromBuffer(Word32 count, Pointer buffer, Pointer butterfly, LBasicBlock copyLoop, LBasicBlock copyElement, LBasicBlock copied);
     AllocationSiteAddress allocationSiteAddress(AllocationID);
-    Pointer recordAt(const AllocationSiteAddress&);
-    void copyHeaderAndWords(const AllocationSiteAddress&, CellPointer);
     void zeroBody(CellPointer, AllocationID);
 };
 

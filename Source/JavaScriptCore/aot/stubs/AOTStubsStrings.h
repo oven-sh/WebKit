@@ -41,6 +41,13 @@ static_assert(exists(distinctStringsAreEqual()) && bodyOf(distinctStringsAreEqua
 static_assert(exists(concatenate(2)) && exists(concatenate(3)));
 static_assert(!exists(concatenate(2).withCount(1)) && !exists(concatenate(3).withCount(4)));
 
+// value is a register or an immediate.
+void returnResult(StubAssembler& jit, auto value)
+{
+    jit.move(value, jit.result());
+    jit.returnToCaller();
+}
+
 // AOTStubsStrings.cpp fiber holds the value word of string. length may be fiber.
 void loadStringLength(StubAssembler&, GPRReg string, GPRReg fiber, GPRReg length);
 struct OrderedFlatStrings {

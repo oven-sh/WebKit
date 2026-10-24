@@ -14,6 +14,5 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="types" parameters=[{type=RegExp<"a"[], pristine[Storage, Names, AsCreated]>}, {type=RegExp<"a"[], pristine[Storage, Names]>}, {type=RegExp<"b"[], pristine[Storage, Names, AsCreated]>}, {type=RegExp<pristine[Names, AsCreated]>}] results=[{type=undefined}] {
-  b0(v0: RegExp<"a"[], pristine[Storage, Names, AsCreated]>, v1: RegExp<"a"[], pristine[Storage, Names]>, v2: RegExp<"b"[], pristine[Storage, Names, AsCreated]>, v3: RegExp<pristine[Names, AsCreated]>):
     Return
 }

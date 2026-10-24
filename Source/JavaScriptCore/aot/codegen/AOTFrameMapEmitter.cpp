@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTCodeRecords.h"
-#include "AOTFrameMaps.h"
 #include "AOTSavedFrame.h"
 #include "AOTSavedFrameMap.h"
 #include "AOTStubRegisters.h"
@@ -24,11 +23,6 @@ namespace JSC { namespace AOT { namespace Typed {
 // A root lies in a word of the frame, or two narrow ones in one. Nothing else about a map depends on how many there are.
 static_assert(defaultLimitValue(LimitID::MaxFrameMapRoots, hostArchitecture()) == SavedFrame::maxNumberOfWords);
 
-FrameMapEmitter::FrameMapEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
-
 static RegisterSet registersClobberedBySuspension(const B3::Air::Code& code)
 {
     RegisterSet clobbered = RegisterSet::allScalarRegisters();
@@ -41,12 +35,11 @@ static RegisterSet registersClobberedBySuspension(const B3::Air::Code& code)
 FrameMapEmitter::Roots FrameMapEmitter::appendRoots(B3::PatchpointValue* patchpoint, const ValueContext& suspension)
 {
     const SuspensionRoots& roots = m_generator.inputs().frameMaps.rootsAt(suspension.id());
-    Roots result { m_proc.resultCount(patchpoint->type()) + patchpoint->numChildren(), 0, { } };
+    Roots result { m_proc.resultCount(patchpoint->type()) + patchpoint->numChildren(), { } };
     auto append = [&](Operand operand, FrameSlotKind kind) {
         RELEASE_ASSERT(frameSlotKindOf(operand.representation) == kind && operand.value->type() == b3TypeOf(operand.representation));
         patchpoint->append(B3::ConstrainedValue(operand.value, B3::ValueRep::LateColdAny));
         result.kinds.append(kind);
-        ++result.count;
     };
     for (const FrameRoot& root : roots.roots)
         append(m_generator.getAsDefined(root.value), root.kind);
@@ -67,39 +60,7 @@ static bool isFoldedToConstant(const B3::Air::Code& code, const B3::ValueRep& re
     return rep.gpr() == GPRInfo::numberTagRegister || rep.gpr() == GPRInfo::notCellMaskRegister;
 }
 
-std::optional<uint64_t> FrameMapEmitter::siteWordFor(FrameMapRecords& records, const B3::StackmapGenerationParams& params, const Roots& roots, unsigned promiseChild)
-{
-    RELEASE_ASSERT(roots.kinds.size() == roots.count);
-    SavedFrameMapBuilder builder;
-    for (unsigned i = 0; i < roots.count; ++i) {
-        const B3::ValueRep& rep = params[roots.firstChild + i];
-        if (isFoldedToConstant(params.code(), rep))
-            continue;
-        std::optional<uint32_t> location = locationOf(rep, roots.kinds[i]);
-        if (!location)
-            return std::nullopt;
-        switch (roots.kinds[i]) {
-        case FrameSlotKind::Value:
-        case FrameSlotKind::Cell:
-            builder.addValue(*location);
-            break;
-        case FrameSlotKind::NarrowReference:
-            builder.addNarrowReference(*location);
-            break;
-        }
-    }
-    const B3::Air::Code& code = params.code();
-    std::optional<uint32_t> promiseLocation = locationOf(params[promiseChild], FrameSlotKind::Cell);
-    std::optional<uint32_t> savedRegisters = savedRegistersWord(code);
-    if (!promiseLocation || !savedRegisters)
-        return std::nullopt;
-    // The area of outgoing arguments lies at the stack pointer, and what a call left in it is dead.
-    uint32_t deadWordsAtBottom = static_cast<uint32_t>(code.callArgAreaSizeInBytes() / sizeof(uint64_t));
-    size_t numberOfWordsInFrame = code.bytesBelowFrameRecord() / sizeof(uint64_t);
-    return SavedFrame::siteWord(records.addMap(builder.finish().span()), *promiseLocation, *savedRegisters, deadWordsAtBottom, numberOfWordsInFrame);
-}
-
-std::optional<uint32_t> FrameMapEmitter::locationOf(const B3::ValueRep& rep, FrameSlotKind kind)
+static std::optional<uint32_t> locationOf(const B3::ValueRep& rep, FrameSlotKind kind)
 {
     if (rep.isGPR() && rep.gpr() == SavedFrame::preservedRegister)
         return SavedFrame::locationInRegister;
@@ -136,7 +97,7 @@ static bool storesCalleeSavesBelowFrameRecord(const B3::Air::FrameLayout& layout
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-std::optional<uint32_t> FrameMapEmitter::savedRegistersWord(const B3::Air::Code& code)
+static std::optional<uint32_t> savedRegistersWord(const B3::Air::Code& code)
 {
     const B3::Air::FrameLayout& layout = code.frameLayout();
     if (!storesCalleeSavesBelowFrameRecord(layout))
@@ -167,6 +128,37 @@ std::optional<uint32_t> FrameMapEmitter::savedRegistersWord(const B3::Air::Code&
         return std::nullopt;
     return 0u;
 #endif
+}
+
+std::optional<uint64_t> FrameMapEmitter::siteWordFor(FrameMapRecords& records, const B3::StackmapGenerationParams& params, const Roots& roots, unsigned promiseChild)
+{
+    SavedFrameMapBuilder builder;
+    for (unsigned i = 0; i < roots.kinds.size(); ++i) {
+        const B3::ValueRep& rep = params[roots.firstChild + i];
+        if (isFoldedToConstant(params.code(), rep))
+            continue;
+        std::optional<uint32_t> location = locationOf(rep, roots.kinds[i]);
+        if (!location)
+            return std::nullopt;
+        switch (roots.kinds[i]) {
+        case FrameSlotKind::Value:
+        case FrameSlotKind::Cell:
+            builder.addValue(*location);
+            break;
+        case FrameSlotKind::NarrowReference:
+            builder.addNarrowReference(*location);
+            break;
+        }
+    }
+    const B3::Air::Code& code = params.code();
+    std::optional<uint32_t> promiseLocation = locationOf(params[promiseChild], FrameSlotKind::Cell);
+    std::optional<uint32_t> savedRegisters = savedRegistersWord(code);
+    if (!promiseLocation || !savedRegisters)
+        return std::nullopt;
+    // The area of outgoing arguments lies at the stack pointer, and what a call left in it is dead.
+    uint32_t deadWordsAtBottom = static_cast<uint32_t>(code.callArgAreaSizeInBytes() / sizeof(uint64_t));
+    size_t numberOfWordsInFrame = code.bytesBelowFrameRecord() / sizeof(uint64_t);
+    return SavedFrame::siteWord(records.addMap(builder.finish().span()), *promiseLocation, *savedRegisters, deadWordsAtBottom, numberOfWordsInFrame);
 }
 
 } } } // namespace JSC::AOT::Typed

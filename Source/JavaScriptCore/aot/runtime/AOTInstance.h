@@ -10,9 +10,7 @@
 #include "AOTBuiltinWords.h"
 #include "AOTCodegenScratchWords.h"
 #include "AOTCoroutineWords.h"
-#include "AOTHeapWords.h"
 #include "AOTInstanceLayout.h"
-#include "AOTIterationWords.h"
 #include "AOTJSONWords.h"
 #include "AOTModuleWords.h"
 #include "AOTObjectWords.h"
@@ -43,7 +41,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC {
 
 struct ClassInfo;
+class MarkStackArray;
 class MicrotaskQueue;
+class StoredCellLog;
 class VM;
 
 namespace AOT {
@@ -224,6 +224,16 @@ struct RealmWords {
     Structure* readAndWrittenCountsStructure;
     // The Map in which the library's validator keeps what it has made of the texts of plans and rules. A library file has no variables. Null until the first is asked for.
     JSCell* preparedPlans;
+};
+
+struct HeapWords {
+    StoredCellLog* storedCellLog;
+    MarkStackArray* mutatorMarkStack;
+    uintptr_t* barriersExecuted;
+};
+
+struct IterationWords {
+    JSCell* emptyEnumerator;
 };
 
 struct NumberWords {
@@ -410,30 +420,6 @@ static_assert(sizeof(TypedArrayAllocation) == 32);
 static_assert(sizeof(UniquedStringImpl) == 24, "The image holds a header of this size per identifier, and a stub scales an identifier number by it.");
 
 JS_EXPORT_PRIVATE JSCell* livenessToken(Instance*);
-
-constexpr uint64_t runtimeLayoutHash()
-{
-    constexpr uint64_t numbers[] = {
-        sizeof(InstancePrefix), sizeof(InstanceHeader), sizeof(Instance),
-#define AOT_HASH_INSTANCE_PART(member, Type) OBJECT_OFFSETOF(Instance, member), sizeof(Type),
-        FOR_EACH_AOT_INSTANCE_PART(AOT_HASH_INSTANCE_PART)
-#undef AOT_HASH_INSTANCE_PART
-        OBJECT_OFFSETOF(Instance, state),
-        sizeof(Slot), sizeof(PackedSlot), sizeof(SiteCacheState), sizeof(CustomAccessorRecord), numberOfSlotKinds,
-        sizeof(AllocationSiteRecord), sizeof(KeyOrderTransition), sizeof(KeyListCacheEntry), sizeof(GlobalBinding),
-        sizeof(LayoutData), sizeof(ExtensionLayoutData), sizeof(ClassData), sizeof(FieldData), sizeof(MethodData), sizeof(MemberGuardData), sizeof(MemberGuardAggregates),
-        sizeof(EnvironmentData), sizeof(KeyOrderData), sizeof(ShapeTestData), sizeof(RuntimeType), sizeof(RuntimeCellTest),
-        numberOfProgramTables,
-#define AOT_HASH_PROGRAM_TABLE(accessor, ElementType) sizeof(ElementType),
-        FOR_EACH_AOT_PROGRAM_TABLE(AOT_HASH_PROGRAM_TABLE)
-#undef AOT_HASH_PROGRAM_TABLE
-        InstanceLayout::offsetOfStringCells, InstanceLayout::bytesReservedForPrefixAndPollPage, InstanceLayout::granuleBelowInstance, InstanceLayout::granuleAboveInstance, InstanceLayout::cardShift,
-    };
-    uint64_t hash = 14695981039346656037ull;
-    for (uint64_t number : numbers)
-        hash = (hash ^ number) * 1099511628211ull;
-    return hash;
-}
 
 } } // namespace JSC::AOT
 

@@ -60,21 +60,6 @@ static Vector<uint32_t> countEnteringOperations(const ValueFlowResultInputs& inp
     return counts;
 }
 
-static BitVector findModulesWithBodiesThatOnlyLoaderEnters(const ValueFlowResultInputs& inputs, const ValueFlowStampedCalls& calls, const Vector<uint32_t>& numberOfEnteringOperations)
-{
-    const Program& program = inputs.program;
-    BitVector modules(program.modules.size());
-    for (uint32_t index = 0; index < program.modules.size(); ++index) {
-        FunctionID body = program.modules[index].body;
-        if (!body || !inputs.isReached(body))
-            continue;
-        ValueFlowObjectID closure = inputs.universe().closureOf(body);
-        if (!numberOfEnteringOperations[body.index()] && !calls.functionsEnteredWithoutStamp.get(body.index()) && !inputs.hasEscaped(closure) && !inputs.isLost(closure))
-            modules.quickSet(index);
-    }
-    return modules;
-}
-
 static bool isEvaluatedAtMostOnce(ModuleKind kind)
 {
     switch (kind) {
@@ -90,22 +75,16 @@ static bool isEvaluatedAtMostOnce(ModuleKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static const ValueFlowStatement* findCallAt(const ValueFlowResultInputs& inputs, const FlowApplication& application, const FlowIndirectCall& call)
-{
-    if (!call.site)
-        return nullptr;
-    ValueID site = application.accessSites.valueOfSite[call.site.index()];
-    for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(call.caller.index())) {
-        if (statement.kind == ValueFlowStatementKind::Operation && statement.opcode == Opcode::Call && statement.site == site)
-            return &statement;
-    }
-    return nullptr;
-}
-
 static bool isCalledByForwardingBuiltinItself(const ValueFlowResultInputs& inputs, const FlowApplication& application, ValueSetMaker& maker, const FlowIndirectCall& call)
 {
-    const ValueFlowStatement* statement = findCallAt(inputs, application, call);
-    if (!statement)
+    if (!call.site)
+        return false;
+    ValueID site = application.accessSites.valueOfSite[call.site.index()];
+    std::span<const ValueFlowStatement> statements = inputs.bodies().statementsOf(call.caller.index());
+    auto statement = std::ranges::find_if(statements, [&](const ValueFlowStatement& candidate) {
+        return candidate.kind == ValueFlowStatementKind::Operation && candidate.opcode == Opcode::Call && candidate.site == site;
+    });
+    if (statement == statements.end())
         return false;
     const FlowCallStamp* stamp = findByValue(application.bodies[call.caller.index()].calls.span(), statement->site, &FlowCallStamp::value);
     if (!stamp)
@@ -144,7 +123,6 @@ void computeExecutionResults(const ValueFlowResultInputs& inputs, const ValueFlo
     const FlowApplication& application = *tables.application;
     Vector<FunctionFlow>& flows = tables.functions.functions;
     Vector<uint32_t> numberOfEnteringOperations = countEnteringOperations(inputs, tables, application);
-    BitVector modulesWithBodiesThatOnlyLoaderEnters = findModulesWithBodiesThatOnlyLoaderEnters(inputs, calls, numberOfEnteringOperations);
     std::span<const FlowIndirectCall> indirectCalls = tables.functions.indirectCalls.span();
     Vector<uint32_t> numberOfIndirectCalls(FillWith { }, program.functions.size(), 0u);
     for (const FlowIndirectCall& call : indirectCalls)
@@ -159,10 +137,14 @@ void computeExecutionResults(const ValueFlowResultInputs& inputs, const ValueFlo
         flows[function.index()].executions = ExecutionCount::AtMostOnce;
         worklist.append(function);
     };
-    for (size_t index : modulesWithBodiesThatOnlyLoaderEnters) {
-        const Module& module = program.modules[index];
-        if (isEvaluatedAtMostOnce(module.kind))
-            runsAtMostOnce(module.body);
+    for (const Module& module : program.modules) {
+        FunctionID body = module.body;
+        if (!body || !inputs.isReached(body))
+            continue;
+        ValueFlowObjectID closure = inputs.universe().closureOf(body);
+        bool onlyLoaderEnters = !numberOfEnteringOperations[body.index()] && !calls.functionsEnteredWithoutStamp.get(body.index()) && !inputs.hasEscaped(closure) && !inputs.isLost(closure);
+        if (onlyLoaderEnters && isEvaluatedAtMostOnce(module.kind))
+            runsAtMostOnce(body);
     }
 
     while (!worklist.isEmpty()) {

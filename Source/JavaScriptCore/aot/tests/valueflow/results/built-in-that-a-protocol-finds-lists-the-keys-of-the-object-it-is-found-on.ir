@@ -12,12 +12,10 @@ entry module=m0
 layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
 layout L1 name="Odd" fields=[{key="y" declared={type=anything} flags=[IsRequired]}, {key="then" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = CallDirect function=f1
     Return
 }
 function f1 name="run" module=m0 flags=[IsAsync] results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = PropGet v1 key="x"

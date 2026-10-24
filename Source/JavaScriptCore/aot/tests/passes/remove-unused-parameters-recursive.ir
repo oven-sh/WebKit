@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="passesSecondToItself" parameters=[{type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
     v2 = TypeTest v0 testedType=i32
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -23,7 +22,6 @@ function f0 name="passesSecondToItself" parameters=[{type=number}, {type=number}
 # CHECK-NEXT: }
 
 function f1 name="swapsInRecursiveCall" parameters=[{type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
     v2 = TypeTest v0 testedType=i32
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -38,14 +36,12 @@ function f1 name="swapsInRecursiveCall" parameters=[{type=number}, {type=number}
 # CHECK: = CallDirect v1, v0 function=f1
 
 function f2 name="caller" parameters=[{type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
     v2 = CallDirect v0, v1 function=f0
     v3 = CallDirect v2, v1 function=f1
     Return v3
-}
-# CHECK-LABEL: function f2 name="caller"
 # CHECK: [[first]]: number = CallDirect v0 function=f3
 # CHECK-NEXT: = CallDirect [[first]], v1 function=f1
+}
 
 # CHECK-LABEL: function f3 name="passesSecondToItself"{{*}}parameters=[{type=number}] results=[{type=number}]{{*}}derivation={source=f0 parameterMap=[{original=0}]}
 # CHECK-NEXT: b0(v0: number):

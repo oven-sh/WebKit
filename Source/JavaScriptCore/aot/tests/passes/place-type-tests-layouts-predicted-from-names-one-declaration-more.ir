@@ -17,33 +17,30 @@ function f0 name="atTheLimit" parameters=[{type=object flags=[IsExpected]}] resu
   b0(v0: anything ~ object):
     v1 = PropGet v0 key="area"
     Return v1
-}
-# CHECK-LABEL: function f0 name="atTheLimit"
 # CHECK-NEXT: b0(v0: anything ~ L0|L1|L2|L3):
 # CHECK-NEXT: = TypeTest v0 testedType=L0|L1|L2|L3
 # CHECK: = GetSlot {{*}} key="area" receivers=[L0, L1, L2, L3] level=Expected
 # CHECK: = PropGet v0 key="area"
+}
 
 function f1 name="oneMore" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ object):
     v1 = PropGet v0 key="weight"
     Return v1
-}
-# CHECK-LABEL: function f1 name="oneMore"
 # CHECK-NEXT: b0(v0: anything ~ L0|L1|L2|L3):
 # CHECK-NEXT: = TypeTest v0 testedType=L0|L1|L2|L3
 # CHECK: = GetSlot {{*}} key="weight" receivers=[L0, L1, L2, L3] level=Expected
 # CHECK: = PropGet v0 key="weight"
+}
 
 function f2 name="classAndWhatIsBelowItTakeOnePlace" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ object):
     v1 = PropGet v0 key="span"
     Return v1
-}
-# CHECK-LABEL: function f2 name="classAndWhatIsBelowItTakeOnePlace"
 # CHECK-NEXT: b0(v0: anything ~ L0|L1|L2|L5|L6|L7):
 # CHECK-NEXT: = TypeTest v0 testedType=L0|L1|L2|L5|L6|L7
 # CHECK: = GetSlot {{*}} key="span" receivers=[L0, L1, L2, L5, L6, L7] level=Expected
+}
 
 function f3 name="nameOnOnePathLeavesNothingOut" parameters=[{type=object flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything ~ object, v1: boolean):
@@ -54,10 +51,9 @@ function f3 name="nameOnOnePathLeavesNothingOut" parameters=[{type=object flags=
     Return v3
   b2():
     Return v2
-}
-# CHECK-LABEL: function f3 name="nameOnOnePathLeavesNothingOut"
 # CHECK-NEXT: b0(v0: anything ~ L4, v1: boolean):
 # CHECK: = TypeTest v0 testedType=L4
+}
 
 function f4 name="Beam" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L5
 function f5 name="LongBeam" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L6
@@ -67,10 +63,9 @@ function f7 name="storeLeavesOutTheSameLayout" parameters=[{type=object flags=[I
   b0(v0: anything ~ object, v1: number):
     PropSet v0, v1 key="weight"
     Return v1
-}
-# CHECK-LABEL: function f7 name="storeLeavesOutTheSameLayout"
 # CHECK-NEXT: b0(v0: anything ~ L0|L1|L2|L3, v1: number):
 # CHECK-NEXT: = TypeTest v0 testedType=L0|L1|L2|L3
+}
 
 function f8 name="Circle" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
 function f9 name="Square" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1

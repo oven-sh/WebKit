@@ -30,29 +30,14 @@ static_assert(gprOf(StubRegister::R0) == gprOf(StubRegister::A0));
 static constexpr StubRegister globalObjectRegister = StubRegister::T10;
 #endif
 
-struct ConstructOperands {
-    GPRReg callee;
-    GPRReg newTarget;
-    GPRReg count;
-    GPRReg values;
-};
-
-struct NativeConstructorRegisters {
-    GPRReg callee;
-    GPRReg function;
-    GPRReg globalObject;
-    GPRReg scratch;
-};
-
 static void loadConstructorClassInfo(StubAssembler& jit, GPRReg callee, GPRReg result)
 {
     loadStructure(jit, callee, result);
     jit.loadPtr(Address(result, Structure::classInfoOffset()), result);
 }
 
-static void loadNativeConstructor(StubAssembler& jit, ConstructSyntax syntax, const NativeConstructorRegisters& registers, JumpList& genericPath)
+static void loadNativeConstructor(StubAssembler& jit, ConstructSyntax syntax, GPRReg callee, GPRReg function, GPRReg globalObject, GPRReg scratch, JumpList& genericPath)
 {
-    const auto [callee, function, globalObject, scratch] = registers;
     RELEASE_ASSERT(noOverlap(callee, function, globalObject, scratch, instanceGPR));
 
     jit.load8(Address(callee, JSCell::typeInfoTypeOffset()), scratch);
@@ -89,21 +74,19 @@ static void loadNativeConstructor(StubAssembler& jit, ConstructSyntax syntax, co
 
 [[nodiscard]] static JumpList checkHostFrameCapacity(StubAssembler& jit, GPRReg count, GPRReg scratch)
 {
-    constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
     JumpList overflowsStack;
     static_assert(stackAlignmentRegisters() == 2);
     jit.add32(TrustedImm32(CallFrame::headerSizeInRegisters + 1 + 1), count, scratch);
     jit.and32(TrustedImm32(~1), scratch);
     jit.lshiftPtr(TrustedImm32(3), scratch);
     jit.subPtr(sp, scratch, scratch);
-    overflowsStack.append(jit.branchPtr(CCallHelpers::Above, Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfSoftStackLimit()), scratch));
-    overflowsStack.append(jit.branchPtr(CCallHelpers::Above, scratch, GPRInfo::callFrameRegister));
+    overflowsStack.append(jit.branchPtr(CCallHelpers::Above, softStackLimit(), scratch));
+    overflowsStack.append(jit.branchPtr(CCallHelpers::Above, scratch, fp));
     return overflowsStack;
 }
 
 static void callConstructorAndReturn(StubAssembler& jit, const HostCallFrame& frame, GPRReg function, GPRReg globalObject)
 {
-    constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
     emitHostCallFrame(jit, frame);
     const GPRReg globalObjectArgument = jit.reuseScratch(StubRegister::A0);
     const GPRReg callFrameArgument = jit.reuseScratch(StubRegister::A1);
@@ -121,9 +104,12 @@ static void callConstructorAndReturn(StubAssembler& jit, const HostCallFrame& fr
     jit.returnToCaller();
 }
 
-static void emitConstructFrontEnd(StubAssembler& jit, ConstructSyntax syntax, const ConstructOperands& operands, Entry rawOperation)
+static void emitConstructFrontEnd(StubAssembler& jit, ConstructSyntax syntax, Entry rawOperation)
 {
-    const auto [callee, newTarget, count, values] = operands;
+    const GPRReg callee = jit.clobberOperand(0);
+    const GPRReg newTarget = jit.operand(1);
+    const GPRReg count = jit.clobberOperand(2);
+    const GPRReg values = jit.operand(3);
     const GPRReg function = jit.allocateScratch(StubRegister::T9);
     const GPRReg globalObject = jit.allocateScratch(globalObjectRegister);
     const GPRReg scratch = jit.allocateScratch(StubRegister::T11);
@@ -131,7 +117,7 @@ static void emitConstructFrontEnd(StubAssembler& jit, ConstructSyntax syntax, co
     JumpList genericPath;
     genericPath.append(jit.branchIfNotCell(callee));
     genericPath.append(jit.branchIfNotCell(newTarget));
-    loadNativeConstructor(jit, syntax, { callee, function, globalObject, scratch }, genericPath);
+    loadNativeConstructor(jit, syntax, callee, function, globalObject, scratch, genericPath);
 
     jit.emitFunctionPrologue();
     JumpList overflowsStack = checkHostFrameCapacity(jit, count, scratch);
@@ -143,24 +129,10 @@ static void emitConstructFrontEnd(StubAssembler& jit, ConstructSyntax syntax, co
     jit.tailCallOperation(rawOperation, OperationCall::FirstArgument::Instance);
 }
 
-StubSignature signatureOfConstructFrontEnd(StubKey)
-{
-    return operationFrontEndSignature(4);
-}
-
-void generateConstructFrontEnd(StubAssembler& jit)
-{
-    const GPRReg callee = jit.clobberOperand(0);
-    const GPRReg newTarget = jit.operand(1);
-    const GPRReg count = jit.clobberOperand(2);
-    const GPRReg values = jit.operand(3);
-    emitConstructFrontEnd(jit, ConstructSyntax::NewExpression, { callee, newTarget, count, values }, Entry::RawConstruct);
-}
-
-StubSignature signatureOfSuperConstructFrontEnd(StubKey)
-{
-    return operationFrontEndSignature(4);
-}
+StubSignature signatureOfConstructFrontEnd(StubKey) { return operationFrontEndSignature(4); }
+StubSignature signatureOfSuperConstructFrontEnd(StubKey) { return operationFrontEndSignature(4); }
+void generateConstructFrontEnd(StubAssembler& jit) { emitConstructFrontEnd(jit, ConstructSyntax::NewExpression, Entry::RawConstruct); }
+void generateSuperConstructFrontEnd(StubAssembler& jit) { emitConstructFrontEnd(jit, ConstructSyntax::SuperCall, Entry::RawSuperConstruct); }
 
 // A function whose Structure is remembered has its `prototype` property at the remembered place, and an object found there is the answer.
 static void loadRememberedPrototypeProperty(StubAssembler& jit, GPRReg function, GPRReg structureID, GPRReg place, GPRReg offset, GPRReg prototype, JumpList& isNotRemembered)
@@ -247,15 +219,6 @@ PreludeExit emitGetSuperBasePrelude(StubAssembler& jit)
 
     callsOperation.link(&jit);
     return PreludeExit::CallsOperation;
-}
-
-void generateSuperConstructFrontEnd(StubAssembler& jit)
-{
-    const GPRReg parent = jit.clobberOperand(0);
-    const GPRReg newTarget = jit.operand(1);
-    const GPRReg count = jit.clobberOperand(2);
-    const GPRReg values = jit.operand(3);
-    emitConstructFrontEnd(jit, ConstructSyntax::SuperCall, { parent, newTarget, count, values }, Entry::RawSuperConstruct);
 }
 
 } } // namespace JSC::AOT

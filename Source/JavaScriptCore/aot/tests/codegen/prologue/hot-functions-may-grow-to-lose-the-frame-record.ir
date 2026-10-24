@@ -8,13 +8,11 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="keepsTwoValues" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Call v0
     v3 = Call v0
     Return v1
 }
 function f1 name="keepsManyValues" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 1..20
     v%(i) = Call v0
 # END REPEAT

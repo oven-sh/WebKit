@@ -29,10 +29,8 @@ layout L7 name="OnlyNote" fields=[{key="note" declared={type=string}}]
 # CHECK-NEXT: L7: members [L7]
 
 function f0 name="take" parameters=[{type=L0}, {type=undefined|L0}, {type=Array<L0>}, {type=L2}] results=[{type=anything}] {
-  b0(v0: L0, v1: undefined|L0, v2: Array<L0>, v3: L2):
     Return
-}
-# READ-LABEL: function f0 name="take"
 # READ: parameters=[{type=L0|L1|L3|L4|L6}, {type=undefined|L0|L1|L3|L4|L6}, {type=Array<L0|L1|L3|L4|L6>}, {type=L2|L3}]
+}
 function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=L2 flags=[IsFromCompiler]}]
 function f2 name="Derived" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=L3 flags=[IsFromCompiler]}]

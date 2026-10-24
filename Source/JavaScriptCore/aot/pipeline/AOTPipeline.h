@@ -12,6 +12,7 @@
 #include "AOTPass.h"
 #include "AOTVector.h"
 #include <memory>
+#include <optional>
 #include <span>
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
@@ -78,11 +79,9 @@ struct PipelineOutput {
 using ReaderOfFinishedBodies = ScopedLambda<void(const PipelineOutput&)>;
 
 std::unique_ptr<PipelineOutput> runPipeline(std::span<const uint8_t> programBytes, const ExternalFunctionBodies*, BuildContext&, NOESCAPE const ScopedLambda<void()>& didReadProgram, NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries);
-std::unique_ptr<PipelineOutput> runPipeline(std::unique_ptr<Program>, BuildContext&, NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries);
-std::unique_ptr<PipelineOutput> runPipeline(std::unique_ptr<Program>, BuildContext&);
+// Where a last pass is named, the run stops behind it.
+std::unique_ptr<PipelineOutput> runPipeline(std::unique_ptr<Program>, BuildContext&, NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries = [](const PipelineOutput&) { }, std::optional<PassID> last = std::nullopt);
 std::unique_ptr<PipelineOutput> runPipelineUntil(PassID last, std::unique_ptr<Program>, BuildContext&);
-std::unique_ptr<PipelineOutput> runPasses(std::unique_ptr<Program>, PassRunner&);
-std::unique_ptr<PipelineOutput> runPasses(std::unique_ptr<Program>, PassRunner&, NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries);
 
 bool canRunPassForTesting(PassID, IRForm);
 PassOutcome runPassForTesting(PassID, Program&, PrintStream& results, BuildContext&);

@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToString v1
@@ -19,7 +18,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="sumOfCodes" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
-  b0(v0: string, v1: number):
     v2 = Integer integer=0
     v3 = Integer integer=1
     Jump -> next b1(v2, v2)
@@ -35,8 +33,6 @@ function f1 name="sumOfCodes" parameters=[{type=string}, {type=number}] results=
     Jump -> next b1(v11, v10)
   b3():
     Return v5
-}
-# CHECK-LABEL: function f1 name="sumOfCodes"
 # CHECK: b3(v8: int[0, 2147483647], v9: int|whole):
 # CHECK-NEXT: LoopHint
 # CHECK-NOT: form=Generic
@@ -44,15 +40,14 @@ function f1 name="sumOfCodes" parameters=[{type=string}, {type=number}] results=
 # CHECK-NOT: form=Generic
 # CHECK: ([[sum]]: number):
 # CHECK-NEXT: Return [[sum]]
-# REPRESENTED-LABEL: function f1 name="sumOfCodes"
 # REPRESENTED: b3(v8: int[0, 2147483647] @Int32, v9: int|whole @Double):
 # REPRESENTED-NOT: Box
 # REPRESENTED: : int|whole @Double = Add v9, {{*}}form=Numbers
 # REPRESENTED-NOT: Box
 # REPRESENTED: Return
+}
 
 function f2 name="sumOfUnknownResults" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
-  b0(v0: string, v1: number):
     v2 = Integer integer=0
     v3 = Integer integer=1
     v4 = Builtin builtin=GlobalThis
@@ -69,10 +64,8 @@ function f2 name="sumOfUnknownResults" parameters=[{type=string}, {type=number}]
     Jump -> next b1(v12, v11)
   b3():
     Return v7
-}
-# CHECK-LABEL: function f2 name="sumOfUnknownResults"
 # CHECK: b2(v8: int[0, 2147483647], v9: number|string|bigint):
 # CHECK-NEXT: LoopHint
 # CHECK: : number|string|bigint = Add v9, {{*}}form=Generic
-# REPRESENTED-LABEL: function f2 name="sumOfUnknownResults"
 # REPRESENTED: b2(v8: int[0, 2147483647] @Int32, v9: number|string|bigint @JSValue):
+}

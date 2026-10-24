@@ -10,7 +10,6 @@ module m0 path="main.js" displayPath="main.js"
 
 # k = s[k], four times, with s: number[] and k: number
 function f0 name="chainOfReads" parameters=[{type=Array<number>}, {type=number}] results=[{type=number}] {
-  b0(v0: Array<number>, v1: number):
     v2 = ElemGet v0, v1
     v3 = Check v2 castType=number
     v4 = ElemGet v0, v3
@@ -40,7 +39,6 @@ function f0 name="chainOfReads" parameters=[{type=Array<number>}, {type=number}]
 
 # The same where the checks have become tests that leave for the generic version
 function f1 name="chainBehindTestsOfTheElements" parameters=[{type=Array<number>}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<number>, v1: number):
     v2 = ElemGet v0, v1
     v3 = TypeTest v2 testedType=number
     Branch v3 -> taken b1(| 0), notTaken b3()
@@ -70,7 +68,6 @@ function f1 name="chainBehindTestsOfTheElements" parameters=[{type=Array<number>
 
 # ResolveAccesses has rewritten the read of an array of which everything is proven. Whether the position holds an element is still open
 function f2 name="provenArray" parameters=[{type=Array<number, proven, Double, pristine[Storage, Names]>}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, Double, pristine[Storage, Names]>, v1: number):
     v2 = GetArrayElement v0, v1 arrayStorage=Double level=Proven
     Return v2
 }
@@ -93,7 +90,6 @@ function f2 name="provenArray" parameters=[{type=Array<number, proven, Double, p
 
 # A position inside the length of an array without holes holds an element
 function f3 name="provenArrayWithoutHoles" parameters=[{type=Array<number, proven, Double, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, Double, pristine[Storage, Names, Dense]>, v1: int[0, 1000]):
     v2 = GetArrayElement v0, v1 arrayStorage=Double level=Proven [keyIsIntegral]
     Return v2
 }
@@ -124,7 +120,6 @@ function f4 name="expectedArray" parameters=[{type=Array<number> flags=[IsExpect
 
 # s[k] === undefined
 function f5 name="comparedWithUndefined" parameters=[{type=Array<number>}, {type=int[0, 1000]}] results=[{type=boolean}] {
-  b0(v0: Array<number>, v1: int[0, 1000]):
     v2 = ElemGet v0, v1
     v3 = Undefined
     v4 = StrictEq v2, v3
@@ -143,7 +138,6 @@ function f5 name="comparedWithUndefined" parameters=[{type=Array<number>}, {type
 
 # s[k] ?? 0
 function f6 name="replacedWhereAbsent" parameters=[{type=Array<number>}, {type=int[0, 1000]}] results=[{type=anything}] {
-  b0(v0: Array<number>, v1: int[0, 1000]):
     v2 = ElemGet v0, v1
     v3 = TypeTest v2 testedType=undefined|null
     Branch v3 -> taken b1(), notTaken b2(| 0)
@@ -166,7 +160,6 @@ function f6 name="replacedWhereAbsent" parameters=[{type=Array<number>}, {type=i
 
 # if (s[k])
 function f7 name="branchedOn" parameters=[{type=Array<number>}, {type=int[0, 1000]}] results=[{type=anything}] {
-  b0(v0: Array<number>, v1: int[0, 1000]):
     v2 = ElemGet v0, v1
     v3 = ToBoolean v2
     Branch v3 -> taken b1(), notTaken b2()
@@ -190,7 +183,6 @@ function f7 name="branchedOn" parameters=[{type=Array<number>}, {type=int[0, 100
 
 # typeof s[k]
 function f8 name="askedForItsType" parameters=[{type=Array<number>}, {type=int[0, 1000]}] results=[{type=string}] {
-  b0(v0: Array<number>, v1: int[0, 1000]):
     v2 = ElemGet v0, v1
     v3 = TypeOf v2
     Return v3

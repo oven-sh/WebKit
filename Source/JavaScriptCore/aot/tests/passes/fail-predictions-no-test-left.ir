@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="noTestIsLeft" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = ShouldFailPrediction
     Branch v1 -> taken b2(), notTaken b1()
   b1():
@@ -15,14 +14,12 @@ function f0 name="noTestIsLeft" parameters=[{type=number}] results=[{type=number
   b2() frequency=Unlikely:
     v3 = ToNumber v0
     Return v3
-}
-# CHECK-LABEL: function f0 name="noTestIsLeft"
 # CHECK-NOT: Branch
 # CHECK-NOT: ToNumber
 # CHECK: = Mul v0, v0
+}
 
 function f1 name="oneTestIsLeft" parameters=[{type=anything}] results=[{type=number}] {
-  b0(v0: anything):
     v1 = ShouldFailPrediction
     Branch v1 -> taken b3(), notTaken b1()
   b1():
@@ -34,9 +31,8 @@ function f1 name="oneTestIsLeft" parameters=[{type=anything}] results=[{type=num
   b3() frequency=Unlikely:
     v5 = ToNumber v0
     Return v5
-}
-# CHECK-LABEL: function f1 name="oneTestIsLeft"
 # CHECK: Branch v1 -> taken [[failed]](), notTaken
 # CHECK: Branch v2 -> taken {{*}}(| 0), notTaken [[failed]]()
 # CHECK: [[failed]]() frequency=Unlikely:
 # CHECK-NEXT: = ToNumber v0
+}

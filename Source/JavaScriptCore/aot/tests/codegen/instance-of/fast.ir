@@ -11,7 +11,6 @@ variable g0 name="A" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="B" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = FinishClass v1 layout=L0
@@ -35,25 +34,21 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v19
 }
 function f1 name="A" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2
 }
 function f2 name="B" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0 homeKind=Object
     v3 = SuperConstruct v2, v1 layout=L1
     Return v3
 }
 function f3 name="againstDerivedClass" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g1
     v2 = InstanceOf v0, v1
     Return v2
 }
 function f4 name="derivedAgainstBase" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g1
     v1 = Construct v0
     v2 = GetModuleVariable variable=g0
@@ -61,7 +56,6 @@ function f4 name="derivedAgainstBase" results=[{type=anything}] {
     Return v3
 }
 function f5 name="baseAgainstDerived" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = Construct v0
     v2 = GetModuleVariable variable=g1
@@ -69,19 +63,16 @@ function f5 name="baseAgainstDerived" results=[{type=anything}] {
     Return v3
 }
 function f6 name="createsDerived" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g1
     v1 = Construct v0
     Return v1
 }
 function f7 name="againstMap" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=Map
     v2 = InstanceOf v0, v1
     Return v2
 }
 function f8 name="againstMapThenSet" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=Map
     v2 = InstanceOf v0, v1
     Branch v2 -> taken b1(), notTaken b2()
@@ -93,12 +84,10 @@ function f8 name="againstMapThenSet" parameters=[{type=anything}] results=[{type
     Return v4
 }
 function f9 name="againstParameter" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = InstanceOf v0, v1
     Return v2
 }
 function f10 name="againstArray" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=Array
     v2 = InstanceOf v0, v1
     Return v2

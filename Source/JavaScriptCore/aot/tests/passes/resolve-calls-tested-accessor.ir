@@ -8,21 +8,17 @@ layout L0 kind=Instance name="Buffer" constructor=f0 flow={baseState=None imposs
 layout L1 kind=Instance name="Open" constructor=f4 flow={baseState=None impossibleMutations=[ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="size" kind=Getter function=f5}] namedMembers=[{key="size" kind=Getter function=f5}]}
 function f0 name="Buffer" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f1 name="size" kind=Getter flags=[HasThis] thisType={type=object} results=[{type=number}] {
-  b0(v0: object):
     v1 = Integer integer=1
     Return v1
 }
 function f2 name="size" kind=Setter flags=[HasThis] thisType={type=object} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
     Return
 }
 function f3 name="owner" kind=Getter flags=[HasThis] captures=[{type=string}] thisType={type=object} results=[{type=anything}] {
-  b0(v0: string, v1: object):
     Return v0
 }
 function f4 name="Open" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f5 name="size" kind=Getter flags=[HasThis] thisType={type=L1} results=[{type=number}] {
-  b0(v0: L1):
     v1 = Integer integer=2
     Return v1
 }
@@ -31,8 +27,6 @@ function f6 name="getter" parameters=[{type=L0 flags=[IsExpected]}] results=[{ty
   b0(v0: anything ~ L0):
     v1 = PropGet v0 key="size"
     Return v1
-}
-# CHECK-LABEL: function f6 name="getter"
 # CHECK-NEXT: b0(v0: anything ~ L0):
 # CHECK-NEXT: [[hasLayout]]: boolean{{*}}= TypeTest v0 testedType=L0
 # CHECK-NEXT: Branch [[hasLayout]] -> taken [[tested]](| 0), notTaken {{*}}
@@ -44,12 +38,11 @@ function f6 name="getter" parameters=[{type=L0 flags=[IsExpected]}] results=[{ty
 # CHECK-NEXT: [[tested]]([[buffer]]: L0):
 # CHECK-NEXT: = BelongsToInstance [[buffer]]
 # CHECK-NOT: Test
+}
 function f7 name="setter" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything ~ L0, v1: anything):
     PropSet v0, v1 key="size"
     Return
-}
-# CHECK-LABEL: function f7 name="setter"
 # CHECK-NEXT: b0(v0: anything ~ L0, v1: anything):
 # CHECK-NEXT: = TypeTest v0 testedType=L0
 # CHECK-NOT: PropSet
@@ -60,12 +53,10 @@ function f7 name="setter" parameters=[{type=L0 flags=[IsExpected]}, {type=anythi
 # CHECK-NEXT: Return
 # CHECK: ([[stored]]: L0):
 # CHECK-NEXT: = BelongsToInstance [[stored]]
+}
 function f8 name="proven-receiver" parameters=[{type=L1}] results=[{type=anything}] {
-  b0(v0: L1):
     v1 = PropGet v0 key="size"
     Return v1
-}
-# CHECK-LABEL: function f8 name="proven-receiver"
 # CHECK-NEXT: b0(v0: L1):
 # CHECK-NEXT: [[isUnchanged]]: boolean = AreMembersUnchanged conditions=[{{*}}layout=L1{{*}}key="size"}]
 # CHECK-NEXT: Branch [[isUnchanged]] -> taken [[unchanged]](| 0), notTaken {{*}}()
@@ -76,25 +67,23 @@ function f8 name="proven-receiver" parameters=[{type=L1}] results=[{type=anythin
 # CHECK-NEXT: = PropGet v0 key="size"
 # CHECK-NOT: HasNoExtraProperties
 # CHECK-NOT: BelongsToInstance
+}
 function f9 name="getter-with-capture" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ L0):
     v1 = PropGet v0 key="owner"
     Return v1
-}
-# CHECK-LABEL: function f9 name="getter-with-capture"
 # CHECK-NEXT: b0(v0: anything ~ L0):
 # CHECK-NEXT: v1: anything = PropGet v0 key="owner"
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
+}
 function f10 name="nothing-expected" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
     v2 = PropGet v0 key="size"
     PropSet v0, v1 key="size"
     Return v2
-}
-# CHECK-LABEL: function f10 name="nothing-expected"
 # CHECK-NEXT: b0(v0: object, v1: anything):
 # CHECK-NEXT: v2: anything = PropGet v0 key="size"
 # CHECK-NEXT: PropSet v0, v1 key="size"
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
+}

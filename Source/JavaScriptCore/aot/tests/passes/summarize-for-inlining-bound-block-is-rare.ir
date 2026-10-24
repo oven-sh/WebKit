@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js"
 evalscope e0
 function f0 name="evaluatesTextInRareBlock" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=number
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -19,7 +18,6 @@ function f0 name="evaluatesTextInRareBlock" parameters=[{type=anything}] results
 # CHECK: f0: barrier=None {{*}} head=[b0 b1] {{*}} boundToFrame=[b2]
 
 function f1 name="callsInRareBlock" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=number
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -32,7 +30,6 @@ function f1 name="callsInRareBlock" parameters=[{type=anything}] results=[{type=
 # CHECK-NOT: boundToFrame
 
 function f2 name="evaluatesTextInEntryBlock" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Undefined
     v2 = DirectEval v0, v1 evalScope=e0
     v3 = TypeTest v2 testedType=number

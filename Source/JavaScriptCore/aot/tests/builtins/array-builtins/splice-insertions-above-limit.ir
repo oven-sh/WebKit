@@ -10,7 +10,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="publish" [isFreeName]
@@ -18,7 +17,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v3
 }
 function f1 name="insertsTwo" parameters=[{type=Array<number>}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<number>, v1: number):
     v2 = Integer integer=0
     v3 = PropGet v0 key="splice"
     v4 = Call v3, v0, v2, v2, v1, v1 calleeKey="splice"

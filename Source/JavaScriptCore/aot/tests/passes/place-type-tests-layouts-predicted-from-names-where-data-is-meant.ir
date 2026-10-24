@@ -12,19 +12,17 @@ function f0 name="stores" parameters=[{type=object flags=[IsExpected]}, {type=ob
   b0(v0: anything ~ object, v1: anything ~ object):
     PropSet v0, v1 key="return"
     Return
-}
-# CHECK-LABEL: function f0 name="stores"
 # CHECK: = TypeTest v0 testedType=L0
 # CHECK: PutSlot{{*}} key="return" receivers=[L0]
+}
 
 function f1 name="readsAndPassesOn" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ object):
     v1 = PropGet v0 key="return"
     Return v1
-}
-# CHECK-LABEL: function f1 name="readsAndPassesOn"
 # CHECK: = TypeTest v0 testedType=L0
 # CHECK: = GetSlot {{*}} key="return" receivers=[L0]
+}
 
 function f2 name="return" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=undefined}] {
   b0(v0: anything ~ object):

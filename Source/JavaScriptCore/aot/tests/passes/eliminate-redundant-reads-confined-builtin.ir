@@ -10,16 +10,14 @@ layout L1 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequir
 layout L2 kind=Environment name="scope" fields=[{key="y" declared={type=anything}}]
 
 function f0 name="pushBetweenReadsOfTheSlotThatHoldsTheArray" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0, v1: number):
     v2 = GetSlot v0 key="items" receivers=[L0] level=Proven
     v3 = CallBuiltin v2, v1 overload=ArrayPrototypePush/0
     v4 = GetSlot v0 key="items" receivers=[L0] level=Proven
     v5 = CallBuiltin v4, v1 overload=ArrayPrototypePush/0
     Return v5
-}
-# CHECK-LABEL: function f0 name="pushBetweenReadsOfTheSlotThatHoldsTheArray"
 # CHECK: = CallBuiltin v2, v1 overload=ArrayPrototypePush/0
 # CHECK-NEXT: v4:{{*}}= Upcast v2 castType=
+}
 
 function f1 name="mapSetBetweenReads" captures=[{type=env L2}] parameters=[{type=L1}, {type=Map<anything, anything>}, {type=anything}] results=[{type=anything}] {
   b0(v0: env L2, v1: L1, v2: Map<anything, anything>, v3: anything):
@@ -33,55 +31,46 @@ function f1 name="mapSetBetweenReads" captures=[{type=env L2}] parameters=[{type
     v11 = CallBuiltin v2, v5, v8 overload=MapPrototypeSet/0
     v12 = CallBuiltin v2, v6, v9 overload=MapPrototypeSet/0
     Return v10
-}
-# CHECK-LABEL: function f1 name="mapSetBetweenReads"
 # CHECK: = CallBuiltin v2, v3, v4 overload=MapPrototypeSet/0
 # CHECK-NEXT: v8: anything = Upcast v4 castType=anything
 # CHECK-NEXT: v9: anything = Upcast v5 castType=anything
 # CHECK-NEXT: v10: anything = Upcast v6 castType=anything
+}
 
 function f2 name="freezeOfAnotherObject" parameters=[{type=L1}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L1, v1: anything):
     v2 = NewObject -, v1 layout=L1 fields=[0]
     v3 = CallBuiltin -, v0 overload=ObjectFreeze/0
     v4 = GetSlot v2 key="x" receivers=[L1] level=Proven
     Return v4
-}
-# CHECK-LABEL: function f2 name="freezeOfAnotherObject"
 # CHECK: = CallBuiltin -, v0 overload=ObjectFreeze/0
 # CHECK-NEXT: v4: anything = Upcast v1 castType=anything
+}
 
 function f3 name="freezeOfTheObject" parameters=[{type=L1}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L1, v1: anything):
     v2 = NewObject -, v1 layout=L1 fields=[0]
     v3 = CallBuiltin -, v2 overload=ObjectFreeze/0
     v4 = GetSlot v2 key="x" receivers=[L1] level=Proven
     Return v4
-}
-# CHECK-LABEL: function f3 name="freezeOfTheObject"
 # CHECK: = CallBuiltin -, v2 overload=ObjectFreeze/0
 # CHECK-NEXT: v4: anything = GetSlot v2 key="x"
+}
 
 function f4 name="freezeOfAnObjectThatMayBeTheOneRead" parameters=[{type=L1}, {type=L1}] results=[{type=boolean}] {
-  b0(v0: L1, v1: L1):
     v2 = GetSlot v0 key="x" receivers=[L1] level=Proven
     v3 = CallBuiltin -, v1 overload=ObjectFreeze/0
     v4 = GetSlot v0 key="x" receivers=[L1] level=Proven
     v5 = StrictEq v2, v4
     Return v5
-}
-# CHECK-LABEL: function f4 name="freezeOfAnObjectThatMayBeTheOneRead"
 # CHECK: = CallBuiltin -, v1 overload=ObjectFreeze/0
 # CHECK-NEXT: v4: anything = GetSlot v0 key="x"
+}
 
 function f5 name="pushOnAnyObjectRunsOtherCode" parameters=[{type=L0}, {type=object}, {type=number}] results=[{type=boolean}] {
-  b0(v0: L0, v1: object, v2: number):
     v3 = GetSlot v0 key="items" receivers=[L0] level=Proven
     v4 = CallBuiltin v1, v2 overload=ArrayPrototypePush/1
     v5 = GetSlot v0 key="items" receivers=[L0] level=Proven
     v6 = StrictEq v3, v5
     Return v6
-}
-# CHECK-LABEL: function f5 name="pushOnAnyObjectRunsOtherCode"
 # CHECK: = CallBuiltin v1, v2 overload=ArrayPrototypePush/1
 # CHECK-NEXT: v5:{{*}}= GetSlot v0 key="items"
+}

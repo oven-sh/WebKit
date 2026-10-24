@@ -7,7 +7,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="callOnString" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = String string=","
     v2 = PropGet v0 key="split"
     v3 = Call v2, v0, v1 calleeKey="split"
@@ -26,18 +25,15 @@ function f0 name="callOnString" parameters=[{type=string}] results=[{type=anythi
     Jump -> next b1(v12)
   b3():
     Return v7
-}
-# CHECK-LABEL: function f0 name="callOnString"
 # CHECK: = IteratorOpen v4
 # CHECK: = IteratorResume v5
-# LATER-LABEL: function f0 name="callOnString"
 # LATER-NOT: overload=StringPrototypeSplit
 # LATER-NOT: IteratorOpen
 # LATER: = CallBuiltin {{*}} overload=StringPrototypeIndexOf/
 # LATER: = Substring
+}
 
 function f1 name="callOnAnObject" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = PropGet v0 key="items"
     v2 = Call v1, v0 calleeKey="items"
     v3 = AssumeType v2 castType=Array<string, proven, pristine[Storage, Names]>
@@ -55,13 +51,11 @@ function f1 name="callOnAnObject" parameters=[{type=object}] results=[{type=anyt
     Jump -> next b1(v11)
   b3():
     Return v6
-}
-# CHECK-LABEL: function f1 name="callOnAnObject"
 # CHECK-NOT: IteratorOpen
 # CHECK-NOT: IteratorResume
+}
 
 function f2 name="arrayIsUsedAgain" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = String string=","
     v2 = PropGet v0 key="split"
     v3 = Call v2, v0, v1 calleeKey="split"
@@ -78,7 +72,6 @@ function f2 name="arrayIsUsedAgain" parameters=[{type=string}] results=[{type=an
     Jump -> next b1()
   b3():
     Return v4
-}
-# CHECK-LABEL: function f2 name="arrayIsUsedAgain"
 # CHECK-NOT: IteratorOpen
 # CHECK-NOT: IteratorResume
+}

@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="behindMergePoint" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
-  b0(v0: anything, v1: number):
     v2 = ToBoolean v0
     Branch v2 -> taken b1(), notTaken b2(v1)
   b1():
@@ -20,16 +19,13 @@ function f0 name="behindMergePoint" parameters=[{type=anything}, {type=number}] 
     Return v4
   b4():
     Return v1
-}
-# CHECK-LABEL: function f0 name="behindMergePoint"
 # CHECK: b2(v4
 # CHECK: Branch v2 -> taken b3(), notTaken b4()
-# CLEAN-LABEL: function f0 name="behindMergePoint"
 # CLEAN: = ToBoolean v0
 # CLEAN-NOT: = ToBoolean
+}
 
 function f1 name="onTakenPath" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
-  b0(v0: anything, v1: number):
     v2 = ToBoolean v0
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -48,7 +44,6 @@ function f1 name="onTakenPath" parameters=[{type=anything}, {type=number}] resul
 # CHECK: Branch [[known]] -> taken b3(), notTaken b2()
 
 function f2 name="secondBranchPassesProof" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b1()
   b1():
@@ -58,13 +53,11 @@ function f2 name="secondBranchPassesProof" parameters=[{type=anything}] results=
     Return v3
   b3():
     Return v0
-}
-# CHECK-LABEL: function f2 name="secondBranchPassesProof"
 # CHECK: b1():
 # CHECK: Branch v1 -> taken b2(| 0), notTaken b3()
+}
 
 function f3 name="onTwoPaths" parameters=[{type=anything}, {type=boolean}] results=[{type=boolean}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = ToBoolean v0
@@ -72,13 +65,11 @@ function f3 name="onTwoPaths" parameters=[{type=anything}, {type=boolean}] resul
   b2():
     v3 = ToBoolean v0
     Return v3
-}
-# CHECK-LABEL: function f3 name="onTwoPaths"
 # CHECK: Return v2
 # CHECK: Return v3
+}
 
 function f4 name="twoValues" parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
-  b0(v0: anything, v1: anything):
     v2 = ToBoolean v0
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -86,12 +77,10 @@ function f4 name="twoValues" parameters=[{type=anything}, {type=anything}] resul
     Return v3
   b2():
     Return v2
-}
-# CHECK-LABEL: function f4 name="twoValues"
 # CHECK: Return v3
+}
 
 function f5 name="whatFirstTestProvesIsTested" parameters=[{type=anything}] results=[{type=number}] {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(| 0), notTaken b3()
   b1(v2):
@@ -103,14 +92,12 @@ function f5 name="whatFirstTestProvesIsTested" parameters=[{type=anything}] resu
   b3():
     v5 = Integer integer=2
     Return v5
-}
-# CHECK-LABEL: function f5 name="whatFirstTestProvesIsTested"
 # CHECK: b1(v2
 # CHECK: [[known5]]: true = Boolean boolean=true
 # CHECK: Branch [[known5]] -> taken b2(), notTaken b3()
+}
 
 function f6 name="handlerIsEnteredInFrontOfFirstTest" parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1() handler=b2():
     v2 = Call v1
@@ -120,13 +107,11 @@ function f6 name="handlerIsEnteredInFrontOfFirstTest" parameters=[{type=anything
     v4 = CatchValue
     v5 = ToBoolean v0
     Return v5
-}
-# CHECK-LABEL: function f6 name="handlerIsEnteredInFrontOfFirstTest"
 # CHECK: Return v3
 # CHECK: Return v5
+}
 
 function f7 name="behindHandlerAndBehindEndOfBlock" parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1() handler=b2():
     v2 = Call v1
@@ -138,12 +123,10 @@ function f7 name="behindHandlerAndBehindEndOfBlock" parameters=[{type=anything},
   b3():
     v5 = ToBoolean v0
     Return v5
-}
-# CHECK-LABEL: function f7 name="behindHandlerAndBehindEndOfBlock"
 # CHECK: Return v5
+}
 
 function f8 name="testInFrontOfBlockWithHandler" parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
-  b0(v0: anything, v1: anything):
     v2 = ToBoolean v0
     Jump -> next b1()
   b1() handler=b2():
@@ -154,15 +137,13 @@ function f8 name="testInFrontOfBlockWithHandler" parameters=[{type=anything}, {t
     v5 = CatchValue
     v6 = ToBoolean v0
     Return v6
-}
-# CHECK-LABEL: function f8 name="testInFrontOfBlockWithHandler"
 # CHECK: b1() handler=b2():
 # CHECK: Return v2
 # CHECK: b2() role=CatchHandler:
 # CHECK: Return v2
+}
 
 function f9 name="secondTestProvesMoreOfNarrowedValue" parameters=[{type=anything}] results=[{type=number}] {
-  b0(v0: anything):
     v1 = ToBoolean v0
     v2 = TypeTest v0 testedType=string
     Branch v2 -> taken b1(| 0), notTaken b3()
@@ -180,7 +161,6 @@ function f9 name="secondTestProvesMoreOfNarrowedValue" parameters=[{type=anythin
   b5():
     v8 = Integer integer=0
     Return v8
-}
-# CHECK-LABEL: function f9 name="secondTestProvesMoreOfNarrowedValue"
 # CHECK: b1(v3
 # CHECK: Branch v4 -> taken b2(| 0), notTaken b3()
+}

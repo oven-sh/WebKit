@@ -8,7 +8,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Environment fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
 layout L1
 function f0 name="collected-on-one-path" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewObject layout=L0 fields=[]
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -19,12 +18,10 @@ function f0 name="collected-on-one-path" parameters=[{type=anything}, {type=bool
   b3():
     PutEnvironmentField v2, v0 layout=L0 field=0
     Return
-}
-# CHECK-LABEL: function f0 name="collected-on-one-path"
 # CHECK: PutEnvironmentField v2, v0 layout=L0
 # CHECK-NOT: ownerCannotBeMarked
+}
 function f1 name="collected-on-no-path" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewObject layout=L0 fields=[]
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -34,6 +31,5 @@ function f1 name="collected-on-no-path" parameters=[{type=anything}, {type=boole
   b3():
     PutEnvironmentField v2, v0 layout=L0 field=0
     Return
-}
-# CHECK-LABEL: function f1 name="collected-on-no-path"
 # CHECK: PutEnvironmentField v2, v0 layout=L0 [ownerCannotBeMarked]
+}

@@ -17,7 +17,7 @@
 #include "AOTObjectModel.h"
 #include "AOTProgramFile.h"
 #include "AOTPropertyCaches.h"
-#include "AOTRegExpLiterals.h"
+#include "AOTRegExpRecords.h"
 #include "AOTRuntimeType.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTShellProcess.h"
@@ -49,7 +49,6 @@ module m1 path="/first.js" displayPath="first.js" body=f1 exports=[{name="a" var
 module m2 path="/second.js" displayPath="second.js" body=f2 exports=[{name="a" variable=g1}]
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="registry" [isFreeName]
     v2 = NewClosure function=f3
@@ -67,34 +66,28 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="first" module=m1 kind=Module results=[{type=anything}] {
-  b0():
     v0 = String string="export of first"
     PutModuleVariable v0 variable=g0
     Return
 }
 function f2 name="second" module=m2 kind=Module results=[{type=anything}] {
-  b0():
     v0 = String string="export of second"
     PutModuleVariable v0 variable=g1
     Return
 }
 function f3 name="isUnshared" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=ArrayBuffer
     Return v1
 }
 function f4 name="isShared" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=SharedArrayBuffer
     Return v1
 }
 function f5 name="isEither" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=ArrayBuffer|SharedArrayBuffer
     Return v1
 }
 function f6 name="choose" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     v2 = StrictEq v0, v1
     Branch v2 -> taken b1(), notTaken b2()
@@ -117,7 +110,6 @@ function f6 name="choose" parameters=[{type=anything}] results=[{type=anything}]
     Return
 }
 function f7 name="read" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g2
     v1 = PropGet v0 key="a"
     Return v1
@@ -127,7 +119,6 @@ function f7 name="read" results=[{type=anything}] {
 static constexpr ASCIILiteral programWithLiterals = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="registry" [isFreeName]
     v2 = NewClosure function=f1
@@ -135,7 +126,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="literals" results=[{type=anything}] {
-  b0():
     v0 = NewRegExp pattern="a+" regExpFlags=[]
     v1 = NewRegExp pattern="b+" regExpFlags=[]
     v2 = NewRegExp pattern="c+" regExpFlags=[]
@@ -382,7 +372,7 @@ static void testMessages(LoadedProgram& program)
     TypeRecord namespacesOfFirst { RuntimeCellTest::isNamespaceOf(firstModule) };
     AOT_TEST_CHECK(isDescribedAs(program, namespacesOfFirst, "typeof import(\"first.js\")"_s));
     AOT_TEST_CHECK(isDescribedAs(program, TypeRecord { RuntimeCellTest::isNamespaceOf(firstModule), RuntimeCellTest::isNamespaceOf(secondModule) }, "typeof import(\"first.js\") | typeof import(\"second.js\")"_s));
-    AOT_TEST_CHECK(hasMessage(program, jsNumber(3), namespacesOfFirst, "expected typeof import(\"first.js\"), got number 3"_s));
+    AOT_TEST_CHECK(hasMessage(program, jsNumber(3), namespacesOfFirst, "expected typeof import(\"first.js\"), got number"_s));
 }
 
 static constexpr ASCIILiteral scriptStart = R"js(

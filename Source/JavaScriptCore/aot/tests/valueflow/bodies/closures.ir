@@ -15,13 +15,11 @@
 module m0 path="main.js" displayPath="main.js"
 entry module=m0
 function f0 name="creates" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewClosure v0, v1 function=f1
     v3 = NewClosure v2, v0 function=f1
     v4 = PropGet v3 key="a"
     Return v2
 }
 function f1 name="captures" kind=Arrow captures=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Return v0
 }

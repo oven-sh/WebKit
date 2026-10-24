@@ -13,7 +13,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}] flow={members=[L0]}
 function f0 name="narrowedOperandIntoHead" parameters=[{type=anything}] results=[{type=string}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = TypeTest v0 testedType=string
@@ -52,7 +51,6 @@ function f0 name="narrowedOperandIntoHead" parameters=[{type=anything}] results=
 # EXTRACT-NEXT: [[sum]]: string = Add [[parameter]], [[parameter]]
 # EXTRACT-NEXT: Return [[sum]]
 function f1 name="guardIntoHead" parameters=[{type=object}] results=[{type=number}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b3()
   b1(v2):
@@ -71,7 +69,6 @@ function f1 name="guardIntoHead" parameters=[{type=object}] results=[{type=numbe
 # ARGUMENT-NOT: live-ins
 # ARGUMENT-NOT: function
 function f2 name="branchWithProofsAfterRegion" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3()
@@ -90,7 +87,6 @@ function f2 name="branchWithProofsAfterRegion" parameters=[{type=anything}, {typ
 # TEST: check: OperandMustBeDefinition
 # TEST-NOT: function
 function f3 name="plainBranchAfterRegion" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3()
@@ -116,7 +112,6 @@ function f3 name="plainBranchAfterRegion" parameters=[{type=anything}, {type=boo
 # CONDITION: [[test]]: boolean = TypeTest v0 testedType=string
 # CONDITION-NEXT: Jump -> next b4([[test]])
 function f4 name="allocationIsGuardAfterRegion" parameters=[{type=boolean}, {type=number}] results=[{type=number}] {
-  b0(v0: boolean, v1: number):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3()

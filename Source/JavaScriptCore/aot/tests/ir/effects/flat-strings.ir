@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="flat" parameters=[{type=string}, {type=number}, {type=int[0, 10]}] results=[{type=undefined}] {
-  b0(v0: string, v1: number, v2: int[0, 10]):
     v3 = FlattenString v0
     v4 = StringRangeCodeUnitOrNaN v3, -, -, v1
     v5 = StringRangeCodePointOrUndefined v3, -, -, v1
@@ -24,7 +23,6 @@ function f0 name="flat" parameters=[{type=string}, {type=number}, {type=int[0, 1
 # ONLY-NOT: throws
 # ONLY-NOT: collects
 function f1 name="mayBeRope" parameters=[{type=string}, {type=number}, {type=int[0, 10]}] results=[{type=undefined}] {
-  b0(v0: string, v1: number, v2: int[0, 10]):
     v3 = StringRangeCodeUnitOrNaN v0, -, -, v1
     v4 = StringRangeCodePointOrUndefined v0, -, -, v1
     v5 = StringRangeEqualsLiteral v0, v2, v2 literal="a"
@@ -37,7 +35,6 @@ function f1 name="mayBeRope" parameters=[{type=string}, {type=number}, {type=int
 # CHECK-NEXT: v5 StringRangeEqualsLiteral: reads(StringStorage) writes(StringStorage, RuntimeState) throwsForLackOfMemory collects
 # CHECK-NEXT: v6 GetStringCodeUnit: reads(StringStorage) writes(StringStorage, RuntimeState) throwsForLackOfMemory collects
 function f2 name="createsString" parameters=[{type=string}, {type=number}] results=[{type=undefined}] {
-  b0(v0: string, v1: number):
     v2 = FlattenString v0
     v3 = StringRangeCharacterOrEmpty v2, -, -, v1
     Return
@@ -45,7 +42,6 @@ function f2 name="createsString" parameters=[{type=string}, {type=number}] resul
 # CHECK-LABEL: function f2
 # CHECK: v3 StringRangeCharacterOrEmpty: reads(StringStorage, AllocatorState) writes(StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects
 function f3 name="oneOperandMayBeRope" parameters=[{type=string}, {type=string}] results=[{type=undefined}] {
-  b0(v0: string, v1: string):
     v2 = FlattenString v0
     v3 = FlattenString v1
     v4 = StringOrder v2, v1

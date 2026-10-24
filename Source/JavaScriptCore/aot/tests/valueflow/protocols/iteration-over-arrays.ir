@@ -12,7 +12,6 @@ module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSou
 entry module=m0
 runtimefunction id=69 function=f1
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = NewArray v0 contents=anything
     v2 = IteratorOpen v1
@@ -37,7 +36,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=69 results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Convert v0 declared={type=object flags=[IsFromCompiler]}
     v2 = StepArrayIterator v1
     v3 = ResultAt v2 index=1
@@ -46,14 +44,11 @@ function f1 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeF
     Return v5
 }
 function f2 name="one" results=[{type=anything}] {
-  b0():
     Return
 }
 function f3 name="two" results=[{type=anything}] {
-  b0():
     Return
 }
 function f4 name="three" results=[{type=anything}] {
-  b0():
     Return
 }

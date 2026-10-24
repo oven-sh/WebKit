@@ -9,12 +9,10 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTableBindings.h"
-#include "AOTChainDependents.h"
 #include "AOTClosure.h"
 #include "AOTErrorMessages.h"
 #include "AOTGenerator.h"
 #include "AOTInstance.h"
-#include "AOTRealmStartup.h"
 #include "ImmutablePropertyNames.h"
 #include "JSCInlines.h"
 #include "MicrotaskQueueInlines.h"
@@ -32,13 +30,23 @@ void willInitializeRealm(JSGlobalObject* realm)
         reserveInstance(realm);
 }
 
+String messageOfNameRefusedOnBuiltinFunction(PropertyName name)
+{
+    return assignmentToNameThatBuiltinFunctionInheritsMessage(name.uid());
+}
+
+String messageOfPrototypeRefusedOnBuiltinFunction()
+{
+    return prototypeChangeOfLockedBuiltinMessage("a built-in function"_s);
+}
+
 namespace {
 
 class RefusalsOfHostFunctions final : public ImmutablePropertyNames::OutsideNames {
 public:
     bool contains(UniquedStringImpl*) const final { return false; }
-    String messageOfRefusal(UniquedStringImpl* uid) const final { return assignmentToNameThatBuiltinFunctionInheritsMessage(uid); }
-    String messageOfRefusedPrototype() const final { return prototypeChangeOfLockedBuiltinMessage("a built-in function"_s); }
+    String messageOfRefusal(UniquedStringImpl* uid) const final { return messageOfNameRefusedOnBuiltinFunction(uid); }
+    String messageOfRefusedPrototype() const final { return messageOfPrototypeRefusedOnBuiltinFunction(); }
     bool refusalAlwaysThrows() const final { return true; }
 };
 
@@ -62,21 +70,6 @@ bool refusesNameOnNativeConstructor(JSGlobalObject* realm, PropertyName name)
     return !name.isPrivateName() && Closure::isNameThatBuiltinFunctionsRefuse(realm->vm(), name.uid()) && locksBuiltins(realm);
 }
 
-bool keepsPrototypeOfNativeConstructors(JSGlobalObject* realm)
-{
-    return locksBuiltins(realm);
-}
-
-String messageOfNameRefusedOnBuiltinFunction(PropertyName name)
-{
-    return assignmentToNameThatBuiltinFunctionInheritsMessage(name.uid());
-}
-
-String messageOfPrototypeRefusedOnBuiltinFunction()
-{
-    return prototypeChangeOfLockedBuiltinMessage("a built-in function"_s);
-}
-
 void didCreateRealm(JSGlobalObject* realm)
 {
     refuseEvaluationUnlessAdmitted(realm);
@@ -93,31 +86,6 @@ void didCreateRealm(JSGlobalObject* realm)
         didInstallBuiltins(*instance);
 }
 
-void didCreateClass(JSGlobalObject* realm, const LazyClassStructure& lazyStructure, Structure* structure, JSObject* prototype, JSObject* constructorOrNull)
-{
-    AOT::didCreateClass(realm, lazyStructure, structure, prototype, constructorOrNull);
-}
-
-void didCreateStaticProperty(JSObject* holder, UniquedStringImpl* key, JSValue value)
-{
-    AOT::didCreateStaticProperty(holder, key, value);
-}
-
-void didChangePrototypeChain(VM& vm, JSObject* changed, UniquedStringImpl* nameOrNull)
-{
-    didChangeChainObject(vm, changed, nameOrNull);
-}
-
-void didFlattenObjectOnPrototypeChain(VM& vm, JSObject* flattened)
-{
-    didFlattenChainObject(vm, flattened);
-}
-
-void didFlattenStructure(VM& vm, Structure* structure)
-{
-    AOT::didFlattenStructure(vm, structure);
-}
-
 void didChangeMicrotaskQueueing(VM& vm)
 {
     for (Instance* instance : vm.aotState().instances) {
@@ -126,21 +94,6 @@ void didChangeMicrotaskQueueing(VM& vm)
         if (instance->awaitMustSuspend)
             instance->coroutines.frameThatMayContinue = nullptr;
     }
-}
-
-void didChangeGlobalLexicalBindings(JSGlobalObject* realm)
-{
-    AOT::didChangeGlobalLexicalBindings(realm);
-}
-
-void didRefuseChange(JSGlobalObject* realm, JSObject* object, UniquedStringImpl* keyOrNull, RefusedChange change)
-{
-    AOT::didRefuseChange(realm, object, keyOrNull, change);
-}
-
-String messageOfRefusalByLockedObject(JSGlobalObject* realm, JSObject* object, UniquedStringImpl* key, RefusedChange change)
-{
-    return AOT::messageOfRefusalByLockedObject(realm, object, key, change);
 }
 
 CONCURRENT_SAFE void setLoopPollsEnabled(VM& vm, bool enabled)

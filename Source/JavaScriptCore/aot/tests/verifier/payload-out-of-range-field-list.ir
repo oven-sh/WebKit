@@ -6,12 +6,10 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 fields=[{key="a" declared={type=number}}, {key="b" declared={type=number}}]
 function f0 name="bad" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     v1 = NewObject -, v0, v0 layout=L0 fields=[0, 2]
     Return
 }
 function f1 name="good" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     Return
 }

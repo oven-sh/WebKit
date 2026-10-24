@@ -13,7 +13,10 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class StringRangeReadEmitter final : public OperationEmitter {
 public:
-    explicit StringRangeReadEmitter(CodeGenerator&);
+    explicit StringRangeReadEmitter(CodeGenerator& generator)
+        : OperationEmitter(generator)
+    {
+    }
 
     void generateStringRangeCodeUnitOrNaN(const ValueContext&);
     void generateStringRangeCodeUnitOrMinusOne(const ValueContext&);
@@ -35,10 +38,11 @@ private:
         Condition isInRange;
     };
 
+    StringEmitter& strings() { return emitter<StringEmitter>(); }
     CharacterView viewOfRange(const ValueContext&);
     IndexedRead openIndexedRead(const ValueContext&);
     Integer readCodePointByStub(const ValueContext&);
-    void defineCharacter(const ValueContext&, const IndexedRead&, Boxed whenOutOfRange);
+    CellPointer readCharacter(const ValueContext&, const IndexedRead&);
 };
 
 } } } // namespace JSC::AOT::Typed

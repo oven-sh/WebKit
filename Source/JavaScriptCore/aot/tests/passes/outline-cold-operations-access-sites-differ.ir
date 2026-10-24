@@ -11,7 +11,6 @@ layout L0 name="First" fields=[{key="owner" declared={type=anything}}]
 layout L1 name="Second" fields=[{key="owner" declared={type=anything}}]
 
 function f0 name="accessSitesDiffer" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
 # REPEAT: i = 1..5
   b%(i)() frequency=Rare:
@@ -32,7 +31,6 @@ function f0 name="accessSitesDiffer" parameters=[{type=number}, {type=anything}]
 # CHECK-NOT: = PropGet
 
 function f1 name="receiversDiffer" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
   b1() frequency=Rare:
     v2 = PropGet v1 key="owner" accessSite=11 receivers=[L0]
@@ -67,7 +65,6 @@ function f1 name="receiversDiffer" parameters=[{type=number}, {type=anything}] r
 # CHECK-NOT: CallDirect
 
 function f2 name="operandIsFoundByAccessSite" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
 # REPEAT: i = 1..6
   b%(i)() frequency=Rare:
@@ -84,7 +81,6 @@ function f2 name="operandIsFoundByAccessSite" parameters=[{type=number}, {type=a
 # CHECK-NOT: CallDirect
 
 function f3 name="operandIsNotFoundByAccessSite" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
 # REPEAT: i = 1..6
   b%(i)() frequency=Rare:

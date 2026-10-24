@@ -9,37 +9,24 @@
 
 #include "AOTFlowResults.h"
 #include "AOTTypeArena.h"
-#include "AOTVector.h"
-#include <algorithm>
-#include <span>
-#include <wtf/BitVector.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// What flow says about one position: a parameter, a capture, a variable, a field, a result.
 struct FlowPositionUpdate {
-    // A part of the type of the position. None where that type stands as it is. Of a position that is not proven: that type without `absent`, where every read follows a store.
     TypeID type;
-    // Whatever arrives lies inside the type of the position.
     bool isProven { false };
-    // Of a position that is not proven: the type is all that arrives, and holds objects that were not expected of the position.
     bool replacesExpectation { false };
-    // Of a position that something arrives at and that is not proven: what took the proof away, and where.
     UnprovenCause cause { UnprovenCause::Unknown };
     Witness witness { noWitness };
 
     bool isEmpty() const { return !type && !isProven; }
 };
 
-// Every definition that was seen under the name in the objects that hold the field makes an accessor of one form. It is what to expect: the run time keeps anything else out of the slot.
 struct FlowAccessorField {
-    // Contains IsAccessor, or is empty: the field holds a value.
     OptionSet<FieldForm> form;
-    // The functions that the getter was seen to be a closure of, ascending. None where it may be something else.
     Vector<FunctionID, 1> getters;
-    // The same for the setter. Nothing keeps another setter out of the slot.
     Vector<FunctionID, 1> setters;
 
     bool isAccessor() const { return form.contains(FieldForm::IsAccessor); }
@@ -49,7 +36,6 @@ struct FlowFieldUpdate {
     FlowPositionUpdate position;
     FieldFlow flow;
     FlowAccessorField accessor;
-    // Of a field of an environment: see FlowLocationOrder. The allocations stop listing the field.
     bool undefinedAtStartIsNeverRead { false };
 };
 
@@ -65,13 +51,9 @@ struct FlowLayoutUpdate {
     ClassFlow classFlow;
     Vector<FlowFieldUpdate> fields;
     Vector<FlowAppendedField> appendedFields;
-    // More constructor orders. They list keys, because an appended field has no index before it is appended.
     Vector<Vector<PropertyKeyID>> literalKeyOrders;
-    // The literals with this layout make ordinary objects, and no type names the layout.
     bool objectsAreDictionaries { false };
-    // The guards of a class watch the members of an ordinary object.
     bool objectsArePrototypesOfCreatedObjects { false };
-    // Some call of Object.create is handed an object of the layout and never anything else.
     bool isHandedToObjectCreateAlone { false };
 };
 
@@ -94,13 +76,10 @@ struct FlowValueProof {
 struct FlowClaimUpdate {
     ValueID claim;
     bool isRedundant { false };
-    // Where nothing that arrives can pass: the type of what arrives. See ValueFlowPositions::typeWhereNothingPasses().
     TypeID arriving;
-    // See ValueFlowPositions::turnsAwayConstructedObject().
     bool mayFail { false };
 };
 
-// Written only where the set is complete.
 struct FlowAccessStamp {
     ValueID value;
     LayoutSetID receivers;
@@ -113,7 +92,6 @@ struct FlowCallStamp {
 
 struct FlowTailCallUpdate {
     ValueID call;
-    TailCallRequirement requirement { TailCallRequirement::Required };
     bool claimsAreRedundant { false };
 };
 
@@ -137,7 +115,6 @@ struct FlowDefinedValue {
 
 struct FlowBodyUpdate {
     Vector<FlowValueProof> proofs;
-    // Reads of locations that start absent, which these reads never find so. Ascending. Each gets a proof when the types of the locations are known.
     Vector<ValueID> readsAfterInitialization;
     Vector<FlowClaimUpdate> claims;
     Vector<FlowAccessStamp> accesses;
@@ -145,7 +122,6 @@ struct FlowBodyUpdate {
     Vector<FlowTailCallUpdate> tailCalls;
     Vector<FlowAllocationStamp> allocations;
     Vector<FlowSymbolConstant> symbolConstants;
-    // Nobody sees what these field definitions store, so each stores a value that its field holds anyway.
     Vector<FlowDefinedValue> definedValues;
 };
 
@@ -160,13 +136,11 @@ const Entry* findByValue(std::span<const Entry> ascendingEntries, ValueID value,
 
 struct FlowAccessSiteNumbering {
     Vector<uint32_t> firstSiteOfFunction;
-    // By site. Only while the results are computed.
     Vector<ValueID> valueOfSite;
 
     uint32_t numberOfSites() const { return firstSiteOfFunction.isEmpty() ? 0 : firstSiteOfFunction.last(); }
     AccessSiteID siteOf(FunctionID functionAsRead, uint32_t ordinal) const { return AccessSiteID(firstSiteOfFunction[functionAsRead.index()] + ordinal); }
     uint32_t numberOfSitesOf(FunctionID functionAsRead) const { return firstSiteOfFunction[functionAsRead.index() + 1] - firstSiteOfFunction[functionAsRead.index()]; }
-    // None for a value without a site.
     AccessSiteID siteOfValue(FunctionID functionAsRead, ValueID value) const
     {
         uint32_t first = firstSiteOfFunction[functionAsRead.index()];
@@ -197,37 +171,23 @@ struct FlowApplication {
     Vector<FlowSignatureUpdate> signatures;
     Vector<FlowBodyUpdate> bodies;
     bool hasDictionaries { false };
-    // Ascending by the first: a type as read that names a layout whose objects are dictionaries. The second names Object in its place.
     Vector<std::pair<TypeID, TypeID>> typesBehindDictionaries;
-    // The same types. The second names nothing in its place: what a test looks for, which can find a layout and nothing of an ordinary object.
     Vector<std::pair<TypeID, TypeID>> typesTestedBehindDictionaries;
-    // By type: whether it comes first in a pair of the lists above.
     BitVector typesNamingDictionaries;
-    // By set of layouts, of those that the table had when the list above was made.
     BitVector layoutSetsNamingDictionaries;
 };
 
 TypeID typeBehindDictionaries(std::span<const std::pair<TypeID, TypeID>> ascendingTypes, TypeID);
 
 struct DictionaryTypeRewriter {
-    explicit DictionaryTypeRewriter(const FlowApplication& application)
-        : ascendingTypes(application.typesBehindDictionaries.span())
-        , ascendingTestedTypes(application.typesTestedBehindDictionaries.span())
-        , typesNamingDictionaries(application.typesNamingDictionaries)
-    {
-    }
-
-    TypeID typeBehind(TypeID id) const { return typesNamingDictionaries.get(id.index()) ? typeBehindDictionaries(ascendingTypes, id) : id; }
-    TypeID typeTestedBehind(TypeID id) const { return typesNamingDictionaries.get(id.index()) ? typeBehindDictionaries(ascendingTestedTypes, id) : id; }
+    TypeID typeBehind(TypeID id) const { return application.typesNamingDictionaries.get(id.index()) ? typeBehindDictionaries(application.typesBehindDictionaries.span(), id) : id; }
+    TypeID typeTestedBehind(TypeID id) const { return application.typesNamingDictionaries.get(id.index()) ? typeBehindDictionaries(application.typesTestedBehindDictionaries.span(), id) : id; }
     void operator()(TypeID& id) const { id = typeBehind(id); }
     void operator()(auto&) const { }
 
-    std::span<const std::pair<TypeID, TypeID>> ascendingTypes;
-    std::span<const std::pair<TypeID, TypeID>> ascendingTestedTypes;
-    const BitVector& typesNamingDictionaries;
+    const FlowApplication& application;
 };
 
-// Of an operation that makes an object below %Object.prototype% and that an ordinary object can stand in for: `{}`, and a literal that lists its members, which are then defined by name.
 LayoutID layoutOfPlainLiteral(const Program&, const Value&);
 
 void remapTypes(FlowPositionUpdate&, const TypeRemap&);

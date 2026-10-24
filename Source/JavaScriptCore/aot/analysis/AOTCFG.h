@@ -59,7 +59,32 @@ inline ProgramPoint pointBeforeTerminatorOf(const Function& function, BlockID bl
 inline uint32_t numberOfOutgoingEdges(const Block& block) { return static_cast<uint32_t>(block.terminator.targets.size()) + (block.handler ? 1 : 0); }
 Edge outgoingEdgeAt(const Function&, BlockID, uint32_t successorIndex);
 uint32_t indexAfterCaughtValues(const Function&, const Block&);
-bool returnsToCaller(TerminatorKind);
+
+enum class WayOut : uint8_t { ToBlocks, ToCaller, Abnormal };
+
+inline WayOut wayOutOf(TerminatorKind kind)
+{
+    switch (kind) {
+    case TerminatorKind::Return:
+    case TerminatorKind::ReturnCall:
+        return WayOut::ToCaller;
+    case TerminatorKind::Throw:
+    case TerminatorKind::Rethrow:
+    case TerminatorKind::Unreachable:
+        return WayOut::Abnormal;
+    case TerminatorKind::Jump:
+    case TerminatorKind::Branch:
+    case TerminatorKind::Switch:
+    case TerminatorKind::SwitchString:
+    case TerminatorKind::SwitchOnShape:
+    case TerminatorKind::TryCallInline:
+    case TerminatorKind::TestAndBranch:
+        return WayOut::ToBlocks;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+inline bool returnsToCaller(TerminatorKind kind) { return wayOutOf(kind) == WayOut::ToCaller; }
 
 void forEachOutgoingEdge(const Function& function, BlockID from, NOESCAPE const Invocable<void(Edge, const Target&)> auto& functor)
 {
@@ -80,7 +105,7 @@ struct IncomingValue {
 
 IncomingValue incomingValueOf(const Function&, Edge, uint32_t parameterIndex);
 ValueID valuePassedOn(const Function&, Edge, uint32_t parameterIndex);
-uint32_t numberOfExplicitArguments(const Function&, Edge);
+inline uint32_t numberOfExplicitArguments(const Function& function, Edge edge) { return static_cast<uint32_t>(targetOf(function, edge).arguments.size()); }
 
 void forEachEdgeResult(const Function& function, BlockID from, NOESCAPE const Invocable<void(const EdgeResult&, ValueID parameter)> auto& functor)
 {
@@ -98,17 +123,10 @@ void forEachEdgeResult(const Function& function, BlockID from, NOESCAPE const In
     }
 }
 
-class BlockIDDump {
-public:
-    explicit BlockIDDump(BlockID block)
-        : m_block(block)
-    {
-    }
-
+struct BlockIDDump {
     void dump(PrintStream&) const;
 
-private:
-    BlockID m_block;
+    BlockID block;
 };
 
 class CFG {
@@ -177,15 +195,13 @@ public:
     BitVector blocksReachableFrom(BlockID start, const BitVector& barrier) const;
     bool isInCycleAvoiding(BlockID, BlockID avoidedBlock) const;
 
-    BlockIDDump dump(BlockID block) const { return BlockIDDump(block); }
+    BlockIDDump dump(BlockID block) const { return { block }; }
     void dump(PrintStream&) const;
 
 private:
     static constexpr uint32_t notReached = UINT32_MAX;
     static constexpr uint32_t beingWalked = UINT32_MAX - 1;
 
-    void readSuccessors(const Function&);
-    void computeReversePostOrder();
     void forgetUnreachableBlocks(uint32_t numberOfUnreachableBlocks);
     void computeIncomingEdges() const;
     void computePredecessors() const;

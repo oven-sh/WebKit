@@ -8,7 +8,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="visitsEachInTheLibrary" role=Library parameters=[{type=anything}, {type=int[0, 100]}, {type=number}] results=[{type=boolean}] {
-  b0(v0: anything, v1: int[0, 100], v2: number):
     v3 = Integer integer=0
     Jump -> next b1(v3)
   b1(v4):
@@ -34,7 +33,6 @@ function f0 name="visitsEachInTheLibrary" role=Library parameters=[{type=anythin
 }
 
 function f1 name="visitsEachInTheProgram" parameters=[{type=anything}, {type=int[0, 100]}, {type=number}] results=[{type=boolean}] {
-  b0(v0: anything, v1: int[0, 100], v2: number):
     v3 = Integer integer=0
     Jump -> next b1(v3)
   b1(v4):
@@ -60,14 +58,12 @@ function f1 name="visitsEachInTheProgram" parameters=[{type=anything}, {type=int
 }
 
 function f2 name="handed" kind=Arrow parameters=[{type=anything}] results=[{type=boolean}] {
-  b0(v0: anything):
     v1 = Integer integer=0
     v2 = Less v0, v1
     Return v2
 }
 
 function f3 name="atASiteOfOrdinaryHeat" parameters=[{type=f2}, {type=int[0, 100]}, {type=number}] results=[{type=boolean}] {
-  b0(v0: f2, v1: int[0, 100], v2: number):
     v3 = CallDirect v0, v1, v2 function=f0
     Return v3
 }
@@ -76,7 +72,6 @@ function f3 name="atASiteOfOrdinaryHeat" parameters=[{type=f2}, {type=int[0, 100
 # CHECK: LoopHint
 
 function f4 name="whereCodeRunsSeldom" parameters=[{type=f2}, {type=int[0, 100]}, {type=number}, {type=boolean}] results=[{type=boolean}] {
-  b0(v0: f2, v1: int[0, 100], v2: number, v3: boolean):
     Branch v3 -> taken b1(), notTaken b2()
   b1() frequency=Unlikely:
     v4 = CallDirect v0, v1, v2 function=f0
@@ -89,7 +84,6 @@ function f4 name="whereCodeRunsSeldom" parameters=[{type=f2}, {type=int[0, 100]}
 # CHECK: = CallDirect v0, v1, v2
 
 function f5 name="theSameLoopOfTheProgram" parameters=[{type=f2}, {type=int[0, 100]}, {type=number}] results=[{type=boolean}] {
-  b0(v0: f2, v1: int[0, 100], v2: number):
     v3 = CallDirect v0, v1, v2 function=f1
     Return v3
 }
@@ -98,7 +92,6 @@ function f5 name="theSameLoopOfTheProgram" parameters=[{type=f2}, {type=int[0, 1
 # CHECK: = CallDirect v0, v1, v2
 
 function f6 name="theSameLoopOfTheProgramAgain" parameters=[{type=f2}, {type=int[0, 100]}, {type=number}] results=[{type=boolean}] {
-  b0(v0: f2, v1: int[0, 100], v2: number):
     v3 = CallDirect v0, v1, v2 function=f1
     Return v3
 }

@@ -14,7 +14,6 @@ layout L2 name="Full" fields=[{key="end" declared={type=int[0, 255]} flags=[IsRe
 variable g0 name="range" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="rangeOrFull" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToNumber v1
@@ -49,7 +48,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Span" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=string}, {type=int[0, 65535]}, {type=int[0, 255]}] results=[{type=anything}] {
-  b0(v0: anything, v1: string, v2: int[0, 65535], v3: int[0, 255]):
     v4 = GetConstructPrototype v0 layout=L1
     v5 = Undefined
     v6 = NewObject v4, v1, v3, v2, v5 layout=L1 fields=[0, 1, 2, 3]

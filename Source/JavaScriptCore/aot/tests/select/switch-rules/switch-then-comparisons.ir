@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="switch-then-comparison" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Switch v0 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
   b1():
     Return v0
@@ -20,13 +19,11 @@ function f0 name="switch-then-comparison" parameters=[{type=anything}] results=[
     Return v0
   b5():
     Return v0
-}
-# CHECK-LABEL: function f0 name="switch-then-comparison"
 # CHECK: Switch v0 cases=[1, 2, 3] -> case b1(), case b2(), case b3(), otherwise b4()
 # CHECK-NOT: StrictEq
+}
 
 function f1 name="comparison-then-switch" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=3
     v2 = StrictEq v0, v1
     Branch v2 -> taken b1(), notTaken b2()
@@ -41,13 +38,11 @@ function f1 name="comparison-then-switch" parameters=[{type=anything}] results=[
     Return v3
   b5():
     Return v0
-}
-# CHECK-LABEL: function f1 name="comparison-then-switch"
 # CHECK: Switch v0 cases=[3, 1, 2] -> case b1(), case b2(), case b2(), otherwise b3()
 # CHECK-NOT: key="second-three"
+}
 
 function f2 name="string-switch-then-comparison" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     SwitchString v0 strings=["a", "b"] -> case b1(), case b2(), otherwise b3()
   b1():
     Return v0
@@ -61,12 +56,10 @@ function f2 name="string-switch-then-comparison" parameters=[{type=anything}] re
     Return v0
   b5():
     Return v0
-}
-# CHECK-LABEL: function f2 name="string-switch-then-comparison"
 # CHECK: SwitchString v0 strings=["a", "b", "c"] -> case b1(), case b2(), case b3(), otherwise b4()
+}
 
 function f3 name="two-switches" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Switch v0 cases=[1, 2] -> case b1(), case b1(), otherwise b2()
   b1():
     Return v0
@@ -74,13 +67,11 @@ function f3 name="two-switches" parameters=[{type=anything}] results=[{type=anyt
     Switch v0 cases=[3, 4] -> case b1(), case b1(), otherwise b3()
   b3():
     Return v0
-}
-# CHECK-LABEL: function f3 name="two-switches"
 # CHECK: Switch v0 cases=[1, 2] -> case b1(), case b1(), otherwise b2()
 # CHECK: Switch v0 cases=[3, 4] -> case b1(), case b1(), otherwise b3()
+}
 
 function f4 name="switch-on-another-value" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Switch v1 cases=[1, 2] -> case b1(), case b1(), otherwise b2()
   b1():
     Return v0
@@ -90,7 +81,6 @@ function f4 name="switch-on-another-value" parameters=[{type=anything}, {type=an
     Branch v3 -> taken b1(), notTaken b3()
   b3():
     Return v0
-}
-# CHECK-LABEL: function f4 name="switch-on-another-value"
 # CHECK: Switch v1 cases=[1, 2] -> case b1(), case b1(), otherwise b2()
 # CHECK: = StrictEq v0,
+}

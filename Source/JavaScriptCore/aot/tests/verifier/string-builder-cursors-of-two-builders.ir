@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="goodOtherBuilderIsDiscarded" parameters=[{type=string}] results=[{type=string}] {
-  b0(v0: string):
     v1 = StringBuilderBegin
     v2 = StringBuilderBegin
     StringBuilderAppend v2, v0
@@ -20,7 +19,6 @@ function f0 name="goodOtherBuilderIsDiscarded" parameters=[{type=string}] result
     Return v9
 }
 function f1 name="goodOtherBuilderIsBegunAppendedToAndFinished" parameters=[{type=string}] results=[{type=string}] {
-  b0(v0: string):
     v1 = StringBuilderBegin
     v2 = StringBuilderReserve v1 size=40
     v3 = StringBuilderBegin
@@ -33,7 +31,6 @@ function f1 name="goodOtherBuilderIsBegunAppendedToAndFinished" parameters=[{typ
     Return v9
 }
 function f2 name="goodCursorGoesOverAnEdgeBehindTheDiscard" parameters=[{type=string}] results=[{type=string}] {
-  b0(v0: string):
     v1 = StringBuilderBegin
     v2 = StringBuilderBegin
     StringBuilderAppend v2, v0
@@ -50,7 +47,6 @@ function f2 name="goodCursorGoesOverAnEdgeBehindTheDiscard" parameters=[{type=st
     Return v11
 }
 function f3 name="badOwnBuilderIsAppendedTo" parameters=[{type=string}] results=[{type=string}] {
-  b0(v0: string):
     v1 = StringBuilderBegin
     v2 = StringBuilderBegin
     v3 = StringBuilderReserve v1 size=40
@@ -63,7 +59,6 @@ function f3 name="badOwnBuilderIsAppendedTo" parameters=[{type=string}] results=
     Return v9
 }
 function f4 name="badBuildersMeetInAParameter" parameters=[{type=boolean}, {type=string}] results=[{type=string}] {
-  b0(v0: boolean, v1: string):
     v2 = StringBuilderBegin
     v3 = StringBuilderBegin
     v4 = StringBuilderReserve v2 size=40
@@ -82,7 +77,6 @@ function f4 name="badBuildersMeetInAParameter" parameters=[{type=boolean}, {type
     Return v11
 }
 function f5 name="badUnknownCodeRuns" parameters=[{type=anything}] results=[{type=string}] {
-  b0(v0: anything):
     v1 = StringBuilderBegin
     v2 = StringBuilderBegin
     v3 = StringBuilderReserve v1 size=40

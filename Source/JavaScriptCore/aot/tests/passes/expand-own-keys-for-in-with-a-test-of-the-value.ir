@@ -39,11 +39,10 @@ function f0 name="copiesNumbers" parameters=[{type=object}, {type=object}] resul
     Jump -> next b1(v12)
   b6():
     Return
-}
-# CHECK-LABEL: function f0 name="copiesNumbers"
 # CHECK: = ShapeTest v0 layouts=[L0]
 # CHECK: = String string="bravo"
 # CHECK: = String string="alpha"
+}
 
 function f1 name="theSecondHeaderWorks" parameters=[{type=object}, {type=object}] results=[{type=undefined}] {
   b0(v0: object ~ L0, v1: object):
@@ -75,7 +74,6 @@ function f1 name="theSecondHeaderWorks" parameters=[{type=object}, {type=object}
     Jump -> next b1(v13)
   b6():
     Return
-}
-# CHECK-LABEL: function f1 name="theSecondHeaderWorks"
 # CHECK-NOT: = ShapeTest
 # CHECK: Jump -> next b1(
+}

@@ -16,19 +16,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Whichever of several origins it was, the subject has one of their layouts, one of their key orders and the slots all of them fill. The others say the same for every origin.
-static constexpr ProofSet proofsUnitedOverOrigins {
-    Proof::Shape,
-    Proof::OwnInstance,
-    Proof::SlotFilled,
-    Proof::NoExtraProperties,
-    Proof::NoFieldOutsideSlot,
-    Proof::BirthFieldsFilled,
-    Proof::NotFrozen,
-    Proof::KeyOrder,
-};
+static constexpr ProofSet proofsUnitedOverOrigins { Proof::Shape, Proof::OwnInstance, Proof::SlotFilled, Proof::NoExtraProperties, Proof::NoFieldOutsideSlot, Proof::BirthFieldsFilled, Proof::NotFrozen, Proof::KeyOrder };
 
-// On the way into a block a parameter takes the place of the value passed for it: what held for that value holds for the parameter, and what held for the value a parameter had before says nothing about the value it has now.
 GuardFacts GuardAvailability::factsAfterEdge(const GuardFacts& factsBeforeEdge, Edge edge) const
 {
     if (factsBeforeEdge.facts.isEmpty())
@@ -62,7 +51,6 @@ GuardFacts GuardAvailability::factsAfterEdge(const GuardFacts& factsBeforeEdge, 
     return result;
 }
 
-// Nothing when no fact from before the edge is about the subject: the edge fills the parameter with a result of its own.
 std::optional<ValueID> GuardAvailability::subjectBeforeEdge(ValueID subjectAfterEdge, Edge edge) const
 {
     if (!subjectAfterEdge)
@@ -76,7 +64,7 @@ std::optional<ValueID> GuardAvailability::subjectBeforeEdge(ValueID subjectAfter
     return m_analyses.identityOf(passed);
 }
 
-static bool haveSameCondition(FunctionAnalyses& analyses, const Value& a, const Value& b, uint32_t firstComparedOperand)
+bool haveSameCondition(FunctionAnalyses& analyses, const Value& a, const Value& b, uint32_t firstComparedOperand)
 {
     if (a.opcode != b.opcode || !a.hasSamePayloadAs(b) || a.numberOfOperands() != b.numberOfOperands())
         return false;
@@ -96,12 +84,6 @@ static bool haveSameCondition(FunctionAnalyses& analyses, const Value& a, const 
     return true;
 }
 
-bool haveSameCondition(FunctionAnalyses& analyses, const Value& a, const Value& b)
-{
-    return haveSameCondition(analyses, a, b, 0);
-}
-
-// The subject of a fact may be a parameter that took the place of what its test names, so whoever compares origins compares the subjects of the facts.
 bool GuardAvailability::haveSameOrigin(const GuardOrigin& a, const GuardOrigin& b) const
 {
     if (a.source != b.source)
@@ -117,7 +99,7 @@ bool GuardAvailability::haveSameOrigin(const GuardOrigin& a, const GuardOrigin& 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-bool GuardAvailability::haveSameOrigins(const GuardFact& a, const GuardFact& b) const
+bool GuardAvailability::areSameFact(const GuardFact& a, const GuardFact& b) const
 {
     auto hasOriginsOf = [&](const GuardFact& fact, const GuardFact& other) {
         return std::ranges::all_of(other.origins, [&](const GuardOrigin& origin) {
@@ -126,12 +108,7 @@ bool GuardAvailability::haveSameOrigins(const GuardFact& a, const GuardFact& b) 
             });
         });
     };
-    return hasOriginsOf(a, b) && hasOriginsOf(b, a);
-}
-
-bool GuardAvailability::areSameFact(const GuardFact& a, const GuardFact& b) const
-{
-    return a.proofs == b.proofs && a.subject == b.subject && a.dependsOn == b.dependsOn && haveSameOrigins(a, b);
+    return a.proofs == b.proofs && a.subject == b.subject && a.dependsOn == b.dependsOn && hasOriginsOf(a, b) && hasOriginsOf(b, a);
 }
 
 static bool testImplies(const Value& test, const Value& impliedTest)
@@ -153,7 +130,6 @@ static std::span<const uint32_t> fieldsListedBy(const Value& allocation)
     return Value::opcodesWithFields.contains(allocation.opcode) ? allocation.fields() : std::span<const uint32_t>();
 }
 
-// What an allocation proves depends on the shape words of its own layout only, so it lasts as long for an object of that layout and no other.
 static bool allocationImplies(const Program& program, const Value& allocation, const Value& impliedAllocation, Proof proof)
 {
     switch (proof) {
@@ -226,7 +202,6 @@ bool GuardAvailability::originImplies(const GuardOrigin& origin, const GuardOrig
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Whether the fact says about its subject all that the other one says about its own.
 bool GuardAvailability::isAsStrongAs(const GuardFact& fact, const GuardFact& other) const
 {
     if ((fact.proofs | other.proofs) != fact.proofs)
@@ -240,20 +215,6 @@ bool GuardAvailability::isAsStrongAs(const GuardFact& fact, const GuardFact& oth
             return originImplies(origin, otherOrigin, other.proofs);
         });
     });
-}
-
-bool GuardAvailability::implies(const GuardFact& fact, const GuardFact& implied) const
-{
-    return fact.subject == implied.subject && isAsStrongAs(fact, implied);
-}
-
-std::optional<uint32_t> GuardAvailability::findSameFact(const GuardFacts& facts, const GuardFact& fact) const
-{
-    for (uint32_t index = 0; index < facts.facts.size(); ++index) {
-        if (areSameFact(facts.facts[index], fact))
-            return index;
-    }
-    return std::nullopt;
 }
 
 bool GuardAvailability::anyImplies(const GuardFacts& facts, const GuardFact& implied) const
@@ -274,7 +235,6 @@ GuardFacts GuardAvailability::meetFacts(const GuardFacts& a, const GuardFacts& b
 {
     if (!a.isKnown() || !b.isKnown())
         return { };
-    // What holds on both sides is the weaker of two facts, and what the weaker one read decides how long it holds.
     GuardFacts result { GuardKnowledge::Known, { } };
     auto keepFactsImpliedBy = [&](const GuardFacts& other, const GuardFacts& candidates) {
         for (const GuardFact& candidate : candidates.facts) {
@@ -287,7 +247,6 @@ GuardFacts GuardAvailability::meetFacts(const GuardFacts& a, const GuardFacts& b
     return result;
 }
 
-// No use of an unspecified value is ever reached, so an edge that passes one for a parameter says nothing against a fact about the parameter.
 bool GuardAvailability::leavesUnspecified(Edge edge, ValueID subjectAfterEdge) const
 {
     std::optional<ValueID> subject = subjectBeforeEdge(subjectAfterEdge, edge);
@@ -315,20 +274,6 @@ static bool fillSameSlot(const Program& program, const Function& function, const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-ProofSet GuardAvailability::proofsToUnite(const GuardFact& a, const GuardFact& b) const
-{
-    ProofSet proofs;
-    for (Proof proof : allMembersOf<Proof>) {
-        if (!proofsUnitedOverOrigins.contains(proof) || !a.proves(proof) || !b.proves(proof))
-            continue;
-        if (proof == Proof::SlotFilled && !fillSameSlot(m_analyses.program(), m_function, a, b))
-            continue;
-        proofs.add(proof);
-    }
-    return proofs;
-}
-
-// The fact becomes what holds whether it or a fact of the other way is the one that was proven, and it lasts only while both would.
 bool GuardAvailability::tryWiden(GuardFact& fact, const GuardFacts& factsOnOtherWay) const
 {
     const GuardFact* partner = nullptr;
@@ -336,7 +281,13 @@ bool GuardAvailability::tryWiden(GuardFact& fact, const GuardFacts& factsOnOther
     for (const GuardFact& candidate : factsOnOtherWay.facts) {
         if (candidate.subject != fact.subject)
             continue;
-        ProofSet united = proofsToUnite(fact, candidate);
+        ProofSet united;
+        for (Proof proof : allMembersOf<Proof>) {
+            if (!proofsUnitedOverOrigins.contains(proof) || !fact.proves(proof) || !candidate.proves(proof))
+                continue;
+            if (proof != Proof::SlotFilled || fillSameSlot(m_analyses.program(), m_function, fact, candidate))
+                united.add(proof);
+        }
         if (united.isEmpty() || (partner && united != fact.proofs))
             continue;
         partner = &candidate;
@@ -413,7 +364,10 @@ GuardFacts GuardAvailability::uniteFacts(std::span<const ValueID> guards) const
         if (!facts.isKnown())
             return { };
         for (const GuardFact& fact : facts.facts) {
-            if (!findSameFact(result, fact))
+            bool isListed = std::ranges::any_of(result.facts, [&](const GuardFact& listed) {
+                return areSameFact(listed, fact);
+            });
+            if (!isListed)
                 result.facts.append(fact);
         }
     }

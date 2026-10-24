@@ -6,7 +6,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number}}]
 layout L1 name="Size" fields=[{key="width" declared={type=number}}]
 function f0 name="arguments" parameters=[{type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: boolean, v1: number, v2: number):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v1, v2)
@@ -23,7 +22,6 @@ function f0 name="arguments" parameters=[{type=boolean}, {type=number}, {type=nu
 # CHECK-NEXT: v4 from b2.0: v1
 # CHECK-NOT: from
 function f1 name="bothEdgesOfTypeTest" parameters=[{type=number|string}] results=[{type=number|string}] {
-  b0(v0: number|string):
     v1 = TypeTest v0 testedType=string
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):
@@ -37,7 +35,6 @@ function f1 name="bothEdgesOfTypeTest" parameters=[{type=number|string}] results
 # CHECK-NEXT: v3 from b0.1: narrowed v0 by v1
 # CHECK-NOT: from
 function f2 name="secondOperandOfComparison" parameters=[{type=string}, {type=number|string}] results=[{type=number|string}] {
-  b0(v0: string, v1: number|string):
     v2 = StrictEq v0, v1
     Branch v2 -> taken b1(| 1), notTaken b2()
   b1(v3):
@@ -50,7 +47,6 @@ function f2 name="secondOperandOfComparison" parameters=[{type=string}, {type=nu
 # CHECK-NEXT: v3 from b0.0: narrowed v1 by v2
 # CHECK-NOT: from
 function f3 name="guardOfShapeTest" parameters=[{type=object}] results=[{type=undefined}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
@@ -63,7 +59,6 @@ function f3 name="guardOfShapeTest" parameters=[{type=object}] results=[{type=un
 # CHECK-NEXT: v2 from b0.0: guard by v1
 # CHECK-NOT: from
 function f4 name="casesOfSwitchOnShape" parameters=[{type=object}] results=[{type=undefined}] {
-  b0(v0: object):
     SwitchOnShape v0 layoutSets=[[L0], [L1]] -> case b1(| 0), case b2(| 0), otherwise b3()
   b1(v1):
     Return
@@ -78,7 +73,6 @@ function f4 name="casesOfSwitchOnShape" parameters=[{type=object}] results=[{typ
 # CHECK-NEXT: v2 from b0.1: guard by b0.case1
 # CHECK-NOT: from
 function f5 name="mixOnOneBlock" parameters=[{type=anything}] results=[{type=string}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = TypeTest v0 testedType=string
@@ -97,7 +91,6 @@ function f5 name="mixOnOneBlock" parameters=[{type=anything}] results=[{type=str
 # CHECK-NEXT: v4 from b2.0: v2
 # CHECK-NOT: from
 function f6 name="guardAsResultAndAsArgument" parameters=[{type=object}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: object, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = ShapeTest v0 layouts=[L0]

@@ -31,7 +31,6 @@ layout L1 name="Inner" fields=[{key="d" declared={type=number} flags=[IsRequired
 module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -39,7 +38,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="make" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Check v1 castType=number
     v3 = NewObject -, v2, v0 layout=L1 fields=[0, 1]
     v4 = NewObject -, v2, v3, v0 layout=L0 fields=[0, 1, 2]
@@ -54,7 +52,6 @@ layout L1 name="Inner" fields=[{key="d" declared={type=number} flags=[IsRequired
 module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -62,7 +59,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="make" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = Check v1 castType=number
     v4 = Check v2 castType=boolean
     v5 = NewObject -, v3, v0, v4 layout=L1 fields=[0, 1, 2]

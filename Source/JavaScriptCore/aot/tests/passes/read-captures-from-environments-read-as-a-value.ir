@@ -12,7 +12,6 @@ layout L2 kind=Environment name="filledFromOutside" fields=[{key="inner" declare
 # CHECK: layout L2 kind=Environment name="filledFromOutside" fields=[{key="inner" declared={type=f5}}]
 
 function f0 name="storedAgain" parameters=[{type=f1}] results=[{type=anything}] {
-  b0(v0: f1):
     v1 = NewObject layout=L0
     v2 = NewClosure v1 function=f1
     PutEnvironmentField v1, v2 layout=L0 field=0
@@ -21,10 +20,9 @@ function f0 name="storedAgain" parameters=[{type=f1}] results=[{type=anything}] 
     v6 = GetCapture v5 function=f1
     v7 = CallDirect v6 function=f1
     Return v7
-}
-# CHECK-LABEL: function f0 name="storedAgain"
 # CHECK: = NewClosure {{*}} function=f1
 # CHECK: = GetCapture
+}
 
 function f1 name="inner" captures=[{type=env L0}] results=[{type=anything}] {
   b0(v0: env L0):
@@ -32,7 +30,6 @@ function f1 name="inner" captures=[{type=env L0}] results=[{type=anything}] {
 }
 
 function f2 name="filledInALoop" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject layout=L1
     Jump -> next b1(v0)
   b1(v2: number):
@@ -46,9 +43,8 @@ function f2 name="filledInALoop" parameters=[{type=number}] results=[{type=anyth
     Branch v9 -> taken b1(v7), notTaken b2()
   b2():
     Return v6
-}
-# CHECK-LABEL: function f2 name="filledInALoop"
 # CHECK: = NewClosure {{*}} function=f3
+}
 
 function f3 name="inner" captures=[{type=env L1}, {type=number}] results=[{type=anything}] {
   b0(v0: env L1, v1: number):
@@ -56,9 +52,8 @@ function f3 name="inner" captures=[{type=env L1}, {type=number}] results=[{type=
     v3 = GetCapture v2 function=f3 index=1
     v4 = Add v1, v3
     Return v4
-}
-# CHECK-LABEL: function f3 name="inner"
 # CHECK: = GetCapture
+}
 
 function f4 name="filledFromOutside" captures=[{type=env L2}] parameters=[{type=number}] results=[{type=anything}] {
   b0(v0: env L2, v1: number):
@@ -66,9 +61,8 @@ function f4 name="filledFromOutside" captures=[{type=env L2}] parameters=[{type=
     PutEnvironmentField v0, v2 layout=L2 field=0
     v4 = CallDirect v0, v1 function=f5
     Return v4
-}
-# CHECK-LABEL: function f4 name="filledFromOutside"
 # CHECK: = NewClosure {{*}} function=f5
+}
 
 function f5 name="inner" captures=[{type=env L2}, {type=number}] results=[{type=anything}] {
   b0(v0: env L2, v1: number):
@@ -76,12 +70,10 @@ function f5 name="inner" captures=[{type=env L2}, {type=number}] results=[{type=
     v3 = GetCapture v2 function=f5 index=1
     v4 = Add v1, v3
     Return v4
-}
-# CHECK-LABEL: function f5 name="inner"
 # CHECK: = GetCapture
+}
 
 function f6 name="makesTheEnvironment" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject layout=L2
     v2 = CallDirect v1, v0 function=f4
     v3 = Add v0, v0

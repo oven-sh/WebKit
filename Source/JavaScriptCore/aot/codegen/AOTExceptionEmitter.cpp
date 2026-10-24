@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTCallSiteTable.h"
 #include "AOTCodeRecords.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTRuntimeCallEmitter.h"
@@ -18,7 +19,6 @@
 #include "AirCode.h"
 #include "AllowMacroScratchRegisterUsage.h"
 #include "B3BasicBlockInlines.h"
-#include "AOTHandlerTable.h"
 #include "B3PatchpointValue.h"
 #include "B3StackmapGenerationParams.h"
 #include "B3VariableValue.h"
@@ -54,6 +54,18 @@ HandlerType ExceptionEmitter::handlerTypeOf(BlockID handler) const
     return type;
 }
 
+static WTF::Vector<Box<CCallHelpers::Label>> emitSiteAndJumpToContinuation(CCallHelpers& jit, const B3::StackmapGenerationParams& params, B3::StackmapGenerator& siteGenerator, bool mayReturn)
+{
+    siteGenerator.run(jit, params);
+    WTF::Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
+    if (mayReturn && !params.fallsThroughToSuccessor(0)) {
+        params.addLatePath([jump = jit.jump(), returnTarget = labels[0]](CCallHelpers& jit) {
+            jump.linkTo(*returnTarget, &jit);
+        });
+    }
+    return labels;
+}
+
 void ExceptionEmitter::attachLandingPad(const OperationContext& context, B3::PatchpointValue* patchpoint, uint32_t site, bool mayReturn)
 {
     const Target* handler = context.handler();
@@ -69,13 +81,13 @@ void ExceptionEmitter::attachLandingPad(const OperationContext& context, B3::Pat
         block->appendSuccessor(normalEdge(continuation));
     unsigned landingPadIndex = block->numSuccessors();
     block->appendSuccessor(rareEdge(landingPad));
-    patchpoint->clobberLateOnSuccessor(landingPadIndex, registersClobberedAtLandingPads());
+    RegisterSet clobberedOnTheWay = emitter<RuntimeCallEmitter>().registersClobberedByCalls();
+    patchpoint->clobberLateOnSuccessor(landingPadIndex, clobberedOnTheWay);
     patchpoint->effects.terminal = true;
 
     B3::Air::StackSlot* registerStorage = generator().checksKeptRegisters() ? emitter<RuntimeCallEmitter>().landingPadRegisterStorage() : nullptr;
     if (registerStorage)
         patchpoint->clobberEarly(RegisterSet::macroClobberedGPRs());
-    RegisterSet clobberedOnTheWay = registersClobberedAtLandingPads();
     clobberedOnTheWay.merge(patchpoint->earlyClobbered());
     clobberedOnTheWay.merge(patchpoint->lateClobbered());
     patchpoint->setGenerator([records = &m_records.exceptions, indexBySuccessor = m_landingPadsBySuccessor, siteGenerator = patchpoint->generator(), site, type = handlerTypeOf(handler->block), mayReturn, registerStorage, stubCalls = &m_records.stubCalls, clobbered = WTF::move(clobberedOnTheWay), function = m_id](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
@@ -89,14 +101,7 @@ void ExceptionEmitter::attachLandingPad(const OperationContext& context, B3::Pat
             check = KeptRegisterCheck { notCompared, params.code().addressInFrame(registerStorage->offsetFromFP()), function, ValueID().index() };
             emitStoresOfKeptRegisters(jit, *check);
         }
-        siteGenerator->run(jit, params);
-        WTF::Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
-        if (mayReturn && !params.fallsThroughToSuccessor(0)) {
-            params.addLatePath([jump = jit.jump(), returnTarget = labels[0]](CCallHelpers& jit) {
-                jump.linkTo(*returnTarget, &jit);
-            });
-        }
-        Box<CCallHelpers::Label> successor = labels.last();
+        Box<CCallHelpers::Label> successor = emitSiteAndJumpToContinuation(jit, params, *siteGenerator, mayReturn).last();
         // What a check compares depends on the site, so it is not shared.
         uint32_t landingPadNumber = static_cast<uint32_t>(records->landingPads.size());
         bool isNewEntry = true;
@@ -141,15 +146,9 @@ LBasicBlock ExceptionEmitter::attachLandingOfMisfit(B3::PatchpointValue* patchpo
     block->appendSuccessor(rareEdge(landing));
     patchpoint->effects.terminal = true;
     patchpoint->setGenerator([records = &m_records.exceptions, siteGenerator = patchpoint->generator(), site](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
-        siteGenerator->run(jit, params);
-        WTF::Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
-        if (!params.fallsThroughToSuccessor(0)) {
-            params.addLatePath([jump = jit.jump(), returnTarget = labels[0]](CCallHelpers& jit) {
-                jump.linkTo(*returnTarget, &jit);
-            });
-        }
+        Box<CCallHelpers::Label> landing = emitSiteAndJumpToContinuation(jit, params, *siteGenerator, true)[1];
         uint32_t landingPadNumber = static_cast<uint32_t>(records->landingPads.size());
-        records->landingPads.append(labels[1]);
+        records->landingPads.append(landing);
         records->sites.append(SiteLandingPad { site, landingPadNumber, landingOfMisfit });
     });
     m_out.appendTo(continuation);
@@ -169,12 +168,7 @@ LBasicBlock ExceptionEmitter::landingPadFor(const Target& handler)
 
     LBasicBlock landingPad = newBlock();
     landingPads.append(LandingPad { handler.arguments, landingPad });
-    generateLandingPad(handler, landingPad);
-    return landingPad;
-}
 
-void ExceptionEmitter::generateLandingPad(const Target& handler, LBasicBlock landingPad)
-{
     LBasicBlock siteBlock = m_out.m_block;
     m_out.appendTo(landingPad);
     // No operation of such a handler takes the pending exception from the run time.
@@ -185,6 +179,7 @@ void ExceptionEmitter::generateLandingPad(const Target& handler, LBasicBlock lan
     generator().passHandlerArguments(handler);
     m_out.jump(generator().blockFor(handler.block));
     m_out.appendTo(siteBlock);
+    return landingPad;
 }
 
 B3::Variable* ExceptionEmitter::caughtVariableFor(BlockID handler)
@@ -192,11 +187,6 @@ B3::Variable* ExceptionEmitter::caughtVariableFor(BlockID handler)
     return m_caughtVariables.ensure(handler, [&] {
         return m_proc.addVariable(B3::Int64);
     }).iterator->value;
-}
-
-LValue ExceptionEmitter::getCaughtVariable(BlockID handler)
-{
-    return m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Get, m_out.origin(), caughtVariableFor(handler));
 }
 
 void ExceptionEmitter::setCaughtVariable(BlockID handler, LValue caught)
@@ -214,22 +204,19 @@ LValue ExceptionEmitter::caughtWord(const ValueContext& value)
     auto takeFromRuntime = [&] {
         return callOperation<Boxed>(value, operation, { }, { .followsThrow = true });
     };
-    if (!isEnteredByJump(handler)) {
-        LValue caught = takeFromRuntime().value();
-        m_caughtWords.add(handler, caught);
-        return caught;
-    }
-
-    Boxed passed(getCaughtVariable(handler));
-    LBasicBlock wasPassed = newBlock();
-    LBasicBlock wasUnwound = newBlock();
-    Join<Boxed> join(m_out);
-    m_out.branch(isNotEmpty(passed).value(), normalEdge(wasPassed), normalEdge(wasUnwound));
-    m_out.appendTo(wasPassed);
-    join.add(passed);
-    m_out.appendTo(wasUnwound);
-    join.add(takeFromRuntime());
-    LValue caught = join.finish().value();
+    auto takePassedOrFromRuntime = [&] {
+        Boxed passed(m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Get, m_out.origin(), caughtVariableFor(handler)));
+        LBasicBlock wasPassed = newBlock();
+        LBasicBlock wasUnwound = newBlock();
+        Join<Boxed> join(m_out);
+        m_out.branch(isNotEmpty(passed).value(), normalEdge(wasPassed), normalEdge(wasUnwound));
+        m_out.appendTo(wasPassed);
+        join.add(passed);
+        m_out.appendTo(wasUnwound);
+        join.add(takeFromRuntime());
+        return join.finish();
+    };
+    LValue caught = (isEnteredByJump(handler) ? takePassedOrFromRuntime() : takeFromRuntime()).value();
     m_caughtWords.add(handler, caught);
     return caught;
 }
@@ -314,11 +301,6 @@ void ExceptionEmitter::rethrow(const TerminatorContext& terminator, CellPointer 
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-RegisterSet ExceptionEmitter::registersClobberedAtLandingPads() const
-{
-    return m_generator.emitter<RuntimeCallEmitter>().registersClobberedByCalls();
 }
 
 } } } // namespace JSC::AOT::Typed

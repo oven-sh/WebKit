@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="mapOnlyForOneKind" parameters=[{type=Map}, {type=boolean}] results=[{type=Array<anything>}] {
-  b0(v0: Map, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = Integer
@@ -45,7 +44,6 @@ function f0 name="mapOnlyForOneKind" parameters=[{type=Map}, {type=boolean}] res
 # CHECK-NEXT: Switch v5
 
 function f1 name="mapForEveryKind" parameters=[{type=Map}, {type=boolean}] results=[{type=Array<anything>}] {
-  b0(v0: Map, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = Integer

@@ -13,7 +13,6 @@ layout L0 kind=Instance name="Point" constructor=f1 flags=[IsConstructorFunction
 layout L1 kind=Instance name="Inner" constructor=f5 flags=[IsConstructorFunction]
 variable g0 name="Point" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = PropGet v0 key="prototype"
     v2 = NewClosure function=f2
@@ -34,15 +33,12 @@ function f1 name="Point" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} r
     Return
 }
 function f2 name="first" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f3 name="second" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f4 name="make" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f5
     v1 = PropGet v0 key="prototype"
     v2 = NewClosure function=f2

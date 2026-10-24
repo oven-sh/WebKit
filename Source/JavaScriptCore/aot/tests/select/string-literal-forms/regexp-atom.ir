@@ -11,7 +11,6 @@ entry module=m0
 variable g0 name="plainText" module=m0 declared={type=anything} initialization=Uninitialized
 variable g1 name="compiledAgain" module=m0 declared={type=anything} initialization=Uninitialized
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewRegExp pattern="abc" @10
     PutModuleVariable v0 variable=g0
     v2 = NewRegExp pattern="abc" @20
@@ -30,42 +29,34 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v14
 }
 function f1 name="test" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g0
     v2 = PropGet v1 key="test"
     v3 = Call v2, v1, v0 calleeKey="test"
     Return v3
-}
-# CHECK-LABEL: function f1 name="test"
 # CHECK-NOT: GetModuleVariable
 # CHECK: = StringIndexOfLiteral v0{{*}}literal="abc"
 # CHECK-NOT: CallInline
+}
 function f2 name="search" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g0
     v2 = PropGet v0 key="search"
     v3 = Call v2, v0, v1 calleeKey="search"
     Return v3
-}
-# CHECK-LABEL: function f2 name="search"
 # CHECK-NOT: GetModuleVariable
 # CHECK: = StringIndexOfLiteral v0{{*}}literal="abc"
 # CHECK-NOT: CallInline
+}
 function f3 name="sameTextCompiledAgain" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g1
     v2 = PropGet v1 key="test"
     v3 = Call v2, v1, v0 calleeKey="test"
     Return v3
-}
-# CHECK-LABEL: function f3 name="sameTextCompiledAgain"
 # CHECK-NOT: StringIndexOfLiteral
+}
 function f4 name="ignoringCase" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewRegExp pattern="abc" regExpFlags=[IgnoreCase]
     v2 = PropGet v1 key="test"
     v3 = Call v2, v1, v0 calleeKey="test"
     Return v3
-}
-# CHECK-LABEL: function f4 name="ignoringCase"
 # CHECK-NOT: StringIndexOfLiteral
+}

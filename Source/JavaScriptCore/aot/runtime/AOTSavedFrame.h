@@ -137,7 +137,6 @@ public:
 
     CoroutineKind kind() const { return m_kind; }
     bool isOnStack() const { return !m_liveSlotMapOffsetPlusOne; }
-    bool isEnteredByJobLoop() const { return m_flags & isEnteredByJobLoopFlag; }
     void setIsEnteredByJobLoop(bool isEnteredByJobLoop) { m_flags = isEnteredByJobLoop ? m_flags | isEnteredByJobLoopFlag : m_flags & ~isEnteredByJobLoopFlag; }
     SuspensionKind suspensionKind() const { return m_flags & isSuspendedAtYieldFlag ? SuspensionKind::Yield : SuspensionKind::Await; }
     // What the site of a StepAsyncGenerator reads beside the value it is resumed with. Every suspension resets it to Result.
@@ -158,8 +157,8 @@ public:
     JSCell* promiseOrWaiter() const { return m_promiseOrWaiter; }
     void setWaiter(VM&, SavedFrame* waiter, JSValue asyncContext);
     void setCombinatorElement(VM&, JSCell* globalContext, uint32_t index);
-    void fulfill(JSGlobalObject*, VM&, JSValue);
-    void reject(JSGlobalObject*, VM&, JSValue);
+    void fulfill(JSGlobalObject* globalObject, VM& vm, JSValue value) { settle(globalObject, vm, value, false); }
+    void reject(JSGlobalObject* globalObject, VM& vm, JSValue error) { settle(globalObject, vm, error, true); }
     JSPromise* ensurePromise(JSGlobalObject*, VM&);
 
     void poisonDeadUnlistedWords(VM&);
@@ -210,7 +209,7 @@ private:
     }
     std::optional<SavedFrameMap> liveSlotMap(uint32_t offsetPlusOne) const;
     std::optional<uint32_t> narrowReferenceAt(uint32_t narrowLocation) const;
-    uint64_t* addressOfWordAt(uint32_t location);
+    void settle(JSGlobalObject*, VM&, JSValue, bool isRejected);
     uint32_t combinatorIndex() const { return static_cast<uint32_t>(m_continuation) - static_cast<uint32_t>(Continuation::CombinatorElement); }
 
     // The frame has m_numberOfWordsSkippedAtTop words above the words kept and m_numberOfWordsSkippedAtBottom words below them.

@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="theResultHoldsTheReceiver" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = CallBuiltin v0, v1 overload=FunctionPrototypeBind/0 builtinCallForm=AnyReceiver
     Return v2
 }

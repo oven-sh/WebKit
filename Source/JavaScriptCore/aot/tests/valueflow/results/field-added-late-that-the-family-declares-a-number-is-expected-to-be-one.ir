@@ -12,7 +12,6 @@ entry module=m0
 layout L0 name="Made" fields=[{key="flags" declared={type=number}}] supertypes=[L1]
 layout L1 name="Markable" fields=[{key="flags" declared={type=number} flags=[IsRequired]}, {key="marked" declared={type=number}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewClosure function=f1

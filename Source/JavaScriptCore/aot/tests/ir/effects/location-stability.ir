@@ -19,7 +19,6 @@ variable g6 name="storedFirstBeforeActivation" declared={type=number} initializa
 variable g7 name="constant" declared={type=number} initialization=Undefined flags=[IsImmutable]
 variable g8 name="storesUnknown" declared={type=number} initialization=Undefined flow={initialization=StoredBeforeEveryRead isUnchangedDuringActivation=true}
 function f0 name="variables" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
 # REPEAT: i = 0..8
     v%(i+1) = GetModuleVariable variable=g%(i)
 # END REPEAT
@@ -61,7 +60,6 @@ function f1 name="environmentFields" captures=[{type=env L0}] parameters=[{type=
 # CHECK-NEXT: v8 GetEnvironmentField: read EnvironmentFields[L0, 6] base=v0 stability=Unknown
 # CHECK-NEXT: v9 PutEnvironmentField: write EnvironmentFields[L0, 1] base=v0 stored=v1 stability=ChangedByOwnStores
 function f2 name="fieldsOfOneLayout" parameters=[{type=L1}, {type=number}] results=[{type=undefined}] {
-  b0(v0: L1, v1: number):
     v2 = GetSlot v0 key="a" receivers=[L1] level=Proven
     v3 = GetSlot v0 key="b" receivers=[L1] level=Proven
     v4 = GetSlot v0 key="c" receivers=[L1] level=Proven
@@ -74,7 +72,6 @@ function f2 name="fieldsOfOneLayout" parameters=[{type=L1}, {type=number}] resul
 # CHECK-NEXT: v4 GetSlot: read ObjectFields["c"] base=v0 stability=UnchangedDuringActivation
 # CHECK-NEXT: v5 PutSlot: write ObjectFields["a"] base=v0 stored=v1 stability=ChangedByOwnStores
 function f3 name="fieldsOfTwoLayouts" parameters=[{type=L1|L2}, {type=L1|L3}] results=[{type=undefined}] {
-  b0(v0: L1|L2, v1: L1|L3):
     v2 = GetSlot v0 key="a" receivers=[L1, L2] level=Proven
     v3 = GetSlot v1 key="a" receivers=[L1, L3] level=Proven
     v4 = GetSlot v1 key="c" receivers=[L1, L3] level=Proven
@@ -85,7 +82,6 @@ function f3 name="fieldsOfTwoLayouts" parameters=[{type=L1|L2}, {type=L1|L3}] re
 # CHECK-NEXT: v3 GetSlot: read ObjectFields["a"] base=v1 stability=ChangedByOwnStores
 # CHECK-NEXT: v4 GetSlot: read ObjectFields["c"] base=v1 stability=UnchangedDuringActivation
 function f4 name="inheritedFields" parameters=[{type=L5}, {type=L4|L5}] results=[{type=undefined}] {
-  b0(v0: L5, v1: L4|L5):
     v2 = GetSlot v0 key="id" receivers=[L5] level=Proven
     v3 = GetSlot v0 key="n" receivers=[L5] level=Proven
     v4 = GetSlot v1 key="id" receivers=[L4, L5] level=Proven

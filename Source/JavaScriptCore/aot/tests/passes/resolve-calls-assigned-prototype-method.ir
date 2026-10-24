@@ -10,7 +10,6 @@ layout L1 kind=Instance name="Early" constructor=f4 fields=[{key="x" declared={t
 variable g0 name="Point" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
 variable g1 name="Early" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f3
     v1 = NewClosure function=f5
     v2 = GetModuleVariable variable=g0
@@ -32,36 +31,31 @@ function f1 name="Point" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} p
     Return
 }
 function f2 name="double" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="x"
     v2 = Add v1, v1
     Return v2
 }
 function f3 name="usesPoint" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = Integer integer=2
     v2 = Construct v0, -, v1
     v3 = PropGet v2 key="double"
     v4 = Call v3, v2 calleeKey="double"
     Return v4
-}
-# CHECK-LABEL: function f3 name="usesPoint"
 # CHECK-NOT: PropGet
 # CHECK: CallDirect {{*}} function=f2
+}
 function f4 name="Early" flags=[HasThis] thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
     PropSet v0, v1 key="x" mode=Strict
     Return
 }
 function f5 name="usesEarly" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g1
     v1 = Integer integer=2
     v2 = Construct v0, -, v1
     v3 = PropGet v2 key="double"
     v4 = TypeOf v3
     Return v4
-}
-# CHECK-LABEL: function f5 name="usesEarly"
 # CHECK: PropGet {{*}} key="double"
+}

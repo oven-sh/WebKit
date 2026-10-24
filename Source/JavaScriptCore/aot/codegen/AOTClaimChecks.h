@@ -7,8 +7,8 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBrokenClaims.h"
 #include "AOTID.h"
+#include "AOTRuntimeTable.h"
 #include "AOTStackSlotPoisoning.h"
 #include "AOTVector.h"
 #include "B3Policy.h"

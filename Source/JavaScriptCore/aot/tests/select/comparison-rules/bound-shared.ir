@@ -13,7 +13,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="three-comparisons" parameters=[{type=int}, {type=number}] results=[{type=int}] {
-  b0(v0: int, v1: number):
     v2 = Integer integer=1
     v3 = Integer integer=0
     Jump -> next b1(v0)

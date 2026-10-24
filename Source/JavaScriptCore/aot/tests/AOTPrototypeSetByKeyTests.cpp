@@ -24,7 +24,6 @@ layout L7 kind=Instance name="Account" constructor=f25 fields=[{key="id" declare
 variable g0 name="Point" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="Account" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -68,7 +67,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Point" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L2
     v2 = NewObject v1 layout=L2
     v3 = Integer integer=1
@@ -76,12 +74,10 @@ function f1 name="Point" kind=BaseConstructor flags=[HasNewTarget] results=[{typ
     Return v2
 }
 function f2 name="describe" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="method of the class"
     Return v1
 }
 function f3 name="readInherited" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Integer integer=1
     v2 = NewObject -, v1 layout=L0 fields=[0]
     v3 = FinishObject v2
@@ -94,7 +90,6 @@ function f3 name="readInherited" parameters=[{type=string}] results=[{type=anyth
     Return v9
 }
 function f4 name="readMemberOfInherited" parameters=[{type=string}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: anything, v2: anything):
     v3 = Integer integer=1
     v4 = NewObject -, v3 layout=L0 fields=[0]
     v5 = FinishObject v4
@@ -116,7 +111,6 @@ function f4 name="readMemberOfInherited" parameters=[{type=string}, {type=anythi
     Return v16
 }
 function f5 name="isInstance" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = GetModuleVariable variable=g0
     v2 = Construct v1
     v3 = String string="u1"
@@ -128,7 +122,6 @@ function f5 name="isInstance" parameters=[{type=string}] results=[{type=anything
     Return v8
 }
 function f6 name="hasInherited" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = GetModuleVariable variable=g0
     v2 = Construct v1
     v3 = String string="u1"
@@ -140,7 +133,6 @@ function f6 name="hasInherited" parameters=[{type=string}] results=[{type=anythi
     Return v8
 }
 function f7 name="typeOfMethod" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = GetModuleVariable variable=g0
     v2 = Construct v1
     v3 = Null
@@ -150,7 +142,6 @@ function f7 name="typeOfMethod" parameters=[{type=string}] results=[{type=anythi
     Return v6
 }
 function f8 name="throughUnknownReceiver" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: anything):
     v2 = Integer integer=1
     v3 = NewObject -, v2 layout=L0 fields=[0]
     v4 = FinishObject v3
@@ -164,7 +155,6 @@ function f8 name="throughUnknownReceiver" parameters=[{type=string}, {type=anyth
     Return v11
 }
 function f9 name="byReflectSet" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Integer integer=1
     v2 = NewObject -, v1 layout=L0 fields=[0]
     v3 = FinishObject v2
@@ -178,7 +168,6 @@ function f9 name="byReflectSet" parameters=[{type=string}] results=[{type=anythi
     Return v10
 }
 function f10 name="byAssign" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Integer integer=1
     v2 = NewObject -, v1 layout=L0 fields=[0]
     v3 = FinishObject v2
@@ -190,7 +179,6 @@ function f10 name="byAssign" parameters=[{type=string}] results=[{type=anything}
     Return v8
 }
 function f11 name="byLookedUpSetter" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Integer integer=1
     v2 = NewObject -, v1 layout=L0 fields=[0]
     v3 = FinishObject v2
@@ -205,7 +193,6 @@ function f11 name="byLookedUpSetter" parameters=[{type=string}] results=[{type=a
     Return v11
 }
 function f12 name="storeNumber" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Integer integer=1
     v2 = NewObject -, v1 layout=L0 fields=[0]
     v3 = FinishObject v2
@@ -218,7 +205,6 @@ function f12 name="storeNumber" parameters=[{type=string}] results=[{type=anythi
     Return v9
 }
 function f13 name="countKeys" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Integer integer=1
     v2 = NewObject -, v1 layout=L0 fields=[0]
     v3 = FinishObject v2
@@ -242,7 +228,6 @@ function f13 name="countKeys" parameters=[{type=string}] results=[{type=anything
     Return v11
 }
 function f14 name="mergeFirstKey" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Integer integer=1
     v2 = NewObject -, v1 layout=L0 fields=[0]
     v3 = FinishObject v2
@@ -258,7 +243,6 @@ function f14 name="mergeFirstKey" parameters=[{type=string}] results=[{type=anyt
     Return v12
 }
 function f15 name="mergeByForIn" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Integer integer=1
     v2 = NewObject -, v1 layout=L0 fields=[0]
     v3 = FinishObject v2
@@ -281,7 +265,6 @@ function f15 name="mergeByForIn" parameters=[{type=string}] results=[{type=anyth
     Return v13
 }
 function f16 name="keyIsParsed" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Integer integer=1
     v2 = NewObject -, v1 layout=L0 fields=[0]
     v3 = FinishObject v2
@@ -296,7 +279,6 @@ function f16 name="keyIsParsed" parameters=[{type=string}] results=[{type=anythi
     Return v11
 }
 function f17 name="Parented" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L5
     v2 = NewObject v1 layout=L5
     v3 = Integer integer=1
@@ -304,13 +286,11 @@ function f17 name="Parented" kind=BaseConstructor flags=[HasNewTarget] results=[
     Return v2
 }
 function f18 name="Static" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L6
     v2 = NewObject v1 layout=L6
     Return v2
 }
 function f19 name="classPrototypeGetsParent" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = NewClosure function=f17
     v2 = NewClass v1 layout=L5
     v3 = FinishClass v2 layout=L5
@@ -324,7 +304,6 @@ function f19 name="classPrototypeGetsParent" parameters=[{type=string}] results=
     Return v10
 }
 function f20 name="classObjectGetsParent" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = NewClosure function=f18
     v2 = NewClass v1 layout=L6
     v3 = FinishClass v2 layout=L6
@@ -336,7 +315,6 @@ function f20 name="classObjectGetsParent" parameters=[{type=string}] results=[{t
     Return v8
 }
 function f21 name="holeOfArray" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Integer integer=1
     v2 = Integer integer=3
     v3 = NewArray v1, v2 contents=anything holes=[1]
@@ -349,7 +327,6 @@ function f21 name="holeOfArray" parameters=[{type=string}] results=[{type=anythi
     Return v9
 }
 function f22 name="methodOfArray" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Integer integer=1
     v2 = NewArray v1 contents=anything holes=[]
     v3 = Null
@@ -359,7 +336,6 @@ function f22 name="methodOfArray" parameters=[{type=string}] results=[{type=anyt
     Return v6
 }
 function f23 name="spreadParsed" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Builtin builtin=JSONParse
     v2 = Call v1, -, v0
     v3 = Integer integer=1
@@ -378,7 +354,6 @@ function f23 name="spreadParsed" parameters=[{type=string}] results=[{type=anyth
     Return v15
 }
 function f24 name="computedLiteralKey" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Integer integer=1
     v2 = NewObject -, v1 layout=L0 fields=[0]
     v3 = Null
@@ -394,7 +369,6 @@ function f24 name="computedLiteralKey" parameters=[{type=string}] results=[{type
     Return v12
 }
 function f25 name="Account" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = GetConstructPrototype v0 layout=L7
     v3 = NewObject v2 layout=L7
     PropSet v3, v1 key="id" mode=Strict
@@ -403,22 +377,18 @@ function f25 name="Account" kind=BaseConstructor flags=[HasNewTarget] parameters
     Return v3
 }
 function f26 name="label" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="id"
     Return v1
 }
 function f27 name="count" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     PropSet v0, v1 key="visits" mode=Strict
     Return
 }
 function f28 name="describe" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="visits"
     Return v1
 }
 function f29 name="accessorsOfStoredClass" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
-  b0(v0: string, v1: string):
     v2 = GetModuleVariable variable=g1
     v3 = Construct v2, -, v1
     v4 = Integer integer=1

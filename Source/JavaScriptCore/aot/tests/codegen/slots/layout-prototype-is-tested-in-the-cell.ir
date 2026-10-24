@@ -9,12 +9,10 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="A" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}]
 function f0 name="allocate" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     Return
 }
 function f1 name="hasLayoutPrototype" parameters=[{type=L0}] results=[{type=boolean}] {
-  b0(v0: L0):
     v1 = HasLayoutPrototype v0
     Return v1
 }

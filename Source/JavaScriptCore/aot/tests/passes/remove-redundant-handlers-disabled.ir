@@ -15,8 +15,6 @@ function f0 name="pureValues" parameters=[{type=number}] results=[{type=anything
   b2() role=CatchHandler:
     v2 = CatchValue
     Return v2
-}
-# CHECK-LABEL: function f0 name="pureValues"
 # CHECK-NEXT: b0(v0: number) handler=b2():
 # CHECK-NEXT: v1: number = Add v0, v0
 # CHECK-NEXT: Jump -> next b1()
@@ -26,3 +24,4 @@ function f0 name="pureValues" parameters=[{type=number}] results=[{type=anything
 # CHECK-NEXT: v2: anything = CatchValue
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
+}

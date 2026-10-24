@@ -5,7 +5,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="testedAfterStep" parameters=[{type=int[0, 1000]}] results=[{type=undefined}] {
-  b0(v0: int[0, 1000]):
     v1 = Integer integer=0
     Jump -> next b1(v1)
   b1(v2):
@@ -22,7 +21,6 @@ function f0 name="testedAfterStep" parameters=[{type=int[0, 1000]}] results=[{ty
 # CHECK-NEXT: loop b1 counter: v2
 
 function f1 name="narrowedCopyGoesAround" parameters=[{type=int[0, 1000]}] results=[{type=undefined}] {
-  b0(v0: int[0, 1000]):
     v1 = Integer integer=0
     Jump -> next b1(v1)
   b1(v2):
@@ -41,7 +39,6 @@ function f1 name="narrowedCopyGoesAround" parameters=[{type=int[0, 1000]}] resul
 # CHECK-NEXT: loop b1 counter: v2
 
 function f2 name="testedBeforeLoop" parameters=[{type=int[0, 1000]}] results=[{type=undefined}] {
-  b0(v0: int[0, 1000]):
     v1 = Integer integer=0
     v2 = Less v1, v0
     Branch v2 -> taken b1(), notTaken b3()
@@ -61,7 +58,6 @@ function f2 name="testedBeforeLoop" parameters=[{type=int[0, 1000]}] results=[{t
 # CHECK-NEXT: loop b2 counter: v3
 
 function f3 name="anotherBoundTestedBeforeLoop" parameters=[{type=int[0, 1000]}, {type=int[0, 1000]}] results=[{type=undefined}] {
-  b0(v0: int[0, 1000], v1: int[0, 1000]):
     v2 = Integer integer=0
     v3 = Less v2, v1
     Branch v3 -> taken b1(), notTaken b3()
@@ -81,7 +77,6 @@ function f3 name="anotherBoundTestedBeforeLoop" parameters=[{type=int[0, 1000]},
 # CHECK-NEXT: loop b2 counter: v4
 
 function f4 name="testedOnOneOfTwoWaysIn" parameters=[{type=int[0, 1000]}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: int[0, 1000], v1: boolean):
     v2 = Integer integer=0
     Branch v1 -> taken b1(), notTaken b3()
   b1():

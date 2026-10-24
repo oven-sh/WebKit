@@ -22,59 +22,48 @@ entry module=m0
 # CHECK: module m5 path="/own-of-shared.js" displayPath="own-of-shared.js" namespaceLayout=
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = ImportModule module=m2 referrer=m0
     PutModuleVariable v0 variable=g0
     Return
-}
 # The shared module is called where the walk first comes to it, under own-of-main.js, and looks at its state itself.
-# CHECK-LABEL: function f0 name="main"
 # CHECK: = BeginModuleEvaluation module=m0
 # CHECK: = CallDirect function=f3
 # CHECK-NEXT: = CallDirect function=f1
 # CHECK-NEXT: = CallDirect function=f6
 # CHECK-NEXT: FinishModuleEvaluation module=m0
+}
 function f1 name="ownOfMain" module=m1 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     PutModuleVariable v0 variable=g0
     Return
-}
-# CHECK-LABEL: function f1 name="ownOfMain"
 # CHECK-NOT: ModuleEvaluation
+}
 function f2 name="lazy" module=m2 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=2
     PutModuleVariable v0 variable=g0
     Return
-}
-# CHECK-LABEL: function f2 name="lazy"
 # CHECK: = BeginModuleEvaluation module=m2
 # CHECK: = CallDirect function=f4
 # CHECK-NEXT: = CallDirect function=f3
 # CHECK-NEXT: = CallDirect function=f7
 # CHECK-NEXT: FinishModuleEvaluation module=m2
+}
 function f3 name="shared" module=m3 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=3
     PutModuleVariable v0 variable=g0
     Return
-}
-# CHECK-LABEL: function f3 name="shared"
 # CHECK: = BeginModuleEvaluation module=m3
 # CHECK: = CallDirect function=f5
 # CHECK-NEXT: = CallDirect function=f8
 # CHECK-NEXT: FinishModuleEvaluation module=m3
+}
 function f4 name="ownOfLazy" module=m4 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=4
     PutModuleVariable v0 variable=g0
     Return
-}
-# CHECK-LABEL: function f4 name="ownOfLazy"
 # CHECK-NOT: ModuleEvaluation
+}
 function f5 name="ownOfShared" module=m5 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=5
     PutModuleVariable v0 variable=g0
     Return

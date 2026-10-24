@@ -10,7 +10,7 @@
 
 #include "AOTBuiltinCells.h"
 #include "AOTBuiltinTable.h"
-#include "AOTImmortalCells.h"
+#include "AOTHeapCacheRegistry.h"
 #include "AOTObjectWords.h"
 #include "AOTState.h"
 #include "ExceptionHelpers.h"
@@ -36,7 +36,8 @@ static JSValue callInEngineOn(Instance* instance, BuiltinID function, JSValue re
         return { };
     }
     MarkedArgumentBuffer list;
-    list.append(first);
+    if (first)
+        list.append(first);
     if (second)
         list.append(second);
     if (third)
@@ -51,9 +52,9 @@ JSValue callInEngine(Instance* instance, BuiltinID function, JSValue first, JSVa
     return callInEngineOn(instance, function, objectOf(instance, BuiltinTable::singleton().at(function).holder), first, second, third);
 }
 
-JSValue callMethodInEngine(Instance* instance, BuiltinID function, JSValue receiver, JSValue argument)
+JSValue callMethodInEngine(Instance* instance, BuiltinID function, JSValue receiver, JSValue first, JSValue second)
 {
-    return callInEngineOn(instance, function, receiver, argument, { }, { });
+    return callInEngineOn(instance, function, receiver, first, second, { });
 }
 
 static bool isOriginalStructureOfLazyClass(JSGlobalObject* realm, Structure* structure)

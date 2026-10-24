@@ -9,8 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTSort.h"
-#include "AOTThreshold.h"
-#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/Locker.h>
 #include <wtf/MathExtras.h>
@@ -26,6 +24,22 @@ static constexpr uint64_t mix(uint64_t first, uint64_t second)
     hash *= 0xd6e8feb86659fd93ull;
     return hash ^ hash >> 29;
 }
+
+struct ValueSetMaker::BlockBeingMade {
+    ALWAYS_INLINE void add(unsigned word, uint64_t bits)
+    {
+        present |= 1ull << word;
+        words[size++] = bits;
+        numberOfMembers += static_cast<uint32_t>(std::popcount(bits));
+        hash += mix(word, bits);
+    }
+
+    std::array<uint64_t, ValueSets::wordsPerBlock + 1> words;
+    unsigned size { 1 };
+    uint64_t present { 0 };
+    uint32_t numberOfMembers { 0 };
+    uint64_t hash { 0 };
+};
 
 ValueSets::InternedRuns::InternedRuns()
 {
@@ -175,11 +189,6 @@ size_t ValueSets::InternedRuns::size() const
     return size;
 }
 
-uint32_t ValueSets::InternedRuns::endOfNumbers() const
-{
-    return m_endOfNumbers.load(std::memory_order_relaxed);
-}
-
 size_t ValueSets::InternedRuns::memoryInBytes() const
 {
     size_t bytes = static_cast<size_t>(endOfNumbers()) * bytesPerUnit;
@@ -199,9 +208,7 @@ ValueSets::ValueSets(uint32_t sizeOfUniverse)
     RELEASE_ASSERT(sizeOfUniverse < namesOneMember);
 }
 
-ValueSets::~ValueSets() = default;
-
-static void forEachBlockOfMembers(uint64_t lowestMembers, std::span<const uint32_t> highMembers, NOESCAPE const Invocable<void(uint32_t place, uint64_t hashOfBlock, size_t first, size_t end)> auto& functor)
+static void forEachBlockOfMembers(uint64_t lowestMembers, std::span<const uint32_t> highMembers, NOESCAPE const Invocable<void(uint32_t place, uint64_t hashOfBlock)> auto& functor)
 {
     constexpr uint32_t membersPerBlock = ValueSets::membersPerBlock;
     size_t index = 0;
@@ -210,7 +217,6 @@ static void forEachBlockOfMembers(uint64_t lowestMembers, std::span<const uint32
         uint32_t place = startsWithLowestMembers ? 0 : highMembers[index] / membersPerBlock;
         uint64_t hash = startsWithLowestMembers ? mix(0, lowestMembers) : 0;
         startsWithLowestMembers = false;
-        size_t first = index;
         while (index < highMembers.size() && highMembers[index] / membersPerBlock == place) {
             uint32_t word = highMembers[index] / 64;
             uint64_t bits = 0;
@@ -218,24 +224,20 @@ static void forEachBlockOfMembers(uint64_t lowestMembers, std::span<const uint32
                 bits |= 1ull << highMembers[index] % 64;
             hash += mix(word % (membersPerBlock / 64), bits);
         }
-        functor(place, hash, first, index);
+        functor(place, hash);
     }
-}
-
-static uint64_t hashOfListedMembers(uint64_t lowestMembers, std::span<const uint32_t> highMembers)
-{
-    uint64_t hash = 0;
-    forEachBlockOfMembers(lowestMembers, highMembers, [&](uint32_t place, uint64_t hashOfBlock, size_t, size_t) {
-        hash += mix(place, hashOfBlock);
-    });
-    return hash;
 }
 
 uint64_t ValueSets::hashOfMembers(ValueSetID set) const
 {
     RunOfOneMember room;
     const Run& run = runOf(storedSetOf(set), room);
-    uint64_t stored = isShort(run) ? hashOfListedMembers(run.lowestMembers, highMembersOf(run)) : run.hashOfMembers;
+    uint64_t stored = isShort(run) ? 0 : run.hashOfMembers;
+    if (isShort(run)) {
+        forEachBlockOfMembers(run.lowestMembers, highMembersOf(run), [&](uint32_t place, uint64_t hashOfBlock) {
+            stored += mix(place, hashOfBlock);
+        });
+    }
     return isComplement(set) ? ~stored : stored;
 }
 
@@ -288,9 +290,7 @@ std::array<uint64_t, 4> ValueSets::sampleOfBlocks(ValueSetID set) const
     RunOfOneMember room;
     const Run& run = runOf(storedSetOf(set), room);
     if (isShort(run)) {
-        forEachBlockOfMembers(run.lowestMembers, highMembersOf(run), [&](uint32_t place, uint64_t hashOfBlock, size_t, size_t) {
-            take(place, hashOfBlock);
-        });
+        forEachBlockOfMembers(run.lowestMembers, highMembersOf(run), take);
         return sample;
     }
     forEachStoredBlock(run.span(), [&](uint32_t place, uint32_t block) {
@@ -359,6 +359,23 @@ size_t ValueSets::positionOfGroupOfPlaces(std::span<const uint64_t> list, size_t
     return std::ranges::lower_bound(list.subspan(from), groupOfPlaces, { }, groupOfPlacesOf) - list.begin();
 }
 
+ALWAYS_INLINE bool ValueSets::anyEntriesOfSameGroupOfPlaces(std::span<const uint64_t> first, std::span<const uint64_t> second, NOESCAPE const Invocable<bool(uint64_t, uint64_t)> auto& functor)
+{
+    size_t i = 0;
+    size_t j = 0;
+    while (i < first.size() && j < second.size()) {
+        uint32_t firstGroup = groupOfPlacesOf(first[i]);
+        uint32_t secondGroup = groupOfPlacesOf(second[j]);
+        if (firstGroup < secondGroup)
+            i = positionOfGroupOfPlaces(first, i + 1, secondGroup);
+        else if (secondGroup < firstGroup)
+            j = positionOfGroupOfPlaces(second, j + 1, firstGroup);
+        else if (functor(first[i++], second[j++]))
+            return true;
+    }
+    return false;
+}
+
 ALWAYS_INLINE bool ValueSets::blocksMeet(uint32_t first, uint32_t second) const
 {
     if (first == second)
@@ -413,34 +430,18 @@ bool ValueSets::storedSetsMeet(ValueSetID first, ValueSetID second) const
         }
         return false;
     }
-    std::span<const uint64_t> firstList = firstRun->span();
-    std::span<const uint64_t> secondList = secondRun->span();
-    size_t i = 0;
-    size_t j = 0;
-    while (i < firstList.size() && j < secondList.size()) {
-        uint32_t firstGroup = groupOfPlacesOf(firstList[i]);
-        uint32_t secondGroup = groupOfPlacesOf(secondList[j]);
-        if (firstGroup < secondGroup) {
-            i = positionOfGroupOfPlaces(firstList, i + 1, secondGroup);
-            continue;
-        }
-        if (secondGroup < firstGroup) {
-            j = positionOfGroupOfPlaces(secondList, j + 1, firstGroup);
-            continue;
-        }
-        if (firstList[i] == secondList[j])
+    return anyEntriesOfSameGroupOfPlaces(firstRun->span(), secondRun->span(), [&](uint64_t firstEntry, uint64_t secondEntry) {
+        if (firstEntry == secondEntry)
             return true;
-        BlocksOfEntry a(*this, firstList[i]);
-        BlocksOfEntry b(*this, secondList[j]);
+        BlocksOfEntry a(*this, firstEntry);
+        BlocksOfEntry b(*this, secondEntry);
         for (uint64_t common = a.present & b.present; common; common &= common - 1) {
             uint64_t bit = common & -common;
             if (blocksMeet(a.blockAt(bit), b.blockAt(bit)))
                 return true;
         }
-        ++i;
-        ++j;
-    }
-    return false;
+        return false;
+    });
 }
 
 uint32_t ValueSets::numberOfCommonMembers(ValueSetID first, ValueSetID second) const
@@ -461,44 +462,29 @@ uint32_t ValueSets::numberOfCommonMembers(ValueSetID first, ValueSetID second) c
             common += others.contains(member);
         return common;
     }
-    std::span<const uint64_t> firstList = firstRun->span();
-    std::span<const uint64_t> secondList = secondRun->span();
     uint32_t number = 0;
-    size_t i = 0;
-    size_t j = 0;
-    while (i < firstList.size() && j < secondList.size()) {
-        uint32_t firstGroup = groupOfPlacesOf(firstList[i]);
-        uint32_t secondGroup = groupOfPlacesOf(secondList[j]);
-        if (firstGroup < secondGroup) {
-            i = positionOfGroupOfPlaces(firstList, i + 1, secondGroup);
-            continue;
+    anyEntriesOfSameGroupOfPlaces(firstRun->span(), secondRun->span(), [&](uint64_t firstEntry, uint64_t secondEntry) {
+        if (firstEntry == secondEntry && isGroup(firstEntry)) {
+            number += m_groups.at(groupOf(firstEntry)).numberOfMembers;
+            return false;
         }
-        if (secondGroup < firstGroup) {
-            j = positionOfGroupOfPlaces(secondList, j + 1, firstGroup);
-            continue;
-        }
-        if (firstList[i] == secondList[j] && isGroup(firstList[i]))
-            number += m_groups.at(groupOf(firstList[i])).numberOfMembers;
-        else {
-            BlocksOfEntry a(*this, firstList[i]);
-            BlocksOfEntry b(*this, secondList[j]);
-            for (uint64_t common = a.present & b.present; common; common &= common - 1) {
-                uint64_t bit = common & -common;
-                uint32_t firstBlock = a.blockAt(bit);
-                uint32_t secondBlock = b.blockAt(bit);
-                if (firstBlock == secondBlock) {
-                    number += m_blocks.at(firstBlock).numberOfMembers;
-                    continue;
-                }
-                forEachCommonWord(m_blocks.at(firstBlock).words(), m_blocks.at(secondBlock).words(), [&](uint64_t x, uint64_t y) {
-                    number += std::popcount(x & y);
-                    return false;
-                });
+        BlocksOfEntry a(*this, firstEntry);
+        BlocksOfEntry b(*this, secondEntry);
+        for (uint64_t common = a.present & b.present; common; common &= common - 1) {
+            uint64_t bit = common & -common;
+            uint32_t firstBlock = a.blockAt(bit);
+            uint32_t secondBlock = b.blockAt(bit);
+            if (firstBlock == secondBlock) {
+                number += m_blocks.at(firstBlock).numberOfMembers;
+                continue;
             }
+            forEachCommonWord(m_blocks.at(firstBlock).words(), m_blocks.at(secondBlock).words(), [&](uint64_t x, uint64_t y) {
+                number += std::popcount(x & y);
+                return false;
+            });
         }
-        ++i;
-        ++j;
-    }
+        return false;
+    });
     return number;
 }
 
@@ -645,6 +631,12 @@ uint32_t ValueSetMaker::combineBlocks(Operation operation, uint32_t first, uint3
     return number;
 }
 
+ALWAYS_INLINE uint32_t ValueSetMaker::intern(BlockBeingMade& block)
+{
+    block.words[0] = block.present;
+    return m_sets.m_blocks.intern(m_roomForBlocks, std::span<const uint64_t>(block.words).first(block.size), block.numberOfMembers, block.hash);
+}
+
 ALWAYS_INLINE auto ValueSetMaker::totalsOfBlock(uint32_t place, uint32_t block) const -> Totals
 {
     const ValueSets::Run& run = m_sets.m_blocks.at(block);
@@ -680,11 +672,8 @@ uint64_t ValueSetMaker::entryFor(uint32_t firstPlace, uint64_t present, std::spa
     Totals totals;
     if (blocks.size() > 1) {
         const uint32_t* block = blocks.data();
-        for (uint64_t rest = present; rest; rest &= rest - 1) {
-            Totals ofBlock = totalsOfBlock(firstPlace + static_cast<uint32_t>(std::countr_zero(rest)), *block++);
-            totals.numberOfMembers += ofBlock.numberOfMembers;
-            totals.hashOfMembers += ofBlock.hashOfMembers;
-        }
+        for (uint64_t rest = present; rest; rest &= rest - 1)
+            totals += totalsOfBlock(firstPlace + static_cast<uint32_t>(std::countr_zero(rest)), *block++);
     }
     return entryFor(firstPlace, present, blocks, totals);
 }
@@ -716,16 +705,6 @@ uint64_t ValueSetMaker::combineEntries(Operation operation, uint64_t first, uint
     bool isSecond = true;
     bool startsFromSecond = operation == Operation::Unite && std::popcount(b.present) > std::popcount(a.present);
     Totals totals = operation == Operation::Intersect ? Totals { } : totalsOf(startsFromSecond ? second : first);
-    auto add = [&](uint32_t place, uint32_t block) {
-        Totals ofBlock = totalsOfBlock(place, block);
-        totals.numberOfMembers += ofBlock.numberOfMembers;
-        totals.hashOfMembers += ofBlock.hashOfMembers;
-    };
-    auto remove = [&](uint32_t place, uint32_t block) {
-        Totals ofBlock = totalsOfBlock(place, block);
-        totals.numberOfMembers -= ofBlock.numberOfMembers;
-        totals.hashOfMembers -= ofBlock.hashOfMembers;
-    };
     const uint32_t* nextOfFirst = a.blocks;
     const uint32_t* nextOfSecond = b.blocks;
     for (uint64_t either = a.present | b.present; either; either &= either - 1) {
@@ -743,9 +722,9 @@ uint64_t ValueSetMaker::combineEntries(Operation operation, uint64_t first, uint
         uint32_t counted = operation == Operation::Intersect ? 0 : startsFromSecond ? y : x;
         if (block != counted) {
             if (counted)
-                remove(place, counted);
+                totals -= totalsOfBlock(place, counted);
             if (block)
-                add(place, block);
+                totals += totalsOfBlock(place, block);
         }
         if (!block)
             continue;
@@ -761,11 +740,8 @@ uint64_t ValueSetMaker::combineEntries(Operation operation, uint64_t first, uint
 uint32_t ValueSetMaker::internList(std::span<const uint64_t> list)
 {
     Totals totals;
-    for (uint64_t entry : list) {
-        Totals ofEntry = totalsOf(entry);
-        totals.numberOfMembers += ofEntry.numberOfMembers;
-        totals.hashOfMembers += ofEntry.hashOfMembers;
-    }
+    for (uint64_t entry : list)
+        totals += totalsOf(entry);
     uint64_t lowestMembers = 0;
     if (!list.empty() && !ValueSets::placeOf(list[0])) {
         ValueSets::BlocksOfEntry blocks(m_sets, list[0]);
@@ -833,30 +809,17 @@ uint32_t ValueSetMaker::internMembers(uint64_t lowestMembers, std::span<const ui
     bool startsWithLowestMembers = lowestMembers;
     while (index < highMembers.size() || startsWithLowestMembers) {
         uint32_t place = startsWithLowestMembers ? 0 : highMembers[index] / ValueSets::membersPerBlock;
-        std::array<uint64_t, ValueSets::wordsPerBlock + 1> block;
-        unsigned size = 1;
-        uint64_t present = 0;
-        uint32_t numberOfMembers = 0;
-        uint64_t hash = 0;
-        if (startsWithLowestMembers) {
-            present = 1;
-            block[size++] = lowestMembers;
-            numberOfMembers = static_cast<uint32_t>(std::popcount(lowestMembers));
-            hash = mix(0, lowestMembers);
-            startsWithLowestMembers = false;
-        }
+        BlockBeingMade block;
+        if (std::exchange(startsWithLowestMembers, false))
+            block.add(0, lowestMembers);
         while (index < highMembers.size() && highMembers[index] / ValueSets::membersPerBlock == place) {
             unsigned word = highMembers[index] % ValueSets::membersPerBlock / 64;
             uint64_t bits = 0;
             for (; index < highMembers.size() && highMembers[index] / 64 == place * ValueSets::wordsPerBlock + word; ++index)
                 bits |= 1ull << highMembers[index] % 64;
-            present |= 1ull << word;
-            block[size++] = bits;
-            numberOfMembers += static_cast<uint32_t>(std::popcount(bits));
-            hash += mix(word, bits);
+            block.add(word, bits);
         }
-        block[0] = present;
-        m_listOfBlocks.append(static_cast<uint64_t>(place) << 32 | m_sets.m_blocks.intern(m_roomForBlocks, std::span<const uint64_t>(block).first(size), numberOfMembers, hash));
+        m_listOfBlocks.append(static_cast<uint64_t>(place) << 32 | intern(block));
     }
     return internListOfBlocks(m_listOfBlocks.span());
 }
@@ -1099,8 +1062,7 @@ uint32_t ValueSetMaker::changeList(uint32_t number, bool adds, uint64_t lowestMe
             size = static_cast<unsigned>(std::popcount(present));
             std::copy_n(before.blocks, size, blocks.data());
             ofGroup = totalsOf(entry);
-            totals.numberOfMembers -= ofGroup.numberOfMembers;
-            totals.hashOfMembers -= ofGroup.hashOfMembers;
+            totals -= ofGroup;
         }
         while (next < changes.size() && changes[next].word / wordsPerGroup == groupOfPlaces) {
             uint32_t place = changes[next].word / ValueSets::wordsPerBlock;
@@ -1112,16 +1074,10 @@ uint32_t ValueSetMaker::changeList(uint32_t number, bool adds, uint64_t lowestMe
             uint32_t before = present & bit ? blocks[index] : 0;
             uint32_t after = changeBlock(before, adds, changes.subspan(next, end - next));
             next = end;
-            if (before) {
-                Totals ofBlock = totalsOfBlock(place, before);
-                ofGroup.numberOfMembers -= ofBlock.numberOfMembers;
-                ofGroup.hashOfMembers -= ofBlock.hashOfMembers;
-            }
-            if (after) {
-                Totals ofBlock = totalsOfBlock(place, after);
-                ofGroup.numberOfMembers += ofBlock.numberOfMembers;
-                ofGroup.hashOfMembers += ofBlock.hashOfMembers;
-            }
+            if (before)
+                ofGroup -= totalsOfBlock(place, before);
+            if (after)
+                ofGroup += totalsOfBlock(place, after);
             if (before && after)
                 blocks[index] = after;
             else if (after) {
@@ -1137,8 +1093,7 @@ uint32_t ValueSetMaker::changeList(uint32_t number, bool adds, uint64_t lowestMe
         }
         if (uint64_t entry = entryFor(groupOfPlaces * ValueSets::placesPerGroup, present, std::span<const uint32_t>(blocks).first(size), ofGroup))
             m_list.append(entry);
-        totals.numberOfMembers += ofGroup.numberOfMembers;
-        totals.hashOfMembers += ofGroup.hashOfMembers;
+        totals += ofGroup;
     }
     m_list.append(list.subspan(position));
     return m_sets.m_lists.intern(m_roomForLists, m_list.span(), totals.numberOfMembers, totals.hashOfMembers, adds ? run.lowestMembers | lowestMembers : run.lowestMembers & ~lowestMembers);
@@ -1332,23 +1287,13 @@ uint32_t ValueSetMaker::combineLists(Operation operation, uint32_t first, uint32
     Totals totals;
     if (operation != Operation::Intersect)
         totals = startsFromSecond ? Totals { secondRun.numberOfMembers, secondRun.hashOfMembers } : Totals { firstRun.numberOfMembers, firstRun.hashOfMembers };
-    auto add = [&](uint64_t entry) {
-        Totals ofEntry = totalsOf(entry);
-        totals.numberOfMembers += ofEntry.numberOfMembers;
-        totals.hashOfMembers += ofEntry.hashOfMembers;
-    };
-    auto remove = [&](uint64_t entry) {
-        Totals ofEntry = totalsOf(entry);
-        totals.numberOfMembers -= ofEntry.numberOfMembers;
-        totals.hashOfMembers -= ofEntry.hashOfMembers;
-    };
     auto takeFromFirst = [&](std::span<const uint64_t> entries) {
         if (operation == Operation::Intersect)
             return;
         m_list.append(entries);
         if (startsFromSecond) {
             for (uint64_t entry : entries)
-                add(entry);
+                totals += totalsOf(entry);
         }
     };
     auto takeFromSecond = [&](std::span<const uint64_t> entries) {
@@ -1357,7 +1302,7 @@ uint32_t ValueSetMaker::combineLists(Operation operation, uint32_t first, uint32
         m_list.append(entries);
         if (!startsFromSecond) {
             for (uint64_t entry : entries)
-                add(entry);
+                totals += totalsOf(entry);
         }
     };
     m_list.shrink(0);
@@ -1382,9 +1327,9 @@ uint32_t ValueSetMaker::combineLists(Operation operation, uint32_t first, uint32
         uint64_t counted = operation == Operation::Intersect ? 0 : startsFromSecond ? b[j] : a[i];
         if (entry != counted) {
             if (counted)
-                remove(counted);
+                totals -= totalsOf(counted);
             if (entry)
-                add(entry);
+                totals += totalsOf(entry);
         }
         if (entry)
             m_list.append(entry);
@@ -1536,19 +1481,12 @@ ValueSetID ValueSetMaker::ofManyMembers(std::span<const ValueFlowObjectID> membe
     for (size_t wordOfPlaces = 0; wordOfPlaces < m_placesTouched.size(); ++wordOfPlaces) {
         for (uint64_t places = std::exchange(m_placesTouched[wordOfPlaces], 0); places; places &= places - 1) {
             uint64_t place = wordOfPlaces * 64 + std::countr_zero(places);
-            std::array<uint64_t, ValueSets::wordsPerBlock + 1> block;
-            unsigned size = 1;
-            uint32_t numberOfMembers = 0;
-            uint64_t hash = 0;
-            block[0] = std::exchange(m_wordsTouchedAtPlace[place], 0);
-            for (uint64_t words = block[0]; words; words &= words - 1) {
+            BlockBeingMade block;
+            for (uint64_t words = std::exchange(m_wordsTouchedAtPlace[place], 0); words; words &= words - 1) {
                 unsigned word = std::countr_zero(words);
-                uint64_t bits = std::exchange(m_scatteredMembers[place * ValueSets::wordsPerBlock + word], 0);
-                block[size++] = bits;
-                numberOfMembers += static_cast<uint32_t>(std::popcount(bits));
-                hash += mix(word, bits);
+                block.add(word, std::exchange(m_scatteredMembers[place * ValueSets::wordsPerBlock + word], 0));
             }
-            m_listOfBlocks.append(place << 32 | m_sets.m_blocks.intern(m_roomForBlocks, std::span<const uint64_t>(block).first(size), numberOfMembers, hash));
+            m_listOfBlocks.append(place << 32 | intern(block));
         }
     }
     return ValueSetID(internListOfBlocks(m_listOfBlocks.span()) * 2);
@@ -1598,25 +1536,15 @@ ValueSetID ValueSetMaker::ofRange(ValueFlowObjectID first, ValueFlowObjectID end
             m_listOfBlocks.append(place << 32 | m_fullBlock);
             continue;
         }
-        std::array<uint64_t, ValueSets::wordsPerBlock + 1> block;
-        unsigned size = 1;
-        uint64_t present = 0;
-        uint32_t numberOfMembers = 0;
-        uint64_t hash = 0;
+        BlockBeingMade block;
         for (unsigned word = 0; word < ValueSets::wordsPerBlock; ++word) {
             uint64_t firstOfWord = place * ValueSets::membersPerBlock + word * 64;
             uint64_t low = std::max(begin, firstOfWord);
             uint64_t high = std::min(limit, firstOfWord + 64);
-            if (low >= high)
-                continue;
-            uint64_t bits = (high - low == 64 ? ~0ull : (1ull << (high - low)) - 1) << (low - firstOfWord);
-            present |= 1ull << word;
-            block[size++] = bits;
-            numberOfMembers += static_cast<uint32_t>(high - low);
-            hash += mix(word, bits);
+            if (low < high)
+                block.add(word, (high - low == 64 ? ~0ull : (1ull << (high - low)) - 1) << (low - firstOfWord));
         }
-        block[0] = present;
-        uint32_t number = m_sets.m_blocks.intern(m_roomForBlocks, std::span<const uint64_t>(block).first(size), numberOfMembers, hash);
+        uint32_t number = intern(block);
         if (isFull)
             m_fullBlock = number;
         m_listOfBlocks.append(place << 32 | number);
@@ -1783,18 +1711,10 @@ uint32_t ValueSetMaker::uniteAllLists(std::span<const ValueSetID> sets)
                 continue;
             if (block & isGathered) {
                 const GatheredBlock& gathered = m_gatheredBlocks[block & ~isGathered];
-                std::array<uint64_t, ValueSets::wordsPerBlock + 1> result;
-                unsigned size = 1;
-                uint32_t numberOfMembers = 0;
-                uint64_t hash = 0;
-                for (uint64_t present = gathered.present; present; present &= present - 1) {
-                    uint64_t word = gathered.words[std::countr_zero(present)];
-                    result[size++] = word;
-                    numberOfMembers += static_cast<uint32_t>(std::popcount(word));
-                    hash += mix(static_cast<uint64_t>(std::countr_zero(present)), word);
-                }
-                result[0] = gathered.present;
-                block = m_sets.m_blocks.intern(m_roomForBlocks, std::span<const uint64_t>(result).first(size), numberOfMembers, hash);
+                BlockBeingMade result;
+                for (uint64_t present = gathered.present; present; present &= present - 1)
+                    result.add(std::countr_zero(present), gathered.words[std::countr_zero(present)]);
+                block = intern(result);
             }
             placesPresent |= 1ull << index;
             blocks[numberOfBlocks++] = block;

@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinIDTypes.h"
+#include "AOTBuiltinTableEnums.h"
 #include "AOTSchemaEnums.h"
 #include "AOTVector.h"
 #include "ArrayBufferSharingMode.h"
@@ -41,18 +42,6 @@ using Protocols = OptionSet<Protocol>;
 using AbstractHeaps = EnumSet<AbstractHeap>;
 using PristineAspectSet = OptionSet<PristineAspects>;
 
-enum class BuiltinKind : uint8_t {
-    Namespace,
-    Constructor,
-    Function,
-    Prototype,
-    Method,
-    Accessor,
-    DataProperty,
-    Constant,
-    NativeBinding,
-};
-
 constexpr bool isObjectKind(BuiltinKind kind)
 {
     switch (kind) {
@@ -71,43 +60,7 @@ constexpr bool isObjectKind(BuiltinKind kind)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-enum class BuiltinCallMode : uint8_t {
-    Call,
-    Construct,
-    Get,
-    Set,
-};
-
-enum class BuiltinOrigin : uint8_t {
-    Engine,
-    Host,
-};
-
-enum class BuiltinScope : uint8_t {
-    Realm,
-    Module,
-};
-
-enum class BuiltinMutability : uint8_t {
-    ChangesOnItsOwn,
-    ConstantUnlessWritten,
-    AlwaysLocked,
-};
-
-enum class BuiltinPlatform : uint8_t {
-    Darwin = 1 << 0,
-    Linux = 1 << 1,
-    Windows = 1 << 2,
-    FreeBSD = 1 << 3,
-    Android = 1 << 4,
-};
-
 inline constexpr OptionSet<BuiltinPlatform> everyBuiltinPlatform { BuiltinPlatform::Darwin, BuiltinPlatform::Linux, BuiltinPlatform::Windows, BuiltinPlatform::FreeBSD, BuiltinPlatform::Android };
-
-enum class BuiltinArchitecture : uint8_t {
-    ARM64 = 1 << 0,
-    X86_64 = 1 << 1,
-};
 
 inline constexpr OptionSet<BuiltinArchitecture> everyBuiltinArchitecture { BuiltinArchitecture::ARM64, BuiltinArchitecture::X86_64 };
 
@@ -143,66 +96,6 @@ constexpr BuiltinTarget targetOfThisBuild()
     return { platform, architecture };
 }
 
-enum class BuiltinPrototypeLink : uint8_t {
-    Unknown,
-    Null,
-    Builtin,
-};
-
-enum class BuiltinFlag : uint16_t {
-    ListsAllMembers = 1 << 0,
-    IsGlobalObject = 1 << 1,
-    IsLockedObject = 1 << 2,
-    RequiresHolderAsThis = 1 << 3,
-    IsDeterministic = 1 << 4,
-    HasPrivateAlias = 1 << 5,
-    IsOwnPropertyOfInstances = 1 << 6,
-    IsLazilyCreated = 1 << 7,
-    StartsInstance = 1 << 8,
-    LoadsModuleByName = 1 << 9,
-    EvaluatesText = 1 << 10,
-    RunsUnseenCode = 1 << 11,
-    IsCompilerHelper = 1 << 12,
-    IsDefaultExport = 1 << 13,
-    HasLockedMembers = 1 << 14,
-    IsClosedToOtherNames = 1 << 15,
-};
-
-enum class BuiltinOverloadFlag : uint8_t {
-    IsUndeclared = 1 << 0,
-    IsProvenByConstruction = 1 << 1,
-    Throws = 1 << 2,
-    RunsOnlyOperandCode = 1 << 3,
-    ReadsStateBeforeConversions = 1 << 4,
-    IsSpecialCase = 1 << 5,
-    OnlyPropagatesErrors = 1 << 6,
-    ResultIsDeclaredOnly = 1 << 7,
-};
-
-enum class BuiltinCapability : uint8_t {
-    JS,
-    Heap,
-    None,
-};
-
-enum class BuiltinConversion : uint8_t {
-    None,
-    ToBoolean,
-    ToNumber,
-    ToNumeric,
-    ToString,
-    ToPropertyKey,
-    ToObject,
-    ToPrimitive,
-    ToIntegerOrInfinity,
-    ToLength,
-    ToIndex,
-    ToInt32,
-    ToUint32,
-    ToBigInt,
-    Dictionary,
-};
-
 inline bool readsCharactersOfString(BuiltinConversion conversion)
 {
     switch (conversion) {
@@ -227,23 +120,6 @@ inline bool readsCharactersOfString(BuiltinConversion conversion)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-enum class BuiltinParameterMode : uint8_t {
-    Required,
-    Optional,
-    Rest,
-};
-
-enum class BuiltinPrimitive : uint8_t {
-    Undefined = 1 << 0,
-    Null = 1 << 1,
-    Boolean = 1 << 2,
-    Number = 1 << 3,
-    String = 1 << 4,
-    Symbol = 1 << 5,
-    BigInt = 1 << 6,
-    NotPassed = 1 << 7,
-};
-
 enum class BuiltinTypeFlag : uint8_t {
     IsAnything = 1 << 0,
     HasAnyObject = 1 << 1,
@@ -252,159 +128,10 @@ enum class BuiltinTypeFlag : uint8_t {
     HasOnlyIntegers = 1 << 4,
 };
 
-enum class BuiltinFreshness : uint8_t {
-    No,
-    Unaliased,
-    UnlessSpecies,
-    Yes,
-};
-
-enum class BuiltinOperandRole : uint16_t {
-    EvaluatedAsText = 1 << 0,
-    ModuleSpecifier = 1 << 1,
-    ReadAsCharacters = 1 << 2,
-    Locale = 1 << 3,
-    ContentKey = 1 << 4,
-    ReplacesContents = 1 << 5,
-    MembersAreOnlyInspected = 1 << 6,
-    KeysAreNotListed = 1 << 7,
-    MembersAreOfObjectsOnly = 1 << 8,
-    FunctionsAreConvertedUnderNamesOnly = 1 << 9,
-    BecomesLengthOfReceiver = 1 << 10,
-    CopiesHolesToResult = 1 << 11,
-};
-
-enum class BuiltinTypePartKind : uint8_t {
-    Instance,
-    InstanceOfReceiverClass,
-    TypedArrayOfReceiverElementType,
-    Layout,
-    Builtin,
-    Operand,
-    Slot,
-    IteratedValues,
-    CallbackResult,
-    Prototype,
-};
-
-enum class BuiltinPlaceKind : uint8_t {
-    None,
-    Operand,
-    Slot,
-    IteratedValues,
-    OwnValues,
-    Result,
-    ResultSlot,
-    ResultField,
-    NewValue,
-    NativeMemory,
-    Prototype,
-    Member,
-    NativeCell,
-};
-
-enum class BuiltinKeyKind : uint8_t {
-    None,
-    Any,
-    Indexes,
-    Names,
-    Operand,
-    ElementsOf,
-};
-
-enum class BuiltinCallbackTimes : uint8_t {
-    Later,
-    Repeatedly,
-    PerElement,
-    Once,
-    PerEvent,
-};
-
 constexpr bool isCalledAfterReturn(BuiltinCallbackTimes times)
 {
     return times == BuiltinCallbackTimes::Later || times == BuiltinCallbackTimes::PerEvent;
 }
-
-enum class BuiltinCallbackResultUse : uint8_t {
-    Escapes,
-    Ignored,
-    Tested,
-    Returned,
-    Stored,
-};
-
-enum class BuiltinCallbackAftermath : uint8_t {
-    WritesIntoWhatItFinds,
-    TouchesOnlyWhatRowNames,
-};
-
-enum class BuiltinPropertyActionKind : uint8_t {
-    ReadsByKey,
-    StoresByKey,
-    DeletesByKey,
-    AssignsFrom,
-    DefinesName,
-    TakesDescriptor,
-    TakesDescriptorMap,
-    ChangesIntegrity,
-    ChangesPrototype,
-    BecomesPrototype,
-    DefinesGetter,
-    DefinesSetter,
-    ReadsGetter,
-    ReadsSetter,
-    TestsByKey,
-    DescribesOwnProperties,
-    DescribesResult,
-    DefinesFrom,
-};
-
-enum class BuiltinIntegrityLevel : uint8_t {
-    NonExtensible,
-    Sealed,
-    Frozen,
-};
-
-enum class BuiltinRangeRule : uint8_t {
-    None,
-    MinimumOfArguments,
-    MaximumOfArguments,
-    AbsoluteValue,
-    IntegerPart,
-    Sign,
-};
-
-enum class BuiltinImplementationKind : uint8_t {
-    Generic,
-    HostCall,
-    Compiled,
-    Inline,
-    Number,
-    Cell,
-    CachedGetter,
-    OwnSlot,
-};
-
-enum class BuiltinCallee : uint8_t {
-    None,
-    Function,
-    HostFunction,
-    InternalFunction,
-    CustomGetter,
-};
-
-enum class BuiltinInstanceTest : uint8_t {
-    None,
-    JSTypeEquals,
-    ClassInfoInherits,
-    SharingModeEquals,
-};
-
-enum class BuiltinPristineTest : uint8_t {
-    Mark,
-    ClosureAsCreated,
-    InstanceStructure,
-};
 
 enum class RuntimeFunctionRole : uint8_t {
     EngineBuiltin,
@@ -432,14 +159,6 @@ enum class BuiltinHostReadContext : uint8_t {
     Preload,
     Plugin,
     TestFile,
-};
-
-enum class BuiltinHostReadUse : uint8_t {
-    Inspected,
-    Called,
-    PassedTo,
-    Kept,
-    IsValueOf,
 };
 
 struct BuiltinIntegerRange {

@@ -13,7 +13,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class ObjectCreationEmitter final : public OperationEmitter {
 public:
-    explicit ObjectCreationEmitter(CodeGenerator&);
+    explicit ObjectCreationEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generateDefineOwnProperty(const ValueContext&);
     void generateDefineAccessors(const ValueContext&);

@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="withSiteCache" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
     v2 = TryPutByIds v0, v1, v1, v1 keys=["a", "b", "c"]
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -18,7 +17,6 @@ function f0 name="withSiteCache" parameters=[{type=object}, {type=anything}] res
     Return v0
 }
 function f1 name="withoutSiteCache" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
     v2 = TryPutByIds v0, v1, v1, v1 keys=["a", "b", "c"]
     Branch v2 -> taken b1(), notTaken b2()
   b1():

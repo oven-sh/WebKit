@@ -11,7 +11,6 @@ layout L1 name="Count" fields=[{key="value" declared={type=undefined|number}}] f
 variable g0 name="saved" declared={type=anything} initialization=Undefined
 
 function f0 name="comparison-between-test-and-branch" parameters=[{type=L0|L1}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0|L1, v1: anything):
     v2 = IsSlotFilled v0 key="value" receivers=[L0, L1] level=Proven
     ValidateSameValue v1, v0
     Branch v2 -> taken b1(| 0), notTaken b2()
@@ -20,17 +19,15 @@ function f0 name="comparison-between-test-and-branch" parameters=[{type=L0|L1}, 
     Return v5
   b2():
     Return
-}
-# CHECK-LABEL: function f0 name="comparison-between-test-and-branch"
 # CHECK-NEXT: b0(v0: L0|L1, v1: anything):
 # CHECK-NEXT: ValidateSameValue v1, v0
 # CHECK-NEXT: = TypeTest v0 testedType=L0
 # CHECK: = IsSlotFilled {{*}} key="value" receivers=[L0] level=Proven
 # CHECK: = IsSlotFilled {{*}} key="value" receivers=[L1] level=Proven
 # CHECK-NOT: receivers=[L0, L1]
+}
 
 function f1 name="branch-in-later-block" parameters=[{type=L0|L1}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: L0|L1, v1: boolean):
     v2 = IsSlotFilled v0 key="value" receivers=[L0, L1] level=Proven
     Branch v1 -> taken b1(), notTaken b3()
   b1():
@@ -41,14 +38,12 @@ function f1 name="branch-in-later-block" parameters=[{type=L0|L1}, {type=boolean
     Return v5
   b3():
     Return
-}
-# CHECK-LABEL: function f1 name="branch-in-later-block"
 # CHECK: PutModuleVariable v1 variable=g0
 # CHECK-NEXT: = TypeTest v0 testedType=L0
 # CHECK-NOT: receivers=[L0, L1]
+}
 
 function f2 name="test-under-guard" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
     v2 = ShapeTest v0 layouts=[L0, L1]
     Branch v2 -> taken b1(| 0), notTaken b3()
   b1(v3):
@@ -61,10 +56,9 @@ function f2 name="test-under-guard" parameters=[{type=object}, {type=anything}] 
     Return v8
   b3():
     Return
-}
-# CHECK-LABEL: function f2 name="test-under-guard"
 # CHECK: PutModuleVariable v1 variable=g0
 # CHECK-NEXT: SwitchOnShape v0 layoutSets=[{{*}}[L0], [L1]]
 # CHECK-NOT: receivers=[L0, L1]
+}
 
 # PLACE-NOT: "value" {L0 L1}

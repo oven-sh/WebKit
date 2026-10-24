@@ -12,7 +12,6 @@ module m0 path="main.js" displayPath="main.js"
 evalscope e0 mode=Strict
 
 function f0 name="twentyFourOperations" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
 # REPEAT: i = 0..23
     v%(i+1) = Mul v%(i), v0
 # END REPEAT
@@ -20,14 +19,12 @@ function f0 name="twentyFourOperations" parameters=[{type=number}] results=[{typ
 }
 
 function f1 name="evaluatesText" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Undefined
     v2 = DirectEval v0, v1 evalScope=e0
     Return v0
 }
 
 function f2 name="unmarkedCall" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f0
     Return v1
 }
@@ -36,7 +33,6 @@ function f2 name="unmarkedCall" parameters=[{type=number}] results=[{type=number
 # CHECK-NEXT: Return
 
 function f3 name="markedCall" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f0 [isAlwaysInlined]
     Return v1
 }
@@ -44,7 +40,6 @@ function f3 name="markedCall" parameters=[{type=number}] results=[{type=number}]
 # CHECK-NOT: CallDirect
 
 function f4 name="markedCallOfBarrier" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f1 [isAlwaysInlined]
     Return v1
 }

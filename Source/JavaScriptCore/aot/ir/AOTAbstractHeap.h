@@ -67,12 +67,6 @@ inline constexpr std::array<AbstractHeap, numberOfIndexedHeaps> indexedHeapsInOr
     return heaps;
 }();
 
-struct AbstractHeapSetDump {
-    AbstractHeapSet heaps;
-
-    void dump(PrintStream&) const;
-};
-
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

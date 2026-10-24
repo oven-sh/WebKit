@@ -15,27 +15,22 @@ function f2 name="guarded" kind=Setter flags=[HasThis] thisType={type=anything} 
 function f3 name="NamesNotComplete" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
 
 function f4 name="store-meets-inherited-setter" parameters=[{type=L1}, {type=number}] results=[{type=anything}] {
-  b0(v0: L1, v1: number):
     PropSet v0, v1 key="guarded"
     Return
 }
 function f5 name="definition-passes-the-setter" parameters=[{type=L1}, {type=number}] results=[{type=anything}] {
-  b0(v0: L1, v1: number):
     PropDefine v0, v1 key="guarded"
     Return
 }
 function f6 name="nothing-inherited-by-the-lists-of-the-classes" parameters=[{type=L1}, {type=number}] results=[{type=anything}] {
-  b0(v0: L1, v1: number):
     PropSet v0, v1 key="free"
     Return
 }
 function f7 name="nothing-inherited-while-the-guards-hold" parameters=[{type=L2}, {type=number}] results=[{type=anything}] {
-  b0(v0: L2, v1: number):
     PropSet v0, v1 key="filled"
     Return
 }
 function f8 name="reads-find-the-field" parameters=[{type=L1}] results=[{type=anything}] {
-  b0(v0: L1):
     v1 = PropGet v0 key="guarded"
     Return
 }

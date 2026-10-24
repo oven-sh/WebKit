@@ -8,7 +8,6 @@ variable g0 name="limit" declared={type=number}
 variable g1 name="late" declared={type=number|absent}
 
 function f0 name="throwsBelowZero" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Integer integer=0
     v2 = Less v0, v1
     Branch v2 -> taken b1(), notTaken b2()
@@ -19,7 +18,6 @@ function f0 name="throwsBelowZero" parameters=[{type=number}] results=[{type=num
 }
 
 function f1 name="handlerBehindTheLoop" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Jump -> next b1()
   b1() handler=b3():
     LoopHint
@@ -34,17 +32,15 @@ function f1 name="handlerBehindTheLoop" parameters=[{type=number}] results=[{typ
     Return v0
   b4():
     Return v2
-}
-# CHECK-LABEL: function f1 name="handlerBehindTheLoop"
 # CHECK: b0(
 # CHECK-NEXT: v2: number = GetModuleVariable variable=g0
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1() handler=b3():
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: = CallDirect v2 function=f0
+}
 
 function f2 name="handlerInTheLoop" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Jump -> next b1()
   b1() handler=b2():
     LoopHint
@@ -57,15 +53,13 @@ function f2 name="handlerInTheLoop" parameters=[{type=number}] results=[{type=nu
     Jump -> next b1()
   b3():
     Return v2
-}
-# CHECK-LABEL: function f2 name="handlerInTheLoop"
 # CHECK: b0(
 # CHECK-NEXT: v2: number = GetModuleVariable variable=g0
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NOT: GetModuleVariable
+}
 
 function f3 name="handlerInTheLoopStores" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Jump -> next b1()
   b1() handler=b2():
     LoopHint
@@ -79,15 +73,13 @@ function f3 name="handlerInTheLoopStores" parameters=[{type=number}] results=[{t
     Jump -> next b1()
   b3():
     Return v2
-}
-# CHECK-LABEL: function f3 name="handlerInTheLoopStores"
 # CHECK: b0(
 # CHECK-NEXT: Jump -> next b1()
 # CHECK: LoopHint
 # CHECK-NEXT: v2: number = GetModuleVariable variable=g0
+}
 
 function f4 name="checkStaysUnderTheHandler" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Jump -> next b1()
   b1() handler=b3():
     LoopHint
@@ -102,17 +94,15 @@ function f4 name="checkStaysUnderTheHandler" parameters=[{type=number}] results=
     Return v0
   b4():
     Return v3
-}
-# CHECK-LABEL: function f4 name="checkStaysUnderTheHandler"
 # CHECK: b0(
 # CHECK-NEXT: v2: number|absent = GetModuleVariable variable=g1
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1() handler=b3():
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v3: number = CheckInitialized v2 name="late"
+}
 
 function f5 name="headerIsTheHandler" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Jump -> next b1()
   b1() handler=b2():
     v1 = CallDirect v0 function=f0
@@ -127,9 +117,8 @@ function f5 name="headerIsTheHandler" parameters=[{type=number}] results=[{type=
     Jump -> next b4(v5)
   b4(v6):
     Return v6
-}
-# CHECK-LABEL: function f5 name="headerIsTheHandler"
 # CHECK: = CallDirect v0 function=f0
 # CHECK-NEXT: Jump -> next b4(v1)
 # CHECK: = CatchValue
 # CHECK-NEXT: v3: number = GetModuleVariable variable=g0
+}

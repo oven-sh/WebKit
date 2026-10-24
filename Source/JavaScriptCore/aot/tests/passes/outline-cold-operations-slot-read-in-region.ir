@@ -10,7 +10,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
 
 function f0 name="provenReceiver" parameters=[{type=boolean}, {type=L0}, {type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: L0, v2: boolean, v3: anything):
     Branch v0 -> taken b1(), notTaken b5()
   b1() frequency=Rare:
     Branch v2 -> taken b2(), notTaken b3()
@@ -36,7 +35,6 @@ function f0 name="provenReceiver" parameters=[{type=boolean}, {type=L0}, {type=b
 # CHECK-NOT: GetSlot
 
 function f%(i) name="provenReceiver%(i+1)" parameters=[{type=boolean}, {type=L0}, {type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: L0, v2: boolean, v3: anything):
     Branch v0 -> taken b1(), notTaken b5()
   b1() frequency=Rare:
     Branch v2 -> taken b2(), notTaken b3()
@@ -60,7 +58,6 @@ function f%(i) name="provenReceiver%(i+1)" parameters=[{type=boolean}, {type=L0}
 # CHECK-NOT: GetSlot
 
 function f4 name="guardFromOutside" parameters=[{type=boolean}, {type=object}, {type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: object, v2: boolean, v3: anything):
     v4 = ShapeTest v1 layouts=[L0]
     Branch v4 -> taken b1(| 0), notTaken b7()
   b1(v5):
@@ -91,7 +88,6 @@ function f4 name="guardFromOutside" parameters=[{type=boolean}, {type=object}, {
 # CHECK-NOT: CallDirect
 
 function f%(i) name="guardFromOutside%(i-3)" parameters=[{type=boolean}, {type=object}, {type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: object, v2: boolean, v3: anything):
     v4 = ShapeTest v1 layouts=[L0]
     Branch v4 -> taken b1(| 0), notTaken b7()
   b1(v5):

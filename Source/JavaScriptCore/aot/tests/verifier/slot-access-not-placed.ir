@@ -6,17 +6,14 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="unused" declared={type=anything} flow={location={writers=AllKnown stores=Never reads=NeverRead}}}, {key="onlyStored" declared={type=anything} flow={location={writers=AllKnown reads=NeverRead}}}]
 function f0 name="badRead" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = GetSlotOrUndefined v0 key="unused" receivers=[L0] level=Proven
     Return v1
 }
 function f1 name="badStore" parameters=[{type=L0}] results=[{type=undefined}] {
-  b0(v0: L0):
     PutSlot v0, -, v0 key="unused" receivers=[L0] level=Proven
     Return
 }
 function f2 name="good" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     PutSlot v0, -, v0 key="onlyStored" receivers=[L0] level=Proven
     v2 = GetSlotOrUndefined v0 key="x" receivers=[L0] level=Proven
     Return v2

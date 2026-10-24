@@ -10,16 +10,14 @@ function f0 name="readsAnElement" parameters=[{type=Array<anything> flags=[IsExp
   b0(v0: anything ~ Array<anything>, v1: i32):
     v2 = ElemGet v0, v1
     Return v2
-}
-# CHECK-LABEL: function f0 name="readsAnElement"
 # CHECK-NOT: TypeTest
 # CHECK: = ElemGet v0, v1
+}
 
 function f1 name="storesAnElement" parameters=[{type=Array<anything> flags=[IsExpected]}, {type=i32}] results=[{type=anything}] {
   b0(v0: anything ~ Array<anything>, v1: i32):
     ElemSet v0, v1, v1
     Return v1
-}
-# CHECK-LABEL: function f1 name="storesAnElement"
 # CHECK-NOT: TypeTest
 # CHECK: ElemSet v0, v1, v1
+}

@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="maskOfAnything" parameters=[{type=anything}] results=[{type=boolean}] {
-  b0(v0: anything):
     v1 = Integer integer=8
     v2 = BitAnd v0, v1 form=Generic
     v3 = ToBoolean v2 form=Integers
@@ -20,21 +19,18 @@ function f0 name="maskOfAnything" parameters=[{type=anything}] results=[{type=bo
 # CODE: stub BinaryOperation
 
 function f1 name="eachOperator" parameters=[{type=anything}, {type=i32}] results=[{type=i32}] {
-  b0(v0: anything, v1: i32):
     v2 = BitOr v0, v1 form=Generic
     v3 = BitXor v0, v2 form=Generic
     v4 = LShift v0, v3 form=Generic
     v5 = RShift v0, v4 form=Generic
     Return v5
-}
-# CHECK-LABEL: function f1 name="eachOperator"
 # CHECK: i32 @Int32 = BitOr
 # CHECK: i32 @Int32 = BitXor
 # CHECK: i32 @Int32 = LShift
 # CHECK: i32 @Int32 = RShift
+}
 
 function f2 name="mayBeBigInt" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = BitAnd v0, v1 form=Generic
     Return v2
 }

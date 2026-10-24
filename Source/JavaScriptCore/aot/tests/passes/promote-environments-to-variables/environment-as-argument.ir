@@ -12,7 +12,6 @@ layout L0 kind=Environment name="passedAsArgument" fields=[{key=@"x.0" declared=
 layout L1 kind=Environment name="onlyCaptured" fields=[{key=@"x.0" declared={type=anything}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = NewObject -, v1 layout=L0 fields=[0] @10
@@ -20,12 +19,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v4 = NewObject -, v1 layout=L1 fields=[0] @20
     v5 = CallDirect v4 function=f2
     Return
-}
-# CHECK-LABEL: function f0 name="main"
 # CHECK: [[passed]]: env L0 = NewObject -, v1 layout=L0
 # CHECK-NEXT: = CallDirect [[passed]] function=f1
 # CHECK-NEXT: PutModuleVariable v1 variable=g0
 # CHECK-NEXT: = CallDirect function=f2
+}
 
 function f1 name="takesParameter" parameters=[{type=env L0}] results=[{type=anything}] {
   b0(v0: env L0):
@@ -39,7 +37,6 @@ function f2 name="takesCapture" captures=[{type=env L1}] results=[{type=anything
   b0(v0: env L1):
     v1 = GetEnvironmentField v0 layout=L1 field=0
     Return v1
-}
-# CHECK-LABEL: function f2 name="takesCapture"
 # CHECK-NOT: captures=
 # CHECK: = GetModuleVariable variable=g0
+}

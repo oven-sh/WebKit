@@ -5,7 +5,7 @@
 
 #include "config.h"
 
-#if ENABLE(AOT) && (ASSERT_ENABLED || defined(AOT_IR_PRINTER_FOR_TESTAOT))
+#if ENABLE(AOT)
 
 #include "AOTSlotPlan.h"
 
@@ -247,4 +247,4 @@ void SlotPlan::dump(PrintStream& out, const Program& program) const
 
 } } } // namespace JSC::AOT::Typed
 
-#endif // ENABLE(AOT) && (ASSERT_ENABLED || defined(AOT_IR_PRINTER_FOR_TESTAOT))
+#endif // ENABLE(AOT)

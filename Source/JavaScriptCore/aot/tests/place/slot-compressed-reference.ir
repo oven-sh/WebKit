@@ -14,7 +14,6 @@ layout L4 kind=Environment name="onHeap" fields=[{key="heapClosure" declared={ty
 layout L5 kind=Environment name="inFrame" fields=[{key="frameClosure" declared={type=function}}, {key="frameText" declared={type=string}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToNumber v1
@@ -61,7 +60,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK-NEXT: "frameClosure" Cell @
 # CHECK-NEXT: "frameText" Cell32 @
 function f1 name="closureLeavesTheFrame" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = NewClosure function=f3
     v2 = NewObject -, v1, v0 layout=L4 fields=[0, 1]
     v3 = NewClosure v2 function=f4
@@ -71,14 +69,12 @@ function f1 name="closureLeavesTheFrame" parameters=[{type=string}] results=[{ty
     Return
 }
 function f2 name="closureStaysInTheFrame" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = NewClosure function=f3
     v2 = NewObject -, v1, v0 layout=L5 fields=[0, 1]
     v3 = CallDirect v2 function=f5
     Return v3
 }
 function f3 name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f4 name="callsHeapClosure" kind=Arrow captures=[{type=env L4}] results=[{type=anything}] {

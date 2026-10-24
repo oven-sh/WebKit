@@ -26,7 +26,6 @@ variable g2 name="looseKey" module=m0 declared={type=anything} initialization=Un
 variable g3 name="seen" module=m0 declared={type=anything} initialization=Undefined
 data d0 root=Array{contents=number} module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=7
     v1 = NewClosure function=f1
     v2 = NewClass v1 layout=L0
@@ -77,7 +76,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object flags=[IsFromCompiler]}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
@@ -86,14 +84,12 @@ function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type
     Return v3
 }
 function f2 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
-  b0(v0: L0):
     v1 = Integer integer=1
     PropDefine v0, v1 key="id"
     v3 = Undefined
     Return v3
 }
 function f3 name="WithList" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
-  b0(v0: function, v1: anything, v2: anything):
     v3 = GetSuperBase v0 homeKind=Object
     v4 = SuperConstruct v3, v1 layout=L1
     v5 = Convert v4 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
@@ -106,7 +102,6 @@ function f3 name="WithList" kind=DerivedConstructor flags=[HasNewTarget, TakesCa
 # CHECK: [[zeroInWithList]]: 0 = Integer
 # CHECK: PropDefine {{*}}, [[zeroInWithList]] key="n"
 function f4 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L1 flags=[IsFromCompiler]} results=[{type=anything}] {
-  b0(v0: L1):
     v1 = Data data=d0
     PropDefine v0, v1 key="list"
     v3 = Undefined
@@ -136,7 +131,6 @@ function f6 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] captures=[{t
     Return v4
 }
 function f7 name="WithPrivate" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
-  b0(v0: function, v1: anything, v2: anything):
     v3 = GetSuperBase v0 homeKind=Object
     v4 = SuperConstruct v3, v1 layout=L3
     v5 = Convert v4 declared={type=L3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
@@ -149,7 +143,6 @@ function f7 name="WithPrivate" kind=DerivedConstructor flags=[HasNewTarget, Take
 # CHECK: [[zeroInWithPrivate]]: 0 = Integer
 # CHECK: PropDefine {{*}}, [[zeroInWithPrivate]] key="n"
 function f8 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L3 flags=[IsFromCompiler]} results=[{type=anything}] {
-  b0(v0: L3):
     v1 = GetModuleVariable variable=g0
     v2 = PrivateHas v0, v1 layout=L3
     Branch v2 -> taken b2(), notTaken b1()
@@ -164,7 +157,6 @@ function f8 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={ty
     Return v6
 }
 function f9 name="WithArrow" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
-  b0(v0: anything, v1: anything):
     v2 = GetConstructPrototype v0 layout=L4
     v3 = NewObject v2 layout=L4
     v4 = Convert v3 declared={type=L4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
@@ -178,7 +170,6 @@ function f9 name="WithArrow" kind=BaseConstructor flags=[HasNewTarget] parameter
 # CHECK: [[zeroInWithArrow]]: 0 = Integer
 # CHECK: PropDefine {{*}}, [[zeroInWithArrow]] key="n"
 function f10 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L4 flags=[IsFromCompiler]} results=[{type=anything}] {
-  b0(v0: L4):
     v1 = Undefined
     PropDefine v0, v1 key="n"
     v3 = NewClosure v0 function=f11
@@ -186,12 +177,10 @@ function f10 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={t
     Return v1
 }
 function f11 name="on" kind=Arrow captures=[{type=L4 flags=[IsFromCompiler]}] results=[{type=anything}] {
-  b0(v0: L4):
     v1 = PropGet v0 key="n"
     Return v1
 }
 function f12 name="WithComputed" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
-  b0(v0: anything, v1: anything):
     v2 = GetConstructPrototype v0 layout=L5
     v3 = NewObject v2 layout=L5
     v4 = Convert v3 declared={type=L5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
@@ -205,7 +194,6 @@ function f12 name="WithComputed" kind=BaseConstructor flags=[HasNewTarget] param
 # CHECK: [[zeroInWithComputed]]: 0 = Integer
 # CHECK: PropDefine {{*}}, [[zeroInWithComputed]] key="n"
 function f13 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L5 flags=[IsFromCompiler]} results=[{type=anything}] {
-  b0(v0: L5):
     v1 = Undefined
     PropDefine v0, v1 key="n"
     v3 = GetModuleVariable variable=g1
@@ -214,7 +202,6 @@ function f13 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={t
     Return v1
 }
 function f14 name="CallsArrowFirst" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
-  b0(v0: anything, v1: anything):
     v2 = GetConstructPrototype v0 layout=L6
     v3 = NewObject v2 layout=L6
     v4 = Convert v3 declared={type=L6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
@@ -230,7 +217,6 @@ function f14 name="CallsArrowFirst" kind=BaseConstructor flags=[HasNewTarget] pa
 # CHECK-LABEL: function f15
 # CHECK: PropDefine {{*}}, v1 key="n"
 function f15 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L6 flags=[IsFromCompiler]} results=[{type=anything}] {
-  b0(v0: L6):
     v1 = Undefined
     PropDefine v0, v1 key="n"
     v3 = NewClosure v0 function=f16
@@ -238,12 +224,10 @@ function f15 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={t
     Return v1
 }
 function f16 name="on" kind=Arrow captures=[{type=L6 flags=[IsFromCompiler]}] results=[{type=anything}] {
-  b0(v0: L6):
     v1 = PropGet v0 key="n"
     Return v1
 }
 function f17 name="KeyMayBeObject" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
-  b0(v0: function, v1: anything, v2: anything):
     v3 = GetSuperBase v0 homeKind=Object
     v4 = SuperConstruct v3, v1 layout=L7
     v5 = Convert v4 declared={type=L7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
@@ -255,7 +239,6 @@ function f17 name="KeyMayBeObject" kind=DerivedConstructor flags=[HasNewTarget, 
 # CHECK-LABEL: function f18
 # CHECK: PropDefine {{*}}, v1 key="n"
 function f18 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L7 flags=[IsFromCompiler]} results=[{type=anything}] {
-  b0(v0: L7):
     v1 = Undefined
     PropDefine v0, v1 key="n"
     v3 = GetModuleVariable variable=g2
@@ -264,7 +247,6 @@ function f18 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={t
     Return v1
 }
 function f19 name="ReadsOtherObject" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
-  b0(v0: function, v1: anything, v2: anything):
     v3 = GetSuperBase v0 homeKind=Object
     v4 = SuperConstruct v3, v1 layout=L8
     v5 = Convert v4 declared={type=L8 flags=[IsFromCompiler]} illTypedCause=FromLooseType
@@ -276,7 +258,6 @@ function f19 name="ReadsOtherObject" kind=DerivedConstructor flags=[HasNewTarget
 # CHECK-LABEL: function f20
 # CHECK: PropDefine {{*}}, v1 key="n"
 function f20 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L8 flags=[IsFromCompiler]} results=[{type=anything}] {
-  b0(v0: L8):
     v1 = Undefined
     PropDefine v0, v1 key="n"
     v3 = GetModuleVariable variable=g3
@@ -285,7 +266,6 @@ function f20 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={t
     Return v1
 }
 function f21 name="CallsInFront" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
-  b0(v0: function, v1: anything, v2: anything):
     v3 = GetSuperBase v0 homeKind=Object
     v4 = SuperConstruct v3, v1 layout=L10
     v5 = Convert v4 declared={type=L10 flags=[IsFromCompiler]} illTypedCause=FromLooseType
@@ -298,7 +278,6 @@ function f21 name="CallsInFront" kind=DerivedConstructor flags=[HasNewTarget, Ta
 # CHECK: [[zeroInCallsInFront]]: 0 = Integer
 # CHECK: PropDefine {{*}}, [[zeroInCallsInFront]] key="n"
 function f22 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L10 flags=[IsFromCompiler]} results=[{type=anything}] {
-  b0(v0: L10):
     v1 = CallDirect function=f23
     PropDefine v0, v1 key="first"
     v3 = Undefined
@@ -306,7 +285,6 @@ function f22 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={t
     Return v3
 }
 function f23 name="looksAtWhatWasSeen" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g3
     v1 = PropGet v0 key="n"
     Return v1

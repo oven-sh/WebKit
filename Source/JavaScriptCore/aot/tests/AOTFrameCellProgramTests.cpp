@@ -16,7 +16,6 @@ entry module=m0
 layout L0 name="Point" fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
 layout L1 name="Holder" fields=[{key="held" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = CallDirect v0 function=f1
     v2 = NewClosure function=f3
@@ -32,7 +31,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="repeat" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer
     Jump -> next b1(v1, v1)
   b1(v2, v3):
@@ -52,28 +50,24 @@ function f1 name="repeat" parameters=[{type=anything}] results=[{type=anything}]
     Return
 }
 function f2 name="givesToHolder" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewClosure function=f8
     v3 = Call v2, -, v1 [isNeverInlined]
     Return v3
 }
 function f3 name="givesToCapturer" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewClosure function=f9
     v3 = Call v2, -, v1 [isNeverInlined]
     Return v3
 }
 function f4 name="givesToLister" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewClosure function=f10
     v3 = Call v2, -, v1 [isNeverInlined]
     Return v3
 }
 function f5 name="givesToReaderByKey" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewClosure function=f11
     v3 = Builtin builtin=GlobalThis
@@ -82,7 +76,6 @@ function f5 name="givesToReaderByKey" parameters=[{type=anything}] results=[{typ
     Return v5
 }
 function f6 name="givesHolderOfYoungObject" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewObject -, v1 layout=L1 fields=[0]
     v3 = NewClosure function=f12
@@ -90,14 +83,12 @@ function f6 name="givesHolderOfYoungObject" parameters=[{type=anything}] results
     Return v4
 }
 function f7 name="givesClosure" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure v0 function=f15
     v2 = NewClosure function=f13
     v3 = Call v2, -, v1 [isNeverInlined]
     Return v3
 }
 function f8 name="holdsInArray" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray v0 contents=anything
     v2 = Builtin builtin=GlobalThis
     v3 = PropGet v2 key="collect" [isFreeName]
@@ -108,14 +99,12 @@ function f8 name="holdsInArray" parameters=[{type=anything}] results=[{type=anyt
     Return v7
 }
 function f9 name="capturesInClosure" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure v0 function=f17
     v2 = NewClosure function=f14
     v3 = Call v2, -, v1 [isNeverInlined]
     Return v3
 }
 function f10 name="listsKeys" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="collect" [isFreeName]
     v3 = Call v2
@@ -126,7 +115,6 @@ function f10 name="listsKeys" parameters=[{type=anything}] results=[{type=anythi
     Return v7
 }
 function f11 name="readsByKey" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Builtin builtin=GlobalThis
     v3 = PropGet v2 key="collect" [isFreeName]
     v4 = Call v3
@@ -134,7 +122,6 @@ function f11 name="readsByKey" parameters=[{type=anything}, {type=anything}] res
     Return v5
 }
 function f12 name="readsHeld" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="collect" [isFreeName]
     v3 = Call v2
@@ -143,14 +130,12 @@ function f12 name="readsHeld" parameters=[{type=anything}] results=[{type=anythi
     Return v5
 }
 function f13 name="capturesClosure" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure v0 function=f16
     v2 = NewClosure function=f14
     v3 = Call v2, -, v1 [isNeverInlined]
     Return v3
 }
 function f14 name="callsDuringCollection" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="collect" [isFreeName]
     v3 = Call v2
@@ -158,16 +143,13 @@ function f14 name="callsDuringCollection" parameters=[{type=anything}] results=[
     Return v4
 }
 function f15 name="returnsCapture" kind=Arrow captures=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 function f16 name="callsCapture" kind=Arrow captures=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0 [isNeverInlined]
     Return v1
 }
 function f17 name="readsCapture" kind=Arrow captures=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="y"
     Return v1
 }
@@ -195,7 +177,6 @@ static constexpr ASCIILiteral closureHandedToPartCutOff = R"IR(layout L0 name="I
 variable g0 name="countTrue" declared={type=function} initialization=Function function=f1 flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = Undefined
     v1 = Integer integer=5
     v2 = NewObject -, v1, v0 layout=L0 fields=[0, 1]
@@ -218,7 +199,6 @@ function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
     Return v18
 }
 function f1 name="countTrue" length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = TypeTest v0 testedType=undefined
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -242,14 +222,12 @@ function f1 name="countTrue" length=2 thisType={type=anything} parameters=[{type
     Return v12
 }
 function f2 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="id"
     v2 = Integer integer=2
     v3 = Greater v1, v2
     Return v3
 }
 function f3 kind=Arrow thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = Boolean boolean=true
     Return v0
 }
@@ -268,7 +246,6 @@ layout L1 fields=[{key="then" declared={type=function flags=[IsExpected]} flags=
 variable g0 name="record" declared={type=L0|absent flags=[IsExpected]} flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" flags=[HasTopLevelAwait] body=f0
 function f0 kind=Module flags=[IsAsync] thisType={type=anything} results=[{type=anything}] {
-  b0():
     Jump -> next b1()
   b1():
     v0 = NewClosure function=f1
@@ -304,7 +281,6 @@ function f0 kind=Module flags=[IsAsync] thisType={type=anything} results=[{type=
     Return v29
 }
 function f1 name="attempt" length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     Jump -> next b2()
@@ -328,7 +304,6 @@ function f1 name="attempt" length=1 thisType={type=anything} parameters=[{type=a
     Return v10
 }
 function f2 name="then" kind=Method length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = Integer integer=1
@@ -337,7 +312,6 @@ function f2 name="then" kind=Method length=1 thisType={type=anything} parameters
     Return v3
 }
 function f3 kind=Arrow thisType={type=anything} results=[{type=string flags=[IsExpected]}] {
-  b0():
     Jump -> next b1()
   b1():
     v0 = String string="first "
@@ -350,7 +324,6 @@ function f3 kind=Arrow thisType={type=anything} results=[{type=string flags=[IsE
     Return v6
 }
 function f4 kind=Arrow thisType={type=anything} results=[{type=string flags=[IsExpected]}] {
-  b0():
     Jump -> next b1()
   b1():
     v0 = String string="second "
@@ -363,7 +336,6 @@ function f4 kind=Arrow thisType={type=anything} results=[{type=string flags=[IsE
     Return v6
 }
 function f5 kind=Arrow thisType={type=anything} results=[{type=string flags=[IsExpected]}] {
-  b0():
     Jump -> next b1()
   b1():
     v0 = String string="third "
@@ -386,7 +358,6 @@ function f5 kind=Arrow thisType={type=anything} results=[{type=string flags=[IsE
     Return v16
 }
 function f6 kind=Arrow flags=[IsAsync] thisType={type=anything} results=[{type=Promise flags=[IsExpected]}] {
-  b0():
     Jump -> next b1()
   b1():
     v0 = Null

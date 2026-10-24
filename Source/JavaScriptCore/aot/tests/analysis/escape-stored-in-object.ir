@@ -7,13 +7,11 @@ layout L0 kind=Environment name="scope" fields=[{key="x" declared={type=anything
 layout L1 name="Empty"
 layout L2 name="Holder" fields=[{key="inner" declared={type=anything}}]
 function f0 name="containerStaysLocal" results=[{type=undefined}] {
-  b0():
     v0 = NewObject layout=L1 fields=[]
     v1 = NewObject -, v0 layout=L2 fields=[0]
     Return
 }
 function f1 name="containerEscapesLater" results=[{type=function}] {
-  b0():
     v0 = Undefined
     v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     v2 = NewClosure v1 function=f3
@@ -24,7 +22,6 @@ function f1 name="containerEscapesLater" results=[{type=function}] {
     Return v2
 }
 function f2 name="oneFieldReadBack" results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L1 fields=[]
     v1 = NewObject layout=L1 fields=[]
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]

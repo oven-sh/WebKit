@@ -13,7 +13,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = PropGet v0 key="prototype"
     v2 = PropGet v1 key="next"
@@ -26,7 +25,6 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return v3
 }
 function f1 name="numbers" module=m0 flags=[IsGenerator, TakesCallee] results=[{type=anything}] {
-  b0(v0: function):
     InitialYield
     v2 = Integer integer=2
     v3 = Yield v2
@@ -34,7 +32,6 @@ function f1 name="numbers" module=m0 flags=[IsGenerator, TakesCallee] results=[{
     Return v4
 }
 function f2 name="twice" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=4
     Return v1
 }

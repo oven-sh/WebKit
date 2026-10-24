@@ -14,7 +14,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class ArrayStorageBuiltinEmitter final : public OperationEmitter {
 public:
-    explicit ArrayStorageBuiltinEmitter(CodeGenerator&);
+    explicit ArrayStorageBuiltinEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generateArrayPush(const InlineCall&);
     void generateArrayIsArray(const InlineCall&);
@@ -25,11 +25,11 @@ public:
     void generateArrayOf(const InlineCall&);
 
 private:
+    ElementAccessEmitter& elements() { return emitter<ElementAccessEmitter>(); }
     Operand lengthResult(const InlineCall&, Integer length);
     void pushOne(const InlineCall&, CellPointer array);
     Operand pushOutOfLine(const InlineCall&, CellPointer array, ValueID pushed);
     void pushSeveral(const InlineCall&, CellPointer array);
-    ArrayElements makeRoom(const InlineCall&, const ArrayElements&, Integer newLength);
 };
 
 static_assert(sizeof(ArrayStorageBuiltinEmitter) == sizeof(OperationEmitter));

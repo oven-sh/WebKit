@@ -8,21 +8,17 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="atLimit" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = Builtin builtin=StringFromCharCode
     v2 = Call v1, -, v0, v0
     Return v2
-}
-# CHECK-LABEL: function f0 name="atLimit"
 # CHECK: v2: string = CallBuiltin -, v0, v0 overload=StringFromCharCode/0
+}
 
 function f1 name="aboveLimit" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = Builtin builtin=StringFromCharCode
     v2 = Call v1, -, v0, v0, v0
     v3 = Call v1, -, v0
     Return v2
-}
-# CHECK-LABEL: function f1 name="aboveLimit"
 # CHECK: v2: anything = Call v1, -, v0, v0, v0
 # CHECK-NEXT: v3: string = CallBuiltin -, v0 overload=StringFromCharCode/0
+}

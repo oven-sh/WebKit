@@ -14,7 +14,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Nobody can say whether a construction by value ever finds a constructor function.
 static double activationsThatCount(const Program& program, const Heat& heat, FunctionID id)
 {
     const Function& function = program.at(id);
@@ -39,7 +38,6 @@ SiteWeight FunctionSiteWeights::weightOf(BlockID block) const
 
 double FunctionSiteWeights::heatOf(BlockID block) const
 {
-    // Never nothing, like the weight: a store that is there fills its field, however seldom it is taken to run.
     constexpr double leastHeat = static_cast<double>(minSiteWeight) / (1u << siteWeightFractionBits);
     if (!(m_activations * frequencyConstants.maxFrequency >= leastHeat))
         return leastHeat;

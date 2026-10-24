@@ -9,7 +9,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Open" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
 
 function f0 name="strings" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="a"
     v2 = String string="b"
     v3 = Integer integer=12

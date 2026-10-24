@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="badSelfLoop" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Jump -> next b1()
   b1():
     Branch v0 -> taken b1(), notTaken b2()
@@ -13,7 +12,6 @@ function f0 name="badSelfLoop" parameters=[{type=boolean}] results=[{type=undefi
     Return
 }
 function f1 name="goodSelfLoop" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -22,7 +20,6 @@ function f1 name="goodSelfLoop" parameters=[{type=boolean}] results=[{type=undef
     Return
 }
 function f2 name="badInnerCycle" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -35,7 +32,6 @@ function f2 name="badInnerCycle" parameters=[{type=boolean}] results=[{type=unde
     Return
 }
 function f3 name="goodInnerCycle" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -49,7 +45,6 @@ function f3 name="goodInnerCycle" parameters=[{type=boolean}] results=[{type=und
     Return
 }
 function f4 name="badCycleThroughHandlerEdge" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1() handler=b2():
     v1 = Call v0
@@ -59,7 +54,6 @@ function f4 name="badCycleThroughHandlerEdge" parameters=[{type=anything}] resul
     Jump -> next b1()
 }
 function f5 name="goodCycleThroughHandlerEdge" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1() handler=b2():
     LoopHint

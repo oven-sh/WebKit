@@ -230,21 +230,6 @@ static AllocationRemark mergeCopiesOfSite(std::span<const AllocationRemark> wors
     return merged;
 }
 
-static void mergeCopies(Vector<AllocationRemark>& remarks)
-{
-    AOT::sort(remarks, { }, remarkOrderKey);
-
-    size_t numberOfSites = 0;
-    for (size_t begin = 0; begin < remarks.size();) {
-        size_t end = begin + 1;
-        while (end < remarks.size() && remarks[end].site == remarks[begin].site)
-            ++end;
-        remarks[numberOfSites++] = mergeCopiesOfSite(remarks.span().subspan(begin, end - begin));
-        begin = end;
-    }
-    remarks.shrink(numberOfSites);
-}
-
 Losses::Losses(Collected collected)
     : m_collected(collected)
 {
@@ -264,6 +249,23 @@ Vector<Record> Losses::takeRecords(Vector<Record> Stripe::* list)
         records.appendVector(std::exchange(stripe.*list, { }));
     }
     return records;
+}
+
+Vector<AllocationRemark> Losses::takeAllocationRemarks()
+{
+    Vector<AllocationRemark> remarks = takeRecords(&Stripe::allocationRemarks);
+    AOT::sort(remarks, { }, remarkOrderKey);
+
+    size_t numberOfSites = 0;
+    for (size_t begin = 0; begin < remarks.size();) {
+        size_t end = begin + 1;
+        while (end < remarks.size() && remarks[end].site == remarks[begin].site)
+            ++end;
+        remarks[numberOfSites++] = mergeCopiesOfSite(remarks.span().subspan(begin, end - begin));
+        begin = end;
+    }
+    remarks.shrink(numberOfSites);
+    return remarks;
 }
 
 void Losses::addLimitHit(LimitID limit, const Subject& subject)
@@ -349,13 +351,6 @@ void Losses::addAllocationRemark(const AllocationRemark& remark)
     Stripe& stripe = stripeOfCurrentThread();
     Locker locker { stripe.lock };
     stripe.allocationRemarks.append(remark);
-}
-
-Vector<AllocationRemark> Losses::takeAllocationRemarks()
-{
-    Vector<AllocationRemark> remarks = takeRecords(&Stripe::allocationRemarks);
-    mergeCopies(remarks);
-    return remarks;
 }
 
 } } // namespace JSC::AOT

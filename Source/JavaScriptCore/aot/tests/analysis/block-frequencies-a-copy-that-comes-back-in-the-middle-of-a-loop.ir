@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="rareSideIsTheFirstSuccessor" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Branch v0 -> taken b5(), notTaken b1()
   b1():
     LoopHint
@@ -32,7 +31,6 @@ function f0 name="rareSideIsTheFirstSuccessor" parameters=[{type=boolean}] resul
 # CHECK-NEXT: b6 frequency: Normal count:
 # CHECK-NOT: frequency
 function f1 name="rareSideIsTheSecondSuccessor" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Branch v0 -> taken b1(), notTaken b5()
   b1():
     LoopHint

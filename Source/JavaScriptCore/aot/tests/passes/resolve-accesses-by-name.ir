@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 function f0 name="unknown-receivers" parameters=[{type=anything}, {type=object}, {type=anything}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: anything, v1: object, v2: anything, v3: anything):
     v4 = PropGet v0 key="a" accessSite=1 receivers=[L0, ..]
     PropSet v0, v3 key="a" mode=Sloppy accessSite=2 receivers=[L0, ..]
     PropDefine v1, v3 key="a"
@@ -18,8 +17,6 @@ function f0 name="unknown-receivers" parameters=[{type=anything}, {type=object},
     v12 = ElemHas v0, v2
     v13 = ElemDelete v0, v2 mode=Sloppy
     Return
-}
-# CHECK-LABEL: function f0 name="unknown-receivers"
 # CHECK: v4: anything = PropGet v0 key="a" accessSite=1 receivers=[L0, ..]
 # CHECK-NEXT: PropSet v0, v3 key="a" mode=Sloppy accessSite=2 receivers=[L0, ..]
 # CHECK-NEXT: PropDefine v1, v3 key="a"
@@ -31,37 +28,32 @@ function f0 name="unknown-receivers" parameters=[{type=anything}, {type=object},
 # CHECK-NEXT: v12: boolean = ElemHas v0, v2
 # CHECK-NEXT: v13: boolean = ElemDelete v0, v2 mode=Sloppy
 # CHECK-NEXT: Return
+}
 function f1 name="free-names" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="input" [isFreeName]
     v3 = PropGet v1 key="maybe" [isFreeName, isForTypeOf]
     PropSet v1, v0 key="output" [isFreeName]
     Return v2
-}
-# CHECK-LABEL: function f1 name="free-names"
 # CHECK: = PropGet v1 key="input" [isFreeName]
 # CHECK-NEXT: = PropGet v1 key="maybe" [isFreeName, isForTypeOf]
 # CHECK-NEXT: PropSet v1, v0 key="output" [isFreeName]
+}
 function f2 name="index-like-keys-and-proto" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0, v1: number):
     v2 = PropGet v0 key="0"
     v3 = PropGet v0 key="1.5"
     v4 = PropGet v0 key="__proto__"
     PropSet v0, v1 key="0"
     v6 = PropHas v0 key="0"
     Return v2
-}
-# CHECK-LABEL: function f2 name="index-like-keys-and-proto"
 # CHECK: = PropGet v0 key="0"
 # CHECK-NEXT: = PropGet v0 key="1.5"
 # CHECK-NEXT: = PropGet v0 key="__proto__"
 # CHECK-NEXT: PropSet v0, v1 key="0"
 # CHECK-NEXT: = PropHas v0 key="0"
+}
 function f3 name="deletion-of-a-field" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropDelete v0 key="x" accessSite=4 receivers=[L0]
     Return v1
-}
-# CHECK-LABEL: function f3 name="deletion-of-a-field"
 # CHECK: v1: boolean = PropDelete v0 key="x" accessSite=4 receivers=[L0]
+}

@@ -11,7 +11,6 @@ layout L2 name="Text" fields=[{key="x" declared={type=string} flags=[IsRequired]
 variable g0 name="cached" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="oneLiteral" parameters=[{type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: number, v1: number):
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
     Return v2
 }
@@ -22,7 +21,6 @@ function f0 name="oneLiteral" parameters=[{type=number}, {type=number}] results=
 # CHECK-NOT: Switch
 
 function f1 name="sameLiteralOnTwoPaths" parameters=[{type=number}, {type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: number, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
@@ -38,7 +36,6 @@ function f1 name="sameLiteralOnTwoPaths" parameters=[{type=number}, {type=number
 # CHECK-NOT: Switch
 
 function f2 name="literalOrNull" parameters=[{type=number}, {type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: number, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
@@ -65,7 +62,6 @@ function f2 name="literalOrNull" parameters=[{type=number}, {type=number}, {type
 # CHECK: [[merge2]]([[result2]]: null|L0):
 
 function f3 name="literalOrNullOrCached" parameters=[{type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: number, v1: number):
     Switch v0 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
   b1():
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
@@ -95,7 +91,6 @@ function f3 name="literalOrNullOrCached" parameters=[{type=number}, {type=number
 # CHECK-NEXT: Jump -> next {{*}}([[cached3]])
 
 function f4 name="twoLayouts" parameters=[{type=number}, {type=string}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: string, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
@@ -118,7 +113,6 @@ function f4 name="twoLayouts" parameters=[{type=number}, {type=string}, {type=bo
 # CHECK: = NewObject -, [[x4]], [[name4]] layout=L1 fields=[0, 1]
 
 function f5 name="oneKeyWithTwoTypes" parameters=[{type=number}, {type=string}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: string, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
@@ -132,7 +126,6 @@ function f5 name="oneKeyWithTwoTypes" parameters=[{type=number}, {type=string}, 
 # CHECK-LABEL: function f5 name="oneKeyWithTwoTypes" module=m0 role=ResultWrapper
 
 function f6 name="twoArrayLengths" parameters=[{type=number}, {type=number}, {type=boolean}] results=[{type=Array<number>}] {
-  b0(v0: number, v1: number, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v3 = NewArray v0 contents=number
@@ -153,7 +146,6 @@ function f6 name="twoArrayLengths" parameters=[{type=number}, {type=number}, {ty
 # CHECK: = NewArray [[first6]], [[second6]] contents=number
 
 function f7 name="variantsMeetBeforeOneReturn" parameters=[{type=number}, {type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: number, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
@@ -170,7 +162,6 @@ function f7 name="variantsMeetBeforeOneReturn" parameters=[{type=number}, {type=
 # CHECK: creator=ResultWrapper{worker=[[worker7]] nullish=Undefined layout=L0} {
 
 function f8 name="nullOrCached" parameters=[{type=boolean}] results=[{type=anything}] {
-  b0(v0: boolean):
     v1 = NewObject layout=L0
     Branch v0 -> taken b1(), notTaken b2()
   b1():
@@ -242,7 +233,6 @@ function f8 name="nullOrCached" parameters=[{type=boolean}] results=[{type=anyth
 
 # Whoever calls them needs no object
 function f9 name="dropsTheResults" parameters=[{type=number}, {type=number}, {type=number}, {type=number}, {type=boolean}, {type=number}, {type=number}, {type=boolean}, {type=number}, {type=number}, {type=number}, {type=string}, {type=boolean}, {type=number}, {type=string}, {type=boolean}, {type=number}, {type=number}, {type=boolean}, {type=number}, {type=number}, {type=boolean}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: number, v1: number, v2: number, v3: number, v4: boolean, v5: number, v6: number, v7: boolean, v8: number, v9: number, v10: number, v11: string, v12: boolean, v13: number, v14: string, v15: boolean, v16: number, v17: number, v18: boolean, v19: number, v20: number, v21: boolean, v22: boolean):
     v23 = CallDirect v0, v1 function=f0
     v24 = CallDirect v2, v3, v4 function=f1
     v25 = CallDirect v5, v6, v7 function=f2

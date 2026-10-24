@@ -8,7 +8,6 @@ layout L1 name="MayChangePrototype" fields=[{key="x" declared={type=number}}] fl
 layout L2 kind=Instance name="Matcher" constructor=f2 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key=@@hasInstance side=Static function=f3 mutability=Fixed}]}
 layout L3 kind=Instance name="MayGainStaticNames" constructor=f4 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true}
 function f0 name="tests" parameters=[{type=L0}, {type=L1}, {type=object}, {type=number}, {type=f1}, {type=function}, {type=f2}, {type=f4}, {type=BoundFunction<pristine[Storage, Names]>}, {type=builtin(Promise)}] results=[{type=undefined}] {
-  b0(v0: L0, v1: L1, v2: object, v3: number, v4: f1, v5: function, v6: f2, v7: f4, v8: BoundFunction<pristine[Storage, Names]>, v9: builtin(Promise)):
     v10 = InstanceOf v0, v4
     v11 = InstanceOf v3, v4
     v12 = InstanceOf v0, v9

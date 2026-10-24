@@ -8,15 +8,19 @@
 
 #if ENABLE(AOT)
 
+#include "AOTHeapCacheRegistry.h"
+#include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
+#include "AOTObjectModelCaches.h"
 #include "AOTPrimitives.h"
 #include "AOTProgramStrings.h"
+#include "AOTRuntimeCounters.h"
 #include "AOTState.h"
 #include "AOTVector.h"
 #include "JSCInlines.h"
-#include "PureNaN.h"
 #include <algorithm>
+#include <bit>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -128,17 +132,31 @@ bool alwaysFits(const RuntimeLayoutTable& layouts, const FieldData& from, const 
     return hasEveryMarkerOf(from.slot.representation(), to.slot.representation()) && typeAlwaysFits(layouts, from, to);
 }
 
-static std::optional<FieldMoveKind> rawMoveKind(SlotRepresentation from, SlotRepresentation to)
+std::optional<AcceptedValue> acceptInSlot(Object& target, const FieldData& to, JSValue value)
 {
-    auto isCell32 = [](SlotRepresentation representation) {
-        return representation == SlotRepresentation::Cell32 || representation == SlotRepresentation::OptionalCell32;
-    };
-    auto isBoxedCell = [](SlotRepresentation representation) {
-        return representation == SlotRepresentation::Cell || representation == SlotRepresentation::JSValue;
-    };
-    if (from == to)
-        return FieldMoveKind::CopyBits;
-    switch (from) {
+    if (!value)
+        return std::nullopt;
+    State& state = target.state();
+    std::optional<AcceptedValue> accepted = state.objects->layouts.accept(to, value);
+    uint64_t scratch = 0;
+    if (!accepted || !tryWriteSlot(*state.strings, to.slot.representation(), &scratch, value))
+        return std::nullopt;
+    return accepted;
+}
+
+static uint32_t offsetOfInlineProperty(PropertyOffset offset)
+{
+    ASSERT(isInlineOffset(offset));
+    return JSObject::offsetOfInlineStorage() + offsetInInlineStorage(offset) * sizeof(EncodedJSValue);
+}
+
+void FieldMovePlan::appendField(const FieldData& from, PropertyOffset to)
+{
+    SlotRepresentation representation = from.slot.representation();
+    bool liesInCell = !(from.flags & (fieldIsOutOfLine | fieldMayExistWithoutStorage));
+    bool isBoxed = false;
+    bool isNarrowReference = false;
+    switch (representation) {
     case SlotRepresentation::Uint8:
     case SlotRepresentation::Int8:
     case SlotRepresentation::Uint16:
@@ -152,366 +170,35 @@ static std::optional<FieldMoveKind> rawMoveKind(SlotRepresentation from, SlotRep
     case SlotRepresentation::OptionalBoolean:
     case SlotRepresentation::LiteralString:
     case SlotRepresentation::LiteralString32:
-        return std::nullopt;
     case SlotRepresentation::Int32:
-        if (to == SlotRepresentation::Double || to == SlotRepresentation::OptionalDouble)
-            return FieldMoveKind::Int32ToDouble;
-        return std::nullopt;
     case SlotRepresentation::Double:
-        if (to == SlotRepresentation::OptionalDouble)
-            return FieldMoveKind::PurifyDouble;
-        return std::nullopt;
     case SlotRepresentation::OptionalDouble:
-        if (to == SlotRepresentation::Double)
-            return FieldMoveKind::CopyBits;
-        return std::nullopt;
+        break;
     case SlotRepresentation::Cell:
     case SlotRepresentation::JSValue:
-        if (isBoxedCell(to))
-            return FieldMoveKind::CopyBits;
-        if (isCell32(to))
-            return FieldMoveKind::UnboxToCell32;
-        return std::nullopt;
+        isBoxed = true;
+        break;
     case SlotRepresentation::Cell32:
     case SlotRepresentation::OptionalCell32:
     case SlotRepresentation::DeferredClosure:
-        if (isCell32(to) || to == SlotRepresentation::DeferredClosure)
-            return FieldMoveKind::CopyBits;
-        if (isBoxedCell(to))
-            return FieldMoveKind::BoxCell32;
-        return std::nullopt;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-FieldMoveKind classifyMove(const RuntimeLayoutTable& layouts, const FieldData* from, const FieldData* to)
-{
-    ASSERT(from || to);
-    constexpr uint32_t mayLieOutsideCell = fieldIsOutOfLine | fieldMayExistWithoutStorage;
-    if (!to)
-        return from->flags & mayLieOutsideCell ? FieldMoveKind::SlotToBoxed : rawMoveKind(from->slot.representation(), SlotRepresentation::JSValue).value_or(FieldMoveKind::SlotToBoxed);
-    if (!from)
-        return to->slot.representation() == SlotRepresentation::JSValue && acceptsEveryValue(layouts.typeOf(*to)) ? FieldMoveKind::CopyBits : FieldMoveKind::BoxedToSlot;
-    bool fits = typeAlwaysFits(layouts, *from, *to);
-    static_assert(traitsOf(SlotRepresentation::JSValue).hasUndefined && traitsOf(SlotRepresentation::JSValue).hasNull);
-    FieldMoveKind valueMove = to->slot.representation() == SlotRepresentation::JSValue && fits ? FieldMoveKind::SlotToBoxed : FieldMoveKind::BoxedToSlot;
-    if (from->flags & mayLieOutsideCell || !fits)
-        return valueMove;
-    return rawMoveKind(from->slot.representation(), to->slot.representation()).value_or(valueMove);
-}
-
-static FieldMove moveToField(const FieldData& to)
-{
-    FieldMove move;
-    move.to = to.slot.offset;
-    move.width = traitsOf(to.slot.representation()).width;
-    move.flags = to.isOutOfLine() ? FieldMove::toIsOutOfLine : 0;
-    move.toField = &to;
-    return move;
-}
-
-static void addGranuleOf(FieldMovePlan& plan, const FieldData& to)
-{
-    if (to.isOutOfLine())
-        plan.granuleBits |= granuleBitOf(to.slot.offset);
-}
-
-static void setMoveSource(FieldMove& move, const FieldData& from)
-{
-    move.from = from.slot.offset;
-    if (from.isOutOfLine())
-        move.flags |= FieldMove::fromIsOutOfLine;
-    move.fromField = &from;
-}
-
-static FieldMove moveToInlineProperty(PropertyOffset to)
-{
-    ASSERT(isInlineOffset(to));
-    FieldMove move;
-    move.to = JSObject::offsetOfInlineStorage() + offsetInInlineStorage(to) * sizeof(EncodedJSValue);
-    move.width = sizeof(EncodedJSValue);
-    return move;
-}
-
-static void setMoveSource(FieldMove& move, PropertyOffset from)
-{
-    if (isInlineOffset(from)) {
-        move.from = JSObject::offsetOfInlineStorage() + offsetInInlineStorage(from) * sizeof(EncodedJSValue);
-        return;
-    }
-    move.from = -offsetInButterfly(from) * sizeof(EncodedJSValue);
-    move.flags |= FieldMove::fromIsOutOfLine;
-}
-
-void FieldMovePlan::append(const FieldMove& move)
-{
-    bool isAbsentAsZero = !move.fromField || representsAbsentAsZero(move.fromField->slot.representation());
-    if (move.kind == FieldMoveKind::CopyBits && move.width == sizeof(EncodedJSValue) && isAbsentAsZero && !move.flags && move.from <= UINT16_MAX && move.to <= UINT16_MAX) {
-        boxedWordMoves.append(BoxedWordMove { static_cast<uint16_t>(move.from), static_cast<uint16_t>(move.to) });
-        return;
-    }
-    moves.append(move);
-}
-
-void FieldMovePlan::appendFieldToField(const RuntimeLayoutTable& layouts, const FieldData& from, const FieldData& to)
-{
-    FieldMove move = moveToField(to);
-    setMoveSource(move, from);
-    move.kind = classifyMove(layouts, &from, &to);
-    if (!hasEveryMarkerOf(from.slot.representation(), to.slot.representation()))
-        move.flags |= FieldMove::refusesUndefinedAndNull;
-    append(move);
-    addGranuleOf(*this, to);
-    namesFieldWithAttributes |= !!((from.flags | to.flags) & fieldAttributeFlags);
-    if (from.slot.representation() == SlotRepresentation::DeferredClosure)
-        sourceHasDeferredClosures = true;
-}
-
-void FieldMovePlan::appendPropertyToField(const RuntimeLayoutTable& layouts, PropertyOffset from, const FieldData& to)
-{
-    FieldMove move = moveToField(to);
-    setMoveSource(move, from);
-    move.kind = classifyMove(layouts, nullptr, &to);
-    append(move);
-    addGranuleOf(*this, to);
-    namesFieldWithAttributes |= !!(to.flags & fieldAttributeFlags);
-}
-
-void FieldMovePlan::appendPropertyToInlineProperty(PropertyOffset from, PropertyOffset to)
-{
-    FieldMove move = moveToInlineProperty(to);
-    setMoveSource(move, from);
-    move.kind = FieldMoveKind::CopyBits;
-    append(move);
-}
-
-void FieldMovePlan::appendFieldToInlineProperty(const RuntimeLayoutTable& layouts, const FieldData& from, PropertyOffset to)
-{
-    FieldMove move = moveToInlineProperty(to);
-    setMoveSource(move, from);
-    move.kind = classifyMove(layouts, &from, nullptr);
-    append(move);
-    namesFieldWithAttributes |= !!(from.flags & fieldAttributeFlags);
-    if (from.slot.representation() == SlotRepresentation::DeferredClosure)
-        sourceHasDeferredClosures = true;
-}
-
-void FieldMovePlan::appendSetAbsent(const FieldData& to)
-{
-    FieldMove move = moveToField(to);
-    move.kind = FieldMoveKind::SetAbsent;
-    moves.append(move);
-}
-
-void FieldMovePlan::finish(Structure* targetStructure, uint32_t targetSize, uint32_t targetOrderWord)
-{
-    status = namesFieldWithAttributes ? FieldMovePlanStatus::NeverApplies : FieldMovePlanStatus::Usable;
-    size = targetSize;
-    orderWord = targetOrderWord;
-    structure = targetStructure;
-}
-
-static const uint8_t* sourceAddress(JSObject* source, const FieldMove& move)
-{
-    ASSERT(!move.fromField || !(move.flags & FieldMove::fromIsOutOfLine));
-    if (move.flags & FieldMove::fromIsOutOfLine)
-        return reinterpret_cast<const uint8_t*>(source->butterfly()) - move.from;
-    return reinterpret_cast<const uint8_t*>(source) + move.from;
-}
-
-static uint8_t* targetAddress(JSObject* target, const FieldMove& move)
-{
-    if (!(move.flags & FieldMove::toIsOutOfLine))
-        return reinterpret_cast<uint8_t*>(target) + move.to;
-    return static_cast<uint8_t*>(uncheckedDowncast<Object>(target)->extension()->slot(move.to));
-}
-
-static JSValue readBoxedValue(JSObject* source, const FieldMove& move)
-{
-    if (!move.fromField)
-        return JSValue::decode(*reinterpret_cast<const EncodedJSValue*>(sourceAddress(source, move)));
-    Object* object = uncheckedDowncast<Object>(source);
-    if (JSValue value = object->readInline(*move.fromField))
-        return value;
-    return object->read(*move.fromField);
-}
-
-static void copyBits(unsigned width, const uint8_t* from, uint8_t* to)
-{
-    switch (width) {
-    case 1:
-        *to = *from;
-        return;
-    case 2:
-        *reinterpret_cast<uint16_t*>(to) = *reinterpret_cast<const uint16_t*>(from);
-        return;
-    case 4:
-        *reinterpret_cast<uint32_t*>(to) = *reinterpret_cast<const uint32_t*>(from);
-        return;
-    case 8:
-        *reinterpret_cast<uint64_t*>(to) = *reinterpret_cast<const uint64_t*>(from);
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-std::optional<AcceptedValue> acceptInSlot(Object& target, const FieldData& to, JSValue value)
-{
-    if (!value)
-        return std::nullopt;
-    State& state = target.state();
-    std::optional<AcceptedValue> accepted = state.objects->layouts.accept(to, value);
-    uint64_t scratch = 0;
-    if (!accepted || !tryWriteSlot(*state.strings, to.slot.representation(), &scratch, value))
-        return std::nullopt;
-    return accepted;
-}
-
-static bool slotHoldsUndefinedOrNull(SlotRepresentation representation, const void* slot)
-{
-    SlotTraits traits = traitsOf(representation);
-    uint64_t bits = readSlotBits(representation, slot);
-    return (traits.hasUndefined && bits == traits.undefinedBits) || (traits.hasNull && bits == traits.nullBits);
-}
-
-static bool canApplyMove(const FieldMove& move, JSObject* source)
-{
-    switch (move.kind) {
-    case FieldMoveKind::SetAbsent:
-        return true;
-    case FieldMoveKind::SlotToBoxed:
-        return !!readBoxedValue(source, move);
-    case FieldMoveKind::CopyBits:
-    case FieldMoveKind::PurifyDouble:
-    case FieldMoveKind::Int32ToDouble:
-    case FieldMoveKind::BoxCell32:
-    case FieldMoveKind::UnboxToCell32: {
-        if (!move.fromField)
-            return true;
-        SlotRepresentation representation = move.fromField->slot.representation();
-        const uint8_t* slot = sourceAddress(source, move);
-        if (slotHoldsAbsent(representation, slot))
-            return false;
-        return !(move.flags & FieldMove::refusesUndefinedAndNull) || !slotHoldsUndefinedOrNull(representation, slot);
-    }
-    case FieldMoveKind::BoxedToSlot:
+        isNarrowReference = true;
         break;
     }
-    RELEASE_ASSERT_NOT_REACHED();
+    static_assert(representsAbsentAsZero(SlotRepresentation::JSValue) && representsAbsentAsZero(SlotRepresentation::Cell));
+    sourceHasDeferredClosures |= representation == SlotRepresentation::DeferredClosure;
+    if (liesInCell && isBoxed && from.slot.offset <= UINT16_MAX) {
+        boxedWordMoves.append({ static_cast<uint16_t>(from.slot.offset), static_cast<uint16_t>(offsetOfInlineProperty(to)) });
+        return;
+    }
+    moves.append({ &from, from.slot.offset, offsetOfInlineProperty(to), liesInCell && isNarrowReference });
 }
 
-static void applyMove(const FieldMove& move, JSObject* source, JSObject* target)
+void FieldMovePlan::appendProperty(PropertyOffset from, PropertyOffset to)
 {
-    auto from = [&] {
-        return sourceAddress(source, move);
-    };
-    auto to = [&] {
-        return targetAddress(target, move);
-    };
-    switch (move.kind) {
-    case FieldMoveKind::CopyBits:
-        copyBits(move.width, from(), to());
-        return;
-    case FieldMoveKind::PurifyDouble:
-        *reinterpret_cast<double*>(to()) = purifyNaN(*reinterpret_cast<const double*>(from()));
-        return;
-    case FieldMoveKind::Int32ToDouble:
-        *reinterpret_cast<double*>(to()) = *reinterpret_cast<const int32_t*>(from());
-        return;
-    case FieldMoveKind::BoxCell32: {
-        uint32_t word = *reinterpret_cast<const uint32_t*>(from());
-        JSValue value = word >= minCell32 ? JSValue(decodeCell32(source, word)) : JSValue::decode(word);
-        *reinterpret_cast<EncodedJSValue*>(to()) = JSValue::encode(value);
-        return;
-    }
-    case FieldMoveKind::UnboxToCell32: {
-        JSValue value = JSValue::decode(*reinterpret_cast<const EncodedJSValue*>(from()));
-        *reinterpret_cast<uint32_t*>(to()) = value.isCell() ? encodeCell32(target, value.asCell()) : static_cast<uint32_t>(JSValue::encode(value));
-        return;
-    }
-    case FieldMoveKind::SlotToBoxed:
-        *reinterpret_cast<EncodedJSValue*>(to()) = JSValue::encode(readBoxedValue(source, move));
-        return;
-    case FieldMoveKind::SetAbsent:
-        uncheckedDowncast<Object>(target)->clear(*move.toField);
-        return;
-    case FieldMoveKind::BoxedToSlot:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-bool applyMoves(VM& vm, const FieldMovePlan& plan, JSObject* target, JSObject* source)
-{
-    ASSERT(plan.isUsable());
-    auto wordOf = [](auto* object, uint16_t offset) -> auto& {
-        return *reinterpret_cast<EncodedJSValue*>(reinterpret_cast<uint8_t*>(object) + offset);
-    };
-    for (BoxedWordMove move : plan.boxedWordMoves) {
-        if (!wordOf(source, move.from))
-            return false;
-    }
-    // The source keeps every one of them alive.
-    Vector<AcceptedValue, 8> acceptedValues;
-    for (const FieldMove& move : plan.moves) {
-        if (move.kind != FieldMoveKind::BoxedToSlot) {
-            if (!canApplyMove(move, source))
-                return false;
-            continue;
-        }
-        std::optional<AcceptedValue> accepted = acceptInSlot(*uncheckedDowncast<Object>(target), *move.toField, readBoxedValue(source, move));
-        if (!accepted)
-            return false;
-        acceptedValues.append(*accepted);
-    }
-    for (BoxedWordMove move : plan.boxedWordMoves)
-        wordOf(target, move.to) = wordOf(source, move.from);
-    size_t numberOfValuesStored = 0;
-    for (const FieldMove& move : plan.moves) {
-        if (move.kind != FieldMoveKind::BoxedToSlot) {
-            applyMove(move, source, target);
-            continue;
-        }
-        bool didStore = uncheckedDowncast<Object>(target)->store(vm, *move.toField, acceptedValues[numberOfValuesStored++]);
-        ASSERT_UNUSED(didStore, didStore);
-    }
-    vm.writeBarrier(target);
-    vm.mutatorFence();
-    return true;
-}
-
-static ALWAYS_INLINE bool tryApplyMove(VM& vm, const FieldMove& move, JSObject* source, JSObject* target)
-{
-    switch (move.kind) {
-    case FieldMoveKind::SlotToBoxed: {
-        ASSERT(move.fromField && !(move.flags & FieldMove::toIsOutOfLine));
-        Object& object = *uncheckedDowncast<Object>(source);
-        JSValue value = object.readInline(*move.fromField);
-        if (!value) [[unlikely]] {
-            value = object.read(*move.fromField);
-            if (!value)
-                return false;
-        }
-        *reinterpret_cast<EncodedJSValue*>(reinterpret_cast<uint8_t*>(target) + move.to) = JSValue::encode(value);
-        return true;
-    }
-    case FieldMoveKind::BoxedToSlot: {
-        Object& object = *uncheckedDowncast<Object>(target);
-        std::optional<AcceptedValue> accepted = acceptInSlot(object, *move.toField, readBoxedValue(source, move));
-        return accepted && object.store(vm, *move.toField, *accepted);
-    }
-    case FieldMoveKind::CopyBits:
-    case FieldMoveKind::PurifyDouble:
-    case FieldMoveKind::Int32ToDouble:
-    case FieldMoveKind::BoxCell32:
-    case FieldMoveKind::UnboxToCell32:
-    case FieldMoveKind::SetAbsent:
-        if (!canApplyMove(move, source))
-            return false;
-        applyMove(move, source, target);
-        return true;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    if (isInlineOffset(from))
+        boxedWordMoves.append({ static_cast<uint16_t>(offsetOfInlineProperty(from)), static_cast<uint16_t>(offsetOfInlineProperty(to)) });
+    else
+        moves.append({ nullptr, static_cast<uint32_t>(-offsetInButterfly(from) * sizeof(EncodedJSValue)), offsetOfInlineProperty(to), false });
 }
 
 bool applyMovesToNewObject(VM& vm, const FieldMovePlan& plan, JSFinalObject* target, JSObject* source)
@@ -519,34 +206,232 @@ bool applyMovesToNewObject(VM& vm, const FieldMovePlan& plan, JSFinalObject* tar
     ASSERT(plan.isUsable());
     auto* wordsOfSource = reinterpret_cast<const uint8_t*>(source);
     auto* wordsOfTarget = reinterpret_cast<uint8_t*>(target);
-    for (BoxedWordMove move : plan.boxedWordMoves) {
+    for (FieldMovePlan::BoxedWordMove move : plan.boxedWordMoves) {
         EncodedJSValue word = *reinterpret_cast<const EncodedJSValue*>(wordsOfSource + move.from);
         if (!word)
             return false;
         *reinterpret_cast<EncodedJSValue*>(wordsOfTarget + move.to) = word;
     }
-    for (const FieldMove& move : plan.moves) {
-        if (!tryApplyMove(vm, move, source, target))
-            return false;
+    for (const FieldMovePlan::Move& move : plan.moves) {
+        JSValue value;
+        if (!move.field)
+            value = JSValue::decode(*reinterpret_cast<const EncodedJSValue*>(reinterpret_cast<const uint8_t*>(source->butterfly()) - move.from));
+        else if (move.isNarrowReferenceInCell) {
+            if (slotHoldsAbsent(move.field->slot.representation(), wordsOfSource + move.from))
+                return false;
+            uint32_t word = *reinterpret_cast<const uint32_t*>(wordsOfSource + move.from);
+            value = word >= minCell32 ? JSValue(decodeCell32(source, word)) : JSValue::decode(word);
+        } else {
+            Object& object = *uncheckedDowncast<Object>(source);
+            value = object.readInline(*move.field);
+            if (!value) [[unlikely]] {
+                value = object.read(*move.field);
+                if (!value)
+                    return false;
+            }
+        }
+        *reinterpret_cast<EncodedJSValue*>(wordsOfTarget + move.to) = JSValue::encode(value);
     }
     vm.writeBarrier(target);
     vm.mutatorFence();
     return true;
 }
 
-JSObject* tryCreateByPlan(VM& vm, const FieldMovePlan& plan, JSObject* source)
+FieldMovePlanCache::FieldMovePlanCache(State& state)
 {
-    ASSERT(plan.isUsable());
-    DeferGC deferGC(vm);
-    if (plan.sourceHasDeferredClosures)
-        uncheckedDowncast<Object>(source)->materializeDeferredClosures(vm);
-    Object* target = Object::create(vm, plan.structure, uncheckedDowncast<CompiledStructure>(plan.structure)->layout(), plan.size, plan.orderWord);
-    if (plan.granuleBits)
-        target->ensureExtensionGranules(vm, plan.granuleBits);
-    if (!applyMoves(vm, plan, target, source))
+    state.caches->add(CacheKind::WeakByKey, "field move plans"_s, *this);
+}
+
+FieldMovePlanCache::~FieldMovePlanCache() = default;
+
+static unsigned hashOfFieldMovePlanKey(const FieldMovePlanKey& key)
+{
+    uint64_t words = key.sourceWords * 0x9e3779b97f4a7c15ull ^ std::rotl(key.targetWords * 0xc2b2ae3d27d4eb4full, 31) ^ std::bit_cast<uintptr_t>(key.sourceStructure) ^ static_cast<uint64_t>(key.purpose) << 56;
+    if (!key.replacedFields.isEmpty())
+        words ^= key.replacedFields.hash();
+    return static_cast<unsigned>(words >> 32 ^ words);
+}
+
+FieldMovePlanCache::Set& FieldMovePlanCache::setFor(const FieldMovePlanKey& key)
+{
+    ASSERT(m_sets);
+    return (*m_sets)[hashOfFieldMovePlanKey(key) % numberOfSets];
+}
+
+const FieldMovePlan* FieldMovePlanCache::find(const FieldMovePlanKey& key)
+{
+    ASSERT(key.purpose != FieldMovePlanPurpose::Forgotten);
+    const Entry*& lastFound = m_lastFound[static_cast<size_t>(key.purpose)];
+    if (lastFound && lastFound->key == key)
+        return lastFound->plan.get();
+    if (!m_sets)
         return nullptr;
-    target->tryFinishBirth();
-    return target;
+    for (auto& way : setFor(key).ways) {
+        if (way && way->key == key) {
+            lastFound = way.get();
+            return way->plan.get();
+        }
+    }
+    return nullptr;
+}
+
+const FieldMovePlan& FieldMovePlanCache::add(VM& vm, FieldMovePlanKey&& key, std::unique_ptr<FieldMovePlan>&& plan)
+{
+    ASSERT(plan);
+    if (!m_sets)
+        m_sets = makeUniqueWithoutFastMallocCheck<Sets>();
+    m_lastFound.fill(nullptr);
+    Set& set = setFor(key);
+    auto way = std::ranges::find_if(set.ways, [](auto& candidate) {
+        return !candidate || candidate->key.purpose == FieldMovePlanPurpose::Forgotten;
+    });
+    if (way == set.ways.end())
+        way = set.ways.begin() + set.nextVictim++ % waysPerSet;
+    *way = makeUnique<Entry>(WTF::move(key), WTF::move(plan));
+    m_writes.recordAll();
+    count(vm, RuntimeCounterID::FieldMovePlansMade);
+    return *(*way)->plan;
+}
+
+size_t FieldMovePlanCache::removeDeadEntries(VM& vm, CollectionScope scope)
+{
+    size_t removed = 0;
+    auto isDead = [&](Structure* structureOrNull) {
+        return structureOrNull && !vm.heap.isMarked(structureOrNull);
+    };
+    m_writes.forEachRegionToSweep(scope, [&](size_t, size_t) {
+        m_lastFound.fill(nullptr);
+        for (Set& set : *m_sets) {
+            for (auto& way : set.ways) {
+                if (!way || (!isDead(way->key.sourceStructure) && !isDead(way->plan->structure)))
+                    continue;
+                way->key.purpose = FieldMovePlanPurpose::Forgotten;
+                way->key.sourceStructure = nullptr;
+                way->plan->structure = nullptr;
+                ++removed;
+            }
+        }
+    });
+    return removed;
+}
+
+static std::unique_ptr<FieldMovePlan> createCloneAsPlan(VM& vm, State& state, Structure* structure, const LayoutData& layout, const BitVector& replaced)
+{
+    auto plan = makeUnique<FieldMovePlan>();
+    RuntimeLayoutTable& layouts = state.objects->layouts;
+    Vector<UniquedStringImpl*, 16> names;
+    BitVector present;
+    structure->forEachProperty(vm, [&](const auto& entry) {
+        const FieldData* field = layouts.field(vm, layout, entry.key());
+        uint16_t index = field ? layout.indexOf(*field) : layout.numberOfFields;
+        present.set(index);
+        names.append(entry.key());
+        plan->clonedMembers.append({ entry.offset(), index });
+        return true;
+    });
+    for (size_t index : replaced) {
+        if (present.get(index))
+            continue;
+        names.append(layouts.nameOf(vm, layout.fields()[index]));
+        plan->clonedMembers.append({ invalidOffset, static_cast<uint16_t>(index) });
+    }
+    plan->builder = ObjectBuilder::tryCreatePlan(state, layout, names.span());
+    return plan;
+}
+
+Object* tryCloneAs(VM& vm, JSObject* source, const LayoutData& layout, std::span<const EncodedJSValue> replacedFields)
+{
+    RELEASE_ASSERT(replacedFields.size() == layout.numberOfFields);
+    if (!isPlainDataObject(source))
+        return nullptr;
+    Structure* structure = source->structure();
+    Instance* instance = Instance::of(structure->realm());
+    if (!instance)
+        return nullptr;
+    State& state = *instance->state;
+    RuntimeLayoutTable& layouts = state.objects->layouts;
+    if (!layouts.hasLayoutForShape(layout.shape) || &layouts.layoutForShape(layout.shape) != &layout)
+        return nullptr;
+
+    FieldMovePlanKey key { FieldMovePlanPurpose::CloneAs };
+    key.targetWords = static_cast<uint64_t>(shapeWordOf(layout.shape)) << 32;
+    key.sourceStructure = structure;
+    for (uint32_t i = 0; i < layout.numberOfFields; ++i) {
+        if (JSValue::decode(replacedFields[i]))
+            key.replacedFields.set(i);
+    }
+    DeferGC deferGC(vm);
+    FieldMovePlanCache& plans = state.objects->caches->movePlans;
+    const FieldMovePlan* plan = plans.find(key);
+    if (!plan) {
+        auto created = createCloneAsPlan(vm, state, structure, layout, key.replacedFields);
+        plan = &plans.add(vm, WTF::move(key), WTF::move(created));
+    }
+    if (!plan->builder)
+        return nullptr;
+    ObjectBuilder builder(vm, *plan->builder);
+    unsigned index = 0;
+    for (auto [from, field] : plan->clonedMembers) {
+        JSValue replacement = field < layout.numberOfFields ? JSValue::decode(replacedFields[field]) : JSValue();
+        if (!builder.tryStore(index++, replacement ? replacement : source->getDirect(from)))
+            return nullptr;
+    }
+    JSObject* created = builder.finish();
+    if (!created)
+        return nullptr;
+    Object* object = uncheckedDowncast<Object>(created);
+    object->tryFinishBirth();
+    return object;
+}
+
+JSFinalObject* tryCopyAsOrdinaryObject(VM& vm, JSGlobalObject* realm, JSObject* source, ExcludedRun excluded)
+{
+    Instance* instance = Instance::of(realm);
+    if (!instance || source->structure()->realm() != realm)
+        return nullptr;
+    State& state = *instance->state;
+    Object* compiled = compiledObjectOrNull(source);
+    FieldMovePlanKey key { FieldMovePlanPurpose::CopyAsOrdinaryObject };
+    key.targetWords = excluded.numberPlusOne;
+    if (compiled) {
+        if (compiled->hasExtraProperties() || compiled->hasOutOfLineKeyOrder() || compiled->layout().keysAreNeverEnumerated)
+            return nullptr;
+        key.sourceWords = compiled->orderAndShapeWords() & orderCountAndShapeMask;
+    } else {
+        if (source->type() != FinalObjectType)
+            return nullptr;
+        key.sourceStructure = source->structure();
+    }
+
+    DeferGC deferGC(vm);
+    FieldMovePlanCache& plans = state.objects->caches->movePlans;
+    const FieldMovePlan* plan = plans.find(key);
+    if (!plan)
+        plan = &plans.add(vm, WTF::move(key), state.objects->caches->assignmentPlans.createPlanForOrdinaryCopy(vm, realm, source, excluded));
+    if (!plan->isUsable())
+        return nullptr;
+    if (plan->sourceHasDeferredClosures)
+        compiled->materializeDeferredClosures(vm);
+    JSFinalObject* copy = JSFinalObject::create(vm, plan->structure);
+    return applyMovesToNewObject(vm, *plan, copy, source) ? copy : nullptr;
+}
+
+bool isPlainDataObject(JSValue value)
+{
+    if (!value.isCell() || value.asCell()->type() != FinalObjectType)
+        return false;
+    Structure* structure = value.asCell()->structure();
+    return !structure->hasPolyProto()
+        && structure->storedPrototype() == structure->realm()->objectPrototype()
+        && !hasIndexedProperties(structure->indexingType())
+        && !structure->isDictionary()
+        && structure->isStructureExtensible()
+        && !structure->hasAnyKindOfGetterSetterProperties()
+        && !structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto()
+        && !structure->hasNonEnumerableProperties()
+        && !structure->hasNonConfigurableProperties()
+        && !structure->hasUnderscoreProtoPropertyExcludingOriginalProto()
+        && structure->isQuickPropertyAccessAllowedForEnumeration();
 }
 
 } } // namespace JSC::AOT

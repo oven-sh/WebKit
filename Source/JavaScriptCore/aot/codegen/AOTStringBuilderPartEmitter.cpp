@@ -38,85 +38,33 @@ static void emitDiamond(Output& out, Condition condition, B3::FrequencyClass fre
     out.appendTo(done);
 }
 
-StringBuilderPartEmitter::StringBuilderPartEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
-
 auto StringBuilderPartEmitter::builderOf(const ValueContext& value) -> Builder
 {
-    if (const StringBuilderEmitter::StackBuilder* onStack = emitter<StringBuilderEmitter>().stackBuilderFor(value->builderOperand()))
+    if (const StringBuilderEmitter::StackBuilder* onStack = builders().stackBuilderFor(value->builderOperand()))
         return { { }, onStack };
     return { in<CellPointer>(value->builderOperand()), nullptr };
-}
-
-void StringBuilderPartEmitter::appendView(Builder builder, const CharacterView& view, LBasicBlock byCall)
-{
-    StringBuilderEmitter& builders = emitter<StringBuilderEmitter>();
-    branchUnless(view.is8Bit, byCall);
-    branchUnless(below(view.length, word32(static_cast<int32_t>(build().limit(LimitID::MinLengthAppendedByReference)))), byCall);
-    if (builder.onStack) {
-        Pointer cursor = builders.cursorOf(*builder.onStack);
-        branchUnless(belowOrEqual(offsetBy(cursor, zeroExtended(view.length), 0), builders.limitOf(*builder.onStack)), byCall);
-        builders.setCursor(*builder.onStack, builders.copyLatin1Characters(cursor, view.characters, view.length));
-    } else {
-        Pointer cursor = builders.tryReserve(builder.storage, view.length, byCall);
-        builders.commit(builder.storage, builders.copyLatin1Characters(cursor, view.characters, view.length));
-    }
-    ensureStillAliveHere(view.owner);
-}
-
-void StringBuilderPartEmitter::appendViewOrCall(Builder builder, const CharacterView& view, LBasicBlock byCall, NOESCAPE const Invocable<void()> auto& appendByCall)
-{
-    LBasicBlock done = newBlock();
-    appendView(builder, view, byCall);
-    m_out.jump(done);
-
-    m_out.appendTo(byCall);
-    appendByCall();
-    m_out.jump(done);
-
-    m_out.appendTo(done);
 }
 
 void StringBuilderPartEmitter::appendString(const OperationContext& context, Builder builder, CellPointer string)
 {
     if (builder.onStack) {
-        StringBuilderEmitter& builders = emitter<StringBuilderEmitter>();
-        builders.setCursor(*builder.onStack, Pointer(callStub(context, stackStringBuilderAppendString(), { builders.addressOf(*builder.onStack).value(), builders.cursorOf(*builder.onStack).value(), string.value() }).first));
+        builders().setCursor(*builder.onStack, Pointer(callStub(context, stackStringBuilderAppendString(), { builders().addressOf(*builder.onStack).value(), builders().cursorOf(*builder.onStack).value(), string.value() }).first));
         return;
     }
     callStub(context, stringBuilderAppendString(), { builder.storage.value(), string.value() });
 }
 
-void StringBuilderPartEmitter::appendConstant(const OperationContext& context, Builder builder, StringID id)
-{
-    StringBuilderEmitter& builders = emitter<StringBuilderEmitter>();
-    String text = emitter<StringEmitter>().textOf(id);
-    if (!text.is8Bit() || (builder.onStack && roundUpToMultipleOf<sizeof(uint64_t)>(text.length()) > StackStringBuilder::maxBytesWrittenPastLimit)) {
-        fail(context, InternalErrorKind::OpcodeWithoutCode);
-        return;
-    }
-    if (builder.onStack) {
-        builders.advance(context, *builder.onStack, builders.writeBytes(builders.cursorOf(*builder.onStack), text.span8()));
-        return;
-    }
-    Pointer cursor = builders.reserve(context, builder.storage, text.length());
-    builders.commit(builder.storage, builders.writeBytes(cursor, text.span8()));
-}
-
 // How many characters are appended is known only when they are written, and fewer than the bytes that are written.
 void StringBuilderPartEmitter::appendInWordsOrByCall(const OperationContext& context, Builder builder, int32_t bytesWritten, NOESCAPE const Invocable<Pointer(Pointer cursor)> auto& write, NOESCAPE const Invocable<Boxed()> auto& box)
 {
-    StringBuilderEmitter& builders = emitter<StringBuilderEmitter>();
     if (builder.onStack) {
-        builders.advance(context, *builder.onStack, write(builders.cursorOf(*builder.onStack)));
+        builders().advance(context, *builder.onStack, write(builders().cursorOf(*builder.onStack)));
         return;
     }
     LBasicBlock byCall = newBlock();
     LBasicBlock done = newBlock();
-    Pointer cursor = builders.tryReserve(builder.storage, word32(bytesWritten), byCall);
-    builders.commit(builder.storage, write(cursor));
+    Pointer cursor = builders().tryReserve(builder.storage, word32(bytesWritten), byCall);
+    builders().commit(builder.storage, write(cursor));
     m_out.jump(done);
 
     m_out.appendTo(byCall);
@@ -129,7 +77,7 @@ void StringBuilderPartEmitter::appendInWordsOrByCall(const OperationContext& con
 void StringBuilderPartEmitter::appendDigits(const OperationContext& context, Builder builder, Word32 value)
 {
     appendInWordsOrByCall(context, builder, StringBuilderEmitter::maxInlineDigits, [&](Pointer cursor) {
-        return emitter<StringBuilderEmitter>().writeDigits(cursor, value);
+        return builders().writeDigits(cursor, value);
     }, [&] {
         return emitter<ConversionEmitter>().boxInteger(zeroExtended(value), Range { 0, StringBuilderEmitter::firstIntegerWrittenByCall - 1 });
     });
@@ -137,7 +85,6 @@ void StringBuilderPartEmitter::appendDigits(const OperationContext& context, Bui
 
 void StringBuilderPartEmitter::appendNullish(const OperationContext& context, Builder builder, Condition isUndefined)
 {
-    StringBuilderEmitter& builders = emitter<StringBuilderEmitter>();
     appendInWordsOrByCall(context, builder, bytesReservedForNullish, [&](Pointer cursor) {
         LBasicBlock writeUndefined = newBlock();
         LBasicBlock writeNull = newBlock();
@@ -145,10 +92,10 @@ void StringBuilderPartEmitter::appendNullish(const OperationContext& context, Bu
         m_out.branch(isUndefined.value(), normalEdge(writeUndefined), normalEdge(writeNull));
 
         m_out.appendTo(writeUndefined);
-        end.add(builders.writeBytes(cursor, "undefined"_s.span8()));
+        end.add(builders().writeBytes(cursor, "undefined"_s.span8()));
 
         m_out.appendTo(writeNull);
-        end.add(builders.writeBytes(cursor, "null"_s.span8()));
+        end.add(builders().writeBytes(cursor, "null"_s.span8()));
         return end.finish();
     }, [&] {
         return Boxed(m_out.select(isUndefined.value(), undefined().value(), boxedConstant(jsNull()).value()));
@@ -158,8 +105,7 @@ void StringBuilderPartEmitter::appendNullish(const OperationContext& context, Bu
 void StringBuilderPartEmitter::appendPrimitive(const OperationContext& context, Builder builder, Boxed primitive, bool isOnRarePath)
 {
     if (builder.onStack) {
-        StringBuilderEmitter& builders = emitter<StringBuilderEmitter>();
-        builders.setCursor(*builder.onStack, callOperation<Pointer>(context, RuntimeOperation::StackStringBuilderAppend, { builders.addressOf(*builder.onStack), builders.cursorOf(*builder.onStack), primitive }, { .isOnRarePath = isOnRarePath }));
+        builders().setCursor(*builder.onStack, callOperation<Pointer>(context, RuntimeOperation::StackStringBuilderAppend, { builders().addressOf(*builder.onStack), builders().cursorOf(*builder.onStack), primitive }, { .isOnRarePath = isOnRarePath }));
         return;
     }
     callVoidOperation(context, RuntimeOperation::StringBuilderAppend, { builder.storage, word32(1), argumentBuffer(singleElementSpan(primitive)) }, { .isOnRarePath = isOnRarePath });
@@ -167,7 +113,18 @@ void StringBuilderPartEmitter::appendPrimitive(const OperationContext& context, 
 
 void StringBuilderPartEmitter::generateStringBuilderAppendConstant(const ValueContext& value)
 {
-    appendConstant(value, builderOf(value), value->string());
+    Builder builder = builderOf(value);
+    String text = emitter<StringEmitter>().textOf(value->string());
+    if (!text.is8Bit() || (builder.onStack && roundUpToMultipleOf<sizeof(uint64_t)>(text.length()) > StackStringBuilder::maxBytesWrittenPastLimit)) {
+        fail(value, InternalErrorKind::OpcodeWithoutCode);
+        return;
+    }
+    if (builder.onStack) {
+        builders().advance(value, *builder.onStack, builders().writeBytes(builders().cursorOf(*builder.onStack), text.span8()));
+        return;
+    }
+    Pointer cursor = builders().reserve(value, builder.storage, text.length());
+    builders().commit(builder.storage, builders().writeBytes(cursor, text.span8()));
 }
 
 void StringBuilderPartEmitter::generateStringBuilderAppendInteger(const ValueContext& value)
@@ -209,13 +166,12 @@ void StringBuilderPartEmitter::generateStringBuilderAppendNumber(const ValueCont
 
 void StringBuilderPartEmitter::generateStringBuilderAppendBoolean(const ValueContext& value)
 {
-    StringBuilderEmitter& builders = emitter<StringBuilderEmitter>();
     Builder builder = builderOf(value);
     Condition isTrue = in<Condition>(value->valueOperand());
     appendInWordsOrByCall(value, builder, bytesReservedForBoolean, [&](Pointer cursor) {
         Word32 firstFourBytes = select(isTrue, word32('t' | 'r' << 8 | 'u' << 16 | 'e' << 24), word32('f' | 'a' << 8 | 'l' << 16 | 's' << 24));
-        m_out.store32(firstFourBytes.value(), builders.bytesAt(cursor));
-        m_out.store32As8(m_out.constInt32('e'), builders.bytesAt(cursor, 4));
+        m_out.store32(firstFourBytes.value(), builders().bytesAt(cursor));
+        m_out.store32As8(m_out.constInt32('e'), builders().bytesAt(cursor, 4));
         return Pointer(m_out.sub(offsetBy(cursor, 5).value(), zeroExtended(isTrue).value()));
     }, [&] {
         return boxBoolean(isTrue);
@@ -234,14 +190,30 @@ void StringBuilderPartEmitter::generateStringBuilderAppendStringRange(const Valu
     CellPointer string = in<CellPointer>(value->stringOperand());
     CodeUnitRange range { strings.word32Of(value->startOperand()), strings.word32Of(value->endOperand()) };
     CharacterView view = strings.subview(strings.viewOf(value, value->stringOperand()), range);
-    appendViewOrCall(builder, view, newBlock(), [&] {
-        if (builder.onStack) {
-            StringBuilderEmitter& builders = emitter<StringBuilderEmitter>();
-            builders.setCursor(*builder.onStack, callOperation<Pointer>(value, RuntimeOperation::StackStringBuilderAppendStringRange, { builders.addressOf(*builder.onStack), builders.cursorOf(*builder.onStack), string, range.start, range.end }, { .isOnRarePath = true }));
-            return;
-        }
+    LBasicBlock byCall = newBlock();
+    LBasicBlock done = newBlock();
+
+    branchUnless(view.is8Bit, byCall);
+    branchUnless(below(view.length, word32(static_cast<int32_t>(build().limit(LimitID::MinLengthAppendedByReference)))), byCall);
+    if (builder.onStack) {
+        Pointer cursor = builders().cursorOf(*builder.onStack);
+        branchUnless(belowOrEqual(offsetBy(cursor, zeroExtended(view.length), 0), builders().limitOf(*builder.onStack)), byCall);
+        builders().setCursor(*builder.onStack, builders().copyLatin1Characters(cursor, view.characters, view.length));
+    } else {
+        Pointer cursor = builders().tryReserve(builder.storage, view.length, byCall);
+        builders().commit(builder.storage, builders().copyLatin1Characters(cursor, view.characters, view.length));
+    }
+    ensureStillAliveHere(view.owner);
+    m_out.jump(done);
+
+    m_out.appendTo(byCall);
+    if (builder.onStack)
+        builders().setCursor(*builder.onStack, callOperation<Pointer>(value, RuntimeOperation::StackStringBuilderAppendStringRange, { builders().addressOf(*builder.onStack), builders().cursorOf(*builder.onStack), string, range.start, range.end }, { .isOnRarePath = true }));
+    else
         callVoidOperation(value, RuntimeOperation::StringBuilderAppendStringRange, { builder.storage, string, range.start, range.end }, { .isOnRarePath = true });
-    });
+    m_out.jump(done);
+
+    m_out.appendTo(done);
 }
 
 void StringBuilderPartEmitter::generateStringBuilderAppendStringOrNullish(const ValueContext& value)

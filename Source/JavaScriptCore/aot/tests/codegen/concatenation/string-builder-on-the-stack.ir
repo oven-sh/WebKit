@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="loop" parameters=[{type=int[0, 1000]}, {type=string}] results=[{type=string}] {
-  b0(v0: int[0, 1000], v1: string):
     v2 = StringBuilderBegin
     v3 = Integer integer=0
     Jump -> next b1(v3)
@@ -33,7 +32,6 @@ function f0 name="loop" parameters=[{type=int[0, 1000]}, {type=string}] results=
 # CHECK: operation operationAOTStackStringBuilderGrow x2
 # CHECK: stub StackStringBuilderAppendString x1
 function f1 name="twoBeginningsOneEnd" parameters=[{type=boolean}] results=[{type=string}] {
-  b0(v0: boolean):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v1 = StringBuilderBegin
@@ -50,7 +48,6 @@ function f1 name="twoBeginningsOneEnd" parameters=[{type=boolean}] results=[{typ
 # CHECK-LABEL: f1: size=
 # CHECK: operation operationAOTStackStringBuilderFinish x1
 function f2 name="discarded" parameters=[{type=boolean}, {type=number}] results=[{type=string}] {
-  b0(v0: boolean, v1: number):
     v2 = StringBuilderBegin
     StringBuilderAppendNumber v2, v1
     Branch v0 -> taken b1(), notTaken b2()
@@ -67,7 +64,6 @@ function f2 name="discarded" parameters=[{type=boolean}, {type=number}] results=
 # CHECK: operation operationAOTStackStringBuilderDiscard x1
 # CHECK: operation operationAOTStackStringBuilderFinish x1
 function f3 name="twoOpenAtOnce" parameters=[{type=boolean}] results=[{type=string}] {
-  b0(v0: boolean):
     v1 = StringBuilderBegin
     v2 = StringBuilderBegin
     StringBuilderAppendConstant v1 string="a"
@@ -87,7 +83,6 @@ function f3 name="twoOpenAtOnce" parameters=[{type=boolean}] results=[{type=stri
 # CHECK-NOT: StackStringBuilder
 # CHECK: operation operationAOTStringBuilderFinish x1
 function f4 name="openInHandler" parameters=[{type=anything}] results=[{type=string}] {
-  b0(v0: anything):
     v1 = StringBuilderBegin
     Jump -> next b1()
   b1() handler=b2():
@@ -105,7 +100,6 @@ function f4 name="openInHandler" parameters=[{type=anything}] results=[{type=str
 # CHECK-NOT: StackStringBuilder
 # CHECK: operation operationAOTStringBuilderFinish x2
 function f5 name="closedInTryBlock" parameters=[{type=anything}] results=[{type=string}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1() handler=b2():
     v1 = StringBuilderBegin
@@ -121,7 +115,6 @@ function f5 name="closedInTryBlock" parameters=[{type=anything}] results=[{type=
 # CHECK-LABEL: f5: size=
 # CHECK: operation operationAOTStackStringBuilderFinish x1
 function f6 name="read" results=[{type=string}] {
-  b0():
     v0 = StringBuilderBegin
     StringBuilderAppendConstant v0 string="a"
     v2 = StringBuilderToString v0
@@ -132,7 +125,6 @@ function f6 name="read" results=[{type=string}] {
 # CHECK-NOT: StackStringBuilder
 # CHECK: operation operationAOTStringBuilderToString x1
 function f7 name="oneAfterTheOther" results=[{type=string}] {
-  b0():
     v0 = StringBuilderBegin
     StringBuilderAppendConstant v0 string="a"
     v2 = StringBuilderFinish v0
@@ -144,7 +136,6 @@ function f7 name="oneAfterTheOther" results=[{type=string}] {
 # CHECK-LABEL: f7: size={{*}} frame={{*}}@
 # CHECK: operation operationAOTStackStringBuilderFinish x2
 function f8 name="twoWebsOpenAtOnce" results=[{type=string}] {
-  b0():
     v0 = StringBuilderBegin
     v1 = StringBuilderBegin
     StringBuilderAppendConstant v0 string="a"
@@ -157,7 +148,6 @@ function f8 name="twoWebsOpenAtOnce" results=[{type=string}] {
 # CHECK-LABEL: f8: size={{*}} frame=3{{*}}@
 # CHECK: operation operationAOTStackStringBuilderFinish x2
 function f9 name="onlyInCompactCode" parameters=[{type=boolean}, {type=string}] results=[{type=string}] {
-  b0(v0: boolean, v1: string):
     Branch v0 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v2 = StringBuilderBegin

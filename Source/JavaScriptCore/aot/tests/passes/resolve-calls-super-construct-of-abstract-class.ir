@@ -15,7 +15,6 @@ layout L6 kind=Instance name="Unused" base=L0 constructor=f6 flags=[HasHeritage]
 layout L7 kind=Instance name="Concrete" base=L0 constructor=f7 flags=[HasHeritage] flow={baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
 layout L8 kind=Instance name="BelowConcrete" base=L7 constructor=f8 flags=[HasHeritage] flow={baseState=Layout base=L7} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
 function f0 name="Legacy" flags=[HasThis] thisType={type=object} results=[{type=undefined}] {
-  b0(v0: object):
     Return
 }
 function f1 name="Abstract" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
@@ -28,54 +27,42 @@ function f7 name="Concrete" kind=DerivedConstructor flags=[HasNewTarget] results
 function f8 name="BelowConcrete" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
 
 function f9 name="one-subclass-has-instances" parameters=[{type=f0}, {type=f2}] results=[{type=anything}] {
-  b0(v0: f0, v1: f2):
     v2 = SuperConstruct v0, v1 layout=L1
     Return v2
-}
-# CHECK-LABEL: function f9 name="one-subclass-has-instances"
 # CHECK: [[prototype]]: object = GetConstructPrototype v1 layout=L2
 # CHECK-NEXT: NewObject [[prototype]] layout=L2
 # CHECK-NOT: layout=L1
 # CHECK-NOT: SuperConstruct
+}
 function f10 name="two-subclasses-have-instances" parameters=[{type=f0}, {type=f4|f5}] results=[{type=anything}] {
-  b0(v0: f0, v1: f4|f5):
     v2 = SuperConstruct v0, v1 layout=L3
     Return v2
-}
-# CHECK-LABEL: function f10 name="two-subclasses-have-instances"
 # CHECK-NOT: NewObject
 # CHECK: SuperConstruct v0, v1 layout=L3
+}
 function f11 name="no-class-has-instances" parameters=[{type=f0}, {type=f6}] results=[{type=anything}] {
-  b0(v0: f0, v1: f6):
     v2 = SuperConstruct v0, v1 layout=L6
     Return v2
-}
-# CHECK-LABEL: function f11 name="no-class-has-instances"
 # CHECK-NOT: NewObject
 # CHECK: SuperConstruct v0, v1 layout=L6
+}
 function f12 name="the-class-has-instances-of-its-own" parameters=[{type=f0}, {type=f7|f8}] results=[{type=anything}] {
-  b0(v0: f0, v1: f7|f8):
     v2 = SuperConstruct v0, v1 layout=L7
     Return v2
-}
-# CHECK-LABEL: function f12 name="the-class-has-instances-of-its-own"
 # CHECK: [[prototype]]: object = GetConstructPrototype v1 layout=L7
 # CHECK-NEXT: NewObject [[prototype]] layout=L7
 # CHECK-NOT: layout=L8
 # CHECK-NOT: SuperConstruct
+}
 function f13 name="new-target-is-not-proven" parameters=[{type=f0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: f0, v1: anything):
     v2 = SuperConstruct v0, v1 layout=L7
     Return v2
-}
-# CHECK-LABEL: function f13 name="new-target-is-not-proven"
 # CHECK-NOT: NewObject
 # CHECK: SuperConstruct v0, v1 layout=L7
+}
 function f14 name="new-target-may-be-a-function" parameters=[{type=f0}, {type=f0|f7}] results=[{type=anything}] {
-  b0(v0: f0, v1: f0|f7):
     v2 = SuperConstruct v0, v1 layout=L7
     Return v2
-}
-# CHECK-LABEL: function f14 name="new-target-may-be-a-function"
 # CHECK-NOT: NewObject
 # CHECK: SuperConstruct v0, v1 layout=L7
+}

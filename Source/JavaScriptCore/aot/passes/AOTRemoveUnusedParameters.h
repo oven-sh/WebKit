@@ -16,12 +16,7 @@ class PassRunner;
 
 void removeUnusedParameters(ProgramEditor&, const OptimizationInputs&, const PassRunner&);
 
-enum class ParameterEditing : uint8_t { Unknown, Allowed };
-
-ParameterEditing canEditParameters(const Program&, const CallGraph&, FunctionID);
-
 void removeEntryParameters(Function&, const BitVector& removedEntryParameters);
-void removeCallArguments(Function& caller, ValueID call, const BitVector& removedEntryParameters);
 
 } } } // namespace JSC::AOT::Typed
 

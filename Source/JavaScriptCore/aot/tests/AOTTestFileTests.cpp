@@ -152,6 +152,19 @@ static void testRepeatIsWrittenOut()
     AOT_TEST_CHECK(std::ranges::equal(file.checkLinesFor("CHECK"_s), std::initializer_list<unsigned> { 3, 5, 5, 3, 5, 5, 8 }, { }, &CheckLine::line));
 }
 
+static void testCheckLinesInsideFunctionHaveLabel()
+{
+    TestFile file = parseTestFile("# RUN: print\n# RUN(OTHER): print\nfunction f0 name=\"a b\" results=[] {\n    Return\n# CHECK: x\n# plain words\n# OTHER-NOT: y\n# CHECK-NEXT: z\n}\n# CHECK: end\nfunction f1 name=\"c\" {\n    Return\n# CHECK: w\n}\n"_s);
+    AOT_TEST_CHECK(file.errors.isEmpty());
+    std::span<const CheckLine> lines = file.checkLinesFor("CHECK"_s);
+    AOT_TEST_CHECK(std::ranges::equal(lines, std::initializer_list<unsigned> { 5, 5, 8, 10, 13, 13 }, { }, &CheckLine::line));
+    AOT_TEST_CHECK(lines[0].kind == CheckKind::Label && lines[0].pattern == "function f0 name=\"a b\""_s);
+    AOT_TEST_CHECK(lines[4].kind == CheckKind::Label && lines[4].pattern == "function f1 name=\"c\""_s);
+    std::span<const CheckLine> otherLines = file.checkLinesFor("OTHER"_s);
+    AOT_TEST_CHECK(otherLines.size() == 2 && otherLines[0].kind == CheckKind::Label && otherLines[1].kind == CheckKind::Not);
+    expectErrorLines("# RUN: print\nfunction f0 results=[] {\n    Return\n# CHECK: x\n}\n"_s, { 4 });
+}
+
 static void testRepeatMalformed()
 {
     expectErrorLines("# RUN: print\n# REPEAT: i = 0..1\n# CHECK: x\n"_s, { 2 });
@@ -165,6 +178,7 @@ static void testRepeatMalformed()
     expectErrorLines("# RUN: print\n# REPEAT: i = 0..1\n# CHECK: %(i\n# END REPEAT\n"_s, { 3 });
     expectErrorLines("# RUN: print\n# REPEAT: i = 0..1\n# CHECK: %(i*)\n# END REPEAT\n"_s, { 3 });
     expectErrorLines("# RUN: print\n# REPEAT: word = a b\n# CHECK: %(word+1)\n# END REPEAT\n"_s, { 3 });
+    expectErrorLines("# RUN: print\n# CHECK: x\n# PROGRAM-OF: a-text-has-no-folder.ir\n"_s, { 3 });
 }
 
 std::span<const NativeTest> testFileTests()
@@ -174,6 +188,7 @@ std::span<const NativeTest> testFileTests()
         { "test-file/requires-malformed"_s, testRequiresMalformed },
         { "test-file/repeat-is-written-out"_s, testRepeatIsWrittenOut },
         { "test-file/repeat-malformed"_s, testRepeatMalformed },
+        { "test-file/check-lines-inside-function-have-label"_s, testCheckLinesInsideFunctionHaveLabel },
         { "runner/skips-other-architecture"_s, testRunnerSkipsOtherArchitecture },
     };
     return tests;

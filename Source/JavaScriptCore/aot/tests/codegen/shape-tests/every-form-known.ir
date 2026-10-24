@@ -17,14 +17,12 @@ module m0 path="main.js" displayPath="main.js"
 layout L%(i) name="T%(i)" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
 # END REPEAT
 function f0 name="allocate" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
 # REPEAT: i = 0..69
     v%(i+1) = NewObject -, v0 layout=L%(i) fields=[0]
 # END REPEAT
     Return
 }
 function f1 name="neighbors" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     LoopHint
@@ -36,7 +34,6 @@ function f1 name="neighbors" parameters=[{type=anything}] results=[{type=undefin
     Return
 }
 function f2 name="neverPasses" parameters=[{type=L10|L12|L14|L16|L18|L20}] results=[{type=anything}] {
-  b0(v0: L10|L12|L14|L16|L18|L20):
     v1 = ShapeTest v0 layouts=[L5]
     v2 = ShapeTest v0 layouts=[L5]
     TestAndBranch v2 -> taken b1(), notTaken b2()
@@ -46,7 +43,6 @@ function f2 name="neverPasses" parameters=[{type=L10|L12|L14|L16|L18|L20}] resul
     Return
 }
 function f3 name="alwaysPasses" parameters=[{type=L10|L12|L14|L16|L18|L20}] results=[{type=anything}] {
-  b0(v0: L10|L12|L14|L16|L18|L20):
     v1 = ShapeTest v0 layouts=[L10, L12, L14, L16, L18, L20, L22]
     v2 = ShapeTest v0 layouts=[L10, L12, L14, L16, L18, L20, L22]
     TestAndBranch v2 -> taken b1(), notTaken b2()
@@ -56,7 +52,6 @@ function f3 name="alwaysPasses" parameters=[{type=L10|L12|L14|L16|L18|L20}] resu
     Return
 }
 function f4 name="upTo" parameters=[{type=L10|L12|L14|L16|L18|L20}] results=[{type=anything}] {
-  b0(v0: L10|L12|L14|L16|L18|L20):
     v1 = ShapeTest v0 layouts=[L10, L12]
     v2 = ShapeTest v0 layouts=[L10, L12]
     TestAndBranch v2 -> taken b1(), notTaken b2()
@@ -66,7 +61,6 @@ function f4 name="upTo" parameters=[{type=L10|L12|L14|L16|L18|L20}] results=[{ty
     Return
 }
 function f5 name="from" parameters=[{type=L10|L12|L14|L16|L18|L20}] results=[{type=anything}] {
-  b0(v0: L10|L12|L14|L16|L18|L20):
     v1 = ShapeTest v0 layouts=[L18, L20]
     v2 = ShapeTest v0 layouts=[L18, L20]
     TestAndBranch v2 -> taken b1(), notTaken b2()
@@ -76,7 +70,6 @@ function f5 name="from" parameters=[{type=L10|L12|L14|L16|L18|L20}] results=[{ty
     Return
 }
 function f6 name="oneShape" parameters=[{type=L10|L12|L14|L16|L18|L20}] results=[{type=anything}] {
-  b0(v0: L10|L12|L14|L16|L18|L20):
     v1 = ShapeTest v0 layouts=[L14]
     v2 = ShapeTest v0 layouts=[L14]
     TestAndBranch v2 -> taken b1(), notTaken b2()
@@ -86,7 +79,6 @@ function f6 name="oneShape" parameters=[{type=L10|L12|L14|L16|L18|L20}] results=
     Return
 }
 function f7 name="range" parameters=[{type=L10|L12|L14|L16|L18|L20}] results=[{type=anything}] {
-  b0(v0: L10|L12|L14|L16|L18|L20):
     v1 = ShapeTest v0 layouts=[L12, L14, L16]
     v2 = ShapeTest v0 layouts=[L12, L14, L16]
     TestAndBranch v2 -> taken b1(), notTaken b2()
@@ -96,7 +88,6 @@ function f7 name="range" parameters=[{type=L10|L12|L14|L16|L18|L20}] results=[{t
     Return
 }
 function f8 name="immediateBits" parameters=[{type=L10|L12|L14|L16|L18|L20}] results=[{type=anything}] {
-  b0(v0: L10|L12|L14|L16|L18|L20):
     v1 = ShapeTest v0 layouts=[L12, L16]
     v2 = ShapeTest v0 layouts=[L12, L16]
     TestAndBranch v2 -> taken b1(), notTaken b2()
@@ -106,7 +97,6 @@ function f8 name="immediateBits" parameters=[{type=L10|L12|L14|L16|L18|L20}] res
     Return
 }
 function f9 name="bitSet" parameters=[{type=L0|L30|L69}] results=[{type=anything}] {
-  b0(v0: L0|L30|L69):
     v1 = ShapeTest v0 layouts=[L0, L69]
     v2 = ShapeTest v0 layouts=[L0, L69]
     TestAndBranch v2 -> taken b1(), notTaken b2()

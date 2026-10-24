@@ -12,7 +12,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f5
     v2 = Call v1, -, v0
@@ -35,17 +34,14 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 # REPEAT: i = 1..4
 function f%(i) name="inner%(i)" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 # END REPEAT
 function f5 name="watch" kind=Plain parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=WeakRef
     v2 = Construct v1, -, v0
     Return v0
 }
 function f6 name="cleanup" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }

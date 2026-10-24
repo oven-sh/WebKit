@@ -7,7 +7,6 @@ module m0 path="main.js" displayPath="main.js"
 variable g0 name="sink" declared={type=anything} initialization=Undefined
 
 function f0 name="castAddsProofs" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -20,8 +19,6 @@ function f0 name="castAddsProofs" parameters=[{type=anything}, {type=boolean}] r
     Branch v1 -> taken b1(), notTaken b3()
   b3():
     Return
-}
-# CHECK-LABEL: function f0 name="castAddsProofs"
 # CHECK: LoopHint
 # CHECK-NEXT: v3: Array<number, proven, pristine[Storage, Names]> = AssumeType {{*}} castType=undefined|Array<number, proven, pristine[Storage, Names]>
 # CHECK-NEXT: [[narrowed0]]: Array<number, proven, pristine[Storage, Names]> = AssumeType {{*}} castType=Array<number, proven, pristine[Storage, Names]>
@@ -29,15 +26,14 @@ function f0 name="castAddsProofs" parameters=[{type=anything}, {type=boolean}] r
 # CHECK: (v5: Array<number, proven, pristine[Storage, Names]>):
 # CHECK: = GetArrayElement v5, v6{{*}} level=Proven
 # CHECK: = TypeTest v0 testedType=Array
-# SIMPLE-LABEL: function f0 name="castAddsProofs"
 # SIMPLE: = TypeTest v0 testedType=Array
 # SIMPLE: LoopHint
 # SIMPLE-NOT: TypeTest
 # SIMPLE: frequency=Unlikely:
 # SIMPLE-NEXT: LoopHint
+}
 
 function f1 name="castOutsideTheLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = AssumeType v0 castType=undefined|Array<number, proven, pristine[Storage, Names]>
     Jump -> next b1()
   b1():
@@ -68,7 +64,6 @@ function f1 name="castOutsideTheLoop" parameters=[{type=anything}, {type=boolean
 # SIMPLE-LABEL: function f2 name="checkedCast"
 
 function f2 name="checkedCast" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = Check v0 castType=number|string cause=AddedByPass
     Jump -> next b1()
   b1():
@@ -98,7 +93,6 @@ function f2 name="checkedCast" parameters=[{type=anything}, {type=boolean}] resu
 # SIMPLE-LABEL: function f3 name="castAddsNothing"
 
 function f3 name="castAddsNothing" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -109,11 +103,10 @@ function f3 name="castAddsNothing" parameters=[{type=anything}, {type=boolean}] 
     Branch v1 -> taken b1(), notTaken b3()
   b3():
     Return
-}
-# CHECK-LABEL: function f3 name="castAddsNothing"
 # CHECK-NOT: AssumeType
 # CHECK: LoopHint
 # CHECK-NEXT: v3: true = TypeTest [[narrowed3]] testedType=Array
 # CHECK: = TypeTest v0 testedType=Array
 # CHECK: ({{*}}: Array):
 # CHECK-NEXT: Jump -> next b1(
+}

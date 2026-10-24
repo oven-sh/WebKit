@@ -14,7 +14,6 @@ entry module=m0
 layout L0 kind=Instance name="Base" constructor=f1
 layout L1 kind=Instance name="Derived" base=L0 constructor=f3 flags=[HasHeritage]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = NewClosure function=f2
@@ -40,38 +39,31 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2
 }
 function f2 name="run" kind=Method results=[{type=anything}] {
-  b0():
     Return
 }
 function f3 name="Derived" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=object}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0
     v3 = SuperConstruct v2, v1 layout=L1
     Return v3
 }
 function f4 name="run" kind=Method results=[{type=anything}] {
-  b0():
     Return
 }
 function f5 name="go" kind=Method flags=[HasThis] captures=[{type=function}] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0 homeKind=ClassPrototype
     v3 = SuperGet v2, v1 key="run"
     v4 = Call v3, v1
     Return
 }
 function f6 name="run" kind=Method results=[{type=anything}] {
-  b0():
     Return
 }
 function f7 name="go" kind=Method flags=[HasThis] captures=[{type=function}] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0
     v3 = SuperGet v2, v1 key="run"
     v4 = Call v3, v1

@@ -7,7 +7,6 @@ module m0 path="main.js" displayPath="main.js"
 variable g0 name="limit" module=m0 declared={type=number|absent} flow={writers=AllKnown stores=AtMostOnce}
 
 function f0 name="everyEdgeDecides" parameters=[{type=i32}, {type=string}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: i32, v1: string, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v0)
@@ -23,8 +22,6 @@ function f0 name="everyEdgeDecides" parameters=[{type=i32}, {type=string}, {type
     Return v8
   b5():
     Return v5
-}
-# CHECK-LABEL: function f0 name="everyEdgeDecides"
 # CHECK: b1():
 # CHECK-NEXT: Jump -> next [[copy]](v0)
 # CHECK: b2():
@@ -33,12 +30,11 @@ function f0 name="everyEdgeDecides" parameters=[{type=i32}, {type=string}, {type
 # CHECK: [[copy]](
 # CHECK-NEXT: = GetModuleVariable variable=g0
 # CHECK-NEXT: = CheckInitialized
-# FOLDED-LABEL: function f0 name="everyEdgeDecides"
 # FOLDED-NOT: TypeTest
+}
 
 # An edge that leaves the test open keeps the block as it is.
 function f1 name="oneEdgeLeavesTheTestOpen" parameters=[{type=i32}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: i32, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v0)
@@ -54,11 +50,9 @@ function f1 name="oneEdgeLeavesTheTestOpen" parameters=[{type=i32}, {type=anythi
     Return v8
   b5():
     Return v5
-}
-# CHECK-LABEL: function f1 name="oneEdgeLeavesTheTestOpen"
 # CHECK: b1():
 # CHECK-NEXT: Jump -> next b3(v0)
 # CHECK: b2():
 # CHECK-NEXT: Jump -> next b3(v1)
-# FOLDED-LABEL: function f1 name="oneEdgeLeavesTheTestOpen"
 # FOLDED: = TypeTest
+}

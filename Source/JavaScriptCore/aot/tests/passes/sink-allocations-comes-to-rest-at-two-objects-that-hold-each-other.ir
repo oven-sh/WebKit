@@ -12,7 +12,6 @@ variable g0 name="default" module=m0 declared={type=anything|absent} flags=[IsIm
 layout L0 name="Pair" fields=[{key="first" declared={type=anything} flags=[IsRequired]}, {key="second" declared={type=anything} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Undefined
     v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     v2 = FinishObject v1

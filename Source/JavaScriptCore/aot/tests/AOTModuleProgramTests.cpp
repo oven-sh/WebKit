@@ -29,7 +29,6 @@ using OptionWords = std::initializer_list<ASCIILiteral>;
 static constexpr ASCIILiteral mainThatRequires = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 kind=Require completes=true}, {target=m2 kind=Require completes=true}, {target=m3 kind=Require completes=true}]
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
     EvaluateModule module=m1 referrer=m0 [isBare]
@@ -63,7 +62,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 static constexpr ASCIILiteral mainThatImports = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m4 completes=true}, {target=m5 completes=true}, {target=m6 completes=true}]
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
     v2 = GetModuleVariable variable=g3
@@ -97,17 +95,14 @@ variable g5 name="a" module=m5 declared={type=anything}
 variable g6 name="default" module=m5 declared={type=anything}
 variable g7 name="sum" module=m6 declared={type=anything}
 function f5 name="faceOfFunctionModule" module=m1 kind=Module results=[{type=anything}] {
-  b0():
     EvaluateModule module=m1 referrer=m4 [isBare]
     Return
 }
 function f6 name="faceOfFilledModule" module=m2 kind=Module results=[{type=anything}] {
-  b0():
     EvaluateModule module=m2 referrer=m5 [isBare]
     Return
 }
 function f7 name="faceOfChainedModule" module=m3 kind=Module results=[{type=anything}] {
-  b0():
     EvaluateModule module=m3 referrer=m6 [isBare]
     Return
 }
@@ -120,7 +115,6 @@ variable g0 name="exports" module=m1 declared={type=anything} initialization=Und
 variable g1 name="exports" module=m2 declared={type=anything} initialization=Undefined
 variable g2 name="exports" module=m3 declared={type=anything} initialization=Undefined
 function f1 name="functionModule" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f4
     v1 = String string="tagged"
     PropSet v0, v1 key="tag"
@@ -128,7 +122,6 @@ function f1 name="functionModule" module=m1 kind=CommonJsModule flags=[IsSloppy]
     Return
 }
 function f2 name="filledModule" module=m2 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
-  b0():
     v0 = NewDictionary
     PutModuleVariable v0 variable=g1
     v2 = Integer integer=41
@@ -136,7 +129,6 @@ function f2 name="filledModule" module=m2 kind=CommonJsModule flags=[IsSloppy] r
     Return
 }
 function f3 name="chainedModule" module=m3 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
     v2 = NewDictionary
@@ -178,7 +170,6 @@ function f3 name="chainedModule" module=m3 kind=CommonJsModule flags=[IsSloppy] 
     Return
 }
 function f4 name="exported" module=m1 results=[{type=anything}] {
-  b0():
     v0 = String string="called"
     Return v0
 }
@@ -191,7 +182,6 @@ entry module=m0
 variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="a" module=m1 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
     v2 = NewDictionary
@@ -211,7 +201,6 @@ function f0 name="main" kind=CommonJsModule flags=[IsSloppy] results=[{type=anyt
     Return
 }
 function f1 name="library" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
-  b0():
     v0 = Integer integer=41
     PutModuleVariable v0 variable=g1
     Return
@@ -224,7 +213,6 @@ entry module=m0
 variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
     v2 = ModuleBuiltin builtin=ModuleObject module=m0
@@ -254,7 +242,6 @@ function f0 name="main" kind=CommonJsModule flags=[IsSloppy] results=[{type=anyt
     Return
 }
 function f1 name="child" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
     v2 = NewDictionary
@@ -274,7 +261,6 @@ entry module=m0
 variable g0 name="meta" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="otherMeta" module=m1 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
     v2 = ModuleBuiltin builtin=ImportMeta module=m0
@@ -303,14 +289,12 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="comparesMeta" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = ModuleBuiltin builtin=ImportMeta module=m0
     v2 = StrictEq v0, v1
     Return v2
 }
 function f2 name="other" module=m1 kind=Module results=[{type=anything}] {
-  b0():
     v0 = ModuleBuiltin builtin=ImportMeta module=m1
     PutModuleVariable v0 variable=g1
     Return
@@ -320,7 +304,6 @@ function f2 name="other" module=m1 kind=Module results=[{type=anything}] {
 static constexpr ASCIILiteral importMetaPassedOn = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
     v2 = ModuleBuiltin builtin=ImportMeta module=m0
@@ -344,7 +327,6 @@ variable g2 name="callback" module=m0 declared={type=anything} initialization=Un
 variable g3 name="received" module=m0 declared={type=anything} initialization=Undefined
 variable g4 name="exports" module=m1 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
     v2 = ModuleBuiltin builtin=ImportMeta module=m0
@@ -388,7 +370,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="library" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
-  b0():
     v0 = NewDictionary
     PutModuleVariable v0 variable=g4
     v2 = ModuleBuiltin builtin=ModuleRequire module=m1
@@ -400,19 +381,16 @@ function f1 name="library" module=m1 kind=CommonJsModule flags=[IsSloppy] result
     Return
 }
 function f2 name="first" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     PutModuleVariable v0 variable=g3
     v2 = Integer integer=1
     Return v2
 }
 function f3 name="second" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     PutModuleVariable v0 variable=g3
     v2 = Integer integer=2
     Return v2
 }
 function f4 name="comparesField" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g1
     v1 = PropGet v0 key="meta"
     v2 = ModuleBuiltin builtin=ImportMeta module=m0
@@ -420,7 +398,6 @@ function f4 name="comparesField" results=[{type=anything}] {
     Return v3
 }
 function f5 name="describesWrapper" module=m1 captures=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="exports"
     v2 = PropGet v0 key="require"
     v3 = PropGet v0 key="module"

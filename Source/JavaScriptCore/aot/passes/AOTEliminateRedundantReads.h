@@ -9,18 +9,10 @@
 
 #include "AOTEffectsDeclared.h"
 #include "AOTIR.h"
-#include <array>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-inline constexpr std::array accessedHeaps { AbstractHeap::ModuleVariables, AbstractHeap::EnvironmentFields, AbstractHeap::ObjectFields };
-
-inline constexpr AbstractHeapSet accessedHeapSet = [] {
-    AbstractHeapSet heaps;
-    for (AbstractHeap heap : accessedHeaps)
-        heaps.add(heap);
-    return heaps;
-}();
+inline constexpr AbstractHeapSet accessedHeapSet { AbstractHeap::ModuleVariables, AbstractHeap::EnvironmentFields, AbstractHeap::ObjectFields };
 
 // What memoryAccessOf() may take for a read of one of the heaps. EliminateRedundantReads has nothing to do in a function without any of these.
 inline constexpr OpcodeSet opcodesReadingAccessedHeaps = [] {

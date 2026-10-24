@@ -15,17 +15,7 @@ class MapSetBuiltinEmitter final : public BuiltinFamilyEmitter {
 public:
     explicit MapSetBuiltinEmitter(CodeGenerator&);
 
-    void generateSetFromIterable(const InlineCall&);
-    void generateMapFromEntries(const InlineCall&);
-    void generateWeakMapGet(const InlineCall&);
-    void generateWeakMapHas(const InlineCall&);
-    void generateWeakSetHas(const InlineCall&);
-    void generateMapDelete(const InlineCall&);
-    void generateSetDelete(const InlineCall&);
-    void generateMapClear(const InlineCall&);
-    void generateSetClear(const InlineCall&);
-    void generateMapIterator(const InlineCall&);
-    void generateSetIterator(const InlineCall&);
+    FOR_EACH_AOT_INLINE_BUILTIN_IN_MAP_SET_BUILTIN(AOT_DECLARE_INLINE_BUILTIN_GENERATOR)
 
 private:
     enum class WeakLookup : uint8_t { MapGet, MapHas, SetHas };

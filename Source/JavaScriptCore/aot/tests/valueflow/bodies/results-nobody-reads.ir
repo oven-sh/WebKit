@@ -17,7 +17,6 @@
 module m0 path="main.js" displayPath="main.js"
 entry module=m0
 function f0 name="deadResults" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0
     v2 = PropGet v0 key="a"
     v3 = Convert v2 declared={type=object flags=[IsExpected]}

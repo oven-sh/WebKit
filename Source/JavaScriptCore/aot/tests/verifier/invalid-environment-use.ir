@@ -26,12 +26,10 @@ function f2 name="badThrown" captures=[{type=env L0}] results=[{type=undefined}]
     Throw v0
 }
 function f3 name="badReadOfRecordField" parameters=[{type=L1}] results=[{type=undefined}] {
-  b0(v0: L1):
     v1 = GetEnvironmentField v0 layout=L1 field=0
     Return
 }
 function f4 name="badStoreToRecordField" parameters=[{type=L1}, {type=number}] results=[{type=undefined}] {
-  b0(v0: L1, v1: number):
     PutEnvironmentField v0, v1 layout=L1 field=0
     Return
 }

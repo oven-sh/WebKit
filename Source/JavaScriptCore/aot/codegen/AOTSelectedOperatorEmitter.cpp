@@ -20,21 +20,6 @@ SelectedOperatorEmitter::SelectedOperatorEmitter(CodeGenerator& generator)
 {
 }
 
-Integer SelectedOperatorEmitter::integerBound(Opcode relationToNumber, Number value)
-{
-    bool roundsUp = relationToNumber == Opcode::Less || relationToNumber == Opcode::GreaterEq;
-    bool isFalseAtGreatest = relationToNumber == Opcode::Greater || relationToNumber == Opcode::GreaterEq;
-    constexpr int64_t least = -maxTrackedInteger;
-    constexpr int64_t greatest = maxTrackedInteger;
-    static_assert(static_cast<double>(greatest + 1) == 0x1p62);
-    int64_t boundForNaN = isFalseAtGreatest ? greatest : least;
-
-    Integer rounded = emitter<ConversionEmitter>().toInteger(roundsUp ? ceil(value) : floor(value));
-    Integer bound = select(equal(value, value), rounded, integer(boundForNaN));
-    bound = select(lessThanOrEqual(value, number(-0x1p62)), integer(least), bound);
-    return select(greaterThanOrEqual(value, number(0x1p62)), integer(greatest), bound);
-}
-
 void SelectedOperatorEmitter::generateIntegerBound(const ValueContext& value)
 {
     Opcode relation = value->comparison();
@@ -43,13 +28,9 @@ void SelectedOperatorEmitter::generateIntegerBound(const ValueContext& value)
         define(value, emitter<ConstantEmitter>().zeroOf(value.representation()));
         return;
     }
-    if (value->numberIsOnLeft())
-        relation = mirroredComparison(relation);
-
     switch (value.representation()) {
     case Representation::Int64:
-        define(value, integerBound(relation, in<Number>(value->numberOperand())));
-        return;
+        break;
     case Representation::Unchosen:
     case Representation::Void:
     case Representation::Boolean:
@@ -62,10 +43,25 @@ void SelectedOperatorEmitter::generateIntegerBound(const ValueContext& value)
     case Representation::JSValue:
     case Representation::LiteralString:
     case Representation::RawWord:
-        break;
+        fail(value, InternalErrorKind::OpcodeWithoutCode);
+        define(value, emitter<ConstantEmitter>().zeroOf(value.representation()));
+        return;
     }
-    fail(value, InternalErrorKind::OpcodeWithoutCode);
-    define(value, emitter<ConstantEmitter>().zeroOf(value.representation()));
+    if (value->numberIsOnLeft())
+        relation = mirroredComparison(relation);
+
+    bool roundsUp = relation == Opcode::Less || relation == Opcode::GreaterEq;
+    bool isFalseAtGreatest = relation == Opcode::Greater || relation == Opcode::GreaterEq;
+    constexpr int64_t least = -maxTrackedInteger;
+    constexpr int64_t greatest = maxTrackedInteger;
+    static_assert(static_cast<double>(greatest + 1) == 0x1p62);
+    int64_t boundForNaN = isFalseAtGreatest ? greatest : least;
+
+    Number number = in<Number>(value->numberOperand());
+    Integer rounded = emitter<ConversionEmitter>().toInteger(roundsUp ? ceil(number) : floor(number));
+    Integer bound = select(equal(number, number), rounded, integer(boundForNaN));
+    bound = select(lessThanOrEqual(number, this->number(-0x1p62)), integer(least), bound);
+    define(value, select(greaterThanOrEqual(number, this->number(0x1p62)), integer(greatest), bound));
 }
 
 void SelectedOperatorEmitter::generateFulfillFreshPromise(const ValueContext& value)

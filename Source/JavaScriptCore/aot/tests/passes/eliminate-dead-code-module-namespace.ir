@@ -15,7 +15,6 @@ module m5 path="lazy.js" displayPath="lazy.js"
 module m6 path="#6" displayPath="common.cjs" exportRule=CommonJs requests=[{target=m3 kind=Require completes=true}]
 
 function f0 name="unused" results=[{type=anything}] {
-  b0():
     v0 = ModuleNamespace module=m1
     v1 = ModuleNamespace module=m2
     v2 = ModuleNamespace module=m3
@@ -24,22 +23,18 @@ function f0 name="unused" results=[{type=anything}] {
     v5 = ModuleNamespace module=m6
     v6 = Undefined
     Return v6
-}
-# CHECK-LABEL: function f0 name="unused"
 # CHECK-NOT: ModuleNamespace module=m1
 # CHECK: = ModuleNamespace module=m2
 # CHECK-NEXT: = ModuleNamespace module=m3
 # CHECK-NEXT: = ModuleNamespace module=m4
 # CHECK-NEXT: = ModuleNamespace module=m5 phase=Defer
 # CHECK-NEXT: = ModuleNamespace module=m6
+}
 function f1 name="common" kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="used" results=[{type=anything}] {
-  b0():
     v0 = ModuleNamespace module=m1
     Return v0
-}
-# CHECK-LABEL: function f2 name="used"
 # CHECK: = ModuleNamespace module=m1
+}

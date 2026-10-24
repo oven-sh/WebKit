@@ -6,25 +6,21 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="target" flags=[HasRestParameter] parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     Return
 }
 
 function f1 name="restLength" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0} {
-  b0(v0: f0, v1: anything):
     v2 = CreateRest firstArgument=1
     v3 = CallBuiltin v2 overload=ArrayPrototypeLength/0
     Return v3
-}
-# CHECK-LABEL: function f1 name="restLength"
 # CHECK-NOT: CreateRest
 # CHECK-NOT: CallBuiltin
 # CHECK: [[length1]]:{{*}}= GetRestLength firstArgument=1
 # CHECK-NOT: CreateRest
 # CHECK-NOT: CallBuiltin
+}
 
 function f2 name="restLengthAndElement" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0} {
-  b0(v0: f0, v1: anything):
     v2 = CreateRest
     v3 = CallBuiltin v2 overload=ArrayPrototypeLength/0
     v4 = ToBoolean v3
@@ -35,80 +31,67 @@ function f2 name="restLengthAndElement" role=GenericEntrypoint flags=[HasThis] c
     Return v6
   b2():
     Return v3
-}
-# CHECK-LABEL: function f2 name="restLengthAndElement"
 # CHECK-NOT: CreateRest
 # CHECK-NOT: CallBuiltin
 # CHECK: = GetRestLength
 # CHECK-NOT: CreateRest
 # CHECK: = GetArgument
 # CHECK-NOT: CreateRest
+}
 
 function f3 name="literalLength" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewArray v0, v1 contents=anything
     v3 = CallBuiltin v2 overload=ArrayPrototypeLength/0
     Return v3
-}
-# CHECK-LABEL: function f3 name="literalLength"
 # CHECK-NOT: NewArray
 # CHECK-NOT: CallBuiltin
 # CHECK: : 2 = Integer integer=2
 # CHECK-NOT: NewArray
 # CHECK-NOT: CallBuiltin
+}
 
 function f4 name="lengthAfterAppend" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewArray v0 contents=anything
     AppendElement v2, v1
     v4 = CallBuiltin v2 overload=ArrayPrototypeLength/0
     Return v4
-}
-# CHECK-LABEL: function f4 name="lengthAfterAppend"
 # CHECK-NOT: NewArray
 # CHECK-NOT: CallBuiltin
 # CHECK: : 2 = Integer integer=2
 # CHECK-NOT: NewArray
+}
 
 function f5 name="substringLength" parameters=[{type=string}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=number}] {
-  b0(v0: string, v1: int[0, 100], v2: int[0, 100]):
     v3 = Substring v0, v1, v2
     v4 = CallBuiltin v3 overload=StringPrototypeLength/0
     Return v4
-}
-# CHECK-LABEL: function f5 name="substringLength"
 # CHECK-NOT: Substring
 # CHECK-NOT: CallBuiltin
 # CHECK: = Sub v2, v1
 # CHECK-NOT: Substring
 # CHECK-NOT: CallBuiltin
+}
 
 function f6 name="lengthOfEscapedArray" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewArray v0 contents=anything
     v3 = Call v1, -, v2
     v4 = CallBuiltin v2 overload=ArrayPrototypeLength/0
     Return v4
-}
-# CHECK-LABEL: function f6 name="lengthOfEscapedArray"
 # CHECK: v2: Array = NewArray v0 contents=anything
 # CHECK-NEXT: = Call v1, -, v2
 # CHECK-NEXT: = CallBuiltin v2 overload=ArrayPrototypeLength/0
+}
 
 function f7 name="otherBuiltinNeedsTheArray" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
-  b0(v0: anything, v1: string):
     v2 = NewArray v0 contents=anything
     v3 = CallBuiltin v2, v1 overload=ArrayPrototypeJoin/0 [needsPristineReceiver]
     Return v3
-}
-# CHECK-LABEL: function f7 name="otherBuiltinNeedsTheArray"
 # CHECK: v2: Array = NewArray v0 contents=anything
 # CHECK-NEXT: = CallBuiltin v2, v1 overload=ArrayPrototypeJoin/0
+}
 
 function f8 name="lengthOfParameter" parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     v1 = CallBuiltin v0 overload=ArrayPrototypeLength/0
     Return v1
-}
-# CHECK-LABEL: function f8 name="lengthOfParameter"
 # CHECK: v1:{{*}}= CallBuiltin v0 overload=ArrayPrototypeLength/0
+}

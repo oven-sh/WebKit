@@ -26,56 +26,44 @@ function f6 name="Reassigned" kind=BaseConstructor flags=[HasNewTarget] results=
 function f7 name="Relinked" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f8 name="Reparented" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f9 name="hasInstance" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Return
 }
 
 function f10 name="closed-union" parameters=[{type=L0|L1|L5}, {type=f0}] results=[{type=anything}] {
-  b0(v0: L0|L1|L5, v1: f0):
     v2 = InstanceOf v0, v1
     Return v2
-}
-# CHECK-LABEL: function f10 name="closed-union"
 # CHECK-NEXT: b0(v0: L0|L1|L5, v1: f0):
 # CHECK-NEXT: v2: boolean = TypeTest v0 testedType=L0|L1
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
+}
 function f11 name="subclass-is-tested-for" parameters=[{type=L0|L1|L5}, {type=f1}] results=[{type=anything}] {
-  b0(v0: L0|L1|L5, v1: f1):
     v2 = InstanceOf v0, v1
     Return v2
-}
-# CHECK-LABEL: function f11 name="subclass-is-tested-for"
 # CHECK-NEXT: b0(v0: L0|L1|L5, v1: f1):
 # CHECK-NEXT: v2: boolean = TypeTest v0 testedType=L1
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
+}
 function f12 name="union-with-primitives" parameters=[{type=undefined|number|L1|L5}, {type=f0}] results=[{type=anything}] {
-  b0(v0: undefined|number|L1|L5, v1: f0):
     v2 = InstanceOf v0, v1
     Return v2
-}
-# CHECK-LABEL: function f12 name="union-with-primitives"
 # CHECK-NEXT: b0(v0: undefined|number|L1|L5, v1: f0):
 # CHECK-NEXT: v2: boolean = TypeTest v0 testedType=L1
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
+}
 function f13 name="unrelated-subject" parameters=[{type=L5}, {type=f0}] results=[{type=anything}] {
-  b0(v0: L5, v1: f0):
     v2 = InstanceOf v0, v1
     Return v2
-}
-# CHECK-LABEL: function f13 name="unrelated-subject"
 # CHECK-NEXT: b0(v0: L5, v1: f0):
 # CHECK-NEXT: v2: false = Boolean
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
+}
 function f14 name="unknown-subject" parameters=[{type=anything}, {type=f0}] results=[{type=anything}] {
-  b0(v0: anything, v1: f0):
     v2 = InstanceOf v0, v1
     Return v2
-}
-# CHECK-LABEL: function f14 name="unknown-subject"
 # CHECK-NEXT: b0(v0: anything, v1: f0):
 # CHECK-NEXT: [[linksHold]]: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L7}]
 # CHECK-NEXT: Branch [[linksHold]] -> taken [[asDefined]](), notTaken [[changedSince]]()
@@ -95,12 +83,10 @@ function f14 name="unknown-subject" parameters=[{type=anything}, {type=f0}] resu
 # CHECK: [[foreignShape]]() frequency=Unlikely:
 # CHECK-NEXT: [[prototypeAgain]]: object = GetClassPrototype v1 layout=L0
 # CHECK-NEXT: : boolean = HasInPrototypeChain v0, [[prototypeAgain]]
+}
 function f15 name="member-may-change-its-prototype" parameters=[{type=L0|L8}, {type=f0}] results=[{type=anything}] {
-  b0(v0: L0|L8, v1: f0):
     v2 = InstanceOf v0, v1
     Return v2
-}
-# CHECK-LABEL: function f15 name="member-may-change-its-prototype"
 # CHECK-NEXT: b0(v0: L0|L8, v1: f0):
 # CHECK-NEXT: [[keepsPrototype]]: boolean = AreMembersUnchanged conditions=[{kind=InstancePrototypeUnchanged layout=L8}]
 # CHECK-NEXT: Branch [[keepsPrototype]] -> taken [[kept]](), notTaken [[reparented]]()
@@ -108,12 +94,10 @@ function f15 name="member-may-change-its-prototype" parameters=[{type=L0|L8}, {t
 # CHECK-NEXT: = TypeTest v0 testedType=L0
 # CHECK: [[reparented]]() frequency=Unlikely:
 # CHECK-NEXT: : boolean = InstanceOf v0, v1
+}
 function f16 name="descendant-with-a-changeable-link" parameters=[{type=L0|L5|L7}, {type=f0}] results=[{type=anything}] {
-  b0(v0: L0|L5|L7, v1: f0):
     v2 = InstanceOf v0, v1
     Return v2
-}
-# CHECK-LABEL: function f16 name="descendant-with-a-changeable-link"
 # CHECK-NEXT: b0(v0: L0|L5|L7, v1: f0):
 # CHECK-NEXT: [[linkHolds]]: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L7}]
 # CHECK-NEXT: Branch [[linkHolds]] -> taken [[linked]](), notTaken [[relinked]]()
@@ -121,22 +105,18 @@ function f16 name="descendant-with-a-changeable-link" parameters=[{type=L0|L5|L7
 # CHECK-NEXT: = TypeTest v0 testedType=L0|L7
 # CHECK: [[relinked]]() frequency=Unlikely:
 # CHECK-NEXT: : boolean = InstanceOf v0, v1
+}
 function f17 name="static-has-instance-method" parameters=[{type=anything}, {type=f2}] results=[{type=anything}] {
-  b0(v0: anything, v1: f2):
     v2 = InstanceOf v0, v1
     Return v2
-}
-# CHECK-LABEL: function f17 name="static-has-instance-method"
 # CHECK-NEXT: b0(v0: anything, v1: f2):
 # CHECK-NEXT: v2: boolean = InstanceOf v0, v1
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
+}
 function f18 name="class-object-may-gain-names" parameters=[{type=anything}, {type=f3}] results=[{type=anything}] {
-  b0(v0: anything, v1: f3):
     v2 = InstanceOf v0, v1
     Return v2
-}
-# CHECK-LABEL: function f18 name="class-object-may-gain-names"
 # CHECK-NEXT: b0(v0: anything, v1: f3):
 # CHECK-NEXT: [[hasNoOwnTest]]: boolean = AreMembersUnchanged conditions=[{layout=L3 side=Static key=@@hasInstance}]
 # CHECK-NEXT: Branch [[hasNoOwnTest]] -> taken [[ordinaryTest]](), notTaken [[ownTest]]()
@@ -144,12 +124,10 @@ function f18 name="class-object-may-gain-names" parameters=[{type=anything}, {ty
 # CHECK-NEXT: = TypeTest v0 testedType=L3
 # CHECK: [[ownTest]]() frequency=Unlikely:
 # CHECK-NEXT: : boolean = InstanceOf v0, v1
+}
 function f19 name="class-evaluated-more-than-once" parameters=[{type=anything}, {type=f4}] results=[{type=anything}] {
-  b0(v0: anything, v1: f4):
     v2 = InstanceOf v0, v1
     Return v2
-}
-# CHECK-LABEL: function f19 name="class-evaluated-more-than-once"
 # CHECK-NEXT: b0(v0: anything, v1: f4):
 # CHECK-NEXT: [[isOnlyClass]]: boolean = AreMembersUnchanged conditions=[{kind=ClassEvaluatedOnce layout=L4}]
 # CHECK-NEXT: Branch [[isOnlyClass]] -> taken [[onlyClass]](), notTaken [[oneOfSeveral]]()
@@ -157,12 +135,10 @@ function f19 name="class-evaluated-more-than-once" parameters=[{type=anything}, 
 # CHECK-NEXT: = TypeTest v0 testedType=L4
 # CHECK: [[oneOfSeveral]]() frequency=Unlikely:
 # CHECK-NEXT: : boolean = InstanceOf v0, v1
+}
 function f20 name="prototype-property-may-change" parameters=[{type=anything}, {type=f6}] results=[{type=anything}] {
-  b0(v0: anything, v1: f6):
     v2 = InstanceOf v0, v1
     Return v2
-}
-# CHECK-LABEL: function f20 name="prototype-property-may-change"
 # CHECK-NEXT: b0(v0: anything, v1: f6):
 # CHECK-NEXT: [[hasOwnPrototype]]: boolean = AreMembersUnchanged conditions=[{layout=L6 side=Static key="prototype"}]
 # CHECK-NEXT: Branch [[hasOwnPrototype]] -> taken [[ownPrototype]](), notTaken [[otherPrototype]]()
@@ -171,23 +147,20 @@ function f20 name="prototype-property-may-change" parameters=[{type=anything}, {
 # CHECK-NEXT: : boolean = HasInPrototypeChain v0, [[prototypeOfFunction]]
 # CHECK: [[otherPrototype]]() frequency=Unlikely:
 # CHECK-NEXT: : boolean = InstanceOf v0, v1
+}
 function f21 name="built-in-class" parameters=[{type=anything}, {type=builtin(Array)}] results=[{type=anything}] {
-  b0(v0: anything, v1: builtin(Array)):
     v2 = InstanceOf v0, v1
     Return v2
-}
-# CHECK-LABEL: function f21 name="built-in-class"
 # CHECK-NEXT: b0(v0: anything, v1: builtin(Array)):
 # CHECK-NEXT: v2: boolean = InstanceOf v0, v1
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
+}
 function f22 name="nullable-class-object" parameters=[{type=anything}, {type=undefined|f0}] results=[{type=anything}] {
-  b0(v0: anything, v1: undefined|f0):
     v2 = InstanceOf v0, v1
     Return v2
-}
-# CHECK-LABEL: function f22 name="nullable-class-object"
 # CHECK-NEXT: b0(v0: anything, v1: undefined|f0):
 # CHECK-NEXT: v2: boolean = InstanceOf v0, v1
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
+}

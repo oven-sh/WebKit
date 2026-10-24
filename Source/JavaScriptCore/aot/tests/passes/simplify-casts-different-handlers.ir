@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="onlyMergeIsCovered" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = Integer integer=1
@@ -20,16 +19,14 @@ function f0 name="onlyMergeIsCovered" parameters=[{type=anything}, {type=boolean
     v5 = CatchValue
     v6 = Integer integer=0
     Return v6
-}
-# CHECK-LABEL: function f0 name="onlyMergeIsCovered"
 # CHECK: b2():
 # CHECK-NEXT: Jump -> next b3(v0)
 # CHECK-NEXT: b3(v3: anything) handler=b4():
 # CHECK-NEXT: v4: number = Check v3 castType=number
 # CHECK-NEXT: Return v4
+}
 
 function f1 name="onlyPredecessorIsCovered" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = Integer integer=1
@@ -44,17 +41,15 @@ function f1 name="onlyPredecessorIsCovered" parameters=[{type=anything}, {type=b
   b4(v6):
     v7 = Check v6 castType=number
     Return v7
-}
-# CHECK-LABEL: function f1 name="onlyPredecessorIsCovered"
 # CHECK: b2() handler=b3():
 # CHECK-NEXT: v3: anything = Call v0
 # CHECK-NEXT: Jump -> next b4(v3)
 # CHECK: b4(v6: anything):
 # CHECK-NEXT: v7: number = Check v6 castType=number
 # CHECK-NEXT: Return v7
+}
 
 function f2 name="sameHandlerOtherArguments" parameters=[{type=anything}, {type=boolean}, {type=boolean}] results=[{type=number}] {
-  b0(v0: anything, v1: boolean, v2: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v3 = Integer integer=1
@@ -68,10 +63,9 @@ function f2 name="sameHandlerOtherArguments" parameters=[{type=anything}, {type=
     v7 = CatchValue
     v8 = Integer integer=0
     Return v8
-}
-# CHECK-LABEL: function f2 name="sameHandlerOtherArguments"
 # CHECK: b2() handler=b4(v1):
 # CHECK-NEXT: Jump -> next b3(v0)
 # CHECK-NEXT: b3(v4: anything) handler=b4(v2):
 # CHECK-NEXT: v5: number = Check v4 castType=number
 # CHECK-NEXT: Return v5
+}

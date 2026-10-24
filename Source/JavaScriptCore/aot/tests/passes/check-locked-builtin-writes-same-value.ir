@@ -5,7 +5,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Math
     v1 = PropGet v0 key="imul" @10
     PropSet v0, v1 key="imul" mode=Strict @20
@@ -28,6 +27,5 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="polyfill" results=[{type=anything}] {
-  b0():
     Return
 }

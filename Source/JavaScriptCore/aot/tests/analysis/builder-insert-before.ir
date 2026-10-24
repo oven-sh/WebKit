@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="insertBefore" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Negate v0
     v2 = Negate v1
     Jump -> next b1()

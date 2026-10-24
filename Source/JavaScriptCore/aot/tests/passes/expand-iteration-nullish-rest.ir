@@ -9,7 +9,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="arrayOrNullish" parameters=[{type=undefined|null|Array<number, pristine[Names]>}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: undefined|null|Array<number, pristine[Names]>, v1: anything):
     v2 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -23,8 +22,6 @@ function f0 name="arrayOrNullish" parameters=[{type=undefined|null|Array<number,
     Jump -> next b1()
   b3():
     Return
-}
-# CHECK-LABEL: function f0 name="arrayOrNullish"
 # CHECK: b0(v0: undefined|null|Array<number, pristine[Names]>, v1: anything):
 # CHECK-NEXT: [[isArray0]]: boolean = TypeTest v0 testedType=Array<number>
 # CHECK-NEXT: Branch [[isArray0]] -> taken [[array0]](| 0), notTaken [[nullish0]](| 0)
@@ -50,16 +47,15 @@ function f0 name="arrayOrNullish" parameters=[{type=undefined|null|Array<number,
 # CHECK-NOT: TypeTest
 # CHECK-NOT: LoopHint
 # CHECK-NOT: = Call v1,
-# ABSENT-LABEL: function f0 name="arrayOrNullish"
 # ABSENT-NOT: Switch
 # ABSENT-NOT: Unspecified
 # ABSENT-NOT: IsPristine
 # ABSENT-NOT: @@iterator
 # ABSENT-NOT: key="next"
 # ABSENT-NOT: [isNeverInlined]
+}
 
 function f1 name="arrayOrNumber" parameters=[{type=number|Array<number, pristine[Names]>}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: number|Array<number, pristine[Names]>, v1: anything):
     v2 = IteratorOpen v0
     Jump -> next b1()
   b1():

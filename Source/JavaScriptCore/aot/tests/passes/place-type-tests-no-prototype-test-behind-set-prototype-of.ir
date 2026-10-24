@@ -7,21 +7,17 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Made" fields=[{key="turn" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity]}
 
 function f0 name="readsBehindSetPrototypeOf" parameters=[{type=L0}, {type=object}] results=[{type=anything}] {
-  b0(v0: L0, v1: object):
     v2 = CallBuiltin -, v0, v1 overload=ObjectSetPrototypeOf/0
     v3 = PropGet v2 key="kindOf"
     Return v3
-}
-# CHECK-LABEL: function f0 name="readsBehindSetPrototypeOf"
 # CHECK-NOT: HasLayoutPrototype
 # CHECK: = PropGet v2 key="kindOf"
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
+}
 
 function f1 name="readsOffAnotherObject" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="kindOf"
     Return v1
-}
-# CHECK-LABEL: function f1 name="readsOffAnotherObject"
 # CHECK: = HasLayoutPrototype v0
+}

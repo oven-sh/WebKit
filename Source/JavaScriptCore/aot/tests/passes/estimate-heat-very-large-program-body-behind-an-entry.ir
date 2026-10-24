@@ -17,7 +17,6 @@ entry module=m0
 variable g0 name="input" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = ToBoolean v0
     Jump -> next b1()
@@ -33,35 +32,29 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="entryCalledByFourFunctions" role=ParameterWrapper parameters=[{type=anything}] results=[{type=anything}] creator=ParameterWrapper{body=f2 parameter=0} {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f2
     Return v1
 }
 
 function f2 name="bodyBehindThatEntry" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f3
     Return v1
 }
 
 function f3 name="calledByTheBodyAlone" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 
 function f4 name="entryCalledByOneFunction" role=ParameterWrapper parameters=[{type=anything}] results=[{type=anything}] creator=ParameterWrapper{body=f5 parameter=0} {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f5
     Return v1
 }
 
 function f5 name="bodyBehindTheOtherEntry" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 
 function f6 name="firstCaller" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f1
     v2 = CallDirect v0 function=f4
     v3 = CallDirect v0 function=f10
@@ -69,33 +62,28 @@ function f6 name="firstCaller" parameters=[{type=anything}] results=[{type=anyth
 }
 
 function f7 name="secondCaller" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f1
     v2 = CallDirect v0 function=f10
     Return v0
 }
 
 function f8 name="thirdCaller" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f1
     v2 = CallDirect v0 function=f10
     Return v0
 }
 
 function f9 name="fourthCaller" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f1
     v2 = CallDirect v0 function=f10
     Return v0
 }
 
 function f10 name="entryOfAnAsyncFunction" role=ParameterWrapper parameters=[{type=anything}] results=[{type=anything}] creator=ParameterWrapper{body=f11 parameter=0} {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f11
     Return v1
 }
 
 function f11 name="asyncBody" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }

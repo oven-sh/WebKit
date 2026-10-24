@@ -911,7 +911,6 @@ static void testIndexWiderThanTheHash(LoadedProgram& program)
 static constexpr ASCIILiteral programThatProbesSet = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="registry" [isFreeName]
     v2 = NewClosure function=f1
@@ -919,7 +918,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="countPresent" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = Check v0 castType=i32
     v4 = Check v1 castType=i32
     v5 = Check v2 castType=i32

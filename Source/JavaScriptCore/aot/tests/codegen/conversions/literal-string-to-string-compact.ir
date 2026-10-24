@@ -3,29 +3,10 @@
 # OPTIONS: heat=everything-is-cold
 # RUN: generate-code calls
 
-module m0 path="main.js" displayPath="main.js"
-typesite w0 module=m0 position=10 kind=Parameter
-typesite w1 module=m0 position=20 kind=Parameter
-typesite w2 module=m0 position=30 kind=Parameter
-
-function f0 name="widen" parameters=[{type="a"|"b" site=w0}] results=[{type=string}] {
-  b0(v0: "a"|"b"):
-    v1 = Upcast v0 castType=string
-    Return v1
-}
-function f1 name="widenOnRarePath" parameters=[{type="a"|"b" site=w1}, {type=boolean site=w2}] results=[{type=null|string}] {
-  b0(v0: "a"|"b", v1: boolean):
-    Branch v1 -> taken b1(), notTaken b2()
-  b1() frequency=Rare:
-    v2 = Upcast v0 castType=string
-    Return v2
-  b2():
-    v3 = Null
-    Return v3
-}
 # CHECK: f0: size={{*}}
 # CHECK-NEXT: stub LiteralStringToString x1
 # CHECK-NOT: operation operationAOTLiteralStringToString
 # CHECK: f1: size={{*}}
 # CHECK-NEXT: stub LiteralStringToString x1
 # CHECK-NOT: operation operationAOTLiteralStringToString
+# PROGRAM-OF: literal-string-to-string-fast.ir

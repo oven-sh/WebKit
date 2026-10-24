@@ -15,7 +15,6 @@
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
 #include "AOTShellProgramTestSupport.h"
-#include "AOTStructureTable.h"
 #include "AOTVector.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
@@ -25,7 +24,6 @@ namespace JSC { namespace AOT {
 static constexpr ASCIILiteral functionExpression = R"IR(layout L0 kind=Instance constructor=f1 fields=[{key="px" declared={type=1 flags=[IsExpected]}}] flags=[IsConstructorFunction]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = PropGet v0 key="prototype"
     v2 = NewClosure function=f2
@@ -65,7 +63,6 @@ function f1 name="Point" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} r
     Return v3
 }
 function f2 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="px"
     Return v1
 }
@@ -75,7 +72,6 @@ entry module=m0
 static constexpr ASCIILiteral bodiesWithoutThis = R"IR(layout L0 kind=Instance name="Declared" constructor=f1 flags=[IsConstructorFunction]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = PropGet v0 key="prototype"
     v2 = NewClosure function=f2
@@ -132,32 +128,26 @@ function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
     Return v52
 }
 function f1 name="Declared" flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = Undefined
     Return v0
 }
 function f2 thisType={type=anything} results=[{type=number flags=[IsExpected]}] {
-  b0():
     v0 = Integer integer=7
     Return v0
 }
 function f3 name="Expression" thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = Undefined
     Return v0
 }
 function f4 thisType={type=anything} results=[{type=number flags=[IsExpected]}] {
-  b0():
     v0 = Integer integer=8
     Return v0
 }
 function f5 thisType={type=anything} results=[{type=number flags=[IsExpected]}] {
-  b0():
     v0 = Integer integer=5
     Return v0
 }
 function f6 thisType={type=anything} results=[{type=string flags=[IsExpected]}] {
-  b0():
     v0 = String string="text"
     Return v0
 }
@@ -169,7 +159,6 @@ layout L1 kind=Instance name="Sub" constructor=f3 fields=[{key="py" declared={ty
 variable g0 declared={type=function} flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = PropGet v0 key="prototype"
     v2 = NewClosure function=f2
@@ -219,12 +208,10 @@ function f1 name="Point" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} r
     Return v3
 }
 function f2 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="px"
     Return v1
 }
 function f3 name="Sub" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} results=[{type=object}] {
-  b0(v0: function, v1: anything):
     v2 = Absent
     v3 = GetSuperBase v0
     v4 = SuperConstruct v3, v1 layout=L1
@@ -278,7 +265,6 @@ entry module=m0
 static constexpr ASCIILiteral declaredInAFunctionThatIsCalledAtOnce = R"IR(layout L0 kind=Instance name="Point" constructor=f2 fields=[{key="px" declared={type=anything}}] flags=[IsConstructorFunction]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Call v0
     v2 = Builtin builtin=GlobalThis
@@ -329,7 +315,6 @@ function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
     Return v46
 }
 function f1 thisType={type=anything} results=[{type=function flags=[IsExpected]}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = PropGet v0 key="prototype"
     v2 = NewClosure function=f3
@@ -348,20 +333,17 @@ function f2 name="Point" flags=[HasThis, HasExplicitName] length=1 thisType={typ
     Return v3
 }
 function f3 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="px"
     v2 = Integer integer=1
     v3 = Add v1, v2
     Return v3
 }
 function f4 flags=[HasThis] captures=[{type=function}] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = PropGet v1 key="px"
     v3 = Construct v0, -, v2
     Return v3
 }
 function f5 length=1 captures=[{type=function}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = Construct v0, -, v1
     Return v2
 }
@@ -374,7 +356,6 @@ layout L2 kind=Instance name="Wrapped" constructor=f4 fields=[{key="v" declared=
 variable g0 name="Both" declared={type=function} initialization=Function function=f1 flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = PropGet v0 key="prototype"
     v2 = NewClosure function=f2
@@ -444,12 +425,10 @@ function f1 name="Both" flags=[HasThis, HasExplicitName] length=1 thisType={type
     Return v10
 }
 function f2 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="v"
     Return v1
 }
 function f3 thisType={type=anything} results=[{type=function flags=[IsExpected]}] {
-  b0():
     v0 = NewObject layout=L1
     v1 = NewClosure v0 function=f4
     PutEnvironmentField v0, v1 layout=L1
@@ -478,7 +457,6 @@ function f4 name="Wrapped" flags=[HasThis, HasExplicitName] length=1 captures=[{
     Return v11
 }
 function f5 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="v"
     Return v1
 }
@@ -489,7 +467,6 @@ static constexpr ASCIILiteral declaredInAFunctionCalledOnceAndTwice = R"IR(layou
 layout L1 kind=Instance name="Inner" constructor=f5 fields=[{key="v" declared={type=2 flags=[IsExpected]}}] flags=[IsConstructorFunction]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = Call v0
@@ -519,7 +496,6 @@ function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
     Return v25
 }
 function f1 name="once" flags=[HasExplicitName] thisType={type=anything} results=[{type=function flags=[IsExpected]}] {
-  b0():
     v0 = NewClosure function=f3
     v1 = PropGet v0 key="prototype"
     v2 = NewClosure function=f4
@@ -527,7 +503,6 @@ function f1 name="once" flags=[HasExplicitName] thisType={type=anything} results
     Return v0
 }
 function f2 name="twice" flags=[HasExplicitName] thisType={type=anything} results=[{type=function flags=[IsExpected]}] {
-  b0():
     v0 = NewClosure function=f5
     v1 = PropGet v0 key="prototype"
     v2 = NewClosure function=f6
@@ -542,7 +517,6 @@ function f3 name="Inner" flags=[HasThis, HasExplicitName] thisType={type=L0 flag
     Return v3
 }
 function f4 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="v"
     Return v1
 }
@@ -554,7 +528,6 @@ function f5 name="Inner" flags=[HasThis, HasExplicitName] thisType={type=L1 flag
     Return v3
 }
 function f6 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="v"
     Return v1
 }
@@ -564,7 +537,6 @@ entry module=m0
 static constexpr ASCIILiteral factoryWithACapture = R"IR(layout L0 kind=Instance name="P" constructor=f4 fields=[{key="tag" declared={type=anything}}] flags=[IsConstructorFunction]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = String string="a"
     v2 = Call v0, -, v1
@@ -615,19 +587,16 @@ function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
     Return v46
 }
 function f1 name="make" flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=function flags=[IsExpected]}] {
-  b0(v0: anything):
     v1 = NewClosure v0 function=f4
     Return v1
 }
 function f2 flags=[HasThis] thisType={type=anything} results=[{type=string flags=[IsExpected]}] {
-  b0(v0: anything):
     v1 = String string="A"
     v2 = PropGet v0 key="tag"
     v3 = Add v1, v2
     Return v3
 }
 function f3 flags=[HasThis] thisType={type=anything} results=[{type=string flags=[IsExpected]}] {
-  b0(v0: anything):
     v1 = String string="B"
     v2 = PropGet v0 key="tag"
     v3 = Add v1, v2
@@ -645,7 +614,6 @@ entry module=m0
 static constexpr ASCIILiteral factoryWithoutCaptures = R"IR(layout L0 kind=Instance name="P" constructor=f4 fields=[{key="tag" declared={type=1 flags=[IsExpected]}}] flags=[IsConstructorFunction]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Call v0
     v2 = Call v0
@@ -694,19 +662,16 @@ function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
     Return v44
 }
 function f1 name="make" flags=[HasExplicitName] thisType={type=anything} results=[{type=function flags=[IsExpected]}] {
-  b0():
     v0 = NewClosure function=f4
     Return v0
 }
 function f2 flags=[HasThis] thisType={type=anything} results=[{type=string flags=[IsExpected]}] {
-  b0(v0: anything):
     v1 = String string="A"
     v2 = PropGet v0 key="tag"
     v3 = Add v1, v2
     Return v3
 }
 function f3 flags=[HasThis] thisType={type=anything} results=[{type=string flags=[IsExpected]}] {
-  b0(v0: anything):
     v1 = String string="B"
     v2 = PropGet v0 key="tag"
     v3 = Add v1, v2
@@ -725,7 +690,6 @@ entry module=m0
 static constexpr ASCIILiteral createdInALoop = R"IR(layout L0 kind=Instance constructor=f1 fields=[{key="n" declared={type=10 flags=[IsExpected]}}] flags=[IsConstructorFunction]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = Data data=d0
     v1 = Integer
     Jump -> next b1(v1)
@@ -802,7 +766,6 @@ layout L1 fields=[{key="sum" declared={type=function flags=[IsExpected]} flags=[
 layout L2 fields=[{key="sum" declared={type=function flags=[IsExpected]} flags=[IsRequired, IsMethod]}]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewObject layout=L1
     v2 = NewClosure function=f2
@@ -862,14 +825,12 @@ function f1 name="Point" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} r
     Return v3
 }
 function f2 name="sum" kind=Method flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="px"
     v2 = Integer integer=10
     v3 = Add v1, v2
     Return v3
 }
 function f3 name="sum" kind=Method flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="px"
     v2 = Integer integer=20
     v3 = Add v1, v2
@@ -882,7 +843,6 @@ static constexpr ASCIILiteral prototypeReplacedAfterTheFirstConstruction = R"IR(
 layout L1 fields=[{key="sum" declared={type=function flags=[IsExpected]} flags=[IsRequired, IsMethod]}]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = PropGet v0 key="prototype"
     v2 = NewClosure function=f2
@@ -914,12 +874,10 @@ function f1 name="Point" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} r
     Return v3
 }
 function f2 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="px"
     Return v1
 }
 function f3 name="sum" kind=Method flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="px"
     v2 = Integer integer=20
     v3 = Add v1, v2
@@ -933,7 +891,6 @@ layout L1 kind=Instance constructor=f2 fields=[{key="id" declared={type=number f
 layout L2 kind=Instance name="Sub" constructor=f4 flags=[HasHeritage]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="print" [isFreeName]
@@ -943,7 +900,6 @@ function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
     Return v5
 }
 function f1 name="main" flags=[HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] {
-  b0():
     v0 = Absent
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = Integer
@@ -1005,14 +961,12 @@ function f2 name="Counter" flags=[HasThis] captures=[{type=env L0}] thisType={ty
     Return v9
 }
 function f3 flags=[HasThis] thisType={type=anything} results=[{type=string flags=[IsExpected]}] {
-  b0(v0: anything):
     v1 = String string="c"
     v2 = PropGet v0 key="id"
     v3 = Add v1, v2
     Return v3
 }
 function f4 name="Sub" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array}] results=[{type=object}] {
-  b0(v0: function, v1: anything, v2: Array):
     v3 = GetSuperBase v0
     v4 = SuperConstructList v3, v1, v2 layout=L2
     Return v4
@@ -1032,7 +986,6 @@ static constexpr ASCIILiteral constructorThatCapturesItsHolder = R"IR(layout L0 
 layout L1 fields=[{key="Node" declared={type=function flags=[IsExpected]} flags=[IsRequired]}]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Call v0
     v2 = PropGet v1 key="Node"
@@ -1060,7 +1013,6 @@ function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
     Return v23
 }
 function f1 name="setUp" flags=[HasExplicitName] thisType={type=anything} results=[{type=L1 flags=[IsExpected]}] {
-  b0():
     v0 = Data data=d0
     v1 = NewClosure v0 function=f2
     PropSet v0, v1 key="Node"
@@ -1078,7 +1030,6 @@ function f2 flags=[HasThis] length=1 captures=[{type=L1 flags=[IsExpected]}] thi
     Return v5
 }
 function f3 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="v"
     Return v1
 }
@@ -1092,7 +1043,6 @@ layout L2 fields=[{key="Point" declared={type=function flags=[IsExpected]} flags
 layout L3 fields=[{key="Point" declared={type=function flags=[IsExpected]} flags=[IsRequired]}]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = Data data=d0
     v1 = NewClosure function=f1
     PropSet v0, v1 key="Point"
@@ -1151,7 +1101,6 @@ function f1 flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type
     Return v3
 }
 function f2 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="px"
     Return v1
 }
@@ -1163,7 +1112,6 @@ function f3 name="Point" flags=[HasThis] thisType={type=L1 flags=[IsExpected]} r
     Return v3
 }
 function f4 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="py"
     Return v1
 }
@@ -1176,7 +1124,6 @@ layout L1 kind=Instance name="DeclaredWithThis" constructor=f2 fields=[{key="a" 
 layout L2 kind=Instance constructor=f4 fields=[{key="a" declared={type=2 flags=[IsExpected]}}] flags=[IsConstructorFunction]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = NewClosure function=f3
@@ -1304,7 +1251,6 @@ function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
     Return v123
 }
 function f1 name="Declared" flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = Undefined
     Return v0
 }
@@ -1316,7 +1262,6 @@ function f2 name="DeclaredWithThis" flags=[HasThis, HasExplicitName] thisType={t
     Return v3
 }
 function f3 name="Expression" thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = Undefined
     Return v0
 }
@@ -1328,14 +1273,12 @@ function f4 name="ExpressionWithThis" flags=[HasThis] thisType={type=L2 flags=[I
     Return v3
 }
 function f5 flags=[HasThis] thisType={type=anything} results=[{type=string flags=[IsExpected]}] {
-  b0(v0: anything):
     v1 = String string="d"
     v2 = PropGet v0 key="x"
     v3 = Add v1, v2
     Return v3
 }
 function f6 flags=[HasThis] thisType={type=anything} results=[{type=string flags=[IsExpected]}] {
-  b0(v0: anything):
     v1 = String string="dt"
     v2 = PropGet v0 key="x"
     v3 = Add v1, v2
@@ -1344,14 +1287,12 @@ function f6 flags=[HasThis] thisType={type=anything} results=[{type=string flags
     Return v5
 }
 function f7 flags=[HasThis] thisType={type=anything} results=[{type=string flags=[IsExpected]}] {
-  b0(v0: anything):
     v1 = String string="e"
     v2 = PropGet v0 key="x"
     v3 = Add v1, v2
     Return v3
 }
 function f8 flags=[HasThis] thisType={type=anything} results=[{type=string flags=[IsExpected]}] {
-  b0(v0: anything):
     v1 = String string="et"
     v2 = PropGet v0 key="x"
     v3 = Add v1, v2
@@ -1365,7 +1306,6 @@ entry module=m0
 static constexpr ASCIILiteral closureReadFromAnInstance = R"IR(layout L0 kind=Instance constructor=f1 fields=[{key="px" declared={type=1 flags=[IsExpected]}}] flags=[IsConstructorFunction]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Construct v0
     v2 = PropGet v1 key="constructor"
@@ -1394,7 +1334,6 @@ static constexpr ASCIILiteral constructedInAFunctionDeclaredEarlier = R"IR(layou
 variable g0 name="Point" declared={type=function flags=[IsExpected]} initialization=Undefined flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     PutModuleVariable v1 variable=g0
@@ -1416,7 +1355,6 @@ function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
     Return v17
 }
 function f1 name="build" flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = Construct v0
     Return v1
@@ -1429,7 +1367,6 @@ function f2 name="Point" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} r
     Return v3
 }
 function f3 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="px"
     Return v1
 }
@@ -1440,7 +1377,6 @@ static constexpr ASCIILiteral constructedByValue = R"IR(layout L0 kind=Instance 
 layout L1 kind=Instance constructor=f3 fields=[{key="p" declared={type=anything}}] flags=[IsConstructorFunction]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = NewClosure function=f3
@@ -1490,7 +1426,6 @@ function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
     Return v45
 }
 function f1 name="construct" flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Construct v0, -, v1
     Return v2
 }
@@ -1507,14 +1442,12 @@ function f3 name="P" flags=[HasThis] length=1 thisType={type=L1 flags=[IsExpecte
     Return v3
 }
 function f4 flags=[HasThis] thisType={type=anything} results=[{type=string flags=[IsExpected]}] {
-  b0(v0: anything):
     v1 = String string="P"
     v2 = PropGet v0 key="p"
     v3 = Add v1, v2
     Return v3
 }
 function f5 flags=[HasThis] thisType={type=anything} results=[{type=string flags=[IsExpected]}] {
-  b0(v0: anything):
     v1 = String string="Q"
     v2 = PropGet v0 key="q"
     v3 = Add v1, v2
@@ -1527,7 +1460,6 @@ static constexpr ASCIILiteral otherNewTarget = R"IR(layout L0 kind=Instance cons
 layout L1 kind=Instance constructor=f2 fields=[{key="qx" declared={type=2 flags=[IsExpected]}}] flags=[IsConstructorFunction]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = PropGet v1 key="prototype"
@@ -1572,7 +1504,6 @@ function f2 name="Q" flags=[HasThis] thisType={type=L1 flags=[IsExpected]} resul
     Return v3
 }
 function f3 flags=[HasThis] thisType={type=anything} results=[{type=string flags=[IsExpected]}] {
-  b0(v0: anything):
     v1 = String string="q"
     v2 = PropGet v0 key="px"
     v3 = Add v1, v2
@@ -1589,7 +1520,6 @@ layout L3 kind=Instance name="D" constructor=f7 flags=[HasHeritage]
 variable g0 declared={type=function} flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = PropGet v0 key="prototype"
@@ -1669,14 +1599,12 @@ function f2 name="B" flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[I
     Return v5
 }
 function f3 flags=[HasThis] thisType={type=anything} results=[{type=string flags=[IsExpected]}] {
-  b0(v0: anything):
     v1 = String string="A"
     v2 = PropGet v0 key="a"
     v3 = Add v1, v2
     Return v3
 }
 function f4 flags=[HasThis] thisType={type=anything} results=[{type=string flags=[IsExpected]}] {
-  b0(v0: anything):
     v1 = String string="B"
     v2 = PropGet v0 key="b"
     v3 = Add v1, v2
@@ -1694,14 +1622,12 @@ function f5 name="C" flags=[HasThis] thisType={type=L2 flags=[IsExpected]} resul
     Return v7
 }
 function f6 flags=[HasThis] thisType={type=anything} results=[{type=string flags=[IsExpected]}] {
-  b0(v0: anything):
     v1 = String string="C"
     v2 = PropGet v0 key="c"
     v3 = Add v1, v2
     Return v3
 }
 function f7 name="D" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array}] results=[{type=object}] {
-  b0(v0: function, v1: anything, v2: Array):
     v3 = GetSuperBase v0
     v4 = SuperConstructList v3, v1, v2 layout=L3
     Return v4
@@ -1723,7 +1649,6 @@ layout L2 fields=[{key="n" declared={type=number flags=[IsExpected]} flags=[IsRe
 layout L3
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = Integer
     v1 = NewClosure function=f1
     v2 = Builtin builtin=SymbolHasInstance
@@ -1786,7 +1711,6 @@ layout L1 kind=Instance constructor=f3 fields=[{key="py" declared={type=anything
 variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
 module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
 function f0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = PropGet v0 key="prototype"
     v2 = NewClosure function=f2
@@ -1821,27 +1745,23 @@ function f0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} result
     Return v30
 }
 function f1 name="Point" flags=[IsSloppy, HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = ToThis v0
     PropSet v2, v1 key="px" mode=Sloppy
     v4 = Undefined
     Return v4
 }
 function f2 flags=[IsSloppy, HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToThis v0
     v2 = PropGet v1 key="px"
     Return v2
 }
 function f3 name="Other" flags=[IsSloppy, HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = ToThis v0
     PropSet v2, v1 key="py" mode=Sloppy
     v4 = Undefined
     Return v4
 }
 function f4 flags=[IsSloppy, HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToThis v0
     v2 = PropGet v1 key="py"
     Return v2

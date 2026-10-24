@@ -6,7 +6,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=undefined|number}}]
 
 function f0 name="numberStoredToFieldTestedForItsType" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0, v1: number):
     v2 = IsSlotFilled v0 key="x" receivers=[L0] level=Proven [holdsDeclaredType]
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3):

@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="slice-to-number" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=number}] {
-  b0(v0: string, v1: int, v2: int):
     v3 = GetStringLength v0
     v4 = StringRange v3, v1, v2
     v5 = ResultAt v4
@@ -13,14 +12,12 @@ function f0 name="slice-to-number" parameters=[{type=string}, {type=int}, {type=
     v7 = Substring v0, v5, v6
     v8 = ToNumber v7
     Return v8
-}
-# CHECK-LABEL: function f0 name="slice-to-number"
 # CHECK-NOT: = Substring
 # CHECK: [[result0]]: number = StringRangeToNumber v0, v5, v6
 # CHECK-NEXT: Return [[result0]]
+}
 
 function f1 name="slice-passed-to-number" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=number}] {
-  b0(v0: string, v1: int, v2: int):
     v3 = GetStringLength v0
     v4 = StringRange v3, v1, v2
     v5 = ResultAt v4
@@ -28,29 +25,25 @@ function f1 name="slice-passed-to-number" parameters=[{type=string}, {type=int},
     v7 = Substring v0, v5, v6
     v8 = CallBuiltin -, v7 overload=Number/0
     Return v8
-}
-# CHECK-LABEL: function f1 name="slice-passed-to-number"
 # CHECK-NOT: = Substring
 # CHECK: [[result1]]: number = StringRangeToNumber v0, v5, v6
 # CHECK-NEXT: Return [[result1]]
 # CHECK-NOT: overload=Number
+}
 
 # Number(undefined) is NaN and Number("") is 0
 function f2 name="at-to-number" parameters=[{type=string}, {type=int}] results=[{type=number}] {
-  b0(v0: string, v1: int):
     v2 = CallBuiltin v0, v1 overload=StringPrototypeAt/0
     v3 = ToNumber v2
     Return v3
-}
-# CHECK-LABEL: function f2 name="at-to-number"
 # CHECK-NOT: StringRange
 # CHECK: v2: undefined|string = Call{{*}} overload=StringPrototypeAt/0
 # CHECK-NEXT: v3: number = ToNumber v2
 # CHECK-NOT: StringRange
+}
 
 # `count = text.slice(a, b); count++` converts with ToNumeric, which gives a string the number ToNumber gives it
 function f3 name="slice-to-numeric" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=number}] {
-  b0(v0: string, v1: int, v2: int):
     v3 = GetStringLength v0
     v4 = StringRange v3, v1, v2
     v5 = ResultAt v4
@@ -59,21 +52,18 @@ function f3 name="slice-to-numeric" parameters=[{type=string}, {type=int}, {type
     v8 = ToNumeric v7
     v9 = Increment v8
     Return v9
-}
-# CHECK-LABEL: function f3 name="slice-to-numeric"
 # CHECK-NOT: = Substring
 # CHECK-NOT: = ToNumeric
 # CHECK: [[result3]]: number = StringRangeToNumber v0, v5, v6
 # CHECK-NEXT: = Increment [[result3]]
+}
 
 # ToNumeric(undefined) is NaN and ToNumeric("") is 0
 function f4 name="at-to-numeric" parameters=[{type=string}, {type=int}] results=[{type=anything}] {
-  b0(v0: string, v1: int):
     v2 = CallBuiltin v0, v1 overload=StringPrototypeAt/0
     v3 = ToNumeric v2
     Return v3
-}
-# CHECK-LABEL: function f4 name="at-to-numeric"
 # CHECK-NOT: StringRange
 # CHECK: v3:{{*}}= ToNumeric v2
 # CHECK-NOT: StringRange
+}

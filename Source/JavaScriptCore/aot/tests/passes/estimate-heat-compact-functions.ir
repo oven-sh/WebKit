@@ -19,7 +19,6 @@ entry module=m0
 variable g0 name="input" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = ToBoolean v0
     v2 = CallDirect v0 function=f7
@@ -34,7 +33,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="calledInLoop" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 1..70
     v%(i) = ToBoolean v0
 # END REPEAT
@@ -43,7 +41,6 @@ function f1 name="calledInLoop" parameters=[{type=anything}] results=[{type=anyt
 }
 
 function f2 name="calledByOneThatALoopCalls" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 1..70
     v%(i) = ToBoolean v0
 # END REPEAT
@@ -51,7 +48,6 @@ function f2 name="calledByOneThatALoopCalls" parameters=[{type=anything}] result
 }
 
 function f3 name="calledByCompactFunction" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 1..70
     v%(i) = ToBoolean v0
 # END REPEAT
@@ -61,7 +57,6 @@ function f3 name="calledByCompactFunction" parameters=[{type=anything}] results=
 }
 
 function f4 name="calledByTwo" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 1..70
     v%(i) = ToBoolean v0
 # END REPEAT
@@ -69,7 +64,6 @@ function f4 name="calledByTwo" parameters=[{type=anything}] results=[{type=anyth
 }
 
 function f5 name="hasLoop" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Jump -> next b1()
   b1():
@@ -83,7 +77,6 @@ function f5 name="hasLoop" parameters=[{type=anything}] results=[{type=anything}
 }
 
 function f6 name="calledAtTheEndOfSuchAChain" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 1..70
     v%(i) = ToBoolean v0
 # END REPEAT
@@ -91,7 +84,6 @@ function f6 name="calledAtTheEndOfSuchAChain" parameters=[{type=anything}] resul
 }
 
 function f7 name="calledTwiceByCodeThatRunsOnce" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 1..70
     v%(i) = ToBoolean v0
 # END REPEAT

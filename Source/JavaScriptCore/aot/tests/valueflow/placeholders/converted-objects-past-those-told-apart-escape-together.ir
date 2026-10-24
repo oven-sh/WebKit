@@ -21,7 +21,6 @@ entry module=m0
 layout L0 name="Plain" fields=[{key="held" declared={type=anything} flags=[IsRequired]}]
 layout L1 name="Odd" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}, {key="given" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = ToString v0
     v2 = NewClosure function=f2
@@ -36,14 +35,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="onlyConverted" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="held" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f3 name="given" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }

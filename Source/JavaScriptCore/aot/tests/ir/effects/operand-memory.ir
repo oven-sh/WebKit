@@ -7,7 +7,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Environment fields=[{key="a" declared={type=anything}}]
 layout L1 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 function f0 name="appendElements" parameters=[{type=Array<anything>}, {type=Array<anything, pristine[Storage, Names]>}] results=[{type=undefined}] {
-  b0(v0: Array<anything>, v1: Array<anything, pristine[Storage, Names]>):
     AppendElements v0, v1
     Return
 }
@@ -16,7 +15,6 @@ function f0 name="appendElements" parameters=[{type=Array<anything>}, {type=Arra
 # CHECK-NEXT: v2 AppendElements 1: [Inspects, ReadsContents, RetainsContents] reads(Elements/1, ArrayStorage)
 # CHECK-NOT: writes
 function f1 name="putArrayElement" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=int[0, 10]}, {type=number}, {type=object}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage, Names]>, v1: int[0, 10], v2: number, v3: object):
     PutArrayElement v0, v1, v3 level=Proven
     PutArrayElement v0, v2, v3 level=Proven
     Return
@@ -32,7 +30,6 @@ function f1 name="putArrayElement" parameters=[{type=Array<anything, pristine[St
 # CHECK-NEXT: v5 PutArrayElement 2: [Retains] in operand 0 reads(Elements/1, ArrayStorage)
 # CHECK-NOT: writes
 function f2 name="setMappedArgument" parameters=[{type=Arguments}, {type=object}] results=[{type=undefined}] {
-  b0(v0: Arguments, v1: object):
     SetMappedArgument v0, v1 index=0
     Return
 }
@@ -41,7 +38,6 @@ function f2 name="setMappedArgument" parameters=[{type=Arguments}, {type=object}
 # CHECK-NEXT: v2 SetMappedArgument 1: [Retains] in operand 0
 # CHECK-NOT: writes
 function f3 name="releaseEnvironment" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     ReleaseEnvironment v1
     Return
@@ -49,7 +45,6 @@ function f3 name="releaseEnvironment" parameters=[{type=anything}] results=[{typ
 # CHECK-LABEL: function f3
 # CHECK: v2 ReleaseEnvironment 0: [Inspects] writes(EnvironmentFields)
 function f4 name="writesFirstReadsSecond" parameters=[{type=L1}, {type=L1}] results=[{type=undefined}] {
-  b0(v0: L1, v1: L1):
     v2 = GetSlot v1 key="x" receivers=[L1] level=Proven
     PutSlot v0, -, v2 key="x" receivers=[L1] level=Proven
     Return
@@ -59,7 +54,6 @@ function f4 name="writesFirstReadsSecond" parameters=[{type=L1}, {type=L1}] resu
 # CHECK-NOT: writes
 # CHECK: v3 PutSlot 0: [Inspects] writes(ObjectFields/1)
 function f5 name="callsDirectly" parameters=[{type=L1}, {type=L1}] results=[{type=undefined}] {
-  b0(v0: L1, v1: L1):
     v2 = CallDirect v0, v1 function=f4
     Return
 }

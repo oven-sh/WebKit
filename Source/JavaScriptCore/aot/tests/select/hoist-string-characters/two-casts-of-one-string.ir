@@ -15,7 +15,6 @@ module m0 path="main.js" displayPath="main.js"
 # CHECK-NEXT: v12: number = StringRangeCodeUnitOrNaN [[flat]], -, -, v6
 # CHECK-NOT: FlattenString
 function f0 name="casts-inside-and-outside-loop" parameters=[{type=undefined|string}, {type=number}] results=[{type=anything}] {
-  b0(v0: undefined|string, v1: number):
     v2 = Undefined
     v3 = Integer integer=0
     v4 = Integer integer=1

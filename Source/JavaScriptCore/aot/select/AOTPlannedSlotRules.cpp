@@ -55,19 +55,7 @@ struct RepeatedTest {
 } // anonymous namespace
 
 static constexpr uint32_t guardProofEntry = 0;
-
-static constexpr bool isSlotOperation(Opcode opcode)
-{
-    return Value::opcodesWithFieldAccess.contains(opcode);
-}
-
-static constexpr size_t numberOfSlotOperations = std::ranges::count_if(allMembersOf<Opcode>, isSlotOperation);
-
-static constexpr std::array<Opcode, numberOfSlotOperations> slotOperations = [] {
-    std::array<Opcode, numberOfSlotOperations> operations { };
-    std::ranges::copy_if(allMembersOf<Opcode>, operations.begin(), isSlotOperation);
-    return operations;
-}();
+static constexpr OpcodeSet slotOperations = Value::opcodesWithFieldAccess;
 
 static bool findsOffsetByShape(Opcode opcode, const SlotAgreement& agreement)
 {
@@ -307,7 +295,7 @@ static ValueID findFollower(SelectionContext& context, ValueID id, const SlotAgr
         return { };
     ValueID follower = entered.values[index];
     const Value& access = function.at(follower);
-    if (!isSlotOperation(access.opcode) || provesOf(access.opcode) != Proof::None || numberOfResultsOf(context.program(), function, access))
+    if (!slotOperations.contains(access.opcode) || provesOf(access.opcode) != Proof::None || numberOfResultsOf(context.program(), function, access))
         return { };
     if (access.objectOperand() != test.objectOperand() || access.key() != test.key() || access.receivers() != test.receivers())
         return { };
@@ -388,23 +376,9 @@ static void endArmInCopy(GroupRewriter& rewriter, const PlannedSlotMatch& match,
     rewriter.endFollower(narrowToArm(builder, follower, arm, guard));
 }
 
-static void beginArms(GroupRewriter& rewriter, const PlannedSlotMatch& match)
-{
-    if (match.follower)
-        rewriter.beginArms(match.follower, match.followerIsOnlyReturned);
-    else
-        rewriter.beginArms();
-}
-
 // A failed test takes the layouts of its arm out of the type of the object. What has failed every test has the layouts of the last arm, so no arm is left for other objects.
-static void dispatchOnType(GroupRewriter& rewriter, const PlannedSlotMatch& match)
+static void dispatchOnType(GroupRewriter& rewriter, const PlannedSlotMatch& match, ValueID object, ValueID guard, BlockFrequency frequency)
 {
-    const Value& original = rewriter.original(match.group.root);
-    ValueID object = original.objectOperand();
-    ValueID guard = original.guardOperand();
-    BlockFrequency frequency = rewriter.function().at(rewriter.rootBlock()).frequency;
-
-    beginArms(rewriter, match);
     IRBuilder& builder = rewriter.builder();
     for (LayoutSetID arm : match.arms.span().first(match.arms.size() - 1)) {
         ValueID test = builder.appendTypeTest(object, Type::forLayoutSet(arm));
@@ -417,14 +391,8 @@ static void dispatchOnType(GroupRewriter& rewriter, const PlannedSlotMatch& matc
 }
 
 // A guard proves the layouts of the receiver, and only the case of a switch gives a guard for fewer of them: every arm is a case.
-static void dispatchOnShape(GroupRewriter& rewriter, const PlannedSlotMatch& match)
+static void dispatchOnShape(GroupRewriter& rewriter, const PlannedSlotMatch& match, ValueID object, ValueID previousGuard, BlockFrequency frequency)
 {
-    const Value& original = rewriter.original(match.group.root);
-    ValueID object = original.objectOperand();
-    ValueID previousGuard = original.guardOperand();
-    BlockFrequency frequency = rewriter.function().at(rewriter.rootBlock()).frequency;
-
-    beginArms(rewriter, match);
     IRBuilder& builder = rewriter.builder();
     BlockID head = builder.currentBlock();
 
@@ -452,33 +420,43 @@ static void dispatchOnShape(GroupRewriter& rewriter, const PlannedSlotMatch& mat
     builder.emitUnreachable();
 }
 
+static void dispatchToArms(GroupRewriter& rewriter, const PlannedSlotMatch& match)
+{
+    const Value& original = rewriter.original(match.group.root);
+    ValueID object = original.objectOperand();
+    ValueID guard = original.guardOperand();
+    BlockFrequency frequency = rewriter.function().at(rewriter.rootBlock()).frequency;
+
+    if (match.follower)
+        rewriter.beginArms(match.follower, match.followerIsOnlyReturned);
+    else
+        rewriter.beginArms();
+    if (match.typeListsReceivers)
+        dispatchOnType(rewriter, match, object, guard, frequency);
+    else
+        dispatchOnShape(rewriter, match, object, guard, frequency);
+}
+
 void selectPlannedSlots(SelectionContext& context)
 {
     // Each branch that passes the proofs of a test gets a test of its own, which the arms can copy together with the branch.
     Vector<RepeatedTest> repeatedTests;
-    for (Opcode opcode : slotOperations)
+    slotOperations.forEach([&](Opcode opcode) {
         collectRepeatedTests(context, opcode, repeatedTests);
-    context.rewriteGroups(SelectionRuleID::PlannedSlots, repeatedTests, [](GroupRewriter& rewriter, const RepeatedTest& test) {
-        repeatInFrontOfBranches(rewriter, test);
     });
+    context.rewriteGroups(SelectionRuleID::PlannedSlots, repeatedTests, repeatInFrontOfBranches);
 
     testStoredValuesFirst(context);
 
     Vector<PlannedSlotMatch> matches;
     ArmsOfAgreements armsOfAgreements;
     for (bool isTest : { true, false }) {
-        for (Opcode opcode : slotOperations) {
+        slotOperations.forEach([&](Opcode opcode) {
             if ((provesOf(opcode) != Proof::None) == isTest)
                 collectMatches(context, opcode, armsOfAgreements, matches);
-        }
+        });
     }
-
-    context.rewriteGroups(SelectionRuleID::PlannedSlots, matches, [](GroupRewriter& rewriter, const PlannedSlotMatch& match) {
-        if (match.typeListsReceivers)
-            dispatchOnType(rewriter, match);
-        else
-            dispatchOnShape(rewriter, match);
-    });
+    context.rewriteGroups(SelectionRuleID::PlannedSlots, matches, dispatchToArms);
 }
 
 } } } // namespace JSC::AOT::Typed

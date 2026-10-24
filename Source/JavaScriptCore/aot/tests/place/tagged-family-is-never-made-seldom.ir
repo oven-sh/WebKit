@@ -12,7 +12,6 @@ layout L2 name="Wide" fields=[{key="kind" declared={type=1} flags=[IsRequired]},
 layout L3 name="Num" fields=[{key="kind" declared={type=2} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] supertypes=[L1] flags=[IsNeverAllocated]
 variable g0 name="NodeConstructor" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     PutModuleVariable v0 variable=g0
     v2 = GetModuleVariable variable=g0
@@ -26,20 +25,17 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="NodeObject" flags=[HasThis] thisType={type=undefined|null|L1} parameters=[{type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: undefined|null|L1, v1: number, v2: number):
     PropSet v0, v1 key="kind" mode=Strict
     PropSet v0, v2 key="pos" mode=Strict
     Return
 }
 function f2 name="fill" parameters=[{type=undefined|null|L2}, {type=number}] results=[{type=anything}] {
-  b0(v0: undefined|null|L2, v1: number):
 # REPEAT: i = 0..23
     PropSet v0, v1 key="late%(i)"
 # END REPEAT
     Return
 }
 function f3 name="look" parameters=[{type=undefined|null|L2}] results=[{type=anything}] {
-  b0(v0: undefined|null|L2):
 # REPEAT: i = 0..23
     v%(i+1) = PropGet v0 key="late%(i)"
 # END REPEAT

@@ -17,33 +17,28 @@ layout L3 name="literal" fields=[{key="depth" declared={type=number} flags=[IsRe
 
 # `const settings: Settings = { depth: 1 }`
 function f0 name="makesSettings" results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L3
     Return v0
 }
 function f1 name="readsMember" parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] {
-  b0(v0: undefined|null|L0):
     v1 = PropGet v0 key="depth"
     Return v1
 }
 # CHECK: F1 v1 PropGet [[depth]]: form=ByName level=Unknown receivers=[] cause=UnknownObject
 # CANDIDATES: F1 v1: proof=Unknown level=Unknown otherParts nullish
 function f2 name="storesMember" parameters=[{type=undefined|null|L0 flags=[IsExpected]}, {type=number}] results=[{type=anything}] {
-  b0(v0: undefined|null|L0, v1: number):
     PropSet v0, v1 key="depth"
     Return
 }
 # CHECK-NEXT: F2 v2 PropSet [[depth]]: form=ByName level=Unknown receivers=[] cause=UnknownObject
 # CANDIDATES-NEXT: F2 v2: proof=Unknown level=Unknown otherParts nullish
 function f3 name="testsMember" parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] {
-  b0(v0: undefined|null|L0):
     v1 = PropHas v0 key="depth"
     Return v1
 }
 # CHECK-NEXT: F3 v1 PropHas [[depth]]: form=ByName level=Unknown receivers=[] cause=UnknownObject
 # CANDIDATES-NEXT: F3 v1: proof=Unknown level=Unknown otherParts nullish
 function f4 name="callsMethod" parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] {
-  b0(v0: undefined|null|L0):
     v1 = PropGet v0 key="run"
     v2 = Call v1, v0 calleeKey="run"
     Return v2
@@ -52,7 +47,6 @@ function f4 name="callsMethod" parameters=[{type=undefined|null|L0 flags=[IsExpe
 # CANDIDATES-NEXT: F4 v1: proof=Unknown level=Unknown otherParts nullish
 # The fields of layouts that nobody allocates say nothing about what a read finds, so nothing is expected of `options.inner` either
 function f5 name="readsThroughMember" parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] {
-  b0(v0: undefined|null|L0):
     v1 = PropGet v0 key="inner"
     v2 = PropGet v1 key="depth"
     Return v2
@@ -63,7 +57,6 @@ function f5 name="readsThroughMember" parameters=[{type=undefined|null|L0 flags=
 # CANDIDATES-NEXT: F5 v2: proof=Unknown level=Unknown otherParts nullish
 # `declare function load(): Options`. The type of the result is the callee's own, so the call is no built-in that creates what its caller asks for
 function f6 name="readsResultOfDeclaredFunction" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0
     v2 = Convert v1 declared={type=undefined|null|L0 site=w0 flags=[IsExpected]} illTypedCause=DeclarationWithoutBody
     v3 = PropGet v2 key="depth"
@@ -72,14 +65,12 @@ function f6 name="readsResultOfDeclaredFunction" parameters=[{type=anything}] re
 # CHECK-NEXT: F6 v3 PropGet [[depth]]: form=ByName level=Unknown receivers=[] cause=UnknownObject
 # CANDIDATES-NEXT: F6 v3: proof=Unknown level=Unknown otherParts nullish
 function f7 name="memberOfFamilyIsAllocated" parameters=[{type=undefined|null|L2 flags=[IsExpected]}] results=[{type=anything}] {
-  b0(v0: undefined|null|L2):
     v1 = PropGet v0 key="depth"
     Return v1
 }
 # CHECK-NEXT: F7 v1 PropGet [[depth]]: form=Slot level=Expected operation=GetSlot{{*}} receivers=[L3] receiverTest=Type
 # CANDIDATES-NEXT: F7 v1: proof=Unknown level=Expected {{*}}=[L3] otherParts nullish
 function f8 name="unionOfBothFamilies" parameters=[{type=undefined|null|L0|L2 flags=[IsExpected]}] results=[{type=anything}] {
-  b0(v0: undefined|null|L0|L2):
     v1 = PropGet v0 key="depth"
     Return v1
 }

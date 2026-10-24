@@ -12,19 +12,16 @@ layout L1 kind=Instance name="Other" constructor=f4 fields=[{key="expression" de
 function f0 name="CallExpression" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
 
 function f1 name="required" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="expression"
     Return v1
 }
 # CHECK: F1 v1 PropGet [[expression]]: form=Slot level=Expected operation=GetSlot receivers=[L0] proofs=[SlotFilled] {{*}}
 function f2 name="optional" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="questionDotToken"
     Return v1
 }
 # CHECK-NEXT: F2 v1 PropGet [[questionDotToken]]: form=Slot level=Expected operation=GetSlotOrUndefined receivers=[L0] proofs=[NoFieldOutsideSlot, PrototypeLinkUnchanged] {{*}}
 function f3 name="optional-in-one-receiver" parameters=[{type=L0|L1}] results=[{type=anything}] {
-  b0(v0: L0|L1):
     v1 = PropGet v0 key="expression"
     Return v1
 }

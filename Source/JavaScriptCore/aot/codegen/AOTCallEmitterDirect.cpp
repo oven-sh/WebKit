@@ -25,15 +25,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static std::optional<unsigned> findDirectArgumentIndex(Reg reg)
-{
-    for (unsigned index = 0; index < numberOfDirectArgumentGPRs; ++index) {
-        if (reg == Reg(directArgumentGPR(index)))
-            return index;
-    }
-    return std::nullopt;
-}
-
 CallEmitter::PlacedArguments CallEmitter::placeArguments(FunctionID function, const ArgumentLocations& locations, std::span<const Operand> arguments, OmittedArguments omitted)
 {
     RELEASE_ASSERT(arguments.size() == locations.parameters.size() && locations.convention == EntryConvention::Direct);
@@ -52,7 +43,7 @@ CallEmitter::PlacedArguments CallEmitter::placeArguments(FunctionID function, co
         case ArgumentLocation::Kind::None:
             break;
         case ArgumentLocation::Kind::GPR:
-            RELEASE_ASSERT(findDirectArgumentIndex(location.reg) == numberOfGPRs);
+            RELEASE_ASSERT(numberOfGPRs < numberOfDirectArgumentGPRs && location.reg == Reg(directArgumentGPR(numberOfGPRs)));
             inGPRs[numberOfGPRs++] = argument;
             break;
         case ArgumentLocation::Kind::FPR:

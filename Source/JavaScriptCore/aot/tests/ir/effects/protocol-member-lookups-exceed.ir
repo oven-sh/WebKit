@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="resolutionWithNumber" parameters=[{type=object}, {type=number}] results=[{type=undefined}] {
-  b0(v0: object, v1: number):
     v2 = NewPromise
     v3 = Undefined
     ResolvePromise v2, v1

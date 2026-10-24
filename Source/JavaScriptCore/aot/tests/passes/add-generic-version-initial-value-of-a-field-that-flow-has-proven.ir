@@ -14,7 +14,6 @@ module m0 path="main.ts" displayPath="main.ts"
 layout L0 name="Links" fields=[{key="chain" declared={type=Array<anything, proven, pristine[Storage, Names]>} flags=[IsRequired, IsEnforced] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="count" declared={type=undefined|number} flags=[IsRequired, IsEnforced]}]
 
 function f0 name="make" parameters=[{type=anything}] results=[{type=L0}] {
-  b0(v0: anything):
     v1 = Check v0 castType=number
     v2 = NewArray v1 contents=anything
     v3 = AssumeType v2 castType=Array<anything, proven, pristine[Storage, Names]>

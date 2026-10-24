@@ -11,7 +11,7 @@ import {
   blocks,
   cppHeader,
   cppLiteral,
-  cppSourceThatPrintsIR,
+  cppSource,
   groupedCases,
   indent,
   indentation,
@@ -343,7 +343,7 @@ function recordPrinterSource(schema: Schema): string[] {
     ...zeroFunctions(schema, nestedTypeNames(schema)),
     ...functions,
   );
-  return cppSourceThatPrintsIR(['"AOTIRPrinter.h"', "<bit>"], inNamespace("Typed", body));
+  return cppSource(['"AOTIRPrinter.h"', "<bit>"], inNamespace("Typed", body));
 }
 
 const entryHelpers = `template<typename Entry>
@@ -429,7 +429,7 @@ function entryPrinterSource(schema: Schema): string[] {
     entryFunction(schema, schema.operations, "Value", "value", "opcode", "Opcode"),
     entryFunction(schema, schema.terminators, "Terminator", "terminator", "kind", "TerminatorKind"),
   );
-  return cppSourceThatPrintsIR(['"AOTIRPrinter.h"', "<bit>"], inNamespace("Typed", body));
+  return cppSource(['"AOTIRPrinter.h"', "<bit>"], inNamespace("Typed", body));
 }
 
 export function closureOfZeroTests(schema: Schema, names: Iterable<string>): Set<string> {
@@ -453,7 +453,7 @@ export function emitCppPrinter(context: EmitContext): OutputFile[] {
   const { schema } = context;
   return [
     { name: "AOTSchemaPrinter.h", lines: printerHeader(schema) },
-    { name: "AOTSchemaRecordPrinter.cpp", lines: recordPrinterSource(schema) },
-    { name: "AOTSchemaEntryPrinter.cpp", lines: entryPrinterSource(schema) },
+    { name: "AOTSchemaRecordPrinter.cpp", lines: recordPrinterSource(schema), isTestSource: true },
+    { name: "AOTSchemaEntryPrinter.cpp", lines: entryPrinterSource(schema), isTestSource: true },
   ];
 }

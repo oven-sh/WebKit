@@ -16,33 +16,28 @@ variable g0 name="last" module=m0 declared={type=anything} initialization=Undefi
 # CHECK: outcome: Changed
 # CHECK-NEXT: outcome: Unchanged
 function f0 name="numberIntoString" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = Convert v0 declared={type=string site=w0} illTypedCause=Assertion
     PutModuleVariable v1 variable=g0
     v3 = Strcat v1, v1
     Return v3
-}
-# CHECK-LABEL: function f0 name="numberIntoString"
 # CHECK: b0(v0: number):
 # CHECK-NEXT: v1: string = Check v0 castType=string site=w0
 # CHECK-NEXT: PutModuleVariable v1 variable=g0
 # CHECK-NEXT: v3: string = Strcat v1, v1
 # CHECK-NEXT: Return v3
+}
 function f1 name="layoutOutsideTheFamily" results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L2
     v1 = Convert v0 declared={type=L0 site=w1} illTypedCause=Assertion
     v2 = PropGet v1 key="x"
     Return v2
-}
-# CHECK-LABEL: function f1 name="layoutOutsideTheFamily"
 # CHECK: v0: L2 = NewObject layout=L2
 # CHECK-NEXT: v1: L0|L1 = Check v0 castType=L0|L1 site=w1
 # CHECK-NOT: never
 # CHECK: = PropGet v1 key="x"
 # CHECK-NEXT: Return v2
+}
 function f2 name="oneArmOfAJoin" parameters=[{type=boolean}, {type=number}] results=[{type=anything}] {
-  b0(v0: boolean, v1: number):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v2 = Convert v1 declared={type=string site=w0} illTypedCause=Assertion
@@ -52,8 +47,6 @@ function f2 name="oneArmOfAJoin" parameters=[{type=boolean}, {type=number}] resu
     Jump -> next b3(v3)
   b3(v4):
     Return v4
-}
-# CHECK-LABEL: function f2 name="oneArmOfAJoin"
 # CHECK: Branch v0 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v2: string = Check v1 castType=string site=w0
@@ -61,16 +54,14 @@ function f2 name="oneArmOfAJoin" parameters=[{type=boolean}, {type=number}] resu
 # CHECK: Jump -> next b3(v3)
 # CHECK-NEXT: b3(v4: string):
 # CHECK-NEXT: Return v4
+}
 function f3 name="tailCall" results=[{type=string site=w2}] {
-  b0():
     v0 = CallDirect function=f4
     ReturnCall v0 casts=[{declared={type=string site=w2}}]
-}
-# CHECK-LABEL: function f3 name="tailCall"
 # CHECK: v0: number = CallDirect function=f4
 # CHECK-NEXT: ReturnCall v0 casts=[{declared={type=string site=w2} resolution=Check}]
+}
 function f4 name="count" results=[{type=number}] {
-  b0():
     v0 = Integer integer=1
     Return v0
 }

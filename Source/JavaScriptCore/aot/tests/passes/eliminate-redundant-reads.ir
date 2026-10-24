@@ -18,24 +18,20 @@ layout L4 name="Handler" fields=[{key="run" declared={type=anything} flags=[IsRe
 layout L5 kind=Instance name="Vault" fields=[{key=#"secret"@L5 declared={type=anything} flags=[IsPrivate]}]
 
 function f0 name="variableReadAfterRead" results=[{type=boolean}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = GetModuleVariable variable=g0
     v2 = StrictEq v0, v1
     Return v2
-}
-# CHECK-LABEL: function f0 name="variableReadAfterRead"
 # CHECK: v1: anything = Upcast v0 castType=anything
+}
 
 function f1 name="variableReadAfterStore" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     PutModuleVariable v0 variable=g0
     v2 = GetModuleVariable variable=g0
     Return v2
-}
-# CHECK-LABEL: function f1 name="variableReadAfterStore"
 # CHECK: PutModuleVariable v0
 # CHECK-NEXT: v2: anything = Upcast v0 castType=anything
+}
 
 function f2 name="fieldReadAfterRead" captures=[{type=env L0}] results=[{type=boolean}] {
   b0(v0: env L0):
@@ -43,30 +39,25 @@ function f2 name="fieldReadAfterRead" captures=[{type=env L0}] results=[{type=bo
     v2 = GetEnvironmentField v0 layout=L0 field=0
     v3 = StrictEq v1, v2
     Return v3
-}
-# CHECK-LABEL: function f2 name="fieldReadAfterRead"
 # CHECK: v2: anything = Upcast v1 castType=anything
+}
 
 function f3 name="fieldReadAfterStore" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: env L0, v1: anything):
     PutEnvironmentField v0, v1 layout=L0 field=0
     v3 = GetEnvironmentField v0 layout=L0 field=0
     Return v3
-}
-# CHECK-LABEL: function f3 name="fieldReadAfterStore"
 # CHECK: v3: anything = Upcast v1 castType=anything
+}
 
 function f4 name="fieldReadAfterAllocation" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = GetEnvironmentField v1 layout=L0 field=0
     Return v2
-}
-# CHECK-LABEL: function f4 name="fieldReadAfterAllocation"
 # CHECK: v2: anything = Upcast v0 castType=anything
+}
 
 function f5 name="availableOnEveryPath" parameters=[{type=boolean}] results=[{type=anything}] {
-  b0(v0: boolean):
     v1 = GetModuleVariable variable=g0
     Branch v0 -> taken b1(), notTaken b2()
   b1():
@@ -76,13 +67,11 @@ function f5 name="availableOnEveryPath" parameters=[{type=boolean}] results=[{ty
   b3():
     v2 = GetModuleVariable variable=g0
     Return v2
-}
-# CHECK-LABEL: function f5 name="availableOnEveryPath"
 # CHECK: b3():
 # CHECK-NEXT: v2: anything = Upcast v1 castType=anything
+}
 
 function f6 name="numbersMergeInBlockParameter" parameters=[{type=number}, {type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: number, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     PutModuleVariable v0 variable=g2
@@ -93,12 +82,11 @@ function f6 name="numbersMergeInBlockParameter" parameters=[{type=number}, {type
   b3():
     v5 = GetModuleVariable variable=g2
     Return v5
-}
-# CHECK-LABEL: function f6 name="numbersMergeInBlockParameter"
 # CHECK: Jump -> next b3(v0)
 # CHECK: Jump -> next b3(v1)
 # CHECK: b3([[merged]]:
 # CHECK-NEXT: v5:{{*}}= Upcast [[merged]] castType={{*}}
+}
 
 function f7 name="readUnderHandler" captures=[{type=env L0}] results=[{type=anything}] {
   b0(v0: env L0):
@@ -112,10 +100,9 @@ function f7 name="readUnderHandler" captures=[{type=env L0}] results=[{type=anyt
   b3() role=CatchHandler:
     v3 = CatchValue
     Return v3
-}
-# CHECK-LABEL: function f7 name="readUnderHandler"
 # CHECK: v2: anything = Upcast v1 castType=anything
 # CHECK-NEXT: Jump -> next b2()
+}
 
 function f8 name="immutableFieldAcrossCall" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=boolean}] {
   b0(v0: env L0, v1: anything):
@@ -124,20 +111,17 @@ function f8 name="immutableFieldAcrossCall" captures=[{type=env L0}] parameters=
     v4 = GetEnvironmentField v0 layout=L0 field=2
     v5 = StrictEq v2, v4
     Return v5
-}
-# CHECK-LABEL: function f8 name="immutableFieldAcrossCall"
 # CHECK: v4: anything = Upcast v2 castType=anything
+}
 
 function f9 name="storeToOtherVariable" parameters=[{type=anything}] results=[{type=boolean}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g0
     PutModuleVariable v0 variable=g1
     v3 = GetModuleVariable variable=g0
     v4 = StrictEq v1, v3
     Return v4
-}
-# CHECK-LABEL: function f9 name="storeToOtherVariable"
 # CHECK: v3: anything = Upcast v1 castType=anything
+}
 
 function f10 name="storeToOtherField" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=boolean}] {
   b0(v0: env L0, v1: anything):
@@ -146,9 +130,8 @@ function f10 name="storeToOtherField" captures=[{type=env L0}] parameters=[{type
     v4 = GetEnvironmentField v0 layout=L0 field=0
     v5 = StrictEq v2, v4
     Return v5
-}
-# CHECK-LABEL: function f10 name="storeToOtherField"
 # CHECK: v4: anything = Upcast v2 castType=anything
+}
 
 function f11 name="variableStorePreservesFields" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=boolean}] {
   b0(v0: env L0, v1: anything):
@@ -157,9 +140,8 @@ function f11 name="variableStorePreservesFields" captures=[{type=env L0}] parame
     v4 = GetEnvironmentField v0 layout=L0 field=0
     v5 = StrictEq v2, v4
     Return v5
-}
-# CHECK-LABEL: function f11 name="variableStorePreservesFields"
 # CHECK: v4: anything = Upcast v2 castType=anything
+}
 
 function f12 name="fieldStorePreservesVariables" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=boolean}] {
   b0(v0: env L0, v1: anything):
@@ -168,19 +150,16 @@ function f12 name="fieldStorePreservesVariables" captures=[{type=env L0}] parame
     v4 = GetModuleVariable variable=g0
     v5 = StrictEq v2, v4
     Return v5
-}
-# CHECK-LABEL: function f12 name="fieldStorePreservesVariables"
 # CHECK: v4: anything = Upcast v2 castType=anything
+}
 
 function f13 name="callPreservesUnescapedAllocation" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     v3 = Call v1
     v4 = GetEnvironmentField v2 layout=L0 field=0
     Return v4
-}
-# CHECK-LABEL: function f13 name="callPreservesUnescapedAllocation"
 # CHECK: v4: anything = Upcast v0 castType=anything
+}
 
 function f14 name="calleeWritesOtherHeap" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=boolean}] {
   b0(v0: env L0, v1: anything):
@@ -189,31 +168,26 @@ function f14 name="calleeWritesOtherHeap" captures=[{type=env L0}] parameters=[{
     v4 = GetModuleVariable variable=g0
     v5 = StrictEq v2, v4
     Return v5
-}
-# CHECK-LABEL: function f14 name="calleeWritesOtherHeap"
 # CHECK: v4: anything = Upcast v2 castType=anything
+}
 
 function f15 name="storeThroughOtherAllocation" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     v3 = NewObject -, v0 layout=L0 fields=[0]
     PutEnvironmentField v3, v1 layout=L0 field=0
     v5 = GetEnvironmentField v2 layout=L0 field=0
     Return v5
-}
-# CHECK-LABEL: function f15 name="storeThroughOtherAllocation"
 # CHECK: v5: anything = Upcast v0 castType=anything
+}
 
 function f16 name="unknownCallBetweenVariableReads" parameters=[{type=anything}] results=[{type=boolean}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g0
     v2 = Call v0
     v3 = GetModuleVariable variable=g0
     v4 = StrictEq v1, v3
     Return v4
-}
-# CHECK-LABEL: function f16 name="unknownCallBetweenVariableReads"
 # CHECK: v3: anything = GetModuleVariable
+}
 
 function f17 name="unknownCallBetweenFieldReads" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=boolean}] {
   b0(v0: env L0, v1: anything):
@@ -222,20 +196,17 @@ function f17 name="unknownCallBetweenFieldReads" captures=[{type=env L0}] parame
     v4 = GetEnvironmentField v0 layout=L0 field=0
     v5 = StrictEq v2, v4
     Return v5
-}
-# CHECK-LABEL: function f17 name="unknownCallBetweenFieldReads"
 # CHECK: v4: anything = GetEnvironmentField v0
+}
 
 function f18 name="calleeWritesVariable" parameters=[{type=anything}] results=[{type=boolean}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g0
     v2 = CallDirect v0 function=f29
     v3 = GetModuleVariable variable=g0
     v4 = StrictEq v1, v3
     Return v4
-}
-# CHECK-LABEL: function f18 name="calleeWritesVariable"
 # CHECK: v3: anything = GetModuleVariable
+}
 
 function f19 name="storeThroughOtherReceiver" captures=[{type=env L0}, {type=env L0}] parameters=[{type=anything}] results=[{type=boolean}] {
   b0(v0: env L0, v1: env L0, v2: anything):
@@ -244,20 +215,17 @@ function f19 name="storeThroughOtherReceiver" captures=[{type=env L0}, {type=env
     v5 = GetEnvironmentField v0 layout=L0 field=0
     v6 = StrictEq v3, v5
     Return v6
-}
-# CHECK-LABEL: function f19 name="storeThroughOtherReceiver"
 # CHECK: v5: anything = GetEnvironmentField v0
+}
 
 function f20 name="callAfterEscape" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     v3 = NewClosure v2 function=f30
     v4 = Call v1, -, v3
     v5 = GetEnvironmentField v2 layout=L0 field=0
     Return v5
-}
-# CHECK-LABEL: function f20 name="callAfterEscape"
 # CHECK: v5: anything = GetEnvironmentField v2
+}
 
 function f21 name="storeThroughMayAliasParameter" captures=[{type=env L0}] parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
   b0(v0: env L0, v1: anything, v2: boolean):
@@ -271,12 +239,10 @@ function f21 name="storeThroughMayAliasParameter" captures=[{type=env L0}] param
     PutEnvironmentField v4, v2 layout=L0 field=0
     v6 = GetEnvironmentField v3 layout=L0 field=0
     Return v6
-}
-# CHECK-LABEL: function f21 name="storeThroughMayAliasParameter"
 # CHECK: v6: anything = GetEnvironmentField v3
+}
 
 function f22 name="availableOnOnePathOnly" parameters=[{type=boolean}] results=[{type=anything}] {
-  b0(v0: boolean):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v1 = GetModuleVariable variable=g0
@@ -286,10 +252,9 @@ function f22 name="availableOnOnePathOnly" parameters=[{type=boolean}] results=[
   b3():
     v2 = GetModuleVariable variable=g0
     Return v2
-}
-# CHECK-LABEL: function f22 name="availableOnOnePathOnly"
 # CHECK: b3():
 # CHECK-NEXT: v2: anything = GetModuleVariable
+}
 
 function f23 name="handlerEdge" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: env L0, v1: anything):
@@ -305,13 +270,11 @@ function f23 name="handlerEdge" captures=[{type=env L0}] parameters=[{type=anyth
     v5 = CatchValue
     v6 = GetEnvironmentField v0 layout=L0 field=0
     Return v6
-}
-# CHECK-LABEL: function f23 name="handlerEdge"
 # CHECK: v4: anything = Upcast v2 castType=anything
 # CHECK: v6: anything = GetEnvironmentField v0
+}
 
 function f24 name="storeInLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = GetModuleVariable variable=g0
     Jump -> next b1()
   b1():
@@ -321,12 +284,10 @@ function f24 name="storeInLoop" parameters=[{type=anything}, {type=boolean}] res
     Branch v1 -> taken b1(), notTaken b2()
   b2():
     Return v4
-}
-# CHECK-LABEL: function f24 name="storeInLoop"
 # CHECK: v4: anything = GetModuleVariable
+}
 
 function f25 name="nonNumbersDoNotMerge" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     PutModuleVariable v0 variable=g0
@@ -337,20 +298,17 @@ function f25 name="nonNumbersDoNotMerge" parameters=[{type=anything}, {type=anyt
   b3():
     v5 = GetModuleVariable variable=g0
     Return v5
-}
-# CHECK-LABEL: function f25 name="nonNumbersDoNotMerge"
 # CHECK: b3():
 # CHECK-NEXT: v5: anything = GetModuleVariable
+}
 
 function f26 name="readByName" parameters=[{type=L1}] results=[{type=boolean}] {
-  b0(v0: L1):
     v1 = PropGet v0 key="x"
     v2 = PropGet v0 key="x"
     v3 = StrictEq v1, v2
     Return v3
-}
-# CHECK-LABEL: function f26 name="readByName"
 # CHECK: v2: anything = PropGet v0
+}
 
 function f27 name="readsExceedSolveLimit" captures=[{type=env L0}] results=[{type=anything}] {
   b0(v0: env L0):
@@ -365,13 +323,12 @@ function f27 name="readsExceedSolveLimit" captures=[{type=env L0}] results=[{typ
     v9 = GetEnvironmentField v0 layout=L0 field=0
     v10 = GetEnvironmentField v0 layout=L0 field=1
     Return v10
-}
-# CHECK-LABEL: function f27 name="readsExceedSolveLimit"
 # CHECK: v6: anything = Upcast v1 castType=anything
 # CHECK-NEXT: v7: anything = Upcast v2 castType=anything
 # CHECK-NEXT: v8:{{*}}= Upcast v3 castType={{*}}
 # CHECK-NEXT: v9: anything = Upcast v4 castType=anything
 # CHECK-NEXT: v10: anything = Upcast v5 castType=anything
+}
 
 function f28 name="storesField" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: env L0, v1: anything):
@@ -381,7 +338,6 @@ function f28 name="storesField" captures=[{type=env L0}] parameters=[{type=anyth
 # CHECK-LABEL: function f28 name="storesField"
 
 function f29 name="storesVariable" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     PutModuleVariable v0 variable=g0
     Return v0
 }
@@ -395,46 +351,38 @@ function f30 name="readsCapture" captures=[{type=env L0}] results=[{type=anythin
 # CHECK-LABEL: function f30 name="readsCapture"
 
 function f31 name="propertyReadAfterRead" parameters=[{type=L2}] results=[{type=boolean}] {
-  b0(v0: L2):
     v1 = GetSlot v0 key="x" receivers=[L2] level=Proven
     v2 = GetSlot v0 key="x" receivers=[L2] level=Proven
     v3 = StrictEq v1, v2
     Return v3
-}
-# CHECK-LABEL: function f31 name="propertyReadAfterRead"
 # CHECK: v2: anything = Upcast v1 castType=anything
+}
 
 function f32 name="propertyReadAfterStore" parameters=[{type=L2}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L2, v1: anything):
     PutSlot v0, -, v1 key="x" receivers=[L2] level=Proven
     v3 = GetSlot v0 key="x" receivers=[L2] level=Proven
     Return v3
-}
-# CHECK-LABEL: function f32 name="propertyReadAfterStore"
 # CHECK: v3: anything = Upcast v1 castType=anything
+}
 
 function f33 name="propertyReadsAfterAllocation" parameters=[{type=anything}] results=[{type=boolean}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L2 fields=[0]
     v2 = GetSlot v1 key="x" receivers=[L2] level=Proven
     v3 = GetSlotOrUndefined v1 key="y" receivers=[L2] level=Proven
     v4 = StrictEq v2, v3
     Return v4
-}
-# CHECK-LABEL: function f33 name="propertyReadsAfterAllocation"
 # CHECK: v2: anything = Upcast v0 castType=anything
 # CHECK-NEXT: v3:{{*}}= Undefined
+}
 
 function f34 name="propertyStoreThroughUnknownReceiver" parameters=[{type=L2}, {type=anything}, {type=anything}] results=[{type=boolean}] {
-  b0(v0: L2, v1: anything, v2: anything):
     v3 = GetSlot v0 key="x" receivers=[L2] level=Proven
     PropSet v1, v2 key="x" mode=Strict
     v5 = GetSlot v0 key="x" receivers=[L2] level=Proven
     v6 = StrictEq v3, v5
     Return v6
-}
-# CHECK-LABEL: function f34 name="propertyStoreThroughUnknownReceiver"
 # CHECK: v5: anything = GetSlot v0
+}
 
 function f35 name="environmentReadAfterRead" captures=[{type=env L3}] results=[{type=boolean}] {
   b0(v0: env L3):
@@ -444,10 +392,9 @@ function f35 name="environmentReadAfterRead" captures=[{type=env L3}] results=[{
     v4 = GetEnvironmentField v3 layout=L0 field=1
     v5 = StrictEq v2, v4
     Return v5
-}
-# CHECK-LABEL: function f35 name="environmentReadAfterRead"
 # CHECK-NOT: Upcast
 # CHECK: v4: anything = GetEnvironmentField v1 layout=L0 field=1
+}
 
 function f36 name="classTokenReadAfterRead" captures=[{type=env L3}] parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: env L3, v1: anything):
@@ -455,65 +402,53 @@ function f36 name="classTokenReadAfterRead" captures=[{type=env L3}] parameters=
     v3 = GetEnvironmentField v0 layout=L3 field=1
     v4 = PrivateGet v1, v3 layout=L5 field=0
     Return v4
-}
-# CHECK-LABEL: function f36 name="classTokenReadAfterRead"
 # CHECK-NOT: Upcast
 # CHECK: v4: anything = PrivateGet v1, v2
+}
 
 function f37 name="closureReadAfterAllocation" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f29
     v1 = NewObject -, v0 layout=L2 fields=[0]
     v2 = GetSlot v1 key="x" receivers=[L2] level=Proven
     Return v2
-}
-# CHECK-LABEL: function f37 name="closureReadAfterAllocation"
 # CHECK: v2: f29 = Upcast v0 castType=anything
+}
 
 function f38 name="deferredClosureReadAfterAllocation" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f29
     v1 = NewObject -, v0 layout=L4 fields=[0]
     v2 = GetSlot v1 key="run" receivers=[L4] level=Proven
     Return v2
-}
-# CHECK-LABEL: function f38 name="deferredClosureReadAfterAllocation"
 # CHECK: v2: anything = GetSlot v1
+}
 
 function f39 name="calleeWritesUnescapedArgument" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     v3 = CallDirect v2, v1 function=f28
     v4 = GetEnvironmentField v2 layout=L0 field=0
     Return v4
-}
-# CHECK-LABEL: function f39 name="calleeWritesUnescapedArgument"
 # CHECK: v4: anything = GetEnvironmentField v2
+}
 
 function f40 name="calleeWritesThroughLocalClosure" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     v3 = NewClosure v2 function=f28
     v4 = Call v3, -, v1
     v5 = GetEnvironmentField v2 layout=L0 field=0
     Return v5
-}
-# CHECK-LABEL: function f40 name="calleeWritesThroughLocalClosure"
 # CHECK: v5: anything = GetEnvironmentField v2
+}
 
 function f41 name="awaitBetweenVariableReads" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g0
     v2 = Await v0
     v3 = GetModuleVariable variable=g0
     v4 = StrictEq v1, v3
     Return v4
-}
-# CHECK-LABEL: function f41 name="awaitBetweenVariableReads"
 # CHECK: v3: anything = GetModuleVariable
+}
 
 function f42 name="callAfterMergedRead" parameters=[{type=number}, {type=number}, {type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: number, v2: boolean, v3: anything):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     PutModuleVariable v0 variable=g2
@@ -527,21 +462,18 @@ function f42 name="callAfterMergedRead" parameters=[{type=number}, {type=number}
     v8 = GetModuleVariable variable=g2
     v9 = StrictEq v6, v8
     Return v9
-}
-# CHECK-LABEL: function f42 name="callAfterMergedRead"
 # CHECK: b3([[merged2]]:
 # CHECK-NEXT: v6:{{*}}= Upcast [[merged2]] castType={{*}}
 # CHECK: v8:{{*}}= GetModuleVariable
+}
 
 function f43 name="clockReadTwice" results=[{type=boolean}] {
-  b0():
     v0 = CallBuiltin overload=DateNow/0 builtinCallForm=Whole
     v1 = Integer integer=1
     v2 = CallBuiltin overload=DateNow/0 builtinCallForm=Whole
     v3 = StrictEq v0, v2
     Return v3
-}
-# CHECK-LABEL: function f43 name="clockReadTwice"
 # CHECK: v0: number = CallBuiltin
 # CHECK: v2: number = CallBuiltin
 # CHECK-NEXT: StrictEq v0, v2
+}

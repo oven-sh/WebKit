@@ -7,11 +7,8 @@
 
 #if ENABLE(AOT)
 
-#include "AOTCompileOptions.h"
 #include "AOTFlowReport.h"
 #include "AOTFlowResults.h"
-#include "AOTVector.h"
-#include <span>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -43,14 +40,8 @@ constexpr unsigned rankOf(AccessCost cost)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-Vector<Wire::RemainingCheckRecord> collectRemainingChecks(const Program&, const AOT::CompileOptions&, FunctionID);
-
 Vector<Wire::AccessRecord> buildAccessRecords(const Program&, const FlowResults&, std::span<const FlowSiteLevel>, BuildContext&);
 Vector<Wire::AccessCountRecord> countAccesses(const Program&, std::span<const Wire::AccessRecord>, std::span<const Wire::TypeTestRecord>);
-
-uint64_t remainingCheckIDOf(const Program&, const AOT::CompileOptions&, Wire::SourceLocation origin, TypeSiteKind);
-
-void appendLocaleUses(const Program&, const FlowResults&, FlowReport&);
 
 } } } // namespace JSC::AOT::Typed
 

@@ -31,7 +31,6 @@ namespace JSC { namespace AOT {
 static constexpr ASCIILiteral programText = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="registry" [isFreeName]
     v2 = NewClosure function=f1
@@ -59,81 +58,66 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="outerRead" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f2 @10
     Return v1
 }
 function f2 name="innerRead" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="missing" @30
     Return v1
 }
 function f3 name="outerHost" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = CallDirect v0, v1 function=f4 @40
     Return v2
 }
 function f4 name="innerHost" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Call v0, -, v1 @50
     Return v2
 }
 function f5 name="callsBack" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0 @60
     Return v1
 }
 function f6 name="toJSON" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="leaf" [isFreeName]
     v2 = Call v1 @70
     Return v2
 }
 function f7 name="callsClosure" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = Call v0, -, v1, v2 @80
     Return v3
 }
 function f8 name="tailCaller" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Call v0, -, v1 @90
     ReturnCall v2
 }
 function f9 name="outerOfInlinedTail" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = CallDirect v0, v1 function=f8 [isAlwaysInlined] @100
     Return v2
 }
 function f10 name="tailCallerOfMethod" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = PropGet v0 key="run" @110
     v3 = Call v2, v0, v1 calleeKey="run" @112
     ReturnCall v3
 }
 function f11 name="outerOfInlinedMethodTail" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = CallDirect v0, v1 function=f10 [isAlwaysInlined] @120
     Return v2
 }
 function f12 name="tailCallerOfKnownFunction" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f2 @130
     ReturnCall v1
 }
 function f13 name="outerOfInlinedDirectTail" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f12 [isAlwaysInlined] @140
     Return v1
 }
 function f14 name="tailCallerOfBuiltin" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=BigInt
     v2 = Call v1, -, v0 @150
     ReturnCall v2
 }
 function f15 name="callerOfBuiltin" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=BigInt
     v2 = Call v1, -, v0 @160
     Return v2

@@ -46,18 +46,14 @@ public:
         return vm.compiledStructureSpace<mode>();
     }
 
-    struct ExtraPropertiesShape {
-        Structure* structureOrNull { nullptr };
-        uint16_t cellSize { 0 };
-    };
-
     struct ObjectParameters {
         JSGlobalObject* realm { nullptr };
         JSValue prototype;
         const LayoutData* layout { nullptr };
         bool hasOtherPrototype { false };
         bool mayBePrototype { false };
-        std::optional<ExtraPropertiesShape> extraProperties;
+        bool hasExtraProperties { false };
+        Structure* extraPropertiesStructure { nullptr };
         JSObject* heldExtraProperties { nullptr };
         std::optional<std::span<const uint16_t>> outOfLineKeyOrder;
     };
@@ -217,17 +213,17 @@ private:
         const EnvironmentShapes* m_environmentShapes;
     };
     union {
-        const FieldAsProperty* m_listedFields;
+        const FieldAsProperty* m_listedFields { nullptr };
         NamedStructureAndRareData m_namedStructureAndRareData;
     };
     union {
-        uint16_t m_listedSize;
+        uint16_t m_listedSize { 0 };
         uint16_t m_highBitsOfRareData;
         uint16_t m_environmentShapePage;
     };
     OptionSet<Flag> m_flags;
     union {
-        uint32_t m_listedOrderAndCount;
+        uint32_t m_listedOrderAndCount { ListedFields::noOrderWord };
         ExtraKeysAndCellSize m_extraKeysAndCellSize;
     };
     SlotData m_extraPropertiesSlot { };

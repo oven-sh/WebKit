@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="inCompactCode" parameters=[{type=object}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: object, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     SetLiteralPrototype v0, v1
@@ -19,7 +18,6 @@ function f0 name="inCompactCode" parameters=[{type=object}, {type=anything}, {ty
 # CHECK: stub WriteBarrier{{*}} x1
 # S: f0 b1 Compact
 function f1 name="inBalancedCode" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: object, v1: anything):
     SetLiteralPrototype v0, v1
     Return
 }
@@ -28,7 +26,6 @@ function f1 name="inBalancedCode" parameters=[{type=object}, {type=anything}] re
 # CHECK: stub WriteBarrier{{*}} x1
 # S: f1 b0 Balanced
 function f2 name="inFastCode" parameters=[{type=object}, {type=null}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: object, v1: null, v2: boolean):
     Jump -> next b1()
   b1():
     LoopHint

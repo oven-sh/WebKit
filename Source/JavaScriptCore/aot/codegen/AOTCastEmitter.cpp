@@ -20,26 +20,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static_assert(declaredBoundOf(RuntimeOperation::ReportMismatch).mayThrow && declaredBoundOf(Opcode::ReportMismatch).mayThrow, "the report reads the position of its call site, and a call has a site only if the operation and the callee declare throws");
 
-CastEmitter::CastEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
-
-const TypeTestPlan& CastEmitter::planFor(ValueID operand, TypeID to)
-{
-    return typeTestPlanFor(m_function.at(operand).type, representationOf(operand), to);
-}
-
-void CastEmitter::generateUpcast(const ValueContext& value)
-{
-    define(value, get(value->valueOperand()));
-}
-
-void CastEmitter::generateNarrowByField(const ValueContext& value)
-{
-    define(value, get(value->valueOperand()));
-}
-
 void CastEmitter::generateAssumeType(const ValueContext& value)
 {
     if (generator().checksProofs())

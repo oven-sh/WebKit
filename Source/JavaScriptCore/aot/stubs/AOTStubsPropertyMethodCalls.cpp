@@ -43,43 +43,10 @@ static_assert(isFreeBeforeCall(StubRegister::T9) && isFreeBeforeCall(StubRegiste
 static_assert(sizeof(PackedSlot) == sizeof(uint64_t));
 static_assert(!Slot::offsetOfStructureID() && Slot::offsetOfPayload() == sizeof(uint64_t));
 
-struct MethodProbeRegisters {
-    static MethodProbeRegisters allocate(StubAssembler& jit)
-    {
-        return { jit.allocateScratch(StubRegister::T13), jit.allocateScratch(StubRegister::T11), jit.allocateScratch(StubRegister::T9) };
-    }
-
-    GPRReg cell;
-    GPRReg method;
-    GPRReg scratch;
-};
-
-struct MethodProbeExits {
-    JumpList otherwise;
-    Box<JumpList> hasNoStructure { Box<JumpList>::create() };
-};
-
 // The name, this and the arguments, and above them room for a slim closure with one capture.
 static constexpr unsigned sizeOfClosureInFrame = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(static_cast<unsigned>(offsetOfSlimClosureCaptures + sizeof(EncodedJSValue)));
 static constexpr unsigned offsetOfClosureInFrame(unsigned count) { return WTF::roundUpToMultipleOf<stackAlignmentBytes()>((count + 2) * sizeof(EncodedJSValue)); }
 static constexpr unsigned bytesSavedForCallMethod(unsigned count) { return offsetOfClosureInFrame(count) + sizeOfClosureInFrame; }
-
-static constexpr StubKey getByIdInStubFrame()
-{
-    return getById().withCallerFrame(CallerFrame::StubFrame);
-}
-
-template<typename Functor>
-static void preservingThisAndArguments(StubAssembler& jit, GPRReg extra, const Functor& functor)
-{
-#if CPU(ARM64)
-    static_assert(numberOfArgumentGPRs == 8);
-    jit.preserving({ thisGPR, extra, argumentGPR(0), argumentGPR(1), argumentGPR(2), argumentGPR(3), argumentGPR(4), argumentGPR(5), argumentGPR(6), argumentGPR(7) }, functor);
-#else
-    static_assert(numberOfArgumentGPRs == 4);
-    jit.preserving({ thisGPR, extra, argumentGPR(0), argumentGPR(1), argumentGPR(2), argumentGPR(3) }, functor);
-#endif
-}
 
 static void readMethodByCell(StubAssembler& jit, GPRReg cell, GPRReg method, GPRReg scratch, JumpList& otherwise)
 {
@@ -95,42 +62,6 @@ static void readMethodByCell(StubAssembler& jit, GPRReg cell, GPRReg method, GPR
     hasMethod.link(&jit);
 }
 
-// finish takes the register with a cell that an own field of the receiver holds. Falls through with every operand as it was where there is none.
-static void emitProbeMethodInField(StubAssembler& jit, GPRReg index, GPRReg entry, std::optional<uint32_t> boundName, const ScopedLambda<void(GPRReg method)>& finish)
-{
-    JumpList otherwise;
-    const GPRReg method = index;
-    readFieldByTable(jit, { thisGPR, calleeGPR, index, entry, boundName }, method, otherwise, [&] {
-        otherwise.append(jit.branchIfNotCell(method));
-        finish(method);
-    });
-    otherwise.link(&jit);
-}
-
-static void emitProbeMethod(StubAssembler& jit, const MethodProbeRegisters& registers, MethodProbeExits& exits)
-{
-    loadStructureIDOfReceiver(jit, thisGPR, registers.method, *exits.hasNoStructure);
-#if CPU(ARM64)
-    static_assert(isFreeBeforeCall(StubRegister::T14));
-    loadFrontCell(jit, SlotAccess::Read, { registers.method, calleeGPR, registers.scratch, registers.cell, jit.allocateScratch(StubRegister::T14) });
-#else
-    // The calling convention leaves three registers free, one fewer than loadFrontCell takes.
-    loadFrontRow(jit, SlotAccess::Read, registers.method, registers.cell, registers.scratch);
-    jit.load64(BaseIndex(registers.cell, calleeGPR, CCallHelpers::TimesEight), registers.cell);
-#endif
-    readMethodByCell(jit, registers.cell, registers.method, registers.scratch, exits.otherwise);
-    exits.otherwise.append(jit.branchIfNotCell(registers.method));
-}
-
-static void linkMethodProbeExits(StubAssembler& jit, const MethodProbeExits& exits)
-{
-    exits.otherwise.link(&jit);
-    // loadStructureIDOfReceiver adds to its list in an out-of-line part, which runs after the generator has returned.
-    jit.addOutOfLinePart([hasNoStructure = exits.hasNoStructure, target = jit.label()](StubAssembler& jit) {
-        hasNoStructure->linkTo(target, &jit);
-    });
-}
-
 // The code that calls a method does not know the callee, so what it expects of the call waits for the callee's name.
 static void callFoundMethod(StubAssembler& jit, unsigned count)
 {
@@ -139,26 +70,17 @@ static void callFoundMethod(StubAssembler& jit, unsigned count)
     jit.jumpToStub(callValueCell(count));
 }
 
-static void emitCallMethodWithBoundName(StubAssembler& jit, uint32_t number, const MethodProbeRegisters& registers)
+// Calls a cell that an own field of the receiver holds. Falls through with every operand as it was where there is none.
+static void emitCallMethodInField(StubAssembler& jit, GPRReg index, GPRReg entry, std::optional<uint32_t> boundName)
 {
-    RELEASE_ASSERT(RowDisplacementTable::hasColumn(number));
     JumpList otherwise;
-
-    emitProbeMethodInField(jit, registers.cell, registers.scratch, number, [&](GPRReg method) {
+    const GPRReg method = index;
+    readFieldByTable(jit, { thisGPR, calleeGPR, index, entry, boundName }, method, otherwise, [&] {
+        otherwise.append(jit.branchIfNotCell(method));
         jit.move(method, calleeGPR);
         callFoundMethod(jit, jit.key().count());
     });
-    jit.move(TrustedImm32(number), calleeGPR);
-    otherwise.append(jit.branchIfNotCell(thisGPR));
-    jit.load32(Address(thisGPR, JSCell::structureIDOffset()), registers.method);
-    loadFrontRow(jit, SlotAccess::Read, registers.method, registers.cell, registers.scratch);
-    jit.load64(Address(registers.cell, static_cast<int32_t>(number * sizeof(PackedSlot))), registers.cell);
-    readMethodByCell(jit, registers.cell, registers.method, registers.scratch, otherwise);
-    otherwise.append(jit.branchIfNotCell(registers.method));
-    jit.move(registers.method, calleeGPR);
-    callFoundMethod(jit, jit.key().count());
-
-    jit.linkToStub(otherwise, jit.key().withoutImmediate());
+    otherwise.link(&jit);
 }
 
 static uint32_t slimFunctionKindBit()
@@ -179,7 +101,6 @@ static uint32_t asyncFunctionKindBit()
 static void emitCallOfUncreatedClosure(StubAssembler& jit, unsigned count)
 {
     using Form = FieldTableEntry::Form;
-    constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
     constexpr unsigned fieldSizeShift = WTF::fastLog2(static_cast<unsigned>(sizeof(FieldData)));
     static_assert(sizeof(FieldData) == 1u << fieldSizeShift && sizeof(FieldTableEntry) == 1u << CCallHelpers::TimesFour && sizeof(FieldRecordIndex) == 1u << CCallHelpers::TimesTwo);
     static_assert(sizeof(FunctionKindData) == 1u << CCallHelpers::TimesTwo && offsetOfSlimClosureWord == sizeof(uint64_t) && numberOfSlimClosureKinds == 2);
@@ -286,7 +207,6 @@ static void emitCallOfUncreatedClosure(StubAssembler& jit, unsigned count)
 
 static void emitReadMethodAndCall(StubAssembler& jit, unsigned count)
 {
-    constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
     const GPRReg R0 = jit.result();
     jit.emitFunctionPrologue();
     jit.subPtr(TrustedImm32(bytesSavedForCallMethod(count)), sp);
@@ -297,7 +217,7 @@ static void emitReadMethodAndCall(StubAssembler& jit, unsigned count)
     emitCallOfUncreatedClosure(jit, count);
     jit.move(calleeGPR, jit.reuseScratch(slotNameRegister));
     jit.move(thisGPR, R0);
-    jit.callStub(getByIdInStubFrame());
+    jit.callStub(getById().withCallerFrame(CallerFrame::StubFrame));
     Jump notCell = jit.branchIfNotCell(R0);
     jit.move(R0, calleeGPR);
     jit.load64(Address(sp, sizeof(EncodedJSValue)), thisGPR);
@@ -315,22 +235,46 @@ static void emitReadMethodAndCall(StubAssembler& jit, unsigned count)
 void generateCallMethodById(StubAssembler& jit)
 {
     const unsigned count = jit.key().count();
-    const MethodProbeRegisters registers = MethodProbeRegisters::allocate(jit);
-    if (std::optional<uint32_t> number = jit.key().immediate()) {
-        emitCallMethodWithBoundName(jit, *number, registers);
-        return;
-    }
+    const GPRReg cell = jit.allocateScratch(StubRegister::T13);
+    const GPRReg method = jit.allocateScratch(StubRegister::T11);
+    const GPRReg scratch = jit.allocateScratch(StubRegister::T9);
+    const std::optional<uint32_t> boundName = jit.key().immediate();
+    RELEASE_ASSERT(!boundName || RowDisplacementTable::hasColumn(*boundName));
+    JumpList otherwise;
+    Box<JumpList> hasNoStructure = Box<JumpList>::create();
 
-    MethodProbeExits exits;
-    emitProbeMethodInField(jit, registers.cell, registers.scratch, std::nullopt, [&](GPRReg method) {
-        jit.move(method, calleeGPR);
-        callFoundMethod(jit, count);
-    });
-    emitProbeMethod(jit, registers, exits);
-    jit.move(registers.method, calleeGPR);
+    emitCallMethodInField(jit, cell, scratch, boundName);
+    if (boundName) {
+        jit.move(TrustedImm32(*boundName), calleeGPR);
+        otherwise.append(jit.branchIfNotCell(thisGPR));
+        jit.load32(Address(thisGPR, JSCell::structureIDOffset()), method);
+        loadFrontRow(jit, SlotAccess::Read, method, cell, scratch);
+        jit.load64(Address(cell, static_cast<int32_t>(*boundName * sizeof(PackedSlot))), cell);
+    } else {
+        loadStructureIDOfReceiver(jit, thisGPR, method, *hasNoStructure);
+#if CPU(ARM64)
+        static_assert(isFreeBeforeCall(StubRegister::T14));
+        loadFrontCell(jit, SlotAccess::Read, { method, calleeGPR, scratch, cell, jit.allocateScratch(StubRegister::T14) });
+#else
+        // The calling convention leaves three registers free, one fewer than loadFrontCell takes.
+        loadFrontRow(jit, SlotAccess::Read, method, cell, scratch);
+        jit.load64(BaseIndex(cell, calleeGPR, CCallHelpers::TimesEight), cell);
+#endif
+    }
+    readMethodByCell(jit, cell, method, scratch, otherwise);
+    otherwise.append(jit.branchIfNotCell(method));
+    jit.move(method, calleeGPR);
     callFoundMethod(jit, count);
 
-    linkMethodProbeExits(jit, exits);
+    if (boundName) {
+        jit.linkToStub(otherwise, jit.key().withoutImmediate());
+        return;
+    }
+    otherwise.link(&jit);
+    // loadStructureIDOfReceiver adds to its list in an out-of-line part, which runs after the generator has returned.
+    jit.addOutOfLinePart([hasNoStructure, target = jit.label()](StubAssembler& jit) {
+        hasNoStructure->linkTo(target, &jit);
+    });
     emitReadMethodAndCall(jit, count);
 }
 

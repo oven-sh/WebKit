@@ -10,27 +10,22 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="stringInInt8Array" parameters=[{type=Int8Array}, {type=i32}, {type=string}] results=[{type=undefined}] {
-  b0(v0: Int8Array, v1: i32, v2: string):
     PutTypedArrayElement v0, v1, v2 typedArrayType=1 level=Proven
     Return
 }
 function f1 name="numberInBigInt64Array" parameters=[{type=BigInt64Array}, {type=i32}, {type=number}] results=[{type=undefined}] {
-  b0(v0: BigInt64Array, v1: i32, v2: number):
     PutTypedArrayElement v0, v1, v2 typedArrayType=11 level=Proven
     Return
 }
 function f2 name="bigintInFloat64Array" parameters=[{type=Float64Array}, {type=i32}, {type=bigint}] results=[{type=undefined}] {
-  b0(v0: Float64Array, v1: i32, v2: bigint):
     PutTypedArrayElement v0, v1, v2 typedArrayType=10 level=Proven
     Return
 }
 function f3 name="numberInInt8Array" parameters=[{type=Int8Array}, {type=i32}, {type=number}] results=[{type=undefined}] {
-  b0(v0: Int8Array, v1: i32, v2: number):
     PutTypedArrayElement v0, v1, v2 typedArrayType=1 level=Proven
     Return
 }
 function f4 name="bigintInBigInt64Array" parameters=[{type=BigInt64Array}, {type=i32}, {type=bigint}] results=[{type=undefined}] {
-  b0(v0: BigInt64Array, v1: i32, v2: bigint):
     PutTypedArrayElement v0, v1, v2 typedArrayType=11 level=Proven
     Return
 }

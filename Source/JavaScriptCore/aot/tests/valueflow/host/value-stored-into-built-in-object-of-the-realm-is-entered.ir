@@ -7,7 +7,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Date
     v1 = NewClosure function=f1
     PropSet v0, v1 key="now" mode=Strict
@@ -15,18 +14,15 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="fixedTime" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=0
     Return v0
 }
 function f2 name="neverCalled" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Date
     v1 = NewClosure function=f3
     PropSet v0, v1 key="parse" mode=Strict
     Return
 }
 function f3 name="neverStored" results=[{type=anything}] {
-  b0():
     Return
 }

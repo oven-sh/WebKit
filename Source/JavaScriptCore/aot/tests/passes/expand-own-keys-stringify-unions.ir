@@ -11,12 +11,9 @@ layout L1 name="Other" fields=[{key="z" declared={type=number}}] flow={construct
 layout L2 name="Converted" fields=[{key="toJSON" declared={type=anything}}] flow={constructorOrders=[{fields=[0]}]}
 
 function f0 name="provenUnion" parameters=[{type=string|L0|L1|Array<number>}] results=[{type=anything}] {
-  b0(v0: string|L0|L1|Array<number>):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1 overload=JSONStringify/0
     Return v2
-}
-# CHECK-LABEL: function f0 name="provenUnion"
 # CHECK: [[builder0]]: stringbuilder = StringBuilderBegin
 # CHECK: [[isArray0]]: boolean = TypeTest v0 testedType=Array<number>
 # CHECK-NEXT: Branch [[isArray0]] -> taken [[array0]](| 0), notTaken [[others0]](| 0)
@@ -31,14 +28,13 @@ function f0 name="provenUnion" parameters=[{type=string|L0|L1|Array<number>}] re
 # CHECK: = CallDirect [[object0]], [[builder0]] function=[[serializerOfOther]]
 # CHECK: = CallDirect [[object0]], [[builder0]] function=[[serializerOfPoint]]
 # CHECK: = StringBuilderFinish [[builder0]]
+}
 
 function f1 name="expectedUnion" parameters=[{type=undefined|number|string|L0|Array<L1> flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ undefined|number|string|L0|Array<L1>):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1 overload=JSONStringify/0
     Return v2
-}
-# CHECK-LABEL: function f1 name="expectedUnion"
 # CHECK: [[builder1]]: stringbuilder = StringBuilderBegin
 # CHECK: = CallBuiltin -, v0, v1 overload=JSONStringify/0
 # CHECK: StringBuilderDiscard [[builder1]]
@@ -53,61 +49,52 @@ function f1 name="expectedUnion" parameters=[{type=undefined|number|string|L0|Ar
 # CHECK: = ShapeTest [[object1]] layouts=[L0]
 # CHECK: = CallDirect [[object1]], [[builder1]] function=[[serializerOfPoint]]
 # CHECK: = StringBuilderFinish [[builder1]]
+}
 
 function f2 name="arrayOrMap" parameters=[{type=Array<number>|Map}] results=[{type=anything}] {
-  b0(v0: Array<number>|Map):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1 overload=JSONStringify/0
     Return v2
-}
-# CHECK-LABEL: function f2 name="arrayOrMap"
 # CHECK: = StringBuilderBegin
 # CHECK: = TypeTest v0 testedType=Array<number>
 # CHECK: = CallBuiltin -, v0, v1 overload=JSONStringify/0
 # CHECK-NOT: testedType=Map
 # CHECK: = StringBuilderFinish
+}
 
 function f3 name="onePartHasNoPlan" parameters=[{type=function|L0|Map}] results=[{type=anything}] {
-  b0(v0: function|L0|Map):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1 overload=JSONStringify/0
     Return v2
-}
-# CHECK-LABEL: function f3 name="onePartHasNoPlan"
 # CHECK: = StringBuilderBegin
 # CHECK: = ShapeTest v0 layouts=[L0]
 # CHECK: = CallBuiltin -, v0, v1 overload=JSONStringify/0
 # CHECK-NOT: testedType=Map
+}
 
 function f4 name="oneLayoutMayHaveToJSON" parameters=[{type=L0|L2|Array<number>}] results=[{type=anything}] {
-  b0(v0: L0|L2|Array<number>):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1 overload=JSONStringify/0
     Return v2
-}
-# CHECK-LABEL: function f4 name="oneLayoutMayHaveToJSON"
 # CHECK: = StringBuilderBegin
 # CHECK: = ShapeTest {{*}} layouts=[L0]
 # CHECK-NOT: layouts=[L2]
+}
 
 function f5 name="noPartHasPlan" parameters=[{type=function|L2|Map}] results=[{type=anything}] {
-  b0(v0: function|L2|Map):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1 overload=JSONStringify/0
     Return v2
-}
-# CHECK-LABEL: function f5 name="noPartHasPlan"
 # CHECK: b0(v0: function|L2|Map):
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: v2: undefined|string = CallBuiltin -, v0, v1 overload=JSONStringify/0
 # CHECK-NEXT: Return v2
+}
 
 function f6 name="unionWithReplacer" parameters=[{type=L0|Array<number>}, {type=function}] results=[{type=anything}] {
-  b0(v0: L0|Array<number>, v1: function):
     v2 = CallBuiltin -, v0, v1 overload=JSONStringify/1
     Return v2
-}
-# CHECK-LABEL: function f6 name="unionWithReplacer"
 # CHECK: b0(v0: L0|Array<number>, v1: function):
 # CHECK-NEXT: v2: undefined|string = CallBuiltin -, v0, v1 overload=JSONStringify/1
 # CHECK-NEXT: Return v2
+}

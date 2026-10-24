@@ -5,43 +5,36 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="arrayProvenByType" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Storage, Names]>):
     v1 = Builtin builtin=MathMax
     v2 = NewArray contents=anything
     AppendSpread v2, v0
     v4 = CallList v1, -, v2
     Return v4
-}
-# CHECK-LABEL: function f0 name="arrayProvenByType"
 # CHECK-NOT: IsPristine
 # CHECK-NOT: NewArray
 # CHECK-NOT: AppendSpread
 # CHECK: v4: number = CallBuiltin -, v0 overload=MathMax/0 builtinCallForm=List
 # CHECK-NOT: needsPristineReceiver
+}
 
 function f1 name="freshLiteral" parameters=[{type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: number, v1: number):
     v2 = Builtin builtin=MathMax
     v3 = NewArray v0, v1 contents=number
     v4 = NewArray contents=anything
     AppendSpread v4, v3
     v6 = CallList v2, -, v4
     Return v6
-}
-# CHECK-LABEL: function f1 name="freshLiteral"
 # CHECK-NOT: IsPristine
 # CHECK-NOT: AppendSpread
 # CHECK: v6: number = CallBuiltin -, v3 overload=MathMax/0 builtinCallForm=List [needsPristineReceiver]
+}
 
 function f2 name="arrayWithoutProof" parameters=[{type=Array<number>}] results=[{type=anything}] {
-  b0(v0: Array<number>):
     v1 = Builtin builtin=MathMax
     v2 = NewArray contents=anything
     AppendSpread v2, v0
     v4 = CallList v1, -, v2
     Return v4
-}
-# CHECK-LABEL: function f2 name="arrayWithoutProof"
 # CHECK-NOT: TypeTest
 # CHECK: [[isPristine2]]: boolean = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
 # CHECK-NEXT: Branch [[isPristine2]] -> taken [[fast2]](| 0), notTaken [[generic2]]()
@@ -51,6 +44,7 @@ function f2 name="arrayWithoutProof" parameters=[{type=Array<number>}] results=[
 # CHECK-NEXT: [[list2]]: Array = NewArray contents=anything
 # CHECK-NEXT: AppendSpread [[list2]], v0
 # CHECK-NEXT: anything = CallList v1, -, [[list2]]
+}
 
 function f3 name="expectedArray" parameters=[{type=Array<number> flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ Array<number>):
@@ -59,8 +53,6 @@ function f3 name="expectedArray" parameters=[{type=Array<number> flags=[IsExpect
     AppendSpread v2, v0
     v4 = CallList v1, -, v2
     Return v4
-}
-# CHECK-LABEL: function f3 name="expectedArray"
 # CHECK: [[isArray3]]: boolean{{*}} = TypeTest v0 testedType=Array<number>
 # CHECK-NEXT: Branch [[isArray3]] -> taken [[tested3]](| 0), notTaken
 # CHECK: [[tested3]]([[array3]]: Array<number>):
@@ -70,16 +62,14 @@ function f3 name="expectedArray" parameters=[{type=Array<number> flags=[IsExpect
 # CHECK: number = CallBuiltin -, [[array3]] overload=MathMax/0 builtinCallForm=List [needsPristineReceiver]
 # CHECK: frequency=Unlikely:
 # CHECK: AppendSpread {{*}}, v0
+}
 
 function f4 name="nullableArray" parameters=[{type=undefined|Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: undefined|Array<number, proven, pristine[Storage, Names]>):
     v1 = Builtin builtin=MathMax
     v2 = NewArray contents=anything
     AppendSpread v2, v0
     v4 = CallList v1, -, v2
     Return v4
-}
-# CHECK-LABEL: function f4 name="nullableArray"
 # CHECK-NOT: IsPristine
 # CHECK: [[isArray4]]: boolean = TypeTest v0 testedType=Array<number>
 # CHECK-NEXT: Branch [[isArray4]] -> taken [[tested4]](| 0), notTaken
@@ -88,113 +78,98 @@ function f4 name="nullableArray" parameters=[{type=undefined|Array<number, prove
 # CHECK-NEXT: number = CallBuiltin -, [[array4]] overload=MathMax/0 builtinCallForm=List
 # CHECK: frequency=Unlikely:
 # CHECK: AppendSpread {{*}}, v0
+}
 
 function f5 name="unknownIterable" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=MathMax
     v2 = NewArray contents=anything
     AppendSpread v2, v0
     v4 = CallList v1, -, v2
     Return v4
-}
-# CHECK-LABEL: function f5 name="unknownIterable"
 # CHECK: AppendSpread v2, v0
 # CHECK-NEXT: [[isPristine5]]: boolean = IsPristine v2 builtinClass=Array aspects=[Storage, Names]
 # CHECK: number = CallBuiltin -, v2 overload=MathMax/0 builtinCallForm=List [needsPristineReceiver]
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: anything = CallList v1, -, v2
+}
 
 function f6 name="twoSpreads" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Storage, Names]>):
     v1 = Builtin builtin=MathMax
     v2 = NewArray contents=anything
     AppendSpread v2, v0
     AppendSpread v2, v0
     v5 = CallList v1, -, v2
     Return v5
-}
-# CHECK-LABEL: function f6 name="twoSpreads"
 # CHECK: AppendSpread v2, v0
 # CHECK-NEXT: AppendSpread v2, v0
 # CHECK: number = CallBuiltin -, v2 overload=MathMax/0 builtinCallForm=List [needsPristineReceiver]
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: anything = CallList v1, -, v2
+}
 
 function f7 name="elementBesideSpread" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Storage, Names]>, v1: number):
     v2 = Builtin builtin=MathMax
     v3 = NewArray v1 contents=anything
     AppendSpread v3, v0
     v5 = CallList v2, -, v3
     Return v5
-}
-# CHECK-LABEL: function f7 name="elementBesideSpread"
 # CHECK: v3: Array = NewArray v1 contents=anything
 # CHECK-NEXT: AppendSpread v3, v0
 # CHECK: number = CallBuiltin -, v3 overload=MathMax/0 builtinCallForm=List [needsPristineReceiver]
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: anything = CallList v2, -, v3
+}
 
 function f8 name="listUsedTwice" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Storage, Names]>):
     v1 = Builtin builtin=MathMax
     v2 = NewArray contents=anything
     AppendSpread v2, v0
     v4 = CallList v1, -, v2
     Return v2
-}
-# CHECK-LABEL: function f8 name="listUsedTwice"
 # CHECK: AppendSpread v2, v0
 # CHECK: Return v2
 # CHECK: number = CallBuiltin -, v2 overload=MathMax/0 builtinCallForm=List [needsPristineReceiver]
+}
 
 function f9 name="callBetweenSpreadAndCall" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Storage, Names]>, v1: anything):
     v2 = Builtin builtin=MathMax
     v3 = NewArray contents=anything
     AppendSpread v3, v0
     v5 = Call v1
     v6 = CallList v2, -, v3
     Return v6
-}
-# CHECK-LABEL: function f9 name="callBetweenSpreadAndCall"
 # CHECK: AppendSpread v3, v0
 # CHECK-NEXT: v5: anything = Call v1
 # CHECK: number = CallBuiltin -, v3 overload=MathMax/0 builtinCallForm=List [needsPristineReceiver]
+}
 
 function f10 name="calleeWithoutListForm" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Storage, Names]>):
     v1 = Builtin builtin=StringFromCharCode
     v2 = NewArray contents=anything
     AppendSpread v2, v0
     v4 = CallList v1, -, v2
     Return v4
-}
-# CHECK-LABEL: function f10 name="calleeWithoutListForm"
 # CHECK-NOT: CallBuiltin
 # CHECK-NOT: AppendSpread
 # CHECK: v4: anything = CallList v1, -, v0
+}
 
 function f11 name="listWithoutSpread" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Storage, Names]>):
     v1 = Builtin builtin=MathMax
     v2 = CallList v1, -, v0
     Return v2
-}
-# CHECK-LABEL: function f11 name="listWithoutSpread"
 # CHECK-NOT: IsPristine
 # CHECK: v2: number = CallBuiltin -, v0 overload=MathMax/0 builtinCallForm=List
 # CHECK-NOT: needsPristineReceiver
+}
 
 function f12 name="positionalArrayArgument" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Storage, Names]>):
     v1 = Builtin builtin=MathMax
     v2 = Call v1, -, v0
     Return v2
-}
-# CHECK-LABEL: function f12 name="positionalArrayArgument"
 # CHECK-NOT: builtinCallForm=List
 # CHECK: Return v2
+}
 
 function f13 name="hiddenRest" flags=[HasArgumentCount, HasHiddenRest] results=[{type=anything}] {
   b0(v0: int[0, 4294967295], v1: Array):
@@ -202,25 +177,21 @@ function f13 name="hiddenRest" flags=[HasArgumentCount, HasHiddenRest] results=[
     v3 = Builtin builtin=Math
     v4 = CallList v2, v3, v1
     Return v4
-}
-# CHECK-LABEL: function f13 name="hiddenRest"
 # CHECK: [[isPristine13]]: boolean = IsPristine v1 builtinClass=Array aspects=[Storage, Names]
 # CHECK: number = CallBuiltin -, v1 overload=MathMax/0 builtinCallForm=List [needsPristineReceiver]
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: anything = CallList v2, v3, v1
+}
 
 function f14 name="listWithoutSpreadAndCalleeWithoutListForm" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Storage, Names]>):
     v1 = Builtin builtin=StringFromCharCode
     v2 = CallList v1, -, v0
     Return v2
-}
-# CHECK-LABEL: function f14 name="listWithoutSpreadAndCalleeWithoutListForm"
 # CHECK-NOT: CallBuiltin
 # CHECK: v2: anything = CallList v1, -, v0
+}
 
 function f15 name="listInRareBlock" parameters=[{type=Array<number>}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: Array<number>, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v2 = Builtin builtin=MathMax
@@ -228,31 +199,25 @@ function f15 name="listInRareBlock" parameters=[{type=Array<number>}, {type=bool
     Return v3
   b2():
     Return v1
-}
-# CHECK-LABEL: function f15 name="listInRareBlock"
 # CHECK-NOT: IsPristine
 # CHECK: v3: anything = CallList v2, -, v0
+}
 
 function f16 name="anyCallee" parameters=[{type=anything}, {type=anything}, {type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: Array<number, pristine[Storage, Names]>):
     v3 = NewArray contents=anything
     AppendSpread v3, v2
     v5 = CallList v0, v1, v3
     Return v5
-}
-# CHECK-LABEL: function f16 name="anyCallee"
 # CHECK-NOT: NewArray
 # CHECK-NOT: AppendSpread
 # CHECK: v5: anything = CallList v0, v1, v2
+}
 
 function f17 name="anyCalleeAndArrayWithoutProof" parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
-  b0(v0: anything, v1: Array):
     v2 = NewArray contents=anything
     AppendSpread v2, v1
     v4 = CallList v0, -, v2
     Return v4
-}
-# CHECK-LABEL: function f17 name="anyCalleeAndArrayWithoutProof"
 # CHECK: [[isPristine17]]: boolean = IsPristine v1 builtinClass=Array aspects=[Storage, Names]
 # CHECK-NEXT: Branch [[isPristine17]] -> taken [[fast17]](| 0), notTaken [[generic17]]()
 # CHECK: [[fast17]]({{*}}):
@@ -261,75 +226,64 @@ function f17 name="anyCalleeAndArrayWithoutProof" parameters=[{type=anything}, {
 # CHECK-NEXT: [[list17]]: Array = NewArray contents=anything
 # CHECK-NEXT: AppendSpread [[list17]], v1
 # CHECK-NEXT: anything = CallList v0, -, [[list17]]
+}
 
 function f18 name="construction" parameters=[{type=anything}, {type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: anything, v1: Array<number, pristine[Storage, Names]>):
     v2 = NewArray contents=anything
     AppendSpread v2, v1
     v4 = ConstructList v0, -, v2
     Return v4
-}
-# CHECK-LABEL: function f18 name="construction"
 # CHECK-NOT: AppendSpread
 # CHECK: v4: anything ~ object = ConstructList v0, -, v1
+}
 
 function f19 name="anyCalleeAndElementBesideSpread" parameters=[{type=anything}, {type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: anything, v1: Array<number, pristine[Storage, Names]>):
     v2 = NewArray v0 contents=anything
     AppendSpread v2, v1
     v4 = CallList v0, -, v2
     Return v4
-}
-# CHECK-LABEL: function f19 name="anyCalleeAndElementBesideSpread"
 # CHECK: AppendSpread v2, v1
 # CHECK-NEXT: v4: anything = CallList v0, -, v2
+}
 
 function f20 name="anyCalleeAndUnknownIterable" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewArray contents=anything
     AppendSpread v2, v1
     v4 = CallList v0, -, v2
     Return v4
-}
-# CHECK-LABEL: function f20 name="anyCalleeAndUnknownIterable"
 # CHECK-NOT: IsPristine
 # CHECK: AppendSpread v2, v1
 # CHECK-NEXT: v4: anything = CallList v0, -, v2
+}
 
 function f21 name="anyCalleeAndCallBetweenSpreadAndCall" parameters=[{type=anything}, {type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: anything, v1: Array<number, pristine[Storage, Names]>):
     v2 = NewArray contents=anything
     AppendSpread v2, v1
     v4 = Call v0
     v5 = CallList v0, -, v2
     Return v5
-}
-# CHECK-LABEL: function f21 name="anyCalleeAndCallBetweenSpreadAndCall"
 # CHECK: AppendSpread v2, v1
 # CHECK-NEXT: v4: anything = Call v0
 # CHECK-NEXT: v5: anything = CallList v0, -, v2
+}
 
 function f22 name="spreadIntoCastOfList" parameters=[{type=anything}, {type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: anything, v1: Array<number, pristine[Storage, Names]>):
     v2 = NewArray contents=anything
     v3 = AssumeType v2 castType=Array<anything, pristine[Storage, Names]>
     AppendSpread v3, v1
     v5 = CallList v0, -, v3
     Return v5
-}
-# CHECK-LABEL: function f22 name="spreadIntoCastOfList"
 # CHECK-NOT: NewArray
 # CHECK-NOT: AppendSpread
 # CHECK: v5: anything = CallList v0, -, v1
+}
 
 function f23 name="castOfListUsedTwice" parameters=[{type=anything}, {type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: anything, v1: Array<number, pristine[Storage, Names]>):
     v2 = NewArray contents=anything
     v3 = AssumeType v2 castType=Array<anything, pristine[Storage, Names]>
     AppendSpread v3, v1
     v5 = CallList v0, v3, v3
     Return v5
-}
-# CHECK-LABEL: function f23 name="castOfListUsedTwice"
 # CHECK: AppendSpread v3, v1
 # CHECK-NEXT: v5: anything = CallList v0, v3, v3
+}

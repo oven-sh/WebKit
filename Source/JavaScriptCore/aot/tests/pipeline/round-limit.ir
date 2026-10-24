@@ -3,25 +3,4 @@
 # RUN: pipeline NumberLiteralStrings
 # LOSS: MaxOptimizationRounds f0
 # CHECK: function f0
-
-module m0 path="/main.js" displayPath="main.js" body=f0
-entry module=m0
-
-function f0 name="" kind=Module results=[{type=anything}] {
-  b0():
-    v0 = Boolean boolean=true
-    Branch v0 -> taken b1(), notTaken b2()
-  b1():
-    v1 = Integer integer=1
-    Jump -> next b3(v1)
-  b2():
-    v2 = Integer integer=2
-    Jump -> next b3(v2)
-  b3(v3):
-    v4 = Integer integer=1
-    v5 = Add v3, v4
-    v6 = Builtin builtin=GlobalThis
-    v7 = PropGet v6 key="sink" [isFreeName]
-    v8 = Call v7, -, v5
-    Return v8
-}
+# PROGRAM-OF: work-limit.ir

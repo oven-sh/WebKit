@@ -35,7 +35,6 @@
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
-#include <wtf/UniqueArray.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -69,7 +68,6 @@ inline LayoutID provenBaseOf(const FlowApplication& application, LayoutID id)
     const LayoutFlow& flow = application.layouts[id.index()].flow;
     return flow.baseState == BaseState::Layout ? flow.base : LayoutID();
 }
-
 
 using SetsByNumber = HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
 
@@ -115,10 +113,7 @@ public:
         return unionOfDistinctSets(maker, std::exchange(m_parts, { }));
     }
 
-    ValueSetID takeExpanded(const ValueFlowHeapView& heap, ValueSetMaker& maker)
-    {
-        return heap.expand(maker, take(maker));
-    }
+    ValueSetID takeExpanded(const ValueFlowHeapView& heap, ValueSetMaker& maker) { return heap.expand(maker, take(maker)); }
 
     ValueSetID takeAsListed(ValueSetMaker& maker)
     {
@@ -283,9 +278,6 @@ private:
 
     LayoutID namedLayoutOf(ValueFlowObjectID) const;
     bool selectsLayoutByPrototype(ValueFlowObjectID) const;
-    ValueSetID collectClassLayouts(ValueFlowHeapView&);
-    SetsByNumber collectWrittenPrototypeLinks(std::span<const ValueFlowObjectID> objects, ValueFlowHeapView&) const;
-    SelectedLayouts layoutsSelectedBy(ValueSetID prototypes, LayoutID named, ValueSetID prototypeObjectsOfClasses, ValueFlowHeapView&) const;
 
     const ValueFlowResultInputs& m_inputs;
     HashMap<uint32_t, SelectedLayouts, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_selectedLayouts;
@@ -293,7 +285,6 @@ private:
     Vector<LayoutID> m_lostClasses;
     Vector<ValueSetID> m_objectsOfLayout;
 };
-
 
 struct StoredUnderKey {
     ValueSetID value { ValueSets::nothing };
@@ -465,18 +456,9 @@ public:
     };
     void lookAt(std::span<const ValueSetID>);
     PlaceholdersInSet placeholdersInSetOfWrite(ValueSetID objects) const;
-    void forEachLayoutListedInSetOfWrite(ValueSetID objects, const Writer&, NOESCAPE const Invocable<void(LayoutID)> auto&) const;
+    void forEachLayoutListedInSetOfWrite(ValueSetID objects, const Writer& writer, NOESCAPE const Invocable<void(LayoutID)> auto& functor) const { forEachLayoutListedAmong(objectsOfSetOfWrite(objects), writer, functor); }
 
 private:
-    struct WrittenNode {
-        uint8_t detail;
-        uint32_t payload;
-        uint32_t set;
-        ValueSetID value;
-
-        auto order() const { return std::tuple { detail, payload, set }; }
-    };
-
     struct ObjectsOfSet {
         Vector<LayoutID, 4> layouts;
         bool holdsObjectOfEveryEscapedClass { false };
@@ -545,10 +527,7 @@ private:
     void listWrites();
     void forEachWriteAmong(std::span<const uint32_t>, NOESCAPE const Invocable<void(const Writer&, const ValueFlowNodeKey&, ValueSetID value)> auto&) const;
     ObjectsOfSet findObjectsOf(ValueSetID) const;
-    const ObjectsOfSet& objectsOf(ValueSetID);
     std::optional<uint32_t> positionOfSetLookedAt(ValueSetID) const;
-    void noteObjectsOf(ValueSetID, ObjectsOfSet&&);
-    const ObjectsOfSet& objectsOfSetAt(uint32_t position) const;
     const ObjectsOfSet& objectsOfSetOfWrite(ValueSetID) const;
     void forEachLayoutListedAmong(const ObjectsOfSet&, const Writer&, NOESCAPE const Invocable<void(LayoutID)> auto&) const;
     bool admits(std::span<const LayoutID> layoutsOfReceiver, LayoutID) const;
@@ -558,22 +537,16 @@ private:
     std::optional<ValueSetID> descriptorsWrittenOutIn(ValueSetMaker&, const ValueFlowStatement&) const;
     uint8_t formsOfAccessorDefinedBy(ValueSetMaker&, const Writer&, ValueFlowName) const;
     bool definesValue(ValueSetMaker&, const Writer&, ValueFlowName) const;
-    StoreUnderName describeStore(ValueSetMaker&, const Writer&, ValueFlowName) const;
     WritesThroughSet describeWrite(ValueSetMaker&, StoreUnderName&, const Writer&, const ValueFlowNodeKey&, ValueSetID value) const;
     ParallelArray<WritesThroughSet> collectWrites(ValueSetMakers&) const;
     void noteWrites();
     void noteWritesInto(ValueSetMaker&, LayoutID, const WritesThroughSet&);
-    void noteWritesThroughPlaceholder(ValueSetMaker&, StoresIntoObjects&, const WritesThroughSet&);
     void noteNamesStoredThroughDeclaredReceivers();
-    Vector<LayoutID> receiversNamedBy(LayoutSetID family, uint8_t placeholders);
     using AccessesByKeyAndLayout = HashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
-    AccessesByKeyAndLayout countAccessesThroughTypesOfFewLayouts(const BitVector& keys, uint64_t mostLayouts);
     void unite(ValueSetID& into, ValueSetID value) { into = m_heap.maker().unite(into, value); }
     bool spellsKey(ValueSetMaker&, const Writer&, ValueFlowName) const;
     void note(ValueSetMaker&, StoresIntoObjects&, ValueFlowName, ValueSetID value, bool isAllocation, bool isNamedByOperation);
-    bool someReceiverDeclares(PropertyKeyID, const ObjectsOfSet&) const;
     ValueFlowNumbers numbersStoredBy(const Writer&, ValueFlowName) const;
-    void indexNumbersInData();
     ValueFlowNumbers numbersInData(LayoutID, ValueFlowName) const;
     void noteNumbers(StoresIntoObjects&, ValueFlowName, const ValueFlowNumbers&);
     void noteCodeWithoutSolve(const Function&);
@@ -622,7 +595,6 @@ private:
     std::optional<HashMap<uint64_t, ValueFlowNumbers, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>> m_numbersInData;
 };
 
-
 class UsesOfObjects {
 public:
     UsesOfObjects(const ValueFlowResultInputs&, const ValueFlowHeapView&);
@@ -657,15 +629,10 @@ private:
     };
 
     Noter noterOf(ValueSetMakers& makers, unsigned worker) { return { m_notes[worker], makers.of(worker) }; }
-    UnionOfSets takeUnion(UnionOfSets Notes::*);
-    Vector<PartOfNumber> takeParts(PartsByNumber Notes::*);
-    SetsByNumber takeExpanded(ValueSetMakers&, Vector<PartOfNumber>&&);
     void noteReads(ValueSetMakers&);
     void noteRead(Noter, const ValueFlowNodeKey&, Reader, ValueSetID startOfLookup);
     void noteOperations(ValueSetMakers&);
     void noteOperationsWithoutStatement();
-    void noteBehaviors();
-    void noteObjectsOfRuntimeModules();
     void noteApplication(Noter, const ValueFlowBuiltinApplication&);
     void noteRefusedOperands(Noter, const ValueFlowBuiltinApplication&);
 
@@ -727,12 +694,7 @@ private:
     void noteApplicationOfAll(Noter, const ValueFlowBuiltinApplication&, ValueSetID builtinCallees);
     void noteTestUnderKeys(Noter, const ValueFlowBuiltinApplication&, BuiltinOperand object, BuiltinOperand key, bool looksAtOwnPropertyAlone);
     void findHostFunctionsThatProgramHasStored(ValueSetMakers&);
-    void noteParameter(Noter, const ValueFlowBuiltinApplication&, const BuiltinParameter&);
-    void noteParameterWithoutAction(Noter, const ValueFlowBuiltinApplication&, const BuiltinOverload&, const BuiltinParameter&);
-    void noteTest(Noter, const ValueFlowBuiltinApplication&, const BuiltinOverload&, const BuiltinPropertyAction&);
     void goOnToPrototypes(ValueSetMakers&);
-    void findObjectsObservedUnderKeys(ValueSetMakers&);
-    void listReceiversOfReads();
 
     const ValueFlowResultInputs& m_inputs;
     const ValueFlowHeapView& m_heap;
@@ -867,11 +829,6 @@ void StoresByLayout::forEachLayoutWrittenThroughSetOfWrite(ValueSetID set, const
         }
     }
     forEachLayoutListedInSetOfWrite(set, writer, functor);
-}
-
-void StoresByLayout::forEachLayoutListedInSetOfWrite(ValueSetID set, const Writer& writer, NOESCAPE const Invocable<void(LayoutID)> auto& functor) const
-{
-    forEachLayoutListedAmong(objectsOfSetOfWrite(set), writer, functor);
 }
 
 void StoresByLayout::forEachLayoutListedAmong(const ObjectsOfSet& objects, const Writer& writer, NOESCAPE const Invocable<void(LayoutID)> auto& functor) const

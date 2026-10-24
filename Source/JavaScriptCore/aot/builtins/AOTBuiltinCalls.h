@@ -9,8 +9,8 @@
 
 #include "AOTBuiltinTable.h"
 #include "AOTIR.h"
+#include "AOTOperationData.h"
 #include "AOTResultRules.h"
-#include "AOTStringBuiltinOperationData.h"
 #include "AOTVector.h"
 #include <optional>
 #include <span>

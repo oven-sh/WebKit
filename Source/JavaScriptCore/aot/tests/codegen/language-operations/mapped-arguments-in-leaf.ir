@@ -15,7 +15,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = NewClosure function=f3
@@ -25,17 +24,14 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v5
 }
 function f1 name="calls" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = Call v0
     Return v1
 }
 function f2 name="read" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = GetMappedArgument v0 index=3
     Return v1
 }
 function f3 name="store" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
     SetMappedArgument v0, v1 index=1
     Return
 }

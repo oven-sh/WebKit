@@ -15,10 +15,7 @@
 #include "AOTConversionEmitter.h"
 #include "AOTElementAccessEmitter.h"
 #include "AOTGuardEmitter.h"
-#include "AOTIdentifierNumbering.h"
 #include "AOTNumberLiteralStrings.h"
-#include "AOTPlacement.h"
-#include "AOTPureOperations.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTShapeTestEmitter.h"
 #include "AOTStubsValues.h"
@@ -127,7 +124,7 @@ std::optional<Condition> TypeTestEmitter::tryGetSingleCondition(CellPointer cell
     return cellPasses(cell, plan);
 }
 
-void TypeTestEmitter::testCell(CellPointer cell, const TypeTestPlan& plan, const Failure& failure)
+void TypeTestEmitter::testCell(CellPointer cell, const TypeTestPlan& plan, B3::FrequentedBlock failure)
 {
     if (plan.everyCellPasses())
         return;
@@ -147,13 +144,14 @@ Condition TypeTestEmitter::cellPasses(CellPointer cell, const TypeTestPlan& plan
 
 Condition TypeTestEmitter::stringPasses(CellPointer cell, const TypeTestPlan& plan)
 {
+    auto isOneOfLiterals = [&] {
+        return isOneOfLiteralStringWords(emitter<ConversionEmitter>().toLiteralString(cell), plan);
+    };
     if (plan.stringLiterals.isEmpty())
         return hasCellType(cell, StringType);
     if (onlyStringsOccur(plan))
-        return isOneOfStringLiterals(cell, plan);
-    return either<Condition>(hasCellType(cell, StringType), [&] {
-        return isOneOfStringLiterals(cell, plan);
-    }, [&] {
+        return isOneOfLiterals();
+    return either<Condition>(hasCellType(cell, StringType), isOneOfLiterals, [&] {
         return boolean(false);
     });
 }
@@ -325,11 +323,6 @@ Condition TypeTestEmitter::isPristine(CellPointer cell, BuiltinClassID classID, 
     }
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-Condition TypeTestEmitter::isOneOfStringLiterals(CellPointer string, const TypeTestPlan& plan)
-{
-    return isOneOfLiteralStringWords(emitter<ConversionEmitter>().toLiteralString(string), plan);
 }
 
 Condition TypeTestEmitter::isOneOfLiteralStringWords(LiteralStringWord word, const TypeTestPlan& plan)

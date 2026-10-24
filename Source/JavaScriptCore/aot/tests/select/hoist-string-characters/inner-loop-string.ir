@@ -20,7 +20,6 @@
 # CHECK-NOT: FlattenString
 module m0 path="main.js" displayPath="main.js"
 function f0 name="inner-loop-string" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
-  b0(v0: string, v1: number):
     v2 = Integer integer=0
     v3 = Integer integer=1
     v4 = Undefined

@@ -9,7 +9,6 @@
 
 #include "AOTCFG.h"
 #include "AOTKnownValue.h"
-#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <optional>
 #include <span>
@@ -33,7 +32,25 @@ bool argumentsFitParameters(const Program&, const Function&, const Target&);
 bool argumentsFitParametersAfterCasts(const Program&, const Function&, TypeArena&, const Target&);
 void castArgumentsToParameters(IRBuilder&, BlockID jumpingBlock, bool validates);
 
-// The branches on a test of one value for one type, whichever cast of the value each of them names.
+const Value* typeTestBranchedOn(const Function&, const Block&);
+bool holdsOnlyKnownFunctions(const Type&);
+
+struct BranchOnTypeTest {
+    ValueID subject;
+    TypeID testedType;
+    BlockID block;
+
+    auto test() const { return std::tuple { subject.index(), testedType.index() }; }
+};
+
+struct BranchOnValue {
+    ValueID operand;
+    BlockID block;
+};
+
+// Leaves the tests that several of the branches are on, sorted by test, whichever cast of the value each of them names.
+void keepRepeatedTests(FunctionAnalyses&, Vector<BranchOnTypeTest>&);
+
 class TypeTestBranches {
 public:
     explicit TypeTestBranches(FunctionAnalyses&);
@@ -46,32 +63,11 @@ public:
     std::span<const BlockID> blocksThatBranchOnTypeTest() const LIFETIME_BOUND { return m_blocksThatBranchOnTypeTest.span(); }
 
 private:
-    AOT_CLASS_THRESHOLD(size_t, maxComparedBranches, 8);
-
-    struct TestedBranch {
-        ValueID subject;
-        TypeID testedType;
-        BlockID block;
-
-        auto test() const { return std::tuple { subject.index(), testedType.index() }; }
-    };
-
-    struct BranchOnValue {
-        ValueID operand;
-        BlockID block;
-    };
-
-    void computeOutcomesOfFrequentTests() const;
-    void computeOutcomesOfFrequentConditions() const;
-    std::span<const BranchOnValue> branchesOn(ValueID) const;
-    void keepValuesThatSeveralBranchesName();
-
     FunctionAnalyses& m_analyses;
-    // The tests that several branches are on.
-    Vector<TestedBranch> m_branches;
+    Vector<BranchOnTypeTest> m_branches;
     BitVector m_repeatsTest;
     Vector<BlockID, 16> m_blocksThatBranchOnTypeTest;
-    // The conditional branches by the values among their operands, those on one value in reverse post order.
+    // The conditional branches by the values among their operands that several of them name, those on one value in reverse post order.
     Vector<BranchOnValue, 32> m_branchesByOperand;
     mutable Vector<KnownBoolean> m_outcomesOfFrequentTests;
     mutable Vector<KnownBoolean> m_outcomesOfFrequentConditions;
@@ -99,7 +95,6 @@ private:
 
     void collectTestedReads(std::span<const ValueID> testedObjects, BlockID);
     void addTestedRead(std::span<const ValueID> testedObjects, BlockID, ValueID tested, std::optional<uint32_t> operandIndex);
-    bool isRuledOut(const TestedRead&, uint32_t targetIndex, const Type& slotType) const;
     const Vector<Type>& slotTypesByReceiverOf(ValueID read) LIFETIME_BOUND;
     const Vector<LayoutID>& layoutsRuledOutBy(TestedRead&) LIFETIME_BOUND;
 

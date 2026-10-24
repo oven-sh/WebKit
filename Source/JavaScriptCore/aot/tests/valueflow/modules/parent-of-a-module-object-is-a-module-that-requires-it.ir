@@ -15,7 +15,6 @@ module m1 path="/app/child.cjs" displayPath="child.cjs" kind=CommonJs flags=[Kee
 module m2 path="/app/sibling.cjs" displayPath="sibling.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f3 exportsVariable=g2
 entry module=m0
 function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     PutModuleVariable v0 variable=g0
     EvaluateModule module=m1 referrer=m0 [isBare]
@@ -24,11 +23,9 @@ function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} r
     Return
 }
 function f1 name="exportedByMain" module=m0 results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="child" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = ModuleBuiltin builtin=ModuleObject module=m1
     v1 = PropGet v0 key="parent"
     v2 = PropGet v1 key="exports"
@@ -36,12 +33,10 @@ function f2 name="child" module=m1 kind=CommonJsModule thisType={type=anything} 
     Return
 }
 function f3 name="sibling" module=m2 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f4
     PutModuleVariable v0 variable=g2
     Return
 }
 function f4 name="exportedBySibling" module=m2 results=[{type=anything}] {
-  b0():
     Return
 }

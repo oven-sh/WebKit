@@ -24,7 +24,6 @@ entry module=m0
 # CHECK: module m5 {{*}}flags=[EvaluatesItself]
 
 function f0 name="main" module=m0 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="flag" [isFreeName]
     v2 = ToBoolean v1
@@ -45,41 +44,33 @@ function f0 name="main" module=m0 kind=CommonJsModule flags=[IsSloppy] results=[
   b5() role=CatchHandler:
     v8 = CatchValue
     Jump -> next b4()
-}
-# CHECK-LABEL: function f0 name="main"
 # CHECK: = CallDirect function=f1
 # CHECK-NEXT: = CallDirect function=f3
 # CHECK: = CallDirect function=f3
 # CHECK: = CallDirect function=f2
 # CHECK: = CallDirect function=f5
 # CHECK-NOT: EvaluateModule
+}
 function f1 name="inABranch" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
-  b0():
     EvaluateModule module=m4 referrer=m1 [isBare]
     Return
-}
 # A CommonJS module begins in its code, behind the stack check of that frame.
-# CHECK-LABEL: function f1 name="inABranch"
 # CHECK-NOT: BeginModuleEvaluation
 # CHECK: AbandonModuleEvaluation {{*}} module=m1
+}
 function f2 name="underAHandler" module=m2 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
-  b0():
     v0 = Integer integer=2
     PutModuleVariable v0 variable=g0
     Return
-}
-# CHECK-LABEL: function f2 name="underAHandler"
 # CHECK: AbandonModuleEvaluation {{*}} module=m2
+}
 function f3 name="moved" module=m3 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
-  b0():
     v0 = Integer integer=3
     PutModuleVariable v0 variable=g0
     Return
-}
-# CHECK-LABEL: function f3 name="moved"
 # CHECK: = CallDirect function=f8
+}
 function f4 name="ownOfTheBranch" module=m4 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
-  b0():
     v0 = Integer integer=4
     PutModuleVariable v0 variable=g0
     Return
@@ -87,7 +78,6 @@ function f4 name="ownOfTheBranch" module=m4 kind=CommonJsModule flags=[IsSloppy]
 # CHECK-LABEL: function f4 name="ownOfTheBranch"{{*}}HasOnlyDirectCallers, IsNeverCalledByHost] {
 # CHECK-NOT: ModuleEvaluation
 function f5 name="wrapped" module=m0 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
-  b0():
     v0 = Integer integer=5
     PutModuleVariable v0 variable=g0
     Return

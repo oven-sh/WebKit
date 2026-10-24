@@ -72,7 +72,6 @@ public:
     }
 
     Latin1Character* reserve(JSGlobalObject*, size_t size);
-    Latin1Character* tryReserve(size_t size);
     void commit(const Latin1Character* cursor);
     bool hasRoomAt(const Latin1Character* cursor, size_t size) const
     {

@@ -4,7 +4,6 @@
  */
 
 #include "config.h"
-#include "AOTDataBuilder.h"
 
 #if ENABLE(AOT)
 
@@ -95,15 +94,7 @@ ALWAYS_INLINE static JSArray* createArrayCell(Builder& builder, uint64_t header,
 
 static uint64_t headerOfCopyOnWriteArray(const Instance& instance, IndexingType indexingType)
 {
-    switch (indexingType) {
-    case ArrayWithInt32:
-        return instance.allocation.newCopyOnWriteArrayHeaders[0];
-    case ArrayWithDouble:
-        return instance.allocation.newCopyOnWriteArrayHeaders[1];
-    case ArrayWithContiguous:
-        return instance.prefix().newCopyOnWriteArrayWithContiguousHeader;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    return *reinterpret_cast<const uint64_t*>(reinterpret_cast<const uint8_t*>(&instance) + Instance::offsetOfNewCopyOnWriteArrayHeader(indexingType));
 }
 
 ALWAYS_INLINE static JSArray* tryCreateArrayAroundStorage(Builder& builder, const ArrayNode& node)
@@ -342,12 +333,6 @@ static OtherMembersNode membersOfNodeAt(std::span<const uint64_t> data, uint32_t
     return { words.first(header.count), spanReinterpretCast<const uint32_t>(words.subspan(header.count)).first(header.count) };
 }
 
-static OtherMembersNode otherMembersNodeAt(std::span<const uint64_t> data, uint64_t word)
-{
-    RELEASE_ASSERT(DataWord::kindOf(word) == DataWord::Kind::Node);
-    return membersOfNodeAt(data, DataWord::operandOf(word), DataNodeHeader::Kind::OtherMembers);
-}
-
 static void defineOtherMembers(Builder& builder, Object& object, std::span<const uint32_t> identifierNumbers, size_t firstRoot)
 {
     VM& vm = builder.vm;
@@ -374,8 +359,10 @@ static NEVER_INLINE JSObject* buildObject(Builder& builder, uint32_t first)
     std::span<const uint64_t> words = builder.data.subspan(first + 1, DataNodeHeader::numberOfWords(header.kind(), count) - 1);
     std::span<const uint16_t> fieldIndices = spanReinterpretCast<const uint16_t>(words.subspan(count)).first(count);
     OtherMembersNode otherMembers;
-    if (header.kind() == DataNodeHeader::Kind::ObjectWithOtherMembers)
-        otherMembers = otherMembersNodeAt(builder.data, words.back());
+    if (header.kind() == DataNodeHeader::Kind::ObjectWithOtherMembers) {
+        RELEASE_ASSERT(DataWord::kindOf(words.back()) == DataWord::Kind::Node);
+        otherMembers = membersOfNodeAt(builder.data, DataWord::operandOf(words.back()), DataNodeHeader::Kind::OtherMembers);
+    }
 
     size_t firstRoot = builder.roots.size();
     appendValues(builder, words.first(count));
@@ -435,13 +422,6 @@ static NEVER_INLINE JSObject* buildOrdinaryObject(Builder& builder, uint32_t fir
     return object;
 }
 
-static NEVER_INLINE JSObject* throwStackOverflow(Builder& builder)
-{
-    auto scope = DECLARE_THROW_SCOPE(builder.vm);
-    throwStackOverflowError(builder.realm, scope);
-    return nullptr;
-}
-
 static JSObject* buildNode(Builder& builder, uint32_t first)
 {
     VM& vm = builder.vm;
@@ -454,8 +434,10 @@ static JSObject* buildNode(Builder& builder, uint32_t first)
         if (JSArray* created = tryCreateArrayAroundStorage(builder, array))
             return created;
     }
-    if (!vm.isSafeToRecurse()) [[unlikely]]
-        RELEASE_AND_RETURN(scope, throwStackOverflow(builder));
+    if (!vm.isSafeToRecurse()) [[unlikely]] {
+        throwStackOverflowError(builder.realm, scope);
+        return nullptr;
+    }
     switch (header.kind()) {
     case DataNodeHeader::Kind::Array: {
         ArrayNode array = arrayNodeAt(node, header);

@@ -15,6 +15,7 @@
 #include "AOTStubAssembler.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
+#include "AOTThreshold.h"
 #include "JSString.h"
 #include <unicode/utf16.h>
 #include <wtf/text/StringImpl.h>
@@ -24,6 +25,7 @@ namespace JSC { namespace AOT {
 using Saves = OperationCall::Saves;
 
 static constexpr int32_t maxLengthComparedWithoutCall = defaultLimitValue(LimitID::MaxInlineStringCompareLength, hostArchitecture());
+AOT_THRESHOLD(int32_t, maxLengthSearchedByBytes, 32);
 
 static StubSignature signatureOfCharactersInPlace()
 {
@@ -32,33 +34,15 @@ static StubSignature signatureOfCharactersInPlace()
     return signature;
 }
 
-StubSignature signatureOfRopeCharacters(StubKey)
-{
-    return signatureOfCharactersInPlace();
-}
-
-StubSignature signatureOfFlattenString(StubKey)
-{
-    return signatureOfCharactersInPlace();
-}
-
-StubSignature signatureOfStringsAreEqual(StubKey)
-{
-    return StubSignature::withGPRResult({ gprOf(StubRegister::T11), gprOf(StubRegister::T12) });
-}
-
-StubSignature signatureOfDistinctStringsAreEqual(StubKey key)
-{
-    return signatureOfStringsAreEqual(key);
-}
-
-StubSignature signatureOfStringBuilderAppendString(StubKey)
-{
-    StubSignature signature;
-    signature.addOperand(gprOf(StubRegister::A1));
-    signature.addOperand(gprOf(StubRegister::A2));
-    return signature;
-}
+StubSignature signatureOfRopeCharacters(StubKey) { return signatureOfCharactersInPlace(); }
+StubSignature signatureOfFlattenString(StubKey) { return signatureOfCharactersInPlace(); }
+StubSignature signatureOfStringsAreEqual(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T11), gprOf(StubRegister::T12) }); }
+StubSignature signatureOfDistinctStringsAreEqual(StubKey key) { return signatureOfStringsAreEqual(key); }
+StubSignature signatureOfCompareStrings(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T11), gprOf(StubRegister::T12) }); }
+StubSignature signatureOfStringCodePointAt(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
+StubSignature signatureOfFindCharacter8(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3) }); }
+StubSignature signatureOfStringBuilderAppendString(StubKey) { return StubSignature::withoutResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
+StubSignature signatureOfStackStringBuilderAppendString(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3) }); }
 
 namespace {
 
@@ -223,11 +207,6 @@ void generateStringBuilderAppendString(StubAssembler& jit)
     jit.callOperationAndReturn(Entry::operationAOTStringBuilderAppendString, { .returns = OperationCall::Returns::Void, .saves = Saves::CallerSavedRegisters });
 }
 
-StubSignature signatureOfStackStringBuilderAppendString(StubKey)
-{
-    return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3) });
-}
-
 // The same two kinds of strings as above, and a piece of a flat string. The cursor is left alone, so the slow path starts with nothing done.
 void generateStackStringBuilderAppendString(StubAssembler& jit)
 {
@@ -278,24 +257,6 @@ void generateStackStringBuilderAppendString(StubAssembler& jit)
     jit.callOperationAndReturn(Entry::operationAOTStackStringBuilderAppend, { .saves = Saves::CallerSavedRegisters });
 }
 
-StubSignature signatureOfCompareStrings(StubKey)
-{
-    return StubSignature::withGPRResult({ gprOf(StubRegister::T11), gprOf(StubRegister::T12) });
-}
-
-static void loadSubstringCharactersAndReturn(StubAssembler& jit, GPRReg stringAndCharacters, GPRReg base, GPRReg offset)
-{
-    const GPRReg impl = base;
-    loadSubstringBaseAndOffset(jit, stringAndCharacters, base, offset);
-    jit.loadPtr(Address(base, JSString::offsetOfValue()), impl);
-    jit.loadPtr(Address(impl, StringImpl::dataOffset()), stringAndCharacters);
-    Jump is8Bit = jit.branchTest32(CCallHelpers::NonZero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit()));
-    jit.lshift64(TrustedImm32(1), offset);
-    is8Bit.link(&jit);
-    jit.addPtr(offset, stringAndCharacters);
-    jit.returnToCaller();
-}
-
 void generateRopeCharacters(StubAssembler& jit)
 {
     const GPRReg string = jit.clobberOperand(0);
@@ -309,7 +270,14 @@ void generateRopeCharacters(StubAssembler& jit)
     jit.loadPtr(Address(string, JSString::offsetOfValue()), fiber);
     Jump isFlat = jit.branchTestPtr(CCallHelpers::Zero, fiber, TrustedImm32(JSString::isRopeInPointer));
     Jump notSubstring = jit.branchTestPtr(CCallHelpers::Zero, fiber, TrustedImm32(JSRopeString::isSubstringInPointer));
-    loadSubstringCharactersAndReturn(jit, string, fiber, offset);
+    loadSubstringBaseAndOffset(jit, string, fiber, offset);
+    jit.loadPtr(Address(fiber, JSString::offsetOfValue()), fiber);
+    loadImplCharacters();
+    Jump is8Bit = jit.branchTest32(CCallHelpers::NonZero, Address(fiber, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit()));
+    jit.lshift64(TrustedImm32(1), offset);
+    is8Bit.link(&jit);
+    jit.addPtr(offset, data);
+    jit.returnToCaller();
 
     isFlat.link(&jit);
     loadImplCharacters();
@@ -332,11 +300,6 @@ void generateFlattenString(StubAssembler& jit)
     isRope.link(&jit);
     // The returned impl is unused. Sending it to the scratch register makes the call restore every other register, including the cell's.
     jit.callOperationAndReturn(Entry::operationAOTFlatten, { .saves = Saves::CallerSavedRegisters, .secondArgumentIn = string, .valueDestination = fiber });
-}
-
-StubSignature signatureOfStringCodePointAt(StubKey)
-{
-    return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) });
 }
 
 void generateStringCodePointAt(StubAssembler& jit)
@@ -413,12 +376,6 @@ static void compareImplsAndReturn(StubAssembler& jit, Entry leaf, GPRReg firstIm
     jit.returnToCaller();
 }
 
-static void loadCharacters(StubAssembler& jit, GPRReg firstImplAndCharacters, GPRReg secondImplAndCharacters)
-{
-    jit.loadPtr(Address(firstImplAndCharacters, StringImpl::dataOffset()), firstImplAndCharacters);
-    jit.loadPtr(Address(secondImplAndCharacters, StringImpl::dataOffset()), secondImplAndCharacters);
-}
-
 void branchIfCharactersDiffer(StubAssembler& jit, const ComparedImpls& impls, JumpList& differ, JumpList& needsLeaf)
 {
     auto [first, second, length, flagsOfBoth, word] = impls;
@@ -433,7 +390,8 @@ void branchIfCharactersDiffer(StubAssembler& jit, const ComparedImpls& impls, Ju
         areBoth8Bit.link(&jit);
     };
     countBytes();
-    loadCharacters(jit, first, second);
+    jit.loadPtr(Address(first, StringImpl::dataOffset()), first);
+    jit.loadPtr(Address(second, StringImpl::dataOffset()), second);
     branchIfBytesDiffer(jit, { first, second, length, flagsOfBoth, word }, differ, DifferingWords::MayBeUnloaded);
     Jump areSame = jit.jump();
 
@@ -485,13 +443,11 @@ void generateStringsAreEqual(StubAssembler& jit)
     branchIfCharactersDiffer(jit, { firstFiber, secondFiber, length, scratch, word }, areNotEqual, needsLeaf);
 
     areEqual.link(&jit);
-    jit.move(TrustedImm32(1), result);
-    jit.returnToCaller();
+    returnResult(jit, TrustedImm32(1));
 
     areNotEqual.link(&jit);
     Label returnFalse = jit.label();
-    jit.move(TrustedImm32(0), result);
-    jit.returnToCaller();
+    returnResult(jit, TrustedImm32(0));
 
     needsLeaf.link(&jit);
     compareImplsAndReturn(jit, Entry::operationAOTStringImplsAreEqual, firstFiber, secondFiber);
@@ -516,7 +472,8 @@ void branchOnOrderOfFlatStrings(StubAssembler& jit, const OrderedFlatStrings& st
     jit.load32(Address(secondImpl, StringImpl::lengthMemoryOffset()), firstWord);
     jit.moveConditionally32(CCallHelpers::Above, length, firstWord, firstWord, length);
     needsLeaf.append(jit.branch32(CCallHelpers::Above, length, TrustedImm32(maxLengthComparedWithoutCall)));
-    loadCharacters(jit, firstImpl, secondImpl);
+    jit.loadPtr(Address(firstImpl, StringImpl::dataOffset()), firstImpl);
+    jit.loadPtr(Address(secondImpl, StringImpl::dataOffset()), secondImpl);
     branchIfBytesDiffer(jit, { firstImpl, secondImpl, length, firstWord, secondWord }, differ);
 
     jit.loadPtr(Address(first, JSString::offsetOfValue()), firstImpl);
@@ -553,22 +510,55 @@ void generateCompareStrings(StubAssembler& jit)
     jit.or64(firstFiber, secondFiber, scratch);
     Jump oneIsRope = jit.branchTestPtr(CCallHelpers::NonZero, scratch, TrustedImm32(JSString::isRopeInPointer));
     branchOnOrderOfFlatStrings(jit, { first, second, firstFiber, secondFiber, result, scratch, word }, needsLeaf, isLess, isEqual);
-    jit.move(TrustedImm32(1), result);
-    jit.returnToCaller();
+    returnResult(jit, TrustedImm32(1));
 
     isLess.link(&jit);
-    jit.move(TrustedImm64(-1), result);
-    jit.returnToCaller();
+    returnResult(jit, TrustedImm64(-1));
 
     isEqual.link(&jit);
-    jit.move(TrustedImm32(0), result);
-    jit.returnToCaller();
+    returnResult(jit, TrustedImm32(0));
 
     needsLeaf.link(&jit);
     compareImplsAndReturn(jit, Entry::operationAOTCompareStringImpls, firstFiber, secondFiber);
 
     oneIsRope.link(&jit);
     jit.callOperationAndReturn(Entry::operationAOTCompareStrings, { .saves = Saves::CallerSavedRegisters, .secondArgumentIn = first, .thirdArgumentIn = second });
+}
+
+// The index of the first unit from position on that equals codeUnit, or -1. Only bits 0 to 31 of length, codeUnit and position count.
+void generateFindCharacter8(StubAssembler& jit)
+{
+    static_assert(leafArgumentGPR(0) == gprOf(StubRegister::A0) && leafArgumentGPR(1) == gprOf(StubRegister::A1));
+    static_assert(leafArgumentGPR(2) == gprOf(StubRegister::A2) && leafArgumentGPR(3) == gprOf(StubRegister::A3));
+    const GPRReg characters = jit.operand(0);
+    const GPRReg length = jit.operand(1);
+    const GPRReg codeUnit = jit.operand(2);
+    const GPRReg position = jit.operand(3);
+    const GPRReg result = jit.result();
+    // On ARM64 the result shares its register with characters, and the leaf clobbers A4 and A5 anyway.
+    const GPRReg index = result == characters ? jit.allocateScratch(StubRegister::A5) : result;
+    const GPRReg unit = jit.allocateScratch(StubRegister::A4);
+    RELEASE_ASSERT(result == GPRInfo::returnValueGPR);
+    RELEASE_ASSERT(noOverlap(characters, length, codeUnit, position, index, unit));
+
+    Jump isPastEnd = jit.branch32(CCallHelpers::AboveOrEqual, position, length);
+    Jump needsLeaf = jit.branch32(CCallHelpers::Above, length, TrustedImm32(maxLengthSearchedByBytes));
+    jit.zeroExtend32ToWord(position, index);
+    Label next = jit.label();
+    jit.load8(BaseIndex(characters, index, CCallHelpers::TimesOne), unit);
+    Jump isFound = jit.branch32(CCallHelpers::Equal, unit, codeUnit);
+    jit.add32(TrustedImm32(1), index);
+    jit.branch32(CCallHelpers::Below, index, length).linkTo(next, &jit);
+
+    isPastEnd.link(&jit);
+    returnResult(jit, TrustedImm64(-1));
+
+    isFound.link(&jit);
+    returnResult(jit, index);
+
+    needsLeaf.link(&jit);
+    jit.callLeaf(Entry::operationAOTStringFindCharacter8);
+    jit.returnToCaller();
 }
 
 } } // namespace JSC::AOT

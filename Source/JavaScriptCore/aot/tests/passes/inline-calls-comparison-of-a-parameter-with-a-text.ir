@@ -10,7 +10,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="byText" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
-  b0(v0: anything, v1: number):
     v2 = String string="error"
     v3 = StrictEq v0, v2
     Branch v3 -> taken b1(), notTaken b2()
@@ -37,27 +36,21 @@ function f0 name="byText" parameters=[{type=anything}, {type=number}] results=[{
 }
 
 function f1 name="passesTheText" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = String string="error"
     v2 = CallDirect v1, v0 function=f0
     Return v2
-}
-# CHECK-LABEL: function f1 name="passesTheText"
 # CHECK-NOT: CallDirect
+}
 
 function f2 name="passesAnotherText" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = String string="data"
     v2 = CallDirect v1, v0 function=f0
     Return v2
-}
-# CHECK-LABEL: function f2 name="passesAnotherText"
 # CHECK-NOT: CallDirect
+}
 
 function f3 name="passesSomeText" parameters=[{type=string}, {type=number}] results=[{type=number}] {
-  b0(v0: string, v1: number):
     v2 = CallDirect v0, v1 function=f0
     Return v2
-}
-# CHECK-LABEL: function f3 name="passesSomeText"
 # CHECK: = CallDirect v0, v1 function=f0
+}

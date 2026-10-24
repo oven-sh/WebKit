@@ -9,13 +9,10 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Holder" fields=[{key="chunks" declared={type=anything} flags=[IsRequired]}]
 
 function f0 name="oneClassHasTheMethod" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=0
     v2 = PropGet v0 key="charCodeAt"
     v3 = Call v2, v0, v1 calleeKey="charCodeAt"
     Return v3
-}
-# CHECK-LABEL: function f0 name="oneClassHasTheMethod"
 # CHECK-NEXT: b0(v0: anything ~ string):
 # CHECK-NOT: PropGet
 # CHECK: = TypeTest v0 testedType=string
@@ -24,29 +21,26 @@ function f0 name="oneClassHasTheMethod" parameters=[{type=anything}] results=[{t
 # CHECK: frequency=Unlikely:
 # CHECK: = PropGet {{*}} key="charCodeAt"
 # CHECK: = Call {{*}} calleeKey="charCodeAt"
+}
 
 function f1 name="pushedTwice" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
-  b0(v0: anything, v1: string):
     v2 = PropGet v0 key="push"
     v3 = Call v2, v0, v1 calleeKey="push"
     v4 = PropGet v0 key="push"
     v5 = Call v4, v0, v1 calleeKey="push"
     Return v5
-}
-# CHECK-LABEL: function f1 name="pushedTwice"
 # CHECK-NEXT: b0(v0: anything ~ Array, v1: string):
 # CHECK-NEXT: = TypeTest v0 testedType=Array
 # CHECK-NOT: TypeTest v0
 # CHECK: overload=ArrayPrototypePush/0
 # CHECK-NOT: TypeTest v0
 # CHECK: overload=ArrayPrototypePush/0
+}
 
 function f2 name="fieldOfSomeLayout" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="chunks"
     Return v1
-}
-# CHECK-LABEL: function f2 name="fieldOfSomeLayout"
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: anything = PropGet v0 key="chunks"
 # CHECK-NEXT: Return v1
+}

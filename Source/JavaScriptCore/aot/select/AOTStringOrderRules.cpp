@@ -8,13 +8,11 @@
 
 #if ENABLE(AOT)
 
-#include "AOTInductionVariables.h"
-#include "AOTRuleSupport.h"
 #include "AOTSelectionContext.h"
 #include "AOTSort.h"
+#include "AOTStringRuleSupport.h"
 #include "AOTVector.h"
 #include <algorithm>
-#include <array>
 #include <tuple>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -42,26 +40,12 @@ struct StringOrderMatch {
 
 } // anonymous namespace
 
-static constexpr std::array relationalOpcodesOfStrings { Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq };
-
-static_assert([] {
-    OpcodeSet opcodes;
-    for (Opcode opcode : relationalOpcodesOfStrings)
-        opcodes.add(opcode);
-    return opcodes == relationalOperators;
-}());
-
-static uint64_t orderedPair(ValueID a, ValueID b)
-{
-    return static_cast<uint64_t>(a.index()) << 32 | b.index();
-}
-
 static uint64_t operandPairOf(const StringComparison& comparison)
 {
-    return orderedPair(std::min(comparison.left, comparison.right), std::max(comparison.left, comparison.right));
+    return static_cast<uint64_t>(std::min(comparison.left, comparison.right).index()) << 32 | std::max(comparison.left, comparison.right).index();
 }
 
-static Vector<StringComparison> collectStringComparisons(SelectionContext& context)
+static Vector<SharedOrder> findSharedOrders(SelectionContext& context)
 {
     const Function& function = context.function();
     FunctionAnalyses& analyses = context.analyses();
@@ -80,16 +64,9 @@ static Vector<StringComparison> collectStringComparisons(SelectionContext& conte
                 comparisons.append(StringComparison { id, left, right, analyses.useLists().pointOf(id) });
         }
     }
-    return comparisons;
-}
-
-static Vector<SharedOrder> findSharedOrders(SelectionContext& context)
-{
-    Vector<StringComparison> comparisons = collectStringComparisons(context);
     if (comparisons.size() < 2)
         return { };
 
-    FunctionAnalyses& analyses = context.analyses();
     const CFG& cfg = analyses.cfg();
     AOT::sort(comparisons, { }, [&](const StringComparison& comparison) {
         return std::tuple { operandPairOf(comparison), cfg.reversePostOrderIndex(comparison.point.block), comparison.point.index };
@@ -116,28 +93,14 @@ static Vector<SharedOrder> findSharedOrders(SelectionContext& context)
     return orders;
 }
 
-static Vector<SelectionGroup, 4> groupsOf(const SharedOrder& order)
-{
-    Vector<SelectionGroup, 4> groups { groupOfOne(order.first.value) };
-    for (const StringComparison& other : order.others)
-        groups.append(groupOfOne(other.value));
-    return groups;
-}
-
-static void replaceWithOrderTest(GroupRewriter& rewriter, const StringOrderMatch& match, ValueID order)
-{
-    Opcode opcode = rewriter.original(match.group.root).opcode;
-    ValueID zero = rewriter.insert(makeInteger(0));
-    Value& root = rewriter.replaceRoot(match.isMirrored ? mirroredComparison(opcode) : opcode);
-    root.setLeftOperand(order);
-    root.setRightOperand(zero);
-}
-
 void selectSharedStringOrder(SelectionContext& context)
 {
     Vector<SharedOrder> sharedOrders = findSharedOrders(context);
     sharedOrders.removeAllMatching([&](const SharedOrder& order) {
-        return context.tryClaimAll(SelectionRuleID::SharedStringOrder, groupsOf(order).span()) != ClaimResult::Claimed;
+        Vector<SelectionGroup, 4> groups { groupOfOne(order.first.value) };
+        for (const StringComparison& other : order.others)
+            groups.append(groupOfOne(other.value));
+        return context.tryClaimAll(SelectionRuleID::SharedStringOrder, groups.span()) != ClaimResult::Claimed;
     });
 
     Vector<StringOrderMatch> firstComparisons;
@@ -149,15 +112,20 @@ void selectSharedStringOrder(SelectionContext& context)
             laterComparisons.append(StringOrderMatch { groupOfOne(other.value), index, other.left != shared.first.left });
     }
 
+    // The first comparison of an order computes it.
     Vector<ValueID> orders(sharedOrders.size());
-    context.rewriteGroups(SelectionRuleID::SharedStringOrder, firstComparisons, [&](GroupRewriter& rewriter, const StringOrderMatch& match) {
+    auto rewrite = [&](GroupRewriter& rewriter, const StringOrderMatch& match) {
         const Value& original = rewriter.original(match.group.root);
-        orders[match.order] = rewriter.insert(IRBuilder::make(Opcode::StringOrder, { original.leftOperand(), original.rightOperand() }));
-        replaceWithOrderTest(rewriter, match, orders[match.order]);
-    });
-    context.rewriteGroups(SelectionRuleID::SharedStringOrder, laterComparisons, [&](GroupRewriter& rewriter, const StringOrderMatch& match) {
-        replaceWithOrderTest(rewriter, match, orders[match.order]);
-    });
+        Opcode opcode = original.opcode;
+        if (!orders[match.order])
+            orders[match.order] = rewriter.insert(IRBuilder::make(Opcode::StringOrder, { original.leftOperand(), original.rightOperand() }));
+        ValueID zero = rewriter.insert(makeInteger(0));
+        Value& root = rewriter.replaceRoot(match.isMirrored ? mirroredComparison(opcode) : opcode);
+        root.setLeftOperand(orders[match.order]);
+        root.setRightOperand(zero);
+    };
+    context.rewriteGroups(SelectionRuleID::SharedStringOrder, firstComparisons, rewrite);
+    context.rewriteGroups(SelectionRuleID::SharedStringOrder, laterComparisons, rewrite);
 }
 
 } } } // namespace JSC::AOT::Typed

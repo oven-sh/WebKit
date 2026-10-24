@@ -11,7 +11,6 @@
 module m0 path="main.js" displayPath="main.js"
 entry module=m0
 function f0 name="merge" parameters=[{type=boolean}] results=[{type=anything}] {
-  b0(v0: boolean):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v1 = Integer integer=2

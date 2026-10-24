@@ -14,47 +14,35 @@ module m2 path="second.js" displayPath="second.js" exports=[{name="a" variable=g
 layout L0 name="Record" fields=[{key="a" declared={type=boolean} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 
 function f0 name="one-of-two-namespaces" parameters=[{type=L(m1)|L(m2)}] results=[{type=anything}] {
-  b0(v0: L(m1)|L(m2)):
     v1 = PropGet v0 key="a"
     Return v1
-}
-# CHECK-LABEL: function f0 name="one-of-two-namespaces"
 # CHECK: = TypeTest v0 testedType=L(m1)
 # CHECK-NOT: TypeTest
 # CHECK: ([[first0]]: L(m1)):
 # CHECK-NEXT: = PropGet [[first0]] key="a" receivers=[L(m1)]
 # CHECK: ([[second0]]: L(m2)):
 # CHECK-NEXT: = PropGet [[second0]] key="a" receivers=[L(m2)]
-# BOTH-LABEL: function f0 name="one-of-two-namespaces"
 # BOTH: : number = GetModuleVariable variable=g0
 # BOTH: : string = GetModuleVariable variable=g1
 # BOTH-NOT: PropGet
+}
 function f1 name="namespace-or-record" parameters=[{type=L0|L(m1)}] results=[{type=anything}] {
-  b0(v0: L0|L(m1)):
     v1 = PropGet v0 key="a"
     Return v1
-}
-# CHECK-LABEL: function f1 name="namespace-or-record"
 # CHECK-COUNT-1: = TypeTest v0 testedType=
-# BOTH-LABEL: function f1 name="namespace-or-record"
 # BOTH-NOT: PropGet
+}
 function f2 name="namespace-or-array" parameters=[{type=Array|L(m1)}] results=[{type=anything}] {
-  b0(v0: Array|L(m1)):
     v1 = PropGet v0 key="a"
     Return v1
-}
-# CHECK-LABEL: function f2 name="namespace-or-array"
 # CHECK: = TypeTest v0 testedType=L(m1)
 # CHECK: ([[first2]]: L(m1)):
-# BOTH-LABEL: function f2 name="namespace-or-array"
 # BOTH: : number = GetModuleVariable variable=g0
+}
 function f3 name="one-namespace" parameters=[{type=L(m1)}] results=[{type=anything}] {
-  b0(v0: L(m1)):
     v1 = PropGet v0 key="a"
     Return v1
-}
-# CHECK-LABEL: function f3 name="one-namespace"
 # CHECK-NOT: TypeTest
-# BOTH-LABEL: function f3 name="one-namespace"
 # BOTH-NOT: TypeTest
 # BOTH: : number = GetModuleVariable variable=g0
+}

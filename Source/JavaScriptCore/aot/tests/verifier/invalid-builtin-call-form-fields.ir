@@ -5,12 +5,10 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="goodFields" parameters=[{type=object}, {type=string}] results=[{type=undefined}] {
-  b0(v0: object, v1: string):
     v2 = CallBuiltin -, v0, v1 overload=ObjectGetOwnPropertyDescriptor/0 builtinCallForm=Fields
     Return
 }
 function f1 name="badFieldsOfOverloadWithoutFieldsForm" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     v1 = CallBuiltin -, v0 overload=MathAbs/0 builtinCallForm=Fields
     Return
 }

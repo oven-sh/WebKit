@@ -31,7 +31,6 @@ variable g0 name="made" module=m0 declared={type=undefined|null|number site=w11}
 evalscope e0 bindings=[{name="value" layout=L3 field=0 operand=0}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = FinishClass v1 layout=L0
@@ -50,7 +49,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 
 # new.target and the callee come from the engine and are not checked
 function f1 name="Point" module=m0 position=5 kind=BaseConstructor flags=[HasNewTarget, IsChecked] length=1 parameters=[{type=undefined|null|number site=w0}] results=[{type=object flags=[IsFromCompiler]}] {
-  b0(v0: anything, v1: undefined|null|number):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
     v4 = Convert v1 declared={type=undefined|null|number site=w1}
@@ -65,20 +63,17 @@ function f1 name="Point" module=m0 position=5 kind=BaseConstructor flags=[HasNew
 # CHECK: PropSet {{*}}, [[x]] key="x"
 
 function f2 name="Point3" module=m0 position=25 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked] length=1 parameters=[{type=undefined|null|number site=w2}] results=[{type=object flags=[IsFromCompiler]}] {
-  b0(v0: function, v1: anything, v2: undefined|null|number):
     v3 = GetSuperBase v0 homeKind=Object
     v4 = SuperConstruct v3, v1, v2 layout=L1
     PropSet v4, v2 key="z"
     Return v4
-}
-# CHECK-LABEL: function f2 name="Point3"
 # CHECK: b0(v0: function, v1: anything, v2: anything ~ undefined|null|number):
 # CHECK-NEXT: [[z]]: undefined|null|number = Check v2 castType=undefined|null|number site=w2 @30
 # CHECK: = SuperConstruct {{*}}, v1, [[z]] layout=L1
+}
 
 # The checks of a coroutine stand in front of its first suspension
 function f3 name="later" module=m0 position=35 flags=[IsAsync, IsChecked] length=1 parameters=[{type=undefined|null|number site=w3}] results=[{type=anything}] {
-  b0(v0: undefined|null|number):
     v1 = Await v0
     Return v1
 }
@@ -87,7 +82,6 @@ function f3 name="later" module=m0 position=35 flags=[IsAsync, IsChecked] length
 # CHECK-NEXT: = Await [[awaited]]
 
 function f4 name="range" module=m0 position=45 flags=[IsGenerator, TakesCallee, IsChecked] length=1 parameters=[{type=undefined|null|number site=w4}] results=[{type=anything}] {
-  b0(v0: function, v1: undefined|null|number):
     InitialYield
     v3 = Yield v1
     v4 = ResultAt v3 index=0
@@ -99,7 +93,6 @@ function f4 name="range" module=m0 position=45 flags=[IsGenerator, TakesCallee, 
 # CHECK-NEXT: = Yield [[yielded]]
 
 function f5 name="makesClass" module=m0 position=55 flags=[IsChecked] length=1 parameters=[{type=undefined|null|number site=w5}] results=[{type=anything}] {
-  b0(v0: undefined|null|number):
     v1 = NewClosure v0 function=f6
     v2 = NewClass v1 layout=L2
     v3 = NewClosure function=f7
@@ -108,16 +101,14 @@ function f5 name="makesClass" module=m0 position=55 flags=[IsChecked] length=1 p
     PutModuleVariable v5 variable=g0
     v7 = FinishClass v2 layout=L2
     Return v7
-}
-# CHECK-LABEL: function f5 name="makesClass"
 # CHECK: [[start]]: undefined|null|number = Check v0 castType=undefined|null|number site=w5 @60
 # CHECK-NEXT: = NewClosure [[start]] function=f6
 # CHECK-NEXT: = NewClass {{*}} layout=L2
 # CHECK: PutModuleVariable [[start]] variable=g0
+}
 
 # A capture comes from the function that makes the closure
 function f6 name="Inner" module=m0 position=65 kind=BaseConstructor flags=[HasNewTarget, IsChecked] captures=[{type=undefined|null|number site=w5}] results=[{type=object flags=[IsFromCompiler]}] {
-  b0(v0: undefined|null|number, v1: anything):
     v2 = GetConstructPrototype v1 layout=L2
     v3 = NewObject v2 layout=L2
     v4 = Convert v0 declared={type=undefined|null|number site=w6}
@@ -129,27 +120,23 @@ function f6 name="Inner" module=m0 position=65 kind=BaseConstructor flags=[HasNe
 # CHECK-NOT: Check
 
 function f7 name="read" module=m0 position=75 kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="count"
     Return v1
 }
 
 function f8 name="evaluates" module=m0 position=85 flags=[IsChecked] length=2 parameters=[{type=undefined|null|number site=w7}, {type=undefined|null|string site=w8}] results=[{type=anything}] {
-  b0(v0: undefined|null|number, v1: undefined|null|string):
     v2 = NewObject -, v0 layout=L3 fields=[0]
     v3 = Undefined
     v4 = DirectEval v1, v3, -, v2 evalScope=e0
     Return v4
-}
-# CHECK-LABEL: function f8 name="evaluates"
 # CHECK: [[value]]: undefined|null|number = Check v0 castType=undefined|null|number site=w7 @90
 # CHECK-NEXT: [[text]]: undefined|null|string = Check v1 castType=undefined|null|string site=w8 @95
 # CHECK-NEXT: = NewObject -, [[value]] layout=L3 fields=[0]
 # CHECK: = DirectEval [[text]], {{*}} evalScope=e0
+}
 
 # No test finds the instances of this class, so the check passes only the part of the type that a test decides
 function f9 name="iterates" module=m0 position=105 flags=[IsChecked] length=1 parameters=[{type=undefined|null|ArrayIterator site=w9}] results=[{type=anything}] {
-  b0(v0: undefined|null|ArrayIterator):
     Return v0
 }
 # CHECK-LABEL: function f9 name="iterates" {{*}}parameters=[{type=undefined|null|ArrayIterator site=w9 flags=[IsExpected]}]
@@ -157,13 +144,11 @@ function f9 name="iterates" module=m0 position=105 flags=[IsChecked] length=1 pa
 # CHECK-NEXT: = Check v0 castType={{*}} site=w9 @110
 
 function f10 name="again" module=m0 position=125 flags=[IsChecked] length=1 parameters=[{type=undefined|null|number site=w10}] results=[{type=anything}] {
-  b0(v0: undefined|null|number):
     v1 = NewClosure function=f10
     v2 = Add v0, v0
     Return v1
-}
-# CHECK-LABEL: function f10 name="again"
 # CHECK: [[number]]: undefined|null|number = Check v0 castType=undefined|null|number site=w10 @130
 # CHECK-NEXT: = NewClosure function=f10
 # CHECK-NEXT: = Add [[number]], [[number]]
 # CHECK-NOT: function f11
+}

@@ -8,10 +8,7 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="neverAwaits" flags=[IsAsync] parameters=[{type=number}] results=[{type=Promise}] {
-  b0(v0: number):
     Return v0
-}
-# CHECK-LABEL: function f0 name="neverAwaits"
 # CHECK: role=CoroutineRamp
 # CHECK: creator=Coroutine{kind=AsyncFunction ramp=f0 body=f4 promiseType=Promise worker=f4}
 # CHECK: [[error]]: anything = CatchValue
@@ -22,23 +19,20 @@ function f0 name="neverAwaits" flags=[IsAsync] parameters=[{type=number}] result
 # CHECK: [[resolved]]: Promise = NewPromise
 # CHECK-NEXT: ResolvePromise [[resolved]], [[result]]
 # CHECK-NEXT: Return [[resolved]]
+}
 function f1 name="neverYields" flags=[IsGenerator, TakesCallee] parameters=[{type=number}] results=[{type=Generator}] {
-  b0(v0: function, v1: number):
     InitialYield
     Return v1
-}
-# CHECK-LABEL: function f1 name="neverYields"
 # CHECK: role=CoroutineRamp
 # CHECK: creator=Coroutine{ramp=f1 body=f5 promiseParameter=2}
-function f2 name="plain" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
-    Return v0
 }
-# CHECK-LABEL: function f2 name="plain"
+function f2 name="plain" parameters=[{type=number}] results=[{type=number}] {
+    Return v0
 # CHECK-NOT: role=
 # CHECK-NOT: creator=
 # CHECK: b0(v0: number):
 # CHECK-NEXT: Return v0
+}
 function f3 name="declaredOnly" flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}]
 # CHECK-LABEL: function f3 name="declaredOnly"
 # CHECK-NOT: role=

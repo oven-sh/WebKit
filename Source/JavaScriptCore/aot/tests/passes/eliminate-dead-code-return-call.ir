@@ -5,29 +5,24 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="callNamedByReturnCall" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Add v0, v0
     v2 = CallDirect v1 function=f3
     ReturnCall v2
-}
-# CHECK-LABEL: function f0 name="callNamedByReturnCall"
 # CHECK-NEXT: b0(v0: number):
 # CHECK-NEXT: v1: number = Add v0, v0
 # CHECK-NEXT: v2: number = CallDirect v1 function=f3
 # CHECK-NEXT: ReturnCall v2
+}
 
 function f1 name="sameCallWithUnusedResult" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Add v0, v0
     v2 = CallDirect v1 function=f3
     Return v0
-}
-# CHECK-LABEL: function f1 name="sameCallWithUnusedResult"
 # CHECK-NEXT: b0(v0: number):
 # CHECK-NEXT: Return v0
+}
 
 function f2 name="unusedValueBesideTheCall" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
-  b0(v0: number, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = Mul v0, v0
@@ -35,14 +30,12 @@ function f2 name="unusedValueBesideTheCall" parameters=[{type=number}, {type=boo
     ReturnCall v3
   b2():
     Return v0
-}
-# CHECK-LABEL: function f2 name="unusedValueBesideTheCall"
 # CHECK: b1():
 # CHECK-NEXT: v3: number = CallDirect v0 function=f3
 # CHECK-NEXT: ReturnCall v3
+}
 
 function f3 name="withoutEffects" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Return v0
 }
 # CHECK-LABEL: function f3 name="withoutEffects"

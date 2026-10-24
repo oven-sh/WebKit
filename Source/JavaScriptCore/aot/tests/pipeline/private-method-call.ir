@@ -30,7 +30,6 @@ layout L0 kind=Instance name="C" module=m0 constructor=f1 fields=[{key=#"#"@L0 d
 variable g0 module=m0 declared={type=classtoken} flags=[IsImmutable]
 variable g1 module=m0 declared={type=anything} flags=[IsImmutable]
 function f0 module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClassToken layout=L0
     PutModuleVariable v0 variable=g0
     v2 = NewClosure function=f1
@@ -55,7 +54,6 @@ function f0 module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     v3 = GetModuleVariable variable=g0
@@ -63,12 +61,10 @@ function f1 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget] results
     Return v2
 }
 function f2 name="#m" module=m0 kind=Method results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     Return v0
 }
 function f3 name="n" module=m0 kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g0
     v2 = PrivateGet v0, v1 layout=L0
     v3 = GetModuleVariable variable=g1
@@ -76,7 +72,6 @@ function f3 name="n" module=m0 kind=Method flags=[HasThis] results=[{type=anythi
     Return v4
 }
 function f4 name="s" module=m0 kind=Method parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g0
     v2 = PrivateGet v0, v1 layout=L0
     v3 = GetModuleVariable variable=g1

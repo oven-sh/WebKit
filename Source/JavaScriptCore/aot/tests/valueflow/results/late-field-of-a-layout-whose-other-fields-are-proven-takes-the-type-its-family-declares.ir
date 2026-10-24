@@ -13,7 +13,6 @@ layout L1 kind=Instance name="Open" constructor=f2 fields=[{key="flags" declared
 layout L2 name="Late" fields=[{key="flags" declared={type=number} flags=[IsRequired]}, {key="owner" declared={type=undefined|null|L3} flags=[IsRequired]}]
 layout L3 kind=Record name="Owner" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L3 fields=[0]
     v2 = FinishObject v1
@@ -33,12 +32,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v14
 }
 function f1 name="Known" flags=[HasThis] thisType={type=undefined|null|L2} parameters=[{type=number}] results=[{type=anything}] constructedClass=L0 {
-  b0(v0: undefined|null|L2, v1: number):
     PropSet v0, v1 key="flags" mode=Strict
     Return
 }
 function f2 name="Open" flags=[HasThis] thisType={type=undefined|null|L2} parameters=[{type=number}] results=[{type=anything}] constructedClass=L1 {
-  b0(v0: undefined|null|L2, v1: number):
     PropSet v0, v1 key="flags" mode=Strict
     Return
 }

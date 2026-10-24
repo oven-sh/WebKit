@@ -6,55 +6,41 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="indexOfBoolean" parameters=[{type=Array<anything, pristine[Storage]>}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: boolean):
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/1
     Return v2
-}
-# CHECK-LABEL: function f0 name="indexOfBoolean"
 # CHECK: TryCallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/1 -> done
 # CHECK: = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/1
+}
 function f1 name="includesSymbolOrNothing" parameters=[{type=Array<anything, pristine[Storage]>}, {type=undefined|null|symbol}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: undefined|null|symbol):
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeIncludes/1
     Return v2
-}
-# CHECK-LABEL: function f1 name="includesSymbolOrNothing"
 # CHECK: TryCallInline v0, v1 inlineBuiltin=ArrayIncludes overload=ArrayPrototypeIncludes/1 -> done
+}
 function f2 name="indexOfArray" parameters=[{type=Array<anything, pristine[Storage]>}, {type=Array<number>}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: Array<number>):
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/1
     Return v2
-}
-# CHECK-LABEL: function f2 name="indexOfArray"
 # CHECK: TryCallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/1 -> done
+}
 function f3 name="indexOfString" parameters=[{type=Array<anything, pristine[Storage]>}, {type=string}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: string):
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/1
     Return v2
-}
-# CHECK-LABEL: function f3 name="indexOfString"
 # CHECK-NOT: TryCallInline
 # CHECK: v2:{{*}}= CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/1
+}
 function f4 name="includesBigInt" parameters=[{type=Array<anything, pristine[Storage]>}, {type=bigint}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: bigint):
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeIncludes/1
     Return v2
-}
-# CHECK-LABEL: function f4 name="includesBigInt"
 # CHECK-NOT: TryCallInline
 # CHECK: v2:{{*}}= CallBuiltin v0, v1 overload=ArrayPrototypeIncludes/1
+}
 function f5 name="indexOfAnything" parameters=[{type=Array<anything, pristine[Storage]>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: anything):
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/1
     Return v2
-}
-# CHECK-LABEL: function f5 name="indexOfAnything"
 # CHECK: TryCallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/1 -> done
+}
 function f6 name="indexOfBooleanFromAnIndex" parameters=[{type=Array<anything, pristine[Storage]>}, {type=boolean}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: boolean, v2: number):
     v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeIndexOf/1
     Return v3
-}
-# CHECK-LABEL: function f6 name="indexOfBooleanFromAnIndex"
 # CHECK-NOT: TryCallInline
 # CHECK: v3:{{*}}= CallBuiltin v0, v1, v2 overload=ArrayPrototypeIndexOf/1
+}

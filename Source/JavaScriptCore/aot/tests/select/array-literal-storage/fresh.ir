@@ -6,60 +6,47 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="constantElements" results=[{type=Array<anything>}] {
-  b0():
     v0 = Integer integer=1
     v1 = String string="a"
     v2 = NewArray v0, v1 contents=anything
     Return v2
-}
-# CHECK-LABEL: function f0 name="constantElements"
 # CHECK: = NewArray v0, v1 contents=anything
 # CHECK-NOT: literalStorage
+}
 function f1 name="parameterElement" parameters=[{type=anything}] results=[{type=Array<anything>}] {
-  b0(v0: anything):
     v1 = NewArray v0 contents=anything
     Return v1
-}
-# CHECK-LABEL: function f1 name="parameterElement"
 # CHECK: = NewArray v0 contents=anything
 # CHECK-NOT: literalStorage
+}
 function f2 name="elementsThenPushedTo" parameters=[{type=anything}] results=[{type=Array<anything>}] {
-  b0(v0: anything):
     v1 = NewArray v0, v0 contents=anything
     v2 = CallBuiltin v1, v0 overload=ArrayPrototypePush/0
     Return v1
-}
-# CHECK-LABEL: function f2 name="elementsThenPushedTo"
 # CHECK: = NewArray v0, v0 contents=anything
 # CHECK-NOT: literalStorage
+}
 function f3 name="onlyHoles" results=[{type=Array<anything>}] {
-  b0():
     v0 = NewArray contents=anything holes=[0, 1]
     Return v0
-}
-# CHECK-LABEL: function f3 name="onlyHoles"
 # CHECK: = NewArray contents=anything holes=[0, 1]
 # CHECK-NOT: literalStorage
+}
 function f4 name="elementsAndHole" results=[{type=Array<anything>}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewArray v0, v0 contents=anything holes=[1]
     Return v1
-}
-# CHECK-LABEL: function f4 name="elementsAndHole"
 # CHECK: = NewArray v0, v0 contents=anything holes=[1]
 # CHECK-NOT: literalStorage
+}
 function f5 name="emptyWithCapacity" parameters=[{type=int[0, 100]}, {type=anything}] results=[{type=Array<anything>}] {
-  b0(v0: int[0, 100], v1: anything):
     v2 = NewArray contents=anything capacity=v0
     v3 = CallBuiltin v2, v1 overload=ArrayPrototypePush/0
     Return v2
-}
-# CHECK-LABEL: function f5 name="emptyWithCapacity"
 # CHECK: = NewArray contents=anything capacity=v0
 # CHECK-NOT: literalStorage
+}
 function f6 name="emptyInRareBlock" parameters=[{type=boolean}] results=[{type=Array<anything>}] {
-  b0(v0: boolean):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v1 = NewArray contents=anything
@@ -67,8 +54,7 @@ function f6 name="emptyInRareBlock" parameters=[{type=boolean}] results=[{type=A
   b2() frequency=Rare:
     v2 = NewArray contents=anything
     Return v2
-}
-# CHECK-LABEL: function f6 name="emptyInRareBlock"
 # CHECK: v1:{{*}}= NewArray contents=anything literalStorage=Profiled
 # CHECK: v2:{{*}}= NewArray contents=anything
 # CHECK-NOT: literalStorage
+}

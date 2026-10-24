@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="twoEntries" parameters=[{type=boolean}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean, v1: boolean):
     Branch v0 -> taken b2(), notTaken b1()
   b1():
     LoopHint
@@ -21,7 +20,6 @@ function f0 name="twoEntries" parameters=[{type=boolean}, {type=boolean}] result
 # CHECK-NEXT: b3 frequency: Normal count: 1.000000
 # CHECK-NOT: frequency
 function f1 name="halfOfTheActivationsEnter" parameters=[{type=boolean}, {type=boolean}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean, v1: boolean, v2: boolean):
     Branch v0 -> taken b1(), notTaken b5()
   b1():
     Branch v1 -> taken b3(), notTaken b2()
@@ -44,7 +42,6 @@ function f1 name="halfOfTheActivationsEnter" parameters=[{type=boolean}, {type=b
 # CHECK-NEXT: b5 frequency: Normal count: 1.000000
 # CHECK-NOT: frequency
 function f2 name="noEdgeBack" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Branch v0 -> taken b2(), notTaken b1()
   b1():
     Jump -> next b2()

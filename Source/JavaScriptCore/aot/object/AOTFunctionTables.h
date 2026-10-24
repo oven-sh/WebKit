@@ -119,7 +119,6 @@ struct FunctionTables {
     DisplayNamesByFunction displayNames WTF_GUARDED_BY_LOCK(namesLock);
     std::atomic<bool> hasNamesSetAtRunTime { false };
     std::atomic<bool> hasDisplayNames { false };
-    // What toString() answered for a function, while that string is alive. A program that uses a function as a property key asks at every access, and the string it gets again is an atom already.
     TextsByFunction sourceTexts;
 };
 

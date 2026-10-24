@@ -5,71 +5,56 @@
 layout L0 name="Point" fields=[{key="x" declared={type=number}}]
 module m0 path="main.js" displayPath="main.js"
 function f0 name="texts" parameters=[{type=Array<string, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
-  b0(v0: Array<string, pristine[Storage, Names]>, v1: int[0, 1000]):
     v2 = ElemGet v0, v1
     Return v2
-}
-# CHECK-LABEL: function f0 name="texts"
 # CHECK: = HasArrayStorage v0 arrayStorage=Contiguous
 # CHECK: = GetArrayElement v0, v1, {{*}} arrayStorage=Contiguous level=Expected
+}
 
 function f1 name="objectsOrNothing" parameters=[{type=Array<undefined|L0, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
-  b0(v0: Array<undefined|L0, pristine[Storage, Names]>, v1: int[0, 1000]):
     v2 = ElemGet v0, v1
     Return v2
-}
-# CHECK-LABEL: function f1 name="objectsOrNothing"
 # CHECK: = HasArrayStorage v0 arrayStorage=Contiguous
 # CHECK: = GetArrayElement v0, v1, {{*}} arrayStorage=Contiguous level=Expected
+}
 
 function f2 name="numbers" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Storage, Names]>, v1: int[0, 1000]):
     v2 = ElemGet v0, v1
     Return v2
-}
-# CHECK-LABEL: function f2 name="numbers"
 # CHECK: = HasArrayStorage v0 arrayStorage=Double
 # CHECK: = GetArrayElement v0, v1, {{*}} arrayStorage=Double level=Expected
+}
 
 function f3 name="textsOrNumbers" parameters=[{type=Array<number|string, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
-  b0(v0: Array<number|string, pristine[Storage, Names]>, v1: int[0, 1000]):
     v2 = ElemGet v0, v1
     Return v2
-}
-# CHECK-LABEL: function f3 name="textsOrNumbers"
 # CHECK: = HasArrayStorage v0 arrayStorage=Contiguous
 # CHECK: = GetArrayElement v0, v1, {{*}} arrayStorage=Contiguous level=Expected
+}
 
 function f4 name="anything" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage, Names]>, v1: int[0, 1000]):
     v2 = ElemGet v0, v1
     Return v2
-}
-# CHECK-LABEL: function f4 name="anything"
 # CHECK-NOT: HasArrayStorage
+}
 
 function f5 name="expectedTexts" parameters=[{type=Array<string> flags=[IsExpected]}, {type=int[0, 1000]}] results=[{type=anything}] {
   b0(v0: anything ~ Array<string>, v1: int[0, 1000]):
     v2 = ElemGet v0, v1
     Return v2
-}
-# CHECK-LABEL: function f5 name="expectedTexts"
 # CHECK: = HasArrayStorage {{*}} arrayStorage=Contiguous
+}
 
 function f6 name="storeOfText" parameters=[{type=Array<string, pristine[Storage, Names]>}, {type=int[0, 1000]}, {type=string}] results=[{type=anything}] {
-  b0(v0: Array<string, pristine[Storage, Names]>, v1: int[0, 1000], v2: string):
     ElemSet v0, v1, v2 mode=Strict
     Return
-}
-# CHECK-LABEL: function f6 name="storeOfText"
 # CHECK: = HasArrayStorage v0 arrayStorage=Contiguous [isWritable]
 # CHECK: PutArrayElement v0, v1, v2, {{*}} arrayStorage=Contiguous level=Expected
+}
 
 function f7 name="smallIntegers" parameters=[{type=Array<int[0, 7], pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
-  b0(v0: Array<int[0, 7], pristine[Storage, Names]>, v1: int[0, 1000]):
     v2 = ElemGet v0, v1
     Return v2
-}
-# CHECK-LABEL: function f7 name="smallIntegers"
 # CHECK: = HasArrayStorage v0 arrayStorage=Int32
 # CHECK: = GetArrayElement v0, v1, {{*}} arrayStorage=Int32 level=Expected
+}

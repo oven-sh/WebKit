@@ -7,12 +7,10 @@ module m0 path="main.js" displayPath="main.js" body=f0
 layout L0 name="Explanation" fields=[{key="lines" declared={type=Array<string>} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     Return v0
 }
 function f1 name="joined" parameters=[{type=undefined|L0}] results=[{type=anything}] {
-  b0(v0: undefined|L0):
     v1 = PropGet v0 key="lines"
     v2 = String string="-"
     v3 = TypeTest v1 testedType=Array
@@ -25,10 +23,9 @@ function f1 name="joined" parameters=[{type=undefined|L0}] results=[{type=anythi
     Jump -> next b3(v6)
   b3(v7: anything):
     Return v7
-}
-# CHECK-LABEL: function f1 name="joined"
 # CHECK: [[isObject]]: boolean = TypeTest v0 testedType=object
 # CHECK-NEXT: Branch [[isObject]] -> taken {{*}}(| 0), notTaken [[failed]](| 0)
 # CHECK: [[failed]]([[nothing]]: undefined) frequency=Unlikely:
 # CHECK: : never = PropGet [[nothing]] key="lines"
 # CHECK-NEXT: Unreachable
+}

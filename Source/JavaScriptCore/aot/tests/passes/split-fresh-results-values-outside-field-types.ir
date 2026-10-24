@@ -9,7 +9,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Sized" fields=[{key="n" declared={type=number} flags=[IsRequired]}, {key="label" declared={type=string} flags=[IsRequired]}]
 
 function f0 name="sized" parameters=[{type=anything}, {type=string}] results=[{type=L0}] {
-  b0(v0: anything, v1: string):
     v2 = TypeTest v0 testedType=number
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3: number):
@@ -34,7 +33,6 @@ function f0 name="sized" parameters=[{type=anything}, {type=string}] results=[{t
 # CHECK-NEXT: PropSet [[object]], {{*}} key="n"
 
 function f1 name="twoPlacesOneValue" parameters=[{type=number}, {type=string}, {type=boolean}] results=[{type=L0}] {
-  b0(v0: number, v1: string, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1] allocationSite=1
@@ -50,7 +48,6 @@ function f1 name="twoPlacesOneValue" parameters=[{type=number}, {type=string}, {
 # CHECK-NOT: NewObject
 
 function f2 name="caller" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
-  b0(v0: anything, v1: string):
     v2 = CallDirect v0, v1 function=f0 [isNeverInlined]
     v3 = IsSlotFilled v2 key="n" receivers=[L0] level=Expected
     Branch v3 -> taken b1(| 0), notTaken b2()
@@ -60,21 +57,18 @@ function f2 name="caller" parameters=[{type=anything}, {type=string}] results=[{
   b2() frequency=Rare:
     v6 = PropGet v2 key="n" receivers=[L0]
     Return v6
-}
-# CHECK-LABEL: function f2 name="caller"
 # CHECK-NOT: NewObject
 # CHECK-NOT: PropSet
 # CHECK: [[parts]]:{{*}}= CallDirect v0, v1 function=[[worker]]
 # CHECK-NOT: PropGet
 # CHECK: Return
+}
 
 function f3 name="otherCaller" parameters=[{type=number}, {type=string}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: string, v2: boolean):
     v3 = CallDirect v0, v1, v2 function=f1
     v4 = PropGet v3 key="label" receivers=[L0]
     Return v4
-}
-# CHECK-LABEL: function f3 name="otherCaller"
 # CHECK-NOT: NewObject
 # CHECK-NOT: Switch
 # CHECK: Return
+}

@@ -5,46 +5,36 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Holder" fields=[{key="a" declared={type=anything}}]
 function f0 name="underObjectPrototype" results=[{type=undefined}] {
-  b0():
     v0 = Builtin builtin=ObjectPrototype
     v1 = CallBuiltin -, v0 overload=ObjectCreate/0
     v2 = AssumeType v1 castType=object
     Return
-}
-# CHECK-LABEL: function f0 name="underObjectPrototype"
 # CHECK-NOT: ObjectCreate
+}
 
 function f1 name="underNull" results=[{type=undefined}] {
-  b0():
     v0 = Null
     v1 = CallBuiltin -, v0 overload=ObjectCreate/0
     Return
-}
-# CHECK-LABEL: function f1 name="underNull"
 # CHECK-NOT: ObjectCreate
+}
 
 function f2 name="underAnotherObject" parameters=[{type=L0}] results=[{type=undefined}] {
-  b0(v0: L0):
     v1 = CallBuiltin -, v0 overload=ObjectCreate/0
     Return
-}
-# CHECK-LABEL: function f2 name="underAnotherObject"
 # CHECK-NOT: ObjectCreate
+}
 
 function f3 name="used" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=ObjectPrototype
     v1 = CallBuiltin -, v0 overload=ObjectCreate/0
     Return v1
-}
-# CHECK-LABEL: function f3 name="used"
 # CHECK: = CallBuiltin -, v0 overload=ObjectCreate/0
+}
 
 function f4 name="withDescriptors" parameters=[{type=L0}] results=[{type=undefined}] {
-  b0(v0: L0):
     v1 = Null
     v2 = CallBuiltin -, v1, v0 overload=ObjectCreate/1
     Return
-}
-# CHECK-LABEL: function f4 name="withDescriptors"
 # CHECK: = CallBuiltin -, v1, v0 overload=ObjectCreate/1
+}

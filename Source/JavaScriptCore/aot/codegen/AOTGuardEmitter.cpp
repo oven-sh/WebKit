@@ -13,7 +13,6 @@
 #include "AOTClosureTestEmitter.h"
 #include "AOTCompiledStructure.h"
 #include "AOTConstantEmitter.h"
-#include "AOTDerivedFunctions.h"
 #include "AOTEffectsOfProtocols.h"
 #include "AOTDominators.h"
 #include "AOTForInEmitter.h"
@@ -26,7 +25,6 @@
 #include "AOTSlotEmitter.h"
 #include "AOTSort.h"
 #include "AOTStaticsEmitter.h"
-#include "AOTStringEmitter.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeTestEmitter.h"
 #include "AOTVector.h"
@@ -40,11 +38,6 @@ namespace JSC { namespace AOT { namespace Typed {
 static_assert(sizeof(OptionSet<CompiledStructure::Flag>) == sizeof(uint8_t));
 static_assert(sizeof(WatchpointState) == sizeof(uint8_t));
 static_assert(offsetOfFirstField <= MarkedBlock::atomSize);
-
-GuardEmitter::GuardEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
 
 Condition GuardEmitter::isPresentCell(Boxed value, const Type& type)
 {
@@ -250,65 +243,47 @@ void GuardEmitter::planTestsOfFlags()
     }
 }
 
-void GuardEmitter::generateTestOfFlags(const ValueContext& value)
+Condition GuardEmitter::testOfFlags(const ValueContext& value)
 {
     if (!std::exchange(m_didPlanTestsOfFlags, true))
         planTestsOfFlags();
     auto planned = m_flagsToTest.find(value.id());
     Word32 flags = loadByte(in<CellPointer>(value->objectOperand()), m_heaps.JSCell_typeInfoFlags);
-    defineTest(value, hasNoBits(flags, planned == m_flagsToTest.end() ? flagsTestedBy(value.value()) : planned->value));
+    return hasNoBits(flags, planned == m_flagsToTest.end() ? flagsTestedBy(value.value()) : planned->value);
+}
+
+Condition GuardEmitter::orderWordHasNoBits(const ValueContext& value, uint32_t bits)
+{
+    if (std::optional<StateOfNewObject> newObject = emitter<SlotAccessEmitter>().stateOfNewObjectBefore(value, value->objectOperand()))
+        return boolean(!(newObject->orderWord & bits));
+    Word32 orderWord = emitter<ShapeTestEmitter>().orderWordOf(in<CellPointer>(value->objectOperand()));
+    return hasNoBits(orderWord, bits);
 }
 
 void GuardEmitter::generateHasNoFieldOutsideSlot(const ValueContext& value)
 {
-    if (!flagsTestedBy(value.value())) {
-        if (std::optional<StateOfNewObject> newObject = emitter<SlotAccessEmitter>().stateOfNewObjectBefore(value, value->objectOperand())) {
-            defineTest(value, Condition(m_out.constInt32(!(newObject->orderWord & orderWordHasFieldOutsideSlot))));
-            return;
-        }
-        Word32 orderWord = emitter<ShapeTestEmitter>().orderWordOf(in<CellPointer>(value->objectOperand()));
-        defineTest(value, hasNoBits(orderWord, orderWordHasFieldOutsideSlot));
-        return;
-    }
-    generateTestOfFlags(value);
+    defineTest(value, flagsTestedBy(value.value()) ? testOfFlags(value) : orderWordHasNoBits(value, orderWordHasFieldOutsideSlot));
 }
 
 void GuardEmitter::generateHasBirthFieldsFilled(const ValueContext& value)
 {
-    if (build().recordedOptions().isSabotaged(Sabotage::UnfinishedObjectsPassForFinished)) {
-        defineTest(value, Condition(m_out.constInt32(1)));
-        return;
-    }
-    generateTestOfFlags(value);
+    defineTest(value, build().recordedOptions().isSabotaged(Sabotage::UnfinishedObjectsPassForFinished) ? boolean(true) : testOfFlags(value));
 }
 
 void GuardEmitter::generateIsNotFrozen(const ValueContext& value)
 {
-    if (std::optional<StateOfNewObject> newObject = emitter<SlotAccessEmitter>().stateOfNewObjectBefore(value, value->objectOperand())) {
-        defineTest(value, Condition(m_out.constInt32(!(newObject->orderWord & orderWordIntegrityBits))));
-        return;
-    }
-    Word32 orderWord = emitter<ShapeTestEmitter>().orderWordOf(in<CellPointer>(value->objectOperand()));
-    defineTest(value, hasNoBits(orderWord, orderWordIntegrityBits));
+    defineTest(value, orderWordHasNoBits(value, orderWordIntegrityBits));
 }
 
 void GuardEmitter::generateHasLayoutPrototype(const ValueContext& value)
 {
     // The state of an object that was handed a prototype is known only behind a test that has passed.
-    if (emitter<SlotAccessEmitter>().stateOfNewObjectBefore(value, value->objectOperand())) {
-        defineTest(value, Condition(m_out.constInt32(1)));
-        return;
-    }
-    if (!flagsTestedBy(value.value())) {
+    if (emitter<SlotAccessEmitter>().stateOfNewObjectBefore(value, value->objectOperand()))
+        defineTest(value, boolean(true));
+    else if (flagsTestedBy(value.value()))
+        defineTest(value, testOfFlags(value));
+    else
         defineTest(value, emitter<ShapeTestEmitter>().hasLayoutPrototype(in<CellPointer>(value->objectOperand()), typeOf(value->objectOperand())));
-        return;
-    }
-    generateTestOfFlags(value);
-}
-
-void GuardEmitter::generateBelongsToInstance(const ValueContext& value)
-{
-    defineTest(value, belongsToInstance(in<CellPointer>(value->objectOperand())));
 }
 
 void GuardEmitter::generateIsPristine(const ValueContext& value)
@@ -365,11 +340,6 @@ void GuardEmitter::generateIsNotThenable(const ValueContext& value)
     });
 }
 
-void GuardEmitter::generateAreMembersUnchanged(const ValueContext& value)
-{
-    defineTest(value, holds(value->guardBit()));
-}
-
 void GuardEmitter::generateHasKeyOrder(const ValueContext& value)
 {
     std::optional<OrderWord> expected = value->orderWord();
@@ -422,11 +392,6 @@ Condition GuardEmitter::holds(GuardBitID id)
         m_records.guardTests.append(GuardTest { valueOfOrigin(m_out.origin()), static_cast<int32_t>(address.offset()), statics.guardMaskOf(id), holdsWhileClear });
     Word32 byte(m_out.load8ZeroExt32(address));
     return holdsWhileClear ? hasNoBits(byte, statics.guardMaskOf(id)) : hasBits(byte, statics.guardMaskOf(id));
-}
-
-Condition GuardEmitter::belongsToInstance(CellPointer cell)
-{
-    return hasInstanceRealm(loadStructure(cell));
 }
 
 Condition GuardEmitter::isClosureAsCreated(CellPointer cell)

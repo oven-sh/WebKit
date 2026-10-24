@@ -9,7 +9,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="texts" parameters=[{type=Set<string>}, {type=anything}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Set<string>, v1: anything, v2: i32):
     Jump -> next b1()
   b1():
     LoopHint
@@ -25,7 +24,6 @@ function f0 name="texts" parameters=[{type=Set<string>}, {type=anything}, {type=
 # S: f0 b1 Fast
 
 function f1 name="numbers" parameters=[{type=Set<number>}, {type=anything}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Set<number>, v1: anything, v2: i32):
     Jump -> next b1()
   b1():
     LoopHint
@@ -40,7 +38,6 @@ function f1 name="numbers" parameters=[{type=Set<number>}, {type=anything}, {typ
 # S: f1 b1 Fast
 
 function f2 name="numbersOrNothing" parameters=[{type=Set<undefined|null|boolean|number>}, {type=anything}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Set<undefined|null|boolean|number>, v1: anything, v2: i32):
     Jump -> next b1()
   b1():
     LoopHint
@@ -55,7 +52,6 @@ function f2 name="numbersOrNothing" parameters=[{type=Set<undefined|null|boolean
 # S: f2 b1 Fast
 
 function f3 name="numbersOrTexts" parameters=[{type=Set<string|number>}, {type=anything}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Set<string|number>, v1: anything, v2: i32):
     Jump -> next b1()
   b1():
     LoopHint
@@ -70,7 +66,6 @@ function f3 name="numbersOrTexts" parameters=[{type=Set<string|number>}, {type=a
 # S: f3 b1 Fast
 
 function f4 name="anything" parameters=[{type=Set<anything>}, {type=anything}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Set<anything>, v1: anything, v2: i32):
     Jump -> next b1()
   b1():
     LoopHint
@@ -85,7 +80,6 @@ function f4 name="anything" parameters=[{type=Set<anything>}, {type=anything}, {
 # S: f4 b1 Fast
 
 function f5 name="numbersByText" parameters=[{type=Map<string, number>}, {type=anything}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Map<string, number>, v1: anything, v2: i32):
     Jump -> next b1()
   b1():
     LoopHint
@@ -101,7 +95,6 @@ function f5 name="numbersByText" parameters=[{type=Map<string, number>}, {type=a
 # S: f5 b1 Fast
 
 function f6 name="textsByNumber" parameters=[{type=Map<number, string>}, {type=anything}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Map<number, string>, v1: anything, v2: i32):
     Jump -> next b1()
   b1():
     LoopHint

@@ -12,26 +12,21 @@ function f0 name="underHandler" results=[{type=anything}] {
   b1() role=CatchHandler:
     v1 = CatchValue
     Return v1
-}
-# CHECK-LABEL: function f0 name="underHandler"
 # CHECK: b0() handler=b1():
 # CHECK-NEXT: = CallDirect
 # CHECK-NEXT: Unreachable
 # CHECK: = CatchValue
+}
 
 function f1 name="lastValue" results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f2
     Unreachable
-}
-# CHECK-LABEL: function f1 name="lastValue"
 # CHECK: = CallDirect
 # CHECK-NEXT: Unreachable
+}
 
 function f2 name="alwaysThrows" results=[{type=never}] {
-  b0():
     v0 = Undefined
     Throw v0
-}
-# CHECK-LABEL: function f2 name="alwaysThrows"
 # CHECK: Throw v0
+}

@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="operators" parameters=[{type=i32}, {type=number}, {type=string}, {type=anything}, {type=undefined|number}] results=[{type=anything}] {
-  b0(v0: i32, v1: number, v2: string, v3: anything, v4: undefined|number):
     v5 = Add v0, v0
     v6 = Add v0, v1
     v7 = Add v2, v2

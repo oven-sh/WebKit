@@ -15,7 +15,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Cache" constructor=f1 flags=[HasHeritage]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Map
     v1 = NewClosure function=f1
     v2 = ResolveHeritage v0
@@ -29,16 +28,13 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v9
 }
 function f1 name="Cache" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0 homeKind=Object
     v3 = SuperConstruct v2, v1 layout=L0
     Return v3
 }
 function f2 name="set" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Return
 }
 function f3 name="unused" results=[{type=anything}] {
-  b0():
     Return
 }

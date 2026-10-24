@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="reads" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="a"
     v2 = PropGet v1 key="b"
     v3 = PropGet v2 key="c"
@@ -18,7 +17,6 @@ function f0 name="reads" parameters=[{type=anything}] results=[{type=anything}] 
     Return v8
 }
 function f1 name="inALoop" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     LoopHint
@@ -31,12 +29,10 @@ function f1 name="inALoop" parameters=[{type=anything}] results=[{type=anything}
     Jump -> next b1()
   b3():
     Return v2
-}
-# CHECK-LABEL: function f1 name="inALoop"
 # CHECK-NOT: function=f0
+}
 
 function f2 name="behindABranchInALoop" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -53,14 +49,11 @@ function f2 name="behindABranchInALoop" parameters=[{type=anything}, {type=boole
     Jump -> next b1()
   b5():
     Return v3
-}
-# CHECK-LABEL: function f2 name="behindABranchInALoop"
 # CHECK-NOT: function=f0
+}
 
 function f3 name="outsideALoop" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f0
     Return v1
-}
-# CHECK-LABEL: function f3 name="outsideALoop"
 # CHECK: = CallDirect {{*}} function=f0
+}

@@ -8,7 +8,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="atAndOverTheLimit" results=[{type=string}] {
-  b0():
     v0 = String string="abcd"
     v1 = String string="efgh"
     v2 = String string="efghi"
@@ -20,8 +19,6 @@ function f0 name="atAndOverTheLimit" results=[{type=string}] {
     v8 = ToString v3
     v9 = ToString v2
     Return v4
-}
-# CHECK-LABEL: function f0 name="atAndOverTheLimit"
 # CHECK: v4: "abcdefgh" = String string="abcdefgh"
 # CHECK-NEXT: v5: string = Add v0, v2
 # CHECK-NEXT: v6: string = Add v0, v3
@@ -29,13 +26,12 @@ function f0 name="atAndOverTheLimit" results=[{type=string}] {
 # CHECK-NEXT: v8: string = ToString v3
 # CHECK-NEXT: v9: "efghi" = String string="efghi"
 # CHECK-NEXT: Return v4
+}
 
 function f1 name="unknownPartIsNoLoss" parameters=[{type=string}] results=[{type=string}] {
-  b0(v0: string):
     v1 = String string="abcdefghij"
     v2 = Add v1, v0
     Return v2
-}
-# CHECK-LABEL: function f1 name="unknownPartIsNoLoss"
 # CHECK: v2: string = Add v1, v0
 # CHECK-NEXT: Return v2
+}

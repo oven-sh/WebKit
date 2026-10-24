@@ -9,7 +9,6 @@ entry module=m0
 layout L0 kind=Instance name="Point" constructor=f1
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}, {cooked="b" raw="b"}] @10
     v1 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}, {cooked="b" raw="b"}] @20
     v2 = NewTemplateObject templateStrings=[{cooked="b" raw="b"}, {cooked="a" raw="a"}] @30
@@ -19,7 +18,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Point" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2

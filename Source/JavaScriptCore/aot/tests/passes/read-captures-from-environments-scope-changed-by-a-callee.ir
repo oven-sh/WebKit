@@ -7,7 +7,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Environment name="counting" fields=[{key="current" declared={type=number}}, {key="next" declared={type=f1}}, {key="bump" declared={type=f2}}]
 
 function f0 name="counting" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewClosure v1 function=f1
     PutEnvironmentField v1, v2 layout=L0 field=1
@@ -28,13 +27,12 @@ function f0 name="counting" parameters=[{type=number}] results=[{type=anything}]
     Jump -> next b1()
   b3():
     Return v9
-}
-# CHECK-LABEL: function f0 name="counting"
 # CHECK-NOT: NewClosure
 # CHECK: LoopHint
 # CHECK-NEXT: [[current]]: number = GetEnvironmentField v1 layout=L0
 # CHECK-NEXT: = Less [[current]],
 # CHECK: CallDirect v1 function=f1
+}
 
 function f1 name="next" captures=[{type=env L0}] results=[{type=anything}] {
   b0(v0: env L0):
@@ -43,10 +41,9 @@ function f1 name="next" captures=[{type=env L0}] results=[{type=anything}] {
     v3 = Integer integer=1
     v4 = CallDirect v2, v3 function=f2
     Return v4
-}
-# CHECK-LABEL: function f1 name="next"
 # CHECK-NOT: GetCapture
 # CHECK: = CallDirect v0, {{*}} function=f2
+}
 
 function f2 name="bump" captures=[{type=env L0}] parameters=[{type=number}] results=[{type=anything}] {
   b0(v0: env L0, v1: number):

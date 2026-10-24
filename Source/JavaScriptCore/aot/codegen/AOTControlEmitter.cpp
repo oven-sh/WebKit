@@ -13,15 +13,9 @@
 #include "AOTExceptionEmitter.h"
 #include "AOTShapeTestEmitter.h"
 #include "AOTStaticsEmitter.h"
-#include "AOTVector.h"
 #include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
-
-ControlEmitter::ControlEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
 
 void ControlEmitter::generateJump(const TerminatorContext& terminator)
 {
@@ -47,24 +41,19 @@ BranchTargets ControlEmitter::branchTargetsOf(const TerminatorContext& terminato
 B3::FrequentedBlock ControlEmitter::countedEdgeTo(const TerminatorContext& terminator, uint32_t targetIndex, std::span<const Operand> declaredResults)
 {
     B3::FrequentedBlock edge = generator().edgeTo(terminator, targetIndex, declaredResults);
-    if (inputs().branchCounters.isCounting())
-        countBranch(terminator, targetIndex, edge);
-    return edge;
-}
-
-void ControlEmitter::countBranch(const TerminatorContext& terminator, uint32_t targetIndex, B3::FrequentedBlock& edge)
-{
+    if (!inputs().branchCounters.isCounting())
+        return edge;
     if (!m_countedBranches)
         m_countedBranches = findCountedBranches(m_program, m_function);
     auto* countedBranch = tryBinarySearch<CountedBranch, BlockID>(*m_countedBranches, m_countedBranches->size(), terminator.block(), [](const CountedBranch* candidate) {
         return candidate->block;
     });
     if (!countedBranch)
-        return;
+        return edge;
     uint32_t ordinal = static_cast<uint32_t>(countedBranch - m_countedBranches->begin());
     std::optional<uint32_t> number = inputs().branchCounters.counterFor(m_id, ordinal, counterSideOf(terminator.terminator(), targetIndex));
     if (!number)
-        return;
+        return edge;
 
     LBasicBlock branchingBlock = m_out.m_block;
     LBasicBlock countingBlock = newBlock();
@@ -74,6 +63,7 @@ void ControlEmitter::countBranch(const TerminatorContext& terminator, uint32_t t
     m_out.jump(edge.block());
     m_out.appendTo(branchingBlock);
     edge.block() = countingBlock;
+    return edge;
 }
 
 void ControlEmitter::generateSwitch(const TerminatorContext& terminator)

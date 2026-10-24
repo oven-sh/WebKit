@@ -44,19 +44,22 @@ static std::optional<size_t> findPlaceInside(FieldList order, FieldList fields)
     return position;
 }
 
+static Vector<FieldIndex> concatenate(FieldList first, FieldList second)
+{
+    Vector<FieldIndex> order;
+    BitVector isListed;
+    for (FieldList part : { first, second }) {
+        for (FieldIndex field : part) {
+            if (isListed.add(field))
+                order.append(field);
+        }
+    }
+    return order;
+}
+
 namespace {
 
 struct CreationOrders {
-    // What an object has when the stores outside its constructor begin. The orders of a constructor start at the allocation.
-    const KeyOrderList& ordersThatStoresContinue() const { return hasConstructor ? constructorOrders : allocationOrders; }
-
-    // Whether an object gets as far in the order of the declarations as the keys in front of the fields.
-    bool reachesPlaceAmongDeclarations(FieldList declaredOrder, FieldList fields) const
-    {
-        std::optional<size_t> position = findPlaceInside(declaredOrder, fields);
-        return position && countsReachedAmongDeclarations.get(*position);
-    }
-
     KeyOrderList allocationOrders;
     KeyOrderList constructorOrders;
     KeyOrderList ordersContinuedByStores;
@@ -69,23 +72,6 @@ struct CreationOrders {
 struct InheritedField {
     FieldReference declaration;
     FieldIndex field { 0 };
-};
-
-class KeyOrderBuilder {
-public:
-    void append(FieldList fields)
-    {
-        for (FieldIndex field : fields) {
-            if (m_isListed.add(field))
-                m_fields.append(field);
-        }
-    }
-
-    Vector<FieldIndex> take() { return WTF::move(m_fields); }
-
-private:
-    Vector<FieldIndex> m_fields;
-    BitVector m_isListed;
 };
 
 class ConstructorChain {
@@ -113,10 +99,10 @@ public:
 
     Vector<FieldIndex> declaredOrder() const
     {
-        KeyOrderBuilder order;
+        Vector<FieldIndex> fields;
         for (LayoutID declaringLayout : m_declaringLayouts)
-            order.append(declaredFieldsOf(declaringLayout).span());
-        return order.take();
+            fields.appendVector(declaredFieldsOf(declaringLayout));
+        return concatenate(fields.span(), { });
     }
 
     KeyOrderList constructorOrders() const
@@ -124,32 +110,20 @@ public:
         KeyOrderList orders(1);
         for (LayoutID declaringLayout : m_declaringLayouts) {
             KeyOrderList nextOrders = constructorOrdersOf(declaringLayout);
-            if (nextOrders.isEmpty())
+            if (nextOrders.isEmpty() || m_context.build.exceeds(LimitID::KeyOrdersPerLayout, static_cast<uint64_t>(orders.size()) * nextOrders.size(), { .layout = m_layout }))
                 break;
-            uint64_t count = static_cast<uint64_t>(orders.size()) * nextOrders.size();
-            if (m_context.build.exceeds(LimitID::KeyOrdersPerLayout, count, { .layout = m_layout }))
-                break;
-            orders = concatenateEach(orders, nextOrders);
+            KeyOrderList longerOrders;
+            longerOrders.reserveInitialCapacity(orders.size() * nextOrders.size());
+            for (auto& order : orders) {
+                for (auto& nextOrder : nextOrders)
+                    longerOrders.append(concatenate(order.span(), nextOrder.span()));
+            }
+            orders = WTF::move(longerOrders);
         }
         return orders;
     }
 
 private:
-    static KeyOrderList concatenateEach(const KeyOrderList& firstParts, const KeyOrderList& secondParts)
-    {
-        KeyOrderList result;
-        result.reserveInitialCapacity(firstParts.size() * secondParts.size());
-        for (auto& firstPart : firstParts) {
-            for (auto& secondPart : secondParts) {
-                KeyOrderBuilder order;
-                order.append(firstPart.span());
-                order.append(secondPart.span());
-                result.append(order.take());
-            }
-        }
-        return result;
-    }
-
     std::optional<FieldIndex> findField(FieldReference field) const
     {
         if (field.layout == m_layout)
@@ -204,145 +178,50 @@ private:
     Vector<InheritedField> m_inheritedFieldsWithoutKey;
 };
 
-} // anonymous namespace
-
-static Vector<FieldIndex> storedInitialFields(const PlacementContext& context, const PlacedAllocation& allocation)
-{
-    Vector<FieldIndex> result;
-    for (FieldIndex field : allocation.initialFields) {
-        if (hasStorage(context, allocation.layout, field))
-            result.append(field);
-    }
-    return result;
-}
-
-static bool haveCommonField(FieldList a, FieldList b)
-{
-    return std::ranges::any_of(a, [&](FieldIndex field) {
-        return std::ranges::find(b, field) != b.end();
-    });
-}
-
-static Vector<FieldIndex> concatenate(FieldList first, FieldList second)
-{
-    KeyOrderBuilder order;
-    order.append(first);
-    order.append(second);
-    return order.take();
-}
-
-namespace {
-
 enum class PlaceInOrder : uint8_t { Inside, Behind };
 
-// Takes the places that the code of a store will name, before the orders have numbers, and keeps the keys that an object has behind the store where no other list of the layout has them.
-class ContinuedOrderCollector {
-public:
-    explicit ContinuedOrderCollector(KeyOrderList& continuedOrders)
-        : m_continuedOrders(continuedOrders)
-    {
-    }
-
-    bool isFull() const { return m_keysBefore.size() == PlacedFieldCreation::maxContinuations; }
-
-    void add(FieldList keysBefore, FieldList keysAfter, PlaceInOrder place)
-    {
-        if (m_keysBefore.containsIf([&](FieldList known) { return equalSpans(known, keysBefore); }))
-            return;
-        m_keysBefore.constructAndAppend(keysBefore);
-        if (place == PlaceInOrder::Behind)
-            m_continuedOrders.append(Vector<FieldIndex>(keysAfter));
-    }
-
-private:
-    KeyOrderList& m_continuedOrders;
-    Vector<FieldList, PlacedFieldCreation::maxContinuations> m_keysBefore;
-};
-
-class ContinuationCollector {
-public:
-    ContinuationCollector(const KeyOrders& keyOrders, PlacedFieldCreation& creation)
-        : m_keyOrders(keyOrders)
-        , m_creation(creation)
-    {
-    }
-
-    bool isFull() const { return m_creation.continuations.size() == PlacedFieldCreation::maxContinuations; }
-
-    // An order that went over the limit is not in the image.
-    void add(FieldList keysBefore, FieldList keysAfter, PlaceInOrder)
-    {
-        std::optional<uint32_t> orderWordBefore = m_keyOrders.findOrderWord(m_creation.layout, keysBefore);
-        std::optional<uint32_t> orderWordAfter = m_keyOrders.findOrderWord(m_creation.layout, keysAfter);
-        if (!orderWordBefore || !orderWordAfter)
-            return;
-        KeyOrderContinuation continuation { *orderWordBefore, *orderWordAfter };
-        if (!m_creation.continuations.contains(continuation))
-            m_creation.continuations.append(continuation);
-    }
-
-private:
-    const KeyOrders& m_keyOrders;
-    PlacedFieldCreation& m_creation;
-};
-
 } // anonymous namespace
 
-static void collectPlacesInside(const KeyOrderList& orders, FieldList created, auto& collector)
+// The places where the fields that a store, or a run of stores, creates may come next, the most likely place first: the keys in front of the place and the keys with the fields.
+static void forEachPlace(const CreationOrders& orders, FieldList created, const Invocable<bool()> auto& isFull, const Invocable<void(FieldList, FieldList, PlaceInOrder)> auto& add)
 {
-    for (auto& order : orders) {
-        if (collector.isFull())
-            return;
-        if (std::optional<size_t> position = findPlaceInside(order.span(), created))
-            collector.add(order.span().first(*position), order.span().first(*position + created.size()), PlaceInOrder::Inside);
-    }
-}
-
-static void collectPlacesBehind(const KeyOrderList& orders, FieldList created, auto& collector)
-{
-    for (auto& order : orders) {
-        if (collector.isFull())
-            return;
-        if (!haveCommonField(order.span(), created))
-            collector.add(order.span(), concatenate(order.span(), created).span(), PlaceInOrder::Behind);
-    }
-}
-
-// The places where the fields that a store, or a run of stores, creates may come next, the most likely place first.
-static void collectPlaces(const CreationOrders& orders, FieldList created, auto& collector)
-{
-    collectPlacesInside(orders.constructorOrders, created, collector);
+    auto addPlacesInside = [&](const KeyOrderList& list) {
+        for (auto& order : list) {
+            if (isFull())
+                return;
+            if (std::optional<size_t> position = findPlaceInside(order.span(), created))
+                add(order.span().first(*position), order.span().first(*position + created.size()), PlaceInOrder::Inside);
+        }
+    };
+    addPlacesInside(orders.constructorOrders);
     bool isFilledInDeclaredOrder = !orders.hasConstructor && std::ranges::any_of(orders.declaredOrders, [&](const Vector<FieldIndex>& order) {
-        return orders.reachesPlaceAmongDeclarations(order.span(), created);
+        std::optional<size_t> position = findPlaceInside(order.span(), created);
+        return position && orders.countsReachedAmongDeclarations.get(*position);
     });
     if (isFilledInDeclaredOrder)
-        collectPlacesInside(orders.declaredOrders, created, collector);
-    collectPlacesBehind(orders.ordersThatStoresContinue(), created, collector);
-    collectPlacesInside(orders.declaredOrders, created, collector);
-}
-
-// An object that has the keys of its allocation or of its constructor gets more keys from stores.
-static KeyOrderList continueOrders(const CreationOrders& orders, std::span<const PlacedFieldCreation> creations)
-{
-    KeyOrderList result;
-    for (auto& creation : creations) {
-        ContinuedOrderCollector collector(result);
-        collectPlaces(orders, creation.fields.span(), collector);
+        addPlacesInside(orders.declaredOrders);
+    // What an object has when the stores outside its constructor begin. The orders of a constructor start at the allocation.
+    for (auto& order : orders.hasConstructor ? orders.constructorOrders : orders.allocationOrders) {
+        if (isFull())
+            break;
+        bool haveCommonField = std::ranges::any_of(order, [&](FieldIndex field) {
+            return std::ranges::contains(created, field);
+        });
+        if (!haveCommonField)
+            add(order.span(), concatenate(order.span(), created).span(), PlaceInOrder::Behind);
     }
-    return result;
+    addPlacesInside(orders.declaredOrders);
 }
 
-// An object has what its allocation lists.
 static BitVector findCountsReachedAmongDeclarations(const PlacementContext& context, LayoutID layout, FieldList declaredOrder, const KeyOrderList& allocationOrders, std::span<const PlacedFieldCreation> creations)
 {
-    const Program& program = context.program;
     BitVector isCreatedBehindAllocation;
     for (auto& creation : creations) {
         for (FieldIndex field : creation.fields)
             isCreatedBehindAllocation.set(field);
     }
     for (FieldIndex field : declaredOrder) {
-        if (!fieldAt(program, declarationOf(program, { layout, field })).form.isEmpty())
+        if (!fieldAt(context.program, declarationOf(context.program, { layout, field })).form.isEmpty())
             isCreatedBehindAllocation.set(field);
     }
 
@@ -357,55 +236,57 @@ static BitVector findCountsReachedAmongDeclarations(const PlacementContext& cont
     return counts;
 }
 
-static size_t countDeclaredKeysThatStoresReach(const CreationOrders& orders, FieldList declaredOrder, std::span<const PlacedFieldCreation> creations)
-{
-    size_t count = 0;
-    for (auto& creation : creations) {
-        std::optional<size_t> position = findPlaceInside(declaredOrder, creation.fields.span());
-        if (position && orders.countsReachedAmongDeclarations.get(*position))
-            count = std::max(count, *position + creation.fields.size());
-    }
-    return count;
-}
-
 static CreationOrders collectCreationOrders(const PlacementContext& context, const AllocationTable& table, LayoutID layout, std::span<const PlacedFieldCreation> creations)
 {
     auto allocations = table.ofLayout(layout);
     CreationOrders orders;
     orders.allocationOrders = KeyOrderList(allocations.size(), [&](size_t i) {
-        return storedInitialFields(context, table.allocations[allocations[i].index()]);
+        Vector<FieldIndex> storedFields;
+        for (FieldIndex field : table.allocations[allocations[i].index()].initialFields) {
+            if (hasStorage(context, layout, field))
+                storedFields.append(field);
+        }
+        return storedFields;
     });
     ConstructorChain chain(context, layout);
     orders.constructorOrders = chain.constructorOrders();
     // Flow names no order where somebody else may get hold of the object before the first store. Then the declarations say what the constructor creates, in its sequence, as for an object without one.
-    orders.hasConstructor = context.program.at(declaredLayoutOf(context.program, layout)).constructor && std::ranges::any_of(orders.constructorOrders, [](const Vector<FieldIndex>& fields) {
-        return !fields.isEmpty();
-    });
+    orders.hasConstructor = context.program.at(declaredLayoutOf(context.program, layout)).constructor && !std::ranges::all_of(orders.constructorOrders, &Vector<FieldIndex>::isEmpty);
 
     // Whatever fills an object that starts without keys, compiled or not, is expected to go by the declarations.
-    bool canStartWithoutKeys = allocations.empty()
-        || std::ranges::any_of(orders.allocationOrders, [](const auto& fields) { return fields.isEmpty(); });
+    bool canStartWithoutKeys = allocations.empty() || std::ranges::any_of(orders.allocationOrders, &Vector<FieldIndex>::isEmpty);
     if (canStartWithoutKeys || !creations.empty()) {
         Vector<FieldIndex> declaredOrder = chain.declaredOrder();
         if (!creations.empty())
             orders.countsReachedAmongDeclarations = findCountsReachedAmongDeclarations(context, layout, declaredOrder.span(), orders.allocationOrders, creations);
-        if (!canStartWithoutKeys)
-            declaredOrder.shrink(countDeclaredKeysThatStoresReach(orders, declaredOrder.span(), creations));
+        if (!canStartWithoutKeys) {
+            size_t numberOfKeysThatStoresReach = 0;
+            for (auto& creation : creations) {
+                std::optional<size_t> position = findPlaceInside(declaredOrder.span(), creation.fields.span());
+                if (position && orders.countsReachedAmongDeclarations.get(*position))
+                    numberOfKeysThatStoresReach = std::max(numberOfKeysThatStoresReach, *position + creation.fields.size());
+            }
+            declaredOrder.shrink(numberOfKeysThatStoresReach);
+        }
         orders.declaredOrders.append(WTF::move(declaredOrder));
     }
-    orders.ordersContinuedByStores = continueOrders(orders, creations);
+    // An object that has the keys of its allocation or of its constructor gets more keys from stores: the keys behind a store at the places that its code will name, where no other list of the layout has them.
+    for (auto& creation : creations) {
+        Vector<FieldList, PlacedFieldCreation::maxContinuations> placesTaken;
+        forEachPlace(orders, creation.fields.span(), [&] {
+            return placesTaken.size() == PlacedFieldCreation::maxContinuations;
+        }, [&](FieldList keysBefore, FieldList keysAfter, PlaceInOrder place) {
+            if (placesTaken.containsIf([&](FieldList known) { return equalSpans(known, keysBefore); }))
+                return;
+            placesTaken.constructAndAppend(keysBefore);
+            if (place == PlaceInOrder::Behind)
+                orders.ordersContinuedByStores.append(Vector<FieldIndex>(keysAfter));
+        });
+    }
     return orders;
 }
 
-static bool canBeKeyOrder(const PlacementContext& context, const KeyOrderTestUse& test)
-{
-    BitVector isListed;
-    return std::ranges::all_of(test.fields, [&](FieldIndex field) {
-        return hasStorage(context, test.layout, field) && isListed.add(field);
-    });
-}
-
-static KeyOrderList computeKeyOrders(const PlacementContext& context, std::initializer_list<const KeyOrderList*> creationOrders, std::span<const KeyOrderTestUse> tests)
+static KeyOrderList computeKeyOrders(const PlacementContext& context, std::span<const KeyOrderList* const> creationOrders, std::span<const KeyOrderTestUse> tests)
 {
     Vector<FieldList> candidates;
     auto addCandidate = [&](const Vector<FieldIndex>& fields) {
@@ -417,7 +298,11 @@ static KeyOrderList computeKeyOrders(const PlacementContext& context, std::initi
             addCandidate(fields);
     }
     for (auto& test : tests) {
-        if (canBeKeyOrder(context, test))
+        BitVector isListed;
+        bool canBeKeyOrder = std::ranges::all_of(test.fields, [&](FieldIndex field) {
+            return hasStorage(context, test.layout, field) && isListed.add(field);
+        });
+        if (canBeKeyOrder)
             addCandidate(test.fields);
     }
     AOT::sort(candidates, isLexicographicallyLess);
@@ -438,30 +323,17 @@ static std::optional<KeyOrderList> chooseKeyOrders(const PlacementContext& conte
 {
     BuildContext& build = context.build;
     Subject subject { .layout = layout };
-    const KeyOrderList* allocationOrders = &creationOrders.allocationOrders;
-    const KeyOrderList* constructorOrders = &creationOrders.constructorOrders;
-    const KeyOrderList* declaredOrders = &creationOrders.declaredOrders;
-
-    KeyOrderList orders = computeKeyOrders(context, { allocationOrders, constructorOrders, declaredOrders, &creationOrders.ordersContinuedByStores }, tests);
-    if (!build.exceeds(LimitID::KeyOrdersPerLayout, orders.size(), subject))
-        return orders;
-    orders = computeKeyOrders(context, { allocationOrders, constructorOrders, declaredOrders }, tests);
-    if (!build.exceeds(LimitID::KeyOrdersPerLayout, orders.size(), subject))
-        return orders;
-    orders = computeKeyOrders(context, { allocationOrders, constructorOrders, declaredOrders }, { });
-    if (!build.exceeds(LimitID::KeyOrdersPerLayout, orders.size(), subject))
-        return orders;
-    orders = computeKeyOrders(context, { allocationOrders }, { });
+    const KeyOrderList* lists[] = { &creationOrders.allocationOrders, &creationOrders.constructorOrders, &creationOrders.declaredOrders, &creationOrders.ordersContinuedByStores };
+    for (auto [numberOfLists, includesTests] : { std::pair { 4, true }, std::pair { 3, true }, std::pair { 3, false } }) {
+        KeyOrderList orders = computeKeyOrders(context, std::span(lists).first(numberOfLists), includesTests ? tests : std::span<const KeyOrderTestUse> { });
+        if (!build.exceeds(LimitID::KeyOrdersPerLayout, orders.size(), subject))
+            return orders;
+    }
+    KeyOrderList orders = computeKeyOrders(context, std::span(lists).first(1), { });
     if (orders.size() <= build.limit(LimitID::KeyOrdersPerLayout))
         return orders;
     build.reportLimitExceeded(LimitID::KeyOrdersPerLayout, orders.size(), subject);
     return std::nullopt;
-}
-
-static void findContinuations(const KeyOrders& keyOrders, const CreationOrders& creationOrders, PlacedFieldCreation& creation)
-{
-    ContinuationCollector collector(keyOrders, creation);
-    collectPlaces(creationOrders, creation.fields.span(), collector);
 }
 
 static void collectLayoutKeyOrders(const PlacementContext& context, const AllocationTable& table, LayoutID layout, std::span<PlacedFieldCreation> creations, std::span<const KeyOrderTestUse> tests, KeyOrders& keyOrders, PlacedOrderWords& orderWords)
@@ -471,8 +343,19 @@ static void collectLayoutKeyOrders(const PlacementContext& context, const Alloca
     if (!orders)
         return;
     keyOrders.ofLayout[layout.index()] = WTF::move(*orders);
-    for (PlacedFieldCreation& creation : creations)
-        findContinuations(keyOrders, creationOrders, creation);
+    for (PlacedFieldCreation& creation : creations) {
+        forEachPlace(creationOrders, creation.fields.span(), [&] {
+            return creation.continuations.size() == PlacedFieldCreation::maxContinuations;
+        }, [&](FieldList keysBefore, FieldList keysAfter, PlaceInOrder) {
+            std::optional<uint32_t> orderWordBefore = keyOrders.findOrderWord(layout, keysBefore);
+            std::optional<uint32_t> orderWordAfter = keyOrders.findOrderWord(layout, keysAfter);
+            if (!orderWordBefore || !orderWordAfter)
+                return;
+            KeyOrderContinuation continuation { *orderWordBefore, *orderWordAfter };
+            if (!creation.continuations.contains(continuation))
+                creation.continuations.append(continuation);
+        });
+    }
 
     auto allocations = table.ofLayout(layout);
     for (size_t i = 0; i < allocations.size(); ++i) {

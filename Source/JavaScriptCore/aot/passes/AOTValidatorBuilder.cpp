@@ -11,6 +11,7 @@
 #include "AOTFlowResults.h"
 #include "AOTKnownValue.h"
 #include "AOTRemoveUnreadFields.h"
+#include "AOTThreshold.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeTestSite.h"
 #include "AOTValidationPlanText.h"
@@ -155,6 +156,26 @@ static PlainArray emitPlainArray(ValidatorBuilder& validator, ValueID value, con
     return { array, guard, builder.append(Opcode::GetArrayLength, { array, guard }) };
 }
 
+// Sparse storage says how long the array is and may hold nothing. The general validator counts the holes that it reads. Other storage has room for every index below the length.
+static void emitLeaveLongSparseArray(ValidatorBuilder& validator, const PlainArray& plain, const ValidationExits& exits)
+{
+    AOT_THRESHOLD(int64_t, maxLengthOfWalkedSparseArray, 65536);
+    IRBuilder& builder = validator.builder();
+    BlockID walked = builder.addBlock();
+    ValueID isLong = builder.append(Opcode::Less, { builder.appendInteger(maxLengthOfWalkedSparseArray), plain.length });
+    IRBuilder::BranchBlocks whetherLong = builder.emitBranch(isLong, BlockFrequency::Rare, BlockFrequency::Normal);
+    builder.moveToEndOf(whetherLong.notTaken);
+    builder.emitJump(walked);
+
+    builder.moveToEndOf(whetherLong.taken);
+    ValueID storage = builder.append(Opcode::ArrayStorageKind, { plain.array });
+    ValueID sparse = builder.appendInteger(static_cast<int64_t>(ArrayStorage::Other));
+    validator.emitJumpIf(builder.append(Opcode::StrictEq, { storage, sparse }), exits.unknown);
+    builder.emitJump(walked);
+
+    builder.moveToEndOf(walked);
+}
+
 static ValueID emitArray(ValidatorBuilder& validator, const ResultNode& node, ValueID value, const ValidationExits& exits)
 {
     RELEASE_ASSERT(node.children.size() == 1);
@@ -162,8 +183,10 @@ static ValueID emitArray(ValidatorBuilder& validator, const ResultNode& node, Va
     ResultNodeRef element = node.children[0];
     bool elementEndsStretch = validationEndsStretch(validator, element);
 
-    auto [array, guard, length] = emitPlainArray(validator, value, exits);
+    PlainArray plain = emitPlainArray(validator, value, exits);
+    auto [array, guard, length] = plain;
     validator.rules().emitLengthRules(node, length, exits.rejected);
+    emitLeaveLongSparseArray(validator, plain, exits);
     ValueID copy = builder.append(makeArrayOf(validator.program(), node, { }));
 
     BlockID header = builder.addBlock();

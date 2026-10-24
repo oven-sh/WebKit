@@ -31,7 +31,6 @@ static_assert(sizeof(ImageLongString) == 8 && isImageRecord<ImageLongString>);
 
 struct ImageStringWord;
 
-// What the text encoder says of a string. The image writer makes a header and an ImageStringWord of it.
 struct ImageString {
     static constexpr unsigned lengthBits = 8;
     static constexpr uint32_t lengthMask = (1u << lengthBits) - 1;
@@ -47,14 +46,10 @@ struct ImageString {
     bool is16Bit() const { return hashAndFlags & is16BitFlag; }
     bool isAtom() const { return hashAndFlags & isAtomFlag; }
     bool hasIdentifierNumber() const { return hashAndFlags & hasIdentifierNumberFlag; }
-    // Without a header the record keeps the hash.
     bool hasHeader() const { return hasText() && !(hashAndFlags & hasNoHeaderFlag); }
-    // Of a string without a header that gets one at run time: behind its words the image's list has its hash.
     bool hasListedHash() const { return hashAndFlags & hasListedHashFlag; }
     uint32_t hashOrIdentifierNumber() const { return hashAndFlags & hashMask; }
-    // The number of the header, or the place in the image's list of a string without one. It counts for nothing in an identifier's text.
     ImageStringWord inImage(uint32_t number) const;
-    // In ImageSection::Text. The length counts characters.
     ImageLongString range(std::span<const ImageLongString> longStrings) const;
 
     uint32_t location;
@@ -62,7 +57,6 @@ struct ImageString {
 };
 static_assert(sizeof(ImageString) == 8 && isImageRecord<ImageString>);
 
-// ImageSection::Strings has one for each StringID.
 struct ImageStringWord {
     bool hasText() const { return !!bits; }
     bool is16Bit() const { return bits & ImageString::is16BitFlag; }
@@ -177,7 +171,6 @@ static_assert(sizeof(LazyStringHeaderArena) == sizeof(LazyStringHeader) && offse
 
 struct ImageIdentifierWord;
 
-// What the text encoder says of an identifier. The image writer makes an ImageIdentifierWord of it and puts the hash of a text into the header of its atom.
 struct ImageIdentifier {
     static constexpr uint32_t hashMask = (1u << 24) - 1;
     static constexpr unsigned kindShift = 24;
@@ -203,7 +196,6 @@ struct ImageIdentifier {
 };
 static_assert(sizeof(ImageIdentifier) == 8 && isImageRecord<ImageIdentifier>);
 
-// ImageSection::Identifiers has one for each identifier number: the text, the kind, and above them the name class.
 struct ImageIdentifierWord {
     static constexpr uint32_t textMask = ImageIdentifier::hashMask;
 
@@ -251,10 +243,8 @@ public:
     JS_EXPORT_PRIVATE StringView view(StringID) const;
     JS_EXPORT_PRIVATE unsigned hash(StringID) const;
     JS_EXPORT_PRIVATE bool equals(StringID, StringView) const;
-    // Both allocate nothing for a string whose header says what is asked for: the result is the header in the image.
     JS_EXPORT_PRIVATE String createString(StringID) const;
     JS_EXPORT_PRIVATE String createAtom(StringID) const;
-    // The header of a string of two characters or more, where the header is what both of them would give. Null for any other string.
     StringImpl* tryGetHeader(StringID) const;
 
     std::optional<uint32_t> identifierNumber(StringID) const;
@@ -271,19 +261,16 @@ public:
     size_t lazyHeadersCapacity() const { return (m_stringRecords.size() + 1) * sizeof(LazyStringHeader); }
     JS_EXPORT_PRIVATE size_t lazyHeadersSize() const;
 #else
-    // The header of the identifier with the number n is identifierAtoms() + n. It is a name where its length is not zero.
     UniquedStringImpl* identifierAtoms() const { return reinterpret_cast<UniquedStringImpl*>(const_cast<ImageStringHeader*>(m_stringHeaders.data())); }
 #endif
     StringID stringConstant(uint32_t number) const { return StringID(m_stringConstants[number]); }
     bool hasListedHash(StringID string) const { return m_strings[string.index()].hasListedHash(); }
-    // Nothing for a string that is no header of this image. Zero for a header that is none of the program's literal strings.
     std::optional<uint32_t> literalStringWordOfHeader(const StringImpl&) const;
 
 private:
-    // A string without text counts as one with a header: headerOf() refuses it.
     bool hasHeader(StringID string) const { return !m_strings[string.index()].hasText() || m_strings[string.index()].hasHeader(); }
+    StringImpl* headerOf(StringID) const;
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-    const ImageStringRecord& recordFor(StringID) const;
     ImageLongString rangeFor(const ImageStringRecord&) const;
     uint32_t literalStringWordFor(const ImageStringRecord&) const;
     JS_EXPORT_PRIVATE StringImpl& createLazyHeader(uint32_t number) const;
@@ -291,8 +278,6 @@ private:
     size_t lazyHeadersReservationSize() const;
 
     static constexpr size_t lazyHeadersAlignment = 2 * MB;
-#else
-    const ImageStringHeader& headerOf(StringID) const;
 #endif
     String createStringWithoutHeader(StringID) const;
 
@@ -308,7 +293,6 @@ private:
     void* m_lazyHeadersReservation { nullptr };
 #else
     std::span<const ImageStringHeader> m_stringHeaders;
-    // ImageStringHeader::characters of the first character of ImageSection::Text.
     uint64_t m_addressOfText { 0 };
 #endif
 };
@@ -410,7 +394,6 @@ JS_EXPORT_PRIVATE void relocateImage(std::span<uint8_t> image, uint64_t address)
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
 [[nodiscard]] inline bool relocateLoadedImage(std::span<const uint8_t>) { return true; }
 #else
-// For an image that no loader brought to its address: an image in a file that the process mapped or read, or in an executable whose writer did not call relocateImage().
 [[nodiscard]] JS_EXPORT_PRIVATE bool relocateLoadedImage(std::span<const uint8_t> image);
 #endif
 

@@ -9,424 +9,334 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="atNumber" parameters=[{type=Array<anything, pristine[Storage]>}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: number):
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0
     Return v2
-}
-# CHECK-LABEL: function f0 name="atNumber"
 # CHECK: TryCallInline v0, v1 overload=ArrayPrototypeAt/0 -> done [[done0]](), miss [[miss0]]()
 # CHECK: [[miss0]]()
 # CHECK: = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0
+}
 function f1 name="indexOfNumber" parameters=[{type=Array<anything, pristine[Storage]>}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: number):
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/0
     Return v2
-}
-# CHECK-LABEL: function f1 name="indexOfNumber"
 # CHECK: TryCallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/0 -> done [[done1]](), miss [[miss1]]()
 # CHECK: [[miss1]]()
 # CHECK: = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/0
+}
 function f2 name="indexOfNumberFromIndex" parameters=[{type=Array<anything, pristine[Storage]>}, {type=number}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: number, v2: i32):
     v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeIndexOf/0
     Return v3
-}
-# CHECK-LABEL: function f2 name="indexOfNumberFromIndex"
 # CHECK-NOT: CallInline
 # CHECK: v3:{{*}}= CallBuiltin v0, v1, v2 overload=ArrayPrototypeIndexOf/0
 # CHECK-NOT: CallInline
+}
 function f3 name="includesNumber" parameters=[{type=Array<anything, pristine[Storage]>}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: number):
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeIncludes/0
     Return v2
-}
-# CHECK-LABEL: function f3 name="includesNumber"
 # CHECK: TryCallInline v0, v1 inlineBuiltin=ArrayIncludes overload=ArrayPrototypeIncludes/0 -> done [[done3]](), miss [[miss3]]()
 # CHECK: [[miss3]]()
 # CHECK: = CallBuiltin v0, v1 overload=ArrayPrototypeIncludes/0
+}
 function f4 name="includesNumberFromIndex" parameters=[{type=Array<anything, pristine[Storage]>}, {type=number}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: number, v2: i32):
     v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeIncludes/0
     Return v3
-}
-# CHECK-LABEL: function f4 name="includesNumberFromIndex"
 # CHECK-NOT: CallInline
 # CHECK: v3:{{*}}= CallBuiltin v0, v1, v2 overload=ArrayPrototypeIncludes/0
 # CHECK-NOT: CallInline
+}
 function f5 name="joinWithoutSeparator" parameters=[{type=Array<anything, pristine[Storage]>}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>):
     v1 = CallBuiltin v0 overload=ArrayPrototypeJoin/0
     Return v1
-}
-# CHECK-LABEL: function f5 name="joinWithoutSeparator"
 # CHECK: TryCallInline v0 inlineBuiltin=ArrayJoin overload=ArrayPrototypeJoin/0 -> done [[done5]](), miss [[miss5]]()
 # CHECK: [[miss5]]()
 # CHECK: = CallBuiltin v0 overload=ArrayPrototypeJoin/0
+}
 function f6 name="joinWithString" parameters=[{type=Array<anything, pristine[Storage]>}, {type=string}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: string):
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeJoin/0
     Return v2
-}
-# CHECK-LABEL: function f6 name="joinWithString"
 # CHECK: TryCallInline v0, v1 inlineBuiltin=ArrayJoin overload=ArrayPrototypeJoin/0 -> done [[done6]](), miss [[miss6]]()
 # CHECK: [[miss6]]()
 # CHECK: = CallBuiltin v0, v1 overload=ArrayPrototypeJoin/0
+}
 function f7 name="joinWithOptionalString" parameters=[{type=Array<anything, pristine[Storage]>}, {type=undefined|string}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: undefined|string):
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeJoin/0
     Return v2
-}
-# CHECK-LABEL: function f7 name="joinWithOptionalString"
 # CHECK-NOT: CallInline
 # CHECK: v2:{{*}}= CallBuiltin v0, v1 overload=ArrayPrototypeJoin/0
 # CHECK-NOT: CallInline
+}
 function f8 name="concatArray" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=Array<anything, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage, Names]>, v1: Array<anything, pristine[Storage, Names]>):
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeConcat/2
     Return v2
-}
-# CHECK-LABEL: function f8 name="concatArray"
 # CHECK: TryCallInline v0, v1 inlineBuiltin=ArrayConcat overload=ArrayPrototypeConcat/2 -> done [[done8]](), miss [[miss8]]()
 # CHECK: [[miss8]]()
 # CHECK: = CallBuiltin v0, v1 overload=ArrayPrototypeConcat/2
+}
 function f9 name="concatPrimitives" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=number}, {type=string}, {type=undefined}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage, Names]>, v1: number, v2: string, v3: undefined):
     v4 = CallBuiltin v0, v1, v2, v3 overload=ArrayPrototypeConcat/3
     Return v4
-}
-# CHECK-LABEL: function f9 name="concatPrimitives"
 # CHECK: TryCallInline v0, v1, v2, v3 inlineBuiltin=ArrayConcat overload=ArrayPrototypeConcat/3 -> done [[done9]](), miss [[miss9]]()
 # CHECK: [[miss9]]()
 # CHECK: = CallBuiltin v0, v1, v2, v3 overload=ArrayPrototypeConcat/3
+}
 function f10 name="concatUnknownValue" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage, Names]>, v1: anything):
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeConcat/3
     Return v2
-}
-# CHECK-LABEL: function f10 name="concatUnknownValue"
 # CHECK-NOT: CallInline
 # CHECK: v2:{{*}}= CallBuiltin v0, v1 overload=ArrayPrototypeConcat/3
 # CHECK-NOT: CallInline
+}
 function f11 name="concatFourOperands" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage, Names]>, v1: number):
     v2 = CallBuiltin v0, v1, v1, v1, v1 overload=ArrayPrototypeConcat/3
     Return v2
-}
-# CHECK-LABEL: function f11 name="concatFourOperands"
 # CHECK-NOT: CallInline
 # CHECK: v2:{{*}}= CallBuiltin v0, v1, v1, v1, v1 overload=ArrayPrototypeConcat/3
 # CHECK-NOT: CallInline
+}
 function f12 name="concatInCompactCode" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=Array<anything, pristine[Storage, Names]>}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage, Names]>, v1: Array<anything, pristine[Storage, Names]>, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v3 = CallBuiltin v0, v1 overload=ArrayPrototypeConcat/2
     Return v3
   b2():
     Return
-}
-# CHECK-LABEL: function f12 name="concatInCompactCode"
 # CHECK-NOT: CallInline
 # CHECK: v3:{{*}}= CallBuiltin v0, v1 overload=ArrayPrototypeConcat/2
 # CHECK-NOT: CallInline
+}
 function f13 name="shift" parameters=[{type=Array<anything, pristine[Storage]>}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>):
     v1 = CallBuiltin v0 overload=ArrayPrototypeShift/0
     Return v1
-}
-# CHECK-LABEL: function f13 name="shift"
 # CHECK: TryCallInline v0 inlineBuiltin=ArrayShift overload=ArrayPrototypeShift/0 -> done [[done13]](), miss [[miss13]]()
 # CHECK: [[miss13]]()
 # CHECK: = CallBuiltin v0 overload=ArrayPrototypeShift/0
+}
 function f14 name="shiftInCompactCode" parameters=[{type=Array<anything, pristine[Storage]>}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v2 = CallBuiltin v0 overload=ArrayPrototypeShift/0
     Return v2
   b2():
     Return
-}
-# CHECK-LABEL: function f14 name="shiftInCompactCode"
 # CHECK-NOT: CallInline
 # CHECK: v2:{{*}}= CallBuiltin v0 overload=ArrayPrototypeShift/0
 # CHECK-NOT: CallInline
+}
 function f15 name="pop" parameters=[{type=Array<anything, pristine[Storage]>}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>):
     v1 = CallBuiltin v0 overload=ArrayPrototypePop/0
     Return v1
-}
-# CHECK-LABEL: function f15 name="pop"
 # CHECK: TryCallInline v0 inlineBuiltin=ArrayPop overload=ArrayPrototypePop/0 -> done [[done15]](), miss [[miss15]]()
 # CHECK: [[miss15]]()
 # CHECK: = CallBuiltin v0 overload=ArrayPrototypePop/0
+}
 function f16 name="popInCompactCode" parameters=[{type=Array<anything, pristine[Storage]>}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v2 = CallBuiltin v0 overload=ArrayPrototypePop/0
     Return v2
   b2():
     Return
-}
-# CHECK-LABEL: function f16 name="popInCompactCode"
 # CHECK: TryCallInline v0 inlineBuiltin=ArrayPop overload=ArrayPrototypePop/0 -> done [[done16]](), miss [[miss16]]()
 # CHECK: [[miss16]]()
 # CHECK: = CallBuiltin v0 overload=ArrayPrototypePop/0
+}
 function f17 name="sliceAll" parameters=[{type=Array<anything, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage, Names]>):
     v1 = CallBuiltin v0 overload=ArrayPrototypeSlice/0
     Return v1
-}
-# CHECK-LABEL: function f17 name="sliceAll"
 # CHECK: TryCallInline v0 inlineBuiltin=ArraySlice overload=ArrayPrototypeSlice/0 -> done [[done17]](), miss [[miss17]]()
 # CHECK: [[miss17]]()
 # CHECK: = CallBuiltin v0 overload=ArrayPrototypeSlice/0
+}
 function f18 name="sliceFromInteger" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage, Names]>, v1: i32):
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeSlice/0
     Return v2
-}
-# CHECK-LABEL: function f18 name="sliceFromInteger"
 # CHECK: TryCallInline v0, v1 inlineBuiltin=ArraySlice overload=ArrayPrototypeSlice/0 -> done [[done18]](), miss [[miss18]]()
 # CHECK: [[miss18]]()
 # CHECK: = CallBuiltin v0, v1 overload=ArrayPrototypeSlice/0
+}
 function f19 name="sliceBetweenIntegers" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=i32}, {type=int}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage, Names]>, v1: i32, v2: int):
     v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSlice/0
     Return v3
-}
-# CHECK-LABEL: function f19 name="sliceBetweenIntegers"
 # CHECK: TryCallInline v0, v1, v2 inlineBuiltin=ArraySlice overload=ArrayPrototypeSlice/0 -> done [[done19]](), miss [[miss19]]()
 # CHECK: [[miss19]]()
 # CHECK: = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSlice/0
+}
 function f20 name="sliceFromNumber" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage, Names]>, v1: number):
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeSlice/0
     Return v2
-}
-# CHECK-LABEL: function f20 name="sliceFromNumber"
 # CHECK-NOT: CallInline
 # CHECK: v2:{{*}}= CallBuiltin v0, v1 overload=ArrayPrototypeSlice/0
 # CHECK-NOT: CallInline
+}
 function f21 name="spliceRemoves" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=i32}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage, Names]>, v1: i32, v2: i32):
     v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/0
     Return v3
-}
-# CHECK-LABEL: function f21 name="spliceRemoves"
 # CHECK: TryCallInline v0, v1, v2 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done [[done21]](), miss [[miss21]]()
 # CHECK: [[miss21]]()
 # CHECK: = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/0
+}
 function f22 name="spliceInsertsTwo" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=i32}, {type=i32}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage, Names]>, v1: i32, v2: i32, v3: anything):
     v4 = CallBuiltin v0, v1, v2, v3, v3 overload=ArrayPrototypeSplice/0
     Return v4
-}
-# CHECK-LABEL: function f22 name="spliceInsertsTwo"
 # CHECK: TryCallInline v0, v1, v2, v3, v3 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done [[done22]](), miss [[miss22]]()
 # CHECK: [[miss22]]()
 # CHECK: = CallBuiltin v0, v1, v2, v3, v3 overload=ArrayPrototypeSplice/0
+}
 function f23 name="spliceInsertsThree" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=i32}, {type=i32}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage, Names]>, v1: i32, v2: i32, v3: anything):
     v4 = CallBuiltin v0, v1, v2, v3, v3, v3 overload=ArrayPrototypeSplice/0
     Return v4
-}
-# CHECK-LABEL: function f23 name="spliceInsertsThree"
 # CHECK-NOT: CallInline
 # CHECK: v4:{{*}}= CallBuiltin v0, v1, v2, v3, v3, v3 overload=ArrayPrototypeSplice/0
 # CHECK-NOT: CallInline
+}
 function f24 name="spliceWithoutCount" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage, Names]>, v1: i32):
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeSplice/0
     Return v2
-}
-# CHECK-LABEL: function f24 name="spliceWithoutCount"
 # CHECK-NOT: CallInline
 # CHECK: v2:{{*}}= CallBuiltin v0, v1 overload=ArrayPrototypeSplice/0
 # CHECK-NOT: CallInline
+}
 function f25 name="spliceAtNumber" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=number}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage, Names]>, v1: number, v2: i32):
     v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/0
     Return v3
-}
-# CHECK-LABEL: function f25 name="spliceAtNumber"
 # CHECK: TryCallInline v0, v1, v2 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done [[done25]]({{*}}), miss [[miss25]]()
 # CHECK: [[miss25]]()
 # CHECK: = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/0
+}
 function f26 name="spliceInCompactCode" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=i32}, {type=i32}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage, Names]>, v1: i32, v2: i32, v3: boolean):
     Branch v3 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v4 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/0
     Return v4
   b2():
     Return
-}
-# CHECK-LABEL: function f26 name="spliceInCompactCode"
 # CHECK: TryCallInline v0, v1, v2 inlineBuiltin=ArraySplice overload=ArrayPrototypeSplice/0 -> done [[done26]]({{*}}), miss [[miss26]]()
 # CHECK: [[miss26]]()
 # CHECK: = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/0
+}
 function f27 name="unshiftOne" parameters=[{type=Array<anything, pristine[Storage]>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: anything):
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeUnshift/0
     Return v2
-}
-# CHECK-LABEL: function f27 name="unshiftOne"
 # CHECK: TryCallInline v0, v1 inlineBuiltin=ArrayUnshift overload=ArrayPrototypeUnshift/0 -> done [[done27]](), miss [[miss27]]()
 # CHECK: [[miss27]]()
 # CHECK: = CallBuiltin v0, v1 overload=ArrayPrototypeUnshift/0
+}
 function f28 name="unshiftNothing" parameters=[{type=Array<anything, pristine[Storage]>}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>):
     v1 = CallBuiltin v0 overload=ArrayPrototypeUnshift/0
     Return v1
-}
-# CHECK-LABEL: function f28 name="unshiftNothing"
 # CHECK-NOT: CallInline
 # CHECK: v1:{{*}}= CallBuiltin v0 overload=ArrayPrototypeUnshift/0
 # CHECK-NOT: CallInline
+}
 function f29 name="unshiftTwo" parameters=[{type=Array<anything, pristine[Storage]>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: anything):
     v2 = CallBuiltin v0, v1, v1 overload=ArrayPrototypeUnshift/0
     Return v2
-}
-# CHECK-LABEL: function f29 name="unshiftTwo"
 # CHECK-NOT: CallInline
 # CHECK: v2:{{*}}= CallBuiltin v0, v1, v1 overload=ArrayPrototypeUnshift/0
 # CHECK-NOT: CallInline
+}
 function f30 name="values" parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     v1 = CallBuiltin v0 overload=ArrayPrototypeValues/0
     Return v1
-}
-# CHECK-LABEL: function f30 name="values"
 # CHECK-NOT: CallBuiltin
 # CHECK: v1:{{*}}= CallInline v0 inlineBuiltin=ArrayIterator inlineParameters=[1] overload=ArrayPrototypeValues/0
 # CHECK-NOT: CallBuiltin
+}
 function f31 name="keys" parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     v1 = CallBuiltin v0 overload=ArrayPrototypeKeys/0
     Return v1
-}
-# CHECK-LABEL: function f31 name="keys"
 # CHECK-NOT: CallBuiltin
 # CHECK: v1:{{*}}= CallInline v0 inlineBuiltin=ArrayIterator inlineParameters=[0] overload=ArrayPrototypeKeys/0
 # CHECK-NOT: CallBuiltin
+}
 function f32 name="entries" parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     v1 = CallBuiltin v0 overload=ArrayPrototypeEntries/0
     Return v1
-}
-# CHECK-LABEL: function f32 name="entries"
 # CHECK-NOT: CallBuiltin
 # CHECK: v1:{{*}}= CallInline v0 inlineBuiltin=ArrayIterator inlineParameters=[2] overload=ArrayPrototypeEntries/0
 # CHECK-NOT: CallBuiltin
+}
 function f33 name="pushOne" parameters=[{type=Array<anything, pristine[Storage]>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: anything):
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypePush/0
     Return v2
-}
-# CHECK-LABEL: function f33 name="pushOne"
 # CHECK-NOT: CallBuiltin
 # CHECK: v2:{{*}}= CallInline v0, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
 # CHECK-NOT: CallBuiltin
+}
 function f34 name="pushTwo" parameters=[{type=Array<anything, pristine[Storage]>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: anything):
     v2 = CallBuiltin v0, v1, v1 overload=ArrayPrototypePush/0
     Return v2
-}
-# CHECK-LABEL: function f34 name="pushTwo"
 # CHECK: TryCallInline v0, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done [[done34]](), miss [[miss34]]()
 # CHECK: [[miss34]]()
 # CHECK: = CallBuiltin v0, v1, v1 overload=ArrayPrototypePush/0
+}
 function f35 name="pushThree" parameters=[{type=Array<anything, pristine[Storage]>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: anything):
     v2 = CallBuiltin v0, v1, v1, v1 overload=ArrayPrototypePush/0
     Return v2
-}
-# CHECK-LABEL: function f35 name="pushThree"
 # CHECK-NOT: CallInline
 # CHECK: v2:{{*}}= CallBuiltin v0, v1, v1, v1 overload=ArrayPrototypePush/0
 # CHECK-NOT: CallInline
+}
 function f36 name="pushNothing" parameters=[{type=Array<anything, pristine[Storage]>}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>):
     v1 = CallBuiltin v0 overload=ArrayPrototypePush/0
     Return v1
-}
-# CHECK-LABEL: function f36 name="pushNothing"
 # CHECK-NOT: CallInline
 # CHECK: v1:{{*}}= CallBuiltin v0 overload=ArrayPrototypePush/0
 # CHECK-NOT: CallInline
+}
 function f37 name="isArrayOfPrimitive" parameters=[{type=undefined|number|string}] results=[{type=anything}] {
-  b0(v0: undefined|number|string):
     v1 = CallBuiltin -, v0 overload=ArrayIsArray/0
     Return v1
-}
-# CHECK-LABEL: function f37 name="isArrayOfPrimitive"
 # CHECK-NOT: CallBuiltin
 # CHECK: v1:{{*}}= CallInline -, v0 inlineBuiltin=ArrayIsArray overload=ArrayIsArray/0
 # CHECK-NOT: CallBuiltin
+}
 function f38 name="isArrayOfUnknownValue" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallBuiltin -, v0 overload=ArrayIsArray/0
     Return v1
-}
-# CHECK-LABEL: function f38 name="isArrayOfUnknownValue"
 # CHECK: TryCallInline -, v0 inlineBuiltin=ArrayIsArray overload=ArrayIsArray/0 -> done [[done38]](), miss [[miss38]]()
 # CHECK: [[miss38]]()
 # CHECK: = CallBuiltin -, v0 overload=ArrayIsArray/0
+}
 function f39 name="length" parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     v1 = CallBuiltin v0 overload=ArrayPrototypeLength/0
     Return v1
-}
-# CHECK-LABEL: function f39 name="length"
 # CHECK-NOT: CallBuiltin
 # CHECK: v1:{{*}}= CallInline v0 inlineBuiltin=ArrayLength overload=ArrayPrototypeLength/0
 # CHECK-NOT: CallBuiltin
+}
 function f40 name="setLength" parameters=[{type=Array}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array, v1: number):
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeLength/1
     Return v2
-}
-# CHECK-LABEL: function f40 name="setLength"
 # CHECK-NOT: CallBuiltin
 # CHECK: v2:{{*}}= CallInline v0, v1 inlineBuiltin=ArraySetLength overload=ArrayPrototypeLength/1
 # CHECK-NOT: CallBuiltin
+}
 function f41 name="withLength" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = CallBuiltin -, v0 overload=Array/2
     Return v1
-}
-# CHECK-LABEL: function f41 name="withLength"
 # CHECK-NOT: CallBuiltin
 # CHECK: v1:{{*}}= CallInline -, v0 inlineBuiltin=ArrayWithLength overload=Array/2
 # CHECK-NOT: CallBuiltin
+}
 function f42 name="withLengthByCall" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = CallBuiltin -, v0 overload=Array/0
     Return v1
-}
-# CHECK-LABEL: function f42 name="withLengthByCall"
 # CHECK-NOT: CallBuiltin
 # CHECK: v1:{{*}}= CallInline -, v0 inlineBuiltin=ArrayWithLength overload=Array/0
 # CHECK-NOT: CallBuiltin
+}
 function f43 name="arrayOf" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = Builtin builtin=Array
     v3 = CallBuiltin v2, v0, v1 overload=ArrayOf/0
     Return v3
-}
-# CHECK-LABEL: function f43 name="arrayOf"
 # CHECK-NOT: CallBuiltin
 # CHECK: v3:{{*}}= CallInline v2, v0, v1 inlineBuiltin=ArrayOf overload=ArrayOf/0
 # CHECK-NOT: CallBuiltin
+}
 function f44 name="arrayOfItems" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = CallBuiltin -, v0, v1 overload=Array/3
     Return v2
-}
-# CHECK-LABEL: function f44 name="arrayOfItems"
 # CHECK-NOT: CallBuiltin
 # CHECK: v2:{{*}}= CallInline -, v0, v1 inlineBuiltin=ArrayOf overload=Array/3
 # CHECK-NOT: CallBuiltin
+}

@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="arithmeticOnCounter" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     v2 = Integer integer=1
     v3 = Integer integer=2
@@ -22,16 +21,14 @@ function f0 name="arithmeticOnCounter" parameters=[{type=int[0, 100]}] results=[
     Jump -> next b1(v10)
   b3():
     Return
-}
-# CHECK-LABEL: function f0 name="arithmeticOnCounter"
 # CHECK: b1(v4: int[0, 100]):
 # CHECK: b2([[counter0]]: int[0, 99]):
 # CHECK-NEXT: v7: int[2, 101] = Add [[counter0]], v3
 # CHECK-NEXT: v8: int[0, 198] = Mul [[counter0]], v3
 # CHECK-NEXT: v9: int[-101, 196] = Sub v8, v7
+}
 
 function f1 name="innerStartIsSum" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     v2 = Integer integer=1
     Jump -> next b1(v1)
@@ -54,8 +51,6 @@ function f1 name="innerStartIsSum" parameters=[{type=int[0, 100]}] results=[{typ
     Jump -> next b1(v11)
   b6():
     Return
-}
-# CHECK-LABEL: function f1 name="innerStartIsSum"
 # CHECK: b1(v3: int[0, 100]):
 # CHECK: b2([[outer1]]: int[0, 99]):
 # CHECK-NEXT: v6: int[1, 100] = Add [[outer1]], v2
@@ -63,9 +58,9 @@ function f1 name="innerStartIsSum" parameters=[{type=int[0, 100]}] results=[{typ
 # CHECK: Branch v9 -> taken b4(| 0), notTaken b5()
 # CHECK-NEXT: b4([[inner1]]: int[1, 99]):
 # CHECK-NEXT: v10: int[2, 100] = Add [[inner1]], v2
+}
 
 function f2 name="innerBoundIsProduct" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     v2 = Integer integer=1
     v3 = Integer integer=2
@@ -89,17 +84,15 @@ function f2 name="innerBoundIsProduct" parameters=[{type=int[0, 100]}] results=[
     Jump -> next b1(v12)
   b6():
     Return
-}
-# CHECK-LABEL: function f2 name="innerBoundIsProduct"
 # CHECK: b1(v4: int[0, 100]):
 # CHECK: b2([[outer2]]: int[0, 99]):
 # CHECK-NEXT: v7: int[0, 198] = Mul [[outer2]], v3
 # CHECK: b3(v8: int[0, 198]):
 # CHECK: Branch v10 -> taken b4(| 0), notTaken b5()
 # CHECK-NEXT: b4([[inner2]]: int[0, 197]):
+}
 
 function f3 name="throughToNumeric" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     v2 = Integer integer=1
     v3 = Integer integer=2
@@ -115,14 +108,12 @@ function f3 name="throughToNumeric" parameters=[{type=int[0, 100]}] results=[{ty
     Jump -> next b1(v9)
   b3():
     Return
-}
-# CHECK-LABEL: function f3 name="throughToNumeric"
 # CHECK: b2([[counter3]]: int[0, 99]):
 # CHECK-NEXT: v7: int[0, 99] = ToNumeric [[counter3]]
 # CHECK-NEXT: v8: int[0, 198] = Mul v7, v3
+}
 
 function f4 name="stepHasAnotherUse" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     v2 = Integer integer=1
     v3 = Integer integer=2
@@ -137,14 +128,12 @@ function f4 name="stepHasAnotherUse" parameters=[{type=int[0, 100]}] results=[{t
     Jump -> next b1(v7)
   b3():
     Return
-}
-# CHECK-LABEL: function f4 name="stepHasAnotherUse"
 # CHECK: b2([[guarded4]]: int[0, 99]):
 # CHECK-NEXT: v7: int[1, 100] = Add [[guarded4]], v2
 # CHECK-NEXT: v8: int[2, 200] = Mul v7, v3
+}
 
 function f5 name="narrowedByAnotherTest" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     v2 = Integer integer=1
     v3 = Integer integer=2
@@ -165,16 +154,14 @@ function f5 name="narrowedByAnotherTest" parameters=[{type=int[0, 100]}] results
     Jump -> next b1(v11)
   b5():
     Return
-}
-# CHECK-LABEL: function f5 name="narrowedByAnotherTest"
 # CHECK: b2([[counter5]]: int[0, 99]):
 # CHECK-NEXT: v8: boolean = Less [[counter5]], v4
 # CHECK-NEXT: Branch v8 -> taken b3(| 0), notTaken b4()
 # CHECK-NEXT: b3(v9: int[0, 9]):
 # CHECK-NEXT: v10: int[0, 18] = Mul v9, v3
+}
 
 function f6 name="fractionalOperand" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     v2 = Integer integer=1
     v3 = Double number=0.5
@@ -189,14 +176,12 @@ function f6 name="fractionalOperand" parameters=[{type=int[0, 100]}] results=[{t
     Jump -> next b1(v8)
   b3():
     Return
-}
-# CHECK-LABEL: function f6 name="fractionalOperand"
 # CHECK: b1(v4: int[0, 100]):
 # CHECK: b2([[counter6]]: int[0, 99]):
 # CHECK-NEXT: v7: number = Add [[counter6]], v3
+}
 
 function f7 name="counterStaysNumber" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Double number=0.5
     v2 = Integer integer=1
     v3 = Integer integer=2
@@ -211,8 +196,7 @@ function f7 name="counterStaysNumber" parameters=[{type=int[0, 100]}] results=[{
     Jump -> next b1(v8)
   b3():
     Return
-}
-# CHECK-LABEL: function f7 name="counterStaysNumber"
 # CHECK: b1(v4: number):
 # CHECK: Branch v6 -> taken b2(), notTaken b3()
 # CHECK: v7: number = Mul v4, v3
+}

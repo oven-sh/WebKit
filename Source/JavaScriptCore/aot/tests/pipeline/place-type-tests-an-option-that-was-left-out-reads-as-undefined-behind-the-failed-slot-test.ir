@@ -7,7 +7,6 @@ entry module=m0
 layout L0 name="Settings" module=m0 fields=[{key="name" declared={type=anything}}, {key="model" declared={type=undefined|string}}]
 
 function f0 name="" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="register" [isFreeName]
     v2 = String string="a"

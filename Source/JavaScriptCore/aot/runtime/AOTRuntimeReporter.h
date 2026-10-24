@@ -12,12 +12,12 @@
 #include "AOTVector.h"
 #include "JSCJSValue.h"
 #include "LineColumn.h"
-#include <memory>
 #include <optional>
 #include <span>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
+#include <wtf/SegmentedVector.h>
 #include <wtf/text/StringHash.h>
 #include <wtf/text/WTFString.h>
 
@@ -31,6 +31,7 @@ enum class InterpreterFallbackReason : uint8_t;
 
 namespace AOT {
 
+struct CompiledFrame;
 struct Instance;
 struct RuntimeType;
 
@@ -54,21 +55,15 @@ public:
     explicit RuntimeReporter(VM&);
     ~RuntimeReporter();
 
-    bool isEnabled() const { return m_destination.descriptor.has_value(); }
-    bool isExplicitlyEnabled() const { return isEnabled() && m_destination.isExplicit; }
+    // Null unless a log was asked for.
+    static RuntimeReporter* ifExplicitlyEnabled(VM&);
 
-    void reportFailedCheck(Instance&, std::optional<uint32_t> typeSite, const RuntimeType& expected, JSValue actual);
+    void reportFailedCheck(Instance&, TypeSiteID, const RuntimeType& expected, JSValue actual);
     void reportNativeCall(ValidationFailureKind, const String& callee, const String& mismatch);
     void writeAtExit();
 
-    CollectionValidator& collectionValidator() { return m_collectionValidator; }
-
 private:
-    using Callers = Vector<String, maxNumberOfCallers>;
-
     struct Site {
-        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Site);
-
         uint64_t id { 0 };
         ASCIILiteral kind;
         String file;
@@ -79,31 +74,25 @@ private:
     };
 
     static void installExitHook();
-    static uint64_t bump(Site&, ASCIILiteral word, const String& name);
 
-    Site* addSite(uint64_t id, NOESCAPE const Invocable<std::unique_ptr<Site>()> auto& create);
-    void countAndWrite(VM&, Site&, ASCIILiteral word, const String& name);
-    void write(const Site&, const String& got, uint64_t count, const Callers&, bool isTotal);
-    void writeTotals();
-    void writeCounts();
+    Site* findOrAddSite(Instance&, TypeSiteID, const RuntimeType& expected, const CompiledFrame*);
+    void write(const Site&, const String& got, uint64_t count, std::span<const String> callers, bool isTotal);
 
     VM& m_vm;
     const ReportDestination m_destination;
     Lock m_lock;
     bool m_hasOverflowed { false };
     bool m_hasWrittenAtExit { false };
-    UncheckedKeyHashMap<uint64_t, std::unique_ptr<Site>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_sites;
+    SegmentedVector<Site, 8> m_sites;
     UncheckedKeyHashMap<uint64_t, Site*, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_sitesByCallSite;
-    Vector<Site*> m_sitesInOrder;
     HashSet<String> m_reportedNativeCalls;
-    CollectionValidator m_collectionValidator;
-    RuntimeReporter* m_previous { nullptr };
-    RuntimeReporter* m_next { nullptr };
 };
 
 uint64_t typeCheckIDOf(std::span<const uint8_t> path, uint32_t position, TypeSiteKind);
 
 void reportFailedCheck(Instance&, uint32_t typeSite, const RuntimeType& expected, JSValue actual);
+// A log that was asked for gets every mismatch of a run. Without one the first mismatch ends the run.
+void reportOrCrash(VM&, const ValidationFailure&, ASCIILiteral whatIsCalled, const String& callee, const String& mismatch);
 void writeToStandardError(const String& line);
 #if ENABLE(WEBASSEMBLY)
 void reportInterpreterFallback(Wasm::InterpreterFallbackReason);

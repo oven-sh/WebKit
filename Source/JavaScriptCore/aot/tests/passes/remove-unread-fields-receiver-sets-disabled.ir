@@ -10,11 +10,9 @@ layout L0 name="NeverRead" fields=[{key="id" declared={type=anything} flags=[IsR
 # CHECK: layout L0 name="NeverRead" fields=[{key="id"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
 
 function f0 name="builds" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     PutSlot v1, v1, v0 key="id" receivers=[L0] level=Proven
     Return v1
-}
-# CHECK-LABEL: function f0 name="builds"
 # CHECK: = NewObject -, v0, v0 layout=L0 fields=[0, 1]
 # CHECK-NEXT: PutSlot v1, v1, v0 key="id"
+}

@@ -14,7 +14,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="provenUnmodified" flags=[IsAsync] parameters=[{type=AsyncGenerator<anything, pristine[Storage, Names]>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: AsyncGenerator<anything, pristine[Storage, Names]>, v1: anything):
     v2 = IteratorOpen v0 iteratorKind=Async
     Jump -> next b1()
   b1():
@@ -28,8 +27,6 @@ function f0 name="provenUnmodified" flags=[IsAsync] parameters=[{type=AsyncGener
     Jump -> next b1()
   b3():
     Return v1
-}
-# CHECK-LABEL: function f0 name="provenUnmodified"
 # CHECK-NOT: TypeTest
 # CHECK-NOT: IsUnmodifiedAsyncGenerator
 # CHECK-NOT: @@asyncIterator
@@ -55,11 +52,10 @@ function f0 name="provenUnmodified" flags=[IsAsync] parameters=[{type=AsyncGener
 # CHECK: [[yielded0]]():
 # CHECK-NEXT: [[false0]]: false = Boolean
 # CHECK-NEXT: Jump -> next [[rest0]]([[false0]], [[value0]])
-# STEPS-LABEL: function f0 name="provenUnmodified"
 # STEPS-NOT: Await
+}
 
 function f1 name="testedOnceAtTheOpen" flags=[IsAsync] parameters=[{type=AsyncGenerator}, {type=anything}] results=[{type=anything}] {
-  b0(v0: AsyncGenerator, v1: anything):
     v2 = IteratorOpen v0 iteratorKind=Async
     Jump -> next b1()
   b1():
@@ -100,21 +96,17 @@ function f2 name="expected" flags=[IsAsync] parameters=[{type=AsyncGenerator fla
     Jump -> next b1()
   b3():
     Return v1
-}
-# CHECK-LABEL: function f2 name="expected"
 # CHECK: [[isGenerator2]]: boolean {{*}}= TypeTest v0 testedType=AsyncGenerator
 # CHECK-NEXT: Branch [[isGenerator2]] -> taken [[generatorArm2]](| 0)
 # CHECK: [[generatorArm2]]([[generator2]]: AsyncGenerator):
 # CHECK-NEXT: = IsUnmodifiedAsyncGenerator [[generator2]]
 # One step in the copy for a generator, one in the copy for the protocol: the wrapper around a sync iterator is stepped the same way.
-# STEPS-LABEL: function f2 name="expected"
 # STEPS-COUNT-2: = StepAsyncGenerator
 # STEPS-NOT: = StepAsyncGenerator
-# THROWS-LABEL: function f2 name="expected"
 # THROWS: key=@@asyncIterator
+}
 
 function f3 name="closesByTheProtocol" flags=[IsAsync] parameters=[{type=AsyncGenerator<anything, pristine[Storage, Names]>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: AsyncGenerator<anything, pristine[Storage, Names]>, v1: anything):
     v2 = IteratorOpen v0 iteratorKind=Async
     v3 = IteratorResume v2 iteratorKind=Async
     v4 = ResultAt v3
@@ -135,7 +127,6 @@ function f3 name="closesByTheProtocol" flags=[IsAsync] parameters=[{type=AsyncGe
 # STEPS-LABEL: function f3 name="closesByTheProtocol"
 
 function f4 name="otherModesByTheProtocol" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=AsyncGenerator<anything, pristine[Storage, Names]>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: function, v1: AsyncGenerator<anything, pristine[Storage, Names]>, v2: anything):
     v3 = IteratorOpen v1 iteratorKind=Async
     v4 = IteratorResume v3, v2 iteratorKind=Async resumeMode=Return [readsValueWhenDone]
     v5 = ResultAt v4
@@ -147,17 +138,13 @@ function f4 name="otherModesByTheProtocol" flags=[IsAsync, IsGenerator, TakesCal
     v11 = ResultAt v10
     v12 = ResultAt v10 index=1
     Return v12
-}
-# CHECK-LABEL: function f4 name="otherModesByTheProtocol"
 # CHECK: = PropGet v1 key="return"
-# STEPS-LABEL: function f4 name="otherModesByTheProtocol"
 # STEPS-COUNT-1: = StepAsyncGenerator v1, v2
 # STEPS-NOT: = StepAsyncGenerator
-# THROWS-LABEL: function f4 name="otherModesByTheProtocol"
 # THROWS: = PropGet v1 key="throw"
+}
 
 function f5 name="syncIterationOverAsyncGenerator" parameters=[{type=AsyncGenerator<anything, pristine[Storage, Names]>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: AsyncGenerator<anything, pristine[Storage, Names]>, v1: anything):
     v2 = IteratorOpen v0
     v3 = IteratorResume v2
     v4 = ResultAt v3
@@ -171,15 +158,12 @@ function f5 name="syncIterationOverAsyncGenerator" parameters=[{type=AsyncGenera
 # CHECK-NOT: StepAsyncGenerator
 
 function f6 name="asyncIterationOverGenerator" flags=[IsAsync] parameters=[{type=Generator<anything, pristine[Storage, Names]>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Generator<anything, pristine[Storage, Names]>, v1: anything):
     v2 = IteratorOpen v0 iteratorKind=Async
     v3 = IteratorResume v2 iteratorKind=Async
     v4 = ResultAt v3
     v5 = ResultAt v3 index=1
     Return v5
-}
 # What is stepped is the wrapper: it closes a generator whose value rejects a turn before the loop hears of the rejection.
-# CHECK-LABEL: function f6 name="asyncIterationOverGenerator"
 # CHECK-NOT: StepAsyncGenerator v0
 # CHECK-NOT: StepGenerator
 # CHECK: key=@@asyncIterator
@@ -187,25 +171,23 @@ function f6 name="asyncIterationOverGenerator" flags=[IsAsync] parameters=[{type
 # CHECK: : object = CallDirect {{*}} [isNeverInlined]
 # CHECK-NOT: StepAsyncGenerator v0
 # CHECK-NOT: StepGenerator
+}
 
 function f7 name="asyncIterationOverArray" flags=[IsAsync] parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything):
     v2 = IteratorOpen v0 iteratorKind=Async
     v3 = IteratorResume v2 iteratorKind=Async
     v4 = ResultAt v3
     v5 = ResultAt v3 index=1
     Return v5
-}
 # An array has an arm of its own: passes/expand-iteration-async-over-sync.ir
-# CHECK-LABEL: function f7 name="asyncIterationOverArray"
 # CHECK-NOT: StepAsyncGenerator v0
 # CHECK-NOT: IsUnmodifiedAsyncGenerator
 # CHECK: key=@@asyncIterator
 # CHECK-NOT: StepAsyncGenerator v0
 # CHECK-NOT: IsUnmodifiedAsyncGenerator
+}
 
 function f8 name="valueNobodyKnows" flags=[IsAsync] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = IteratorOpen v0 iteratorKind=Async
     Jump -> next b1()
   b1():
@@ -219,14 +201,11 @@ function f8 name="valueNobodyKnows" flags=[IsAsync] parameters=[{type=anything},
     Jump -> next b1()
   b3():
     Return v1
-}
-# CHECK-LABEL: function f8 name="valueNobodyKnows"
 # CHECK: [[isGenerator8]]: boolean = TypeTest v0 testedType=AsyncGenerator
 # CHECK-NEXT: Branch [[isGenerator8]] -> taken [[generatorArm8]](| 0)
 # CHECK: [[generatorArm8]]([[generator8]]: AsyncGenerator):
 # CHECK-NEXT: = IsUnmodifiedAsyncGenerator [[generator8]]
-# STEPS-LABEL: function f8 name="valueNobodyKnows"
 # STEPS-COUNT-2: = StepAsyncGenerator
 # STEPS-NOT: = StepAsyncGenerator
-# THROWS-LABEL: function f8 name="valueNobodyKnows"
 # THROWS: key=@@asyncIterator
+}

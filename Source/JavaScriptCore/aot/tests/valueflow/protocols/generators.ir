@@ -16,7 +16,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Call v0
     v2 = IteratorOpen v1
@@ -36,7 +35,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="first" flags=[IsGenerator, TakesCallee] results=[{type=anything}] {
-  b0(v0: function):
     InitialYield
     v2 = NewClosure function=f3
     v3 = Yield v2
@@ -44,7 +42,6 @@ function f1 name="first" flags=[IsGenerator, TakesCallee] results=[{type=anythin
     Return v4
 }
 function f2 name="second" flags=[IsGenerator, TakesCallee] results=[{type=anything}] {
-  b0(v0: function):
     InitialYield
     v2 = NewClosure function=f4
     v3 = Yield v2
@@ -53,18 +50,14 @@ function f2 name="second" flags=[IsGenerator, TakesCallee] results=[{type=anythi
     Return
 }
 function f3 name="one" results=[{type=anything}] {
-  b0():
     Return
 }
 function f4 name="two" results=[{type=anything}] {
-  b0():
     Return
 }
 function f5 name="returned" results=[{type=anything}] {
-  b0():
     Return
 }
 function f6 name="sent" results=[{type=anything}] {
-  b0():
     Return
 }

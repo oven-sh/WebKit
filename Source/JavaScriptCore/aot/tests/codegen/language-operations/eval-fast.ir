@@ -10,7 +10,6 @@ evalscope e0
 evalscope e1 bindings=[{name="x" layout=L0 field=0 operand=0}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = Builtin builtin=GlobalThis
@@ -19,12 +18,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v4
 }
 function f1 name="withoutBindings" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = DirectEval v1, v0 evalScope=e0
     Return v2
 }
 function f2 name="withEnvironment" flags=[HasThis, HasNewTarget] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = NewObject -, v2 layout=L0 fields=[0]
     v4 = DirectEval v2, v0, v1, v3 evalScope=e1
     Return v4

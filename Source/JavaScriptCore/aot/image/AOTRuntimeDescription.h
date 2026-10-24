@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTWireEnums.h"
 #include "JSExportMacros.h"
 #include <cstddef>
 #include <cstdint>
@@ -23,10 +24,6 @@ struct RuntimeDescription {
         Assertions = 1 << 0,
         AddressSanitizer = 1 << 1,
     };
-    enum class ImageForm : uint8_t {
-        Absolute,
-        PositionIndependent,
-    };
     enum class OperatingSystem : uint8_t {
         Linux,
         Darwin,
@@ -41,7 +38,7 @@ struct RuntimeDescription {
     uint64_t cpuFeatures;
     uint8_t architecture;
     OperatingSystem operatingSystem;
-    ImageForm imageForm;
+    uint8_t imageForm;
     uint8_t checks;
     // The one ImageHeader::formatVersion that this run time takes. A run time from before this member has 0 here.
     uint32_t imageFormatVersion;
@@ -86,6 +83,7 @@ struct RuntimeDifference {
     uint64_t there { 0 };
 };
 
+JS_EXPORT_PRIVATE std::span<const uint8_t> descriptionOfThisRuntime();
 // Takes the record of the engine or the record of the table.
 JS_EXPORT_PRIVATE std::optional<RuntimeDifference> findDifferenceFromThisRuntime(std::span<const uint8_t> other);
 

@@ -11,19 +11,11 @@
 #include "AOTEdgeResults.h"
 #include "AOTSort.h"
 #include "AOTThreshold.h"
-#include "AOTVector.h"
 #include <algorithm>
 #include <bit>
 #include <wtf/IterationStatus.h>
 
 namespace JSC { namespace AOT { namespace Typed {
-
-struct NarrowedOperandUse {
-    ValueID subject;
-    BlockID block;
-
-    friend auto operator<=>(const NarrowedOperandUse&, const NarrowedOperandUse&) = default;
-};
 
 static constexpr OpcodeSet opcodesWithBase = [] {
     OpcodeSet opcodes;
@@ -34,18 +26,12 @@ static constexpr OpcodeSet opcodesWithBase = [] {
     return opcodes;
 }();
 
-static bool hasProofs(const Terminator& terminator)
-{
-    for (const Target& target : terminator.targets) {
-        if (!target.proofs.isEmpty())
-            return true;
-    }
-    return false;
-}
-
 static void forEachNarrowedOperand(const Function& function, BlockID block, NOESCAPE const Invocable<void(ValueID)> auto& functor)
 {
-    if (!hasProofs(function.at(block).terminator))
+    bool hasProofs = function.at(block).terminator.targets.containsIf([](const Target& target) {
+        return !target.proofs.isEmpty();
+    });
+    if (!hasProofs)
         return;
     forEachEdgeResult(function, block, [&](const EdgeResult& result, ValueID) {
         if (result.kind == EdgeResultKind::NarrowedOperand)
@@ -53,12 +39,12 @@ static void forEachNarrowedOperand(const Function& function, BlockID block, NOES
     });
 }
 
-static Vector<NarrowedOperandUse> collectNarrowedOperandUses(const Function& function, const CFG& cfg)
+static Vector<std::pair<ValueID, BlockID>> collectNarrowedOperandUses(const Function& function, const CFG& cfg)
 {
-    Vector<NarrowedOperandUse> uses;
+    Vector<std::pair<ValueID, BlockID>> uses;
     for (BlockID block : cfg.reversePostOrder()) {
         forEachNarrowedOperand(function, block, [&](ValueID subject) {
-            uses.append(NarrowedOperandUse { subject, block });
+            uses.append({ subject, block });
         });
     }
     AOT::sort(uses);
@@ -71,6 +57,7 @@ Liveness::Liveness(const Function& function, const CFG& cfg, const UseLists& use
     , m_cfg(cfg)
     , m_useLists(useLists)
 {
+    AOT_THRESHOLD(size_t, maxWordsForPerBlockSolver, 1 << 18);
     RELEASE_ASSERT(m_function.blocks.size() == m_cfg.numNodes());
     RELEASE_ASSERT(m_function.values.size() == m_useLists.numberOfValues());
     if (options.trackedValues)
@@ -84,15 +71,41 @@ Liveness::Liveness(const Function& function, const CFG& cfg, const UseLists& use
     AOT::sort(m_additionalEdges);
 
     Vector<InteriorPointer> interiorPointers;
-    if (!options.opcodesOfValues || options.opcodesOfValues->intersects(opcodesWithBase))
-        interiorPointers = collectInteriorPointers();
+    if (!options.opcodesOfValues || options.opcodesOfValues->intersects(opcodesWithBase)) {
+        for (BlockID block : m_cfg.reversePostOrder()) {
+            for (ValueID pointer : m_function.at(block).values) {
+                forEachBase(pointer, [&](ValueID base) {
+                    if (isTrackedValue(base))
+                        interiorPointers.append(InteriorPointer { base, pointer });
+                    return IterationStatus::Continue;
+                });
+            }
+        }
+        AOT::sort(interiorPointers);
+    }
     m_hasTrackedBases = !interiorPointers.isEmpty();
-    computeLiveAtHeads(interiorPointers.span(), options.solver);
-}
 
-bool Liveness::isTrackedBlock(BlockID block) const
-{
-    return m_cfg.isReachable(block) && (!m_trackedBlocks || m_trackedBlocks->get(block.index()));
+    unsigned numberOfBlocks = m_cfg.numNodes();
+    m_firstLiveValue.fill(0, numberOfBlocks + 1);
+    CrossBlockValues crossBlockValues = collectCrossBlockValues(interiorPointers.span());
+    if (crossBlockValues.values.isEmpty())
+        return;
+
+    AdditionalPredecessors additionalPredecessors;
+    if (!m_additionalEdges.isEmpty()) {
+        additionalPredecessors.grow(numberOfBlocks);
+        for (auto [from, to] : m_additionalEdges)
+            additionalPredecessors[to.index()].append(from);
+    }
+
+    size_t numberOfValues = crossBlockValues.values.size();
+    size_t numberOfReachableBlocks = m_cfg.reversePostOrder().size();
+    bool isDenseEnough = numberOfValues * 64 >= numberOfReachableBlocks;
+    bool isSmallEnough = numberOfReachableBlocks * ((numberOfValues + 63) / 64) <= maxWordsForPerBlockSolver;
+    if (options.solver == LivenessOptions::Solver::ChosenBySize && isDenseEnough && isSmallEnough)
+        solvePerBlock(crossBlockValues, additionalPredecessors);
+    else
+        solvePerValue(crossBlockValues, additionalPredecessors);
 }
 
 ValueID Liveness::baseOf(ValueID id) const
@@ -116,26 +129,10 @@ void Liveness::forEachBase(ValueID id, NOESCAPE const Functor& functor) const
     }
 }
 
-Vector<Liveness::InteriorPointer> Liveness::collectInteriorPointers() const
+Liveness::CrossBlockValues Liveness::collectCrossBlockValues(std::span<const InteriorPointer> interiorPointers) const
 {
-    Vector<InteriorPointer> interiorPointers;
-    for (BlockID block : m_cfg.reversePostOrder()) {
-        for (ValueID pointer : m_function.at(block).values) {
-            forEachBase(pointer, [&](ValueID base) {
-                if (isTrackedValue(base))
-                    interiorPointers.append(InteriorPointer { base, pointer });
-                return IterationStatus::Continue;
-            });
-        }
-    }
-    AOT::sort(interiorPointers);
-    return interiorPointers;
-}
-
-template<typename Functor>
-void Liveness::forEachValueWithUseBlocks(std::span<const InteriorPointer> interiorPointers, NOESCAPE const Functor& functor) const
-{
-    Vector<NarrowedOperandUse> narrowedOperandUses = collectNarrowedOperandUses(m_function, m_cfg);
+    CrossBlockValues result;
+    Vector<std::pair<ValueID, BlockID>> narrowedOperandUses = collectNarrowedOperandUses(m_function, m_cfg);
     Vector<BlockID, 16> useBlocks;
     auto appendUseBlocks = [&](ValueID used) {
         for (auto& use : m_useLists.usesOf(used)) {
@@ -144,8 +141,8 @@ void Liveness::forEachValueWithUseBlocks(std::span<const InteriorPointer> interi
         }
         if (narrowedOperandUses.isEmpty())
             return;
-        for (auto& use : std::ranges::equal_range(narrowedOperandUses, used, { }, &NarrowedOperandUse::subject))
-            useBlocks.append(use.block);
+        for (auto& use : std::ranges::equal_range(narrowedOperandUses, used, { }, &std::pair<ValueID, BlockID>::first))
+            useBlocks.append(use.second);
     };
     unsigned numberOfValues = m_useLists.numberOfValues();
     for (unsigned index = 0; index < numberOfValues; ++index) {
@@ -163,51 +160,16 @@ void Liveness::forEachValueWithUseBlocks(std::span<const InteriorPointer> interi
         appendUseBlocks(value);
         for (auto& interiorPointer : pointers)
             appendUseBlocks(interiorPointer.pointer);
-        functor(value, location.block, useBlocks);
-    }
-}
 
-Liveness::CrossBlockValues Liveness::collectCrossBlockValues(std::span<const InteriorPointer> interiorPointers) const
-{
-    CrossBlockValues result;
-    forEachValueWithUseBlocks(interiorPointers, [&](ValueID value, BlockID definingBlock, const Vector<BlockID, 16>& useBlocks) {
         uint32_t firstUseBlockIndex = result.useBlocks.size();
         for (BlockID block : useBlocks) {
-            if (block != definingBlock)
+            if (block != location.block)
                 result.useBlocks.append(block);
         }
         if (result.useBlocks.size() != firstUseBlockIndex)
-            result.values.append({ value, definingBlock, firstUseBlockIndex });
-    });
-    return result;
-}
-
-void Liveness::computeLiveAtHeads(std::span<const InteriorPointer> interiorPointers, LivenessOptions::Solver solver)
-{
-    AOT_THRESHOLD(size_t, maxWordsForPerBlockSolver, 1 << 18);
-
-    unsigned numberOfBlocks = m_cfg.numNodes();
-    m_firstLiveValue.fill(0, numberOfBlocks + 1);
-    CrossBlockValues crossBlockValues = collectCrossBlockValues(interiorPointers);
-    if (crossBlockValues.values.isEmpty())
-        return;
-
-    AdditionalPredecessors additionalPredecessors;
-    if (!m_additionalEdges.isEmpty()) {
-        additionalPredecessors.grow(numberOfBlocks);
-        for (auto [from, to] : m_additionalEdges)
-            additionalPredecessors[to.index()].append(from);
+            result.values.append({ value, location.block, firstUseBlockIndex });
     }
-
-    // The per-block solver visits every block, which does not pay for a few tracked values in a large function.
-    size_t numberOfValues = crossBlockValues.values.size();
-    size_t numberOfReachableBlocks = m_cfg.reversePostOrder().size();
-    bool isDenseEnough = numberOfValues * 64 >= numberOfReachableBlocks;
-    bool isSmallEnough = numberOfReachableBlocks * ((numberOfValues + 63) / 64) <= maxWordsForPerBlockSolver;
-    if (solver == LivenessOptions::Solver::ChosenBySize && isDenseEnough && isSmallEnough)
-        solvePerBlock(crossBlockValues, additionalPredecessors);
-    else
-        solvePerValue(crossBlockValues, additionalPredecessors);
+    return result;
 }
 
 void Liveness::solvePerValue(const CrossBlockValues& crossBlockValues, const AdditionalPredecessors& additionalPredecessors)
@@ -254,15 +216,13 @@ void Liveness::solvePerBlock(const CrossBlockValues& crossBlockValues, const Add
     std::span<const CrossBlockValue> values = crossBlockValues.values.span();
     size_t wordsPerBlock = (values.size() + 63) / 64;
 
-    Vector<uint64_t, 128> liveAtHeadStorage;
-    liveAtHeadStorage.fill(0, order.size() * wordsPerBlock);
+    Vector<uint64_t, 128> liveAtHeadStorage(FillWith { }, order.size() * wordsPerBlock, 0ull);
     std::span<uint64_t> liveAtHeads = liveAtHeadStorage.mutableSpan();
     auto liveAtHeadOf = [&](BlockID block) {
         return liveAtHeads.subspan(m_cfg.reversePostOrderIndex(block) * wordsPerBlock, wordsPerBlock);
     };
 
-    Vector<uint32_t, 64> firstDefinitionStorage;
-    firstDefinitionStorage.fill(0, order.size() + 1);
+    Vector<uint32_t, 64> firstDefinitionStorage(FillWith { }, order.size() + 1, 0u);
     std::span<uint32_t> firstDefinition = firstDefinitionStorage.mutableSpan();
     for (size_t index = 0; index < values.size(); ++index) {
         ++firstDefinition[m_cfg.reversePostOrderIndex(values[index].definingBlock) + 1];
@@ -271,22 +231,17 @@ void Liveness::solvePerBlock(const CrossBlockValues& crossBlockValues, const Add
     }
     for (size_t orderIndex = 0; orderIndex < order.size(); ++orderIndex)
         firstDefinition[orderIndex + 1] += firstDefinition[orderIndex];
-    Vector<uint32_t, 32> definitionStorage;
-    definitionStorage.grow(values.size());
+    Vector<uint32_t, 32> definitionStorage(values.size());
     std::span<uint32_t> definitions = definitionStorage.mutableSpan();
     Vector<uint32_t, 64> nextDefinition(firstDefinitionStorage.span());
     for (uint32_t index = 0; index < values.size(); ++index)
         definitions[nextDefinition[m_cfg.reversePostOrderIndex(values[index].definingBlock)]++] = index;
 
-    Vector<uint8_t, 64> isStaleStorage;
-    isStaleStorage.fill(true, order.size());
+    Vector<uint8_t, 64> isStaleStorage(FillWith { }, order.size(), static_cast<uint8_t>(true));
     std::span<uint8_t> isStale = isStaleStorage.mutableSpan();
-    Vector<uint64_t, 16> liveThroughStorage;
-    liveThroughStorage.grow(wordsPerBlock);
+    Vector<uint64_t, 16> liveThroughStorage(wordsPerBlock);
     std::span<uint64_t> liveThrough = liveThroughStorage.mutableSpan();
-    bool needsAnotherSweep = true;
-    while (needsAnotherSweep) {
-        needsAnotherSweep = false;
+    for (bool needsAnotherSweep = true; std::exchange(needsAnotherSweep, false);) {
         for (size_t orderIndex = order.size(); orderIndex--;) {
             if (!isStale[orderIndex])
                 continue;
@@ -386,11 +341,8 @@ bool LivenessOfAskedValues::answersFor(const OpcodeSet& opcodesOfValues)
 
 uint32_t LivenessOfAskedValues::findBlocksEnteredWith(ValueID id)
 {
-    if (!m_narrowedOperandUses) {
-        m_narrowedOperandUses.emplace();
-        for (const NarrowedOperandUse& use : collectNarrowedOperandUses(m_function, m_cfg))
-            m_narrowedOperandUses->append({ use.subject, use.block });
-    }
+    if (!m_narrowedOperandUses)
+        m_narrowedOperandUses = collectNarrowedOperandUses(m_function, m_cfg);
 
     BitVector entered(m_cfg.numNodes());
     ValueLocation location = m_useLists.locationOf(id);
@@ -415,10 +367,7 @@ bool LivenessOfAskedValues::isLiveAtHead(ValueID id, BlockID block)
 {
     RELEASE_ASSERT(m_function.values.size() == m_setOfValue.size() && m_function.blocks.size() == m_cfg.numNodes());
     RELEASE_ASSERT(id.index() < m_setOfValue.size() && m_cfg.isReachable(block));
-    uint32_t& set = m_setOfValue[id.index()];
-    if (!set)
-        set = findBlocksEnteredWith(id);
-    return m_blocksEnteredWithValue[set - 1].quickGet(block.index());
+    return blocksEnteredWith(id).quickGet(block.index());
 }
 
 const BitVector& LivenessOfAskedValues::blocksEnteredWith(ValueID id)

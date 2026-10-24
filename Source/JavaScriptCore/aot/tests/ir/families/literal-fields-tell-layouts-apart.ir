@@ -56,8 +56,6 @@ layout L17 name="Far" fields=[{key="sort" declared={type=2} flags=[IsRequired]}]
 # CHECK-NEXT: L17: members [L14, L16, L17]
 
 function f0 name="take" parameters=[{type=L0}, {type=L1}, {type=L4}, {type=L13}] results=[{type=anything}] {
-  b0(v0: L0, v1: L1, v2: L4, v3: L13):
     Return
-}
-# READ-LABEL: function f0 name="take"
 # READ: parameters=[{type=L0|L2|L3}, {type=L1|L3}, {type=L4|L6}, {type=L13|L15|L16}]
+}

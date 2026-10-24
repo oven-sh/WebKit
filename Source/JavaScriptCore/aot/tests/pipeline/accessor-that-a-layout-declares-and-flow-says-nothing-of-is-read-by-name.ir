@@ -19,7 +19,6 @@ layout L1
 variable g0 name="heir" module=m0 declared={type=anything} flags=[IsImmutable]
 variable g1 name="above" module=m0 declared={type=anything} flags=[IsImmutable]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewClosure function=f3
@@ -38,18 +37,15 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="read" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g1
     v1 = PropGet v0 key="lazy"
     Return v1
 }
 function f2 name="hand" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     Return v0
 }
 function f3 name="lazy" kind=Getter results=[{type=anything}] {
-  b0():
     v0 = Integer integer=2
     Return v0
 }

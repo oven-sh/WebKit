@@ -480,17 +480,17 @@ static bool hasInstanceTest(const BuiltinTable& table, BuiltinClassID classID)
     return false;
 }
 
-static bool passesInstanceTest(const BuiltinTable& table, BuiltinClassID classID, JSObject* instance)
+std::optional<bool> passesInstanceTest(const BuiltinTable& table, BuiltinClassID classID, JSCell* instance)
 {
     auto& builtinClass = table.at(classID);
     switch (builtinClass.instanceTest) {
     case BuiltinInstanceTest::None:
-        return true;
+        return std::nullopt;
     case BuiltinInstanceTest::JSTypeEquals:
         return instance->type() == builtinClass.type;
     case BuiltinInstanceTest::ClassInfoInherits: {
         const ClassInfo* info = BuiltinBindings::instanceClassInfoOf(classID);
-        return !info || instance->inherits(info);
+        return info ? std::optional(instance->inherits(info)) : std::nullopt;
     }
     case BuiltinInstanceTest::SharingModeEquals: {
         auto* buffer = dynamicDowncast<JSArrayBuffer>(instance);
@@ -533,7 +533,7 @@ static void checkNewInstance(RealmComparison& comparison, BuiltinClassID classID
     if (!instance)
         return;
     for (BuiltinClassID tested = classID; tested; tested = table.at(tested).parent) {
-        if (!passesInstanceTest(table, tested, instance))
+        if (!passesInstanceTest(table, tested, instance).value_or(true))
             comparison.report(classID, "has a new instance that fails the instance test of "_s, table.tokenOf(tested));
     }
 }

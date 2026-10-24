@@ -14,16 +14,16 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class JSONWriteEmitter final : public OperationEmitter {
 public:
-    explicit JSONWriteEmitter(CodeGenerator&);
+    explicit JSONWriteEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
-    void generateStringBuilderReserve(const ValueContext&);
-    void generateStringBuilderCommit(const ValueContext&);
+    void generateStringBuilderReserve(const ValueContext& value) { define(value, builders().reserve(value, builderOf(value), word32(value->size()))); }
+    void generateStringBuilderCommit(const ValueContext& value) { builders().commit(builderOf(value), cursorOf(value)); }
     void generateJSONAppendKey(const ValueContext&);
     void generateJSONAppendToken(const ValueContext&);
     void generateJSONAppendBoolean(const ValueContext&);
-    void generateJSONAppendInteger(const ValueContext&);
-    void generateJSONAppendNumber(const ValueContext&);
-    void generateJSONAppendDate(const ValueContext&);
+    void generateJSONAppendInteger(const ValueContext& value) { appendNumber(value, true); }
+    void generateJSONAppendNumber(const ValueContext& value) { appendNumber(value, false); }
+    void generateJSONAppendDate(const ValueContext& value) { define(value, callLeaf<Pointer>(RuntimeOperation::JSONAppendDate, { cursorOf(value), in<Number>(value->valueOperand()) })); }
     void generateJSONAppendString(const ValueContext&);
     void generateJSONAppendValue(const ValueContext&);
 
@@ -31,8 +31,7 @@ private:
     StringBuilderEmitter& builders() { return emitter<StringBuilderEmitter>(); }
     CellPointer builderOf(const ValueContext& value) const { return in<CellPointer>(value->builderOperand()); }
     Pointer cursorOf(const ValueContext& value) const { return in<Pointer>(value->cursorOperand()); }
-
-    Pointer closeObjectOverComma(Pointer cursor);
+    void appendNumber(const ValueContext&, bool isInteger);
 };
 
 } } } // namespace JSC::AOT::Typed

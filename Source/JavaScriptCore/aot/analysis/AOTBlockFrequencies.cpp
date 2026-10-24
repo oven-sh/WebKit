@@ -10,9 +10,9 @@
 
 #include "AOTBuildContext.h"
 #include "AOTValueIdentity.h"
-#include "AOTVector.h"
 #include <algorithm>
 #include <array>
+#include <tuple>
 #include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -54,30 +54,9 @@ static BranchSide oppositeOf(BranchSide side)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool isAbnormalExit(TerminatorKind kind)
-{
-    switch (kind) {
-    case TerminatorKind::Throw:
-    case TerminatorKind::Rethrow:
-    case TerminatorKind::Unreachable:
-        return true;
-    case TerminatorKind::Jump:
-    case TerminatorKind::Branch:
-    case TerminatorKind::Switch:
-    case TerminatorKind::SwitchString:
-    case TerminatorKind::Return:
-    case TerminatorKind::ReturnCall:
-    case TerminatorKind::SwitchOnShape:
-    case TerminatorKind::TryCallInline:
-    case TerminatorKind::TestAndBranch:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static bool isNormalExit(const Terminator& terminator)
 {
-    return terminator.targets.isEmpty() && !isAbnormalExit(terminator.kind);
+    return terminator.targets.isEmpty() && wayOutOf(terminator.kind) != WayOut::Abnormal;
 }
 
 static bool hasSingleTarget(const Function& function, BlockID block)
@@ -90,7 +69,6 @@ static bool isForwardEdge(const CFG& cfg, BlockID from, BlockID to)
     return cfg.reversePostOrderIndex(from) < cfg.reversePostOrderIndex(to);
 }
 
-// A jump is always taken: a block is as likely as a block that jumps to it.
 static bool isEnteredByJumpFromLikelierBlock(const Function& function, const CFG& cfg, BlockID block)
 {
     return std::ranges::any_of(cfg.incomingEdges(block), [&](Edge edge) {
@@ -138,7 +116,7 @@ static BlockFrequency appliedFrequencyOf(const FrequencyInputs& inputs, std::spa
 
 static bool isInherentlyRare(const Function& function, const Block& block)
 {
-    if (isAbnormalExit(block.terminator.kind))
+    if (wayOutOf(block.terminator.kind) == WayOut::Abnormal)
         return true;
     return block.values.containsIf([&](ValueID id) {
         return function.at(id).type == TypeTable::never;
@@ -199,32 +177,21 @@ static BranchSide findDifferentObjectsSide(const FrequencyInputs& inputs, BlockI
     return BranchSide::NotTaken;
 }
 
-static BranchSide findUnlikelySide(const FrequencyInputs& inputs, std::span<const FrequencyFacts::BlockFacts> blocks, BlockID block)
+static std::pair<BranchSide, BranchSide> findRarerSides(const FrequencyInputs& inputs, std::span<const FrequencyFacts::BlockFacts> blocks, BlockID block)
 {
     const Function& function = inputs.function;
     const Terminator& terminator = function.at(block).terminator;
     if (!terminator.isConditionalBranch())
-        return BranchSide::Unknown;
+        return { };
     if (!blocks[terminator.taken().block.index()].isNormal() || !blocks[terminator.notTaken().block.index()].isNormal())
-        return BranchSide::Unknown;
+        return { };
 
     BranchCondition condition = conditionOf(function, terminator);
     auto& test = function.at(condition.test);
 
-    BranchSide side = findNullishSide(inputs, test);
-    if (side == BranchSide::Unknown)
-        side = findDifferentObjectsSide(inputs, block, test);
-    return condition.isNegated ? oppositeOf(side) : side;
-}
-
-static BranchSide findSideOffUsualPath(const FrequencyInputs& inputs, std::span<const FrequencyFacts::BlockFacts> blocks, BlockID block)
-{
-    const Function& function = inputs.function;
-    const Terminator& terminator = function.at(block).terminator;
-    if (!terminator.isConditionalBranch())
-        return BranchSide::Unknown;
-    if (!blocks[terminator.taken().block.index()].isNormal() || !blocks[terminator.notTaken().block.index()].isNormal())
-        return BranchSide::Unknown;
+    BranchSide unlikelySide = findNullishSide(inputs, test);
+    if (unlikelySide == BranchSide::Unknown)
+        unlikelySide = findDifferentObjectsSide(inputs, block, test);
 
     auto isConstant = [&](ValueID value) {
         return integerConstantThroughCasts(inputs.program, function, value) || inputs.program.typeOf(function, value).singleStringLiteral();
@@ -235,17 +202,16 @@ static BranchSide findSideOffUsualPath(const FrequencyInputs& inputs, std::span<
         auto& bits = function.at(value);
         return bits.opcode == Opcode::BitAnd && (integerConstantThroughCasts(inputs.program, function, bits.operand(0)) || integerConstantThroughCasts(inputs.program, function, bits.operand(1)));
     };
-    BranchCondition condition = conditionOf(function, terminator);
-    auto& test = function.at(condition.test);
-    BranchSide side = BranchSide::Unknown;
-    // A test of a value that may be anything asks what it is, and every answer is usual.
+    BranchSide sideOffUsualPath = BranchSide::Unknown;
     if (test.opcode == Opcode::IsSlotFilled || (test.opcode == Opcode::TypeTest && !inputs.program.typeOf(function, test.operand(0)).isAnything()))
-        side = BranchSide::NotTaken;
+        sideOffUsualPath = BranchSide::NotTaken;
     else if (test.opcode == Opcode::StrictEq && isConstant(test.operand(0)) != isConstant(test.operand(1)))
-        side = BranchSide::Taken;
+        sideOffUsualPath = BranchSide::Taken;
     else if (test.opcode == Opcode::ToBoolean && isMaskedByConstant(test.operand(0)))
-        side = BranchSide::Taken;
-    return condition.isNegated ? oppositeOf(side) : side;
+        sideOffUsualPath = BranchSide::Taken;
+    if (condition.isNegated)
+        return { oppositeOf(unlikelySide), oppositeOf(sideOffUsualPath) };
+    return { unlikelySide, sideOffUsualPath };
 }
 
 static bool isOnSide(uint32_t targetIndex, BranchSide side)
@@ -302,8 +268,7 @@ static FrequencyFacts collectFacts(const FrequencyInputs& inputs)
         BlockID id(index);
         if (!cfg.isReachable(id) || !function.at(id).terminator.isConditionalBranch())
             continue;
-        facts.blocks[index].unlikelySide = findUnlikelySide(inputs, facts.blocks.span(), id);
-        facts.blocks[index].sideOffUsualPath = findSideOffUsualPath(inputs, facts.blocks.span(), id);
+        std::tie(facts.blocks[index].unlikelySide, facts.blocks[index].sideOffUsualPath) = findRarerSides(inputs, facts.blocks.span(), id);
         forEachDecidedPredecessor(inputs, id, [&](BlockID predecessor, uint32_t successorIndex) {
             facts.decidedPredecessors.append(FrequencyFacts::DecidedPredecessor { id, predecessor, successorIndex });
         });
@@ -352,32 +317,23 @@ BlockFrequencies::BlockFrequencies(const AnalysisContext& context, const Functio
     , m_sharedCycles(sharedCycles)
     , m_blocks(FillWith { }, function.blocks.size(), BlockFrequency::Normal)
 {
-    // All that enters a cycle counts as entering at its header. A hot loop and its rare copy that lead into each other are one cycle with two entries.
     if (sharedCycles.hasCycleWithSeveralEntries())
-        m_cyclesByLikelihood.emplace(cfg, function);
+        m_cyclesByLikelihood.emplace(cfg, &function);
     m_facts = collectFacts(FrequencyInputs { context.program, function, cfg, cycles(), areBranchHintsIgnored(context) });
 
-    // From here on nothing is read of the function.
-    classifyEdges();
-    estimateWeights();
-    for (BlockID block : cfg.reversePostOrder().subspan(1))
-        m_blocks[block.index()] = classOfWeightLevel(m_weights[block.index()]);
-}
-
-BlockFrequencies::~BlockFrequencies() = default;
-
-// An unreachable block has no successor in the graph.
-void BlockFrequencies::classifyEdges()
-{
-    std::span<const BlockID> successors = m_cfg.successorsOfAllBlocks();
-    const uint32_t* firstSuccessor = m_cfg.firstSuccessorOfBlocks().data();
+    std::span<const BlockID> order = cfg.reversePostOrder();
+    size_t numberOfEdges = cfg.successorsOfAllBlocks().size();
+    const BlockID* successors = cfg.successorsOfAllBlocks().data();
+    const uint32_t* firstSuccessor = cfg.firstSuccessorOfBlocks().data();
     const FrequencyFacts::BlockFacts* facts = m_facts.blocks.span().data();
-    m_edges.grow(successors.size());
+    m_edges.grow(numberOfEdges);
     BlockFrequency* edges = m_edges.mutableSpan().data();
-    for (size_t edge = 0; edge < successors.size(); ++edge)
+    for (size_t edge = 0; edge < numberOfEdges; ++edge)
         edges[edge] = facts[successors[edge].index()].applied;
-    bool hasHandlers = m_cfg.hasHandlers();
-    for (BlockID block : m_cfg.reversePostOrder()) {
+    m_weights.fill(FullWeight, cfg.numNodes());
+    uint8_t* weights = m_weights.mutableSpan().data();
+    bool hasHandlers = cfg.hasHandlers();
+    for (BlockID block : order) {
         switch (facts[block.index()].unlikelySide) {
         case BranchSide::Unknown:
             break;
@@ -388,28 +344,15 @@ void BlockFrequencies::classifyEdges()
             edges[firstSuccessor[block.index()] + 1] = rarerOf(edges[firstSuccessor[block.index()] + 1], BlockFrequency::Unlikely);
             break;
         }
-        if (hasHandlers && m_cfg.hasHandler(block))
+        if (hasHandlers && cfg.hasHandler(block))
             edges[firstSuccessor[block.index() + 1] - 1] = BlockFrequency::Rare;
-    }
-}
-
-void BlockFrequencies::estimateWeights()
-{
-    const BlockID* successors = m_cfg.successorsOfAllBlocks().data();
-    const uint32_t* firstSuccessor = m_cfg.firstSuccessorOfBlocks().data();
-    const FrequencyFacts::BlockFacts* facts = m_facts.blocks.span().data();
-    BlockFrequency* edges = m_edges.mutableSpan().data();
-    m_weights.fill(FullWeight, m_cfg.numNodes());
-    uint8_t* weights = m_weights.mutableSpan().data();
-    for (BlockID block : m_cfg.reversePostOrder()) {
         if (facts[block.index()].isRare())
             weights[block.index()] = RareWeight;
     }
 
-    bool hasCycle = m_cfg.hasCycle();
+    bool hasCycle = cfg.hasCycle();
     const BlockCycles::Forest* forest = hasCycle ? &cycles().forest() : nullptr;
     std::span<const FrequencyFacts::DecidedPredecessor> decidedPredecessors = m_facts.decidedPredecessors.span();
-
     auto lowerWeightByEdges = [&](BlockID block) ALWAYS_INLINE_LAMBDA {
         unsigned index = block.index();
         uint32_t first = firstSuccessor[index];
@@ -442,18 +385,21 @@ void BlockFrequencies::estimateWeights()
     };
 
     if (!hasCycle) {
-        std::span<const BlockID> order = m_cfg.reversePostOrder();
         for (size_t index = order.size(); index--;)
             lowerWeightByEdges(order[index]);
         for (BlockID block : order)
             markRareEdges(block);
-        return;
+    } else {
+        for (BlockID block : forest->nodesInPostOrder())
+            lowerWeightByEdges(block);
+        for (BlockID block : forest->nodesInPostOrder())
+            markRareEdges(block);
     }
-    for (BlockID block : forest->nodesInPostOrder())
-        lowerWeightByEdges(block);
-    for (BlockID block : forest->nodesInPostOrder())
-        markRareEdges(block);
+    for (BlockID block : order.subspan(1))
+        m_blocks[block.index()] = classOfWeightLevel(weights[block.index()]);
 }
+
+BlockFrequencies::~BlockFrequencies() = default;
 
 bool BlockFrequencies::describes(const AnalysisContext& context, const Function& function) const
 {
@@ -465,16 +411,13 @@ bool BlockFrequencies::describes(const AnalysisContext& context, const Function&
             return false;
     }
 
-    // With the graph and all that is recorded as they were, so is what is applied, and so are the headers of the cycles with several entries.
     FrequencyInputs inputs { context.program, function, m_cfg, cycles(), areBranchHintsIgnored(context) };
     std::span<const FrequencyFacts::DecidedPredecessor> expected = m_facts.decidedPredecessors.span();
     for (unsigned index = 0; index < m_cfg.numNodes(); ++index) {
         BlockID id(index);
         if (!m_cfg.isReachable(id))
             continue;
-        if (findUnlikelySide(inputs, m_facts.blocks.span(), id) != m_facts.blocks[index].unlikelySide)
-            return false;
-        if (findSideOffUsualPath(inputs, m_facts.blocks.span(), id) != m_facts.blocks[index].sideOffUsualPath)
+        if (findRarerSides(inputs, m_facts.blocks.span(), id) != std::pair { m_facts.blocks[index].unlikelySide, m_facts.blocks[index].sideOffUsualPath })
             return false;
         bool isAsExpected = true;
         forEachDecidedPredecessor(inputs, id, [&](BlockID predecessor, uint32_t successorIndex) {
@@ -499,8 +442,6 @@ void BlockFrequencies::computeClassesOfBlocks() const
     const BlockFrequency* edges = m_edges.span().data();
     BlockFrequency* classes = m_blocks.mutableSpan().data();
     Vector<BlockFrequency, 128> likeliestWayIn(FillWith { }, m_blocks.size(), BlockFrequency::Rare);
-    // A latch is no likelier than its header. In a cycle with several entries, a loop and the copy of its failed tests, the order may reach a join through the copy first: the likely way in comes from a block behind it.
-    // The sweeps end: a way in only gets likelier, and there are three classes.
     for (bool hasLikelierWayInFromBehind = true; std::exchange(hasLikelierWayInFromBehind, false);) {
         for (uint32_t orderIndex = 0; orderIndex < order.size(); ++orderIndex) {
             unsigned block = order[orderIndex].index();
@@ -520,54 +461,10 @@ void BlockFrequencies::computeClassesOfBlocks() const
     }
 }
 
-class BlockFrequencies::Counts {
-public:
+void BlockFrequencies::estimateCounts() const
+{
     using Forest = BlockCycles::Forest;
-
-    Counts(const BlockFrequencies& owner, std::span<double> frequencies)
-        : m_cfg(owner.m_cfg)
-        , m_forest(owner.cycles().forest())
-        , m_postOrder(m_forest.nodesInPostOrder().span())
-        , m_successors(owner.m_cfg.successorsOfAllBlocks().data())
-        , m_firstSuccessor(owner.m_cfg.firstSuccessorOfBlocks().data())
-        , m_facts(owner.m_facts.blocks.span().data())
-        , m_edges(owner.m_edges.span().data())
-        , m_weights(owner.m_weights.span().data())
-        , m_root(owner.m_cfg.root())
-        , m_frequencies(frequencies.data())
-        , m_incoming(frequencies.size())
-        , m_iterations(FillWith { }, m_forest.size(), frequencyConstants.iterationsPerLoop)
-        , m_returningShares(FillWith { }, m_forest.size(), 1.0)
-    {
-    }
-
-    void run()
-    {
-        if (!m_forest.size()) {
-            propagateWithoutCycles();
-            return;
-        }
-        m_flows.grow(m_incoming.size());
-        m_entering.grow(m_forest.size());
-        propagate();
-        unsigned deepest = 0;
-        for (unsigned cycle = 0; cycle < m_forest.size(); ++cycle)
-            deepest = std::max(deepest, m_forest.depth(cycle));
-        for (unsigned depth = deepest; depth; --depth) {
-            bool hasCycleSeldomGoneRound = false;
-            for (unsigned cycle = 0; cycle < m_forest.size(); ++cycle) {
-                double returning = m_returningShares[cycle];
-                if (m_forest.depth(cycle) != depth || (returning > frequencyConstants.unlikelyEdgeShare && !comesRoundThroughUnlikelyBlocksAlone(cycle)))
-                    continue;
-                m_iterations[cycle] = returning < 1 ? std::min(frequencyConstants.iterationsPerLoop, 1 / (1 - returning)) : frequencyConstants.iterationsPerLoop;
-                hasCycleSeldomGoneRound = true;
-            }
-            if (hasCycleSeldomGoneRound)
-                propagate();
-        }
-    }
-
-private:
+    constexpr auto& constants = frequencyConstants;
     struct OutgoingEdge {
         BlockID successor;
         double share;
@@ -575,42 +472,46 @@ private:
         bool isRare;
     };
 
-    double weightOfEdge(uint32_t edge) const { return weightOfLevel[weightLevelOfEdge(m_weights[m_successors[edge].index()], m_edges[edge])]; }
+    m_hasCounts = true;
+    m_frequencies.fill(0.0, m_blocks.size());
+    const Forest& forest = cycles().forest();
+    std::span<const BlockID> postOrder = forest.nodesInPostOrder().span();
+    const BlockID* successors = m_cfg.successorsOfAllBlocks().data();
+    const uint32_t* firstSuccessor = m_cfg.firstSuccessorOfBlocks().data();
+    const FrequencyFacts::BlockFacts* facts = m_facts.blocks.span().data();
+    const BlockFrequency* classOfEdge = m_edges.span().data();
+    const uint8_t* weights = m_weights.span().data();
+    BlockID root = m_cfg.root();
+    size_t numberOfBlocks = m_frequencies.size();
+    double* frequencies = m_frequencies.mutableSpan().data();
+    Vector<double, 64> incomingStorage(numberOfBlocks);
+    double* incoming = incomingStorage.mutableSpan().data();
+    Vector<double, 16> iterations(FillWith { }, forest.size(), constants.iterationsPerLoop);
+    Vector<double, 16> returningShares(FillWith { }, forest.size(), 1.0);
 
-    // A loop and the copy of its failed tests that comes back in front of it: no loop of the program.
-    bool comesRoundThroughUnlikelyBlocksAlone(unsigned cycle) const
-    {
-        BlockID header = m_forest[cycle].header();
-        return m_facts[header.index()].isNormal() && std::ranges::none_of(m_cfg.incomingEdges(header), [&](Edge edge) {
-            return m_forest.contains(cycle, edge.from) && m_facts[edge.from.index()].isNormal();
-        });
-    }
-
-    double leavingShare(unsigned cycleOfSource, BlockID to) const
-    {
-        unsigned cycleOfTarget = m_forest.innermost(to);
+    auto weightOfEdge = [&](uint32_t edge) {
+        return weightOfLevel[weightLevelOfEdge(weights[successors[edge].index()], classOfEdge[edge])];
+    };
+    auto leavingShare = [&](unsigned cycleOfSource, BlockID to) -> double {
+        unsigned cycleOfTarget = forest.innermost(to);
         if (cycleOfSource == cycleOfTarget)
             return 1;
-        unsigned common = m_forest.nearestCommon(cycleOfSource, cycleOfTarget);
+        unsigned common = forest.nearestCommon(cycleOfSource, cycleOfTarget);
         double share = 1;
-        for (unsigned cycle = cycleOfSource; cycle != common; cycle = m_forest[cycle].parent)
-            share /= m_iterations[cycle];
+        for (unsigned cycle = cycleOfSource; cycle != common; cycle = forest[cycle].parent)
+            share /= iterations[cycle];
         return share;
-    }
-
-    template<bool hasCycles>
-    ALWAYS_INLINE void splitFlow(BlockID block, unsigned cycleOfBlock, NOESCAPE const Invocable<void(BlockID, double)> auto& send) const
-    {
-        constexpr auto& constants = frequencyConstants;
-        uint32_t first = m_firstSuccessor[block.index()];
-        uint32_t end = m_firstSuccessor[block.index() + 1];
-        if (first == end || m_facts[block.index()].isNormalExit)
+    };
+    auto splitFlow = [&](auto hasCycles, BlockID block, unsigned cycleOfBlock, NOESCAPE const Invocable<void(BlockID, double)> auto& send) ALWAYS_INLINE_LAMBDA {
+        uint32_t first = firstSuccessor[block.index()];
+        uint32_t end = firstSuccessor[block.index() + 1];
+        if (first == end || facts[block.index()].isNormalExit)
             return;
 
         if (end - first == 1) {
-            BlockID successor = m_successors[first];
+            BlockID successor = successors[first];
             double share = hasCycles ? leavingShare(cycleOfBlock, successor) : 1;
-            if (m_edges[first] == BlockFrequency::Rare)
+            if (classOfEdge[first] == BlockFrequency::Rare)
                 share *= constants.rareEdgeShare;
             else if (share < 1)
                 share *= share > constants.maxUnlikelyEdgeShare ? constants.maxUnlikelyEdgeShare / share : 1;
@@ -626,8 +527,8 @@ private:
         double leaving = 0;
         double rare = 0;
         for (uint32_t index = first; index < end; ++index) {
-            BlockID successor = m_successors[index];
-            OutgoingEdge edge { successor, hasCycles ? leavingShare(cycleOfBlock, successor) : 1, 0, m_edges[index] == BlockFrequency::Rare };
+            BlockID successor = successors[index];
+            OutgoingEdge edge { successor, hasCycles ? leavingShare(cycleOfBlock, successor) : 1, 0, classOfEdge[index] == BlockFrequency::Rare };
             if (edge.isRare)
                 rare += edge.share * constants.rareEdgeShare;
             else if (edge.share < 1) {
@@ -651,86 +552,83 @@ private:
                 share = (1 - rare) * (1 - leaving * leavingScale) * edge.weight / stayingWeight;
             send(edge.successor, share);
         }
-    }
+    };
 
-    void propagateWithoutCycles()
-    {
-        constexpr auto& constants = frequencyConstants;
-        double* incoming = m_incoming.mutableSpan().data();
-        std::fill_n(incoming, m_incoming.size(), 0.0);
-        incoming[m_root.index()] = 1;
-        for (size_t index = m_postOrder.size(); index--;) {
-            BlockID block = m_postOrder[index];
+    if (!forest.size()) {
+        std::fill_n(incoming, numberOfBlocks, 0.0);
+        incoming[root.index()] = 1;
+        for (size_t index = postOrder.size(); index--;) {
+            BlockID block = postOrder[index];
             double flow = std::min(incoming[block.index()], constants.maxMultipliedFrequency);
-            m_frequencies[block.index()] = std::clamp(flow, constants.minFrequency, constants.maxFrequency);
-            splitFlow<false>(block, Forest::none, [&](BlockID successor, double share) ALWAYS_INLINE_LAMBDA {
+            frequencies[block.index()] = std::clamp(flow, constants.minFrequency, constants.maxFrequency);
+            splitFlow(std::false_type { }, block, Forest::none, [&](BlockID successor, double share) ALWAYS_INLINE_LAMBDA {
                 incoming[successor.index()] += flow * share;
             });
         }
+        return;
     }
 
-    void propagate()
-    {
-        constexpr auto& constants = frequencyConstants;
-        double* incoming = m_incoming.mutableSpan().data();
-        double* flows = m_flows.mutableSpan().data();
-        double* entering = m_entering.mutableSpan().data();
-        std::fill_n(incoming, m_incoming.size(), 0.0);
-        std::fill_n(flows, m_flows.size(), 0.0);
-        std::fill_n(entering, m_entering.size(), 0.0);
-        incoming[m_root.index()] = 1;
-        for (unsigned cycle = m_forest.innermost(m_root); cycle != Forest::none; cycle = m_forest[cycle].parent)
+    Vector<double, 0> flowStorage(numberOfBlocks);
+    double* flows = flowStorage.mutableSpan().data();
+    Vector<double, 16> enteringStorage(forest.size());
+    double* entering = enteringStorage.mutableSpan().data();
+    auto propagate = [&] {
+        std::fill_n(incoming, numberOfBlocks, 0.0);
+        std::fill_n(flows, numberOfBlocks, 0.0);
+        std::fill_n(entering, forest.size(), 0.0);
+        incoming[root.index()] = 1;
+        for (unsigned cycle = forest.innermost(root); cycle != Forest::none; cycle = forest[cycle].parent)
             entering[cycle] = 1;
-        for (size_t index = m_postOrder.size(); index--;) {
-            BlockID block = m_postOrder[index];
-            unsigned cycleOfBlock = m_forest.innermost(block);
-            double flow = std::min(m_forest.isHeader(block) ? entering[cycleOfBlock] * m_iterations[cycleOfBlock] : incoming[block.index()], constants.maxMultipliedFrequency);
-            m_frequencies[block.index()] = std::clamp(flow, constants.minFrequency, constants.maxFrequency);
+        for (size_t index = postOrder.size(); index--;) {
+            BlockID block = postOrder[index];
+            unsigned cycleOfBlock = forest.innermost(block);
+            double flow = std::min(forest.isHeader(block) ? entering[cycleOfBlock] * iterations[cycleOfBlock] : incoming[block.index()], constants.maxMultipliedFrequency);
+            frequencies[block.index()] = std::clamp(flow, constants.minFrequency, constants.maxFrequency);
             flows[block.index()] = flow;
-            splitFlow<true>(block, cycleOfBlock, [&](BlockID successor, double share) ALWAYS_INLINE_LAMBDA {
+            splitFlow(std::true_type { }, block, cycleOfBlock, [&](BlockID successor, double share) ALWAYS_INLINE_LAMBDA {
                 double amount = flow * share;
-                unsigned cycle = m_forest.innermost(successor);
+                unsigned cycle = forest.innermost(successor);
                 if (cycle == cycleOfBlock) {
                     incoming[successor.index()] += amount;
                     return;
                 }
-                unsigned common = m_forest.nearestCommon(cycleOfBlock, cycle);
+                unsigned common = forest.nearestCommon(cycleOfBlock, cycle);
                 if (cycle == common) {
                     incoming[successor.index()] += amount;
                     return;
                 }
-                for (; cycle != common; cycle = m_forest[cycle].parent)
+                for (; cycle != common; cycle = forest[cycle].parent)
                     entering[cycle] += amount;
             });
         }
-        for (unsigned cycle = 0; cycle < m_forest.size(); ++cycle) {
-            unsigned header = m_forest[cycle].header().index();
-            m_returningShares[cycle] = flows[header] > 0 ? incoming[header] / flows[header] : 1;
+        for (unsigned cycle = 0; cycle < forest.size(); ++cycle) {
+            unsigned header = forest[cycle].header().index();
+            returningShares[cycle] = flows[header] > 0 ? incoming[header] / flows[header] : 1;
         }
+    };
+    auto comesRoundThroughUnlikelyBlocksAlone = [&](unsigned cycle) {
+        BlockID header = forest[cycle].header();
+        return facts[header.index()].isNormal() && std::ranges::none_of(m_cfg.incomingEdges(header), [&](Edge edge) {
+            return forest.contains(cycle, edge.from) && facts[edge.from.index()].isNormal();
+        });
+    };
+
+    propagate();
+    unsigned deepest = 0;
+    for (unsigned cycle = 0; cycle < forest.size(); ++cycle)
+        deepest = std::max(deepest, forest.depth(cycle));
+    for (unsigned depth = deepest; depth; --depth) {
+        bool hasCycleSeldomGoneRound = false;
+        for (unsigned cycle = 0; cycle < forest.size(); ++cycle) {
+            double returning = returningShares[cycle];
+            if (forest.depth(cycle) != depth || (returning > constants.unlikelyEdgeShare && !comesRoundThroughUnlikelyBlocksAlone(cycle)))
+                continue;
+            iterations[cycle] = returning < 1 ? std::min(constants.iterationsPerLoop, 1 / (1 - returning)) : constants.iterationsPerLoop;
+            hasCycleSeldomGoneRound = true;
+        }
+        if (hasCycleSeldomGoneRound)
+            propagate();
     }
-
-    const CFG& m_cfg;
-    const Forest& m_forest;
-    std::span<const BlockID> m_postOrder;
-    const BlockID* m_successors;
-    const uint32_t* m_firstSuccessor;
-    const FrequencyFacts::BlockFacts* m_facts;
-    const BlockFrequency* m_edges;
-    const uint8_t* m_weights;
-    BlockID m_root;
-    double* m_frequencies;
-    Vector<double, 64> m_incoming;
-    Vector<double, 0> m_flows;
-    Vector<double, 16> m_entering;
-    Vector<double, 16> m_iterations;
-    Vector<double, 16> m_returningShares;
-};
-
-void BlockFrequencies::estimateCounts() const
-{
-    m_hasCounts = true;
-    m_frequencies.fill(0.0, m_blocks.size());
-    Counts(*this, m_frequencies.mutableSpan()).run();
 }
 
 double BlockFrequencies::frequencyOf(BlockID block) const

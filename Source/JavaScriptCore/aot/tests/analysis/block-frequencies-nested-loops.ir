@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="fourNestedLoops" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
 # REPEAT: i = 1..4
     Jump -> next b%(i)()
   b%(i)():
@@ -32,7 +31,6 @@ function f0 name="fourNestedLoops" parameters=[{type=boolean}] results=[{type=un
 # CHECK-NEXT: b8 frequency: Normal count: 1.000000
 # CHECK-NOT: frequency
 function f1 name="testsAtTheHeaders" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -56,7 +54,6 @@ function f1 name="testsAtTheHeaders" parameters=[{type=boolean}] results=[{type=
 # CHECK-NEXT: b5 frequency: Normal count: 1.000000
 # CHECK-NOT: frequency
 function f2 name="twoLoopsInSequence" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Jump -> next b1()
   b1():
     LoopHint

@@ -13,24 +13,22 @@ function f0 name="openStamp" parameters=[{type=object flags=[IsExpected]}] resul
     v1 = PropGet v0 key="kind" receivers=[L1, ..]
     v2 = PropGet v0 key="props"
     Return v2
-}
-# CHECK-LABEL: function f0 name="openStamp"
 # CHECK-NEXT: b0(v0: anything ~ L0):
 # CHECK: = TypeTest v0 testedType=L0|L1
 # CHECK: = GetSlot {{*}} key="kind" receivers=[L0, L1] level=Expected
 # CHECK: = GetSlot {{*}} key="props" receivers=[L0] level=Expected
+}
 
 function f1 name="completeStamp" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ object):
     v1 = PropGet v0 key="kind" receivers=[L1]
     v2 = PropGet v0 key="props"
     Return v2
-}
-# CHECK-LABEL: function f1 name="completeStamp"
 # CHECK-NEXT: b0(v0: anything ~ object):
 # CHECK: = TypeTest v0 testedType=L1
 # CHECK: = GetSlot {{*}} key="kind" receivers=[L1] level=Expected
 # CHECK-NOT: GetSlot
+}
 
 function f2 name="Element" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
 function f3 name="Portal" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1

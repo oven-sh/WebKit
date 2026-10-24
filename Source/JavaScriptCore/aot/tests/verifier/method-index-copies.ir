@@ -5,7 +5,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Instance constructor=f1
 function f0 name="copies" results=[{type=undefined}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = NewClosure function=f2

@@ -11,14 +11,23 @@
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
 #include "AOTCFG.h"
+#include "AOTFlowRecords.h"
+#include "AOTFlowSiteData.h"
+#include "AOTFlowStamps.h"
 #include "AOTSelectTypedResultsTargets.h"
 #include "AOTSelectTypedResultsTypeNodes.h"
 #include "AOTSort.h"
+#include "AOTStringArena.h"
+#include "AOTTypeArena.h"
 #include "AOTUseLists.h"
+#include "AOTValueFlowPositions.h"
+#include "AOTValueFlowResultsInternal.h"
 #include "AOTValueFlowRules.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <array>
+#include <optional>
 #include <wtf/BitVector.h>
 #include <wtf/HashSet.h>
 
@@ -98,122 +107,6 @@ void followTypes(const Program& program, ValueFlowTypedResult& result, bool layo
     }
 }
 
-class TypedResultAllocation {
-    WTF_MAKE_NONCOPYABLE(TypedResultAllocation);
-public:
-    TypedResultAllocation(const ValueFlowTypedResult& result, const ValueFlowStatement& call, ValueSetID plainDataOfCall, ValueFlowRuleContext& context)
-        : m_result(result)
-        , m_call(call)
-        , m_plainDataOfCall(plainDataOfCall)
-        , m_context(context)
-        , m_program(context.program())
-        , m_universe(context.universe())
-    {
-    }
-
-    ValueSetID valueOf(TypeID id)
-    {
-        if (!id)
-            return plainData();
-        const Type& type = m_program.at(id);
-        if (!type.isJavaScriptValue() || type.isAnything())
-            return plainData();
-
-        Vector<ValueFlowObjectID, 16> members;
-        for (uint16_t rest = type.primitives & ~(Primitive::LiteralString | Primitive::LiteralSymbol); rest; rest &= rest - 1)
-            members.append(ValueFlowObjectID(static_cast<uint32_t>(std::countr_zero(rest))));
-        if (type.primitives & Primitive::AnyString)
-            members.append(ValueFlowUniverse::primitive(PrimitiveSet::String));
-        if (type.primitives & Primitive::AnySymbol)
-            members.append(ValueFlowUniverse::primitive(PrimitiveSet::Symbol));
-
-        bool admitsPlainObjects = type.anyObject || type.anyFunction || !type.functions.isEmpty() || !type.builtins.isEmpty() || (type.layouts && m_program.at(type.layouts).hasMembersWithoutLayout);
-        std::span<const LayoutID> layoutsOfType = membersOf(m_program, type);
-        for (size_t index = 0; index < m_result.layouts.size() && !layoutsOfType.empty(); ++index) {
-            if (std::ranges::binary_search(layoutsOfType, m_result.layouts[index]))
-                members.append(objectAt(m_result.ordinalOfLayout(index)));
-        }
-        for (const ClassPart& part : type.classes) {
-            auto listed = std::ranges::lower_bound(m_result.typesWithArrays, id);
-            if (part.builtinClass != BuiltinClasses::Array || listed == m_result.typesWithArrays.end() || *listed != id) {
-                admitsPlainObjects = true;
-                continue;
-            }
-            members.append(objectAt(m_result.ordinalOfArray(listed - m_result.typesWithArrays.begin())));
-            members.append(objectAt(m_result.ordinalOfPlainArray()));
-        }
-
-        ValueSetID value = m_context.maker().of(members.span());
-        return admitsPlainObjects ? m_context.maker().unite(value, m_context.maker().intersect(plainData(), m_universe.objects())) : value;
-    }
-
-    void fill()
-    {
-        for (size_t index = 0; index < m_result.layouts.size(); ++index)
-            fillObject(only(m_result.ordinalOfLayout(index)), m_result.layouts[index]);
-        for (size_t index = 0; index < m_result.typesWithArrays.size(); ++index) {
-            const ClassPart* array = m_program.at(m_result.typesWithArrays[index]).findClassPart(BuiltinClasses::Array);
-            m_context.add(m_context.written(only(m_result.ordinalOfArray(index)), elementsName), valueOf(typedElementTypeOf(m_program, *array)));
-        }
-        m_context.add(m_context.written(only(m_result.ordinalOfPlainArray()), elementsName), plainData());
-
-        ClimbingSet plainObjects = m_plainDataOfCall ? m_context.unite(ClimbingSet(m_context.maker().intersect(m_plainDataOfCall, m_universe.objects())), only(m_result.ordinalOfPlainArray())) : ClimbingSet();
-        for (LayoutID layout : m_result.layoutsAmongPlainData) {
-            size_t index = std::ranges::lower_bound(m_result.layouts, layout) - m_result.layouts.begin();
-            if (!m_plainDataOfCall) {
-                m_context.add(ValueFlowProgramNodes::escaped(), only(m_result.ordinalOfLayout(index)));
-                continue;
-            }
-            for (ValueFlowName name : { unknownKeyName, elementsName })
-                m_context.add(m_context.written(plainObjects, name), only(m_result.ordinalOfLayout(index)));
-        }
-    }
-
-private:
-    ValueFlowObjectID objectAt(uint32_t ordinal) const
-    {
-        ValueFlowObjectID object = m_universe.siteObject(m_call, ordinal);
-        RELEASE_ASSERT(object);
-        return object;
-    }
-
-    ClimbingSet only(uint32_t ordinal) { return ClimbingSet(m_context.maker().of(objectAt(ordinal))); }
-    ValueSetID plainData() { return m_plainDataOfCall ? m_plainDataOfCall : unknownValue(m_context, ValueFlowUnknownSource::DataFromOutside); }
-
-    void fillField(ClimbingSet object, const Field& field)
-    {
-        ValueFlowNodeID node = m_context.written(object, m_program.isIndexLike(field.key) ? elementsName : ValueFlowName::property(field.key));
-        m_context.add(node, valueOf(expectationOf(field.declared)));
-        if (!field.declared.type || m_program.at(field.declared.type).primitives & Primitive::Undefined)
-            m_context.add(node, m_universe.undefinedValue());
-    }
-
-    void fillObject(ClimbingSet object, LayoutID id)
-    {
-        const Layout& layout = m_program.at(id);
-        for (const Field& field : layout.fields) {
-            if (field.key)
-                fillField(object, field);
-        }
-        HashSet<LayoutID> visited;
-        for (LayoutID base = predictedHeritageOf(layout); base && visited.add(base).isNewEntry; base = predictedHeritageOf(m_program.at(base))) {
-            for (const Field& field : m_program.at(base).fields) {
-                if (field.key && !layout.findField(field.key))
-                    fillField(object, field);
-            }
-        }
-        m_context.add(m_context.written(object, unknownKeyName), plainData());
-        m_context.mark(object, ObjectMutation::AddProperty);
-    }
-
-    const ValueFlowTypedResult& m_result;
-    const ValueFlowStatement& m_call;
-    ValueSetID m_plainDataOfCall;
-    ValueFlowRuleContext& m_context;
-    const Program& m_program;
-    const ValueFlowUniverse& m_universe;
-};
-
 bool answersPromise(const BuiltinTable& builtins, const BuiltinOverload& overload)
 {
     return std::ranges::any_of(builtins.at(overload.result.type).parts, [](const BuiltinTypePart& part) {
@@ -237,7 +130,7 @@ ValueFlowTypedResult typedResultOf(const Program& program, ExpectedResultID id, 
     return result;
 }
 
-ValueFlowTypedResult findTypedResult(const Program& program, const ValueFlowBuiltinTables& tables, const Function& function, const UseLists& uses, ValueID call)
+static ValueFlowTypedResult findTypedResult(const Program& program, const ValueFlowBuiltinTables& tables, const Function& function, const UseLists& uses, ValueID call)
 {
     const Value& operation = function.at(call);
     if (operation.opcode != Opcode::Call)
@@ -257,14 +150,6 @@ ValueFlowTypedResult findTypedResult(const Program& program, const ValueFlowBuil
     if (!result.type || result.numberOfObjects() > mostObjects)
         return { };
     return result;
-}
-
-ValueFlowTypedResult findTypedResult(const Program& program, const ValueFlowBuiltinTables& tables, FunctionID id, ValueID call)
-{
-    const Function& function = program.at(id);
-    CFG cfg(function);
-    UseLists uses(function, cfg);
-    return findTypedResult(program, tables, function, uses, call);
 }
 
 static bool mayCallFunctionWithTypedResult(const Program& program, const ValueFlowBuiltinTables& tables, const Function& function, const Value& call)
@@ -308,15 +193,17 @@ void appendSitesOfTypedResults(const Program& program, const ValueFlowBuiltinTab
     }
 }
 
-void allocateTypedResult(const BuiltinOverload& overload, const ValueFlowStatement& call, const ValueFlowBuiltinCall& description, ValueFlowObjectID promise, ValueSetID plainData, ValueFlowRuleContext& context)
+void allocateTypedResult(const BuiltinOverload& overload, const ValueFlowStatement& call, const ValueFlowBuiltinCall& description, ValueFlowObjectID promise, ValueSetID plainDataOfCall, ValueFlowRuleContext& context)
 {
     if (call.kind != ValueFlowStatementKind::Operation || call.opcode != Opcode::Call || description.kind != ValueFlowCallKind::Call)
         return;
 
     const Program& program = context.program();
-    ExpectedResultID expected = program.at(call.function).at(call.site).expectedResult();
+    const ValueFlowUniverse& universe = context.universe();
+    const Function& function = program.at(call.function);
+    ExpectedResultID expected = function.at(call.site).expectedResult();
     bool isValidated = expected && !program.at(expected).validation.isEmpty();
-    bool hasObjects = !!context.universe().siteObject(call, ValueFlowTypedResult::firstOrdinal);
+    bool hasObjects = !!universe.siteObject(call, ValueFlowTypedResult::firstOrdinal);
     TypedResultForm form = overload.result.typedResultForm;
     bool parses = form == TypedResultForm::ParsedText || form == TypedResultForm::ParsedBody || form == TypedResultForm::Rows;
     if (!isValidated && !(hasObjects && parses))
@@ -346,15 +233,319 @@ void allocateTypedResult(const BuiltinOverload& overload, const ValueFlowStateme
         target = context.written(ClimbingSet(context.maker().of(promise)), { ValueFlowNameKind::Slot, BuiltinSlots::PromiseValue.index() });
     }
 
-    ValueFlowTypedResult result = findTypedResult(program, context.universe().builtinTables(), call.function, call.site);
+    CFG cfg(function);
+    ValueFlowTypedResult result = findTypedResult(program, universe.builtinTables(), function, UseLists(function, cfg), call.site);
     RELEASE_ASSERT(result);
-    TypedResultAllocation allocation(result, call, parses ? plainData : ValueSetID(), context);
-    allocation.fill();
+    if (!parses)
+        plainDataOfCall = { };
+
+    auto objectAt = [&](uint32_t ordinal) {
+        ValueFlowObjectID object = universe.siteObject(call, ordinal);
+        RELEASE_ASSERT(object);
+        return object;
+    };
+    auto only = [&](uint32_t ordinal) {
+        return ClimbingSet(context.maker().of(objectAt(ordinal)));
+    };
+    auto plainData = [&]() -> ValueSetID {
+        return plainDataOfCall ? plainDataOfCall : unknownValue(context, ValueFlowUnknownSource::DataFromOutside);
+    };
+    auto valueOf = [&](TypeID id) -> ValueSetID {
+        if (!id)
+            return plainData();
+        const Type& type = program.at(id);
+        if (!type.isJavaScriptValue() || type.isAnything())
+            return plainData();
+
+        Vector<ValueFlowObjectID, 16> members;
+        for (uint16_t rest = type.primitives & ~(Primitive::LiteralString | Primitive::LiteralSymbol); rest; rest &= rest - 1)
+            members.append(ValueFlowObjectID(static_cast<uint32_t>(std::countr_zero(rest))));
+        if (type.primitives & Primitive::AnyString)
+            members.append(ValueFlowUniverse::primitive(PrimitiveSet::String));
+        if (type.primitives & Primitive::AnySymbol)
+            members.append(ValueFlowUniverse::primitive(PrimitiveSet::Symbol));
+
+        bool admitsPlainObjects = type.anyObject || type.anyFunction || !type.functions.isEmpty() || !type.builtins.isEmpty() || (type.layouts && program.at(type.layouts).hasMembersWithoutLayout);
+        std::span<const LayoutID> layoutsOfType = membersOf(program, type);
+        for (size_t index = 0; index < result.layouts.size() && !layoutsOfType.empty(); ++index) {
+            if (std::ranges::binary_search(layoutsOfType, result.layouts[index]))
+                members.append(objectAt(result.ordinalOfLayout(index)));
+        }
+        for (const ClassPart& part : type.classes) {
+            auto listed = std::ranges::lower_bound(result.typesWithArrays, id);
+            if (part.builtinClass != BuiltinClasses::Array || listed == result.typesWithArrays.end() || *listed != id) {
+                admitsPlainObjects = true;
+                continue;
+            }
+            members.append(objectAt(result.ordinalOfArray(listed - result.typesWithArrays.begin())));
+            members.append(objectAt(result.ordinalOfPlainArray()));
+        }
+
+        ValueSetID value = context.maker().of(members.span());
+        return admitsPlainObjects ? context.maker().unite(value, context.maker().intersect(plainData(), universe.objects())) : value;
+    };
+    auto fillField = [&](ClimbingSet object, const Field& field) {
+        ValueFlowNodeID node = context.written(object, program.isIndexLike(field.key) ? elementsName : ValueFlowName::property(field.key));
+        context.add(node, valueOf(expectationOf(field.declared)));
+        if (!field.declared.type || program.at(field.declared.type).primitives & Primitive::Undefined)
+            context.add(node, universe.undefinedValue());
+    };
+
+    for (size_t index = 0; index < result.layouts.size(); ++index) {
+        ClimbingSet object = only(result.ordinalOfLayout(index));
+        const Layout& layout = program.at(result.layouts[index]);
+        for (const Field& field : layout.fields) {
+            if (field.key)
+                fillField(object, field);
+        }
+        HashSet<LayoutID> visited;
+        for (LayoutID base = predictedHeritageOf(layout); base && visited.add(base).isNewEntry; base = predictedHeritageOf(program.at(base))) {
+            for (const Field& field : program.at(base).fields) {
+                if (field.key && !layout.findField(field.key))
+                    fillField(object, field);
+            }
+        }
+        context.add(context.written(object, unknownKeyName), plainData());
+        context.mark(object, ObjectMutation::AddProperty);
+    }
+    for (size_t index = 0; index < result.typesWithArrays.size(); ++index) {
+        const ClassPart* array = program.at(result.typesWithArrays[index]).findClassPart(BuiltinClasses::Array);
+        context.add(context.written(only(result.ordinalOfArray(index)), elementsName), valueOf(typedElementTypeOf(program, *array)));
+    }
+    context.add(context.written(only(result.ordinalOfPlainArray()), elementsName), plainData());
+
+    ClimbingSet plainObjects = plainDataOfCall ? context.unite(ClimbingSet(context.maker().intersect(plainDataOfCall, universe.objects())), only(result.ordinalOfPlainArray())) : ClimbingSet();
+    for (LayoutID layout : result.layoutsAmongPlainData) {
+        size_t index = std::ranges::lower_bound(result.layouts, layout) - result.layouts.begin();
+        if (!plainDataOfCall) {
+            context.add(ValueFlowProgramNodes::escaped(), only(result.ordinalOfLayout(index)));
+            continue;
+        }
+        for (ValueFlowName name : { unknownKeyName, elementsName })
+            context.add(context.written(plainObjects, name), only(result.ordinalOfLayout(index)));
+    }
     if (target)
-        context.add(target, allocation.valueOf(result.type));
+        context.add(target, valueOf(result.type));
 
     if (isValidated && !parses)
         letArgumentsEscape();
+}
+
+void computeTypedResultResults(const ValueFlowResultInputs& inputs, FlowResultTables& tables)
+{
+    const Program& program = inputs.program;
+    const ValueFlowUniverse& universe = inputs.universe();
+    FlowApplication& application = *tables.application;
+
+    inputs.sets().forEachMember(inputs.solver().valueOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::RecordsMadeByParsers)), [&](ValueFlowObjectID record) {
+        application.layouts[universe.layoutOf(record).index()].flow.observedUses.add(ObservedUse::ReachesTypedParse);
+    });
+
+    auto parsesTypedResult = [&](const ValueFlowStatement& statement) {
+        return statement.kind == ValueFlowStatementKind::Operation && statement.opcode == Opcode::Call && universe.siteObject(statement, ValueFlowTypedResult::firstOrdinal);
+    };
+    Vector<const ValueFlowStatement*> calls;
+    for (uint32_t index : findIndicesInParallel(inputs.loops(), program.functions.size(), [&](unsigned index) {
+        return inputs.isReached(FunctionID(index)) && std::ranges::any_of(inputs.bodies().statementsOf(index), parsesTypedResult);
+    })) {
+        for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(index)) {
+            if (parsesTypedResult(statement))
+                calls.append(&statement);
+        }
+    }
+    if (calls.isEmpty())
+        return;
+
+    RELEASE_ASSERT(inputs.heapIndex);
+    Vector<ValueFlowHeapIndex::Stretch> stretches = inputs.heapIndex->stretchesOfNodesWrittenUnder([](ValueFlowName name) {
+        return name.kind == ValueFlowNameKind::Elements;
+    });
+    BitVector isFilled;
+    for (uint32_t object : collectInParallel<uint32_t>(inputs.loops(), stretches.size(), [&](unsigned stretch, Vector<uint32_t>& found) {
+        for (const ValueFlowHeapIndex::WrittenNode& node : stretches[stretch].nodes) {
+            if (ValueSets::isComplement(node.objects))
+                continue;
+            ValueFlowObjectID object = inputs.sets().onlyMember(node.objects);
+            const ValueFlowSite* site = object ? universe.siteOf(object) : nullptr;
+            if (site && site->origin == ValueFlowSiteOrigin::TypedResult)
+                found.append(object.index());
+        }
+    }))
+        isFilled.set(object);
+    size_t numberOfOtherSites = tables.sites.allocationSites.size();
+    tables.sites.typedResultSites.fill(AllocationSiteID(), program.layouts.size());
+    FunctionID functionOfAccessSites;
+    Vector<AccessSiteID> accessSites;
+    FunctionID functionOfUses;
+    std::optional<CFG> cfg;
+    std::optional<UseLists> uses;
+    for (const ValueFlowStatement* call : calls) {
+        const Function& function = program.at(call->function);
+        if (functionOfUses != call->function) {
+            functionOfUses = call->function;
+            cfg.emplace(function);
+            uses.emplace(function, *cfg);
+        }
+        ValueFlowTypedResult result = findTypedResult(program, universe.builtinTables(), function, *uses, call->site);
+        RELEASE_ASSERT(result);
+        if (!isFilled.get(universe.siteObject(*call, result.ordinalOfPlainArray()).index()))
+            continue;
+
+        if (functionOfAccessSites != call->function) {
+            functionOfAccessSites = call->function;
+            accessSites = accessSitesByValue(function, application.accessSites, call->function);
+        }
+        if (AccessSiteID accessSite = accessSites[call->site.index()])
+            tables.sites.typedResultCalls.append({ accessSite, result.type, result.layouts });
+
+        for (LayoutID layout : result.layouts) {
+            application.layouts[layout.index()].flow.observedUses.add({ ObservedUse::ReachesTypedParse, ObservedUse::IsParsedByType });
+            const Vector<AllocationClassID>& classes = application.layouts[layout.index()].flow.allocationClasses;
+            AllocationSiteID& site = tables.sites.typedResultSites[layout.index()];
+            if (site || classes.isEmpty())
+                continue;
+            site = AllocationSiteID(tables.sites.allocationSites.size());
+            tables.sites.allocationSites.append(AllocationSite { call->function, layout, { }, classes[0], function.locationOf(call->site) });
+        }
+    }
+    AOT::sort(tables.sites.typedResultCalls, { }, &FlowTypedResultCall::call);
+    inputs.build.statistics().count(StatisticID::FlowAllocationSites, tables.sites.allocationSites.size() - numberOfOtherSites);
+}
+
+static constexpr OptionSet<ObjectMutation> mutationsOfArraysWithoutMark { ObjectMutation::ChangePrototype, ObjectMutation::BecomePrototype, ObjectMutation::StoreOfOtherType };
+
+void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlowContainerResults& containers, TypeTable& types, FlowResultTables& tables)
+{
+    const Program& program = inputs.program;
+    const ValueFlowUniverse& universe = inputs.universe();
+    FlowApplication& application = *tables.application;
+    unsigned indexOfElements = indexOfArrayElementsInType(program.builtins());
+    size_t numberOfOtherSites = tables.sites.allocationSites.size();
+    std::array<AllocationClassID, 2> classesOfArrays;
+    size_t numberOfOtherNodes = tables.sites.dataNodes.size();
+    ValueFlowPositionCounts counts(nullptr);
+
+    struct Node {
+        ValueID operation;
+        uint32_t ordinal;
+        LayoutID layout;
+        BuiltinClassID builtinClass;
+        AllocationClassID classOfLayout;
+        OptionSet<ObjectMutation> markedMutations;
+        bool neverChanges;
+        TypeID elements;
+        TypeID type;
+        ArrayStorage arrayStorage { ArrayStorage::Other };
+    };
+    const ParallelLoops& loops = inputs.loops();
+    Vector<uint32_t> functions = findIndicesInParallel(loops, program.functions.size(), [&](unsigned index) {
+        return inputs.isReached(FunctionID(index)) && std::ranges::any_of(inputs.bodies().statementsOf(index), [](const ValueFlowStatement& statement) {
+            return statement.kind == ValueFlowStatementKind::Operation && statement.opcode == Opcode::Data;
+        });
+    });
+    TypeInterningPhase phase(types, functions.size());
+    Vector<Vector<Node>> nodesOfFunction(functions.size());
+    forEachIndexInParallel(loops, functions.size(), [&](unsigned task) {
+        uint32_t index = functions[task];
+        const Function& function = program.functions[index];
+        TypeArena arena(phase, task);
+        std::optional<ValueFlowPositions> positions;
+        for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(index)) {
+            if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::Data)
+                continue;
+            forEachDataNodeInPreorder(program.at(function.at(statement.site).data()).root, [&](uint32_t ordinal, const DataNode& dataNode) {
+                if (!dataNode.is<DataNode::Array>() && !dataNode.is<DataNode::Object>())
+                    return;
+                ValueFlowObjectID object = universe.siteObject(statement, ordinal);
+                RELEASE_ASSERT(object);
+                const ValueFlowSite& site = *universe.siteOf(object);
+                Node node { statement.site, ordinal, site.layout, site.builtinClass, { }, { }, false, { }, { } };
+                if (site.layout) {
+                    const Vector<AllocationClassID>& classes = application.layouts[site.layout.index()].flow.allocationClasses;
+                    if (!classes.isEmpty())
+                        node.classOfLayout = classes[0];
+                } else {
+                    node.markedMutations = markedMutationsOf(inputs, object);
+                    node.neverChanges = neverChangesOnceMade(inputs, object);
+                    const ValueFlowContainerFacts* facts = containers.find(object);
+                    if (facts && indexOfElements < facts->contents.size() && facts->contents[indexOfElements] != TypeTable::never)
+                        node.elements = facts->contents[indexOfElements];
+                    if (facts)
+                        node.arrayStorage = facts->arrayStorageToldToCreator;
+                    if (facts && ordinal && (facts->contentsAreProven || !facts->pristine.isEmpty())) {
+                        if (!positions)
+                            positions.emplace(inputs, arena, counts, index);
+                        node.type = arena.intern(positions->typeOfObject(object));
+                    }
+                }
+                nodesOfFunction[task].append(node);
+            });
+        }
+    });
+
+    auto classOfArray = [&](const Node& node) -> AllocationClassID& {
+        return classesOfArrays[node.markedMutations.contains(ObjectMutation::StoreAfterCreation)];
+    };
+    Vector<uint32_t> firstSiteOfFunction;
+    firstSiteOfFunction.reserveInitialCapacity(functions.size());
+    uint32_t numberOfSites = static_cast<uint32_t>(numberOfOtherSites);
+    for (const Vector<Node>& nodes : nodesOfFunction) {
+        firstSiteOfFunction.append(numberOfSites);
+        for (const Node& node : nodes) {
+            uint32_t site = numberOfSites++;
+            if (node.layout)
+                continue;
+            AllocationClassID& classOfArrays = classOfArray(node);
+            if (!classOfArrays) {
+                classOfArrays = AllocationClassID(tables.sites.allocationClasses.size());
+                AllocationClass arrays;
+                arrays.builtinClass = BuiltinClasses::Array;
+                arrays.impossibleMutations = allObjectMutations - mutationsOfArraysWithoutMark;
+                tables.sites.allocationClasses.append(WTF::move(arrays));
+            }
+            tables.sites.allocationClasses[classOfArrays.index()].impossibleMutations.remove(node.markedMutations);
+            if (node.neverChanges && inputs.build.isEnabled(FlowResultKind::HolderMutations, node.builtinClass.index()))
+                tables.sites.sitesOfObjectsThatNeverChange.set(site);
+        }
+    }
+    tables.sites.allocationSites.grow(numberOfSites);
+    tables.sites.dataNodes.grow(numberOfOtherNodes + (numberOfSites - numberOfOtherSites));
+    TypeRemap remap = phase.finish(StringRemap { }, &loops);
+    forEachIndexInParallel(loops, functions.size(), [&](unsigned task) {
+        uint32_t index = functions[task];
+        const Function& function = program.functions[index];
+        Vector<FlowAllocationStamp>& stamps = application.bodies[index].allocations;
+        size_t numberOfOtherStamps = stamps.size();
+        uint32_t nextSite = firstSiteOfFunction[task];
+        ValueID operation;
+        AllocationSiteID rootSite;
+        for (const Node& node : nodesOfFunction[task]) {
+            if (node.operation != operation) {
+                operation = node.operation;
+                rootSite = { };
+            }
+            FlowDataNodeStamp stamp { AllocationSiteID(nextSite++), node.layout ? node.classOfLayout : classOfArray(node), node.elements, node.arrayStorage, node.type };
+            remap.apply(stamp.type);
+            tables.sites.allocationSites[stamp.site.index()] = AllocationSite { FunctionID(index), node.layout, node.builtinClass, stamp.allocationClass, function.locationOf(node.operation) };
+            if (!node.ordinal) {
+                rootSite = stamp.site;
+                stamps.append(FlowAllocationStamp { .value = node.operation, .site = rootSite, .allocationClass = stamp.allocationClass });
+            }
+            tables.sites.dataNodes[numberOfOtherNodes + (stamp.site.index() - numberOfOtherSites)] = { rootSite, node.ordinal, stamp };
+        }
+        if (stamps.size() != numberOfOtherStamps)
+            AOT::sort(stamps, { }, &FlowAllocationStamp::value);
+    });
+
+    for (AllocationClassID classOfArrays : classesOfArrays) {
+        if (!classOfArrays)
+            continue;
+        AllocationClass& arrays = tables.sites.allocationClasses[classOfArrays.index()];
+        if (!inputs.build.isEnabled(FlowResultKind::HolderMutations, BuiltinClasses::Array.index()))
+            arrays.impossibleMutations = { };
+        inputs.build.statistics().count(StatisticID::FlowAllocationClasses, 1);
+    }
+    inputs.build.statistics().count(StatisticID::FlowAllocationSites, tables.sites.allocationSites.size() - numberOfOtherSites);
 }
 
 } } } // namespace JSC::AOT::Typed

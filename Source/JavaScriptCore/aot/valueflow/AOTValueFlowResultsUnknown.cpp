@@ -14,8 +14,6 @@
 #include "AOTFlowStamps.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
-#include "AOTVector.h"
-#include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -79,15 +77,9 @@ static void fillApplication(const Program& program, BuildContext& build, FlowApp
 {
     application.functionCountAsRead = program.functions.size();
     runTasksInParallel(build.parallelLoops(), {
-        [&] {
-            application.bodies = Vector<FlowBodyUpdate>(program.functions.size());
-        },
-        [&] {
-            application.accessSites = numberAccessSites(program, build);
-        },
-        [&] {
-            application.signatures = Vector<FlowSignatureUpdate>(program.functions.size());
-        },
+        [&] { application.bodies = Vector<FlowBodyUpdate>(program.functions.size()); },
+        [&] { application.accessSites = numberAccessSites(program, build); },
+        [&] { application.signatures = Vector<FlowSignatureUpdate>(program.functions.size()); },
         [&] {
             application.layouts = Vector<FlowLayoutUpdate>(program.layouts.size());
             forEachIndexInParallel(build.parallelLoops(), program.layouts.size(), [&](unsigned index) {
@@ -108,27 +100,6 @@ static void fillApplication(const Program& program, BuildContext& build, FlowApp
     });
 }
 
-static Vector<BuiltinUseRecord> listEveryUseOfEveryBuiltin(const BuiltinTable& builtins)
-{
-    return Vector<BuiltinUseRecord>(builtins.builtinCount(), [](size_t index) {
-        return BuiltinUseRecord { static_cast<uint32_t>(index), static_cast<BuiltinUse>(everyFlagOf<BuiltinUse>().toRaw()), noWitness };
-    });
-}
-
-static Vector<FeatureUseRecord> listEveryFeatureOfBuiltins(const BuiltinTable& builtins)
-{
-    Vector<uint32_t> features;
-    for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
-        for (const BuiltinFeatureUse& line : builtins.featureUsesOf(BuiltinID(index)))
-            features.append(static_cast<uint32_t>(line.feature));
-    }
-    AOT::sort(features);
-    removeRepeatedElements(features);
-    return features.map([](uint32_t feature) {
-        return FeatureUseRecord { .feature = feature };
-    });
-}
-
 FlowResultTables createUnknownResultTables(const Program& program, BuildContext& build)
 {
     FlowResultTables tables;
@@ -136,23 +107,28 @@ FlowResultTables createUnknownResultTables(const Program& program, BuildContext&
     tables.application = std::unique_ptr<FlowApplication, FlowApplicationDeleter>(new FlowApplication);
     tables.functions.functionCountAsRead = program.functions.size();
     runTasksInParallel(build.parallelLoops(), {
-        [&] {
-            fillApplication(program, build, *tables.application);
-        },
-        [&] {
-            tables.functions.functions = Vector<FunctionFlow>(program.functions.size());
-        },
-        [&] {
-            tables.functions.parameterSummaries = Vector<Vector<OperandSummary>>(program.functions.size());
-        },
+        [&] { fillApplication(program, build, *tables.application); },
+        [&] { tables.functions.functions = Vector<FunctionFlow>(program.functions.size()); },
+        [&] { tables.functions.parameterSummaries = Vector<Vector<OperandSummary>>(program.functions.size()); },
     });
     fillAccessSites(program, tables.application->accessSites, build.parallelLoops(), tables.sites);
 
-    tables.builtins.uses = listEveryUseOfEveryBuiltin(program.builtins());
-    tables.builtins.featureUses = listEveryFeatureOfBuiltins(program.builtins());
+    const BuiltinTable& builtins = program.builtins();
+    tables.builtins.uses = Vector<BuiltinUseRecord>(builtins.builtinCount(), [](size_t index) {
+        return BuiltinUseRecord { static_cast<uint32_t>(index), static_cast<BuiltinUse>(everyFlagOf<BuiltinUse>().toRaw()), noWitness };
+    });
+    Vector<uint32_t> features;
+    for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
+        for (const BuiltinFeatureUse& line : builtins.featureUsesOf(BuiltinID(index)))
+            features.append(static_cast<uint32_t>(line.feature));
+    }
+    AOT::sort(features);
+    removeRepeatedElements(features);
+    tables.builtins.featureUses = features.map([](uint32_t feature) {
+        return FeatureUseRecord { .feature = feature };
+    });
     tables.builtins.localeUses.append(FlowLocaleUse { });
     tables.wholeProgram.modules = Vector<ModuleFlow>(program.modules.size());
-    // The one cause that opens the whole program: text is evaluated, modules are loaded by name, the loader's answers are replaced. The tables stay as they are only in a build with such an option.
     tables.wholeProgram.unseenCode.append(UnseenCodeRecord { .cause = UnseenCodeCause::OptionAdmitsCode });
     return tables;
 }

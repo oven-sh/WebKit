@@ -19,13 +19,12 @@ function f0 name="holder" captures=[{type=env L0}] parameters=[{type=number}, {t
     PutEnvironmentField v3, v6 layout=L1 field=2
     v8 = CallDirect v3, v0, v1 function=f2
     Return v8
-}
-# CHECK-LABEL: function f0 name="holder"
 # CHECK-NOT: NewClosure
 # CHECK: [[scope]]: env L1 = NewObject -, v1 layout=L1 fields=[0]
 # CHECK-NEXT: PutEnvironmentField [[scope]], v0 layout=L1 field=3
 # CHECK-NEXT: PutEnvironmentField [[scope]], v2 layout=L1 field=4
 # CHECK-NEXT: = CallDirect [[scope]], v0, v1 function=f2
+}
 
 function f1 name="first" captures=[{type=env L0}, {type=env L1}, {type=string}] parameters=[{type=number}] results=[{type=anything}] {
   b0(v0: env L0, v1: env L1, v2: string, v3: number):
@@ -64,8 +63,6 @@ function f2 name="second" captures=[{type=env L1}, {type=env L0}] parameters=[{t
     Return v18
   b5():
     Return v13
-}
-# CHECK-LABEL: function f2 name="second"
 # CHECK-NOT: GetCapture
 # CHECK-NOT: field=1
 # CHECK-NOT: field=2
@@ -74,9 +71,9 @@ function f2 name="second" captures=[{type=env L1}, {type=env L0}] parameters=[{t
 # CHECK-NEXT: [[text]]: string = GetEnvironmentField [[reached]] layout=L1 field=4
 # CHECK-NEXT: = CallDirect [[outer]], [[reached]], [[text]], {{*}} function=f1
 # CHECK: = CallDirect v0, {{*}} function=f2
+}
 
 function f3 name="environmentThroughParameter" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = NewObject -, v0 layout=L2 fields=[0]
@@ -91,12 +88,11 @@ function f3 name="environmentThroughParameter" parameters=[{type=number}, {type=
     PutEnvironmentField v5, v7 layout=L2 field=1
     v9 = CallDirect v5, v6 function=f4
     Return v9
-}
-# CHECK-LABEL: function f3 name="environmentThroughParameter"
 # CHECK: [[merged]]: env L2):
 # CHECK-NEXT: [[double]]: number = Add v0, v0
 # CHECK-NEXT: PutEnvironmentField [[merged]], [[double]] layout=L2 field=2
 # CHECK-NEXT: = CallDirect [[merged]], [[double]] function=f4
+}
 
 function f4 name="inner" captures=[{type=env L2}, {type=number}] results=[{type=anything}] {
   b0(v0: env L2, v1: number):
@@ -113,15 +109,13 @@ function f4 name="inner" captures=[{type=env L2}, {type=number}] results=[{type=
     Return v9
   b2():
     Return v2
-}
 # What it would read there for a call of itself it was given itself (read-captures-from-environments-own-captures.ir).
-# CHECK-LABEL: function f4 name="inner"
 # CHECK-NOT: GetCapture
 # CHECK-NOT: field=2
 # CHECK: = CallDirect v0, v1 function=f4
+}
 
 function f5 name="filledOnTwoPaths" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean):
     v2 = NewObject layout=L3
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -139,13 +133,12 @@ function f5 name="filledOnTwoPaths" parameters=[{type=number}, {type=boolean}] r
     v10 = GetCapture v8 function=f6 index=1
     v11 = CallDirect v9, v10 function=f6
     Return v11
-}
-# CHECK-LABEL: function f5 name="filledOnTwoPaths"
 # CHECK-NOT: NewClosure
 # CHECK: PutEnvironmentField v2, v0 layout=L3 field=1
 # CHECK: PutEnvironmentField v2, {{*}} layout=L3 field=1
 # CHECK-NOT: GetCapture
 # CHECK: = CallDirect v2, {{*}} function=f6
+}
 
 function f6 name="inner" captures=[{type=env L3}, {type=number}] results=[{type=anything}] {
   b0(v0: env L3, v1: number):

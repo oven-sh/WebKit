@@ -41,10 +41,9 @@ function f0 name="skipsNames" parameters=[{type=object}, {type=object}] results=
     Jump -> next b1(v11)
   b6():
     Return
-}
-# CHECK-LABEL: function f0 name="skipsNames"
 # CHECK: = ShapeTest v0 layouts=[L0]
 # CHECK: = String string="charlie"
+}
 
 function f1 name="skipsValues" parameters=[{type=object}, {type=object}] results=[{type=undefined}] {
   b0(v0: object ~ L0, v1: object):
@@ -78,6 +77,5 @@ function f1 name="skipsValues" parameters=[{type=object}, {type=object}] results
     Jump -> next b1(v11)
   b6():
     Return
-}
-# CHECK-LABEL: function f1 name="skipsValues"
 # CHECK-NOT: = ShapeTest
+}

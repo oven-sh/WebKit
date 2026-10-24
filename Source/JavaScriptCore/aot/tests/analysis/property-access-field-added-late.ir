@@ -13,19 +13,16 @@ layout L1 kind=Instance name="Bound" constructor=f4 fields=[{key="run" declared=
 function f0 name="Response" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
 
 function f1 name="store-to-a-field-added-late" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     PropSet v0, v1 key="late"
     Return
 }
 # CHECK: F1 v2 PropSet [[late]]: form=Slot level=Expected operation=PutSlotOrAdd receivers=[L0] proofs=[NoFieldOutsideSlot, NotFrozen, PrototypeLinkUnchanged] conditions=[MemberUnchanged(L0, Prototype, [[late]]), PrototypeLinkUnchanged(L0, Prototype)] storedValueFits missPath member=(Field level=Proven holder=L0 field=1)
 function f2 name="read-of-a-field-added-late" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="late"
     Return v1
 }
 # CHECK-NEXT: F2 v1 PropGet [[late]]: form=Slot level=Expected operation=GetSlotOrUndefined receivers=[L0] proofs=[NoFieldOutsideSlot, PrototypeLinkUnchanged] conditions=[MemberUnchanged(L0, Prototype, [[late]]), PrototypeLinkUnchanged(L0, Prototype)] missPath member=(Field level=Proven holder=L0 field=1)
 function f3 name="read-of-a-declared-field" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="declared"
     Return v1
 }
@@ -33,7 +30,6 @@ function f3 name="read-of-a-declared-field" parameters=[{type=L0}] results=[{typ
 function f4 name="Bound" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
 function f5 name="run" kind=Method flags=[HasThis] results=[{type=anything}]
 function f6 name="read-of-a-field-added-late-over-a-method" parameters=[{type=L1}] results=[{type=anything}] {
-  b0(v0: L1):
     v1 = PropGet v0 key="run"
     Return v1
 }

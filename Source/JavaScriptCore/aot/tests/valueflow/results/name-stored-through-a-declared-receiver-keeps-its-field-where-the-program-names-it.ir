@@ -16,7 +16,6 @@ layout L1 name="Made1" fields=[{key="flags" declared={type=number}}, {key="own1"
 layout L2 name="Made2" fields=[{key="flags" declared={type=number}}, {key="own2" declared={type=number}}] supertypes=[L3]
 layout L3 name="Markable" fields=[{key="flags" declared={type=number} flags=[IsRequired]}, {key="marked" declared={type=number}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewObject -, v0 layout=L1 fields=[0]

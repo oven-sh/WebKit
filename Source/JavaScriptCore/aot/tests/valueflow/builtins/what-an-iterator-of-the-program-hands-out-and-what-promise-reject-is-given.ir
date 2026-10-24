@@ -18,7 +18,6 @@ layout L5 name="Step" fields=[{key="done" declared={type=anything} flags=[IsRequ
 layout L6 kind=Environment name="scope" fields=[{key="pair" declared={type=anything}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f4
     v1 = NewClass v0 layout=L0
     v2 = NewClosure function=f5
@@ -52,7 +51,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v14
 }
 function f1 name="once" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L6 fields=[0]
     v2 = NewObject layout=L3
     v3 = NewClosure v1 function=f2
@@ -75,35 +73,29 @@ function f3 name="next" captures=[{type=env L6}] results=[{type=anything}] {
     Return v5
 }
 function f4 name="Mapped" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0 fields=[]
     Return v2
 }
 function f5 name="double" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=4
     Return v1
 }
 function f6 name="Rejected" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L1
     v2 = NewObject v1 layout=L1 fields=[]
     Return v2
 }
 function f7 name="double" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=4
     Return v1
 }
 function f8 name="Kept" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L2
     v2 = NewObject v1 layout=L2 fields=[]
     Return v2
 }
 function f9 name="double" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=4
     Return v1
 }

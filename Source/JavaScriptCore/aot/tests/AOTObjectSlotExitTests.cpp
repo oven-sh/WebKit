@@ -38,7 +38,6 @@ variable g0 name="deletable" module=m0 declared={type=anything} initialization=U
 module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -49,13 +48,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="makeMutable" parameters=[{type=number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: string, v2: anything, v3: boolean):
     v4 = NewObject -, v0, v1, v2, v3 layout=L0 fields=[0, 1, 2, 3]
     v5 = FinishObject v4
     Return v5
 }
 function f2 name="mutate" parameters=[{type=anything}, {type=string}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: string, v2: anything):
     ElemSet v0, v1, v2
     v4 = ElemDelete v0, v1
     v5 = Builtin builtin=ObjectFreeze
@@ -63,7 +60,6 @@ function f2 name="mutate" parameters=[{type=anything}, {type=string}, {type=anyt
     Return
 }
 function f3 name="useDeletable" results=[{type=anything}] {
-  b0():
     v0 = Double number=1.5
     v1 = String string="text"
     v2 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
@@ -78,7 +74,6 @@ function f3 name="useDeletable" results=[{type=anything}] {
     Return v10
 }
 function f4 name="makeBag" results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L2 fields=[]
     v1 = FinishObject v0
     Return v1
@@ -92,7 +87,6 @@ variable g1 name="extensible" module=m0 declared={type=anything} initialization=
 module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -101,7 +95,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="useExtensible" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Double number=1.5
     v3 = String string="text"
     v4 = Boolean boolean=true
@@ -119,7 +112,6 @@ function f1 name="useExtensible" parameters=[{type=anything}, {type=anything}] r
     Return v15
 }
 function f2 name="useClosed" results=[{type=anything}] {
-  b0():
     v0 = Double number=1.5
     v1 = String string="text"
     v2 = NewObject -, v0, v1 layout=L1 fields=[0, 1]

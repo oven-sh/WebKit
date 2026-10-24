@@ -90,9 +90,7 @@ class FunctionAnalyses {
     WTF_MAKE_NONCOPYABLE(FunctionAnalyses);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(FunctionAnalyses);
 public:
-    // Of a function that nobody edits while this lives, or whose edits this is told of as before there was a log. Other threads may read the function meanwhile.
     FunctionAnalyses(const AnalysisContext&, const Function&);
-    // Of a function that this thread may edit. It gets a log for as long as this lives, unless it has one.
     FunctionAnalyses(const AnalysisContext&, Function&);
     ~FunctionAnalyses();
 
@@ -112,9 +110,7 @@ public:
     NaturalLoops& naturalLoops() LIFETIME_BOUND;
     const BlockCycles& blockCycles() LIFETIME_BOUND;
     const UseLists& useLists() LIFETIME_BOUND;
-    // The lists that are held, for whoever tells them which blocks it has changed (UseLists::didChangeBlock() and its neighbors).
     UseLists* updatingUseLists() LIFETIME_BOUND;
-    // For a stretch of a pass that is not known to tell of every change: while this holds, whoever edits the function does.
     void setEveryChangeIsReported(bool isReported) { m_everyChangeIsReported = isReported; }
     const ValueIdentities& identities() LIFETIME_BOUND;
     const Liveness& liveness() LIFETIME_BOUND;
@@ -123,15 +119,13 @@ public:
     const UseEffectHistory& escapeHistory() LIFETIME_BOUND;
     const BlockFrequencies& blockFrequencies() LIFETIME_BOUND;
     const GuardAvailability& guards() LIFETIME_BOUND;
-    // Of all values, listed in a block or not. A sweep that looks for an operation has nothing to find where its opcode is missing.
     const OpcodeSet& opcodesOfValues() LIFETIME_BOUND;
-    // Where there is none, no guard proves an object pristine, and nobody needs guards() to know it.
     bool hasPristineTest() { return opcodesOfValues().contains(Opcode::IsPristine); }
     const InductionVariables& inductionVariables() LIFETIME_BOUND;
 
-    const EffectsOnEdges& effectsOf(ValueID) LIFETIME_BOUND;
-    const EffectsOnEdges& effectsOfTerminator(BlockID) LIFETIME_BOUND;
-    EffectTraitsOnEdges effectTraitsOfTerminator(BlockID);
+    const EffectsOnEdges& effectsOf(ValueID id) LIFETIME_BOUND { return effectsCache().of(id); }
+    const EffectsOnEdges& effectsOfTerminator(BlockID block) LIFETIME_BOUND { return effectsCache().ofTerminator(block); }
+    EffectTraitsOnEdges effectTraitsOfTerminator(BlockID block) { return effectsCache().traitsOfTerminator(block); }
     bool mayThrow(ValueID id) { return answerFromTraits<&EffectTraits::mayThrow, &EffectTraitsOnEdges::normal>(id); }
     bool maySuspend(ValueID id) { return answerFromTraits<&EffectTraits::maySuspend, &EffectTraitsOnEdges::normal>(id); }
     bool mayCallUnknownCode(ValueID id) { return answerFromTraits<&EffectTraits::mayCallUnknownCode, &EffectTraitsOnEdges::normal>(id); }
@@ -144,14 +138,12 @@ public:
 
     const GuardFacts& guardFacts(ValueID guard) LIFETIME_BOUND { return guards().factsOf(guard); }
     GuardState guardStateAt(ValueID guard, const Use&);
-    bool isGuardAvailable(ValueID guard, ValueID user);
     bool isGuardAvailable(ValueID guard, ProgramPoint point) { return guards().stateAt(guard, point) == GuardState::Available; }
-    // Of whoever runs passes on the function, for all who type single values of it. Null where nobody keeps one.
     TypingMemo* typingMemo() const { return m_typingMemo; }
     void setTypingMemo(TypingMemo* memo) { m_typingMemo = memo; }
 
-    EarlierTest findEarlierTest(const Value& test, BlockID at);
-    bool hasFailedTestOf(ValueID);
+    EarlierTest findEarlierTest(const Value& test, BlockID at) { return failedTests().find(test, at); }
+    bool hasFailedTestOf(ValueID value) { return failedTests().hasTestOf(value); }
 
     ExecutionCount executionCountOf(BlockID);
     bool isInCycle(BlockID block) { return cfg().hasCycle() && blockCycles().isInCycle(block); }
@@ -161,34 +153,25 @@ public:
     ValueID definitionThroughUpcasts(ValueID id) const { return Typed::definitionThroughUpcasts(m_function, id); }
 
     bool dominates(ValueID definition, ProgramPoint);
-    bool dominates(ValueID definition, const Use&);
+    bool dominates(ValueID definition, const Use& use) { return dominates(definition, useLists().pointOf(use)); }
     bool dominates(Edge, BlockID);
 
     template<typename Problem> Vector<std::optional<typename Problem::State>> solveForward(Problem&);
 
-    void invalidate(AnalysisSet);
+    void invalidate(AnalysisSet requested) { invalidate(requested, { }); }
     AnalysisSet computed() const;
     void didChangeValues() { invalidate(valueAnalyses); }
     void didChangeTypes() { invalidate(valueAnalyses - analysesThatReadNoTypes); }
-    // As didChangeTypes(), from whoever has changed types and expected types alone, and no payload.
     void didRetypeValues();
     void didChangeControlFlow() { invalidate(allAnalyses); }
 
-    // Edits that say what they have touched.
     void didAddDetachedValue(ValueID);
-    // Values that stood in no list stand in the list of the block.
-    void didListValues(BlockID, std::span<const ValueID>);
-    // The values have left the list of the block. Until the pass is through with its other blocks, a value that is still listed there may use one of them.
+    void didListValues(BlockID block, std::span<const ValueID>) { didChangeBlock(block); }
     void didEraseValues(BlockID, std::span<const ValueID> erased);
-    // The parameters of the block, its subject, the arguments for its handler, its list of values, an operand of one of those or of its terminator, or what its terminator passes along an edge.
     void didChangeBlock(BlockID);
-    // Every use of the one value names the other.
     void didReplaceUses(ValueID from, ValueID to);
-    // Types, payloads or flags. Nothing that didChangeBlock() lists.
     void didChangeValuesButNotUses();
-    // Blocks or edges were added, removed or redirected. The blocks are those that were there before and of which something changed that didChangeBlock() lists.
     void didChangeControlFlow(std::span<const BlockID> changedBlocks);
-    // compactFunction() has moved blocks and values, and has changed nothing else of what it kept.
     void didRenumber(const Renumbering&);
 
     void verifyCached();
@@ -196,32 +179,25 @@ public:
     void setRunningPass(PassID pass)
     {
         m_runningPass = pass;
-        if (m_values.useLists)
-            m_values.useLists->endSilence();
         if (m_values.identities && !m_values.identities->isComplete())
             completeIdentitiesBeforePass();
     }
-    // Behind a run that has changed the function, where the row of the pass names the use lists, whether the pass has kept them or not.
     void didRunPass()
     {
-        if (!m_values.useLists)
-            return;
-        m_values.useLists->didOutliveDrop();
-        m_values.didDropBesideUseLists = true;
+        if (m_values.useLists)
+            m_values.didDropBesideUseLists = true;
     }
     static void logBuilds();
 
     std::span<const Edge> edgesFromUnreachableBlocks() LIFETIME_BOUND;
     bool isEnteredFromUnreachableBlock(BlockID);
-    bool hasSingleIncomingEdge(BlockID);
+    bool hasSingleIncomingEdge(BlockID block) { return cfg().singleIncomingEdge(block) && !isEnteredFromUnreachableBlock(block); }
 
 private:
+    void invalidate(AnalysisSet requested, AnalysisSet broughtUpToDate);
     friend class EscapeAnalysis;
 
-    static Vector<Edge> collectEdgesFromUnreachableBlocks(const Function&, const CFG&);
-
     EffectsCache& effectsCache();
-    EffectTraitsOnEdges effectTraitsFromCache(ValueID);
 
     template<bool (EffectTraits::*question)() const, EffectTraits EffectTraitsOnEdges::*edge>
     bool answerFromTraits(ValueID id)
@@ -230,9 +206,8 @@ private:
         bool answer = (bounds.atLeast.*question)();
         if (answer == (bounds.atMost.*question)())
             return answer;
-        return (effectTraitsFromCache(id).*edge.*question)();
+        return (effectsCache().traitsOf(id).*edge.*question)();
     }
-    // The solve may come long behind escape().
     EscapeAnalysisInputs inputsOfEscapeAnalysis();
     const FailedTests& failedTests();
 
@@ -248,10 +223,8 @@ private:
 
     struct ValueResults {
         size_t numberOfValues { 0 };
-        // False from where all of them were dropped to where one is asked for: to drop them again is to do nothing.
         bool mayHoldResults { false };
         std::optional<UseLists> useLists;
-        // Somebody has said that the function has changed, and the lists were left as they were. A checking build compares them when they are next asked for.
         bool didDropBesideUseLists { false };
         std::optional<ValueIdentities> identities;
         bool didUpdateIdentities { false };
@@ -271,8 +244,8 @@ private:
     void checkBlockCount() const { RELEASE_ASSERT(m_function.blocks.size() == m_controlFlow.numberOfBlocks); }
     void checkValueCount() const { RELEASE_ASSERT(m_function.values.size() == m_values.numberOfValues); }
     void willComputeValueAnalysis();
-    // What was brought up to date stays, whatever it was made from: its writer answers for what it refers to.
-    void invalidate(AnalysisSet requested, AnalysisSet broughtUpToDate);
+    template<typename Result> const Result& valueResult(std::optional<Result>&, const Invocable<void()> auto& make);
+    template<typename... Arguments> AnalysisSet tellUseLists(void (UseLists::*)(Arguments...), std::type_identity_t<Arguments>...);
     void drop(AnalysisSet);
     void dropResultsOfFormerGraph();
     void dropFrequencies();
@@ -291,13 +264,10 @@ private:
     const Function& m_function;
     TypingMemo* m_typingMemo { nullptr };
     ChangeLog m_ownChanges;
-    // Null where the function is only read.
     ChangeLog* m_changes { nullptr };
     Function* m_functionWithOwnChanges { nullptr };
-    // Only constructed when the context has no summaries.
     std::optional<EffectSummaries> m_unknownSummaries;
     const EffectContext m_effectContext;
-    // It outlives a change of the function: see EffectsCache::didChangeFunction().
     EffectsCache m_effects;
     ControlFlowResults m_controlFlow;
     ValueResults m_values;
@@ -307,6 +277,8 @@ private:
     bool m_everyChangeIsReported { false };
     std::array<PassID, numberOfFunctionAnalyses> m_passesThatDropped { };
 };
+
+ASCIILiteral sectionNameOf(FunctionAnalysis);
 
 } } } // namespace JSC::AOT::Typed
 

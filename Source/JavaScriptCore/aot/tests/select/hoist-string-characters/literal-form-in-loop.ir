@@ -17,7 +17,6 @@
 module m0 path="main.js" displayPath="main.js"
 variable g0 name="sink" declared={type=anything} initialization=Undefined
 function f0 name="literal-forms" parameters=[{type=string}, {type=number}] results=[{type=undefined}] {
-  b0(v0: string, v1: number):
     v2 = Integer integer=0
     v3 = Integer integer=1
     Jump -> next b1(v2)

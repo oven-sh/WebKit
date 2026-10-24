@@ -42,39 +42,6 @@ struct SlotRunEmitter::Entry {
 };
 
 struct SlotRunEmitter::Run {
-    Vector<PropertyKeyID, 4> createdKeys() const
-    {
-        Vector<PropertyKeyID, 4> keys;
-        for (const Entry& entry : entries) {
-            if (entry.mayCreate)
-                keys.append(entry.access->key);
-        }
-        return keys;
-    }
-
-    bool isExpectedToCreate() const
-    {
-        return std::ranges::all_of(entries, [](const Entry& entry) {
-            return !entry.mayCreate || entry.isExpectedToCreate;
-        });
-    }
-
-    const Entry* findEntryThatNeedsGranule() const
-    {
-        auto found = std::ranges::find_if(entries, &Entry::needsGranule);
-        return found == entries.end() ? nullptr : &*found;
-    }
-
-    uint64_t granuleBits() const
-    {
-        uint64_t bits = 0;
-        for (const Entry& entry : entries) {
-            if (entry.needsGranule())
-                bits |= granuleBitOf(entry.slot().offset);
-        }
-        return bits;
-    }
-
     std::optional<Vector<uint64_t, 4>> packCreatedSlotKeys() const
     {
         Vector<uint64_t, 4> words;
@@ -109,11 +76,6 @@ static bool isPlacedStore(const FieldAccess& access)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-SlotRunEmitter::SlotRunEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
-
 void SlotRunEmitter::generatePutSlots(const ValueContext& value)
 {
     PayloadListView<PlacedKey> placedKeys = value->placedKeys();
@@ -135,27 +97,25 @@ void SlotRunEmitter::generatePutSlots(const ValueContext& value)
         }
         run.entries.append({ &access, stored[index], placedKey.mayAdd && slotAccess.mayCreateListedField(access), slotAccess.isExpectedToCreate(placedKey.accessSite), needsStorageFor(access.slot, typeOf(stored[index])) });
     }
-    uint64_t granuleBits = run.granuleBits();
+    uint64_t granuleBits = 0;
+    for (const Entry& entry : run.entries) {
+        if (entry.needsGranule())
+            granuleBits |= granuleBitOf(entry.slot().offset);
+    }
     for (Entry& entry : run.entries)
         entry.hasStorage = !entry.slot().isOutOfLine() || granuleBits & granuleBitOf(entry.slot().offset);
-    storeRun(value, in<CellPointer>(value->objectOperand()), run);
-}
 
-void SlotRunEmitter::storeRun(const ValueContext& value, CellPointer cell, const Run& run)
-{
+    CellPointer cell = in<CellPointer>(value->objectOperand());
     SlotEmitter& slots = emitter<SlotEmitter>();
-
-    if (const Entry* entry = run.findEntryThatNeedsGranule()) {
-        uint64_t granuleBits = run.granuleBits();
-        slots.ensureExtensionHolds(value, cell, entry->access->extensionWord, granuleBits, granuleBits | emitter<SlotAccessEmitter>().granuleBitsOfStoresBehind(value, *entry->access), emitter<BarrierEmitter>().barrierOfExtension(value));
-    }
+    if (auto entry = std::ranges::find_if(run.entries, &Entry::needsGranule); entry != run.entries.end())
+        slots.ensureExtensionHolds(value, cell, entry->access->extensionWord, granuleBits, granuleBits | slotAccess.granuleBitsOfStoresBehind(value, *entry->access), emitter<BarrierEmitter>().barrierOfExtension(value));
 
     // The keys are listed first, while the slots still say which fields are missing. No code of the program runs before the stores.
-    std::optional<StateOfNewObject> newObject = emitter<SlotAccessEmitter>().stateOfNewObjectBefore(value, value->objectOperand());
+    std::optional<StateOfNewObject> newObject = slotAccess.stateOfNewObjectBefore(value, value->objectOperand());
     listMissingFields(value, cell, run, newObject);
 
     for (const Entry& entry : run.entries)
-        emitter<SlotAccessEmitter>().markCellIfMarkerReplacesRawValue(cell, *entry.access, entry.value);
+        slotAccess.markCellIfMarkerReplacesRawValue(cell, *entry.access, entry.value);
 
     std::optional<Pointer> extension;
     Vector<const Entry*, 4> storedWhereGranulesAre;
@@ -174,21 +134,21 @@ void SlotRunEmitter::storeRun(const ValueContext& value, CellPointer cell, const
     }
 
     // An object that is filled for the first time has no Extension, and one test says so for all the granules that are then not there.
-    LBasicBlock stored = nullptr;
+    LBasicBlock allStored = nullptr;
     if (newObject && !newObject->mayHaveExtension && !extension)
         storedWhereGranulesAre.shrink(0);
     if (!storedWhereGranulesAre.isEmpty() && !extension && value.shape() != CodeShape::Compact) {
         const PlacedSlot& extensionWord = storedWhereGranulesAre[0]->access->extensionWord;
         LBasicBlock hasExtension = newBlock();
-        stored = newBlock();
-        branch(slots.hasNoExtension(cell, extensionWord), { normalEdge(stored), unlikelyEdge(hasExtension) });
+        allStored = newBlock();
+        branch(slots.hasNoExtension(cell, extensionWord), { normalEdge(allStored), unlikelyEdge(hasExtension) });
         m_out.appendTo(hasExtension);
     }
     for (const Entry* entry : storedWhereGranulesAre)
         slots.storeIfExtensionHolds(cell, entry->slot(), entry->location(), get(entry->value), entry->access->extensionWord);
-    if (stored) {
-        m_out.jump(stored);
-        m_out.appendTo(stored);
+    if (allStored) {
+        m_out.jump(allStored);
+        m_out.appendTo(allStored);
     }
     emitter<BarrierEmitter>().barrierAfterStores(value, cell, value->valuesOperands());
 }
@@ -204,15 +164,18 @@ Condition SlotRunEmitter::isMissing(CellPointer cell, const Entry& entry)
 
 void SlotRunEmitter::listMissingFields(const ValueContext& value, CellPointer cell, const Run& run, const std::optional<StateOfNewObject>& newObject)
 {
-    Vector<PropertyKeyID, 4> createdKeys = run.createdKeys();
+    Vector<PropertyKeyID, 4> createdKeys;
+    bool isExpectedToCreate = true;
+    for (const Entry& entry : run.entries) {
+        if (!entry.mayCreate)
+            continue;
+        createdKeys.append(entry.access->key);
+        isExpectedToCreate &= entry.isExpectedToCreate;
+    }
     if (createdKeys.isEmpty())
         return;
 
     SlotAccessEmitter& slotAccess = emitter<SlotAccessEmitter>();
-    if (std::optional<uint32_t> orderWordAfter = newObject ? slotAccess.orderWordAfterCreating(newObject->orderWord, value->receivers(), createdKeys.span()) : std::nullopt) {
-        slotAccess.storeOrderWord(cell, *orderWordAfter);
-        return;
-    }
     auto listFieldsIfAnyIsMissing = [&] {
         LBasicBlock creates = newBlock();
         LBasicBlock continuation = newBlock();
@@ -234,13 +197,7 @@ void SlotRunEmitter::listMissingFields(const ValueContext& value, CellPointer ce
     };
 
     // The order word alone says that every field of the run is missing, so the slots are tested only where the step does not apply.
-    std::optional<KeyOrderStep> stepTestedFirst;
-    if (run.isExpectedToCreate()) {
-        if (slotAccess.takeRememberedKeyOrderStepFirst(value, cell, value->receivers(), listFieldsIfAnyIsMissing))
-            return;
-        stepTestedFirst = slotAccess.testLikeliestKeyOrderStep(cell, value->receivers(), createdKeys.span());
-    }
-    slotAccess.takeKeyOrderStepOr(cell, stepTestedFirst, listFieldsIfAnyIsMissing);
+    slotAccess.listCreatedFields(value, cell, value->receivers(), createdKeys.span(), newObject, isExpectedToCreate, listFieldsIfAnyIsMissing);
 }
 
 bool SlotRunEmitter::listFieldsInRuntime(const ValueContext& value, CellPointer cell, const Run& run, std::optional<uint32_t> placePlusOne)

@@ -9,14 +9,12 @@ layout L0 kind=Instance name="Class" constructor=f0 flow={baseState=None} classF
 layout L1 name="Counter" fields=[{key="count" declared={type=number flags=[IsExpected]}}]
 function f0 name="Class" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f1 name="readsAroundTheWalk" parameters=[{type=L1}, {type=anything}, {type=f0}] results=[{type=anything}] {
-  b0(v0: L1, v1: anything, v2: f0):
     v3 = PropGet v0 key="count" receivers=[L1]
     v4 = InstanceOf v1, v2
     v5 = PropGet v0 key="count" receivers=[L1]
     v6 = NewArray v3, v4, v5 contents=anything
     Return v6
-}
-# CHECK-LABEL: function f1 name="readsAroundTheWalk"
 # CHECK: = HasInPrototypeChain v1,
 # CHECK: [[again]]: boolean = IsSlotFilled v0 key="count"
 # CHECK-NEXT: Branch [[again]] ->
+}

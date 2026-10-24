@@ -9,7 +9,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 fields=[{key="x" declared={type=anything}}]
 
 function f0 name="inputUnspecifiedOnOnePath" parameters=[{type=number}, {type=boolean}, {type=L0}, {type=anything}, {type=L0}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean, v2: L0, v3: anything, v4: L0):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v2)
@@ -34,7 +33,6 @@ function f0 name="inputUnspecifiedOnOnePath" parameters=[{type=number}, {type=bo
 # CHECK-NOT: CallDirect
 
 function f1 name="inputSpecifiedOnBothPaths" parameters=[{type=number}, {type=boolean}, {type=L0}, {type=anything}, {type=L0}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean, v2: L0, v3: anything, v4: L0):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v2)

@@ -7,96 +7,77 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="provenByType" parameters=[{type=Array<anything, pristine[Names]>}, {type=int[0, 4294967295]}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Names]>, v1: int[0, 4294967295]):
     v2 = ArraySpeciesCreate v1, v0
     Return v2
-}
-# CHECK-LABEL: function f0 name="provenByType"
 # CHECK-NOT: ArraySpeciesCreate
 # CHECK: v2: Array = NewArrayLike v1, v0
+}
 
 function f1 name="noProof" parameters=[{type=Array}, {type=int[0, 4294967295]}] results=[{type=anything}] {
-  b0(v0: Array, v1: int[0, 4294967295]):
     v2 = ArraySpeciesCreate v1, v0
     Return v2
-}
-# CHECK-LABEL: function f1 name="noProof"
 # CHECK-NOT: NewArrayLike
 # CHECK: v2: anything = ArraySpeciesCreate v1, v0
-# TESTED-LABEL: function f1 name="noProof"
 # TESTED: boolean = IsPristine v0 builtinClass=Array aspects=[Names]
 # TESTED: Array = NewArrayLike v1, v0
 # TESTED: frequency=Unlikely:
 # TESTED-NEXT: anything = ArraySpeciesCreate v1, v0
+}
 
 function f2 name="otherAspectProven" parameters=[{type=Array<anything, pristine[Storage]>}, {type=int[0, 4294967295]}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: int[0, 4294967295]):
     v2 = ArraySpeciesCreate v1, v0
     Return v2
-}
-# CHECK-LABEL: function f2 name="otherAspectProven"
 # CHECK-NOT: NewArrayLike
 # CHECK: v2: anything = ArraySpeciesCreate v1, v0
+}
 
 function f3 name="expectedArray" parameters=[{type=Array flags=[IsExpected]}, {type=int[0, 4294967295]}] results=[{type=anything}] {
   b0(v0: anything ~ Array, v1: int[0, 4294967295]):
     v2 = ArraySpeciesCreate v1, v0
     Return v2
-}
-# CHECK-LABEL: function f3 name="expectedArray"
 # CHECK-NOT: NewArrayLike
 # CHECK: v2: anything = ArraySpeciesCreate v1, v0
-# TESTED-LABEL: function f3 name="expectedArray"
 # TESTED: = TypeTest v0 testedType=Array
 # TESTED: Array = NewArrayLike v1, [[array3]]
 # TESTED: frequency=Unlikely:
 # TESTED-NEXT: anything = ArraySpeciesCreate v1, v0
 # TESTED: ([[array3]]: Array):
 # TESTED-NEXT: boolean = IsPristine [[array3]] builtinClass=Array aspects=[Names]
+}
 
 function f4 name="unknownObject" parameters=[{type=object}, {type=int[0, 4294967295]}] results=[{type=anything}] {
-  b0(v0: object, v1: int[0, 4294967295]):
     v2 = ArraySpeciesCreate v1, v0
     Return v2
-}
-# CHECK-LABEL: function f4 name="unknownObject"
 # CHECK-NOT: NewArrayLike
 # CHECK: v2: anything = ArraySpeciesCreate v1, v0
-# TESTED-LABEL: function f4 name="unknownObject"
 # TESTED-NOT: IsPristine
 # TESTED-NOT: NewArrayLike
 # TESTED: v2: anything = ArraySpeciesCreate v1, v0
+}
 
 function f5 name="lengthIsNoInteger" parameters=[{type=Array<anything, pristine[Names]>}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Names]>, v1: number):
     v2 = ArraySpeciesCreate v1, v0
     Return v2
-}
-# CHECK-LABEL: function f5 name="lengthIsNoInteger"
 # CHECK-NOT: NewArrayLike
 # CHECK: v2: anything = ArraySpeciesCreate v1, v0
+}
 
 function f6 name="typedArray" parameters=[{type=Uint8Array}, {type=int[0, 4294967295]}] results=[{type=anything}] {
-  b0(v0: Uint8Array, v1: int[0, 4294967295]):
     v2 = ArraySpeciesCreate v1, v0
     Return v2
-}
-# CHECK-LABEL: function f6 name="typedArray"
 # CHECK-NOT: NewArrayLike
 # CHECK: v2: anything = ArraySpeciesCreate v1, v0
-# TESTED-LABEL: function f6 name="typedArray"
 # TESTED-NOT: NewArrayLike
 # TESTED: v2: anything = ArraySpeciesCreate v1, v0
+}
 
 function f7 name="arrayAmongWhatIsExpected" parameters=[{type=Array|Boolean|Number|String flags=[IsExpected]}, {type=Boolean|Uint8Array flags=[IsExpected]}, {type=int[0, 4294967295]}] results=[{type=anything}] {
   b0(v0: anything ~ Array|Boolean|Number|String, v1: anything ~ Boolean|Uint8Array, v2: int[0, 4294967295]):
     v3 = ArraySpeciesCreate v2, v0
     v4 = ArraySpeciesCreate v2, v1
     Return v3
-}
-# CHECK-LABEL: function f7 name="arrayAmongWhatIsExpected"
 # CHECK-NOT: NewArrayLike
-# TESTED-LABEL: function f7 name="arrayAmongWhatIsExpected"
 # TESTED: = TypeTest v0 testedType=Array
 # TESTED-COUNT-1: Array = NewArrayLike v2,
 # TESTED-NOT: TypeTest v1
+}

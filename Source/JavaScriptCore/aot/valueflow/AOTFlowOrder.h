@@ -11,10 +11,7 @@
 #include "AOTFlowIDs.h"
 #include "AOTVector.h"
 #include <optional>
-#include <span>
-#include <utility>
 #include <wtf/BitVector.h>
-#include <wtf/Forward.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -45,22 +42,13 @@ struct FlowOrderInputs {
     BitVector reachedFunctions;
     BitVector evaluatedModules;
     BitVector modulesLoadedByName;
-    Vector<ModuleID> modulesLoadedByHost;
+    BitVector modulesLoadedByHost;
     Vector<FlowModuleLoad> moduleLoads;
     Vector<FlowCall> calls;
     Vector<FlowStaticFieldAccess> staticFieldAccesses;
     BitVector staticFieldsOfEscapedClasses;
 
-    FunctionID host() const;
-};
-
-Vector<ModuleID> indexRuntimeModules(const Program&);
-Vector<ModuleID> indexModuleBodies(const Program&);
-RuntimeModuleID findCompiledModuleWithObject(const Program&, BuiltinID);
-
-enum class FlowModuleOrdering : uint8_t {
-    Unknown,
-    CompletesBefore,
+    FunctionID host() const { return FunctionID(program.functions.size()); }
 };
 
 struct FlowModuleOrder {
@@ -68,25 +56,11 @@ struct FlowModuleOrder {
     BitVector modulesInCycles;
     Vector<BitVector> componentsCompletedBefore;
 
-    FlowModuleOrdering orderingOf(ModuleID first, ModuleID second) const;
-    bool runsAfterRequests(ModuleID) const;
+    bool completesBefore(ModuleID first, ModuleID second) const;
+    bool runsAfterRequests(ModuleID module) const { return module.index() < componentOf.size() && !modulesInCycles.get(module.index()); }
 };
 
 FlowModuleOrder computeModuleOrder(const FlowOrderInputs&);
-
-enum class FlowScopeEntryState : uint8_t {
-    Unknown,
-    AfterPoint,
-    Never,
-};
-
-struct FlowScopeEntry {
-    FlowScopeEntryState state { FlowScopeEntryState::Unknown };
-    FunctionID function;
-    ProgramPoint point;
-
-    friend bool operator==(const FlowScopeEntry&, const FlowScopeEntry&) = default;
-};
 
 inline bool listsStartOfVar(const Function& function, const Value& allocation, size_t index)
 {
@@ -98,8 +72,6 @@ struct FlowLocationOrder {
     StoreCount stores { StoreCount::Unknown };
     bool undefinedAtStartIsNeverRead { false };
     bool isStoredBeforeCallersOfReaders { false };
-
-    friend bool operator==(const FlowLocationOrder&, const FlowLocationOrder&) = default;
 };
 
 struct FlowScopeLocationNumbering {
@@ -108,7 +80,7 @@ struct FlowScopeLocationNumbering {
 
     uint32_t numberOfLocations() const { return firstField.isEmpty() ? 0 : firstField.last(); }
     bool isOneLocation(uint32_t location) const { return location < numberOfVariables; }
-    std::optional<uint32_t> locationOf(VariableID) const;
+    std::optional<uint32_t> locationOf(VariableID variable) const { return variable.index() < numberOfVariables ? std::optional(variable.index()) : std::nullopt; }
     std::optional<uint32_t> locationOf(LayoutID environment, uint32_t fieldIndex) const;
 };
 
@@ -124,8 +96,9 @@ struct FlowScopeOrders {
     Vector<FlowLocationOrder> orders;
     Vector<FlowReadOfLocation> readsAfterInitialization;
 
-    FlowLocationOrder orderOf(VariableID) const;
-    FlowLocationOrder orderOf(LayoutID environment, uint32_t fieldIndex) const;
+    FlowLocationOrder orderAt(std::optional<uint32_t> location) const { return location ? orders[*location] : FlowLocationOrder { }; }
+    FlowLocationOrder orderOf(VariableID variable) const { return orderAt(numbering.locationOf(variable)); }
+    FlowLocationOrder orderOf(LayoutID environment, uint32_t fieldIndex) const { return orderAt(numbering.locationOf(environment, fieldIndex)); }
 };
 
 FlowScopeOrders computeScopeOrders(const FlowOrderInputs&, const FlowModuleOrder&);

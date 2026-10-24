@@ -11,29 +11,23 @@ layout L1 kind=Instance name="Button" base=L0 constructor=f1 flags=[HasHeritage]
 function f0 name="Widget" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f1 name="Button" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f2 name="describeWidget" kind=Method flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
-  b0(v0: L0):
     Return
 }
 function f3 name="describeButton" kind=Method flags=[HasThis] thisType={type=L1} results=[{type=anything}] {
-  b0(v0: L1):
     Return
 }
 
 function f4 name="receiver-is-a-widget" parameters=[{type=f2|f3}, {type=L0}] results=[{type=anything}] {
-  b0(v0: f2|f3, v1: L0):
     v2 = Call v0, v1
     Return v2
-}
-# CHECK-LABEL: function f4 name="receiver-is-a-widget"
 # CHECK: = CallDirect v1 function=f2
 # CHECK: [[never]]: never = {{*}} v1 castType=L1
 # CHECK-NEXT: Unreachable
 # CHECK-NOT: function=f3
+}
 function f5 name="receiver-is-either" parameters=[{type=f2|f3}, {type=L0|L1}] results=[{type=anything}] {
-  b0(v0: f2|f3, v1: L0|L1):
     v2 = Call v0, v1
     Return v2
-}
-# CHECK-LABEL: function f5 name="receiver-is-either"
 # CHECK: = CallDirect {{*}} function=f2
 # CHECK: = CallDirect {{*}} function=f3
+}

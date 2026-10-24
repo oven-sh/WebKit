@@ -8,7 +8,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="countsUpBelowBound" parameters=[{type=i32}] results=[{type=undefined}] {
-  b0(v0: i32):
     v1 = Integer integer=0
     Jump -> next b1(v1)
   b1(v2):
@@ -21,8 +20,6 @@ function f0 name="countsUpBelowBound" parameters=[{type=i32}] results=[{type=und
     Jump -> next b1(v6)
   b3():
     Return
-}
-# CHECK-LABEL: function f0 name="countsUpBelowBound"
 # CHECK-NEXT: b0(v0: i32):
 # CHECK-NEXT: v1: 0 = Integer
 # CHECK-NEXT: Jump -> next b1(v1)
@@ -37,3 +34,4 @@ function f0 name="countsUpBelowBound" parameters=[{type=i32}] results=[{type=und
 # CHECK-NEXT: b3():
 # CHECK-NEXT: Return
 # CHECK-NEXT: }
+}

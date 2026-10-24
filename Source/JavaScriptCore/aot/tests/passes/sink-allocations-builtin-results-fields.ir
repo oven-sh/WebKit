@@ -7,7 +7,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="descriptorReadByFields" parameters=[{type=object}, {type=string}] results=[{type=anything}] {
-  b0(v0: object, v1: string):
     v2 = CallBuiltin -, v0, v1 overload=ObjectGetOwnPropertyDescriptor/0
     v3 = ToBoolean v2
     Branch v3 -> taken b1(| 0), notTaken b2()
@@ -16,8 +15,6 @@ function f0 name="descriptorReadByFields" parameters=[{type=object}, {type=strin
     Return v5
   b2():
     Return v1
-}
-# CHECK-LABEL: function f0 name="descriptorReadByFields"
 # CHECK: v2:{{*}}= CallBuiltin -, v0, v1 overload=ObjectGetOwnPropertyDescriptor/0 builtinCallForm=Fields
 # CHECK-NEXT: [[flag0]]: boolean = ResultAt v2
 # CHECK: [[shift0]]: number = ToNumber [[flag0]]
@@ -27,12 +24,11 @@ function f0 name="descriptorReadByFields" parameters=[{type=object}, {type=strin
 # CHECK-NOT: NewObject
 # CHECK-NOT: PropGet
 # CHECK: v5:{{*}}= Upcast
+}
 
 function f1 name="descriptorReturned" parameters=[{type=object}, {type=string}] results=[{type=anything}] {
-  b0(v0: object, v1: string):
     v2 = CallBuiltin -, v0, v1 overload=ObjectGetOwnPropertyDescriptor/0
     Return v2
-}
-# CHECK-LABEL: function f1 name="descriptorReturned"
 # CHECK-NOT: builtinCallForm=
 # CHECK: Return v2
+}

@@ -5,12 +5,10 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="bad" parameters=[{type=RegExp}] results=[{type=undefined}] {
-  b0(v0: RegExp):
     v1 = IsPristine v0 builtinClass=RegExp aspects=[Names, AsCreated]
     Return
 }
 function f1 name="good" parameters=[{type=RegExp}] results=[{type=undefined}] {
-  b0(v0: RegExp):
     v1 = IsPristine v0 builtinClass=RegExp aspects=[Names]
     Return
 }

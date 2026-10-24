@@ -11,7 +11,6 @@ entry module=m0
 layout L0 name="Circle" fields=[{key="kind" declared={type="circle"} flags=[IsRequired]}, {key="r" declared={type=number} flags=[IsRequired]}]
 layout L1 name="Square" fields=[{key="kind" declared={type="square"} flags=[IsRequired]}, {key="side" declared={type=number} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Double number=1.5
     v1 = String string="circle"
     v2 = NewObject -, v1, v0 layout=L0 fields=[0, 1]
@@ -23,7 +22,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="area" parameters=[{type=L0|L1}] results=[{type=anything}] {
-  b0(v0: L0|L1):
     v1 = PropGet v0 key="kind"
     SwitchString v1 strings=["circle", "square"] -> case b1(| 0), case b2(| 0), otherwise b3()
   b1(v2):

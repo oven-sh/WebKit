@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="sumOfCodeUnits" parameters=[{type=string}] results=[{type=i32}] {
-  b0(v0: string):
     v1 = Integer
     v2 = Integer
     Jump -> next b1(v1, v2)
@@ -23,16 +22,14 @@ function f0 name="sumOfCodeUnits" parameters=[{type=string}] results=[{type=i32}
     Jump -> next b1(v12, v13)
   b3():
     Return v3
-}
-# CHECK-LABEL: function f0 name="sumOfCodeUnits"
 # CHECK: [[flat]]: flatstring = FlattenString v0
 # CHECK: LoopHint
 # CHECK-NEXT: = GetStringLength [[flat]]
 # CHECK: [[unit]]: int[0, 65535] = GetStringCodeUnit [[flat]], v8
 # CHECK-NEXT: = Add v3, [[unit]] form=Integers
+}
 
 function f1 name="onlyLength" parameters=[{type=string}] results=[{type=i32}] {
-  b0(v0: string):
     v1 = Integer
     Jump -> next b1(v1)
   b1(v2: int[0, 2147483647]):
@@ -45,7 +42,6 @@ function f1 name="onlyLength" parameters=[{type=string}] results=[{type=i32}] {
     Jump -> next b1(v7)
   b3():
     Return v2
-}
-# CHECK-LABEL: function f1 name="onlyLength"
 # CHECK-NOT: FlattenString
 # CHECK: = GetStringLength v0
+}

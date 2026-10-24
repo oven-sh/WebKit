@@ -8,7 +8,6 @@ layout L1 name="ExpectsNumber" fields=[{key="toString" declared={type=number fla
 layout L2 name="HoldsObject" fields=[{key="toString" declared={type=L0} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
 layout L3 name="HoldsMemberOfOpenFamily" fields=[{key="toString" declared={type=L0|nolayout} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
 function f0 name="operands" parameters=[{type=L0}, {type=L1}, {type=L2}, {type=L3}] results=[{type=undefined}] {
-  b0(v0: L0, v1: L1, v2: L2, v3: L3):
     Return
 }
 

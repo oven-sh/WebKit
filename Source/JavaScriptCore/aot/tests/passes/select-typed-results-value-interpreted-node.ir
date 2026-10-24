@@ -13,11 +13,8 @@ layout L1 name="RightNode" fields=[{key="right" declared={type=undefined|object}
 layout L2 name="Holder" fields=[{key="n" declared={type=number}}, {key="tree" declared={type=object}}]
 
 function f0 name="validated" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallBuiltin -, v0 overload=BunBundleValidate/0 expectedResult=x0
     Return v1
-}
-# CHECK-LABEL: function f0 name="validated"
 # CHECK: b0(v0: anything):
 # CHECK-NOT: CallDirect
 # CHECK: [[plan]]:{{*}}= String string="[{\"shape\":\"Union\"
@@ -27,13 +24,11 @@ function f0 name="validated" parameters=[{type=anything}] results=[{type=anythin
 # CHECK-NOT: CallDirect
 # CHECK-NOT: BunBundleValidate
 # CHECK: }
+}
 
 function f1 name="interpretedBelowTheRoot" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallBuiltin -, v0 overload=BunBundleValidate/0 expectedResult=x1
     Return v1
-}
-# CHECK-LABEL: function f1 name="interpretedBelowTheRoot"
 # CHECK: b0(v0: anything):
 # CHECK-NOT: CallDirect
 # CHECK: [[planOfHolder]]:{{*}}= String string="[{\"shape\":\"Object\"
@@ -43,3 +38,4 @@ function f1 name="interpretedBelowTheRoot" parameters=[{type=anything}] results=
 # CHECK-NOT: CallDirect
 # CHECK-NOT: BunBundleValidate
 # CHECK: }
+}

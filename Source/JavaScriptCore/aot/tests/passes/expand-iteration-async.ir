@@ -11,7 +11,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Bag" fields=[{key="x" declared={type=number}}]
 
 function f0 name="forAwait" flags=[IsAsync] parameters=[{type=undefined|null|L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: undefined|null|L0, v1: anything):
     v2 = IteratorOpen v0 iteratorKind=Async
     Jump -> next b1()
   b1():
@@ -37,8 +36,6 @@ function f0 name="forAwait" flags=[IsAsync] parameters=[{type=undefined|null|L0}
     Rethrow v10
   b7():
     Return v1
-}
-# CHECK-LABEL: function f0 name="forAwait"
 # CHECK: b0(v0: undefined|null|L0
 # CHECK-NEXT: [[object0]]: {{*}} = RequireObjectCoercible v0 nullishAccess=Iterate
 # CHECK-NEXT: [[asyncMethod0]]: anything = PropGet [[object0]] key=@@asyncIterator
@@ -94,14 +91,13 @@ function f0 name="forAwait" flags=[IsAsync] parameters=[{type=undefined|null|L0}
 # CHECK-NEXT: [[promise0]]: anything = Call [[next0]], [[iterator0]]
 # CHECK-NEXT: [[result0]]: anything = Await [[promise0]]
 # CHECK-NEXT: = RequireObject [[result0]] runtimeError=IteratorResultNotObject
-# ABSENT-LABEL: function f0 name="forAwait"
 # ABSENT-NOT: testedType=Array
 # ABSENT-NOT: AwaitBySavingFrame
 # ABSENT-COUNT-3: = Await
 # ABSENT-NOT: = Await
+}
 
 function f1 name="syncKindInAsyncFunction" flags=[IsAsync] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -115,17 +111,14 @@ function f1 name="syncKindInAsyncFunction" flags=[IsAsync] parameters=[{type=any
     Jump -> next b1()
   b3():
     Return v1
-}
-# CHECK-LABEL: function f1 name="syncKindInAsyncFunction"
 # CHECK: = TypeTest v0 testedType=Array
-# ABSENT-LABEL: function f1 name="syncKindInAsyncFunction"
 # ABSENT-NOT: @@asyncIterator
 # ABSENT-NOT: CreateAsyncFromSyncIterator
 # ABSENT-COUNT-2: = Await
 # ABSENT-NOT: = Await
+}
 
 function f2 name="returnWithoutMethod" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: function, v1: L0, v2: anything):
     v3 = IteratorOpen v1 iteratorKind=Async
     v4 = IteratorResume v3, v2 iteratorKind=Async resumeMode=Return [readsValueWhenDone]
     v5 = ResultAt v4
@@ -160,7 +153,6 @@ function f3 name="forAwaitInBody" role=CoroutineRamp flags=[IsAsync] parameters=
 # ABSENT-LABEL: function f3 name="forAwaitInBody"
 
 function f4 name="forAwaitInBody" role=CoroutineBody flags=[IsAsync] parameters=[{type=L0}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f3} creator=Coroutine{kind=AsyncFunction ramp=f3 body=f4 entryWithoutPromise=f4 promiseType=Promise promiseParameter=1} {
-  b0(v0: L0, v1: undefined|Promise):
     v2 = IteratorOpen v0 iteratorKind=Async
     Jump -> next b1()
   b1():
@@ -182,8 +174,6 @@ function f4 name="forAwaitInBody" role=CoroutineBody flags=[IsAsync] parameters=
     v10 = Undefined
     v11 = ReturnAsyncResult v1, v10
     Return v11
-}
-# CHECK-LABEL: function f4 name="forAwaitInBody"
 # CHECK: LoopHint
 # CHECK-NEXT: Branch {{*}} -> taken [[steps4]](), notTaken [[calls4]]()
 # CHECK: = PropGet [[iterator4]] key="return"
@@ -197,10 +187,10 @@ function f4 name="forAwaitInBody" role=CoroutineBody flags=[IsAsync] parameters=
 # CHECK-NEXT: [[promise4]]: anything = Call [[next4]], [[iterator4]]
 # CHECK-NEXT: [[result4]]: anything = AwaitBySavingFrame [[promise4]], v1
 # CHECK-NEXT: = RequireObject [[result4]] runtimeError=IteratorResultNotObject
-# ABSENT-LABEL: function f4 name="forAwaitInBody"
 # ABSENT-NOT: = Await v
 # ABSENT-COUNT-2: = AwaitBySavingFrame
 # ABSENT-NOT: = AwaitBySavingFrame
+}
 
 # LEFT-NOT: IteratorOpen
 # LEFT-NOT: IteratorResume

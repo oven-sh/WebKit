@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="range-behind-a-search" parameters=[{type=string}] results=[{type=undefined|string}] {
-  b0(v0: string):
     v1 = Integer integer=2147483647
     v2 = StringLastIndexOfLiteral v0, v1 literal=".d."
     v3 = Integer integer=0
@@ -20,22 +19,19 @@ function f0 name="range-behind-a-search" parameters=[{type=string}] results=[{ty
   b2():
     v10 = Undefined
     Return v10
-}
-# CHECK-LABEL: function f0 name="range-behind-a-search"
 # CHECK-NOT: FlattenString
 # CHECK: = StringLastIndexOfLiteral v0,
 # CHECK-NOT: FlattenString
 # CHECK: = Substring v0,
+}
 
 function f1 name="two-searches" parameters=[{type=string}] results=[{type=int}] {
-  b0(v0: string):
     v1 = Integer integer=2147483647
     v2 = StringLastIndexOfLiteral v0, v1 literal=".d."
     v3 = StringLastIndexOfLiteral v0, v1 literal="/"
     v4 = Add v2, v3
     Return v4
-}
-# CHECK-LABEL: function f1 name="two-searches"
 # CHECK: [[flat]]: flatstring = FlattenString v0
 # CHECK: = StringLastIndexOfLiteral [[flat]],
 # CHECK: = StringLastIndexOfLiteral [[flat]],
+}

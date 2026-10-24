@@ -31,24 +31,19 @@ StringPositions::StringPositions(FunctionAnalyses& analyses)
 {
 }
 
-void StringPositions::collectLengths()
-{
-    const Program& program = m_analyses.context().program;
-    const Function& function = m_analyses.function();
-    for (BlockID block : m_analyses.cfg().reversePostOrder()) {
-        for (ValueID id : function.at(block).values) {
-            if (ValueID string = stringMeasuredBy(program, function, function.at(id)))
-                m_lengthsOfString.ensure(m_analyses.identityOf(string), [] { return Lengths(); }).iterator->value.append(id);
-        }
-    }
-}
-
 bool StringPositions::isInside(ValueID string, ValueID position, BlockID at)
 {
     if (m_relations.isAtLeast(position, 0, at) != IntegerRelations::Answer::Proven)
         return false;
-    if (!std::exchange(m_didCollectLengths, true))
-        collectLengths();
+    if (!std::exchange(m_didCollectLengths, true)) {
+        const Function& function = m_analyses.function();
+        for (BlockID block : m_analyses.cfg().reversePostOrder()) {
+            for (ValueID id : function.at(block).values) {
+                if (ValueID measured = stringMeasuredBy(m_analyses.context().program, function, function.at(id)))
+                    m_lengthsOfString.ensure(m_analyses.identityOf(measured), [] { return Vector<ValueID, 2>(); }).iterator->value.append(id);
+            }
+        }
+    }
 
     auto lengths = m_lengthsOfString.find(m_analyses.identityOf(string));
     if (lengths == m_lengthsOfString.end())

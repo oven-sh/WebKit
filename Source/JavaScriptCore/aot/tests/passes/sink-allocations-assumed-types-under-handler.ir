@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="oneArrayBuiltInCoveredBlock" parameters=[{type=anything}, {type=Array<anything, pristine[Storage]>}, {type=boolean}] results=[{type=Array<anything, pristine[Storage]>}] {
-  b0(v0: anything, v1: Array<anything, pristine[Storage]>, v2: boolean):
     v3 = NewArray v0 contents=anything
     v4 = AssumeType v3 castType=Array<anything, Contiguous, pristine[Storage]>
     Branch v2 -> taken b1(), notTaken b4()
@@ -20,17 +19,15 @@ function f0 name="oneArrayBuiltInCoveredBlock" parameters=[{type=anything}, {typ
     Return v4
   b4():
     Return v1
-}
-# CHECK-LABEL: function f0 name="oneArrayBuiltInCoveredBlock"
 # CHECK: b0(
 # CHECK-NOT: NewArray
 # CHECK: b1() handler=b3(
 # CHECK-NEXT: = NewArray v0 contents=anything
 # CHECK: b4():
 # CHECK-NEXT: Return v1
+}
 
 function f1 name="twoArraysMeetAndAreBuiltInCoveredBlock" parameters=[{type=anything}, {type=Array<anything, pristine[Storage]>}, {type=boolean}, {type=boolean}] results=[{type=Array<anything, pristine[Storage]>}] {
-  b0(v0: anything, v1: Array<anything, pristine[Storage]>, v2: boolean, v3: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v4 = NewArray contents=anything
@@ -52,8 +49,6 @@ function f1 name="twoArraysMeetAndAreBuiltInCoveredBlock" parameters=[{type=anyt
     Return v8
   b7():
     Return v1
-}
-# CHECK-LABEL: function f1 name="twoArraysMeetAndAreBuiltInCoveredBlock"
 # CHECK: b1():
 # CHECK-NOT: NewArray
 # CHECK: b3([[tag1]]: i32, 
@@ -61,3 +56,4 @@ function f1 name="twoArraysMeetAndAreBuiltInCoveredBlock" parameters=[{type=anyt
 # CHECK-NEXT: Switch [[tag1]] cases=[1] -> case
 # CHECK: b7():
 # CHECK-NEXT: Return v1
+}

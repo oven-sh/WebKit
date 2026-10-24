@@ -9,7 +9,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Codec" fields=[{key="encode" declared={type=f0} flow={location={stores=AtMostOnce deferral=CapturesNothing deferredFunction=f0}}}, {key="size" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 
 function f0 name="encode" kind=Method flags=[HasThis, IsChecked] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Return v1
 }
 
@@ -48,7 +47,6 @@ function f2 name="unknownCodeBetweenReadAndCall" flags=[IsChecked] parameters=[{
 # IR: = CallDirect {{*}} function=f0
 
 function f3 name="nothingIsExpectedOfTheReceiver" flags=[IsChecked] parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
     v2 = PropGet v0 key="encode"
     v3: anything ~ builtin(Function) = Upcast v2 castType=anything
     v4 = Call v3, v0, v1 calleeKey="encode"

@@ -16,8 +16,6 @@ function f0 name="expected" parameters=[{type=anything}] results=[{type=anything
   b0(v0: anything ~ L0):
     v1 = CopyObject v0
     Return v1
-}
-# CHECK-LABEL: function f0 name="expected"
 # CHECK: [[done0]](v1: object):
 # CHECK-NEXT: Return v1
 # CHECK: frequency=Rare:
@@ -34,14 +32,12 @@ function f0 name="expected" parameters=[{type=anything}] results=[{type=anything
 # CHECK-NEXT: [[xB]]: {{*}} = GetSlot {{*}} key="x" receivers=[L0] level=Expected
 # CHECK-NEXT: [[copyB]]: L0 = NewObject -, [[yB]], [[xB]] layout=L0 fields=[1, 0]
 # CHECK-NEXT: Jump -> next [[done0]]([[copyB]])
+}
 
 function f1 name="provenWithOneOrder" parameters=[{type=L1}] results=[{type=anything}] {
-  b0(v0: L1):
     v1 = CopyObject v0
     Return v1
-}
 # A field that is set once, at creation, is set once in the copy too.
-# CHECK-LABEL: function f1 name="provenWithOneOrder"
 # CHECK-NOT: ShapeTest
 # CHECK-NOT: HasKeyOrder
 # CHECK-NOT: CopyObject
@@ -49,26 +45,22 @@ function f1 name="provenWithOneOrder" parameters=[{type=L1}] results=[{type=anyt
 # CHECK-NEXT: [[y1]]: {{*}} = GetSlot v0 key="y" receivers=[L1] level=Proven
 # CHECK-NEXT: [[copy1]]: L1 = NewObject -, [[x1]], [[y1]] layout=L1 fields=[0, 1]
 # CHECK-NOT: CopyObject
+}
 
 function f2 name="provenOrNullish" parameters=[{type=undefined|L1}] results=[{type=anything}] {
-  b0(v0: undefined|L1):
     v1 = CopyObject v0
     Return v1
-}
 # undefined and null give an empty object, which the operation makes.
-# CHECK-LABEL: function f2 name="provenOrNullish"
 # CHECK: = TypeTest v0 testedType=object
 # CHECK: frequency=Rare:
 # CHECK-NEXT: = CopyObject v0
 # CHECK: = NewObject -, {{*}} layout=L1 fields=[0, 1]
+}
 
 function f3 name="oneOfTwoLayoutsIsCopiedSo" parameters=[{type=L1|L4}] results=[{type=anything}] {
-  b0(v0: L1|L4):
     v1 = CopyObject v0
     Return v1
-}
 # The copy of an instance is no instance: it stays with the operation, though flow has proven the layouts.
-# CHECK-LABEL: function f3 name="oneOfTwoLayoutsIsCopiedSo"
 # CHECK: = ShapeTest v0 layouts=[L1]
 # CHECK-NOT: layouts=[L4]
 # CHECK: frequency=Rare:
@@ -76,49 +68,41 @@ function f3 name="oneOfTwoLayoutsIsCopiedSo" parameters=[{type=L1|L4}] results=[
 # CHECK-NOT: layout=L4
 # CHECK: = NewObject -, {{*}} layout=L1 fields=[0, 1]
 # CHECK-NOT: layout=L4
+}
 
 function f4 name="symbolKey" parameters=[{type=L2}] results=[{type=anything}] {
-  b0(v0: L2):
     v1 = CopyObject v0
     Return v1
-}
-# CHECK-LABEL: function f4 name="symbolKey"
 # CHECK-NOT: NewObject
 # CHECK: v1: object = CopyObject v0
 # CHECK-NOT: NewObject
+}
 
 function f5 name="closureMadeAtTheFirstRead" parameters=[{type=L3}] results=[{type=anything}] {
-  b0(v0: L3):
     v1 = CopyObject v0
     Return v1
-}
-# CHECK-LABEL: function f5 name="closureMadeAtTheFirstRead"
 # CHECK-NOT: NewObject
 # CHECK: v1: object = CopyObject v0
 # CHECK-NOT: NewObject
+}
 
 function f6 name="instance" parameters=[{type=L4}] results=[{type=anything}] {
-  b0(v0: L4):
     v1 = CopyObject v0
     Return v1
-}
-# CHECK-LABEL: function f6 name="instance"
 # CHECK-NOT: NewObject
 # CHECK: v1: object = CopyObject v0
 # CHECK-NOT: NewObject
+}
 
 function f7 name="readOnlyField" parameters=[{type=L5}] results=[{type=anything}] {
-  b0(v0: L5):
     v1 = CopyObject v0
     Return v1
-}
-# CHECK-LABEL: function f7 name="readOnlyField"
 # CHECK-NOT: NewObject
 # CHECK: v1: object = CopyObject v0
 # CHECK-NOT: NewObject
+}
 
 function f8 name="leavesKeysOut" parameters=[{type=L1}] results=[{type=anything}] {
-  b0(v0: L1):
     v1 = CopyObject v0 excludedKeys=["x"]
     Return v1
 }
@@ -129,12 +113,10 @@ function f8 name="leavesKeysOut" parameters=[{type=L1}] results=[{type=anything}
 # CHECK-LABEL: function f9 name="run"
 
 function f9 name="run" results=[{type=undefined}] {
-  b0():
     Return
 }
 
 function f10 name="Instance" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L4
     v2 = NewObject v1 layout=L4
     Return v2

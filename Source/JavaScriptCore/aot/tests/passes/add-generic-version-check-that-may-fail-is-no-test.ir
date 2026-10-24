@@ -11,17 +11,15 @@ layout L0 name="Rule" fields=[{key="limit" declared={type=number} flags=[IsRequi
 layout L1 name="Payload" fields=[{key="value" declared={type=number} flags=[IsRequired]}]
 
 function f0 name="run" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Check v0 castType=L0 cause=MayFail
     v3 = Check v1 castType=L1
     v4 = PropGet v2 key="limit"
     v5 = PropGet v3 key="value"
     v6 = Less v5, v4
     Return v6
-}
-# CHECK-LABEL: function f0 name="run"
 # CHECK-NOT: testedType=L0
 # CHECK: v2: anything = Upcast v0
 # CHECK-NOT: testedType=L0
 # CHECK: = TypeTest v1 testedType=L1
 # CHECK-NOT: testedType=L0
+}

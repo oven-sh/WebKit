@@ -6,28 +6,23 @@ layout L0 kind=Instance name="Box" constructor=f0 fields=[{key="v" declared={typ
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="Box" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = NewObject -, v1 layout=L0 fields=[0]
     Return v2
 }
 
 function f1 name="storedField" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
     v3 = PropGet v2 key="w"
     Return v3
-}
-# CHECK-LABEL: function f1 name="storedField"
 # CHECK-NOT: NewObject
 # CHECK-NOT: PropGet
 # CHECK: = Upcast v1
+}
 
 function f2 name="emptyField" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = PropGet v1 key="w"
     Return v2
-}
-# CHECK-LABEL: function f2 name="emptyField"
 # CHECK: = NewObject
 # CHECK-NEXT: = PropGet
+}

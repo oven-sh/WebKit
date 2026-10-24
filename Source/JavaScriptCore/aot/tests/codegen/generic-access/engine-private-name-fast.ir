@@ -10,7 +10,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = PropGet v1 key=@"bunNativePtr"
@@ -29,26 +28,22 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v14
 }
 function f1 name="reads" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key=@"bunNativePtr"
     v2 = PropGet v1 key=@"length"
     v3 = PropGet v2 key=@"0"
     Return v3
 }
 function f2 name="stores" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     PropSet v0, v1 key=@"bunNativePtr" mode=Strict
     PropSet v1, v0 key=@"bunNativePtr" mode=Sloppy
     Return
 }
 function f3 name="definitions" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = RequireObject v0 runtimeError=IteratorResultNotObject
     PropDefine v2, v1 key=@"bunNativePtr"
     Return
 }
 function f4 name="methodCalls" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = PropGet v0 key=@"then"
     v3 = Call v2, v0, v1 calleeKey=@"then"
     v4 = PropGet v3 key=@"get"

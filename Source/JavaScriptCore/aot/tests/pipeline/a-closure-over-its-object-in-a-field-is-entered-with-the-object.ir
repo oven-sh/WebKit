@@ -14,7 +14,6 @@ entry module=m0
 layout L0 kind=Instance name="Button" constructor=f1 fields=[{key="n" declared={type=anything} flags=[IsRequired]}, {key="handler" declared={type=anything} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = FinishClass v1 layout=L0
@@ -37,7 +36,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Button" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
     PropDefine v3, v1 key="n"
@@ -46,17 +44,14 @@ function f1 name="Button" kind=BaseConstructor flags=[HasNewTarget] parameters=[
     Return v3
 }
 function f2 name="handler" kind=Arrow captures=[{type=L0}] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     v2 = PropGet v0 key="n"
     v3 = Add v2, v1
     Return v3
 }
 function f3 name="unused" results=[{type=anything}] {
-  b0():
     Return
 }
 function f4 name="press" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="handler"
     v2 = Integer integer=2
     v3 = Call v1, v0, v2 calleeKey="handler"

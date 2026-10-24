@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="check" parameters=[{type=boolean}, {type=Array<string, proven>}, {type=Array}] results=[{type=anything}] {
-  b0(v0: boolean, v1: Array<string, proven>, v2: Array):
     Jump -> next b1(v1)
   b1(v3):
     LoopHint
@@ -16,11 +15,9 @@ function f0 name="check" parameters=[{type=boolean}, {type=Array<string, proven>
     Jump -> next b1(v6)
   b3():
     Return v5
-}
-# CHECK-LABEL: function f0 name="check"
 # CHECK: v5: Array<int> = Check
+}
 function f1 name="assumed" parameters=[{type=boolean}, {type=Array<string, proven>}, {type=object}] results=[{type=anything}] {
-  b0(v0: boolean, v1: Array<string, proven>, v2: object):
     Jump -> next b1(v1)
   b1(v3):
     LoopHint
@@ -31,11 +28,9 @@ function f1 name="assumed" parameters=[{type=boolean}, {type=Array<string, prove
     Jump -> next b1(v6)
   b3():
     Return v5
-}
-# CHECK-LABEL: function f1 name="assumed"
 # CHECK: v5: Array<int> = AssumeType
+}
 function f2 name="upcast" parameters=[{type=boolean}, {type=Array<string, proven>}, {type=Array<string>}] results=[{type=anything}] {
-  b0(v0: boolean, v1: Array<string, proven>, v2: Array<string>):
     Jump -> next b1(v1)
   b1(v3):
     LoopHint
@@ -46,11 +41,9 @@ function f2 name="upcast" parameters=[{type=boolean}, {type=Array<string, proven
     Jump -> next b1(v6)
   b3():
     Return v5
-}
-# CHECK-LABEL: function f2 name="upcast"
 # CHECK: v5: Array<int> = Upcast
+}
 function f3 name="contentsStayProven" parameters=[{type=boolean}, {type=Array<string, proven>}, {type=Array<int, proven>}] results=[{type=anything}] {
-  b0(v0: boolean, v1: Array<string, proven>, v2: Array<int, proven>):
     Jump -> next b1(v1)
   b1(v3):
     LoopHint
@@ -61,11 +54,9 @@ function f3 name="contentsStayProven" parameters=[{type=boolean}, {type=Array<st
     Jump -> next b1(v6)
   b3():
     Return v5
-}
-# CHECK-LABEL: function f3 name="contentsStayProven"
 # CHECK: v5: Array<int|string, proven> = Check
+}
 function f4 name="usedByAnotherValue" parameters=[{type=boolean}, {type=Array<string, proven>}, {type=Array}] results=[{type=anything}] {
-  b0(v0: boolean, v1: Array<string, proven>, v2: Array):
     Jump -> next b1(v1)
   b1(v3):
     LoopHint
@@ -78,6 +69,5 @@ function f4 name="usedByAnotherValue" parameters=[{type=boolean}, {type=Array<st
     Jump -> next b1(v6)
   b3():
     Return v8
-}
-# CHECK-LABEL: function f4 name="usedByAnotherValue"
 # CHECK: v5: Array<int> = Check
+}

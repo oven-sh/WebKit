@@ -11,7 +11,6 @@ layout L1 kind=Environment name="handlerIgnoresIt" fields=[{key="x" declared={ty
 layout L2 kind=Environment name="handlerLeavesTheLoop" fields=[{key="x" declared={type=anything}}]
 
 function f0 name="handlerReadsIt" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -30,8 +29,6 @@ function f0 name="handlerReadsIt" parameters=[{type=anything}, {type=boolean}] r
     Branch v1 -> taken b1(), notTaken b5()
   b5():
     Return v0
-}
-# CHECK-LABEL: function f0 name="handlerReadsIt"
 # CHECK-NOT: ReleaseEnvironment
 # CHECK: b2() handler=b3(v3):
 # CHECK-NEXT: = GetEnvironmentField v3
@@ -46,9 +43,9 @@ function f0 name="handlerReadsIt" parameters=[{type=anything}, {type=boolean}] r
 # CHECK-NEXT: ReleaseEnvironment v3
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NOT: ReleaseEnvironment
+}
 
 function f1 name="handlerIgnoresIt" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -66,8 +63,6 @@ function f1 name="handlerIgnoresIt" parameters=[{type=anything}, {type=boolean}]
     Branch v1 -> taken b1(), notTaken b5()
   b5():
     Return v0
-}
-# CHECK-LABEL: function f1 name="handlerIgnoresIt"
 # CHECK-NOT: ReleaseEnvironment
 # CHECK: b2() handler=b3():
 # CHECK-NEXT: = GetEnvironmentField v3
@@ -75,9 +70,9 @@ function f1 name="handlerIgnoresIt" parameters=[{type=anything}, {type=boolean}]
 # CHECK-NEXT: = Call v0
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NOT: ReleaseEnvironment
+}
 
 function f2 name="handlerLeavesTheLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -95,8 +90,6 @@ function f2 name="handlerLeavesTheLoop" parameters=[{type=anything}, {type=boole
     Branch v1 -> taken b1(), notTaken b5()
   b5():
     Return v0
-}
-# CHECK-LABEL: function f2 name="handlerLeavesTheLoop"
 # CHECK-NOT: ReleaseEnvironment
 # CHECK: b2() handler=b3(v3):
 # CHECK-NEXT: = GetEnvironmentField v3
@@ -111,3 +104,4 @@ function f2 name="handlerLeavesTheLoop" parameters=[{type=anything}, {type=boole
 # CHECK: [[behindLeaving]]():
 # CHECK-NEXT: ReleaseEnvironment v3
 # CHECK-NOT: ReleaseEnvironment
+}

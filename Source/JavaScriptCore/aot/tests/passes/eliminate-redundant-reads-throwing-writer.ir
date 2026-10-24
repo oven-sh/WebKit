@@ -9,7 +9,6 @@ variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefi
 variable g1 name="written" module=m0 declared={type=anything} initialization=Undefined flow={writers=AllKnown}
 
 function f0 name="unknownCallThrows" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g1
     Jump -> next b1()
   b1() handler=b3():
@@ -21,13 +20,11 @@ function f0 name="unknownCallThrows" parameters=[{type=anything}] results=[{type
     v3 = CatchValue
     v4 = GetModuleVariable variable=g1
     Return v4
-}
-# CHECK-LABEL: function f0 name="unknownCallThrows"
 # CHECK: = CatchValue
 # CHECK-NEXT: v4: anything = GetModuleVariable variable=g1
+}
 
 function f1 name="castThrows" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g1
     Jump -> next b1()
   b1() handler=b3():
@@ -39,13 +36,11 @@ function f1 name="castThrows" parameters=[{type=anything}] results=[{type=anythi
     v3 = CatchValue
     v4 = GetModuleVariable variable=g1
     Return v4
-}
-# CHECK-LABEL: function f1 name="castThrows"
 # CHECK: = CatchValue
 # CHECK-NEXT: v4: anything = Upcast v1
+}
 
 function f2 name="calleeWritesOnlyWhenItThrows" parameters=[{type=anything}] results=[{type=boolean}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g0
     v2 = GetModuleVariable variable=g1
     Jump -> next b1()
@@ -61,14 +56,12 @@ function f2 name="calleeWritesOnlyWhenItThrows" parameters=[{type=anything}] res
     v7 = GetModuleVariable variable=g1
     v8 = StrictEq v6, v7
     Return v8
-}
-# CHECK-LABEL: function f2 name="calleeWritesOnlyWhenItThrows"
 # CHECK: = CatchValue
 # CHECK-NEXT: v6: anything = Upcast v1
 # CHECK-NEXT: v7: anything = GetModuleVariable variable=g1
+}
 
 function f3 name="writesThenThrows" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():

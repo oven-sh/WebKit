@@ -40,7 +40,6 @@ layout L3 fields=[{key="a" declared={type=number} flags=[IsRequired]}]
 layout L4 fields=[{key="c" declared={type=number} flags=[IsRequired]}] flags=[IsWrittenUnderDictionaryType]
 layout L5 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="d" declared={type=number} flags=[IsRequired]}] flags=[IsWrittenUnderDictionaryType]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = String string="k"
     v2 = String string="l"
@@ -49,7 +48,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="fill" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     v2 = Integer integer=2
     v3 = NewObject layout=L0

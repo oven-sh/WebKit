@@ -82,7 +82,6 @@ function f12 name="Computed" kind=BaseConstructor flags=[HasNewTarget] results=[
 function f13 name="BelowComputed" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L12
 function f14 name="ComputedAndStored" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L13
 function f15 name="otherKeys" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="missing"
     Return v1
 }

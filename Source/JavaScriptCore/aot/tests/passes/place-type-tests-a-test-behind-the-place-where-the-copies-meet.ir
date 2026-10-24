@@ -7,7 +7,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Instance name="Point" constructor=f3 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="link" declared={type=anything} flags=[IsRequired]}] flow={baseState=None}
 
 function f0 name="compare" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     v3: anything ~ L0 = Upcast v0 castType=anything
     v4: anything ~ L0 = Upcast v1 castType=anything
     Branch v2 -> taken b1(), notTaken b2()
@@ -22,13 +21,11 @@ function f0 name="compare" parameters=[{type=anything}, {type=anything}, {type=b
     v9 = StrictEq v6, v3
     v10 = Add v8, v9
     Return v10
+# CHECK: = StrictEq {{*}}, v3
+# CHECK: = StrictEq {{*}}, v3
 }
-# CHECK-LABEL: function f0 name="compare"
-# CHECK: = StrictEq {{*}}, v3
-# CHECK: = StrictEq {{*}}, v3
 
 function f1 name="store" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     v3: anything ~ L0 = Upcast v0 castType=anything
     v4: anything ~ L0 = Upcast v1 castType=anything
     Branch v2 -> taken b1(), notTaken b2()
@@ -42,9 +39,8 @@ function f1 name="store" parameters=[{type=anything}, {type=anything}, {type=boo
     v8 = CallDirect v6 function=f2
     PropSet v6, v3 key="link"
     Return v8
-}
-# CHECK-LABEL: function f1 name="store"
 # CHECK: PutSlotOrAdd {{*}}, {{*}}, v3 key="link"
+}
 
 function f2 name="show" parameters=[{type=anything}] results=[{type=anything}]
 function f3 name="Point" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0

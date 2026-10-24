@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="receiverOfInlineCode" parameters=[{type=anything}, {type=string}] results=[{type=string}] {
-  b0(v0: anything, v1: string):
     v2 = TypeTest v0 testedType=Array
     TestAndBranch v2 -> taken b1(| 0), notTaken b5()
   b1(v3: Array):

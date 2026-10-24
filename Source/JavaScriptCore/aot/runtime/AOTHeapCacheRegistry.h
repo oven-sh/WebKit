@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "CollectionScope.h"
+#include "MarkedSpace.h"
 #include "RememberedSlot.h"
 #include <concepts>
 #include <span>
@@ -28,7 +29,9 @@ class VM;
 
 namespace AOT {
 
-enum class CacheKind : uint8_t { StrongRoots, WeakByKey, ClearedEachCollection };
+struct State;
+
+enum class CacheKind : uint8_t { StrongRoots, WeakByKey, ClearedEachCollection, Observer };
 enum class RootVolatility : uint8_t { GreyedByMarking, GreyedByExecution };
 enum class CacheValidation : bool { Off, On };
 
@@ -42,8 +45,7 @@ public:
     template<typename Owner> void add(CacheKind, ASCIILiteral name, Owner&, RootVolatility = RootVolatility::GreyedByMarking);
     void addStrongRoots(ASCIILiteral name, std::span<JSCell* const> cellsOrNull, RootVolatility = RootVolatility::GreyedByMarking);
     void addClearedEachCollection(ASCIILiteral name, std::span<uint8_t> zeroedByClear);
-    void addClearedEachCollection(ASCIILiteral name, std::span<uint8_t> zeroedByClear, RememberedSlotSet&);
-    template<typename Owner> void addObserver(ASCIILiteral name, Owner&);
+    template<typename Owner> void addObserver(ASCIILiteral name, Owner& owner) { add(CacheKind::Observer, name, owner); }
 
     Lock& lock() { return m_lock; }
 
@@ -53,15 +55,12 @@ public:
     void willAnalyzeHeap(VM&);
 
 private:
-    enum class EntryKind : uint8_t { StrongRoots, WeakByKey, ClearedEachCollection, Observer };
-
     struct Entry {
-        EntryKind kind;
+        CacheKind kind;
         RootVolatility volatility { RootVolatility::GreyedByMarking };
         ASCIILiteral name;
         void* owner { nullptr };
         size_t size { 0 };
-        RememberedSlotSet* writtenRegions { nullptr };
         void (*visitWithSlotVisitor)(Entry&, SlotVisitor&) { nullptr };
         void (*visitWithAbstractSlotVisitor)(Entry&, AbstractSlotVisitor&) { nullptr };
         size_t (*removeDeadEntries)(Entry&, VM&, CollectionScope) { nullptr };
@@ -70,8 +69,6 @@ private:
         void (*willAnalyzeHeap)(Entry&, VM&) { nullptr };
     };
 
-    static EntryKind entryKindFor(CacheKind);
-    template<typename Owner> static void setHeapAnalysisCallback(Entry&);
     void append(Entry&&);
 
     SegmentedVector<Entry, 16> m_entries;
@@ -82,63 +79,48 @@ private:
 extern template void CacheRegistry::visitRoots<SlotVisitor>(SlotVisitor&, RootVolatility);
 extern template void CacheRegistry::visitRoots<AbstractSlotVisitor>(AbstractSlotVisitor&, RootVolatility);
 
-inline CacheRegistry::EntryKind CacheRegistry::entryKindFor(CacheKind kind)
-{
-    switch (kind) {
-    case CacheKind::StrongRoots:
-        return EntryKind::StrongRoots;
-    case CacheKind::WeakByKey:
-        return EntryKind::WeakByKey;
-    case CacheKind::ClearedEachCollection:
-        return EntryKind::ClearedEachCollection;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-template<typename Owner>
-void CacheRegistry::setHeapAnalysisCallback(Entry& entry)
-{
-    if constexpr (requires(Owner& candidate, VM& vm) { candidate.willAnalyzeHeap(vm); })
-        entry.willAnalyzeHeap = [](Entry& entry, VM& vm) { static_cast<Owner*>(entry.owner)->willAnalyzeHeap(vm); };
-}
-
+// What the kind needs, the owner must have.
 template<typename Owner>
 void CacheRegistry::add(CacheKind kind, ASCIILiteral name, Owner& owner, RootVolatility volatility)
 {
     ASSERT(kind == CacheKind::StrongRoots || volatility == RootVolatility::GreyedByMarking);
 
-    Entry entry { .kind = entryKindFor(kind), .volatility = volatility, .name = name, .owner = &owner };
-    switch (kind) {
-    case CacheKind::StrongRoots:
-        if constexpr (requires(Owner& candidate, SlotVisitor& visitor, AbstractSlotVisitor& abstractVisitor) { candidate.visitRoots(visitor); candidate.visitRoots(abstractVisitor); }) {
-            entry.visitWithSlotVisitor = [](Entry& entry, SlotVisitor& visitor) { static_cast<Owner*>(entry.owner)->visitRoots(visitor); };
-            entry.visitWithAbstractSlotVisitor = [](Entry& entry, AbstractSlotVisitor& visitor) { static_cast<Owner*>(entry.owner)->visitRoots(visitor); };
-        }
-        RELEASE_ASSERT(entry.visitWithSlotVisitor && entry.visitWithAbstractSlotVisitor);
-        break;
-    case CacheKind::WeakByKey:
-        if constexpr (requires(Owner& candidate, VM& vm, CollectionScope scope) { { candidate.removeDeadEntries(vm, scope) } -> std::convertible_to<size_t>; })
-            entry.removeDeadEntries = [](Entry& entry, VM& vm, CollectionScope scope) -> size_t { return static_cast<Owner*>(entry.owner)->removeDeadEntries(vm, scope); };
-        RELEASE_ASSERT(entry.removeDeadEntries);
-        break;
-    case CacheKind::ClearedEachCollection:
-        if constexpr (requires(Owner& candidate) { candidate.clear(); })
-            entry.clear = [](Entry& entry) { static_cast<Owner*>(entry.owner)->clear(); };
-        RELEASE_ASSERT(entry.clear);
-        break;
+    Entry entry { .kind = kind, .volatility = volatility, .name = name, .owner = &owner };
+    if constexpr (requires(Owner& candidate, SlotVisitor& visitor, AbstractSlotVisitor& abstractVisitor) { candidate.visitRoots(visitor); candidate.visitRoots(abstractVisitor); }) {
+        entry.visitWithSlotVisitor = [](Entry& entry, SlotVisitor& visitor) { static_cast<Owner*>(entry.owner)->visitRoots(visitor); };
+        entry.visitWithAbstractSlotVisitor = [](Entry& entry, AbstractSlotVisitor& visitor) { static_cast<Owner*>(entry.owner)->visitRoots(visitor); };
     }
-    setHeapAnalysisCallback<Owner>(entry);
+    if constexpr (requires(Owner& candidate, VM& vm, CollectionScope scope) { { candidate.removeDeadEntries(vm, scope) } -> std::convertible_to<size_t>; })
+        entry.removeDeadEntries = [](Entry& entry, VM& vm, CollectionScope scope) -> size_t { return static_cast<Owner*>(entry.owner)->removeDeadEntries(vm, scope); };
+    if constexpr (requires(Owner& candidate) { candidate.clear(); })
+        entry.clear = [](Entry& entry) { static_cast<Owner*>(entry.owner)->clear(); };
+    if constexpr (requires(Owner& candidate, VM& vm, CollectionScope scope) { candidate.didFinishCollection(vm, scope); })
+        entry.didFinishCollection = [](Entry& entry, VM& vm, CollectionScope scope) { static_cast<Owner*>(entry.owner)->didFinishCollection(vm, scope); };
+    if constexpr (requires(Owner& candidate, VM& vm) { candidate.willAnalyzeHeap(vm); })
+        entry.willAnalyzeHeap = [](Entry& entry, VM& vm) { static_cast<Owner*>(entry.owner)->willAnalyzeHeap(vm); };
+    RELEASE_ASSERT(kind == CacheKind::StrongRoots ? !!entry.visitWithSlotVisitor : kind == CacheKind::WeakByKey ? !!entry.removeDeadEntries : kind == CacheKind::ClearedEachCollection ? !!entry.clear : !!entry.didFinishCollection);
     append(WTF::move(entry));
 }
 
-template<typename Owner>
-void CacheRegistry::addObserver(ASCIILiteral name, Owner& owner)
-{
-    Entry entry { .kind = EntryKind::Observer, .name = name, .owner = &owner };
-    entry.didFinishCollection = [](Entry& entry, VM& vm, CollectionScope scope) { static_cast<Owner*>(entry.owner)->didFinishCollection(vm, scope); };
-    setHeapAnalysisCallback<Owner>(entry);
-    append(WTF::move(entry));
-}
+class ImmortalCells {
+    WTF_MAKE_NONCOPYABLE(ImmortalCells);
+    WTF_MAKE_TZONE_ALLOCATED(ImmortalCells);
+public:
+    explicit ImmortalCells(State&);
+
+    void add(JSCell*);
+    template<typename Visitor> void visitRoots(Visitor&);
+
+private:
+    static constexpr size_t cellsPerSegment = 512;
+
+    template<typename Functor> void forEachSegment(size_t firstIndex, const Functor&);
+
+    State& m_state;
+    SegmentedVector<JSCell*, cellsPerSegment> m_cells;
+    size_t m_numberOfCellsVisited { 0 };
+    HeapVersion m_lastVisitVersion { 0 };
+};
 
 } } // namespace JSC::AOT
 

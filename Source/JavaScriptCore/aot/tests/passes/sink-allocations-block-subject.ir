@@ -8,7 +8,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Resource" fields=[{key="x" declared={type=anything}}]
 
 function f0 name="subjectIsBuiltBeforeTheRegion" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject layout=L0
     PropDefine v1, v0 key="x" receivers=[L0]
     v3 = FinishObject v1
@@ -21,17 +20,15 @@ function f0 name="subjectIsBuiltBeforeTheRegion" parameters=[{type=anything}] re
     v6 = CatchValue
     v7 = Call v4, v3
     Throw v6
-}
-# CHECK-LABEL: function f0 name="subjectIsBuiltBeforeTheRegion"
 # CHECK: [[cell0]]:{{*}}= NewObject -, v0 layout=L0 fields=[0]
 # CHECK-NEXT: = Call v0, -, [[cell0]]
 # CHECK: b1() handler=b2([[cell0]]):
 # CHECK: b2([[carried0]]: L0) role=DisposalCleanup subject=[[carried0]]:
 # CHECK-NEXT: = CatchValue
 # CHECK-NEXT: = Call v4, [[carried0]]
+}
 
 function f1 name="subjectIsOnlyNamed" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewObject layout=L0
     PropDefine v2, v0 key="x" receivers=[L0]
     v4 = FinishObject v2
@@ -44,8 +41,6 @@ function f1 name="subjectIsOnlyNamed" parameters=[{type=anything}, {type=boolean
     Throw v6
   b3():
     Return v0
-}
-# CHECK-LABEL: function f1 name="subjectIsOnlyNamed"
 # CHECK: b0(
 # CHECK-NEXT: Branch v1 -> taken [[edge1]](), notTaken b3()
 # CHECK: b1() handler=b2([[cell1]]):
@@ -55,9 +50,9 @@ function f1 name="subjectIsOnlyNamed" parameters=[{type=anything}, {type=boolean
 # CHECK: [[edge1]]():
 # CHECK-NEXT: [[cell1]]:{{*}}= NewObject -, v0 layout=L0 fields=[0]
 # CHECK-NEXT: Jump -> next b1()
+}
 
 function f2 name="subjectIsParameter" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewObject layout=L0
     PropDefine v2, v0 key="x" receivers=[L0]
     v4 = FinishObject v2
@@ -70,17 +65,15 @@ function f2 name="subjectIsParameter" parameters=[{type=anything}, {type=boolean
     Throw v7
   b3():
     Return v0
-}
-# CHECK-LABEL: function f2 name="subjectIsParameter"
 # CHECK: b0(
 # CHECK-NEXT: Branch v1 -> taken [[edge2]](), notTaken b3()
 # CHECK: b1() handler=b2([[cell2]]):
 # CHECK: b2(v6:{{*}}) role=DisposalCleanup subject=v6:
 # CHECK: [[edge2]]():
 # CHECK-NEXT: [[cell2]]:{{*}}= NewObject -, v0 layout=L0 fields=[0]
+}
 
 function f3 name="noSubject" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewObject layout=L0
     PropDefine v2, v0 key="x" receivers=[L0]
     v4 = FinishObject v2
@@ -95,9 +88,8 @@ function f3 name="noSubject" parameters=[{type=anything}, {type=boolean}] result
     Throw v6
   b3():
     Return v0
-}
-# CHECK-LABEL: function f3 name="noSubject"
 # CHECK-NOT: NewObject
 # CHECK: b1() handler=b2(v0):
 # CHECK: b2([[x3]]: anything) role=CleanupHandler:
 # CHECK: v7: anything = Upcast [[x3]] castType=anything
+}

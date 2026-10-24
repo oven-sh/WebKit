@@ -9,7 +9,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="includesInBalancedCode" parameters=[{type=Array<number, proven, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage]>, v1: number, v2: boolean):
     Branch v2 -> taken b1(), notTaken b4()
   b1():
     TryCallInline v0, v1 inlineBuiltin=ArrayIncludes overload=ArrayPrototypeIncludes/0 -> done b2(), miss b3()
@@ -28,7 +27,6 @@ function f0 name="includesInBalancedCode" parameters=[{type=Array<number, proven
 # CALLS-NEXT: operation operationAOTArrayIndexOfInt32 x1
 # S: f0 b1 Balanced
 function f1 name="includesInCompactCode" parameters=[{type=Array<number, proven, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage]>, v1: number, v2: boolean):
     Branch v2 -> taken b1(), notTaken b4()
   b1() frequency=Rare:
     TryCallInline v0, v1 inlineBuiltin=ArrayIncludes overload=ArrayPrototypeIncludes/0 -> done b2(), miss b3()
@@ -47,7 +45,6 @@ function f1 name="includesInCompactCode" parameters=[{type=Array<number, proven,
 # CALLS-NEXT: operation operationAOTArrayIndexOfInt32 x1
 # S: f1 b1 Compact
 function f2 name="indexOfInBalancedCode" parameters=[{type=Array<number, proven, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage]>, v1: number, v2: boolean):
     Branch v2 -> taken b1(), notTaken b4()
   b1():
     TryCallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/0 -> done b2(), miss b3()
@@ -66,7 +63,6 @@ function f2 name="indexOfInBalancedCode" parameters=[{type=Array<number, proven,
 # CALLS-NEXT: operation operationAOTArrayIndexOfInt32 x1
 # S: f2 b1 Balanced
 function f3 name="indexOfInCompactCode" parameters=[{type=Array<number, proven, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage]>, v1: number, v2: boolean):
     Branch v2 -> taken b1(), notTaken b4()
   b1() frequency=Rare:
     TryCallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/0 -> done b2(), miss b3()
@@ -85,7 +81,6 @@ function f3 name="indexOfInCompactCode" parameters=[{type=Array<number, proven, 
 # CALLS-NEXT: operation operationAOTArrayIndexOfInt32 x1
 # S: f3 b1 Compact
 function f4 name="includesInFastCode" parameters=[{type=Array<number, proven, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<number, proven, pristine[Storage]>, v1: number, v2: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -105,7 +100,6 @@ function f4 name="includesInFastCode" parameters=[{type=Array<number, proven, pr
 # CALLS-NEXT: operation operationAOTArrayIndexOfInt32 x
 # S: f4 b1 Fast
 function f5 name="indexOfInFastCode" parameters=[{type=Array<number, proven, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<number, proven, pristine[Storage]>, v1: number, v2: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -125,7 +119,6 @@ function f5 name="indexOfInFastCode" parameters=[{type=Array<number, proven, pri
 # CALLS-NEXT: operation operationAOTArrayIndexOfInt32 x
 # S: f5 b1 Fast
 function f6 name="includesWithInt32" parameters=[{type=Array<i32, proven, pristine[Storage]>}, {type=i32}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: Array<i32, proven, pristine[Storage]>, v1: i32, v2: boolean):
     Branch v2 -> taken b1(), notTaken b4()
   b1():
     TryCallInline v0, v1 inlineBuiltin=ArrayIncludes overload=ArrayPrototypeIncludes/0 -> done b2(), miss b3()
@@ -144,7 +137,6 @@ function f6 name="includesWithInt32" parameters=[{type=Array<i32, proven, pristi
 # CALLS-NEXT: operation operationAOTArrayIndexOfInt32 x1
 # S: f6 b1 Balanced
 function f7 name="indexOfWithInt32" parameters=[{type=Array<i32, proven, pristine[Storage]>}, {type=i32}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: Array<i32, proven, pristine[Storage]>, v1: i32, v2: boolean):
     Branch v2 -> taken b1(), notTaken b4()
   b1():
     TryCallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/0 -> done b2(), miss b3()
@@ -163,13 +155,11 @@ function f7 name="indexOfWithInt32" parameters=[{type=Array<i32, proven, pristin
 # CALLS-NEXT: operation operationAOTArrayIndexOfInt32 x1
 # S: f7 b1 Balanced
 function f8 name="alwaysCalls" parameters=[{type=Array<number, proven, pristine[Storage]>}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage]>, v1: number):
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeIncludes/0
     Return v2
 }
 # CHECK: f8: size={{*}} frame={{*}}@[[setup]]-
 function f9 name="onlyIncludes" parameters=[{type=Array<number, proven, pristine[Storage]>}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage]>, v1: number):
     TryCallInline v0, v1 inlineBuiltin=ArrayIncludes overload=ArrayPrototypeIncludes/0 -> done b1(), miss b2()
   b1(v2):
     Return v2
@@ -184,7 +174,6 @@ function f9 name="onlyIncludes" parameters=[{type=Array<number, proven, pristine
 # CALLS: operation operationAOTArrayIndexOfDouble x1
 # CALLS-NEXT: operation operationAOTArrayIndexOfInt32 x1
 function f10 name="onlyIndexOf" parameters=[{type=Array<number, proven, pristine[Storage]>}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage]>, v1: number):
     TryCallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/0 -> done b1(), miss b2()
   b1(v2):
     Return v2

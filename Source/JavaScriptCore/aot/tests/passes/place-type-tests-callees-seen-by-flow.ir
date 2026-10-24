@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Instance name="Node" constructor=f0 fields=[{key="kind" declared={type=number}}] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
 function f0 name="Node" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=L0}] {
-  b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
     v4 = AssumeType v3 castType=L0
@@ -14,16 +13,12 @@ function f0 name="Node" kind=BaseConstructor flags=[HasNewTarget] parameters=[{t
     Return v4
 }
 function f1 name="double" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Add v0, v0
     Return v1
 }
 function f2 name="constructsSeen" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = Construct v0, v0, v1 callees=[f0, ..]
     Return v2
-}
-# CHECK-LABEL: function f2 name="constructsSeen"
 # CHECK: [[test2]]: boolean = IsClosureOf v0 function=f0
 # CHECK-NEXT: Branch [[test2]] -> taken
 # CHECK: b1({{*}}: f0):
@@ -31,36 +26,31 @@ function f2 name="constructsSeen" parameters=[{type=anything}, {type=number}] re
 # CHECK: Return
 # CHECK: b2() frequency=Unlikely:
 # CHECK-NEXT: anything ~ object = Construct v0, v0, v1 callees=[f0, ..]
+}
 
 function f3 name="callsSeen" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = Call v0, -, v1 callees=[f1, ..]
     Return v2
-}
-# CHECK-LABEL: function f3 name="callsSeen"
 # CHECK: [[test3]]: boolean = IsClosureOf v0 function=f1
 # CHECK-NEXT: Branch [[test3]] -> taken
 # CHECK: b1({{*}}: f1):
 # CHECK-NEXT: number = CallDirect v1 function=f1
 # CHECK: b2() frequency=Unlikely:
 # CHECK-NEXT: anything = Call v0, -, v1 callees=[f1, ..]
+}
 
 function f4 name="constructsUnseen" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = Construct v0, v0, v1
     Return v2
-}
-# CHECK-LABEL: function f4 name="constructsUnseen"
 # CHECK-NOT: IsClosureOf
 # CHECK: anything ~ object = Construct v0, v0, v1
 # CHECK-NEXT: Return
+}
 
 function f5 name="callsUnseen" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = Call v0, -, v1
     Return v2
-}
-# CHECK-LABEL: function f5 name="callsUnseen"
 # CHECK-NOT: IsClosureOf
 # CHECK: anything = Call v0, -, v1
 # CHECK-NEXT: Return
+}

@@ -30,6 +30,8 @@ namespace {
 
 constexpr ASCIILiteral repeatLineStart = "# REPEAT:"_s;
 constexpr ASCIILiteral repeatLineEnd = "# END REPEAT"_s;
+constexpr ASCIILiteral programLineStart = "# PROGRAM-OF:"_s;
+constexpr ASCIILiteral functionLineStart = "function f"_s;
 constexpr size_t maxWrittenOutLines = 1 << 20;
 
 struct RepeatedName {
@@ -44,7 +46,8 @@ class RepeatWriter {
     WTF_FORBID_HEAP_ALLOCATION;
     WTF_MAKE_NONCOPYABLE(RepeatWriter);
 public:
-    explicit RepeatWriter(StringView text)
+    RepeatWriter(StringView text, const String& folder)
+        : m_folder(folder)
     {
         for (StringView line : text.splitAllowingEmptyEntries('\n'))
             m_lines.append(line);
@@ -78,6 +81,11 @@ private:
         for (size_t index = begin; index < end; ++index) {
             if (withoutCarriageReturn(m_lines[index]) == repeatLineEnd)
                 return fail(index, "END REPEAT without a REPEAT"_s);
+            if (m_lines[index].startsWith(programLineStart)) {
+                if (!writeProgramOf(index))
+                    return false;
+                continue;
+            }
             if (!m_lines[index].startsWith(repeatLineStart)) {
                 if (!writeLine(index))
                     return false;
@@ -143,13 +151,47 @@ private:
         return true;
     }
 
-    bool writeLine(size_t index)
+    bool writeProgramOf(size_t index)
+    {
+        StringView name = withoutCarriageReturn(m_lines[index]).substring(programLineStart.length()).trim(isTabOrSpace<char16_t>);
+        std::optional<Vector<uint8_t>> bytes;
+        if (!m_folder.isNull() && !name.isEmpty())
+            bytes = FileSystem::readEntireFile(FileSystem::pathByAppendingComponent(m_folder, name));
+        if (!bytes)
+            return fail(index, "cannot read the file beside this one that PROGRAM-OF names"_s);
+
+        StringBuilder program;
+        String text = String::fromUTF8(bytes->span());
+        for (StringView line : StringView(text).split('\n')) {
+            bool isComment = line.trim(isTabOrSpace<char16_t>).startsWith('#');
+            if (!isComment || line.startsWith(repeatLineStart) || withoutCarriageReturn(line) == repeatLineEnd)
+                program.append(line, '\n');
+        }
+        WrittenOutText writtenOut = RepeatWriter(program.toString(), { }).write();
+        if (!writtenOut.error.isNull())
+            return fail(index, name, ':', ' ', writtenOut.error);
+        for (StringView line : StringView(writtenOut.text).split('\n')) {
+            if (!startLine(index))
+                return false;
+            m_text.append(line);
+        }
+        return true;
+    }
+
+    bool startLine(size_t index)
     {
         if (m_result.sourceLines.size() == maxWrittenOutLines)
             return fail(index, "more than "_s, maxWrittenOutLines, " lines"_s);
         if (!m_result.sourceLines.isEmpty())
             m_text.append('\n');
         m_result.sourceLines.append(static_cast<unsigned>(index + 1));
+        return true;
+    }
+
+    bool writeLine(size_t index)
+    {
+        if (!startLine(index))
+            return false;
 
         StringView rest = m_lines[index];
         for (size_t start = rest.find("%("_s); start != notFound; start = rest.find("%("_s)) {
@@ -207,19 +249,98 @@ private:
         return true;
     }
 
+    const String m_folder;
     Vector<StringView> m_lines;
     Vector<RepeatedName> m_names;
     StringBuilder m_text;
     WrittenOutText m_result;
 };
 
+struct ImpliedLabel {
+    size_t line;
+    StringView prefix;
+    StringView function;
+};
+
 } // anonymous namespace
 
-WrittenOutText writeOutRepeats(String&& text)
+static StringView labelOfFunctionLine(StringView line)
 {
-    if (!text.contains(repeatLineStart))
-        return { WTF::move(text), { }, 0, { } };
-    return RepeatWriter(text).write();
+    size_t nameStart = line.find(" name=\""_s);
+    size_t idEnd = line.find(' ', functionLineStart.length());
+    size_t nameEnd = nameStart == notFound || nameStart != idEnd ? notFound : line.find('"', nameStart + 7);
+    return nameEnd == notFound ? StringView() : line.left(nameEnd + 1);
+}
+
+static StringView checkPrefixOfComment(StringView line)
+{
+    if (!line.startsWith("# "_s))
+        return { };
+    unsigned end = 2;
+    while (end < line.length() && (isASCIIUpper(line[end]) || (end > 2 && isASCIIDigit(line[end]))))
+        ++end;
+    bool isDirective = end > 2 && end < line.length() && (line[end] == ':' || line[end] == '-');
+    return isDirective ? line.substring(2, end - 2) : StringView();
+}
+
+static void writeOutLabels(WrittenOutText& writtenOut)
+{
+    Vector<StringView> lines;
+    for (StringView line : StringView(writtenOut.text).splitAllowingEmptyEntries('\n'))
+        lines.append(line);
+
+    Vector<ImpliedLabel> labels;
+    Vector<StringView, 4> prefixesInFunction;
+    bool isInFunction = false;
+    StringView function;
+    for (size_t index = 0; index < lines.size(); ++index) {
+        StringView line = lines[index].endsWith('\r') ? lines[index].left(lines[index].length() - 1) : lines[index];
+        if (line.startsWith(functionLineStart) && line.endsWith('{')) {
+            isInFunction = true;
+            function = labelOfFunctionLine(line);
+            prefixesInFunction.shrink(0);
+        } else if (line == "}"_s)
+            isInFunction = false;
+        else if (StringView prefix = isInFunction ? checkPrefixOfComment(line) : StringView(); !prefix.isEmpty() && !prefixesInFunction.contains(prefix)) {
+            if (function.isNull()) {
+                writtenOut.errorLine = writtenOut.sourceLineOf(static_cast<unsigned>(index + 1));
+                writtenOut.error = "check lines stand inside a function that has no name"_s;
+                return;
+            }
+            prefixesInFunction.append(prefix);
+            labels.append({ index, prefix, function });
+        }
+    }
+    if (labels.isEmpty())
+        return;
+
+    StringBuilder text;
+    Vector<unsigned> sourceLines;
+    size_t nextLabel = 0;
+    for (size_t index = 0; index < lines.size(); ++index) {
+        unsigned sourceLine = writtenOut.sourceLineOf(static_cast<unsigned>(index + 1));
+        if (nextLabel < labels.size() && labels[nextLabel].line == index) {
+            text.append("# "_s, labels[nextLabel].prefix, "-LABEL: "_s, labels[nextLabel].function, '\n');
+            sourceLines.append(sourceLine);
+            ++nextLabel;
+        }
+        text.append(lines[index]);
+        if (index + 1 < lines.size())
+            text.append('\n');
+        sourceLines.append(sourceLine);
+    }
+    writtenOut.text = text.toString();
+    writtenOut.sourceLines = WTF::move(sourceLines);
+}
+
+WrittenOutText writeOut(String&& text, const String& folder)
+{
+    WrittenOutText writtenOut { WTF::move(text), { }, 0, { } };
+    if (writtenOut.text.contains(repeatLineStart) || writtenOut.text.contains(programLineStart))
+        writtenOut = RepeatWriter(String(writtenOut.text), folder).write();
+    if (writtenOut.error.isNull())
+        writeOutLabels(writtenOut);
+    return writtenOut;
 }
 
 ProgramFile::Kind programKindOf(std::span<const uint8_t> bytes)
@@ -251,7 +372,7 @@ std::optional<ProgramFile> readProgramFile(const String& path, PrintStream& erro
         errors.println(path, " is neither a program nor UTF-8 text");
         return std::nullopt;
     }
-    WrittenOutText writtenOut = writeOutRepeats(WTF::move(file.text));
+    WrittenOutText writtenOut = writeOut(WTF::move(file.text), FileSystem::parentPath(path));
     if (!writtenOut.error.isNull()) {
         errors.println(path, ":", writtenOut.errorLine, ": ", writtenOut.error);
         return std::nullopt;

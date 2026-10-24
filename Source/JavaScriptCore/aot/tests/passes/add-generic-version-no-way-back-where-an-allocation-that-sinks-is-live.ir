@@ -9,7 +9,6 @@
 module m0 path="main.js" displayPath="main.js" flags=[IsLibrary]
 
 function f0 name="listIsOnlyRead" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Check v0 castType=object
     v3 = NewArray v1, v1 contents=anything
     v4: anything ~ number = PropGet v2 key="size"
@@ -18,13 +17,11 @@ function f0 name="listIsOnlyRead" parameters=[{type=anything}, {type=anything}] 
     v7 = ElemGet v3, v6
     v8 = Add v4, v7
     Return v8
-}
-# CHECK-LABEL: function f0 name="listIsOnlyRead"
 # CHECK-COUNT-2: = NewArray
 # CHECK-NOT: : Array{{*}}):
+}
 
 function f1 name="listIsHandedOut" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Check v0 castType=object
     v3 = NewArray v1, v1 contents=anything
     v4: anything ~ number = PropGet v2 key="size"
@@ -33,6 +30,5 @@ function f1 name="listIsHandedOut" parameters=[{type=anything}, {type=anything}]
     v7 = ElemGet v3, v6
     v8 = Add v4, v7
     Return v8
-}
-# CHECK-LABEL: function f1 name="listIsHandedOut"
 # CHECK-COUNT-2: = NewArray
+}

@@ -10,7 +10,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Made" fields=[{key="value" declared={type=anything}}]
 function f0 name="inspected" parameters=[{type=boolean}, {type=L0}] results=[{type=boolean}] {
-  b0(v0: boolean, v1: L0):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v2 = Upcast v1 castType=null|L0
@@ -23,7 +22,6 @@ function f0 name="inspected" parameters=[{type=boolean}, {type=L0}] results=[{ty
     Return v5
 }
 function f1 name="handedOn" parameters=[{type=boolean}, {type=L0}] results=[{type=null|L0}] {
-  b0(v0: boolean, v1: L0):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v2 = Upcast v1 castType=null|L0
@@ -35,7 +33,6 @@ function f1 name="handedOn" parameters=[{type=boolean}, {type=L0}] results=[{typ
     Return v4
 }
 function f2 name="makes" results=[{type=L0}] {
-  b0():
     v0 = Undefined
     v1 = Upcast v0 castType=anything
     v2 = NewObject -, v1 layout=L0 fields=[0]

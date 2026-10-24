@@ -51,11 +51,6 @@ static bool canBeKeyRepresentation(Representation representation)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-ArgumentsEmitter::ArgumentsEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
-
 Word32 ArgumentsEmitter::restLength(uint32_t firstArgument)
 {
     Word32 count = emitter<EntryEmitter>().argumentCount();
@@ -70,11 +65,6 @@ Pointer ArgumentsEmitter::restList(uint32_t firstArgument)
     EntryEmitter& entry = emitter<EntryEmitter>();
     RELEASE_ASSERT(!entry.indexOfFirstArgumentInList());
     return offsetBy(entry.argumentList(), static_cast<ptrdiff_t>(firstArgument) * sizeOfStackWord);
-}
-
-Boxed ArgumentsEmitter::loadArgument(Pointer list, Integer index)
-{
-    return Boxed(m_out.load64(m_out.baseIndex(m_heaps.argumentBuffer, list.value(), index.value(), FTL::ScaleEight)));
 }
 
 void ArgumentsEmitter::generateGetArgument(const ValueContext& value)
@@ -154,7 +144,7 @@ void ArgumentsEmitter::generateGetMyArgumentByVal(const ValueContext& value)
         m_out.jump(outOfBounds);
     else {
         branchUnless(below(index, zeroExtended(restLength(firstArgument))), outOfBounds);
-        join.add(loadArgument(restList(firstArgument), index));
+        join.add(Boxed(m_out.load64(m_out.baseIndex(m_heaps.argumentBuffer, restList(firstArgument).value(), index.value(), FTL::ScaleEight))));
     }
 
     m_out.appendTo(outOfBounds);

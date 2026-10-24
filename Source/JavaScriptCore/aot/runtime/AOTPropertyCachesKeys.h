@@ -7,6 +7,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInstance.h"
+#include "AOTPropertyCaches.h"
+#include "AOTState.h"
 #include "Identifier.h"
 #include "JSCJSValue.h"
 #include <optional>
@@ -36,13 +39,26 @@ std::optional<Identifier> nameForKeyedCache(JSGlobalObject*, JSValue key);
 UniquedStringImpl* atomOfKey(JSValue key);
 UniquedStringImpl* uidOfKey(JSCell* key);
 std::optional<UniquedStringImpl*> findNameEqualToLongString(JSValue base, JSValue key, bool checksPrototypes = true);
-
-enum class ChainLookups : uint8_t { Unknown, Ordinary };
-
-ChainLookups classifyChainLookups(JSObject* base);
+bool hasOnlyOrdinaryLookupsOnChain(JSObject* base);
 
 // A leaf operation cannot collect: a store by key makes a Structure only out of the block that the allocator holds.
 bool hasStructureAtHand(VM&);
+
+struct NamedAccess {
+    CachedName name() const { return { ident.impl(), number }; }
+    PropertyCaches& caches() const { return *instance->state->propertyCaches; }
+
+    Instance* instance;
+    Identifier ident;
+    std::optional<uint32_t> number;
+    SiteCache site;
+};
+
+// The base is neither undefined nor null.
+JSValue getAndCache(const NamedAccess&, JSValue base);
+void putAndCache(const NamedAccess&, JSCell* base, JSValue, PutMode);
+bool hasPropertyAndCache(Instance*, JSObject*, const CachedName&);
+bool instanceOfAndCache(Instance*, JSValue, JSValue constructor);
 
 } } // namespace JSC::AOT
 

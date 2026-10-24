@@ -11,7 +11,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="loopWithBreak" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewClosure function=f3
     v3 = NewGenerator v2 function=f3 @40
     v4 = CallDirect v2, v0, v3 function=f4 @40
@@ -36,9 +35,7 @@ function f0 name="loopWithBreak" parameters=[{type=anything}, {type=anything}] r
   b4():
     v16 = Undefined
     Return v16
-}
 # The call that starts the body is place 0, the step of the loop place 1, the step that closes at the break place 2.
-# CHECK-LABEL: function f0 name="loopWithBreak"
 # CHECK: v3: Generator = NewGenerator v2 function=f3 @40
 # CHECK: LoopHint @40
 # CHECK-NEXT: [[startPlace2]]: 0 = Integer @40
@@ -63,13 +60,12 @@ function f0 name="loopWithBreak" parameters=[{type=anything}, {type=anything}] r
 # CHECK-NEXT: Jump -> next b1(
 # A yield hands on the place it was entered from.
 # CHECK: Jump -> next [[leave2]](v0, {{*}}, [[placeAtEnter2]]
-# ABSENT-LABEL: function f0 name="loopWithBreak"
 # ABSENT-NOT: StepGenerator
 # ABSENT-NOT: YieldBySavingFrame
 # ABSENT-NOT: function=f4
+}
 
 function f1 name="patternWithTwoSteps" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Undefined
     v2 = NewClosure function=f3
     v3 = NewGenerator v2 function=f3 @41
@@ -81,9 +77,7 @@ function f1 name="patternWithTwoSteps" parameters=[{type=anything}] results=[{ty
     v9 = StepGenerator v3, v1 resumeMode=Return check=None @62
     v10 = Add v6, v8
     Return v10
-}
 # Three steps in one block and the start: four places, and the value of the first step is carried through the second.
-# CHECK-LABEL: function f1 name="patternWithTwoSteps"
 # CHECK: LoopHint @41
 # CHECK-NEXT: [[startPlace3]]: 0 = Integer @41
 # CHECK-NEXT: Jump -> next [[start3]]() @41
@@ -105,13 +99,12 @@ function f1 name="patternWithTwoSteps" parameters=[{type=anything}] results=[{ty
 # CHECK: : 1 = Integer integer=1 @60
 # CHECK-NEXT: [[firstNext3]]: 0 = Integer @60
 # CHECK-NEXT: Jump -> next [[enter3]](v1, [[firstNext3]],
-# ABSENT-LABEL: function f1 name="patternWithTwoSteps"
 # ABSENT-NOT: StepGenerator
 # ABSENT-NOT: YieldBySavingFrame
 # ABSENT-NOT: function=f4
+}
 
 function f2 name="oneStepLooksItsMethodUp" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewClosure function=f3
     v3 = NewGenerator v2 function=f3 @42
     v4 = CallDirect v2, v0, v3 function=f4 @42
@@ -149,13 +142,11 @@ function f2 name="oneStepLooksItsMethodUp" parameters=[{type=anything}, {type=an
 # ABSENT-LABEL: function f3 name="repeats"
 
 function f3 name="repeats" position=10 role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f3 body=f4 promiseParameter=2} {
-  b0(v0: function, v1: anything):
     v2 = NewGenerator v0 function=f3 @10
     v3 = CallDirect v0, v1, v2 function=f4 @10
     Return v2 @10
 }
 function f4 name="repeats" position=10 role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f3} creator=Coroutine{ramp=f3 body=f4 promiseParameter=2} {
-  b0(v0: function, v1: anything, v2: Generator):
     v3 = Undefined @10
     v4 = YieldBySavingFrame v2, v3 @10
     v5 = ResultAt v4 index=0 @10

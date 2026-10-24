@@ -13,11 +13,7 @@
 #include "AOTIRPrinter.h"
 #include "AOTPropertyAccessElements.h"
 #include "AOTResolveAccesses.h"
-#include "AOTVector.h"
-#include <array>
-#include <wtf/CommaPrinter.h>
 #include <wtf/EnumTraits.h>
-#include <wtf/StringPrintStream.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -33,31 +29,12 @@ struct ListedValue {
     void dump(PrintStream& out) const { out.print("F"_s, functionID.index(), " v"_s, id.index()); }
 };
 
-struct KeyText {
-    const Program& program;
-    PropertyKeyID key;
-
-    void dump(PrintStream& out) const { printPropertyKey(out, program, key); }
-};
-
-struct TypeText {
-    const Program& program;
-    const Type& type;
-
-    void dump(PrintStream& out) const { printType(out, program, type); }
-};
-
-struct LayoutText {
-    const Program& program;
-    LayoutID layout;
-
-    void dump(PrintStream& out) const { IRPrinter(out, program).print(layout); }
-};
-
 } // anonymous namespace
 
-static void forEachListedValue(TestCommandContext& context, NOESCAPE const Invocable<void(const ListedValue&)> auto& functor)
+static void runOnListedValues(TestCommandContext& context, NOESCAPE const Invocable<void(const ListedValue&)> auto& functor)
 {
+    if (!CommandWords(context).finish())
+        return;
     const Program& program = *context.program;
     for (size_t index = 0; index < program.functions.size(); ++index) {
         const Function& function = program.functions[index];
@@ -74,89 +51,52 @@ static void forEachListedValue(TestCommandContext& context, NOESCAPE const Invoc
 
 static auto layoutParser(const Program& program)
 {
-    return [&program](StringView text) -> std::optional<LayoutID> {
+    return [&program](StringView text) {
         size_t numberOfLayouts = program.layouts.size();
-        if (std::optional<LayoutID> layout = idParser<LayoutID>('L', numberOfLayouts)(text))
-            return layout;
-        for (size_t index = 0; index < numberOfLayouts; ++index) {
-            LayoutID layout(index);
-            if (text == toString(LayoutText { program, layout }))
-                return layout;
-        }
-        return std::nullopt;
-    };
-}
-
-static auto layoutListParser(const Program& program)
-{
-    return [parseLayouts = listParser(layoutParser(program))](StringView text) -> std::optional<Vector<LayoutID>> {
-        if (text.length() < 2 || !text.startsWith('[') || !text.endsWith(']'))
-            return std::nullopt;
-        return parseLayouts(text.substring(1, text.length() - 2));
+        std::optional<LayoutID> layout = idParser<LayoutID>('L', numberOfLayouts)(text);
+        return layout ? layout : printedIDParser<LayoutID>(numberOfLayouts, [&](PrintStream& out, LayoutID id) { IRPrinter(out, program).print(id); })(text);
     };
 }
 
 static auto keyParser(const Program& program)
 {
-    return [&program](StringView text) -> std::optional<PropertyKeyID> {
-        unsigned numberOfKeys = program.types.numberOfPropertyKeys();
-        if (std::optional<PropertyKeyID> key = idParser<PropertyKeyID>('K', numberOfKeys)(text))
-            return key;
-        for (unsigned index = 0; index < numberOfKeys; ++index) {
-            PropertyKeyID key(index);
-            if (text == toString(KeyText { program, key }))
-                return key;
-        }
-        return std::nullopt;
-    };
+    return printedIDParser<PropertyKeyID>(program.types.numberOfPropertyKeys(), [&program](PrintStream& out, PropertyKeyID key) { printPropertyKey(out, program, key); });
 }
 
-static auto keyListParser(const Program& program)
+static auto bracketedListParser(auto parseItem)
 {
-    return [parseKeys = listParser(keyParser(program))](StringView text) -> std::optional<Vector<PropertyKeyID>> {
+    using List = Vector<ParsedType<decltype(parseItem)>>;
+    return [parseItems = listParser(parseItem)](StringView text) -> std::optional<List> {
         if (text.length() < 2 || !text.startsWith('[') || !text.endsWith(']'))
             return std::nullopt;
-        return parseKeys(text.substring(1, text.length() - 2));
+        return parseItems(text.substring(1, text.length() - 2));
     };
 }
 
-static auto accessParser()
-{
-    return filterParser(parseEnum<Access>, [](Access access) { return access != Access::None; });
-}
+static auto accessParser() { return filterParser(parseEnum<Access>, [](Access access) { return access != Access::None; }); }
 
-template<typename E>
-static auto enumNameParser()
+static std::optional<MemberStart> parseMemberStart(StringView text)
 {
-    return [](StringView text) -> std::optional<E> {
-        constexpr auto names = enumNames<E>();
-        for (size_t index = 0; index < names.size(); ++index) {
-            if (!names[index].isNull() && text == names[index])
-                return static_cast<E>(index);
-        }
-        return std::nullopt;
-    };
-}
-
-static void printPlan(TestCommandContext& context, const ListedValue& listed)
-{
-    const Program& program = *context.program;
-    const Value& access = listed.value();
-    std::optional<PropertyAccessQuery> query = propertyAccessQueryOf(program, listed.function, access, ExpectedClassObjects::Tested);
-    if (!query)
-        return;
-    query->maxMembers = context.build.limit(LimitID::MaxAccessPlanMembers);
-    if (access.opcode == Opcode::PropGet)
-        query->isOnlyCalled = isOnlyCalled(listed.analyses, listed.id);
-    context.out.println(listed, " "_s, nameOf(access.opcode), " K"_s, query->key.index(), ": "_s, planPropertyAccess({ program, nullptr }, *query));
+    constexpr auto names = enumNames<MemberStart>();
+    for (size_t index = 0; index < names.size(); ++index) {
+        if (!names[index].isNull() && text == names[index])
+            return static_cast<MemberStart>(index);
+    }
+    return std::nullopt;
 }
 
 static void runPropertyAccess(TestCommandContext& context)
 {
-    if (!CommandWords(context).finish())
-        return;
-    forEachListedValue(context, [&](const ListedValue& listed) {
-        printPlan(context, listed);
+    const Program& program = *context.program;
+    runOnListedValues(context, [&](const ListedValue& listed) {
+        const Value& access = listed.value();
+        std::optional<PropertyAccessQuery> query = propertyAccessQueryOf(program, listed.function, access, ExpectedClassObjects::Tested);
+        if (!query)
+            return;
+        query->maxMembers = context.build.limit(LimitID::MaxAccessPlanMembers);
+        if (access.opcode == Opcode::PropGet)
+            query->isOnlyCalled = isOnlyCalled(listed.analyses, listed.id);
+        context.out.println(listed, " "_s, nameOf(access.opcode), " K"_s, query->key.index(), ": "_s, planPropertyAccess({ program, nullptr }, *query));
     });
 }
 
@@ -167,19 +107,18 @@ static void runMemberLookup(TestCommandContext& context)
     MemberQuery query;
     query.layout = words.parseRequired("layout"_s, layoutParser(program));
     query.key = words.parseRequired("key"_s, keyParser(program));
-    query.start = words.parseOptional("start"_s, enumNameParser<MemberStart>()).value_or(MemberStart::Instance);
+    query.start = words.parseOptional("start"_s, parseMemberStart).value_or(MemberStart::Instance);
     query.access = words.parseOptional("access"_s, accessParser()).value_or(Access::Read);
     query.isOwnLookup = words.parseFlag("own"_s);
-    if (!words.finish())
-        return;
-    context.out.println(findMember({ program, nullptr }, query));
+    if (words.finish())
+        context.out.println(findMember({ program, nullptr }, query));
 }
 
 static void runPartitionMembers(TestCommandContext& context)
 {
     const Program& program = *context.program;
     CommandWords words(context);
-    Vector<LayoutID> layouts = words.parseRequired("layouts"_s, layoutListParser(program));
+    Vector<LayoutID> layouts = words.parseRequired("layouts"_s, bracketedListParser(layoutParser(program)));
     PropertyKeyID key = words.parseRequired("key"_s, keyParser(program));
     Access access = words.parseOptional("access"_s, accessParser()).value_or(Access::Read);
     if (!words.finish())
@@ -192,7 +131,7 @@ static void runLayoutsWithNames(TestCommandContext& context)
 {
     const Program& program = *context.program;
     CommandWords words(context);
-    Vector<PropertyKeyID> names = words.parseRequired("names"_s, keyListParser(program));
+    Vector<PropertyKeyID> names = words.parseRequired("names"_s, bracketedListParser(keyParser(program)));
     if (!words.finish())
         return;
     CommaPrinter comma;
@@ -204,55 +143,45 @@ static void runLayoutsWithNames(TestCommandContext& context)
 
 static void runReceiverCandidates(TestCommandContext& context)
 {
-    if (!CommandWords(context).finish())
-        return;
-    const Program& program = *context.program;
-    forEachListedValue(context, [&](const ListedValue& listed) {
+    runOnListedValues(context, [&](const ListedValue& listed) {
         const Value& access = listed.value();
         if (!isNamedAccess(access.opcode))
             return;
         ValueID receiver = access.operand(*receiverOf(access.opcode));
         LayoutSetID stamp = PayloadWord::receivers(access.opcode) ? access.receivers() : LayoutSetID();
-        context.out.println(listed, ": "_s, receiverCandidates(program, listed.function, receiver, stamp));
+        context.out.println(listed, ": "_s, receiverCandidates(*context.program, listed.function, receiver, stamp));
     });
-}
-
-static void printUnionParts(PrintStream& out, const Program& program, const ListedValue& listed)
-{
-    UnionParts parts = unionPartsOf(program.at(listed.value().type));
-    out.print("v"_s, listed.id.index(), ": "_s);
-    CommaPrinter comma;
-    for (const UnionPart& part : parts)
-        out.print(comma, enumName(part.kind), "("_s, TypeText { program, part.type }, ")"_s);
-    if (isClosedUnion(parts))
-        out.print(" closed"_s);
-    out.println();
 }
 
 static void runUnionParts(TestCommandContext& context)
 {
-    if (!CommandWords(context).finish())
-        return;
     const Program& program = *context.program;
+    PrintStream& out = context.out;
     StringID testedFunctionName = program.strings.find(byteCast<uint8_t>("parts"_s.span()));
-    if (!testedFunctionName)
-        return;
-    forEachListedValue(context, [&](const ListedValue& listed) {
-        if (listed.function.name == testedFunctionName && listed.value().opcode == Opcode::Upcast)
-            printUnionParts(context.out, program, listed);
+    runOnListedValues(context, [&](const ListedValue& listed) {
+        if (!testedFunctionName || listed.function.name != testedFunctionName || listed.value().opcode != Opcode::Upcast)
+            return;
+        UnionParts parts = unionPartsOf(program.at(listed.value().type));
+        out.print("v"_s, listed.id.index(), ": "_s);
+        CommaPrinter comma;
+        for (const UnionPart& part : parts) {
+            out.print(comma, enumName(part.kind), "("_s);
+            printType(out, program, part.type);
+            out.print(")"_s);
+        }
+        if (isClosedUnion(parts))
+            out.print(" closed"_s);
+        out.println();
     });
 }
 
 static void runElementAccess(TestCommandContext& context)
 {
-    if (!CommandWords(context).finish())
-        return;
-    const Program& program = *context.program;
-    forEachListedValue(context, [&](const ListedValue& listed) {
+    runOnListedValues(context, [&](const ListedValue& listed) {
         const Value& access = listed.value();
         if (!elementAccessOf(access.opcode) && access.opcode != Opcode::ElemDelete)
             return;
-        ElementAccessPlan plan = planElementAccessOf(program, listed.function, access).value_or(ElementAccessPlan());
+        ElementAccessPlan plan = planElementAccessOf(*context.program, listed.function, access).value_or(ElementAccessPlan());
         context.out.println(listed, " "_s, nameOf(access.opcode), ": "_s, plan);
     });
 }
@@ -294,31 +223,28 @@ static void printProvenAccess(IRPrinter& printer, const ProvenAccess& access)
 
 static void runProvenAccess(TestCommandContext& context)
 {
-    if (!CommandWords(context).finish())
-        return;
-    const Program& program = *context.program;
-    IRPrinter printer(context.out, program);
-    forEachListedValue(context, [&](const ListedValue& listed) {
+    IRPrinter printer(context.out, *context.program);
+    runOnListedValues(context, [&](const ListedValue& listed) {
         const Value& access = listed.value();
         if (effectRuleOf(access.opcode) != EffectRule::Access)
             return;
         context.out.print(listed, " "_s, nameOf(access.opcode), ": "_s);
-        printProvenAccess(printer, provenAccessOf(program, listed.function, access));
+        printProvenAccess(printer, provenAccessOf(*context.program, listed.function, access));
         context.out.println();
     });
 }
 
 std::span<const TestCommand> propertyAccessTestCommands()
 {
-    static constexpr std::array commands {
-        TestCommand { "property-access"_s, IRForm::Prepared, runPropertyAccess, ProgramAsRead::TypedAndVerified },
-        TestCommand { "member-lookup"_s, IRForm::Prepared, runMemberLookup, ProgramAsRead::TypedAndVerified },
-        TestCommand { "partition-members"_s, IRForm::Prepared, runPartitionMembers, ProgramAsRead::TypedAndVerified },
-        TestCommand { "layouts-with-names"_s, IRForm::Prepared, runLayoutsWithNames, ProgramAsRead::TypedAndVerified },
-        TestCommand { "receiver-candidates"_s, IRForm::Prepared, runReceiverCandidates, ProgramAsRead::TypedAndVerified },
-        TestCommand { "union-parts"_s, IRForm::Prepared, runUnionParts, ProgramAsRead::TypedAndVerified },
-        TestCommand { "element-access"_s, IRForm::Prepared, runElementAccess, ProgramAsRead::TypedAndVerified },
-        TestCommand { "proven-access"_s, IRForm::Prepared, runProvenAccess, ProgramAsRead::TypedAndVerified },
+    static constexpr TestCommand commands[] {
+        { "property-access"_s, IRForm::Prepared, runPropertyAccess, ProgramAsRead::TypedAndVerified },
+        { "member-lookup"_s, IRForm::Prepared, runMemberLookup, ProgramAsRead::TypedAndVerified },
+        { "partition-members"_s, IRForm::Prepared, runPartitionMembers, ProgramAsRead::TypedAndVerified },
+        { "layouts-with-names"_s, IRForm::Prepared, runLayoutsWithNames, ProgramAsRead::TypedAndVerified },
+        { "receiver-candidates"_s, IRForm::Prepared, runReceiverCandidates, ProgramAsRead::TypedAndVerified },
+        { "union-parts"_s, IRForm::Prepared, runUnionParts, ProgramAsRead::TypedAndVerified },
+        { "element-access"_s, IRForm::Prepared, runElementAccess, ProgramAsRead::TypedAndVerified },
+        { "proven-access"_s, IRForm::Prepared, runProvenAccess, ProgramAsRead::TypedAndVerified },
     };
     return commands;
 }

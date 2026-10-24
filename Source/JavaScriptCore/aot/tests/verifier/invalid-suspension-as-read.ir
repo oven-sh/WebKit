@@ -6,11 +6,9 @@
 module m0 path="main.js" displayPath="main.js"
 entry module=m0
 function f0 name="badStartUnreachable" flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: function, v1: anything):
     Throw v1
 }
 function f1 name="good" flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: function, v1: anything):
     InitialYield
     Throw v1
 }

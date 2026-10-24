@@ -12,29 +12,23 @@ layout L3 kind=Instance name="Puppy" base=L1 constructor=f5 flags=[HasHeritage] 
 layout L4 kind=Instance name="Hound" base=L1 constructor=f7 flags=[HasHeritage] flow={baseState=Layout base=L1 impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
 function f0 name="Animal" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f1 name="speak" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f2 name="Dog" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f3 name="speak" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f4 name="Cat" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f5 name="Puppy" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f6 name="speak" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f7 name="Hound" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
 
 function f8 name="more-members-first" parameters=[{type=L0|L1|L2|L3|L4}] results=[{type=anything}] {
-  b0(v0: L0|L1|L2|L3|L4):
     v1 = PropGet v0 key="speak"
     v2 = Call v1, v0 calleeKey="speak"
     Return v2
-}
-# CHECK-LABEL: function f8 name="more-members-first"
 # CHECK: = TypeTest v0 testedType=L0|L2
 # CHECK: ({{*}}: L0|L2):
 # CHECK-NEXT: = CallDirect {{*}} function=f1
@@ -45,13 +39,12 @@ function f8 name="more-members-first" parameters=[{type=L0|L1|L2|L3|L4}] results
 # CHECK: ({{*}}: L3):
 # CHECK-NEXT: = CallDirect {{*}} function=f6
 # CHECK-NOT: frequency=Unlikely
+}
 function f9 name="expected-member-first" parameters=[{type=L0|L1|L2|L3|L4}] results=[{type=anything}] {
   b0(v0: L0|L1|L2|L3|L4 ~ L3):
     v1 = PropGet v0 key="speak"
     v2 = Call v1, v0 calleeKey="speak"
     Return v2
-}
-# CHECK-LABEL: function f9 name="expected-member-first"
 # CHECK: = TypeTest v0 testedType=L3
 # CHECK: ({{*}}: L3):
 # CHECK-NEXT: = CallDirect {{*}} function=f6
@@ -61,13 +54,12 @@ function f9 name="expected-member-first" parameters=[{type=L0|L1|L2|L3|L4}] resu
 # CHECK-NEXT: = CallDirect {{*}} function=f1
 # CHECK: ({{*}}: L1|L4) frequency=Unlikely:
 # CHECK-NEXT: = CallDirect {{*}} function=f3
+}
 function f10 name="two-expected-arms" parameters=[{type=L0|L1|L2|L3|L4}] results=[{type=anything}] {
   b0(v0: L0|L1|L2|L3|L4 ~ L3|L4):
     v1 = PropGet v0 key="speak"
     v2 = Call v1, v0 calleeKey="speak"
     Return v2
-}
-# CHECK-LABEL: function f10 name="two-expected-arms"
 # CHECK: = TypeTest v0 testedType=L1|L4
 # CHECK: ({{*}}: L1|L4{{*}}):
 # CHECK-NEXT: = CallDirect {{*}} function=f3
@@ -77,14 +69,13 @@ function f10 name="two-expected-arms" parameters=[{type=L0|L1|L2|L3|L4}] results
 # CHECK-NEXT: = CallDirect {{*}} function=f6
 # CHECK: ({{*}}: L0|L2) frequency=Unlikely:
 # CHECK-NEXT: = CallDirect {{*}} function=f1
+}
 function f11 name="smaller-layout-first" parameters=[{type=L1|L3}] results=[{type=anything}] {
-  b0(v0: L1|L3):
     v1 = PropGet v0 key="speak"
     v2 = Call v1, v0 calleeKey="speak"
     Return v2
-}
-# CHECK-LABEL: function f11 name="smaller-layout-first"
 # CHECK: = TypeTest v0 testedType=L1
 # CHECK-NOT: TypeTest
 # CHECK: = CallDirect {{*}} function=f3
 # CHECK: = CallDirect {{*}} function=f6
+}

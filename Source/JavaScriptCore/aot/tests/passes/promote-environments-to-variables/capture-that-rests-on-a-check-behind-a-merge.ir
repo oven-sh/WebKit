@@ -10,14 +10,12 @@ typesite w0 module=m0 position=1 kind=Parameter function=f1
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Integer integer=2147483648
     v2 = Call v0, -, v1
     Return
 }
 function f1 name="inner" flags=[IsChecked] parameters=[{type=undefined|i32 site=w0}] results=[{type=anything}] {
-  b0(v0: undefined|i32):
     v1 = TypeTest v0 testedType=undefined
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):
@@ -33,8 +31,6 @@ function f1 name="inner" flags=[IsChecked] parameters=[{type=undefined|i32 site=
     Return
 }
 function f2 name="readsCapture" kind=Arrow captures=[{type=i32}] results=[{type=anything}] {
-  b0(v0: i32):
     Return v0
-}
-# CHECK-LABEL: function f2 name="readsCapture"
 # CHECK: [[read]]: anything ~ int[1, 2147483647] = GetModuleVariable variable=g0
+}

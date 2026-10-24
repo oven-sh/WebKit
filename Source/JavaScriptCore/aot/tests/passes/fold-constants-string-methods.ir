@@ -5,84 +5,69 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="withoutArguments" results=[{type=string}] {
-  b0():
     v0 = String string="  a.b.c "
     v1 = CallBuiltin v0 overload=StringPrototypeTrim/0
     Return v1
-}
-# CHECK-LABEL: function f0 name="withoutArguments"
 # CHECK: v1: "a.b.c" = String string="a.b.c"
 # CHECK-NEXT: Return v1
+}
 
 function f1 name="answerOfOneCallIsOperandOfTheNext" results=[{type=string}] {
-  b0():
     v0 = String string="  a.b.c "
     v1 = CallBuiltin v0 overload=StringPrototypeTrim/0
     v2 = String string="."
     v3 = String string="-"
     v4 = CallBuiltin v1, v2, v3 overload=StringPrototypeReplace/1
     Return v4
-}
-# CHECK-LABEL: function f1 name="answerOfOneCallIsOperandOfTheNext"
 # CHECK: v4: "a-b.c" = String string="a-b.c"
 # CHECK-NEXT: Return v4
+}
 
 function f2 name="integers" results=[{type=string}] {
-  b0():
     v0 = String string="abcdef"
     v1 = Integer integer=2
     v2 = Integer integer=4
     v3 = CallBuiltin v0, v1, v2 overload=StringPrototypeSlice/0
     Return v3
-}
-# CHECK-LABEL: function f2 name="integers"
 # CHECK: v3: "cd" = String string="cd"
 # CHECK-NEXT: Return v3
+}
 
 function f3 name="answerIsNumber" results=[{type=number}] {
-  b0():
     v0 = String string="abcabc"
     v1 = String string="c"
     v2 = Integer integer=3
     v3 = CallBuiltin v0, v1, v2 overload=StringPrototypeIndexOf/0
     Return v3
-}
-# CHECK-LABEL: function f3 name="answerIsNumber"
 # CHECK: v3: 5 = Integer integer=5
 # CHECK-NEXT: Return v3
+}
 
 function f4 name="unknownReceiver" parameters=[{type=string}] results=[{type=string}] {
-  b0(v0: string):
     v1 = CallBuiltin v0 overload=StringPrototypeTrim/0
     Return v1
-}
-# CHECK-LABEL: function f4 name="unknownReceiver"
 # CHECK: v1: string = CallBuiltin v0 overload=StringPrototypeTrim/0
+}
 
 function f5 name="unknownArgument" parameters=[{type=string}] results=[{type=string}] {
-  b0(v0: string):
     v1 = String string="a.b"
     v2 = String string="."
     v3 = CallBuiltin v1, v2, v0 overload=StringPrototypeReplace/1
     Return v3
-}
-# CHECK-LABEL: function f5 name="unknownArgument"
 # CHECK: v3: string = CallBuiltin v1, v2, v0 overload=StringPrototypeReplace/1
+}
 
 function f6 name="nobodyKnowsThatTheLastMatchIsNotRead" results=[{type=string}] {
-  b0():
     v0 = String string="a.b"
     v1 = NewRegExp pattern="[.]" regExpFlags=[Global]
     v2 = String string="-"
     v3 = CallBuiltin v0, v1, v2 overload=StringPrototypeReplace/0
     Return v3
-}
-# CHECK-LABEL: function f6 name="nobodyKnowsThatTheLastMatchIsNotRead"
 # CHECK: v3: string = CallBuiltin v0, v1, v2 overload=StringPrototypeReplace/0
+}
 
 # The table says which functions depend on their operands alone
 function f7 name="everyFunctionThatTheTableCallsDeterministic" results=[{type=string}] {
-  b0():
     v0 = String string="aBc"
     v1 = CallBuiltin v0 overload=StringPrototypeToUpperCase/0
     v2 = CallBuiltin v1 overload=StringPrototypeToLowerCase/0
@@ -92,32 +77,27 @@ function f7 name="everyFunctionThatTheTableCallsDeterministic" results=[{type=st
     v6 = String string="-"
     v7 = CallBuiltin v4, v5, v6 overload=StringPrototypePadStart/1
     Return v7
-}
-# CHECK-LABEL: function f7 name="everyFunctionThatTheTableCallsDeterministic"
 # CHECK: v1: "ABC" = String string="ABC"
 # CHECK: v2: "abc" = String string="abc"
 # CHECK: v4: "abcabc" = String string="abcabc"
 # CHECK: v7: "--abcabc" = String string="--abcabc"
 # CHECK-NEXT: Return v7
+}
 
 function f8 name="aCallThatThrowsStaysAndThrowsInTheProgram" results=[{type=string}] {
-  b0():
     v0 = String string="a"
     v1 = Integer integer=-1
     v2 = CallBuiltin v0, v1 overload=StringPrototypeRepeat/0
     v3 = String string="X"
     v4 = CallBuiltin v0, v3 overload=StringPrototypeNormalize/1
     Return v2
-}
-# CHECK-LABEL: function f8 name="aCallThatThrowsStaysAndThrowsInTheProgram"
 # CHECK: = CallBuiltin v0, v1 overload=StringPrototypeRepeat/0
 # CHECK: = CallBuiltin v0, v3 overload=StringPrototypeNormalize/1
+}
 
 function f9 name="theLocaleIsNoOperand" results=[{type=string}] {
-  b0():
     v0 = String string="a"
     v1 = CallBuiltin v0 overload=StringPrototypeToLocaleUpperCase/1
     Return v1
-}
-# CHECK-LABEL: function f9 name="theLocaleIsNoOperand"
 # CHECK: = CallBuiltin v0 overload=StringPrototypeToLocaleUpperCase/1
+}

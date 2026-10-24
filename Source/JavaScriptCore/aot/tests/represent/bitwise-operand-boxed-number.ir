@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="orOfTestedNumber" parameters=[{type=anything}, {type=i32}] results=[{type=i32}] {
-  b0(v0: anything, v1: i32):
     v2 = TypeTest v0 testedType=number
     TestAndBranch v2 -> taken b1(| 0), notTaken b2()
   b1(v3: number):
@@ -15,14 +14,12 @@ function f0 name="orOfTestedNumber" parameters=[{type=anything}, {type=i32}] res
     Return v4
   b2():
     Return v1
-}
-# CHECK-LABEL: function f0 name="orOfTestedNumber"
 # CHECK: TestAndBranch v2 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v3: number @JSValue):
 # CHECK-NEXT: i32 @Int32 = BitOr v3, v1 form=Numbers
+}
 
 function f1 name="eachOperatorOnBoxedNumbers" parameters=[{type=anything}] results=[{type=int}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=number
     TestAndBranch v1 -> taken b1(| 0), notTaken b2()
   b1(v2: number):
@@ -35,23 +32,19 @@ function f1 name="eachOperatorOnBoxedNumbers" parameters=[{type=anything}] resul
   b2():
     v8 = Integer
     Return v8
-}
-# CHECK-LABEL: function f1 name="eachOperatorOnBoxedNumbers"
 # CHECK: b1(v2: number @JSValue):
 # CHECK-NOT: = Unbox
+}
 
 function f2 name="orOfComputedNumber" parameters=[{type=number}, {type=i32}] results=[{type=i32}] {
-  b0(v0: number, v1: i32):
     v2 = Mul v0, v0 form=Numbers
     v3 = BitOr v2, v1 form=Numbers
     Return v3
-}
-# CHECK-LABEL: function f2 name="orOfComputedNumber"
 # CHECK: number @Double = Mul v0, v0 form=Numbers
 # CHECK-NEXT: i32 @Int32 = BitOr v2, v1 form=Numbers
+}
 
 function f3 name="usedAsDoubleToo" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
-  b0(v0: anything, v1: number):
     v2 = TypeTest v0 testedType=number
     TestAndBranch v2 -> taken b1(| 0), notTaken b2()
   b1(v3: number):

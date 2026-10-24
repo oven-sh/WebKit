@@ -10,7 +10,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="smallLoop" parameters=[{type=undefined|null|Array<number>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: undefined|null|Array<number>, v1: anything):
     v2 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -36,9 +35,7 @@ function f0 name="smallLoop" parameters=[{type=undefined|null|Array<number>}, {t
     Rethrow v10
   b7():
     Return v1
-}
 # The array copy is the text as written, without its handler. The protocol copy is unlikely and keeps the landing block.
-# CHECK-LABEL: function f0 name="smallLoop"
 # CHECK: b1({{*}}: int[0, 9007199254740991]):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: = PropGet [[array0]] key="length"
@@ -64,7 +61,6 @@ function f0 name="smallLoop" parameters=[{type=undefined|null|Array<number>}, {t
 # CHECK: Rethrow [[exception0]]
 # CHECK: Jump -> next b5([[called0]])
 # CHECK: Jump -> next b5(v7)
-# ABSENT-LABEL: function f0 name="smallLoop"
 # ABSENT-NOT: ) handler=
 # ABSENT-NOT: role=IterationCleanup
 # ABSENT-NOT: role=CleanupHandler:
@@ -74,9 +70,9 @@ function f0 name="smallLoop" parameters=[{type=undefined|null|Array<number>}, {t
 # ABSENT-NOT: Unspecified
 # ABSENT-COUNT-2: = Call v1, -,
 # ABSENT-NOT: = Call v1, -,
+}
 
 function f1 name="pattern" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = IteratorOpen v0 elementCount=2 [isDestructuring]
     Jump -> next b1()
   b1() handler=b4():
@@ -95,18 +91,15 @@ function f1 name="pattern" parameters=[{type=anything}] results=[{type=anything}
     v8 = CatchException
     IteratorClose v1 completion=Throw
     Rethrow v8
-}
-# CHECK-LABEL: function f1 name="pattern"
 # CHECK: b3([[first1]]: anything, [[second1]]: anything):
 # CHECK-NEXT: = Add [[first1]], [[second1]]
-# ABSENT-LABEL: function f1 name="pattern"
 # ABSENT-NOT: ) handler=
 # ABSENT-NOT: Switch
 # ABSENT-COUNT-2: = ElemGet
 # ABSENT-NOT: = ElemGet
+}
 
 function f2 name="codeAfterPattern" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = IteratorOpen v0 elementCount=2 [isDestructuring]
     Jump -> next b1()
   b1() handler=b3():
@@ -128,9 +121,7 @@ function f2 name="codeAfterPattern" parameters=[{type=anything}, {type=anything}
     v14 = CatchException
     IteratorClose v2 completion=Throw
     Rethrow v14
-}
 # What follows the last close in its block belongs to no copy and does not count for the limit.
-# CHECK-LABEL: function f2 name="codeAfterPattern"
 # CHECK: b0(v0: anything, v1: anything):
 # CHECK: [[shared2]]([[first2]]: anything, [[second2]]: anything):
 # CHECK-NEXT: v8: anything = Call v1, -, [[first2]]
@@ -139,16 +130,15 @@ function f2 name="codeAfterPattern" parameters=[{type=anything}, {type=anything}
 # CHECK: [[read2]]: undefined = DestructureIterable {{*}} count=2
 # CHECK: Jump -> next [[shared2]](
 # CHECK: Jump -> next [[shared2]](
-# ABSENT-LABEL: function f2 name="codeAfterPattern"
 # ABSENT-NOT: Switch
 # ABSENT-COUNT-1: = ElemGet
 # ABSENT-COUNT-6: = Call v1, -,
 # ABSENT-NOT: = Call v1, -,
 # ABSENT-COUNT-1: = ElemGet
 # ABSENT-NOT: = ElemGet
+}
 
 function f3 name="codeBeforeClose" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = IteratorOpen v0 elementCount=2 [isDestructuring]
     Jump -> next b1()
   b1() handler=b3():
@@ -170,20 +160,17 @@ function f3 name="codeBeforeClose" parameters=[{type=anything}, {type=anything}]
     v14 = CatchException
     IteratorClose v2 completion=Throw
     Rethrow v14
-}
 # The same calls in front of the close are in the region: it has one copy, and each operation asks for the form.
-# CHECK-LABEL: function f3 name="codeBeforeClose"
 # CHECK: Switch
-# ABSENT-LABEL: function f3 name="codeBeforeClose"
 # ABSENT-COUNT-6: = Call v1, -,
 # ABSENT-NOT: = Call v1, -,
+}
 
 function f4 name="coroutine" role=CoroutineRamp flags=[IsAsync] parameters=[{type=undefined|null|Array<number>}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f4 body=f5 entryWithoutPromise=f5 promiseType=Promise promiseParameter=1}
 # CHECK-LABEL: function f4 name="coroutine"
 # ABSENT-LABEL: function f4 name="coroutine"
 
 function f5 name="coroutine" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|null|Array<number>}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f4} creator=Coroutine{kind=AsyncFunction ramp=f4 body=f5 entryWithoutPromise=f5 promiseType=Promise promiseParameter=1} {
-  b0(v0: undefined|null|Array<number>, v1: undefined|Promise):
     v2 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -205,19 +192,17 @@ function f5 name="coroutine" role=CoroutineBody flags=[IsAsync] parameters=[{typ
     v10 = Undefined
     v11 = ReturnAsyncResult v1, v10
     Return v11
-}
 # A region with a suspension is copied like any other: a loop in an async function gets the array copy as well.
-# CHECK-LABEL: function f5 name="coroutine"
 # CHECK: b3():
 # CHECK-NEXT: v7: anything = AwaitBySavingFrame v6, v1
 # CHECK: frequency=Unlikely handler=[[landing5]]():
 # CHECK-NEXT: = AwaitBySavingFrame {{*}}, v1
 # CHECK: [[landing5]]() role=CleanupHandler frequency=Unlikely:
-# ABSENT-LABEL: function f5 name="coroutine"
 # ABSENT-NOT: Switch
 # ABSENT-NOT: ) handler=
 # ABSENT-COUNT-2: = AwaitBySavingFrame
 # ABSENT-NOT: = AwaitBySavingFrame
+}
 
 # LEFT-NOT: IteratorOpen
 # LEFT-NOT: IteratorResume

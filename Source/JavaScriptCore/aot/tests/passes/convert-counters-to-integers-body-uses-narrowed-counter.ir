@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="indexInBody" parameters=[{type=Array<number>}, {type=int[0, 100]}] results=[{type=number}] {
-  b0(v0: Array<number>, v1: int[0, 100]):
     v2 = Integer integer=0
     v3 = Integer integer=1
     Jump -> next b1(v2)
@@ -20,8 +19,6 @@ function f0 name="indexInBody" parameters=[{type=Array<number>}, {type=int[0, 10
     Jump -> next b1(v8)
   b3():
     Return v4
-}
-# CHECK-LABEL: function f0 name="indexInBody"
 # CHECK: b1(v4: int[0, 100]):
 # CHECK: Less v4, v1
 # CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b3()
@@ -30,9 +27,9 @@ function f0 name="indexInBody" parameters=[{type=Array<number>}, {type=int[0, 10
 # CHECK-NEXT: v8: int[1, 100] = Add [[index0]], v3
 # CHECK: b3():
 # CHECK-NEXT: Return v4
+}
 
 function f1 name="boundIsLengthReadInHeader" parameters=[{type=string}] results=[{type=undefined}] {
-  b0(v0: string):
     v1 = Integer integer=0
     v2 = Integer integer=1
     Jump -> next b1(v1)
@@ -47,16 +44,14 @@ function f1 name="boundIsLengthReadInHeader" parameters=[{type=string}] results=
     Jump -> next b1(v8)
   b3():
     Return
-}
-# CHECK-LABEL: function f1 name="boundIsLengthReadInHeader"
 # CHECK: b1(v3: int[0, 2147483647]):
 # CHECK: Branch v6 -> taken b2(| 0), notTaken b3()
 # CHECK-NEXT: b2([[index1]]: int[0, 2147483646]):
 # CHECK-NEXT: ElemGet v0, [[index1]]
 # CHECK-NEXT: v8: int[1, 2147483647] = Add [[index1]], v2
+}
 
 function f2 name="usesInBlocksBelowTheBody" parameters=[{type=Array<number>}, {type=int[0, 100]}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<number>, v1: int[0, 100], v2: boolean):
     v3 = Integer integer=0
     v4 = Integer integer=1
     Jump -> next b1(v3)
@@ -78,8 +73,6 @@ function f2 name="usesInBlocksBelowTheBody" parameters=[{type=Array<number>}, {t
     Jump -> next b1(v12)
   b6():
     Return
-}
-# CHECK-LABEL: function f2 name="usesInBlocksBelowTheBody"
 # CHECK: b2([[index2]]: int[0, 99]):
 # CHECK: b3():
 # CHECK-NEXT: ElemGet v0, [[index2]]
@@ -89,9 +82,9 @@ function f2 name="usesInBlocksBelowTheBody" parameters=[{type=Array<number>}, {t
 # CHECK: b5(v10: int[0, 99]):
 # CHECK-NEXT: ElemGet v0, v10
 # CHECK-NEXT: v12: int[1, 100] = Add [[index2]], v4
+}
 
 function f3 name="usesTheEdgeDoesNotDominate" parameters=[{type=Array<number>}, {type=int[0, 100]}] results=[{type=anything}] {
-  b0(v0: Array<number>, v1: int[0, 100]):
     v2 = Integer integer=0
     v3 = Integer integer=1
     Jump -> next b1(v2)
@@ -106,8 +99,6 @@ function f3 name="usesTheEdgeDoesNotDominate" parameters=[{type=Array<number>}, 
   b3():
     v9 = ElemGet v0, v4
     Return v9
-}
-# CHECK-LABEL: function f3 name="usesTheEdgeDoesNotDominate"
 # CHECK: b1(v4: int[0, 100]):
 # CHECK: ElemGet v0, v4
 # CHECK-NEXT: Less v4, v1
@@ -116,9 +107,9 @@ function f3 name="usesTheEdgeDoesNotDominate" parameters=[{type=Array<number>}, 
 # CHECK-NEXT: Add [[index3]], v3
 # CHECK: b3():
 # CHECK-NEXT: ElemGet v0, v4
+}
 
 function f4 name="counterStaysNumber" parameters=[{type=Array<number>}, {type=number}] results=[{type=undefined}] {
-  b0(v0: Array<number>, v1: number):
     v2 = Integer integer=0
     v3 = Integer integer=1
     Jump -> next b1(v2)
@@ -132,10 +123,9 @@ function f4 name="counterStaysNumber" parameters=[{type=Array<number>}, {type=nu
     Jump -> next b1(v8)
   b3():
     Return
-}
-# CHECK-LABEL: function f4 name="counterStaysNumber"
 # CHECK: b1(v4: int|whole):
 # CHECK: Branch v6 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
 # CHECK-NEXT: ElemGet v0, v4
 # CHECK-NEXT: v8: int|whole = Add v4, v3
+}

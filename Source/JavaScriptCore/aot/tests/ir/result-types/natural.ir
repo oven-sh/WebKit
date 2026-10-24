@@ -19,7 +19,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="n" parameters=[{type=number}, {type=string}, {type=bigint}, {type=anything}, {type=boolean}, {type=undefined}] results=[{type=undefined}] {
-  b0(v0: number, v1: string, v2: bigint, v3: anything, v4: boolean, v5: undefined):
     v6 = Add v0, v0
     v7 = Add v0, v5
     v8 = Add v1, v0

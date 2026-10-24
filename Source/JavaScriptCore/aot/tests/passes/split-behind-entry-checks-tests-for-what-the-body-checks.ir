@@ -19,7 +19,6 @@ typesite w2 module=m0 position=30 kind=Assertion
 typesite w3 module=m0 position=40 kind=Parameter
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = NewClosure function=f3
@@ -32,7 +31,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="handsOn" module=m0 position=100 flags=[IsChecked] length=2 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = ToBoolean v1
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -55,7 +53,6 @@ function f2 name="narrows" module=m0 position=200 flags=[IsChecked] length=1 par
     Return v4
 }
 function f3 name="alsoUses" module=m0 position=300 flags=[IsChecked] length=1 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -66,7 +63,6 @@ function f3 name="alsoUses" module=m0 position=300 flags=[IsChecked] length=1 pa
     Return
 }
 function f4 name="twoTypes" module=m0 position=400 flags=[IsChecked] length=2 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = ToBoolean v1
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -78,7 +74,6 @@ function f4 name="twoTypes" module=m0 position=400 flags=[IsChecked] length=2 pa
     Return v5
 }
 function f5 name="otherMemberArrives" module=m0 position=500 flags=[IsChecked] length=1 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = Check v0 castType=string site=w1
@@ -86,7 +81,6 @@ function f5 name="otherMemberArrives" module=m0 position=500 flags=[IsChecked] l
     Return v2
 }
 function f6 name="reassigned" module=m0 position=600 flags=[IsChecked] length=2 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = ToBoolean v1
     Branch v2 -> taken b1(), notTaken b2()
   b1():

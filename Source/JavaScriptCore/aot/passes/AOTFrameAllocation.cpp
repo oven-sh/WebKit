@@ -12,9 +12,9 @@
 #include "AOTBuildContext.h"
 #include "AOTEffectsDescription.h"
 #include "AOTFlowResults.h"
-#include "AOTFrameAllocationMaterialization.h"
 #include "AOTFrameAllocationPlanner.h"
 #include "AOTFunctionEditing.h"
+#include "AOTIRBuilder.h"
 #include "AOTPass.h"
 #include "AOTPhaseTimes.h"
 #include "AOTProgramCaches.h"
@@ -24,21 +24,10 @@
 #include "AOTVector.h"
 #include <algorithm>
 #include <optional>
-#include <wtf/PrintStream.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 static_assert(Value::opcodesWithStorage == (OpcodeSet { Opcode::NewClosure, Opcode::NewObject } | arrayAllocationsWithStorage));
-
-namespace {
-
-// Most functions allocate nothing and have no plan.
-struct PlannedFunction {
-    FunctionID id;
-    FramePlan plan;
-};
-
-} // anonymous namespace
 
 static bool hasAllocationSite(const Value& value)
 {
@@ -64,24 +53,15 @@ static FoundAllocations findAllocations(const Program& program, FunctionID funct
     return found;
 }
 
-static FramePlan createHeapPlan(const Program& program, const Function& function, const BitVector& allocations)
+static FramePlan createHeapPlan(const Program& program, FunctionID id, const BitVector& allocations)
 {
-    FramePlan plan;
+    FramePlan plan { .function = id };
     for (size_t index : allocations) {
-        ValueID id(index);
-        const Value& value = function.at(id);
-        AllocationStorage storage = hasStorageChoice(value) ? value.storage() : AllocationStorage::Heap;
-        if (storage == AllocationStorage::Heap)
-            plan.decisions.append(FrameDecision { .allocation = id });
-        if (!hasStorageChoice(value) || arrayAllocationsWithStorage.contains(value.opcode))
-            continue;
-        if (value.opcode == Opcode::NewClosure) {
-            plan.allocation.addClosure(value.function(), storage);
-            continue;
-        }
-        plan.allocation.addCell(value.layout(), storage);
-        if (storage == AllocationStorage::Heap && program.at(value.layout()).kind == LayoutKind::Environment)
-            ++plan.environmentsOnHeap;
+        const Value& value = program.at(id).at(ValueID(index));
+        if (!hasStorageChoice(value) || value.storage() == AllocationStorage::Heap)
+            plan.decisions.append(FrameDecision { .allocation = ValueID(index) });
+        if (hasStorageChoice(value))
+            plan.add(program, value, value.storage(), value.opcode == Opcode::NewClosure && value.isLent());
     }
     return plan;
 }
@@ -96,15 +76,13 @@ static bool keepsEveryCellOnHeapByForm(const Program& program, const FlowResults
             return false;
         if (arrayAllocationsWithStorage.contains(allocation.opcode))
             hasArrays = true;
-        else if (!FramePlanner::staysOnHeapByForm(program, flow, build, allocation))
+        else if (!staysOnHeapByForm(program, flow, build, allocation))
             return false;
     }
-    if (!hasArrays)
-        return true;
-    return findArraysThatMayLieInFrame(program, build, function).size() <= maxFollowedArrays && !mayPutSomeArrayInFrame(program, flow, build, function);
+    return !hasArrays || (findArraysThatMayLieInFrame(program, build, function).size() <= maxFollowedArrays && !mayPutSomeArrayInFrame(program, flow, build, function));
 }
 
-// What FramePlanner::finishPlan() lists.
+// What the plan of the planner lists.
 static BitVector findListedAllocations(const Program& program, const BuildContext& build, FunctionAnalyses& analyses, const BitVector& allocations)
 {
     const Function& function = analyses.function();
@@ -122,8 +100,8 @@ static BitVector findListedAllocations(const Program& program, const BuildContex
 static bool keepsSameCellsOnHeap(const FramePlan& heapPlan, const FramePlan& plan)
 {
     return plan.emptyArgumentLists.isEmpty() && plan.demotedReturnCalls.isEmpty()
-        && plan.allocation.fieldsHoldingFramePointers().empty() && plan.allocation.capturesHoldingFramePointers().empty()
-        && plan.environmentsOnHeap == heapPlan.environmentsOnHeap
+        && plan.fieldsHoldingFramePointers.isEmpty() && plan.capturesHoldingFramePointers.isEmpty()
+        && plan.counts == heapPlan.counts
         && std::ranges::equal(plan.decisions, heapPlan.decisions, [](const FrameDecision& planned, const FrameDecision& kept) {
             return planned.storage == AllocationStorage::Heap && planned.allocation == kept.allocation && planned.isHeldByClosureTable == kept.isHeldByClosureTable;
         });
@@ -136,28 +114,21 @@ static std::optional<FramePlan> planFunction(const Program& program, const Optim
     if (allocations.isEmpty())
         return std::nullopt;
     if (!build.isEnabled(PassID::AllocateInFrames, id))
-        return createHeapPlan(program, function, allocations);
+        return createHeapPlan(program, id, allocations);
     if (areAllFilledArrays && !mayPutSomeArrayInFrame(program, inputs.flow, build, function))
         return std::nullopt;
 
     FunctionAnalyses analyses(AnalysisContext { build, program, &inputs.flow, &inputs.effects, id }, function);
-    // A remark and a dump say what keeps a cell on the heap, which the planner finds out.
-    bool namesCauses = build.options().collectsAllocationRemarks() || build.options().logging.dumpedPass == PassID::AllocateInFrames;
-    if (!namesCauses && !areAllFilledArrays && keepsEveryCellOnHeapByForm(program, inputs.flow, build, function, allocations)) {
-        FramePlan plan = createHeapPlan(program, function, findListedAllocations(program, build, analyses, allocations));
-        for (FrameDecision& decision : plan.decisions)
-            decision.isHeldByClosureTable = FramePlanner::isLikeEveryClosureOfItsFunction(program, &inputs.flow, function, function.at(decision.allocation));
-        RELEASE_ASSERT(!build.options().verifiesAfterEveryPass || keepsSameCellsOnHeap(plan, FramePlanner(analyses, inputs.heat).run()));
-        return plan;
-    }
-    return FramePlanner(analyses, inputs.heat).run();
-}
+    // A remark says what keeps a cell on the heap, which the planner finds out.
+    bool namesCauses = build.options().collectsAllocationRemarks();
+    if (namesCauses || areAllFilledArrays || !keepsEveryCellOnHeapByForm(program, inputs.flow, build, function, allocations))
+        return planFrame(analyses, inputs.heat);
 
-bool FramePlan::changesFunction() const
-{
-    return !emptyArgumentLists.isEmpty() || decisions.containsIf([](const FrameDecision& decision) {
-        return decision.storage != AllocationStorage::Heap || decision.isHeldByClosureTable;
-    });
+    FramePlan plan = createHeapPlan(program, id, findListedAllocations(program, build, analyses, allocations));
+    for (FrameDecision& decision : plan.decisions)
+        decision.isHeldByClosureTable = isLikeEveryClosureOfItsFunction(program, &inputs.flow, function, function.at(decision.allocation));
+    RELEASE_ASSERT(!build.options().verifiesAfterEveryPass || keepsSameCellsOnHeap(plan, planFrame(analyses, inputs.heat)));
+    return plan;
 }
 
 static Value closureOfHeapLike(const Value& closure)
@@ -235,15 +206,7 @@ static void setStorage(Function& function, const FramePlan& plan)
     }
 }
 
-// applyFramePlan() does no more than setStorage().
-static bool setsOnlyStorage(const FramePlan& plan)
-{
-    return plan.emptyArgumentLists.isEmpty() && plan.demotedReturnCalls.isEmpty() && !plan.decisions.containsIf([](const FrameDecision& decision) {
-        return decision.isHeldByClosureTable || decision.storage == AllocationStorage::FrameUntilMaterialized || !decision.madeAgainAt.isEmpty();
-    });
-}
-
-void applyFramePlan(const AnalysisContext& context, Function& function, TypeArena& types, const FramePlan& plan)
+static void applyFramePlan(const AnalysisContext& context, Function& function, TypeArena& types, const FramePlan& plan)
 {
     for (ValueID id : plan.emptyArgumentLists) {
         Value& list = function.edit(id);
@@ -254,8 +217,10 @@ void applyFramePlan(const AnalysisContext& context, Function& function, TypeAren
     setStorage(function, plan);
     BitVector frameClosures(function.values.size());
     Vector<ValueID, 4> environmentsMaterializedLate;
+    bool makesClosuresAgain = false;
     for (const FrameDecision& decision : plan.decisions) {
         Value& allocation = function.edit(decision.allocation);
+        makesClosuresAgain |= !decision.madeAgainAt.isEmpty();
         switch (decision.storage) {
         case AllocationStorage::Heap:
             if (decision.isHeldByClosureTable)
@@ -270,9 +235,6 @@ void applyFramePlan(const AnalysisContext& context, Function& function, TypeAren
             break;
         }
     }
-    bool makesClosuresAgain = plan.decisions.containsIf([](const FrameDecision& decision) {
-        return !decision.madeAgainAt.isEmpty();
-    });
     if (environmentsMaterializedLate.isEmpty() && plan.demotedReturnCalls.isEmpty() && !makesClosuresAgain)
         return;
 
@@ -283,7 +245,7 @@ void applyFramePlan(const AnalysisContext& context, Function& function, TypeAren
     for (BlockID block : plan.demotedReturnCalls)
         builder.demoteReturnCall(block);
     for (ValueID environment : environmentsMaterializedLate)
-        EnvironmentMaterialization(analyses, environment, frameClosures).run(builder);
+        materializeEnvironmentLate(builder, analyses, environment, frameClosures);
 }
 
 static AllocationOutcome outcomeOf(AllocationStorage storage)
@@ -328,73 +290,20 @@ AllocationRemark remarkOf(const Function& function, const FrameDecision& decisio
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void addAllocationRemarks(const Function& function, BuildContext& build, const FramePlan& plan)
-{
-    for (const FrameDecision& decision : plan.decisions) {
-        if (hasAllocationSite(function.at(decision.allocation)))
-            build.addAllocationRemark(remarkOf(function, decision));
-    }
-}
-
-static void countPlans(BuildContext& build, std::span<const PlannedFunction> plannedFunctions)
-{
-    uint64_t closuresInFrames = 0;
-    uint64_t closuresLent = 0;
-    uint64_t environmentsInFrames = 0;
-    uint64_t environmentsOnHeap = 0;
-    uint64_t environmentsMaterializedLate = 0;
-    uint64_t objectsInFrames = 0;
-    uint64_t emptyArgumentListsShared = 0;
-    uint64_t arraysInFrames = 0;
-    uint64_t restArraysInFrames = 0;
-    for (const PlannedFunction& planned : plannedFunctions) {
-        const FramePlan& plan = planned.plan;
-        emptyArgumentListsShared += plan.emptyArgumentLists.size();
-        closuresInFrames += plan.closuresInFrames;
-        closuresLent += plan.closuresLent;
-        environmentsInFrames += plan.environmentsInFrames;
-        environmentsOnHeap += plan.environmentsOnHeap;
-        environmentsMaterializedLate += plan.environmentsMaterializedLate;
-        objectsInFrames += plan.objectsInFrames;
-        arraysInFrames += plan.arraysInFrames;
-        restArraysInFrames += plan.restArraysInFrames;
-    }
-    build.statistics().count(StatisticID::ClosuresInFrames, closuresInFrames);
-    build.statistics().count(StatisticID::ClosuresLent, closuresLent);
-    build.statistics().count(StatisticID::EnvironmentsInFrames, environmentsInFrames);
-    build.statistics().count(StatisticID::EnvironmentsOnHeap, environmentsOnHeap);
-    build.statistics().count(StatisticID::EnvironmentsMaterializedLate, environmentsMaterializedLate);
-    build.statistics().count(StatisticID::ObjectsInFrames, objectsInFrames);
-    build.statistics().count(StatisticID::EmptyArgumentListsShared, emptyArgumentListsShared);
-    build.statistics().count(StatisticID::ArraysInFrames, arraysInFrames);
-    build.statistics().count(StatisticID::RestArraysInFrames, restArraysInFrames);
-}
-
-static void addCellsCreatedByRuntime(const Program& program, FrameAllocation& result)
-{
-    for (unsigned index = 0; index < program.layouts.size(); ++index) {
-        if (program.layouts[index].kind != LayoutKind::Environment)
-            result.addCell(LayoutID(index), AllocationStorage::Heap);
-    }
-}
-
-static Vector<PlannedFunction> planFunctions(const Program& program, const OptimizationInputs& inputs, BuildContext& build)
+static Vector<FramePlan> planFunctions(const Program& program, const OptimizationInputs& inputs, BuildContext& build)
 {
     const ParallelLoops& loops = build.parallelLoops();
-    Vector<PlannedFunction> plannedFunctions;
+    Vector<FramePlan> plans;
     TypeInterningPhase scratch(program.types, 0u, TypeInterningPhase::Scratch);
     {
         ProgramCaches caches(program, build);
-        plannedFunctions = collectInParallel<PlannedFunction>(loops, program.functions.size(), largeFunctions(program, loops).span(), [&](unsigned index, Vector<PlannedFunction>& planned) {
-            FunctionID id(index);
-            std::optional<FramePlan> plan = planFunction(program, inputs, build, id);
-            if (!plan)
-                return;
-            planned.append(PlannedFunction { id, WTF::move(*plan) });
+        plans = collectInParallel<FramePlan>(loops, program.functions.size(), largeFunctions(program, loops).span(), [&](unsigned index, Vector<FramePlan>& planned) {
+            if (std::optional<FramePlan> plan = planFunction(program, inputs, build, FunctionID(index)))
+                planned.append(WTF::move(*plan));
         });
     }
     scratch.discard();
-    return plannedFunctions;
+    return plans;
 }
 
 // The stub of a call may copy a closure that is lent to the heap, with all that it holds.
@@ -421,22 +330,24 @@ static bool keepsClosuresInFrame(const Function& function, const FramePlan& earl
 }
 
 // A closure in the frame captures an entry parameter that the table has lost.
-static bool mayBorrowMoreBy(const FlowResults& flow, FunctionID id, const Function& function, const FramePlan& plan)
+static bool mayBorrowMoreBy(const Program& program, const FlowResults& flow, const FramePlan& plan)
 {
+    const Function& function = program.at(plan.function);
     const CompactList<ValueID>& parameters = function.at(entryBlock).parameters;
     return plan.decisions.containsIf([&](const FrameDecision& decision) {
         if (!staysInFrame(function, decision))
             return false;
         return std::ranges::any_of(function.at(decision.allocation).capturesOperands(), [&](ValueID capture) {
             size_t entryParameter = parameters.find(sameObjectThroughCasts(function, capture));
-            return entryParameter != notFound && !flow.borrowedParameters().isBorrowed(id, entryParameter);
+            return entryParameter != notFound && !flow.borrowedParameters().isBorrowed(plan.function, entryParameter);
         });
     });
 }
 
 // Something went to the heap, or is made again, for a callee that borrows more now.
-static bool mayGainFrom(const Program& program, const Function& function, const FramePlan& plan, const BitVector& functionsThatBorrowMore)
+static bool mayGainFrom(const Program& program, const FramePlan& plan, const BitVector& functionsThatBorrowMore)
 {
+    const Function& function = program.at(plan.function);
     auto handsToSuchFunction = [&](const Use& use) {
         if (use.kind != Use::Kind::Operand || effectRuleOf(function.at(use.user).opcode) != EffectRule::Call)
             return false;
@@ -454,24 +365,24 @@ static bool mayGainFrom(const Program& program, const Function& function, const 
 AOT_THRESHOLD(unsigned, maxRoundsOfPlans, 3);
 
 // A parameter that a closure of the function's own frame captures stays borrowed (AOTBorrowedParameters.h), and which closures lie in the frame is known by the plans.
-static void planAgainWithWhatFramesHold(const Program& program, const OptimizationInputs& inputs, FlowResults& flow, BuildContext& build, Vector<PlannedFunction>& plannedFunctions)
+static void planAgainWithWhatFramesHold(const Program& program, const OptimizationInputs& inputs, FlowResults& flow, BuildContext& build, Vector<FramePlan>& plans)
 {
     struct GrownWord {
         uint32_t position { 0 };
         uint64_t word { 0 };
     };
     const ParallelLoops& loops = build.parallelLoops();
-    Vector<uint32_t> positionsToScan = findIndicesInParallel(loops, plannedFunctions.size(), [&](unsigned position) {
-        return mayBorrowMoreBy(flow, plannedFunctions[position].id, program.at(plannedFunctions[position].id), plannedFunctions[position].plan);
+    Vector<uint32_t> positionsToScan = findIndicesInParallel(loops, plans.size(), [&](unsigned position) {
+        return mayBorrowMoreBy(program, flow, plans[position]);
     });
     // The table counts on the closures that these plans put into frames.
-    BitVector isCountedOn(plannedFunctions.size());
+    BitVector isCountedOn(plans.size());
 
     for (unsigned round = 1; round < maxRoundsOfPlans && !positionsToScan.isEmpty(); ++round) {
         Vector<GrownWord> grownWords = collectInParallel<GrownWord>(loops, positionsToScan.size(), [&](unsigned index, Vector<GrownWord>& grown) {
-            const PlannedFunction& planned = plannedFunctions[positionsToScan[index]];
-            uint64_t word = flow.borrowedParameters().wordOfBody(program, build, planned.id, closuresInFrameBy(program.at(planned.id), planned.plan));
-            if (word & ~flow.borrowedParameters().wordOf(planned.id))
+            const FramePlan& plan = plans[positionsToScan[index]];
+            uint64_t word = flow.borrowedParameters().wordOfBody(program, build, plan.function, closuresInFrameBy(program.at(plan.function), plan));
+            if (word & ~flow.borrowedParameters().wordOf(plan.function))
                 grown.append({ positionsToScan[index], word });
         });
         if (grownWords.isEmpty())
@@ -479,233 +390,140 @@ static void planAgainWithWhatFramesHold(const Program& program, const Optimizati
 
         BitVector functionsThatBorrowMore(program.functions.size());
         for (const GrownWord& grown : grownWords) {
-            FunctionID id = plannedFunctions[grown.position].id;
-            if (build.options().logging.dumpedPass == PassID::AllocateInFrames) [[unlikely]]
-                dataLogLn("borrows more in round ", round, ": f", id.index(), " ", RawHex(flow.borrowedParameters().wordOf(id)), " -> ", RawHex(grown.word));
+            FunctionID id = plans[grown.position].function;
             flow.addBorrowedParameters(id, grown.word);
             functionsThatBorrowMore.quickSet(id.index());
             isCountedOn.quickSet(grown.position);
         }
 
-        Vector<uint32_t> positionsToPlan = findIndicesInParallel(loops, plannedFunctions.size(), [&](unsigned position) {
-            return mayGainFrom(program, program.at(plannedFunctions[position].id), plannedFunctions[position].plan, functionsThatBorrowMore);
+        Vector<uint32_t> positionsToPlan = findIndicesInParallel(loops, plans.size(), [&](unsigned position) {
+            return mayGainFrom(program, plans[position], functionsThatBorrowMore);
         });
-        if (build.options().logging.dumpedPass == PassID::AllocateInFrames) [[unlikely]] {
-            for (uint32_t position : positionsToPlan)
-                dataLogLn("planned again in round ", round, ": f", plannedFunctions[position].id.index());
-        }
         TypeInterningPhase scratch(program.types, 0u, TypeInterningPhase::Scratch);
         {
             ProgramCaches caches(program, build);
             forEachIndexInParallel(loops, positionsToPlan.size(), [&](unsigned index) {
-                PlannedFunction& planned = plannedFunctions[positionsToPlan[index]];
-                std::optional<FramePlan> plan = planFunction(program, inputs, build, planned.id);
-                if (!plan)
-                    return;
-                if (isCountedOn.get(positionsToPlan[index]) && !keepsClosuresInFrame(program.at(planned.id), planned.plan, *plan))
-                    return;
-                planned.plan = WTF::move(*plan);
+                FramePlan& earlier = plans[positionsToPlan[index]];
+                std::optional<FramePlan> plan = planFunction(program, inputs, build, earlier.function);
+                if (plan && (!isCountedOn.get(positionsToPlan[index]) || keepsClosuresInFrame(program.at(earlier.function), earlier, *plan)))
+                    earlier = WTF::move(*plan);
             });
         }
         scratch.discard();
         positionsToScan = WTF::move(positionsToPlan);
         positionsToScan.removeAllMatching([&](uint32_t position) {
-            return !mayBorrowMoreBy(flow, plannedFunctions[position].id, program.at(plannedFunctions[position].id), plannedFunctions[position].plan);
+            return !mayBorrowMoreBy(program, flow, plans[position]);
         });
     }
 }
 
-static FrameAllocation mergePlans(const Program& program, BuildContext& build, std::span<const PlannedFunction> plannedFunctions)
+static void countPlans(BuildContext& build, std::span<const FramePlan> plans)
 {
-    FrameAllocation result;
-    for (const PlannedFunction& planned : plannedFunctions)
-        result.merge(planned.plan.allocation);
-    addCellsCreatedByRuntime(program, result);
-    result.finish();
-    countPlans(build, plannedFunctions);
-    return result;
+    std::array<uint64_t, statisticsOfFramePlans.size()> sums { };
+    for (const FramePlan& plan : plans) {
+        for (size_t index = 0; index < sums.size(); ++index)
+            sums[index] += plan.counts[index];
+    }
+    for (size_t index = 0; index < sums.size(); ++index)
+        build.statistics().count(statisticsOfFramePlans[index], sums[index]);
 }
 
-static void applyPlans(ProgramEditor& editor, const OptimizationInputs& inputs, BuildContext& build, std::span<const PlannedFunction> plannedFunctions)
+static void applyPlans(ProgramEditor& editor, const OptimizationInputs& inputs, BuildContext& build, std::span<const FramePlan> plans)
 {
     Vector<FunctionID> changedFunctions;
     Vector<const FramePlan*> plansOfChangedFunctions;
-    Vector<const PlannedFunction*> functionsWithNewStorage;
-    for (const PlannedFunction& planned : plannedFunctions) {
-        if (!planned.plan.changesFunction())
-            continue;
-        if (setsOnlyStorage(planned.plan)) {
-            functionsWithNewStorage.append(&planned);
-            continue;
+    Vector<const FramePlan*> plansOfNewStorage;
+    for (const FramePlan& plan : plans) {
+        bool setsStorage = false;
+        bool doesMore = !plan.emptyArgumentLists.isEmpty();
+        for (const FrameDecision& decision : plan.decisions) {
+            setsStorage |= decision.storage != AllocationStorage::Heap;
+            doesMore |= decision.isHeldByClosureTable || decision.storage == AllocationStorage::FrameUntilMaterialized || !decision.madeAgainAt.isEmpty();
         }
-        changedFunctions.append(planned.id);
-        plansOfChangedFunctions.append(&planned.plan);
+        if (doesMore || (setsStorage && !plan.demotedReturnCalls.isEmpty())) {
+            changedFunctions.append(plan.function);
+            plansOfChangedFunctions.append(&plan);
+        } else if (setsStorage)
+            plansOfNewStorage.append(&plan);
     }
-    forEachIndexInParallel(build.parallelLoops(), functionsWithNewStorage.size(), [&](unsigned index) {
-        setStorage(editor.atForStorage(functionsWithNewStorage[index]->id), functionsWithNewStorage[index]->plan);
+    forEachIndexInParallel(build.parallelLoops(), plansOfNewStorage.size(), [&](unsigned index) {
+        setStorage(editor.atForStorage(plansOfNewStorage[index]->function), *plansOfNewStorage[index]);
     });
     editFunctionsInParallel(editor, build, changedFunctions.span(), [&](unsigned index, FunctionID id, Function& function, TaskArenas& arenas) {
         applyFramePlan(AnalysisContext { build, editor.program(), &inputs.flow, &inputs.effects, id }, function, arenas.types, *plansOfChangedFunctions[index]);
     });
 }
 
-// One line for each closure and each environment: where it lies, and what keeps it out of the frame. The census of a run counts closures by the number of the entrypoint.
-static void explainClosuresAndEnvironments(const Program& program, const FlowResults& flow, std::span<const PlannedFunction> plannedFunctions)
-{
-    Vector<FunctionID> entrypoints(FillWith { }, program.functions.size(), FunctionID());
-    for (size_t index = 0; index < program.functions.size(); ++index) {
-        const Function& function = program.functions[index];
-        if (function.role == FunctionRole::GenericEntrypoint)
-            entrypoints[function.creator.as<CreatorRecord::Entrypoint>().target.index()] = FunctionID(index);
-    }
-
-    PrintStream& out = WTF::dataFile();
-    for (const PlannedFunction& planned : plannedFunctions) {
-        const Function& function = program.at(planned.id);
-        for (const FrameDecision& decision : planned.plan.decisions) {
-            const Value& cell = function.at(decision.allocation);
-            if (cell.opcode == Opcode::NewClosure)
-                out.print("closure f", cell.function().index(), " entered by f", entrypoints[cell.function().index()].index());
-            else if (cell.opcode == Opcode::NewObject && program.at(cell.layout()).isEnvironment())
-                out.print("environment L", cell.layout().index());
-            else
-                continue;
-            out.print(" made in f", planned.id.index(), ": ", nameOf(decision.storage), decision.isLent ? " lent" : "", decision.madeAgainAt.isEmpty() ? "" : " made again", decision.isHeldByClosureTable ? " of the table" : "");
-            if (decision.storage == AllocationStorage::Heap)
-                out.print(" ", nameOf(decision.cause));
-            if (decision.forcedBy && decision.forcedBy->kind == Use::Kind::Operand) {
-                const Value& user = function.at(decision.forcedBy->user);
-                out.print(" by operand ", decision.forcedBy->operandIndex, " of ", nameOf(user.opcode));
-                if (user.opcode == Opcode::CallDirect)
-                    out.print(" of f", user.function().index());
-            } else if (decision.forcedBy)
-                out.print(" by an edge or a terminator");
-            if (cell.opcode == Opcode::NewClosure && cell.capturesOperands().empty())
-                out.print(", captures nothing");
-            if (cell.opcode == Opcode::NewClosure && flow.function(cell.function()).closureUse == ClosureUse::CalledOnly)
-                out.print(", only called");
-            out.print(" reasons ", decision.reasons.toRaw());
-            if (SourceLocation location = function.locationOf(decision.allocation); hasModule(location)) {
-                const Module& module = program.modules[location.module];
-                out.print(" at ", byteCast<char8_t>(program.string(module.displayPath ? module.displayPath : module.path)), ":", program.lineColumnFor(ModuleID(location.module), location.position).line);
-            }
-            out.print("\n");
-        }
-    }
-}
-
 FrameAllocation allocateInFrames(ProgramEditor& editor, const OptimizationInputs& inputs, FlowResults& flow, BuildContext& build)
 {
     RELEASE_ASSERT(&flow == &inputs.flow);
+    const Program& program = editor.program();
     PhaseTimes times(build, PassID::AllocateInFrames);
-    Vector<PlannedFunction> plannedFunctions = planFunctions(editor.program(), inputs, build);
+    Vector<FramePlan> plans = planFunctions(program, inputs, build);
     times.didFinish("planFunctions"_s);
-    planAgainWithWhatFramesHold(editor.program(), inputs, flow, build, plannedFunctions);
+    planAgainWithWhatFramesHold(program, inputs, flow, build, plans);
     times.didFinish("planAgainWithWhatFramesHold"_s);
     if (build.options().collectsAllocationRemarks()) {
-        for (const PlannedFunction& planned : plannedFunctions)
-            addAllocationRemarks(editor.program().at(planned.id), build, planned.plan);
+        for (const FramePlan& plan : plans) {
+            for (const FrameDecision& decision : plan.decisions) {
+                if (hasAllocationSite(program.at(plan.function).at(decision.allocation)))
+                    build.addAllocationRemark(remarkOf(program.at(plan.function), decision));
+            }
+        }
     }
-    if (build.options().logging.dumpedPass == PassID::AllocateInFrames) [[unlikely]]
-        explainClosuresAndEnvironments(editor.program(), inputs.flow, plannedFunctions.span());
 
     // The edits change functions and types. The merge reads the plans and the layouts.
     FrameAllocation result;
     runTasksInParallel(build.parallelLoops(), {
-        [&] { applyPlans(editor, inputs, build, plannedFunctions.span()); },
-        [&] { result = mergePlans(editor.program(), build, plannedFunctions.span()); },
+        [&] { applyPlans(editor, inputs, build, plans.span()); },
+        [&] {
+            result = FrameAllocation(program, plans.span());
+            countPlans(build, plans.span());
+        },
     });
     times.didFinish("applyAndMergePlans"_s);
-    build.destroyLater(WTF::move(plannedFunctions));
+    build.destroyLater(WTF::move(plans));
     return result;
 }
 
-bool FrameAllocation::mayHoldFramePointer(FieldReference field) const
+FrameAllocation::FrameAllocation(const Program& program, std::span<const FramePlan> plans)
+    : m_layoutsInFrames(program.layouts.size())
+    , m_layoutsOnHeap(program.layouts.size())
+    , m_closuresInFrames(program.functions.size())
+    , m_closuresOnHeap(program.functions.size())
 {
-    RELEASE_ASSERT(m_isFinished);
-    return std::ranges::binary_search(m_fieldsHoldingFramePointers, field);
-}
-
-bool FrameAllocation::mayHoldFramePointer(CaptureReference capture) const
-{
-    RELEASE_ASSERT(m_isFinished);
-    return std::ranges::binary_search(m_capturesHoldingFramePointers, capture);
-}
-
-void FrameAllocation::addCell(LayoutID layout, AllocationStorage storage)
-{
-    RELEASE_ASSERT(layout);
-    m_pendingCells.append(PendingStorage<LayoutID> { layout, storage });
-    m_isFinished = false;
-}
-
-void FrameAllocation::addClosure(FunctionID closureFunction, AllocationStorage storage)
-{
-    RELEASE_ASSERT(closureFunction);
-    m_pendingClosures.append(PendingStorage<FunctionID> { closureFunction, storage });
-    m_isFinished = false;
-}
-
-void FrameAllocation::addHolder(FieldReference field)
-{
-    m_fieldsHoldingFramePointers.append(field);
-    m_isFinished = false;
-}
-
-void FrameAllocation::addHolder(CaptureReference capture)
-{
-    m_capturesHoldingFramePointers.append(capture);
-    m_isFinished = false;
-}
-
-void FrameAllocation::merge(const FrameAllocation& other)
-{
-    m_pendingCells.appendVector(other.m_pendingCells);
-    m_pendingClosures.appendVector(other.m_pendingClosures);
-    m_layoutsInFrames.merge(other.m_layoutsInFrames);
-    m_layoutsOnHeap.merge(other.m_layoutsOnHeap);
-    m_closuresInFrames.merge(other.m_closuresInFrames);
-    m_closuresOnHeap.merge(other.m_closuresOnHeap);
-    m_fieldsHoldingFramePointers.appendVector(other.m_fieldsHoldingFramePointers);
-    m_capturesHoldingFramePointers.appendVector(other.m_capturesHoldingFramePointers);
-    m_isFinished = false;
-}
-
-template<typename Entry>
-static void applyPendingStorage(Vector<Entry>& pending, BitVector& inFrames, BitVector& onHeap)
-{
-    size_t size = 0;
-    for (const Entry& entry : pending)
-        size = std::max(size, static_cast<size_t>(entry.id.index()) + 1);
-    inFrames.ensureSize(size);
-    onHeap.ensureSize(size);
-
-    for (const Entry& entry : pending) {
-        switch (entry.storage) {
+    auto add = [](BitVector& inFrames, BitVector& onHeap, auto id, AllocationStorage storage) {
+        RELEASE_ASSERT(id);
+        switch (storage) {
         case AllocationStorage::Heap:
-            onHeap.quickSet(entry.id.index());
+            onHeap.quickSet(id.index());
             break;
         case AllocationStorage::Frame:
-            inFrames.quickSet(entry.id.index());
+            inFrames.quickSet(id.index());
             break;
         case AllocationStorage::FrameUntilMaterialized:
-            inFrames.quickSet(entry.id.index());
-            onHeap.quickSet(entry.id.index());
+            inFrames.quickSet(id.index());
+            onHeap.quickSet(id.index());
             break;
         }
+    };
+    for (const FramePlan& plan : plans) {
+        for (auto [layout, storage] : plan.cells)
+            add(m_layoutsInFrames, m_layoutsOnHeap, layout, storage);
+        for (auto [closureFunction, storage] : plan.closures)
+            add(m_closuresInFrames, m_closuresOnHeap, closureFunction, storage);
+        m_fieldsHoldingFramePointers.appendVector(plan.fieldsHoldingFramePointers);
+        m_capturesHoldingFramePointers.appendVector(plan.capturesHoldingFramePointers);
     }
-    pending.clear();
-}
-
-void FrameAllocation::finish()
-{
-    applyPendingStorage(m_pendingCells, m_layoutsInFrames, m_layoutsOnHeap);
-    applyPendingStorage(m_pendingClosures, m_closuresInFrames, m_closuresOnHeap);
+    // The run time creates cells of every other kind.
+    for (unsigned index = 0; index < program.layouts.size(); ++index) {
+        if (program.layouts[index].kind != LayoutKind::Environment)
+            m_layoutsOnHeap.quickSet(index);
+    }
     AOT::sort(m_fieldsHoldingFramePointers);
     removeRepeatedElements(m_fieldsHoldingFramePointers);
     AOT::sort(m_capturesHoldingFramePointers);
     removeRepeatedElements(m_capturesHoldingFramePointers);
-    m_isFinished = true;
 }
 
 } } } // namespace JSC::AOT::Typed

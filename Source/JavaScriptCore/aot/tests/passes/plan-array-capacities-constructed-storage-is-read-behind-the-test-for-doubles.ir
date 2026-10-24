@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="readAsDoubles" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=i32}] results=[{type=anything}] {
-  b0(v0: int[0, 100], v1: Array<anything>, v2: i32):
     v3 = NewArrayLike v0, v1
     v4 = Integer integer=0
     v5 = IsPristine v3 builtinClass=Array aspects=[Storage]
@@ -37,7 +36,6 @@ function f0 name="readAsDoubles" parameters=[{type=int[0, 100]}, {type=Array<any
 # CHECK: = GetArrayElement v3, v4, v16 arrayStorage=Double
 
 function f1 name="alsoReadAsIntegers" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=i32}] results=[{type=anything}] {
-  b0(v0: int[0, 100], v1: Array<anything>, v2: i32):
     v3 = NewArrayLike v0, v1
     v4 = Integer integer=0
     v5 = IsPristine v3 builtinClass=Array aspects=[Storage]

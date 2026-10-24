@@ -11,24 +11,132 @@
 #include "AOTBuildContext.h"
 #include "AOTIdentifierNumbering.h"
 #include "AOTInstanceLayout.h"
+#include "AOTLimits.h"
 #include "AOTPipeline.h"
 #include "AOTPlacement.h"
 #include "AOTProgramTables.h"
-#include "AOTStringConstantNumbering.h"
-#include "AOTTableWriter.h"
+#include "AOTSectionWriter.h"
+#include "AOTStringUses.h"
 #include "AOTVector.h"
+#include <functional>
 #include <optional>
 #include <span>
+#include <type_traits>
+#include <utility>
 #include <wtf/BitVector.h>
+#include <wtf/HashMap.h>
+#include <wtf/MathExtras.h>
+#include <wtf/Noncopyable.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/text/ASCIILiteral.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The number by which the run time knows the bit of a guard. The offset is of the word that holds the bit, and the bit counts within its side of the class, which may fill several words.
-inline uint32_t numberInStaticsOf(const PlacedGuardBit& placed)
-{
-    return MemberGuardAggregates::bitNumber(placed.wordOffset, placed.bit % MemberGuardData::bitsPerWord);
-}
+class TableWriter {
+    WTF_MAKE_NONCOPYABLE(TableWriter);
+public:
+    explicit TableWriter(BuildContext& build)
+        : m_build(build)
+    {
+    }
+
+    uint32_t allocate(size_t size, size_t alignment = 8)
+    {
+        if (std::optional<uint32_t> offset = tryAllocate(size, alignment))
+            return *offset;
+        RELEASE_ASSERT(size <= defaultLimitValue(LimitID::VectorBytes, hostArchitecture()));
+        if (size > m_bytes.size())
+            growSectionTo(m_bytes, size);
+        return 0;
+    }
+
+    template<typename T>
+    T& at(uint32_t offset)
+    {
+        ASSERT(!(offset % alignof(T)));
+        return *reinterpret_cast<T*>(m_bytes.mutableSpan().subspan(offset, sizeof(T)).data());
+    }
+
+    uint32_t append(std::span<const uint8_t> bytes, size_t alignment = 8)
+    {
+        auto& candidates = m_appended.add(hashOf(bytes), Vector<std::pair<uint32_t, uint32_t>, 1> { }).iterator->value;
+        for (auto [offset, size] : candidates) {
+            if (size == bytes.size() && !(offset % alignment) && equalSpans(m_bytes.span().subspan(offset, size), bytes))
+                return offset;
+        }
+        std::optional<uint32_t> offset = tryAllocate(bytes.size(), alignment);
+        if (!offset)
+            return 0;
+        memcpySpan(m_bytes.mutableSpan().subspan(*offset), bytes);
+        candidates.append({ *offset, static_cast<uint32_t>(bytes.size()) });
+        return *offset;
+    }
+
+    template<typename T>
+    uint32_t append(std::span<const T> items)
+    {
+        static_assert(std::has_unique_object_representations_v<T>, "Padding would make the bytes differ from build to build.");
+        return append(asBytes(items), sizeof(T) == 1 ? 8 : alignof(T));
+    }
+
+    template<typename T, size_t inlineCapacity>
+    uint32_t append(const Vector<T, inlineCapacity>& items) { return append(items.span()); }
+
+    uint32_t appendUnshared(std::span<const uint8_t> bytes, size_t alignment = 1)
+    {
+        std::optional<uint32_t> offset = tryAllocate(bytes.size(), alignment);
+        if (!offset)
+            return 0;
+        memcpySpan(m_bytes.mutableSpan().subspan(*offset), bytes);
+        return *offset;
+    }
+
+    template<typename T>
+    uint32_t write(uint32_t offset, std::span<const T> items)
+    {
+        static_assert(std::has_unique_object_representations_v<T>, "Padding would make the bytes differ from build to build.");
+        ASSERT(!(offset % alignof(T)));
+        memcpySpan(m_bytes.mutableSpan().subspan(offset), asBytes(items));
+        return offset + static_cast<uint32_t>(items.size_bytes());
+    }
+
+    size_t size() const { return m_bytes.size(); }
+
+    Vector<uint8_t> take()
+    {
+        m_appended.clear();
+        if (m_didOverflow)
+            return { };
+        return std::exchange(m_bytes, { });
+    }
+
+private:
+    std::optional<uint32_t> tryAllocate(size_t size, size_t alignment)
+    {
+        size_t end = m_bytes.size();
+        size_t offset = WTF::roundUpToMultipleOf(alignment, end);
+        if (!m_didOverflow)
+            m_didOverflow = !checkSectionSize(offset + size, m_build);
+        if (m_didOverflow)
+            return std::nullopt;
+        growSectionTo(m_bytes, offset + size);
+        zeroSpan(m_bytes.mutableSpan().subspan(end));
+        return static_cast<uint32_t>(offset);
+    }
+
+    static uint64_t hashOf(std::span<const uint8_t> bytes)
+    {
+        uint64_t hash = 1469598103934665603ull;
+        for (uint8_t byte : bytes)
+            hash = (hash ^ byte) * 1099511628211ull;
+        return hash >> 1 | 1;
+    }
+
+    BuildContext& m_build;
+    Vector<uint8_t> m_bytes;
+    UncheckedKeyHashMap<uint64_t, Vector<std::pair<uint32_t, uint32_t>, 1>> m_appended;
+    bool m_didOverflow { false };
+};
 
 struct ProgramTableInputs {
     const PipelineOutput& pipeline;
@@ -94,10 +202,10 @@ struct TableEncoder {
     uint32_t stringNumber(StringID);
     uint32_t shownStringNumber(StringID);
     // Of a function, a class, a type: an obfuscated build has the empty string in its place.
-    uint32_t shownNameNumber(StringID);
+    uint32_t shownNameNumber(StringID id) { return shownStringNumber(obfuscates() ? StringID() : id); }
     uint32_t stringConstantNumber(StringID);
-    uint32_t identifierNumber(PropertyKeyID) const;
-    uint32_t identifierNumberOfText(StringID) const;
+    uint32_t identifierNumber(PropertyKeyID key) const { return numberOrFail(identifiers.numberOf(key), ProgramTableRule::NameWithoutIdentifier); }
+    uint32_t identifierNumberOfText(StringID text) const { return numberOrFail(identifiers.numberOfText(text), ProgramTableRule::NameWithoutIdentifier); }
     uint32_t typeOffset(TypeID) const;
     uint32_t dataNodeOf(DataID) const;
     FunctionID findEntrypoint(FunctionID) const;
@@ -105,16 +213,34 @@ struct TableEncoder {
     uint32_t checkedOffset(uint32_t offset) const;
     bool obfuscates() const { return build.options().obfuscates(); }
 
+    uint32_t numberOrFail(std::optional<uint32_t> number, ProgramTableRule rule) const
+    {
+        if (!number)
+            fail(rule);
+        return number.value_or(0);
+    }
+
     template<typename T>
-    void setTable(ProgramTableIndex index, std::span<const T> items)
+    uint32_t setTable(ProgramTableIndex index, std::span<const T> items)
     {
         RELEASE_ASSERT(sizeof(T) == elementSizeOf(index));
         uint32_t offset = writer.append(items);
         setTableRange(index, offset, static_cast<uint32_t>(items.size()));
+        return offset;
     }
 
     template<typename T, size_t inlineCapacity>
-    void setTable(ProgramTableIndex index, const Vector<T, inlineCapacity>& items) { setTable(index, items.span()); }
+    uint32_t setTable(ProgramTableIndex index, const Vector<T, inlineCapacity>& items) { return setTable(index, items.span()); }
+
+    template<typename T>
+    void setTableFrom(ProgramTableIndex index, const auto& source, NOESCAPE const auto& elementOf)
+    {
+        Vector<T> items;
+        items.reserveInitialCapacity(std::size(source));
+        for (const auto& element : source)
+            items.append(std::invoke(elementOf, element));
+        setTable(index, items);
+    }
 
     void setTableRange(ProgramTableIndex index, uint32_t offset, uint32_t count)
     {
@@ -139,14 +265,12 @@ struct TableEncoder {
     Vector<uint32_t> typeOffsets;
     Vector<uint32_t> dataNodes;
     Vector<std::optional<uint32_t>> tablesInImage;
-    BitVector layoutsWithSharedName;
     // By the index of a class: the classes whose assumed base it is, ascending.
     Vector<Vector<uint32_t>> subclasses;
 };
 
-FastBitVector findUsedTypeSites(const Program&, const ParallelLoops&);
-BitVector findModuleBodiesThatOnlyReturn(const Program&);
-Vector<ModuleImportSite> findImportSites(const Program&, const ParallelLoops&);
+// Every table but the header, in the order in which they lie in the image. Ends behind the first group that reports an error.
+void encodeTables(TableEncoder&);
 
 void encodeTypeTables(TableEncoder&);
 void encodeLayoutTables(TableEncoder&);
@@ -159,24 +283,20 @@ void encodeModuleTables(TableEncoder&);
 void encodeDataTable(TableEncoder&);
 void encodeRequestTable(TableEncoder&);
 void encodeConstantTables(TableEncoder&);
-void encodeShapeSetBits(TableEncoder&);
 
-// What ProgramTables::recordOfFunction() reads.
+SlotData placedVariableSlot(const TableEncoder&, VariableID);
+
+inline uint32_t numberInStaticsOf(const PlacedGuardBit& placed)
+{
+    return MemberGuardAggregates::bitNumber(placed.wordOffset, placed.bit % MemberGuardData::bitsPerWord);
+}
+
 struct NumberedFunctionRecords {
     Vector<FunctionRecordData> records;
     Vector<uint8_t> numbers;
     Vector<FunctionRecordByFunctionData> recordsByFunction;
 };
 NumberedFunctionRecords numberFunctionRecords(std::span<const FunctionRecordData> recordsOfFunctions);
-
-struct ClassRecordParts {
-    Vector<MethodData> methods;
-    uint32_t numberOfStaticMethods { 0 };
-    Vector<FieldData> staticFields;
-    Vector<MemberGuardData> memberGuards;
-    Vector<MemberGuardAggregates> memberGuardAggregates;
-    ClassData data { };
-};
 
 // What the row of a class in the field table has an entry for, in ascending order of names. A method has no getter and no setter. The numbers are cells of the closure table.
 struct DeclaredClassMember {
@@ -187,20 +307,6 @@ struct DeclaredClassMember {
 };
 // No answer where the record of the class does not say all that its prototype object has, in a way that the table can hold.
 std::optional<Vector<DeclaredClassMember>> collectDeclaredClassMembers(const TableEncoder&, const LayoutData& classLayout);
-
-ClassRecordParts collectClassRecordParts(TableEncoder&, LayoutID);
-void encodeConstructors(TableEncoder&);
-void encodeBoundFunctions(TableEncoder&);
-
-struct DeclarationLocation {
-    uint32_t path { noDeclaredPath };
-    uint32_t line { 0 };
-};
-
-SlotData placedVariableSlot(const TableEncoder&, VariableID);
-bool retainsDeclarationLocation(TableEncoder&, LayoutID);
-DeclarationLocation declarationLocationOf(TableEncoder&, LayoutID);
-uint64_t encodeDataWord(TableEncoder&, const DataNode&);
 
 void checkProgramTables(const TableEncoder&, std::span<const uint8_t> tables);
 

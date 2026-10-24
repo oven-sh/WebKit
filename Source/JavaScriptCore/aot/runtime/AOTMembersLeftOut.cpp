@@ -24,25 +24,19 @@ namespace JSC { namespace AOT {
 
 namespace {
 
-struct MemberWithoutSlot {
-    // The getter, or the object on which native code answers for the name.
-    Strong<JSObject> answeredBy;
-    String name;
-    Strong<JSObject> standIn;
-};
-
 struct StandIn {
     Strong<JSObject> function;
     // What a call of it throws.
     String message;
+    // Of a member without a slot: the getter, or the object on which native code answers for the name. It answers the same function each time, as it would answer the same object.
+    Strong<JSObject> answeredBy;
+    String name;
 };
 
 struct MembersLeftOut {
     // The newest. It is held so that no other object can take its address while it is asked for.
     Strong<JSObject> error;
     String message;
-    // A getter answers the same function each time, as it would answer the same object. There are a handful.
-    Vector<MemberWithoutSlot> membersWithoutSlot;
     // One for each member that was left out and read.
     Vector<StandIn> standIns;
 };
@@ -123,9 +117,9 @@ static JSValue standInThatThrows(JSGlobalObject* realm, String&& message, const 
     VM& vm = realm->vm();
     if (answeredBy) {
         Locker locker { membersLock };
-        for (const MemberWithoutSlot& known : membersByVM().find(&vm)->value.membersWithoutSlot) {
+        for (const StandIn& known : membersByVM().find(&vm)->value.standIns) {
             if (known.answeredBy.get() == answeredBy && known.name == nameOfMember)
-                return known.standIn.get();
+                return known.function.get();
         }
     }
     NativeStdFunction throwsWhenCalled = [message](JSGlobalObject* caller, CallFrame*) -> EncodedJSValue {
@@ -135,10 +129,7 @@ static JSValue standInThatThrows(JSGlobalObject* realm, String&& message, const 
     JSObject* standIn = JSNativeStdFunction::create(vm, realm, 0, nameOfMember, WTF::move(throwsWhenCalled), NoIntrinsic, NativeFunction(constructStandIn));
 
     Locker locker { membersLock };
-    MembersLeftOut& members = membersByVM().find(&vm)->value;
-    members.standIns.append(StandIn { Strong<JSObject>(vm, standIn), WTF::move(message) });
-    if (answeredBy)
-        members.membersWithoutSlot.append(MemberWithoutSlot { Strong<JSObject>(vm, answeredBy), nameOfMember, Strong<JSObject>(vm, standIn) });
+    membersByVM().find(&vm)->value.standIns.append(StandIn { Strong<JSObject>(vm, standIn), WTF::move(message), answeredBy ? Strong<JSObject>(vm, answeredBy) : Strong<JSObject>(), nameOfMember });
     return standIn;
 }
 

@@ -9,7 +9,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}] flow={members=[L0]}
 function f0 name="argumentAndProof" parameters=[{type=number|string}, {type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number|string, v1: number, v2: anything):
     v3 = TypeTest v0 testedType=string
     Branch v3 -> taken b1(v1 | 0), notTaken b3(v1)
   b1(v4, v5) handler=b2():
@@ -41,7 +40,6 @@ function f0 name="argumentAndProof" parameters=[{type=number|string}, {type=numb
 # HANDLER: error: bad argument edge=b1.handler
 # HANDLER-NOT: function f0
 function f1 name="guard" parameters=[{type=object}] results=[{type=number}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
@@ -59,7 +57,6 @@ function f1 name="guard" parameters=[{type=object}] results=[{type=number}] {
 # GUARD-NEXT: Jump -> next b1([[guard]])
 # GUARD-NEXT: }
 function f2 name="twoEdgesIntoOneBlock" parameters=[{type=number|string}, {type=boolean|string}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number|string, v1: boolean|string, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v3 = TypeTest v0 testedType=number

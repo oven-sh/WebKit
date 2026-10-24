@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTAsyncAwaitConditions.h"
 #include "AOTCellFormat.h"
 #include "AOTInstance.h"
 #include "AOTSavedFrame.h"
@@ -22,10 +21,7 @@
 
 namespace JSC { namespace AOT {
 
-StubSignature signatureOfNewPromise(StubKey)
-{
-    return StubSignature::withGPRResult({ });
-}
+StubSignature signatureOfNewPromise(StubKey) { return StubSignature::withGPRResult({ }); }
 
 void generateNewPromise(StubAssembler& jit)
 {
@@ -73,10 +69,8 @@ void generatePromiseThen(StubAssembler& jit)
     const GPRReg otherHandler = jit.allocateScratch(isOnFulfilled ? StubRegister::A3 : StubRegister::A2);
     const GPRReg word = jit.allocateScratch(StubRegister::A5);
     const GPRReg other = otherHandler;
-    constexpr auto kindOf = [](bool isOnFulfilled) {
-        return isOnFulfilled ? JSPromise::InlineReactionKind::FulfillHandler : JSPromise::InlineReactionKind::RejectHandler;
-    };
-    const uint64_t reactionBits = (static_cast<uint64_t>(JSPromise::isHandledFlag) | static_cast<uint64_t>(kindOf(isOnFulfilled)) << JSPromise::inlineReactionKindShift) << promiseFlagsShift;
+    const auto kind = isOnFulfilled ? JSPromise::InlineReactionKind::FulfillHandler : JSPromise::InlineReactionKind::RejectHandler;
+    const uint64_t reactionBits = (static_cast<uint64_t>(JSPromise::isHandledFlag) | static_cast<uint64_t>(kind) << JSPromise::inlineReactionKindShift) << promiseFlagsShift;
     RELEASE_ASSERT(promise == operationArgumentGPR(1) && derived == operationArgumentGPR(4) && handler == operationArgumentGPR(isOnFulfilled ? 2 : 3));
     RELEASE_ASSERT(noOverlap(promise, handler, derived, otherHandler, word, instanceGPR));
 
@@ -98,22 +92,17 @@ void generatePromiseThen(StubAssembler& jit)
     jit.callOperationAndReturn(Entry::operationAOTPromiseThen, { .returns = OperationCall::Returns::Void });
 }
 
-static void emitNonThenableCheck(StubAssembler& jit, GPRReg object, GPRReg structure, GPRReg scratch, JumpList& otherwise)
-{
-    loadStructure(jit, object, structure);
-    jit.load32(Address(structure, Structure::bitFieldOffset()), scratch);
-    jit.and32(TrustedImm32(Structure::s_definitelyNonThenableStateBits), scratch);
-    otherwise.append(jit.branch32(CCallHelpers::NotEqual, scratch, TrustedImm32(static_cast<int32_t>(Structure::DefinitelyNonThenableState::NonThenable) << Structure::s_definitelyNonThenableStateShift)));
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), scratch);
-    otherwise.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(structure, Structure::realmOffset())));
-    otherwise.append(branchIfWatchpointSetIsNotWatched(jit, Address(scratch, OBJECT_OFFSETOF(JSGlobalObject, m_promiseThenWatchpointSet)), scratch));
-}
-
 void emitBranchIfMayBeThenable(StubAssembler& jit, GPRReg value, GPRReg structure, GPRReg scratch, JumpList& mayBeThenable)
 {
     Jump isNotCell = jit.branchIfNotCell(value);
     Jump isNotObject = jit.branchIfNotObject(value);
-    emitNonThenableCheck(jit, value, structure, scratch, mayBeThenable);
+    loadStructure(jit, value, structure);
+    jit.load32(Address(structure, Structure::bitFieldOffset()), scratch);
+    jit.and32(TrustedImm32(Structure::s_definitelyNonThenableStateBits), scratch);
+    mayBeThenable.append(jit.branch32(CCallHelpers::NotEqual, scratch, TrustedImm32(static_cast<int32_t>(Structure::DefinitelyNonThenableState::NonThenable) << Structure::s_definitelyNonThenableStateShift)));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), scratch);
+    mayBeThenable.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(structure, Structure::realmOffset())));
+    mayBeThenable.append(branchIfWatchpointSetIsNotWatched(jit, Address(scratch, OBJECT_OFFSETOF(JSGlobalObject, m_promiseThenWatchpointSet)), scratch));
     isNotObject.link(&jit);
     isNotCell.link(&jit);
 }
@@ -278,20 +267,16 @@ static void emitHandOverToWaiter(StubAssembler& jit, GPRReg waiter, GPRReg value
     isQueued.link(&jit);
     emitReserveJob(jit, registers, needsOperation);
     loadAsyncContext(registers.scratch);
-    emitStoreAsyncContextOfJob(jit, registers, registers.scratch);
+    jit.store64(registers.scratch, argumentOfJob(registers.slot, 3));
     beforeHandOver();
     emitFillJob(jit, { InternalMicrotask::CompiledAsyncFunctionResume, JSPromise::Status::Fulfilled, value, waiter, JobAsyncContext::IsStored }, registers);
     isHandedOver.link(&jit);
 }
 
-StubSignature signatureOfReturnAsyncResult(StubKey)
-{
-    return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) });
-}
+StubSignature signatureOfReturnAsyncResult(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
 
 void generateReturnAsyncResult(StubAssembler& jit)
 {
-    constexpr GPRReg fp = GPRInfo::callFrameRegister;
     const GPRReg promise = jit.clobberOperand(0);
     const GPRReg value = jit.operand(1);
     const GPRReg result = jit.result();

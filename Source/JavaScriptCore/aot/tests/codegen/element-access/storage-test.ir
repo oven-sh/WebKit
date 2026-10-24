@@ -9,7 +9,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="conditionForInt32" parameters=[{type=Array<anything, pristine[Storage]>}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: i32, v2: boolean):
     v3 = HasArrayStorage v0 arrayStorage=Int32
     Branch v3 -> taken b1(| 0), notTaken b2()
   b1(v4):
@@ -46,7 +45,6 @@ function f0 name="conditionForInt32" parameters=[{type=Array<anything, pristine[
 # R: b3(v9: guard @Void):
 # R: b7(v13: guard @Void)
 function f1 name="conditionForDouble" parameters=[{type=Array<anything, pristine[Storage]>}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: i32, v2: boolean):
     v3 = HasArrayStorage v0 arrayStorage=Double
     Branch v3 -> taken b1(| 0), notTaken b2()
   b1(v4):
@@ -83,7 +81,6 @@ function f1 name="conditionForDouble" parameters=[{type=Array<anything, pristine
 # R: b3(v9: guard @Void):
 # R: b7(v13: guard @Void)
 function f2 name="conditionForContiguous" parameters=[{type=Array<anything, pristine[Storage]>}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: i32, v2: boolean):
     v3 = HasArrayStorage v0 arrayStorage=Contiguous
     Branch v3 -> taken b1(| 0), notTaken b2()
   b1(v4):
@@ -120,7 +117,6 @@ function f2 name="conditionForContiguous" parameters=[{type=Array<anything, pris
 # R: b3(v9: guard @Void):
 # R: b7(v13: guard @Void)
 function f3 name="values" parameters=[{type=Array}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array, v1: boolean):
     v2 = HasArrayStorage v0 arrayStorage=Int32
     v3 = HasArrayStorage v0 arrayStorage=Double
     v4 = HasArrayStorage v0 arrayStorage=Contiguous

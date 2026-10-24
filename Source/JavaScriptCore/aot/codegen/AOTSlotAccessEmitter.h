@@ -40,14 +40,14 @@ struct StateOfNewObject {
 
 class SlotAccessEmitter final : public OperationEmitter {
 public:
-    explicit SlotAccessEmitter(CodeGenerator&);
+    explicit SlotAccessEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generateGetSlot(const ValueContext&);
     void generateGetSlotOrUndefined(const ValueContext&);
     void generateGetSlotGetter(const ValueContext&);
     void generateGetSlotSetter(const ValueContext&);
-    void generateGetDeferredClosureSlot(const ValueContext&);
-    void generateGetDeferredClosureSlotOrUndefined(const ValueContext&);
+    void generateGetDeferredClosureSlot(const ValueContext& value) { readDeferringSlot(value, false); }
+    void generateGetDeferredClosureSlotOrUndefined(const ValueContext& value) { readDeferringSlot(value, true); }
     void generatePutSlot(const ValueContext&);
     void generatePutSlotOrAdd(const ValueContext&);
 
@@ -66,11 +66,12 @@ public:
     std::optional<StateOfNewObject> stateOfNewObjectBefore(const ValueContext& user, ValueID object);
     // The order word of an object of any of the receivers that has the given one, once the fields are created. Nothing where the image has no such place in an order.
     std::optional<uint32_t> orderWordAfterCreating(uint32_t orderWordBefore, LayoutSetID receivers, std::span<const PropertyKeyID> createdKeys) const;
-    void storeOrderWord(CellPointer, uint32_t);
     void takeKeyOrderStepOr(CellPointer, const std::optional<KeyOrderStep>&, NOESCAPE const Invocable<void()> auto& otherwise);
+    // Gives the object the order word that it has with the fields, by what is known of a new object or by the step that applies. Otherwise the caller tests the slots.
+    void listCreatedFields(const ValueContext&, CellPointer, LayoutSetID receivers, std::span<const PropertyKeyID> createdKeys, const std::optional<StateOfNewObject>&,
+        bool isExpectedToCreate, NOESCAPE const Invocable<void()> auto& listIfMissing);
     // For fields that are missing where no place in an order of the image applies.
     void takeRememberedKeyOrderStepOr(const ValueContext&, CellPointer, NOESCAPE const Invocable<bool(std::optional<uint32_t>)> auto& askRuntime);
-    bool takeRememberedKeyOrderStepFirst(const ValueContext&, CellPointer, LayoutSetID receivers, NOESCAPE const Invocable<void()> auto& otherwise);
     // The granule of the slot and those of the stores to the same object that the store leads to: an object that gets one late field tends to get them all.
     uint64_t granuleBitsOfStoresBehind(const ValueContext& store, const FieldAccess&);
 
@@ -104,7 +105,7 @@ private:
     CellPointer innerObjectOf(const OperationContext&, CellPointer, const FieldAccess&);
     bool isTestedByAccess(ValueID object) const;
     bool isOnlyBaseOfAccesses(ValueID);
-    Operand loadSlotOfMembersWithField(const ValueContext&, CellPointer, const FieldAccess&);
+    Operand readIfMemberHasField(const ValueContext&, CellPointer, const FieldAccess&, NOESCAPE const Invocable<Operand()> auto& read);
     Operand inResultRepresentation(const ValueContext&, Operand loaded);
     Operand undefinedResult(const ValueContext&);
     Operand resultBehindTestThatNeverPasses(const ValueContext&);
@@ -143,15 +144,19 @@ void SlotAccessEmitter::takeKeyOrderStepOr(CellPointer cell, const std::optional
     m_out.appendTo(done);
 }
 
-bool SlotAccessEmitter::takeRememberedKeyOrderStepFirst(const ValueContext& value, CellPointer cell, LayoutSetID receivers, NOESCAPE const Invocable<void()> auto& otherwise)
+void SlotAccessEmitter::listCreatedFields(const ValueContext& value, CellPointer cell, LayoutSetID receivers, std::span<const PropertyKeyID> createdKeys,
+    const std::optional<StateOfNewObject>& newObject, bool isExpectedToCreate, NOESCAPE const Invocable<void()> auto& listIfMissing)
 {
-    if (flowNamesConstructorOrdersOf(receivers))
-        return false;
-    std::optional<RememberedKeyOrderStep> remembered = testRememberedKeyOrderStep(value, cell);
-    if (!remembered)
-        return false;
-    takeKeyOrderStepOr(cell, std::optional<KeyOrderStep>(remembered->step), otherwise);
-    return true;
+    if (std::optional<uint32_t> orderWordAfter = newObject ? orderWordAfterCreating(newObject->orderWord, receivers, createdKeys) : std::nullopt) {
+        storeField(cell, m_heaps.AOTObject_orderWord, word32(static_cast<int32_t>(*orderWordAfter)));
+        return;
+    }
+    std::optional<KeyOrderStep> stepTestedFirst;
+    if (isExpectedToCreate) {
+        std::optional<RememberedKeyOrderStep> remembered = flowNamesConstructorOrdersOf(receivers) ? std::nullopt : testRememberedKeyOrderStep(value, cell);
+        stepTestedFirst = remembered ? std::optional<KeyOrderStep>(remembered->step) : testLikeliestKeyOrderStep(cell, receivers, createdKeys);
+    }
+    takeKeyOrderStepOr(cell, stepTestedFirst, listIfMissing);
 }
 
 void SlotAccessEmitter::takeRememberedKeyOrderStepOr(const ValueContext& value, CellPointer cell, NOESCAPE const Invocable<bool(std::optional<uint32_t>)> auto& askRuntime)

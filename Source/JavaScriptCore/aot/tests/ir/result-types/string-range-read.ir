@@ -20,7 +20,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="kinds" parameters=[{type=string}, {type=int}, {type=int[0, 2147483647]}] results=[{type=undefined}] {
-  b0(v0: string, v1: int, v2: int[0, 2147483647]):
     v3 = StringRange v2, v1
     v4 = ResultAt v3 index=0
     v5 = ResultAt v3 index=1

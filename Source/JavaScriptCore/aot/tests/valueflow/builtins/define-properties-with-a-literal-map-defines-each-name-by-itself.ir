@@ -18,7 +18,6 @@ layout L0 kind=Instance name="State" constructor=f1 flags=[IsConstructorFunction
 layout L1 name="PropertyDescriptor" fields=[{key="get" declared={type=anything}}, {key="set" declared={type=anything}}, {key="value" declared={type=anything}}]
 layout L2 kind=Instance name="Box" constructor=f11 flags=[IsConstructorFunction]
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = PropGet v0 key="prototype"
     v2 = NewDictionary
@@ -75,67 +74,54 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return v25
 }
 function f1 name="State" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Undefined
     Return v1
 }
 function f2 name="get" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f6
     Return v1
 }
 function f3 name="set" module=m0 kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Call v1
     Return v2
 }
 function f4 name="get" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f7
     Return v1
 }
 function f5 name="kind" module=m0 results=[{type=anything}] {
-  b0():
     v0 = Undefined
     Return v0
 }
 function f6 name="whileFlowing" module=m0 results=[{type=anything}] {
-  b0():
     v0 = Undefined
     Return v0
 }
 function f7 name="onceEnded" module=m0 results=[{type=anything}] {
-  b0():
     v0 = Undefined
     Return v0
 }
 function f8 name="storedToFlowing" module=m0 results=[{type=anything}] {
-  b0():
     v0 = Undefined
     Return v0
 }
 function f9 name="storedToEnded" module=m0 results=[{type=anything}] {
-  b0():
     v0 = Undefined
     Return v0
 }
 function f10 name="spare" module=m0 results=[{type=anything}] {
-  b0():
     v0 = Undefined
     Return v0
 }
 function f11 name="Box" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Undefined
     Return v1
 }
 function f12 name="get" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f13
     Return v1
 }
 function f13 name="inside" module=m0 results=[{type=anything}] {
-  b0():
     v0 = Undefined
     Return v0
 }

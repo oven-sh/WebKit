@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="dispatchInLoopHeader" parameters=[{type=number}, {type=anything}] results=[{type=number}] {
-  b0(v0: number, v1: anything):
     v2 = Integer integer=1
     v3 = Integer integer=0
     Jump -> next b1(v2, v3)
@@ -28,8 +27,6 @@ function f0 name="dispatchInLoopHeader" parameters=[{type=number}, {type=anythin
     Jump -> next b1(v13, v10)
   b6():
     Return v0
-}
-# CHECK-LABEL: function f0 name="dispatchInLoopHeader"
 # CHECK: Jump -> next [[first0]](v2, v3)
 # CHECK: Jump -> next [[later0]](v13, v10)
 # CHECK: [[first0]](
@@ -38,7 +35,6 @@ function f0 name="dispatchInLoopHeader" parameters=[{type=number}, {type=anythin
 # CHECK: [[later0]](
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: Jump -> next b3()
-# SIMPLE-LABEL: function f0 name="dispatchInLoopHeader"
 # SIMPLE-NOT: Switch
 # SIMPLE: LoopHint
 # SIMPLE-NOT: Switch
@@ -46,9 +42,9 @@ function f0 name="dispatchInLoopHeader" parameters=[{type=number}, {type=anythin
 # SIMPLE-NOT: Switch
 # SIMPLE: LoopHint
 # SIMPLE-NOT: Switch
+}
 
 function f1 name="constantIsUsedBelowTheDispatch" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v2 = Integer integer=1
@@ -80,7 +76,6 @@ function f1 name="constantIsUsedBelowTheDispatch" parameters=[{type=boolean}, {t
 # SIMPLE-NOT: Switch
 
 function f2 name="backEdgePassesUnknownState" parameters=[{type=number}, {type=anything}, {type=int[1, 2]}] results=[{type=number}] {
-  b0(v0: number, v1: anything, v2: int[1, 2]):
     v3 = Integer integer=1
     v4 = Integer integer=0
     Jump -> next b1(v3, v4)
@@ -102,18 +97,15 @@ function f2 name="backEdgePassesUnknownState" parameters=[{type=number}, {type=a
     Jump -> next b1(v2, v11)
   b6():
     Return v0
-}
-# CHECK-LABEL: function f2 name="backEdgePassesUnknownState"
 # CHECK: Jump -> next b1(v3, v4)
 # CHECK: b1(
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: Switch v5 cases=[1, 2]
 # CHECK: Jump -> next b1(v2, v11)
-# SIMPLE-LABEL: function f2 name="backEdgePassesUnknownState"
 # SIMPLE: Switch
+}
 
 function f3 name="callInDispatch" parameters=[{type=boolean}, {type=anything}] results=[{type=number}] {
-  b0(v0: boolean, v1: anything):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v2 = Integer integer=1
@@ -133,18 +125,15 @@ function f3 name="callInDispatch" parameters=[{type=boolean}, {type=anything}] r
   b6():
     v8 = Integer integer=30
     Return v8
-}
-# CHECK-LABEL: function f3 name="callInDispatch"
 # CHECK: Jump -> next b3(v2)
 # CHECK: Jump -> next b3(v3)
 # CHECK: b3(
 # CHECK-NEXT: = Call v1
 # CHECK-NEXT: Switch v4 cases=[1, 2]
-# SIMPLE-LABEL: function f3 name="callInDispatch"
 # SIMPLE: Switch
+}
 
 function f4 name="twoWaysIntoTheLoop" parameters=[{type=number}, {type=anything}, {type=boolean}] results=[{type=number}] {
-  b0(v0: number, v1: anything, v2: boolean):
     v3 = Integer integer=0
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -174,18 +163,15 @@ function f4 name="twoWaysIntoTheLoop" parameters=[{type=number}, {type=anything}
     Jump -> next b3(v17, v14)
   b8():
     Return v0
-}
-# CHECK-LABEL: function f4 name="twoWaysIntoTheLoop"
 # CHECK: Jump -> next b3(v4, v3)
 # CHECK: Jump -> next b3(v5, v3)
 # CHECK: b3(
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: Switch v6 cases=[1, 2]
-# SIMPLE-LABEL: function f4 name="twoWaysIntoTheLoop"
 # SIMPLE: Switch
+}
 
 function f5 name="skippedBlockEntersKeptHeader" parameters=[{type=boolean}, {type=anything}, {type=int[1, 2]}, {type=number}] results=[{type=number}] {
-  b0(v0: boolean, v1: anything, v2: int[1, 2], v3: number):
     v4 = Integer integer=1
     v5 = Integer integer=0
     Branch v0 -> taken b1(), notTaken b2()
@@ -215,19 +201,16 @@ function f5 name="skippedBlockEntersKeptHeader" parameters=[{type=boolean}, {typ
     Jump -> next b4(v2, v15)
   b9():
     Return v3
-}
-# CHECK-LABEL: function f5 name="skippedBlockEntersKeptHeader"
 # CHECK: Jump -> next b4(v4, v5)
 # CHECK: Jump -> next b9()
 # CHECK: b4(v9
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: Switch v9 cases=[1, 2]
 # CHECK: Jump -> next b4(v2, v15)
-# SIMPLE-LABEL: function f5 name="skippedBlockEntersKeptHeader"
 # SIMPLE: Switch
+}
 
 function f6 name="skippedBlockEntersSkippedHeader" parameters=[{type=boolean}, {type=anything}, {type=number}] results=[{type=number}] {
-  b0(v0: boolean, v1: anything, v2: number):
     v3 = Integer integer=1
     v4 = Integer integer=0
     Branch v0 -> taken b1(), notTaken b2()
@@ -258,8 +241,6 @@ function f6 name="skippedBlockEntersSkippedHeader" parameters=[{type=boolean}, {
     Jump -> next b4(v17, v14)
   b9():
     Return v2
-}
-# CHECK-LABEL: function f6 name="skippedBlockEntersSkippedHeader"
 # CHECK: Jump -> next [[first6]](v3, v4)
 # CHECK: Jump -> next [[later6]](v17, v14)
 # CHECK: [[first6]](
@@ -268,7 +249,7 @@ function f6 name="skippedBlockEntersSkippedHeader" parameters=[{type=boolean}, {
 # CHECK: [[later6]](
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: Jump -> next b6()
-# SIMPLE-LABEL: function f6 name="skippedBlockEntersSkippedHeader"
 # SIMPLE-NOT: Switch
 # SIMPLE: = Less
 # SIMPLE-NOT: Switch
+}

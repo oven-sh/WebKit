@@ -14,24 +14,14 @@
 #include "AOTInstanceLayout.h"
 #include "AOTLinkedFunctions.h"
 #include "AOTPromisedResults.h"
-#include "AOTStringConstantNumbering.h"
 #include "AOTStringUses.h"
-#include "AOTVector.h"
-#include <memory>
-#include <wtf/BitSet.h>
-#include <wtf/Noncopyable.h>
+#include "AOTStubCatalog.h"
 
 namespace JSC { namespace AOT {
-
-class StubCatalog;
 
 using OperationCounts = Vector<std::pair<Typed::Opcode, uint32_t>>;
 
 struct CodeGenerationPlan {
-    CodeGenerationPlan();
-    CodeGenerationPlan(CodeGenerationPlan&&);
-    ~CodeGenerationPlan();
-
     std::unique_ptr<const StubCatalog> stubCatalog;
     ProgramUses uses;
     StringConstantNumbering stringConstants;
@@ -66,7 +56,6 @@ private:
     std::unique_ptr<State> m_state;
 };
 
-GeneratedCode generateAllCode(const Typed::CodeGenerationInputs&, Typed::Program&, BuildContext&);
 OperationCounts countOperations(const Typed::Function&);
 
 void dropUnitsWithoutOutlinableCode(CodeBody&);

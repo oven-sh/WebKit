@@ -26,7 +26,6 @@ variable g4 name="readCyclic" module=m3 declared={type=function} initialization=
 variable g5 name="readGiven" module=m3 declared={type=function} initialization=Function function=f9 flags=[IsImmutable]
 variable g6 module=m2 declared={type=anything} owner=L1
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = CheckInitialized v0 name="Ordered"
     v2 = PropGet v1 key="count"
@@ -35,7 +34,6 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="ordered" module=m1 kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = NewClass v0 layout=L0
     v2 = FinishClass v1 layout=L0
@@ -44,19 +42,16 @@ function f1 name="ordered" module=m1 kind=Module results=[{type=anything}] {
     Return
 }
 function f2 name="Ordered" module=m1 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2
 }
 function f3 name="initializeOrdered" module=m1 kind=Initializer flags=[HasThis] thisType={type=function} results=[{type=anything}] {
-  b0(v0: function):
     v1 = Integer integer=1
     PropDefine v0, v1 key="count"
     Return
 }
 function f4 name="cyclic" module=m2 kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f5
     v1 = NewClass v0 layout=L1
     v2 = FinishClass v1 layout=L1
@@ -65,13 +60,11 @@ function f4 name="cyclic" module=m2 kind=Module results=[{type=anything}] {
     Return
 }
 function f5 name="Cyclic" module=m2 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L1
     v2 = NewObject v1 layout=L1
     Return v2
 }
 function f6 name="initializeCyclic" module=m2 kind=Initializer flags=[HasThis] thisType={type=function} results=[{type=anything}] {
-  b0(v0: function):
     v1 = Integer integer=1
     PropDefine v0, v1 key="count"
     v3 = GetModuleVariable variable=g5
@@ -80,21 +73,17 @@ function f6 name="initializeCyclic" module=m2 kind=Initializer flags=[HasThis] t
     Return
 }
 function f7 name="partner" module=m3 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f8 name="readCyclic" module=m3 results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g1
     v1 = CheckInitialized v0 name="Cyclic"
     v2 = PropGet v1 key="count"
     Return v2
-}
-# CHECK-LABEL: function f8 name="readCyclic"
 # CHECK: = CheckInitialized
 # CHECK: = GetModuleVariable variable=g3
+}
 function f9 name="readGiven" module=m3 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="count"
     v2 = PropGet v0 key="late"
     Return v2

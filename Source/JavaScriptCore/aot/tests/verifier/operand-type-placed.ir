@@ -6,13 +6,11 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Environment fields=[{key="c" declared={type=number}}]
 function f0 name="badCodeAddress" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     v1 = ResolveCallTarget v0
     v2 = Box v1
     Return
 }
 function f1 name="badBuilderCursor" results=[{type=undefined}] {
-  b0():
     v0 = StringBuilderBegin
     v1 = StringBuilderReserve v0 size=8
     v2 = Compress v1

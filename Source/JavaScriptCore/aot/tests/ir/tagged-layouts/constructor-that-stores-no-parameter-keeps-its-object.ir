@@ -13,11 +13,9 @@ layout L1 name="Node" fields=[{key="kind" declared={type=number} flags=[IsRequir
 layout L2 name="Num" fields=[{key="kind" declared={type=1} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] supertypes=[L1]
 layout L3 name="Neg" fields=[{key="kind" declared={type=2} flags=[IsRequired]}, {key="operand" declared={type=undefined|null|L1} flags=[IsRequired]}] supertypes=[L1]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f1 name="NodeObject" flags=[HasThis] thisType={type=undefined|null|L1} parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: undefined|null|L1, v1: number):
     v2 = Increment v1
     PropSet v0, v2 key="kind" mode=Strict
     Return

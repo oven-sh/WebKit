@@ -10,7 +10,6 @@ layout L0 name="Options" fields=[{key="required0" declared={type=number} flags=[
 layout L1 name="ListedAndStoredBySlot" fields=[{key="listed0" declared={type=undefined|number}}, {key="listed1" declared={type=undefined|number}}, {key="listed2" declared={type=undefined|number}}, {key="listed3" declared={type=undefined|number}}, {key="listed4" declared={type=undefined|number}}, {key="listed5" declared={type=undefined|number}}, {key="listed6" declared={type=undefined|number}}, {key="listed7" declared={type=undefined|number}}, {key="listed8" declared={type=undefined|number}}, {key="listed9" declared={type=undefined|number}}, {key="listed10" declared={type=undefined|number}}, {key="listed11" declared={type=undefined|number}}, {key="listed12" declared={type=undefined|number}}, {key="listed13" declared={type=undefined|number}}, {key="listed14" declared={type=undefined|number}}, {key="listed15" declared={type=undefined|number}}]
 layout L2 name="ListedAndStoredByName" fields=[{key="listed0" declared={type=undefined|number}}, {key="listed1" declared={type=undefined|number}}, {key="listed2" declared={type=undefined|number}}, {key="listed3" declared={type=undefined|number}}, {key="listed4" declared={type=undefined|number}}, {key="listed5" declared={type=undefined|number}}, {key="listed6" declared={type=undefined|number}}, {key="listed7" declared={type=undefined|number}}, {key="listed8" declared={type=undefined|number}}, {key="listed9" declared={type=undefined|number}}, {key="listed10" declared={type=undefined|number}}, {key="listed11" declared={type=undefined|number}}, {key="listed12" declared={type=undefined|number}}, {key="listed13" declared={type=undefined|number}}, {key="listed14" declared={type=undefined|number}}, {key="listed15" declared={type=undefined|number}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=MathRandom
     v1 = Call v0
     v2 = ToNumber v1
@@ -42,7 +41,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="fillOptions" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     PropSet v0, v1 key="initialized"
 # REPEAT: i = 0..39
     PropSet v0, v1 key="optional%(i)"
@@ -51,14 +49,12 @@ function f1 name="fillOptions" parameters=[{type=anything}, {type=number}] resul
     Return
 }
 function f2 name="fillObject" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
 # REPEAT: i = 0..15
     PropSet v0, v1 key="listed%(i)"
 # END REPEAT
     Return
 }
 function f3 name="fillObjectOrNumber" flags=[IsSloppy] parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
 # REPEAT: i = 0..15
     PropSet v0, v1 key="listed%(i)"
 # END REPEAT

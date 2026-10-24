@@ -17,7 +17,6 @@ ALWAYS_INLINE std::optional<std::span<const FieldAsProperty>> fieldsInKeyOrder(c
     return uncheckedDowncast<Object>(compiledObject)->fieldsInKeyOrder();
 }
 
-// What fieldsInKeyOrder() answers for one of two compiled objects it answers for the other.
 ALWAYS_INLINE bool haveSameFieldsInKeyOrder(const JSObject* compiledObject, const JSObject* other)
 {
     ASSERT(isCompiledObject(compiledObject) && isCompiledObject(other));

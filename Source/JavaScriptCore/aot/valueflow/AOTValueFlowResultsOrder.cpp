@@ -8,20 +8,31 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBuiltinTable.h"
 #include "AOTFlowOrder.h"
-#include "AOTThreads.h"
 #include "AOTValueFlowResultsUnseenCode.h"
 #include "AOTValueFlowRulesModules.h"
-#include "AOTVector.h"
-#include <algorithm>
 #include <atomic>
-#include <tuple>
 #include <wtf/Atomics.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static void collectOperations(const ValueFlowResultInputs& inputs, FlowOrderInputs& order, bool& libraryLoadsItsModulesByName)
+static RuntimeModuleID findCompiledModuleWithObject(const Program& program, BuiltinID builtin)
+{
+    const BuiltinTable& builtins = program.builtins();
+    const Builtin& entry = builtins.at(builtin);
+    if (entry.holder || !isObjectKind(entry.kind) || entry.origin != BuiltinOrigin::Host)
+        return { };
+    for (const Module& module : program.modules) {
+        if (module.kind != ModuleKind::RuntimeSource || !module.runtimeModule)
+            continue;
+        BuiltinID object = builtins.namespaceOf(module.runtimeModule);
+        if (object && builtins.canonicalID(object) == builtin)
+            return module.runtimeModule;
+    }
+    return { };
+}
+
+static void collectOperations(const ValueFlowResultInputs& inputs, FlowOrderInputs& order, const Vector<ModuleID>& moduleOfRuntimeModule, bool& libraryLoadsItsModulesByName)
 {
     struct Row {
         FlowCall call;
@@ -29,7 +40,6 @@ static void collectOperations(const ValueFlowResultInputs& inputs, FlowOrderInpu
         bool isSynchronous;
     };
     const Program& program = inputs.program;
-    Vector<ModuleID> moduleOfRuntimeModule = indexRuntimeModules(program);
     std::atomic<bool> namesModuleAtRunTime { false };
     Vector<Row> rows = collectInParallel<Row>(inputs.loops(), program.functions.size(), [&](unsigned index, Vector<Row>& rows) {
         if (!order.reachedFunctions.quickGet(index) || !inputs.bodies().holdsAnyOf(FunctionID(index), notedOperations({ ValueFlowNotedOperation::CallDirect, ValueFlowNotedOperation::Builtin, ValueFlowNotedOperation::ModuleOperation })))
@@ -125,13 +135,12 @@ static void collectCallsOfClosures(const ValueFlowResultInputs& inputs, const Fl
     sortAndRemoveDuplicates(inputs.loops(), order.calls);
 }
 
-static void collectModules(const ValueFlowResultInputs& inputs, FlowOrderInputs& order, bool libraryLoadsItsModulesByName)
+static void collectModules(const ValueFlowResultInputs& inputs, FlowOrderInputs& order, const Vector<ModuleID>& moduleOfRuntimeModule, bool libraryLoadsItsModulesByName)
 {
     const Program& program = inputs.program;
     const BuiltinTable& builtins = program.builtins();
     bool modulesAreNamedAtRunTime = unseenCodeCanRun(inputs.solution) || modulesAreLoadedByName(inputs.solution);
     bool filesOfProgramAreNamedAtRunTime = filesOfProgramAreLoadedByName(inputs.solution);
-    BitVector isLoadedByNativeCode(program.modules.size());
     for (uint32_t index = 0; index < program.modules.size(); ++index) {
         const Module& module = program.modules[index];
         if (module.body && inputs.isReached(module.body))
@@ -140,19 +149,16 @@ static void collectModules(const ValueFlowResultInputs& inputs, FlowOrderInputs&
         if ((isEntryPoint ? filesOfProgramAreNamedAtRunTime : modulesAreNamedAtRunTime) && mayAnswerToName(program, ModuleID(index)))
             order.modulesLoadedByName.quickSet(index);
         if (libraryLoadsItsModulesByName && module.kind == ModuleKind::RuntimeSource)
-            isLoadedByNativeCode.quickSet(index);
+            order.modulesLoadedByHost.quickSet(index);
     }
-    Vector<ModuleID> moduleOfRuntimeModule = indexRuntimeModules(program);
     for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
         if (inputs.solver().usesOf(BuiltinID(index)).isEmpty())
             continue;
         for (const BuiltinModuleLoad& load : builtins.moduleLoadsOf(BuiltinID(index))) {
             if (ModuleID module = moduleOfRuntimeModule[load.module.index()])
-                isLoadedByNativeCode.quickSet(module.index());
+                order.modulesLoadedByHost.quickSet(module.index());
         }
     }
-    for (size_t module : isLoadedByNativeCode)
-        order.modulesLoadedByHost.append(ModuleID(static_cast<uint32_t>(module)));
 }
 
 static void collectStaticFields(const ValueFlowResultInputs& inputs, FlowOrderInputs& order)
@@ -191,15 +197,21 @@ static FlowOrderInputs collectOrderInputs(const ValueFlowResultInputs& inputs, c
     order.reachedFunctions = BitVector(program.functions.size());
     order.evaluatedModules = BitVector(program.modules.size());
     order.modulesLoadedByName = BitVector(program.modules.size());
+    order.modulesLoadedByHost = BitVector(program.modules.size());
     order.staticFieldsOfEscapedClasses = BitVector(program.variables.size());
     for (uint32_t index = 0; index < program.functions.size(); ++index) {
         if (inputs.isReached(FunctionID(index)) || isUnsolvedCode(inputs, tables, FunctionID(index)))
             order.reachedFunctions.quickSet(index);
     }
+    Vector<ModuleID> moduleOfRuntimeModule(program.builtins().moduleCount());
+    for (uint32_t module = 0; module < program.modules.size(); ++module) {
+        if (RuntimeModuleID runtimeModule = program.modules[module].runtimeModule)
+            moduleOfRuntimeModule[runtimeModule.index()] = ModuleID(module);
+    }
     bool libraryLoadsItsModulesByName = false;
-    collectOperations(inputs, order, libraryLoadsItsModulesByName);
+    collectOperations(inputs, order, moduleOfRuntimeModule, libraryLoadsItsModulesByName);
     collectCallsOfClosures(inputs, tables, order);
-    collectModules(inputs, order, libraryLoadsItsModulesByName);
+    collectModules(inputs, order, moduleOfRuntimeModule, libraryLoadsItsModulesByName);
     collectStaticFields(inputs, order);
     return order;
 }

@@ -10,27 +10,20 @@
 
 #include "AOTBlockCycles.h"
 #include "AOTBuiltinIDs.h"
-#include "AOTBuiltinTable.h"
 #include "AOTFlowStamps.h"
 #include "AOTPhaseTimes.h"
 #include "AOTSort.h"
-#include "AOTThreads.h"
-#include "AOTVector.h"
-#include <algorithm>
 #include <atomic>
 #include <optional>
 #include <tuple>
 #include <utility>
 #include <wtf/Atomics.h>
-#include <wtf/HashMap.h>
-#include <wtf/HashSet.h>
 #include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-// The group of a set of callees that a statement has asked for: the closures in the set are entered with what the statement hands to the group.
 struct EnteredGroup {
     ValueSetID callees;
     ValueFlowCallKind kind { ValueFlowCallKind::Call };
@@ -41,92 +34,39 @@ struct GroupOfStatement {
     EnteredGroup group;
 };
 
-// Lists of numbers, by the number of their owner.
-class ListsByOwner {
-public:
+struct ListsByOwner {
     using Pair = std::pair<uint32_t, uint32_t>;
 
     ListsByOwner() = default;
     ListsByOwner(uint32_t numberOfOwners, std::span<const Pair> ownersAndMembers)
     {
-        m_first.fill(0u, numberOfOwners + 1);
+        first.fill(0u, numberOfOwners + 1);
         for (const Pair& pair : ownersAndMembers)
-            ++m_first[pair.first + 1];
+            ++first[pair.first + 1];
         for (uint32_t owner = 0; owner < numberOfOwners; ++owner)
-            m_first[owner + 1] += m_first[owner];
-        m_members.grow(ownersAndMembers.size());
-        Vector<uint32_t> next(m_first.span().first(numberOfOwners));
+            first[owner + 1] += first[owner];
+        members.grow(ownersAndMembers.size());
+        Vector<uint32_t> next(first.span().first(numberOfOwners));
         for (const Pair& pair : ownersAndMembers)
-            m_members[next[pair.first]++] = pair.second;
+            members[next[pair.first]++] = pair.second;
     }
 
-    std::span<const uint32_t> of(uint32_t owner) const LIFETIME_BOUND { return m_members.subspan(m_first[owner], m_first[owner + 1] - m_first[owner]); }
+    std::span<const uint32_t> of(uint32_t owner) const LIFETIME_BOUND { return members.subspan(first[owner], first[owner + 1] - first[owner]); }
 
-private:
-    Vector<uint32_t> m_first;
-    Vector<uint32_t> m_members;
+    Vector<uint32_t> first;
+    Vector<uint32_t> members;
 };
 
-// The statements that rules have made, by their number among such statements.
-class StatementsMadeByRules {
-public:
-    explicit StatementsMadeByRules(const ValueFlowResultInputs&);
-
-    uint32_t size() const { return m_size; }
-    uint32_t numberOf(ValueFlowStatementID statement) const { return statement.index() - m_numberOfStatementsOfBodies; }
-    bool hasRun(uint32_t number) const { return m_hasRun[number]; }
-    // Nobody can say for whom it acts: it stands for all that reaches an operand of native code anywhere, for native code itself, or for the calls of a placeholder.
-    bool actsForNobodyKnown(uint32_t number) const { return m_actsForNobodyKnown[number]; }
-    // It has asked for the group of some closure, or for a statement that leads to such a group.
-    bool leadsToGroup(uint32_t number) const { return m_leadsToGroup.quickGet(number); }
-    std::span<const GroupOfStatement> groupsOf(uint32_t number) const LIFETIME_BOUND { return m_groups.subspan(m_firstGroup[number], m_firstGroup[number + 1] - m_firstGroup[number]); }
-    std::span<const uint32_t> statementsAskedForBy(uint32_t number) const LIFETIME_BOUND { return m_statementsAskedFor.of(number); }
-
-    // From any thread.
-    void noteAsker(uint32_t number) { AtomicRef(m_isAskedFor[number]).store(1, std::memory_order_relaxed); }
-    bool isAskedFor(uint32_t number) const { return m_isAskedFor[number]; }
-
-private:
-    uint32_t m_numberOfStatementsOfBodies;
-    uint32_t m_size;
-    // The threads of a loop set these two, each statement on one thread.
-    Vector<uint8_t> m_hasRun;
-    Vector<uint8_t> m_actsForNobodyKnown;
-    BitVector m_leadsToGroup;
-    Vector<uint8_t> m_isAskedFor;
-    // In the order of the statements.
-    Vector<GroupOfStatement> m_groups;
-    Vector<uint32_t> m_firstGroup;
-    ListsByOwner m_statementsAskedFor;
-};
-
-// The entries into functions that no stamp lists.
 struct EntriesWithoutStamp {
-    // Ascending by caller, site, callee and kind.
-    Vector<FlowIndirectCall> calls;
-    BitVector functions;
-    // Those among them that a call of a placeholder may enter, which `calls` does not list.
-    BitVector functionsEnteredWithoutRecord;
-    // Those among them that something enters for which nobody can name an operation.
     BitVector functionsEnteredByHost;
-    // The group of almost everything was asked for, so nothing lists what it enters.
     bool mayBeIntoAnyFunction { false };
-};
-
-struct BindCall {
-    FunctionID target;
-    uint32_t numberOfBoundArguments { 0 };
-    bool resultIsOnlyCalled { false };
 };
 
 } // anonymous namespace
 
-// The solve enters the body of a module where something reached loads the module, and a function of the library where something reached uses its built-in.
 static bool isEnteredOnDemand(const Function& function)
 {
-    if (function.role == FunctionRole::Library || function.role == FunctionRole::Model)
-        return true;
-    return function.kind == FunctionKind::Module || function.kind == FunctionKind::CommonJsModule;
+    return function.role == FunctionRole::Library || function.role == FunctionRole::Model || function.kind == FunctionKind::Module || function.kind == FunctionKind::CommonJsModule;
 }
 
 static bool hasCalleeStamp(const ValueFlowStatement& statement)
@@ -134,24 +74,9 @@ static bool hasCalleeStamp(const ValueFlowStatement& statement)
     return statement.kind == ValueFlowStatementKind::Operation && PayloadWord::callees(statement.opcode);
 }
 
-static const CalleeSet* findStamp(const ValueFlowResultInputs& inputs, const FlowApplication& application, FunctionID function, const ValueFlowStatement& statement)
-{
-    if (!hasCalleeStamp(statement))
-        return nullptr;
-    const FlowCallStamp* stamp = findByValue(application.bodies[function.index()].calls.span(), statement.site, &FlowCallStamp::value);
-    return stamp ? &inputs.program.at(stamp->callees) : nullptr;
-}
-
-static bool holdsPlaceholder(const ValueSets& sets, ValueSetID set)
-{
-    return sets.contains(set, ValueFlowUniverse::unknownObject()) || sets.contains(set, ValueFlowUniverse::untrackedObject());
-}
-
-// Every rule that enters a closure asks for the group of a set that holds it.
 static void forEachRequestOf(const ValueFlowResultInputs& inputs, ValueFlowStatementID id, NOESCAPE const Invocable<void(const EnteredGroup&)> auto& group, NOESCAPE const Invocable<void(ValueFlowStatementID)> auto& madeStatement)
 {
     inputs.forEachMadeNodeAskedForBy(id, kindsOfMadeNodes({ ValueFlowMadeNodeKind::CallGroup }), true, [&](const ValueFlowNodeKey& key, ValueFlowStatementID made) {
-        // A statement asks for the nodes that it was made with.
         if (made == id)
             return;
         if (key.kind == ValueFlowMadeNodeKind::CallGroup)
@@ -167,7 +92,7 @@ static bool actsForNobodyKnown(const ValueFlowSolver& solver, ValueFlowStatement
     case ValueFlowStatementKind::Lookup:
         return solver.keyOf(id).name().kind == ValueFlowNameKind::FoundThroughEscapedInstances;
     case ValueFlowStatementKind::CallGroup:
-        return ValueSets::isComplement(solver.keyOf(id).set) || holdsPlaceholder(solver.sets(), solver.keyOf(id).set);
+        return ValueSets::isComplement(solver.keyOf(id).set) || solver.sets().contains(solver.keyOf(id).set, ValueFlowUniverse::unknownObject()) || solver.sets().contains(solver.keyOf(id).set, ValueFlowUniverse::untrackedObject());
     case ValueFlowStatementKind::Behavior:
     case ValueFlowStatementKind::Escape:
         return true;
@@ -183,99 +108,6 @@ static bool actsForNobodyKnown(const ValueFlowSolver& solver, ValueFlowStatement
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A group without a closure enters no function. What its statement asks for in turn is looked at by itself.
-static bool entersFunctions(const ValueFlowResultInputs& inputs, const EnteredGroup& group)
-{
-    return inputs.sets().meet(group.callees, inputs.universe().closures());
-}
-
-StatementsMadeByRules::StatementsMadeByRules(const ValueFlowResultInputs& inputs)
-    : m_numberOfStatementsOfBodies(inputs.solver().input().statements.size())
-    , m_size(inputs.solver().numberOfStatements() - m_numberOfStatementsOfBodies)
-    , m_hasRun(FillWith { }, m_size, static_cast<uint8_t>(0))
-    , m_actsForNobodyKnown(FillWith { }, m_size, static_cast<uint8_t>(0))
-    , m_leadsToGroup(m_size)
-    , m_isAskedFor(FillWith { }, m_size, static_cast<uint8_t>(0))
-{
-    struct Requests {
-        Vector<GroupOfStatement> groups;
-        Vector<ListsByOwner::Pair> askersAndAsked;
-    };
-    constexpr uint32_t statementsPerTask = 256;
-
-    const ValueFlowSolver& solver = inputs.solver();
-    Vector<Requests> requestsOfTask((m_size + statementsPerTask - 1) / statementsPerTask);
-    forEachIndexInParallel(inputs.loops(), requestsOfTask.size(), [&](unsigned task) {
-        Vector<GroupOfStatement>& groupsOfTask = requestsOfTask[task].groups;
-        Vector<ListsByOwner::Pair>& askersAndAskedOfTask = requestsOfTask[task].askersAndAsked;
-        uint32_t end = std::min(m_size, (task + 1) * statementsPerTask);
-        for (uint32_t number = task * statementsPerTask; number < end; ++number) {
-            ValueFlowStatementID id(m_numberOfStatementsOfBodies + number);
-            if (solver.isAtRest(id))
-                continue;
-            m_hasRun[number] = 1;
-            if (Typed::actsForNobodyKnown(solver, id))
-                m_actsForNobodyKnown[number] = 1;
-            size_t firstGroup = groupsOfTask.size();
-            size_t firstAsked = askersAndAskedOfTask.size();
-            forEachRequestOf(inputs, id, [&](const EnteredGroup& group) {
-                if (entersFunctions(inputs, group))
-                    groupsOfTask.append(GroupOfStatement { number, group });
-            }, [&](ValueFlowStatementID made) {
-                askersAndAskedOfTask.append({ number, numberOf(made) });
-                noteAsker(numberOf(made));
-            });
-
-            // A statement that is shown only what is new in a node keeps what all its runs have asked for, the same thing many times over.
-            auto orderOfGroup = [](const GroupOfStatement& entry) {
-                return std::tuple(entry.group.callees, entry.group.kind);
-            };
-            auto groups = groupsOfTask.mutableSpan().subspan(firstGroup);
-            AOT::sort(groups, { }, orderOfGroup);
-            groupsOfTask.shrink(groupsOfTask.size() - std::ranges::unique(groups, { }, orderOfGroup).size());
-            auto asked = askersAndAskedOfTask.mutableSpan().subspan(firstAsked);
-            AOT::sort(asked);
-            askersAndAskedOfTask.shrink(askersAndAskedOfTask.size() - std::ranges::unique(asked).size());
-        }
-    });
-
-    size_t numberOfGroups = 0;
-    size_t numberOfAsked = 0;
-    for (const Requests& requests : requestsOfTask) {
-        numberOfGroups += requests.groups.size();
-        numberOfAsked += requests.askersAndAsked.size();
-    }
-    Vector<ListsByOwner::Pair> askersAndAsked;
-    m_groups.reserveInitialCapacity(numberOfGroups);
-    askersAndAsked.reserveInitialCapacity(numberOfAsked);
-    for (Requests& requests : requestsOfTask) {
-        m_groups.appendVector(WTF::move(requests.groups));
-        askersAndAsked.appendVector(WTF::move(requests.askersAndAsked));
-    }
-    m_firstGroup.fill(0u, m_size + 1);
-    for (const GroupOfStatement& entry : m_groups)
-        ++m_firstGroup[entry.statement + 1];
-    for (uint32_t number = 0; number < m_size; ++number)
-        m_firstGroup[number + 1] += m_firstGroup[number];
-    m_statementsAskedFor = ListsByOwner(m_size, askersAndAsked.span());
-
-    for (ListsByOwner::Pair& pair : askersAndAsked)
-        std::swap(pair.first, pair.second);
-    ListsByOwner askers(m_size, askersAndAsked.span());
-    Vector<uint32_t> worklist;
-    for (const GroupOfStatement& entry : m_groups) {
-        if (!m_leadsToGroup.quickSet(entry.statement))
-            worklist.append(entry.statement);
-    }
-    while (!worklist.isEmpty()) {
-        for (uint32_t asker : askers.of(worklist.takeLast())) {
-            if (!m_leadsToGroup.quickSet(asker))
-                worklist.append(asker);
-        }
-    }
-}
-
-// As the rule that enters a closure decides it.
 static bool throwsBeforeEntry(const Function& callee, ValueFlowCallKind kind)
 {
     if (isConstruction(kind))
@@ -291,7 +123,6 @@ static BuiltinCallbackTimes mergeTimes(BuiltinCallbackTimes first, BuiltinCallba
     return isCalledPerEvent ? BuiltinCallbackTimes::PerEvent : BuiltinCallbackTimes::Repeatedly;
 }
 
-// The solve does not keep which row of the table has entered which closure, so every function that a call of built-ins enters counts as called as often as the rows of those built-ins say together.
 static BuiltinCallbackTimes timesOfCallbacks(const BuiltinTable& builtins, const CalleeSet* stamp)
 {
     std::optional<BuiltinCallbackTimes> times;
@@ -316,7 +147,6 @@ static auto callOrderOf(const FlowIndirectCall& call)
     return std::tuple(call.caller, call.site, call.callee, call.kind);
 }
 
-// Sorts the calls from `first` on and leaves one for each caller, site, callee and kind.
 static void mergeIndirectCalls(Vector<FlowIndirectCall>& calls, size_t first)
 {
     AOT::sort(calls.mutableSpan().subspan(first), { }, callOrderOf);
@@ -334,61 +164,7 @@ static void mergeIndirectCalls(Vector<FlowIndirectCall>& calls, size_t first)
     calls.shrink(count);
 }
 
-namespace {
-
-// The statements of one reached function, and what they enter beside what their stamps list.
-class EntriesFromFunction {
-public:
-    EntriesFromFunction(const ValueFlowResultInputs& inputs, const FlowApplication& application, StatementsMadeByRules& madeStatements, FunctionID id, Vector<FlowIndirectCall>& calls)
-        : m_inputs(inputs)
-        , m_application(application)
-        , m_madeStatements(madeStatements)
-        , m_id(id)
-        , m_function(inputs.program.at(id))
-        , m_calls(calls)
-    {
-    }
-
-    void collect(ValueFlowStatementID, const ValueFlowStatement&);
-
-private:
-    void prepareSites();
-    void add(const ValueFlowStatement&, const EnteredGroup&, const CalleeSet* stampThatListsCallees);
-    FlowIndirectCallKind kindOf(const ValueFlowStatement&, ValueFlowCallKind) const;
-
-    const ValueFlowResultInputs& m_inputs;
-    const FlowApplication& m_application;
-    StatementsMadeByRules& m_madeStatements;
-    FunctionID m_id;
-    const Function& m_function;
-    Vector<FlowIndirectCall>& m_calls;
-    // Made with the first entry.
-    bool m_hasPreparedSites { false };
-    BitVector m_valuesInCycles;
-    // Of the statement that is looked at.
-    const CalleeSet* m_stamp { nullptr };
-    std::optional<BuiltinCallbackTimes> m_timesOfCallbacks;
-};
-
-} // anonymous namespace
-
-void EntriesFromFunction::prepareSites()
-{
-    if (std::exchange(m_hasPreparedSites, true))
-        return;
-    m_valuesInCycles = BitVector(m_function.values.size());
-    CFG cfg(m_function);
-    BlockCycles cycles(cfg);
-    for (BlockID block : cfg.reversePostOrder()) {
-        if (!cycles.isInCycle(block))
-            continue;
-        for (ValueID value : m_function.at(block).values)
-            m_valuesInCycles.quickSet(value.index());
-    }
-}
-
-// A call enters what a built-in among its callees calls, the target of a bound function among them, and the function of the library that a built-in among them is. Any other operation runs a protocol of the language.
-FlowIndirectCallKind EntriesFromFunction::kindOf(const ValueFlowStatement& statement, ValueFlowCallKind kind) const
+static FlowIndirectCallKind kindOfIndirectCall(const ValueFlowStatement& statement, ValueFlowCallKind kind)
 {
     switch (kind) {
     case ValueFlowCallKind::Get:
@@ -404,111 +180,200 @@ FlowIndirectCallKind EntriesFromFunction::kindOf(const ValueFlowStatement& state
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void EntriesFromFunction::add(const ValueFlowStatement& statement, const EnteredGroup& group, const CalleeSet* stampThatListsCallees)
-{
-    const ValueFlowUniverse& universe = m_inputs.universe();
-    if (ValueSets::isComplement(group.callees))
-        return;
-    // A group is what the statement was shown when it last ran, and a statement runs again only when it is shown more.
-    bool namesNoEscapedClosure = m_inputs.sets().size(group.callees) > m_inputs.build.limit(LimitID::MaxValueFlowMembersToldApart);
-    ValueSetID escaped = m_inputs.solver().valueOf(ValueFlowProgramNodes::escaped());
-    m_inputs.sets().forEachMember(group.callees, [&](ValueFlowObjectID callee) {
-        FunctionID function = universe.closureFunction(callee);
-        if (!function || throwsBeforeEntry(m_inputs.program.at(function), group.kind))
-            return;
-        if (namesNoEscapedClosure && m_inputs.sets().contains(escaped, callee))
-            return;
-        if (stampThatListsCallees && std::ranges::binary_search(stampThatListsCallees->functions, function))
-            return;
-
-        prepareSites();
-        FlowIndirectCall call { .caller = m_id, .callee = function, .kind = kindOf(statement, group.kind), .times = BuiltinCallbackTimes::Once };
-        if (statement.site) {
-            call.site = m_application.accessSites.siteOfValue(m_id, statement.site);
-            call.isInCycle = m_valuesInCycles.quickGet(statement.site.index());
-        }
-        if (call.kind == FlowIndirectCallKind::BuiltinCallback) {
-            if (!m_timesOfCallbacks)
-                m_timesOfCallbacks = timesOfCallbacks(m_inputs.program.builtins(), m_stamp);
-            call.times = *m_timesOfCallbacks;
-        }
-        m_calls.append(call);
-    });
-}
-
-void EntriesFromFunction::collect(ValueFlowStatementID id, const ValueFlowStatement& statement)
-{
-    const ValueFlowSolver& solver = m_inputs.solver();
-    m_stamp = findStamp(m_inputs, m_application, m_id, statement);
-    m_timesOfCallbacks = std::nullopt;
-
-    Vector<uint32_t, 8> worklist;
-    forEachRequestOf(m_inputs, id, [&](const EnteredGroup& group) {
-        // A call lists in its stamp what it enters as its callee. Nothing emits a model: native code makes the calls that it spells out, so nothing in the image lists what they enter.
-        bool isGroupOfCallees = (group.kind == ValueFlowCallKind::Call || group.kind == ValueFlowCallKind::Construct) && m_function.role != FunctionRole::Model;
-        add(statement, group, isGroupOfCallees ? m_stamp : nullptr);
-    }, [&](ValueFlowStatementID made) {
-        uint32_t number = m_madeStatements.numberOf(made);
-        m_madeStatements.noteAsker(number);
-        if (m_madeStatements.leadsToGroup(number) && !m_madeStatements.actsForNobodyKnown(number))
-            worklist.append(number);
-    });
-    if (worklist.isEmpty())
-        return;
-
-    HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> seen;
-    while (!worklist.isEmpty()) {
-        uint32_t number = worklist.takeLast();
-        if (!seen.add(number).isNewEntry)
-            continue;
-        for (const GroupOfStatement& entry : m_madeStatements.groupsOf(number))
-            add(statement, entry.group, nullptr);
-        for (uint32_t asked : m_madeStatements.statementsAskedForBy(number)) {
-            if (m_madeStatements.leadsToGroup(asked) && !m_madeStatements.actsForNobodyKnown(asked))
-                worklist.append(asked);
-        }
-    }
-}
-
-static void setFunctionsOfClosuresIn(const ValueFlowResultInputs& inputs, ValueFlowNodeID covered, BitVector& functions)
-{
-    inputs.sets().forEachMember(inputs.solver().valueOf(covered), [&](ValueFlowObjectID member) {
-        if (FunctionID function = inputs.universe().closureFunction(member))
-            functions.quickSet(function.index());
-    });
-}
-
-// An operation names its function and its site as the caller.
-static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& inputs, const FlowApplication& application)
+static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& inputs, ValueFlowStampedCalls& stampedCalls, FlowResultTables& tables)
 {
     const Program& program = inputs.program;
     const ValueFlowSolver& solver = inputs.solver();
     const ValueFlowBodies& bodies = inputs.bodies();
     const ValueFlowUniverse& universe = inputs.universe();
+    const ValueSets& sets = inputs.sets();
+    const FlowApplication& application = *tables.application;
     unsigned numberOfFunctions = program.functions.size();
     auto idOf = [&](const ValueFlowStatement& statement) {
         return ValueFlowStatementID(static_cast<uint32_t>(&statement - bodies.statements().data()));
     };
 
-    StatementsMadeByRules madeStatements(inputs);
-    EntriesWithoutStamp entries;
-    entries.functions = BitVector(numberOfFunctions);
-    entries.calls = collectInParallel<FlowIndirectCall>(inputs.loops(), numberOfFunctions, [&](unsigned index, Vector<FlowIndirectCall>& calls) {
-        if (!inputs.isReached(FunctionID(index)))
+    uint32_t numberOfStatementsOfBodies = solver.input().statements.size();
+    uint32_t numberOfMadeStatements = solver.numberOfStatements() - numberOfStatementsOfBodies;
+    Vector<uint8_t> hasRun(FillWith { }, numberOfMadeStatements, static_cast<uint8_t>(0));
+    Vector<uint8_t> actsForNobody(FillWith { }, numberOfMadeStatements, static_cast<uint8_t>(0));
+    BitVector leadsToGroup(numberOfMadeStatements);
+    Vector<uint8_t> isAskedFor(FillWith { }, numberOfMadeStatements, static_cast<uint8_t>(0));
+    Vector<GroupOfStatement> groups;
+    Vector<uint32_t> firstGroup;
+    ListsByOwner statementsAskedFor;
+    auto numberOf = [&](ValueFlowStatementID statement) {
+        return statement.index() - numberOfStatementsOfBodies;
+    };
+    auto groupsOf = [&](uint32_t number) {
+        return groups.subspan(firstGroup[number], firstGroup[number + 1] - firstGroup[number]);
+    };
+    auto noteAsker = [&](uint32_t number) {
+        AtomicRef(isAskedFor[number]).store(1, std::memory_order_relaxed);
+    };
+    {
+        struct Requests {
+            Vector<GroupOfStatement> groups;
+            Vector<ListsByOwner::Pair> askersAndAsked;
+        };
+        constexpr uint32_t statementsPerTask = 256;
+        Vector<Requests> requestsOfTask((numberOfMadeStatements + statementsPerTask - 1) / statementsPerTask);
+        forEachIndexInParallel(inputs.loops(), requestsOfTask.size(), [&](unsigned task) {
+            Vector<GroupOfStatement>& groupsOfTask = requestsOfTask[task].groups;
+            Vector<ListsByOwner::Pair>& askersAndAskedOfTask = requestsOfTask[task].askersAndAsked;
+            uint32_t end = std::min(numberOfMadeStatements, (task + 1) * statementsPerTask);
+            for (uint32_t number = task * statementsPerTask; number < end; ++number) {
+                ValueFlowStatementID id(numberOfStatementsOfBodies + number);
+                if (solver.isAtRest(id))
+                    continue;
+                hasRun[number] = 1;
+                if (actsForNobodyKnown(solver, id))
+                    actsForNobody[number] = 1;
+                size_t firstGroupOfStatement = groupsOfTask.size();
+                size_t firstAskedByStatement = askersAndAskedOfTask.size();
+                forEachRequestOf(inputs, id, [&](const EnteredGroup& group) {
+                    if (sets.meet(group.callees, universe.closures()))
+                        groupsOfTask.append(GroupOfStatement { number, group });
+                }, [&](ValueFlowStatementID made) {
+                    askersAndAskedOfTask.append({ number, numberOf(made) });
+                    noteAsker(numberOf(made));
+                });
+
+                auto orderOfGroup = [](const GroupOfStatement& entry) {
+                    return std::tuple(entry.group.callees, entry.group.kind);
+                };
+                auto groupsOfStatement = groupsOfTask.mutableSpan().subspan(firstGroupOfStatement);
+                AOT::sort(groupsOfStatement, { }, orderOfGroup);
+                groupsOfTask.shrink(groupsOfTask.size() - std::ranges::unique(groupsOfStatement, { }, orderOfGroup).size());
+                auto asked = askersAndAskedOfTask.mutableSpan().subspan(firstAskedByStatement);
+                AOT::sort(asked);
+                askersAndAskedOfTask.shrink(askersAndAskedOfTask.size() - std::ranges::unique(asked).size());
+            }
+        });
+
+        size_t numberOfGroups = 0;
+        size_t numberOfAsked = 0;
+        for (const Requests& requests : requestsOfTask) {
+            numberOfGroups += requests.groups.size();
+            numberOfAsked += requests.askersAndAsked.size();
+        }
+        Vector<ListsByOwner::Pair> askersAndAsked;
+        groups.reserveInitialCapacity(numberOfGroups);
+        askersAndAsked.reserveInitialCapacity(numberOfAsked);
+        for (Requests& requests : requestsOfTask) {
+            groups.appendVector(WTF::move(requests.groups));
+            askersAndAsked.appendVector(WTF::move(requests.askersAndAsked));
+        }
+        firstGroup.fill(0u, numberOfMadeStatements + 1);
+        for (const GroupOfStatement& entry : groups)
+            ++firstGroup[entry.statement + 1];
+        for (uint32_t number = 0; number < numberOfMadeStatements; ++number)
+            firstGroup[number + 1] += firstGroup[number];
+        statementsAskedFor = ListsByOwner(numberOfMadeStatements, askersAndAsked.span());
+
+        for (ListsByOwner::Pair& pair : askersAndAsked)
+            std::swap(pair.first, pair.second);
+        ListsByOwner askers(numberOfMadeStatements, askersAndAsked.span());
+        Vector<uint32_t> worklist;
+        for (const GroupOfStatement& entry : groups) {
+            if (!leadsToGroup.quickSet(entry.statement))
+                worklist.append(entry.statement);
+        }
+        while (!worklist.isEmpty()) {
+            for (uint32_t asker : askers.of(worklist.takeLast())) {
+                if (!leadsToGroup.quickSet(asker))
+                    worklist.append(asker);
+            }
+        }
+    }
+
+    tables.functions.indirectCalls = collectInParallel<FlowIndirectCall>(inputs.loops(), numberOfFunctions, [&](unsigned index, Vector<FlowIndirectCall>& calls) {
+        FunctionID id(index);
+        if (!inputs.isReached(id))
             return;
+        const Function& function = program.functions[index];
         size_t first = calls.size();
-        EntriesFromFunction fromFunction(inputs, application, madeStatements, FunctionID(index), calls);
-        for (const ValueFlowStatement& statement : bodies.statementsOf(index))
-            fromFunction.collect(idOf(statement), statement);
+        bool hasPreparedSites = false;
+        BitVector valuesInCycles;
+        for (const ValueFlowStatement& statement : bodies.statementsOf(index)) {
+            const FlowCallStamp* stampOfCall = hasCalleeStamp(statement) ? findByValue(application.bodies[index].calls.span(), statement.site, &FlowCallStamp::value) : nullptr;
+            const CalleeSet* stamp = stampOfCall ? &program.at(stampOfCall->callees) : nullptr;
+            std::optional<BuiltinCallbackTimes> timesOfCallbacksOfStatement;
+            auto add = [&](const EnteredGroup& group, const CalleeSet* stampThatListsCallees) {
+                if (ValueSets::isComplement(group.callees))
+                    return;
+                bool namesNoEscapedClosure = sets.size(group.callees) > inputs.build.limit(LimitID::MaxValueFlowMembersToldApart);
+                ValueSetID escaped = solver.valueOf(ValueFlowProgramNodes::escaped());
+                sets.forEachMember(group.callees, [&](ValueFlowObjectID callee) {
+                    FunctionID entered = universe.closureFunction(callee);
+                    if (!entered || throwsBeforeEntry(program.at(entered), group.kind))
+                        return;
+                    if (namesNoEscapedClosure && sets.contains(escaped, callee))
+                        return;
+                    if (stampThatListsCallees && std::ranges::binary_search(stampThatListsCallees->functions, entered))
+                        return;
+
+                    if (!std::exchange(hasPreparedSites, true)) {
+                        valuesInCycles = BitVector(function.values.size());
+                        CFG cfg(function);
+                        BlockCycles cycles(cfg);
+                        for (BlockID block : cfg.reversePostOrder()) {
+                            if (!cycles.isInCycle(block))
+                                continue;
+                            for (ValueID value : function.at(block).values)
+                                valuesInCycles.quickSet(value.index());
+                        }
+                    }
+                    FlowIndirectCall call { .caller = id, .callee = entered, .kind = kindOfIndirectCall(statement, group.kind), .times = BuiltinCallbackTimes::Once };
+                    if (statement.site) {
+                        call.site = application.accessSites.siteOfValue(id, statement.site);
+                        call.isInCycle = valuesInCycles.quickGet(statement.site.index());
+                    }
+                    if (call.kind == FlowIndirectCallKind::BuiltinCallback) {
+                        if (!timesOfCallbacksOfStatement)
+                            timesOfCallbacksOfStatement = timesOfCallbacks(program.builtins(), stamp);
+                        call.times = *timesOfCallbacksOfStatement;
+                    }
+                    calls.append(call);
+                });
+            };
+
+            Vector<uint32_t, 8> worklist;
+            auto follow = [&](uint32_t number) {
+                if (leadsToGroup.quickGet(number) && !actsForNobody[number])
+                    worklist.append(number);
+            };
+            forEachRequestOf(inputs, idOf(statement), [&](const EnteredGroup& group) {
+                bool isGroupOfCallees = (group.kind == ValueFlowCallKind::Call || group.kind == ValueFlowCallKind::Construct) && function.role != FunctionRole::Model;
+                add(group, isGroupOfCallees ? stamp : nullptr);
+            }, [&](ValueFlowStatementID made) {
+                noteAsker(numberOf(made));
+                follow(numberOf(made));
+            });
+            if (worklist.isEmpty())
+                continue;
+
+            HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> seen;
+            while (!worklist.isEmpty()) {
+                uint32_t number = worklist.takeLast();
+                if (!seen.add(number).isNewEntry)
+                    continue;
+                for (const GroupOfStatement& entry : groupsOf(number))
+                    add(entry.group, nullptr);
+                for (uint32_t asked : statementsAskedFor.of(number))
+                    follow(asked);
+            }
+        }
         mergeIndirectCalls(calls, first);
     });
 
-    // A big set of callees hands on to the groups of its parts, which no statement has asked for.
-    BitVector isEnteredByHost(numberOfFunctions);
-    BitVector seen(madeStatements.size());
+    EntriesWithoutStamp entries;
+    BitVector& isEnteredByHost = entries.functionsEnteredByHost;
+    isEnteredByHost = BitVector(numberOfFunctions);
+    BitVector seen(numberOfMadeStatements);
     Vector<uint32_t> worklist;
     auto follow = [&](uint32_t number) {
-        if (madeStatements.leadsToGroup(number) && !seen.quickSet(number))
+        if (leadsToGroup.quickGet(number) && !seen.quickSet(number))
             worklist.append(number);
     };
     auto enterFromHost = [&](const EnteredGroup& group) {
@@ -522,28 +387,27 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
     };
     for (const ValueFlowStatement& statement : bodies.statementsOf(bodies.hostBody())) {
         forEachRequestOf(inputs, idOf(statement), enterFromHost, [&](ValueFlowStatementID made) {
-            madeStatements.noteAsker(madeStatements.numberOf(made));
-            follow(madeStatements.numberOf(made));
+            noteAsker(numberOf(made));
+            follow(numberOf(made));
         });
     }
-    for (uint32_t number = 0; number < madeStatements.size(); ++number) {
-        if (madeStatements.hasRun(number) && (madeStatements.actsForNobodyKnown(number) || !madeStatements.isAskedFor(number)))
+    for (uint32_t number = 0; number < numberOfMadeStatements; ++number) {
+        if (hasRun[number] && (actsForNobody[number] || !isAskedFor[number]))
             follow(number);
     }
     while (!worklist.isEmpty()) {
         uint32_t number = worklist.takeLast();
-        for (const GroupOfStatement& entry : madeStatements.groupsOf(number))
+        for (const GroupOfStatement& entry : groupsOf(number))
             enterFromHost(entry.group);
-        for (uint32_t asked : madeStatements.statementsAskedForBy(number))
+        for (uint32_t asked : statementsAskedFor.of(number))
             follow(asked);
     }
     for (size_t function : isEnteredByHost)
-        entries.calls.append(FlowIndirectCall { .callee = FunctionID(static_cast<uint32_t>(function)), .kind = FlowIndirectCallKind::Host, .times = BuiltinCallbackTimes::Repeatedly });
-    for (const FlowIndirectCall& call : entries.calls)
-        entries.functions.quickSet(call.callee.index());
-    entries.functionsEnteredByHost = WTF::move(isEnteredByHost);
+        tables.functions.indirectCalls.append(FlowIndirectCall { .callee = FunctionID(static_cast<uint32_t>(function)), .kind = FlowIndirectCallKind::Host, .times = BuiltinCallbackTimes::Repeatedly });
+    stampedCalls.functionsEnteredWithoutStamp = BitVector(numberOfFunctions);
+    for (const FlowIndirectCall& call : tables.functions.indirectCalls)
+        stampedCalls.functionsEnteredWithoutStamp.quickSet(call.callee.index());
 
-    // Whoever calls a placeholder has asked for a group that holds it.
     std::atomic<bool> mayBeIntoAnyFunction { false };
     std::atomic<bool> callsUnknownObject { false };
     std::atomic<bool> callsUntrackedObject { false };
@@ -560,20 +424,25 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
         raiseFlag(callsUntrackedObject, [&] { return inputs.sets().contains(key.set, ValueFlowUniverse::untrackedObject()); });
     });
     entries.mayBeIntoAnyFunction = mayBeIntoAnyFunction.load(std::memory_order_relaxed);
-    entries.functionsEnteredWithoutRecord = BitVector(numberOfFunctions);
+    stampedCalls.functionsEnteredWithoutRecord = BitVector(numberOfFunctions);
+    auto enterClosuresIn = [&](ValueFlowNodeID covered) {
+        sets.forEachMember(solver.valueOf(covered), [&](ValueFlowObjectID member) {
+            if (FunctionID function = universe.closureFunction(member))
+                stampedCalls.functionsEnteredWithoutRecord.quickSet(function.index());
+        });
+    };
     if (callsUnknownObject.load(std::memory_order_relaxed))
-        setFunctionsOfClosuresIn(inputs, ValueFlowProgramNodes::escaped(), entries.functionsEnteredWithoutRecord);
+        enterClosuresIn(ValueFlowProgramNodes::escaped());
     if (callsUntrackedObject.load(std::memory_order_relaxed))
-        setFunctionsOfClosuresIn(inputs, ValueFlowProgramNodes::lost(), entries.functionsEnteredWithoutRecord);
+        enterClosuresIn(ValueFlowProgramNodes::lost());
     if (entries.mayBeIntoAnyFunction) {
         for (size_t index = 0; index < numberOfFunctions; ++index)
-            entries.functionsEnteredWithoutRecord.quickSet(index);
+            stampedCalls.functionsEnteredWithoutRecord.quickSet(index);
     }
-    entries.functions.merge(entries.functionsEnteredWithoutRecord);
+    stampedCalls.functionsEnteredWithoutStamp.merge(stampedCalls.functionsEnteredWithoutRecord);
     return entries;
 }
 
-// The functions that the code of one function can enter if nobody has followed that code: those it calls or makes closures of, and those whose closures lie where it reads, in a variable, in a field of an environment or in a capture of its own.
 static void forEachFunctionWithinReachOf(const ValueFlowResultInputs& inputs, FunctionID id, NOESCAPE const Invocable<void(FunctionID)> auto& functor)
 {
     const Function& function = inputs.program.at(id);
@@ -610,7 +479,6 @@ static void forEachFunctionWithinReachOf(const ValueFlowResultInputs& inputs, Fu
     }
 }
 
-// Unsolved code hands whatever it likes to what it enters.
 static BitVector findFunctionsNamedByUnsolvedCode(const ValueFlowResultInputs& inputs, const FlowResultTables& tables)
 {
     const Program& program = inputs.program;
@@ -627,7 +495,6 @@ static BitVector findFunctionsNamedByUnsolvedCode(const ValueFlowResultInputs& i
     return functions;
 }
 
-// Whether a read or a lookup under a name of the kind looks at what the program can see of an object. The others are cells of native code: a call of a bound function reads its target out of one.
 static constexpr bool looksIntoObject(ValueFlowNameKind kind)
 {
     switch (kind) {
@@ -668,17 +535,14 @@ static constexpr bool looksIntoObject(ValueFlowNameKind kind)
     case ValueFlowNameKind::AllocatedAs:
     case ValueFlowNameKind::RestArgument:
     case ValueFlowNameKind::AddedNames:
-    // Its statement asks under other names for what it looks into.
     case ValueFlowNameKind::FoundThroughEscapedInstances:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-// What can be called and has a property, its prototype or a protocol asked of it. Whatever a store or a definition does to an object is marked on the object.
 static ValueSetID findCallablesLookedInto(const ValueFlowResultInputs& inputs, ValueSetMaker& maker)
 {
-    // A set that several threads meet is tested by each of them, and adds the same.
     struct FoundByWorker {
         ValueSetsMet seenSets;
         Vector<ValueSetID> callablesInSets;
@@ -711,7 +575,6 @@ static ValueSetID findCallablesLookedInto(const ValueFlowResultInputs& inputs, V
             case ValueFlowMadeNodeKind::Instance:
                 continue;
             }
-            // A read through the untracked object is answered by name, out of all that anybody has written under the name. It looks into what is lost and into nothing else.
             if (key.set == inputs.universe().knownObjects())
                 continue;
             if (looksIntoObject(key.name().kind) && ofWorker.seenSets.add(key.set) && inputs.sets().meet(key.set, callables))
@@ -725,7 +588,6 @@ static ValueSetID findCallablesLookedInto(const ValueFlowResultInputs& inputs, V
     return maker.uniteAll(callablesInSets.span());
 }
 
-// The solve has followed the object to every place that it reaches, and nothing happens to it there but that it is handed on and called.
 static bool isOnlyCalled(const ValueFlowResultInputs& inputs, ValueSetID callablesLookedInto, ValueFlowObjectID object)
 {
     if (inputs.hasEscaped(object) || inputs.isLost(object) || inputs.isHeldByNativeCode(object))
@@ -738,7 +600,6 @@ static bool mayHold(const ValueFlowResultInputs& inputs, const ValueFlowOperand&
     return (operand.constant && inputs.sets().contains(operand.constant, object)) || (operand.node && inputs.sets().contains(inputs.solver().valueOf(operand.node), object));
 }
 
-// A pass turns a call of bind that spells out its arguments into the creation of a closure, of one function for each target and number of bound arguments.
 static Vector<FlowBoundFunctionUse> findBoundFunctionsOnlyCalled(const ValueFlowResultInputs& inputs, ValueSetID callablesLookedInto)
 {
     const Program& program = inputs.program;
@@ -789,6 +650,11 @@ static Vector<FlowBoundFunctionUse> findBoundFunctionsOnlyCalled(const ValueFlow
         for (uint32_t numberOfBoundArguments = 0; numberOfBoundArguments < valuesOfOneWorker.size(); ++numberOfBoundArguments)
             add(maker, values, numberOfBoundArguments, valuesOfOneWorker[numberOfBoundArguments]);
     }
+    struct BindCall {
+        FunctionID target;
+        uint32_t numberOfBoundArguments { 0 };
+        bool resultIsOnlyCalled { false };
+    };
     Vector<BindCall> calls;
     for (uint32_t numberOfBoundArguments = 0; numberOfBoundArguments < values.size(); ++numberOfBoundArguments) {
         const BoundValues& bound = values[numberOfBoundArguments];
@@ -818,7 +684,6 @@ static Vector<FlowBoundFunctionUse> findBoundFunctionsOnlyCalled(const ValueFlow
     return uses;
 }
 
-// By function: the statement that has handed a closure of it, or something that holds one, to code that nobody compiles.
 static Vector<Witness> findWitnessesOfEscapes(const ValueFlowResultInputs& inputs, ValueSetMaker& maker)
 {
     const ValueFlowSolver& solver = inputs.solver();
@@ -880,17 +745,6 @@ static Vector<Witness> findWitnessesOfEscapes(const ValueFlowResultInputs& input
     return witnesses;
 }
 
-// The table names these.
-static BitVector findFunctionsNamedByTable(const Program& program)
-{
-    BitVector functions(program.functions.size());
-    for (const RuntimeFunctionEntry& entry : program.runtimeFunctions) {
-        if (entry.function)
-            functions.quickSet(entry.function.index());
-    }
-    return functions;
-}
-
 void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampedCalls& calls, FlowResultTables& tables)
 {
     const Program& program = inputs.program;
@@ -899,11 +753,8 @@ void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampe
     unsigned numberOfFunctions = program.functions.size();
     PhaseTimes times(inputs.build, PassID::AnalyzeFlow);
     BitVector isCalledByHost = functionsCalledByHost(program, inputs.loops());
-    EntriesWithoutStamp entries = findEntriesWithoutStamp(inputs, application);
+    EntriesWithoutStamp entries = findEntriesWithoutStamp(inputs, calls, tables);
     times.didFinish("functions: entries without stamp"_s);
-    calls.functionsEnteredWithoutStamp = WTF::move(entries.functions);
-    calls.functionsEnteredWithoutRecord = WTF::move(entries.functionsEnteredWithoutRecord);
-    tables.functions.indirectCalls = WTF::move(entries.calls);
 
     Vector<uint32_t> unreachedFunctions = findIndicesInParallel(inputs.loops(), numberOfFunctions, [&](unsigned index) {
         if (inputs.isReached(FunctionID(index)) || !inputs.build.isEnabled(FlowResultKind::ReachedFunctions, index))
@@ -922,11 +773,14 @@ void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampe
     times.didFinish("functions: callables looked into"_s);
     tables.functions.boundFunctionUses = findBoundFunctionsOnlyCalled(inputs, callablesLookedInto);
 
-    BitVector isNamedByTable = findFunctionsNamedByTable(program);
+    BitVector isNamedByTable(numberOfFunctions);
+    for (const RuntimeFunctionEntry& entry : program.runtimeFunctions) {
+        if (entry.function)
+            isNamedByTable.quickSet(entry.function.index());
+    }
     Vector<Witness> witnessesOfEscapes = findWitnessesOfEscapes(inputs, maker);
     times.didFinish("functions: bound functions, named by table"_s);
 
-    // Every entry into a function whose callers are all known is a call that names the function, a call whose stamp lists it, or an indirect call out of an operation.
     forEachIndexInParallel(inputs.loops(), numberOfFunctions, [&](unsigned index) {
         FunctionFlow& flow = tables.functions.functions[index];
         ValueFlowObjectID closure = universe.closureOf(FunctionID(index));
@@ -940,7 +794,6 @@ void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampe
                 flow.witness = witnessesOfEscapes[index];
             return;
         }
-        // A call of the untracked object may enter it, and the stamp of such a call is not complete.
         if (inputs.isLost(closure)) {
             flow.cause = UnprovenCause::Untracked;
             return;
@@ -961,7 +814,6 @@ void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampe
     });
 }
 
-// What a built-in does with an operand that cannot tell one closure from another of the same function: it calls it, keeps it, hands it back.
 static bool mayTellClosuresApart(const BuiltinParameter& parameter)
 {
     constexpr OperandUses usesThatDoNotLook { OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly, OperandUse::Retains, OperandUse::Returns };
@@ -970,7 +822,6 @@ static bool mayTellClosuresApart(const BuiltinParameter& parameter)
     return !others.isEmpty() && (others != OperandUses { OperandUse::Inspects } || !parameter.uses.containsAny(callsOrKeeps));
 }
 
-// Two closures of one function are two objects.
 void computeClosuresNeverCompared(const ValueFlowResultInputs& inputs, ValueFlowHeapView& heap, FlowResultTables& tables)
 {
     const Program& program = inputs.program;
@@ -978,7 +829,6 @@ void computeClosuresNeverCompared(const ValueFlowResultInputs& inputs, ValueFlow
     const BuiltinTable& builtins = program.builtins();
     const ParallelLoops& loops = inputs.loops();
     ValueSetID closures = universe.closures();
-    // Under the phase log: who can tell, part by part.
     struct Teller {
         FunctionID function;
         BuiltinID builtin;
@@ -1011,7 +861,6 @@ void computeClosuresNeverCompared(const ValueFlowResultInputs& inputs, ValueFlow
             lookers[worker].tellers.append(teller);
     };
 
-    // Without the masks of the operands: what a type would cut off stays, and the bit says "compared" of a closure too many at the worst.
     constexpr size_t comparisonsPerTask = 1024;
     std::span<const ValueFlowComparedValues> comparedValues = inputs.bodies().comparedValues();
     forEachIndexInParallel(loops, (comparedValues.size() + comparisonsPerTask - 1) / comparisonsPerTask, [&](unsigned task, unsigned worker) {
@@ -1038,7 +887,6 @@ void computeClosuresNeverCompared(const ValueFlowResultInputs& inputs, ValueFlow
     BitVector builtinsThatLook = builtinsWithOverload(builtins, [](const BuiltinOverload& overload) {
         return (overload.receiver && mayTellClosuresApart(*overload.receiver)) || std::ranges::any_of(overload.parameters, mayTellClosuresApart);
     });
-    // What a new WeakRef is born with is written under no slot.
     const std::array watchingBuiltins { builtins.canonicalID(Builtins::WeakRef), builtins.canonicalID(Builtins::FinalizationRegistryPrototypeRegister), builtins.canonicalID(Builtins::FinalizationRegistryPrototypeUnregister) };
     auto watchesItsArguments = [&](BuiltinID builtin) {
         return std::ranges::contains(watchingBuiltins, builtins.canonicalID(builtin));
@@ -1050,11 +898,9 @@ void computeClosuresNeverCompared(const ValueFlowResultInputs& inputs, ValueFlow
     forEachBuiltinApplicationOnAllThreads(inputs, heap, makers, builtinsThatLook, closures, [&](unsigned worker, const ValueFlowBuiltinApplication& application) {
         ValueSetMaker& maker = makers.of(worker);
         auto note = [&](ValueSetID value) {
-            // A function of a protocol comes once more with anything at every operand, for what the language may hand it.
             if (value != ValueSets::anything)
                 keep(worker, closuresIn(worker, value), { application.function, application.builtin, { } });
         };
-        // They may land at any position.
         note(application.otherArguments);
         if (watchesItsArguments(application.builtin)) {
             for (ValueSetID argument : application.arguments)
@@ -1161,7 +1007,6 @@ void computeClosuresNeverCompared(const ValueFlowResultInputs& inputs, ValueFlow
     }
 }
 
-// The rule for Symbol answers the key of the call, which stands for every symbol that the call makes. Where the call makes one symbol, that key is the value.
 void computeSymbolConstantResults(const ValueFlowResultInputs& inputs, FlowResultTables& tables)
 {
     if (!inputs.symbolsCreatedOnce || inputs.symbolsCreatedOnce->isEmpty())

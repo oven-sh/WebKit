@@ -477,7 +477,6 @@ static constexpr ASCIILiteral programCallingShellFunction = R"IR(module m0 path=
 entry module=m0
 data d0 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = Data data=d0
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="ensureArrayStorage" [isFreeName]
@@ -507,7 +506,6 @@ static constexpr ASCIILiteral programSerializingSetterWithoutGetter = R"IR(layou
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L0
     v1 = NewClosure function=f1
     DefineSetter v0, v1 key="s"
@@ -524,7 +522,6 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     Return v12
 }
 function f1 name="s" module=m0 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Undefined
     Return v1
 }

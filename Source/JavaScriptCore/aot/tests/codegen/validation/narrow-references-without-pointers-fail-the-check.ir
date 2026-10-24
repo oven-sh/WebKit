@@ -5,45 +5,4 @@
 # OPTIONS: disable=pass:InlineCalls,pass:HoistTestsIntoPredecessors,pass:ThreadJumps,pass:SinkAllocations,pass:AllocateInFrames,pass:RemoveUnreadFields
 # DIAGNOSTIC: NarrowReferenceWithoutPointer
 # CHECK: statistic NarrowReferenceGuards 0
-
-layout L0 name="Node" fields=[{key="next" declared={type=null|L0} flags=[IsRequired]}, {key="first" declared={type=null|L0} flags=[IsRequired]}, {key="second" declared={type=null|L0} flags=[IsRequired]}, {key="third" declared={type=null|L0} flags=[IsRequired]}]
-module m0 path="main.js" displayPath="main.js" body=f0
-entry module=m0
-
-function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
-    v0 = Null
-    v1 = NewObject -, v0, v0, v0, v0 layout=L0 fields=[0, 1, 2, 3]
-    v2 = NewObject -, v1, v1, v1, v1 layout=L0 fields=[0, 1, 2, 3]
-    v3 = Builtin builtin=GlobalThis
-    v4 = PropGet v3 key="input" [isFreeName]
-    v5 = ToBoolean v4
-    Branch v5 -> taken b1(), notTaken b2()
-  b1():
-    Jump -> next b3(v1)
-  b2():
-    Jump -> next b3(v2)
-  b3(v6):
-    v7 = Convert v6 declared={type=L0}
-    v8 = PropGet v3 key="use" [isFreeName]
-    v9 = CallDirect v7, v8 function=f1
-    v10 = CallDirect v7, v8 function=f2
-    v11 = TypeTest v9 testedType=null
-    v12 = TypeTest v10 testedType=null
-    v13 = Call v8, -, v11, v12
-    Return v13
-}
-function f1 name="readThenCall" parameters=[{type=L0}, {type=anything}] results=[{type=null|L0}] {
-  b0(v0: L0, v1: anything):
-    v2 = PropGet v0 key="next"
-    v3 = Convert v2 declared={type=null|L0}
-    v4 = Call v1, -
-    Return v3
-}
-function f2 name="callThenRead" parameters=[{type=L0}, {type=anything}] results=[{type=null|L0}] {
-  b0(v0: L0, v1: anything):
-    v2 = Call v1, -
-    v3 = PropGet v0 key="next"
-    v4 = Convert v3 declared={type=null|L0}
-    Return v4
-}
+# PROGRAM-OF: narrow-reference-has-pointer-over-call.ir

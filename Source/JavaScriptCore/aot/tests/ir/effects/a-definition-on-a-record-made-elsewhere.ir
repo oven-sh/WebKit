@@ -7,7 +7,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Record" fields=[{key="n" declared={type=int}}]
 layout L1 kind=Instance name="Instance" constructor=f2 fields=[{key="n" declared={type=int}}]
 function f0 name="joined" parameters=[{type=boolean}, {type=number}] results=[{type=anything}] {
-  b0(v0: boolean, v1: number):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v2 = NewObject layout=L0 fields=[]
@@ -22,7 +21,6 @@ function f0 name="joined" parameters=[{type=boolean}, {type=number}] results=[{t
 # CHECK-LABEL: function f0
 # CHECK: v5 PropDefine: reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, AllocatorState) writes(ObjectFields, ShapeWords, OrderWords, MemberGuards, NamedProperties, AllocatorState, RuntimeState) throws
 function f1 name="given" parameters=[{type=L0}, {type=L1}, {type=L0|Object}, {type=number}] results=[{type=undefined}] {
-  b0(v0: L0, v1: L1, v2: L0|Object, v3: number):
     PropDefine v0, v3 key="n"
     PropDefine v1, v3 key="n"
     PropDefine v2, v3 key="n"
@@ -36,7 +34,6 @@ function f1 name="given" parameters=[{type=L0}, {type=L1}, {type=L0|Object}, {ty
 # CHECK: v6 PropDefine: unknownCode
 # CHECK: v7 PropSet: unknownCode
 function f2 name="Instance" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L1
     v2 = NewObject v1 layout=L1
     Return v2

@@ -8,7 +8,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 fields=[{key="get" declared={type=anything}}, {key="enumerable" declared={type=anything}}, {key="configurable" declared={type=anything}}]
 layout L1 fields=[{key="value" declared={type=anything}}, {key="writable" declared={type=anything}}]
 function f0 name="two-getters" parameters=[{type=object}, {type=string}, {type=boolean}, {type=function}, {type=function}] results=[{type=anything}] {
-  b0(v0: object, v1: string, v2: boolean, v3: function, v4: function):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v5 = Boolean boolean=true
@@ -25,8 +24,6 @@ function f0 name="two-getters" parameters=[{type=object}, {type=string}, {type=b
   b3(v13: L0):
     v14 = CallBuiltin -, v0, v1, v13 overload=ObjectDefineProperty/0
     Return v14
-}
-# CHECK-LABEL: function f0 name="two-getters"
 # CHECK-NOT: NewObject
 # CHECK: Jump -> next b3(v3)
 # CHECK-NOT: NewObject
@@ -34,8 +31,8 @@ function f0 name="two-getters" parameters=[{type=object}, {type=string}, {type=b
 # CHECK: b3([[getter]]: function):
 # CHECK-NOT: overload=
 # CHECK: = DefineOwnProperty v0, v1, -, [[getter]] descriptorFlags=[HasEnumerable, IsEnumerable, HasConfigurable, IsConfigurable, HasGet]
+}
 function f1 name="two-values" parameters=[{type=object}, {type=string}, {type=boolean}, {type=number}, {type=string}] results=[{type=anything}] {
-  b0(v0: object, v1: string, v2: boolean, v3: number, v4: string):
     v5 = Boolean boolean=false
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -49,13 +46,11 @@ function f1 name="two-values" parameters=[{type=object}, {type=string}, {type=bo
   b3(v10: L1):
     v11 = CallBuiltin -, v0, v1, v10 overload=ObjectDefineProperty/0
     Return v11
-}
-# CHECK-LABEL: function f1 name="two-values"
 # CHECK-NOT: NewObject
 # CHECK: b3([[value]]: number|string):
 # CHECK: = DefineOwnProperty v0, v1, [[value]] descriptorFlags=[HasValue, HasWritable]
+}
 function f2 name="two-members-differ" parameters=[{type=object}, {type=string}, {type=boolean}, {type=number}, {type=string}] results=[{type=anything}] {
-  b0(v0: object, v1: string, v2: boolean, v3: number, v4: string):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v5 = Boolean boolean=false
@@ -70,14 +65,12 @@ function f2 name="two-members-differ" parameters=[{type=object}, {type=string}, 
   b3(v11: L1):
     v12 = CallBuiltin -, v0, v1, v11 overload=ObjectDefineProperty/0
     Return v12
-}
-# CHECK-LABEL: function f2 name="two-members-differ"
 # CHECK-NOT: DefineOwnProperty
 # CHECK: = NewObject -, v3, {{*}} layout=L1
 # CHECK: = NewObject -, v4, {{*}} layout=L1
 # CHECK: = CallBuiltin -, v0, v1, {{*}} overload=ObjectDefineProperty/0
+}
 function f3 name="descriptor-used-behind-the-call" parameters=[{type=object}, {type=string}, {type=boolean}, {type=number}, {type=string}] results=[{type=anything}] {
-  b0(v0: object, v1: string, v2: boolean, v3: number, v4: string):
     v5 = Boolean boolean=false
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -91,12 +84,10 @@ function f3 name="descriptor-used-behind-the-call" parameters=[{type=object}, {t
   b3(v10: L1):
     v11 = CallBuiltin -, v0, v1, v10 overload=ObjectDefineProperty/0
     Return v10
-}
-# CHECK-LABEL: function f3 name="descriptor-used-behind-the-call"
 # CHECK-NOT: DefineOwnProperty
 # CHECK: = CallBuiltin -, v0, v1, v10 overload=ObjectDefineProperty/0
+}
 function f4 name="one-way-brings-another-object" parameters=[{type=object}, {type=string}, {type=boolean}, {type=number}, {type=L1}] results=[{type=anything}] {
-  b0(v0: object, v1: string, v2: boolean, v3: number, v4: L1):
     v5 = Boolean boolean=false
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -108,7 +99,6 @@ function f4 name="one-way-brings-another-object" parameters=[{type=object}, {typ
   b3(v8: L1):
     v9 = CallBuiltin -, v0, v1, v8 overload=ObjectDefineProperty/0
     Return v9
-}
-# CHECK-LABEL: function f4 name="one-way-brings-another-object"
 # CHECK-NOT: DefineOwnProperty
 # CHECK: = CallBuiltin -, v0, v1, v8 overload=ObjectDefineProperty/0
+}

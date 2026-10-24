@@ -7,40 +7,32 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Environment fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
 function f0 name="test-against-one-symbol-since" parameters=[{type=anything}] results=[{type=boolean}] {
-  b0(v0: anything):
     v1 = NewObject layout=L0 fields=[]
     v2 = TypeTest v0 testedType=symbol("k")@m0:10
     PutEnvironmentField v1, v0 layout=L0 field=0
     Return v2
-}
-# CHECK-LABEL: function f0 name="test-against-one-symbol-since"
 # CHECK: PutEnvironmentField v1, v0 layout=L0 [ownerCannotBeMarked]
+}
 function f1 name="test-against-string-literals-since" parameters=[{type=anything}] results=[{type=boolean}] {
-  b0(v0: anything):
     v1 = NewObject layout=L0 fields=[]
     v2 = TypeTest v0 testedType="a"|"b"
     PutEnvironmentField v1, v0 layout=L0 field=0
     Return v2
-}
-# CHECK-LABEL: function f1 name="test-against-string-literals-since"
 # CHECK: PutEnvironmentField v1, v0 layout=L0 [ownerCannotBeMarked]
+}
 function f2 name="test-against-any-symbol-since" parameters=[{type=anything}] results=[{type=boolean}] {
-  b0(v0: anything):
     v1 = NewObject layout=L0 fields=[]
     v2 = TypeTest v0 testedType=symbol
     PutEnvironmentField v1, v0 layout=L0 field=0
     Return v2
-}
-# CHECK-LABEL: function f2 name="test-against-any-symbol-since"
 # CHECK: PutEnvironmentField v1, v0 layout=L0 [ownerCannotBeMarked]
+}
 function f3 name="allocation-and-test-since" parameters=[{type=anything}] results=[{type=boolean}] {
-  b0(v0: anything):
     v1 = NewObject layout=L0 fields=[]
     v2 = NewObject layout=L0 fields=[]
     v3 = TypeTest v0 testedType=symbol
     PutEnvironmentField v1, v0 layout=L0 field=0
     Return v3
-}
-# CHECK-LABEL: function f3 name="allocation-and-test-since"
 # CHECK: PutEnvironmentField v1, v0 layout=L0
 # CHECK-NOT: ownerCannotBeMarked
+}

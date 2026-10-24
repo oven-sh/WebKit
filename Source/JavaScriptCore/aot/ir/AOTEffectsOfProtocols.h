@@ -38,7 +38,6 @@ struct CalleeList {
 
     void add(FunctionID);
     void add(BuiltinID);
-    void merge(const CalleeList&);
 
     void dump(PrintStream&) const;
 

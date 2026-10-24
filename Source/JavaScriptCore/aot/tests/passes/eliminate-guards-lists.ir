@@ -7,7 +7,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
 
 function f0 name="listOfLists" parameters=[{type=object}, {type=object}, {type=object}] results=[{type=anything}] {
-  b0(v0: object, v1: object, v2: object):
     v3 = ShapeTest v0 layouts=[L0]
     Branch v3 -> taken b1(| 0), notTaken b4()
   b1(v4):
@@ -23,14 +22,12 @@ function f0 name="listOfLists" parameters=[{type=object}, {type=object}, {type=o
     Return v11
   b4():
     Return v0
-}
-# CHECK-LABEL: function f0 name="listOfLists"
 # CHECK: b3(v8: guard):
 # CHECK: v10: guard = AllGuards v4, v6, v8
 # CHECK-NEXT: v11: number = GetSlot v2, v10 key="x" receivers=[L0] level=Expected
+}
 
 function f1 name="repeatedGuards" parameters=[{type=object}, {type=object}] results=[{type=anything}] {
-  b0(v0: object, v1: object):
     v2 = ShapeTest v0 layouts=[L0]
     Branch v2 -> taken b1(| 0), notTaken b3()
   b1(v3):
@@ -45,15 +42,13 @@ function f1 name="repeatedGuards" parameters=[{type=object}, {type=object}] resu
     Return v10
   b3():
     Return v0
-}
-# CHECK-LABEL: function f1 name="repeatedGuards"
 # CHECK: v6: guard = AllGuards v3, v5
 # CHECK-NEXT: v7: number = GetSlot v0, v6 key="x" receivers=[L0] level=Expected
 # CHECK: v9: guard = AllGuards v5, v3
 # CHECK-NEXT: v10: number = GetSlot v1, v9 key="x" receivers=[L0] level=Expected
+}
 
 function f2 name="twoGuardsStay" parameters=[{type=object}, {type=object}] results=[{type=anything}] {
-  b0(v0: object, v1: object):
     v2 = ShapeTest v0 layouts=[L0]
     Branch v2 -> taken b1(| 0), notTaken b3()
   b1(v3):
@@ -65,14 +60,12 @@ function f2 name="twoGuardsStay" parameters=[{type=object}, {type=object}] resul
     Return v7
   b3():
     Return v0
-}
-# CHECK-LABEL: function f2 name="twoGuardsStay"
 # CHECK: b2(v5: guard):
 # CHECK-NEXT: v6: guard = AllGuards v3, v5
 # CHECK-NEXT: v7: number = GetSlot v0, v6 key="x" receivers=[L0] level=Expected
+}
 
 function f3 name="listOfOneGuard" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b3()
   b1(v2):
@@ -84,16 +77,14 @@ function f3 name="listOfOneGuard" parameters=[{type=object}] results=[{type=anyt
     Return v6
   b3():
     Return v0
-}
-# CHECK-LABEL: function f3 name="listOfOneGuard"
 # CHECK: b1(v2: guard):
 # CHECK-NOT: AllGuards
 # CHECK: v4: number = GetSlot v0, v2 key="x" receivers=[L0] level=Expected
 # CHECK-NEXT: Jump -> next b2(v2)
 # CHECK-NOT: AllGuards
+}
 
 function f4 name="listOfOneRepeatedGuard" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
@@ -103,26 +94,22 @@ function f4 name="listOfOneRepeatedGuard" parameters=[{type=object}] results=[{t
     Return v5
   b2():
     Return v0
-}
-# CHECK-LABEL: function f4 name="listOfOneRepeatedGuard"
 # CHECK-NOT: AllGuards
 # CHECK: v5: number = GetSlot v0, v2 key="x" receivers=[L0] level=Expected
 # CHECK-NOT: AllGuards
+}
 
 function f5 name="listOfOneAllocation" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = AllGuards v1
     v3 = GetSlot v1, v2 key="x" receivers=[L0] level=Expected
     Return v3
-}
-# CHECK-LABEL: function f5 name="listOfOneAllocation"
 # CHECK-NOT: AllGuards
 # CHECK: v3: number = GetSlot v1, v1 key="x" receivers=[L0] level=Expected
 # CHECK-NOT: AllGuards
+}
 
 function f6 name="listOfOneAllocationOnEdge" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = AllGuards v1
     v3 = GetSlot v1, v2 key="x" receivers=[L0] level=Expected
@@ -130,10 +117,9 @@ function f6 name="listOfOneAllocationOnEdge" parameters=[{type=number}] results=
   b1(v4):
     v5 = GetSlot v1, v4 key="x" receivers=[L0] level=Expected
     Return v5
-}
-# CHECK-LABEL: function f6 name="listOfOneAllocationOnEdge"
 # CHECK: v2: guard = AllGuards v1
 # CHECK-NEXT: v3: number = GetSlot v1, {{*}} key="x" receivers=[L0] level=Expected
 # CHECK-NEXT: Jump -> next b1(v2)
 # CHECK-NEXT: b1(v4: guard):
 # CHECK-NEXT: v5: number = GetSlot v1, v4 key="x" receivers=[L0] level=Expected
+}

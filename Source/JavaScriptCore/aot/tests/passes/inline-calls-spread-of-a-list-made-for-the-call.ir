@@ -10,7 +10,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="handsOn" flags=[HasRestParameter] parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
-  b0(v0: anything, v1: Array<anything>):
     v2 = PropGet v0 key="first"
     v3 = NewArray v2 contents=anything
     AppendSpread v3, v1
@@ -19,18 +18,14 @@ function f0 name="handsOn" flags=[HasRestParameter] parameters=[{type=anything},
 }
 
 function f1 name="makesTheList" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray v0, v0 contents=anything
     v2 = CallDirect v0, v1 function=f0
     Return v2
-}
-# CHECK-LABEL: function f1 name="makesTheList"
 # CHECK-NOT: CallDirect
+}
 
 function f2 name="passesSomeList" parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
-  b0(v0: anything, v1: Array<anything>):
     v2 = CallDirect v0, v1 function=f0
     Return v2
-}
-# CHECK-LABEL: function f2 name="passesSomeList"
 # CHECK: = CallDirect v0, v1 function=f0
+}

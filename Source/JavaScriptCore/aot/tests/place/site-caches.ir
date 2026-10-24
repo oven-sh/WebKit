@@ -9,7 +9,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = PropGet v1 key="first"
@@ -25,21 +24,18 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="cold" parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
-  b0(v0: anything, v1: anything):
     v2 = PropGet v0 key="a"
     v3 = PropGet v1 key="b"
     v4 = StrictEq v2, v3
     Return v4
 }
 function f2 name="hot" parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
-  b0(v0: anything, v1: anything):
     v2 = PropGet v0 key="a"
     v3 = PropGet v1 key="b"
     v4 = StrictEq v2, v3
     Return v4
 }
 function f3 name="calledOnce" parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
-  b0(v0: anything, v1: anything):
     v2 = PropGet v0 key="a"
     Jump -> next b1()
   b1():

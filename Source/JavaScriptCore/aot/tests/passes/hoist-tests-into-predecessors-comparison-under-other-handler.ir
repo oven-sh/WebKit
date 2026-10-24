@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="sameHandler" parameters=[{type=number}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1() handler=b6(v0):
     Jump -> next b3(v0)
@@ -21,8 +20,6 @@ function f0 name="sameHandler" parameters=[{type=number}, {type=anything}, {type
   b6(v5) role=CatchHandler:
     v6 = CatchValue
     Return v5
-}
-# CHECK-LABEL: function f0 name="sameHandler"
 # CHECK: b1() handler=b6(v0):
 # CHECK-NEXT: [[first]]:{{*}}= Less v0, v0
 # CHECK-NEXT: Jump -> next b3([[first]])
@@ -31,9 +28,9 @@ function f0 name="sameHandler" parameters=[{type=number}, {type=anything}, {type
 # CHECK-NEXT: Jump -> next b3([[second]])
 # CHECK: b3([[joined]]: boolean) handler=b6(v0):
 # CHECK-NEXT: Branch [[joined]] -> taken b4(), notTaken b5()
+}
 
 function f1 name="onlyMergeBlockIsCovered" parameters=[{type=number}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v0)
@@ -49,17 +46,15 @@ function f1 name="onlyMergeBlockIsCovered" parameters=[{type=number}, {type=anyt
   b6(v5) role=CatchHandler:
     v6 = CatchValue
     Return v5
-}
-# CHECK-LABEL: function f1 name="onlyMergeBlockIsCovered"
 # CHECK: b1():
 # CHECK-NEXT: Jump -> next b3(v0)
 # CHECK: b2():
 # CHECK-NEXT: Jump -> next b3(v1)
 # CHECK: b3(v3: anything) handler=b6(v0):
 # CHECK-NEXT: v4: boolean = Less v3, v0
+}
 
 function f2 name="onlyPredecessorsAreCovered" parameters=[{type=number}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1() handler=b6(v0):
     Jump -> next b3(v0)
@@ -75,17 +70,15 @@ function f2 name="onlyPredecessorsAreCovered" parameters=[{type=number}, {type=a
   b6(v5) role=CatchHandler:
     v6 = CatchValue
     Return v5
-}
-# CHECK-LABEL: function f2 name="onlyPredecessorsAreCovered"
 # CHECK: b1() handler=b6(v0):
 # CHECK-NEXT: Jump -> next b3(v0)
 # CHECK: b2() handler=b6(v0):
 # CHECK-NEXT: Jump -> next b3(v1)
 # CHECK: b3(v3: anything):
 # CHECK-NEXT: v4: boolean = Less v3, v0
+}
 
 function f3 name="onePredecessorHasAnotherHandler" parameters=[{type=number}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1() handler=b6(v0):
     Jump -> next b3(v0)
@@ -104,17 +97,15 @@ function f3 name="onePredecessorHasAnotherHandler" parameters=[{type=number}, {t
   b7() role=CatchHandler:
     v7 = CatchValue
     Return v7
-}
-# CHECK-LABEL: function f3 name="onePredecessorHasAnotherHandler"
 # CHECK: b1() handler=b6(v0):
 # CHECK-NEXT: Jump -> next b3(v0)
 # CHECK: b2() handler=b7():
 # CHECK-NEXT: Jump -> next b3(v1)
 # CHECK: b3(v3: anything) handler=b6(v0):
 # CHECK-NEXT: v4: boolean = Less v3, v0
+}
 
 function f4 name="sameHandlerOtherArguments" parameters=[{type=number}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1() handler=b6(v0):
     Jump -> next b3(v0)
@@ -130,11 +121,10 @@ function f4 name="sameHandlerOtherArguments" parameters=[{type=number}, {type=an
   b6(v5) role=CatchHandler:
     v6 = CatchValue
     Return v5
-}
-# CHECK-LABEL: function f4 name="sameHandlerOtherArguments"
 # CHECK: b1() handler=b6(v0):
 # CHECK-NEXT: Jump -> next b3(v0)
 # CHECK: b2() handler=b6(v1):
 # CHECK-NEXT: Jump -> next b3(v1)
 # CHECK: b3(v3: anything) handler=b6(v0):
 # CHECK-NEXT: v4: boolean = Less v3, v0
+}

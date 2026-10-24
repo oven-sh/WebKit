@@ -13,7 +13,6 @@ layout L3 name="AskedWhetherFrozen" fields=[{key="first" declared={type=anything
 # CHECK: layout L0 name="AskedByHasOwn" fields=[{key="asked"{{*}}stores=AtMostOnce{{*}}{key="other"{{*}}stores=Never{{*}}reads=NeverRead
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = Integer integer=1
@@ -36,9 +35,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v19 = PropGet v0 key="print" [isFreeName]
     v20 = Call v19, -, v7, v10, v13, v15, v18
     Return
-}
-# CHECK-LABEL: function f0 name="main"
 # CHECK: layout=L0 fields=[0]
 # CHECK: layout=L1 fields=[0, 1]
 # CHECK: layout=L2 fields=[0, 1]
 # CHECK: layout=L3 fields=[0]
+}

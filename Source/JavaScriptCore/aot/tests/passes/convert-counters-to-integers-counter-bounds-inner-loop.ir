@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="innerBoundIsOuterCounter" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     v2 = Integer integer=1
     Jump -> next b1(v1)
@@ -41,7 +40,6 @@ function f0 name="innerBoundIsOuterCounter" parameters=[{type=int[0, 100]}] resu
 # CHECK: v10: int[1, 100] = Add [[outer0]], v2
 
 function f1 name="threeLoops" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     v2 = Integer integer=1
 # REPEAT: i = 0..2
@@ -79,7 +77,6 @@ function f1 name="threeLoops" parameters=[{type=int[0, 100]}] results=[{type=und
 # CHECK: v14: int[1, 100] = Add [[outer1]], v2
 
 function f2 name="counterBoundsTheLoopBehind" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     v2 = Integer integer=1
     Jump -> next b1(v1)
@@ -112,7 +109,6 @@ function f2 name="counterBoundsTheLoopBehind" parameters=[{type=int[0, 100]}] re
 # CHECK-NEXT: v10: int[1, 100] = Add [[behind2]], v2
 
 function f3 name="outerCounterStaysNumber" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     v1 = Integer integer=0
     v2 = Integer integer=1
     Jump -> next b1(v1)

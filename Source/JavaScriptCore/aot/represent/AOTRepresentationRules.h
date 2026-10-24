@@ -13,14 +13,9 @@
 #include "AOTRepresentation.h"
 #include "AOTVector.h"
 
-namespace JSC { namespace AOT {
-
-class BuildContext;
-
-namespace Typed {
+namespace JSC { namespace AOT { namespace Typed {
 
 class CallingConventions;
-class Heat;
 class Placement;
 
 struct RepresentationInputs {
@@ -36,7 +31,6 @@ struct RepresentationInputs {
 inline constexpr RepresentationSet integerRepresentations { Representation::Int32, Representation::Int64 };
 inline constexpr RepresentationSet numberRepresentations { Representation::Int32, Representation::Int64, Representation::Double };
 inline constexpr RepresentationSet optionalRepresentations { Representation::OptionalInt64, Representation::OptionalDouble };
-inline constexpr RepresentationSet cellRepresentations { Representation::Cell, Representation::Cell32, Representation::LiteralString };
 
 inline constexpr OpcodeSet constantsInFormOfUses {
     Opcode::Undefined, Opcode::Null, Opcode::Absent, Opcode::Boolean, Opcode::Integer, Opcode::Double, Opcode::String, Opcode::KeyConstant
@@ -56,16 +50,20 @@ constexpr bool isSameWord(Representation from, Representation to)
 
 constexpr OpcodeSet sumsOfNumbers { Opcode::Add, Opcode::Sub, Opcode::Increment, Opcode::Decrement };
 
-bool isSumOfBoxedNumbers(const Value&);
-bool isEqualityOfNumbers(const Program&, const Function&, const Value&);
+// An allocation runs one where it takes the cell of an inner object.
+inline constexpr OpcodeSet operationsThatMayRunBarrier = [] {
+    OpcodeSet opcodes { Opcode::NewObject };
+    for (Opcode opcode : allMembersOf<Opcode>) {
+        if (runsOwnerBarrierOf(opcode))
+            opcodes.add(opcode);
+    }
+    return opcodes;
+}();
 
-Representation integerRepresentationOf(const Type&);
+bool isEqualityOfNumbers(const Program&, const Function&, const Value&);
 
 bool picksOwnRepresentation(const Function&, ValueID);
 bool isForwardedOperand(const Value& user, uint32_t operandIndex);
-
-Representation wantedRepresentationOf(const Program&, const Function&, const Value& user, uint32_t operandIndex);
-Representation wantedRepresentationOf(const Program&, const Function&, const Terminator& user, uint32_t operandIndex);
 
 Representation wantedRepresentationOf(const RepresentationInputs&, const Value& user, uint32_t operandIndex);
 Representation wantedRepresentationOf(const RepresentationInputs&, const Terminator& user, uint32_t operandIndex);
@@ -74,15 +72,16 @@ Representation resultRepresentationOf(const RepresentationInputs&, const Value&)
 Representation resultRepresentationOf(const RepresentationInputs&, const Value& producer, uint32_t resultIndex);
 Representation edgeResultRepresentationOf(const RepresentationInputs&, EdgeResultPosition);
 
-Representation wantedByOperator(const Program&, const Function&, const Value& user, uint32_t operandIndex);
-Representation resultOfOperator(const Program&, const Function&, const Value&);
-Representation wantedByConcatenation(const Type& part);
+struct ConversionStep {
+    Opcode opcode { Opcode::Box };
+    Representation to { Representation::JSValue };
 
-Representation wantedByDeclaredPosition(const RepresentationInputs&, const Value& user, uint32_t operandIndex);
-Representation wantedByDeclaredPosition(const RepresentationInputs&, const Terminator& user, uint32_t operandIndex);
-Representation resultOfDeclaredPosition(const RepresentationInputs&, const Value&);
-Representation resultOfDeclaredPosition(const RepresentationInputs&, const Value& producer, uint32_t resultIndex);
-Representation representationOfEntryParameter(const RepresentationInputs&, unsigned entryParameterIndex);
+    friend bool operator==(const ConversionStep&, const ConversionStep&) = default;
+};
+
+using ConversionPath = Vector<ConversionStep, 2>;
+
+std::optional<ConversionPath> findConversion(const Type&, Representation from, Representation to);
 
 void checkRepresentations(const RepresentationInputs&, Vector<InternalError>&);
 

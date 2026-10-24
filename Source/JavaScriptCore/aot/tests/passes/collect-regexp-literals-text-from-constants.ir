@@ -31,7 +31,6 @@ variable g3 name="nested" module=m0 declared={type=anything}
 variable g4 name="storedTwice" module=m0 declared={type=anything}
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToString v1
@@ -72,7 +71,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="variableOfConcatenation" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g1
     v1 = Builtin builtin=RegExp
     v2 = Construct v1, -, v0 @10
@@ -80,7 +78,6 @@ function f1 name="variableOfConcatenation" results=[{type=anything}] {
 }
 
 function f2 name="concatenationOfVariables" results=[{type=anything}] {
-  b0():
     v0 = String string="^"
     v1 = GetModuleVariable variable=g1
     v2 = String string="|"
@@ -93,7 +90,6 @@ function f2 name="concatenationOfVariables" results=[{type=anything}] {
 }
 
 function f3 name="resultOfFunction" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g2
     v1 = CallDirect v0 function=f5
     v2 = String string="i"
@@ -103,7 +99,6 @@ function f3 name="resultOfFunction" results=[{type=anything}] {
 }
 
 function f4 name="variableOfResults" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g3
     v1 = Builtin builtin=RegExp
     v2 = Construct v1, -, v0 @40
@@ -111,7 +106,6 @@ function f4 name="variableOfResults" results=[{type=anything}] {
 }
 
 function f5 name="optional" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="(?:"
     v2 = String string=")?"
     v3 = Strcat v1, v0, v2
@@ -119,7 +113,6 @@ function f5 name="optional" parameters=[{type=anything}] results=[{type=anything
 }
 
 function f6 name="variableStoredTwice" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g4
     v1 = Builtin builtin=RegExp
     v2 = Construct v1, -, v0 @60
@@ -127,7 +120,6 @@ function f6 name="variableStoredTwice" results=[{type=anything}] {
 }
 
 function f7 name="ownParameter" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="b+"
     v2 = Strcat v1, v0
     v3 = Builtin builtin=RegExp
@@ -136,7 +128,6 @@ function f7 name="ownParameter" parameters=[{type=anything}] results=[{type=anyt
 }
 
 function f8 name="secondCallOfFunction" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = CallDirect v0 function=f5
     v2 = Builtin builtin=RegExp
@@ -145,7 +136,6 @@ function f8 name="secondCallOfFunction" results=[{type=anything}] {
 }
 
 function f9 name="parameterWithTwoCallers" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="c+"
     v2 = Strcat v1, v0
     v3 = Builtin builtin=RegExp
@@ -154,7 +144,6 @@ function f9 name="parameterWithTwoCallers" parameters=[{type=anything}] results=
 }
 
 function f10 name="functionOfTheEngineOnKnownOperands" results=[{type=anything}] {
-  b0():
     v0 = String string="[a-z]+_[0-9]+"
     v1 = NewRegExp pattern="_" regExpFlags=[]
     v2 = String string="-"
@@ -168,7 +157,6 @@ function f10 name="functionOfTheEngineOnKnownOperands" results=[{type=anything}]
 }
 
 function f11 name="sourceOfLiteralInVariable" results=[{type=anything}] {
-  b0():
     v0 = NewRegExp pattern="[0-9]+" regExpFlags=[Global]
     v1 = PropGet v0 key="source"
     v2 = String string="|d"
@@ -181,7 +169,6 @@ function f11 name="sourceOfLiteralInVariable" results=[{type=anything}] {
 }
 
 function f12 name="twoParametersWithTwoCallersEach" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Strcat v0, v1
     v3 = Builtin builtin=RegExp
     v4 = Construct v3, -, v2 @120
@@ -189,7 +176,6 @@ function f12 name="twoParametersWithTwoCallersEach" parameters=[{type=anything},
 }
 
 function f13 name="orDefault" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=undefined
     Branch v1 -> taken b1(), notTaken b2(v0)
   b1():
@@ -200,7 +186,6 @@ function f13 name="orDefault" parameters=[{type=anything}] results=[{type=anythi
 }
 
 function f14 name="armThatTheKnownValueNeverTakes" results=[{type=anything}] {
-  b0():
     v0 = String string="e+"
     v1 = CallDirect v0 function=f13
     v2 = Builtin builtin=RegExp

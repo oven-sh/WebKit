@@ -10,10 +10,9 @@
 #include "AOTCompiledFrame.h"
 #include "AOTConstantPool.h"
 #include "AOTFFIStubs.h"
-#include "AOTImageStamp.h"
 #include "AOTImageTestBodies.h"
 #include "AOTRegExpCompiler.h"
-#include "AOTRuntimeFactValues.h"
+#include "AOTRuntimeDescription.h"
 #include "AOTStubsBarriers.h"
 #include "AOTStubsCallAdapters.h"
 #include "AOTStubsPropertyKeys.h"
@@ -210,8 +209,10 @@ static void checkSideTableParts(OptionSet<ImageFunctionFlag> flags, bool hasFram
     constexpr uint32_t frameStart = 2 * codeOffsetUnit;
 
     Vector<uint8_t> frameRanges;
-    if (hasFrameRange)
-        SideTableParts::appendFrameRange(frameRanges, 0, frameStart, frameStart + codeOffsetUnit);
+    if (hasFrameRange) {
+        SideTableParts::appendFrameChange(frameRanges, 0, frameStart);
+        SideTableParts::appendFrameChange(frameRanges, frameStart, frameStart + codeOffsetUnit);
+    }
     SideTableInputs inputs { };
     inputs.frameRanges = frameRanges.span();
     inputs.frame = 200;
@@ -282,7 +283,8 @@ static Vector<uint8_t> streamWithFrameRanges(std::initializer_list<CodeRange> ra
     Vector<uint8_t> frameRanges;
     uint32_t previousEnd = 0;
     for (const CodeRange& range : ranges) {
-        SideTableParts::appendFrameRange(frameRanges, previousEnd, range.begin, range.end);
+        SideTableParts::appendFrameChange(frameRanges, previousEnd, range.begin);
+        SideTableParts::appendFrameChange(frameRanges, range.begin, range.end);
         previousEnd = range.end;
     }
     SideTableInputs inputs { };
@@ -844,7 +846,7 @@ static void testStamp()
 
 static void testRuntimeDescriptionNamesFormatVersion()
 {
-    std::span<const uint8_t> record(reinterpret_cast<const uint8_t*>(&describedRuntime), sizeOfDescribedRuntime);
+    std::span<const uint8_t> record = descriptionOfThisRuntime();
     uint32_t named;
     memcpy(&named, record.data() + 28, sizeof(named));
     AOT_TEST_CHECK(named == imageFormatVersion && named == smallImage().image->header().formatVersion);

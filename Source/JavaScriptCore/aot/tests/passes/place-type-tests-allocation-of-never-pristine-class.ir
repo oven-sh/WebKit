@@ -8,7 +8,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = NewClosure function=f1
@@ -17,7 +16,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="plainObject" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=Object
     v2 = Construct v1, -
     v3 = Call v0, -, v2
@@ -28,7 +26,6 @@ function f1 name="plainObject" parameters=[{type=anything}] results=[{type=anyth
 # CHECK: = PropGet {{*}}key="toString"
 
 function f2 name="arrayIterator" parameters=[{type=anything}, {type=Array<number>}] results=[{type=anything}] {
-  b0(v0: anything, v1: Array<number>):
     v2 = Builtin builtin=ArrayPrototypeValues
     v3 = Call v2, v1
     v4 = Call v0, -, v3

@@ -25,7 +25,6 @@ variable g0 name="stepOfMap" module=m0 declared={type=anything} initialization=U
 variable g1 name="stepOfArray" module=m0 declared={type=anything} initialization=Uninitialized
 variable g2 name="counts" module=m0 declared={type=anything} initialization=Uninitialized
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Map
     v1 = Construct v0
     v2 = PropGet v1 key="keys"
@@ -51,7 +50,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=69 results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=MathRandom
     v2 = Call v1
     v3 = ToNumber v2
@@ -60,7 +58,6 @@ function f1 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeF
     Return v5
 }
 function f2 name="read" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = GetModuleVariable variable=g0

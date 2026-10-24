@@ -65,7 +65,6 @@ void ValueFlowHeapIndex::collectNodesWritten(const ValueFlowResultInputs& inputs
         Vector<ValueFlowNodeID> nodesOfMarks;
     };
 
-    // The nodes of a name stand in the order of their numbers.
     constexpr uint32_t nodesPerChunk = 2048;
     const ValueFlowSolver& solver = inputs.solver();
     const ParallelLoops& loops = inputs.loops();
@@ -143,7 +142,6 @@ void ValueFlowHeapIndex::collectNodesWritten(const ValueFlowResultInputs& inputs
     inputs.build.destroyLater(WTF::move(nodes));
 }
 
-// On any thread.
 void ValueFlowHeapIndex::indexNodesWrittenUnder(const ValueFlowResultInputs& inputs, NodesWrittenUnderName& entry)
 {
     constexpr size_t fewestNodesToIndex = 16;
@@ -296,7 +294,6 @@ ValueSetID ValueFlowHeapView::findWrittenUnder(ValueSetMaker& maker, ValueSetID 
     return maker.uniteAll(parts.span());
 }
 
-// As the rule of a lookup has it. The unknown object stands for a prototype that nothing names.
 void ValueFlowHeapView::appendPrototypesAtCreation(ValueFlowObjectID object, Vector<ValueFlowObjectID, 8>& prototypes) const
 {
     const Program& program = m_inputs.program;
@@ -392,12 +389,9 @@ void ValueFlowHeapView::appendPrototypesAtCreation(ValueFlowObjectID object, Vec
 
 ValueSetID ValueFlowHeapView::prototypesOf(ValueSetID objects)
 {
-    auto found = m_prototypesOfSet.find(objects.index());
-    if (found != m_prototypesOfSet.end())
-        return found->value;
-    ValueSetID prototypes = prototypesOf(m_maker, objects);
-    m_prototypesOfSet.add(objects.index(), prototypes);
-    return prototypes;
+    return m_prototypesOfSet.ensure(objects.index(), [&] {
+        return prototypesOf(m_maker, objects);
+    }).iterator->value;
 }
 
 ValueSetID ValueFlowHeapView::prototypesOfHeirs(ValueSetMaker& maker, ValueSetID heirs) const
@@ -412,75 +406,46 @@ ValueSetID ValueFlowHeapView::prototypesOfHeirs(ValueSetMaker& maker, ValueSetID
 ValueSetID ValueFlowHeapView::prototypesOf(ValueSetMaker& maker, ValueSetID objects) const
 {
     return m_index.prototypesOfSets().ensure(objects.index(), [&] {
-        return findPrototypesOf(maker, objects);
+        struct Placeholder {
+            ValueFlowObjectID object;
+            ValueSetID alone;
+            PrototypesOfPlaceholder& prototypes;
+        };
+
+        const ValueFlowUniverse& universe = m_inputs.universe();
+        ValueSetID everyObject = universe.objects();
+        ValueSetID heirs = maker.intersect(expand(maker, objects), everyObject);
+        if (ValueSets::isComplement(heirs))
+            return everyObject;
+
+        Placeholder placeholders[] {
+            { ValueFlowUniverse::unknownObject(), universe.unknownObjectAlone(), m_prototypesOfUnknownObject },
+            { ValueFlowUniverse::untrackedObject(), universe.untrackedObjectAlone(), m_prototypesOfUntrackedObject },
+        };
+        ValueSetID otherHeirs = heirs;
+        ValueSetID prototypes = ValueSets::nothing;
+        for (Placeholder& placeholder : placeholders) {
+            if (!m_inputs.sets().contains(objects, placeholder.object))
+                continue;
+            std::call_once(placeholder.prototypes.isComputed, [&] {
+                placeholder.prototypes.heirs = maker.intersect(expand(maker, placeholder.alone), everyObject);
+                placeholder.prototypes.prototypes = prototypesOfHeirs(maker, placeholder.prototypes.heirs);
+            });
+            otherHeirs = maker.intersect(otherHeirs, ValueSets::complement(placeholder.prototypes.heirs));
+            prototypes = maker.unite(prototypes, placeholder.prototypes.prototypes);
+        }
+        prototypes = maker.unite(prototypes, prototypesOfHeirs(maker, otherHeirs));
+        if (m_inputs.build.options().verifiesAfterEveryPass)
+            RELEASE_ASSERT(prototypes == prototypesOfHeirs(maker, heirs));
+        return prototypes;
     });
-}
-
-ValueSetID ValueFlowHeapView::findPrototypesOf(ValueSetMaker& maker, ValueSetID objects) const
-{
-    struct Placeholder {
-        ValueFlowObjectID object;
-        ValueSetID alone;
-        PrototypesOfPlaceholder& prototypes;
-    };
-
-    const ValueFlowUniverse& universe = m_inputs.universe();
-    ValueSetID everyObject = universe.objects();
-    ValueSetID heirs = maker.intersect(expand(maker, objects), everyObject);
-    if (ValueSets::isComplement(heirs))
-        return everyObject;
-
-    Placeholder placeholders[] {
-        { ValueFlowUniverse::unknownObject(), universe.unknownObjectAlone(), m_prototypesOfUnknownObject },
-        { ValueFlowUniverse::untrackedObject(), universe.untrackedObjectAlone(), m_prototypesOfUntrackedObject },
-    };
-    ValueSetID otherHeirs = heirs;
-    ValueSetID prototypes = ValueSets::nothing;
-    for (Placeholder& placeholder : placeholders) {
-        if (!m_inputs.sets().contains(objects, placeholder.object))
-            continue;
-        std::call_once(placeholder.prototypes.isComputed, [&] {
-            placeholder.prototypes.heirs = maker.intersect(expand(maker, placeholder.alone), everyObject);
-            placeholder.prototypes.prototypes = prototypesOfHeirs(maker, placeholder.prototypes.heirs);
-        });
-        otherHeirs = maker.intersect(otherHeirs, ValueSets::complement(placeholder.prototypes.heirs));
-        prototypes = maker.unite(prototypes, placeholder.prototypes.prototypes);
-    }
-    prototypes = maker.unite(prototypes, prototypesOfHeirs(maker, otherHeirs));
-    if (m_inputs.build.options().verifiesAfterEveryPass)
-        RELEASE_ASSERT(prototypes == prototypesOfHeirs(maker, heirs));
-    return prototypes;
 }
 
 ValueSetID ValueFlowHeapView::chainOf(ValueSetID objects)
 {
-    auto found = m_chainOfSet.find(objects.index());
-    if (found != m_chainOfSet.end())
-        return found->value;
-    ValueSetID chain = chainOf(m_maker, objects);
-    m_chainOfSet.add(objects.index(), chain);
-    return chain;
-}
-
-// A link that may hold one of several objects says of none of them that the program puts it there.
-void ValueFlowHeapView::indexStoresIntoPrototypeLinks()
-{
-    m_hasIndexedStoresIntoPrototypeLinks = true;
-    const ValueFlowUniverse& universe = m_inputs.universe();
-    ValueSetID placeholders = m_maker.unite(universe.unknownObjectAlone(), universe.untrackedObjectAlone());
-    ValueSetID namedObjects = m_maker.intersect(universe.objects(), ValueSets::complement(placeholders));
-    forEachNodeWrittenUnder(prototypeLinkName, [&](ValueSetID writtenThrough, ValueSetID value) {
-        if (!m_inputs.sets().onlyMember(m_maker.intersect(value, namedObjects)))
-            return;
-        if (ValueSets::isComplement(writtenThrough)) {
-            m_prototypeLinksStoredThroughComplements.append({ writtenThrough, value });
-            return;
-        }
-        m_inputs.sets().forEachMember(writtenThrough, [&](ValueFlowObjectID object) {
-            ValueSetID& stored = m_storedIntoPrototypeLinkOf.add(object.index(), ValueSets::nothing).iterator->value;
-            stored = m_maker.unite(stored, value);
-        });
-    });
+    return m_chainOfSet.ensure(objects.index(), [&] {
+        return chainOf(m_maker, objects);
+    }).iterator->value;
 }
 
 ValueSetID ValueFlowHeapView::chainBuiltByProgram(ValueSetID objects)
@@ -488,12 +453,24 @@ ValueSetID ValueFlowHeapView::chainBuiltByProgram(ValueSetID objects)
     auto found = m_chainBuiltByProgramOfSet.find(objects.index());
     if (found != m_chainBuiltByProgramOfSet.end())
         return found->value;
-    if (!m_hasIndexedStoresIntoPrototypeLinks)
-        indexStoresIntoPrototypeLinks();
 
     const ValueFlowUniverse& universe = m_inputs.universe();
     ValueSetID placeholders = m_maker.unite(universe.unknownObjectAlone(), universe.untrackedObjectAlone());
     ValueSetID namedObjects = m_maker.intersect(universe.objects(), ValueSets::complement(placeholders));
+    if (!std::exchange(m_hasIndexedStoresIntoPrototypeLinks, true)) {
+        forEachNodeWrittenUnder(prototypeLinkName, [&](ValueSetID writtenThrough, ValueSetID value) {
+            if (!m_inputs.sets().onlyMember(m_maker.intersect(value, namedObjects)))
+                return;
+            if (ValueSets::isComplement(writtenThrough)) {
+                m_prototypeLinksStoredThroughComplements.append({ writtenThrough, value });
+                return;
+            }
+            m_inputs.sets().forEachMember(writtenThrough, [&](ValueFlowObjectID object) {
+                ValueSetID& stored = m_storedIntoPrototypeLinkOf.add(object.index(), ValueSets::nothing).iterator->value;
+                stored = m_maker.unite(stored, value);
+            });
+        });
+    }
     ValueSetID chain = m_maker.intersect(objects, namedObjects);
     ValueSetID frontier = chain;
     while (frontier != ValueSets::nothing) {
@@ -531,57 +508,52 @@ ValueSetID ValueFlowHeapView::chainWalkedInFull(ValueSetMaker& maker, ValueSetID
 ValueSetID ValueFlowHeapView::chainOf(ValueSetMaker& maker, ValueSetID objects) const
 {
     return m_index.chainsOfSets().ensure(objects.index(), [&] {
-        return walkChainOf(maker, objects);
-    });
-}
+        struct Placeholder {
+            ValueFlowObjectID object;
+            ValueSetID alone;
+            ChainOfPlaceholder& chain;
+            bool isTakenIn { false };
+        };
 
-ValueSetID ValueFlowHeapView::walkChainOf(ValueSetMaker& maker, ValueSetID objects) const
-{
-    struct Placeholder {
-        ValueFlowObjectID object;
-        ValueSetID alone;
-        ChainOfPlaceholder& chain;
-        bool isTakenIn { false };
-    };
+        const ValueSets& sets = m_inputs.sets();
+        const ValueFlowUniverse& universe = m_inputs.universe();
+        Placeholder placeholders[] {
+            { ValueFlowUniverse::unknownObject(), universe.unknownObjectAlone(), m_chainOfUnknownObject },
+            { ValueFlowUniverse::untrackedObject(), universe.untrackedObjectAlone(), m_chainOfUntrackedObject },
+        };
 
-    const ValueSets& sets = m_inputs.sets();
-    const ValueFlowUniverse& universe = m_inputs.universe();
-    Placeholder placeholders[] {
-        { ValueFlowUniverse::unknownObject(), universe.unknownObjectAlone(), m_chainOfUnknownObject },
-        { ValueFlowUniverse::untrackedObject(), universe.untrackedObjectAlone(), m_chainOfUntrackedObject },
-    };
-
-    ValueSetID chain = maker.intersect(expand(maker, objects), universe.objects());
-    if (ValueSets::isComplement(chain))
-        return chainWalkedInFull(maker, objects);
-    ValueSetID walked = ValueSets::nothing;
-    auto takeInChainsOfPlaceholdersIn = [&](ValueSetID set) {
-        for (Placeholder& placeholder : placeholders) {
-            if (placeholder.isTakenIn || !sets.contains(set, placeholder.object))
-                continue;
-            placeholder.isTakenIn = true;
-            std::call_once(placeholder.chain.isComputed, [&] {
-                placeholder.chain.chain = chainWalkedInFull(maker, placeholder.alone);
-            });
-            chain = maker.unite(chain, placeholder.chain.chain);
-            walked = maker.unite(walked, maker.unite(placeholder.chain.chain, placeholder.alone));
-        }
-    };
-
-    takeInChainsOfPlaceholdersIn(objects);
-    while (true) {
-        takeInChainsOfPlaceholdersIn(chain);
+        ValueSetID chain = maker.intersect(expand(maker, objects), universe.objects());
         if (ValueSets::isComplement(chain))
             return chainWalkedInFull(maker, objects);
-        ValueSetID frontier = maker.intersect(chain, ValueSets::complement(walked));
-        if (frontier == ValueSets::nothing)
-            break;
-        walked = maker.unite(walked, chain);
-        chain = maker.unite(chain, prototypesOf(maker, frontier));
-    }
-    if (m_inputs.build.options().verifiesAfterEveryPass)
-        RELEASE_ASSERT(chain == chainWalkedInFull(maker, objects));
-    return chain;
+        ValueSetID walked = ValueSets::nothing;
+        auto takeInChainsOfPlaceholdersIn = [&](ValueSetID set) {
+            for (Placeholder& placeholder : placeholders) {
+                if (placeholder.isTakenIn || !sets.contains(set, placeholder.object))
+                    continue;
+                placeholder.isTakenIn = true;
+                std::call_once(placeholder.chain.isComputed, [&] {
+                    placeholder.chain.chain = chainWalkedInFull(maker, placeholder.alone);
+                });
+                chain = maker.unite(chain, placeholder.chain.chain);
+                walked = maker.unite(walked, maker.unite(placeholder.chain.chain, placeholder.alone));
+            }
+        };
+
+        takeInChainsOfPlaceholdersIn(objects);
+        while (true) {
+            takeInChainsOfPlaceholdersIn(chain);
+            if (ValueSets::isComplement(chain))
+                return chainWalkedInFull(maker, objects);
+            ValueSetID frontier = maker.intersect(chain, ValueSets::complement(walked));
+            if (frontier == ValueSets::nothing)
+                break;
+            walked = maker.unite(walked, chain);
+            chain = maker.unite(chain, prototypesOf(maker, frontier));
+        }
+        if (m_inputs.build.options().verifiesAfterEveryPass)
+            RELEASE_ASSERT(chain == chainWalkedInFull(maker, objects));
+        return chain;
+    });
 }
 
 ValueSetID ValueFlowBuiltinApplication::valueAt(BuiltinOperand position, ValueSetMaker& maker) const
@@ -619,7 +591,6 @@ BuiltinCallMode ValueFlowBuiltinApplication::mode() const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The first operand of each is the callee, the second is this or new.target, then come the arguments or the list of them.
 static bool statementCallsValue(const ValueFlowStatement& statement)
 {
     if (statement.kind != ValueFlowStatementKind::Operation)
@@ -661,11 +632,9 @@ static void findOperandsOf(const ValueFlowResultInputs& inputs, const ValueFlowH
 {
     const ValueFlowUniverse& universe = inputs.universe();
     std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(call);
-    // Without the operand the callee is new.target.
     bool hasSecondOperand = !isConstruction(application.kind) || !!inputs.program.at(call.function).at(call.site).operand(1);
     application.thisValue = heap.valueOf(maker, operands[hasSecondOperand ? 1 : 0]);
     if (passesList(call.opcode)) {
-        // A list that unseen code has made, or has got hold of, holds what unseen code has got hold of: the unknown object stands for that, and no object that has stayed with followed code is in it.
         ValueSetID lists = heap.valueOf(maker, operands[2]);
         bool mayBeListOfUnseenCode = inputs.sets().contains(lists, ValueFlowUniverse::unknownObject());
         if (mayBeListOfUnseenCode)
@@ -725,7 +694,6 @@ void ValueFlowHeapIndex::findOperandsOfCalls(const ValueFlowResultInputs& inputs
 
 using ValueFlowBuiltinApplicationsFunctor = ScopedLambda<void(const ValueFlowBuiltinApplication&, ValueSetID builtinCallees)>;
 
-// Each of the bound functions binds no argument: its target takes the call with the bound `this`, and every argument keeps its position.
 static void forEachBuiltinAppliedThroughBoundFunctions(const ValueFlowResultInputs& inputs, const ValueFlowHeapView& heap, ValueSetMaker& maker, std::span<const ValueFlowObjectID> boundFunctions, ValueFlowBuiltinApplication& application, ValueSetID amongFunctions, SetsMeetingOneSet* wantedOperands, const ValueFlowBuiltinApplicationFunctor& functor)
 {
     for (ValueFlowObjectID boundFunction : boundFunctions) {
@@ -786,7 +754,6 @@ static void forEachBuiltinAppliedByGroup(const ValueFlowResultInputs& inputs, co
     const ValueFlowSolver& solver = inputs.solver();
     ValueSetID builtinCallees = heap.expandAmong(maker, key.set, amongObjects);
     ValueFlowCallKind kind = key.callKind();
-    // The rule of a group applies the target of such a bound function where it stands, without a group for the target: callTargetsWithoutBoundArguments().
     Vector<ValueFlowObjectID, 4> boundFunctions;
     if (!isConstruction(kind)) {
         inputs.sets().forEachMember(heap.expandAmong(maker, key.set, maker.intersect(universe.otherCallables(), universe.knownObjects())), [&](ValueFlowObjectID callee) {
@@ -806,7 +773,6 @@ static void forEachBuiltinAppliedByGroup(const ValueFlowResultInputs& inputs, co
     application.otherArguments = maker.unite(solver.valueOf(group.otherArguments), solver.valueOf(group.laterArguments));
     if (passesAnyOf(application, wantedOperands)) {
         inputs.sets().forEachMember(builtinCallees, [&](ValueFlowObjectID callee) {
-            // A lookup finds accessors and data properties of the table, which are applied in the mode of the group. A function of the table that the program has made an accessor is called like any function.
             bool isFunction = inputs.sets().contains(universe.builtinFunctions(), callee);
             if (!isFunction && !isAccessorCall)
                 return;
@@ -818,24 +784,11 @@ static void forEachBuiltinAppliedByGroup(const ValueFlowResultInputs& inputs, co
     forEachBuiltinAppliedThroughBoundFunctions(inputs, heap, maker, boundFunctions.span(), application, amongFunctions, wantedOperands, functor);
 }
 
-// A protocol of the language applies what it finds under one of these names.
-static ValueSetID builtinFunctionsOfProtocolsThatProgramHasStored(const ValueFlowResultInputs& inputs, const ValueFlowHeapView& heap, ValueSetMaker& maker)
-{
-    const Program& program = inputs.program;
-    ValueSetID everyObject = inputs.universe().objects();
-    ValueSetID found = heap.writtenUnder(maker, everyObject, ValueFlowName::of(ValueFlowNameKind::UnknownKey));
-    for (BuiltinName name : { BuiltinNames::iteratorSymbol, BuiltinNames::asyncIteratorSymbol, BuiltinNames::next, BuiltinNames::returnKeyword, BuiltinNames::throwKeyword, BuiltinNames::then })
-        found = maker.unite(found, heap.writtenUnder(maker, everyObject, ValueFlowName::property(program.keyOf(name))));
-    return maker.intersect(found, inputs.universe().builtinFunctionsOfProtocols());
-}
-
-// `value instanceof object` applies the function of the table that it finds under Symbol.hasInstance to the two, without a group: testAgainstConstructor().
 static void forEachBuiltinAppliedByTest(const ValueFlowResultInputs& inputs, const ValueFlowHeapView& heap, ValueSetMaker& maker, ValueSetID amongFunctions, const ValueFlowBuiltinApplicationFunctor& functor)
 {
     const ValueFlowUniverse& universe = inputs.universe();
     PropertyKeyID key = inputs.program.keyOf(BuiltinNames::hasInstanceSymbol);
     auto methodsFoundOn = [&](ValueSetID holders) {
-        // What a getter answers is not followed here.
         if (heap.writtenUnder(maker, holders, ValueFlowName::getter(key)) != ValueSets::nothing)
             return amongFunctions;
         ValueSetID stored = maker.unite(heap.writtenUnder(maker, holders, ValueFlowName::of(ValueFlowNameKind::UnknownKey)), heap.writtenUnder(maker, holders, ValueFlowName::property(key)));
@@ -885,13 +838,16 @@ static void forEachBuiltinAppliedByProtocol(const ValueFlowResultInputs& inputs,
     byProtocol.kind = ValueFlowCallKind::CallByNativeCode;
     byProtocol.thisValue = ValueSets::anything;
     byProtocol.otherArguments = ValueSets::anything;
-    inputs.sets().forEachMember(maker.intersect(builtinFunctionsOfProtocolsThatProgramHasStored(inputs, heap, maker), amongFunctions), [&](ValueFlowObjectID callee) {
+    ValueSetID everyObject = inputs.universe().objects();
+    ValueSetID stored = heap.writtenUnder(maker, everyObject, unknownKeyName);
+    for (BuiltinName name : { BuiltinNames::iteratorSymbol, BuiltinNames::asyncIteratorSymbol, BuiltinNames::next, BuiltinNames::returnKeyword, BuiltinNames::throwKeyword, BuiltinNames::then })
+        stored = maker.unite(stored, heap.writtenUnder(maker, everyObject, ValueFlowName::property(inputs.program.keyOf(name))));
+    inputs.sets().forEachMember(maker.intersect(maker.intersect(stored, inputs.universe().builtinFunctionsOfProtocols()), amongFunctions), [&](ValueFlowObjectID callee) {
         byProtocol.builtin = inputs.universe().builtinOf(callee);
         functor(byProtocol);
     });
 }
 
-// A call that is left out applies no built-in, whichever built-ins somebody asks about: they are built-in functions, and a bound function is one of the other callables.
 void ValueFlowHeapIndex::collectCalls(const ValueFlowResultInputs& inputs)
 {
     constexpr uint32_t functionsPerTask = 64;
@@ -932,65 +888,53 @@ struct BuiltinsToApply {
     ValueSetID objects;
 };
 
-// The calls of built-ins that operations spell out, function by function, then those that the groups of callees share.
-class BuiltinApplicationTasks {
-public:
-    BuiltinApplicationTasks(const ValueFlowResultInputs& inputs, const ValueFlowHeapView& heap, BuiltinsToApply among)
-        : m_inputs(inputs)
-        , m_heap(heap)
-        , m_among(among)
-        , m_calls(heap.index().callsThatMayApplyBuiltins())
-        , m_groups(heap.index().firstNodesOfCallGroups())
-    {
-    }
-
-    unsigned size() const { return numberOfTasksOfCalls() + static_cast<unsigned>((m_groups.size() + groupsPerTask - 1) / groupsPerTask); }
-    void run(unsigned task, ValueSetMaker&, SetsMeetingOneSet* wantedOperands, const ValueFlowBuiltinApplicationFunctor&, const ValueFlowBuiltinApplicationsFunctor* functorForAllCallees = nullptr) const;
-
-private:
-    static constexpr size_t callsPerTask = 256;
-    static constexpr size_t groupsPerTask = 256;
-
-    unsigned numberOfTasksOfCalls() const { return static_cast<unsigned>((m_calls.size() + callsPerTask - 1) / callsPerTask); }
-
-    const ValueFlowResultInputs& m_inputs;
-    const ValueFlowHeapView& m_heap;
-    BuiltinsToApply m_among;
-    std::span<const ValueFlowHeapIndex::CallOfValue> m_calls;
-    std::span<const ValueFlowNodeID> m_groups;
-};
-
 } // anonymous namespace
 
-void BuiltinApplicationTasks::run(unsigned task, ValueSetMaker& maker, SetsMeetingOneSet* wantedOperands, const ValueFlowBuiltinApplicationFunctor& functor, const ValueFlowBuiltinApplicationsFunctor* functorForAllCallees) const
+static constexpr size_t callsOrGroupsPerTask = 256;
+
+static unsigned numberOfRunsOf(size_t numberOfCallsOrGroups)
 {
-    if (task < numberOfTasksOfCalls()) {
-        size_t first = task * callsPerTask;
-        std::span<const ValueFlowStatement> statements = m_inputs.bodies().statements();
-        for (size_t position = first; position < std::min(first + callsPerTask, m_calls.size()); ++position)
-            forEachBuiltinAppliedByOperation(m_inputs, m_heap, maker, statements[m_calls[position].statement], m_calls[position].callees, m_heap.index().operandsOfCallAt(position), m_among.functions, wantedOperands, functor, functorForAllCallees);
-        return;
-    }
-    size_t first = (task - numberOfTasksOfCalls()) * groupsPerTask;
-    for (ValueFlowNodeID node : m_groups.subspan(first, std::min(groupsPerTask, m_groups.size() - first)))
-        forEachBuiltinAppliedByGroup(m_inputs, m_heap, maker, *m_inputs.solver().keyOfMadeNode(node), node, m_among.objects, m_among.functions, wantedOperands, functor);
+    return static_cast<unsigned>((numberOfCallsOrGroups + callsOrGroupsPerTask - 1) / callsOrGroupsPerTask);
 }
 
-// All threads put the applications together. The functor gets them on this thread, in the order of the tasks.
-static void forEachBuiltinApplicationAmong(const ValueFlowResultInputs& inputs, ValueFlowHeapView& heap, BuiltinsToApply among, ValueSetID amongOperands, const ValueFlowBuiltinApplicationFunctor& functor)
+static void runBuiltinApplicationTasks(const ValueFlowResultInputs& inputs, const ValueFlowHeapView& heap, ValueSetMakers& makers, BuiltinsToApply among, ValueSetID onlyPassingAnyOf, NOESCAPE const Invocable<void(unsigned task, unsigned worker, const ValueFlowBuiltinApplication&)> auto& functor, const ValueFlowBuiltinApplicationsOnWorkerFunctor* functorForAllCallees = nullptr)
 {
     const ParallelLoops& loops = inputs.loops();
-    BuiltinApplicationTasks tasks(inputs, heap, among);
-    Vector<Vector<ValueFlowBuiltinApplication>> applicationsOfTask(tasks.size());
+    std::span<const ValueFlowStatement> statements = inputs.bodies().statements();
+    std::span<const ValueFlowHeapIndex::CallOfValue> calls = heap.index().callsThatMayApplyBuiltins();
+    std::span<const ValueFlowNodeID> groups = heap.index().firstNodesOfCallGroups();
+    Vector<SetsMeetingOneSet> setsMeetingOperands(onlyPassingAnyOf == ValueSets::anything ? 0 : loops.width(), [&](size_t) {
+        return SetsMeetingOneSet(inputs.sets(), onlyPassingAnyOf);
+    });
+    forEachIndexInParallel(loops, numberOfRunsOf(calls.size()) + numberOfRunsOf(groups.size()), [&](unsigned task, unsigned worker) {
+        ValueSetMaker& maker = makers.of(worker);
+        SetsMeetingOneSet* wantedOperands = setsMeetingOperands.isEmpty() ? nullptr : &setsMeetingOperands[worker];
+        auto handOn = [&](const ValueFlowBuiltinApplication& application) {
+            functor(task, worker, application);
+        };
+        if (task >= numberOfRunsOf(calls.size())) {
+            size_t first = (task - numberOfRunsOf(calls.size())) * callsOrGroupsPerTask;
+            for (ValueFlowNodeID node : groups.subspan(first, std::min(callsOrGroupsPerTask, groups.size() - first)))
+                forEachBuiltinAppliedByGroup(inputs, heap, maker, *inputs.solver().keyOfMadeNode(node), node, among.objects, among.functions, wantedOperands, handOn);
+            return;
+        }
+        auto handOnAllCallees = [&](const ValueFlowBuiltinApplication& application, ValueSetID builtinCallees) {
+            (*functorForAllCallees)(worker, application, builtinCallees);
+        };
+        ValueFlowBuiltinApplicationsFunctor forAllCallees(handOnAllCallees);
+        size_t first = task * callsOrGroupsPerTask;
+        for (size_t position = first; position < std::min(first + callsOrGroupsPerTask, calls.size()); ++position)
+            forEachBuiltinAppliedByOperation(inputs, heap, maker, statements[calls[position].statement], calls[position].callees, heap.index().operandsOfCallAt(position), among.functions, wantedOperands, handOn, functorForAllCallees ? &forAllCallees : nullptr);
+    });
+}
+
+static void forEachBuiltinApplicationAmong(const ValueFlowResultInputs& inputs, ValueFlowHeapView& heap, BuiltinsToApply among, ValueSetID amongOperands, const ValueFlowBuiltinApplicationFunctor& functor)
+{
+    Vector<Vector<ValueFlowBuiltinApplication>> applicationsOfTask(numberOfRunsOf(heap.index().callsThatMayApplyBuiltins().size()) + numberOfRunsOf(heap.index().firstNodesOfCallGroups().size()));
     {
         ValueSetMakers makers(inputs);
-        Vector<SetsMeetingOneSet> setsMeetingOperands(loops.width(), [&](size_t) {
-            return SetsMeetingOneSet(inputs.sets(), amongOperands);
-        });
-        forEachIndexInParallel(loops, tasks.size(), [&](unsigned task, unsigned worker) {
-            tasks.run(task, makers.of(worker), amongOperands == ValueSets::anything ? nullptr : &setsMeetingOperands[worker], [&](const ValueFlowBuiltinApplication& application) {
-                applicationsOfTask[task].append(application);
-            });
+        runBuiltinApplicationTasks(inputs, heap, makers, among, amongOperands, [&](unsigned task, unsigned, const ValueFlowBuiltinApplication& application) {
+            applicationsOfTask[task].append(application);
         });
     }
     for (Vector<ValueFlowBuiltinApplication>& applications : applicationsOfTask) {
@@ -1028,40 +972,25 @@ void forEachBuiltinApplication(const ValueFlowResultInputs& inputs, ValueFlowHea
     forEachBuiltinApplicationAmong(inputs, heap, builtinsToApplyAmong(inputs, heap.maker(), onlyOfBuiltins), onlyPassingAnyOf, functor);
 }
 
-void forEachBuiltinApplicationInParallel(const ValueFlowResultInputs& inputs, const ValueFlowHeapView& heap, ValueSetMakers& makers, const BitVector& onlyOfBuiltins, const ValueFlowBuiltinApplicationOnWorkerFunctor& functor, const ValueFlowBuiltinApplicationsOnWorkerFunctor& functorForAllCallees)
+static void forEachBuiltinApplicationOnWorkers(const ValueFlowResultInputs& inputs, const ValueFlowHeapView& heap, ValueSetMakers& makers, const BitVector& onlyOfBuiltins, ValueSetID onlyPassingAnyOf, const ValueFlowBuiltinApplicationOnWorkerFunctor& functor, const ValueFlowBuiltinApplicationsOnWorkerFunctor* functorForAllCallees)
 {
     BuiltinsToApply among = builtinsToApplyAmong(inputs, makers.of(0), onlyOfBuiltins);
-    BuiltinApplicationTasks tasks(inputs, heap, among);
-    forEachIndexInParallel(inputs.loops(), tasks.size(), [&](unsigned task, unsigned worker) {
-        auto handOnAllCallees = [&](const ValueFlowBuiltinApplication& application, ValueSetID builtinCallees) {
-            functorForAllCallees(worker, application, builtinCallees);
-        };
-        ValueFlowBuiltinApplicationsFunctor forAllCallees(handOnAllCallees);
-        tasks.run(task, makers.of(worker), nullptr, [&](const ValueFlowBuiltinApplication& application) {
-            functor(worker, application);
-        }, &forAllCallees);
-    });
+    runBuiltinApplicationTasks(inputs, heap, makers, among, onlyPassingAnyOf, [&](unsigned, unsigned worker, const ValueFlowBuiltinApplication& application) {
+        functor(worker, application);
+    }, functorForAllCallees);
     forEachBuiltinAppliedByProtocol(inputs, heap, makers.of(0), among.functions, [&](const ValueFlowBuiltinApplication& application) {
         functor(0, application);
     });
 }
 
+void forEachBuiltinApplicationInParallel(const ValueFlowResultInputs& inputs, const ValueFlowHeapView& heap, ValueSetMakers& makers, const BitVector& onlyOfBuiltins, const ValueFlowBuiltinApplicationOnWorkerFunctor& functor, const ValueFlowBuiltinApplicationsOnWorkerFunctor& functorForAllCallees)
+{
+    forEachBuiltinApplicationOnWorkers(inputs, heap, makers, onlyOfBuiltins, ValueSets::anything, functor, &functorForAllCallees);
+}
+
 void forEachBuiltinApplicationOnAllThreads(const ValueFlowResultInputs& inputs, const ValueFlowHeapView& heap, ValueSetMakers& makers, const BitVector& onlyOfBuiltins, ValueSetID onlyPassingAnyOf, NOESCAPE const ScopedLambda<void(unsigned worker, const ValueFlowBuiltinApplication&)>& functor)
 {
-    const ParallelLoops& loops = inputs.loops();
-    BuiltinsToApply among = builtinsToApplyAmong(inputs, makers.of(0), onlyOfBuiltins);
-    BuiltinApplicationTasks tasks(inputs, heap, among);
-    Vector<SetsMeetingOneSet> setsMeetingOperands(loops.width(), [&](size_t) {
-        return SetsMeetingOneSet(inputs.sets(), onlyPassingAnyOf);
-    });
-    forEachIndexInParallel(loops, tasks.size(), [&](unsigned task, unsigned worker) {
-        tasks.run(task, makers.of(worker), onlyPassingAnyOf == ValueSets::anything ? nullptr : &setsMeetingOperands[worker], [&](const ValueFlowBuiltinApplication& application) {
-            functor(worker, application);
-        });
-    });
-    forEachBuiltinAppliedByProtocol(inputs, heap, makers.of(0), among.functions, [&](const ValueFlowBuiltinApplication& application) {
-        functor(0, application);
-    });
+    forEachBuiltinApplicationOnWorkers(inputs, heap, makers, onlyOfBuiltins, onlyPassingAnyOf, functor, nullptr);
 }
 
 } } } // namespace JSC::AOT::Typed

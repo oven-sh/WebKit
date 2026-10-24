@@ -11,6 +11,7 @@
 #include "AOTEffects.h"
 #include "AOTEscapeAnalysis.h"
 #include "AOTVector.h"
+#include <algorithm>
 #include <memory>
 #include <optional>
 #include <span>
@@ -35,7 +36,6 @@ struct GuardOrigin {
     friend bool operator==(const GuardOrigin&, const GuardOrigin&) = default;
 };
 
-// On every way to the guard one of the origins proved it.
 struct GuardFact {
     ProofSet proofs;
     ValueID subject;
@@ -55,22 +55,12 @@ struct GuardFacts {
     Vector<GuardFact, 1> facts;
 
     bool isKnown() const { return knowledge == GuardKnowledge::Known; }
-    const GuardFact* find(Proof, ValueID subject) const LIFETIME_BOUND;
-    const GuardFact* find(Proof) const LIFETIME_BOUND;
+    const GuardFact* find(Proof, std::optional<ValueID> subject = std::nullopt) const LIFETIME_BOUND;
 
     friend bool operator==(const GuardFacts&, const GuardFacts&) = default;
 };
 
 enum class GuardState : uint8_t { Unknown, Unavailable, Available };
-
-constexpr GuardState meet(GuardState a, GuardState b)
-{
-    if (a == GuardState::Unavailable || b == GuardState::Unavailable)
-        return GuardState::Unavailable;
-    if (a == GuardState::Unknown || b == GuardState::Unknown)
-        return GuardState::Unknown;
-    return GuardState::Available;
-}
 
 bool isGuardValue(const Function&, ValueID);
 BitVector guardValuesOf(const Function&, const CFG&);
@@ -79,9 +69,8 @@ ProofSet proofsOfAllocation(const Program&, const Function&, const Value& alloca
 bool allocationProves(const Program&, const Function&, const Value& allocation, const Value& test);
 ValueID guardedOperandOf(const Value& user);
 ProofSet proofsNeededFromGuard(const Program&, const Function&, const Value& user);
-bool haveSameCondition(FunctionAnalyses&, const Value& test, const Value& otherTest);
+bool haveSameCondition(FunctionAnalyses&, const Value& test, const Value& otherTest, uint32_t firstComparedOperand = 0);
 Vector<MemoryLocation, 2> locationsReadBy(const Value& test);
-Vector<MemoryLocation, 2> locationsReadBy(const Terminator& provingTerminator, uint32_t caseIndex);
 Vector<MemoryLocation, 2> locationsBehindAllocationProof(Proof);
 
 enum class TestedSlotState : uint8_t { None, Filled, HoldsDeclaredType };
@@ -90,7 +79,6 @@ TestedSlotState slotStateTestedBy(const Value& test);
 TestedSlotState slotStateProvenBy(const Function&, const GuardFact&);
 bool leavesSlotsAsTested(const Program&, const Function&, const Value& writer, const Effects& effectsOfWriter, TestedSlotState);
 
-// The mask of a location takes a walk over a layout set, so it is computed once for all the writers that are compared with it.
 struct DependedLocations {
     DependedLocations() = default;
     DependedLocations(const Program&, Vector<MemoryLocation, 2>&&);
@@ -107,13 +95,10 @@ struct GuardDependencies : DependedLocations {
     ValueID subject;
 };
 
-// Nothing for a test whose proof no write ends.
 std::optional<GuardDependencies> dependenciesOfGuardOf(FunctionAnalyses&, const Value& test);
 
-// The value may be an object that was there before the function began, or that other code made: an entry parameter, what a read or a call gave, or what a block is passed one of those for.
 bool comesFromOutside(FunctionAnalyses&, ValueID);
 
-// Answers for one writer whether it may end what tests prove. What that takes to know about the writer is computed once.
 class GuardWriter {
     WTF_MAKE_NONCOPYABLE(GuardWriter);
 public:
@@ -122,7 +107,6 @@ public:
 
     bool mayEnd(const GuardDependencies&);
 
-    // mayEnd() for many proofs that depend on the same locations: what does not hang on the object is found once.
     enum class EndedProofs : uint8_t { None, All, AboutSomeObjects };
     struct WrittenDependencies {
         EndedProofs endedProofs { EndedProofs::None };
@@ -137,7 +121,6 @@ private:
     std::unique_ptr<Query> m_query;
 };
 
-// The facts of all guards are computed at once. Where they hold is solved for the guards that somebody asks about, and an answer does not depend on what was asked before.
 class GuardAvailability {
     WTF_MAKE_NONCOPYABLE(GuardAvailability);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(GuardAvailability);
@@ -150,24 +133,19 @@ public:
     const GuardFacts& factsOf(ValueID guard) const LIFETIME_BOUND;
 
     GuardState stateAt(ValueID guard, ProgramPoint) const;
-    GuardState stateAt(ValueID guard, ProofSet reliedOn, ProgramPoint) const;
+    GuardState stateAt(ValueID guard, ProofSet reliedOn, ProgramPoint point) const { return stateAt(guard, reliedOn, ValueID(), point); }
     GuardState stateAt(ValueID guard, ProofSet reliedOn, ValueID subject, ProgramPoint) const;
     GuardState stateAt(ValueID guard, const Value& user, ProgramPoint) const;
-    // For whoever holds a cursor: what the cursor would say, where a walk back to the definition of the guard shows it.
     std::optional<GuardState> stateSeenWithoutSolving(ValueID guard, ProofSet reliedOn, ValueID subject, ProgramPoint) const;
-    GuardState stateOnEdge(ValueID guard, Edge) const;
     bool mayBeEndedAt(ValueID guard, const Value& user, ProgramPoint writer) const;
 
-    // For whoever asks about the guards that the operations of a block name.
     class Cursor {
     public:
         Cursor(const GuardAvailability&, BlockID);
 
         void advanceTo(uint32_t index);
-        uint32_t index() const { return m_index; }
-        GuardState stateOf(ValueID guard) const;
-        GuardState stateOf(ValueID guard, ProofSet reliedOn) const;
-        GuardState stateOf(ValueID guard, ProofSet reliedOn, ValueID subject) const;
+        GuardState stateOf(ValueID guard) const { return stateOf(guard, nullptr, ValueID()); }
+        GuardState stateOf(ValueID guard, ProofSet reliedOn, ValueID subject) const { return stateOf(guard, &reliedOn, subject); }
         GuardState stateOf(ValueID guard, const Value& user) const;
 
     private:
@@ -175,7 +153,8 @@ public:
 
         Cursor(const GuardAvailability&, ProgramPoint);
 
-        bool isInSolvedBlock() const;
+        GuardState stateOf(ValueID guard, const ProofSet* reliedOn, ValueID subject) const;
+        bool isInSolvedBlock() const { return m_availability.m_solution.solvedBlocks.get(m_block.index()); }
         void replay() const;
         void solveFor(ValueID guard) const;
 
@@ -241,12 +220,7 @@ private:
     };
 
     void collectGuards();
-    void collectUnnamedAllocations();
-    void addGuard(ValueID);
-    void removeGuardsFrom(size_t firstRemovedGuard);
     void computeFacts();
-    GuardFacts factsOfEdgeResult(BlockID, uint32_t parameterIndex, const EdgeResult&) const;
-    GuardFacts factsOfAllocation(ValueID) const;
     GuardFacts factsAfterEdge(const GuardFacts& factsBeforeEdge, Edge) const;
     std::optional<ValueID> subjectBeforeEdge(ValueID subjectAfterEdge, Edge) const;
     bool leavesUnspecified(Edge, ValueID subjectAfterEdge) const;
@@ -254,22 +228,16 @@ private:
     GuardFacts meetFacts(const GuardFacts&, const GuardFacts&) const;
     GuardFacts uniteFacts(std::span<const ValueID> guards) const;
     bool haveSameOrigin(const GuardOrigin&, const GuardOrigin&) const;
-    bool haveSameOrigins(const GuardFact&, const GuardFact&) const;
     bool areSameFact(const GuardFact&, const GuardFact&) const;
     bool originImplies(const GuardOrigin&, const GuardOrigin& implied, ProofSet) const;
     bool isAsStrongAs(const GuardFact&, const GuardFact& other) const;
-    ProofSet proofsToUnite(const GuardFact&, const GuardFact&) const;
     bool tryWiden(GuardFact&, const GuardFacts& factsOnOtherWay) const;
-    bool implies(const GuardFact&, const GuardFact& implied) const;
+    bool implies(const GuardFact& fact, const GuardFact& implied) const { return fact.subject == implied.subject && isAsStrongAs(fact, implied); }
     bool anyImplies(const GuardFacts&, const GuardFact& implied) const;
     bool hasEquivalentFact(const GuardFacts&, const GuardFact&) const;
-    std::optional<uint32_t> findSameFact(const GuardFacts&, const GuardFact&) const;
 
     void describeGuards();
     void numberComponents();
-    uint32_t internLocations(const Vector<MemoryLocation, 2>&, TestedSlotState, HashedIndex&);
-    uint32_t internKillClass(const GuardFact&, HashedIndex& locationsIndex, HashedIndex& killClassIndex);
-    uint32_t internKillClass(const GuardFact&, TestedSlotState, HashedIndex& locationsIndex, HashedIndex& killClassIndex);
     bool exceedsWorkLimit(uint64_t work) const;
     bool exceedsWorkLimit() const;
     uint64_t countWriters() const;
@@ -280,41 +248,33 @@ private:
     bool canSolve(ValueID guard) const;
     bool canSolveForAnyWriters(uint32_t guardIndex) const;
     enum class BehindTerminator : bool { No, Yes };
-    std::optional<BitVector> componentsHeldSinceDefinition(ValueID guard, ProgramPoint) const;
     std::optional<BitVector> componentsHeldAt(ValueID guard, ProgramPoint, BehindTerminator, unsigned depth) const;
     std::optional<BitVector> componentsProvenAtDefinition(ValueID guard, ValueLocation, unsigned depth) const;
-    bool endsProofsOfClass(ProgramPoint writer, const EffectsOnEdges&, uint32_t killClass) const;
     bool hasWriterThatEndsProofsOfClass(BlockID, uint32_t firstIndex, uint32_t killClass) const;
-    bool hasWriterBetweenTestAndBranch(ValueID test, BlockID branch, uint32_t killClass) const;
     void solveFor(ValueID guard) const;
-    bool isWorthSolvingAlone(uint32_t guardIndex) const;
     void solveNamedGuards() const;
     void solveUnnamedAllocations() const;
     void solveGuardsBetween(uint32_t firstGuardIndex, uint32_t endGuardIndex) const;
     void addGuardsBehind(ValueID guard, BitVector& guardIndexes) const;
     void solve(const BitVector& guardIndexes) const;
-    void collectKillsOf(ValueID guard) const;
     void collectKills(const BitVector& killClasses) const;
     void addKill(BlockID, uint32_t index, BitVector&& killClasses) const;
-    uint32_t internKillSet(BitVector&& killClasses) const;
 
     void applyDefinitions(BitVector& available, const BitVector& guardIndexes, BlockID, uint32_t index) const;
     void applyKills(BitVector& available, BlockID, uint32_t index) const;
     void enterEdge(BitVector& available, const BitVector& guardIndexes, Edge) const;
-    bool isProvenOnEdge(Edge, const EdgeResult&, const Component&) const;
-    bool mayEndBetweenTestAndBranch(ValueID test, BlockID branch, uint32_t killClass) const;
+    enum class KillsOfSolve : bool { No, Yes };
+    bool isProvenOnEdge(Edge, const EdgeResult&, const Component&, KillsOfSolve) const;
     bool isAvailableBeforeEdge(const BitVector& available, Edge, ValueID guard, const GuardFact& factAfterEdge) const;
-    bool isAvailableIn(const BitVector& available, ValueID guard, const GuardFact&) const;
     bool isAvailableIn(const BitVector& available, ValueID guard, const GuardFact&, ValueID subject) const;
-    bool ends(const Kill&, uint32_t killClass) const;
-    std::span<const Kill> killsIn(BlockID) const LIFETIME_BOUND;
-    std::span<const Kill> killsAt(ProgramPoint) const LIFETIME_BOUND;
-    std::optional<uint32_t> guardIndexOf(ValueID guard) const;
-    std::span<const Component> componentsOfGuardAt(uint32_t guardIndex) const LIFETIME_BOUND;
-    std::span<const Component> componentsOf(ValueID guard) const LIFETIME_BOUND;
+    bool ends(const Kill& kill, uint32_t killClass) const { return m_solution.killSets[kill.killSet].killClasses.get(killClass); }
+    std::span<const Kill> killsIn(BlockID block) const LIFETIME_BOUND { return m_solution.killsOfBlock[block.index()].span(); }
+    std::span<const Kill> killsAt(ProgramPoint point) const LIFETIME_BOUND { return std::span<const Kill>(std::ranges::equal_range(killsIn(point.block), point.index, { }, &Kill::index)); }
+    std::optional<uint32_t> guardIndexOf(ValueID guard) const { return guard.index() < m_guardIndexOfValue.size() ? m_guardIndexOfValue[guard.index()] : std::nullopt; }
+    std::span<const Component> componentsOfGuardAt(uint32_t guardIndex) const LIFETIME_BOUND { return m_components.subspan(m_firstComponent[guardIndex], m_firstComponent[guardIndex + 1] - m_firstComponent[guardIndex]); }
+    std::span<const Component> componentsOf(ValueID guard) const LIFETIME_BOUND { return guardIndexOf(guard) ? componentsOfGuardAt(*guardIndexOf(guard)) : std::span<const Component>(); }
     uint32_t firstComponentOf(ValueID guard) const;
-    GuardState stateIn(const BitVector& available, ValueID guard, const ProofSet* reliedOn) const;
-    GuardState stateIn(const BitVector& available, ValueID guard, const ProofSet* reliedOn, ValueID subject) const;
+    GuardState stateIn(const BitVector& available, ValueID guard, const ProofSet* reliedOn, ValueID subject = { }) const;
     GuardState stateOfSolvableGuardIn(const BitVector& available, ValueID guard, const ProofSet* reliedOn, ValueID subject) const;
     GuardState stateIn(const BitVector& available, ValueID guard, const Value& user) const;
 
@@ -344,7 +304,6 @@ public:
     explicit FailedTests(FunctionAnalyses&);
 
     EarlierTest find(const Value& test, BlockID at) const;
-    // False: find() answers Unknown for every test of the value, wherever it is asked.
     bool hasTestOf(ValueID) const;
 
 private:

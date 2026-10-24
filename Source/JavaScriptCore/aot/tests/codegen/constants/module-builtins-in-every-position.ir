@@ -21,7 +21,6 @@ variable g2 name="callback" module=m0 declared={type=anything} initialization=Un
 variable g3 name="received" module=m0 declared={type=anything} initialization=Undefined
 variable g4 name="exports" module=m1 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = ModuleBuiltin builtin=ImportMeta module=m0
@@ -72,7 +71,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="library" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
-  b0():
     v0 = ModuleBuiltin builtin=ModuleObjectExports module=m1
     v1 = ModuleBuiltin builtin=ModuleRequire module=m1
     v2 = ModuleBuiltin builtin=ModuleObject module=m1
@@ -83,19 +81,16 @@ function f1 name="library" module=m1 kind=CommonJsModule flags=[IsSloppy] result
     Return
 }
 function f2 name="first" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     PutModuleVariable v0 variable=g3
     v2 = Integer integer=1
     Return v2
 }
 function f3 name="second" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     PutModuleVariable v0 variable=g3
     v2 = Integer integer=2
     Return v2
 }
 function f4 name="comparesField" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g1
     v1 = PropGet v0 key="meta"
     v2 = ModuleBuiltin builtin=ImportMeta module=m0
@@ -103,7 +98,6 @@ function f4 name="comparesField" results=[{type=anything}] {
     Return v3
 }
 function f5 name="describesWrapper" module=m1 captures=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="exports"
     v2 = PropGet v0 key="require"
     v3 = PropGet v0 key="module"

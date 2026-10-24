@@ -28,8 +28,6 @@
 #include "RegExpObject.h"
 #include <algorithm>
 #include <bit>
-#include <wtf/CommaPrinter.h>
-#include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -41,37 +39,37 @@ static constexpr unsigned maxCheckedProperties = 1024;
 static constexpr size_t maxCheckedWordsAtEachEnd = 64;
 static constexpr size_t maxCheckedBytesAtEachEnd = 2 * KB;
 
-ASCIILiteral nameOf(OperandChange change)
+const OperandChangeRow& rowOf(OperandChange change)
 {
-    switch (change) {
-    case OperandChange::PropertyAdded:
-        return "property added"_s;
-    case OperandChange::PropertyRemoved:
-        return "property removed"_s;
-    case OperandChange::PropertyStored:
-        return "property stored"_s;
-    case OperandChange::AttributesChanged:
-        return "attributes changed"_s;
-    case OperandChange::IntegrityChanged:
-        return "integrity changed"_s;
-    case OperandChange::PrototypeChanged:
-        return "prototype changed"_s;
-    case OperandChange::ShapeLost:
-        return "shape lost"_s;
-    case OperandChange::PristineStateLost:
-        return "pristine state lost"_s;
-    case OperandChange::ElementsChanged:
-        return "elements changed"_s;
-    case OperandChange::ArrayStorageChanged:
-        return "array storage changed"_s;
-    case OperandChange::InternalStateChanged:
-        return "internal state changed"_s;
-    case OperandChange::BytesChanged:
-        return "bytes changed"_s;
-    case OperandChange::ByteStorageChanged:
-        return "byte storage changed"_s;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    using enum OperandUse;
+    using enum AbstractHeap;
+    static constexpr OperandUses storesProperties { StoresByKey, AssignsFrom, DefinesName, TakesDescriptor };
+    static constexpr OperandUses writesElements = storesProperties | OperandUses { WritesContents, MovesElements, DeletesByKey };
+    static constexpr AbstractHeaps properties { NamedProperties, ObjectFields };
+    static constexpr AbstractHeaps shape { NamedProperties, ObjectFields, OrderWords, ShapeWords };
+    static constexpr OperandChangeRow rows[] {
+        { "property added"_s, storesProperties, properties },
+        { "property removed"_s, { DeletesByKey, MovesElements }, properties },
+        { "property stored"_s, storesProperties, properties },
+        { "attributes changed"_s, { DefinesName, TakesDescriptor, ChangesIntegrity }, properties },
+        { "integrity changed"_s, { ChangesIntegrity }, shape },
+        { "prototype changed"_s, { ChangesPrototype }, { PrototypeLinks } },
+        { "shape lost"_s, storesProperties | OperandUses { DeletesByKey, ChangesIntegrity, ChangesPrototype }, shape },
+        { "pristine state lost"_s, { }, { PrototypeLinks, NamedProperties, ArrayStorage } },
+        { "elements changed"_s, writesElements, { Elements } },
+        // An array that is frozen in place shares its elements from then on, and one whose prototype may hold indexed accessors asks it at every store.
+        { "array storage changed"_s, writesElements | OperandUses { ChangesIntegrity, ChangesPrototype }, { ArrayStorage } },
+        { "internal state changed"_s, { WritesContents, MovesElements }, { } },
+        { "bytes changed"_s, { WritesContents, MovesElements }, { TypedArrayElements } },
+        { "byte storage changed"_s, { }, { TypedArrayStorage } },
+    };
+    static_assert(std::size(rows) == static_cast<size_t>(OperandChange::ByteStorageChanged) + 1);
+    return rows[static_cast<size_t>(change)];
+}
+
+String describe(const OperandDifference& difference)
+{
+    return makeString(rowOf(difference.change).name, difference.detail.isEmpty() ? ""_s : " "_s, difference.detail);
 }
 
 AbstractHeaps heapsOfClassOf(JSObject* object)
@@ -88,15 +86,6 @@ AbstractHeaps heapsOfClassOf(JSObject* object)
             heaps.add(*builtinClass.stateHeap);
     }
     return heaps;
-}
-
-String describe(AbstractHeaps heaps)
-{
-    StringPrintStream out;
-    CommaPrinter comma("|"_s);
-    for (AbstractHeap heap : heaps)
-        out.print(comma, nameOf(heap));
-    return out.toString();
 }
 
 template<typename T>
@@ -246,10 +235,8 @@ static void captureInternalState(JSObject* object, OperandSnapshot& state)
         return;
     }
     case JSMapType:
-        captureHashTable(object, JSMap::offsetOfStorage(), state);
-        return;
     case JSSetType:
-        captureHashTable(object, JSSet::offsetOfStorage(), state);
+        captureHashTable(object, type == JSMapType ? JSMap::offsetOfStorage() : JSSet::offsetOfStorage(), state);
         return;
     case JSDateType:
         state.internalState.append(std::bit_cast<uint64_t>(uncheckedDowncast<DateInstance>(object)->internalNumber()));
@@ -317,14 +304,8 @@ bool canCapture(JSValue operand)
 {
     if (!operand.isObject())
         return false;
-    switch (asObject(operand)->type()) {
-    case ProxyObjectType:
-    case GlobalProxyType:
-    case GlobalObjectType:
-        return false;
-    default:
-        return true;
-    }
+    JSType type = asObject(operand)->type();
+    return type != ProxyObjectType && type != GlobalProxyType && type != GlobalObjectType;
 }
 
 static String describeKey(UniquedStringImpl* key)

@@ -26,7 +26,6 @@ variable g1 name="constant" module=m0 declared={type=string} initialization=Unin
 variable g2 name="last" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="given" [isFreeName]
     v2 = Convert v1 declared={type=string}
@@ -38,7 +37,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="testsCapture" kind=Arrow captures=[{type=string}] results=[{type=number}] {
-  b0(v0: string):
     v1 = TypeTest v0 testedType=number
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):
@@ -50,7 +48,6 @@ function f1 name="testsCapture" kind=Arrow captures=[{type=string}] results=[{ty
 }
 
 function f2 name="testsVariable" results=[{type=number}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = TypeTest v0 testedType=number
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
@@ -63,7 +60,6 @@ function f2 name="testsVariable" results=[{type=number}] {
 }
 
 function f3 name="testsVariableThatKeepsItsType" results=[{type=number}] {
-  b0():
     v0 = GetModuleVariable variable=g1
     v1 = TypeTest v0 testedType=number
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
@@ -76,7 +72,6 @@ function f3 name="testsVariableThatKeepsItsType" results=[{type=number}] {
 }
 
 function f4 name="noValue" results=[{type=anything}] {
-  b0():
     v0 = Null
     v1 = ToObject v0
     PutModuleVariable v1 variable=g2

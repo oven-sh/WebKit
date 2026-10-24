@@ -39,7 +39,6 @@ static StringID frameName(const Typed::Program& program, const CompiledCode& cod
     return function ? program.at(function).name : StringID();
 }
 
-// A position in a text that the program evaluates names the file that evaluates it. Its offset counts in the text.
 static ModuleID evaluatedTextOf(const Typed::Program& program, const CompiledCode& code, uint32_t frame)
 {
     FunctionID function = frameFunction(program, code, frame);

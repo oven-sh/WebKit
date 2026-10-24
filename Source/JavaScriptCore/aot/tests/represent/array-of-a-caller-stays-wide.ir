@@ -8,7 +8,6 @@ entry module=m0
 variable g0 name="first" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="second" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = NewArray v1 contents=anything
@@ -23,7 +22,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="parameterOrVariable" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything):
     v2 = Null
     v3 = StrictEq v1, v2
     Branch v3 -> taken b1(), notTaken b2()
@@ -41,13 +39,11 @@ function f1 name="parameterOrVariable" parameters=[{type=Array}, {type=anything}
   b5(v7: Array):
     PutModuleVariable v7 variable=g0
     Return v1
-}
-# CHECK-LABEL: function f1 name="parameterOrVariable"
 # CHECK-NOT: Compress v0
 # CHECK-NOT: (v7: {{*}} @Cell32)
+}
 
 function f2 name="variableOrVariable" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -59,6 +55,5 @@ function f2 name="variableOrVariable" parameters=[{type=anything}] results=[{typ
   b3(v4: Array):
     PutModuleVariable v4 variable=g0
     Return v0
-}
-# CHECK-LABEL: function f2 name="variableOrVariable"
 # CHECK: b{{*}}(v4: {{*}} @Cell32):
+}

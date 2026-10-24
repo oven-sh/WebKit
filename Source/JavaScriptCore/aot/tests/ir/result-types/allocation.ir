@@ -11,7 +11,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 fields=[{key="x" declared={type=number} flags=[IsRequired]}]
 layout L1 kind=Environment fields=[{key="c" declared={type=anything}}]
 function f0 name="a" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewObject -, v0 layout=L1 fields=[0]
     v3 = NewArray v0 contents=number

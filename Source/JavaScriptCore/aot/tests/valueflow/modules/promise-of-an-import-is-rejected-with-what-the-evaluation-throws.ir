@@ -9,7 +9,6 @@ module m1 path="a.js" displayPath="a.js" body=f1
 entry module=m0
 layout L0 kind=Instance name="Failure" constructor=f2
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = ImportModule module=m1 referrer=m0
     v1 = PropGet v0 key="catch"
     v2 = NewClosure function=f3
@@ -17,18 +16,15 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return v3
 }
 function f1 name="a" module=m1 kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = Construct v0
     Throw v1
 }
 function f2 name="Failure" module=m1 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0 {
-  b0(v0: anything):
     v1 = NewObject layout=L0
     Return v1
 }
 function f3 name="handler" module=m0 kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="name"
     Return v1
 }

@@ -12,8 +12,6 @@
 #include "AOTFlowUnseenCode.h"
 #include "AOTProvisionalFunctions.h"
 #include "AOTSort.h"
-#include "AOTVector.h"
-#include <algorithm>
 #include <tuple>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -167,10 +165,15 @@ std::optional<uint32_t> FlowResults::findDerivedParameter(FunctionID derived, ui
     return numberOfMatches == 1 ? found : std::nullopt;
 }
 
-const FunctionFlow& FlowResults::function(FunctionID id) const
-{
-    return recordAt(m_tables.functions.functions, findAnalyzedFunction(id), m_unknown.function);
-}
+const FunctionFlow& FlowResults::function(FunctionID id) const { return recordAt(m_tables.functions.functions, findAnalyzedFunction(id), m_unknown.function); }
+const ModuleFlow& FlowResults::module(ModuleID id) const { return recordAt(m_tables.wholeProgram.modules, id, m_unknown.module); }
+const AccessSite& FlowResults::at(AccessSiteID id) const { return recordAt(m_tables.sites.accessSites, id, m_unknown.accessSite); }
+const AllocationSite& FlowResults::at(AllocationSiteID id) const { return recordAt(m_tables.sites.allocationSites, id, m_unknown.allocationSite); }
+const AllocationClass& FlowResults::at(AllocationClassID id) const { return recordAt(m_tables.sites.allocationClasses, id, m_unknown.allocationClass); }
+const FlowSiteLoss& FlowResults::lossOf(AccessSiteID id) const { return recordAt(m_tables.sites.accessSiteLosses, id, m_unknown.loss); }
+bool FlowResults::mayCallBoundFunction(AccessSiteID call) const { return recordAt(m_tables.sites.callsOfBoundFunctions, call, false); }
+AllocationSiteID FlowResults::typedResultSite(LayoutID layout) const { return recordAt(m_tables.sites.typedResultSites, layout, AllocationSiteID()); }
+const BuiltinLocationFlow* FlowResults::findBuiltinLocation(BuiltinID holder, PropertyKeyID key) const { return findRecord(m_tables.builtins.locations, std::tuple(holder, key)); }
 
 bool FlowResults::runsAtMostOnce(const Program& program, FunctionID id) const
 {
@@ -188,11 +191,6 @@ bool FlowResults::closuresAreNeverCompared(FunctionID id) const
 {
     FunctionID analyzed = findAnalyzedFunction(id);
     return analyzed && m_tables.functions.functionsWhoseClosuresAreNeverCompared.get(analyzed.index());
-}
-
-bool FlowResults::hasOneClosure(FunctionID id) const
-{
-    return id.index() < m_tables.functions.functionCountAsRead && m_tables.functions.functionsWithOneClosure.get(id.index());
 }
 
 OperandSummary FlowResults::parameterSummary(FunctionID function, uint32_t entryParameter) const
@@ -260,46 +258,14 @@ static OperandUses usesOfFieldValue(const Vector<Vector<OperandUses>>& usesByLay
     return reference.field < usesByField.size() ? usesByField[reference.field] : OperandUses::all();
 }
 
-OperandUses FlowResults::storedValueUses(FieldReference reference) const
-{
-    return usesOfFieldValue(m_tables.functions.storedValueUses, reference);
-}
-
-OperandSummary FlowResults::framePointerSummary(FunctionID function, uint32_t entryParameter) const
-{
-    return m_borrowedParameters.summaryOf(function, entryParameter);
-}
-
-OperandUses FlowResults::storedFramePointerUses(FieldReference reference) const
-{
-    return usesOfFieldValue(m_tables.functions.storedFramePointerUses, reference);
-}
+OperandUses FlowResults::storedValueUses(FieldReference reference) const { return usesOfFieldValue(m_tables.functions.storedValueUses, reference); }
+OperandUses FlowResults::storedFramePointerUses(FieldReference reference) const { return usesOfFieldValue(m_tables.functions.storedFramePointerUses, reference); }
 
 std::span<const FlowIndirectCall> FlowResults::indirectCallsFrom(FunctionID callerAsRead) const
 {
     const Vector<FlowIndirectCall>& calls = m_tables.functions.indirectCalls;
     auto callsFromCaller = std::ranges::equal_range(calls, callerAsRead, { }, &FlowIndirectCall::caller);
     return calls.subspan(callsFromCaller.begin() - calls.begin(), callsFromCaller.size());
-}
-
-const ModuleFlow& FlowResults::module(ModuleID id) const
-{
-    return recordAt(m_tables.wholeProgram.modules, id, m_unknown.module);
-}
-
-BuiltinLocationState FlowResults::builtinLocation(BuiltinID member) const
-{
-    return member && m_tables.builtins.constantMembers.get(member.index()) ? BuiltinLocationState::Constant : BuiltinLocationState::Unknown;
-}
-
-BuiltinHolderState FlowResults::builtinHolder(BuiltinID holder) const
-{
-    return holder && m_tables.builtins.intactHolders.get(holder.index()) ? BuiltinHolderState::Intact : BuiltinHolderState::Unknown;
-}
-
-const BuiltinLocationFlow* FlowResults::findBuiltinLocation(BuiltinID holder, PropertyKeyID key) const
-{
-    return findRecord(m_tables.builtins.locations, std::tuple(holder, key));
 }
 
 bool builtinHolderNeverGains(const FlowBuiltinTables& tables, BuiltinID holder, PropertyKeyID key)
@@ -312,22 +278,7 @@ bool builtinHolderNeverGains(const FlowBuiltinTables& tables, BuiltinID holder, 
     return !findRecord(tables.locations, std::tuple(holder, key));
 }
 
-const AccessSite& FlowResults::at(AccessSiteID id) const
-{
-    return recordAt(m_tables.sites.accessSites, id, m_unknown.accessSite);
-}
-
-const AllocationSite& FlowResults::at(AllocationSiteID id) const
-{
-    return recordAt(m_tables.sites.allocationSites, id, m_unknown.allocationSite);
-}
-
-const AllocationClass& FlowResults::at(AllocationClassID id) const
-{
-    return recordAt(m_tables.sites.allocationClasses, id, m_unknown.allocationClass);
-}
-
-bool keepsCreatedMembers(const AllocationClass& closures, std::span<const PropertyKeyID> ownKeys)
+static bool keepsCreatedMembers(const AllocationClass& closures, std::span<const PropertyKeyID> ownKeys)
 {
     constexpr OptionSet<ObjectMutation> mutationsChangingCreatedState { ObjectMutation::ReachUnknownJavaScript, ObjectMutation::DeleteField, ObjectMutation::RedefineProperty, ObjectMutation::ChangePrototype };
     if (!closures.impossibleMutations.containsAll(mutationsChangingCreatedState) || !closures.addedKeysAreComplete)
@@ -337,65 +288,41 @@ bool keepsCreatedMembers(const AllocationClass& closures, std::span<const Proper
     });
 }
 
-bool FlowResults::areClosuresAsCreated(FunctionID closureFunction, std::span<const PropertyKeyID> ownKeys) const
+static bool holdsOfEveryClosureClass(const Vector<AllocationClass>& classes, const Vector<AllocationClassID>& closureClassesByFunction, FunctionID closureFunction, NOESCAPE const Invocable<bool(const AllocationClass&)> auto& predicate)
 {
-    const Vector<AllocationClass>& classes = m_tables.sites.allocationClasses;
-    auto closureClasses = std::ranges::equal_range(m_closureClassesByFunction, closureFunction, { }, [&](AllocationClassID id) {
+    auto closureClasses = std::ranges::equal_range(closureClassesByFunction, closureFunction, { }, [&](AllocationClassID id) {
         return classes[id.index()].closureFunction;
     });
     return !closureClasses.empty() && std::ranges::all_of(closureClasses, [&](AllocationClassID id) {
-        return keepsCreatedMembers(classes[id.index()], ownKeys);
+        return predicate(classes[id.index()]);
+    });
+}
+
+bool FlowResults::areClosuresAsCreated(FunctionID closureFunction, std::span<const PropertyKeyID> ownKeys) const
+{
+    return holdsOfEveryClosureClass(m_tables.sites.allocationClasses, m_closureClassesByFunction, closureFunction, [&](const AllocationClass& closures) {
+        return keepsCreatedMembers(closures, ownKeys);
     });
 }
 
 bool FlowResults::closuresInheritFromFunctionPrototype(FunctionID closureFunction, PropertyKeyID key) const
 {
-    const Vector<AllocationClass>& classes = m_tables.sites.allocationClasses;
-    auto closureClasses = std::ranges::equal_range(m_closureClassesByFunction, closureFunction, { }, [&](AllocationClassID id) {
-        return classes[id.index()].closureFunction;
-    });
-    return !closureClasses.empty() && std::ranges::all_of(closureClasses, [&](AllocationClassID id) {
-        const AllocationClass& closures = classes[id.index()];
+    return holdsOfEveryClosureClass(m_tables.sites.allocationClasses, m_closureClassesByFunction, closureFunction, [&](const AllocationClass& closures) {
         return closures.inheritsFromListedFunctions && !closures.addedKeys.contains(key);
     });
 }
 
 bool FlowResults::closuresMeetOneOf(FunctionID closureFunction, OptionSet<ObjectMutation> mutations) const
 {
-    const Vector<AllocationClass>& classes = m_tables.sites.allocationClasses;
-    auto closureClasses = std::ranges::equal_range(m_closureClassesByFunction, closureFunction, { }, [&](AllocationClassID id) {
-        return classes[id.index()].closureFunction;
-    });
-    return !closureClasses.empty() && std::ranges::all_of(closureClasses, [&](AllocationClassID id) {
-        const AllocationClass& closures = classes[id.index()];
+    return holdsOfEveryClosureClass(m_tables.sites.allocationClasses, m_closureClassesByFunction, closureFunction, [&](const AllocationClass& closures) {
         return closures.impossibleMutations.contains(ObjectMutation::ReachUnknownJavaScript) && !closures.impossibleMutations.containsAll(mutations);
     });
-}
-
-bool FlowResults::closuresAreChangedByProgram(FunctionID closureFunction) const
-{
-    return closuresMeetOneOf(closureFunction, { ObjectMutation::AddProperty, ObjectMutation::RedefineProperty, ObjectMutation::ChangePrototype, ObjectMutation::StoreAfterCreation });
-}
-
-bool FlowResults::closuresAreRelinkedByProgram(FunctionID closureFunction) const
-{
-    return closuresMeetOneOf(closureFunction, { ObjectMutation::ChangePrototype });
-}
-
-const FlowSiteLoss& FlowResults::lossOf(AccessSiteID id) const
-{
-    return recordAt(m_tables.sites.accessSiteLosses, id, m_unknown.loss);
 }
 
 bool FlowResults::seesOnlyFinishedObjects(AccessSiteID id) const
 {
     FunctionID functionAsRead = at(id).function;
     return functionAsRead && m_tables.functions.functionsSeeingOnlyFinishedObjects.get(functionAsRead.index());
-}
-
-bool FlowResults::mayCallBoundFunction(AccessSiteID call) const
-{
-    return recordAt(m_tables.sites.callsOfBoundFunctions, call, false);
 }
 
 const SinkCandidates& FlowResults::sinkCandidates(AccessSiteID call, uint32_t operandIndex) const
@@ -416,11 +343,6 @@ std::span<const LayoutID> FlowResults::typedResultLayouts(AccessSiteID call) con
     return record ? record->layouts.span() : std::span<const LayoutID>();
 }
 
-AllocationSiteID FlowResults::typedResultSite(LayoutID layout) const
-{
-    return recordAt(m_tables.sites.typedResultSites, layout, AllocationSiteID());
-}
-
 FlowDataNodeStamp FlowResults::dataNodeStamp(AllocationSiteID rootSite, uint32_t ordinalInPreorder) const
 {
     const FlowDataNode* node = findRecord(m_tables.sites.dataNodes, std::tuple(rootSite, ordinalInPreorder));
@@ -435,20 +357,9 @@ OptionSet<BuiltinUse> FlowResults::usesOf(BuiltinID builtin) const
     return record ? OptionSet<BuiltinUse>::fromRaw(static_cast<uint32_t>(record->uses)) : OptionSet<BuiltinUse>();
 }
 
-OperandSummary publishedParameterSummary(const FlowResults& flow, FunctionID function, uint32_t entryParameter)
-{
-    return flow.parameterSummary(function, entryParameter);
-}
-
-CallerState callerStateOf(const FlowResults& flow, FunctionID function)
-{
-    return flow.function(function).callers;
-}
-
-bool runsAtMostOnce(const FlowResults& flow, FunctionID function)
-{
-    return flow.runsAtMostOnce(function);
-}
+OperandSummary publishedParameterSummary(const FlowResults& flow, FunctionID function, uint32_t entryParameter) { return flow.parameterSummary(function, entryParameter); }
+CallerState callerStateOf(const FlowResults& flow, FunctionID function) { return flow.function(function).callers; }
+bool runsAtMostOnce(const FlowResults& flow, FunctionID function) { return flow.runsAtMostOnce(function); }
 
 BitVector functionsCalledIndirectly(const FlowResults& flow, size_t numberOfFunctions)
 {

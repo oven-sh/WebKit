@@ -13,9 +13,7 @@
 #include "AOTKnownClosures.h"
 #include "AOTPhaseTimes.h"
 #include "AOTSchemaOperandIndexes.h"
-#include "AOTSort.h"
 #include "AOTValueFlowRules.h"
-#include "AOTVector.h"
 #include <wtf/MonotonicTime.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -26,7 +24,6 @@ static bool mayHaveInstances(const Function& function)
     return isPlainBody && !function.isUnsplitCoroutine() && !function.hiddenRestParameterIndex() && !function.argumentCountParameterIndex();
 }
 
-// Which positional parameter the value is, as it came. None for any other value.
 static std::optional<unsigned> positionOfParameter(const Function& function, ValueID id)
 {
     if (!id)
@@ -38,16 +35,13 @@ static std::optional<unsigned> positionOfParameter(const Function& function, Val
     return position < function.numberOfPositionalParameters() ? std::optional(position) : std::nullopt;
 }
 
-// A parameter is a key where the body stores under it, where the body calls what it has read under it, or where the body hands it on to a function that takes a key there.
-Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Program& program, const ParallelLoops& loops, Vector<TextPassed>* textsPassed, Vector<ValueFlowNotedOperations>* notedOperations)
+Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Program& program, const ParallelLoops& loops, Vector<TextPassed>& textsPassed, Vector<ValueFlowNotedOperations>& notedOperations)
 {
-    if (notedOperations)
-        notedOperations->fill(0, program.functions.size());
+    notedOperations.fill(0, program.functions.size());
     struct Argument {
         uint32_t index;
         uint32_t positionOfParameter;
     };
-    // A call that passes a parameter of its function on.
     struct CallPassingParameters {
         uint32_t caller;
         FunctionID callee;
@@ -76,8 +70,7 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
     positionOfKey.fill(noKey, program.functions.size());
     auto scan = [&](unsigned index, Found& body) {
         const Function& function = program.functions[index];
-        if (notedOperations)
-            (*notedOperations)[index] = notedOperationsOf(function);
+        notedOperations[index] = notedOperationsOf(function);
         bool hasInstances = mayHaveInstances(function);
         auto note = [&](unsigned position) {
             positionOfKey[index] = std::min<uint32_t>(positionOfKey[index], position);
@@ -94,7 +87,6 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
                     break;
                 case Opcode::Call:
                 case Opcode::CallList:
-                    // `this.events[type].call(this, a)`, `this.events[type](a)`.
                     for (ValueID called : { value.calleeOperand(), value.thisValueOperand() }) {
                         if (!called || !hasInstances)
                             continue;
@@ -120,7 +112,7 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
                 }
                 if (value.opcode != Opcode::Call && value.opcode != Opcode::Construct)
                     continue;
-                for (uint32_t operand = 2; textsPassed && operand < value.numberOfOperands() && operand < 2 + mostArgumentsLookedAtForTexts; ++operand) {
+                for (uint32_t operand = 2; operand < value.numberOfOperands() && operand < 2 + mostArgumentsLookedAtForTexts; ++operand) {
                     if (!value.operand(operand))
                         continue;
                     const Value& argument = function.at(definitionThroughSameValues(function, value.operand(operand)));
@@ -152,17 +144,13 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
             scan(index, found);
         return found;
     });
-    if (textsPassed) {
-        for (size_t chunk = 0; chunk < bodies.size(); ++chunk)
-            textsPassed->appendVector(std::exchange(bodies[chunk].textsPassed, { }));
-    }
+    for (size_t chunk = 0; chunk < bodies.size(); ++chunk)
+        textsPassed.appendVector(std::exchange(bodies[chunk].textsPassed, { }));
 
-    // By the name: the functions that are stored under it, and the names under which what lies under it is stored again, `prototype.on = prototype.addListener`.
     constexpr uint32_t noList = UINT32_MAX;
     Vector<uint32_t> listOfName;
     listOfName.fill(noList, program.types.numberOfPropertyKeys());
     Vector<Vector<uint32_t, 2>> functionsUnderName;
-    // Only a list that takes the functions of another one is asked what it holds.
     BitVector takesFunctionsOfOtherNames(program.types.numberOfPropertyKeys());
     using SetOfFunctions = HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
     Vector<SetOfFunctions> listed;
@@ -178,7 +166,6 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
     struct NameStoredAgain {
         uint32_t from;
         uint32_t to;
-        // Where numberTaken says how many functions of the first list the second one has got. The same two lists share it wherever they stand.
         uint32_t pair;
     };
     Vector<NameStoredAgain> namesStoredAgain;
@@ -220,7 +207,6 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
         }
     }
 
-    // Of the functions under a name a call by that name asks only at which positions they take a key.
     constexpr uint32_t positionsCounted = 8;
     struct PositionsTaken {
         std::array<uint32_t, positionsCounted> functionsTakingKeyAt { };
@@ -233,7 +219,6 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
         PositionsTaken& taken = positionsTakenUnder[list];
         (position < positionsCounted ? taken.functionsTakingKeyAt[position] : taken.functionsTakingKeyFurtherOn) += change;
     };
-    // Only a function with such a call moves. By function: the lists that hold it, once for each time they do.
     BitVector mayMove(numberOfFunctions);
     for (const Found& body : bodies.span()) {
         for (const CallPassingParameters& call : body.calls)
@@ -256,19 +241,16 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
                 listsHoldingFunctions[--endOfListsHolding[function]] = list;
         }
     }
-    // The ends have become the starts.
     auto listsHolding = [&](uint32_t function) {
         return listsHoldingFunctions.span().subspan(endOfListsHolding[function], endOfListsHolding[function + 1] - endOfListsHolding[function]);
     };
     BitVector liesUnderNameItCalls;
-    {
-        size_t numberOfCalls = 0;
-        for (const Found& body : bodies.span()) {
-            for (const CallPassingParameters& call : body.calls) {
-                size_t number = numberOfCalls++;
-                if (!call.callee && std::ranges::contains(listsHolding(call.caller), listOfName[call.nameOfCallee.index()]))
-                    liesUnderNameItCalls.set(number);
-            }
+    size_t numberOfCalls = 0;
+    for (const Found& body : bodies.span()) {
+        for (const CallPassingParameters& call : body.calls) {
+            size_t number = numberOfCalls++;
+            if (!call.callee && std::ranges::contains(listsHolding(call.caller), listOfName[call.nameOfCallee.index()]))
+                liesUnderNameItCalls.set(number);
         }
     }
 
@@ -322,7 +304,6 @@ Vector<uint32_t> ValueFlowInstancedFunctions::findParametersThatAreKeys(const Pr
     return positionOfKey;
 }
 
-// A text is a constant of flow where it is a property key of the program. So a text that a call passes where some function takes a key becomes one.
 static void makeKeysOfTextsThatCallsPass(Program& program, std::span<const uint32_t> positionOfKey, std::span<const ValueFlowInstancedFunctions::TextPassed> textsPassed)
 {
     static_assert(ValueFlowInstancedFunctions::mostArgumentsLookedAtForTexts == 64);
@@ -340,7 +321,6 @@ static void makeKeysOfTextsThatCallsPass(Program& program, std::span<const uint3
     }
 }
 
-// So does a text that the type of a declared position lists: a String operation with that text is then a member of the type, and not any string.
 static void internKeysOfDeclaredStringLiterals(Program& program, const ParallelLoops& loops)
 {
     BitVector isVisited(program.types.size());
@@ -379,19 +359,17 @@ static void internKeysOfDeclaredStringLiterals(Program& program, const ParallelL
     }
 }
 
-static ValueFlowBodies reduceBodiesTimed(Program& program, BuildContext& build, Vector<uint32_t>& positionOfKey, Seconds& time)
+static ValueFlowBodies reduceBodiesBehindKeys(Program& program, BuildContext& build, Vector<uint32_t>& positionOfKey)
 {
-    MonotonicTime start = MonotonicTime::now();
     PhaseTimes times(build, PassID::AnalyzeFlow);
     Vector<ValueFlowInstancedFunctions::TextPassed> textsPassed;
     Vector<ValueFlowNotedOperations> notedOperations;
-    positionOfKey = ValueFlowInstancedFunctions::findParametersThatAreKeys(program, build.parallelLoops(), &textsPassed, &notedOperations);
+    positionOfKey = ValueFlowInstancedFunctions::findParametersThatAreKeys(program, build.parallelLoops(), textsPassed, notedOperations);
     makeKeysOfTextsThatCallsPass(program, positionOfKey.span(), textsPassed.span());
     internKeysOfDeclaredStringLiterals(program, build.parallelLoops());
     times.didFinish("solve: keys"_s);
     ValueFlowBodies bodies = reduceBodies(program, build, WTF::move(notedOperations));
     times.didFinish("solve: bodies"_s);
-    time = MonotonicTime::now() - start;
     return bodies;
 }
 
@@ -438,7 +416,7 @@ ValueFlowInstancedFunctions::ValueFlowInstancedFunctions(const Program& program,
 
 ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, ValueFlowSolver::Rounds rounds, Witnesses witnesses, uint32_t mostRounds, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut, WaysOfValues waysOfValues)
     : m_program(program)
-    , m_bodies(reduceBodiesTimed(program, build, m_positionOfKey, m_timeToReduceBodies))
+    , m_bodies(reduceBodiesBehindKeys(program, build, m_positionOfKey))
     , m_maker(m_bodies.sets())
     , m_makerPool(m_bodies.sets())
 {
@@ -462,7 +440,6 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
         .mostSetMembers = build.limit(LimitID::MaxValueFlowSetMembers),
         .mostMembersToldApart = build.limit(LimitID::MaxValueFlowMembersToldApart),
         .mostEdgesLogged = build.limit(LimitID::MaxValueFlowEdgesLogged),
-        // The report names the statement and the position behind each site that is not proven.
         .remembersWhoLoggedEachEdge = witnesses == Witnesses::ForEveryEdge || hasFlag(build.options().reports, ReportSet::Flow),
         .isAskedHowValuesCame = waysOfValues == WaysOfValues::AreAskedFor,
         .mostRounds = mostRounds,
@@ -475,12 +452,10 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
     if (!m_instancedFunctions->isEmpty())
         m_input.instancedFunctions = m_instancedFunctions.get();
     times.didFinish("solve: instanced functions"_s);
-    MonotonicTime start = MonotonicTime::now();
     m_solver = makeUnique<ValueFlowSolver>(m_input, m_bodies.sets(), runValueFlowRule, build.parallelLoops(), rounds);
     times.didFinish("solve: the solver made"_s);
     m_hasResult = m_solver->solve();
     times.didFinish("solve: rounds"_s);
-    m_timeToSolve = MonotonicTime::now() - start;
     for (const std::unique_ptr<ValueSetMaker>& maker : m_solver->makersIdleAfterSolve())
         m_makerPool.giveBack(*maker);
 }

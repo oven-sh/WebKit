@@ -10,7 +10,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Empty"
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L0
     v1 = NewObject layout=L0
     v2 = Builtin builtin=Proxy

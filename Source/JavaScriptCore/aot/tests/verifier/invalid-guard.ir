@@ -8,7 +8,6 @@ module m1 path="other.js" displayPath="other.js"
 layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
 layout L1 name="Size" fields=[{key="x" declared={type=anything}}]
 function f0 name="badGuardOnOtherObject" parameters=[{type=object}, {type=object}] results=[{type=anything}] {
-  b0(v0: object, v1: object):
     v2 = ShapeTest v1 layouts=[L0]
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3):
@@ -18,7 +17,6 @@ function f0 name="badGuardOnOtherObject" parameters=[{type=object}, {type=object
     Return
 }
 function f1 name="badShapeGuardWiderThanReceivers" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0, L1]
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
@@ -28,7 +26,6 @@ function f1 name="badShapeGuardWiderThanReceivers" parameters=[{type=object}] re
     Return
 }
 function f2 name="badGuardOfOtherProof" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = IsPlainDataObject v0
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
@@ -38,17 +35,14 @@ function f2 name="badGuardOfOtherProof" parameters=[{type=object}] results=[{typ
     Return
 }
 function f3 name="badNoGuardOnObject" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = GetSlotOrUndefined v0 key="x" receivers=[L0] level=Proven
     Return v1
 }
 function f4 name="badProvenLayoutOutsideReceivers" parameters=[{type=L0|L1}] results=[{type=anything}] {
-  b0(v0: L0|L1):
     v1 = GetSlotOrUndefined v0 key="x" receivers=[L0] level=Proven
     Return v1
 }
 function f5 name="goodGuard" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
@@ -58,7 +52,6 @@ function f5 name="goodGuard" parameters=[{type=object}] results=[{type=anything}
     Return
 }
 function f6 name="goodGuardOnUpcastOfObject" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = Upcast v0 castType=anything
     v2 = ShapeTest v1 layouts=[L0]
     Branch v2 -> taken b1(| 0), notTaken b2()
@@ -69,18 +62,15 @@ function f6 name="goodGuardOnUpcastOfObject" parameters=[{type=object}] results=
     Return
 }
 function f7 name="goodAllocationAsGuard" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = GetSlot v1, v1 key="x" receivers=[L0] level=Proven
     Return v2
 }
 function f8 name="goodProvenLayoutWithoutGuard" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = GetSlotOrUndefined v0 key="x" receivers=[L0] level=Proven
     Return v1
 }
 function f9 name="goodAllGuards" parameters=[{type=object}, {type=object}] results=[{type=anything}] {
-  b0(v0: object, v1: object):
     v2 = ShapeTest v0 layouts=[L0]
     Branch v2 -> taken b1(| 0), notTaken b3()
   b1(v3):
@@ -95,7 +85,6 @@ function f9 name="goodAllGuards" parameters=[{type=object}, {type=object}] resul
     Return
 }
 function f10 name="badGuardOfOtherCase" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     SwitchOnShape v0 layoutSets=[[L0], [L1]] -> case b1(| 0), case b2(), otherwise b2()
   b1(v1):
     v2 = GetSlotOrUndefined v0, v1 key="x" receivers=[L1] level=Proven
@@ -104,7 +93,6 @@ function f10 name="badGuardOfOtherCase" parameters=[{type=object}] results=[{typ
     Return
 }
 function f11 name="badGuardOfCaseOnOtherObject" parameters=[{type=object}, {type=object}] results=[{type=anything}] {
-  b0(v0: object, v1: object):
     SwitchOnShape v1 layoutSets=[[L0], [L1]] -> case b1(| 0), case b2(), otherwise b2()
   b1(v2):
     v3 = GetSlotOrUndefined v0, v2 key="x" receivers=[L0] level=Proven
@@ -113,7 +101,6 @@ function f11 name="badGuardOfCaseOnOtherObject" parameters=[{type=object}, {type
     Return
 }
 function f12 name="goodGuardOfCase" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     SwitchOnShape v0 layoutSets=[[L0], [L1]] -> case b1(| 0), case b2(), otherwise b2()
   b1(v1):
     v2 = GetSlotOrUndefined v0, v1 key="x" receivers=[L0] level=Proven
@@ -122,22 +109,18 @@ function f12 name="goodGuardOfCase" parameters=[{type=object}] results=[{type=an
     Return
 }
 function f13 name="badTestOfSlotWithoutShape" parameters=[{type=object}] results=[{type=boolean}] {
-  b0(v0: object):
     v1 = IsSlotFilled v0 key="x" receivers=[L0] level=Proven
     Return v1
 }
 function f14 name="goodTestOfSlot" parameters=[{type=L0}] results=[{type=boolean}] {
-  b0(v0: L0):
     v1 = IsSlotFilled v0 key="x" receivers=[L0] level=Proven
     Return v1
 }
 function f15 name="badElementOfArrayWithoutGuard" parameters=[{type=Array}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Array, v1: i32):
     v2 = GetArrayElement v0, v1 level=Proven
     Return v2
 }
 function f16 name="badStorageKindUnderPristineGuard" parameters=[{type=Array}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Array, v1: i32):
     v2 = IsPristine v0 builtinClass=Array aspects=[Storage]
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3):
@@ -147,7 +130,6 @@ function f16 name="badStorageKindUnderPristineGuard" parameters=[{type=Array}, {
     Return
 }
 function f17 name="goodElementOfPristineArray" parameters=[{type=Array}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Array, v1: i32):
     v2 = IsPristine v0 builtinClass=Array aspects=[Storage]
     Branch v2 -> taken b1(| 0), notTaken b3()
   b1(v3):
@@ -162,7 +144,6 @@ function f17 name="goodElementOfPristineArray" parameters=[{type=Array}, {type=i
     Return
 }
 function f18 name="badGuardOfOtherEnumerator" parameters=[{type=object}, {type=object}, {type=string}, {type=i32}] results=[{type=anything}] {
-  b0(v0: object, v1: object, v2: string, v3: i32):
     v4 = ForInOpen v0
     v5 = ForInOpen v1
     v6 = IsEnumeratorCurrent v5, v1, v3
@@ -174,7 +155,6 @@ function f18 name="badGuardOfOtherEnumerator" parameters=[{type=object}, {type=o
     Return
 }
 function f19 name="goodGuardOfEnumerator" parameters=[{type=object}, {type=string}, {type=i32}] results=[{type=anything}] {
-  b0(v0: object, v1: string, v2: i32):
     v3 = ForInOpen v0
     v4 = IsEnumeratorCurrent v3, v0, v2
     Branch v4 -> taken b1(| 0), notTaken b2()

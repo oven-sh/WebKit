@@ -17,7 +17,6 @@ entry module=m0
 variable g0 name="input" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="module" kind=Module results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = CallDirect v0 function=f1
     v2 = CallDirect v0 function=f4
@@ -26,7 +25,6 @@ function f0 name="module" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="mainWithHelper" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f2
     v2 = ToBoolean v1
     Jump -> next b1()
@@ -41,17 +39,14 @@ function f1 name="mainWithHelper" parameters=[{type=anything}] results=[{type=an
 }
 
 function f2 name="loadWords" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 
 function f3 name="scoreBehindHelper" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 
 function f4 name="mainWithoutHelper" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Jump -> next b1()
   b1():
@@ -65,12 +60,10 @@ function f4 name="mainWithoutHelper" parameters=[{type=anything}] results=[{type
 }
 
 function f5 name="scoreWithoutHelper" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 
 function f6 name="mainWithLoopOnOneSideOfBranch" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b4()
   b1():
@@ -86,6 +79,5 @@ function f6 name="mainWithLoopOnOneSideOfBranch" parameters=[{type=anything}] re
 }
 
 function f7 name="scoreOnOneSideOfBranch" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }

@@ -5,30 +5,25 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="callsBothTheLaterOneFirst" parameters=[{type=object}] results=[{type=boolean}] {
-  b0(v0: object):
     v1 = CallDirect v0 function=f2
     v2 = CallDirect v0 function=f1
     Return v2
 }
 function f1 name="firstUnknownEntry" parameters=[{type=object}] results=[{type=boolean}] {
-  b0(v0: object):
     v1 = ScopeHasBinding v0 key="first"
     Return v1
 }
 function f2 name="secondUnknownEntry" parameters=[{type=object}] results=[{type=boolean}] {
-  b0(v0: object):
     v1 = Integer integer=1
     v2 = ScopeHasBinding v0 key="second"
     Return v2
 }
 function f3 name="oneCallAwayBeatsTwo" parameters=[{type=object}] results=[{type=boolean}] {
-  b0(v0: object):
     v1 = CallDirect v0 function=f4
     v2 = CallDirect v0 function=f2
     Return v2
 }
 function f4 name="oneCallFromTheFirst" parameters=[{type=object}] results=[{type=boolean}] {
-  b0(v0: object):
     v1 = CallDirect v0 function=f1
     Return v1
 }

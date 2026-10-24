@@ -42,7 +42,6 @@ function f3 name="badValueTwice" parameters=[{type=anything}] results=[{type=und
     Return
 }
 function f4 name="badInOrdinaryBlock" results=[{type=undefined}] {
-  b0():
     v0 = CatchValue
     Return
 }

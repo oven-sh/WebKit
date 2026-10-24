@@ -59,7 +59,6 @@ variable g9 name="MethodHandedOn" module=m0 declared={type=f13} flow={writers=Al
 variable g10 name="ConstructorFunction" module=m0 declared={type=f10} initialization=Function function=f10 flow={writers=AllKnown stores=Never initialization=StoredBeforeEveryRead}
 variable g11 name="BelowComputedKey" module=m0 declared={type=f15} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = NewClosure function=f2
@@ -124,81 +123,66 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Plain" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2
 }
 function f2 name="method" module=m0 kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f3 name="create" module=m0 kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f4 name="Derived" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0
     v3 = SuperConstruct v2, v1 layout=L1
     Return v3
 }
 function f5 name="UsedAtStart" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L2
     v2 = NewObject v1 layout=L2
     Return v2
 }
 function f6 name="TwoNames" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L3
     v2 = NewObject v1 layout=L3
     Return v2
 }
 function f7 name="ComputedKey" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L4
     v2 = NewObject v1 layout=L4
     Return v2
 }
 function f8 name="computed" module=m0 kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f9 name="EvaluatedAgain" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L5
     v2 = NewObject v1 layout=L5
     Return v2
 }
 function f10 name="ConstructorFunction" module=m0 flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f11 name="BelowFunction" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0
     v3 = SuperConstruct v2, v1 layout=L7
     Return v3
 }
 function f12 name="MayBeReadWhileUndefined" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L8
     v2 = NewObject v1 layout=L8
     Return v2
 }
 function f13 name="MethodHandedOn" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L9
     v2 = NewObject v1 layout=L9
     Return v2
 }
 function f14 name="method" module=m0 kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f15 name="BelowComputedKey" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0
     v3 = SuperConstruct v2, v1 layout=L10
     Return v3

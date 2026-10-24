@@ -5,7 +5,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = PropGet v0 key="print" [isFreeName]
@@ -19,7 +18,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="atComma" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = String string=","
     v2 = PropGet v0 key="split"
     v3 = Call v2, v0, v1 calleeKey="split"
@@ -38,16 +36,14 @@ function f1 name="atComma" parameters=[{type=string}] results=[{type=anything}] 
     Jump -> next b1(v12)
   b3():
     Return v6
-}
-# CHECK-LABEL: function f1 name="atComma"
 # CHECK-NOT: StringPrototypeSplit
 # CHECK-NOT: IteratorOpen
 # CHECK: = CallBuiltin v0, v1, {{*}} overload=StringPrototypeIndexOf/0
 # CHECK: string = Substring v0,
 # CHECK-NOT: StringPrototypeSplit
+}
 
 function f2 name="atUnknownSeparator" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
-  b0(v0: string, v1: string):
     v2 = PropGet v0 key="split"
     v3 = Call v2, v0, v1 calleeKey="split"
     v4 = IteratorOpen v3
@@ -65,7 +61,6 @@ function f2 name="atUnknownSeparator" parameters=[{type=string}, {type=string}] 
     Jump -> next b1(v12)
   b3():
     Return v6
-}
-# CHECK-LABEL: function f2 name="atUnknownSeparator"
 # CHECK: = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
 # CHECK-NOT: StringPrototypeIndexOf
+}

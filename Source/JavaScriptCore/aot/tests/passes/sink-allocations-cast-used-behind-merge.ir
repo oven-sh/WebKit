@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="usedBehindMerge" parameters=[{type=anything}, {type=anything}, {type=int[0, 2000]}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: int[0, 2000], v3: boolean):
     v4 = Undefined
     v5 = Integer
     Jump -> next b1(v4, v5)
@@ -29,8 +28,6 @@ function f0 name="usedBehindMerge" parameters=[{type=anything}, {type=anything},
   b6(v15: anything):
     v16 = Call v15, -, v13
     Return v16
-}
-# CHECK-LABEL: function f0 name="usedBehindMerge"
 # CHECK: b2(
 # CHECK-NOT: NewArray
 # CHECK: b6(v15: anything):
@@ -42,9 +39,9 @@ function f0 name="usedBehindMerge" parameters=[{type=anything}, {type=anything},
 # CHECK: [[array0]]: Array = NewArray {{*}} contents=anything
 # CHECK-NEXT: v13: Array = Upcast [[array0]] castType=Array
 # CHECK-NEXT: v14: anything = Call v0, -, v13
+}
 
 function f1 name="usedInOneBlock" parameters=[{type=anything}, {type=anything}, {type=int[0, 2000]}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: int[0, 2000]):
     v3 = Undefined
     v4 = Integer
     Jump -> next b1(v3, v4)
@@ -61,11 +58,10 @@ function f1 name="usedInOneBlock" parameters=[{type=anything}, {type=anything}, 
     v13 = Call v0, -, v12
     v14 = Call v1, -, v12
     Return v14
-}
-# CHECK-LABEL: function f1 name="usedInOneBlock"
 # CHECK: b2(
 # CHECK-NOT: NewArray
 # CHECK-NOT: Upcast
 # CHECK: [[array1]]: Array = NewArray {{*}} contents=anything
 # CHECK-NEXT: v13: anything = Call v0, -, [[array1]]
 # CHECK-NEXT: v14: anything = Call v1, -, [[array1]]
+}

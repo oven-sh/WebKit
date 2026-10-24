@@ -7,38 +7,32 @@ module m0 path="main.js" displayPath="main.js" body=f0
 layout L0 name="Empty"
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L0 fields=[]
     v1 = NewClosure v0 function=f4
     v2 = CallDirect v1 function=f5
     Return
 }
 function f1 name="closureStaysLocal" results=[{type=undefined}] {
-  b0():
     v0 = NewObject layout=L0 fields=[]
     v1 = NewClosure v0 function=f4
     Return
 }
 function f2 name="closureReturned" results=[{type=function}] {
-  b0():
     v0 = NewObject layout=L0 fields=[]
     v1 = NewClosure v0 function=f4
     Return v1
 }
 function f3 name="closureCalled" results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L0 fields=[]
     v1 = NewClosure v0 function=f4
     v2 = Call v1
     Return v2
 }
 function f4 name="capturing" kind=Arrow captures=[{type=object}] results=[{type=undefined}] {
-  b0(v0: object):
     v1 = TypeTest v0 testedType=object
     Return
 }
 function f5 name="callsArgument" parameters=[{type=function}] results=[{type=undefined}] {
-  b0(v0: function):
     v1 = Call v0
     Return
 }

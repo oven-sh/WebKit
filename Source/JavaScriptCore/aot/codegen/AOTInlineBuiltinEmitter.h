@@ -14,10 +14,10 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class InlineBuiltinEmitter final : public OperationEmitter {
 public:
-    explicit InlineBuiltinEmitter(CodeGenerator&);
+    explicit InlineBuiltinEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
-    void generateCallInline(const ValueContext&);
-    void generateTryCallInline(const TerminatorContext&);
+    void generateCallInline(const ValueContext& value) { generate(InlineCall(value)); }
+    void generateTryCallInline(const TerminatorContext& terminator) { generate(InlineCall(terminator)); }
     void generate(const InlineCall&);
 };
 

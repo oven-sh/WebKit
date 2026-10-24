@@ -20,7 +20,6 @@ entry module=m0
 layout L0 kind=Instance name="Point" module=m0 constructor=f1 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
 variable g0 name="point" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = NewClosure function=f2
@@ -35,7 +34,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v10
 }
 function f1 name="Point" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number, v2: number):
     v3 = GetConstructPrototype v0 layout=L0
     v4 = NewObject v3 layout=L0 fields=[]
     PropSet v4, v1 key="x" mode=Strict
@@ -43,14 +41,12 @@ function f1 name="Point" kind=BaseConstructor flags=[HasNewTarget] parameters=[{
     Return v4
 }
 function f2 name="norm" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="x"
     v2 = PropGet v0 key="y"
     v3 = Add v1, v2
     Return v3
 }
 function f3 name="use" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = PropGet v0 key="norm"
     v2 = Call v1, v0 calleeKey="norm"

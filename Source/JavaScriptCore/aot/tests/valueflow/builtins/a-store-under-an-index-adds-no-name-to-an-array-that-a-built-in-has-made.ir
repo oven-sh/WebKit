@@ -21,7 +21,6 @@ variable g0 name="list" module=m0 declared={type=anything} initialization=Undefi
 variable g1 name="bytes" module=m0 declared={type=anything} initialization=Undefined
 variable g2 name="pattern" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Array
     v1 = Integer integer=2
     v2 = Construct v0, -, v1
@@ -49,15 +48,12 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v13
 }
 function f1 name="one" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="two" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f3 name="always" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Boolean boolean=true
     Return v1
 }

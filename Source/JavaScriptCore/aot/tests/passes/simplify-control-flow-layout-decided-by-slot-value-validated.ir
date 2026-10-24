@@ -9,7 +9,6 @@ layout L0 name="Round" fields=[{key="kind" declared={type=1} flags=[IsRequired] 
 layout L1 name="Wide" fields=[{key="kind" declared={type=2} flags=[IsRequired] flow={occupancy=AlwaysFilled}}, {key="w" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}]
 
 function f0 name="caseOfSwitch" parameters=[{type=L0|L1}] results=[{type=anything}] {
-  b0(v0: L0|L1):
     v1 = GetSlot v0 key="kind" receivers=[L0, L1] level=Proven
     Switch v1 cases=[1] -> case b1(), otherwise b4()
   b1():
@@ -24,7 +23,6 @@ function f0 name="caseOfSwitch" parameters=[{type=L0|L1}] results=[{type=anythin
   b4():
     v6 = Null
     Return v6
-}
-# CHECK-LABEL: function f0 name="caseOfSwitch"
 # CHECK: ValidateType v0 validatedType=L0
 # CHECK-NEXT: = AssumeType v0 castType=L0
+}

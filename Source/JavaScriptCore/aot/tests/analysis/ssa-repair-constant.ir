@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="copyInDominatingBlock" parameters=[{type=boolean}, {type=boolean}, {type=number}] results=[{type=number}] {
-  b0(v0: boolean, v1: boolean, v2: number):
     Branch v0 -> taken b1(), notTaken b5()
   b1():
     v3 = Integer integer=7
@@ -34,7 +33,6 @@ function f0 name="copyInDominatingBlock" parameters=[{type=boolean}, {type=boole
 # CHECK: b4():
 # CHECK-NEXT: v6: number = Sub v4, [[K]]
 function f1 name="copiesInSiblingBlocks" parameters=[{type=boolean}, {type=boolean}, {type=number}] results=[{type=number}] {
-  b0(v0: boolean, v1: boolean, v2: number):
     Branch v0 -> taken b1(), notTaken b5()
   b1():
     v3 = Integer integer=7
@@ -62,7 +60,6 @@ function f1 name="copiesInSiblingBlocks" parameters=[{type=boolean}, {type=boole
 # SIBLINGS-NEXT: [[B]]: 7 = Integer integer=7
 # SIBLINGS-NEXT: v5: number = Sub v2, [[B]]
 function f2 name="definitionInDominatingBlock" parameters=[{type=boolean}, {type=boolean}, {type=number}] results=[{type=number}] {
-  b0(v0: boolean, v1: boolean, v2: number):
     Branch v0 -> taken b1(), notTaken b3()
   b1():
     v3 = Integer integer=7

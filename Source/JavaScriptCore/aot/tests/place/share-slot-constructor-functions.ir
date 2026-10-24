@@ -12,7 +12,6 @@ layout L1 kind=Instance name="Token" constructor=f2 fields=[{key="kind" declared
 layout L2 kind=Instance name="Identifier" constructor=f3 fields=[{key="text" declared={type=undefined|string} flags=[IsRequired]}, {key="parent" declared={type=undefined|object} flags=[IsRequired]}, {key="kind" declared={type=number} flags=[IsRequired]}, {key="end" declared={type=number} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}] flags=[IsConstructorFunction]
 variable g0 name="node" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToNumber v1
@@ -36,7 +35,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Node" flags=[HasThis] thisType={type=L0} parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: L0, v1: number):
     v2 = Undefined
     PropSet v0, v1 key="pos"
     PropSet v0, v1 key="end"
@@ -46,7 +44,6 @@ function f1 name="Node" flags=[HasThis] thisType={type=L0} parameters=[{type=num
     Return
 }
 function f2 name="Token" flags=[HasThis] thisType={type=L1} parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: L1, v1: number):
     v2 = Undefined
     PropSet v0, v1 key="kind"
     PropSet v0, v1 key="pos"
@@ -55,7 +52,6 @@ function f2 name="Token" flags=[HasThis] thisType={type=L1} parameters=[{type=nu
     Return
 }
 function f3 name="Identifier" flags=[HasThis] thisType={type=L2} parameters=[{type=number}, {type=string}] results=[{type=anything}] {
-  b0(v0: L2, v1: number, v2: string):
     v3 = Undefined
     PropSet v0, v2 key="text"
     PropSet v0, v3 key="parent"

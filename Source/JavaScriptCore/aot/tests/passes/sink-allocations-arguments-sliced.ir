@@ -9,7 +9,6 @@ function f0 name="target" flags=[HasArgumentCount, HasHiddenRest] parameters=[{t
     Return v1
 }
 function f1 name="ownFrame" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0} {
-  b0(v0: f0, v1: anything):
     v2 = GetRestLength
     v3 = GetArgument
     v4 = CreateRest firstArgument=1
@@ -17,40 +16,35 @@ function f1 name="ownFrame" role=GenericEntrypoint flags=[HasThis] captures=[{ty
     v6 = Integer integer=2
     v7 = CallBuiltin v5, v6 overload=ArrayPrototypeSlice/1
     Return v7
-}
-# CHECK-LABEL: function f1 name="ownFrame"
 # CHECK-NOT: CreateUnmappedArguments
 # CHECK-NOT: CallBuiltin
 # CHECK: [[fromFrame]]: Array = CreateRest firstArgument=2
 # CHECK-NOT: CreateRest
+}
 
 function f2 name="valuesAreNamed" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = Integer integer=3
     v4 = NewArray v1, v2 contents=anything
     v5 = CreateUnmappedArguments v3, v4, v0
     v6 = Integer integer=1
     v7 = CallBuiltin v5, v6 overload=ArrayPrototypeSlice/1
     Return v7
-}
-# CHECK-LABEL: function f2 name="valuesAreNamed"
 # CHECK-NOT: CreateUnmappedArguments
 # CHECK-NOT: CallBuiltin
 # CHECK: Array = NewArray v1, v2 contents=anything
 # CHECK-NOT: NewArray
+}
 
 function f3 name="everyValue" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     v2 = NewArray contents=anything
     v3 = Undefined
     v4 = CreateUnmappedArguments v1, v2, v0, v3
     v5 = CallBuiltin v4 overload=ArrayPrototypeSlice/1
     Return v5
-}
-# CHECK-LABEL: function f3 name="everyValue"
 # CHECK-NOT: CreateUnmappedArguments
 # CHECK: Array = NewArray v0 contents=anything
+}
 
 function f4 name="fromTheRestList" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: int[0, 4294967295], v1: anything, v2: Array):
@@ -58,11 +52,10 @@ function f4 name="fromTheRestList" flags=[HasArgumentCount, HasHiddenRest] param
     v4 = Integer integer=3
     v5 = CallBuiltin v3, v4 overload=ArrayPrototypeSlice/1
     Return v5
-}
-# CHECK-LABEL: function f4 name="fromTheRestList"
 # CHECK-NOT: CreateUnmappedArguments
 # CHECK: [[inList]]: 2 = Integer integer=2
 # CHECK: v5: object = CallBuiltin v2, [[inList]] overload=ArrayPrototypeSlice/1
+}
 
 function f5 name="startsAtParameterThatMayNotBePassed" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: int[0, 4294967295], v1: anything, v2: Array):
@@ -70,20 +63,18 @@ function f5 name="startsAtParameterThatMayNotBePassed" flags=[HasArgumentCount, 
     v4 = Integer
     v5 = CallBuiltin v3, v4 overload=ArrayPrototypeSlice/1
     Return v5
-}
-# CHECK-LABEL: function f5 name="startsAtParameterThatMayNotBePassed"
 # CHECK: v3: Arguments = CreateUnmappedArguments v0, v2, v1
 # CHECK: v5: object = CallBuiltin v3, v4 overload=ArrayPrototypeSlice/1
+}
 
 function f6 name="startIsNotConstant" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=i32}] results=[{type=anything}] {
   b0(v0: int[0, 4294967295], v1: i32, v2: Array):
     v3 = CreateUnmappedArguments v0, v2, v1
     v4 = CallBuiltin v3, v1 overload=ArrayPrototypeSlice/1
     Return v4
-}
-# CHECK-LABEL: function f6 name="startIsNotConstant"
 # CHECK: v3: Arguments = CreateUnmappedArguments v0, v2, v1
 # CHECK: v4: object = CallBuiltin v3, v1 overload=ArrayPrototypeSlice/1
+}
 
 function f7 name="hasAnEnd" flags=[HasArgumentCount, HasHiddenRest] results=[{type=anything}] {
   b0(v0: int[0, 4294967295], v1: Array):
@@ -92,10 +83,9 @@ function f7 name="hasAnEnd" flags=[HasArgumentCount, HasHiddenRest] results=[{ty
     v4 = Integer integer=1
     v5 = CallBuiltin v2, v3, v4 overload=ArrayPrototypeSlice/1
     Return v5
-}
-# CHECK-LABEL: function f7 name="hasAnEnd"
 # CHECK: v2: Arguments = CreateUnmappedArguments v0, v1
 # CHECK: v5: object = CallBuiltin v2, v3, v4 overload=ArrayPrototypeSlice/1
+}
 
 function f8 name="negativeStart" flags=[HasArgumentCount, HasHiddenRest] results=[{type=anything}] {
   b0(v0: int[0, 4294967295], v1: Array):
@@ -103,7 +93,6 @@ function f8 name="negativeStart" flags=[HasArgumentCount, HasHiddenRest] results
     v3 = Integer integer=-1
     v4 = CallBuiltin v2, v3 overload=ArrayPrototypeSlice/1
     Return v4
-}
-# CHECK-LABEL: function f8 name="negativeStart"
 # CHECK: v2: Arguments = CreateUnmappedArguments v0, v1
 # CHECK: v4: object = CallBuiltin v2, v3 overload=ArrayPrototypeSlice/1
+}

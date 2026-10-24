@@ -10,10 +10,6 @@
 
 #include "AOTVector.h"
 #include <algorithm>
-#include <cstring>
-#include <tuple>
-#include <type_traits>
-#include <utility>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -102,10 +98,7 @@ void UseLists::makeAnew()
 
     m_uses.shrink(0);
     m_placeOfNextUse.shrink(0);
-    RoomForUses made = makeRoomForUses(std::max<size_t>(m_numberOfUses + m_numberOfUses / 8, numberOfValues + numberOfValues / 4) + 8);
-    StoredUse* uses = made.uses;
-    uint32_t* placeOfNextUse = made.placeOfNextUse;
-    size_t room = made.size;
+    RoomForUses room = makeRoomForUses(std::max<size_t>(m_numberOfUses + m_numberOfUses / 8, numberOfValues + numberOfValues / 4) + 8);
 
     std::span<ValueLocation> locations = m_locations.mutableSpan();
     std::span<UseRange> ranges = m_ranges.mutableSpan();
@@ -119,16 +112,12 @@ void UseLists::makeAnew()
             RELEASE_ASSERT(entry.placement == ValuePlacement::Detached);
             entry = location;
         }, [&](ValueID used, const Use& use) ALWAYS_INLINE_LAMBDA {
-            if (place == room) [[unlikely]] {
-                RoomForUses more = makeRoomForUses(2 * room);
-                uses = more.uses;
-                placeOfNextUse = more.placeOfNextUse;
-                room = more.size;
-            }
+            if (place == room.size) [[unlikely]]
+                room = makeRoomForUses(2 * room.size);
             UseRange& range = ranges[used.index()];
-            placeOfNextUse[place] = range.first;
+            room.placeOfNextUse[place] = range.first;
             range = { static_cast<uint32_t>(place), (range.end | isLinked) + 1 };
-            new (NotNull, uses + place) Use(use);
+            new (NotNull, room.uses + place) Use(use);
             ++place;
         });
     }
@@ -163,117 +152,24 @@ std::span<const Use> UseLists::layOut(ValueID id) const
 
 void UseLists::didBecomeUpToDate()
 {
-    RELEASE_ASSERT(!m_hasSilentChanges);
     m_hasChangedBlocks = false;
     m_isUpToDate = true;
     m_graphMayHaveChanged = false;
     m_mustBeMadeAnew = false;
-    m_takesSilentChangesAtOnce = false;
 }
 
-void UseLists::fallBehind()
-{
-    m_isUpToDate = false;
-    if (!m_hasSilentChanges) [[likely]]
-        return;
-    m_hasChangedBlocks = true;
-    m_hasSilentChanges = false;
-}
-
-void UseLists::didChangeBlock(BlockID)
-{
-    fallBehind();
-    m_hasChangedBlocks = true;
-}
-
-void UseLists::endSilence()
-{
-    if (m_hasSilentChanges)
-        fallBehind();
-}
-
-void UseLists::didOutliveDrop()
-{
-    endSilence();
-    m_takesSilentChangesAtOnce = true;
-}
-
-// A value that the lists find in no block has no use listed under its name as a user. Whoever has put it into a block since has named that block.
 void UseLists::didChangeOperandsOf(ValueID user)
 {
-    fallBehind();
-    if (user.index() >= m_locations.size())
-        return;
-    const ValueLocation& location = m_locations[user.index()];
-    if (location.placement == ValuePlacement::InBlock)
-        didChangeBlock(location.block);
-}
-
-// A use that has come about since the lists were brought up to date stands in a block that has been named.
-void UseLists::didReplaceUses(ValueID from, ValueID)
-{
-    fallBehind();
-    if (m_mustBeMadeAnew || from.index() >= m_ranges.size())
-        return;
-    if (useCount(from))
+    m_isUpToDate = false;
+    if (user.index() < m_locations.size() && m_locations[user.index()].placement == ValuePlacement::InBlock)
         m_hasChangedBlocks = true;
 }
 
-void UseLists::didChangeControlFlow()
+void UseLists::didReplaceUses(ValueID from, ValueID)
 {
-    fallBehind();
-    m_graphMayHaveChanged = true;
-}
-
-void UseLists::didChangeEverything()
-{
-    fallBehind();
-    m_mustBeMadeAnew = true;
-}
-
-void UseLists::didRenumber(std::span<const BlockID> blocks, std::span<const ValueID> values)
-{
-    if (!m_isUpToDate || m_hasSilentChanges || values.size() != m_locations.size()) {
-        didChangeEverything();
-        return;
-    }
-
-    auto renumbered = [&](BlockID block) {
-        if (blocks.empty())
-            return block;
-        BlockID moved = blocks[block.index()];
-        RELEASE_ASSERT(moved);
-        return moved;
-    };
-
-    size_t numberOfValues = m_function.values.size();
-    Vector<UseRange> ranges(numberOfValues);
-    Vector<ValueLocation> locations(numberOfValues);
-    for (size_t index = 0; index < values.size(); ++index) {
-        UseRange range = m_ranges[index];
-        ValueID value = values[index];
-        if (!value) {
-            RELEASE_ASSERT(range.first == range.end);
-            continue;
-        }
-        ValueLocation location = m_locations[index];
-        RELEASE_ASSERT(location.placement != ValuePlacement::Detached);
-        location.block = renumbered(location.block);
-        locations[value.index()] = location;
-        ranges[value.index()] = range;
-    }
-    m_ranges = WTF::move(ranges);
-    m_locations = WTF::move(locations);
-
-    for (Use& use : std::span<Use> { reinterpret_cast<Use*>(m_uses.mutableSpan().data()), m_uses.size() }) {
-        use.block = renumbered(use.block);
-        if (!use.user)
-            continue;
-        use.user = values[use.user.index()];
-        RELEASE_ASSERT(use.user);
-    }
-    // The graph that orderOf() reads has the former numbers.
     m_isUpToDate = false;
+    if (!m_mustBeMadeAnew && from.index() < m_ranges.size() && useCount(from))
+        m_hasChangedBlocks = true;
 }
 
 auto UseLists::bringUpToDate(const CFG& cfg) -> Update

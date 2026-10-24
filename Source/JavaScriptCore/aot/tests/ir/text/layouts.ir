@@ -35,7 +35,6 @@ variable g1 module=m0 declared={type=anything} owner=L2
 variable g2 name="derived" module=m0 declared={type=L(IteratorResult)|L(m0)}
 module m0 path="/a.ts" displayPath="a.ts" body=f0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     Return
 }
 function f1 name="C" module=m0 position=12 kind=BaseConstructor flags=[HasNewTarget] captures=[{type=env L1}] thisType={type=anything} results=[{type=object}]

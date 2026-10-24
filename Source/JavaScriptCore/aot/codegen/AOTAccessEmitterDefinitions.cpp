@@ -150,20 +150,15 @@ void AccessEmitter::generateSetLiteralPrototype(const ValueContext& value)
     m_out.appendTo(continuation);
 }
 
-// A key that the operation takes is a string or a symbol, so a number among the keys is the number of an identifier.
-Boxed AccessEmitter::identifierOperand(const OperationContext& context, PropertyKeyID key)
-{
-    return boxedConstant(jsNumber(findIdentifierNumber(context, key).value_or(0)));
-}
-
 // The keys that the source text names lie in the image as a run, which the operation gets by its number plus one.
 AccessEmitter::ExcludedKeys AccessEmitter::excludedKeysOf(const ValueContext& value)
 {
     std::optional<Request> run = value->request();
     Vector<Boxed, 8> keys;
     if (!run) {
+        // A key that the operation takes is a string or a symbol, so a number among the keys is the number of an identifier.
         for (PropertyKeyID key : value->excludedKeys())
-            keys.append(identifierOperand(value, key));
+            keys.append(boxedConstant(jsNumber(findIdentifierNumber(value, key).value_or(0))));
     }
     for (ValueID key : value->excludedOperands())
         keys.append(in<Boxed>(key));
@@ -197,7 +192,6 @@ void AccessEmitter::copyDataProperties(const ValueContext& value)
     }
 
     // In code of every shape: the test is shorter than what it saves is long, `...(condition && { .. })` in code that runs once a turn.
-
     LBasicBlock mayHaveOwnProperties = newBlock();
     LBasicBlock continuation = newBlock();
     branch(isCell(source), { normalEdge(mayHaveOwnProperties), normalEdge(continuation) });

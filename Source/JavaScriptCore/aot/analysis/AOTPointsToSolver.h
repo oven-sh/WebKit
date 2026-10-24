@@ -18,6 +18,7 @@ namespace JSC { namespace AOT { namespace Typed {
 using ObjectSlot = std::optional<uint32_t>;
 
 inline constexpr EscapeReasons callReasons { EscapeReason::PassedToUnknownCode, EscapeReason::RetainedByCallee };
+inline constexpr OperandUses leakingUses { OperandUse::Retains, OperandUse::Returns, OperandUse::PassesToUserCode };
 
 struct ValueSet {
     BitVector objects;

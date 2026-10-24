@@ -28,8 +28,6 @@ struct ConstructorOwnAllocation {
     ValueID allocation;
 };
 
-enum class ReturnedValues : uint8_t { Unknown, OnlyUndefined };
-
 } // anonymous namespace
 
 static ValueID newTargetParameterOf(const Function& function)
@@ -137,7 +135,6 @@ static Vector<ValueSite, 2> collectOwnSuperCalls(const Function& function)
     return calls;
 }
 
-// A second super() constructs another object before binding this throws, so one object serves one call.
 static bool runsAtMostOneCall(const Function& function, std::span<const ValueSite> calls)
 {
     CFG cfg(function);
@@ -154,7 +151,6 @@ static bool runsAtMostOneCall(const Function& function, std::span<const ValueSit
     return true;
 }
 
-// The callees of a call name the version it enters: the function as read where every argument is proven, else its generic version.
 static FunctionID findEnteredVersion(const Program& program, const CalleeSet& callees, FunctionID function)
 {
     for (FunctionID callee : callees.functions) {
@@ -165,7 +161,6 @@ static FunctionID findEnteredVersion(const Program& program, const CalleeSet& ca
     return std::ranges::binary_search(callees.functions, function) ? function : FunctionID();
 }
 
-// Where it is not, the class object is expected to inherit from the class that the source names, and the run time clears the guard of the link where the class is defined with another parent.
 static bool isBaseProven(const Layout& holder)
 {
     return holder.flow.baseState != BaseState::Unknown;
@@ -180,7 +175,6 @@ static ValueID restParameterOf(const Function& function)
     return index < entry.parameters.size() ? entry.parameters[index] : ValueID();
 }
 
-// The parent's rest array is this one, so nothing else may name it and both constructors have to know the same of it.
 static bool canHandOverRest(const Function& function, const ValueSite& superCall, const Function& parent)
 {
     ValueID rest = restParameterOf(function);
@@ -199,12 +193,10 @@ static bool canHandOverRest(const Function& function, const ValueSite& superCall
     return use && use->kind == Use::Kind::Operand && use->user == superCall.value && use->operandIndex == OperandIndex::SuperConstructList::list;
 }
 
-// A constructor that cannot count its arguments sees no more of a list than its parameters name, and undefined past the end of the list.
 static bool canPassList(const Program& program, const Function& function, const ValueSite& superCall, const Function& parent)
 {
     if (parent.hasAny({ FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest }))
         return false;
-    // The arguments of this frame were passed once already. Any other list may be too long to pass, which the operation reports.
     if (sameObjectThroughCasts(function, function.at(superCall.value).listOperand()) != restParameterOf(function))
         return false;
     if (parent.has(FunctionFlags::HasRestParameter))
@@ -225,7 +217,6 @@ static FunctionID findParentTakingThis(const Program& program, const Function& f
     if (!parent)
         return { };
 
-    // Flow stamps the super call of a class whose base it has proven. Where it has proven none there is no stamp, and the parent is entered as read.
     CalleeSetID callees = superCall.callees();
     if (!callees && isBaseProven(holder))
         return { };
@@ -275,7 +266,6 @@ LayoutID layoutAllocatedBy(const Program& program, FunctionID constructor)
     return function.constructedClass;
 }
 
-// Every caller hands over an object that it allocated with the layout of the class or of a class below it.
 static DeclaredType computeThisType(const Program& program, const Function& original, TypeArena& types)
 {
     TypeID replacedType = TypeTable::never;
@@ -296,7 +286,6 @@ static DeclaredType computeThisType(const Program& program, const Function& orig
 
     if (program.at(replacedType).layouts)
         return { .type = replacedType };
-    // The source need not say what a class extends: the base may be a value, and only flow finds that it is this class.
     Type declared = Type::forLayoutSet(program.declaredMembersOf(original.constructedClass));
     return { .type = types.intern(declared.unionWith(Type::forLayouts(program.layoutsBelow(original.constructedClass), types), types)) };
 }
@@ -377,7 +366,6 @@ static ValueID appendParentVersionCall(IRBuilder& builder, DerivedFunctionInputs
     });
 }
 
-// Up to this call the constructor has done nothing that running it once more would show.
 static bool canStartOverAt(const Program& program, const Function& version, const ValueSite& site)
 {
     const Block& entry = version.at(entryBlock);
@@ -391,7 +379,6 @@ static bool canStartOverAt(const Program& program, const Function& version, cons
     });
 }
 
-// The object that was handed in goes unused, and the caller takes the one that is returned.
 static void returnWhatSourceConstructs(IRBuilder& builder, ValueID thisParameter)
 {
     const Function& version = builder.function();
@@ -435,7 +422,6 @@ static void passThisToSuperCall(IRBuilder& builder, DerivedFunctionInputs& input
         IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(isUnchanged, 0, BlockFrequency::Normal, BlockFrequency::Rare);
         builder.endPrediction(failedUnasked, branch, { });
         builder.moveToEndOf(branch.notTaken);
-        // An arm that came back would make of `this` one of two objects for all the code that follows.
         if (canStartOver)
             returnWhatSourceConstructs(builder, thisParameter);
         else
@@ -468,20 +454,20 @@ static void passThisToSuper(IRBuilder& builder, DerivedFunctionInputs& inputs, V
     builder.setHandler(std::nullopt);
 }
 
-static ReturnedValues returnUndefinedForThis(IRBuilder& builder, ValueID thisParameter)
+static bool returnsOnlyUndefinedForThis(IRBuilder& builder, ValueID thisParameter)
 {
     Function& version = builder.function();
     CFG cfg(version);
     ValueIdentities identities(version, cfg);
 
-    ReturnedValues returnedValues = ReturnedValues::OnlyUndefined;
+    bool returnsOnlyUndefined = true;
     for (uint32_t blockIndex = 0; blockIndex < version.blocks.size(); ++blockIndex) {
         BlockID block(blockIndex);
         switch (version.at(block).terminator.kind) {
         case TerminatorKind::Return:
             break;
         case TerminatorKind::ReturnCall:
-            returnedValues = ReturnedValues::Unknown;
+            returnsOnlyUndefined = false;
             continue;
         case TerminatorKind::Jump:
         case TerminatorKind::Branch:
@@ -500,7 +486,7 @@ static ReturnedValues returnUndefinedForThis(IRBuilder& builder, ValueID thisPar
         if (!returned)
             continue;
         if (identities.identityOf(returned) != thisParameter) {
-            returnedValues = ReturnedValues::Unknown;
+            returnsOnlyUndefined = false;
             continue;
         }
 
@@ -509,7 +495,7 @@ static ReturnedValues returnUndefinedForThis(IRBuilder& builder, ValueID thisPar
         version.edit(block, BlockEdit::Terminator).terminator.setValueOperand(undefined);
     }
     builder.applyInsertions();
-    return returnedValues;
+    return returnsOnlyUndefined;
 }
 
 Function buildAllocatedThisVersion(const DerivedFunctionKey& key, DerivedFunctionInputs& inputs)
@@ -546,14 +532,10 @@ Function buildAllocatedThisVersion(const DerivedFunctionKey& key, DerivedFunctio
     }
 
     DeclaredType& result = version.results[0];
-    switch (returnUndefinedForThis(builder, thisParameter)) {
-    case ReturnedValues::Unknown:
-        result.type = inputs.types.unionOf(result.type, TypeTable::undefined);
-        break;
-    case ReturnedValues::OnlyUndefined:
+    if (returnsOnlyUndefinedForThis(builder, thisParameter))
         result = DeclaredType { .type = TypeTable::undefined };
-        break;
-    }
+    else
+        result.type = inputs.types.unionOf(result.type, TypeTable::undefined);
     return version;
 }
 

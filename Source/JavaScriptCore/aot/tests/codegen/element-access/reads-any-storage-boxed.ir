@@ -10,7 +10,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="holdsInt32" parameters=[{type=Array<i32, proven, pristine[Storage]>}, {type=int[0, 4294967294]}] results=[{type=anything}] {
-  b0(v0: Array<i32, proven, pristine[Storage]>, v1: int[0, 4294967294]):
     v2 = GetArrayElement v0, v1 level=Proven
     Return v2
 }
@@ -19,7 +18,6 @@ function f0 name="holdsInt32" parameters=[{type=Array<i32, proven, pristine[Stor
 # R-LABEL: function f0 name="holdsInt32"
 # R: v2: undefined|i32 @JSValue = GetArrayElement v0, v1 level=Proven
 function f1 name="holdsNumber" parameters=[{type=Array<number, proven, pristine[Storage]>}, {type=int[0, 4294967294]}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage]>, v1: int[0, 4294967294]):
     v2 = GetArrayElement v0, v1 level=Proven
     Return v2
 }
@@ -28,7 +26,6 @@ function f1 name="holdsNumber" parameters=[{type=Array<number, proven, pristine[
 # R-LABEL: function f1 name="holdsNumber"
 # R: v2: undefined|number @JSValue = GetArrayElement v0, v1 level=Proven
 function f2 name="holdsString" parameters=[{type=Array<string, proven, pristine[Storage]>}, {type=int[0, 4294967294]}] results=[{type=anything}] {
-  b0(v0: Array<string, proven, pristine[Storage]>, v1: int[0, 4294967294]):
     v2 = GetArrayElement v0, v1 level=Proven
     Return v2
 }
@@ -37,7 +34,6 @@ function f2 name="holdsString" parameters=[{type=Array<string, proven, pristine[
 # R-LABEL: function f2 name="holdsString"
 # R: v2: undefined|string @JSValue = GetArrayElement v0, v1 level=Proven
 function f3 name="holdsAnything" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=int[0, 4294967294]}] results=[{type=anything}] {
-  b0(v0: Array<anything, proven, pristine[Storage]>, v1: int[0, 4294967294]):
     v2 = GetArrayElement v0, v1 level=Proven
     Return v2
 }
@@ -46,13 +42,11 @@ function f3 name="holdsAnything" parameters=[{type=Array<anything, proven, prist
 # R-LABEL: function f3 name="holdsAnything"
 # R: v2: anything @JSValue = GetArrayElement v0, v1 level=Proven
 function f4 name="hasNoHoles" parameters=[{type=Array<anything, proven, pristine[Storage, Dense]>}, {type=int[0, 4294967294]}] results=[{type=anything}] {
-  b0(v0: Array<anything, proven, pristine[Storage, Dense]>, v1: int[0, 4294967294]):
     v2 = GetArrayElement v0, v1 level=Proven
     Return v2
 }
 # CHECK-NOT: f4: size=[[boxed]] frame=
 function f5 name="atNumber" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<anything, proven, pristine[Storage]>, v1: number):
     v2 = GetArrayElement v0, v1 level=Proven
     Return v2
 }
@@ -60,7 +54,6 @@ function f5 name="atNumber" parameters=[{type=Array<anything, proven, pristine[S
 # CHECK: f5: size=
 # CHECK-NEXT: stub ArrayGetAtNumber x1
 function f6 name="inFastCode" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=int[0, 4294967294]}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: Array<anything, proven, pristine[Storage]>, v1: int[0, 4294967294], v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v3 = GetArrayElement v0, v1 level=Proven
@@ -73,7 +66,6 @@ function f6 name="inFastCode" parameters=[{type=Array<anything, proven, pristine
 # CHECK-NEXT: stub ArrayGetAtIndex x1
 # S: f6 b1 Fast
 function f7 name="inCompactCode" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=int[0, 4294967294]}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: Array<anything, proven, pristine[Storage]>, v1: int[0, 4294967294], v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v3 = GetArrayElement v0, v1 level=Proven
@@ -86,20 +78,17 @@ function f7 name="inCompactCode" parameters=[{type=Array<anything, proven, prist
 # CHECK: stub ArrayGetAtIndex x1
 # S: f7 b1 Compact
 function f8 name="has" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=int[0, 4294967294]}] results=[{type=boolean}] {
-  b0(v0: Array<anything, proven, pristine[Storage]>, v1: int[0, 4294967294]):
     v2 = HasArrayElement v0, v1 level=Proven
     Return v2
 }
 # CHECK: f8: size=[[has]] frame=
 # CHECK-NEXT: stub ArrayHasAtIndex x1
 function f9 name="hasInArrayWithoutHoles" parameters=[{type=Array<anything, proven, pristine[Storage, Dense]>}, {type=int[0, 4294967294]}] results=[{type=boolean}] {
-  b0(v0: Array<anything, proven, pristine[Storage, Dense]>, v1: int[0, 4294967294]):
     v2 = HasArrayElement v0, v1 level=Proven
     Return v2
 }
 # CHECK-NOT: f9: size=[[has]] frame=
 function f10 name="inEachShape" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, proven, pristine[Storage]>, v1: i32, v2: int, v3: number, v4: whole, v5: boolean):
     v6 = GetArrayElement v0, v1 level=Proven
     v7 = GetArrayElement v0, v2 level=Proven
     v8 = GetArrayElement v0, v3 level=Proven
@@ -148,7 +137,6 @@ function f10 name="inEachShape" parameters=[{type=Array<anything, proven, pristi
 # R-COUNT-4: anything @JSValue = GetArrayElement
 # R-COUNT-4: boolean @Boolean = HasArrayElement
 function f11 name="inTheLibrary" role=Library parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=int[0, 4294967294]}] results=[{type=anything}] {
-  b0(v0: Array<anything, proven, pristine[Storage]>, v1: int[0, 4294967294]):
     v2 = GetArrayElement v0, v1 level=Proven
     Return v2
 }
@@ -156,7 +144,6 @@ function f11 name="inTheLibrary" role=Library parameters=[{type=Array<anything, 
 # CHECK: f11: size=
 # CHECK-NEXT: stub ArrayGetAtIndex x1
 function f12 name="holdsNoNumberInTheLibrary" role=Library parameters=[{type=Array<string, proven, pristine[Storage]>}, {type=int[0, 4294967294]}] results=[{type=anything}] {
-  b0(v0: Array<string, proven, pristine[Storage]>, v1: int[0, 4294967294]):
     v2 = GetArrayElement v0, v1 level=Proven
     Return v2
 }

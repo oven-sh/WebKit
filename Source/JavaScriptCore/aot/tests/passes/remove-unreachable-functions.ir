@@ -10,7 +10,6 @@ module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = CallDirect function=f1
     v1 = NewClosure function=f7
     v2 = Builtin builtin=GlobalThis
@@ -30,7 +29,6 @@ function f0 kind=Module results=[{type=anything}] {
 # CHECK: b0(
 
 function f1 name="calledDirectly" results=[{type=undefined}] {
-  b0():
     v0 = Undefined
     Return v0
 }
@@ -38,7 +36,6 @@ function f1 name="calledDirectly" results=[{type=undefined}] {
 # CHECK: b0(
 
 function f2 name="deadCaller" results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f3
     Return v0
 }
@@ -46,7 +43,6 @@ function f2 name="deadCaller" results=[{type=undefined}] {
 # CHECK-NOT: b0(
 
 function f3 name="deadMiddle" results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f4
     Return v0
 }
@@ -54,7 +50,6 @@ function f3 name="deadMiddle" results=[{type=undefined}] {
 # CHECK-NOT: b0(
 
 function f4 name="deadLeaf" results=[{type=undefined}] {
-  b0():
     v0 = Undefined
     Return v0
 }
@@ -62,7 +57,6 @@ function f4 name="deadLeaf" results=[{type=undefined}] {
 # CHECK-NOT: b0(
 
 function f5 name="deadCycleA" results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f6
     Return v0
 }
@@ -70,7 +64,6 @@ function f5 name="deadCycleA" results=[{type=undefined}] {
 # CHECK-NOT: b0(
 
 function f6 name="deadCycleB" results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f5
     Return v0
 }
@@ -78,7 +71,6 @@ function f6 name="deadCycleB" results=[{type=undefined}] {
 # CHECK-NOT: b0(
 
 function f7 name="closureOnly" results=[{type=undefined}] {
-  b0():
     v0 = Undefined
     Return v0
 }
@@ -86,7 +78,6 @@ function f7 name="closureOnly" results=[{type=undefined}] {
 # CHECK: b0(
 
 function f8 name="hoisted" results=[{type=undefined}] {
-  b0():
     v0 = Undefined
     Return v0
 }
@@ -94,7 +85,6 @@ function f8 name="hoisted" results=[{type=undefined}] {
 # CHECK: b0(
 
 function f9 name="closureOnly" role=GenericEntrypoint captures=[{type=f7}] results=[{type=anything}] derivation={source=f7} creator=Entrypoint{target=f7 arguments=Registers} {
-  b0(v0: f7):
     v1 = CallDirect function=f7
     Return v1
 }
@@ -102,7 +92,6 @@ function f9 name="closureOnly" role=GenericEntrypoint captures=[{type=f7}] resul
 # CHECK: b0(
 
 function f10 name="deadLeaf" role=GenericEntrypoint captures=[{type=f4}] results=[{type=anything}] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} {
-  b0(v0: f4):
     v1 = CallDirect function=f4
     Return v1
 }
@@ -111,7 +100,6 @@ function f10 name="deadLeaf" role=GenericEntrypoint captures=[{type=f4}] results
 
 # Only the closure names it, and whoever has the closure enters the entrypoint, which holds a copy of the body.
 function f11 name="copiedIntoEntrypoint" results=[{type=undefined}] {
-  b0():
     v0 = Undefined
     Return v0
 }
@@ -119,7 +107,6 @@ function f11 name="copiedIntoEntrypoint" results=[{type=undefined}] {
 # CHECK-NOT: b0(
 
 function f12 name="copiedIntoEntrypoint" role=GenericEntrypoint captures=[{type=f11}] results=[{type=anything}] derivation={source=f11} creator=Entrypoint{target=f11 arguments=Registers} {
-  b0(v0: f11):
     v1 = Undefined
     Return v1
 }
@@ -128,7 +115,6 @@ function f12 name="copiedIntoEntrypoint" role=GenericEntrypoint captures=[{type=
 
 # The first read of the variable creates the closure.
 function f13 name="hoistedAndRead" results=[{type=undefined}] {
-  b0():
     v0 = Undefined
     Return v0
 }
@@ -136,7 +122,6 @@ function f13 name="hoistedAndRead" results=[{type=undefined}] {
 # CHECK-NOT: b0(
 
 function f14 name="hoistedAndRead" role=GenericEntrypoint captures=[{type=f13}] results=[{type=anything}] derivation={source=f13} creator=Entrypoint{target=f13 arguments=Registers} {
-  b0(v0: f13):
     v1 = Undefined
     Return v1
 }
@@ -145,7 +130,6 @@ function f14 name="hoistedAndRead" role=GenericEntrypoint captures=[{type=f13}] 
 
 # The entrypoint enters the generic version, so that one stays and the function goes.
 function f15 name="enteredInGenericVersion" results=[{type=undefined}] {
-  b0():
     v0 = Undefined
     Return v0
 }
@@ -153,7 +137,6 @@ function f15 name="enteredInGenericVersion" results=[{type=undefined}] {
 # CHECK-NOT: b0(
 
 function f16 name="enteredInGenericVersion" role=GenericEntrypoint captures=[{type=f15}] results=[{type=anything}] derivation={source=f15} creator=Entrypoint{target=f15 arguments=Registers} {
-  b0(v0: f15):
     v1 = CallDirect function=f17
     Return v1
 }
@@ -161,7 +144,6 @@ function f16 name="enteredInGenericVersion" role=GenericEntrypoint captures=[{ty
 # CHECK: b0(
 
 function f17 name="enteredInGenericVersion" role=GenericVersion results=[{type=undefined}] derivation={source=f15} creator=Version{provenVersion=f15} {
-  b0():
     v0 = Undefined
     Return v0
 }
@@ -170,7 +152,6 @@ function f17 name="enteredInGenericVersion" role=GenericVersion results=[{type=u
 
 # The call by value has the effects of this body, so it stays beside the copy.
 function f18 name="namedByCalleeSet" results=[{type=undefined}] {
-  b0():
     v0 = Undefined
     Return v0
 }
@@ -178,7 +159,6 @@ function f18 name="namedByCalleeSet" results=[{type=undefined}] {
 # CHECK: b0(
 
 function f19 name="namedByCalleeSet" role=GenericEntrypoint captures=[{type=f18}] results=[{type=anything}] derivation={source=f18} creator=Entrypoint{target=f18 arguments=Registers} {
-  b0(v0: f18):
     v1 = Undefined
     Return v1
 }

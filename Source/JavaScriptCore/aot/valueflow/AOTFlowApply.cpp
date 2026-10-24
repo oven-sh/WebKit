@@ -8,34 +8,43 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayStorageForms.h"
+#include "AOTFlowSiteData.h"
 #include "AOTFunctionEditing.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTPhaseTimes.h"
 #include "AOTProgramCaches.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTThreads.h"
-#include "AOTVector.h"
-#include <algorithm>
+#include "AOTTypeClosure.h"
+#include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-bool provesEverything(const BuildContext& build)
-{
-    return build.recordedOptions().has(TestingSwitch::ProveEverything);
-}
+namespace {
+
+struct FlowApplyContext {
+    Program& program;
+    const FlowResults& results;
+    const FlowApplication& application;
+    BuildContext& build;
+};
+
+using FamilyFieldTypeCache = UncheckedKeyHashMap<uint64_t, std::optional<Type>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+
+struct TypeOfPlaceholder {
+    FieldReference field;
+    Type declared;
+};
+
+} // anonymous namespace
 
 static bool isOfRuntimeModule(const Program& program, ModuleID module)
 {
     return module && program.at(module).kind == ModuleKind::RuntimeSource;
 }
 
-bool provesEverythingIn(const FlowBodyApplication& body)
-{
-    return provesEverything(body.build) && !isOfRuntimeModule(body.program, body.function.module);
-}
-
-// Flow takes members away from the type of a position, and turns a type that was only expected into one that is proven. About a position that it does not prove it says nothing.
-void applyPosition(DeclaredType& declared, const FlowPositionUpdate& update)
+static void applyPosition(DeclaredType& declared, const FlowPositionUpdate& update)
 {
     if (update.type)
         declared.type = update.type;
@@ -43,6 +52,458 @@ void applyPosition(DeclaredType& declared, const FlowPositionUpdate& update)
         declared.flags.remove(PositionFlags::IsExpected);
     if (update.replacesExpectation)
         declared.flags.add(PositionFlags::IsExpected);
+}
+
+static BitVector findLayoutsNeverStoredOtherTypes(const Program& program, const FlowResults& results, const Vector<FlowLayoutUpdate>& updates)
+{
+    auto baseOf = [&](LayoutID id) {
+        const LayoutFlow& flow = updates[id.index()].flow;
+        if (flow.baseState == BaseState::Layout)
+            return flow.base;
+        return flow.baseState == BaseState::Unknown ? predictedHeritageOf(program.at(id)) : LayoutID();
+    };
+    BitVector found(updates.size());
+    for (size_t index = 0; index < updates.size(); ++index) {
+        bool hasClassNeverStoredOtherTypes = std::ranges::any_of(updates[index].flow.allocationClasses, [&](AllocationClassID allocationClass) {
+            return results.at(allocationClass).impossibleMutations.contains(ObjectMutation::StoreOfOtherType);
+        });
+        if (!hasClassNeverStoredOtherTypes)
+            continue;
+        for (LayoutID current(index); current && !found.quickSet(current.index()); current = baseOf(current)) { }
+    }
+    return found;
+}
+
+static void applyLayoutUpdate(Layout& layout, const FlowLayoutUpdate& update)
+{
+    layout.flow = update.flow;
+    layout.classFlow = update.classFlow;
+    RELEASE_ASSERT(update.fields.size() == layout.fields.size());
+    for (size_t index = 0; index < layout.fields.size(); ++index) {
+        Field& field = layout.fields[index];
+        const FlowFieldUpdate& fieldUpdate = update.fields[index];
+        if (!fieldUpdate.accessor.isAccessor())
+            applyPosition(field.declared, fieldUpdate.position);
+        field.flow = fieldUpdate.flow;
+
+        bool wasAnalyzed = field.flow.location.writers == WriterState::AllKnown;
+        if (wasAnalyzed && !field.flow.stability.contains(FieldStability::IsNeverDeleted) && field.flags.contains(FieldFlags::IsRequired)) {
+            field.flags.remove(FieldFlags::IsRequired);
+            field.flags.add(FieldFlags::IsRequiredUntilDeleted);
+        }
+    }
+}
+
+static void becomeAccessor(TypeArena& arena, Field& field, const FlowAccessorField& accessor)
+{
+    field.form = accessor.form;
+    field.flags.remove(FieldFlags::IsImmutable);
+    Type getter = accessor.getters.isEmpty() ? Type::function() : Type::never();
+    for (FunctionID function : accessor.getters)
+        getter = getter.unionWith(Type::forFunction(function), arena);
+    field.slotType = arena.intern(getter);
+    Type setter = Type::never();
+    for (FunctionID function : accessor.setters)
+        setter = setter.unionWith(Type::forFunction(function), arena);
+    field.setterType = accessor.setters.isEmpty() ? TypeID() : arena.intern(setter);
+}
+
+static void applyAccessorFields(TypeArena& arena, Layout& layout, const FlowLayoutUpdate& update)
+{
+    for (size_t index = 0; index < layout.fields.size(); ++index) {
+        if (update.fields[index].accessor.isAccessor())
+            becomeAccessor(arena, layout.fields[index], update.fields[index].accessor);
+    }
+}
+
+static bool isPlaceholder(const Program& program, const Field& field)
+{
+    return field.key && field.form.isEmpty() && field.declared.flags.contains(PositionFlags::IsExpected) && program.at(field.declared.type).isUndefinedOrNull();
+}
+
+static std::optional<Type> uniteTypesDeclaredIn(const Program& program, std::span<const LayoutID> layouts, PropertyKeyID key, TypeArena& arena)
+{
+    std::optional<Type> united;
+    for (LayoutID member : layouts) {
+        std::optional<uint32_t> index = program.at(member).findField(key);
+        if (!index)
+            continue;
+        const Field& declaration = fieldAt(program, declarationOf(program, { member, *index }));
+        if (isPlaceholder(program, declaration))
+            continue;
+        const Type& type = program.at(slotTypeOf(program, declaration));
+        united = united ? united->unionWith(type, arena) : type;
+        if (united->isAnything())
+            break;
+    }
+    return united;
+}
+
+static std::optional<Type> typeDeclaredInFamilies(const Program& program, FamilyFieldTypeCache& cache, std::span<const LayoutSetID> families, std::span<const LayoutID> views, PropertyKeyID key, TypeArena& arena)
+{
+    if (families.empty())
+        return std::nullopt;
+    std::optional<Type> declared = uniteTypesDeclaredIn(program, views, key, arena);
+    for (LayoutSetID family : families) {
+        uint64_t cacheKey = static_cast<uint64_t>(family.index()) << 32 | key.index();
+        const std::optional<Type>& declaredInFamily = cache.ensure(cacheKey, [&] {
+            return uniteTypesDeclaredIn(program, program.at(family).members.span(), key, arena);
+        }).iterator->value;
+        if (declaredInFamily)
+            declared = declared ? declared->unionWith(*declaredInFamily, arena) : *declaredInFamily;
+    }
+    if (!declared || declared->isAnything())
+        return std::nullopt;
+    return declared;
+}
+
+static Vector<Vector<std::optional<Type>>> findTypesDeclaredInFamilies(const Program& program, const Vector<FlowLayoutUpdate>& updates, TypeArena& arena)
+{
+    Vector<Vector<std::optional<Type>>> types(updates.size());
+    FamilyFieldTypeCache cache;
+    BitVector declaredLayoutsWithFields(program.layouts.size());
+    for (size_t index = 0; index < updates.size(); ++index) {
+        if (!updates[index].appendedFields.isEmpty())
+            declaredLayoutsWithFields.quickSet(declaredLayoutOf(program, LayoutID(index)).index());
+    }
+    Vector<Vector<LayoutID>> declaredViews = declaredViewsOf(program, declaredLayoutsWithFields);
+    for (size_t index = 0; index < updates.size(); ++index) {
+        if (updates[index].appendedFields.isEmpty())
+            continue;
+        Vector<LayoutSetID, 2> families = declaredFamiliesOf(program, LayoutID(index));
+        std::span<const LayoutID> views = declaredViews[declaredLayoutOf(program, LayoutID(index)).index()].span();
+        types[index] = WTF::map(updates[index].appendedFields, [&](const FlowAppendedField& appended) {
+            return typeDeclaredInFamilies(program, cache, families.span(), views, appended.key, arena);
+        });
+    }
+    return types;
+}
+
+Vector<BitVector> findAppendedFieldsDeclaredInFamilies(const Program& program, const Vector<FlowLayoutUpdate>& updates, const ParallelLoops& loops)
+{
+    struct Worker {
+        explicit Worker(const TypeTable& types)
+            : arena(types)
+        {
+        }
+
+        ScratchTypeArena arena;
+        FamilyFieldTypeCache cache;
+    };
+
+    Vector<BitVector> isDeclared(updates.size());
+    Vector<uint32_t> layouts = findIndicesInParallel(loops, updates.size(), [&](unsigned index) {
+        return !updates[index].appendedFields.isEmpty();
+    });
+    BitVector declaredLayoutsWithFields(program.layouts.size());
+    for (uint32_t index : layouts)
+        declaredLayoutsWithFields.quickSet(declaredLayoutOf(program, LayoutID(index)).index());
+    Vector<Vector<LayoutID>> declaredViews = declaredViewsOf(program, declaredLayoutsWithFields);
+    Vector<std::unique_ptr<Worker>> workers(loops.width());
+    forEachIndexInParallel(loops, layouts.size(), [&](unsigned position, unsigned number) {
+        if (!workers[number])
+            workers[number] = makeUniqueWithoutFastMallocCheck<Worker>(program.types);
+        Worker& worker = *workers[number];
+        uint32_t index = layouts[position];
+        Vector<LayoutSetID, 2> families = declaredFamiliesOf(program, LayoutID(index));
+        std::span<const LayoutID> views = declaredViews[declaredLayoutOf(program, LayoutID(index)).index()].span();
+        const Vector<FlowAppendedField>& fields = updates[index].appendedFields;
+        for (uint32_t field = 0; field < fields.size(); ++field) {
+            if (typeDeclaredInFamilies(program, worker.cache, families.span(), views, fields[field].key, worker.arena))
+                isDeclared[index].set(field);
+        }
+    });
+    return isDeclared;
+}
+
+static Vector<TypeOfPlaceholder> findTypesOfPlaceholders(const Program& program, TypeArena& arena)
+{
+    BitVector declaredLayoutsWithPlaceholders(program.layouts.size());
+    for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+        const Layout& layout = program.layouts[index];
+        if (layout.kind != LayoutKind::Instance || layout.isDerived())
+            continue;
+        if (std::ranges::any_of(layout.fields, [&](const Field& field) { return !field.flags.contains(FieldFlags::IsInherited) && isPlaceholder(program, field); }))
+            declaredLayoutsWithPlaceholders.quickSet(index);
+    }
+    Vector<TypeOfPlaceholder> found;
+    if (declaredLayoutsWithPlaceholders.isEmpty())
+        return found;
+    FamilyFieldTypeCache cache;
+    Vector<Vector<LayoutID>> declaredViews = declaredViewsOf(program, declaredLayoutsWithPlaceholders);
+    for (size_t index : declaredLayoutsWithPlaceholders) {
+        LayoutID id(static_cast<uint32_t>(index));
+        const Layout& layout = program.at(id);
+        Vector<LayoutSetID, 2> families = declaredFamiliesOf(program, id);
+        for (uint32_t field = 0; field < layout.fields.size(); ++field) {
+            if (layout.fields[field].flags.contains(FieldFlags::IsInherited) || !isPlaceholder(program, layout.fields[field]))
+                continue;
+            std::optional<Type> declared = typeDeclaredInFamilies(program, cache, families.span(), declaredViews[index].span(), layout.fields[field].key, arena);
+            if (!declared || (declared->isNumberOrNullish() && declared->primitives & Primitive::Double))
+                continue;
+            found.append({ { id, field }, declared->unionWith(program.at(layout.fields[field].declared.type), arena) });
+        }
+    }
+    return found;
+}
+
+static LayoutID provenBaseOfLayout(const LayoutFlow& flow)
+{
+    return flow.baseState == BaseState::Layout ? flow.base : LayoutID();
+}
+
+static void dropTypesThatDataLiesOutside(const Program& program, const Vector<FlowLayoutUpdate>& updates, Vector<Vector<std::optional<Type>>>& types)
+{
+    for (const Data& data : program.data) {
+        forEachDataNodeInPreorder(data.root, [&](uint32_t, const DataNode& node) {
+            const auto* object = node.tryAs<DataNode::Object>();
+            if (!object)
+                return;
+            for (LayoutID layout = object->layout; layout; layout = provenBaseOfLayout(updates[layout.index()].flow)) {
+                Vector<std::optional<Type>>& typesOfLayout = types[layout.index()];
+                const Vector<FlowAppendedField>& appendedFields = updates[layout.index()].appendedFields;
+                for (size_t index = 0; index < typesOfLayout.size(); ++index) {
+                    if (!typesOfLayout[index])
+                        continue;
+                    bool liesOutside = std::ranges::any_of(object->members, [&](const DataMember& member) {
+                        return member.key == appendedFields[index].key && !includesData(program, *typesOfLayout[index], member.value);
+                    });
+                    if (liesOutside)
+                        typesOfLayout[index] = std::nullopt;
+                }
+            }
+        });
+    }
+}
+
+static void applyTypeDeclaredInFamily(const Program& program, TypeArena& arena, const std::optional<Type>& declared, Field& field)
+{
+    if (!declared)
+        return;
+    const Type& proven = program.at(field.declared.type);
+    bool fitsDeclaredType = proven.isSubsetOf(declared->withPrimitives(Primitive::Absent), program);
+    if (field.flow.stability.contains(FieldStability::IsNeverStoredWithOtherType)) {
+        if (fitsDeclaredType)
+            return;
+        field.flow.stability.remove(FieldStability::IsNeverStoredWithOtherType);
+    }
+    const Type& slotType = fitsDeclaredType ? proven : *declared;
+    if (!fitsDeclaredType)
+        field.declared.type = arena.intern(*declared);
+    if (!fitsDeclaredType && slotType.isNumberOrNullish() && slotType.primitives & Primitive::Double)
+        field.declared.flags.add(PositionFlags::IsExpected);
+}
+
+static void appendFlowFields(const Program& program, TypeArena& arena, std::span<const std::optional<Type>> typesDeclaredInFamilies, bool mustKeepTypes, Layout& layout, const FlowLayoutUpdate& update)
+{
+    for (size_t index = 0; index < update.appendedFields.size(); ++index) {
+        const FlowAppendedField& appended = update.appendedFields[index];
+        RELEASE_ASSERT(!layout.findField(appended.key));
+        Field field;
+        field.key = appended.key;
+        field.declared.type = TypeTable::anything;
+        if (!appended.accessor.isAccessor())
+            applyPosition(field.declared, appended.position);
+        field.flags = { FieldFlags::IsAddedLate };
+        field.flow = appended.flow;
+        if (appended.accessor.isAccessor())
+            becomeAccessor(arena, field, appended.accessor);
+        else if (!mustKeepTypes)
+            applyTypeDeclaredInFamily(program, arena, typesDeclaredInFamilies[index], field);
+        layout.appendField(WTF::move(field));
+    }
+}
+
+static void appendLiteralKeyOrders(Layout& layout, const FlowLayoutUpdate& update)
+{
+    size_t numberOfIndexOrders = layout.flow.constructorOrders.size();
+    for (const Vector<PropertyKeyID>& keys : update.literalKeyOrders) {
+        FieldOrder order;
+        bool listsOnlyFields = std::ranges::all_of(keys, [&](PropertyKeyID key) {
+            std::optional<uint32_t> field = layout.findField(key);
+            if (field)
+                order.fields.append(*field);
+            return field.has_value();
+        });
+        if (listsOnlyFields && !std::ranges::contains(layout.flow.constructorOrders.span().first(numberOfIndexOrders), order))
+            layout.flow.constructorOrders.append(WTF::move(order));
+    }
+}
+
+static void applyLayoutUpdates(const FlowApplyContext& context)
+{
+    Program& program = context.program;
+    const Vector<FlowLayoutUpdate>& updates = context.application.layouts;
+    RELEASE_ASSERT(updates.size() == program.layouts.size());
+
+    PhaseTimes times(context.build, PassID::ApplyFlowResults);
+    TypeArena arena(program.types);
+    Vector<Vector<std::optional<Type>>> typesDeclaredInFamilies = findTypesDeclaredInFamilies(program, updates, arena);
+    BitVector layoutsNeverStoredOtherTypes = findLayoutsNeverStoredOtherTypes(program, context.results, updates);
+    dropTypesThatDataLiesOutside(program, updates, typesDeclaredInFamilies);
+    Vector<TypeOfPlaceholder> typesOfPlaceholders = findTypesOfPlaceholders(program, arena);
+    times.didFinish("findTypesDeclaredInFamilies"_s);
+
+    forEachIndexInParallel(context.build.parallelLoops(), program.layouts.size(), [&](unsigned index) {
+        applyLayoutUpdate(program.layouts[index], updates[index]);
+    });
+    for (uint32_t index : findIndicesInParallel(context.build.parallelLoops(), program.layouts.size(), [&](unsigned index) {
+        return std::ranges::any_of(updates[index].fields, [](const FlowFieldUpdate& update) {
+            return update.accessor.isAccessor();
+        });
+    }))
+        applyAccessorFields(arena, program.layouts[index], updates[index]);
+    for (const TypeOfPlaceholder& placeholder : typesOfPlaceholders) {
+        Field& field = program.at(placeholder.field.layout).fields[placeholder.field.field];
+        if (!isPlaceholder(program, field))
+            continue;
+        field.declared.type = arena.intern(placeholder.declared);
+        field.declared.flags.remove(PositionFlags::IsExpected);
+    }
+    program.setKeysStoredThroughUnknownReceivers(Vector<PropertyKeyID>(context.results.keysStoredThroughUnknownReceivers()));
+    program.setKeysDefinedOnObjectsWithoutKnownLayout(Vector<PropertyKeyID>(context.results.keysDefinedOnObjectsWithoutKnownLayout()));
+    program.indexClasses();
+    times.didFinish("applyLayoutUpdate"_s);
+
+    BitVector done(program.layouts.size());
+    Vector<LayoutID, 8> incompleteChain;
+    for (size_t index = 0; index < program.layouts.size(); ++index) {
+        for (LayoutID current(index); current && !done.quickSet(current.index()); current = provenBaseOfLayout(program.at(current).flow))
+            incompleteChain.append(current);
+        while (!incompleteChain.isEmpty()) {
+            LayoutID current = incompleteChain.takeLast();
+            appendInheritedFields(program, current);
+            appendFlowFields(program, arena, typesDeclaredInFamilies[current.index()].span(), layoutsNeverStoredOtherTypes.get(current.index()), program.at(current), updates[current.index()]);
+            appendLiteralKeyOrders(program.at(current), updates[current.index()]);
+        }
+    }
+    markEnforcedFields(program, context.build);
+    times.didFinish("completeFields"_s);
+
+    program.indexNames(context.build.parallelLoops());
+    times.didFinish("indexNames"_s);
+}
+
+static void applyVariableUpdates(const FlowApplyContext& context)
+{
+    Program& program = context.program;
+    const Vector<FlowVariableUpdate>& updates = context.application.variables;
+    RELEASE_ASSERT(updates.size() == program.variables.size());
+
+    forEachIndexInParallel(context.build.parallelLoops(), program.variables.size(), [&](unsigned index) {
+        Variable& variable = program.variables[index];
+        applyPosition(variable.declared, updates[index].position);
+        variable.flow = updates[index].flow;
+    });
+}
+
+static void applyEntryParameterUpdates(Function& function, std::span<const FlowPositionUpdate> updates)
+{
+    if (updates.empty())
+        return;
+    RELEASE_ASSERT(updates.size() == function.numberOfEntryParameters());
+    for (unsigned index = 0; index < updates.size(); ++index) {
+        if (DeclaredType* declared = function.declaredEntryParameter(index))
+            applyPosition(*declared, updates[index]);
+    }
+    if (function.hasBody() && std::ranges::any_of(updates, &FlowPositionUpdate::replacesExpectation)) {
+        for (Value& value : function.editAllValues())
+            value.setExpected({ });
+    }
+}
+
+static void applyResultUpdates(Function& function, std::span<const FlowPositionUpdate> updates)
+{
+    if (updates.empty())
+        return;
+    RELEASE_ASSERT(updates.size() == function.results.size());
+    for (size_t index = 0; index < updates.size(); ++index)
+        applyPosition(function.results[index], updates[index]);
+}
+
+static void applySignatureUpdates(const FlowApplyContext& context)
+{
+    const Vector<FlowSignatureUpdate>& updates = context.application.signatures;
+    RELEASE_ASSERT(updates.size() == context.application.functionCountAsRead);
+
+    forEachIndexInParallel(context.build.parallelLoops(), updates.size(), [&](unsigned index) {
+        Function& function = context.program.functions[index];
+        const FlowSignatureUpdate& update = updates[index];
+        applyEntryParameterUpdates(function, update.entryParameters.span());
+        applyResultUpdates(function, update.results.span());
+        function.capabilities.add(update.provenCapabilities);
+    });
+}
+
+static void removeUnreachedBodies(const FlowApplyContext& context, ProgramEditor& editor)
+{
+    forEachIndexInParallel(context.build.parallelLoops(), context.results.functionCountAsRead(), [&](unsigned index) {
+        FunctionID id(index);
+        if (context.results.function(id).reachability == FunctionReachability::Unreached && context.program.at(id).hasBody())
+            editor.removeBody(id);
+    });
+}
+
+static void dropDataOfUnreachedCode(const FlowApplyContext& context)
+{
+    Program& program = context.program;
+    Vector<DataID> named = collectInParallel<DataID>(context.build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<DataID>& found) {
+        for (const Value& value : program.functions[index].values) {
+            if (Value::opcodesWithData.contains(value.opcode))
+                found.append(value.data());
+        }
+    });
+    BitVector isNamed(program.data.size());
+    for (DataID data : named)
+        isNamed.quickSet(data.index());
+    for (const Module& module : program.modules) {
+        if (module.data)
+            isNamed.quickSet(module.data.index());
+    }
+    for (uint32_t index = 0; index < program.data.size(); ++index) {
+        if (!isNamed.quickGet(index))
+            program.data[index].root = DataNode();
+    }
+}
+
+static void narrowContentsOfData(const FlowApplyContext& context)
+{
+    struct RootSite {
+        DataID data;
+        AllocationSiteID site;
+    };
+
+    Program& program = context.program;
+    const ParallelLoops& loops = context.build.parallelLoops();
+    Vector<RootSite> sites = collectInParallel<RootSite>(loops, context.application.bodies.size(), [&](unsigned index, Vector<RootSite>& found) {
+        const Function& function = program.functions[index];
+        if (!function.hasBody())
+            return;
+        for (const FlowAllocationStamp& stamp : context.application.bodies[index].allocations) {
+            const Value& value = function.at(stamp.value);
+            if (value.opcode == Opcode::Data)
+                found.append({ value.data(), stamp.site });
+        }
+    });
+    Vector<AllocationSiteID> rootSites(program.data.size());
+    BitVector isNamedTwice(program.data.size());
+    for (const RootSite& root : sites) {
+        AllocationSiteID& rootSite = rootSites[root.data.index()];
+        if (rootSite)
+            isNamedTwice.quickSet(root.data.index());
+        rootSite = root.site;
+    }
+    forEachIndexInParallel(loops, program.data.size(), [&](unsigned index) {
+        if (!rootSites[index] || isNamedTwice.quickGet(index))
+            return;
+        forEachDataNodeInPreorder(program.data[index].root, [&](uint32_t ordinal, const DataNode& node) {
+            const auto* array = node.tryAs<DataNode::Array>();
+            if (!array || !isStorageOfArray(*array))
+                return;
+            if (TypeID elements = context.results.dataNodeStamp(rootSites[index], ordinal).elements)
+                const_cast<DataNode::Array*>(array)->contents = elements;
+        });
+    });
 }
 
 static void proveEveryPosition(Program& program, BuildContext& build)
@@ -69,7 +530,6 @@ static void proveEveryPosition(Program& program, BuildContext& build)
         std::ranges::for_each(function.results, prove);
     }
     markEnforcedFields(program, build);
-    // The tables by name hold what the fields of a family give.
     program.indexNames();
 }
 
@@ -91,7 +551,6 @@ static VariableID addMark(ProgramEditor& editor, ModuleID module)
     return editor.addVariable(WTF::move(variable));
 }
 
-// No function counts its runs. In a validating build the first run of a function that runs at most once fills a variable, and a run that finds it filled ends the process.
 static Vector<VariableID> createFirstRunMarks(const FlowApplyContext& context, ProgramEditor& editor)
 {
     const Program& program = context.program;
@@ -107,7 +566,6 @@ static Vector<VariableID> createFirstRunMarks(const FlowApplyContext& context, P
     return marks;
 }
 
-// As the mark of a first run, filled by the store of a variable that is stored at most once and by the definition of a class that is evaluated at most once.
 static FlowFirstTimeMarks createFirstTimeMarks(const FlowApplyContext& context, ProgramEditor& editor)
 {
     FlowFirstTimeMarks marks;
@@ -147,14 +605,17 @@ static Vector<BitVector> findExpectedFields(const Program& program, const Parall
     return expectedFieldsOfLayouts;
 }
 
-void applyBodyUpdates(const FlowApplyContext& context, ProgramEditor& editor, const Vector<BitVector>& fieldsExpectedAsRead)
+static void applyBodyUpdates(const FlowApplyContext& context, ProgramEditor& editor, const Vector<BitVector>& fieldsExpectedAsRead)
 {
     FlowFirstTimeMarks firstTimeMarks = createFirstTimeMarks(context, editor);
     Vector<VariableID> firstRunMarks = createFirstRunMarks(context, editor);
     Vector<FunctionID> functions = collectBodiesLargestFirst(context.program, context.application.bodies.size(), context.build.parallelLoops());
     Vector<FlowBodyCounts> countsByTask(functions.size());
+    bool provesEverything = context.build.recordedOptions().has(TestingSwitch::ProveEverything);
     editFunctionsInParallel(editor, context.build, BehindEdit::Nothing, functions.span(), [&](unsigned task, FunctionID id, Function& function, TaskArenas& arenas) {
-        countsByTask[task] = applyBodyUpdate(FlowBodyApplication { context.program, context.results, context.application, id, function, arenas.types, context.build, fieldsExpectedAsRead, firstRunMarks[id.index()], &firstTimeMarks });
+        FlowBodyApplication body { context.program, context.results, context.application, id, function, arenas.types, context.build, fieldsExpectedAsRead, firstRunMarks[id.index()], &firstTimeMarks };
+        body.provesEverything = provesEverything && !isOfRuntimeModule(context.program, function.module);
+        countsByTask[task] = applyBodyUpdate(body);
     });
 
     FlowBodyCounts total;
@@ -166,7 +627,6 @@ void applyBodyUpdates(const FlowApplyContext& context, ProgramEditor& editor, co
     context.build.statistics().count(StatisticID::FlowRemainingChecks, total.remainingChecks);
 }
 
-// Past form AsRead no Check may stay on a terminator, and nothing tests the result of a tail call.
 static void applyUnknownResults(Program& program, BuildContext& build)
 {
     ProgramEditor editor(program);
@@ -176,12 +636,11 @@ static void applyUnknownResults(Program& program, BuildContext& build)
     });
 }
 
-// The bodies have their turn in applyBodyUpdate().
 static void nameObjectInPlaceOfDictionaryLayouts(Program& program, const FlowApplication& application, const ParallelLoops& loops)
 {
     if (application.typesBehindDictionaries.isEmpty())
         return;
-    DictionaryTypeRewriter rewriter(application);
+    DictionaryTypeRewriter rewriter { application };
     auto rewriteList = [&](auto& list) {
         forEachIndexInParallel(loops, list.size(), [&](unsigned index) {
             forEachReference(list[index], rewriter);
@@ -225,7 +684,7 @@ void applyFlowResults(Program& program, FlowResults& results, BuildContext& buil
     times.didFinish("applyLayoutUpdates"_s);
     applyVariableUpdates(context);
     applySignatureUpdates(context);
-    if (provesEverything(build))
+    if (build.recordedOptions().has(TestingSwitch::ProveEverything))
         proveEveryPosition(program, build);
     times.didFinish("applySignatureUpdates"_s);
     removeUnreachedBodies(context, editor);

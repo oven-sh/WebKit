@@ -10,7 +10,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 runtimefunction id=47 function=f1
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewArray v0 contents=anything
     v2 = Builtin builtin=GlobalThis
@@ -22,13 +21,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="from" role=Library flags=[HasThis] enclosingRuntimeFunction=47 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything, v3: anything):
     v4 = Integer integer=0
     v5 = ElemGet v1, v4
     v6 = Call v2, v3, v5, v4
     Return v6
 }
 function f2 name="List" kind=Plain flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }

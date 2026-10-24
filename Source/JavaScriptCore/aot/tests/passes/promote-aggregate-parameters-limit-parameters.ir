@@ -10,41 +10,35 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
 
 function f0 name="readsTwoFields" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="a" receivers=[L0]
     v2 = PropGet v0 key="b" receivers=[L0]
     v3 = Builtin builtin=GlobalThis
     v4 = PropGet v3 key="sink" [isFreeName]
     v5 = Call v4, -, v1, v2
     Return v5
-}
-# CHECK-LABEL: function f0 name="readsTwoFields"
 # CHECK-NOT: role=ParameterWrapper
 # CHECK: = PropGet {{*}}key="sink"
+}
 
 function f1 name="readsOneField" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="a" receivers=[L0]
     v2 = Builtin builtin=GlobalThis
     v3 = PropGet v2 key="sink" [isFreeName]
     v4 = Call v3, -, v1
     Return v4
-}
-# CHECK-LABEL: function f1 name="readsOneField"
 # CHECK: role=ParameterWrapper {{*}}creator=ParameterWrapper{body=[[body]]}
 # CHECK: [[read]]: anything = PropGet v0 key="a"
 # CHECK-NOT: key="sink"
 # CHECK: = CallDirect [[read]] function=[[body]]
+}
 
 function f2 name="passesLiterals" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     v2 = CallDirect v1 function=f0
     v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     v4 = CallDirect v3 function=f1
     Return v4
-}
-# CHECK-LABEL: function f2 name="passesLiterals"
 # CHECK: function [[body]] name="readsOneField" {{*}}parameters=[{type=anything}] results=[{type=anything}] {{*}}derivation={source=f1 parameterMap=[{}]}
 # CHECK-NOT: key="a"
 # CHECK: = PropGet {{*}}key="sink"
+}

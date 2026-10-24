@@ -23,7 +23,6 @@ module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 typesite w0 module=m0 position=120 kind=Parameter
 function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = NewClass v0 layout=L0
     v2 = NewClosure function=f3
@@ -41,31 +40,26 @@ function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[
     Return
 }
 function f1 name="call" module=m0 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0|L1 site=w0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: undefined|null|L0|L1, v1: anything):
     v2 = PropGet v0 key="m"
     v3 = Call v2, v0, v1 calleeKey="m" calleeName="m"
     Return v3
 }
 function f2 name="A" module=m0 position=10 kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=object}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2
 }
 function f3 name="m" module=m0 position=20 kind=Method length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     v2 = Add v0, v1
     Return v2
 }
 function f4 name="B" module=m0 position=60 kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=object}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L1
     v2 = NewObject v1 layout=L1
     Return v2
 }
 function f5 name="m" module=m0 position=70 kind=Method length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=2
     v2 = Add v0, v1
     Return v2

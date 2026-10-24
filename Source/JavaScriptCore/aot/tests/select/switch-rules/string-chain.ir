@@ -10,7 +10,6 @@ module m0 path="main.js" displayPath="main.js"
 # CHECK-NEXT: b1():
 # CHECK-NOT: StrictEq
 function f0 name="four-strings" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="a"
     v2 = StrictEq v0, v1
     Branch v2 -> taken b1(), notTaken b2()
@@ -42,7 +41,6 @@ function f0 name="four-strings" parameters=[{type=anything}] results=[{type=anyt
 # CHECK-NEXT: b0(v0: anything):
 # CHECK: SwitchString v0 strings=["", "\u{e9}", "longer than thirty-two characters of text"] -> case b1(), case b2(), case b3(), otherwise b4()
 function f1 name="any-text" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string=""
     v2 = StrictEq v0, v1
     Branch v2 -> taken b1(), notTaken b2()
@@ -67,7 +65,6 @@ function f1 name="any-text" parameters=[{type=anything}] results=[{type=anything
 # CHECK-LABEL: function f2 name="two-strings"
 # CHECK-NOT: Switch
 function f2 name="two-strings" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="a"
     v2 = StrictEq v0, v1
     Branch v2 -> taken b1(), notTaken b2()

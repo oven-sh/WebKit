@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js"
 entry module=m0
 function f0 name="goodDiamond" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3()
@@ -16,7 +15,6 @@ function f0 name="goodDiamond" parameters=[{type=boolean}] results=[{type=undefi
     Return
 }
 function f1 name="goodHandlerEdge" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1() handler=b2():
     v1 = Call v0
@@ -26,7 +24,6 @@ function f1 name="goodHandlerEdge" parameters=[{type=anything}] results=[{type=u
     Return
 }
 function f2 name="badLaterBlockFirst" results=[{type=undefined}] {
-  b0():
     Jump -> next b2()
   b1():
     Return

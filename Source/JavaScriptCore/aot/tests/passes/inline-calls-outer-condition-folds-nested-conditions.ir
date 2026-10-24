@@ -9,7 +9,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="nested" parameters=[{type=number}, {type=boolean}, {type=boolean}] results=[{type=number}] {
-  b0(v0: number, v1: boolean, v2: boolean):
     Branch v1 -> taken b1(), notTaken b4()
   b1():
     v3 = Mul v0, v0
@@ -26,7 +25,6 @@ function f0 name="nested" parameters=[{type=number}, {type=boolean}, {type=boole
 }
 
 function f1 name="outerIsFalse" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
-  b0(v0: number, v1: boolean):
     v2 = Boolean
     v3 = CallDirect v0, v2, v1 function=f0
     Return v3
@@ -35,7 +33,6 @@ function f1 name="outerIsFalse" parameters=[{type=number}, {type=boolean}] resul
 # CHECK-NOT: CallDirect
 
 function f2 name="nothingIsKnown" parameters=[{type=number}, {type=boolean}, {type=boolean}] results=[{type=number}] {
-  b0(v0: number, v1: boolean, v2: boolean):
     v3 = CallDirect v0, v1, v2 function=f0
     Return v3
 }
@@ -43,7 +40,6 @@ function f2 name="nothingIsKnown" parameters=[{type=number}, {type=boolean}, {ty
 # CHECK: = CallDirect
 
 function f3 name="innerIsFalse" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
-  b0(v0: number, v1: boolean):
     v2 = Boolean
     v3 = CallDirect v0, v1, v2 function=f0
     Return v3
@@ -52,7 +48,6 @@ function f3 name="innerIsFalse" parameters=[{type=number}, {type=boolean}] resul
 # CHECK-NOT: CallDirect
 
 function f4 name="bothAreFalse" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Boolean
     v2 = CallDirect v0, v1, v1 function=f0
     Return v2

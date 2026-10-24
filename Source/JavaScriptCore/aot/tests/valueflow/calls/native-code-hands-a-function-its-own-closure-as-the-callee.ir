@@ -14,7 +14,6 @@ layout L0 kind=Instance name="Maker" constructor=f1 flags=[HasHeritage]
 layout L1 kind=Instance name="Base" constructor=f2
 layout L2 kind=Instance name="Below" base=L1 constructor=f3 flags=[HasHeritage]
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="Function" [isFreeName]
     v2 = ResolveHeritage v1
@@ -38,19 +37,16 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return v10
 }
 function f1 name="Maker" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
-  b0(v0: function, v1: anything, v2: Array):
     v3 = GetSuperBase v0
     v4 = SuperConstructList v3, v1, v2 layout=L0
     Return v4
 }
 function f2 name="Base" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L1
     v2 = NewObject v1 layout=L1 fields=[]
     Return v2
 }
 function f3 name="Below" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0
     v3 = SuperConstruct v2, v1 layout=L2
     Return v3

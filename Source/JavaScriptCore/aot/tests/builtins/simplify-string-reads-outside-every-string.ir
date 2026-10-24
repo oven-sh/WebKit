@@ -6,12 +6,9 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="positionIsNegative" parameters=[{type=string}] results=[{type=number}] {
-  b0(v0: string):
     v1 = Integer integer=-1
     v2 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
     Return v2
-}
-# CHECK-LABEL: function f0 name="positionIsNegative"
 # CHECK: [[isNotNegative0]]:{{*}}= LessEq {{*}}, v1
 # CHECK-NEXT: Branch [[isNotNegative0]] -> taken [[inside0]](| 1), notTaken [[outside0]](
 # CHECK-NOT: GetStringLength
@@ -19,13 +16,11 @@ function f0 name="positionIsNegative" parameters=[{type=string}] results=[{type=
 # CHECK: [[inside0]]({{*}}: never):
 # CHECK-NEXT: Unreachable
 # CHECK: = Double number=NaN
+}
 
 function f1 name="positionIsPastEveryString" parameters=[{type=string}, {type=int[4294967296, 4294967300]}] results=[{type=number}] {
-  b0(v0: string, v1: int[4294967296, 4294967300]):
     v2 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
     Return v2
-}
-# CHECK-LABEL: function f1 name="positionIsPastEveryString"
 # CHECK: [[length1]]:{{*}}= GetStringLength v0
 # CHECK-NEXT: [[isBelowLength1]]:{{*}}= Less v1, [[length1]]
 # CHECK-NEXT: Branch [[isBelowLength1]] -> taken [[inside1]](| 0), notTaken [[outside1]](
@@ -33,13 +28,12 @@ function f1 name="positionIsPastEveryString" parameters=[{type=string}, {type=in
 # CHECK: [[inside1]]({{*}}: never):
 # CHECK-NEXT: Unreachable
 # CHECK: = Double number=NaN
+}
 
 function f2 name="positionMayBeInside" parameters=[{type=string}, {type=int[-1, 100]}] results=[{type=number}] {
-  b0(v0: string, v1: int[-1, 100]):
     v2 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
     Return v2
-}
-# CHECK-LABEL: function f2 name="positionMayBeInside"
 # CHECK: [[unsigned2]]: int[0, 4294967295] = URShift v1,
 # CHECK: = Less [[unsigned2]],
 # CHECK: = GetStringCodeUnit v0,
+}

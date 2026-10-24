@@ -9,13 +9,11 @@ function f0 name="Plain" kind=BaseConstructor flags=[HasNewTarget] results=[{typ
 function f1 name="Other" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
 
 function f2 name="declared-field" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key=@"state"
     Return v1
 }
 # CHECK: F2 v1 PropGet [[state]]: form=Slot level=Proven operation=GetSlot receivers=[L0] member=(Field level=Proven holder=L0 field=0)
 function f3 name="name-the-layout-lacks" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key=@"then"
     v2 = PropGet v0 key=@"hidden"
     Return v1
@@ -23,7 +21,6 @@ function f3 name="name-the-layout-lacks" parameters=[{type=L0}] results=[{type=a
 # CHECK-NEXT: F3 v1 PropGet [[then]]: form=ByName level=Unknown receivers=[L0]
 # CHECK-NEXT: F3 v2 PropGet [[hidden]]: form=ByName level=Unknown receivers=[L0]
 function f4 name="private-name-of-another-class" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = NewClassToken layout=L1
     v2 = PrivateHas v0, v1 layout=L1 field=0
     Return v2

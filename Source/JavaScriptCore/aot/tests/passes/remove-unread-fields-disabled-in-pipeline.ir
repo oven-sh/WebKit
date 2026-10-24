@@ -11,7 +11,6 @@ variable g0 name="retained" module=m0 declared={type=anything} initialization=Un
 layout L0 name="Record" fields=[{key="run" declared={type=anything} flags=[IsRequired]}, {key="unread" declared={type=anything} flags=[IsRequired]}, {key="n" declared={type=anything} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = NewClosure function=f2
@@ -19,13 +18,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     PutModuleVariable v3 variable=g0
     v5 = CallDirect function=f1
     Return
-}
-# CHECK-LABEL: function f0 name="main"
 # CHECK: function=f2
 # CHECK: layout=L0 fields=[0, 1, 2]
+}
 
 function f1 name="uses" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = PropGet v0 key="n"
     v2 = PropGet v0 key="run"
@@ -34,6 +31,5 @@ function f1 name="uses" results=[{type=anything}] {
 }
 
 function f2 name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }

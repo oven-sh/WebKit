@@ -8,7 +8,6 @@ entry module=m0
 layout L0 name="Words" fields=[{key="abstract" declared={type=number} flags=[IsRequired]}, {key="any" declared={type=number} flags=[IsRequired]}]
 data d0 root=Object{layout=L0 members=[{key="abstract" value=Number{value=128}}, {key="any" value=Number{value=133}}]} module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Data data=d0
     v1 = Builtin builtin=Object
     v2 = Builtin builtin=ObjectEntries

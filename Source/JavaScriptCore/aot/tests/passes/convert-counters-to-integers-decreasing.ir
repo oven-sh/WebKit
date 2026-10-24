@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="aboveVariableBound" parameters=[{type=int[0, 100]}, {type=i32}] results=[{type=undefined}] {
-  b0(v0: int[0, 100], v1: i32):
     v2 = Integer integer=1
     Jump -> next b1(v0)
   b1(v3):
@@ -18,15 +17,13 @@ function f0 name="aboveVariableBound" parameters=[{type=int[0, 100]}, {type=i32}
     Jump -> next b1(v6)
   b3():
     Return
-}
-# CHECK-LABEL: function f0 name="aboveVariableBound"
 # CHECK: b1(v3: int[-2147483648, 100]):
 # CHECK: Branch v5 -> taken b2(| 0), notTaken b3()
 # CHECK-NEXT: b2([[down0]]: int[-2147483647, 100]):
 # CHECK-NEXT: v6: int[-2147483648, 99] = Sub [[down0]], v2
+}
 
 function f1 name="addsNegativeConstant" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     v2 = Integer integer=-1
     Jump -> next b1(v0)
@@ -39,15 +36,13 @@ function f1 name="addsNegativeConstant" parameters=[{type=int[0, 100]}] results=
     Jump -> next b1(v6)
   b3():
     Return
-}
-# CHECK-LABEL: function f1 name="addsNegativeConstant"
 # CHECK: b1(v3: int[0, 100]):
 # CHECK: Branch v5 -> taken b2(| 0), notTaken b3()
 # CHECK-NEXT: b2([[down1]]: int[1, 100]):
 # CHECK-NEXT: v6: int[0, 99] = Add [[down1]], v2
+}
 
 function f2 name="stepsDownByTwo" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     v2 = Integer integer=2
     Jump -> next b1(v0)
@@ -60,15 +55,13 @@ function f2 name="stepsDownByTwo" parameters=[{type=int[0, 100]}] results=[{type
     Jump -> next b1(v6)
   b3():
     Return
-}
-# CHECK-LABEL: function f2 name="stepsDownByTwo"
 # CHECK: b1(v3: int[-1, 100]):
 # CHECK: Branch v5 -> taken b2(| 0), notTaken b3()
 # CHECK-NEXT: b2([[down2]]: int[1, 100]):
 # CHECK-NEXT: v6: int[-1, 98] = Sub [[down2]], v2
+}
 
 function f3 name="boundOnLeft" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     v2 = Integer integer=1
     Jump -> next b1(v0)
@@ -81,15 +74,13 @@ function f3 name="boundOnLeft" parameters=[{type=int[0, 100]}] results=[{type=un
     Jump -> next b1(v6)
   b3():
     Return
-}
-# CHECK-LABEL: function f3 name="boundOnLeft"
 # CHECK: b1(v3: int[-1, 100]):
 # CHECK: Branch v5 -> taken b2(| 1), notTaken b3()
 # CHECK-NEXT: b2([[down3]]: int[0, 100]):
 # CHECK-NEXT: v6: int[-1, 99] = Sub [[down3]], v2
+}
 
 function f4 name="indexFromLastToFirst" parameters=[{type=string}] results=[{type=undefined}] {
-  b0(v0: string):
     v1 = Integer integer=0
     v2 = Integer integer=1
     v3 = GetStringLength v0
@@ -105,17 +96,15 @@ function f4 name="indexFromLastToFirst" parameters=[{type=string}] results=[{typ
     Jump -> next b1(v9)
   b3():
     Return
-}
-# CHECK-LABEL: function f4 name="indexFromLastToFirst"
 # CHECK: v4: int[-1, 2147483646] = Sub v3, v2
 # CHECK: b1(v5: int[-1, 2147483646]):
 # CHECK: Branch v7 -> taken b2(| 0), notTaken b3()
 # CHECK-NEXT: b2([[down4]]: int[0, 2147483646]):
 # CHECK-NEXT: ElemGet v0, [[down4]]
 # CHECK-NEXT: v9: int[-1, 2147483645] = Sub [[down4]], v2
+}
 
 function f5 name="testKeepsItBelow" parameters=[{type=int[0, 100]}, {type=i32}] results=[{type=undefined}] {
-  b0(v0: int[0, 100], v1: i32):
     v2 = Integer integer=1
     Jump -> next b1(v0)
   b1(v3):
@@ -127,15 +116,13 @@ function f5 name="testKeepsItBelow" parameters=[{type=int[0, 100]}, {type=i32}] 
     Jump -> next b1(v6)
   b3():
     Return
-}
-# CHECK-LABEL: function f5 name="testKeepsItBelow"
 # CHECK: b1(v3: int|whole):
 # CHECK: Branch v5 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v6: int|whole = Sub v3, v2
+}
 
 function f6 name="increasingAboveBound" parameters=[{type=int[0, 100]}, {type=i32}] results=[{type=undefined}] {
-  b0(v0: int[0, 100], v1: i32):
     v2 = Integer integer=1
     Jump -> next b1(v0)
   b1(v3):
@@ -147,9 +134,8 @@ function f6 name="increasingAboveBound" parameters=[{type=int[0, 100]}, {type=i3
     Jump -> next b1(v6)
   b3():
     Return
-}
-# CHECK-LABEL: function f6 name="increasingAboveBound"
 # CHECK: b1(v3: int|whole):
 # CHECK: Branch v5 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v6: int|whole = Add v3, v2
+}

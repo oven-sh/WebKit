@@ -10,19 +10,16 @@ layout L1 kind=Instance name="Lazy" constructor=f0 flow={baseState=None members=
 variable g0 name="count" declared={type=number} initialization=Undefined
 function f0 name="Lazy" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
 function f1 name="x" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=number}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     PutModuleVariable v1 variable=g0
     Return v1
 }
 function f2 name="run" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=undefined}] {
-  b0(v0: anything):
     v1 = Integer integer=2
     PutModuleVariable v1 variable=g0
     Return
 }
 function f3 name="receiverIsNotProven" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: object, v1: anything):
     v2 = PropGet v0 key="x"
     v3 = PropGet v1 key="x"
     v4 = PropGet v0 key="x" receivers=[L0, ..]
@@ -40,7 +37,6 @@ function f3 name="receiverIsNotProven" parameters=[{type=object}, {type=anything
 # PLAIN-NEXT: v4 PropGet: unknownCode
 # PLAIN-NEXT: v5 PropGet: unknownCode
 function f4 name="slots" parameters=[{type=L0}, {type=null|L0}, {type=undefined|L0}] results=[{type=undefined}] {
-  b0(v0: L0, v1: null|L0, v2: undefined|L0):
     v3 = PropGet v0 key="x" receivers=[L0]
     v4 = PropGet v0 key="x"
     v5 = PropGet v1 key="x" receivers=[L0]
@@ -68,7 +64,6 @@ function f4 name="slots" parameters=[{type=L0}, {type=null|L0}, {type=undefined|
 # ONLY-NOT: v7 PropGet:{{*}}throws
 # ONLY-NOT: writes(
 function f5 name="getters" parameters=[{type=L1}, {type=L0|L1}] results=[{type=undefined}] {
-  b0(v0: L1, v1: L0|L1):
     v2 = PropGet v0 key="x" receivers=[L1]
     v3 = PropGet v1 key="x" receivers=[L0, L1]
     v4 = PropGet v0 key="loose" receivers=[L1]
@@ -79,7 +74,6 @@ function f5 name="getters" parameters=[{type=L1}, {type=L0|L1}] results=[{type=u
 # CHECK-NEXT: v3 PropGet: reads(ObjectFields/1) writes(ModuleVariables/1)
 # CHECK-NEXT: v4 PropGet: {{*}}callsUnknownCode
 function f6 name="walks" parameters=[{type=L1}, {type=L0}] results=[{type=undefined}] {
-  b0(v0: L1, v1: L0):
     v2 = PropGet v0 key="run" receivers=[L1]
     v3 = PropGet v1 key="nowhere" receivers=[L0]
     v4 = PropHas v1 key="x" receivers=[L0]
@@ -96,7 +90,6 @@ function f6 name="walks" parameters=[{type=L1}, {type=L0}] results=[{type=undefi
 # CHECK-NEXT: v6 PropHas: {{*}}callsUnknownCode
 # CHECK-NEXT: v7 PropHas: {{*}}callsUnknownCode
 function f7 name="freeName" results=[{type=undefined}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="x" [isFreeName]
     Return

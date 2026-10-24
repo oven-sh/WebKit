@@ -11,7 +11,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="register" [isFreeName]
 # REPEAT: i = 1..15
@@ -22,7 +21,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="wholeForm" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = Builtin builtin=MathFloor
     v2 = Call v1, -, v0
     Return v2
@@ -34,7 +32,6 @@ function f1 name="wholeForm" parameters=[{type=number}] results=[{type=anything}
 # CHECK-NEXT: Return v2
 
 function f2 name="twoWayFormThatAllocates" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = Builtin builtin=ObjectCreate
     v2 = Call v1, -, v0
     Return v2
@@ -52,7 +49,6 @@ function f2 name="twoWayFormThatAllocates" parameters=[{type=object}] results=[{
 # REPS-NEXT: Return
 
 function f3 name="twoWayFormThatReadsCache" parameters=[{type=Date}] results=[{type=anything}] {
-  b0(v0: Date):
     v1 = Builtin builtin=DatePrototypeGetFullYear
     v2 = Call v1, v0
     Return v2
@@ -86,7 +82,6 @@ function f4 name="twoWayFormUnderHandler" parameters=[{type=object}] results=[{t
 # CHECK-NEXT: Object = CallBuiltin -, v0 overload=ObjectCreate/0
 
 function f5 name="callStays" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=ObjectCreate
     v1 = Null
     v2 = Undefined
@@ -99,7 +94,6 @@ function f5 name="callStays" results=[{type=anything}] {
 # CHECK-NEXT: Return v3
 
 function f6 name="unmatchedCallStays" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=ObjectCreate
     v2 = Call v1, -, v0
     Return v2
@@ -110,7 +104,6 @@ function f6 name="unmatchedCallStays" parameters=[{type=anything}] results=[{typ
 # CHECK-NEXT: Return v2
 
 function f7 name="numberResult" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = Builtin builtin=MathSqrt
     v2 = Call v1, -, v0
     Return v2
@@ -119,7 +112,6 @@ function f7 name="numberResult" parameters=[{type=number}] results=[{type=anythi
 # REPS: number @Double = CallInline {{*}} inlineBuiltin=MathSqrt
 
 function f8 name="numberCodeWithInt32Result" parameters=[{type=i32}] results=[{type=anything}] {
-  b0(v0: i32):
     v1 = Builtin builtin=MathFloor
     v2 = Call v1, -, v0
     Return v2
@@ -130,7 +122,6 @@ function f8 name="numberCodeWithInt32Result" parameters=[{type=i32}] results=[{t
 # REPS: i32 @Int32 = CallInline {{*}} inlineBuiltin=MathFloor
 
 function f9 name="numberCodeWithWiderIntegerResult" parameters=[{type=i32}] results=[{type=anything}] {
-  b0(v0: i32):
     v1 = Builtin builtin=MathAbs
     v2 = Call v1, -, v0
     Return v2
@@ -141,7 +132,6 @@ function f9 name="numberCodeWithWiderIntegerResult" parameters=[{type=i32}] resu
 # REPS: int[0, 2147483648] @Int64 = CallInline {{*}} inlineBuiltin=MathAbs
 
 function f10 name="int32Result" parameters=[{type=i32}, {type=i32}] results=[{type=anything}] {
-  b0(v0: i32, v1: i32):
     v2 = Builtin builtin=MathImul
     v3 = Call v2, -, v0, v1
     Return v3
@@ -150,7 +140,6 @@ function f10 name="int32Result" parameters=[{type=i32}, {type=i32}] results=[{ty
 # REPS: i32 @Int32 = CallInline {{*}} inlineBuiltin=MathImul
 
 function f11 name="booleanResult" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=NumberIsInteger
     v2 = Call v1, -, v0
     Return v2
@@ -159,7 +148,6 @@ function f11 name="booleanResult" parameters=[{type=anything}] results=[{type=an
 # REPS: boolean @Boolean = CallInline {{*}} inlineBuiltin=NumberIsInteger
 
 function f12 name="noResult" parameters=[{type=Map}] results=[{type=anything}] {
-  b0(v0: Map):
     v1 = Builtin builtin=MapPrototypeClear
     v2 = Call v1, v0
     Return v2
@@ -168,7 +156,6 @@ function f12 name="noResult" parameters=[{type=Map}] results=[{type=anything}] {
 # REPS: undefined @Void = CallInline {{*}} inlineBuiltin=MapClear
 
 function f13 name="boxedResult" parameters=[{type=Map}, {type=anything}, {type=object}] results=[{type=anything}] {
-  b0(v0: Map, v1: anything, v2: object):
     v3 = Builtin builtin=MapPrototypeGet
     v4 = Call v3, v0, v1
     v5 = Builtin builtin=ObjectGetPrototypeOf
@@ -182,7 +169,6 @@ function f13 name="boxedResult" parameters=[{type=Map}, {type=anything}, {type=o
 # REPS: [[doneBoxed]]({{*}}: null|object @JSValue):
 
 function f14 name="boxedCodeWithOptionalNumberResult" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = Builtin builtin=Map
     v3 = Construct v2
     v4 = Builtin builtin=MapPrototypeSet
@@ -195,7 +181,6 @@ function f14 name="boxedCodeWithOptionalNumberResult" parameters=[{type=anything
 # REPS: undefined|number @OptionalDouble = CallInline {{*}} inlineBuiltin=MapGet
 
 function f15 name="boxedCodeWithOptionalIntegerResult" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
-  b0(v0: anything, v1: i32):
     v2 = Builtin builtin=Map
     v3 = Construct v2
     v4 = Builtin builtin=MapPrototypeSet

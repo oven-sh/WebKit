@@ -13,7 +13,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="e" parameters=[{type=Array<number, proven>}, {type=Array<number>}, {type=i32}, {type=string}, {type=string}, {type=Arguments<int, proven>}, {type=Set<int, proven>}, {type=Generator}, {type=Array<int, proven>|Set<int, proven>}] results=[{type=undefined}] {
-  b0(v0: Array<number, proven>, v1: Array<number>, v2: i32, v3: string, v4: string, v5: Arguments<int, proven>, v6: Set<int, proven>, v7: Generator, v8: Array<int, proven>|Set<int, proven>):
     v9 = ElemGet v0, v2
     v10 = ElemGet v1, v2
     v11 = ElemGet v0, v3

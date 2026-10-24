@@ -11,7 +11,6 @@ layout L0 name="Source"
 layout L1 name="Target"
 layout L2 name="Copy"
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewObject layout=L0 fields=[]
     DefineGetter v1, v0 key="late"
@@ -38,10 +37,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="late" results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="other" results=[{type=anything}] {
-  b0():
     Return
 }

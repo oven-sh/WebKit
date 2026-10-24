@@ -13,11 +13,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-EvalEmitter::EvalEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
-
 void EvalEmitter::generateDirectEval(const ValueContext& value)
 {
     std::optional<Request> request = value->request();

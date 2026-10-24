@@ -7,11 +7,9 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Update" fields=[{key="updateQueue" declared={type=anything} flags=[IsRequired]}]
 
 function f0 name="overTheLimit" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="updateQueue"
     Return v1
-}
-# CHECK-LABEL: function f0 name="overTheLimit"
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: = PropGet v0 key="updateQueue"
 # CHECK-NEXT: Return v1
+}

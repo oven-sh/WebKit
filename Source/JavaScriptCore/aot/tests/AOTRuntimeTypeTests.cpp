@@ -37,7 +37,6 @@ layout L2 name="Holder" fields=[{key="red" declared={type=number} flags=[IsRequi
 module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = PropGet v0 key="input" [isFreeName]
@@ -57,11 +56,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="area" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 function f2 name="perimeter" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0
     Return v1
 }

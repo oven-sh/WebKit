@@ -12,7 +12,6 @@ variable g0 name="last" module=m0 declared={type=anything} initialization=Undefi
 function f0 name="find" role=ResultWrapper parameters=[{type=number}] results=[{type=null|L0}] creator=ResultWrapper{worker=f13 nullish=Null layout=L0}
 
 function f1 name="truthinessTest" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f13
     v2 = ResultAt v1 index=0
     v3 = ResultAt v1 index=1
@@ -32,8 +31,6 @@ function f1 name="truthinessTest" parameters=[{type=number}] results=[{type=anyt
     Return v10
   b5():
     Return
-}
-# CHECK-LABEL: function f1 name="truthinessTest"
 # CHECK-NOT: NewObject
 # CHECK: b1():
 # CHECK-NEXT: [[present1]]: 1 = Integer integer=1
@@ -49,9 +46,9 @@ function f1 name="truthinessTest" parameters=[{type=number}] results=[{type=anyt
 # CHECK-NEXT: Branch v8 -> taken b4(), notTaken b5()
 # CHECK: b4():
 # CHECK-NEXT: v10:{{*}}= Upcast [[a1]] castType=
+}
 
 function f2 name="comparedWithNull" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f13
     v2 = ResultAt v1 index=0
     v3 = ResultAt v1 index=1
@@ -72,8 +69,6 @@ function f2 name="comparedWithNull" parameters=[{type=number}] results=[{type=an
   b5():
     v10 = PropGet v7 key="b" receivers=[L0]
     Return v10
-}
-# CHECK-LABEL: function f2 name="comparedWithNull"
 # CHECK-NOT: NewObject
 # CHECK: b3([[tag2]]: i32, {{*}}: number, [[b2]]: number):
 # CHECK-NOT: StrictEq
@@ -84,9 +79,9 @@ function f2 name="comparedWithNull" parameters=[{type=number}] results=[{type=an
 # CHECK-NEXT: Branch v9 -> taken b4(), notTaken b5()
 # CHECK: b5():
 # CHECK-NEXT: v10:{{*}}= Upcast [[b2]] castType=
+}
 
 function f3 name="notUndefined" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f13
     v2 = ResultAt v1 index=0
     v3 = ResultAt v1 index=1
@@ -107,8 +102,6 @@ function f3 name="notUndefined" parameters=[{type=number}] results=[{type=anythi
   b5():
     v10 = PropGet v7 key="a" receivers=[L0]
     Return v10
-}
-# CHECK-LABEL: function f3 name="notUndefined"
 # CHECK-NOT: NewObject
 # CHECK: b3([[tag3]]: i32, [[a3]]: number, {{*}}: number):
 # CHECK-NOT: StrictEq
@@ -117,9 +110,9 @@ function f3 name="notUndefined" parameters=[{type=number}] results=[{type=anythi
 # CHECK-NEXT: = ToBoolean [[masked3]]
 # CHECK: b5():
 # CHECK-NEXT: v10:{{*}}= Upcast [[a3]] castType=
+}
 
 function f4 name="nullIsNeverUndefined" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f13
     v2 = ResultAt v1 index=0
     v3 = ResultAt v1 index=1
@@ -135,17 +128,15 @@ function f4 name="nullIsNeverUndefined" parameters=[{type=number}] results=[{typ
     v8 = Undefined
     v9 = StrictEq v7, v8
     Return v9
-}
-# CHECK-LABEL: function f4 name="nullIsNeverUndefined"
 # CHECK-NOT: NewObject
 # CHECK: b3(
 # CHECK-NOT: StrictEq
 # CHECK-NOT: BitAnd
 # CHECK: [[never4]]: false = Boolean
 # CHECK-NEXT: v9:{{*}}= Upcast [[never4]] castType=
+}
 
 function f5 name="typeTests" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f13
     v2 = ResultAt v1 index=0
     v3 = ResultAt v1 index=1
@@ -162,8 +153,6 @@ function f5 name="typeTests" parameters=[{type=number}] results=[{type=anything}
     v9 = TypeTest v7 testedType=object
     v10 = StrictEq v8, v9
     Return v10
-}
-# CHECK-LABEL: function f5 name="typeTests"
 # CHECK-NOT: NewObject
 # CHECK: b3([[tag5]]: i32, 
 # CHECK-NOT: TypeTest
@@ -175,9 +164,9 @@ function f5 name="typeTests" parameters=[{type=number}] results=[{type=anything}
 # CHECK-NEXT: [[objectBits5]]:{{*}}= BitAnd [[tag5]], [[objectMask5]]
 # CHECK-NEXT: [[isObject5]]: boolean = ToBoolean [[objectBits5]]
 # CHECK-NEXT: v9: boolean = Upcast [[isObject5]] castType=boolean
+}
 
 function f6 name="requiredWithoutTest" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f13
     v2 = ResultAt v1 index=0
     v3 = ResultAt v1 index=1
@@ -193,8 +182,6 @@ function f6 name="requiredWithoutTest" parameters=[{type=number}] results=[{type
     v8 = RequireObjectCoercible v7 nullishAccess=Read name="r"
     v9 = PropGet v8 key="a" receivers=[L0]
     Return v9
-}
-# CHECK-LABEL: function f6 name="requiredWithoutTest"
 # CHECK-NOT: NewObject
 # CHECK: b3([[tag6]]: i32, [[a6]]: number, {{*}}: number):
 # CHECK-NEXT: [[mask6]]: 2 = Integer integer=2
@@ -207,9 +194,9 @@ function f6 name="requiredWithoutTest" parameters=[{type=number}] results=[{type
 # CHECK-NEXT: Unreachable
 # CHECK: [[passing6]]():
 # CHECK-NEXT: v9:{{*}}= Upcast [[a6]] castType=
+}
 
 function f7 name="readWithoutTest" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f13
     v2 = ResultAt v1 index=0
     v3 = ResultAt v1 index=1
@@ -224,16 +211,14 @@ function f7 name="readWithoutTest" parameters=[{type=number}] results=[{type=any
   b3(v7):
     v8 = PropGet v7 key="a"
     Return v8
-}
-# CHECK-LABEL: function f7 name="readWithoutTest"
 # CHECK: b1():
 # CHECK-NEXT: v5:{{*}}= NewObject -, v3, v4 layout=L0 fields=[0, 1]
 # CHECK-NEXT: Jump -> next b3(v5)
 # CHECK: b3(v7: 
 # CHECK-NEXT: = PropGet v7 key="a"
+}
 
 function f8 name="returnedWhenPresent" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f13
     v2 = ResultAt v1 index=0
     v3 = ResultAt v1 index=1
@@ -252,8 +237,6 @@ function f8 name="returnedWhenPresent" parameters=[{type=number}] results=[{type
     Return v9
   b5():
     Return
-}
-# CHECK-LABEL: function f8 name="returnedWhenPresent"
 # CHECK: b1():
 # CHECK-NOT: NewObject
 # CHECK: b3([[tag8]]: i32, [[a8]]: number, [[b8]]: number):
@@ -261,9 +244,9 @@ function f8 name="returnedWhenPresent" parameters=[{type=number}] results=[{type
 # CHECK-NEXT: [[cell8]]:{{*}}= NewObject -, [[a8]], [[b8]] layout=L0 fields=[0, 1]
 # CHECK-NEXT: Return [[cell8]]
 # CHECK-NOT: NewObject
+}
 
 function f9 name="storedOnOnePath" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f13
     v2 = ResultAt v1 index=0
     v3 = ResultAt v1 index=1
@@ -283,8 +266,6 @@ function f9 name="storedOnOnePath" parameters=[{type=number}] results=[{type=any
     Return
   b5():
     Return
-}
-# CHECK-LABEL: function f9 name="storedOnOnePath"
 # CHECK: b1():
 # CHECK-NOT: NewObject
 # CHECK: b3([[tag9]]: i32, [[a9]]: number, [[b9]]: number):
@@ -298,9 +279,9 @@ function f9 name="storedOnOnePath" parameters=[{type=number}] results=[{type=any
 # CHECK: [[absent9]]():
 # CHECK-NEXT: [[null9]]: null = Null
 # CHECK-NEXT: Jump -> next [[continuation9]]([[null9]])
+}
 
 function f10 name="storedOnEveryPath" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f13
     v2 = ResultAt v1 index=0
     v3 = ResultAt v1 index=1
@@ -315,16 +296,14 @@ function f10 name="storedOnEveryPath" parameters=[{type=number}] results=[{type=
   b3(v7):
     PutModuleVariable v7 variable=g0
     Return
-}
-# CHECK-LABEL: function f10 name="storedOnEveryPath"
 # CHECK: b1():
 # CHECK-NEXT: v5:{{*}}= NewObject -, v3, v4 layout=L0 fields=[0, 1]
 # CHECK-NEXT: Jump -> next b3(v5)
 # CHECK: b3(v7: 
 # CHECK-NEXT: PutModuleVariable v7 variable=g0
+}
 
 function f11 name="passedThroughAnotherParameter" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f13
     v2 = ResultAt v1 index=0
     v3 = ResultAt v1 index=1
@@ -346,16 +325,14 @@ function f11 name="passedThroughAnotherParameter" parameters=[{type=number}] res
     Return v10
   b6():
     Return
-}
-# CHECK-LABEL: function f11 name="passedThroughAnotherParameter"
 # CHECK-NOT: NewObject
 # CHECK-NOT: PropGet
 # CHECK: = BitAnd
 # CHECK-NOT: NewObject
 # CHECK-NOT: PropGet
+}
 
 function f12 name="pairOrUndefinedDestructured" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f13
     v2 = ResultAt v1 index=0
     v3 = ResultAt v1 index=1
@@ -378,8 +355,6 @@ function f12 name="pairOrUndefinedDestructured" parameters=[{type=number}] resul
     Return v13
   b5():
     Return
-}
-# CHECK-LABEL: function f12 name="pairOrUndefinedDestructured"
 # CHECK-NOT: NewArray
 # CHECK-NOT: DestructureIterable
 # CHECK: b3([[tag12]]: i32, [[first12]]: number, [[second12]]: number, 
@@ -387,16 +362,15 @@ function f12 name="pairOrUndefinedDestructured" parameters=[{type=number}] resul
 # CHECK: b4():
 # CHECK-NEXT: v11:{{*}}= Upcast [[first12]] castType=
 # CHECK-NEXT: v12:{{*}}= Upcast [[second12]] castType=
+}
 
 function f13 name="find" role=ResultWorker parameters=[{type=number}] results=[{type=i32}, {type=number}, {type=number}] derivation={source=f0} creator=ResultWorker{origin=f0} {
-  b0(v0: number):
     v1 = Integer integer=1
     v2 = Results v1, v0, v0
     Return v2
 }
 
 function f14 name="narrowedValueUsedAfterOnePathBuiltIt" parameters=[{type=anything}, {type=boolean}, {type=boolean}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean, v2: boolean, v3: number):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v4 = NewObject -, v3, v3 layout=L0 fields=[0, 1]
@@ -418,8 +392,6 @@ function f14 name="narrowedValueUsedAfterOnePathBuiltIt" parameters=[{type=anyth
     Jump -> next b7()
   b7():
     Return
-}
-# CHECK-LABEL: function f14 name="narrowedValueUsedAfterOnePathBuiltIt"
 # CHECK: b1():
 # CHECK-NOT: NewObject
 # CHECK: b5():
@@ -428,3 +400,4 @@ function f14 name="narrowedValueUsedAfterOnePathBuiltIt" parameters=[{type=anyth
 # CHECK: [[cell14]]: L0 = 
 # CHECK-NEXT: PutSlot [[cell14]], -, v3 key="b"
 # CHECK-NEXT: = Call v0, -, [[cell14]]
+}

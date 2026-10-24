@@ -8,34 +8,14 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBuiltinIDs.h"
-#include "AOTExactBuffer.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
-#include "AOTVector.h"
 #include <algorithm>
 #include <functional>
 #include <tuple>
-#include <wtf/BitVector.h>
-#include <wtf/HashSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
-
-static FlowScopeLocationNumbering createScopeLocationNumbering(const Program& program)
-{
-    FlowScopeLocationNumbering numbering;
-    numbering.numberOfVariables = program.variables.size();
-    numbering.firstField.reserveInitialCapacity(program.layouts.size() + 1);
-    uint32_t next = numbering.numberOfVariables;
-    for (const Layout& layout : program.layouts) {
-        numbering.firstField.append(next);
-        if (layout.kind == LayoutKind::Environment)
-            next += layout.fields.size();
-    }
-    numbering.firstField.append(next);
-    return numbering;
-}
 
 static bool readsModuleValue(Opcode opcode, ModuleReferenceKind kind)
 {
@@ -157,8 +137,6 @@ static void collectAccesses(FlowScopeIndex& index)
     for (size_t function = 0; function < program.functions.size(); ++function)
         index.firstMention[function + 1] += index.firstMention[function];
 
-    for (ModuleID module : inputs.modulesLoadedByHost)
-        index.modulesReadByHost.set(module.index());
     for (const FlowStaticFieldAccess& access : inputs.staticFieldAccesses) {
         FlowScopeLocation location = access.variable.index();
         if (!access.function) {
@@ -222,17 +200,14 @@ static void findVariableOwners(FlowScopeIndex& index)
     }
 }
 
-static bool isFoundThroughRegistration(FunctionRole role)
-{
-    return role == FunctionRole::Library || role == FunctionRole::Model;
-}
-
 static BitVector findFunctionsEnteredFromOutside(const FlowScopeIndex& index)
 {
     const Program& program = index.program();
     BitVector functions(program.functions.size());
     for (unsigned function = 0; function < program.functions.size(); ++function) {
-        if (index.bodies.quickGet(function) && program.functions[function].mayBeCalledByHost() && !isFoundThroughRegistration(program.functions[function].role))
+        FunctionRole role = program.functions[function].role;
+        bool isFoundThroughRegistration = role == FunctionRole::Library || role == FunctionRole::Model;
+        if (index.bodies.quickGet(function) && program.functions[function].mayBeCalledByHost() && !isFoundThroughRegistration)
             functions.quickSet(function);
     }
     for (const RuntimeFunctionEntry& entry : program.runtimeFunctions) {
@@ -261,11 +236,6 @@ static void findFunctionsEnteredWithoutMention(FlowScopeIndex& index, const BitV
     }
 }
 
-static bool canRunOnlyDuringCall(const Function& function)
-{
-    return !function.isModuleBody() && !function.isUnsplitCoroutine();
-}
-
 static void findSoleCallSites(FlowScopeIndex& index, const BitVector& functionsEnteredFromOutside)
 {
     const Program& program = index.program();
@@ -281,7 +251,8 @@ static void findSoleCallSites(FlowScopeIndex& index, const BitVector& functionsE
             ++index.calls.numberOfMentions[variable.function.index()];
     }
     for (unsigned function = 0; function < program.functions.size(); ++function) {
-        if (index.calls.numberOfMentions[function] != 1 || !index.bodies.quickGet(function) || functionsEnteredFromOutside.quickGet(function) || !canRunOnlyDuringCall(program.functions[function]))
+        bool canRunOnlyDuringCall = !program.functions[function].isModuleBody() && !program.functions[function].isUnsplitCoroutine();
+        if (index.calls.numberOfMentions[function] != 1 || !index.bodies.quickGet(function) || functionsEnteredFromOutside.quickGet(function) || !canRunOnlyDuringCall)
             index.calls.soleCallSites[function] = { };
     }
     for (const FlowCall& link : index.inputs.calls) {
@@ -335,7 +306,7 @@ static void findEnvironmentOwners(FlowScopeIndex& index)
 {
     for (unsigned layoutIndex = 0; layoutIndex < index.program().layouts.size(); ++layoutIndex) {
         LayoutID layout(layoutIndex);
-        auto sites = allocationsOf(index, layout);
+        auto sites = operationsOn(index.allocations, layout);
         if (sites.empty() || sites.front().function != sites.back().function)
             continue;
         index.environmentOwners[layoutIndex] = sites.front().function;
@@ -350,23 +321,6 @@ static FlowScopeOwner& ownerFor(FlowScopeIndex& index, FunctionID function)
     auto owner = std::ranges::lower_bound(index.owners, function, { }, &FlowScopeOwner::function);
     RELEASE_ASSERT(owner != index.owners.end() && owner->function == function);
     return *owner;
-}
-
-static void createOwners(FlowScopeIndex& index)
-{
-    Vector<FunctionID> functions;
-    for (FunctionID owner : index.locationOwners) {
-        if (owner)
-            functions.append(owner);
-    }
-    for (FunctionID owner : index.environmentOwners) {
-        if (owner)
-            functions.append(owner);
-    }
-    sortAndRemoveDuplicates(index.inputs.build.parallelLoops(), functions);
-    index.owners.reserveInitialCapacity(functions.size());
-    for (FunctionID function : functions)
-        index.owners.append(FlowScopeOwner { function, { }, { }, { }, { }, { } });
 }
 
 static void assignExport(FlowScopeIndex& index, VariableID variable, ModuleID exporter)
@@ -404,9 +358,21 @@ static void assignExportsOfNamespace(FlowScopeIndex& index, ModuleID exportedNam
     }
 }
 
-static void assignOwnedLocations(FlowScopeIndex& index)
+static void createOwners(FlowScopeIndex& index)
 {
     const Program& program = index.program();
+    Vector<FunctionID> functions;
+    for (const Vector<FunctionID>* list : { &index.locationOwners, &index.environmentOwners }) {
+        for (FunctionID owner : *list) {
+            if (owner)
+                functions.append(owner);
+        }
+    }
+    sortAndRemoveDuplicates(index.inputs.build.parallelLoops(), functions);
+    index.owners.reserveInitialCapacity(functions.size());
+    for (FunctionID function : functions)
+        index.owners.append(FlowScopeOwner { function, { }, { }, { }, { }, { } });
+
     for (unsigned variable = 0; variable < program.variables.size(); ++variable) {
         FunctionID function = index.locationOwners[variable];
         if (!function)
@@ -444,17 +410,25 @@ FlowScopeIndex createScopeIndex(const FlowOrderInputs& inputs, const FlowModuleO
 {
     const Program& program = inputs.program;
     FlowScopeIndex index { inputs, moduleOrder };
-    index.numbering = createScopeLocationNumbering(program);
+    FlowScopeLocationNumbering numbering;
+    numbering.numberOfVariables = program.variables.size();
+    numbering.firstField.reserveInitialCapacity(program.layouts.size() + 1);
+    uint32_t numberOfLocations = numbering.numberOfVariables;
+    for (const Layout& layout : program.layouts) {
+        numbering.firstField.append(numberOfLocations);
+        if (layout.kind == LayoutKind::Environment)
+            numberOfLocations += layout.fields.size();
+    }
+    numbering.firstField.append(numberOfLocations);
+    index.numbering = WTF::move(numbering);
     index.bodies = inputs.reachedFunctions;
     for (size_t function : inputs.reachedFunctions) {
         if (!program.functions[function].hasBody())
             index.bodies.quickClear(function);
     }
-    uint32_t numberOfLocations = index.numbering.numberOfLocations();
     index.opaqueLocations = BitVector(numberOfLocations);
     index.syntheticVariables = BitVector(program.variables.size());
     index.modulesOfFunctionsEnteredWithoutMention = BitVector(program.modules.size());
-    index.modulesReadByHost = BitVector(program.modules.size());
     index.locationOwners.grow(numberOfLocations);
     index.environmentOwners.grow(program.layouts.size());
     index.calls.numberOfMentions.fill(0, program.functions.size());
@@ -469,7 +443,6 @@ FlowScopeIndex createScopeIndex(const FlowOrderInputs& inputs, const FlowModuleO
     collectCalls(index);
     findEnvironmentOwners(index);
     createOwners(index);
-    assignOwnedLocations(index);
     return index;
 }
 

@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="read" parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     v1 = CallBuiltin v0 overload=ArrayPrototypeConcat/3
     v2 = Integer integer=0
     v3 = IsPristine v1 builtinClass=Array aspects=[Storage, Names]
@@ -19,13 +18,11 @@ function f0 name="read" parameters=[{type=Array}] results=[{type=anything}] {
     Jump -> next b3(v6)
   b3(v7):
     Return v7
-}
-# CHECK-LABEL: function f0 name="read"
 # CHECK: v3: boolean = IsPristine v1 builtinClass=Array aspects=[Storage, Names]
 # CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2()
 # CHECK: = GetArrayElement v1, v2, v4
+}
 function f1 name="asked" parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     v1 = CallBuiltin v0 overload=ArrayPrototypeConcat/3
     v2 = IsPristine v1 builtinClass=Array aspects=[Names]
     Branch v2 -> taken b1(| 0), notTaken b2()
@@ -37,8 +34,7 @@ function f1 name="asked" parameters=[{type=Array}] results=[{type=anything}] {
     Jump -> next b3(v5)
   b3(v6):
     Return v6
-}
-# CHECK-LABEL: function f1 name="asked"
 # CHECK-NOT: IsPristine
 # CHECK: b2():
 # CHECK-NEXT: Unreachable
+}

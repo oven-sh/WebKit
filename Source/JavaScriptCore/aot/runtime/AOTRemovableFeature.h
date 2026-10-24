@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <wtf/Platform.h>
@@ -139,44 +140,39 @@ inline std::optional<RemovableFeature> removedFeatureAt(const void* address)
 #define JSC_REMOVABLE_RECORD_NAME(operand) "%" #operand
 #endif
 
+#define JSC_EMIT_REMOVABLE_RECORD(label, guardSite, recordedEntryPoint, recordedOrigin, ...) \
+    __asm__ volatile( \
+        label JSC_REMOVABLE_RECORD_SECTION \
+        ".p2align 3\n" \
+        ".quad " guardSite "\n" \
+        ".quad " JSC_REMOVABLE_RECORD_NAME([entryPoint]) "\n" \
+        ".short %c[feature]\n" \
+        ".byte %c[stub]\n" \
+        ".byte %c[origin]\n" \
+        ".long %c[builtin]\n" \
+        ".popsection\n" \
+        : \
+        : [entryPoint] JSC_REMOVABLE_RECORD_SYMBOL(recordedEntryPoint), [feature] "i"(static_cast<uint16_t>(feature)), [stub] "i"(static_cast<uint8_t>(stub)), [origin] "i"(static_cast<uint8_t>(recordedOrigin)), [builtin] "i"(builtin) __VA_ARGS__)
+
+#else
+#define JSC_EMIT_REMOVABLE_RECORD(...)
+#endif
+
+template<RemovableFeature feature, GuardOrigin origin, uint32_t builtin>
+inline constexpr bool isRecordOfGuard = static_cast<uint16_t>(feature) < removableFeatureIndexLimit && origin != GuardOrigin::Definition && (origin == GuardOrigin::Builtin || origin == GuardOrigin::BuiltinNamedByEngine || !builtin);
+
 template<RemovableFeature feature, RemovedFeatureStub stub, auto entryPoint, GuardOrigin origin = GuardOrigin::NativeCode, uint32_t builtin = 0>
 inline __attribute__((__always_inline__)) void recordRemovableEntryPoint()
 {
-    static_assert(static_cast<uint16_t>(feature) < removableFeatureIndexLimit);
-    static_assert(origin != GuardOrigin::Definition);
-    static_assert(origin == GuardOrigin::Builtin || origin == GuardOrigin::BuiltinNamedByEngine || !builtin);
-    __asm__ volatile(
-        "771:\n" JSC_REMOVABLE_RECORD_SECTION
-        ".p2align 3\n"
-        ".quad 771b\n"
-        ".quad " JSC_REMOVABLE_RECORD_NAME(0) "\n"
-        ".short %c1\n"
-        ".byte %c2\n"
-        ".byte %c3\n"
-        ".long %c4\n"
-        ".popsection\n"
-        :
-        : JSC_REMOVABLE_RECORD_SYMBOL(entryPoint), "i"(static_cast<uint16_t>(feature)), "i"(static_cast<uint8_t>(stub)), "i"(static_cast<uint8_t>(origin)), "i"(builtin));
+    static_assert(isRecordOfGuard<feature, origin, builtin>);
+    JSC_EMIT_REMOVABLE_RECORD("771:\n", "771b", entryPoint, origin);
 }
 
 template<auto& table, RemovableFeature feature, RemovedFeatureStub stub, auto entryPoint, GuardOrigin origin = GuardOrigin::NativeCode, uint32_t builtin = 0>
 inline __attribute__((__always_inline__)) void recordRemovableTableEntry()
 {
-    static_assert(static_cast<uint16_t>(feature) < removableFeatureIndexLimit);
-    static_assert(origin != GuardOrigin::Definition);
-    static_assert(origin == GuardOrigin::Builtin || origin == GuardOrigin::BuiltinNamedByEngine || !builtin);
-    __asm__ volatile(
-        JSC_REMOVABLE_RECORD_SECTION
-        ".p2align 3\n"
-        ".quad " JSC_REMOVABLE_RECORD_NAME(0) "\n"
-        ".quad " JSC_REMOVABLE_RECORD_NAME(1) "\n"
-        ".short %c2\n"
-        ".byte %c3\n"
-        ".byte %c4\n"
-        ".long %c5\n"
-        ".popsection\n"
-        :
-        : JSC_REMOVABLE_RECORD_SYMBOL(&table), JSC_REMOVABLE_RECORD_SYMBOL(entryPoint), "i"(static_cast<uint16_t>(feature)), "i"(static_cast<uint8_t>(stub)), "i"(static_cast<uint8_t>(origin)), "i"(builtin));
+    static_assert(isRecordOfGuard<feature, origin, builtin>);
+    JSC_EMIT_REMOVABLE_RECORD("", JSC_REMOVABLE_RECORD_NAME([table]), entryPoint, origin, , [table] JSC_REMOVABLE_RECORD_SYMBOL(&table));
 }
 
 template<RemovableFeature feature, auto function, RemovedFeatureStub stub = RemovedFeatureStub::Abort, uint32_t builtin = 0>
@@ -185,54 +181,18 @@ inline __attribute__((__always_inline__)) void recordRemovableDefinition()
     static_assert(static_cast<uint16_t>(feature) < removableFeatureIndexLimit);
     static_assert(stub == RemovedFeatureStub::Abort || stub == RemovedFeatureStub::Throw);
     static_assert(stub == RemovedFeatureStub::Throw || !builtin);
+#if COMPILER(CLANG) && (CPU(X86_64) || CPU(ARM64))
     // A function that records itself stays until the linker collects sections. LLVM 23 crashes (GlobalDCE, under link-time optimization)
     // when it removes a function that the constant of __builtin_function_start still names.
     [[gnu::used]] static const void* const start = __builtin_function_start(function);
-    __asm__ volatile(
-        "771:\n" JSC_REMOVABLE_RECORD_SECTION
-        ".p2align 3\n"
-        ".quad 771b\n"
-        ".quad " JSC_REMOVABLE_RECORD_NAME(0) "\n"
-        ".short %c1\n"
-        ".byte %c2\n"
-        ".byte %c3\n"
-        ".long %c4\n"
-        ".popsection\n"
-        :
-        : JSC_REMOVABLE_RECORD_SYMBOL(__builtin_function_start(function)), "i"(static_cast<uint16_t>(feature)), "i"(static_cast<uint8_t>(stub)), "i"(static_cast<uint8_t>(GuardOrigin::Definition)), "i"(builtin));
+#endif
+    JSC_EMIT_REMOVABLE_RECORD("771:\n", "771b", __builtin_function_start(function), GuardOrigin::Definition);
 }
 
+#undef JSC_EMIT_REMOVABLE_RECORD
 #undef JSC_REMOVABLE_RECORD_SECTION
 #undef JSC_REMOVABLE_RECORD_SYMBOL
 #undef JSC_REMOVABLE_RECORD_NAME
-
-#else
-
-template<RemovableFeature feature, RemovedFeatureStub stub, auto entryPoint, GuardOrigin origin = GuardOrigin::NativeCode, uint32_t builtin = 0>
-ALWAYS_INLINE void recordRemovableEntryPoint()
-{
-    static_assert(static_cast<uint16_t>(feature) < removableFeatureIndexLimit);
-    static_assert(origin != GuardOrigin::Definition);
-    static_assert(origin == GuardOrigin::Builtin || origin == GuardOrigin::BuiltinNamedByEngine || !builtin);
-}
-
-template<auto& table, RemovableFeature feature, RemovedFeatureStub stub, auto entryPoint, GuardOrigin origin = GuardOrigin::NativeCode, uint32_t builtin = 0>
-ALWAYS_INLINE void recordRemovableTableEntry()
-{
-    static_assert(static_cast<uint16_t>(feature) < removableFeatureIndexLimit);
-    static_assert(origin != GuardOrigin::Definition);
-    static_assert(origin == GuardOrigin::Builtin || origin == GuardOrigin::BuiltinNamedByEngine || !builtin);
-}
-
-template<RemovableFeature feature, auto function, RemovedFeatureStub stub = RemovedFeatureStub::Abort, uint32_t builtin = 0>
-ALWAYS_INLINE void recordRemovableDefinition()
-{
-    static_assert(static_cast<uint16_t>(feature) < removableFeatureIndexLimit);
-    static_assert(stub == RemovedFeatureStub::Abort || stub == RemovedFeatureStub::Throw);
-    static_assert(stub == RemovedFeatureStub::Throw || !builtin);
-}
-
-#endif
 
 template<RemovableFeature feature, GuardOrigin origin, uint32_t builtin>
 ALWAYS_INLINE EncodedJSValue throwForRemovedFeature(JSGlobalObject* realm)
@@ -244,36 +204,22 @@ ALWAYS_INLINE EncodedJSValue throwForRemovedFeature(JSGlobalObject* realm)
         return Bun__throwForRemovedFeature(realm, index);
 }
 
-template<RemovableFeature feature, RemovedFeatureStub stub, typename Result, GuardOrigin origin = GuardOrigin::NativeCode, uint32_t builtin = 0, typename Realm>
-ALWAYS_INLINE Result resultForRemovedFeature([[maybe_unused]] Realm realm)
+// A stub that throws finds the realm in the first argument.
+template<RemovableFeature feature, RemovedFeatureStub stub, typename Result, GuardOrigin origin = GuardOrigin::NativeCode, uint32_t builtin = 0, typename... Arguments>
+ALWAYS_INLINE Result resultForRemovedFeature([[maybe_unused]] Arguments&... arguments)
 {
     static_assert(stub != RemovedFeatureStub::ReturnUndefined);
     if constexpr (stub == RemovedFeatureStub::Abort)
         Bun__abortForRemovedFeature(static_cast<uint16_t>(feature));
     else if constexpr (stub == RemovedFeatureStub::Throw) {
         if constexpr (std::is_same_v<Result, EncodedJSValue>)
-            return throwForRemovedFeature<feature, origin, builtin>(realm);
+            return throwForRemovedFeature<feature, origin, builtin>(std::get<0>(std::tie(arguments...)));
         else {
-            throwForRemovedFeature<feature, origin, builtin>(realm);
+            throwForRemovedFeature<feature, origin, builtin>(std::get<0>(std::tie(arguments...)));
             return Result { };
         }
     } else if constexpr (!std::is_void_v<Result>)
         return Result { };
-}
-
-template<RemovedFeatureStub stub>
-ALWAYS_INLINE std::nullptr_t realmForRemovedFeature()
-{
-    return nullptr;
-}
-
-template<RemovedFeatureStub stub, typename First, typename... Rest>
-ALWAYS_INLINE auto realmForRemovedFeature([[maybe_unused]] First& first, Rest&...)
-{
-    if constexpr (stub == RemovedFeatureStub::Throw)
-        return first;
-    else
-        return nullptr;
 }
 
 template<RemovedFeatureStub stub, typename Result, typename FirstParameter>
@@ -288,16 +234,6 @@ inline constexpr bool removedFeatureStubFitsTypes = [] {
         return std::is_void_v<Result> || std::is_default_constructible_v<Result>;
 }();
 
-template<typename... Parameters>
-struct RemovableFirstParameter {
-    using Type = void;
-};
-
-template<typename First, typename... Rest>
-struct RemovableFirstParameter<First, Rest...> {
-    using Type = First;
-};
-
 template<typename Function>
 struct RemovableFunctionSignature;
 
@@ -310,7 +246,7 @@ concept RemovedFeatureStubFits = requires {
     template<typename Result, typename... Parameters, bool isNoexcept> \
     struct RemovableFunctionSignature<Result (ATTRIBUTES *)(Parameters...) noexcept(isNoexcept)> { \
         using ResultType = Result; \
-        using FirstParameter = typename RemovableFirstParameter<Parameters...>::Type; \
+        using FirstParameter = std::tuple_element_t<0, std::tuple<Parameters..., void>>; \
     };
 
 JSC_DEFINE_REMOVABLE_FUNCTION_SIGNATURE()
@@ -320,25 +256,22 @@ JSC_DEFINE_REMOVABLE_FUNCTION_SIGNATURE(SYSV_ABI)
 
 #undef JSC_DEFINE_REMOVABLE_FUNCTION_SIGNATURE
 
-template<RemovableFeature feature, RemovedFeatureStub stub, auto function>
+template<RemovableFeature feature, RemovedFeatureStub stub, auto function, GuardOrigin origin = GuardOrigin::NativeCode, uint32_t builtin = 0>
 ALWAYS_INLINE decltype(function) removableFunction()
 {
     static_assert(!std::is_member_pointer_v<decltype(function)>, "guard a member function at its definition");
     static_assert(RemovedFeatureStubFits<stub, function>);
-    recordRemovableEntryPoint<feature, stub, function>();
+    recordRemovableEntryPoint<feature, stub, function, origin, builtin>();
     return function;
 }
 
 template<RemovableFeature feature, RemovedFeatureStub stub, auto function, uint32_t builtin>
 ALWAYS_INLINE decltype(function) removableBuiltinFunction()
 {
-    static_assert(!std::is_member_pointer_v<decltype(function)>, "guard a member function at its definition");
-    static_assert(RemovedFeatureStubFits<stub, function>);
-    recordRemovableEntryPoint<feature, stub, function, GuardOrigin::Builtin, builtin>();
-    return function;
+    return removableFunction<feature, stub, function, GuardOrigin::Builtin, builtin>();
 }
 
-template<RemovableFeature feature, RemovedFeatureStub stub, auto function, typename... Arguments>
+template<RemovableFeature feature, RemovedFeatureStub stub, auto function, GuardOrigin origin = GuardOrigin::NativeCode, uint32_t builtin = 0, typename... Arguments>
 ALWAYS_INLINE std::invoke_result_t<decltype(function), Arguments...> callRemovable(Arguments&&... arguments)
 {
     static_assert(!std::is_member_pointer_v<decltype(function)>, "guard a member function at its definition");
@@ -346,22 +279,16 @@ ALWAYS_INLINE std::invoke_result_t<decltype(function), Arguments...> callRemovab
     using Result = std::invoke_result_t<decltype(function), Arguments...>;
     if constexpr (stub != RemovedFeatureStub::Abort) {
         if (isFeatureRemoved(feature)) [[unlikely]]
-            return resultForRemovedFeature<feature, stub, Result>(realmForRemovedFeature<stub>(arguments...));
+            return resultForRemovedFeature<feature, stub, Result, origin, builtin>(arguments...);
     }
-    recordRemovableEntryPoint<feature, stub, function>();
+    recordRemovableEntryPoint<feature, stub, function, origin, builtin>();
     JSC_CALL_WITHOUT_INLINING return function(std::forward<Arguments>(arguments)...);
 }
 
 template<RemovableFeature feature, auto function, uint32_t builtin, typename... Arguments>
 ALWAYS_INLINE std::invoke_result_t<decltype(function), Arguments...> callRemovableBuiltin(Arguments&&... arguments)
 {
-    static_assert(!std::is_member_pointer_v<decltype(function)>, "guard a member function at its definition");
-    static_assert(RemovedFeatureStubFits<RemovedFeatureStub::Throw, function>);
-    using Result = std::invoke_result_t<decltype(function), Arguments...>;
-    if (isFeatureRemoved(feature)) [[unlikely]]
-        return resultForRemovedFeature<feature, RemovedFeatureStub::Throw, Result, GuardOrigin::Builtin, builtin>(realmForRemovedFeature<RemovedFeatureStub::Throw>(arguments...));
-    recordRemovableEntryPoint<feature, RemovedFeatureStub::Throw, function, GuardOrigin::Builtin, builtin>();
-    JSC_CALL_WITHOUT_INLINING return function(std::forward<Arguments>(arguments)...);
+    return callRemovable<feature, RemovedFeatureStub::Throw, function, GuardOrigin::Builtin, builtin>(std::forward<Arguments>(arguments)...);
 }
 
 template<RemovableFeature feature, auto function>

@@ -5,7 +5,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="oneBoolean" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = NewArray v0 contents=anything
@@ -23,13 +22,11 @@ function f0 name="oneBoolean" parameters=[{type=anything}, {type=boolean}] resul
   b6():
     v7 = Undefined
     Return v7
-}
-# CHECK-LABEL: function f0 name="oneBoolean"
 # CHECK: b4([[narrowed0]]: true):
 # CHECK-NEXT: Branch [[narrowed0]] -> taken b5(), notTaken b6()
+}
 
 function f1 name="bothBooleans" parameters=[{type=anything}, {type=int[0, 2]}] results=[{type=anything}] {
-  b0(v0: anything, v1: int[0, 2]):
     Switch v1 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
   b1():
     v2 = NewArray v0 contents=anything
@@ -50,8 +47,6 @@ function f1 name="bothBooleans" parameters=[{type=anything}, {type=int[0, 2]}] r
   b7():
     v8 = Undefined
     Return v8
-}
-# CHECK-LABEL: function f1 name="bothBooleans"
 # CHECK-NOT: NewArray
 # CHECK: b4([[tag1]]: i32,
 # CHECK: b5():
@@ -60,3 +55,4 @@ function f1 name="bothBooleans" parameters=[{type=anything}, {type=int[0, 2]}] r
 # CHECK-NEXT: Branch [[condition1]] -> taken b6(), notTaken b7()
 # CHECK: [[isTrue1]]():
 # CHECK-NEXT: = Boolean boolean=true
+}

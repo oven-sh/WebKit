@@ -14,14 +14,18 @@
 #include "JSExportMacros.h"
 #include <optional>
 #include <span>
+#include <wtf/Hasher.h>
 #include <wtf/Variant.h>
 
 namespace JSC { namespace AOT { namespace Typed {
+
+inline void add(Hasher& hasher, const TemplateString& string) { add(hasher, string.cooked, string.raw); }
 
 struct NewClassRecord {
     LayoutID classLayout;
 
     friend bool operator==(const NewClassRecord&, const NewClassRecord&) = default;
+    friend void add(Hasher& hasher, const NewClassRecord& record) { add(hasher, record.classLayout); }
 };
 
 struct CloneAsRecord {
@@ -30,12 +34,14 @@ struct CloneAsRecord {
     Vector<FieldIndex> fields;
 
     friend bool operator==(const CloneAsRecord&, const CloneAsRecord&) = default;
+    friend void add(Hasher& hasher, const CloneAsRecord& record) { add(hasher, record.layout, record.shape, record.fields); }
 };
 
 struct TemplateObjectRecord {
     Vector<TemplateString> parts;
 
     friend bool operator==(const TemplateObjectRecord&, const TemplateObjectRecord&) = default;
+    friend void add(Hasher& hasher, const TemplateObjectRecord& record) { add(hasher, record.parts); }
 };
 
 struct DirectEvalRecord {
@@ -43,6 +49,7 @@ struct DirectEvalRecord {
     ModuleID module;
 
     friend bool operator==(const DirectEvalRecord&, const DirectEvalRecord&) = default;
+    friend void add(Hasher& hasher, const DirectEvalRecord& record) { add(hasher, record.scope, record.module); }
 };
 
 struct DataRecord {
@@ -52,6 +59,7 @@ struct DataRecord {
     std::optional<uint32_t> node;
 
     friend bool operator==(const DataRecord&, const DataRecord&) = default;
+    friend void add(Hasher& hasher, const DataRecord& record) { add(hasher, record.data, record.sharedStorageOffset, record.node); }
 };
 
 // How the elements of an array of constants are stored, in the table of the image and in the array that is made of it.
@@ -62,6 +70,7 @@ struct CollectionDataRecord {
     bool hasValues { false };
 
     friend bool operator==(const CollectionDataRecord&, const CollectionDataRecord&) = default;
+    friend void add(Hasher& hasher, const CollectionDataRecord& record) { add(hasher, record.data, record.hasValues); }
 };
 
 using RequestRecord = Variant<NewClassRecord, CloneAsRecord, TemplateObjectRecord, DirectEvalRecord, DataRecord, CollectionDataRecord>;

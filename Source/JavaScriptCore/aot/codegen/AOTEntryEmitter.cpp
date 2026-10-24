@@ -12,9 +12,12 @@
 #include "AOTBorrowedParameters.h"
 #include "AOTChooseCallingConventions.h"
 #include "AOTClosureWord.h"
+#include "AOTCodeRecords.h"
 #include "AOTConvention.h"
 #include "AOTFlowResults.h"
+#include "AOTStubsCallFrames.h"
 #include "AOTVector.h"
+#include "AllowMacroScratchRegisterUsage.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -44,11 +47,6 @@ static uint8_t numberOfRegisterParameters(const Function& function)
     }
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-EntryEmitter::EntryEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
 }
 
 void EntryEmitter::generateEntry()
@@ -179,6 +177,53 @@ EntryDescription describeEntry(const CodeGenerationInputs& inputs, FunctionID id
     description.borrowedArguments = argumentsBorrowedBy(inputs.flow, id, function);
     description.endsItsTailCalls = description.isGenericEntrypoint && inputs.flow.frameArrayParameters().endsItsTailCalls(id);
     return description;
+}
+
+static void emitSecondaryEntries(CCallHelpers& jit, std::span<const SecondaryEntry> entries, unsigned numberOfGPRs, CodeRecords& records)
+{
+    RELEASE_ASSERT(numberOfGPRs <= numberOfDirectArgumentGPRs);
+    for (size_t index = 0; index < entries.size(); ++index) {
+        const SecondaryEntry& entry = entries[index];
+        unsigned endOfOmittedGPRs = index + 1 < entries.size() ? entries[index + 1].firstOmittedGPR : numberOfGPRs;
+        RELEASE_ASSERT(entry.id != primaryEntry && entry.firstOmittedGPR < endOfOmittedGPRs);
+
+        CCallHelpers::Label begin = jit.label();
+        records.entries.append(RecordedEntry { entry.id, begin });
+        RegisterSet written;
+        for (unsigned gpr = entry.firstOmittedGPR; gpr < endOfOmittedGPRs; ++gpr) {
+            jit.move(CCallHelpers::TrustedImm64(JSValue::ValueUndefined), directArgumentGPR(gpr));
+            written.add(directArgumentGPR(gpr));
+        }
+        records.units.addPlain(begin, jit.label(), written);
+    }
+}
+
+static void emitArgumentRegisterSpill(CCallHelpers& jit, CodeRecords& records)
+{
+    AllowMacroScratchRegisterUsage allowScratch(jit);
+    CCallHelpers::Label begin = jit.label();
+    records.entries.append(RecordedEntry { primaryEntry, begin });
+    emitSpillArgumentRegisters(jit);
+    RegisterSet written = RegisterSet::macroClobberedGPRs();
+    written.add(CCallHelpers::stackPointerRegister);
+    records.units.addPlain(begin, jit.label(), written);
+    records.frame.stackUsedAtCalls += sizeOfSpilledArgumentRegisters;
+    records.frame.spillsArgumentRegisters = true;
+}
+
+void emitEntryPreambles(CCallHelpers& jit, const CodeGenerationInputs& inputs, FunctionID id, CodeRecords& records)
+{
+    const CallingConventions& conventions = inputs.conventions;
+    std::span<const SecondaryEntry> secondaryEntries = conventions.secondaryEntriesOf(id);
+    bool spillsArgumentRegisters = conventions.of(inputs.program, id).spillsArgumentRegisters;
+    RELEASE_ASSERT(secondaryEntries.empty() || !spillsArgumentRegisters);
+
+    if (!secondaryEntries.empty()) {
+        ArgumentLocations locations = conventions.locationsOf(inputs.program, id);
+        emitSecondaryEntries(jit, secondaryEntries, static_cast<unsigned>(std::ranges::count(locations.parameters, ArgumentLocation::Kind::GPR, &ArgumentLocation::kind)), records);
+    }
+    if (spillsArgumentRegisters)
+        emitArgumentRegisterSpill(jit, records);
 }
 
 } } } // namespace JSC::AOT::Typed

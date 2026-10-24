@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="top" parameters=[{type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
     v2 = CallDirect v0, v1 function=f1
     Return v2
 }
@@ -16,7 +15,6 @@ function f0 name="top" parameters=[{type=number}, {type=number}] results=[{type=
 # CHECK-NEXT: ReturnCall
 
 function f1 name="middle" parameters=[{type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
     v2 = CallDirect v0, v1 function=f2
     Return v2
 }
@@ -26,7 +24,6 @@ function f1 name="middle" parameters=[{type=number}, {type=number}] results=[{ty
 # CHECK-NEXT: ReturnCall
 
 function f2 name="bottom" parameters=[{type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
     v2 = Add v0, v0
     Return v2
 }
@@ -36,14 +33,12 @@ function f2 name="bottom" parameters=[{type=number}, {type=number}] results=[{ty
 # CHECK-NEXT: ReturnCall
 
 function f3 name="caller" parameters=[{type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
     v2 = Mul v1, v1
     v3 = CallDirect v0, v2 function=f0
     Return v3
-}
-# CHECK-LABEL: function f3 name="caller"
 # CHECK-NEXT: b0(v0: number, v1: number):
 # CHECK-NEXT: = CallDirect v0 function=f4
+}
 
 # CHECK-LABEL: function f4 name="top"{{*}}parameters=[{type=number}] results=[{type=number}]{{*}}derivation={source=f0 parameterMap=[{original=0}]}
 # CHECK: b0(v0: number):

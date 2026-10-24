@@ -8,7 +8,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="guardedArrays" parameters=[{type=number}, {type=anything}, {type=object}] results=[{type=anything}] {
-  b0(v0: number, v1: anything, v2: object):
     Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b4(), case b7(), case b10(), case b13(), case b16(), otherwise b19()
 # REPEAT: i = 0..5
   b%(i*3+1)() frequency=Rare:
@@ -32,7 +31,6 @@ function f0 name="guardedArrays" parameters=[{type=number}, {type=anything}, {ty
 # CHECK-NOT: CallDirect
 
 function f1 name="arraysWithoutGuard" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
 # REPEAT: i = 2..7
   b%(i-1)() frequency=Rare:

@@ -17,6 +17,7 @@
 #include <wtf/FastMalloc.h>
 #include <wtf/MathExtras.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -39,6 +40,10 @@ class PropertyCaches;
 class SiteCaches;
 struct BuiltinFamilyState;
 struct ObjectModel;
+
+// Zeroed pages for what lives as long as a VM or the process. With ENABLE(AOT_GUARDED_PAGES) they lie between two pages that cannot be touched, on Linux at an address drawn for them alone.
+void* reserveGuardedPages(size_t bytes, OSAllocator::Usage = OSAllocator::FastMallocPages);
+void releaseGuardedPages(void* pages, size_t bytes);
 
 class ZeroedPages {
     WTF_MAKE_NONCOPYABLE(ZeroedPages);

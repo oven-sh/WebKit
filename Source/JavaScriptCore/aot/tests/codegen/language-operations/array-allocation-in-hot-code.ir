@@ -8,41 +8,4 @@
 # CHECK: stub NewArrayWithLength.Contiguous x2
 # CHECK: operation operationAOTNewArray x1
 # CHECK-NEXT: stub NewArrayWithLength.Contiguous x1
-
-module m0 path="main.js" displayPath="main.js" body=f0
-entry module=m0
-
-function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
-    v0 = NewClosure function=f1
-    v1 = NewClosure function=f2
-    v2 = NewClosure function=f3
-    v3 = Builtin builtin=GlobalThis
-    v4 = PropGet v3 key="register" [isFreeName]
-    v5 = Call v4, -, v0, v1, v2
-    Return v5
-}
-function f1 name="balanced" parameters=[{type=int}, {type=anything}] results=[{type=anything}] {
-  b0(v0: int, v1: anything):
-    v2 = Builtin builtin=Array
-    v3 = Construct v2, -, v0
-    v4 = NewArray v1, v3 contents=anything holes=[1]
-    Return v4
-}
-function f2 name="fast" parameters=[{type=int}, {type=anything}] results=[{type=anything}] {
-  b0(v0: int, v1: anything):
-    v2 = ToBoolean v1
-    v3 = Builtin builtin=Array
-    Jump -> next b1(v1)
-  b1(v4: anything):
-    LoopHint
-    v6 = Construct v3, -, v0
-    v7 = NewArray v4, v6 contents=anything holes=[1]
-    Branch v2 -> taken b1(v7), notTaken b2()
-  b2():
-    Return v7
-}
-function f3 name="rest" flags=[HasRestParameter] parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
-  b0(v0: anything, v1: Array):
-    Return v1
-}
+# PROGRAM-OF: array-allocation-by-shape.ir

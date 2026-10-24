@@ -21,9 +21,8 @@ function f2 name="nameAskedOnOnePath" parameters=[{type=object flags=[IsExpected
     Return v3
   b2():
     Return v2
-}
-# CHECK-LABEL: function f2 name="nameAskedOnOnePath"
 # CHECK-NEXT: b0(v0: anything ~ L0|L1, v1: boolean):
+}
 
 function f3 name="nameAskedOnBothPaths" parameters=[{type=object flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything ~ object, v1: boolean):
@@ -36,9 +35,8 @@ function f3 name="nameAskedOnBothPaths" parameters=[{type=object flags=[IsExpect
     v4 = PropGet v0 key="listItems"
     v5 = Add v2, v4
     Return v5
-}
-# CHECK-LABEL: function f3 name="nameAskedOnBothPaths"
 # CHECK-NEXT: b0(v0: anything ~ L1, v1: boolean):
+}
 
 function f4 name="pathThatIsSeldomTakenDoesNotCount" parameters=[{type=object flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything ~ object, v1: boolean):
@@ -49,9 +47,8 @@ function f4 name="pathThatIsSeldomTakenDoesNotCount" parameters=[{type=object fl
     Return v3
   b2() frequency=Unlikely:
     Return v2
-}
-# CHECK-LABEL: function f4 name="pathThatIsSeldomTakenDoesNotCount"
 # CHECK-NEXT: b0(v0: anything ~ L1, v1: boolean):
+}
 
 function f5 name="pathThatThrowsDoesNotCount" parameters=[{type=object flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything ~ object, v1: boolean):
@@ -62,9 +59,8 @@ function f5 name="pathThatThrowsDoesNotCount" parameters=[{type=object flags=[Is
     Return v3
   b2():
     Throw v2
-}
-# CHECK-LABEL: function f5 name="pathThatThrowsDoesNotCount"
 # CHECK-NEXT: b0(v0: anything ~ L1, v1: boolean):
+}
 
 function f6 name="loopThatMayNotRun" parameters=[{type=object flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything ~ object, v1: boolean):
@@ -78,9 +74,8 @@ function f6 name="loopThatMayNotRun" parameters=[{type=object flags=[IsExpected]
     Jump -> next b1()
   b3():
     Return v2
-}
-# CHECK-LABEL: function f6 name="loopThatMayNotRun"
 # CHECK-NEXT: b0(v0: anything ~ L0|L1, v1: boolean):
+}
 
 function f7 name="everyNameCountsWhereTheOthersLeaveTooManyLayouts" parameters=[{type=object flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything ~ object, v1: boolean):
@@ -91,12 +86,10 @@ function f7 name="everyNameCountsWhereTheOthersLeaveTooManyLayouts" parameters=[
     Return v3
   b2():
     Return v2
-}
-# CHECK-LABEL: function f7 name="everyNameCountsWhereTheOthersLeaveTooManyLayouts"
 # CHECK-NEXT: b0(v0: anything ~ L2, v1: boolean):
+}
 
 function f8 name="allocates" results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L2
     v1 = NewObject layout=L3
     Return v0

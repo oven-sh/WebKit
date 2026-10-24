@@ -10,51 +10,42 @@ layout L1 kind=Instance name="Either" constructor=f2 flags=[HasHeritage]
 layout L2 kind=Instance name="Bare" constructor=f3 flags=[HasHeritage]
 layout L3 kind=Instance name="Index" constructor=f4 flags=[HasHeritage]
 function f0 name="Promise" kind=BaseConstructor role=Library flags=[HasNewTarget, HasExplicitName, IsNakedConstructor] length=1 enclosingRuntimeFunction=0 parameters=[{type=anything}] results=[{type=Promise}] {
-  b0(v0: anything, v1: anything):
     v2 = CreatePromise v0
     Return v2
 }
 
 function f1 name="Deferred" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=function}] results=[{type=object}] {
-  b0(v0: function, v1: anything, v2: function):
     v3 = GetSuperBase v0
     v4 = SuperConstruct v3, v1, v2 layout=L0 callees=[f0, builtin(Promise), builtin(FunctionPrototype), ..]
     Return v4
-}
-# CHECK-LABEL: function f1 name="Deferred"
 # CHECK: v3: null|object = GetSuperBase v0
 # CHECK-NEXT: [[isPromise]]: boolean = TypeTest v3 testedType=builtin(Promise)
 # CHECK-NEXT: Branch [[isPromise]] -> taken [[passed]](| 0), notTaken {{*}}
 # CHECK: = CallDirect v1, v2 function=f0 [isConstruction]
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: = SuperConstruct {{*}}, v1, v2 layout=L0
+}
 
 function f2 name="twoParentsSeen" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=function}] results=[{type=object}] {
-  b0(v0: function, v1: anything, v2: function):
     v3 = GetSuperBase v0
     v4 = SuperConstruct v3, v1, v2 layout=L1 callees=[f0, builtin(Promise), builtin(Map), ..]
     Return v4
-}
-# CHECK-LABEL: function f2 name="twoParentsSeen"
 # CHECK-NOT: TypeTest
 # CHECK: = SuperConstruct v3, v1, v2 layout=L1
+}
 
 function f3 name="nothingSeen" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=function}] results=[{type=object}] {
-  b0(v0: function, v1: anything, v2: function):
     v3 = GetSuperBase v0
     v4 = SuperConstruct v3, v1, v2 layout=L2
     Return v4
-}
-# CHECK-LABEL: function f3 name="nothingSeen"
 # CHECK-NOT: TypeTest
 # CHECK: = SuperConstruct v3, v1, v2 layout=L2
+}
 
 function f4 name="parentSeenHasNoLibraryConstructor" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=object}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0
     v3 = SuperConstruct v2, v1 layout=L3 callees=[builtin(Map), ..]
     Return v3
-}
-# CHECK-LABEL: function f4 name="parentSeenHasNoLibraryConstructor"
 # CHECK-NOT: TypeTest
 # CHECK: = SuperConstruct v2, v1 layout=L3
+}

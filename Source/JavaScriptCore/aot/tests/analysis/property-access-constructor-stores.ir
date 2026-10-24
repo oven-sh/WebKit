@@ -11,19 +11,16 @@ function f0 name="Enumerated" kind=BaseConstructor flags=[HasNewTarget] results=
 function f1 name="NeverEnumerated" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
 
 function f2 name="store-may-create" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0, v1: number):
     PropSet v0, v1 key="filled"
     Return
 }
 # CHECK: F2 v2 PropSet [[filled]]: form=Slot level=Proven operation=PutSlotOrAdd receivers=[L0] storedValueFits member=(Field level=Proven holder=L0 field=0)
 function f3 name="definition-may-create" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0, v1: number):
     PropDefine v0, v1 key="filled"
     Return
 }
 # CHECK-NEXT: F3 v2 PropDefine [[filled]]: form=Slot level=Proven operation=PutSlotOrAdd receivers=[L0] storedValueFits member=(Field level=Proven holder=L0 field=0)
 function f4 name="nobody-enumerates-the-keys" parameters=[{type=L1}, {type=number}] results=[{type=anything}] {
-  b0(v0: L1, v1: number):
     PropSet v0, v1 key="filled"
     PropDefine v0, v1 key="filled"
     Return
@@ -31,7 +28,6 @@ function f4 name="nobody-enumerates-the-keys" parameters=[{type=L1}, {type=numbe
 # CHECK-NEXT: F4 v2 PropSet [[filled]]: form=Slot level=Proven operation=PutSlot receivers=[L1] storedValueFits member=(Field level=Proven holder=L1 field=0)
 # CHECK-NEXT: F4 v3 PropDefine [[filled]]: form=Slot level=Proven operation=PutSlot receivers=[L1] storedValueFits member=(Field level=Proven holder=L1 field=0)
 function f5 name="every-allocation-of-a-literal-lists-the-field" parameters=[{type=L2}, {type=number}] results=[{type=anything}] {
-  b0(v0: L2, v1: number):
     PropSet v0, v1 key="filled"
     PropDefine v0, v1 key="filled"
     Return
@@ -39,13 +35,11 @@ function f5 name="every-allocation-of-a-literal-lists-the-field" parameters=[{ty
 # CHECK-NEXT: F5 v2 PropSet [[filled]]: form=Slot level=Proven operation=PutSlot receivers=[L2] storedValueFits member=(Field level=Proven holder=L2 field=0)
 # CHECK-NEXT: F5 v3 PropDefine [[filled]]: form=Slot level=Proven operation=PutSlot receivers=[L2] storedValueFits member=(Field level=Proven holder=L2 field=0)
 function f6 name="one-member-has-a-constructor" parameters=[{type=L0|L2}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0|L2, v1: number):
     PropSet v0, v1 key="filled"
     Return
 }
 # CHECK-NEXT: F6 v2 PropSet [[filled]]: form=Slot level=Proven operation=PutSlotOrAdd receivers=[L0, L2] storedValueFits member=(Field level=Proven)
 function f7 name="the-allocation-lists-the-field" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     PropSet v1, v0 key="filled"
     PropDefine v1, v0 key="filled"
@@ -56,7 +50,6 @@ function f7 name="the-allocation-lists-the-field" parameters=[{type=number}] res
 # CHECK-NEXT: F7 v3 PropDefine [[filled]]: form=Slot level=Proven operation=PutSlot receivers=[L0] storedValueFits member=(Field level=Proven holder=L0 field=0)
 # CHECK-NEXT: F7 v4 PropSet [[other]]: form=Slot level=Proven operation=PutSlotOrAdd receivers=[L0] storedValueFits member=(Field level=Proven holder=L0 field=1)
 function f8 name="reads-and-tests-find-the-field" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="filled"
     v2 = PropHas v0 key="filled"
     Return

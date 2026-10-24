@@ -20,7 +20,6 @@ layout L1 kind=Instance name="First" constructor=f13
 layout L2 kind=Instance name="Second" constructor=f14
 
 function f0 name="slotStoreKeepsShape" parameters=[{type=L0}, {type=L0}, {type=number}] results=[{type=boolean}] {
-  b0(v0: L0, v1: L0, v2: number):
     v3 = StrictEq v0, v0
     PutSlot v1, -, v2 key="x" receivers=[L0] level=Proven
     v5 = StrictEq v0, v0
@@ -31,7 +30,6 @@ function f0 name="slotStoreKeepsShape" parameters=[{type=L0}, {type=L0}, {type=n
 # F0-NOT: stretch
 
 function f1 name="slotStoreLeavesItsSlotFilled" parameters=[{type=L0}, {type=L0}, {type=number}] results=[{type=boolean}] {
-  b0(v0: L0, v1: L0, v2: number):
     v3 = StrictEq v0, v0
     PutSlot v1, -, v2 key="x" receivers=[L0] level=Proven
     v5 = StrictEq v0, v0
@@ -42,7 +40,6 @@ function f1 name="slotStoreLeavesItsSlotFilled" parameters=[{type=L0}, {type=L0}
 # F1-NOT: stretch
 
 function f2 name="slotStoreKeepsOtherSlot" parameters=[{type=L0}, {type=L0}, {type=number}] results=[{type=boolean}] {
-  b0(v0: L0, v1: L0, v2: number):
     v3 = StrictEq v0, v0
     PutSlot v1, -, v2 key="x" receivers=[L0] level=Proven
     v5 = StrictEq v0, v0
@@ -53,7 +50,6 @@ function f2 name="slotStoreKeepsOtherSlot" parameters=[{type=L0}, {type=L0}, {ty
 # F2-NOT: stretch
 
 function f3 name="addingStoreEndsKeyOrder" parameters=[{type=L0}, {type=L0}, {type=number}] results=[{type=boolean}] {
-  b0(v0: L0, v1: L0, v2: number):
     v3 = StrictEq v0, v0
     PutSlotOrAdd v1, -, v2 key="x" receivers=[L0] level=Proven
     v5 = StrictEq v0, v0
@@ -65,7 +61,6 @@ function f3 name="addingStoreEndsKeyOrder" parameters=[{type=L0}, {type=L0}, {ty
 # F3-NOT: stretch
 
 function f4 name="slotStoreKeepsKeyOrder" parameters=[{type=L0}, {type=L0}, {type=number}] results=[{type=boolean}] {
-  b0(v0: L0, v1: L0, v2: number):
     v3 = StrictEq v0, v0
     PutSlot v1, -, v2 key="x" receivers=[L0] level=Proven
     v5 = StrictEq v0, v0
@@ -76,7 +71,6 @@ function f4 name="slotStoreKeepsKeyOrder" parameters=[{type=L0}, {type=L0}, {typ
 # F4-NOT: stretch
 
 function f5 name="appendToFreshArray" parameters=[{type=Array<anything>}, {type=anything}] results=[{type=boolean}] {
-  b0(v0: Array<anything>, v1: anything):
     v2 = NewArray contents=anything
     v3 = StrictEq v0, v0
     AppendElement v2, v1
@@ -88,7 +82,6 @@ function f5 name="appendToFreshArray" parameters=[{type=Array<anything>}, {type=
 # F5-NOT: stretch
 
 function f6 name="appendToOtherParameter" parameters=[{type=Array<anything>}, {type=anything}, {type=Array<anything>}] results=[{type=boolean}] {
-  b0(v0: Array<anything>, v1: anything, v2: Array<anything>):
     v3 = StrictEq v0, v0
     AppendElement v2, v1
     v5 = StrictEq v0, v0
@@ -100,7 +93,6 @@ function f6 name="appendToOtherParameter" parameters=[{type=Array<anything>}, {t
 # F6-NOT: stretch
 
 function f7 name="callEndsArrayStorage" parameters=[{type=Array<anything>}, {type=function}] results=[{type=boolean}] {
-  b0(v0: Array<anything>, v1: function):
     v2 = StrictEq v0, v0
     v3 = Call v1
     v4 = StrictEq v0, v0
@@ -112,7 +104,6 @@ function f7 name="callEndsArrayStorage" parameters=[{type=Array<anything>}, {typ
 # F7-NOT: stretch
 
 function f8 name="callLeavesShapeAlone" parameters=[{type=object}, {type=function}] results=[{type=boolean}] {
-  b0(v0: object, v1: function):
     v2 = StrictEq v0, v0
     v3 = Call v1
     v4 = StrictEq v0, v0
@@ -123,7 +114,6 @@ function f8 name="callLeavesShapeAlone" parameters=[{type=object}, {type=functio
 # F8-NOT: stretch
 
 function f9 name="otherClassKeepsMemberGuard" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
-  b0(v0: number, v1: boolean):
     v2 = NewClosure function=f14
     Jump -> next b1()
   b1():
@@ -140,7 +130,6 @@ function f9 name="otherClassKeepsMemberGuard" parameters=[{type=number}, {type=b
 # F9-NOT: stretch
 
 function f10 name="sameClassEndsMemberGuard" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
-  b0(v0: number, v1: boolean):
     v2 = NewClosure function=f13
     Jump -> next b1()
   b1():
@@ -157,7 +146,6 @@ function f10 name="sameClassEndsMemberGuard" parameters=[{type=number}, {type=bo
 # F10-NOT: stretch
 
 function f11 name="useWithItsOwnEffectsEndsTheProof" parameters=[{type=Array<anything>}] results=[{type=anything}] {
-  b0(v0: Array<anything>):
     v1 = PropGet v0 key="x"
     v2 = PropGet v0 key="y"
     v3 = HasArrayStorage v0 arrayStorage=Contiguous
@@ -167,7 +155,6 @@ function f11 name="useWithItsOwnEffectsEndsTheProof" parameters=[{type=Array<any
 # F11-NOT: stretch
 
 function f12 name="useWithoutEffectsKeepsTheProof" parameters=[{type=Array<anything>}] results=[{type=anything}] {
-  b0(v0: Array<anything>):
     v1 = PropGet v0 key="x"
     v2 = PropGet v0 key="y"
     v3 = HasArrayStorage v0 arrayStorage=Contiguous

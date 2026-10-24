@@ -14,7 +14,6 @@ layout L2 kind=Environment name="storedLater" fields=[{key="x" declared={type=an
 layout L3 kind=Environment name="outsideLoop" fields=[{key="x" declared={type=anything}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToBoolean v1
@@ -26,7 +25,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK-NOT: holds frame pointers
 
 function f1 name="closureInEnvironmentUsedAfterCopy" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     v3 = NewClosure v2 function=f2
     v4 = NewObject -, v3 layout=L1 fields=[0]
@@ -73,7 +71,6 @@ function f4 name="callsClosureInEnvironment" kind=Arrow captures=[{type=env L1}]
 }
 
 function f5 name="closureStoredIntoEnvironmentLater" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L2 fields=[0]
     v2 = NewClosure function=f7
     PutEnvironmentField v1, v2 layout=L2 field=0
@@ -89,7 +86,6 @@ function f5 name="closureStoredIntoEnvironmentLater" parameters=[{type=anything}
 # PLAN-NEXT: v2: Heap HeldByHeapCell by v3(1)
 
 function f6 name="environmentOutsideLoop" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L3 fields=[0]
     Jump -> next b1()
   b1():
@@ -111,7 +107,6 @@ function f6 name="environmentOutsideLoop" parameters=[{type=anything}] results=[
 # PLAN-NEXT: v3: Heap SeveralLiveInstances
 
 function f7 name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 # CHECK-LABEL: function f7 name="callback"

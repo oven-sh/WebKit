@@ -30,20 +30,15 @@ layout L6 name="Loose" fields=[{key="kind" declared={type=7} flags=[IsRequired]}
 # READ-NEXT: module m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f1 name="NodeObject" flags=[HasThis] thisType={type=L1} parameters=[{type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: L1, v1: number, v2: number):
     PropSet v0, v1 key="kind" mode=Strict
     PropSet v0, v2 key="pos" mode=Strict
     Return
-}
-# READ-LABEL: function f1 name="NodeObject"
 # READ: thisType={type=L0|L1|L2|L3|L4|L5|L7|L8}
-function f2 name="take" parameters=[{type=L2}, {type=L3}, {type=L4}, {type=L5}, {type=L6}] results=[{type=anything}] {
-  b0(v0: L2, v1: L3, v2: L4, v3: L5, v4: L6):
-    Return
 }
-# READ-LABEL: function f2 name="take"
+function f2 name="take" parameters=[{type=L2}, {type=L3}, {type=L4}, {type=L5}, {type=L6}] results=[{type=anything}] {
+    Return
 # READ: parameters=[{type=L1|L2|L4|L5|L7}, {type=L1|L3|L8}, {type=L0|L1|L2|L4|L5|L7}, {type=L0|L1|L2|L4|L5|L7}, {type=L0|L1|L6}]
+}

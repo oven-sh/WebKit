@@ -9,7 +9,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Environment name="scope" fields=[{key="count" declared={type=number}}, {key="total" declared={type=number}}, {key="ratio" declared={type=number}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=MathRandom
     v1 = Call v0
     v2 = ToNumber v1
@@ -39,7 +38,6 @@ function f1 name="reader" kind=Arrow captures=[{type=env L0}] results=[{type=any
     Return v5
 }
 function f2 name="twice" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Add v0, v0
     Return v1
 }

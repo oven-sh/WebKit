@@ -9,7 +9,6 @@ module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 name="" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="register" [isFreeName]
     v2 = NewClosure function=f1
@@ -19,26 +18,22 @@ function f0 name="" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="callsIgnoresSecond" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0, v0 function=f2
     Return v1
 }
 
 function f2 name="ignoresSecond" parameters=[{type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
     v2 = Add v0, v0
     v3 = Mul v2, v0
     Return v3
 }
 
 function f3 name="leftAlone" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f4
     Return v1
 }
 
 function f4 name="calledByLeftAlone" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Mul v0, v0
     v2 = Sub v1, v0
     Return v2

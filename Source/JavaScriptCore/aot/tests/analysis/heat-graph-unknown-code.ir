@@ -6,21 +6,17 @@ module m0 path="main.js" displayPath="main.js"
 variable g0 name="handler" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="first" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Boolean boolean=true
     v2 = CallDirect v1, v0 function=f3
     Return v2
 }
 function f1 name="second" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f2 name="third" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f3 name="callsUnknownCodeInLoop" role=OutlinedBody parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything):
     v2 = NewClosure function=f0
     PutModuleVariable v2 variable=g0
     v4 = NewClosure function=f1
@@ -37,7 +33,6 @@ function f3 name="callsUnknownCodeInLoop" role=OutlinedBody parameters=[{type=bo
     Return v10
 }
 function f4 name="onlyCalledDirectly" role=OutlinedBody results=[{type=undefined}] {
-  b0():
     Return
 }
 # CHECK: f0 size 3 mass 3.000000: f3*1.000000

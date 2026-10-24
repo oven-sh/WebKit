@@ -18,7 +18,6 @@ variable g3 name="readBeforeItsStore" module=m0 declared={type=anything|absent} 
 variable g4 name="storedByFunctionWithTwoCallers" module=m0 declared={type=anything|absent} initialization=Uninitialized
 variable g5 name="readByClosureThatAnEarlierFunctionCalls" module=m0 declared={type=anything|absent} initialization=Uninitialized
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewClosure function=f2
     v2 = Call v1
@@ -50,7 +49,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v22
 }
 function f1 name="reader" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = CheckInitialized v0 name="readByFunction"
     v2 = GetModuleVariable variable=g4
@@ -58,29 +56,24 @@ function f1 name="reader" results=[{type=anything}] {
     Return v1
 }
 function f2 name="earlyReader" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g3
     v1 = CheckInitialized v0 name="readBeforeItsStore"
     Return v1
 }
 function f3 name="storer" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=2
     PutModuleVariable v0 variable=g4
     Return v0
 }
 function f4 name="callsWhatItIsGiven" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0
     Return v1
 }
 function f5 name="givenFirst" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=3
     Return v0
 }
 function f6 name="madeBehindTheStore" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g5
     v1 = CheckInitialized v0 name="readByClosureThatAnEarlierFunctionCalls"
     Return v1

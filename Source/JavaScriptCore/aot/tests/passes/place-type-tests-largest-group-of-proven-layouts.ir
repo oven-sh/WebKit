@@ -10,11 +10,9 @@ layout L0 name="Circle" fields=[{key="size" declared={type=number flags=[IsExpec
 layout L1 name="Square" fields=[{key="size" declared={type=number flags=[IsExpected]}}]
 layout L2 name="Label" fields=[{key="text" declared={type=string flags=[IsExpected]}}]
 function f0 name="sizeOf" parameters=[{type=L0|L1|L2}] results=[{type=anything}] {
-  b0(v0: L0|L1|L2):
     v1 = PropGet v0 key="size"
     Return v1
-}
-# CHECK-LABEL: function f0 name="sizeOf"
 # CHECK: [[hasField]]: boolean = TypeTest v0 testedType=L0|L1
 # CHECK: = GetSlot {{*}}key="size" receivers=[L0, L1]
 # CHECK: = PropGet {{*}}key="size"
+}

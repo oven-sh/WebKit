@@ -18,17 +18,15 @@ function f0 name="objectsByType" parameters=[{type=object}, {type=L0}, {type=obj
     v6 = ToBoolean v2
     v7 = ToBoolean v3
     Return v4
-}
-# CHECK-LABEL: function f0 name="objectsByType"
 # CHECK-NOT: ToBoolean
 # CHECK: v4: true = Boolean boolean=true
 # CHECK-NEXT: v5: true = Boolean boolean=true
 # CHECK-NEXT: v6: true = Boolean boolean=true
 # CHECK-NEXT: v7: true = Boolean boolean=true
 # CHECK-NEXT: Return v4
+}
 
 function f1 name="functionsAndBuiltinClasses" parameters=[{type=function}, {type=f0}, {type=builtin(MathMax)}, {type=Array<number>}, {type=Map<string, number>}, {type=RegExp}, {type=Promise}, {type=L0|function|Array<number>}] results=[{type=boolean}] {
-  b0(v0: function, v1: f0, v2: builtin(MathMax), v3: Array<number>, v4: Map<string, number>, v5: RegExp, v6: Promise, v7: L0|function|Array<number>):
     v8 = ToBoolean v0
     v9 = ToBoolean v1
     v10 = ToBoolean v2
@@ -38,14 +36,12 @@ function f1 name="functionsAndBuiltinClasses" parameters=[{type=function}, {type
     v14 = ToBoolean v6
     v15 = ToBoolean v7
     Return v8
-}
-# CHECK-LABEL: function f1 name="functionsAndBuiltinClasses"
 # CHECK-NOT: ToBoolean
 # CHECK-COUNT-8: : true = Boolean boolean=true
 # CHECK-NEXT: Return v8
+}
 
 function f2 name="objectsMadeHere" results=[{type=boolean}] {
-  b0():
     v0 = NewObject layout=L1
     v1 = NewArray contents=anything
     v2 = NewClosure function=f0
@@ -55,17 +51,15 @@ function f2 name="objectsMadeHere" results=[{type=boolean}] {
     v6 = ToBoolean v2
     v7 = ToBoolean v3
     Return v4
-}
-# CHECK-LABEL: function f2 name="objectsMadeHere"
 # CHECK-NOT: ToBoolean
 # CHECK: v4: true = Boolean boolean=true
 # CHECK-NEXT: v5: true = Boolean boolean=true
 # CHECK-NEXT: v6: true = Boolean boolean=true
 # CHECK-NEXT: v7: true = Boolean boolean=true
 # CHECK-NEXT: Return v4
+}
 
 function f3 name="conditionAndNegation" parameters=[{type=object}] results=[{type=boolean}] {
-  b0(v0: object):
     v1 = ToBoolean v0
     v2 = LogicalNot v1
     Branch v1 -> taken b1(), notTaken b2()
@@ -73,11 +67,10 @@ function f3 name="conditionAndNegation" parameters=[{type=object}] results=[{typ
     Return v2
   b2():
     Return v1
-}
-# CHECK-LABEL: function f3 name="conditionAndNegation"
 # CHECK: v1: true = Boolean boolean=true
 # CHECK-NEXT: v2: false = Boolean
 # CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
+}
 
 function f4 name="mayBeSomethingElse" parameters=[{type=undefined|object}, {type=null|L0}, {type=boolean|object}, {type=number|function}, {type=string|Array<number>}, {type=anything}, {type=L0 flags=[IsExpected]}] results=[{type=boolean}] {
   b0(v0: undefined|object, v1: null|L0, v2: boolean|object, v3: number|function, v4: string|Array<number>, v5: anything, v6: anything ~ L0):
@@ -89,8 +82,6 @@ function f4 name="mayBeSomethingElse" parameters=[{type=undefined|object}, {type
     v12 = ToBoolean v5
     v13 = ToBoolean v6
     Return v7
-}
-# CHECK-LABEL: function f4 name="mayBeSomethingElse"
 # CHECK-NOT: = Boolean
 # CHECK: v7: boolean = ToBoolean v0
 # CHECK-NEXT: v8: boolean = ToBoolean v1
@@ -100,3 +91,4 @@ function f4 name="mayBeSomethingElse" parameters=[{type=undefined|object}, {type
 # CHECK-NEXT: v12: boolean = ToBoolean v5
 # CHECK-NEXT: v13: boolean{{*}}= ToBoolean v6
 # CHECK-NEXT: Return v7
+}

@@ -30,7 +30,6 @@ layout L2 name="Square" fields=[{key="side" declared={type=anything} flags=[IsRe
 layout L3 name="Triangle" fields=[{key="side" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
 layout L4 name="Other" fields=[{key="edge" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewObject -, v0 layout=L1 fields=[0]
@@ -56,38 +55,30 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="take" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="side"
     Return v1
-}
-# CHECK-LABEL: function f1 name="take"
 # CHECK: parameters=[{type=L1|L2|L3}]
 # CHECK: b0(v0: L1|L2|L3):
 # CHECK: = PropGet v0 key="side" accessSite={{*}} receivers=[L1, L2, L3]
+}
 function f2 name="takeAnything" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="side"
     Return v1
-}
-# CHECK-LABEL: function f2 name="takeAnything"
 # CHECK: parameters=[{type=anything}]
 # CHECK: b0(v0: anything):
 # CHECK: = PropGet v0 key="side" accessSite={{*}} receivers=[L1, L2, L3, ..]
+}
 function f3 name="takeExpected" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="side"
     Return v1
-}
-# CHECK-LABEL: function f3 name="takeExpected"
 # CHECK: parameters=[{type=L0|L1|L2|L3 flags=[IsExpected]}]
 # CHECK: b0(v0: anything ~ L0|L1|L2|L3):
 # CHECK: = PropGet v0 key="side" accessSite={{*}} receivers=[L1, L2, L3, ..]
+}
 function f4 name="takeTwo" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="side"
     Return v1
-}
-# CHECK-LABEL: function f4 name="takeTwo"
 # CHECK: parameters=[{type=L1|L2}]
 # CHECK: b0(v0: L1|L2):
 # CHECK: key="side" accessSite={{*}} receivers=[L1, L2]
+}

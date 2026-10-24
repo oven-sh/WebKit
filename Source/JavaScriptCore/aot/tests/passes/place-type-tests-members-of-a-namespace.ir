@@ -11,32 +11,28 @@ layout L0 kind=Container name="Debug" fields=[{key="level" declared={type=number
 layout L1 name="Options" fields=[{key="level" declared={type=number}}, {key="isDebugging" declared={type=boolean}}, {key="depth" declared={type=number}}, {key="isQuiet" declared={type=boolean}}] flow={constructorOrders=[{}]}
 
 function f0 name="membersOfNamespace" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="level"
     v2 = PropGet v0 key="isDebugging"
     v3 = PropGet v0 key="depth"
     v4 = PropGet v0 key="isQuiet"
     v5 = NewArray v1, v2, v3, v4
     Return v5
-}
-# CHECK-LABEL: function f0 name="membersOfNamespace"
 # CHECK-NOT: HasNoFieldOutsideSlot
 # CHECK-NOT: GetSlotOrUndefined
 # CHECK: = IsSlotFilled {{*}} key="level"
 # CHECK: = IsSlotFilled {{*}} key="isDebugging"
 # CHECK: = IsSlotFilled {{*}} key="depth"
 # CHECK: = IsSlotFilled {{*}} key="isQuiet"
+}
 
 function f1 name="optionsOfRecord" parameters=[{type=L1}] results=[{type=anything}] {
-  b0(v0: L1):
     v1 = PropGet v0 key="level"
     v2 = PropGet v0 key="isDebugging"
     v3 = PropGet v0 key="depth"
     v4 = PropGet v0 key="isQuiet"
     v5 = NewArray v1, v2, v3, v4
     Return v5
-}
-# CHECK-LABEL: function f1 name="optionsOfRecord"
 # CHECK-NOT: IsSlotFilled
 # CHECK: = GetSlotOrUndefined {{*}} key="level"
 # CHECK: = GetSlotOrUndefined {{*}} key="isQuiet"
+}

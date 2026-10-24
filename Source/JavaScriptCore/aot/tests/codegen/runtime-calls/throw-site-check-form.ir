@@ -13,7 +13,6 @@ variable g0 name="late" module=m0 declared={type=anything|absent} initialization
 variable g1 name="ready" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = NewClosure function=f3
@@ -25,18 +24,15 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v5
 }
 function f1 name="readsInDeadZone" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = CheckInitialized v0 name="late"
     Return v1
 }
 function f2 name="refusesUndefinedAndNull" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = RequireObjectCoercible v0 name="length"
     Return v1
 }
 function f3 name="readsInitialized" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g1
     v1 = CheckInitialized v0 name="ready"
     Return v1

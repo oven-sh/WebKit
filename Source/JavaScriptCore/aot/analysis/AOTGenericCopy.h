@@ -22,13 +22,10 @@ class FunctionAnalyses;
 class SSARepair;
 struct FunctionPassContext;
 
-// Loop headers, handler blocks, and the points after an operation that may call unknown code and the reads of its results.
 Vector<ProgramPoint> findRejoinPoints(FunctionAnalyses&, NOESCAPE const ScopedLambda<bool(ValueID)>& mayCallUnknownCode, NOESCAPE const ScopedLambda<bool(ProgramPoint)>& mayRejoinAt);
 
-// A copy that comes back in front of the tests it has failed closes a cycle through them. The tested code never goes around it, so it is no loop to move a test out of.
 bool isClosedOnlyByWaysBack(FunctionAnalyses&, const NaturalLoop&);
 
-// That a counter stays on this side of its bound makes it an integer once the bound is one, which typed code may find out rounds from now. A copy counts without a bound, and what it hands back would undo that for good, so it hands back only what passes a test for this type. By parameter of the head, none for one that is no such counter; empty where there is none at all.
 Vector<TypeID, 4> typesOfCountersOnWayBack(FunctionAnalyses&, TypeArena&, BlockID head);
 
 struct ValuesNarrowedByTests {
@@ -44,38 +41,31 @@ class GenericCopy {
 public:
     GenericCopy(FunctionPassContext&, IRBuilder&);
 
-    // Step 1, once the caller has split its blocks.
-    void addCopiedBlock(BlockID);
-    void addStart(BlockID);
-    void addEntry(BlockID);
-    void addRejoinBlock(BlockID);
-    void addRejoinBlockWithoutTests(BlockID);
-    void addValueToBeNarrowed(ValueID);
-    void addValueNarrowedInUnknownWay(ValueID);
-    void addValueKnownBeyondItsType(ValueID);
-    // For a caller that narrows its values after clone(): a rejoin block that is rarer than the starts is typed as the copy is, so the copy leaves for it whatever is live there and does not copy it once more.
+    void addCopiedBlock(BlockID block) { m_requiredBlocks.append(block); }
+    void addStart(BlockID block) { m_starts.append(block); }
+    void addEntry(BlockID block) { m_entries.append(block); }
+    void addRejoinBlock(BlockID block) { m_isRejoinBlock.set(block.index()); }
+    void addRejoinBlockWithoutTests(BlockID block) { m_isRejoinBlockWithoutTests.set(block.index()); }
+    void addValueToBeNarrowed(ValueID value) { m_valuesToBeNarrowed.append(value); }
+    void addValueNarrowedInUnknownWay(ValueID value) { m_valuesNarrowedInUnknownWay.append(value); }
+    void addValueKnownBeyondItsType(ValueID value) { m_valuesKnownBeyondTheirTypes.append(value); }
     void leaveAtRarerRejoinBlocks() { m_leavesAtRarerRejoinBlocks = true; }
     enum class Extent : uint8_t { NotCopied, OnlyCopiedBlocks, ToEndOfFunction, ToWaysBack };
     bool wasCutShortByLimit() const { return m_wasCutShortByLimit; }
-    // Outside loops the copy then comes back only where that takes no test.
     void testOnlyWaysBackIntoLoops() { m_testsOnlyWaysBackIntoLoops = true; }
     Extent plan(uint64_t maxBlocks);
-    // A copy without starts asks the given liveness, which has to track the values that the copied blocks define, at the heads of the entries.
     Extent plan(uint64_t maxBlocks, NOESCAPE const RegionCloner::LivenessSource& livenessInsideCopiedBlocks);
     std::span<const BlockID> plannedBlocks() const LIFETIME_BOUND { return m_region.span(); }
 
-    // Step 2.
     void clone(BlockFrequency (*frequencyOfCopy)(BlockFrequency));
-    BlockID copyOf(BlockID) const;
-    ValueID copyOf(ValueID) const;
-    std::span<const BlockID> copiedBlocks() const;
+    BlockID copyOf(BlockID block) const { return m_cloner ? m_cloner->cloneOf(block) : BlockID(); }
+    ValueID copyOf(ValueID value) const { return m_hasPlaceholder.get(value.index()) ? ValueID() : nameInCopy(value); }
+    std::span<const BlockID> copiedBlocks() const { return m_cloner ? m_cloner->clonedBlocks() : std::span<const BlockID> { }; }
 
-    // Step 3, once the caller has emitted its tests and rewritten the typed code, before SSA is repaired.
     enum class TypesTestedOnWayBack : uint8_t { Proven, Expected };
     void addWaysBack(std::span<const ValueID> changedValues, TypesTestedOnWayBack = TypesTestedOnWayBack::Proven);
     unsigned numberOfWaysBack() const { return m_numberOfWaysBack; }
 
-    // Step 4. addDefinition() may be called any time after clone(), with a value made after clone().
     void addVariablesTo(SSARepair&);
     void addDefinition(ValueID inTypedCode, ValueID otherDefinition);
 
@@ -128,36 +118,27 @@ private:
     };
 
     bool isInRegion(BlockID block) const { return m_isInRegion.get(block.index()); }
-    bool isRare(BlockID) const;
+    bool isRare(BlockID block) const { return m_function.at(block).frequency == BlockFrequency::Rare; }
 
     void computeBlocksReachingNonRareCode();
     void computeNarrowedValues();
     bool hasValueAtHead(BlockID, const BitVector& values, AnswersByBlock&) const;
-    bool hasNarrowedValueAtHead(BlockID) const;
-    bool knowsMoreInTypedCodeAtHead(BlockID) const;
     void computeRegion(Extent);
     bool addsLoopEntry(BlockID) const;
     bool mergesAllocationWithItsCopyAt(BlockID) const;
     bool mergesAllocationThatSinksWithItsCopyAt(BlockID) const;
     bool canLeaveCopyAt(BlockID) const;
-    bool forceCopyOfUnusableExits();
     bool tryPlan(Extent, uint64_t maxBlocks, const RegionCloner::LivenessSource&);
     void recordTestedRejoins();
 
-    void addPlaceholders();
-    ValueID nameInCopy(ValueID inTypedCode) const;
+    ValueID nameInCopy(ValueID inTypedCode) const { return m_cloner ? m_cloner->cloneOf(inTypedCode) : ValueID(); }
 
     Vector<TypeID> computeTypesIgnoringCopy(std::span<const ValueID> changedValues);
-    Vector<TypeID> collectTypesOfOtherDefinitions() const;
     TypeID typeBoundInCopy(ValueID inTypedCode, ValueID inCopy, const RejoinTypes&) const;
     TypeID typeAssumedInTypedCode(ValueID, TypeID, const BitVector& isCopy);
     std::optional<RejoinPlan> planRejoin(const TestedRejoin&, const RejoinTypes&, const BitVector& isCopy);
-    unsigned depthOfLoopEnteredAt(BlockID) const;
     void keepWaysBackWithinSizeOfCopy(Vector<RejoinPlan, 4>&) const;
     std::optional<PreheaderPlan> planPreheader(BlockID header, bool isTestedRejoin, const BitVector& isCopy);
-    void addRejoinBlocks(Vector<RejoinPlan, 4>&, Vector<PreheaderPlan, 4>&, const RejoinTypes&);
-    void emitRejoin(const RejoinPlan&, BlockID target);
-    void emitPreheader(const PreheaderPlan&);
 
     FunctionPassContext& m_context;
     Function& m_function;

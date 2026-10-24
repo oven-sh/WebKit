@@ -8,7 +8,6 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinFamilyEmitter.h"
-#include "AOTSchemaInlineBuiltins.h"
 #include "TypedArrayType.h"
 #include "Width.h"
 #include <array>
@@ -20,10 +19,7 @@ class BufferBuiltinEmitter final : public BuiltinFamilyEmitter {
 public:
     explicit BufferBuiltinEmitter(CodeGenerator&);
 
-    void generateDataViewGet(const InlineCall&);
-    void generateDataViewSet(const InlineCall&);
-    void generateAtomics(const InlineCall&);
-    void generateBufferAccess(const InlineCall&);
+    FOR_EACH_AOT_INLINE_BUILTIN_IN_BUFFER_BUILTIN(AOT_DECLARE_INLINE_BUILTIN_GENERATOR)
 
     CellPointer newBigInt(const OperationContext&, Integer bits, bool isSigned);
     Integer low64Of(CellPointer bigInt);

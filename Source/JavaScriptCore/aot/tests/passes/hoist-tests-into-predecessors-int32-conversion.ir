@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="sumWithElementThatMayBeMissing" parameters=[{type=i32}, {type=int[0, 255]}, {type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: i32, v1: int[0, 255], v2: number, v3: boolean):
     Branch v3 -> taken b1(), notTaken b2()
   b1():
     v4 = Add v0, v1
@@ -17,8 +16,6 @@ function f0 name="sumWithElementThatMayBeMissing" parameters=[{type=i32}, {type=
     v7 = Integer
     v8 = BitOr v6, v7
     Return v8
-}
-# CHECK-LABEL: function f0 name="sumWithElementThatMayBeMissing"
 # CHECK: v4: int[{{*}}] = Add v0, v1
 # CHECK-NEXT: [[zero0]]: 0 = Integer
 # CHECK-NEXT: [[integer0]]: i32 = BitOr v4, [[zero0]]
@@ -30,9 +27,9 @@ function f0 name="sumWithElementThatMayBeMissing" parameters=[{type=i32}, {type=
 # CHECK: b3([[joined0]]: i32):
 # CHECK-NOT: BitOr
 # CHECK: Return [[joined0]]
+}
 
 function f1 name="operandFromOutside" parameters=[{type=i32}, {type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: i32, v1: number, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v0)
@@ -41,17 +38,15 @@ function f1 name="operandFromOutside" parameters=[{type=i32}, {type=number}, {ty
   b3(v3):
     v4 = RShift v0, v3
     Return v4
-}
-# CHECK-LABEL: function f1 name="operandFromOutside"
 # CHECK: b1():
 # CHECK-NEXT: = RShift v0, v0
 # CHECK: b2():
 # CHECK-NEXT: = RShift v0, v1
 # CHECK: b3({{*}}: i32):
 # CHECK-NOT: RShift
+}
 
 function f2 name="noEdgePassesAnInteger" parameters=[{type=number}, {type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: number, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v0)
@@ -61,13 +56,11 @@ function f2 name="noEdgePassesAnInteger" parameters=[{type=number}, {type=number
     v4 = Integer
     v5 = BitOr v3, v4
     Return v5
-}
-# CHECK-LABEL: function f2 name="noEdgePassesAnInteger"
 # CHECK: b3(v3: number):
 # CHECK: v5: i32 = BitOr v3, v4
+}
 
 function f3 name="joinedValueHasAnotherUse" parameters=[{type=i32}, {type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: i32, v1: number, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v0)
@@ -78,13 +71,11 @@ function f3 name="joinedValueHasAnotherUse" parameters=[{type=i32}, {type=number
     v5 = BitOr v3, v4
     v6 = Add v5, v3
     Return v6
-}
-# CHECK-LABEL: function f3 name="joinedValueHasAnotherUse"
 # CHECK: b3(v3: number):
 # CHECK: v5: i32 = BitOr v3, v4
+}
 
 function f4 name="valueMayBeAnObject" parameters=[{type=i32}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: i32, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v0)
@@ -94,7 +85,6 @@ function f4 name="valueMayBeAnObject" parameters=[{type=i32}, {type=anything}, {
     v4 = Integer
     v5 = BitOr v3, v4
     Return v5
-}
-# CHECK-LABEL: function f4 name="valueMayBeAnObject"
 # CHECK: b3(v3: anything):
 # CHECK: = BitOr v3, v4
+}

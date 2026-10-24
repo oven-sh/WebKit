@@ -12,7 +12,6 @@ layout L2 name="Third" fields=[{key="x" declared={type=number} flags=[IsRequired
 layout L3 name="Fourth" fields=[{key="y" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L3]}
 
 function f0 name="reads" parameters=[{type=L0|L1|L2}, {type=L0|L1|L3}, {type=L0|L1}] results=[{type=anything}] {
-  b0(v0: L0|L1|L2, v1: L0|L1|L3, v2: L0|L1):
     v3 = PropGet v0 key="x"
     v4 = PropGet v1 key="x"
     v5 = PropGet v2 key="x"

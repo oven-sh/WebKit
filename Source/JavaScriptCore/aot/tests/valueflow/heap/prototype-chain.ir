@@ -12,7 +12,6 @@ layout L1 name="Derived"
 layout L2 name="Created"
 layout L3 name="Lone"
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewObject layout=L1 fields=[]
@@ -28,6 +27,5 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="one" results=[{type=anything}] {
-  b0():
     Return
 }

@@ -28,7 +28,6 @@ layout L%(i) name="Made%(i)" fields=[{key="flags" declared={type=number}}, {key=
 layout L70 name="EmitterLike" fields=[{key="flags" declared={type=number} flags=[IsRequired]}, {key="capture" declared={type=boolean}}, {key="marked" declared={type=number}}]
 layout L71 kind=Instance name="Emitter" constructor=f1 supertypes=[L70] flags=[IsConstructorFunction]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
 # REPEAT: i = 0..69
     v%(i+1) = NewObject -, v0 layout=L%(i) fields=[0]

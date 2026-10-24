@@ -14,12 +14,10 @@ variable g0 name="unknownWriters" module=m1 declared={type=anything}
 variable g1 name="knownWriters" module=m1 declared={type=anything}
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 
 function f1 name="library" module=m1 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="compute" [isFreeName]
     v2 = Call v1
@@ -27,8 +25,7 @@ function f1 name="library" module=m1 kind=Module results=[{type=anything}] {
     PutModuleVariable v3 variable=g0
     PutModuleVariable v3 variable=g1
     Return
-}
-# CHECK-LABEL: function f1 name="library"
 # CHECK: [[computed]]:{{*}}= ToNumber
 # CHECK-NEXT: PutModuleVariable [[computed]] variable=g0
 # CHECK-NEXT: Return
+}

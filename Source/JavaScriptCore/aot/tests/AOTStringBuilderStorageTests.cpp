@@ -710,11 +710,6 @@ static void testReserveCommit(LoadedProgram& program)
     builder->commit(builder.characters() + 6);
     AOT_TEST_CHECK(builder.text() == "start:"_s);
 
-    Latin1Character* roomWithoutException = builder->tryReserve(100);
-    AOT_TEST_CHECK(roomWithoutException == builder.characters() + 6);
-    AOT_TEST_CHECK(!builder->tryReserve(String::MaxLength));
-    AOT_TEST_CHECK(!builder->tryReserve(String::MaxLength - 5));
-    AOT_TEST_CHECK(!program.vm().exceptionForInspection());
     AOT_TEST_CHECK(!builder->reserve(program.realm(), String::MaxLength));
     AOT_TEST_CHECK(takeOutOfMemoryError(program));
     AOT_TEST_CHECK(builder.text() == "start:"_s);

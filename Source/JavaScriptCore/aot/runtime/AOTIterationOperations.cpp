@@ -4,7 +4,6 @@
  */
 
 #include "config.h"
-#include "AOTIteration.h"
 
 #if ENABLE(AOT)
 
@@ -27,43 +26,11 @@
 #include "JSAsyncFromSyncIterator.h"
 #include "JSCInlines.h"
 #include "JSPropertyNameEnumeratorInlines.h"
-#include <optional>
 #include <span>
 
 namespace JSC { namespace AOT {
 
 static_assert(sizeof(UCPURegister) == sizeof(uint64_t), "operationAOTEnumeratorNext returns a position in one register.");
-
-static uint64_t endPositionOf(const JSPropertyNameEnumerator& enumerator)
-{
-    return static_cast<uint64_t>(enumerator.indexedLength()) + enumerator.sizeOfPropertyNames();
-}
-
-EnumeratorCursor cursorBefore(const JSPropertyNameEnumerator& enumerator, uint64_t position)
-{
-    ASSERT(position <= endPositionOf(enumerator));
-    uint64_t indexedLength = enumerator.indexedLength();
-    if (!position)
-        return { 0, JSPropertyNameEnumerator::InitMode };
-    if (position <= indexedLength)
-        return { static_cast<uint32_t>(position - 1), JSPropertyNameEnumerator::IndexedMode };
-    return { static_cast<uint32_t>(position - indexedLength - 1), JSPropertyNameEnumerator::OwnStructureMode };
-}
-
-uint64_t positionOf(const JSPropertyNameEnumerator& enumerator, EnumeratorCursor cursor)
-{
-    switch (cursor.mode) {
-    case JSPropertyNameEnumerator::IndexedMode:
-        return cursor.index;
-    case JSPropertyNameEnumerator::OwnStructureMode:
-    case JSPropertyNameEnumerator::GenericMode:
-        return static_cast<uint64_t>(enumerator.indexedLength()) + cursor.index;
-    case JSPropertyNameEnumerator::InitMode:
-    case JSPropertyNameEnumerator::HasSeenOwnStructureModeStructureMismatch:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
 
 JSPropertyNameEnumerator* enumeratorFor(JSGlobalObject* globalObject, JSValue value)
 {
@@ -87,104 +54,74 @@ EnumeratedKey findEnumeratedKey(JSGlobalObject* globalObject, JSPropertyNameEnum
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    uint64_t end = endPositionOf(*enumerator);
+    uint64_t indexedLength = enumerator->indexedLength();
+    uint64_t end = indexedLength + enumerator->sizeOfPropertyNames();
     if (position >= end)
         return { nullptr, end };
     JSObject* base = value.toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-    EnumeratorCursor cursor = cursorBefore(*enumerator, position);
-    JSString* key = enumerator->computeNext(globalObject, base, cursor.index, cursor.mode);
+    uint32_t index = 0;
+    JSPropertyNameEnumerator::Flag mode = JSPropertyNameEnumerator::InitMode;
+    if (position > indexedLength) {
+        index = static_cast<uint32_t>(position - indexedLength - 1);
+        mode = JSPropertyNameEnumerator::OwnStructureMode;
+    } else if (position) {
+        index = static_cast<uint32_t>(position - 1);
+        mode = JSPropertyNameEnumerator::IndexedMode;
+    }
+    JSString* key = enumerator->computeNext(globalObject, base, index, mode);
     RETURN_IF_EXCEPTION(scope, { });
     if (!key)
         return { nullptr, end };
-    return { key, positionOf(*enumerator, cursor) };
+    RELEASE_ASSERT(mode == JSPropertyNameEnumerator::IndexedMode || mode == JSPropertyNameEnumerator::OwnStructureMode || mode == JSPropertyNameEnumerator::GenericMode);
+    return { key, mode == JSPropertyNameEnumerator::IndexedMode ? index : indexedLength + index };
 }
 
-static IterationRecord getIterator(JSGlobalObject* globalObject, JSValue iterable)
+static void destructureIterable(JSGlobalObject* globalObject, JSValue iterable, std::span<EncodedJSValue> elements)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (iterable.isUndefinedOrNull()) [[unlikely]] {
-        throwException(globalObject, scope, createNotAnObjectError(globalObject, iterable));
-        return { };
-    }
+    for (EncodedJSValue& element : elements)
+        element = JSValue::encode(jsUndefined());
     JSValue method = iterable.get(globalObject, vm.propertyNames->iteratorSymbol);
-    RETURN_IF_EXCEPTION(scope, { });
+    RETURN_IF_EXCEPTION(scope, void());
     if (auto validation = validateIterable(vm, iterable, method); validation != IterableValidationResult::Valid) [[unlikely]] {
         throwTypeError(globalObject, scope, getIteratorErrorMessage(validation, iterable));
-        return { };
+        return;
     }
     JSValue iterator = call(globalObject, method, JSC::getCallData(method), iterable, ArgList());
-    RETURN_IF_EXCEPTION(scope, { });
+    RETURN_IF_EXCEPTION(scope, void());
     if (!iterator.isObject()) [[unlikely]] {
         throwException(globalObject, scope, createIteratorResultNotObjectError(globalObject));
-        return { };
+        return;
     }
     JSValue next = asObject(iterator)->get(globalObject, vm.propertyNames->next);
-    RETURN_IF_EXCEPTION(scope, { });
-    return { iterator, next };
-}
-
-static std::optional<JSValue> iteratorStepValue(JSGlobalObject* globalObject, IterationRecord record)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!record.nextMethod.isCallable()) [[unlikely]] {
-        throwNotAFunctionError(globalObject, scope, record.nextMethod);
-        return std::nullopt;
-    }
-    JSValue result = iteratorNextExported(globalObject, record);
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
-    if (JSObject* object = asObject(result); object->structure() == globalObject->iteratorResultObjectStructure()) {
-        if (object->getDirect(iteratorResultObjectDonePropertyOffset).toBoolean(globalObject))
-            return std::nullopt;
-        return object->getDirect(iteratorResultObjectValuePropertyOffset);
-    }
-    bool isDone = iteratorCompleteExported(globalObject, result);
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
-    if (isDone)
-        return std::nullopt;
-    JSValue value = iteratorValue(globalObject, result);
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
-    return value;
-}
-
-static void closeIterator(JSGlobalObject* globalObject, JSValue iterator)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue method = iterator.get(globalObject, vm.propertyNames->returnKeyword);
     RETURN_IF_EXCEPTION(scope, void());
-    if (method.isUndefinedOrNull())
+    for (EncodedJSValue& element : elements) {
+        if (!next.isCallable()) [[unlikely]] {
+            throwNotAFunctionError(globalObject, scope, next);
+            return;
+        }
+        JSValue result = iteratorStep(globalObject, { iterator, next });
+        RETURN_IF_EXCEPTION(scope, void());
+        if (result.isFalse())
+            return;
+        JSValue value = iteratorValue(globalObject, result);
+        RETURN_IF_EXCEPTION(scope, void());
+        element = JSValue::encode(value);
+    }
+    JSValue close = iterator.get(globalObject, vm.propertyNames->returnKeyword);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (close.isUndefinedOrNull())
         return;
-    if (!method.isCallable()) [[unlikely]] {
-        throwNotAFunctionError(globalObject, scope, method);
+    if (!close.isCallable()) [[unlikely]] {
+        throwNotAFunctionError(globalObject, scope, close);
         return;
     }
-    JSValue result = call(globalObject, method, JSC::getCallData(method), iterator, ArgList());
+    JSValue result = call(globalObject, close, JSC::getCallData(close), iterator, ArgList());
     RETURN_IF_EXCEPTION(scope, void());
     if (!result.isObject()) [[unlikely]]
         throwException(globalObject, scope, createIteratorResultNotObjectError(globalObject));
-}
-
-void destructureIterable(JSGlobalObject* globalObject, JSValue iterable, uint32_t count, EncodedJSValue* results)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    std::span<EncodedJSValue> elements = unsafeMakeSpan(results, count);
-    for (EncodedJSValue& element : elements)
-        element = JSValue::encode(jsUndefined());
-    IterationRecord record = getIterator(globalObject, iterable);
-    RETURN_IF_EXCEPTION(scope, void());
-    for (EncodedJSValue& element : elements) {
-        std::optional<JSValue> value = iteratorStepValue(globalObject, record);
-        RETURN_IF_EXCEPTION(scope, void());
-        if (!value)
-            return;
-        element = JSValue::encode(*value);
-    }
-    scope.release();
-    closeIterator(globalObject, record.iterator);
 }
 
 void initializeIterationWords(Instance& instance)
@@ -220,7 +157,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTEnumeratorGetByVal, EncodedJSValue, (Instan
 JSC_DEFINE_JIT_OPERATION(operationAOTDestructureIterable, void, (Instance* instance, EncodedJSValue iterable, uint32_t count, EncodedJSValue* results))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTDestructureIterable);
-    destructureIterable(globalObject, JSValue::decode(iterable), count, results);
+    destructureIterable(globalObject, JSValue::decode(iterable), unsafeMakeSpan(results, count));
     OPERATION_RETURN(scope);
 }
 

@@ -12,7 +12,6 @@
 # CHECK-NOT: FlattenString
 module m0 path="main.js" displayPath="main.js"
 function f0 name="string-used-as-key" parameters=[{type=string}, {type=number}, {type=object}] results=[{type=anything}] {
-  b0(v0: string, v1: number, v2: object):
     v3 = Integer integer=0
     v4 = Integer integer=1
     v5 = Undefined

@@ -20,37 +20,30 @@ layout L2 kind=Instance name="MadeByConstructorFunction" constructor=f3 fields=[
 # CHECK-NEXT: layout L2 {{*}}flow={location={deferral=CapturesObject deferredFunction=f4}}}]
 
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f1 name="Base" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0 {
-  b0(v0: anything):
     v1 = NewObject layout=L0
     Return v1
 }
 function f2 name="Below" module=m0 kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1 {
-  b0(v0: anything):
     v1 = NewObject layout=L1
     Return v1
 }
 
 function f3 name="MadeByConstructorFunction" module=m0 flags=[HasThis] thisType={type=L2} results=[{type=anything}] constructedClass=L2 {
-  b0(v0: L2):
     v1 = NewClosure v0 function=f4
     PutSlotOrAdd v0, -, v1 key="run" receivers=[L2] level=Proven
     Return v0
-}
-# CHECK-LABEL: function f3 name="MadeByConstructorFunction"
 # CHECK: v1: f4 = NewClosure function=f4 [isMadeOnDemand]
 # CHECK-NEXT: PutSlotOrAdd v0, -, v1 key="run"
+}
 
 function f4 name="overObject" module=m0 kind=Arrow captures=[{type=L0|L1|L2}] results=[{type=anything}] {
-  b0(v0: L0|L1|L2):
     Return
 }
 
 function f5 name="fieldsOfBase" module=m0 parameters=[{type=L0|L1}] results=[{type=anything}] {
-  b0(v0: L0|L1):
     v1 = NewClosure v0 function=f4
     PutSlotOrAdd v0, -, v1 key="run" receivers=[L0, L1] level=Proven
     v3 = NewClosure v0 function=f4
@@ -58,28 +51,24 @@ function f5 name="fieldsOfBase" module=m0 parameters=[{type=L0|L1}] results=[{ty
     v5 = NewClosure v0 function=f4
     PutSlotOrAdd v0, -, v5 key="known" receivers=[L0, L1] level=Proven
     Return v0
-}
 # A class and the classes below it have one slot for a field that the classes below inherit. A field that a class below declares again is another field.
-# CHECK-LABEL: function f5 name="fieldsOfBase"
 # CHECK: v1: f4 = NewClosure function=f4 [isMadeOnDemand]
 # CHECK-NEXT: PutSlotOrAdd v0, -, v1 key="run" receivers=[L0, L1] level=Proven
 # CHECK-NEXT: v3: f4 = NewClosure v0 function=f4
 # CHECK-NEXT: PutSlotOrAdd v0, -, v3 key="again"
 # CHECK-NEXT: v5: f4 = NewClosure function=f4 [isMadeOnDemand]
 # CHECK-NEXT: PutSlotOrAdd v0, -, v5 key="known"
+}
 
 function f6 name="fieldsOfBelow" module=m0 parameters=[{type=L1}] results=[{type=anything}] {
-  b0(v0: L1):
     v1 = NewClosure v0 function=f4
     PutSlotOrAdd v0, -, v1 key="own" receivers=[L1] level=Proven
     Return v0
-}
-# CHECK-LABEL: function f6 name="fieldsOfBelow"
 # CHECK: v1: f4 = NewClosure function=f4 [isMadeOnDemand]
 # CHECK-NEXT: PutSlotOrAdd v0, -, v1 key="own"
+}
 
 function f7 name="readsFromBelow" module=m0 parameters=[{type=L1}] results=[{type=anything}] {
-  b0(v0: L1):
     v1 = IsSlotFilled v0 key="known" receivers=[L1] level=Proven
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2: guard):
@@ -89,9 +78,8 @@ function f7 name="readsFromBelow" module=m0 parameters=[{type=L1}] results=[{typ
     Return v5
   b2():
     Return
-}
 # What the closure captures is the object at hand, which is known better than what the function says it captures. The types behind it follow: no pass types the function again.
-# CHECK-LABEL: function f7 name="readsFromBelow"
 # CHECK: b1(v2: guard):
 # CHECK-NEXT: [[captured]]: L1 = Upcast v0 castType=L0|L1|L2
 # CHECK-NEXT: L1 = Upcast [[captured]] castType=anything
+}

@@ -8,7 +8,6 @@
 module m0 path="main.js" displayPath="main.js"
 variable g0 name="writerHasOnlyDirectCallers" module=m0 declared={type=anything} initialization=Undefined flow={writers=AllKnown}
 function f0 name="closes" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
-  b0(v0: anything, v1: anything):
     v2 = GetModuleVariable variable=g0
     v3 = Call v1, v0 calleeKey="return"
     v4 = CallBuiltin v0 overload=WrapForValidIteratorPrototypeReturn/0 builtinCallForm=AnyReceiver
@@ -18,7 +17,6 @@ function f0 name="closes" parameters=[{type=anything}, {type=anything}] results=
 }
 function f1 name="withoutBody" kind=Method role=Library flags=[HasThis] enclosingRuntimeFunction=88 thisType={type=anything} results=[{type=anything}]
 function f2 name="withBody" kind=Method role=Library flags=[HasThis] enclosingRuntimeFunction=87 thisType={type=anything} results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
-  b0(v0: anything):
     v1 = Integer integer=1
     PutModuleVariable v1 variable=g0
     Return v1

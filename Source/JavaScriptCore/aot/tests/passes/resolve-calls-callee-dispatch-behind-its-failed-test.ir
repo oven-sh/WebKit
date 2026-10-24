@@ -5,23 +5,19 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="listed" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 
 function f1 name="behindNoTest" parameters=[{type=function|f0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: function|f0, v1: anything):
     v2 = Call v0, -, v1 callees=[f0, ..]
     Return v2
-}
-# CHECK-LABEL: function f1 name="behindNoTest"
 # CHECK: [[isListed]]: boolean = TypeTest v0 testedType=f0
 # CHECK-NEXT: Branch [[isListed]] -> taken
 # CHECK: = CallDirect v1 function=f0
 # CHECK: = Call {{*}}, -, v1 callees=[f0, ..]
+}
 
 function f2 name="behindFailedTest" parameters=[{type=function|f0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: function|f0, v1: anything):
     v2 = TypeTest v0 testedType=f0
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -30,10 +26,9 @@ function f2 name="behindFailedTest" parameters=[{type=function|f0}, {type=anythi
     v3 = Upcast v0 castType=function
     v4 = Call v3, -, v1 callees=[f0, ..]
     Return v4
-}
-# CHECK-LABEL: function f2 name="behindFailedTest"
 # CHECK: v2: boolean = TypeTest v0 testedType=f0
 # CHECK-NOT: TypeTest
 # CHECK-NOT: CallDirect
 # CHECK: v4: anything = Call v3, -, v1 callees=[f0, ..]
 # CHECK-NEXT: Return v4
+}

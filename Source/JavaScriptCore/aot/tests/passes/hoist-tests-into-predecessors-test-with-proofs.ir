@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="truthinessWithoutProof" parameters=[{type=boolean}, {type=undefined|number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: boolean, v1: undefined|number, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v0)
@@ -18,16 +17,14 @@ function f0 name="truthinessWithoutProof" parameters=[{type=boolean}, {type=unde
     Return v0
   b5():
     Return v1
-}
-# CHECK-LABEL: function f0 name="truthinessWithoutProof"
 # CHECK: b2():
 # CHECK-NEXT: [[converted]]:{{*}}= ToBoolean v1
 # CHECK-NEXT: Jump -> next b3([[converted]])
 # CHECK: b3(v3: boolean):
 # CHECK-NEXT: Branch v3 -> taken b4(), notTaken b5()
+}
 
 function f1 name="truthinessProvenOnTakenEdge" parameters=[{type=boolean}, {type=undefined|number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: boolean, v1: undefined|number, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v0)
@@ -40,16 +37,14 @@ function f1 name="truthinessProvenOnTakenEdge" parameters=[{type=boolean}, {type
     Return v5
   b5():
     Return v1
-}
-# CHECK-LABEL: function f1 name="truthinessProvenOnTakenEdge"
 # CHECK: b2():
 # CHECK-NEXT: Jump -> next b3(v1)
 # CHECK: b3(v3: undefined|boolean|number):
 # CHECK-NEXT: v4: boolean = ToBoolean v3
 # CHECK-NEXT: Branch v4 -> taken b4(| 0), notTaken b5()
+}
 
 function f2 name="truthinessProvenOnNotTakenEdge" parameters=[{type=boolean}, {type=undefined|number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: boolean, v1: undefined|number, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v0)
@@ -62,16 +57,14 @@ function f2 name="truthinessProvenOnNotTakenEdge" parameters=[{type=boolean}, {t
     Return v0
   b5(v5):
     Return v5
-}
-# CHECK-LABEL: function f2 name="truthinessProvenOnNotTakenEdge"
 # CHECK: b2():
 # CHECK-NEXT: Jump -> next b3(v1)
 # CHECK: b3(v3: undefined|boolean|number):
 # CHECK-NEXT: v4: boolean = ToBoolean v3
 # CHECK-NEXT: Branch v4 -> taken b4(), notTaken b5(| 0)
+}
 
 function f3 name="comparisonWithoutProof" parameters=[{type=number}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v0)
@@ -84,8 +77,6 @@ function f3 name="comparisonWithoutProof" parameters=[{type=number}, {type=anyth
     Return v0
   b5():
     Return v1
-}
-# CHECK-LABEL: function f3 name="comparisonWithoutProof"
 # CHECK: b1():
 # CHECK-NEXT: [[first]]:{{*}}= Less v0, v0
 # CHECK-NEXT: Jump -> next b3([[first]])
@@ -94,9 +85,9 @@ function f3 name="comparisonWithoutProof" parameters=[{type=number}, {type=anyth
 # CHECK-NEXT: Jump -> next b3([[second]])
 # CHECK: b3([[joined]]: boolean):
 # CHECK-NEXT: Branch [[joined]] -> taken b4(), notTaken b5()
+}
 
 function f4 name="comparisonProvesItsParameter" parameters=[{type=number}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v0)
@@ -109,8 +100,6 @@ function f4 name="comparisonProvesItsParameter" parameters=[{type=number}, {type
     Return v5
   b5():
     Return v1
-}
-# CHECK-LABEL: function f4 name="comparisonProvesItsParameter"
 # CHECK: b1():
 # CHECK-NEXT: Jump -> next b3(v0)
 # CHECK: b2():
@@ -118,9 +107,9 @@ function f4 name="comparisonProvesItsParameter" parameters=[{type=number}, {type
 # CHECK: b3(v3: anything):
 # CHECK-NEXT: v4: boolean = Less v3, v0
 # CHECK-NEXT: Branch v4 -> taken b4(| 0), notTaken b5()
+}
 
 function f5 name="comparisonProvesItsOtherOperand" parameters=[{type=number}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v0)
@@ -133,8 +122,6 @@ function f5 name="comparisonProvesItsOtherOperand" parameters=[{type=number}, {t
     Return v0
   b5(v5):
     Return v5
-}
-# CHECK-LABEL: function f5 name="comparisonProvesItsOtherOperand"
 # CHECK: b1():
 # CHECK-NEXT: Jump -> next b3(v0)
 # CHECK: b2():
@@ -142,3 +129,4 @@ function f5 name="comparisonProvesItsOtherOperand" parameters=[{type=number}, {t
 # CHECK: b3(v3: anything):
 # CHECK-NEXT: v4: boolean = Less v3, v0
 # CHECK-NEXT: Branch v4 -> taken b4(), notTaken b5(| 1)
+}

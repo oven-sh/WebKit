@@ -10,7 +10,6 @@ layout L0 kind=Environment name="passedInTailCall" fields=[{key="x" declared={ty
 layout L1 kind=Environment name="passedInCall" fields=[{key="x" declared={type=anything}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = CallDirect function=f1
@@ -28,7 +27,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="closureInTailCall" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f8
     v1 = CallDirect v0 function=f7
     ReturnCall v1
@@ -41,7 +39,6 @@ function f1 name="closureInTailCall" results=[{type=anything}] {
 # PLAN-NEXT: v0: Frame
 
 function f2 name="closureInCall" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f9
     v1 = CallDirect v0 function=f7
     Return v1
@@ -52,7 +49,6 @@ function f2 name="closureInCall" results=[{type=anything}] {
 # PLAN-NEXT: v0: Frame
 
 function f3 name="closureInTailCallByValue" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f10
     v1 = Call v0
     ReturnCall v1
@@ -65,7 +61,6 @@ function f3 name="closureInTailCallByValue" results=[{type=anything}] {
 # PLAN-NEXT: v0: Frame
 
 function f4 name="closureDeadAtTailCall" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f11
     v1 = CallDirect v0 function=f7
     v2 = NewClosure function=f12
@@ -82,7 +77,6 @@ function f4 name="closureDeadAtTailCall" results=[{type=anything}] {
 # PLAN-NEXT: v2: Frame
 
 function f5 name="environmentInTailCall" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = CallDirect v1 function=f13
     ReturnCall v2
@@ -95,7 +89,6 @@ function f5 name="environmentInTailCall" parameters=[{type=anything}] results=[{
 # PLAN-NEXT: v1: Frame
 
 function f6 name="environmentInCall" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L1 fields=[0]
     v2 = CallDirect v1 function=f14
     Return v2
@@ -106,7 +99,6 @@ function f6 name="environmentInCall" parameters=[{type=anything}] results=[{type
 # PLAN-NEXT: v1: Frame
 
 function f7 name="callsParameter" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0
     Return v1
 }
@@ -115,7 +107,6 @@ function f7 name="callsParameter" parameters=[{type=anything}] results=[{type=an
 
 # REPEAT: i = 8..12
 function f%(i) name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 # END REPEAT
@@ -133,7 +124,6 @@ function f14 name="readsScope" kind=Arrow captures=[{type=env L1}] results=[{typ
 }
 
 function f15 name="closureInRequiredTailCall" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = NewClosure function=f17
@@ -153,18 +143,15 @@ function f15 name="closureInRequiredTailCall" parameters=[{type=anything}, {type
 # PLAN-NEXT: v2: Heap LiveAtReturnCall by v3(0)
 
 function f16 name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 # CHECK-LABEL: function f16 name="callback"
 # PLAN-LABEL: function f16
 function f17 name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 
 function f18 name="tailCallsParameter" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0
     ReturnCall v1
 }
@@ -172,7 +159,6 @@ function f18 name="tailCallsParameter" parameters=[{type=anything}] results=[{ty
 # PLAN-LABEL: function f18
 
 function f19 name="closureInTailCallOfCalleeThatGoesOnAnywhere" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f20
     v1 = CallDirect v0 function=f18
     ReturnCall v1
@@ -185,6 +171,5 @@ function f19 name="closureInTailCallOfCalleeThatGoesOnAnywhere" results=[{type=a
 # PLAN-NEXT: v0: Heap LiveAtReturnCall by v1(0)
 
 function f20 name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }

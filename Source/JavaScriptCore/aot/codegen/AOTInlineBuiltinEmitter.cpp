@@ -27,23 +27,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-InlineBuiltinEmitter::InlineBuiltinEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
-
-void InlineBuiltinEmitter::generateCallInline(const ValueContext& value)
-{
-    InlineCall call(value);
-    generate(call);
-}
-
-void InlineBuiltinEmitter::generateTryCallInline(const TerminatorContext& terminator)
-{
-    InlineCall call(terminator);
-    generate(call);
-}
-
 void InlineBuiltinEmitter::generate(const InlineCall& call)
 {
     switch (call.builtin()) {

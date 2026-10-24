@@ -15,7 +15,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="forOf" parameters=[{type=Generator<anything, pristine[Storage, Names]>}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: Generator<anything, pristine[Storage, Names]>, v1: anything):
     v2 = IteratorOpen v0 iteratorKind=Sync
     Jump -> next b1()
   b1():
@@ -30,8 +29,6 @@ function f0 name="forOf" parameters=[{type=Generator<anything, pristine[Storage,
   b3():
     v8 = Undefined
     Return v8
-}
-# CHECK-LABEL: function f0 name="forOf"
 # CHECK-NOT: IsUnmodifiedGenerator
 # CHECK-NOT: TypeTest
 # CHECK: LoopHint
@@ -58,9 +55,9 @@ function f0 name="forOf" parameters=[{type=Generator<anything, pristine[Storage,
 # CHECK: [[yielded0]]():
 # CHECK-NEXT: [[false0]]: false = Boolean
 # CHECK-NEXT: Jump -> next [[rest0]]([[false0]], [[value0]])
+}
 
 function f1 name="close" parameters=[{type=Generator<anything, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Generator<anything, pristine[Storage, Names]>):
     v1 = IteratorOpen v0 iteratorKind=Sync
     v2 = IteratorResume v1 iteratorKind=Sync resumeMode=Next
     v3 = ResultAt v2 index=0
@@ -72,8 +69,6 @@ function f1 name="close" parameters=[{type=Generator<anything, pristine[Storage,
   b2():
     v6 = Undefined
     Return v6
-}
-# CHECK-LABEL: function f1 name="close"
 # CHECK: b1():
 # CHECK-NEXT: [[nothing1]]: undefined = Undefined
 # CHECK-NEXT: [[step1]]{{*}} = StepGenerator v0, [[nothing1]] resumeMode=Return check=None
@@ -86,9 +81,9 @@ function f1 name="close" parameters=[{type=Generator<anything, pristine[Storage,
 # CHECK: = PropGet v0 key="return"
 # CHECK: [[closed1]]():
 # CHECK-NEXT: Jump -> next
+}
 
 function f2 name="closeThrow" parameters=[{type=Generator<anything, pristine[Storage, Names]>}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: Generator<anything, pristine[Storage, Names]>, v1: anything):
     v2 = IteratorOpen v0 iteratorKind=Sync
     Jump -> next b1()
   b1():
@@ -107,8 +102,6 @@ function f2 name="closeThrow" parameters=[{type=Generator<anything, pristine[Sto
     v9 = CatchException
     IteratorClose v2 iteratorKind=Sync completion=Throw
     Rethrow v9
-}
-# CHECK-LABEL: function f2 name="closeThrow"
 # CHECK: b2() handler=b4():
 # CHECK: b4() role=CleanupHandler:
 # CHECK-NEXT: v9: exception = CatchException
@@ -124,9 +117,9 @@ function f2 name="closeThrow" parameters=[{type=Generator<anything, pristine[Sto
 # CHECK: Branch {{*}} -> taken [[call2]](), notTaken [[closed2]]()
 # CHECK: [[closed2]]() frequency=Rare:
 # CHECK-NEXT: Jump -> next [[afterClose2]]()
+}
 
 function f3 name="namesNotProven" parameters=[{type=Generator}] results=[{type=anything}] {
-  b0(v0: Generator):
     v1 = IteratorOpen v0 iteratorKind=Sync
     v2 = IteratorResume v1 iteratorKind=Sync resumeMode=Next
     v3 = ResultAt v2 index=0
@@ -137,8 +130,6 @@ function f3 name="namesNotProven" parameters=[{type=Generator}] results=[{type=a
     Return v4
   b2():
     Return v4
-}
-# CHECK-LABEL: function f3 name="namesNotProven"
 # CHECK-NOT: TypeTest v0
 # CHECK: [[unmodified3]]: boolean = IsUnmodifiedGenerator v0
 # CHECK-NEXT: Branch [[unmodified3]] -> taken [[generatorArm3]](| 0), notTaken [[modified3]]()
@@ -146,6 +137,7 @@ function f3 name="namesNotProven" parameters=[{type=Generator}] results=[{type=a
 # CHECK: = StepGenerator v0, {{*}} check=None
 # CHECK: ([[modifiedGenerator3]]: Generator) frequency=Unlikely:
 # CHECK-NEXT: = CallDirect [[modifiedGenerator3]] function=f7 [isNeverInlined]
+}
 
 function f4 name="expected" parameters=[{type=Generator flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ Generator):
@@ -153,24 +145,21 @@ function f4 name="expected" parameters=[{type=Generator flags=[IsExpected]}] res
     v2 = IteratorResume v1 iteratorKind=Sync resumeMode=Next
     v3 = ResultAt v2 index=1
     Return v3
-}
-# CHECK-LABEL: function f4 name="expected"
 # CHECK: [[isGenerator4]]: boolean {{*}}= TypeTest v0 testedType=Generator
 # CHECK-NEXT: Branch [[isGenerator4]] -> taken [[tested4]](| 0), notTaken
 # CHECK: = StepGenerator [[generator4]], {{*}} check=None
 # CHECK: [[tested4]]([[generator4]]: Generator):
 # CHECK-NEXT: = IsUnmodifiedGenerator [[generator4]]
+}
 
 function f5 name="notExpected" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = IteratorOpen v0 iteratorKind=Sync
     v2 = IteratorResume v1 iteratorKind=Sync resumeMode=Next
     v3 = ResultAt v2 index=1
     Return v3
-}
-# CHECK-LABEL: function f5 name="notExpected"
 # CHECK-NOT: StepGenerator
 # CHECK-NOT: IsUnmodifiedGenerator
+}
 
 function f6 name="underHandler" parameters=[{type=Generator<anything, pristine[Storage, Names]>}] results=[{type=anything}] {
   b0(v0: Generator<anything, pristine[Storage, Names]>) handler=b2(v0):
@@ -183,9 +172,8 @@ function f6 name="underHandler" parameters=[{type=Generator<anything, pristine[S
   b2(v4) role=CatchHandler:
     v5 = CatchValue
     Return v5
-}
-# CHECK-LABEL: function f6 name="underHandler"
 # CHECK: = StepGenerator v0, {{*}} check=None
 # CHECK: Branch {{*}} -> taken [[call6]](), notTaken [[stepped6]]()
 # CHECK: [[call6]]() frequency=Rare handler=b2(v0):
 # CHECK: [[stepped6]]() handler=b2(v0):
+}

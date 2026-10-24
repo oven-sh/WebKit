@@ -8,7 +8,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="pairArray" parameters=[{type=number}] results=[{type=Array<number>}] {
-  b0(v0: number):
     v1 = Add v0, v0
     v2 = NewArray v0, v1 contents=number
     Return v2

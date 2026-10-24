@@ -14,7 +14,6 @@ layout L5 kind=Instance name="Point" constructor=f6 fields=[{key="x" declared={t
 variable g0 name="Base" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="kept" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=MathRandom
     v1 = Call v0
     v2 = ToNumber v1
@@ -52,40 +51,34 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Stored" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
     PropSet v3, v1 key="x"
     Return v3
 }
 function f2 name="Listed" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L1
     v3 = NewObject v2, v1 layout=L1 fields=[0]
     Return v3
 }
 function f3 name="NeverEnumerated" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L2
     v3 = NewObject v2 layout=L2
     PropSet v3, v1 key="x"
     Return v3
 }
 function f4 name="Base" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L3
     v3 = NewObject v2, v1 layout=L3 fields=[0]
     Return v3
 }
 function f5 name="Derived" kind=DerivedConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetModuleVariable variable=g0
     v3 = SuperConstruct v2, v0, v1 layout=L4
     PropSet v3, v1 key="y"
     Return v3
 }
 function f6 name="Point" flags=[HasThis] thisType={type=L5} parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: L5, v1: number):
     PropSet v0, v1 key="x"
     Return
 }

@@ -5,7 +5,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Rest"
 function f0 name="main" parameters=[{type=anything}, {type=string|symbol}] results=[{type=object}] {
-  b0(v0: anything, v1: string|symbol):
     v2 = CopyObject v0 excludedKeys=["a", "b"]
     v3 = CopyObject v0, v1 excludedKeys=["a", "b"]
     v4 = NewObject layout=L0

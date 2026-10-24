@@ -13,20 +13,17 @@ layout L4 kind=Environment name="scope" fields=[{key="value" declared={type=anyt
 layout L5 name="Three" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}, {key="z" declared={type=anything}}]
 
 function f0 name="readThroughTwoLevels" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     v3 = NewObject -, v2, v1 layout=L1 fields=[0, 1]
     v4 = PropGet v3 key="size" receivers=[L1]
     v5 = PropGet v4 key="w" receivers=[L0]
     Return v5
-}
-# CHECK-LABEL: function f0 name="readThroughTwoLevels"
 # CHECK: b0(
 # CHECK-NEXT: v5: anything = Upcast v0 castType=anything
 # CHECK-NEXT: Return v5
+}
 
 function f1 name="heldObjectIsReplaced" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     v3 = NewObject -, v1 layout=L0 fields=[0]
     v4 = NewObject -, v2, v1 layout=L1 fields=[0, 1]
@@ -34,14 +31,12 @@ function f1 name="heldObjectIsReplaced" parameters=[{type=anything}, {type=anyth
     v6 = PropGet v4 key="size" receivers=[L1]
     v7 = PropGet v6 key="w" receivers=[L0]
     Return v7
-}
-# CHECK-LABEL: function f1 name="heldObjectIsReplaced"
 # CHECK: b0(
 # CHECK-NEXT: v7: anything = Upcast v1 castType=anything
 # CHECK-NEXT: Return v7
+}
 
 function f2 name="innerObjectIsBuiltFirst" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     v3 = NewObject -, v0 layout=L0 fields=[0]
     v4 = NewObject -, v3, v1 layout=L1 fields=[0, 1]
     Branch v2 -> taken b1(), notTaken b2()
@@ -50,8 +45,6 @@ function f2 name="innerObjectIsBuiltFirst" parameters=[{type=anything}, {type=an
     Return v5
   b2():
     Return v1
-}
-# CHECK-LABEL: function f2 name="innerObjectIsBuiltFirst"
 # CHECK: b0(
 # CHECK-NEXT: Branch v2
 # CHECK: b1():
@@ -59,9 +52,9 @@ function f2 name="innerObjectIsBuiltFirst" parameters=[{type=anything}, {type=an
 # CHECK-NEXT: [[outer2]]:{{*}}= NewObject -, [[inner2]], v1 layout=L1 fields=[0, 1]
 # CHECK-NEXT: = Call v0, -, [[outer2]]
 # CHECK-NOT: NewObject
+}
 
 function f3 name="flatLiteralAfterRareUse" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     v3 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
     Branch v2 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
@@ -72,8 +65,6 @@ function f3 name="flatLiteralAfterRareUse" parameters=[{type=anything}, {type=an
   b3():
     v5 = PropGet v3 key="name" receivers=[L1]
     Return v5
-}
-# CHECK-LABEL: function f3 name="flatLiteralAfterRareUse"
 # CHECK: b0(
 # CHECK-NEXT: Branch v2
 # CHECK: b1() frequency=Rare:
@@ -88,9 +79,9 @@ function f3 name="flatLiteralAfterRareUse" parameters=[{type=anything}, {type=an
 # CHECK-NEXT: v5: anything = Upcast [[read3]] castType=anything
 # CHECK-NEXT: Return v5
 # CHECK-NOT: Return
+}
 
 function f4 name="nestedLiteralAfterRareUse" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     v3 = NewObject -, v0 layout=L0 fields=[0]
     v4 = NewObject -, v3, v1 layout=L1 fields=[0, 1]
     Branch v2 -> taken b1(), notTaken b2()
@@ -136,7 +127,6 @@ function f4 name="nestedLiteralAfterRareUse" parameters=[{type=anything}, {type=
 # CHECK: = PropGet [[outer4]] key="size"
 
 function f5 name="arrayInFieldAfterRareUse" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     v3 = NewArray v0, v1 contents=anything
     v4 = NewObject -, v3, v1 layout=L1 fields=[0, 1]
     Branch v2 -> taken b1(), notTaken b2()
@@ -150,8 +140,6 @@ function f5 name="arrayInFieldAfterRareUse" parameters=[{type=anything}, {type=a
     v7 = Integer integer=1
     v8 = ElemGet v6, v7
     Return v8
-}
-# CHECK-LABEL: function f5 name="arrayInFieldAfterRareUse"
 # CHECK: b0(
 # CHECK-NOT: NewArray
 # CHECK-NOT: NewObject
@@ -167,9 +155,9 @@ function f5 name="arrayInFieldAfterRareUse" parameters=[{type=anything}, {type=a
 # CHECK-NEXT: Return v8
 # CHECK-NOT: NewArray
 # CHECK-NOT: NewObject
+}
 
 function f6 name="closureInFieldAfterRareUse" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     v3 = NewClosure v0 function=f12
     v4 = NewObject -, v3, v1 layout=L1 fields=[0, 1]
     Branch v2 -> taken b1(), notTaken b2()
@@ -187,8 +175,6 @@ function f6 name="closureInFieldAfterRareUse" parameters=[{type=anything}, {type
     Return v9
   b5():
     Return v1
-}
-# CHECK-LABEL: function f6 name="closureInFieldAfterRareUse"
 # CHECK: b0(
 # CHECK-NEXT: Branch v2
 # CHECK: b1() frequency=Rare:
@@ -204,9 +190,9 @@ function f6 name="closureInFieldAfterRareUse" parameters=[{type=anything}, {type
 # CHECK-NEXT: v9: anything = Upcast v0 castType=anything
 # CHECK-NOT: NewClosure
 # CHECK-NOT: NewObject
+}
 
 function f7 name="liveRangeIsLoop" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     v3 = NewObject -, v0 layout=L0 fields=[0]
     v4 = NewObject -, v3, v1 layout=L1 fields=[0, 1]
     Branch v2 -> taken b1(), notTaken b2()
@@ -224,16 +210,14 @@ function f7 name="liveRangeIsLoop" parameters=[{type=anything}, {type=anything},
     Branch v10 -> taken b3(), notTaken b4()
   b4():
     Return v9
-}
-# CHECK-LABEL: function f7 name="liveRangeIsLoop"
 # CHECK: b0(
 # CHECK-NEXT: v3:{{*}}= NewObject -, v0 layout=L0 fields=[0]
 # CHECK-NEXT: v4:{{*}}= NewObject -, v3, v1 layout=L1 fields=[0, 1]
 # CHECK: LoopHint
 # CHECK-NOT: LoopHint
+}
 
 function f8 name="cycleBuiltFromNode" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewObject layout=L2
     v3 = NewObject -, v2 layout=L3 fields=[0]
     PropDefine v2, v3 key="next" receivers=[L2]
@@ -243,9 +227,7 @@ function f8 name="cycleBuiltFromNode" parameters=[{type=anything}, {type=boolean
     Return v5
   b2():
     Return v0
-}
 # The allocation lists "owner" and undefined is no object, so "owner" stays listed and the node is built first. "next" takes any value, so undefined holds its place.
-# CHECK-LABEL: function f8 name="cycleBuiltFromNode"
 # CHECK: b0(
 # CHECK-NEXT: Branch v1
 # CHECK: b1():
@@ -254,9 +236,9 @@ function f8 name="cycleBuiltFromNode" parameters=[{type=anything}, {type=boolean
 # CHECK-NEXT: [[owned8]]:{{*}}= NewObject -, [[node8]] layout=L3 fields=[0]
 # CHECK-NEXT: PutSlotOrAdd [[node8]], [[node8]], [[owned8]] key="next" receivers=[L2] level=Proven
 # CHECK-NEXT: = Call v0, -, [[node8]]
+}
 
 function f9 name="cycleBuiltFromOwned" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewObject layout=L2
     v3 = NewObject -, v2 layout=L3 fields=[0]
     PropDefine v2, v3 key="next" receivers=[L2]
@@ -266,9 +248,7 @@ function f9 name="cycleBuiltFromOwned" parameters=[{type=anything}, {type=boolea
     Return v5
   b2():
     Return v0
-}
 # "next" takes any value, so undefined holds its place.
-# CHECK-LABEL: function f9 name="cycleBuiltFromOwned"
 # CHECK: b0(
 # CHECK-NEXT: Branch v1
 # CHECK: b1():
@@ -277,9 +257,9 @@ function f9 name="cycleBuiltFromOwned" parameters=[{type=anything}, {type=boolea
 # CHECK-NEXT: [[owned9]]:{{*}}= NewObject -, [[node9]] layout=L3 fields=[0]
 # CHECK-NEXT: PutSlotOrAdd [[node9]], [[node9]], [[owned9]] key="next" receivers=[L2] level=Proven
 # CHECK-NEXT: = Call v0, -, [[owned9]]
+}
 
 function f10 name="cycleIsOnlyRead" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject layout=L2
     v2 = NewObject -, v1 layout=L3 fields=[0]
     PropDefine v1, v2 key="next" receivers=[L2]
@@ -287,15 +267,13 @@ function f10 name="cycleIsOnlyRead" parameters=[{type=anything}] results=[{type=
     v5 = PropGet v4 key="owner" receivers=[L3]
     v6 = StrictEq v5, v1
     Return v6
-}
-# CHECK-LABEL: function f10 name="cycleIsOnlyRead"
 # CHECK-NOT: NewObject
 # CHECK-NOT: PropGet
 # CHECK: [[same10]]: true = Boolean boolean=true
 # CHECK-NEXT: v6:{{*}}= Upcast [[same10]] castType=
+}
 
 function f11 name="cycleWithoutPlaceholderIsNeverBuilt" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewObject layout=L3
     v3 = NewObject -, v2 layout=L3 fields=[0]
     Branch v1 -> taken b1(), notTaken b2()
@@ -304,13 +282,11 @@ function f11 name="cycleWithoutPlaceholderIsNeverBuilt" parameters=[{type=anythi
     Return v0
   b2():
     Return v0
-}
-# CHECK-LABEL: function f11 name="cycleWithoutPlaceholderIsNeverBuilt"
 # CHECK-NOT: NewObject
 # CHECK-NOT: PropDefine
+}
 
 function f12 name="callback" captures=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 
@@ -321,7 +297,6 @@ function f13 name="readsScope" captures=[{type=env L4}] results=[{type=anything}
 }
 
 function f14 name="environmentIsBuiltBeforeItsClosure" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewObject -, v0 layout=L4 fields=[0]
     v3 = NewClosure v2 function=f13
     Branch v1 -> taken b1(), notTaken b2()
@@ -330,8 +305,6 @@ function f14 name="environmentIsBuiltBeforeItsClosure" parameters=[{type=anythin
     Return v4
   b2():
     Return v0
-}
-# CHECK-LABEL: function f14 name="environmentIsBuiltBeforeItsClosure"
 # CHECK: b0(
 # CHECK-NEXT: Branch v1
 # CHECK: b1():
@@ -341,9 +314,9 @@ function f14 name="environmentIsBuiltBeforeItsClosure" parameters=[{type=anythin
 # CHECK: b2():
 # CHECK-NOT: NewObject
 # CHECK-NOT: NewClosure
+}
 
 function f15 name="closureInItsOwnEnvironment" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewObject -, v0 layout=L4 fields=[0]
     v3 = NewClosure v2 function=f13
     PutEnvironmentField v2, v3 layout=L4 field=1
@@ -353,8 +326,6 @@ function f15 name="closureInItsOwnEnvironment" parameters=[{type=anything}, {typ
     Return v5
   b2():
     Return v0
-}
-# CHECK-LABEL: function f15 name="closureInItsOwnEnvironment"
 # CHECK: b0(
 # CHECK-NEXT: Branch v1
 # CHECK: b1():
@@ -365,9 +336,9 @@ function f15 name="closureInItsOwnEnvironment" parameters=[{type=anything}, {typ
 # CHECK: b2():
 # CHECK-NOT: NewObject
 # CHECK-NOT: NewClosure
+}
 
 function f16 name="heldInDifferentFieldsOfTwoHolders" parameters=[{type=anything}, {type=boolean}, {type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean, v2: boolean, v3: anything):
     v4 = NewObject layout=L5
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -385,8 +356,6 @@ function f16 name="heldInDifferentFieldsOfTwoHolders" parameters=[{type=anything
     v9 = GetSlotOrUndefined v8 key="z" receivers=[L5] level=Proven
     v10 = Call v0, -, v9
     Return
-}
-# CHECK-LABEL: function f16 name="heldInDifferentFieldsOfTwoHolders"
 # CHECK: b0(
 # CHECK-NOT: NewObject
 # CHECK: b1():
@@ -395,9 +364,9 @@ function f16 name="heldInDifferentFieldsOfTwoHolders" parameters=[{type=anything
 # CHECK-NOT: fields=[
 # CHECK: = Call v0, -, v9
 # CHECK-NOT: fields=[
+}
 
 function f17 name="hardEdgeWouldCloseCycle" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewClosure v0 function=f12
     v3 = NewArray v2 contents=anything
     v4 = NewArray v3 contents=anything
@@ -408,12 +377,11 @@ function f17 name="hardEdgeWouldCloseCycle" parameters=[{type=anything}, {type=b
     Return v0
   b2():
     Return v0
-}
 # An element is listed by its array, so the store that would close the cycle builds what it stores.
-# CHECK-LABEL: function f17 name="hardEdgeWouldCloseCycle"
 # CHECK: b1():
 # CHECK: [[inner17]]:{{*}}= NewArray {{*}} contents=anything
 # CHECK-NEXT: [[outer17]]:{{*}}= NewArray [[inner17]] contents=anything
 # CHECK: ElemSet [[inner17]], {{*}}, [[outer17]]
 # CHECK: b2():
 # CHECK-NOT: NewArray
+}

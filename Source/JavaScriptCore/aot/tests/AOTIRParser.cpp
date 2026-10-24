@@ -399,6 +399,8 @@ bool TextParser::scanBody(Lexer::State start, BodyScan& scan)
     Lexer lexer(m_text);
     lexer.restore(start);
     Token first = lexer.next();
+    scan.leavesOutEntryHead = first.kind != TokenKind::RightBrace && first.kind != TokenKind::EndOfFile && !(first.kind == TokenKind::ID && first.prefix == IDPrefix::Block);
+    scan.numberOfBlocks = scan.leavesOutEntryHead;
     for (; !hasFailed() && first.kind != TokenKind::RightBrace && first.kind != TokenKind::EndOfFile; first = lexer.next()) {
         if (first.kind == TokenKind::ID && first.prefix == IDPrefix::Block) {
             ++scan.numberOfBlocks;
@@ -449,7 +451,7 @@ void TextParser::parseItem(const TextItem& item)
         wire.thisType.type = typeWordOfAnything();
         FunctionRecord engineFields;
         parseFields(*this, wire, engineFields);
-        wire.body = parseBody(item);
+        wire.body = parseBody(item, wire);
         appendLine(*this, wire, WTF::move(engineFields), &Program::functions);
         break;
     }

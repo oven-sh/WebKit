@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="twoPlusCounter" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     v2 = Integer integer=2
     Jump -> next b1(v1)
@@ -19,15 +18,13 @@ function f0 name="twoPlusCounter" parameters=[{type=int[0, 100]}] results=[{type
     Jump -> next b1(v6)
   b3():
     Return
-}
-# CHECK-LABEL: function f0 name="twoPlusCounter"
 # CHECK: b1(v3: int[0, 101]):
 # CHECK: Branch v5 -> taken b2(| 0), notTaken b3()
 # CHECK-NEXT: b2([[first0]]: int[0, 99]):
 # CHECK-NEXT: v6: int[2, 101] = Add v2, [[first0]]
+}
 
 function f1 name="counterPlusTwo" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     v2 = Integer integer=2
     Jump -> next b1(v1)
@@ -40,15 +37,13 @@ function f1 name="counterPlusTwo" parameters=[{type=int[0, 100]}] results=[{type
     Jump -> next b1(v6)
   b3():
     Return
-}
-# CHECK-LABEL: function f1 name="counterPlusTwo"
 # CHECK: b1(v3: int[0, 101]):
 # CHECK: Branch v5 -> taken b2(| 0), notTaken b3()
 # CHECK-NEXT: b2([[last1]]: int[0, 99]):
 # CHECK-NEXT: v6: int[2, 101] = Add [[last1]], v2
+}
 
 function f2 name="minusOnePlusCounter" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     v2 = Integer integer=-1
     Jump -> next b1(v0)
@@ -61,15 +56,13 @@ function f2 name="minusOnePlusCounter" parameters=[{type=int[0, 100]}] results=[
     Jump -> next b1(v6)
   b3():
     Return
-}
-# CHECK-LABEL: function f2 name="minusOnePlusCounter"
 # CHECK: b1(v3: int[0, 100]):
 # CHECK: Branch v5 -> taken b2(| 0), notTaken b3()
 # CHECK-NEXT: b2([[first2]]: int[1, 100]):
 # CHECK-NEXT: v6: int[0, 99] = Add v2, [[first2]]
+}
 
 function f3 name="twoPlusConvertedCounter" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     v2 = Integer integer=2
     Jump -> next b1(v1)
@@ -83,16 +76,14 @@ function f3 name="twoPlusConvertedCounter" parameters=[{type=int[0, 100]}] resul
     Jump -> next b1(v7)
   b3():
     Return
-}
-# CHECK-LABEL: function f3 name="twoPlusConvertedCounter"
 # CHECK: b1(v3: int[0, 101]):
 # CHECK: Branch v5 -> taken b2(| 0), notTaken b3()
 # CHECK-NEXT: b2([[first3]]: int[0, 99]):
 # CHECK-NEXT: v6: int[0, 99] = ToNumeric [[first3]]
 # CHECK-NEXT: v7: int[2, 101] = Add v2, v6
+}
 
 function f4 name="twoMinusCounter" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     v2 = Integer integer=2
     Jump -> next b1(v1)
@@ -105,10 +96,9 @@ function f4 name="twoMinusCounter" parameters=[{type=int[0, 100]}] results=[{typ
     Jump -> next b1(v6)
   b3():
     Return
-}
 # It is no step. What is compared with an integer goes on along the staying edge all the same.
-# CHECK-LABEL: function f4 name="twoMinusCounter"
 # CHECK: b1(v3: int[-97, 99]):
 # CHECK: Branch v5 -> taken b2(| 0), notTaken b3()
 # CHECK-NEXT: b2([[compared4]]: int[-97, 99]):
 # CHECK-NEXT: v6: int[-97, 99] = Sub v2, [[compared4]]
+}

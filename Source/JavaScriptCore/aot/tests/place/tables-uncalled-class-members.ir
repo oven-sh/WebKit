@@ -7,7 +7,6 @@ entry module=m0
 layout L0 kind=Instance name="Constructed" module=m0 constructor=f1
 layout L1 kind=Instance name="NeverConstructed" module=m0 constructor=f4
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = NewClosure function=f2
@@ -24,21 +23,17 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Constructed" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2
 }
 function f2 name="called" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f3 name="uncalled" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f4 name="NeverConstructed" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L1
     v2 = NewObject v1 layout=L1
     Return v2

@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="array-or-bytes" parameters=[{type=Array<number>|Uint8Array}] results=[{type=anything}] {
-  b0(v0: Array<number>|Uint8Array):
     v1 = Integer integer=0
     v2 = Integer integer=0
     Jump -> next b1(v1, v2)
@@ -22,15 +21,13 @@ function f0 name="array-or-bytes" parameters=[{type=Array<number>|Uint8Array}] r
     Jump -> next b1(v9, v10)
   b3():
     Return v3
-}
-# CHECK-LABEL: function f0 name="array-or-bytes"
 # CHECK-NOT: TypeTest
 # CHECK: [[isBytes]]: boolean = TypeTest v0 testedType=Uint8Array
 # CHECK-NEXT: Branch [[isBytes]] -> taken [[front]](| 0), notTaken [[rest]](| 0)
 # CHECK-NOT: TypeTest
+}
 
 function f1 name="nobody-knows-what" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=0
     v2 = Integer integer=0
     Jump -> next b1(v1, v2)
@@ -46,16 +43,14 @@ function f1 name="nobody-knows-what" parameters=[{type=anything}] results=[{type
     Jump -> next b1(v9, v10)
   b3():
     Return v3
-}
-# CHECK-LABEL: function f1 name="nobody-knows-what"
 # CHECK: = ElemGet v0,
 # CHECK: [[isBytes]]: boolean = TypeTest v0 testedType=Uint8Array
 # CHECK-NEXT: Branch [[isBytes]] -> taken
 # CHECK: ([[bytes]]: Uint8Array):
 # CHECK: = GetTypedArrayElement [[bytes]],
+}
 
 function f2 name="asked-for-what-bytes-lack" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=0
     v2 = Integer integer=0
     Jump -> next b1(v1, v2)
@@ -71,12 +66,10 @@ function f2 name="asked-for-what-bytes-lack" parameters=[{type=anything}] result
     Jump -> next b1(v9, v10)
   b3():
     Return v3
-}
-# CHECK-LABEL: function f2 name="asked-for-what-bytes-lack"
 # CHECK-NOT: TypeTest
+}
 
 function f3 name="another-object-each-turn" parameters=[{type=Array<anything>}] results=[{type=anything}] {
-  b0(v0: Array<anything>):
     v1 = Integer integer=0
     v2 = Integer integer=0
     Jump -> next b1(v1, v2)
@@ -92,12 +85,10 @@ function f3 name="another-object-each-turn" parameters=[{type=Array<anything>}] 
     Jump -> next b1(v9, v10)
   b3():
     Return v3
-}
-# CHECK-LABEL: function f3 name="another-object-each-turn"
 # CHECK-NOT: testedType=Uint8Array
+}
 
 function f4 name="elements-that-nothing-takes-for-numbers" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=0
     v2 = Integer integer=0
     Jump -> next b1(v1, v2)
@@ -112,6 +103,5 @@ function f4 name="elements-that-nothing-takes-for-numbers" parameters=[{type=any
     Jump -> next b1(v8, v9)
   b3():
     Return v3
-}
-# CHECK-LABEL: function f4 name="elements-that-nothing-takes-for-numbers"
 # CHECK-NOT: TypeTest
+}

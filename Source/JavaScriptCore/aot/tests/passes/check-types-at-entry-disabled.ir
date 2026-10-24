@@ -17,18 +17,15 @@ module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 typesite w0 module=m0 position=10 kind=Parameter
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     Return
 }
 function f1 name="double" module=m0 position=5 flags=[IsChecked] length=1 parameters=[{type=undefined|null|number site=w0}] results=[{type=anything}] {
-  b0(v0: undefined|null|number):
     v1 = Add v0, v0
     Return v1
 }
 function f2 name="withoutSite" module=m0 position=50 flags=[IsChecked] length=1 parameters=[{type=undefined|null|number}] results=[{type=anything}] {
-  b0(v0: undefined|null|number):
     v1 = Add v0, v0
     Return v1
 }

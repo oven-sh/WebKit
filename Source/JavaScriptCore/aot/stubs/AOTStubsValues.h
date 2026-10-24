@@ -25,6 +25,14 @@ static_assert(exists(toBoolean()) && exists(valueIsTruthy()) && exists(valueIsCa
 static_assert(exists(equal(false)) && exists(equal(true)));
 static_assert(!exists(equal(true).withForm(static_cast<uint8_t>(Equality::Strict) + 1)));
 
+constexpr StubSignature signatureWithFlagsResult(std::initializer_list<Reg> operandRegisters, MacroAssembler::ResultCondition trueCondition)
+{
+    StubSignature signature = StubSignature::withoutResult(operandRegisters);
+    signature.result = StubResult::Flags;
+    signature.trueCondition = trueCondition;
+    return signature;
+}
+
 void callBinaryOperation(StubAssembler&, Entry);
 
 } } // namespace JSC::AOT

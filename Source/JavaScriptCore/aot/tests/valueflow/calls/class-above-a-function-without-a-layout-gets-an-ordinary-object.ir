@@ -22,7 +22,6 @@ layout L0 kind=Instance name="Wide" constructor=f2 fields=[{key="x" declared={ty
 layout L1 kind=Instance name="Shaped" base=L2 constructor=f4 fields=[{key="x" declared={type=anything}}] flags=[HasHeritage]
 layout L2 kind=Instance name="Base" constructor=f3 flags=[IsConstructorFunction]
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = ResolveHeritage v0
     v2 = NewClosure function=f2
@@ -40,12 +39,10 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return v12
 }
 function f1 name="base" module=m0 results=[{type=anything}] {
-  b0():
     v0 = Undefined
     Return v0
 }
 function f2 name="Wide" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0
     v3 = SuperConstruct v2, v1 layout=L0
     v4 = Integer integer=1
@@ -53,12 +50,10 @@ function f2 name="Wide" module=m0 kind=DerivedConstructor flags=[HasNewTarget, T
     Return v3
 }
 function f3 name="Base" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Undefined
     Return v1
 }
 function f4 name="Shaped" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0
     v3 = SuperConstruct v2, v1 layout=L1
     v4 = Integer integer=1

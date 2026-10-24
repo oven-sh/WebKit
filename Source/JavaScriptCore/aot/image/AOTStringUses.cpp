@@ -13,19 +13,26 @@
 #include "AOTFlowResults.h"
 #include "AOTFlowSiteData.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTIRProgram.h"
+#include "AOTIdentifierNumbering.h"
 #include "AOTNumberLiteralStrings.h"
 #include "AOTOpcodesNamingRecords.h"
 #include "AOTPipeline.h"
 #include "AOTPlacement.h"
 #include "AOTPropertyAccess.h"
+#include "AOTPropertyCachesFront.h"
 #include "AOTRegExpRequests.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTSlotPlanSteps.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
+#include "SmallStrings.h"
+#include <algorithm>
 #include <array>
 #include <concepts>
 #include <functional>
+#include <span>
 #include <wtf/Atomics.h>
 #include <wtf/FastBitVector.h>
 #include <wtf/HashSet.h>
@@ -44,14 +51,12 @@ static constexpr Typed::TerminatorKindSet keyOrComparisonTerminators { Typed::Te
 static constexpr bool usesOperandsAsKeys(Typed::Opcode opcode) { return keyOrComparisonOpcodes.contains(opcode); }
 static constexpr bool usesOperandsAsKeys(Typed::TerminatorKind kind) { return keyOrComparisonTerminators.contains(kind); }
 
-// A fused access reads its keys by name, also when the reports count it as a call.
 template<typename Operation>
 static constexpr bool looksUpKeysByName(Operation operation)
 {
     return accessClassOf(operation) == Typed::AccessClass::ByName || familyOf(operation) == Typed::OperationFamily::FusedAccess;
 }
 
-// The text is read when an error is made: the name of what is called, of a variable that has no value yet, of what is null, the message itself.
 static bool hasStringsForMessagesOnly(Typed::Opcode opcode)
 {
     switch (opcode) {
@@ -76,56 +81,6 @@ static bool hasStringsForMessagesOnly(Typed::TerminatorKind)
 {
     return false;
 }
-
-namespace {
-
-struct SharedUses {
-    explicit SharedUses(const Typed::Program& program)
-        : isNamed(program.strings.size())
-        , isNamedBesideCreation(program.strings.size())
-        , isConstant(program.strings.size())
-        , isCreatedRepeatedly(program.strings.size())
-        , isAtom(program.strings.size())
-        , keys(program.types.numberOfPropertyKeys())
-    {
-    }
-
-    FastBitVector isNamed;
-    FastBitVector isNamedBesideCreation;
-    FastBitVector isConstant;
-    FastBitVector isCreatedRepeatedly;
-    FastBitVector isAtom;
-    Vector<KeyUse> keys;
-};
-
-class FunctionWalk {
-public:
-    FunctionWalk(const Typed::PipelineOutput&, BuildContext&, FunctionID, bool hasCode, SharedUses&);
-
-    Vector<uint32_t> run();
-
-private:
-    bool runsAtMostOnce(Typed::BlockID);
-    void visit(const Typed::Value&, bool runsAtMostOnce);
-    template<typename InstructionType, typename Operation> void visit(const InstructionType&, Operation, bool runsAtMostOnce);
-    template<typename InstructionType> void markAtomStrings(const InstructionType&, bool usesEveryOperandAsKey);
-    void nameString(StringID);
-    void countKey(PropertyKeyID, Typed::Access, bool looksUpInTables);
-    void countCreationSite(StringID, bool runsAtMostOnce);
-
-    const Typed::Program& m_program;
-    const Typed::Function& m_function;
-    FunctionID m_id;
-    Typed::AnalysisContext m_context;
-    bool m_hasCode;
-    bool m_functionRunsAtMostOnce;
-    std::optional<Typed::FunctionAnalyses> m_analyses;
-    SharedUses& m_shared;
-    Vector<uint32_t> m_namedStrings;
-    UncheckedKeyHashSet<StringID> m_namedStringSet;
-};
-
-} // anonymous namespace
 
 static void addRelaxed(uint32_t& counter)
 {
@@ -155,26 +110,6 @@ static StringID impliedNameOf(const Typed::Program& program, const Typed::Value&
     return key ? program.at(key).text : StringID();
 }
 
-FunctionWalk::FunctionWalk(const Typed::PipelineOutput& pipeline, BuildContext& context, FunctionID id, bool hasCode, SharedUses& shared)
-    : m_program(*pipeline.program)
-    , m_function(m_program.at(id))
-    , m_id(id)
-    , m_context { context, m_program, pipeline.flow.get(), nullptr, id }
-    , m_hasCode(hasCode)
-    , m_functionRunsAtMostOnce(pipeline.flow->runsAtMostOnce(m_program, id))
-    , m_shared(shared)
-{
-}
-
-bool FunctionWalk::runsAtMostOnce(Typed::BlockID block)
-{
-    if (!m_functionRunsAtMostOnce)
-        return false;
-    if (!m_analyses)
-        m_analyses.emplace(m_context, m_function);
-    return m_analyses->executionCountOf(block) == Typed::ExecutionCount::AtMostOnce;
-}
-
 template<typename Operation>
 static bool takesKeyAsOperand(Operation operation)
 {
@@ -186,149 +121,138 @@ static bool takesKeyAsOperand(Operation operation)
     return false;
 }
 
-static Typed::OpcodeSet findOpcodesWithUses()
+template<typename Operation, typename Set>
+static Set withOperationsTakingKeys(Set operations)
 {
-    Typed::OpcodeSet opcodes = Typed::findOpcodesNaming<StringID, PropertyKeyID>() | keyOrComparisonOpcodes;
-    for (Typed::Opcode opcode : allMembersOf<Typed::Opcode>) {
-        if (takesKeyAsOperand(opcode) || Typed::familyOf(opcode) == Typed::OperationFamily::PrivateAccess)
-            opcodes.add(opcode);
+    for (Operation operation : allMembersOf<Operation>) {
+        if (takesKeyAsOperand(operation) || Typed::familyOf(operation) == Typed::OperationFamily::PrivateAccess)
+            operations.add(operation);
     }
-    return opcodes;
+    return operations;
 }
 
-static Typed::TerminatorKindSet findTerminatorKindsWithUses()
-{
-    Typed::TerminatorKindSet kinds = Typed::findTerminatorKindsNaming<StringID, PropertyKeyID>() | keyOrComparisonTerminators;
-    for (Typed::TerminatorKind kind : allMembersOf<Typed::TerminatorKind>) {
-        if (takesKeyAsOperand(kind))
-            kinds.add(kind);
-    }
-    return kinds;
-}
+namespace {
 
-void FunctionWalk::visit(const Typed::Value& value, bool runsAtMostOnce)
-{
-    visit(value, value.opcode, runsAtMostOnce);
-    nameString(impliedNameOf(m_program, value));
-}
+struct SharedUses {
+    size_t numberOfStrings;
+    Vector<KeyUse> keys;
+    FastBitVector isNamed { numberOfStrings };
+    FastBitVector isNamedBesideCreation { numberOfStrings };
+    FastBitVector isConstant { numberOfStrings };
+    FastBitVector isCreatedRepeatedly { numberOfStrings };
+    FastBitVector isAtom { numberOfStrings };
+};
 
-Vector<uint32_t> FunctionWalk::run()
-{
-    static const Typed::OpcodeSet opcodesWithUses = findOpcodesWithUses();
-    static const Typed::TerminatorKindSet terminatorKindsWithUses = findTerminatorKindsWithUses();
-    if (!mayEndBlockWith(m_program, m_id, terminatorKindsWithUses)) {
-        Typed::BlockID current;
-        bool currentRunsAtMostOnce = false;
-        forEachListedValue(m_program, m_id, opcodesWithUses, [&](Typed::BlockID block, uint32_t, ValueID, const Typed::Value& value) {
-            if (block != current) {
-                current = block;
-                currentRunsAtMostOnce = runsAtMostOnce(block);
-            }
-            visit(value, currentRunsAtMostOnce);
-        });
-        return WTF::move(m_namedStrings);
+struct FunctionWalk {
+    bool runsAtMostOnce(Typed::BlockID block)
+    {
+        if (!functionRunsAtMostOnce)
+            return false;
+        if (!analyses)
+            analyses.emplace(context, function);
+        return analyses->executionCountOf(block) == Typed::ExecutionCount::AtMostOnce;
     }
 
-    for (uint32_t blockIndex = 0; blockIndex < m_function.blocks.size(); ++blockIndex) {
-        Typed::BlockID id(blockIndex);
-        const Typed::Block& block = m_function.at(id);
-        bool blockRunsAtMostOnce = runsAtMostOnce(id);
-        for (ValueID valueID : block.values)
-            visit(m_function.at(valueID), blockRunsAtMostOnce);
-        visit(block.terminator, block.terminator.kind, blockRunsAtMostOnce);
-    }
-    return WTF::move(m_namedStrings);
-}
-
-template<typename InstructionType, typename Operation>
-void FunctionWalk::visit(const InstructionType& instruction, Operation operation, bool runsAtMostOnce)
-{
-    bool createsStringConstant = runtimeOf(operation) == Typed::RuntimeOperation::StringConstant;
-    bool looksUpInTables = !runsAtMostOnce && looksUpKeysByName(operation);
-    forEachReference(instruction, [&]<typename Reference>(const Reference& reference) {
-        if constexpr (std::same_as<Reference, StringID>) {
-            nameString(reference);
-            if (createsStringConstant)
-                countCreationSite(reference, runsAtMostOnce);
-            else if (reference && !hasStringsForMessagesOnly(operation))
-                m_shared.isNamedBesideCreation.atomicSetAndCheck(reference.index(), true);
-        } else if constexpr (std::same_as<Reference, PropertyKeyID>)
-            countKey(reference, accessOf(operation), looksUpInTables);
-    });
-    markAtomStrings(instruction, usesOperandsAsKeys(operation));
-}
-
-template<typename InstructionType>
-void FunctionWalk::markAtomStrings(const InstructionType& instruction, bool usesEveryOperandAsKey)
-{
-    instruction.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        if (!usesEveryOperandAsKey && instruction.operandKind(operandIndex) != Typed::OperandKind::PropertyKey)
+    void nameString(StringID string)
+    {
+        if (!string || !namedStringSet.add(string).isNewEntry)
             return;
-        const Typed::Value& definition = m_function.at(sameObjectThroughCasts(m_function, operand));
-        if (definition.opcode == Typed::Opcode::String)
-            m_shared.isAtom.atomicSetAndCheck(definition.string().index(), true);
-    });
-}
+        if (hasCode)
+            shared.isNamed.atomicSetAndCheck(string.index(), true);
+        namedStrings.append(string.index());
+    }
 
-void FunctionWalk::nameString(StringID string)
-{
-    if (!string || !m_namedStringSet.add(string).isNewEntry)
-        return;
-    if (m_hasCode)
-        m_shared.isNamed.atomicSetAndCheck(string.index(), true);
-    m_namedStrings.append(string.index());
-}
+    void countKey(PropertyKeyID key, Typed::Access access, bool looksUpInTables)
+    {
+        KeyUse& use = shared.keys[key.index()];
+        addRelaxed(use.uses);
+        addRelaxed(use.usesByAccess[static_cast<size_t>(access)]);
+        nameString(program.at(key).text);
+        if (!looksUpInTables)
+            return;
+        addRelaxed(use.tableLookupUses);
+        atomicMinRelaxed(use.firstTableLookupFunction, id);
+    }
 
-void FunctionWalk::countKey(PropertyKeyID key, Typed::Access access, bool looksUpInTables)
-{
-    KeyUse& use = m_shared.keys[key.index()];
-    addRelaxed(use.uses);
-    addRelaxed(use.usesByAccess[static_cast<size_t>(access)]);
-    nameString(m_program.at(key).text);
-    if (!looksUpInTables)
-        return;
-    addRelaxed(use.tableLookupUses);
-    atomicMinRelaxed(use.firstTableLookupFunction, m_id);
-}
+    void countCreationSite(StringID string, bool runsAtMostOnce)
+    {
+        bool isFirstSite = shared.isConstant.atomicSetAndCheck(string.index(), true);
+        if (!isFirstSite || !runsAtMostOnce)
+            shared.isCreatedRepeatedly.atomicSetAndCheck(string.index(), true);
+    }
 
-void FunctionWalk::countCreationSite(StringID string, bool runsAtMostOnce)
-{
-    bool isFirstSite = m_shared.isConstant.atomicSetAndCheck(string.index(), true);
-    if (!isFirstSite || !runsAtMostOnce)
-        m_shared.isCreatedRepeatedly.atomicSetAndCheck(string.index(), true);
-}
+    template<typename InstructionType, typename Operation>
+    void visit(const InstructionType& instruction, Operation operation, bool runsAtMostOnce)
+    {
+        bool createsStringConstant = runtimeOf(operation) == Typed::RuntimeOperation::StringConstant;
+        bool looksUpInTables = !runsAtMostOnce && looksUpKeysByName(operation);
+        forEachReference(instruction, [&]<typename Reference>(const Reference& reference) {
+            if constexpr (std::same_as<Reference, StringID>) {
+                nameString(reference);
+                if (createsStringConstant)
+                    countCreationSite(reference, runsAtMostOnce);
+                else if (reference && !hasStringsForMessagesOnly(operation))
+                    shared.isNamedBesideCreation.atomicSetAndCheck(reference.index(), true);
+            } else if constexpr (std::same_as<Reference, PropertyKeyID>)
+                countKey(reference, accessOf(operation), looksUpInTables);
+        });
+        bool usesEveryOperandAsKey = usesOperandsAsKeys(operation);
+        instruction.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+            if (!usesEveryOperandAsKey && instruction.operandKind(operandIndex) != Typed::OperandKind::PropertyKey)
+                return;
+            const Typed::Value& definition = function.at(sameObjectThroughCasts(function, operand));
+            if (definition.opcode == Typed::Opcode::String)
+                shared.isAtom.atomicSetAndCheck(definition.string().index(), true);
+        });
+    }
 
-static void addStringsOfRegExps(const RegExpRequests& requests, StringUses& strings)
-{
-    requests.forEachString([&](StringID string) {
-        strings.isNamed.quickSet(string.index());
-        strings.isNamedBesideCreation.quickSet(string.index());
-    });
-    for (const RegExpRequest& request : requests.all()) {
-        for (StringID name : request.captureGroupNames) {
-            if (name)
-                strings.isAtom.quickSet(name.index());
+    void visit(const Typed::Value& value, bool runsAtMostOnce)
+    {
+        visit(value, value.opcode, runsAtMostOnce);
+        nameString(impliedNameOf(program, value));
+    }
+
+    Vector<uint32_t> run()
+    {
+        static const Typed::OpcodeSet opcodesWithUses = withOperationsTakingKeys<Typed::Opcode>(Typed::findOpcodesNaming<StringID, PropertyKeyID>() | keyOrComparisonOpcodes);
+        static const Typed::TerminatorKindSet terminatorKindsWithUses = withOperationsTakingKeys<Typed::TerminatorKind>(Typed::findTerminatorKindsNaming<StringID, PropertyKeyID>() | keyOrComparisonTerminators);
+        if (!mayEndBlockWith(program, id, terminatorKindsWithUses)) {
+            Typed::BlockID current;
+            bool currentRunsAtMostOnce = false;
+            forEachListedValue(program, id, opcodesWithUses, [&](Typed::BlockID block, uint32_t, ValueID, const Typed::Value& value) {
+                if (block != current) {
+                    current = block;
+                    currentRunsAtMostOnce = runsAtMostOnce(block);
+                }
+                visit(value, currentRunsAtMostOnce);
+            });
+            return WTF::move(namedStrings);
         }
-        for (const RegExpNamedGroupStrings& group : request.namedGroups)
-            strings.isAtom.quickSet(group.name.index());
-    }
-}
 
-static void addLiteralStringsWithoutWord(const Typed::LiteralStringTable& literalStrings, StringUses& strings)
-{
-    for (StringID string : literalStrings.stringsWithoutWord()) {
-        strings.isNamed.quickSet(string.index());
-        strings.isNamedBesideCreation.quickSet(string.index());
+        for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
+            Typed::BlockID blockID(blockIndex);
+            const Typed::Block& block = function.at(blockID);
+            bool blockRunsAtMostOnce = runsAtMostOnce(blockID);
+            for (ValueID valueID : block.values)
+                visit(function.at(valueID), blockRunsAtMostOnce);
+            visit(block.terminator, block.terminator.kind, blockRunsAtMostOnce);
+        }
+        return WTF::move(namedStrings);
     }
-}
 
-static void addStringConstantsInTables(const Typed::Placement& placement, StringUses& strings)
-{
-    strings.isConstantInTables = placement.stringConstantsInTables();
-    strings.isNamed.merge(strings.isConstantInTables);
-    strings.isConstant.merge(strings.isConstantInTables);
-    strings.isCreatedRepeatedly.merge(strings.isConstantInTables);
-}
+    const Typed::Program& program;
+    FunctionID id;
+    const Typed::Function& function;
+    Typed::AnalysisContext context;
+    bool hasCode;
+    bool functionRunsAtMostOnce;
+    SharedUses& shared;
+    std::optional<Typed::FunctionAnalyses> analyses { };
+    Vector<uint32_t> namedStrings { };
+    UncheckedKeyHashSet<StringID> namedStringSet { };
+};
+
+} // anonymous namespace
 
 static Vector<uint32_t> sortFunctionsBySourcePosition(const Typed::Program& program, const ParallelLoops& loops)
 {
@@ -432,27 +356,233 @@ ProgramUses collectProgramUses(const Typed::PipelineOutput& pipeline, const BitV
     const ParallelLoops& loops = context.parallelLoops();
     unsigned numberOfFunctions = program.functions.size();
 
-    SharedUses shared(program);
+    SharedUses shared { program.strings.size(), Vector<KeyUse>(program.types.numberOfPropertyKeys()) };
     ProgramUses uses;
-    uses.strings.namedByFunction.grow(numberOfFunctions);
+    StringUses& strings = uses.strings;
+    strings.namedByFunction.grow(numberOfFunctions);
     forEachIndexInParallel(loops, numberOfFunctions, [&](unsigned index) {
-        if (program.functions[index].hasBody())
-            uses.strings.namedByFunction[index] = FunctionWalk(pipeline, context, FunctionID(index), !bodiesWithoutCode.get(index), shared).run();
+        FunctionID id(index);
+        if (program.at(id).hasBody())
+            strings.namedByFunction[index] = FunctionWalk { program, id, program.at(id), { context, program, pipeline.flow.get(), nullptr, id }, !bodiesWithoutCode.get(index), pipeline.flow->runsAtMostOnce(program, id), shared }.run();
     });
 
-    uses.strings.isNamed = toBitVector(shared.isNamed);
-    uses.strings.isNamedBesideCreation = toBitVector(shared.isNamedBesideCreation);
-    uses.strings.isConstant = toBitVector(shared.isConstant);
-    uses.strings.isCreatedRepeatedly = toBitVector(shared.isCreatedRepeatedly);
-    uses.strings.isAtom = toBitVector(shared.isAtom);
-    addStringsOfRegExps(*pipeline.regExpRequests, uses.strings);
-    addLiteralStringsWithoutWord(*pipeline.literalStrings, uses.strings);
-    addStringConstantsInTables(*pipeline.placement, uses.strings);
-    uses.strings.functionsInSourceOrder = sortFunctionsBySourcePosition(program, loops);
+    strings.isNamed = toBitVector(shared.isNamed);
+    strings.isNamedBesideCreation = toBitVector(shared.isNamedBesideCreation);
+    strings.isConstant = toBitVector(shared.isConstant);
+    strings.isCreatedRepeatedly = toBitVector(shared.isCreatedRepeatedly);
+    strings.isAtom = toBitVector(shared.isAtom);
+    auto nameBesideCreation = [&](StringID string) {
+        strings.isNamed.quickSet(string.index());
+        strings.isNamedBesideCreation.quickSet(string.index());
+    };
+    pipeline.regExpRequests->forEachString(nameBesideCreation);
+    for (const RegExpRequest& request : pipeline.regExpRequests->all()) {
+        for (StringID name : request.captureGroupNames) {
+            if (name)
+                strings.isAtom.quickSet(name.index());
+        }
+        for (const RegExpNamedGroupStrings& group : request.namedGroups)
+            strings.isAtom.quickSet(group.name.index());
+    }
+    for (StringID string : pipeline.literalStrings->stringsWithoutWord())
+        nameBesideCreation(string);
+    strings.isConstantInTables = pipeline.placement->stringConstantsInTables();
+    strings.isNamed.merge(strings.isConstantInTables);
+    strings.isConstant.merge(strings.isConstantInTables);
+    strings.isCreatedRepeatedly.merge(strings.isConstantInTables);
+    strings.functionsInSourceOrder = sortFunctionsBySourcePosition(program, loops);
 
     uses.keys.byKey = WTF::move(shared.keys);
     collectNamesInTables(program, *pipeline.flow, *pipeline.placement, uses.keys);
     return uses;
+}
+
+static_assert(!RowDisplacementTable::rowMarkerColumn);
+static_assert(defaultLimitValue(LimitID::LookupTableNames, hostArchitecture()) == RowDisplacementTable::maxColumn);
+static_assert(StringID(0u) < StringID(), "a symbol without a description sorts last");
+static_assert(PropertyKeyID(0u) < PropertyKeyID(), "a name without a key sorts last");
+
+namespace {
+
+struct NameCandidate {
+    NumberedIdentifier identifier;
+    bool hasPromisedColumn { false };
+    bool isEngineSymbol { false };
+    uint32_t uses { 0 };
+    uint32_t tableLookupUses { 0 };
+    FunctionID firstTableLookupFunction { };
+};
+
+} // anonymous namespace
+
+static bool isFoundByText(const Typed::Program& program, const NumberedIdentifier& identifier)
+{
+    return !identifier.key || program.at(identifier.key).kind == PropertyKeyKind::Text;
+}
+
+// The run time creates the identifiers of all of these in one step, before it looks up the first uid.
+static bool isEngineSymbol(PropertyKeyKind kind)
+{
+    switch (kind) {
+    case PropertyKeyKind::WellKnownSymbol:
+    case PropertyKeyKind::RegisteredSymbol:
+    case PropertyKeyKind::EnginePrivateName:
+        return true;
+    case PropertyKeyKind::Text:
+    case PropertyKeyKind::PrivateName:
+    case PropertyKeyKind::CreatedSymbol:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static Vector<NameCandidate> collectNumberedNames(const Typed::Program& program, const KeyUses& uses, const BitVector& keysWithColumn)
+{
+    unsigned numberOfKeys = program.types.numberOfPropertyKeys();
+    RELEASE_ASSERT(uses.byKey.size() == numberOfKeys);
+
+    Vector<NameCandidate> names;
+    BitVector isTextOfNumberedKey(program.strings.size());
+    for (unsigned index = 0; index < numberOfKeys; ++index) {
+        PropertyKeyID key(index);
+        const KeyUse& use = uses.byKey[index];
+        if (!use.uses && !uses.keysNamedByTables.get(index) && !program.builtinNameOf(key))
+            continue;
+        NumberedIdentifier identifier { key, program.at(key).text };
+        if (isFoundByText(program, identifier))
+            isTextOfNumberedKey.quickSet(identifier.text.index());
+        names.append(NameCandidate {
+            .identifier = identifier,
+            .hasPromisedColumn = keysWithColumn.get(index),
+            .isEngineSymbol = isEngineSymbol(program.at(key).kind),
+            .uses = use.uses,
+            .tableLookupUses = use.tableLookupUses,
+            .firstTableLookupFunction = use.firstTableLookupFunction,
+        });
+    }
+    for (size_t index : uses.stringsNamedAsKeysByTables) {
+        if (!isTextOfNumberedKey.get(index))
+            names.append(NameCandidate { .identifier = { PropertyKeyID(), StringID(index) } });
+    }
+    return names;
+}
+
+static void sortByUse(const ParallelLoops& loops, std::span<NameCandidate> names)
+{
+    parallelSort(loops, names, [](const NameCandidate& a, const NameCandidate& b) {
+        if (a.hasPromisedColumn != b.hasPromisedColumn)
+            return a.hasPromisedColumn;
+        if (a.tableLookupUses != b.tableLookupUses)
+            return a.tableLookupUses > b.tableLookupUses;
+        if (a.uses != b.uses)
+            return a.uses > b.uses;
+        if (a.identifier.key != b.identifier.key)
+            return a.identifier.key < b.identifier.key;
+        return a.identifier.text < b.identifier.text;
+    });
+}
+
+static void groupColumnsByFunction(std::span<NameCandidate> namesWithColumn)
+{
+    constexpr size_t hotNameCount = RowDisplacementTable::numberOfHotNames - 1;
+    if (namesWithColumn.size() <= hotNameCount)
+        return;
+    auto remainingNamesWithColumn = namesWithColumn.subspan(hotNameCount);
+    AOT::stableSort(remainingNamesWithColumn, [](const NameCandidate& a, const NameCandidate& b) {
+        return a.firstTableLookupFunction < b.firstTableLookupFunction;
+    });
+}
+
+static void reportNamesWithoutColumn(std::span<const NameCandidate> namesWithoutColumn, BuildContext& context)
+{
+    auto isLookedUp = [](const NameCandidate& name) {
+        return name.tableLookupUses > 0;
+    };
+    auto mostLookedUp = std::ranges::find_if(namesWithoutColumn, isLookedUp);
+    if (mostLookedUp == namesWithoutColumn.end())
+        return;
+    auto lookedUpCount = static_cast<uint64_t>(std::ranges::count_if(namesWithoutColumn, isLookedUp));
+    context.gaveUp(LimitID::LookupTableNames, { .function = mostLookedUp->firstTableLookupFunction });
+    context.statistics().count(hitsOf(LimitID::LookupTableNames), lookedUpCount - 1);
+}
+
+static void sortByFirstMention(const ParallelLoops& loops, std::span<NameCandidate> namesWithoutColumn)
+{
+    parallelSort(loops, namesWithoutColumn, [](const NameCandidate& a, const NameCandidate& b) {
+        if (a.isEngineSymbol != b.isEngineSymbol)
+            return a.isEngineSymbol;
+        if (a.identifier.text != b.identifier.text)
+            return a.identifier.text < b.identifier.text;
+        return a.identifier.key < b.identifier.key;
+    });
+}
+
+IdentifierNumbering numberIdentifiers(const Typed::Program& program, const KeyUses& uses, const BitVector& keysWithColumn, BuildContext& context)
+{
+    Vector<NameCandidate> names = collectNumberedNames(program, uses, keysWithColumn);
+    sortByUse(context.parallelLoops(), names.mutableSpan());
+    auto columnCount = static_cast<uint32_t>(std::min<uint64_t>(names.size(), context.limit(LimitID::LookupTableNames)));
+    groupColumnsByFunction(names.mutableSpan().first(columnCount));
+    reportNamesWithoutColumn(names.span().subspan(columnCount), context);
+    sortByFirstMention(context.parallelLoops(), names.mutableSpan().subspan(columnCount));
+
+    IdentifierNumbering numbering;
+    numbering.m_numbersByKey.fill(0, program.types.numberOfPropertyKeys());
+    numbering.m_numbersByText.fill(0, program.strings.size());
+    numbering.m_identifiers.grow(names.size() + 1);
+    for (uint32_t index = 0; index < names.size(); ++index) {
+        const NumberedIdentifier& identifier = names[index].identifier;
+        uint32_t number = RowDisplacementTable::numberForRank(index + 1, columnCount);
+        numbering.m_identifiers[number] = identifier;
+        if (identifier.key)
+            numbering.m_numbersByKey[identifier.key.index()] = number;
+        if (isFoundByText(program, identifier))
+            numbering.m_numbersByText[identifier.text.index()] = number;
+    }
+    numbering.m_countWithLookupTableColumn = columnCount + 1;
+
+    context.statistics().count(StatisticID::IdentifiersNumbered, names.size());
+    if (context.exceeds(LimitID::MaxIdentifiers, numbering.count()))
+        context.diagnostics().add(UserDiagnostic { .kind = UserDiagnosticKind::TooManyIdentifiers, .limit = LimitID::MaxIdentifiers, .count = numbering.count() });
+    return numbering;
+}
+
+static bool hasCellInVM(std::span<const uint8_t> text)
+{
+    constexpr size_t maxEncodedSizeOfSingleCharacterString = 2;
+    if (text.size() > maxEncodedSizeOfSingleCharacterString)
+        return false;
+    Vector<char16_t> units = Typed::decodeProgramString(text);
+    return units.isEmpty() || (units.size() == 1 && units[0] <= maxSingleCharacterString);
+}
+
+StringConstantNumbering numberStringConstants(const Typed::Program& program, const StringUses& uses, BuildContext& context)
+{
+    BitVector needsNumber(program.strings.size());
+    needsNumber.merge(uses.isConstantInTables);
+    for (size_t string : uses.isCreatedRepeatedly) {
+        if (uses.isConstant.get(string) && !hasCellInVM(program.strings[StringID(string)]))
+            needsNumber.quickSet(string);
+    }
+
+    StringConstantNumbering numbering;
+    numbering.m_numbersPlusOne.fill(0, program.strings.size());
+    numbering.m_strings.reserveInitialCapacity(needsNumber.bitCount());
+    auto numberIfNeeded = [&](size_t string) {
+        if (!needsNumber.quickGet(string) || numbering.m_numbersPlusOne[string])
+            return;
+        numbering.m_strings.append(StringID(string));
+        numbering.m_numbersPlusOne[string] = numbering.count();
+    };
+    for (uint32_t function : uses.functionsInSourceOrder) {
+        for (uint32_t string : uses.namedByFunction[function])
+            numberIfNeeded(string);
+    }
+    for (size_t string : needsNumber)
+        numberIfNeeded(string);
+
+    context.statistics().count(StatisticID::StringConstantsNumbered, numbering.count());
+    return numbering;
 }
 
 } } // namespace JSC::AOT

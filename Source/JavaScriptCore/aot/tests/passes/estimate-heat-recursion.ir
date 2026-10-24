@@ -20,7 +20,6 @@ entry module=m0
 variable g0 name="input" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = CallDirect v0 function=f1
     v2 = CallDirect v0 function=f4
@@ -31,7 +30,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="kernel" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Jump -> next b1()
   b1():
@@ -52,18 +50,15 @@ function f1 name="kernel" parameters=[{type=anything}] results=[{type=anything}]
 }
 
 function f2 name="step" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f3
     Return v1
 }
 
 function f3 name="score" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 
 function f4 name="inspect" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -75,12 +70,10 @@ function f4 name="inspect" parameters=[{type=anything}] results=[{type=anything}
 }
 
 function f5 name="format" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 
 function f6 name="inspectWithoutRecursion" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -92,12 +85,10 @@ function f6 name="inspectWithoutRecursion" parameters=[{type=anything}] results=
 }
 
 function f7 name="formatWithoutRecursion" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 
 function f8 name="callsItselfInLoop" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Jump -> next b1()
   b1():
@@ -111,7 +102,6 @@ function f8 name="callsItselfInLoop" parameters=[{type=anything}] results=[{type
 }
 
 function f9 name="isEven" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -122,7 +112,6 @@ function f9 name="isEven" parameters=[{type=anything}] results=[{type=anything}]
 }
 
 function f10 name="isOdd" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():

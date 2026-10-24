@@ -13,7 +13,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class ModuleEmitter final : public OperationEmitter {
 public:
-    explicit ModuleEmitter(CodeGenerator&);
+    explicit ModuleEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generateModuleNamespace(const ValueContext&);
     void generateImportModule(const ValueContext&);

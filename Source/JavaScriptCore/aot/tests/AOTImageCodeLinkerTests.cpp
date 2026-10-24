@@ -10,7 +10,7 @@
 #include "AOTImageBuildSteps.h"
 #include "AOTVector.h"
 
-#include "AOTCodeLinker.h"
+#include "AOTCodeLayout.h"
 #include "AOTInstanceLayout.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsBarriers.h"

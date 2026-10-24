@@ -8,7 +8,6 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinIDTypes.h"
-#include "AOTVector.h"
 #include "AOTWatchpoints.h"
 #include "Identifier.h"
 #include "JSType.h"
@@ -16,23 +15,11 @@
 #include "PropertySlot.h"
 #include "StructureID.h"
 #include <array>
-#include <memory>
 #include <span>
-#include <wtf/FastMalloc.h>
-#include <wtf/HashFunctions.h>
 #include <wtf/HashMap.h>
-#include <wtf/HashTraits.h>
-#include <wtf/Noncopyable.h>
 
-namespace JSC {
+namespace JSC { namespace AOT {
 
-class JSCell;
-class JSObject;
-class VM;
-
-namespace AOT {
-
-class BuiltinCellKey;
 struct Instance;
 struct State;
 
@@ -55,7 +42,6 @@ class BuiltinLocationWatch {
     WTF_MAKE_NONCOPYABLE(BuiltinLocationWatch);
 public:
     explicit BuiltinLocationWatch(State&);
-    ~BuiltinLocationWatch();
 
     WatchedLocationState stateOf(BuiltinID member) const;
     unsigned numberOfWatches() const { return m_watches.size(); }
@@ -68,41 +54,22 @@ public:
     GetValueFunc::Ptr customGetterOf(BuiltinOverloadID);
 
 private:
-    struct Watch {
-        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Watch);
-
-        Watch(const Identifier& name, WatchedLocationState& state)
-            : name(name)
-            , state(state)
-        {
-        }
-
-        PropertyValueWatchpoint watchpoint;
-        // The condition of the watchpoint names the key without keeping it alive.
-        Identifier name;
-        WatchedLocationState& state;
-    };
-
     struct CustomGetter {
         BuiltinOverloadID overload;
         GetValueFunc::Ptr function { nullptr };
     };
 
-    static void didFire(VM&, void* watch);
-
-    enum class Attempt : uint8_t { Watches, CannotWatch, IsNotMadeYet };
-    Attempt tryWatch(VM&, BuiltinID member, WatchedLocationState&);
-    JSObject* findHolder(BuiltinID member);
-    JSCell* cellFilledBeforeProgramRan(BuiltinCellKey) const;
-    bool isWhatStartUpFound(BuiltinID member, JSValue held) const;
+    // NotArmed: the host has not made the member yet.
+    WatchedLocationState tryWatch(VM&, BuiltinID member, WatchedLocationState&);
 
     State& m_state;
     std::span<WatchedLocationState> m_states;
-    UncheckedKeyHashMap<uint32_t, std::unique_ptr<Watch>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_watches;
+    UncheckedKeyHashMap<uint32_t, std::unique_ptr<PropertyValueWatchpoint>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_watches;
     // The holders, the keys and the objects are kept alive for as long as the instance lives: a static table has a few hundred entries at the most.
     using Location = std::pair<JSObject*, UniquedStringImpl*>;
     UncheckedKeyHashMap<Location, JSObject*> m_objectsMadeByHost;
-    WTF::Vector<Identifier> m_keysOfObjectsMadeByHost;
+    // A location and the condition of a watchpoint name a key without keeping it alive.
+    WTF::Vector<Identifier> m_keys;
     // The bindings are a sorted list. Each place holds the getter that was asked for last among those that share it.
     std::array<CustomGetter, 64> m_customGetters;
 };

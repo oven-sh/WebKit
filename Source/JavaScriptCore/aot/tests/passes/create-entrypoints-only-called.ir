@@ -10,14 +10,11 @@ variable g0 name="onlyCalled" module=m0 declared={type=anything} initialization=
 variable g1 name="neverRead" module=m0 declared={type=anything} initialization=Function function=f1 flow={stores=Never reads=NeverRead}
 variable g2 name="readAsValue" module=m0 declared={type=anything} initialization=Function function=f2 flow={stores=Never}
 function f0 name="onlyCalled" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f1 name="neverRead" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f2 name="readAsValue" results=[{type=undefined}] {
-  b0():
     Return
 }

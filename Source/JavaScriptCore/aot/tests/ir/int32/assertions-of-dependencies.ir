@@ -8,7 +8,6 @@ entry module=m0
 typesite w0 module=m1 position=10 kind=Assertion
 typesite w1 module=m1 position=20 kind=Result
 function f0 name="asserted" module=m1 parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = Convert v0 declared={type=i32 site=w0 flags=[IsInt32Promise, IsDeclaredByDependency]}
     Return v1
 }
@@ -16,7 +15,6 @@ function f0 name="asserted" module=m1 parameters=[{type=number}] results=[{type=
 # CHECK-NOT: Convert
 # CHECK: Return v0
 function f1 name="assertedAndReturned" module=m1 parameters=[{type=number}] results=[{type=i32 site=w1 flags=[IsInt32Promise, IsDeclaredByDependency]}] {
-  b0(v0: number):
     v1 = Convert v0 declared={type=i32 site=w0 flags=[IsInt32Promise, IsDeclaredByDependency]}
     v2 = Convert v1 declared={type=i32 site=w1 flags=[IsInt32Promise, IsDeclaredByDependency]}
     Return v2
@@ -25,12 +23,10 @@ function f1 name="assertedAndReturned" module=m1 parameters=[{type=number}] resu
 # CHECK: Check v0 castType=i32 site=w1
 # CHECK-NOT: Convert
 function f2 name="number" module=m1 results=[{type=number}] {
-  b0():
     v0 = Double number=1.5
     Return v0
 }
 function f3 name="assertedTailCall" module=m1 results=[{type=i32 site=w1 flags=[IsInt32Promise, IsDeclaredByDependency]}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = Call v0
     ReturnCall v1 casts=[{declared={type=i32 site=w0 flags=[IsInt32Promise, IsDeclaredByDependency]}}, {declared={type=i32 site=w1 flags=[IsInt32Promise, IsDeclaredByDependency]}}]

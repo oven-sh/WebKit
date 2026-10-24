@@ -12,13 +12,11 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = NewClosure function=f1
     PropSet v0, v1 key="__hookOfSomeTool" mode=Strict
     Return
 }
 function f1 name="hook" module=m0 results=[{type=anything}] {
-  b0():
     Return
 }

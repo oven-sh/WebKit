@@ -14,12 +14,10 @@
 #include "AOTVector.h"
 #include <array>
 #include <memory>
-#include <optional>
 #include <wtf/BitVector.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/Forward.h>
 #include <wtf/Lock.h>
-#include <wtf/text/ASCIILiteral.h>
 
 namespace JSC { namespace AOT {
 
@@ -38,54 +36,48 @@ enum class InlineBarrier : uint8_t {
     NeverInlined,
 };
 
-ASCIILiteral nameOf(InlineBarrier);
-
 // The blocks that one edge dominates, as a range of preorder indices in the dominator tree.
 struct DominatedRange {
     bool contains(const DominatedRange& other) const { return begin <= other.begin && other.begin < end; }
+    bool isEmpty() const { return begin == end; }
 
     uint32_t begin { 0 };
     uint32_t end { 0 };
 };
 
+// Code, and the innermost side of a condition or a switch that it lies on, which counts it among its own. No range: it lies on none.
+struct BytesInRange {
+    DominatedRange range;
+    uint32_t bytes { 0 };
+};
+
 struct ParameterCondition {
+    BlockID block;
     ValueID condition;
     uint32_t entryParameter { 0 };
-    uint32_t bytesOnlyIfTrue { 0 };
-    uint32_t bytesOnlyIfFalse { 0 };
-    DominatedRange rangeIfTrue;
-    DominatedRange rangeIfFalse;
-    // The test and its branch, which go where the site decides the condition, and the innermost side of another condition or switch that they lie on.
-    uint32_t bytesOfTest { 0 };
-    DominatedRange rangeAround;
+    BytesInRange onlyIfTrue;
+    BytesInRange onlyIfFalse;
+    // The test and its branch, which go where the site decides the condition.
+    BytesInRange test;
     // Where it is false, control enters InliningSummary::bytesOnlyIfSomeTestFails.
     bool isTestInFrontOfSharedBytes { false };
 };
 
 // A switch on a parameter, or on the length of the list that it holds. Where the site passes a constant, or makes the list, one arm stays. The key of a case is its integer, or the index of its string.
 struct ParameterSwitch {
+    BlockID block;
     uint32_t entryParameter { 0 };
     bool isOnStrings { false };
     bool isOnLength { false };
-    Vector<std::pair<int64_t, uint32_t>, 4> bytesOnlyInCase;
-    uint32_t bytesOnlyOtherwise { 0 };
-    Vector<DominatedRange, 4> caseRanges;
-    DominatedRange rangeOtherwise;
-    uint32_t bytesOfTest { 0 };
-    DominatedRange rangeAround;
+    Vector<std::pair<int64_t, BytesInRange>, 4> onlyInCase;
+    BytesInRange onlyOtherwise;
+    BytesInRange test;
 };
 
-// A part of InliningSummary::bytesOnlyIfSomeTestFails, and the innermost side of a condition or a switch that it lies on, which counts it among its own. No range: it lies on none.
-struct BytesBehindFailedTests {
-    DominatedRange rangeAround;
-    uint32_t bytes { 0 };
-};
-
-// `g(a, ...list)`: what it takes to make a list and to spread into it the list that a parameter holds, and the innermost side of a condition or a switch that it lies on. Where the site makes the list of the parameter, the copy passes its elements one by one.
+// `g(a, ...list)`: what it takes to make a list and to spread into it the list that a parameter holds. Where the site makes the list of the parameter, the copy passes its elements one by one.
 struct SpreadOfParameter {
     uint32_t entryParameter { 0 };
-    DominatedRange rangeAround;
-    uint32_t bytes { 0 };
+    BytesInRange code;
 };
 
 struct ReceiverParameter {
@@ -111,7 +103,7 @@ struct InliningSummary {
     BitVector iteratedParameters;
     Vector<ParameterCondition, 2> conditions;
     Vector<ParameterSwitch, 0> switches;
-    Vector<BytesBehindFailedTests, 0> partsOfBytesOnlyIfSomeTestFails;
+    Vector<BytesInRange, 0> partsOfBytesOnlyIfSomeTestFails;
     Vector<SpreadOfParameter, 0> spreadsOfParameters;
     Vector<ReceiverParameter, 1> receiverParameters;
     bool neverReturns { false };
@@ -119,7 +111,7 @@ struct InliningSummary {
     bool hasBareReturn { false };
     bool isWrapper { false };
     enum class Answer : uint8_t { NotAsked, No, Yes };
-    // The answer of returnsFreshAggregate() for the function, once it is made. Threads that share the summary read and write it as an atomic: each that finds none makes it, and all make the same. InliningSummaries keeps the answers for its own.
+    // The answer of returnsFreshAggregate() for the function, once it is made. Threads that share the summary read and write it as an atomic: each that finds none makes it, and all make the same.
     mutable Answer returnsFreshAggregate { Answer::NotAsked };
 };
 
@@ -139,14 +131,12 @@ public:
 private:
     friend InliningSummaries summarizeForInlining(const Program&, const CallGraph&, const Heat&, const FlowResults&, BuildContext&);
 
-    using Answer = InliningSummary::Answer;
     static constexpr unsigned numberOfLocks = 256;
 
     ParallelArray<InliningSummary> m_summaries;
     InliningSummary m_unknown;
     BuildContext* m_build { nullptr };
     const FlowResults* m_flow { nullptr };
-    mutable Vector<Answer> m_returnsFreshAggregate;
     // Whoever makes the answer for a function holds the lock of its index modulo their number.
     std::unique_ptr<std::array<Lock, numberOfLocks>> m_locksOfAnswers;
 };

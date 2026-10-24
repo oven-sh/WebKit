@@ -79,15 +79,15 @@ public:
     // A check that repeats work hits the same limits again. Those hits are no losses of the build.
     void setRecordsLimitHits(bool recordsLimitHits) { m_recordsLimitHits = recordsLimitHits; }
 
-    void addDecline(const Wire::DeclineRecord&);
-    void addAllocationRemark(const AllocationRemark&);
+    void addDecline(const Wire::DeclineRecord& decline) { m_losses.addDecline(decline); }
+    void addAllocationRemark(const AllocationRemark& remark) { m_losses.addAllocationRemark(remark); }
 
     const IdentifierNumbering& identifierNumbering() const;
     RegExpSummaries& regExpSummaries() { return *m_regExpSummaries; }
     Typed::ScratchRealms& scratchRealms() { return *m_scratchRealms; }
     B3::CompilationScratch& backEndScratch(unsigned worker);
     void destroyBackEndScratches();
-    bool shouldDump(Typed::FunctionID) const;
+    bool shouldDump(Typed::FunctionID function) const { return !m_functionsToDump || m_functionsToDump->get(function.index()); }
 
     template<typename T>
     void destroyLater(T&& value)
@@ -100,12 +100,12 @@ public:
 
     void resolveFunctionToDump(const Typed::Program&);
     void setIdentifierNumbering(IdentifierNumbering&&);
-    Diagnostics takeDiagnostics();
-    Statistics takeStatistics();
+    Diagnostics takeDiagnostics() { return WTF::move(m_diagnostics); }
+    Statistics takeStatistics() { return std::exchange(m_statistics, Statistics()); }
     Vector<Typed::FunctionID> functionsWithUnresolvedWitnesses() { return m_losses.functionsWithUnresolvedWitnesses(); }
-    Vector<Wire::LossRecord> takeLosses(const Typed::Program*);
-    Vector<Wire::DeclineRecord> takeDeclines(const Typed::Program*);
-    Vector<AllocationRemark> takeAllocationRemarks();
+    Vector<Wire::LossRecord> takeLosses(const Typed::Program* program) { return m_losses.takeLosses(program); }
+    Vector<Wire::DeclineRecord> takeDeclines(const Typed::Program* program) { return m_losses.takeDeclines(program); }
+    Vector<AllocationRemark> takeAllocationRemarks() { return m_losses.takeAllocationRemarks(); }
 
 private:
     class DeferredValue {

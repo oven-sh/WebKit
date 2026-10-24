@@ -46,11 +46,9 @@ variable g0 module=m0 declared={type=anything} owner=L0
 module m0 path="/a.js" displayPath="a.js" body=f0
 module m1 path="/b.js" displayPath="b.js"
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     Return
 }
 function f1 name="keys" module=m0 thisType={type=anything} parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = PropGet v0 key=@@asyncDispose
     v2 = PropGet v0 key=@@asyncIterator
     v3 = PropGet v0 key=@@dispose

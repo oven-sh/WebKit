@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="pushPerMapEntry" parameters=[{type=Map}] results=[{type=Array<anything>}] {
-  b0(v0: Map):
     v1 = NewArray contents=anything
     v2 = CollectionTable v0
     v3 = Integer integer=0
@@ -33,7 +32,6 @@ function f0 name="pushPerMapEntry" parameters=[{type=Map}] results=[{type=Array<
 # CHECK-NEXT: = NewArray contents=anything capacity=[[sum0]]
 
 function f1 name="appendPerSetElementAfterAnElement" parameters=[{type=Set}, {type=anything}] results=[{type=Array<anything>}] {
-  b0(v0: Set, v1: anything):
     v2 = NewArray v1 contents=anything
     v3 = CollectionTable v0
     v4 = Integer integer=0
@@ -61,7 +59,6 @@ function f1 name="appendPerSetElementAfterAnElement" parameters=[{type=Set}, {ty
 # CHECK-NEXT: = NewArray v1 contents=anything capacity=[[sum1]]
 
 function f2 name="countedUpToSize" parameters=[{type=Set}, {type=anything}] results=[{type=Array<anything>}] {
-  b0(v0: Set, v1: anything):
     v2 = NewArray contents=anything
     v3 = Integer integer=0
     Jump -> next b1(v3)
@@ -84,7 +81,6 @@ function f2 name="countedUpToSize" parameters=[{type=Set}, {type=anything}] resu
 # CHECK: = NewArray contents=anything capacity=
 
 function f3 name="mapGrowsInLoop" parameters=[{type=Map}, {type=anything}] results=[{type=Array<anything>}] {
-  b0(v0: Map, v1: anything):
     v2 = NewArray contents=anything
     v3 = CollectionTable v0
     v4 = Integer integer=0
@@ -111,7 +107,6 @@ function f3 name="mapGrowsInLoop" parameters=[{type=Map}, {type=anything}] resul
 # CHECK-NOT: capacity=
 
 function f4 name="unknownCodeInLoop" parameters=[{type=Map}, {type=anything}] results=[{type=Array<anything>}] {
-  b0(v0: Map, v1: anything):
     v2 = NewArray contents=anything
     v3 = CollectionTable v0
     v4 = Integer integer=0
@@ -139,7 +134,6 @@ function f4 name="unknownCodeInLoop" parameters=[{type=Map}, {type=anything}] re
 # CHECK-NEXT: = NewArray contents=anything capacity=[[sum4]]
 
 function f5 name="loopLeftEarly" parameters=[{type=Map}, {type=boolean}] results=[{type=Array<anything>}] {
-  b0(v0: Map, v1: boolean):
     v2 = NewArray contents=anything
     v3 = CollectionTable v0
     v4 = Integer integer=0
@@ -167,7 +161,6 @@ function f5 name="loopLeftEarly" parameters=[{type=Map}, {type=boolean}] results
 # CHECK-NOT: capacity=
 
 function f6 name="pushForSomeEntries" parameters=[{type=Map}] results=[{type=Array<anything>}] {
-  b0(v0: Map):
     v1 = NewArray contents=anything
     v2 = CollectionTable v0
     v3 = Integer integer=0
@@ -198,7 +191,6 @@ function f6 name="pushForSomeEntries" parameters=[{type=Map}] results=[{type=Arr
 # CHECK-NOT: capacity=
 
 function f7 name="classOfCollectionNotProven" parameters=[{type=object}] results=[{type=Array<anything>}] {
-  b0(v0: object):
     v1 = NewArray contents=anything
     v2 = CollectionTable v0
     v3 = Integer integer=0

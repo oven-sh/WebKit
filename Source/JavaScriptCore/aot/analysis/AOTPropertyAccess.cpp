@@ -11,7 +11,6 @@
 #include "AOTBuiltinTable.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTPropertyAccessCache.h"
-#include "AOTPropertyAccessInternal.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTValueIdentity.h"
 #include <algorithm>
@@ -51,41 +50,42 @@ static constexpr bool haveNamedAccessColumns(const OpcodeSet& opcodes)
 
 static_assert(haveNamedAccessColumns(namedAccesses));
 
-static bool namesOperation(AccessForm form)
+namespace {
+
+enum class AccessFormTrait : uint8_t {
+    IsResolved = 1 << 0,
+    NamesOperation = 1 << 1,
+    IsBoundToInstance = 1 << 2,
+};
+
+} // namespace
+
+static OptionSet<AccessFormTrait> traitsOfAccessForm(AccessForm form)
 {
     switch (form) {
+    case AccessForm::ByName:
+    case AccessForm::Split:
+        return { };
     case AccessForm::Slot:
     case AccessForm::Constant:
+        return { AccessFormTrait::IsResolved, AccessFormTrait::NamesOperation };
     case AccessForm::Variable:
     case AccessForm::GetterInSlot:
     case AccessForm::SetterInSlot:
-        return true;
-    case AccessForm::ByName:
+        return { AccessFormTrait::IsResolved, AccessFormTrait::NamesOperation, AccessFormTrait::IsBoundToInstance };
     case AccessForm::Namespace:
     case AccessForm::Builtin:
     case AccessForm::Method:
     case AccessForm::Call:
-    case AccessForm::Split:
-        return false;
+        return { AccessFormTrait::IsResolved, AccessFormTrait::IsBoundToInstance };
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void dumpRequiredProofs(PrintStream& out, ProofSet proofs)
-{
-    CommaPrinter comma;
-    out.print("[");
-    for (Proof proof : allMembersOf<Proof>) {
-        if (proofs.contains(proof))
-            out.print(comma, nameOf(proof));
-    }
-    out.print("]");
 }
 
 void PropertyAccessPlan::dump(PrintStream& out) const
 {
     out.print("form=", enumName(form), " level=", nameOf(level));
-    if (namesOperation(form)) {
+    if (traitsOfAccessForm(form).contains(AccessFormTrait::NamesOperation)) {
         out.print(" operation=", nameOf(operation));
         if (operation == Opcode::Boolean)
             out.print(" value=", booleanConstant ? "true"_s : "false"_s);
@@ -98,7 +98,7 @@ void PropertyAccessPlan::dump(PrintStream& out) const
         out.print(" classObject=F", testedClassObject.index());
     if (!requiredProofs.isEmpty()) {
         out.print(" proofs=");
-        dumpRequiredProofs(out, requiredProofs);
+        dumpProofs(out, requiredProofs);
     }
     if (testsDeclaredType)
         out.print(" testsDeclaredType");
@@ -137,25 +137,26 @@ bool needsNoClosure(const Program& program, FunctionID id)
     return function.captures.isEmpty() && !function.has(FunctionFlags::TakesCallee);
 }
 
+static std::optional<bool> fillsFieldAtAllocation(const Program& program, const Value& allocation, PropertyKeyID key)
+{
+    if (allocation.opcode != Opcode::NewObject)
+        return std::nullopt;
+    std::optional<uint32_t> field = program.at(allocation.layout()).findField(key);
+    if (!field)
+        return std::nullopt;
+    return std::ranges::contains(allocation.fields(), *field);
+}
+
 bool isAllocationListing(const Program& program, const Function& function, ValueID object, PropertyKeyID key)
 {
-    const Value& allocation = function.at(sameObjectThroughCasts(function, object));
-    if (allocation.opcode != Opcode::NewObject)
-        return false;
-    std::optional<uint32_t> field = program.at(allocation.layout()).findField(key);
-    return field && std::ranges::contains(allocation.fields(), *field);
+    return fillsFieldAtAllocation(program, function.at(sameObjectThroughCasts(function, object)), key) == true;
 }
 
 bool isUnfinishedAllocationLeavingOut(const Program& program, const Function& function, ValueID object, PropertyKeyID key)
 {
-    const Value& allocation = function.at(object);
-    if (allocation.opcode != Opcode::NewObject)
-        return false;
-    std::optional<uint32_t> field = program.at(allocation.layout()).findField(key);
-    return field && !std::ranges::contains(allocation.fields(), *field);
+    return fillsFieldAtAllocation(program, function.at(object), key) == false;
 }
 
-// The closure of one function, which is the constructor of a class: what the value is expected to be where its type says less.
 static FunctionID expectedClassObjectOf(const Program& program, const Function& function, ValueID value)
 {
     TypeID expected = function.at(value).expected();
@@ -167,9 +168,7 @@ static FunctionID expectedClassObjectOf(const Program& program, const Function& 
 std::optional<PropertyAccessQuery> propertyAccessQueryOf(const Program& program, const Function& function, const Value& access, ExpectedClassObjects expectedClassObjects, PredictedReceivers predictedReceivers)
 {
     Opcode opcode = access.opcode;
-    if (!isNamedAccess(opcode))
-        return std::nullopt;
-    if (FlagMask::isFreeName(opcode) && access.isFreeName())
+    if (!isNamedAccess(opcode) || (FlagMask::isFreeName(opcode) && access.isFreeName()))
         return std::nullopt;
 
     PropertyAccessQuery query;
@@ -216,80 +215,6 @@ std::optional<PropertyAccessQuery> propertyAccessQueryOf(const Program& program,
     return query;
 }
 
-static void setUndefinedConstant(PropertyAccessPlan& plan)
-{
-    plan.form = AccessForm::Constant;
-    plan.operation = Opcode::Undefined;
-}
-
-static void setBooleanConstant(PropertyAccessPlan& plan, bool value)
-{
-    plan.form = AccessForm::Constant;
-    plan.operation = Opcode::Boolean;
-    plan.booleanConstant = value;
-}
-
-static void planAbsentArm(const PropertyAccessQuery& query, PropertyAccessPlan& plan)
-{
-    switch (query.access) {
-    case Access::Read:
-        if (!query.isPrivate)
-            setUndefinedConstant(plan);
-        return;
-    case Access::Has:
-        setBooleanConstant(plan, false);
-        return;
-    case Access::Store:
-    case Access::Define:
-        return;
-    case Access::None:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void planKnownValueArm(const PropertyAccessQuery& query, AccessForm readForm, PropertyAccessPlan& plan)
-{
-    switch (query.access) {
-    case Access::Read:
-        plan.form = readForm;
-        return;
-    case Access::Has:
-        setBooleanConstant(plan, true);
-        return;
-    case Access::Store:
-    case Access::Define:
-        return;
-    case Access::None:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void planAccessorArm(const PropertyAccessQuery& query, PropertyAccessPlan& plan)
-{
-    switch (query.access) {
-    case Access::Read:
-        if (plan.member.getter)
-            plan.form = AccessForm::Call;
-        else
-            setUndefinedConstant(plan);
-        return;
-    case Access::Has:
-        setBooleanConstant(plan, true);
-        return;
-    case Access::Store:
-        if (plan.member.setter)
-            plan.form = AccessForm::Call;
-        return;
-    case Access::Define:
-        return;
-    case Access::None:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static bool isVariablePropertyPresent(const Program& program, const PropertyAccessQuery& query, VariableID id)
 {
     const Variable& variable = program.at(id);
@@ -301,42 +226,13 @@ static bool isVariablePropertyPresent(const Program& program, const PropertyAcce
     return !readsBinding || isInitialized || variable.initialization != VariableInitialization::Uninitialized;
 }
 
-static void planVariableMember(const PropertyAccessContext& context, const PropertyAccessQuery& query, const MemberArm& arm, PropertyAccessPlan& plan)
-{
-    if (query.access != Access::Has) {
-        planVariableArm(context, query, arm, plan);
-        return;
-    }
-    if (isVariablePropertyPresent(context.program, query, arm.answer.variable))
-        setBooleanConstant(plan, true);
-    else
-        plan.cause = UnprovenCause::PropertyAdded;
-}
-
-static void resetToByName(PropertyAccessPlan& plan)
-{
-    plan.operation = Opcode::Undefined;
-    plan.booleanConstant = false;
-    plan.storedValueFits = false;
-    plan.capturesReceiver = false;
-    plan.emptySlotMeansNoOwnProperty = false;
-    plan.testsDeclaredType = false;
-    plan.requiredProofs = { };
-    plan.conditions.clear();
-}
-
-// `o.read === read`, `typeof o.then`, `o.run.bind(o)`: the value is the closure that the closure table holds for the method.
-static bool mayBeReadAsValue(const Program& program, const PropertyAccessQuery& query, const MemberAnswer& answer)
-{
-    return !query.isPrivate && answer.holder && isEvaluatedOnce(program, program.at(answer.holder));
-}
-
-// A function that takes its callee gets hold of the closure it is entered through, as a read of the value does.
 static bool isReadWithoutLookup(const Program& program, const PropertyAccessQuery& query, const MemberAnswer& answer)
 {
     if (!program.at(answer.method).captures.isEmpty())
         return false;
-    return (needsNoClosure(program, answer.method) && query.readIsOnlyCalled()) || mayBeReadAsValue(program, query, answer);
+    if (needsNoClosure(program, answer.method) && query.readIsOnlyCalled())
+        return true;
+    return !query.isPrivate && answer.holder && isEvaluatedOnce(program, program.at(answer.holder));
 }
 
 PropertyAccessPlan planMemberArm(const PropertyAccessContext& context, const PropertyAccessQuery& query, const MemberArm& arm)
@@ -352,34 +248,66 @@ PropertyAccessPlan planMemberArm(const PropertyAccessContext& context, const Pro
     plan.conditions = answer.conditions;
     plan.cause = answer.cause;
 
+    auto setConstant = [&](Opcode operation, bool booleanConstant = false) {
+        plan.form = AccessForm::Constant;
+        plan.operation = operation;
+        plan.booleanConstant = booleanConstant;
+    };
+    auto planKnownValue = [&](AccessForm readForm) {
+        if (query.access == Access::Read)
+            plan.form = readForm;
+        else if (query.access == Access::Has)
+            setConstant(Opcode::Boolean, true);
+    };
+
     switch (answer.kind) {
     case MemberKind::Unknown:
         break;
     case MemberKind::Absent:
-        planAbsentArm(query, plan);
+        if (query.access == Access::Has)
+            setConstant(Opcode::Boolean, false);
+        else if (query.access == Access::Read && !query.isPrivate)
+            setConstant(Opcode::Undefined);
         break;
     case MemberKind::Field:
         planFieldArm(context, query, arm, plan);
         break;
     case MemberKind::Method:
-        planKnownValueArm(query, isReadWithoutLookup(program, query, answer) ? AccessForm::Method : AccessForm::ByName, plan);
+        planKnownValue(isReadWithoutLookup(program, query, answer) ? AccessForm::Method : AccessForm::ByName);
         break;
     case MemberKind::Accessor:
-        planAccessorArm(query, plan);
+        if (query.access == Access::Read && !answer.getter)
+            setConstant(Opcode::Undefined);
+        else if (query.access == Access::Store && answer.setter)
+            plan.form = AccessForm::Call;
+        else
+            planKnownValue(AccessForm::Call);
         break;
     case MemberKind::Variable:
-        planVariableMember(context, query, arm, plan);
+        if (query.access != Access::Has)
+            planVariableArm(context, query, arm, plan);
+        else if (isVariablePropertyPresent(program, query, answer.variable))
+            setConstant(Opcode::Boolean, true);
+        else
+            plan.cause = UnprovenCause::PropertyAdded;
         break;
     case MemberKind::Namespace:
-        planKnownValueArm(query, AccessForm::Namespace, plan);
+        planKnownValue(AccessForm::Namespace);
         break;
     case MemberKind::Builtin:
-        planKnownValueArm(query, isObjectKind(program.builtins().at(answer.builtin).kind) ? AccessForm::Builtin : AccessForm::ByName, plan);
+        planKnownValue(isObjectKind(program.builtins().at(answer.builtin).kind) ? AccessForm::Builtin : AccessForm::ByName);
         break;
     }
 
     if (plan.form == AccessForm::ByName) {
-        resetToByName(plan);
+        plan.operation = Opcode::Undefined;
+        plan.booleanConstant = false;
+        plan.storedValueFits = false;
+        plan.capturesReceiver = false;
+        plan.emptySlotMeansNoOwnProperty = false;
+        plan.testsDeclaredType = false;
+        plan.requiredProofs = { };
+        plan.conditions.clear();
         return plan;
     }
     plan.needsMissPath = !plan.requiredProofs.isEmpty() || !plan.conditions.isEmpty() || (plan.stores() && !plan.storedValueFits);
@@ -401,16 +329,12 @@ struct MemberSelection {
 static MemberSelection selectMembers(const PropertyAccessQuery& query)
 {
     const ReceiverCandidates& receivers = query.receivers;
-    bool canPlanExpected = !receivers.predicted.isEmpty() && receivers.predicted.size() <= query.maxMembers;
-    MemberSelection overLimit { canPlanExpected ? MemberSource::Expected : MemberSource::None, UnprovenCause::LimitReached, LimitID::MaxAccessPlanMembers };
-
-    // Proven members are grouped by where they find the name, once for each list and name, however many they are. What costs code is the groups: MaxDispatchCases bounds those.
     if (receivers.isProven())
         return receivers.proven.isEmpty() ? MemberSelection { } : MemberSelection { MemberSource::Proven };
     if (receivers.predicted.isEmpty())
         return { MemberSource::None, UnprovenCause::UnknownObject };
-    if (!canPlanExpected)
-        return overLimit;
+    if (receivers.predicted.size() > query.maxMembers)
+        return { MemberSource::None, UnprovenCause::LimitReached, LimitID::MaxAccessPlanMembers };
     return { MemberSource::Expected };
 }
 
@@ -419,19 +343,6 @@ static MemberQuery memberQueryFor(const PropertyAccessQuery& query, LayoutID lay
     return { query.start, layout, query.key, query.access, query.isOwnLookup };
 }
 
-static MemberPartition partitionClassObject(const PropertyAccessContext& context, const PropertyAccessQuery& query, const LayoutList& members)
-{
-    RELEASE_ASSERT(members.size() == 1);
-    MemberPartition partition;
-    MemberAnswer answer = findMember(context, memberQueryFor(query, members[0]));
-    if (answer.isKnown())
-        partition.arms.append(MemberArm { WTF::move(answer), members });
-    else
-        partition.rest = members;
-    return partition;
-}
-
-// One store into several layouts asks its value to be what the slot of each of them holds.
 static LayoutList findSlotsThatHoldOneValue(const Program& program, const LayoutList& layouts, PropertyKeyID key)
 {
     LayoutList found;
@@ -460,7 +371,7 @@ static void separateSlotsThatHoldOneValue(const Program& program, const Property
             PropertyAccessCache::DeclaredTypesKey key { cache->lists.idOf(layouts.span()), query.key };
             narrow = &findOrCompute(cache->narrowSlots, key, computeHash(key.layouts, key.key), [&] {
                 return PropertyAccessCache::NarrowSlots { key, findSlotsThatHoldOneValue(program, layouts, query.key) };
-            }).layouts;
+            }).value;
         } else
             narrow = &computed.emplace(findSlotsThatHoldOneValue(program, layouts, query.key));
         LayoutList separated;
@@ -487,8 +398,16 @@ static MemberPartition partitionFor(const PropertyAccessContext& context, const 
             separateSlotsThatHoldOneValue(context.program, query, partition);
         return partition;
     }
-    case MemberStart::ClassObject:
-        return partitionClassObject(context, query, members);
+    case MemberStart::ClassObject: {
+        RELEASE_ASSERT(members.size() == 1);
+        MemberPartition partition;
+        MemberAnswer answer = findMember(context, memberQueryFor(query, members[0]));
+        if (answer.isKnown())
+            partition.arms.append(MemberArm { WTF::move(answer), members });
+        else
+            partition.rest = members;
+        return partition;
+    }
     case MemberStart::ClassPrototype:
         break;
     }
@@ -502,43 +421,8 @@ static UnprovenCause causeOfRest(const PropertyAccessContext& context, const Pro
     return findMember(context, memberQueryFor(query, partition.rest[0])).cause;
 }
 
-static PropertyAccessPlan planProvenMembers(const PropertyAccessContext& context, const PropertyAccessQuery& query, const LayoutList& members, const MemberPartition& partition)
-{
-    if (partition.hasOneArm())
-        return planMemberArm(context, query, partition.arms[0]);
-
-    bool canSplitOffArm = std::ranges::any_of(partition.arms, [&](const MemberArm& arm) {
-        return planMemberArm(context, query, arm).isResolved();
-    });
-    PropertyAccessPlan plan;
-    plan.form = canSplitOffArm ? AccessForm::Split : AccessForm::ByName;
-    plan.receivers = members;
-    plan.cause = causeOfRest(context, query, partition);
-    return plan;
-}
-
-static void setReceiverTest(const PropertyAccessQuery& query, PropertyAccessPlan& plan)
-{
-    plan.needsMissPath = true;
-    switch (query.start) {
-    case MemberStart::Instance:
-        plan.receiverTest = ReceiverTest::Type;
-        return;
-    case MemberStart::ClassObject:
-        RELEASE_ASSERT(query.expectedClassObject);
-        plan.receiverTest = ReceiverTest::ClassObject;
-        plan.testedClassObject = query.expectedClassObject;
-        return;
-    case MemberStart::ClassPrototype:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static PropertyAccessPlan planExpectedMembers(const PropertyAccessContext& context, const PropertyAccessQuery& query, const MemberPartition& partition)
 {
-    // Whoever names a member expects to find it: the receivers that lack it come last, however many they are.
-    // `ledger.shelf.get(index)`: what the type of the receiver names comes first, however many records with a field of that name the analysis has seen on the way as well.
     PropertyAccessPlan heaviest;
     std::tuple<bool, bool, size_t, bool> weightOfHeaviest { false, false, 0, false };
     for (const MemberArm& arm : partition.arms) {
@@ -561,76 +445,35 @@ static PropertyAccessPlan planExpectedMembers(const PropertyAccessContext& conte
         heaviest.cause = partition.arms.isEmpty() ? causeOfRest(context, query, partition) : partition.arms[0].answer.cause;
         return heaviest;
     }
-    setReceiverTest(query, heaviest);
-    return heaviest;
-}
-
-// Undefined and null are members of every type of objects. The access throws for either, which is what the operation by name behind the failed test does.
-static void addNullishProof(const PropertyAccessQuery& query, PropertyAccessPlan& plan)
-{
-    if (!query.receivers.mayBeNullish || !plan.isResolved())
-        return;
-    plan.requiredProofs.add(Proof::NotNullish);
-    plan.needsMissPath = true;
-}
-
-static bool isBoundToInstance(const PropertyAccessQuery& query, const PropertyAccessPlan& plan)
-{
-    if (query.isPrivate || !plan.conditions.isEmpty())
-        return true;
-    switch (plan.form) {
-    case AccessForm::Variable:
-    case AccessForm::Namespace:
-    case AccessForm::Builtin:
-    case AccessForm::Method:
-    case AccessForm::Call:
-    case AccessForm::GetterInSlot:
-    case AccessForm::SetterInSlot:
-        return true;
-    case AccessForm::ByName:
-    case AccessForm::Slot:
-    case AccessForm::Constant:
-    case AccessForm::Split:
-        return false;
+    heaviest.needsMissPath = true;
+    switch (query.start) {
+    case MemberStart::Instance:
+        heaviest.receiverTest = ReceiverTest::Type;
+        return heaviest;
+    case MemberStart::ClassObject:
+        RELEASE_ASSERT(query.expectedClassObject);
+        heaviest.receiverTest = ReceiverTest::ClassObject;
+        heaviest.testedClassObject = query.expectedClassObject;
+        return heaviest;
+    case MemberStart::ClassPrototype:
+        break;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
 static void addInstanceProof(const PropertyAccessContext& context, const PropertyAccessQuery& query, PropertyAccessPlan& plan)
 {
-    // Only a closure of this Instance passes the test for a class object.
     if (query.start == MemberStart::ClassObject)
         return;
     bool receiverIsTested = plan.receiverTest != ReceiverTest::None || query.receivers.proof == ReceiverProof::Guard;
-    // A permanent test gives the receiver a type that lists its layouts, and every later plan takes such a receiver for an object of this Instance.
     bool narrowsReceiverType = plan.receiverTest == ReceiverTest::Type;
-    if (!plan.isResolved() || !receiverIsTested || !(narrowsReceiverType || isBoundToInstance(query, plan)))
+    bool isBoundToInstance = query.isPrivate || !plan.conditions.isEmpty() || traitsOfAccessForm(plan.form).contains(AccessFormTrait::IsBoundToInstance);
+    if (!plan.isResolved() || !receiverIsTested || !(narrowsReceiverType || isBoundToInstance))
         return;
     if (instanceCountOf(context) == InstanceCount::AtMostOne)
         return;
     plan.requiredProofs.add(Proof::OwnInstance);
     plan.needsMissPath = true;
-}
-
-static KnowledgeLevel levelOf(const PropertyAccessPlan& plan, KnowledgeLevel memberLevel)
-{
-    switch (plan.form) {
-    case AccessForm::ByName:
-        return KnowledgeLevel::Unknown;
-    case AccessForm::Split:
-        return memberLevel;
-    case AccessForm::Slot:
-    case AccessForm::Constant:
-    case AccessForm::Variable:
-    case AccessForm::Namespace:
-    case AccessForm::Builtin:
-    case AccessForm::Method:
-    case AccessForm::Call:
-    case AccessForm::GetterInSlot:
-    case AccessForm::SetterInSlot:
-        return plan.needsNoTest() ? memberLevel : KnowledgeLevel::Expected;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
 }
 
 PropertyAccessPlan planPropertyAccess(const PropertyAccessContext& context, const PropertyAccessQuery& query)
@@ -655,8 +498,20 @@ PropertyAccessPlan planPropertyAccess(const PropertyAccessContext& context, cons
         break;
     case MemberSource::Proven:
         partition = partitionFor(context, query, receivers.proven);
-        plan = planProvenMembers(context, query, receivers.proven, partition);
-        addNullishProof(query, plan);
+        if (partition.hasOneArm())
+            plan = planMemberArm(context, query, partition.arms[0]);
+        else {
+            bool canSplitOffArm = std::ranges::any_of(partition.arms, [&](const MemberArm& arm) {
+                return planMemberArm(context, query, arm).isResolved();
+            });
+            plan.form = canSplitOffArm ? AccessForm::Split : AccessForm::ByName;
+            plan.receivers = receivers.proven;
+            plan.cause = causeOfRest(context, query, partition);
+        }
+        if (receivers.mayBeNullish && plan.isResolved()) {
+            plan.requiredProofs.add(Proof::NotNullish);
+            plan.needsMissPath = true;
+        }
         memberLevel = receivers.level;
         break;
     case MemberSource::Expected:
@@ -671,15 +526,16 @@ PropertyAccessPlan planPropertyAccess(const PropertyAccessContext& context, cons
 
     addInstanceProof(context, query, plan);
     plan.partition = WTF::move(partition);
-    plan.level = levelOf(plan, memberLevel);
+    if (plan.form == AccessForm::ByName)
+        plan.level = KnowledgeLevel::Unknown;
+    else
+        plan.level = traitsOfAccessForm(plan.form).contains(AccessFormTrait::IsResolved) && !plan.needsNoTest() ? KnowledgeLevel::Expected : memberLevel;
     return plan;
 }
 
 LimitID limitOfPropertyAccessPlan(const Program& program, const PropertyAccessQuery& query)
 {
-    if (keyLookupOf(program, query.key) != KeyLookup::Ordinary)
-        return LimitID::None;
-    if (query.receivers.isProven() && query.receivers.hasOtherParts)
+    if (keyLookupOf(program, query.key) != KeyLookup::Ordinary || (query.receivers.isProven() && query.receivers.hasOtherParts))
         return LimitID::None;
     return selectMembers(query).limit;
 }

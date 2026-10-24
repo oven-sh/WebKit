@@ -17,14 +17,11 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class AllocationSinking;
 class FunctionAnalyses;
-class IRBuilder;
 class PassRunner;
 
 struct FreshResultField {
     VirtualField field;
     uint32_t part { 0 };
-
-    friend bool operator==(const FreshResultField&, const FreshResultField&) = default;
 };
 
 struct FreshResultVariant {
@@ -59,27 +56,10 @@ struct FreshResultShape {
     void dump(PrintStream&) const;
 };
 
-bool canReturnParts(const Function&);
-
 FreshResultShape computeFreshResults(FunctionAnalyses&);
 // Also for a function that cannot return parts: a caller that holds a copy of the body can leave the aggregate unbuilt.
 bool returnsFreshAggregate(FunctionAnalyses&);
-FreshResultShape shapeOfReturns(const AllocationSinking&);
 FreshResultVariant variantOfShape(const AllocationSinking&, VirtualObjectID, const VirtualShape&);
-
-struct ResultWorkerRequest {
-    FunctionID origin;
-    const Function& body;
-};
-
-struct ResultWorker {
-    Function function;
-    FreshResultShape shape;
-};
-
-ResultWorker createResultWorker(const AnalysisContext&, const ResultWorkerRequest&, TypeArena&);
-Function createResultWrapper(const AnalysisContext&, FunctionID worker, const Function& original, const FreshResultShape&, TypeArena&);
-ValueID appendRebuiltResult(IRBuilder&, const FreshResultShape&, ValueID workerCall);
 
 void splitFreshResults(ProgramEditor&, const OptimizationInputs&, const PassRunner&);
 

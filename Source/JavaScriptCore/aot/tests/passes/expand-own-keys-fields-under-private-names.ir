@@ -16,12 +16,11 @@ function f0 name="spreadOfInstanceWithPrivateField" parameters=[{type=object}] r
     CopyDataProperties v1, v0
     v3 = FinishObject v1
     Return v3
-}
-# CHECK-LABEL: function f0 name="spreadOfInstanceWithPrivateField"
 # CHECK-NEXT: b0(v0: object ~ L1):
 # CHECK-NEXT: = NewObject layout=L0
 # CHECK-NEXT: CopyDataProperties v1, v0
 # CHECK-NOT: HasKeyOrder
+}
 
 function f1 name="oneOfTwoLayoutsHasAPrivateField" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L1|L2):
@@ -29,21 +28,18 @@ function f1 name="oneOfTwoLayoutsHasAPrivateField" parameters=[{type=object}] re
     CopyDataProperties v1, v0
     v3 = FinishObject v1
     Return v3
-}
-# CHECK-LABEL: function f1 name="oneOfTwoLayoutsHasAPrivateField"
 # CHECK-NOT: layout=L1
 # CHECK: = HasKeyOrder v0, {{*}} layout=L2 fields=[0, 1]
 # CHECK-NOT: layout=L1
+}
 
 function f2 name="oneProvenOrderNeedsNoTest" parameters=[{type=L3}] results=[{type=anything}] {
-  b0(v0: L3):
     v1 = NewObject layout=L0 fields=[]
     CopyDataProperties v1, v0
     v3 = FinishObject v1
     Return v3
-}
-# CHECK-LABEL: function f2 name="oneProvenOrderNeedsNoTest"
 # CHECK-NOT: HasKeyOrder
 # CHECK-NOT: CopyDataProperties
 # CHECK: = GetSlot v0 key="a" receivers=[L3]
 # CHECK-NOT: CopyDataProperties
+}

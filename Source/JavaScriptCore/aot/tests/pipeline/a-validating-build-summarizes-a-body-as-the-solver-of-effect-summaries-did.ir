@@ -15,7 +15,6 @@ module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 layout L0 kind=Environment fields=[{key="last" declared={type=undefined|null|string|absent flags=[OmitsNull, OmitsUndefined]}}]
 function f0 name="main" kind=Module flags=[IsChecked] results=[{type=anything}] {
-  b0():
     v0 = Integer
     v1 = Convert v0 declared={type=number}
     Jump -> next b1(v1)
@@ -37,7 +36,6 @@ function f0 name="main" kind=Module flags=[IsChecked] results=[{type=anything}] 
     Return v12
 }
 function f1 name="outer" flags=[IsChecked] parameters=[{type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-  b0(v0: undefined|null|Array<undefined|null|string>):
     v1 = NewObject layout=L0
     v2 = String string=""
     PutEnvironmentField v1, v2 layout=L0

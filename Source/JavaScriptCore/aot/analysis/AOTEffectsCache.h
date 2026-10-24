@@ -18,24 +18,16 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// What the effects of a value or of a terminator are computed from, besides the program and the summaries.
 enum class EffectInputs : uint8_t {
-    // Its opcode or its kind.
     Row,
-    // Also its payload.
     Payload,
-    // Also its type and the types of its operands.
     Operands,
-    // Also the definitions that its operands are casts of.
     DefinitionsBehindCasts,
-    // Also other parts of the function.
     Function,
 };
 
-// What holds for every value with an opcode, whatever its payload, its type and its operands are.
 struct OpcodeEffectFacts {
     EffectInputs inputs { EffectInputs::Operands };
-    // It does nothing that declaredBoundOf() leaves out.
     bool staysWithinDeclaredBound { false };
     bool mayExitSideways { false };
     AbstractHeapSet writtenHeaps;
@@ -48,7 +40,6 @@ class EffectsCache {
     WTF_MAKE_NONCOPYABLE(EffectsCache);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(EffectsCache);
 public:
-    // An answer is given a second time in a round without a look at the value.
     EffectsCache(const EffectContext&, const Function&, bool verifiesAnswers);
 
     const EffectsOnEdges& of(ValueID) LIFETIME_BOUND;
@@ -57,13 +48,11 @@ public:
     EffectTraitsOnEdges traitsOfTerminator(BlockID);
     OperandSummary summaryOfOperand(ValueID user, uint32_t operandIndex);
 
-    // From here on an answer is given again only where what it was computed from is as it was.
     void didChangeFunction() { ++m_round; }
     void resizeToFunction();
 
     unsigned numberOfBlocks() const { return m_terminators.size(); }
 
-    // The answer that would be given without computing it.
     const EffectsOnEdges* findKept(ValueID) const LIFETIME_BOUND;
     const EffectsOnEdges* findKeptOfTerminator(BlockID) const LIFETIME_BOUND;
 
@@ -74,7 +63,6 @@ private:
     using EntryID = ID<struct EffectsCacheEntryIDTag>;
 
     struct Answer {
-        // Of what the entry was computed from. Zero where that has no stamp.
         uint64_t stamp { 0 };
         EntryID entry;
         uint32_t round { 0 };

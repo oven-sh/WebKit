@@ -8,7 +8,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="valuesAndEntries" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = CallBuiltin -, v0 overload=ObjectValues/0
     v2 = CallBuiltin -, v0 overload=ObjectEntries/0
     v3 = NewArray v1, v2 contents=anything
@@ -23,7 +22,6 @@ function f0 name="valuesAndEntries" parameters=[{type=object}] results=[{type=an
 # CHECK-NEXT: v2: {{*}} = CallInline -, v0 inlineBuiltin=ObjectEntries overload=ObjectEntries/0
 
 function f1 name="inCompactBlock" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: object, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v2 = CallBuiltin -, v0 overload=ObjectValues/0
@@ -46,10 +44,8 @@ function f1 name="inCompactBlock" parameters=[{type=object}, {type=boolean}] res
 # CHECK-NEXT: v4: {{*}} = CallInline -, v0 inlineBuiltin=OwnPropertyKeys inlineParameters=[0] overload=ObjectKeys/0
 
 function f2 name="valuesOfText" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = CallBuiltin -, v0 overload=ObjectValues/1
     Return v1
-}
-# CHECK-LABEL: function f2 name="valuesOfText"
 # CHECK-NOT: CallInline
 # CHECK: = CallBuiltin -, v0 overload=ObjectValues/1
+}

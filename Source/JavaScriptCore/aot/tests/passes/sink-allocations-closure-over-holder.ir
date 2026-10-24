@@ -12,16 +12,13 @@ layout L2 kind=Environment name="scope" fields=[{key="self" declared={type=anyth
 layout L3 name="Mixed" fields=[{key="env" declared={type=anything}}, {key="text" declared={type=function}}, {key="json" declared={type=anything}}, {key="done" declared={type=anything}}]
 
 function f0 name="text" kind=Arrow captures=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     Return v0
 }
 function f1 name="json" kind=Arrow captures=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     Return v0
 }
 
 function f2 name="definitionsAfterClosures" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewObject layout=L0
     PropDefine v2, v1 key="env" receivers=[L0]
     v4 = NewClosure v2 function=f0
@@ -31,8 +28,6 @@ function f2 name="definitionsAfterClosures" parameters=[{type=anything}, {type=a
     PropDefine v2, v1 key="done" receivers=[L0]
     v9 = Call v0, -, v2
     Return v9
-}
-# CHECK-LABEL: function f2 name="definitionsAfterClosures"
 # CHECK: b0(
 # CHECK-NEXT: [[placeholder]]: undefined = Undefined
 # CHECK-NEXT: [[object]]:{{*}}= NewObject -, v1, [[placeholder]], [[placeholder]], v1 layout=L0 fields=[0, 1, 2, 3]
@@ -40,9 +35,9 @@ function f2 name="definitionsAfterClosures" parameters=[{type=anything}, {type=a
 # CHECK-COUNT-2: = NewClosure [[object]] function=
 # CHECK-COUNT-2: PutSlotOrAdd [[object]], [[object]],
 # CHECK-NEXT: = Call v0, -, [[object]]
+}
 
 function f3 name="placeholderDoesNotFit" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewObject layout=L1
     PropDefine v2, v1 key="env" receivers=[L1]
     v4 = NewClosure v2 function=f0
@@ -50,40 +45,35 @@ function f3 name="placeholderDoesNotFit" parameters=[{type=anything}, {type=anyt
     PropDefine v2, v1 key="done" receivers=[L1]
     v7 = Call v0, -, v2
     Return v7
-}
 # The allocation ends in front of the field, and the fields that were created after it follow it in their order.
-# CHECK-LABEL: function f3 name="placeholderDoesNotFit"
 # CHECK: b0(
 # CHECK-NEXT: [[strict]]:{{*}}= NewObject -, v1 layout=L1 fields=[0]
 # CHECK-NEXT: [[closure]]:{{*}}= NewClosure [[strict]] function=f0
 # CHECK-NEXT: PutSlotOrAdd [[strict]], [[strict]], [[closure]] key="text"
 # CHECK-NEXT: PutSlotOrAdd [[strict]], [[strict]], v1 key="done"
 # CHECK-NEXT: = Call v0, -, [[strict]]
+}
 
 function f4 name="closureOverOtherObject" parameters=[{type=anything}, {type=object}] results=[{type=anything}] {
-  b0(v0: anything, v1: object):
     v2 = NewClosure v1 function=f0
     v3 = Call v0, -, v2
     Return v3
-}
-# CHECK-LABEL: function f4 name="closureOverOtherObject"
 # CHECK: b0(
 # CHECK-NEXT: v2:{{*}}= NewClosure v1 function=f0
 # CHECK-NEXT: = Call v0, -, v2
+}
 
 function f5 name="lateStoreWouldRepeatTheStore" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject layout=L2
     v2 = NewClosure v1 function=f6
     PutEnvironmentField v1, v2 layout=L2 field=0
     v4 = Call v0, -, v2
     Return v4
-}
-# CHECK-LABEL: function f5 name="lateStoreWouldRepeatTheStore"
 # CHECK: b0(
 # CHECK-NEXT: v1:{{*}}= NewObject layout=L2
 # CHECK-NEXT: v2:{{*}}= NewClosure v1 function=f6
 # CHECK-NEXT: PutEnvironmentField v1, v2 layout=L2
+}
 function f6 name="recursive" kind=Arrow captures=[{type=env L2}] results=[{type=anything}] {
   b0(v0: env L2):
     v1 = GetEnvironmentField v0 layout=L2 field=0
@@ -91,7 +81,6 @@ function f6 name="recursive" kind=Arrow captures=[{type=env L2}] results=[{type=
 }
 
 function f7 name="nothingNeedsTheCycle" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject layout=L1
     PropDefine v1, v0 key="env" receivers=[L1]
     v3 = NewClosure v1 function=f0
@@ -99,14 +88,12 @@ function f7 name="nothingNeedsTheCycle" parameters=[{type=anything}] results=[{t
     PropDefine v1, v0 key="done" receivers=[L1]
     v6 = PropGet v1 key="env" receivers=[L1]
     Return v6
-}
-# CHECK-LABEL: function f7 name="nothingNeedsTheCycle"
 # CHECK: b0(
 # CHECK-NEXT: v6: anything = Upcast v0 castType=anything
 # CHECK-NEXT: Return v6
+}
 
 function f8 name="oneBranchNeedsTheCycle" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewObject layout=L1
     PropDefine v2, v0 key="env" receivers=[L1]
     v4 = NewClosure v2 function=f0
@@ -118,8 +105,6 @@ function f8 name="oneBranchNeedsTheCycle" parameters=[{type=anything}, {type=boo
     Return v7
   b2():
     Return v0
-}
-# CHECK-LABEL: function f8 name="oneBranchNeedsTheCycle"
 # CHECK: b0(
 # CHECK-NEXT: Branch v1
 # CHECK-NEXT: b1():
@@ -130,9 +115,9 @@ function f8 name="oneBranchNeedsTheCycle" parameters=[{type=anything}, {type=boo
 # CHECK-NEXT: = Call v0, -, [[holder8]]
 # CHECK: b2():
 # CHECK-NEXT: Return v0
+}
 
 function f9 name="placeholderWouldFitBehindTheEnd" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewObject layout=L3
     PropDefine v2, v1 key="env" receivers=[L3]
     v4 = NewClosure v2 function=f0
@@ -142,8 +127,6 @@ function f9 name="placeholderWouldFitBehindTheEnd" parameters=[{type=anything}, 
     PropDefine v2, v1 key="done" receivers=[L3]
     v9 = Call v0, -, v2
     Return v9
-}
-# CHECK-LABEL: function f9 name="placeholderWouldFitBehindTheEnd"
 # CHECK-NOT: Undefined
 # CHECK: [[mixed]]:{{*}}= NewObject -, v1 layout=L3 fields=[0]
 # CHECK-COUNT-2: = NewClosure [[mixed]] function=
@@ -151,21 +134,19 @@ function f9 name="placeholderWouldFitBehindTheEnd" parameters=[{type=anything}, 
 # CHECK-NEXT: PutSlotOrAdd [[mixed]], [[mixed]], {{*}} key="json"
 # CHECK-NEXT: PutSlotOrAdd [[mixed]], [[mixed]], v1 key="done"
 # CHECK-NEXT: = Call v0, -, [[mixed]]
+}
 
 function f10 name="elementIsNotStoredLate" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray contents=anything
     v2 = NewClosure v1 function=f11
     AppendElement v1, v2
     v4 = PropGet v1 key="length"
     Return v4
-}
-# CHECK-LABEL: function f10 name="elementIsNotStoredLate"
 # CHECK: b0(
 # CHECK-NEXT: v1:{{*}}= NewArray contents=anything
 # CHECK-NEXT: v2:{{*}}= NewClosure v1 function=f11
 # CHECK-NEXT: AppendElement v1, v2
+}
 function f11 name="overArray" kind=Arrow captures=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     Return v0
 }

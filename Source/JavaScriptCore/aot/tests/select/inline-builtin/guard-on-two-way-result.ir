@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="resultStaysLocal" parameters=[{type=object}, {type=object}] results=[{type=anything}] {
-  b0(v0: object, v1: object):
     v2 = CallBuiltin -, v0 overload=ObjectKeys/0
     v3 = IsPristine v2 builtinClass=Array aspects=[Storage]
     Branch v3 -> taken b1(| 0), notTaken b2()
@@ -16,9 +15,8 @@ function f0 name="resultStaysLocal" parameters=[{type=object}, {type=object}] re
     Return v8
   b2():
     Return
-}
-# CHECK-LABEL: function f0 name="resultStaysLocal"
 # CHECK: TryCallInline -, v0 inlineBuiltin=OwnPropertyKeys inlineParameters=[0] overload=ObjectKeys/0 -> done [[done]](), miss [[miss]]()
 # CHECK: PropSet v1, v6 key="first"
 # CHECK-NEXT: v8: anything = GetArrayElement v2, v5, v4 level=Expected
 # CHECK: [[done]](v2: Array<string>):
+}

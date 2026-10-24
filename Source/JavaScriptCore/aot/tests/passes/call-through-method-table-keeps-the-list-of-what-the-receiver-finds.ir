@@ -20,18 +20,14 @@ function f3 name="scaled" kind=Method flags=[HasThis] thisType={type=L1} paramet
     Return v2
 }
 function f4 name="listsEveryCallee" parameters=[{type=L0|L1}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0|L1, v1: number):
     v2 = PropGet v0 key="scaled"
     v3 = Call v2, v0, v1 calleeKey="scaled" callees=[f1, f3]
     Return v3
-}
-# CHECK-LABEL: function f4 name="listsEveryCallee"
 # CHECK: = CallTable v0, v1 function={{*}} key="scaled" receivers=[L0, L1] entrypoints=[{{*}}] callees=[f1, f3]
+}
 function f5 name="listsSomeCallees" parameters=[{type=L0|L1}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0|L1, v1: number):
     v2 = PropGet v0 key="scaled"
     v3 = Call v2, v0, v1 calleeKey="scaled" callees=[f1, ..]
     Return v3
-}
-# CHECK-LABEL: function f5 name="listsSomeCallees"
 # CHECK: = CallTable v0, v1 function={{*}} key="scaled" receivers=[L0, L1] entrypoints=[{{*}}] callees=[f1, ..]
+}

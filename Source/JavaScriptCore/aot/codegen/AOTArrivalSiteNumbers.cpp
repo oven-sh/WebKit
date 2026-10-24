@@ -18,7 +18,6 @@
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include <algorithm>
-#include <array>
 #include <tuple>
 #include <utility>
 #include <wtf/CommaPrinter.h>
@@ -52,7 +51,7 @@ struct ArrivalSiteDescription {
 
 } // anonymous namespace
 
-uint32_t numberOfArrivalSitesOf(const Value& value)
+static uint32_t numberOfArrivalSitesOf(const Value& value)
 {
     switch (value.opcode) {
     case Opcode::PropGet:
@@ -84,14 +83,14 @@ uint32_t numberOfArrivalSitesOf(const Value& value)
     }
 }
 
-Vector<ArrivalSite> findArrivalSites(const Function& function)
+static Vector<ArrivalSite> findArrivalSites(const Function& function)
 {
     Vector<ArrivalSite> sites;
-    for (unsigned index = 0; index < function.blocks.size(); ++index) {
-        for (ValueID value : function.blocks[index].values) {
+    for (const Block& block : function.blocks) {
+        for (ValueID value : block.values) {
             uint32_t count = numberOfArrivalSitesOf(function.at(value));
             for (uint32_t part = 0; part < count; ++part)
-                sites.append(ArrivalSite { .block = BlockID(index), .value = value, .part = part });
+                sites.append(ArrivalSite { .value = value, .part = part });
         }
     }
     return sites;
@@ -127,15 +126,10 @@ ArrivalSiteNumbers numberArrivalSites(const Program& program, BuildContext& buil
     return numbers;
 }
 
-uint32_t ArrivalSiteNumbers::firstOf(FunctionID function) const
-{
-    return function.index() < m_functions.size() ? m_functions[function.index()].first : 0;
-}
-
 uint32_t ArrivalSiteNumbers::numberFor(FunctionID function, uint32_t ordinal) const
 {
     RELEASE_ASSERT(ordinal < sitesOf(function).size());
-    return firstOf(function) + ordinal;
+    return m_functions[function.index()].first + ordinal;
 }
 
 std::optional<uint32_t> ArrivalSiteNumbers::numberOf(FunctionID function, ValueID value, uint32_t part) const
@@ -196,19 +190,6 @@ static AccessKind accessKindOf(Opcode opcode)
     default:
         return AccessKind::Unknown;
     }
-}
-
-// An operation that stands for two source operations has the origin of the later one, and names the origin of the read that comes first.
-static Origin originOf(const Value& value, uint32_t part)
-{
-    if (!part && PayloadWord::readOrigin(value.opcode))
-        return value.readOrigin();
-    return value.origin();
-}
-
-static AccessSiteID accessSiteOf(const Value& value, uint32_t part)
-{
-    return part ? value.secondAccessSite() : value.accessSite();
 }
 
 // Nothing for the second read of a pair that reads from the result of the first: no value of the function stands for that result alone.
@@ -272,8 +253,9 @@ static ArrivalSiteDescription describe(const Program& program, const Function& f
     const Value& value = function.at(site.value);
     ArrivalSiteDescription description {
         .operation = value.opcode,
-        .origin = originOf(value, site.part),
-        .accessSite = accessSiteOf(value, site.part),
+        // An operation that stands for two source operations has the origin of the later one, and names the origin of the read that comes first.
+        .origin = !site.part && PayloadWord::readOrigin(value.opcode) ? value.readOrigin() : value.origin(),
+        .accessSite = site.part ? value.secondAccessSite() : value.accessSite(),
         .kind = accessKindOf(value.opcode),
     };
 
@@ -295,12 +277,10 @@ static ArrivalSiteDescription describe(const Program& program, const Function& f
     if (!receiver)
         return description;
     ReceiverCandidates candidates = receiverCandidates(program, function, receiver, stamp);
-    if (candidates.proof == ReceiverProof::Type) {
+    bool isProven = candidates.proof == ReceiverProof::Type;
+    if (isProven)
         description.level = KnowledgeLevel::Proven;
-        description.expected = WTF::move(candidates.proven);
-        return description;
-    }
-    description.expected = WTF::move(candidates.predicted);
+    description.expected = WTF::move(isProven ? candidates.proven : candidates.predicted);
     return description;
 }
 
@@ -316,20 +296,6 @@ static Vector<ArrivalSiteDescription> describeSitesOf(const Program& program, co
     });
 }
 
-static const AccessSite* findAccessSite(const FlowResults* flow, AccessSiteID site)
-{
-    if (!flow || !site || site.index() >= flow->numberOfAccessSites())
-        return nullptr;
-    return &flow->at(site);
-}
-
-static FunctionID functionHolding(Origin origin, const Function& function, FunctionID id)
-{
-    if (!origin.inlineFrame || origin.inlineFrame >= function.inlineFrames.size())
-        return id;
-    return function.inlineFrames[origin.inlineFrame].callee;
-}
-
 static String escaped(const Program& program, StringID id)
 {
     String text = id ? program.strings.toWTFString(id) : emptyString();
@@ -342,15 +308,18 @@ static void printSite(PrintStream& out, const PropertyAccessContext& context, Fu
 {
     const Program& program = context.program;
     const Function& function = program.at(id);
+    uint32_t inlineFrame = description.origin.inlineFrame;
+    bool isInlined = inlineFrame && inlineFrame < function.inlineFrames.size();
     Wire::SourceLocation location = function.locationOf(description.origin);
-    FunctionID holder = findFunctionAsRead(&program, functionHolding(description.origin, function, id));
+    FunctionID holder = findFunctionAsRead(&program, isInlined ? function.inlineFrames[inlineFrame].callee : id);
     AccessKind kind = description.kind;
     UnprovenCause cause = UnprovenCause::Unknown;
     // The list of access sites in the report has these words for the same access, so the two lists agree on where it is.
-    if (const AccessSite* access = findAccessSite(context.flow, description.accessSite)) {
-        location = access->location;
-        holder = findFunctionAsRead(&program, access->function);
-        kind = access->kind;
+    if (context.flow && description.accessSite && description.accessSite.index() < context.flow->numberOfAccessSites()) {
+        const AccessSite& access = context.flow->at(description.accessSite);
+        location = access.location;
+        holder = findFunctionAsRead(&program, access.function);
+        kind = access.kind;
         if (description.level != KnowledgeLevel::Proven)
             cause = context.flow->lossOf(description.accessSite).cause;
     }

@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="haveSameText" parameters=[{type=string}, {type=string}] results=[{type=boolean}] {
-  b0(v0: string, v1: string):
     v2 = StrictEq v0, v1
     Return v2
 }
@@ -15,7 +14,6 @@ function f0 name="haveSameText" parameters=[{type=string}, {type=string}] result
 # CHECK: = StrictEq v0, v1 form=Generic
 
 function f1 name="haveSameTextInALoop" parameters=[{type=string}, {type=string}] results=[{type=boolean}] {
-  b0(v0: string, v1: string):
     Jump -> next b1()
   b1():
     LoopHint
@@ -29,7 +27,6 @@ function f1 name="haveSameTextInALoop" parameters=[{type=string}, {type=string}]
 # CHECK: = StrictEq v0, v1 form=Strings
 
 function f2 name="haveSameKind" parameters=[{type="circle"|"square"}, {type="circle"|"square"}] results=[{type=boolean}] {
-  b0(v0: "circle"|"square", v1: "circle"|"square"):
     v2 = StrictEq v0, v1
     Return v2
 }
@@ -38,46 +35,36 @@ function f2 name="haveSameKind" parameters=[{type="circle"|"square"}, {type="cir
 # CHECK: = StrictEq v0, v1 form=Strings
 
 function f3 name="comesFirst" parameters=[{type=string}, {type=string}] results=[{type=boolean}] {
-  b0(v0: string, v1: string):
     v2 = Less v0, v1
     Return v2
-}
-# CHECK-LABEL: function f3 name="comesFirst"
 # CHECK: = Less v0, v1 form=Generic
+}
 
 function f4 name="emptyLiteral" results=[{type=Array<anything>}] {
-  b0():
     v0 = NewArray contents=anything
     Return v0
-}
-# CHECK-LABEL: function f4 name="emptyLiteral"
 # CHECK-NOT: Profiled
 # CHECK: Return v0
+}
 
 function f5 name="concat" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=Array<anything, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage, Names]>, v1: Array<anything, pristine[Storage, Names]>):
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeConcat/2
     Return v2
-}
-# CHECK-LABEL: function f5 name="concat"
 # CHECK-NOT: CallInline
 # CHECK: v2:{{*}}= CallBuiltin v0, v1 overload=ArrayPrototypeConcat/2
 # CHECK-NOT: CallInline
+}
 
 function f6 name="shift" parameters=[{type=Array<anything, pristine[Storage]>}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>):
     v1 = CallBuiltin v0 overload=ArrayPrototypeShift/0
     Return v1
-}
-# CHECK-LABEL: function f6 name="shift"
 # CHECK-NOT: CallInline
 # CHECK: v1:{{*}}= CallBuiltin v0 overload=ArrayPrototypeShift/0
 # CHECK-NOT: CallInline
+}
 
 function f7 name="pop" parameters=[{type=Array<anything, pristine[Storage]>}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>):
     v1 = CallBuiltin v0 overload=ArrayPrototypePop/0
     Return v1
-}
-# CHECK-LABEL: function f7 name="pop"
 # CHECK: TryCallInline v0 inlineBuiltin=ArrayPop overload=ArrayPrototypePop/0
+}

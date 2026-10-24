@@ -9,7 +9,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="register" [isFreeName]
@@ -18,7 +17,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="sixSevenAndNine" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewDictionary
     PropDefine v1, v0 key="a"
     PropDefine v1, v0 key="b"

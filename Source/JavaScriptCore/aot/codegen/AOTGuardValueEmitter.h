@@ -13,9 +13,12 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class GuardValueEmitter final : public OperationEmitter {
 public:
-    explicit GuardValueEmitter(CodeGenerator&);
+    explicit GuardValueEmitter(CodeGenerator& generator)
+        : OperationEmitter(generator)
+    {
+    }
 
-    void generateAllGuards(const ValueContext&);
+    void generateAllGuards(const ValueContext&) { }
 };
 
 } } } // namespace JSC::AOT::Typed

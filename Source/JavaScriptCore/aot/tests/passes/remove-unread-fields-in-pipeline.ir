@@ -21,7 +21,6 @@ layout L4 name="PresenceObserved" fields=[{key="run" declared={type=anything} fl
 # CHECK: layout L3 kind=Instance name="Widget"{{*}}fields=[{key="run"{{*}}stores=Never{{*}}reads=NeverRead{{*}}{key="n"
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = Integer integer=1
@@ -48,15 +47,13 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v23 = PropGet v0 key="print" [isFreeName]
     v24 = Call v23, -, v18, v19, v20, v21, v22
     Return
-}
-# CHECK-LABEL: function f0 name="main"
 # CHECK: layout=L0 fields=[1]
 # CHECK: layout=L1 fields=[1]
 # CHECK: layout=L2 fields=[0]
 # CHECK: layout=L4 fields=[0, 1]
+}
 
 function f1 name="callsField" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = PropGet v0 key="n"
     v2 = PropGet v0 key="run"
@@ -64,7 +61,6 @@ function f1 name="callsField" results=[{type=anything}] {
     Return v1
 }
 function f2 name="readsOtherField" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g1
     v1 = PropGet v0 key="n"
     Return v1
@@ -75,7 +71,6 @@ function f3 name="readsScope" kind=Arrow captures=[{type=env L2}] results=[{type
     Return v1
 }
 function f4 name="callsFieldOfInstance" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g2
     v1 = PropGet v0 key="n"
     v2 = PropGet v0 key="run"
@@ -83,7 +78,6 @@ function f4 name="callsFieldOfInstance" results=[{type=anything}] {
     Return v1
 }
 function f5 name="asksForField" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g3
     v1 = PropHas v0 key="run"
     v2 = PropGet v0 key="n"
@@ -91,19 +85,16 @@ function f5 name="asksForField" results=[{type=anything}] {
     Return v3
 }
 function f6 name="Widget" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = GetConstructPrototype v0 layout=L3
     v3 = NewObject v2 layout=L3 fields=[]
     v4 = NewClosure function=f7
     PropSet v3, v4 key="run" mode=Strict
     PropSet v3, v1 key="n" mode=Strict
     Return v3
-}
-# CHECK-LABEL: function f6 name="Widget"
 # CHECK-NOT: key="run"
 # CHECK: key="n"
+}
 
 function f7 name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }

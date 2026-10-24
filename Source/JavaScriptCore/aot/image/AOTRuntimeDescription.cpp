@@ -8,8 +8,20 @@
 
 #if ENABLE(AOT)
 
-#include "AOTRuntimeFactValues.h"
+#include "AOTBuiltinIDTypes.h"
+#include "AOTIdentifierTable.h"
+#include "AOTImage.h"
+#include "AOTInstance.h"
+#include "AOTOperationData.h"
+#include "AOTRegExpRecord.h"
+#include "AOTRuntimeFactsOfLayoutsIncludes.h"
+#include "AOTRuntimeTable.h"
+#include "AOTStubBlob.h"
+#include "AOTStubRegisters.h"
+#include "FFIStubs.h"
+#include <bit>
 #include <cstring>
+#include <iterator>
 
 namespace JSC { namespace AOT {
 
@@ -18,7 +30,79 @@ static constexpr ASCIILiteral namesOfFacts[] = {
 #include "AOTRuntimeFacts.def"
 #undef AOT_RUNTIME_FACT
 };
-static_assert(std::size(namesOfFacts) == numberOfRuntimeFacts);
+static constexpr unsigned numberOfRuntimeFacts = std::size(namesOfFacts);
+
+struct DescribedRuntime {
+    RuntimeDescription header;
+    uint32_t facts[numberOfRuntimeFacts];
+};
+static_assert(offsetof(DescribedRuntime, facts) == sizeof(RuntimeDescription));
+
+static constexpr uint32_t checkedRuntimeFact(uint64_t value)
+{
+    RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(value <= UINT32_MAX);
+    return static_cast<uint32_t>(value);
+}
+
+static constexpr DescribedRuntime thisRuntime = {
+    {
+        RuntimeDescription::expectedMagic,
+        sizeof(RuntimeDescription) + sizeof(DescribedRuntime::facts),
+        numberOfRuntimeFacts,
+        CPUFeatureSet::buildTarget().bits(),
+        static_cast<uint8_t>(hostArchitecture()),
+#if OS(LINUX)
+        RuntimeDescription::OperatingSystem::Linux,
+#elif OS(DARWIN)
+        RuntimeDescription::OperatingSystem::Darwin,
+#elif OS(WINDOWS)
+        RuntimeDescription::OperatingSystem::Windows,
+#elif OS(FREEBSD)
+        RuntimeDescription::OperatingSystem::FreeBSD,
+#else
+        RuntimeDescription::OperatingSystem::Other,
+#endif
+        static_cast<uint8_t>(imageFormOfThisRuntime()),
+        (ASSERT_ENABLED ? RuntimeDescription::Assertions : 0) | (ASAN_ENABLED ? RuntimeDescription::AddressSanitizer : 0),
+        imageFormatVersion,
+    },
+    {
+#define AOT_RUNTIME_FACT(name, value) checkedRuntimeFact(value),
+#include "AOTRuntimeFacts.def"
+#undef AOT_RUNTIME_FACT
+    },
+};
+
+// It lies beside imageStamp(), which every run time has, so that no linker leaves it out.
+extern "C" AOT_IN_RUNTIME_DESCRIPTION_SECTION AOT_KEPT_BY_EVERY_LINKER constinit const DescribedRuntime describedRuntime = thisRuntime;
+
+std::span<const uint8_t> descriptionOfThisRuntime()
+{
+    return { reinterpret_cast<const uint8_t*>(&describedRuntime), describedRuntime.header.size };
+}
+
+static constexpr void mixIntoStamp(uint64_t& stamp, uint64_t value)
+{
+    stamp = (stamp ^ value) * 0x100000001b3ULL;
+    stamp ^= stamp >> 29;
+}
+
+uint64_t imageStamp(CPUFeatureSet features, const std::array<uint8_t, 16>& identity, Wire::ImageForm form)
+{
+    static constexpr uint64_t stampOfFacts = [] {
+        uint64_t stamp = imageFormatVersion;
+        for (uint32_t fact : thisRuntime.facts)
+            mixIntoStamp(stamp, fact);
+        return stamp;
+    }();
+    uint64_t stamp = stampOfFacts;
+    for (uint64_t word : std::bit_cast<std::array<uint64_t, 2>>(identity))
+        mixIntoStamp(stamp, word);
+    mixIntoStamp(stamp, static_cast<uint64_t>(hostArchitecture()) | static_cast<uint64_t>(features.bits()) << 8);
+    if (form == Wire::ImageForm::PositionIndependent)
+        mixIntoStamp(stamp, sizeof(ImageStringRecord));
+    return stamp;
+}
 
 static std::optional<RuntimeDifference> findDifferenceFromThisTable(const BuiltinTableDescription& there)
 {
@@ -66,7 +150,7 @@ std::optional<RuntimeDifference> findDifferenceFromThisRuntime(std::span<const u
         return RuntimeDifference { "the architecture"_s, here.architecture, there.architecture };
     if (there.operatingSystem != here.operatingSystem)
         return RuntimeDifference { "the operating system"_s, static_cast<uint64_t>(here.operatingSystem), static_cast<uint64_t>(there.operatingSystem) };
-    if (there.imageForm > RuntimeDescription::ImageForm::PositionIndependent)
+    if (there.imageForm > static_cast<uint8_t>(Wire::ImageForm::PositionIndependent))
         return RuntimeDifference { "the form of the image"_s, static_cast<uint64_t>(here.imageForm), static_cast<uint64_t>(there.imageForm) };
     if (there.imageFormatVersion != here.imageFormatVersion)
         return RuntimeDifference { "the version of the image format"_s, here.imageFormatVersion, there.imageFormatVersion };

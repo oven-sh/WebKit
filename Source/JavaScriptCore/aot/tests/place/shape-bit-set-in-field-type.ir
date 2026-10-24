@@ -14,7 +14,6 @@ layout L65 name="Last" fields=[{key="x" declared={type=number}}]
 layout L66 name="Holder" fields=[{key="member" declared={type=L0|L65} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToNumber v1

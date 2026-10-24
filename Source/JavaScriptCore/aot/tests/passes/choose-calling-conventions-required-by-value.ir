@@ -13,14 +13,12 @@ module m0 path="main.js" displayPath="main.js"
 # CHECK: results=[{type=number}]
 # CHECK: ReturnCall v2 casts=
 function f0 name="mustJump" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
-  b0(v0: anything, v1: number):
     v2 = Call v0, -, v1
     ReturnCall v2 casts=[{declared={type=number} resolution=Assume}]
 }
 # CHECK-LABEL: function f1 name="usesResult"
 # CHECK: v2: number = CallDirect v0, v1 function=f0
 function f1 name="usesResult" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
-  b0(v0: anything, v1: number):
     v2 = CallDirect v0, v1 function=f0
     v3 = Add v2, v2
     Return v3
@@ -30,7 +28,6 @@ function f1 name="usesResult" parameters=[{type=anything}, {type=number}] result
 # CHECK-NEXT: [[number]]: number = AssumeType [[result]] castType=number
 # CHECK-NEXT: Return [[number]]
 function f2 name="mayJump" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
-  b0(v0: anything, v1: number):
     v2 = Call v0, -, v1
     ReturnCall v2 casts=[{declared={type=number} resolution=Assume}] requirement=Allowed
 }

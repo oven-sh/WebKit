@@ -12,10 +12,10 @@
 #include "AOTBarrierEmitter.h"
 #include "AOTConstantEmitter.h"
 #include "AOTIdentifierNumbering.h"
+#include "AOTPlacement.h"
 #include "AOTPropertyCachesFront.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTRuntimeRecords.h"
-#include "AOTSiteCachePlacement.h"
 #include "AOTStringEmitter.h"
 #include "AOTStubsPropertyKeys.h"
 #include "AOTVector.h"
@@ -26,32 +26,6 @@ namespace JSC { namespace AOT { namespace Typed {
 static_assert(RowDisplacementTable::maxColumn < 1u << secondNameShift);
 static_assert(!Slot::offsetOfStructureID() && sizeof(StructureID) == sizeof(uint32_t));
 static_assert(OBJECT_OFFSETOF(Slot, transition.newStructureID) == Slot::offsetOfPayload());
-
-namespace {
-
-struct FusedPropertyRun {
-    CellPointer object;
-    Vector<Boxed, 8> values;
-    Request request;
-};
-
-class PropertyRunEmitter final : public OperationEmitter {
-public:
-    explicit PropertyRunEmitter(CodeGenerator& generator)
-        : OperationEmitter(generator)
-    {
-    }
-
-    Condition tryStore(const ValueContext&);
-
-private:
-    bool paysWithoutSiteCache(const ValueContext&);
-    Condition countMiss(Pointer cache);
-    Condition storeByOperation(const ValueContext&, const FusedPropertyRun&, Pointer cache, bool isOnRarePath);
-    void storeThroughSiteCache(const ValueContext&, const FusedPropertyRun&, Pointer cache, Integer header, Word32 kind);
-};
-
-} // anonymous namespace
 
 static std::optional<uint32_t> columnOf(const IdentifierNumbering& numbering, PropertyKeyID key)
 {
@@ -87,11 +61,6 @@ static bool probesSiteCacheInline(CodeShape shape)
         return true;
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-FusedAccessEmitter::FusedAccessEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
 }
 
 void FusedAccessEmitter::generatePropGetChain(const ValueContext& value)
@@ -160,87 +129,68 @@ void FusedAccessEmitter::generatePropGetAndTest(const ValueContext& value)
     calls.callStubAndBranch(value, getByIdEqualsLiteral(text.length()), operands, options, value.branchTargets());
 }
 
-void FusedAccessEmitter::generateTryPutByIds(const ValueContext& value)
+void FusedAccessEmitter::generateTryPutByIds(const ValueContext& store)
 {
-    defineTest(value, PropertyRunEmitter(generator()).tryStore(value));
+    defineTest(store, tryPutByIds(store));
 }
 
-Condition PropertyRunEmitter::tryStore(const ValueContext& store)
+Condition FusedAccessEmitter::tryPutByIds(const ValueContext& store)
 {
     std::optional<Request> request = store->request();
     if (!request)
         return boolean(false);
     SiteCacheID siteCache = store->siteCache();
-    bool probesSiteCache = siteCache && probesSiteCacheInline(store.shape());
-    if (!probesSiteCache && !paysWithoutSiteCache(store))
+    bool shapeProbesInline = probesSiteCacheInline(store.shape());
+    bool probesSiteCache = siteCache && shapeProbesInline;
+    // A run of stores calls the operation to fill its site cache.
+    if (!probesSiteCache && (!store->isDefinition() || (shapeProbesInline && mayReadSiteCachesAgain(analyses(), store.block()))))
         return boolean(false);
 
-    FusedPropertyRun run { in<CellPointer>(store->objectOperand()), { }, *request };
+    CellPointer object = in<CellPointer>(store->objectOperand());
+    Vector<Boxed, 8> values;
     for (ValueID stored : store->valuesOperands())
-        run.values.append(in<Boxed>(stored));
-    RELEASE_ASSERT(run.values.size() == store->keys().size());
+        values.append(in<Boxed>(stored));
+    RELEASE_ASSERT(values.size() == store->keys().size());
+    auto refuse = [&] {
+        return boolean(false);
+    };
+    auto storeByOperation = [&](Pointer cache, bool isOnRarePath) {
+        Pointer buffer = argumentBuffer(values.span());
+        return callOperation<Condition>(store, RuntimeOperation::TryPutProperties, { cache, boxCell(object), word32(request->value()), buffer, word32(store->isDefinition()) }, { .isOnRarePath = isOnRarePath });
+    };
     if (!probesSiteCache)
-        return storeByOperation(store, run, pointerConstant(0), false);
+        return storeByOperation(pointerConstant(0), false);
 
     Pointer cache = siteCacheAddress(siteCache);
     Integer header(m_out.load64(m_out.address(m_heaps.AOTInstance_siteCaches, cache.value(), Slot::offsetOfStructureID())));
-    return either<Condition>(equal(low32(header), loadStructureID(run.object)), [&] {
+    return either<Condition>(equal(low32(header), loadStructureID(object)), [&] {
         Word32 kind = bitAnd(low32(Integer(m_out.lShr(header.value(), m_out.constInt32(Slot::kindShiftInHeader)))), word32(UINT8_MAX));
         return either<Condition>(notEqual(kind, word32(static_cast<int32_t>(Slot::Kind::Uncacheable))), [&] {
-            storeThroughSiteCache(store, run, cache, header, kind);
+            const B3::AbstractHeap& properties = m_heaps.entire(AbstractHeap::NamedProperties);
+            LValue firstWordIndex = m_out.aShr(header.value(), m_out.constInt32(Slot::locationShiftInHeader));
+            LValue first = m_out.add(object.value(), m_out.shl(firstWordIndex, m_out.constInt32(3)));
+            for (size_t i = 0; i < values.size(); ++i)
+                m_out.store64(values[i].value(), m_out.address(properties, first, i * sizeof(EncodedJSValue)));
+
+            Word32 newStructureID(m_out.load32(m_out.address(m_heaps.AOTInstance_siteCaches, cache.value(), Slot::offsetOfPayload())));
+            Condition addsProperties = equal(kind, word32(static_cast<int32_t>(Slot::Kind::Transition)));
+            storeField(object, m_heaps.JSCell_structureID, select(addsProperties, newStructureID, low32(header)));
+            // The Structure is a cell the object refers to, so a run of numbers needs the barrier as well.
+            emitter<BarrierEmitter>().barrier(store, object);
             return boolean(true);
-        }, [&] {
-            return boolean(false);
-        });
+        }, refuse);
     }, [&] {
-        // A site that sees several Structures in turn takes the single stores between its refills.
-        return either<Condition>(countMiss(cache), [&] {
-            return storeByOperation(store, run, cache, true);
-        }, [&] {
-            return boolean(false);
-        });
+        // What countSiteCacheMiss() does in a stub. A site that sees several Structures in turn takes the single stores between its refills.
+        Pointer states = loadImmutablePointer(AOT_INSTANCE_OFFSET(propertyCaches.siteCacheStates));
+        LValue offset = m_out.bitAnd(m_out.lShr(cache.value(), m_out.constInt32(SiteCacheState::slotAddressShift)), m_out.constIntPtr(SiteCacheState::offsetMask));
+        LValue state = m_out.add(states.value(), offset);
+        TypedPointer missesLeft = m_out.address(m_heaps.entire(AbstractHeap::RuntimeState), state, SiteCacheState::offsetOfMissesLeft());
+        Word32 count(m_out.load8ZeroExt32(missesLeft));
+        m_out.store32As8(m_out.sub(count.value(), m_out.constInt32(1)), missesLeft);
+        return either<Condition>(equal(count, word32(0)), [&] {
+            return storeByOperation(cache, true);
+        }, refuse);
     });
-}
-
-// A run of stores calls the operation to fill its site cache.
-bool PropertyRunEmitter::paysWithoutSiteCache(const ValueContext& store)
-{
-    if (!store->isDefinition())
-        return false;
-    return !probesSiteCacheInline(store.shape()) || !mayReadSiteCachesAgain(analyses(), store.block());
-}
-
-// What countSiteCacheMiss() does in a stub. The answer says whether the site is due for a refill.
-Condition PropertyRunEmitter::countMiss(Pointer cache)
-{
-    Pointer states = loadImmutablePointer(AOT_INSTANCE_OFFSET(propertyCaches.siteCacheStates));
-    LValue offset = m_out.bitAnd(m_out.lShr(cache.value(), m_out.constInt32(SiteCacheState::slotAddressShift)), m_out.constIntPtr(SiteCacheState::offsetMask));
-    LValue state = m_out.add(states.value(), offset);
-    TypedPointer missesLeft = m_out.address(m_heaps.entire(AbstractHeap::RuntimeState), state, SiteCacheState::offsetOfMissesLeft());
-    Word32 count(m_out.load8ZeroExt32(missesLeft));
-    m_out.store32As8(m_out.sub(count.value(), m_out.constInt32(1)), missesLeft);
-    return equal(count, word32(0));
-}
-
-Condition PropertyRunEmitter::storeByOperation(const ValueContext& store, const FusedPropertyRun& run, Pointer cache, bool isOnRarePath)
-{
-    Pointer buffer = argumentBuffer(run.values.span());
-    return callOperation<Condition>(store, RuntimeOperation::TryPutProperties, { cache, boxCell(run.object), word32(run.request.value()), buffer, word32(store->isDefinition()) }, { .isOnRarePath = isOnRarePath });
-}
-
-void PropertyRunEmitter::storeThroughSiteCache(const ValueContext& store, const FusedPropertyRun& run, Pointer cache, Integer header, Word32 kind)
-{
-    const B3::AbstractHeap& properties = m_heaps.entire(AbstractHeap::NamedProperties);
-    LValue firstWordIndex = m_out.aShr(header.value(), m_out.constInt32(Slot::locationShiftInHeader));
-    LValue first = m_out.add(run.object.value(), m_out.shl(firstWordIndex, m_out.constInt32(3)));
-    for (size_t i = 0; i < run.values.size(); ++i)
-        m_out.store64(run.values[i].value(), m_out.address(properties, first, i * sizeof(EncodedJSValue)));
-
-    Word32 newStructureID(m_out.load32(m_out.address(m_heaps.AOTInstance_siteCaches, cache.value(), Slot::offsetOfPayload())));
-    Condition addsProperties = equal(kind, word32(static_cast<int32_t>(Slot::Kind::Transition)));
-    storeField(run.object, m_heaps.JSCell_structureID, select(addsProperties, newStructureID, low32(header)));
-    // The Structure is a cell the object refers to, so a run of numbers needs the barrier as well.
-    emitter<BarrierEmitter>().barrier(store, run.object);
 }
 
 } } } // namespace JSC::AOT::Typed

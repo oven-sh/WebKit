@@ -14,7 +14,6 @@ layout L1 name="Deleted" fields=[{key="x" declared={type=anything} flags=[IsRequ
 layout L2 name="Escaped" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
 layout L3 name="NeverAllocated" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = PropGet v1 key="x"
@@ -27,7 +26,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v2
 }
 function f1 name="unreached" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L3 fields=[0]
     Return v1

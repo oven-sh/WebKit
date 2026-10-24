@@ -36,9 +36,6 @@
 #include "JSFunction.h"
 #include "TopExceptionScope.h"
 #include <algorithm>
-#include <mutex>
-#include <optional>
-#include <wtf/NeverDestroyed.h>
 #include <wtf/SetForScope.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
@@ -93,17 +90,6 @@ static String className(JSObject* object)
     return object->classInfo()->className;
 }
 
-static bool hasPlainPrototype(JSObject* object)
-{
-    JSValue prototype = object->getPrototypeDirect();
-    return prototype.isNull() || prototype == JSValue(object->realm()->objectPrototype());
-}
-
-static bool isNativeObject(JSObject* object)
-{
-    return object->type() != FinalObjectType && !object->isCallable() && !dynamicDowncast<JSArray>(object) && !isCompiledObject(object) && !dynamicDowncast<ClassPrototype>(object);
-}
-
 static String describeNamed(ASCIILiteral kind, const String& name)
 {
     return name.isEmpty() ? String(kind) : makeString(kind, ' ', name);
@@ -118,30 +104,20 @@ static String describeInstance(const ProgramTables& tables, const LayoutData& la
     return makeString("untyped "_s, ProgramStrings::text(tables, StringID(layout.name)));
 }
 
-String describe(JSValue value, ValueDetail detail)
+String describe(JSValue value)
 {
-    bool describesKindOnly = detail == ValueDetail::KindOnly;
     if (!value)
         return "nothing"_s;
     if (value.isUndefined())
         return "undefined"_s;
     if (value.isNull())
         return "null"_s;
-    if (value.isBoolean() && describesKindOnly)
-        return "boolean"_s;
     if (value.isBoolean())
-        return value.asBoolean() ? "boolean true"_s : "boolean false"_s;
-    if (value.isNumber() && describesKindOnly)
-        return "number"_s;
+        return "boolean"_s;
     if (value.isNumber())
-        return makeString("number "_s, value.asNumber());
-    if (value.isString()) {
-        static constexpr unsigned maxLength = 40;
-        StringImpl* text = describesKindOnly ? nullptr : asString(value)->tryGetValueImpl();
-        if (!text)
-            return "string"_s;
-        return makeString("string \""_s, StringView { *text }.left(maxLength), text->length() > maxLength ? "...\""_s : "\""_s);
-    }
+        return "number"_s;
+    if (value.isString())
+        return "string"_s;
     if (value.isSymbol())
         return "symbol"_s;
     if (value.isBigInt())
@@ -157,9 +133,11 @@ String describe(JSValue value, ValueDetail detail)
         return describeNamed("function"_s, functionName(object));
     if (dynamicDowncast<JSArray>(object))
         return "Array"_s;
-    if (isNativeObject(object))
+    if (object->type() != FinalObjectType && !dynamicDowncast<ClassPrototype>(object))
         return makeString("built-in "_s, className(object));
-    return hasPlainPrototype(object) ? "untyped object"_str : makeString("untyped "_s, className(object));
+    JSValue prototype = object->getPrototypeDirect();
+    bool hasPlainPrototype = prototype.isNull() || prototype == JSValue(object->realm()->objectPrototype());
+    return hasPlainPrototype ? "untyped object"_str : makeString("untyped "_s, className(object));
 }
 
 static void appendUnionMember(StringBuilder& result, bool has, StringView name)
@@ -168,15 +146,11 @@ static void appendUnionMember(StringBuilder& result, bool has, StringView name)
         result.append(result.isEmpty() ? ""_s : " | "_s, name);
 }
 
-static uint32_t withoutImplicitNullish(uint32_t primitives, bool hasOtherMembers)
-{
-    bool hasBoth = (primitives & Primitive::UndefinedOrNull) == Primitive::UndefinedOrNull;
-    return hasBoth && (hasOtherMembers || primitives & ~Primitive::UndefinedOrNull) ? primitives & ~Primitive::UndefinedOrNull : primitives;
-}
-
 static void appendPrimitives(StringBuilder& result, uint32_t primitives)
 {
-    primitives = withoutImplicitNullish(primitives, !result.isEmpty());
+    // Both together go without saying beside another member.
+    if ((primitives & Primitive::UndefinedOrNull) == Primitive::UndefinedOrNull && (!result.isEmpty() || primitives & ~Primitive::UndefinedOrNull))
+        primitives &= ~Primitive::UndefinedOrNull;
     appendUnionMember(result, (primitives & Primitive::Boolean) == Primitive::Boolean, "boolean"_s);
     appendUnionMember(result, (primitives & Primitive::Boolean) == Primitive::True, "true"_s);
     appendUnionMember(result, (primitives & Primitive::Boolean) == Primitive::False, "false"_s);
@@ -220,23 +194,15 @@ String nameOf(const ProgramTables& tables, const LayoutData& layout)
     return describeAnonymousType(layout.fields());
 }
 
-static const LayoutData* memberLayoutForShape(const ProgramTables& tables, const ShapeTestData& members, uint32_t shape)
-{
-    if (!tables.hasLayoutForShape(shape) || !tables.passes(members, shape))
-        return nullptr;
-    return &tables.layoutForShape(shape);
-}
-
 static String describeMembers(const ProgramTables& tables, const ShapeTestData& members)
 {
     static constexpr unsigned maxNamesShown = 4;
     Vector<String, maxNamesShown> names;
     StringBuilder result;
     for (uint32_t shape = members.first(); shape < members.first() + members.count; ++shape) {
-        const LayoutData* layout = memberLayoutForShape(tables, members, shape);
-        if (!layout)
+        if (!tables.hasLayoutForShape(shape) || !tables.passes(members, shape))
             continue;
-        String name = nameOf(tables, *layout);
+        String name = nameOf(tables, tables.layoutForShape(shape));
         if (names.contains(name))
             continue;
         if (names.size() == maxNamesShown) {
@@ -298,137 +264,101 @@ static String namespaceName(const ProgramTables& tables, ModuleID module)
     return makeString("typeof import(\""_s, path, "\")"_s);
 }
 
-namespace {
-
-struct DescribedType {
-    uint32_t primitives { 0 };
-    bool allowsAnyObject { false };
-    bool allowsAnyFunction { false };
-    std::optional<std::pair<int64_t, int64_t>> integerRange;
-    Vector<String, 2> layoutSetNames;
-    Vector<String, 2> cellNames;
-    String elements;
-    Vector<String, 2> literalStrings;
-};
-
-} // namespace
-
-static String describe(const DescribedType& type)
-{
-    static constexpr uint32_t allValues = Primitive::Boolean | Primitive::Number | Primitive::String | Primitive::Symbol | Primitive::BigInt | Primitive::UndefinedOrNull;
-    static constexpr size_t maxLiteralsShown = 4;
-    if (type.allowsAnyObject && (type.primitives & allValues) == allValues)
-        return "any"_s;
-    StringBuilder result;
-    for (auto& name : type.layoutSetNames)
-        appendUnionMember(result, true, name);
-    for (auto& name : type.cellNames)
-        appendUnionMember(result, true, name);
-    appendUnionMember(result, type.allowsAnyObject, "object"_s);
-    appendUnionMember(result, type.allowsAnyFunction && !type.allowsAnyObject, "Function"_s);
-    for (size_t i = 0; i < std::min(type.literalStrings.size(), maxLiteralsShown); ++i)
-        appendUnionMember(result, true, makeString('"', type.literalStrings[i], '"'));
-    appendUnionMember(result, type.literalStrings.size() > maxLiteralsShown, "..."_s);
-    uint32_t primitives = type.primitives & Primitive::All;
-    if (!type.literalStrings.isEmpty())
-        primitives &= ~Primitive::String;
-    auto range = type.integerRange;
-    if ((primitives & Primitive::Number) == Primitive::Integer && range && range->first >= -Typed::maxExactInteger && range->second <= Typed::maxExactInteger) {
-        appendUnionMember(result, true, range->first == range->second ? makeString(range->first) : makeString("integer "_s, range->first, ".."_s, range->second));
-        appendPrimitives(result, primitives & ~Primitive::Number);
-    } else
-        appendPrimitives(result, primitives);
-    return result.toString();
-}
-
 static void appendUnique(Vector<String, 2>& names, String&& name)
 {
     if (!names.contains(name))
         names.append(WTF::move(name));
 }
 
-static void appendClassesWithCellType(DescribedType& described, JSType cellType)
-{
-    if (cellType != ArrayBufferType) {
-        appendUnique(described.cellNames, builtinClassName(cellType, described.elements));
-        return;
-    }
-    for (ArrayBufferSharingMode sharingMode : { ArrayBufferSharingMode::Default, ArrayBufferSharingMode::Shared })
-        appendUnique(described.cellNames, arrayBufferSharingModeName(sharingMode));
-}
-
-static void appendCellTest(DescribedType& described, const ProgramTables& tables, const RuntimeType& type, const RuntimeCellTest& test)
-{
-    switch (test.kind) {
-    case CellTestKind::IsObject:
-        if (auto set = type.layoutSet())
-            appendUnique(described.layoutSetNames, nameOf(tables, tables.layoutSets()[*set]));
-        else
-            described.allowsAnyObject = true;
-        return;
-    case CellTestKind::IsCallable:
-        described.allowsAnyFunction = true;
-        return;
-    case CellTestKind::CellTypeIs: {
-        JSTypeRange cellTypes = test.cellTypes();
-        for (unsigned cellType = cellTypes.first; cellType <= cellTypes.last; ++cellType)
-            appendClassesWithCellType(described, static_cast<JSType>(cellType));
-        return;
-    }
-    case CellTestKind::ShapeIn:
-        if (auto set = type.layoutSet())
-            appendUnique(described.layoutSetNames, nameOf(tables, tables.layoutSets()[*set]));
-        else
-            appendUnique(described.layoutSetNames, describeMembers(tables, tables.shapeTestAt(test.shapeTestOffset())));
-        return;
-    case CellTestKind::InheritsClassInfo:
-    case CellTestKind::IsPristine:
-        appendUnique(described.cellNames, builtinClassName(BuiltinTable::singleton().at(test.builtinClass()), described.elements));
-        return;
-    case CellTestKind::IsBuiltinCell:
-        appendUnique(described.cellNames, builtinCellName(tables, test.builtinCellNumber()));
-        return;
-    case CellTestKind::IsClosureOf:
-        if (String name = initialNameProperty(test.function()); !name.isEmpty())
-            appendUnique(described.cellNames, makeString("typeof "_s, name));
-        else
-            described.allowsAnyFunction = true;
-        return;
-    case CellTestKind::IsSymbol:
-        if (StringID description = ProgramStrings::identifierString(tables, test.symbolKeyNumber()); hasNonEmptyText(description))
-            appendUnique(described.cellNames, makeString("typeof "_s, ProgramStrings::text(tables, description)));
-        else
-            described.primitives |= Primitive::Symbol;
-        return;
-    case CellTestKind::SharingModeIs:
-        appendUnique(described.cellNames, arrayBufferSharingModeName(test.sharingMode()));
-        return;
-    case CellTestKind::IsNamespaceOf:
-        appendUnique(described.cellNames, namespaceName(tables, test.module()));
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static DescribedType describedTypeOf(const ProgramTables& tables, const RuntimeType& type)
-{
-    DescribedType described;
-    described.primitives = type.primitiveSet().toRaw();
-    described.integerRange = type.integerRange();
-    if (auto offset = type.contents())
-        described.elements = describe(tables, tables.typeAt(*offset));
-    for (const RuntimeCellTest& test : type.cellTests())
-        appendCellTest(described, tables, type, test);
-    for (uint32_t string : type.literalStrings()) {
-        if (Image::current()->text().hasText(StringID(string)))
-            described.literalStrings.append(ProgramStrings::text(tables, StringID(string)));
-    }
-    return described;
-}
-
 String describe(const ProgramTables& tables, const RuntimeType& type)
 {
-    return describe(describedTypeOf(tables, type));
+    static constexpr uint32_t allValues = Primitive::Boolean | Primitive::Number | Primitive::String | Primitive::Symbol | Primitive::BigInt | Primitive::UndefinedOrNull;
+    static constexpr size_t maxLiteralsShown = 4;
+    uint32_t primitives = type.primitiveSet().toRaw();
+    bool allowsAnyObject = false;
+    bool allowsAnyFunction = false;
+    Vector<String, 2> layoutSetNames;
+    Vector<String, 2> cellNames;
+    String elements;
+    if (auto offset = type.contents())
+        elements = describe(tables, tables.typeAt(*offset));
+    for (const RuntimeCellTest& test : type.cellTests()) {
+        switch (test.kind) {
+        case CellTestKind::IsObject:
+        case CellTestKind::ShapeIn:
+            if (auto set = type.layoutSet())
+                appendUnique(layoutSetNames, nameOf(tables, tables.layoutSets()[*set]));
+            else if (test.kind == CellTestKind::IsObject)
+                allowsAnyObject = true;
+            else
+                appendUnique(layoutSetNames, describeMembers(tables, tables.shapeTestAt(test.shapeTestOffset())));
+            continue;
+        case CellTestKind::IsCallable:
+            allowsAnyFunction = true;
+            continue;
+        case CellTestKind::CellTypeIs:
+            for (unsigned cellType = test.cellTypes().first; cellType <= test.cellTypes().last; ++cellType) {
+                if (cellType != ArrayBufferType) {
+                    appendUnique(cellNames, builtinClassName(static_cast<JSType>(cellType), elements));
+                    continue;
+                }
+                for (ArrayBufferSharingMode sharingMode : { ArrayBufferSharingMode::Default, ArrayBufferSharingMode::Shared })
+                    appendUnique(cellNames, arrayBufferSharingModeName(sharingMode));
+            }
+            continue;
+        case CellTestKind::InheritsClassInfo:
+        case CellTestKind::IsPristine:
+            appendUnique(cellNames, builtinClassName(BuiltinTable::singleton().at(test.builtinClass()), elements));
+            continue;
+        case CellTestKind::IsBuiltinCell:
+            appendUnique(cellNames, builtinCellName(tables, test.builtinCellNumber()));
+            continue;
+        case CellTestKind::IsClosureOf:
+            if (String name = initialNameProperty(test.function()); !name.isEmpty())
+                appendUnique(cellNames, makeString("typeof "_s, name));
+            else
+                allowsAnyFunction = true;
+            continue;
+        case CellTestKind::IsSymbol:
+            if (StringID description = ProgramStrings::identifierString(tables, test.symbolKeyNumber()); hasNonEmptyText(description))
+                appendUnique(cellNames, makeString("typeof "_s, ProgramStrings::text(tables, description)));
+            else
+                primitives |= Primitive::Symbol;
+            continue;
+        case CellTestKind::SharingModeIs:
+            appendUnique(cellNames, arrayBufferSharingModeName(test.sharingMode()));
+            continue;
+        case CellTestKind::IsNamespaceOf:
+            appendUnique(cellNames, namespaceName(tables, test.module()));
+            continue;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    if (allowsAnyObject && (primitives & allValues) == allValues)
+        return "any"_s;
+    StringBuilder result;
+    for (auto& name : layoutSetNames)
+        appendUnionMember(result, true, name);
+    for (auto& name : cellNames)
+        appendUnionMember(result, true, name);
+    appendUnionMember(result, allowsAnyObject, "object"_s);
+    appendUnionMember(result, allowsAnyFunction && !allowsAnyObject, "Function"_s);
+    size_t numberOfLiterals = 0;
+    for (uint32_t string : type.literalStrings()) {
+        if (!Image::current()->text().hasText(StringID(string)))
+            continue;
+        if (numberOfLiterals++ < maxLiteralsShown)
+            appendUnionMember(result, true, makeString('"', ProgramStrings::text(tables, StringID(string)), '"'));
+    }
+    appendUnionMember(result, numberOfLiterals > maxLiteralsShown, "..."_s);
+    primitives &= numberOfLiterals ? Primitive::All & ~Primitive::String : Primitive::All;
+    auto range = type.integerRange();
+    if ((primitives & Primitive::Number) == Primitive::Integer && range && range->first >= -Typed::maxExactInteger && range->second <= Typed::maxExactInteger) {
+        appendUnionMember(result, true, range->first == range->second ? makeString(range->first) : makeString("integer "_s, range->first, ".."_s, range->second));
+        primitives &= ~Primitive::Number;
+    }
+    appendPrimitives(result, primitives);
+    return result.toString();
 }
 
 static bool namesLayoutSet(const ProgramTables& tables, const RuntimeType& type)
@@ -452,16 +382,12 @@ static bool acceptsAnyObject(const ProgramTables& tables, const RuntimeType& typ
     return contents && acceptsAnyObject(tables, tables.typeAt(*contents));
 }
 
-// The test of a cast asks for a family, which lists every layout the program converts to the type behind `as`. The text of the site is that type.
-static bool isAssertion(const TypeSiteData& site)
-{
-    return static_cast<TypeSiteKind>(site.kind) == TypeSiteKind::Assertion;
-}
-
 String describe(const ProgramTables& tables, const RuntimeType& type, Typed::TypeSiteID site)
 {
     const TypeSiteData* data = site ? tables.findTypeSite(site.index()) : nullptr;
-    if (!data || data->text == TypeSiteData::noText || (!isAssertion(*data) && !namesLayoutSet(tables, type) && !acceptsAnyObject(tables, type)))
+    // The test of a cast asks for a family, which lists every layout the program converts to the type behind `as`. The text of the site is that type.
+    bool isAssertion = data && static_cast<TypeSiteKind>(data->kind) == TypeSiteKind::Assertion;
+    if (!data || data->text == TypeSiteData::noText || (!isAssertion && !namesLayoutSet(tables, type) && !acceptsAnyObject(tables, type)))
         return describe(tables, type);
     return ProgramStrings::text(tables, StringID(data->text));
 }
@@ -473,10 +399,10 @@ StringView quotedSourceOfFailedExpression()
     return quotedSource ? StringView(*quotedSource) : StringView();
 }
 
-static JSObject* createQuoting(const String& source, NOESCAPE const Invocable<JSObject*()> auto& create)
+static JSObject* createQuoting(const String& source, JSObject* (*create)(JSGlobalObject*, JSValue), JSGlobalObject* globalObject, JSValue value)
 {
     SetForScope quotedInScope(quotedSource, source.isNull() ? nullptr : &source);
-    return create();
+    return create(globalObject, value);
 }
 
 // As the engine's message describes the value. Null where it cannot be described.
@@ -497,9 +423,7 @@ JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, Str
     String source;
     if (String description = describe(globalObject, base); !member.isNull() && !description.isNull())
         source = tryMakeString(description, '.', member);
-    return createQuoting(source, [&] {
-        return JSC::createNotAnObjectError(globalObject, base);
-    });
+    return createQuoting(source, JSC::createNotAnObjectError, globalObject, base);
 }
 
 JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, const Identifier& member)
@@ -516,33 +440,25 @@ JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, JSV
         if (!description.isNull() && !descriptionOfKey.isNull())
             source = tryMakeString(description, '[', descriptionOfKey, ']');
     }
-    return createQuoting(source, [&] {
-        return JSC::createNotAnObjectError(globalObject, base);
-    });
+    return createQuoting(source, JSC::createNotAnObjectError, globalObject, base);
 }
 
 JSObject* createSuperBaseNotAnObjectError(JSGlobalObject* globalObject, JSValue base, const Identifier& member)
 {
     String source = member.isSymbol() || member.isPrivateName() ? String() : tryMakeString("super."_s, StringView(member.impl()));
-    return createQuoting(source, [&] {
-        return JSC::createNotAnObjectError(globalObject, base);
-    });
+    return createQuoting(source, JSC::createNotAnObjectError, globalObject, base);
 }
 
 JSObject* createNotAFunctionError(JSGlobalObject* globalObject, JSValue callee, StringView name)
 {
     String source = name.isNull() ? String() : tryMakeString(name, "()"_s);
-    return createQuoting(source, [&] {
-        return JSC::createNotAFunctionError(globalObject, callee);
-    });
+    return createQuoting(source, JSC::createNotAFunctionError, globalObject, callee);
 }
 
 JSObject* createNotAConstructorError(JSGlobalObject* globalObject, JSValue callee, StringView name)
 {
     String source = name.isNull() ? String() : tryMakeString("new "_s, name);
-    return createQuoting(source, [&] {
-        return JSC::createNotAConstructorError(globalObject, callee);
-    });
+    return createQuoting(source, JSC::createNotAConstructorError, globalObject, callee);
 }
 
 JSObject* createNotAFunctionError(JSGlobalObject* globalObject, JSValue callee, const Identifier& name)
@@ -565,11 +481,6 @@ JSObject* createBuiltinWithoutPathError(JSGlobalObject* globalObject)
     return createTypeError(globalObject, "Built-in has no path from the global object"_s);
 }
 
-static JSObject* createNotCompiledError(JSGlobalObject* globalObject, const String& message)
-{
-    return createError(globalObject, withAOTErrorNote(message));
-}
-
 JSObject* createBuiltinNotCompiledError(JSGlobalObject* globalObject, const String& builtin)
 {
     return createError(globalObject, withAOTErrorNote(makeString(builtin, " was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code."_s)));
@@ -577,7 +488,7 @@ JSObject* createBuiltinNotCompiledError(JSGlobalObject* globalObject, const Stri
 
 JSObject* createBuiltinFunctionNotCompiledError(JSGlobalObject* globalObject, const String& functionName)
 {
-    return createNotCompiledError(globalObject, makeString("The built-in function '"_s, functionName, "' was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code."_s));
+    return createError(globalObject, withAOTErrorNote(makeString("The built-in function '"_s, functionName, "' was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code."_s)));
 }
 
 JSObject* createBuiltinsNotCompiledError(JSGlobalObject* globalObject, std::span<const String> builtins)
@@ -588,7 +499,7 @@ JSObject* createBuiltinsNotCompiledError(JSGlobalObject* globalObject, std::span
             alternatives.append(index + 1 == builtins.size() ? " or "_s : ", "_s);
         alternatives.append(builtins[index]);
     }
-    return createNotCompiledError(globalObject, makeString("None of "_s, alternatives.toString(), " was compiled into this executable because your code never uses them. To keep them, use one of them somewhere in your code."_s));
+    return createError(globalObject, withAOTErrorNote(makeString("None of "_s, alternatives.toString(), " was compiled into this executable because your code never uses them. To keep them, use one of them somewhere in your code."_s)));
 }
 
 JSObject* createExternalModuleNotLoadedError(JSGlobalObject* globalObject, const String& path)
@@ -596,20 +507,20 @@ JSObject* createExternalModuleNotLoadedError(JSGlobalObject* globalObject, const
     return createTypeError(globalObject, withAOTErrorNote(makeString("The module \""_s, path, "\" is not loaded"_s)));
 }
 
-static JSObject* createLoadByNameRefusedErrorWithoutCode(JSGlobalObject* globalObject, StringView name)
+static JSObject* createErrorWithCode(JSGlobalObject* globalObject, const String& message, ASCIILiteral code)
 {
-    // A module of Bun's is no file that could be another entry point. The call went through a value that the compiler did not follow to the loader.
-    if (name.startsWith("node:"_s) || name.startsWith("bun:"_s))
-        return createError(globalObject, withAOTErrorNote(makeString("Cannot load '"_s, name, "': this executable can't load a module from a dynamic path. The compiler couldn't tell at build time that this call reaches a module loader. Call require(), import() or process.getBuiltinModule() directly."_s)));
-    return createError(globalObject, withAOTErrorNote(makeString("Cannot load '"_s, name, "': this executable can't load a module from a dynamic path. Pass the file to bun compile as another entry point."_s)));
+    VM& vm = globalObject->vm();
+    JSObject* error = createError(globalObject, message);
+    error->putDirect(vm, Identifier::fromString(vm, "code"_s), jsNontrivialString(vm, String(code)));
+    return error;
 }
 
 JSObject* createLoadByNameRefusedError(JSGlobalObject* globalObject, StringView name, ASCIILiteral code)
 {
-    VM& vm = globalObject->vm();
-    JSObject* error = createLoadByNameRefusedErrorWithoutCode(globalObject, name);
-    error->putDirect(vm, Identifier::fromString(vm, "code"_s), jsNontrivialString(vm, String(code)));
-    return error;
+    // A module of Bun's is no file that could be another entry point. The call went through a value that the compiler did not follow to the loader.
+    bool isModuleOfBun = name.startsWith("node:"_s) || name.startsWith("bun:"_s);
+    ASCIILiteral advice = isModuleOfBun ? "The compiler couldn't tell at build time that this call reaches a module loader. Call require(), import() or process.getBuiltinModule() directly."_s : "Pass the file to bun compile as another entry point."_s;
+    return createErrorWithCode(globalObject, withAOTErrorNote(makeString("Cannot load '"_s, name, "': this executable can't load a module from a dynamic path. "_s, advice)), code);
 }
 
 #if ENABLE(SHADOW_REALM)
@@ -624,28 +535,15 @@ JSObject* createModuleInOtherRealmError(JSGlobalObject* globalObject, StringView
 }
 #endif
 
-static String describe(LoaderChange change, StringView changed)
-{
-    switch (change) {
-    case LoaderChange::ReplaceInRequireCache:
-        return makeString("replace '"_s, changed, "' in require.cache"_s);
-    case LoaderChange::ReplaceLoaderFunction:
-        return makeString("replace "_s, changed);
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 JSObject* createLoaderChangeRefusedError(JSGlobalObject* globalObject, LoaderChange change, StringView changed)
 {
-    return createError(globalObject, withAOTErrorNote(makeString("Cannot "_s, describe(change, changed), ": imports in this executable were resolved at build time, so the module loader can't be patched."_s)));
+    bool isInRequireCache = change == LoaderChange::ReplaceInRequireCache;
+    return createError(globalObject, withAOTErrorNote(makeString("Cannot replace "_s, isInRequireCache ? "'"_s : ""_s, changed, isInRequireCache ? "' in require.cache"_s : ""_s, ": imports in this executable were resolved at build time, so the module loader can't be patched."_s)));
 }
 
 JSObject* createModuleMissingAtBuildError(JSGlobalObject* globalObject, const String& specifier, const String& importer, ASCIILiteral code)
 {
-    VM& vm = globalObject->vm();
-    JSObject* error = createError(globalObject, makeString("Cannot find module '"_s, specifier, "' from '"_s, importer, "'"_s));
-    error->putDirect(vm, Identifier::fromString(vm, "code"_s), jsNontrivialString(vm, String(code)));
-    return error;
+    return createErrorWithCode(globalObject, makeString("Cannot find module '"_s, specifier, "' from '"_s, importer, "'"_s), code);
 }
 
 JSObject* createSuperCallInDirectEvalError(JSGlobalObject* globalObject)
@@ -700,9 +598,7 @@ String assignmentToLockedBuiltinMessage(const String& property)
 
 String assignmentToNameThatBuiltinFunctionInheritsMessage(UniquedStringImpl* uid)
 {
-    if (uid->isSymbol())
-        return assignmentToLockedBuiltinMessage(makeString('[', StringView(uid), "] of a built-in function"_s));
-    return assignmentToLockedBuiltinMessage(makeString('\'', StringView(uid), "' of a built-in function"_s));
+    return assignmentToLockedBuiltinMessage(makeString(uid->isSymbol() ? '[' : '\'', StringView(uid), uid->isSymbol() ? ']' : '\'', " of a built-in function"_s));
 }
 
 String prototypeChangeOfLockedBuiltinMessage(const String& holder)

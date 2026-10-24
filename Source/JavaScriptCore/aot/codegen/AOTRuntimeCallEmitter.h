@@ -23,7 +23,6 @@ class StubCatalog;
 
 namespace Typed {
 
-bool acceptsRepresentation(RuntimeValueKind, Representation);
 bool leavesCallerWithoutFrame(StubKey);
 
 struct CallPatchpointRequest {
@@ -39,7 +38,10 @@ struct CallPatchpointRequest {
 
 class RuntimeCallEmitter final : public OperationEmitter {
 public:
-    explicit RuntimeCallEmitter(CodeGenerator&);
+    explicit RuntimeCallEmitter(CodeGenerator& generator)
+        : OperationEmitter(generator)
+    {
+    }
 
     Operand callOperation(const OperationContext&, RuntimeOperation, std::span<const Operand> arguments, Representation result, const CallOptions&);
     StubCallResult callOperationReturningPair(const OperationContext&, RuntimeOperation, std::span<const Operand> arguments, const CallOptions& = { });
@@ -67,18 +69,17 @@ public:
 
     RegisterSet registersClobberedByCalls() const;
     // Under validation: where a call patchpoint stores the registers that its callee keeps. One call of a frame runs at a time.
-    B3::Air::StackSlot* keptRegisterStorage();
+    B3::Air::StackSlot* keptRegisterStorage() { return ensureRegisterStorage(m_keptRegisterStorage); }
     // The same for the registers that a landing pad relies on, stored before each operation that may throw to one.
-    B3::Air::StackSlot* landingPadRegisterStorage();
+    B3::Air::StackSlot* landingPadRegisterStorage() { return ensureRegisterStorage(m_landingPadRegisterStorage); }
     RecordedSite recordedSiteOf(const OperationContext&, const CallOptions& = { });
     uint32_t addSite(const OperationContext&, const CallOptions& = { });
-    uint32_t addItemSite(const OperationContext&, uint32_t callSite, uint32_t item, Origin);
 
     Pointer argumentBuffer(std::span<const Boxed>);
     Pointer uninitializedArgumentBuffer(unsigned numberOfWords);
 
 private:
-    enum class CallEnd : uint8_t { Returns, BranchesOnFlags, LeavesFunction, NeverReturns };
+    enum class CallEnd : uint8_t { Returns, BranchesOnFlags, NeverReturns };
 
     struct PlacedOperand {
         LValue value;
@@ -100,15 +101,15 @@ private:
         std::optional<AOT::Entry> entry;
     };
 
-    const StubSummary& summaryOf(StubKey) const;
     bool mayConvertCells(const Effects&);
-    CallRequest createRequest(StubKey, std::span<const LValue> operands, const CallOptions&) const;
-    CallRequest createEntryRequest(AOT::Entry, LType, const CallOptions&) const;
+    CallRequest createRequest(StubKey, std::span<const LValue> operands, const CallOptions&, std::optional<BranchTargets> = std::nullopt, std::optional<Origin> firstRead = std::nullopt) const;
+    CallRequest createEntryRequest(AOT::Entry, const CallOptions&) const;
     void placeArguments(CallRequest&, std::span<const LValue> arguments, OperationCall::FirstArgument) const;
+    Operand callChecked(const OperationContext*, RuntimeOperation, std::span<const Operand> arguments, Representation result, const CallOptions&);
+    StubCallResult emitEntryCall(const OperationContext*, AOT::Entry, std::span<const LValue> arguments, const CallOptions&);
     StubCallResult emitCall(const OperationContext*, const CallRequest&);
     StubCallResult resultOfCall(StubResult, B3::PatchpointValue*);
-    void checkArguments(RuntimeOperation, std::span<const Operand> arguments, Representation result) const;
-    Operand convertResult(RuntimeValueKind, LValue, Representation);
+    uint32_t addRecordedSite(const OperationContext&, const RecordedSite&);
     LValue transientBuffer(size_t bytes);
     B3::Air::StackSlot* ensureRegisterStorage(B3::Air::StackSlot*&);
 

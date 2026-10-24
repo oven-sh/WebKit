@@ -6,19 +6,16 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
 function f0 name="badOnlyKey" parameters=[{type=number}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: number, v1: anything):
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1] allocation=0
     PutSlots v2, v2, v0 placedKeys=[{key="a"}] receivers=[L0]
     Return
 }
 function f1 name="badSecondKey" parameters=[{type=number}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: number, v1: anything):
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1] allocation=0
     PutSlots v2, v2, v0, v1 placedKeys=[{key="a" fieldAccess=0}, {key="b"}] receivers=[L0]
     Return
 }
 function f2 name="good" parameters=[{type=number}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: number, v1: anything):
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1] allocation=0
     PutSlots v2, v2, v0, v1 placedKeys=[{key="a" fieldAccess=0}, {key="b" fieldAccess=1}] receivers=[L0]
     Return

@@ -191,6 +191,33 @@ static bool isExpectedToBeAccepted(const Type& type, BuiltinConversion conversio
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// Nothing is known of the operand. What is passed where a built-in takes a position or a count is a number nearly always.
+static bool isExpectedToBeNumber(const Type& type, BuiltinConversion conversion)
+{
+    if (!type.isAnything())
+        return false;
+    switch (conversion) {
+    case BuiltinConversion::ToIntegerOrInfinity:
+    case BuiltinConversion::ToLength:
+    case BuiltinConversion::ToIndex:
+    case BuiltinConversion::ToInt32:
+    case BuiltinConversion::ToUint32:
+        return true;
+    case BuiltinConversion::None:
+    case BuiltinConversion::ToBoolean:
+    case BuiltinConversion::ToNumber:
+    case BuiltinConversion::ToNumeric:
+    case BuiltinConversion::ToString:
+    case BuiltinConversion::ToPropertyKey:
+    case BuiltinConversion::ToPrimitive:
+    case BuiltinConversion::ToObject:
+    case BuiltinConversion::ToBigInt:
+    case BuiltinConversion::Dictionary:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 bool precedes(BuiltinOperand a, BuiltinOperand b)
 {
     if (a.isReceiver() || b.isReceiver())
@@ -439,6 +466,8 @@ OperandOutcome CallPlanner::requireAcceptedType(PlannedOperand& operand)
     TypeID expected = expectedWithin(operand);
     if (!expected && isExpectedToBeAccepted(types().at(operand.type), operand.parameter.conversion))
         expected = types().intern(narrowed);
+    if (!expected && isExpectedToBeNumber(types().at(operand.type), operand.parameter.conversion))
+        expected = types().intern(narrowed.withoutPrimitives(static_cast<uint16_t>(Primitive::Defined & ~Primitive::Number)));
     if (!expected || fitIn(expected, accepted) != TypeFit::Inside)
         return giveUp();
 

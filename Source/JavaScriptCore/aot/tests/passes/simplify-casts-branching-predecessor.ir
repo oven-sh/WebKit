@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="branchEdgeNeedsCheck" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2(v0)
   b1():
     v2 = Integer integer=1
@@ -14,8 +13,6 @@ function f0 name="branchEdgeNeedsCheck" parameters=[{type=anything}, {type=boole
   b2(v3):
     v4 = Check v3 castType=number
     Return v4
-}
-# CHECK-LABEL: function f0 name="branchEdgeNeedsCheck"
 # CHECK-NEXT: b0(v0: anything, v1: boolean):
 # CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2(v0)
 # CHECK-NEXT: b1():
@@ -25,9 +22,9 @@ function f0 name="branchEdgeNeedsCheck" parameters=[{type=anything}, {type=boole
 # CHECK-NEXT: v4: number = Check v3 castType=number
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
+}
 
 function f1 name="jumpEdgeNeedsCheck" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
-  b0(v0: anything, v1: boolean):
     v2 = Integer integer=1
     Branch v1 -> taken b1(), notTaken b2(v2)
   b1():
@@ -35,8 +32,6 @@ function f1 name="jumpEdgeNeedsCheck" parameters=[{type=anything}, {type=boolean
   b2(v3):
     v4 = Check v3 castType=number
     Return v4
-}
-# CHECK-LABEL: function f1 name="jumpEdgeNeedsCheck"
 # CHECK-NEXT: b0(v0: anything, v1: boolean):
 # CHECK-NEXT: v2: 1 = Integer integer=1
 # CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2(v2)
@@ -46,3 +41,4 @@ function f1 name="jumpEdgeNeedsCheck" parameters=[{type=anything}, {type=boolean
 # CHECK-NEXT: v4: number = Check v3 castType=number
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
+}

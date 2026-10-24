@@ -12,7 +12,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="fused" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=3 module=m0}] {
-  b0(v0: anything):
     v1 = PropGetChain v0 key="x" secondKey="y" readOrigin={position=5 inlineFrame=1} @6
     Return v1
 }

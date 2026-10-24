@@ -8,33 +8,28 @@ layout L0 kind=Environment name="scope" fields=[{key="x" declared={type=anything
 variable g0 name="changing" module=m0 declared={type=anything|absent} flow={writers=AllKnown}
 
 function f0 name="testedTwice" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g0
     v2 = CheckInitialized v1 name="changing"
     v3 = Call v0, -, v2
     v4 = GetModuleVariable variable=g0
     v5 = CheckInitialized v4 name="changing"
     Return v5
-}
-# CHECK-LABEL: function f0 name="testedTwice"
 # CHECK: = CheckInitialized v1 name="changing"
 # CHECK: v4: anything|absent = GetModuleVariable variable=g0
 # CHECK-NEXT: v5: anything = AssumeType v4 castType=anything
+}
 
 function f1 name="storedFirst" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     PutModuleVariable v0 variable=g0
     v2 = Call v0
     v3 = GetModuleVariable variable=g0
     v4 = CheckInitialized v3 name="changing"
     Return v4
-}
-# CHECK-LABEL: function f1 name="storedFirst"
 # CHECK-NOT: CheckInitialized
 # CHECK: Return
+}
 
 function f2 name="testedOnOnePath" parameters=[{type=boolean}] results=[{type=anything}] {
-  b0(v0: boolean):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v1 = GetModuleVariable variable=g0
@@ -44,10 +39,9 @@ function f2 name="testedOnOnePath" parameters=[{type=boolean}] results=[{type=an
     v3 = GetModuleVariable variable=g0
     v4 = CheckInitialized v3 name="changing"
     Return v4
-}
-# CHECK-LABEL: function f2 name="testedOnOnePath"
 # CHECK: b2():
 # CHECK: = CheckInitialized v3 name="changing"
+}
 
 function f3 name="fieldTestedTwice" kind=Arrow captures=[{type=env L0}, {type=env L0}] parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: env L0, v1: env L0, v2: anything):
@@ -62,9 +56,8 @@ function f3 name="fieldTestedTwice" kind=Arrow captures=[{type=env L0}, {type=en
     v11 = CheckInitialized v10 name="y"
     v12 = Call v2, -, v7, v9, v11
     Return v12
-}
-# CHECK-LABEL: function f3 name="fieldTestedTwice"
 # CHECK: = CheckInitialized v3 name="y"
 # CHECK: v7: anything = AssumeType v6 castType=anything
 # CHECK: = CheckInitialized v8 name="x"
 # CHECK: = CheckInitialized v10 name="y"
+}

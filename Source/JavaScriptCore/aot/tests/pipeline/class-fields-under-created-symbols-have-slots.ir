@@ -30,7 +30,6 @@ variable g0 name="kFirst" module=m0 declared={type=anything} flags=[IsImmutable]
 variable g1 name="kSecond" module=m0 declared={type=anything} flags=[IsImmutable]
 variable g2 name="kLate" module=m0 declared={type=anything} flags=[IsImmutable]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Symbol
     v1 = String string="one"
     v2 = Call v0, -, v1 @100
@@ -52,7 +51,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Meter" module=m0 position=5 kind=BaseConstructor flags=[HasNewTarget, IsChecked] length=1 parameters=[{type=number site=w0}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0 fields=[]
     v4 = GetModuleVariable variable=g0
@@ -67,17 +65,14 @@ function f1 name="Meter" module=m0 position=5 kind=BaseConstructor flags=[HasNew
     Return v3
 }
 function f2 name="readBy" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = ElemGet v0, v1
     Return v2
 }
 function f3 name="writeBy" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     ElemSet v0, v1, v2 mode=Strict
     Return
 }
 function f4 name="late" flags=[IsChecked] parameters=[{type=L0 site=w1}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = GetModuleVariable variable=g2
     v2 = CheckInitialized v1 name="kLate"
     v3 = ElemGet v0, v2

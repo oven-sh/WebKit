@@ -7,21 +7,17 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="tookInALeaf" parameters=[{type=number}] results=[{type=number}] inlineFrames=[{}, {callee=f2 callPosition=7 module=m0}] {
-  b0(v0: number):
     v1 = Add v0, v0 form=Numbers @20:1
     Return v1
 }
 function f1 name="tookInACall" parameters=[{type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f2 callPosition=7 module=m0}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f3 @20:1
     Return v1
 }
 function f2 name="inlined" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Return v0
 }
 function f3 name="called" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     LoopHint
     Return v0
 }

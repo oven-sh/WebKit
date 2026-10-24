@@ -7,7 +7,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="constantSeparator" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: anything):
     v2 = String string=","
     v3 = CallBuiltin v0, v2 overload=StringPrototypeSplit/0
     v4 = IteratorOpen v3
@@ -23,8 +22,6 @@ function f0 name="constantSeparator" parameters=[{type=string}, {type=anything}]
     Jump -> next b1()
   b3():
     Return
-}
-# CHECK-LABEL: function f0 name="constantSeparator"
 # CHECK-NOT: StringPrototypeSplit
 # CHECK: [[zero0]]: 0 = Integer
 # CHECK-NEXT: Jump -> next [[start0]]([[zero0]])
@@ -49,9 +46,9 @@ function f0 name="constantSeparator" parameters=[{type=string}, {type=anything}]
 # CHECK-NOT: IsPristine
 # CHECK-NOT: @@iterator
 # CHECK-NOT: [isNeverInlined]
+}
 
 function f1 name="throughCasts" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: anything):
     v2 = String string=", "
     v3 = CallBuiltin v0, v2 overload=StringPrototypeSplit/0
     v4 = AssumeType v3 castType=Array<string, proven>
@@ -70,16 +67,14 @@ function f1 name="throughCasts" parameters=[{type=string}, {type=anything}] resu
     Jump -> next b1()
   b3():
     Return
-}
-# CHECK-LABEL: function f1 name="throughCasts"
 # CHECK-NOT: StringPrototypeSplit
 # CHECK-NOT: AssumeType
 # CHECK-NOT: Upcast
 # CHECK: = CallBuiltin v0, v2, {{*}} overload=StringPrototypeIndexOf/0
 # CHECK: string = Substring v0,
+}
 
 function f2 name="oneOfTwoSeparators" parameters=[{type=string}, {type=","|";"}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: ","|";", v2: anything):
     v3 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
     v4 = IteratorOpen v3
     Jump -> next b1()
@@ -94,14 +89,12 @@ function f2 name="oneOfTwoSeparators" parameters=[{type=string}, {type=","|";"},
     Jump -> next b1()
   b3():
     Return
-}
-# CHECK-LABEL: function f2 name="oneOfTwoSeparators"
 # CHECK-NOT: StringPrototypeSplit
 # CHECK: = CallBuiltin v0, v1, {{*}} overload=StringPrototypeIndexOf/0
 # CHECK: = GetStringLength v1
+}
 
 function f3 name="patternWithRest" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = String string=" "
     v2 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
     v3 = IteratorOpen v2 elementCount=1 [isDestructuring, hasRest]
@@ -130,15 +123,13 @@ function f3 name="patternWithRest" parameters=[{type=string}] results=[{type=any
     v14 = CatchException
     IteratorClose v3 completion=Throw
     Rethrow v14
-}
-# CHECK-LABEL: function f3 name="patternWithRest"
 # CHECK-NOT: StringPrototypeSplit
 # CHECK: overload=StringPrototypeIndexOf/0
 # CHECK: overload=StringPrototypeIndexOf/0
 # CHECK-NOT: IterationCleanup
+}
 
 function f4 name="separatorMayBeEmpty" parameters=[{type=string}, {type=string}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: string, v2: anything):
     v3 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
     v4 = IteratorOpen v3
     Jump -> next b1()
@@ -153,14 +144,12 @@ function f4 name="separatorMayBeEmpty" parameters=[{type=string}, {type=string},
     Jump -> next b1()
   b3():
     Return
-}
-# CHECK-LABEL: function f4 name="separatorMayBeEmpty"
 # CHECK: v3: Array<string> = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
 # CHECK-NOT: StringPrototypeIndexOf
 # CHECK: = ElemGet v3,
+}
 
 function f5 name="emptySeparator" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: anything):
     v2 = String string=""
     v3 = CallBuiltin v0, v2 overload=StringPrototypeSplit/0
     v4 = IteratorOpen v3
@@ -176,13 +165,11 @@ function f5 name="emptySeparator" parameters=[{type=string}, {type=anything}] re
     Jump -> next b1()
   b3():
     Return
-}
-# CHECK-LABEL: function f5 name="emptySeparator"
 # CHECK: v3: Array<string> = CallBuiltin v0, v2 overload=StringPrototypeSplit/0
 # CHECK-NOT: StringPrototypeIndexOf
+}
 
 function f6 name="oneSeparatorIsEmpty" parameters=[{type=string}, {type=""|","}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: ""|",", v2: anything):
     v3 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
     v4 = IteratorOpen v3
     Jump -> next b1()
@@ -197,13 +184,11 @@ function f6 name="oneSeparatorIsEmpty" parameters=[{type=string}, {type=""|","},
     Jump -> next b1()
   b3():
     Return
-}
-# CHECK-LABEL: function f6 name="oneSeparatorIsEmpty"
 # CHECK: v3: Array<string> = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
 # CHECK-NOT: StringPrototypeIndexOf
+}
 
 function f7 name="limited" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: anything):
     v2 = String string=","
     v3 = Integer integer=2
     v4 = CallBuiltin v0, v2, v3 overload=StringPrototypeSplit/1
@@ -220,13 +205,11 @@ function f7 name="limited" parameters=[{type=string}, {type=anything}] results=[
     Jump -> next b1()
   b3():
     Return
-}
-# CHECK-LABEL: function f7 name="limited"
 # CHECK: = CallBuiltin v0, v2, v3 overload=StringPrototypeSplit/1
 # CHECK-NOT: StringPrototypeIndexOf
+}
 
 function f8 name="arrayIsAlsoRead" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: anything):
     v2 = String string=","
     v3 = CallBuiltin v0, v2 overload=StringPrototypeSplit/0
     v4 = IteratorOpen v3
@@ -242,14 +225,12 @@ function f8 name="arrayIsAlsoRead" parameters=[{type=string}, {type=anything}] r
     Jump -> next b1()
   b3():
     Return v3
-}
-# CHECK-LABEL: function f8 name="arrayIsAlsoRead"
 # CHECK: v3: Array<string> = CallBuiltin v0, v2 overload=StringPrototypeSplit/0
 # CHECK-NOT: StringPrototypeIndexOf
 # CHECK: Return v3
+}
 
 function f9 name="callBetween" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: anything):
     v2 = String string=","
     v3 = CallBuiltin v0, v2 overload=StringPrototypeSplit/0
     v4 = Call v1
@@ -266,14 +247,12 @@ function f9 name="callBetween" parameters=[{type=string}, {type=anything}] resul
     Jump -> next b1()
   b3():
     Return
-}
-# CHECK-LABEL: function f9 name="callBetween"
 # CHECK: v3: Array<string> = CallBuiltin v0, v2 overload=StringPrototypeSplit/0
 # CHECK-NEXT: = Call v1
 # CHECK-NOT: StringPrototypeIndexOf
+}
 
 function f10 name="splitInEarlierBlock" parameters=[{type=string}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: string, v1: anything, v2: boolean):
     v3 = String string=","
     v4 = CallBuiltin v0, v3 overload=StringPrototypeSplit/0
     Branch v2 -> taken b1(), notTaken b4()
@@ -291,13 +270,11 @@ function f10 name="splitInEarlierBlock" parameters=[{type=string}, {type=anythin
     Jump -> next b2()
   b4():
     Return
-}
-# CHECK-LABEL: function f10 name="splitInEarlierBlock"
 # CHECK: v4: Array<string> = CallBuiltin v0, v3 overload=StringPrototypeSplit/0
 # CHECK-NOT: StringPrototypeIndexOf
+}
 
 function f11 name="patternWithoutRest" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = String string=":"
     v2 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
     v3 = IteratorOpen v2 elementCount=2 [isDestructuring]
@@ -308,13 +285,11 @@ function f11 name="patternWithoutRest" parameters=[{type=string}] results=[{type
     IteratorClose v3
     v9 = Add v5, v7
     Return v9
-}
-# CHECK-LABEL: function f11 name="patternWithoutRest"
 # CHECK: v2: Array<string> = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
 # CHECK-NOT: StringPrototypeIndexOf
+}
 
 function f12 name="regExpSeparator" parameters=[{type=string}, {type=RegExp<pristine[Names]>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: RegExp<pristine[Names]>, v2: anything):
     v3 = CallBuiltin v0, v1 overload=StringPrototypeSplit/2
     v4 = IteratorOpen v3
     Jump -> next b1()
@@ -329,13 +304,11 @@ function f12 name="regExpSeparator" parameters=[{type=string}, {type=RegExp<pris
     Jump -> next b1()
   b3():
     Return
-}
-# CHECK-LABEL: function f12 name="regExpSeparator"
 # CHECK: = CallBuiltin v0, v1 overload=StringPrototypeSplit/2
 # CHECK-NOT: StringPrototypeIndexOf
+}
 
 function f13 name="nestedLoops" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: anything):
     v2 = String string=";"
     v3 = String string=","
     v4 = CallBuiltin v0, v2 overload=StringPrototypeSplit/0
@@ -363,10 +336,9 @@ function f13 name="nestedLoops" parameters=[{type=string}, {type=anything}] resu
     Jump -> next b3()
   b5():
     Return
-}
-# CHECK-LABEL: function f13 name="nestedLoops"
 # CHECK-NOT: StringPrototypeSplit
 # CHECK: = CallBuiltin v10, v3, {{*}} overload=StringPrototypeIndexOf/0
 # CHECK: string = Substring v10,
 # CHECK: = CallBuiltin v0, v2, {{*}} overload=StringPrototypeIndexOf/0
 # CHECK: string = Substring v0,
+}

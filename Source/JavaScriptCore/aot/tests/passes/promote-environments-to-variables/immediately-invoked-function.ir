@@ -15,7 +15,6 @@ layout L0 kind=Environment name="once" fields=[{key=@"counter.0" declared={type=
 layout L1 kind=Environment name="twice" fields=[{key=@"counter.0" declared={type=anything}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Call v0
     v2 = NewClosure function=f4
@@ -25,7 +24,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="once" results=[{type=anything}] {
-  b0():
     v0 = Absent
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewClosure v1 function=f2
@@ -39,8 +37,6 @@ function f1 name="once" results=[{type=anything}] {
     v10 = PropGet v9 key="publish" [isFreeName]
     v11 = Call v10, -, v8
     Return
-}
-# CHECK-LABEL: function f1 name="once"
 # CHECK-NOT: NewObject
 # Every read of counter comes behind a store, so its type has no `absent` and the dead zone is not stored either
 # CHECK-NOT: PutModuleVariable v0
@@ -52,6 +48,7 @@ function f1 name="once" results=[{type=anything}] {
 # CHECK-NEXT: = Call [[callee]]
 # CHECK-NEXT: = NewClosure function=f3
 # CHECK-NOT: EnvironmentField
+}
 
 function f2 name="bump" captures=[{type=env L0}] results=[{type=anything}] {
   b0(v0: env L0):
@@ -61,27 +58,24 @@ function f2 name="bump" captures=[{type=env L0}] results=[{type=anything}] {
     v4 = Add v2, v3
     PutEnvironmentField v0, v4 layout=L0 field=0
     Return v4
-}
-# CHECK-LABEL: function f2 name="bump"
 # CHECK-NOT: captures=
 # CHECK: b0():
 # CHECK-NEXT: [[counter]]:{{*}}= GetModuleVariable variable=g0
 # CHECK-NEXT: = CheckInitialized [[counter]] name="counter"
 # CHECK: PutModuleVariable [[sum]] variable=g0
+}
 
 function f3 name="published" captures=[{type=env L0}] results=[{type=anything}] {
   b0(v0: env L0):
     v1 = GetEnvironmentField v0 layout=L0 field=1
     v2 = Call v1
     Return v2
-}
-# CHECK-LABEL: function f3 name="published"
 # CHECK-NOT: captures=
 # CHECK: b0():
 # CHECK-NEXT: = GetModuleVariable variable=g1
+}
 
 function f4 name="twice" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=0
     v1 = NewObject -, v0 layout=L1 fields=[0]
     v2 = NewClosure v1 function=f5
@@ -89,10 +83,9 @@ function f4 name="twice" results=[{type=anything}] {
     v4 = PropGet v3 key="publish" [isFreeName]
     v5 = Call v4, -, v2
     Return
-}
-# CHECK-LABEL: function f4 name="twice"
 # CHECK: [[scope]]: env L1 = NewObject -, v0 layout=L1 fields=[0]
 # CHECK-NEXT: = NewClosure [[scope]] function=f5
+}
 
 function f5 name="readsCounter" captures=[{type=env L1}] results=[{type=anything}] {
   b0(v0: env L1):

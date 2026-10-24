@@ -2929,8 +2929,10 @@ public:
 private:
     bool inheritsFromInterceptor(JSObject* object) const
     {
+        JSGlobalObject* realm = object ? object->realmMayBeNull() : nullptr;
+        bool typedArraysIntercept = realm && realm->typedArraysInterceptIndexedStores();
         for (JSObject* current = object; current;) {
-            if (current == m_interceptor)
+            if (current == m_interceptor || (typedArraysIntercept && isTypedArrayType(current->type())))
                 return true;
             JSValue prototype = current->getPrototypeDirect();
             if (prototype.isNull())
@@ -3176,6 +3178,8 @@ void JSGlobalObject::haveABadTime(VM& vm, JSObject* interceptor)
     }
 
     DeferGC deferGC(vm);
+
+    m_typedArraysInterceptIndexedStores = true;
 
     Vector<JSObject*> foundObjects;
     Vector<JSGlobalObject*> affectedRealms;

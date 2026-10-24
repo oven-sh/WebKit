@@ -8,7 +8,6 @@ layout L1 name="NamedLiteral" fields=[{key="name" declared={type=string} flags=[
 layout L2 name="DeclaredDictionaryType"
 layout L3 name="DeclaredTypeWithIndexSignature" fields=[{key="name" declared={type=string} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Data data=d0
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="publish" [isFreeName]

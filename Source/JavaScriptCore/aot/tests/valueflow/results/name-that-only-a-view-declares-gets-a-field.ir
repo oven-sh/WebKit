@@ -21,7 +21,6 @@ layout L0 name="Made" fields=[{key="flags" declared={type=number}}] supertypes=[
 layout L1 name="Links" fields=[{key="count" declared={type=undefined|null|number}}, {key="resolved" declared={type=undefined|null|string}}] flags=[IsNeverAllocated]
 layout L2 name="MoreLinks" fields=[{key="count" declared={type=undefined|null|number}}, {key="mapped" declared={type=undefined|null|string}}, {key="resolved" declared={type=undefined|null|string}}] supertypes=[L1] flags=[IsNeverAllocated]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewClosure function=f1

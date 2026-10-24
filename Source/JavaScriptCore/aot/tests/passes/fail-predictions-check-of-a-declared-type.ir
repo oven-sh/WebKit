@@ -7,13 +7,10 @@
 module m0 path="main.js" displayPath="main.js" flags=[IsLibrary]
 
 function f0 name="straightLine" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = Call v0
     v3 = Check v2 castType=number
     v4 = Add v3, v1
     Return v4
-}
-# CHECK-LABEL: function f0 name="straightLine"
 # CHECK: v2: anything = Call v0
 # CHECK-NEXT: [[fails]]: boolean = ShouldFailPrediction
 # CHECK-NEXT: Branch [[fails]] -> taken [[failed]](v2), notTaken [[asked]]()
@@ -26,3 +23,4 @@ function f0 name="straightLine" parameters=[{type=anything}, {type=number}] resu
 # CHECK-NEXT: Branch [[test]] -> taken [[passed]](| 0), notTaken [[turnedAway]](| 0)
 # CHECK: [[turnedAway]]([[noNumber]]: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
 # CHECK-NEXT: Jump -> next [[failed]]([[noNumber]])
+}

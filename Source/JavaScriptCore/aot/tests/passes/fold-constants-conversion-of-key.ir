@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="string" parameters=[{type=string}] results=[{type=string|symbol}] {
-  b0(v0: string):
     v1 = ToPropertyKey v0
     Return v1
 }
@@ -13,7 +12,6 @@ function f0 name="string" parameters=[{type=string}] results=[{type=string|symbo
 # CHECK: v1: string = Upcast v0 castType=string|symbol
 
 function f1 name="oneText" results=[{type=string|symbol}] {
-  b0():
     v0 = String string="pos"
     v1 = ToPropertyKey v0
     Return v1
@@ -22,7 +20,6 @@ function f1 name="oneText" results=[{type=string|symbol}] {
 # CHECK-NOT: ToPropertyKey
 
 function f2 name="stringOrSymbol" parameters=[{type=string|symbol}] results=[{type=string|symbol}] {
-  b0(v0: string|symbol):
     v1 = ToPropertyKey v0
     Return v1
 }
@@ -30,7 +27,6 @@ function f2 name="stringOrSymbol" parameters=[{type=string|symbol}] results=[{ty
 # CHECK: v1: string|symbol = Upcast v0 castType=string|symbol
 
 function f3 name="stringOrNumber" parameters=[{type=number|string}] results=[{type=string|symbol}] {
-  b0(v0: number|string):
     v1 = ToPropertyKey v0
     Return v1
 }
@@ -38,7 +34,6 @@ function f3 name="stringOrNumber" parameters=[{type=number|string}] results=[{ty
 # CHECK: v1: string|symbol = ToPropertyKey v0
 
 function f4 name="unknown" parameters=[{type=anything}] results=[{type=string|symbol}] {
-  b0(v0: anything):
     v1 = ToPropertyKey v0
     Return v1
 }

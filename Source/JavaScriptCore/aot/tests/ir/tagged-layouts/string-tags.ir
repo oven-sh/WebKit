@@ -18,22 +18,18 @@ layout L2 name="Add" fields=[{key="kind" declared={type=undefined|null|"add"} fl
 layout L3 name="Num" fields=[{key="kind" declared={type=undefined|null|"num"} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] supertypes=[L1]
 layout L4 name="Keyword" fields=[{key="kind" declared={type=undefined|null|"false"|"true"} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}] supertypes=[L1]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f1 name="NodeObject" flags=[HasThis] thisType={type=undefined|null|L1} parameters=[{type=undefined|null|string}, {type=number}] results=[{type=anything}] {
-  b0(v0: undefined|null|L1, v1: undefined|null|string, v2: number):
     PropSet v0, v1 key="kind" mode=Strict
     PropSet v0, v2 key="pos" mode=Strict
     Return
 }
 function f2 name="valueOf" parameters=[{type=undefined|null|L3}] results=[{type=anything}] {
-  b0(v0: undefined|null|L3):
     v1 = PropGet v0 key="value"
     Return v1
 }
 function f3 name="isKeyword" parameters=[{type=undefined|null|L4}] results=[{type=anything}] {
-  b0(v0: undefined|null|L4):
     Return v0
 }
 

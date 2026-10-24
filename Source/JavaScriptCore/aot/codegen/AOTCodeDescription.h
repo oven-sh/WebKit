@@ -37,15 +37,7 @@ struct EmittedCode {
     Vector<Relocation> relocations;
 };
 
-struct DescribedFunction {
-    BuildContext& build;
-    const Program& program;
-    FunctionID id;
-    const Function& function;
-};
-
 CompiledCode describeCode(BuildContext&, const CodeGenerationInputs&, FunctionID, const Function&, CodeRecords&, EmittedCode&&);
-SiteDescription describeSites(const DescribedFunction&, CodeRecords&, LinkBuffer&, CodeBody&);
 
 Vector<ConstantData> copyConstants(const B3::Procedure&);
 Vector<AOT::JumpTable> takeJumpTables(B3::Procedure&);

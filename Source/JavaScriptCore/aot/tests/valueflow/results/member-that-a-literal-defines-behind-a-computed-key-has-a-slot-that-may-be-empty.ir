@@ -11,7 +11,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Literal" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}]
 function f0 name="main" module=m0 kind=Module parameters=[] results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="somethingNobodyDeclares" [isFreeName]
     v2 = ToPropertyKey v1

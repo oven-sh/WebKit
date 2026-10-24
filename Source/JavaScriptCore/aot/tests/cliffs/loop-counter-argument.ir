@@ -5,7 +5,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToNumber v1
@@ -17,7 +16,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v7
 }
 function f1 name="countsToInt32" parameters=[{type=undefined|null|number}, {type=i32}] results=[{type=anything}] {
-  b0(v0: undefined|null|number, v1: i32):
     v2 = Integer integer=0
     Jump -> next b1(v2, v2)
   b1(v3, v4):
@@ -33,7 +31,6 @@ function f1 name="countsToInt32" parameters=[{type=undefined|null|number}, {type
     Return v4
 }
 function f2 name="comparesIntegers" parameters=[{type=undefined|null|number}, {type=i32}] results=[{type=anything}] {
-  b0(v0: undefined|null|number, v1: i32):
     v2 = Less v1, v0
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -44,7 +41,6 @@ function f2 name="comparesIntegers" parameters=[{type=undefined|null|number}, {t
     Return v4
 }
 function f3 name="countsToNumber" parameters=[{type=undefined|null|number}, {type=i32}] results=[{type=anything}] {
-  b0(v0: undefined|null|number, v1: i32):
     v2 = Integer integer=0
     Jump -> next b1(v2, v2)
   b1(v3, v4):
@@ -60,7 +56,6 @@ function f3 name="countsToNumber" parameters=[{type=undefined|null|number}, {typ
     Return v4
 }
 function f4 name="comparesNumbers" parameters=[{type=undefined|null|number}, {type=i32}] results=[{type=anything}] {
-  b0(v0: undefined|null|number, v1: i32):
     v2 = Less v1, v0
     Branch v2 -> taken b1(), notTaken b2()
   b1():

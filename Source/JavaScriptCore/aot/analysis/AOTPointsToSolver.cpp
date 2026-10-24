@@ -10,22 +10,323 @@
 
 #include "AOTBuildContext.h"
 #include "AOTEdgeResults.h"
-#include "AOTEffectsDeclared.h"
-#include "AOTPointsToSolverInternal.h"
-#include "AOTResultRules.h"
+#include "AOTEffectSummaries.h"
 #include "AOTEffectsCache.h"
+#include "AOTEffectsDeclared.h"
+#include "AOTFlowResults.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTResultRules.h"
+#include "AOTSchemaWalkers.h"
 #include "AOTSort.h"
 #include "AOTThreshold.h"
+#include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <array>
+#include <bit>
+#include <limits>
+#include <memory>
 #include <optional>
 #include <span>
 #include <tuple>
 #include <utility>
+#include <wtf/BitVector.h>
+#include <wtf/FastMalloc.h>
+#include <wtf/HashMap.h>
+#include <wtf/Noncopyable.h>
+#include <wtf/OptionSet.h>
+#include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT { namespace Typed {
+
+inline constexpr OperandUses retainedContentsUses { OperandUse::Inspects, OperandUse::Retains };
+
+// OperandUses::all() sets all 32 bits, so a loop that switches over OperandUse iterates over (uses & declaredOperandUses).
+inline constexpr OperandUses declaredOperandUses = [] {
+    OperandUses uses;
+    for (OperandUse use : allMembersOf<OperandUse>)
+        uses.add(use);
+    return uses;
+}();
+
+// A set of objects is a row of words, as many as hold a bit for each object of the function: one word in nearly every function.
+using ObjectWord = uint64_t;
+inline constexpr unsigned objectsPerWord = 64;
+
+void forEachObjectIn(std::span<const ObjectWord> words, NOESCAPE const Invocable<void(ObjectID)> auto& functor)
+{
+    for (size_t index = 0; index < words.size(); ++index) {
+        for (ObjectWord word = words[index]; word; word &= word - 1)
+            functor(ObjectID(index * objectsPerWord + std::countr_zero(word)));
+    }
+}
+
+struct ContentsApplication {
+    ObjectSlot slot;
+    OperandUses uses;
+    EscapeReason reason;
+
+    friend bool operator==(const ContentsApplication&, const ContentsApplication&) = default;
+};
+
+struct QueuedApplication {
+    ObjectID object;
+    OperandUses uses;
+    EscapeReason reason;
+};
+
+struct SlotState {
+    ObjectSlot slot;
+    Vector<ObjectWord, 1> objects;
+    Vector<SolvedContents, 1> contents;
+    Vector<ValueID, 1> readers;
+    Vector<ContentsApplication, 1> applications;
+};
+
+struct ContainerState {
+    AOT_CLASS_THRESHOLD(size_t, maxSearchedSlots, 8);
+
+    SlotState* find(uint32_t slot)
+    {
+        if (slots.size() <= maxSearchedSlots) {
+            for (SlotState& state : slots) {
+                if (*state.slot == slot)
+                    return &state;
+            }
+            return nullptr;
+        }
+        auto found = indexOfSlot.find(slot);
+        return found != indexOfSlot.end() ? &slots[found->value] : nullptr;
+    }
+
+    SlotState& ensure(ObjectSlot slot)
+    {
+        if (!slot)
+            return unknownSlot;
+        if (SlotState* found = find(*slot))
+            return *found;
+        RELEASE_ASSERT(*slot < std::numeric_limits<uint32_t>::max() - 1);
+        slots.append(SlotState { slot, Vector<ObjectWord, 1>(FillWith { }, unknownSlot.objects.size(), ObjectWord { 0 }), { }, { }, { } });
+        if (slots.size() == maxSearchedSlots + 1) {
+            for (uint32_t index = 0; index < slots.size(); ++index)
+                indexOfSlot.add(*slots[index].slot, index);
+        } else if (slots.size() > maxSearchedSlots)
+            indexOfSlot.add(*slot, static_cast<uint32_t>(slots.size() - 1));
+        return slots.last();
+    }
+
+    LayoutID environment;
+    SlotState unknownSlot;
+    Vector<SlotState, 1> slots;
+    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> indexOfSlot;
+};
+
+struct UserOperand {
+    const Value& user;
+    uint32_t index;
+    OperandSummary summary;
+};
+
+// The objects that have arrived at a value since its uses were last looked at.
+struct ArrivedObjects {
+    std::span<const ObjectID> objects;
+    std::span<const ObjectWord> words;
+};
+
+struct NarrowedCopy {
+    ValueID subject;
+    ValueID parameter;
+
+    friend auto operator<=>(const NarrowedCopy&, const NarrowedCopy&) = default;
+};
+
+constexpr bool isSummarizedCall(Opcode opcode)
+{
+    switch (effectRuleOf(opcode)) {
+    case EffectRule::Call:
+    case EffectRule::Builtin:
+    case EffectRule::Inline:
+        return true;
+    case EffectRule::Declared:
+    case EffectRule::Operator:
+    case EffectRule::Access:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+inline bool isSummarizedCall(const Value& value) { return isSummarizedCall(value.opcode); }
+
+void forEachOverlappingSlot(ContainerState& state, ObjectSlot slot, NOESCAPE const Invocable<void(SlotState&)> auto& functor)
+{
+    functor(state.unknownSlot);
+    if (!slot) {
+        for (SlotState& known : state.slots)
+            functor(known);
+        return;
+    }
+    if (SlotState* known = state.find(*slot))
+        functor(*known);
+}
+
+void forEachOverlappingEntry(ContainerState& state, ObjectSlot slot, NOESCAPE const Invocable<void(SolvedContents&)> auto& functor)
+{
+    forEachOverlappingSlot(state, slot, [&](SlotState& overlapping) {
+        for (SolvedContents& entry : overlapping.contents)
+            functor(entry);
+    });
+}
+
+enum class Sweep : uint8_t { Forward, BackwardToVerify };
+
+class PointsToSolver {
+    WTF_MAKE_NONCOPYABLE(PointsToSolver);
+public:
+    PointsToSolver(const EscapeAnalysisInputs&, Sweep);
+
+    PointsToResults solve();
+
+private:
+    SolvedObject& at(ObjectID object) { return m_results.objects[object.index()]; }
+    const SolvedObject& at(ObjectID object) const { return m_results.objects[object.index()]; }
+    const Value& definitionOf(ObjectID object) const { return m_function.at(at(object).definition); }
+    // Of a pair the first says yes and the second no. Neither is set until somebody has asked.
+    enum class ValueFlag : uint16_t {
+        DefinesObject = 1 << 0,
+        IsSharedByObjects = 1 << 1,
+        HasNarrowedCopies = 1 << 2,
+        MayHoldReference = 1 << 3,
+        HoldsNoReference = 1 << 4,
+        IsReference = 1 << 5,
+        IsNoReference = 1 << 6,
+        RefersToOperand = 1 << 7,
+        RefersToNoOperand = 1 << 8,
+        MayRunOtherCode = 1 << 9,
+        RunsNoOtherCode = 1 << 10,
+    };
+    using WordsOfSet = Vector<ObjectWord, 2>;
+
+    bool definesObject(ValueID value) const { return (m_valueFlags[value.index()] & OptionSet<ValueFlag> { ValueFlag::DefinesObject, ValueFlag::IsSharedByObjects }) == ValueFlag::DefinesObject; }
+    bool isSharedByObjects(ValueID value) const { return m_valueFlags[value.index()].contains(ValueFlag::IsSharedByObjects); }
+    bool hasSet(ValueID value) const { return !!m_results.setOfValue[value.index()]; }
+    AnswerFromTypes ask(AnswerFromTypes::Question, uint32_t subject, uint32_t operandIndex = 0) const;
+    bool askOnce(ValueID, AnswerFromTypes::Question, ValueFlag yes, ValueFlag no);
+    bool mayHoldReference(ValueID value) { return askOnce(value, AnswerFromTypes::Question::MayHoldReference, ValueFlag::MayHoldReference, ValueFlag::HoldsNoReference); }
+    bool isReference(ValueID value) { return askOnce(value, AnswerFromTypes::Question::IsReference, ValueFlag::IsReference, ValueFlag::IsNoReference); }
+    bool refersToOperand(ValueID value) { return askOnce(value, AnswerFromTypes::Question::RefersToOperand, ValueFlag::RefersToOperand, ValueFlag::RefersToNoOperand); }
+    bool mayRunOtherCode(ValueID);
+    std::span<ObjectWord> wordsOf(ValueSetID set) LIFETIME_BOUND { return m_wordsOfSets.mutableSpan().subspan(size_t { set.index() } * m_wordsPerSet, m_wordsPerSet); }
+    std::span<ObjectWord> arrivalsOf(ValueSetID set) LIFETIME_BOUND { return m_arrivalsOfSets.mutableSpan().subspan(size_t { set.index() } * m_wordsPerSet, m_wordsPerSet); }
+    // A copy: a set grows, and the table of all sets moves, while its members are looked at.
+    WordsOfSet objectsOf(ValueID) const;
+    ValueSetID ensureSet(ValueID);
+    ValueID parameterFor(const Use& edgeUse) const;
+    std::span<const NarrowedCopy> narrowedCopiesOf(ValueID subject) const;
+    bool takeWork(uint64_t amount = 1);
+    void giveUp();
+    void forgetAllButObjects();
+
+    void findObjects();
+    void findNarrowedCopies();
+    void addObject(ValueID definition, ObjectKind);
+    void addObjectSharingItsValue(ValueID);
+    bool makesObjectOnEdge(BlockID from) const;
+    void add(ValueID, ObjectID);
+    void addAll(ValueID, std::span<const ObjectWord>);
+    void addAll(ValueID, const ArrivedObjects&);
+    void takeSets();
+    size_t mirroredWhenBackward(size_t index) const { return m_sweep == Sweep::Forward ? index : m_function.values.size() - 1 - index; }
+
+    // What is found about a use holds for every object that arrives at the used value: the record is filled once and written down for each.
+    void solveUse(const ArrivedObjects&, ValueID usedValue, const Use&);
+    void record(SolvedUse&, const ArrivedObjects&);
+    void solveEdgeUse(const ArrivedObjects&, const Use&);
+    void solveTerminatorOperand(const ArrivedObjects&, const Use&);
+    void solveTerminatorOperandUse(SolvedUse&, const ArrivedObjects&, TerminatorKind, OperandUse);
+    void addToDeclaredResults(SolvedUse&, const ArrivedObjects&);
+    void solveOperand(const ArrivedObjects&, ValueID usedValue, const Use&);
+    void solveOperandWith(const ArrivedObjects&, const Use&, const OperandSummary&);
+    void solveOperandUse(SolvedUse&, const ArrivedObjects&, const UserOperand&, OperandUse);
+    void solveRetainedOperand(SolvedUse&, const ArrivedObjects&, const UserOperand&);
+    Vector<ValueID, 4> operandsStoredIn(ValueID user, const UserOperand&);
+    void addStoredOperands(ObjectID container, const Value& user, std::span<const ValueID> storedOperands);
+    bool isContentsStore(const UserOperand&) const;
+    void addOperandsRetainedInResult(ValueID result, const ArrivedObjects& containers);
+
+    LayoutID environmentLayoutOf(ObjectID) const;
+    ContainerState& ensureContainer(ObjectID);
+    OperandUses environmentFieldUses(const ContainerState&, ObjectSlot) const;
+    void addContents(ObjectID container, ObjectSlot, std::span<const ObjectWord> objects);
+    bool mayReadContentsIntoReference(const SolvedUse&, const UserOperand&) const;
+    OperandSummary summaryOf(ValueID user, uint32_t operandIndex);
+    void solveContentsRead(SolvedUse&, const ArrivedObjects&, const UserOperand&);
+    void addReader(ObjectID container, ValueID reader, ObjectSlot);
+    ObjectSlot slotInContainer(ObjectID container, const Value& user) const;
+
+    void callObject(ObjectID);
+    void applyToContents(ObjectID container, ObjectSlot, OperandUses, EscapeReason);
+    void applyToObject(ObjectID, OperandUses, EscapeReason);
+    void applyQueuedUses();
+
+    bool isExactCapable(ValueID) const;
+    bool handsOperandOn(ValueID user, uint32_t operandIndex) const;
+    bool getsOnlyUnspecifiedValues(ValueID parameter) const;
+    bool mayBeUntracked(ValueID) const;
+    bool hasUntrackedSource(ValueID) const;
+    void forEachExactAlias(ValueID, const Use&, NOESCAPE const ScopedLambda<void(ValueID)>&) const;
+    void computeMayBeUntracked();
+
+    void markLeakedEntries(ContainerState&) const;
+    void collectContents();
+
+    const EscapeAnalysisInputs& m_inputs;
+    const Program& m_program;
+    const Function& m_function;
+    const CFG& m_cfg;
+    const UseLists& m_useLists;
+    const uint64_t m_maxWork;
+    // A word for each value is no more than the function itself takes. Past 64 objects the table grows with sets times objects.
+    const uint64_t m_maxWordsOfSets;
+    const Sweep m_sweep;
+    uint64_t m_work { 0 };
+    PointsToResults m_results;
+    mutable Vector<AnswerFromTypes> m_answersFromTypes;
+    Vector<NarrowedCopy> m_narrowedCopies;
+    Vector<OptionSet<ValueFlag>> m_valueFlags;
+    unsigned m_wordsPerSet { 1 };
+    Vector<ObjectWord> m_wordsOfSets;
+    Vector<ObjectWord> m_arrivalsOfSets;
+    // The words of a set's arrivals that may hold a bit. In a function of thousands of objects a row is long and nearly every set holds one object.
+    struct WordRange {
+        uint32_t first { std::numeric_limits<uint32_t>::max() };
+        uint32_t end { 0 };
+    };
+    Vector<WordRange> m_arrivedWordsOfSets;
+    Vector<bool> m_setsThatMayBeUntracked;
+    Vector<ObjectWord, 2> m_newContents;
+    BitVector m_valuesWithArrivals;
+    Vector<QueuedApplication, 8> m_applicationWorklist;
+    // An object has a place in the list once something is known of its contents. The list never moves: it has room for all objects from the start.
+    static constexpr uint32_t noContainer = std::numeric_limits<uint32_t>::max();
+    Vector<uint32_t> m_containerOfObject;
+    Vector<ContainerState> m_containers;
+    // The last applications to all the contents of each object. Most are repeated at every call that the object is passed to.
+    struct ApplicationToAll {
+        OperandUses uses;
+        EscapeReason reason { EscapeReason::LimitReached };
+        bool isSet { false };
+    };
+    Vector<std::array<ApplicationToAll, 2>> m_lastApplicationsToAll;
+    // The summaries of the operands of a user are asked for by each of its operands that an object arrives at.
+    struct KeptSummary {
+        OperandSummary summary;
+        bool isKnown { false };
+    };
+    Vector<uint32_t> m_firstSummaryOfUser;
+    Vector<KeptSummary> m_summaries;
+    Vector<ValueID> m_valueOfSet;
+    BitVector m_calledObjects;
+};
 
 static bool isRetainedInOperand(const OperandSummary& summary)
 {
@@ -1161,6 +1462,446 @@ PointsToResults solvePointsTo(const EscapeAnalysisInputs& inputs)
     if (inputs.context.build.options().verifiesAfterEveryPass) [[unlikely]]
         verifySameResults(results, PointsToSolver(inputs, Sweep::BackwardToVerify).solve());
     return results;
+}
+
+static bool isOrderedBefore(const SolvedContents& a, const SolvedContents& b)
+{
+    return std::tie(a.container, a.slot, a.object) < std::tie(b.container, b.slot, b.object);
+}
+
+static LayoutID layoutPayloadOf(const Value& value)
+{
+    return Value::opcodesWithLayout.contains(value.opcode) ? value.layout() : LayoutID();
+}
+
+static ObjectSlot fieldPayloadOf(const Value& value)
+{
+    if (!Value::opcodesWithField.contains(value.opcode))
+        return std::nullopt;
+    return value.field();
+}
+
+static PropertyKeyID keyPayloadOf(const Value& value)
+{
+    if (!Value::opcodesWithKey.contains(value.opcode) || Value::opcodesWithSecondKey.contains(value.opcode))
+        return { };
+    return value.key();
+}
+
+static FunctionID closureFunctionOf(const Value& definition)
+{
+    FunctionID result;
+    if (definition.opcode != Opcode::NewClosure)
+        return result;
+    forEachFunctionReference(definition, [&](FunctionID function, FunctionReferenceKind kind) {
+        if (kind == FunctionReferenceKind::Closure)
+            result = function;
+    });
+    return result;
+}
+
+LayoutID PointsToSolver::environmentLayoutOf(ObjectID object) const
+{
+    LayoutID layout = layoutPayloadOf(definitionOf(object));
+    if (!layout || m_program.at(layout).kind != LayoutKind::Environment)
+        return { };
+    return layout;
+}
+
+ContainerState& PointsToSolver::ensureContainer(ObjectID object)
+{
+    uint32_t& index = m_containerOfObject[object.index()];
+    if (index == noContainer) {
+        index = m_containers.size();
+        RELEASE_ASSERT(m_containers.size() < m_containers.capacity());
+        m_containers.append(ContainerState { });
+        ContainerState& state = m_containers.last();
+        state.environment = environmentLayoutOf(object);
+        state.unknownSlot.objects.fill(0, m_wordsPerSet);
+    }
+    return m_containers[index];
+}
+
+OperandUses PointsToSolver::environmentFieldUses(const ContainerState& state, ObjectSlot slot) const
+{
+    const FlowResults* flow = m_inputs.context.flow;
+    if (!state.environment || !flow)
+        return { };
+    return slot ? flow->storedValueUses(FieldReference { state.environment, *slot }) : OperandSummary().uses;
+}
+
+void PointsToSolver::addContents(ObjectID container, ObjectSlot slot, std::span<const ObjectWord> objects)
+{
+    if (objects.empty())
+        return;
+
+    ContainerState& state = ensureContainer(container);
+    SlotState& holder = state.ensure(slot);
+    ObjectWord added = 0;
+    for (unsigned index = 0; index < m_wordsPerSet; ++index) {
+        m_newContents[index] = objects[index] & ~holder.objects[index];
+        holder.objects[index] |= m_newContents[index];
+        added |= m_newContents[index];
+    }
+    if (!added)
+        return;
+
+    size_t firstNewEntry = holder.contents.size();
+    forEachObjectIn(m_newContents.span(), [&](ObjectID object) {
+        holder.contents.append(SolvedContents { container, slot, object, false });
+    });
+    auto apply = [&](OperandUses uses, EscapeReason reason) {
+        for (SolvedContents& entry : holder.contents.mutableSpan().subspan(firstNewEntry)) {
+            m_applicationWorklist.append({ entry.object, uses, reason });
+            entry.isLeaked |= uses.containsAny(leakingUses);
+        }
+    };
+    forEachOverlappingSlot(state, slot, [&](SlotState& overlapping) {
+        for (ValueID reader : overlapping.readers)
+            addAll(reader, m_newContents.span());
+        for (const ContentsApplication& application : overlapping.applications)
+            apply(application.uses, application.reason);
+    });
+    if (OperandUses uses = environmentFieldUses(state, slot); !uses.isEmpty())
+        apply(uses, EscapeReason::RetainedByCallee);
+}
+
+bool PointsToSolver::mayReadContentsIntoReference(const SolvedUse& solved, const UserOperand& operand) const
+{
+    return solved.reasons.isEmpty() && !solved.uses.containsAny({ OperandUse::Retains, OperandUse::Returns }) && !isSummarizedCall(operand.user);
+}
+
+void PointsToSolver::solveContentsRead(SolvedUse& solved, const ArrivedObjects& arrived, const UserOperand& operand)
+{
+    ValueID reader = solved.use.user;
+    if (!definesObject(reader)) {
+        if (refersToOperand(reader)) {
+            solved.flowsTo = reader;
+            addAll(reader, arrived);
+        } else {
+            for (ObjectID object : arrived.objects)
+                addReader(object, reader, slotInContainer(object, operand.user));
+        }
+    }
+    if (!mayRunOtherCode(reader))
+        return;
+    for (ObjectID object : arrived.objects)
+        applyToContents(object, std::nullopt, retainedContentsUses, EscapeReason::LeakedByContainer);
+}
+
+void PointsToSolver::addReader(ObjectID container, ValueID reader, ObjectSlot slot)
+{
+    ContainerState& state = ensureContainer(container);
+    state.ensure(slot).readers.append(reader);
+    forEachOverlappingSlot(state, slot, [&](SlotState& overlapping) {
+        addAll(reader, overlapping.objects.span());
+    });
+}
+
+void PointsToSolver::callObject(ObjectID object)
+{
+    if (m_calledObjects.set(object.index()))
+        return;
+    SolvedObject& solved = at(object);
+    if (solved.kind == ObjectKind::EntryParameter)
+        return;
+
+    FunctionID function = closureFunctionOf(definitionOf(object));
+    if (!function) {
+        solved.reasons.add(EscapeReason::PassedToUnknownCode);
+        applyToContents(object, std::nullopt, retainedContentsUses, EscapeReason::LeakedByContainer);
+        return;
+    }
+
+    const Function& callee = m_program.at(function);
+    FunctionSummaryView summary = m_inputs.effects.summaries.of(function);
+    for (uint32_t capture = 0; capture < callee.captures.size(); ++capture)
+        applyToContents(object, capture, summary.operand(capture).uses, EscapeReason::RetainedByCallee);
+    if (auto calleeParameter = callee.calleeParameterIndex())
+        m_applicationWorklist.append({ object, summary.operand(*calleeParameter).uses, EscapeReason::RetainedByCallee });
+}
+
+void PointsToSolver::applyToContents(ObjectID container, ObjectSlot slot, OperandUses uses, EscapeReason reason)
+{
+    if (!slot) {
+        std::array<ApplicationToAll, 2>& last = m_lastApplicationsToAll[container.index()];
+        for (const ApplicationToAll& application : last) {
+            if (application.isSet && application.uses == uses && application.reason == reason)
+                return;
+        }
+        last[1] = last[0];
+        last[0] = { uses, reason, true };
+    }
+    ContainerState& state = ensureContainer(container);
+    ContentsApplication application { slot, uses, reason };
+    auto& applications = state.ensure(slot).applications;
+    if (applications.contains(application))
+        return;
+    applications.append(application);
+    forEachOverlappingEntry(state, slot, [&](SolvedContents& entry) {
+        m_applicationWorklist.append({ entry.object, uses, reason });
+        entry.isLeaked |= uses.containsAny(leakingUses);
+    });
+}
+
+void PointsToSolver::applyToObject(ObjectID object, OperandUses uses, EscapeReason reason)
+{
+    if (!takeWork())
+        return;
+
+    SolvedObject& solved = at(object);
+    if (uses.containsAny({ OperandUse::Retains, OperandUse::Returns }))
+        solved.reasons.add(reason);
+    if (uses.containsAny({ OperandUse::AppliesTransitively, OperandUse::AppliesToContents }))
+        applyToContents(object, std::nullopt, uses, reason);
+
+    OperandUses newUses = uses - solved.appliedUses;
+    solved.appliedUses.add(uses);
+    for (OperandUse use : newUses & declaredOperandUses) {
+        switch (use) {
+        case OperandUse::Inspects:
+        case OperandUse::Retains:
+        case OperandUse::Returns:
+        case OperandUse::ReadsContents:
+        case OperandUse::WritesContents:
+        case OperandUse::MovesElements:
+        case OperandUse::StoresByKey:
+        case OperandUse::DeletesByKey:
+        case OperandUse::AssignsFrom:
+        case OperandUse::DefinesName:
+        case OperandUse::TakesDescriptor:
+        case OperandUse::ChangesIntegrity:
+        case OperandUse::ChangesPrototype:
+        case OperandUse::AppliesTransitively:
+        case OperandUse::AppliesToContents:
+            break;
+        case OperandUse::PassesToUserCode:
+            solved.reasons.add(EscapeReason::PassedToUnknownCode);
+            break;
+        case OperandUse::BecomesPrototype:
+            solved.reasons.add(EscapeReason::StoredInUnknownMemory);
+            break;
+        case OperandUse::RetainsContents:
+            applyToContents(object, std::nullopt, retainedContentsUses, EscapeReason::LeakedByContainer);
+            break;
+        case OperandUse::Calls:
+        case OperandUse::CallsPerElement:
+        case OperandUse::CallsRepeatedly:
+            callObject(object);
+            break;
+        }
+    }
+}
+
+void PointsToSolver::applyQueuedUses()
+{
+    while (!m_applicationWorklist.isEmpty()) {
+        QueuedApplication application = m_applicationWorklist.takeLast();
+        applyToObject(application.object, application.uses, application.reason);
+    }
+}
+
+ObjectSlot PointsToSolver::slotInContainer(ObjectID container, const Value& user) const
+{
+    if (user.opcode == Opcode::GetCapture)
+        return user.index();
+    const Value& definition = definitionOf(container);
+    LayoutID layout = layoutPayloadOf(definition);
+    // An environment that is handed in has the layout that its type names. Without it a store to one variable would come back from a read of any other.
+    if (!layout)
+        layout = m_program.at(definition.type).environment;
+    if (!layout)
+        return std::nullopt;
+    if (layoutPayloadOf(user) == layout) {
+        if (ObjectSlot field = fieldPayloadOf(user))
+            return field;
+    }
+    PropertyKeyID key = keyPayloadOf(user);
+    if (!key)
+        return std::nullopt;
+    return m_program.at(layout).findField(key);
+}
+
+bool PointsToSolver::isExactCapable(ValueID value) const
+{
+    ValueLocation location = m_useLists.locationOf(value);
+    switch (location.placement) {
+    case ValuePlacement::Detached:
+        return false;
+    case ValuePlacement::Parameter:
+        return location.block != m_cfg.root();
+    case ValuePlacement::InBlock:
+        return isCastOrConversion(m_function.at(value).opcode) || isSharedByObjects(value);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+bool PointsToSolver::handsOperandOn(ValueID user, uint32_t operandIndex) const
+{
+    Opcode opcode = m_function.at(user).opcode;
+    if (isCastOrConversion(opcode))
+        return !operandIndex;
+    return isSharedByObjects(user) && operandUsesOf(opcode, std::min(operandIndex, numberOfNamedOperandsOf(opcode))).contains(OperandUse::Returns);
+}
+
+// On every way into its block, straight or through parameters like itself.
+bool PointsToSolver::getsOnlyUnspecifiedValues(ValueID parameter) const
+{
+    AOT_THRESHOLD(size_t, maxValuesFollowedToUnspecified, 16);
+    Vector<ValueID, maxValuesFollowedToUnspecified> seen { parameter };
+    for (size_t index = 0; index < seen.size(); ++index) {
+        ValueID value = seen[index];
+        if (m_function.at(value).opcode == Opcode::Unspecified)
+            continue;
+        ValueLocation location = m_useLists.locationOf(value);
+        if (location.placement != ValuePlacement::Parameter || location.block == m_cfg.root())
+            return false;
+        for (Edge edge : m_cfg.incomingEdges(location.block)) {
+            IncomingValue incoming = incomingValueOf(m_function, edge, location.index);
+            if (incoming.kind != IncomingValue::Kind::Argument || !incoming.argument)
+                return false;
+            if (seen.contains(incoming.argument))
+                continue;
+            if (seen.size() == maxValuesFollowedToUnspecified)
+                return false;
+            seen.append(incoming.argument);
+        }
+    }
+    return true;
+}
+
+bool PointsToSolver::mayBeUntracked(ValueID value) const
+{
+    if (!value)
+        return true;
+    // It stands where nobody reads the value: on the way into a block from where the value does not exist yet. It brings no object.
+    if (m_function.at(value).opcode == Opcode::Unspecified)
+        return false;
+    ValueSetID set = m_results.setOfValue[value.index()];
+    if (!set)
+        return !getsOnlyUnspecifiedValues(value);
+    return m_setsThatMayBeUntracked[set.index()];
+}
+
+bool PointsToSolver::hasUntrackedSource(ValueID value) const
+{
+    ValueLocation location = m_useLists.locationOf(value);
+    if (location.placement == ValuePlacement::InBlock) {
+        bool hasUntrackedOperand = false;
+        m_function.at(value).forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+            hasUntrackedOperand |= handsOperandOn(value, operandIndex) && mayBeUntracked(operand);
+        });
+        return hasUntrackedOperand;
+    }
+
+    auto mayPassUntracked = [&](Edge edge) {
+        IncomingValue incoming = incomingValueOf(m_function, edge, location.index);
+        switch (incoming.kind) {
+        case IncomingValue::Kind::Argument:
+            return mayBeUntracked(incoming.argument);
+        case IncomingValue::Kind::EdgeResult:
+            break;
+        }
+        std::optional<EdgeResult> result = tryGetEdgeResult(m_function, incoming.result);
+        if (!result)
+            return true;
+        switch (result->kind) {
+        case EdgeResultKind::NarrowedOperand:
+            return mayBeUntracked(result->subject);
+        case EdgeResultKind::Guard:
+            return false;
+        case EdgeResultKind::DeclaredResult:
+            return !makesObjectOnEdge(edge.from);
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    };
+    return std::ranges::any_of(m_cfg.incomingEdges(location.block), mayPassUntracked);
+}
+
+void PointsToSolver::forEachExactAlias(ValueID value, const Use& use, NOESCAPE const ScopedLambda<void(ValueID)>& functor) const
+{
+    ASSERT_UNUSED(value, usedValueOf(m_function, use) == value);
+    switch (use.kind) {
+    case Use::Kind::Operand:
+        if (handsOperandOn(use.user, use.operandIndex))
+            functor(use.user);
+        return;
+    case Use::Kind::EdgeArgument:
+    case Use::Kind::HandlerArgument:
+        if (ValueID parameter = parameterFor(use))
+            functor(parameter);
+        return;
+    case Use::Kind::TerminatorOperand:
+    case Use::Kind::BlockSubject:
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void PointsToSolver::computeMayBeUntracked()
+{
+    Vector<ValueID, 16> exactValues;
+    for (uint32_t index = 0; index < m_valueOfSet.size(); ++index) {
+        ValueSetID id(index);
+        ValueID value = m_valueOfSet[index];
+        if (definesObject(value) || !isExactCapable(value))
+            continue;
+        m_setsThatMayBeUntracked[id.index()] = false;
+        exactValues.append(value);
+    }
+
+    Vector<ValueID, 16> worklist;
+    auto markUntracked = [&](ValueID value) {
+        ValueSetID id = m_results.setOfValue[value.index()];
+        if (!id || m_setsThatMayBeUntracked[id.index()] || definesObject(value))
+            return;
+        m_setsThatMayBeUntracked[id.index()] = true;
+        worklist.append(value);
+    };
+    for (ValueID value : exactValues) {
+        if (hasUntrackedSource(value))
+            markUntracked(value);
+    }
+    while (!worklist.isEmpty()) {
+        ValueID value = worklist.takeLast();
+        for (const Use& use : m_useLists.usesOf(value))
+            forEachExactAlias(value, use, markUntracked);
+        for (const NarrowedCopy& copy : narrowedCopiesOf(value))
+            markUntracked(copy.parameter);
+    }
+}
+
+void PointsToSolver::markLeakedEntries(ContainerState& state) const
+{
+    forEachOverlappingSlot(state, std::nullopt, [&](SlotState& applied) {
+        for (const ContentsApplication& application : applied.applications) {
+            if (!application.uses.containsAny(callingUses))
+                continue;
+            forEachOverlappingEntry(state, application.slot, [&](SolvedContents& entry) {
+                entry.isLeaked |= at(entry.object).reasons.containsAny(callReasons);
+            });
+        }
+    });
+    forEachOverlappingEntry(state, std::nullopt, [&](SolvedContents& entry) {
+        if (environmentFieldUses(state, entry.slot).containsAny(callingUses))
+            entry.isLeaked |= at(entry.object).reasons.containsAny(callReasons);
+    });
+}
+
+void PointsToSolver::collectContents()
+{
+    for (uint32_t index : m_containerOfObject) {
+        if (index == noContainer)
+            continue;
+        ContainerState* state = &m_containers[index];
+        markLeakedEntries(*state);
+        size_t first = m_results.contents.size();
+        forEachOverlappingSlot(*state, std::nullopt, [&](SlotState& slot) {
+            m_results.contents.appendVector(slot.contents);
+        });
+        AOT::sort(m_results.contents.mutableSpan().subspan(first), isOrderedBefore);
+    }
+    ASSERT(std::ranges::is_sorted(m_results.contents, isOrderedBefore));
 }
 
 } } } // namespace JSC::AOT::Typed

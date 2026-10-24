@@ -17,7 +17,6 @@ layout L0 name="Table"
 layout L1 name="Request" fields=[{key="url" declared={type=anything} flags=[IsRequired]}]
 layout L2 name="Failure" fields=[{key="code" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L0 fields=[]
     v1 = NewClosure function=f3
     v2 = NewClosure function=f4
@@ -35,22 +34,18 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="takesRequest" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="url"
     Return v1
 }
 function f2 name="takesFailure" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="code"
     Return v1
 }
 function f3 name="on" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     ElemSet v0, v1, v2
     Return
 }
 function f4 name="emit" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = ElemGet v0, v1
     v4 = Call v3, -, v2
     Return v4

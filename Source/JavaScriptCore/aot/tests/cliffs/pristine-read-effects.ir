@@ -10,7 +10,6 @@ variable g0 name="scale" module=m0 declared={type=anything} initialization=Undef
 variable g1 name="weights" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToNumber v1
@@ -31,14 +30,12 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="setFactor" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     v1 = GetModuleVariable variable=g0
     PropSet v1, v0 key="factor"
     Return
 }
 
 function f2 name="testedArray" parameters=[{type=Array<number>}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<number>, v1: number):
     v2 = GetModuleVariable variable=g0
     v3 = PropGet v2 key="factor"
     v4 = Integer integer=0
@@ -60,8 +57,6 @@ function f2 name="testedArray" parameters=[{type=Array<number>}, {type=number}] 
     Jump -> next b1(v14)
   b4():
     Return v3
-}
-# CHECK-LABEL: function f2 name="testedArray"
 # CHECK: [[factor2]]:{{*}}= GetSlot {{*}}key="factor"
 # CHECK: [[test2]]:{{*}}= IsPristine v0 builtinClass=Array
 # CHECK-NEXT: [[test2]] -> taken [[entry2]](| 0)
@@ -76,9 +71,9 @@ function f2 name="testedArray" parameters=[{type=Array<number>}, {type=number}] 
 # CHECK-NOT: GetSlot
 # CHECK: = ElemGet v0,
 # CHECK: = GetSlot {{*}}key="factor"
+}
 
 function f3 name="provenArray" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = GetModuleVariable variable=g1
     v2 = GetModuleVariable variable=g0
     v3 = PropGet v2 key="factor"
@@ -101,8 +96,6 @@ function f3 name="provenArray" parameters=[{type=number}] results=[{type=anythin
     Jump -> next b1(v14)
   b4():
     Return v3
-}
-# CHECK-LABEL: function f3 name="provenArray"
 # CHECK: [[weights]]: Array<number, proven{{*}}pristine[Storage{{*}}= GetModuleVariable variable=g1
 # CHECK: [[factor3]]:{{*}}= GetSlot {{*}}key="factor"
 # CHECK-NOT: IsPristine
@@ -113,9 +106,9 @@ function f3 name="provenArray" parameters=[{type=number}] results=[{type=anythin
 # CHECK-NOT: GetSlot
 # CHECK-NOT: IsPristine
 # CHECK: = StrictEq {{*}}[[factor3]]
+}
 
 function f4 name="unknownReceiver" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetModuleVariable variable=g0
     v3 = PropGet v2 key="factor"
     v4 = Integer integer=0
@@ -137,8 +130,6 @@ function f4 name="unknownReceiver" parameters=[{type=anything}, {type=number}] r
     Jump -> next b1(v14)
   b4():
     Return v3
-}
-# CHECK-LABEL: function f4 name="unknownReceiver"
 # CHECK: = GetSlot {{*}}key="factor"
 # CHECK-NOT: IsPristine
 # CHECK: LoopHint
@@ -146,3 +137,4 @@ function f4 name="unknownReceiver" parameters=[{type=anything}, {type=number}] r
 # CHECK: = ElemGet v0,
 # CHECK: [[again4]]:{{*}}= GetSlot {{*}}key="factor"
 # CHECK: = StrictEq {{*}}[[again4]]
+}

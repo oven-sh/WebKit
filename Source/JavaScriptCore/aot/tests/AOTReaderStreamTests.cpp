@@ -111,7 +111,6 @@ void testStreamPayloads()
 constexpr ASCIILiteral conversionsText = R"IR(typesite w0 module=m0 position=3 kind=Assertion
 module m0 path="/a.ts" displayPath="a.ts"
 function f0 name="f" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Convert v0 declared={type=number site=w0} illTypedCause=Assertion @1001
     v2 = Convert v0 declared={type=string flags=[IsExpected]} @1002
     v3 = Check v0 castType=number site=w0 @1003
@@ -157,7 +156,6 @@ constexpr ASCIILiteral scopeReferencesText = R"IR(module m0 path="/a.ts" display
 modulefailure q0 importer=m0 specifier="./q"
 evalscope e0
 function f0 name="f" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = DirectEval v0, v0 evalScope=e0 @10
     v2 = ThrowModuleFailure failure=q0 @11
     Unreachable @12

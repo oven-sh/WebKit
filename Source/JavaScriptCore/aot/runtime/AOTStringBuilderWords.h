@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include <cstdint>
 #include <type_traits>
 
 namespace JSC { namespace AOT {
@@ -19,6 +20,16 @@ struct StringBuilderWords {
 };
 
 static_assert(std::is_trivially_default_constructible_v<StringBuilderWords>);
+
+inline constexpr uint32_t maxStringBuilderReservation = 4096;
+
+inline constexpr uint32_t jsonTokenBytes = 8;
+inline constexpr uint32_t jsonBooleanBytes = 8;
+inline constexpr uint32_t jsonIntegerBytes = 24;
+inline constexpr uint32_t jsonNumberBytes = 40;
+inline constexpr uint32_t jsonDateBytes = 32;
+
+static_assert(jsonDateBytes <= maxStringBuilderReservation && jsonNumberBytes <= maxStringBuilderReservation);
 
 } } // namespace JSC::AOT
 

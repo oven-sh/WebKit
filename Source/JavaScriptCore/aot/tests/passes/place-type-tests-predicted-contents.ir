@@ -12,8 +12,6 @@ function f0 name="expectedElement" parameters=[{type=Array<object, proven, Conti
     v2 = ElemGet v0, v1
     v3 = PropGet v2 key="x"
     Return v3
-}
-# CHECK-LABEL: function f0 name="expectedElement"
 # CHECK: v2: {{*}}object ~ {{*}}L0 = GetArrayElement v0, v1
 # CHECK-NEXT: [[isStable0]]:{{*}}= TypeTest v2 testedType=L0
 # CHECK-NEXT: Branch [[isStable0]] -> taken [[stableBlock0]](| 0), notTaken
@@ -23,40 +21,36 @@ function f0 name="expectedElement" parameters=[{type=Array<object, proven, Conti
 # CHECK: = PropGet {{*}} key="x"
 # CHECK-NOT: = TypeTest
 # CHECK: [[stableBlock0]]([[stable0]]: L0):
+}
 
 function f1 name="elementWithoutExpectedType" parameters=[{type=Array<object, proven, Contiguous, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
-  b0(v0: Array<object, proven, Contiguous, pristine[Storage, Names]>, v1: int[0, 1000]):
     v2 = ElemGet v0, v1
     v3 = PropGet v2 key="x"
     Return v3
-}
-# CHECK-LABEL: function f1 name="elementWithoutExpectedType"
 # CHECK: v2: {{*}}object = GetArrayElement v0, v1
 # CHECK-NOT: Test
 # CHECK-NOT: GetSlot
 # CHECK: v3: anything = PropGet {{*}} key="x"
 # CHECK-NOT: Test
 # CHECK-NOT: GetSlot
+}
 
 function f2 name="expectedElementOfOtherLayout" parameters=[{type=Array<object, proven, Contiguous, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
   b0(v0: Array<object, proven, Contiguous, pristine[Storage, Names]> ~ Array<L1, proven, Contiguous, pristine[Storage, Names]>, v1: int[0, 1000]):
     v2 = ElemGet v0, v1
     v3 = PropGet v2 key="x"
     Return v3
-}
-# CHECK-LABEL: function f2 name="expectedElementOfOtherLayout"
 # CHECK: v2: {{*}}object ~ {{*}}L1 = GetArrayElement v0, v1
 # CHECK-NEXT: = TypeTest v2 testedType=L1
 # CHECK: v3: number = GetSlot [[other2]], {{*}} key="x" receivers=[L1] level=Expected
 # CHECK: ([[other2]]: L1):
+}
 
 function f3 name="expectedRow" parameters=[{type=Array<Array<number, proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
   b0(v0: Array<Array<number, proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names]> ~ Array<Array<number, proven, Double, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names]>, v1: int[0, 1000]):
     v2 = ElemGet v0, v1
     v3 = ElemGet v2, v1
     Return v3
-}
-# CHECK-LABEL: function f3 name="expectedRow"
 # CHECK: [[row3]]: Array<number, proven, pristine[Storage, Names]> ~ Array<number, proven, Double, pristine[Storage, Names]> = RequireObjectCoercible v2
 # CHECK-NEXT: [[isDouble3]]:{{*}}= HasArrayStorage [[row3]] arrayStorage=Double
 # CHECK-NEXT: Branch [[isDouble3]] -> taken [[doubleBlock3]](| 0), notTaken
@@ -64,19 +58,18 @@ function f3 name="expectedRow" parameters=[{type=Array<Array<number, proven, pri
 # CHECK: v3: {{*}}number = GetArrayElement [[row3]], v1, {{*}} arrayStorage=Double level=Expected
 # CHECK-NOT: HasArrayStorage
 # CHECK: [[doubleBlock3]]({{*}}: guard):
+}
 
 function f4 name="rowWithoutExpectedType" parameters=[{type=Array<Array<number, proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
-  b0(v0: Array<Array<number, proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names]>, v1: int[0, 1000]):
     v2 = ElemGet v0, v1
     v3 = ElemGet v2, v1
     Return v3
-}
 # An array of numbers is expected to hold doubles, whatever else is expected of it.
-# CHECK-LABEL: function f4 name="rowWithoutExpectedType"
 # CHECK-COUNT-1: = HasArrayStorage {{*}} arrayStorage=Double
 # CHECK-NOT: HasArrayStorage
 # CHECK: v3: {{*}}number = GetArrayElement {{*}}, v1, {{*}} arrayStorage=Double level=Expected
 # CHECK-NOT: HasArrayStorage
+}
 
 function f5 name="forOf" parameters=[{type=Array<object, proven, Contiguous, pristine[Storage, Names]>}] results=[{type=undefined}] {
   b0(v0: Array<object, proven, Contiguous, pristine[Storage, Names]> ~ Array<L0, proven, Contiguous, pristine[Storage, Names]>):
@@ -103,10 +96,9 @@ function f5 name="forOf" parameters=[{type=Array<object, proven, Contiguous, pri
     Rethrow v9
   b6():
     Return
-}
-# CHECK-LABEL: function f5 name="forOf"
 # CHECK: [[element5]]: {{*}}object ~ {{*}}L0 = GetArrayElement v0,
 # CHECK: [[isStable5]]:{{*}}= TypeTest [[element5]] testedType=L0
 # CHECK-NEXT: Branch [[isStable5]] -> taken [[stableBlock5]](| 0), notTaken
 # CHECK: [[stableBlock5]]([[stable5]]: L0):
 # CHECK: : number = GetSlot [[stable5]], {{*}} key="x" receivers=[L0] level=Expected
+}

@@ -11,8 +11,8 @@
 #include "AOTClassTable.h"
 #include "AOTClosure.h"
 #include "AOTHeapCacheRegistry.h"
-#include "AOTImmortalCells.h"
 #include "AOTInstance.h"
+#include "AOTObject.h"
 #include "AOTObjectModel.h"
 #include "AOTProgramStatics.h"
 #include "AOTSlimClosure.h"
@@ -24,6 +24,7 @@
 #include "FastMarkAppender.h"
 #include "FunctionPrototype.h"
 #include "GeneratorFunctionPrototype.h"
+#include "GetterSetter.h"
 #include "JSCInlines.h"
 #include "MarkedBlockCage.h"
 #include "SlotVisitorInlines.h"
@@ -32,7 +33,6 @@
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
-
 
 static std::span<const uint8_t> allocateClosureCells(State& state)
 {
@@ -70,7 +70,7 @@ ClosureTable::ClosureTable(State& state)
     for (unsigned i = 0; i < FunctionTables::numberOfExecutables; ++i)
         instance.closures.executables[i] = shared.executables[i].get();
     state.caches->add(CacheKind::StrongRoots, "closures"_s, *this);
-    ensureStructures(*instance.vm);
+    createStructures(*instance.vm);
 }
 
 Structure* ClosureTable::realmClosureStructure(VM& vm, JSGlobalObject* globalObject, unsigned index)
@@ -79,26 +79,10 @@ Structure* ClosureTable::realmClosureStructure(VM& vm, JSGlobalObject* globalObj
     uint64_t& header = Instance::of(globalObject)->closures.closureHeaders[index];
     if (header)
         return std::bit_cast<StructureID>(static_cast<uint32_t>(header)).decode();
-    JSObject* prototype = nullptr;
-    switch (index) {
-    case 0:
-        prototype = globalObject->functionPrototype();
-        break;
-    case 1:
-        prototype = globalObject->asyncFunctionPrototype();
-        break;
-    case 2:
-        prototype = globalObject->generatorFunctionPrototype();
-        break;
-    case 3:
-        prototype = globalObject->asyncGeneratorFunctionPrototype();
-        break;
-    case classObjectClosureStructure:
-        prototype = globalObject->functionPrototype();
-        break;
-    }
-    RELEASE_ASSERT(prototype);
-    Structure* structure = Closure::createStructure(vm, globalObject, prototype);
+    JSObject* prototypes[] = { globalObject->functionPrototype(), globalObject->asyncFunctionPrototype(), globalObject->generatorFunctionPrototype(), globalObject->asyncGeneratorFunctionPrototype(), globalObject->functionPrototype() };
+    static_assert(std::size(prototypes) == numberOfClosureStructures && classObjectClosureStructure == 4);
+    RELEASE_ASSERT(prototypes[index]);
+    Structure* structure = Closure::createStructure(vm, globalObject, prototypes[index]);
     header = cellHeaderFor(structure);
     FunctionTables::of(vm).closureStructuresWithoutTable.append(Strong<Structure>(vm, structure));
     return structure;
@@ -138,31 +122,17 @@ void ClosureTable::didGivePrototypePropertyTo(VM& vm, JSObject* closure)
     }
 }
 
-void ClosureTable::ensureStructures(VM& vm)
-{
-    if (m_closureStructures[0])
-        return;
-    Instance& instance = m_state.instance;
-    for (unsigned i = 0; i < numberOfClosureStructures; ++i) {
-        m_closureStructures[i] = realmClosureStructure(vm, instance.globalObject, i);
-        instance.closures.closureHeaders[i] = cellHeaderFor(m_closureStructures[i]);
-    }
-    FunctionTables::of(vm).closureStructuresWithoutTable.removeAllMatching([&](const Strong<Structure>& structure) {
-        return structure->realm() == instance.globalObject;
-    });
-    createSlimClosureStructures(vm);
-}
-
-Structure* ClosureTable::slimClosureStructure(VM& vm, FunctionID function)
-{
-    ensureStructures(vm);
-    return m_slimClosureStructures[functionKindData(function).slimClosureKind()];
-}
-
-void ClosureTable::createSlimClosureStructures(VM& vm)
+void ClosureTable::createStructures(VM& vm)
 {
     Instance& instance = m_state.instance;
     JSGlobalObject* globalObject = instance.globalObject;
+    for (unsigned i = 0; i < numberOfClosureStructures; ++i) {
+        m_closureStructures[i] = realmClosureStructure(vm, globalObject, i);
+        instance.closures.closureHeaders[i] = cellHeaderFor(m_closureStructures[i]);
+    }
+    FunctionTables::of(vm).closureStructuresWithoutTable.removeAllMatching([&](const Strong<Structure>& structure) {
+        return structure->realm() == globalObject;
+    });
     JSObject* prototypes[] = { globalObject->functionPrototype(), globalObject->asyncFunctionPrototype() };
     static_assert(std::size(prototypes) == numberOfSlimClosureKinds);
     for (unsigned i = 0; i < numberOfSlimClosureKinds; ++i) {
@@ -203,7 +173,7 @@ Structure* ClosureTable::reifiedSlimClosureStructure(VM& vm, FunctionID function
         if (hasPrototypeProperty) {
             next->setHasAnyKindOfGetterSetterPropertiesWithProtoCheck(false);
             if (!m_uncreatedPrototypeProperty) {
-                m_uncreatedPrototypeProperty = CustomGetterSetter::create(vm, ReifiedSlimClosure::prototypePropertyCreator(), nullptr);
+                m_uncreatedPrototypeProperty = CustomGetterSetter::create(vm, createPrototypeProperty, nullptr);
                 m_state.immortalCells->add(m_uncreatedPrototypeProperty);
             }
         }
@@ -225,10 +195,9 @@ Structure* ClosureTable::boundClosureStructure(VM& vm, FunctionID function)
     return structure;
 }
 
-Structure* ClosureTable::closureStructure(VM& vm, unsigned index)
+Structure* ClosureTable::closureStructure(VM&, unsigned index)
 {
     RELEASE_ASSERT(index < numberOfClosureStructures);
-    ensureStructures(vm);
     return m_closureStructures[index];
 }
 
@@ -389,6 +358,53 @@ void ClosureTable::visitRoots(Visitor& visitor)
 
 template void ClosureTable::visitRoots(AbstractSlotVisitor&);
 template void ClosureTable::visitRoots(SlotVisitor&);
+
+void Object::materializeDeferredClosures(VM& vm)
+{
+    for (auto& field : layout().fields()) {
+        if (field.slot.representation() == SlotRepresentation::DeferredClosure && isInSlot(field))
+            materializeDeferredClosure(vm, field);
+    }
+}
+
+// Nothing, the object itself, or the one environment that all closures of the object share. The object keeps that environment in a hidden field, which every allocation fills.
+static JSValue valueCapturedByClosureOf(Object& object, const FieldData& field, uintptr_t cageBase)
+{
+    if (field.flags & fieldDeferredClosureCapturesObject)
+        return &object;
+    if (!(field.flags & fieldDeferredClosureCapturesEnvironment))
+        return { };
+    SlotData slot = object.layout().closureEnvironmentSlotOf(field);
+    JSCell* environment = cellInSlot(slot.representation(), &object.at<uint8_t>(slot.offset), cageBase);
+    RELEASE_ASSERT(environment);
+    return environment;
+}
+
+// Empty where the property has left the slot. What the program has stored since is in the slot as it is. The slot of an accessor holds its GetterSetter, and the closure is the getter.
+JSValue Object::materializeDeferredClosure(VM& vm, const FieldData& field)
+{
+    ASSERT(field.slot.representation() == SlotRepresentation::DeferredClosure && !field.isOutOfLine());
+    // An object whose closures capture nothing may lie in a frame, and that address says nothing about the cage.
+    State& state = this->state();
+    uintptr_t cageBase = state.instance.cellCageBase;
+    uint32_t word = at<uint32_t>(field.slot.offset);
+    if (word >= minCell32)
+        return MarkedBlockCage::decode(cageBase, word);
+    if (word == absentDeferredClosure)
+        return { };
+    if (word != uncreatedDeferredClosure) {
+        ASSERT(word == undefinedCell32 || word == nullCell32);
+        return JSValue::decode(word);
+    }
+
+    JSObject* closure = state.objects->closures.createClosureOver(vm, layout().deferredClosureOf(field), valueCapturedByClosureOf(*this, field, cageBase));
+    JSCell* held = closure;
+    if (field.isAccessor()) [[unlikely]]
+        held = GetterSetter::create(vm, state.instance.globalObject, closure, nullptr);
+    at<uint32_t>(field.slot.offset) = MarkedBlockCage::encode(cageBase, held);
+    vm.writeBarrier(this, held);
+    return held;
+}
 
 } } // namespace JSC::AOT
 

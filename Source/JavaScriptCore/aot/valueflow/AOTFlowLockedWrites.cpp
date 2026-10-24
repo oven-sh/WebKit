@@ -14,31 +14,16 @@
 #include "AOTFlowBuiltinLocations.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTPropertyAccessElements.h"
-#include "AOTVector.h"
-#include <algorithm>
-#include <optional>
-#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-enum class LockedWriteForm : uint8_t {
-    None,
-    BuiltinCall,
-    Operation,
-};
+enum class LockedWriteForm : uint8_t { None, BuiltinCall, Operation };
 
 struct LockedWrite {
     BlockID block;
     ValueID value;
-};
-
-struct LockedWriteContext {
-    const Program& program;
-    const FlowResults& results;
-    BuildContext& build;
-    BitVector alwaysEvaluatedModules;
 };
 
 } // anonymous namespace
@@ -55,7 +40,6 @@ static BitVector findAlwaysEvaluatedModules(const Program& program)
     for (const Entry& entry : program.entries)
         visit(entry.module);
     while (!worklist.isEmpty()) {
-        // A `require` may stand in a function or a branch.
         for (const ModuleRequest& request : program.at(worklist.takeLast()).requests) {
             if (request.kind == ModuleRequestKind::Import && request.phase == ImportPhase::Evaluation)
                 visit(request.target);
@@ -91,21 +75,14 @@ static LockedWriteForm writeFormOf(AccessKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static LockedWriteForm writeFormAt(const FlowResults& results, const Function& function, ValueID id, SourceLocation location)
-{
-    const Value& value = function.at(id);
-    if (!hasAccessSite(value.opcode) || function.locationOf(id) != location)
-        return LockedWriteForm::None;
-    return writeFormOf(results.at(value.accessSite()).kind);
-}
-
 static std::optional<LockedWrite> findWrite(const FlowResults& results, const Function& function, const CFG& cfg, SourceLocation location)
 {
-    // Object.assign and Reflect.set write through a call, which counts only where no operation at the location writes.
     std::optional<LockedWrite> builtinCall;
     for (BlockID block : cfg.reversePostOrder()) {
         for (ValueID value : function.at(block).values) {
-            switch (writeFormAt(results, function, value, location)) {
+            if (!hasAccessSite(function.at(value).opcode) || function.locationOf(value) != location)
+                continue;
+            switch (writeFormOf(results.at(function.at(value).accessSite()).kind)) {
             case LockedWriteForm::None:
                 break;
             case LockedWriteForm::BuiltinCall:
@@ -118,21 +95,6 @@ static std::optional<LockedWrite> findWrite(const FlowResults& results, const Fu
         }
     }
     return builtinCall;
-}
-
-static bool dominatesEveryReturn(FunctionAnalyses& analyses, BlockID block)
-{
-    const Function& function = analyses.function();
-    const Dominators& dominators = analyses.dominators();
-    bool hasReturn = false;
-    for (BlockID other : analyses.cfg().reversePostOrder()) {
-        if (!returnsToCaller(function.at(other).terminator.kind))
-            continue;
-        if (!dominators.dominates(block, other))
-            return false;
-        hasReturn = true;
-    }
-    return hasReturn;
 }
 
 static bool isProgramModule(ModuleKind kind)
@@ -150,42 +112,45 @@ static bool isProgramModule(ModuleKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool alwaysRuns(const LockedWriteContext& context, FunctionAnalyses& analyses, BlockID block)
+static bool alwaysRuns(const Program& program, const BitVector& alwaysEvaluatedModules, FunctionAnalyses& analyses, BlockID block)
 {
     const Function& function = analyses.function();
     if (!function.module)
         return false;
 
-    const Module& module = context.program.at(function.module);
+    const Module& module = program.at(function.module);
     if (module.body != analyses.context().id || !isProgramModule(module.kind) || module.flags.contains(ModuleFlags::IsLibrary))
         return false;
-    if (!context.alwaysEvaluatedModules.get(function.module.index()))
+    if (!alwaysEvaluatedModules.get(function.module.index()) || function.at(block).handler)
         return false;
-    if (function.at(block).handler)
-        return false;
-    return dominatesEveryReturn(analyses, block);
-}
 
-static bool isOnly(const LockedWriteContext& context, const Function& function, ValueID operand, BuiltinID holder)
-{
-    if (!operand)
-        return false;
-    const Type& type = context.program.typeOf(function, operand);
-    return !type.primitives && type.singleBuiltin() == holder;
-}
-
-// Flow lists every write that may reach a locked object. One throws in every run only where the object written to can be nothing else and the key is one name.
-static bool writesOnlyTo(const LockedWriteContext& context, const Function& function, ValueID write, BuiltinID holder)
-{
-    const Value& value = function.at(write);
-    if (value.opcode == Opcode::Call) {
-        // Object.defineProperty, Reflect.set and the like take the object first and the key second.
-        std::span<const ValueID> arguments = value.argumentsOperands();
-        return arguments.size() >= 2 && isOnly(context, function, arguments[0], holder) && context.program.typeOf(function, arguments[1]).singleStringLiteral();
+    const Dominators& dominators = analyses.dominators();
+    bool hasReturn = false;
+    for (BlockID other : analyses.cfg().reversePostOrder()) {
+        if (!returnsToCaller(function.at(other).terminator.kind))
+            continue;
+        if (!dominators.dominates(block, other))
+            return false;
+        hasReturn = true;
     }
-    if (writeFormOf(context.results.at(value.accessSite()).kind) != LockedWriteForm::Operation)
+    return hasReturn;
+}
+
+static bool writesOnlyTo(const Program& program, const FlowResults& results, const Function& function, const Value& value, BuiltinID holder)
+{
+    auto isOnlyHolder = [&](ValueID operand) {
+        if (!operand)
+            return false;
+        const Type& type = program.typeOf(function, operand);
+        return !type.primitives && type.singleBuiltin() == holder;
+    };
+    if (value.opcode == Opcode::Call) {
+        std::span<const ValueID> arguments = value.argumentsOperands();
+        return arguments.size() >= 2 && isOnlyHolder(arguments[0]) && program.typeOf(function, arguments[1]).singleStringLiteral();
+    }
+    if (writeFormOf(results.at(value.accessSite()).kind) != LockedWriteForm::Operation)
         return false;
-    if (elementAccessOf(value.opcode) && !constantKeyOf(context.program, context.program.typeOf(function, value.propertyOperand())))
+    if (elementAccessOf(value.opcode) && !constantKeyOf(program, program.typeOf(function, value.propertyOperand())))
         return false;
 
     ValueID receiver;
@@ -193,19 +158,13 @@ static bool writesOnlyTo(const LockedWriteContext& context, const Function& func
         if (!index)
             receiver = operand;
     });
-    return isOnly(context, function, receiver, holder);
+    return isOnlyHolder(receiver);
 }
 
-// The lock's refusal throws, in sloppy code too.
-enum class RefusalInSloppyCode : uint8_t {
-    Throws,
-    MayThrow,
-    IsLikelySilent,
-};
+enum class RefusalInSloppyCode : uint8_t { Throws, MayThrow, IsLikelySilent };
 
 static RefusalInSloppyCode refusalInSloppyCode(const BuiltinTable& table, BuiltinID member)
 {
-    // A new name, which the holder does not take.
     if (!member)
         return RefusalInSloppyCode::Throws;
     const Builtin& entry = table.at(member);
@@ -214,7 +173,6 @@ static RefusalInSloppyCode refusalInSloppyCode(const BuiltinTable& table, Builti
     case BuiltinKind::Constructor:
     case BuiltinKind::Function:
     case BuiltinKind::Method:
-        // What the language puts under a string is writable and configurable where it is one of these. Under a symbol some are not, and the host does as it likes.
         return entry.origin == BuiltinOrigin::Engine && !table.isSymbolName(entry.name) ? RefusalInSloppyCode::Throws : RefusalInSloppyCode::MayThrow;
     case BuiltinKind::Prototype:
     case BuiltinKind::Accessor:
@@ -226,43 +184,6 @@ static RefusalInSloppyCode refusalInSloppyCode(const BuiltinTable& table, Builti
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool isInSloppyCode(const Value& write)
-{
-    return Value::opcodesWithMode.contains(write.opcode) && write.mode() == ECMAMode::Sloppy;
-}
-
-// A function of Reflect answers false.
-static bool isIgnoredWhenRefused(const LockedWriteContext& context, const Function& function, const Value& write, BuiltinID member)
-{
-    if (write.opcode == Opcode::Call) {
-        BuiltinID callee = context.program.typeOf(function, write.calleeOperand()).singleBuiltin();
-        return callee && context.program.builtins().at(callee).holder == Builtins::Reflect;
-    }
-    return isInSloppyCode(write) && refusalInSloppyCode(context.program.builtins(), member) == RefusalInSloppyCode::IsLikelySilent;
-}
-
-static bool isSpy(const LockedWriteContext& context, const Function& function, const Value& write)
-{
-    if (write.opcode != Opcode::Call)
-        return false;
-    BuiltinID callee = context.program.typeOf(function, write.calleeOperand()).singleBuiltin();
-    return context.program.builtins().has(BuiltinMark::IsSpy, callee);
-}
-
-static const Type* storedTypeOf(const LockedWriteContext& context, const Function& function, const Value& write)
-{
-    if (write.opcode != Opcode::PropSet)
-        return nullptr;
-    return &context.program.typeOf(function, write.operand(*storedOf(write.opcode)));
-}
-
-static BuiltinID memberAt(const LockedWriteContext& context, const BuiltinLocationFlow& location)
-{
-    BuiltinID member = findOwnMember(context.program, location.holder, location.key);
-    return member ? context.program.builtins().canonicalID(member) : member;
-}
-
-// The run time accepts a store of the value the location holds: `Object.assign = Object.assign || polyfill`.
 static bool mayStore(const Type& stored, BuiltinID member)
 {
     return stored.anyObject || stored.anyFunction || stored.builtins.contains(member);
@@ -283,7 +204,6 @@ static bool mayHoldObject(const BuiltinTable& table, BuiltinID member)
     return !isDeclared;
 }
 
-// What an object literal that stands in the place of an argument gives its properties. Nothing where anything else fills or sees the object: a spread, a computed key, a variable that holds it.
 using LiteralProperties = Vector<std::pair<PropertyKeyID, ValueID>, 4>;
 static std::optional<LiteralProperties> propertiesOfLiteralArgument(const Program& program, const Function& function, const CFG& cfg, ValueID call, ValueID argument)
 {
@@ -316,14 +236,11 @@ static std::optional<LiteralProperties> propertiesOfLiteralArgument(const Progra
     return properties;
 }
 
-// The run time accepts a definition that repeats what the member is, or that only takes from what it admits: a polyfill that defines what is there, and whoever writes out what Object.freeze() does.
-static bool mayLeaveMemberAsItIs(const LockedWriteContext& context, const Function& function, const CFG& cfg, ValueID id, BuiltinID member)
+static bool mayLeaveMemberAsItIs(const Program& program, const Function& function, const CFG& cfg, ValueID id, BuiltinID callee, BuiltinID member)
 {
-    const Program& program = context.program;
     const Value& write = function.at(id);
     if (write.opcode != Opcode::Call || !member)
         return false;
-    BuiltinID callee = program.typeOf(function, write.calleeOperand()).singleBuiltin();
     std::span<const ValueID> arguments = write.argumentsOperands();
     if ((callee != Builtins::ObjectDefineProperty && callee != Builtins::ReflectDefineProperty) || arguments.size() < 3)
         return false;
@@ -353,11 +270,9 @@ static bool mayLeaveMemberAsItIs(const LockedWriteContext& context, const Functi
     const BuiltinTable& table = program.builtins();
     switch (table.at(member).kind) {
     case BuiltinKind::Accessor:
-        // It may be given the functions that it has. A value makes a data property of it.
         return !value;
     case BuiltinKind::DataProperty:
     case BuiltinKind::Constant:
-        // It may be given the value that it has, and no type says which string or number a value is.
         return !hasAccessorFunction && (!value || value->primitives || mayHoldObject(table, member));
     case BuiltinKind::NativeBinding:
         return true;
@@ -371,41 +286,46 @@ static bool mayLeaveMemberAsItIs(const LockedWriteContext& context, const Functi
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void reportWrite(const LockedWriteContext& context, const BuiltinLocationFlow& location)
+static void reportWrite(const Program& program, const FlowResults& results, BuildContext& build, const BitVector& alwaysEvaluatedModules, const BuiltinLocationFlow& location)
 {
-    BuiltinID holder = location.holder;
+    const BuiltinTable& table = program.builtins();
     const Witness& witness = location.witness;
     FunctionID id(witness.function);
-    const Function& function = context.program.at(id);
+    const Function& function = program.at(id);
     if (!function.hasBody())
         return;
 
-    FunctionAnalyses analyses(AnalysisContext { .build = context.build, .program = context.program, .flow = &context.results, .id = id }, function);
-    std::optional<LockedWrite> write = findWrite(context.results, function, analyses.cfg(), witness.location);
+    FunctionAnalyses analyses(AnalysisContext { .build = build, .program = program, .flow = &results, .id = id }, function);
+    std::optional<LockedWrite> write = findWrite(results, function, analyses.cfg(), witness.location);
     if (!write)
         return;
 
     const Value& value = function.at(write->value);
-    if (context.build.options().isCheckOnly() && isSpy(context, function, value))
+    bool isCall = value.opcode == Opcode::Call;
+    BuiltinID callee = isCall ? program.typeOf(function, value.calleeOperand()).singleBuiltin() : BuiltinID();
+    if (build.options().isCheckOnly() && isCall && table.has(BuiltinMark::IsSpy, callee))
         return;
-    BuiltinID member = memberAt(context, location);
-    const Type* stored = member ? storedTypeOf(context, function, value) : nullptr;
+    BuiltinID member = findOwnMember(program, location.holder, location.key);
+    if (member)
+        member = table.canonicalID(member);
+    const Type* stored = member && value.opcode == Opcode::PropSet ? &program.typeOf(function, value.operand(*storedOf(value.opcode))) : nullptr;
     if (stored && !stored->primitives && stored->singleBuiltin() == member)
         return;
-    if (mayLeaveMemberAsItIs(context, function, analyses.cfg(), write->value, member))
+    if (mayLeaveMemberAsItIs(program, function, analyses.cfg(), write->value, callee, member))
         return;
 
+    bool isInSloppyCode = Value::opcodesWithMode.contains(value.opcode) && value.mode() == ECMAMode::Sloppy;
     auto kind = [&] {
-        if (isIgnoredWhenRefused(context, function, value, member))
+        if (isCall ? callee && table.at(callee).holder == Builtins::Reflect : isInSloppyCode && refusalInSloppyCode(table, member) == RefusalInSloppyCode::IsLikelySilent)
             return UserDiagnosticKind::LockedBuiltinWriteIsIgnored;
         if (stored && mayStore(*stored, member))
             return UserDiagnosticKind::LockedBuiltinWriteMayRun;
-        if (isInSloppyCode(value) && refusalInSloppyCode(context.program.builtins(), member) != RefusalInSloppyCode::Throws)
+        if (isInSloppyCode && refusalInSloppyCode(table, member) != RefusalInSloppyCode::Throws)
             return UserDiagnosticKind::LockedBuiltinWriteMayRun;
-        bool alwaysThrows = writesOnlyTo(context, function, write->value, holder) && alwaysRuns(context, analyses, write->block);
+        bool alwaysThrows = writesOnlyTo(program, results, function, value, location.holder) && alwaysRuns(program, alwaysEvaluatedModules, analyses, write->block);
         return alwaysThrows ? UserDiagnosticKind::LockedBuiltinWriteAlwaysRuns : UserDiagnosticKind::LockedBuiltinWriteMayRun;
     };
-    context.build.diagnostics().add(UserDiagnostic {
+    build.diagnostics().add(UserDiagnostic {
         .kind = kind(),
         .function = id,
         .block = write->block,
@@ -422,10 +342,10 @@ void checkLockedBuiltinWrites(const Program& program, const FlowResults& results
     if (std::ranges::none_of(results.builtinLocations(), isLockedWrite))
         return;
 
-    LockedWriteContext context { program, results, build, findAlwaysEvaluatedModules(program) };
+    BitVector alwaysEvaluatedModules = findAlwaysEvaluatedModules(program);
     for (const BuiltinLocationFlow& record : results.builtinLocations()) {
         if (isLockedWrite(record))
-            reportWrite(context, record);
+            reportWrite(program, results, build, alwaysEvaluatedModules, record);
     }
 }
 

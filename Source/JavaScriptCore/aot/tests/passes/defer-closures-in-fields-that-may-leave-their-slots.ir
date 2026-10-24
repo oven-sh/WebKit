@@ -12,20 +12,16 @@ entry module=m0
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
 layout L0 name="MayGetAnything" fields=[{key="run" declared={type=function flags=[IsExpected]} flow={stability=[IsNeverRedefined]}}]
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = NewObject -, v0 layout=L0 fields=[0]
     PutModuleVariable v1 variable=g0
     Return
 }
 function f1 name="reads" module=m0 parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = GetSlotOrUndefined v0 key="run" receivers=[L0] level=Proven
     Return v1
-}
-# CHECK-LABEL: function f1 name="reads"
 # CHECK: v1: anything ~ undefined|function = GetDeferredClosureSlotOrUndefined v0 key="run"
+}
 function f2 name="run" module=m0 kind=Arrow results=[{type=undefined}] {
-  b0():
     Return
 }

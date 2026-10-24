@@ -13,7 +13,6 @@ layout L0 kind=Instance name="Base" constructor=f2 fields=[{key="a" declared={ty
 layout L1 kind=Instance name="Derived" constructor=f3 fields=[{key="b" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] flags=[HasHeritage]
 variable g0 name="Base" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Call v0
     v2 = GetModuleVariable variable=g0
@@ -27,7 +26,6 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="init" module=m0 results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = NewClass v0 layout=L0
     v2 = FinishClass v1 layout=L0
@@ -35,7 +33,6 @@ function f1 name="init" module=m0 results=[{type=anything}] {
     Return
 }
 function f2 name="Base" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     v3 = Integer integer=1
@@ -43,7 +40,6 @@ function f2 name="Base" module=m0 kind=BaseConstructor flags=[HasNewTarget] resu
     Return v2
 }
 function f3 name="Derived" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array}] results=[{type=object}] {
-  b0(v0: function, v1: anything, v2: Array):
     v3 = GetSuperBase v0
     v4 = SuperConstructList v3, v1, v2 layout=L1
     v5 = Integer integer=2

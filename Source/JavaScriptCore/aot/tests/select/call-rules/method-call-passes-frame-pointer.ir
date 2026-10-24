@@ -11,7 +11,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = CallDirect function=f1
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="input" [isFreeName]
@@ -34,19 +33,16 @@ function f1 name="callsNothing" results=[{type=anything}] {
     Return
 }
 function f2 name="callback" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 # CHECK-LABEL: function f3 name="callsAnything"
 # CHECK: CallMethod {{*}} key="map"
 function f3 name="callsAnything" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="map"
     v2 = NewClosure function=f4
     v3 = Call v1, v0, v2 calleeKey="map" calleeName="map"
     Return v3
 }
 function f4 name="otherCallback" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }

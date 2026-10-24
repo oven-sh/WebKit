@@ -29,7 +29,6 @@
 module m0 path="main.js" displayPath="main.js"
 variable g0 name="stored" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="enumeratorLiveAcrossStep" parameters=[{type=anything}, {type=object}] results=[{type=anything}] {
-  b0(v0: anything, v1: object):
     v2 = NewClosure function=f17
     v3 = NewGenerator v2 function=f17 @100
     v4 = CallDirect v2, v0, v3 function=f22 @100
@@ -72,7 +71,6 @@ function f0 name="enumeratorLiveAcrossStep" parameters=[{type=anything}, {type=o
 # CHECK-NOT: @12:1
 
 function f1 name="notStarted" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f17
     v2 = NewGenerator v1 function=f17 @101
     v3 = Undefined
@@ -102,7 +100,6 @@ function f1 name="notStarted" parameters=[{type=anything}] results=[{type=anythi
 # CHECK-NOT: @12:1
 
 function f2 name="neverStepped" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f17
     v2 = NewGenerator v1 function=f17 @102
     v3 = CallDirect v1, v0, v2 function=f22 @102
@@ -114,7 +111,6 @@ function f2 name="neverStepped" parameters=[{type=anything}] results=[{type=anyt
 # CHECK: = CallDirect v1, v0, v2 function=f22
 
 function f3 name="steppedInNextIteration" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = Undefined
     Jump -> next b1(v2)
   b1(v3):
@@ -135,7 +131,6 @@ function f3 name="steppedInNextIteration" parameters=[{type=anything}, {type=boo
 # CHECK-NOT: @12:1
 
 function f4 name="mergesTwoGenerators" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = NewClosure function=f17
@@ -175,7 +170,6 @@ function f4 name="mergesTwoGenerators" parameters=[{type=anything}, {type=boolea
 # CHECK-NOT: @12:1
 
 function f5 name="isPassedToCall" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewClosure function=f17
     v3 = NewGenerator v2 function=f17 @106
     v4 = CallDirect v2, v0, v3 function=f22 @106
@@ -207,7 +201,6 @@ function f5 name="isPassedToCall" parameters=[{type=anything}, {type=anything}] 
 # CHECK-NOT: @12:1
 
 function f6 name="isReturned" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f17
     v2 = NewGenerator v1 function=f17 @107
     v3 = CallDirect v1, v0, v2 function=f22 @107
@@ -221,7 +214,6 @@ function f6 name="isReturned" parameters=[{type=anything}] results=[{type=anythi
 # CHECK-NOT: @12:1
 
 function f7 name="isStored" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f17
     v2 = NewGenerator v1 function=f17 @108
     v3 = CallDirect v1, v0, v2 function=f22 @108
@@ -253,7 +245,6 @@ function f7 name="isStored" parameters=[{type=anything}] results=[{type=anything
 # CHECK-NOT: @12:1
 
 function f8 name="methodIsLookedUp" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f17
     v2 = NewGenerator v1 function=f17 @109
     v3 = CallDirect v1, v0, v2 function=f22 @109
@@ -284,7 +275,6 @@ function f8 name="methodIsLookedUp" parameters=[{type=anything}] results=[{type=
 # CHECK-NOT: @12:1
 
 function f9 name="bodyUsesGenerator" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f18
     v2 = NewGenerator v1 function=f18 @110
     v3 = CallDirect v1, v0, v2 function=f23 @110
@@ -315,7 +305,6 @@ function f9 name="bodyUsesGenerator" parameters=[{type=anything}] results=[{type
 # CHECK-NOT: @12:1
 
 function f10 name="bodyTooLarge" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f19
     v2 = NewGenerator v1 function=f19 @111
     v3 = CallDirect v1, v0, v2 function=f24 @111
@@ -346,7 +335,6 @@ function f10 name="bodyTooLarge" parameters=[{type=anything}] results=[{type=any
 # CHECK-NOT: @12:1
 
 function f11 name="callerTooLarge" parameters=[{type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f16 callPosition=1 module=m0}] {
-  b0(v0: anything):
 # REPEAT: i = 1..60
     v%(i) = Call v0 @1:1
 # END REPEAT
@@ -380,7 +368,6 @@ function f11 name="callerTooLarge" parameters=[{type=anything}] results=[{type=a
 # CHECK-NOT: @12:1
 
 function f12 name="deepInlineFrame" parameters=[{type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f16 callPosition=1 module=m0}, {callee=f16 callPosition=2 parent=1 module=m0}, {callee=f16 callPosition=3 parent=2 module=m0}, {callee=f16 callPosition=4 parent=3 module=m0}] {
-  b0(v0: anything):
     v1 = NewClosure function=f17
     v2 = NewGenerator v1 function=f17 @113:4
     v3 = CallDirect v1, v0, v2 function=f22 @113:4
@@ -410,7 +397,6 @@ function f12 name="deepInlineFrame" parameters=[{type=anything}] results=[{type=
 # CHECK: = StepGenerator
 
 function f13 name="oneEscapes" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewClosure function=f17
     v3 = NewGenerator v2 function=f17 @114
     v4 = CallDirect v2, v0, v3 function=f22 @114
@@ -450,7 +436,6 @@ function f13 name="oneEscapes" parameters=[{type=anything}, {type=anything}] res
 # CHECK-NOT: StepGenerator
 
 function f14 name="stepsThroughCast" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f17
     v2 = NewGenerator v1 function=f17 @116
     v3 = CallDirect v1, v0, v2 function=f22 @116
@@ -481,7 +466,6 @@ function f14 name="stepsThroughCast" parameters=[{type=anything}] results=[{type
 # CHECK-NOT: StepGenerator
 
 function f15 name="asyncGenerator" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f21
     v2 = NewAsyncGenerator v1 function=f21 @117
     v3 = CallDirect v1, v0, v2 function=f26 @117
@@ -494,44 +478,37 @@ function f15 name="asyncGenerator" parameters=[{type=anything}] results=[{type=a
 # CHECK: = CallDirect v1, v0, v2 function=f26
 
 function f16 name="plain" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 # CHECK-LABEL: function f16 name="plain"
 # CHECK: Return v0
 
 function f17 name="yieldsOnce" position=10 role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f17 body=f22 promiseParameter=2} {
-  b0(v0: function, v1: anything):
     v2 = NewGenerator v0 function=f17 @10
     v3 = CallDirect v0, v1, v2 function=f22 @10
     Return v2 @10
 }
 function f18 name="usesItself" position=20 role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f18 body=f23 promiseParameter=2} {
-  b0(v0: function, v1: anything):
     v2 = NewGenerator v0 function=f18 @20
     v3 = CallDirect v0, v1, v2 function=f23 @20
     Return v2 @20
 }
 function f19 name="large" position=30 role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f19 body=f24 promiseParameter=2} {
-  b0(v0: function, v1: anything):
     v2 = NewGenerator v0 function=f19 @30
     v3 = CallDirect v0, v1, v2 function=f24 @30
     Return v2 @30
 }
 function f20 name="recursive" position=40 role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f20 body=f25 promiseParameter=2} {
-  b0(v0: function, v1: anything):
     v2 = NewGenerator v0 function=f20 @40
     v3 = CallDirect v0, v1, v2 function=f25 @40
     Return v2 @40
 }
 function f21 name="yieldsAsynchronously" position=50 role=CoroutineRamp flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] creator=Coroutine{kind=AsyncGenerator ramp=f21 body=f26 promiseType=Promise promiseParameter=2} {
-  b0(v0: function, v1: anything):
     v2 = NewAsyncGenerator v0 function=f21 @50
     v3 = CallDirect v0, v1, v2 function=f26 @50
     Return v2 @50
 }
 function f22 name="yieldsOnce" position=10 role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f17} creator=Coroutine{ramp=f17 body=f22 promiseParameter=2} {
-  b0(v0: function, v1: anything, v2: Generator):
     v3 = Undefined @10
     v4 = YieldBySavingFrame v2, v3 @10
     v5 = ResultAt v4 index=0 @10
@@ -555,7 +532,6 @@ function f22 name="yieldsOnce" position=10 role=CoroutineBody flags=[IsGenerator
     Return v10
 }
 function f23 name="usesItself" position=20 role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f18} creator=Coroutine{ramp=f18 body=f23 promiseParameter=2} {
-  b0(v0: function, v1: anything, v2: Generator):
     v3 = Undefined @20
     v4 = YieldBySavingFrame v2, v3 @20
     v5 = ResultAt v4 index=0 @20
@@ -578,7 +554,6 @@ function f23 name="usesItself" position=20 role=CoroutineBody flags=[IsGenerator
     Return v2
 }
 function f24 name="large" position=30 role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f19} creator=Coroutine{ramp=f19 body=f24 promiseParameter=2} {
-  b0(v0: function, v1: anything, v2: Generator):
     v3 = Undefined @30
     v4 = YieldBySavingFrame v2, v3 @30
     v5 = ResultAt v4 index=0 @30
@@ -605,7 +580,6 @@ function f24 name="large" position=30 role=CoroutineBody flags=[IsGenerator, Tak
     Return v70
 }
 function f25 name="recursive" position=40 role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f20} creator=Coroutine{ramp=f20 body=f25 promiseParameter=2} {
-  b0(v0: function, v1: anything, v2: Generator):
     v3 = Undefined @40
     v4 = YieldBySavingFrame v2, v3 @40
     v5 = ResultAt v4 index=0 @40
@@ -651,7 +625,6 @@ function f25 name="recursive" position=40 role=CoroutineBody flags=[IsGenerator,
 # CHECK-NOT: inlineFrames=
 # CHECK: = StepGenerator
 function f26 name="yieldsAsynchronously" position=50 role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f21} creator=Coroutine{kind=AsyncGenerator ramp=f21 body=f26 promiseType=Promise promiseParameter=2} {
-  b0(v0: function, v1: anything, v2: AsyncGenerator):
     v3 = Undefined @50
     v4 = YieldBySavingFrame v2, v3 @50
     v5 = ResultAt v4 index=0 @50

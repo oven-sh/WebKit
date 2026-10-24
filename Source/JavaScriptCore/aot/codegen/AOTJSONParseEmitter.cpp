@@ -9,8 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTFrameMaps.h"
-#include "AOTIRProgram.h"
-#include "AOTInstance.h"
 #include "AOTJSONScanner.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTVector.h"
@@ -23,34 +21,10 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static_assert(maxExactMantissaDigits == 15 && maxJSONInteger == 9007199254740991, "The result type of JSONParseInteger is int[-9007199254740991, 9007199254740991]");
 
-JSONParseEmitter::JSONParseEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
-
-Pointer JSONParseEmitter::cursorOf(ValueID id) const
-{
-    return in<Pointer>(id);
-}
-
-TypedPointer JSONParseEmitter::word(ptrdiff_t offsetInInstance)
-{
-    return instanceField(m_heaps.entire(AbstractHeap::ParserState), offsetInInstance);
-}
-
-TypedPointer JSONParseEmitter::at(Pointer cursor, ptrdiff_t offset)
-{
-    return m_out.address(m_heaps.entire(AbstractHeap::ParserState), cursor.value(), offset);
-}
-
-Pointer JSONParseEmitter::sourceEnd()
-{
-    return Pointer(m_out.loadPtr(word(AOT_INSTANCE_OFFSET(json.sourceEnd))));
-}
-
-Pointer JSONParseEmitter::skipWhitespace(Pointer cursor)
+void JSONParseEmitter::generateJSONSkipWhitespace(const ValueContext& value)
 {
     static constexpr int64_t whitespace = 1LL << ' ' | 1LL << '\n' | 1LL << '\r' | 1LL << '\t';
+    Pointer cursor = cursorOf(value);
     auto byteAt = [&](LValue position) {
         return m_out.load8ZeroExt32(at(Pointer(position)));
     };
@@ -79,7 +53,7 @@ Pointer JSONParseEmitter::skipWhitespace(Pointer cursor)
     m_out.branch(m_out.above(nextByte, m_out.constInt32(' ')), normalEdge(continuation), normalEdge(mayBeWhitespace));
 
     m_out.appendTo(continuation);
-    return Pointer(m_out.phi(B3::Int64, ends));
+    define(value, Pointer(m_out.phi(B3::Int64, ends)));
 }
 
 Condition JSONParseEmitter::startsWith(Pointer cursor, std::span<const uint8_t> text, bool isLikely)
@@ -120,20 +94,10 @@ Condition JSONParseEmitter::startsWith(Pointer cursor, std::span<const uint8_t> 
         for (unsigned i = 0; i < width; ++i)
             bits |= static_cast<uint64_t>(text[offset + i]) << (8 * i);
         TypedPointer pointer = at(cursor, offset);
-        switch (width) {
-        case 8:
+        if (width == 8)
             isSame = equal(Integer(m_out.load64(pointer)), integer(static_cast<int64_t>(bits)));
-            break;
-        case 4:
-            isSame = equal(Word32(m_out.load32(pointer)), word32(static_cast<int32_t>(bits)));
-            break;
-        case 2:
-            isSame = equal(Word32(m_out.load16ZeroExt32(pointer)), word32(static_cast<int32_t>(bits)));
-            break;
-        default:
-            isSame = equal(Word32(m_out.load8ZeroExt32(pointer)), word32(static_cast<int32_t>(bits)));
-            break;
-        }
+        else
+            isSame = equal(Word32(width == 4 ? m_out.load32(pointer) : width == 2 ? m_out.load16ZeroExt32(pointer) : m_out.load8ZeroExt32(pointer)), word32(static_cast<int32_t>(bits)));
         offset += width;
     }
     if (!fails)
@@ -151,20 +115,21 @@ StubCallResult JSONParseEmitter::callReturningPair(const ValueContext& value, Ru
     return emitter<RuntimeCallEmitter>().callOperationReturningPair(value, operation, std::span<const Operand>(arguments.begin(), arguments.size()));
 }
 
-Pointer JSONParseEmitter::cursorOrSourceEnd(Condition isParsed, LValue next)
-{
-    return select(isParsed, Pointer(next), sourceEnd());
-}
-
 void JSONParseEmitter::defineParsed(const ValueContext& value, Operand parsed, LValue next)
 {
     Condition isParsed(m_out.notZero64(next));
     defineResults(value, { isParsed, parsed, cursorOrSourceEnd(isParsed, next) });
 }
 
+void JSONParseEmitter::defineParsedByOperation(const ValueContext& value, RuntimeOperation operation, Representation representation)
+{
+    StubCallResult parsed = callReturningPair(value, operation, { cursorOf(value) });
+    defineParsed(value, Operand(representation, parsed.first), parsed.second);
+}
+
 void JSONParseEmitter::parseDigits(const ValueContext& value, bool isInteger)
 {
-    Pointer start = cursorOf(value->cursorOperand());
+    Pointer start = cursorOf(value);
     auto parseByOperation = [&] {
         StubCallResult parsed = callReturningPair(value, isInteger ? RuntimeOperation::JSONParseInteger : RuntimeOperation::JSONParseNumber, { start });
         return StubCallResult { isInteger ? parsed.first : m_out.bitCast(parsed.first, B3::Double), parsed.second };
@@ -249,14 +214,9 @@ void JSONParseEmitter::generateJSONSourceOpen(const ValueContext& value)
     defineTest(value, isNotZero(isOpen));
 }
 
-void JSONParseEmitter::generateJSONSourceStart(const ValueContext& value)
-{
-    define(value, Pointer(m_out.loadPtr(word(AOT_INSTANCE_OFFSET(json.sourceStart)))));
-}
-
 void JSONParseEmitter::generateJSONSourceClose(const ValueContext& value)
 {
-    Pointer cursor = cursorOf(value->cursorOperand());
+    Pointer cursor = cursorOf(value);
     auto closeByOperation = [&] {
         return isNotZero(callOperation<Integer>(value, RuntimeOperation::JSONSourceClose, { cursor }));
     };
@@ -282,74 +242,16 @@ void JSONParseEmitter::generateJSONSourceClose(const ValueContext& value)
     defineTest(value, isComplete.finish());
 }
 
-void JSONParseEmitter::generateJSONSourceAbandon(const ValueContext& value)
-{
-    callVoidOperation(value, RuntimeOperation::JSONSourceAbandon, { });
-}
-
-void JSONParseEmitter::generateJSONDecodeBytes(const ValueContext& value)
-{
-    define(value, callOperation<Boxed>(value, RuntimeOperation::JSONDecodeBytes, { boxed(value->valueOperand()) }));
-}
-
-void JSONParseEmitter::generateJSONGetByte(const ValueContext& value)
-{
-    define(value, Word32(m_out.load8ZeroExt32(at(cursorOf(value->cursorOperand())))));
-}
-
-void JSONParseEmitter::generateJSONStartsWith(const ValueContext& value)
-{
-    defineTest(value, startsWith(cursorOf(value->cursorOperand()), m_program.string(value->string()), value->isLikely()));
-}
-
-void JSONParseEmitter::generateJSONAdvance(const ValueContext& value)
-{
-    define(value, offsetBy(cursorOf(value->cursorOperand()), m_program.string(value->string()).size()));
-}
-
 void JSONParseEmitter::generateJSONSkipByte(const ValueContext& value)
 {
-    Pointer cursor = cursorOf(value->cursorOperand());
+    Pointer cursor = cursorOf(value);
     define(value, select(equal(cursor, sourceEnd()), cursor, offsetBy(cursor, 1)));
-}
-
-void JSONParseEmitter::generateJSONSkipWhitespace(const ValueContext& value)
-{
-    define(value, skipWhitespace(cursorOf(value->cursorOperand())));
-}
-
-void JSONParseEmitter::generateJSONParseString(const ValueContext& value)
-{
-    StubCallResult parsed = callReturningPair(value, RuntimeOperation::JSONParseString, { cursorOf(value->cursorOperand()) });
-    defineParsed(value, CellPointer(parsed.first), parsed.second);
-}
-
-void JSONParseEmitter::generateJSONParseKey(const ValueContext& value)
-{
-    StubCallResult parsed = callReturningPair(value, RuntimeOperation::JSONParseKey, { cursorOf(value->cursorOperand()) });
-    defineParsed(value, CellPointer(parsed.first), parsed.second);
-}
-
-void JSONParseEmitter::generateJSONParseNumber(const ValueContext& value)
-{
-    parseDigits(value, false);
-}
-
-void JSONParseEmitter::generateJSONParseInteger(const ValueContext& value)
-{
-    parseDigits(value, true);
-}
-
-void JSONParseEmitter::generateJSONParseValue(const ValueContext& value)
-{
-    StubCallResult parsed = callReturningPair(value, RuntimeOperation::JSONParseValue, { cursorOf(value->cursorOperand()) });
-    defineParsed(value, Boxed(parsed.first), parsed.second);
 }
 
 void JSONParseEmitter::generateJSONFindMember(const ValueContext& value)
 {
     Word32 name = word32(static_cast<int32_t>(value->string().index()));
-    StubCallResult found = callReturningPair(value, RuntimeOperation::JSONFindMember, { cursorOf(value->cursorOperand()), name });
+    StubCallResult found = callReturningPair(value, RuntimeOperation::JSONFindMember, { cursorOf(value), name });
     Word32 search = low32(Integer(found.first));
     Condition isFound = equal(search, word32(static_cast<int32_t>(JSONMemberSearch::Found)));
     defineResults(value, { search, cursorOrSourceEnd(isFound, found.second) });
@@ -358,19 +260,19 @@ void JSONParseEmitter::generateJSONFindMember(const ValueContext& value)
 void JSONParseEmitter::generateJSONMemberRepeats(const ValueContext& value)
 {
     Word32 name = word32(static_cast<int32_t>(value->string().index()));
-    Integer mayRepeat = callOperation<Integer>(value, RuntimeOperation::JSONMemberRepeats, { cursorOf(value->valueStartOperand()), name });
+    Integer mayRepeat = callOperation<Integer>(value, RuntimeOperation::JSONMemberRepeats, { in<Pointer>(value->valueStartOperand()), name });
     defineTest(value, isNotZero(mayRepeat));
 }
 
 void JSONParseEmitter::generateJSONKeyRepeats(const ValueContext& value)
 {
-    Integer mayRepeat = callOperation<Integer>(value, RuntimeOperation::JSONKeyRepeats, { cursorOf(value->keyStartOperand()), cursorOf(value->valueStartOperand()) });
+    Integer mayRepeat = callOperation<Integer>(value, RuntimeOperation::JSONKeyRepeats, { in<Pointer>(value->keyStartOperand()), in<Pointer>(value->valueStartOperand()) });
     defineTest(value, isNotZero(mayRepeat));
 }
 
 void JSONParseEmitter::generateJSONKeyHasEscapes(const ValueContext& value)
 {
-    Pointer cursor = cursorOf(value->cursorOperand());
+    Pointer cursor = cursorOf(value);
     LBasicBlock continuation = newBlock();
     LBasicBlock nextCharacter = newBlock();
     LBasicBlock isNotClosingQuote = newBlock();

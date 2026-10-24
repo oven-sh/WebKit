@@ -9,7 +9,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 variable g0 name="total" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToNumber v1
@@ -22,7 +21,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v8
 }
 function f1 name="exitsEarly" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     PutModuleVariable v1 variable=g0
     v3 = Integer integer=7
     v4 = StrictEq v0, v3
@@ -37,7 +35,6 @@ function f1 name="exitsEarly" parameters=[{type=anything}, {type=anything}] resu
     Return v8
 }
 function f2 name="exitsEarlyInATry" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     PutModuleVariable v1 variable=g0
     v3 = Integer integer=7
     v4 = StrictEq v0, v3
@@ -56,7 +53,6 @@ function f2 name="exitsEarlyInATry" parameters=[{type=anything}, {type=anything}
     Throw v9
 }
 function f3 name="changesTotal" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g0
     v2 = PropGet v1 key="x"
     PutModuleVariable v2 variable=g0

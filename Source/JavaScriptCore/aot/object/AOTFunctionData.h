@@ -39,7 +39,8 @@ struct FunctionKindData {
     constexpr unsigned slimClosureKind() const { return isAsync; }
     constexpr CallableKind callable() const { return static_cast<CallableKind>(callableKind); }
     constexpr MethodKind accessor() const { return static_cast<MethodKind>(accessorKind); }
-    constexpr bool hasInitialNamePrefix() const { return callable() == CallableKind::Bound || accessor() != MethodKind::Method; }
+    constexpr bool isBound() const { return callable() == CallableKind::Bound; }
+    constexpr bool hasInitialNamePrefix() const { return isBound() || accessor() != MethodKind::Method; }
 };
 static_assert(sizeof(FunctionKindData) == 2 && isImageRecord<FunctionKindData>);
 static_assert(classObjectClosureStructure < 1 << 3);

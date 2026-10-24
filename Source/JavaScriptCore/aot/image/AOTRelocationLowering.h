@@ -11,8 +11,6 @@
 #include "B3RelocatableValue.h"
 #include "B3RelocationLowering.h"
 #include "GPRInfo.h"
-#include <optional>
-#include <wtf/Noncopyable.h>
 
 namespace JSC { namespace AOT {
 
@@ -35,8 +33,7 @@ public:
 
 private:
     B3::Value* loadSlot(B3::InsertionSet&, size_t index, B3::Origin, uint32_t slot) const;
-    B3::Value* lowerSiteCacheAddress(B3::InsertionSet&, size_t index, B3::Origin, uint32_t siteCache);
-    B3::Value* lowerDataAddress(B3::InsertionSet&, size_t index, B3::Origin, CodeSymbol);
+    B3::Value* insertAddressOf(B3::InsertionSet&, size_t index, B3::Origin, CodeSymbol);
 
     PointerTable m_table;
     RelocationRecorder& m_relocations;

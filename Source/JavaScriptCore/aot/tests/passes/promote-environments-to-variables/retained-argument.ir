@@ -12,7 +12,6 @@ layout L1 name="Kept" fields=[{key="x" declared={type=number} flags=[IsRequired]
 layout L2 name="OnlyRead" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToNumber v1
@@ -33,21 +32,19 @@ function f1 name="creates" captures=[{type=env L0}] parameters=[{type=number}] r
     v4 = NewObject -, v1 layout=L2 fields=[0] @20
     v5 = CallDirect v0, v4 function=f3
     Return v5
-}
-# CHECK-LABEL: function f1 name="creates"
 # CHECK: [[kept]]:{{*}}= NewObject {{*}}layout=L1
 # CHECK-NOT: storage=Frame
 # CHECK: = CallDirect [[kept]] function=f2
 # CHECK-NEXT: [[read]]:{{*}}= NewObject {{*}}layout=L2 {{*}}storage=Frame
 # CHECK-NEXT: = CallDirect [[read]] function=f3
+}
 
 function f2 name="keeps" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: env L0, v1: anything):
     PutEnvironmentField v0, v1 layout=L0 field=0
     Return
-}
-# CHECK-LABEL: function f2 name="keeps"
 # CHECK: PutModuleVariable {{*}}variable=g0
+}
 
 function f3 name="reads" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: env L0, v1: anything):

@@ -15,21 +15,19 @@ function f0 name="readBelowLength" parameters=[{type=Array<i32, proven, pristine
   b2():
     v5 = Undefined
     Return v5
-}
-# CHECK-LABEL: function f0 name="readBelowLength"
 # CHECK: = HasArrayStorage v0 arrayStorage=Int32
 # CHECK: v4: i32 = GetArrayElement v0, v1, {{*}} arrayStorage=Int32 level=Expected [keyIsIntegral, isInBounds]
 # CHECK: [[isInside0]]: boolean = IsInBounds v0, v1
 # CHECK-NEXT: Branch [[isInside0]] -> taken {{*}}(| 0), notTaken
+}
 
 function f1 name="readWithoutComparison" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}] results=[{type=anything}] {
   b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]> ~ Array<i32, proven, Int32, pristine[Storage, Names, Dense]>, v1: int[0, 1000]):
     v2 = ElemGet v0, v1
     Return v2
-}
-# CHECK-LABEL: function f1 name="readWithoutComparison"
 # CHECK: v2: i32 = GetArrayElement v0, v1, {{*}} arrayStorage=Int32 level=Expected [keyIsIntegral, isInBounds]
 # CHECK: = IsInBounds v0, v1
+}
 
 function f2 name="comparedWithLengthOfAnother" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=Array<i32, proven, pristine[Storage, Names, Dense]>}] results=[{type=anything}] {
   b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]> ~ Array<i32, proven, Int32, pristine[Storage, Names, Dense]>, v1: int[0, 1000], v2: Array<i32, proven, pristine[Storage, Names, Dense]> ~ Array<i32, proven, Int32, pristine[Storage, Names, Dense]>):
@@ -42,10 +40,9 @@ function f2 name="comparedWithLengthOfAnother" parameters=[{type=Array<i32, prov
   b2():
     v6 = Undefined
     Return v6
-}
-# CHECK-LABEL: function f2 name="comparedWithLengthOfAnother"
 # CHECK: v5: i32 = GetArrayElement v0, v1, {{*}} arrayStorage=Int32 level=Expected [keyIsIntegral, isInBounds]
 # CHECK: = IsInBounds v0, v1
+}
 
 function f3 name="positionMayBeNegative" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=i32}] results=[{type=anything}] {
   b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]> ~ Array<i32, proven, Int32, pristine[Storage, Names, Dense]>, v1: i32):
@@ -58,10 +55,9 @@ function f3 name="positionMayBeNegative" parameters=[{type=Array<i32, proven, pr
   b2():
     v5 = Undefined
     Return v5
-}
-# CHECK-LABEL: function f3 name="positionMayBeNegative"
 # CHECK: v4: i32 = GetArrayElement v0, v1, {{*}} arrayStorage=Int32 level=Expected [keyIsIntegral, isInBounds]
 # CHECK: = IsInBounds v0, v1
+}
 
 function f4 name="readOfArrayThatMayHaveHoles" parameters=[{type=Array<i32, proven, pristine[Storage, Names]>}, {type=int[0, 1000]}] results=[{type=anything}] {
   b0(v0: Array<i32, proven, pristine[Storage, Names]> ~ Array<i32, proven, Int32, pristine[Storage, Names]>, v1: int[0, 1000]):
@@ -74,14 +70,13 @@ function f4 name="readOfArrayThatMayHaveHoles" parameters=[{type=Array<i32, prov
   b2():
     v5 = Undefined
     Return v5
-}
 # A position inside the length may hold a hole, so the test looks at the element.
-# CHECK-LABEL: function f4 name="readOfArrayThatMayHaveHoles"
 # CHECK-NOT: IsInBounds
 # CHECK: v4: i32 = GetArrayElement v0, v1, {{*}} arrayStorage=Int32 level=Expected [keyIsIntegral, isPresent]
 # CHECK-NOT: IsInBounds
 # CHECK: = IsElementPresent v0, v1, {{*}} arrayStorage=Int32
 # CHECK-NOT: IsInBounds
+}
 
 function f5 name="storeBelowLength" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}] results=[{type=undefined}] {
   b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]> ~ Array<i32, proven, Int32, pristine[Storage, Names, Dense]>, v1: int[0, 1000], v2: i32):
@@ -93,11 +88,10 @@ function f5 name="storeBelowLength" parameters=[{type=Array<i32, proven, pristin
     Return
   b2():
     Return
-}
-# CHECK-LABEL: function f5 name="storeBelowLength"
 # CHECK: = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
 # CHECK: PutArrayElement v0, v1, v2, {{*}} arrayStorage=Int32 level=Expected [keyIsIntegral, isInBounds]
 # CHECK: = IsInBounds v0, v1
+}
 
 function f6 name="storeOfValueThatMayNotFit" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=number}] results=[{type=undefined}] {
   b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]> ~ Array<i32, proven, Int32, pristine[Storage, Names, Dense]>, v1: int[0, 1000], v2: number):
@@ -109,10 +103,9 @@ function f6 name="storeOfValueThatMayNotFit" parameters=[{type=Array<i32, proven
     Return
   b2():
     Return
-}
-# CHECK-LABEL: function f6 name="storeOfValueThatMayNotFit"
 # CHECK-NOT: IsInBounds
 # CHECK-NOT: isInBounds
+}
 
 function f7 name="storeInsideLengthEndsNoProof" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}] results=[{type=anything}] {
   b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]> ~ Array<i32, proven, Int32, pristine[Storage, Names, Dense]>, v1: int[0, 1000], v2: i32):
@@ -126,10 +119,9 @@ function f7 name="storeInsideLengthEndsNoProof" parameters=[{type=Array<i32, pro
   b2():
     v7 = Undefined
     Return v7
-}
-# CHECK-LABEL: function f7 name="storeInsideLengthEndsNoProof"
 # CHECK-COUNT-1: = HasArrayStorage v0
 # CHECK-NOT: = HasArrayStorage v0
+}
 
 function f8 name="storeAnywhereEndsTheProofs" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}, {type=int[0, 1000]}] results=[{type=anything}] {
   b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]> ~ Array<i32, proven, Int32, pristine[Storage, Names, Dense]>, v1: int[0, 1000], v2: i32, v3: int[0, 1000]):
@@ -143,9 +135,8 @@ function f8 name="storeAnywhereEndsTheProofs" parameters=[{type=Array<i32, prove
   b2():
     v8 = Undefined
     Return v8
-}
-# CHECK-LABEL: function f8 name="storeAnywhereEndsTheProofs"
 # CHECK-COUNT-2: = HasArrayStorage v0
+}
 
 function f9 name="loopThatStoresInsideTheLength" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}] results=[{type=anything}] {
   b0(v0: Array<i32, proven, pristine[Storage, Names, Dense]> ~ Array<i32, proven, Int32, pristine[Storage, Names, Dense]>):
@@ -202,9 +193,8 @@ function f10 name="loopThatStoresAnywhere" parameters=[{type=Array<i32, proven, 
     Jump -> next b1(v15)
   b3():
     Return
-}
 # The store may lengthen the array or give it other storage, so every turn tests the kind again.
-# CHECK-LABEL: function f10 name="loopThatStoresAnywhere"
 # CHECK: LoopHint
 # CHECK: = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
 # CHECK: PutArrayElement v0, v1, {{*}} arrayStorage=Int32 level=Expected [keyIsIntegral]
+}

@@ -18,7 +18,6 @@ layout L0 kind=Instance name="Shape" constructor=f1 fields=[{key="side" declared
 layout L1 kind=Instance name="Circle" base=L0 constructor=f2 supertypes=[L0] flags=[HasHeritage]
 layout L2 kind=Instance name="Dot" base=L0 constructor=f4 supertypes=[L0] flags=[HasHeritage]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = FinishClass v1 layout=L0
@@ -43,25 +42,21 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v20
 }
 function f1 name="Shape" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
     PropSet v3, v1 key="side"
     Return v3
 }
 function f2 name="Circle" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
-  b0(v0: function, v1: anything, v2: Array):
     v3 = GetSuperBase v0
     v4 = SuperConstructList v3, v1, v2 layout=L1
     Return v4
 }
 function f3 name="nothing" results=[{type=anything}] {
-  b0():
     v0 = Undefined
     Return v0
 }
 function f4 name="Dot" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
-  b0(v0: function, v1: anything, v2: Array):
     v3 = GetSuperBase v0
     v4 = SuperConstructList v3, v1, v2 layout=L2
     Return v4

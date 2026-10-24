@@ -14,10 +14,9 @@ function f0 name="inColdCode" parameters=[{type=object}, {type=number}] results=
     CopyDataProperties v2, v0
     v4 = FinishObject v2
     Return v4
-}
-# CHECK-LABEL: function f0 name="inColdCode"
 # CHECK: b0(
 # CHECK-NEXT: = NewObject
 # CHECK-NEXT: CopyDataProperties v2, v0
 # CHECK-NEXT: = FinishObject v2
 # CHECK-NEXT: Return v4
+}

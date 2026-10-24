@@ -11,7 +11,6 @@ layout L2 kind=Instance name="Left" base=L0 constructor=f2 flags=[HasHeritage]
 layout L3 kind=Instance name="Right" base=L0 constructor=f3 flags=[HasHeritage]
 variable g0 name="Base" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = NewClosure function=f1
@@ -38,20 +37,17 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     v3 = FinishObject v2
     Return v3
 }
 function f2 name="Left" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g0
     v2 = SuperConstruct v1, v0 layout=L2
     Return v2
 }
 function f3 name="Right" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g0
     v2 = SuperConstruct v1, v0 layout=L3
     Return v2

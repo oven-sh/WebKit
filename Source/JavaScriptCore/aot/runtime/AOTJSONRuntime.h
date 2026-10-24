@@ -110,11 +110,9 @@ private:
     uint8_t* reserve(size_t size);
     uint8_t* replace(size_t size);
     void freeCurrent();
-    void freeAll();
 
     bool openLatin1(std::span<const Latin1Character>, void* stackPointer);
     bool open16Bit(std::span<const char16_t>, void* stackPointer);
-    bool openUTF8(std::span<const uint8_t>, void* stackPointer);
 
     Instance& m_instance;
     bool m_hasParsedRecords { false };

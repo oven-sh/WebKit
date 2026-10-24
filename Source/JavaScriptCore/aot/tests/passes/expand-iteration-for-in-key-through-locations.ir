@@ -9,7 +9,6 @@ layout L1 kind=Environment name="scope" fields=[{key="k" declared={type=anything
 variable g0 name="key" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="mergeOfEqualValues" parameters=[{type=object}, {type=boolean}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: object, v1: boolean, v2: anything):
     v3 = ForInOpen v0
     Jump -> next b1()
   b1():
@@ -29,14 +28,12 @@ function f0 name="mergeOfEqualValues" parameters=[{type=object}, {type=boolean},
   b5(v10):
     v11 = ElemGet v0, v10
     Jump -> next b1()
-}
-# CHECK-LABEL: function f0 name="mergeOfEqualValues"
 # CHECK: [[position0]]: {{*}} = ResultAt v5 index=2
 # CHECK: = IsEnumeratorCurrent v3, v0, [[position0]]
 # CHECK: = EnumeratorGetByVal v0, v10, v3, [[position0]],
+}
 
 function f1 name="immutableEnvironmentField" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: object, v1: anything):
     v2 = ForInOpen v0
     Jump -> next b1()
   b1():
@@ -55,14 +52,12 @@ function f1 name="immutableEnvironmentField" parameters=[{type=object}, {type=an
   b3():
     v12 = Undefined
     Return v12
-}
-# CHECK-LABEL: function f1 name="immutableEnvironmentField"
 # CHECK: [[position1]]: {{*}} = ResultAt v4 index=2
 # CHECK: = IsEnumeratorCurrent v2, v0, [[position1]]
 # CHECK: = EnumeratorGetByVal v0, v10, v2, [[position1]],
+}
 
 function f2 name="environmentFieldStoredByCallee" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: object, v1: anything):
     v2 = ForInOpen v0
     Jump -> next b1()
   b1():
@@ -81,14 +76,12 @@ function f2 name="environmentFieldStoredByCallee" parameters=[{type=object}, {ty
   b3():
     v12 = Undefined
     Return v12
-}
-# CHECK-LABEL: function f2 name="environmentFieldStoredByCallee"
 # CHECK-NOT: IsEnumeratorCurrent
 # CHECK: v11: anything = ElemGet v0, v10
 # CHECK-NOT: IsEnumeratorCurrent
+}
 
 function f3 name="moduleVariable" parameters=[{type=object}] results=[{type=undefined}] {
-  b0(v0: object):
     v1 = ForInOpen v0
     Jump -> next b1()
   b1():
@@ -105,11 +98,10 @@ function f3 name="moduleVariable" parameters=[{type=object}] results=[{type=unde
   b3():
     v9 = Undefined
     Return v9
-}
-# CHECK-LABEL: function f3 name="moduleVariable"
 # CHECK: [[position3]]: {{*}} = ResultAt v3 index=2
 # CHECK: = IsEnumeratorCurrent v1, v0, [[position3]]
 # CHECK: true = Boolean boolean=true
+}
 
 function f4 name="reader" captures=[{type=env L0}] results=[{type=anything}] {
   b0(v0: env L0):

@@ -10,16 +10,10 @@
 
 #include "AOTCompiledCode.h"
 #include "AOTSort.h"
-#include "AOTVector.h"
 #include "AirBasicBlock.h"
 #include "AirInst.h"
 #include "AirOpcodeUtils.h"
 #include "B3Value.h"
-#include "LinkBuffer.h"
-#include <algorithm>
-#include <functional>
-#include <limits>
-#include <wtf/CheckedArithmetic.h>
 
 namespace JSC { namespace AOT {
 
@@ -143,16 +137,22 @@ static std::optional<StackPointerDisplacement> findStackPointerDisplacement(std:
     return StackPointerDisplacement { static_cast<uint8_t>(at), static_cast<uint8_t>(displacementSize) };
 }
 
-static bool canAdjustForNearCall(std::span<const uint8_t> bytes)
+// False, and nothing is written, for what is no such instruction and where a return address more on the stack would not leave the displacement in its field.
+static bool addToStackPointerDisplacement(std::span<uint8_t> bytes, int32_t addend)
 {
     auto displacement = findStackPointerDisplacement(bytes);
     if (!displacement)
         return false;
-    if (displacement->size == 1)
-        return static_cast<int8_t>(bytes[displacement->position]) >= 0 && bytes[displacement->position] <= std::numeric_limits<int8_t>::max() - sizeof(void*);
-    int32_t value;
-    memcpySpan(asMutableByteSpan(value), bytes.subspan(displacement->position, sizeof(value)));
-    return value >= 0 && value <= std::numeric_limits<int32_t>::max() - static_cast<int32_t>(sizeof(void*));
+    std::span<uint8_t> field = bytes.subspan(displacement->position, displacement->size);
+    int32_t value = static_cast<int8_t>(field[0]);
+    if (field.size() == sizeof(value))
+        memcpySpan(asMutableByteSpan(value), field);
+    int32_t largest = field.size() == 1 ? std::numeric_limits<int8_t>::max() : std::numeric_limits<int32_t>::max();
+    if (value < 0 || value > largest - static_cast<int32_t>(sizeof(void*)))
+        return false;
+    value += addend;
+    memcpySpan(field, asByteSpan(value).first(field.size()));
+    return true;
 }
 #endif
 
@@ -241,17 +241,7 @@ PackedCodeUnits::Iterator adjustForNearCall(std::span<uint8_t> bytes, PackedCode
             break;
         if (unit.kind != CodeUnit::Kind::PlainOffStackPointer)
             continue;
-        std::span<uint8_t> instruction = bytes.subspan(unit.offset - firstOffset, unit.length);
-        RELEASE_ASSERT(canAdjustForNearCall(instruction));
-        auto displacement = *findStackPointerDisplacement(instruction);
-        if (displacement.size == 1) {
-            instruction[displacement.position] += sizeof(void*);
-            continue;
-        }
-        int32_t value;
-        memcpySpan(asMutableByteSpan(value), instruction.subspan(displacement.position, sizeof(value)));
-        value += sizeof(void*);
-        memcpySpan(instruction.subspan(displacement.position, sizeof(value)), asByteSpan(value));
+        RELEASE_ASSERT(addToStackPointerDisplacement(bytes.subspan(unit.offset - firstOffset, unit.length), sizeof(void*)));
     }
 #else
     UNUSED_PARAM(bytes);
@@ -314,10 +304,8 @@ void CodeUnitRecorder::willGenerate(const B3::Air::BasicBlock& block)
 
 void CodeUnitRecorder::willGenerateBlock(bool isCold, bool isRarelyRun)
 {
-    if (!isCold)
-        m_blockState = BlockState::StartsHotBlock;
-    else
-        m_blockState = isRarelyRun ? BlockState::InColdBlock : BlockState::StartsColdBlockThatMayRun;
+    m_blockHeat = !isCold ? BlockHeat::Hot : isRarelyRun ? BlockHeat::RarelyRun : BlockHeat::ColdButMayRun;
+    m_isAtStartOfBlock = true;
 }
 
 void CodeUnitRecorder::addRange(MacroAssembler::Label begin, MacroAssembler::Label end, CodeUnit::Kind kind)
@@ -344,28 +332,16 @@ void CodeUnitRecorder::didGenerateInBlock(MacroAssembler::Label begin, MacroAsse
     if (begin == end)
         return;
 
-    // All of a hot block is pinned, whatever its instructions are.
-    switch (m_blockState) {
-    case BlockState::NoBlock:
-    case BlockState::StartsHotBlock:
-        m_hotBlockRanges.append({ begin, end });
-        m_blockState = BlockState::InHotBlock;
-        return;
-    case BlockState::InHotBlock:
-        m_hotBlockRanges.last().second = end;
-        return;
-    case BlockState::InColdBlock:
-        break;
-    case BlockState::StartsColdBlockThatMayRun:
-        m_rangesOfColdBlocksThatMayRun.append({ begin, end });
-        m_blockState = BlockState::InColdBlockThatMayRun;
-        break;
-    case BlockState::InColdBlockThatMayRun:
-        m_rangesOfColdBlocksThatMayRun.last().second = end;
-        break;
+    if (m_blockHeat != BlockHeat::RarelyRun) {
+        auto& ranges = m_blockHeat == BlockHeat::Hot ? m_hotBlockRanges : m_rangesOfColdBlocksThatMayRun;
+        if (std::exchange(m_isAtStartOfBlock, false))
+            ranges.append({ begin, end });
+        else
+            ranges.last().second = end;
     }
-
-    addRange(begin, end, kind);
+    // All of a hot block is pinned, whatever its instructions are.
+    if (m_blockHeat != BlockHeat::Hot)
+        addRange(begin, end, kind);
 }
 
 void CodeUnitRecorder::addPlain(MacroAssembler::Label begin, MacroAssembler::Label end, const RegisterSet& named)
@@ -439,7 +415,7 @@ static const OffsetRange* findRangeCovering(std::span<const OffsetRange> ranges,
     return cursor < ranges.size() && ranges[cursor].begin <= offset ? &ranges[cursor] : nullptr;
 }
 
-static Vector<CodeUnit> tileCode(std::span<const uint32_t> cuts, std::span<const CodeUnit> exactUnits, const LinkedRanges& ranges, std::span<const uint8_t> bytes)
+static Vector<CodeUnit> tileCode(std::span<const uint32_t> cuts, std::span<const CodeUnit> exactUnits, const LinkedRanges& ranges, std::span<uint8_t> bytes)
 {
     Vector<CodeUnit> units;
     units.reserveInitialCapacity(cuts.size());
@@ -467,7 +443,7 @@ static Vector<CodeUnit> tileCode(std::span<const uint32_t> cuts, std::span<const
         else if (range && range->kind == CodeUnit::Kind::Plain)
             kind = CodeUnit::Kind::Plain;
 #if CPU(X86_64)
-        else if (range && range->kind == CodeUnit::Kind::PlainOffStackPointer && !isHot && range->begin == begin && range->end == end && canAdjustForNearCall(bytes.subspan(begin, end - begin)))
+        else if (range && range->kind == CodeUnit::Kind::PlainOffStackPointer && !isHot && range->begin == begin && range->end == end && addToStackPointerDisplacement(bytes.subspan(begin, end - begin), 0))
             kind = CodeUnit::Kind::PlainOffStackPointer;
 #endif
         appendPieces(units, begin, end, isHot || isPinnedByClient ? CodeUnit::Kind::Pinned : kind, mayRun);
@@ -564,90 +540,56 @@ Vector<CodeUnit> CodeUnitRecorder::link(ImageLinkBuffer& buffer, std::span<const
     return tileCode(cuts.span(), exactUnits.span(), ranges, buffer.bytes());
 }
 
-static bool unitsTileCode(std::span<const CodeUnit> units, size_t size)
+CodeUnitsError verifyCodeUnits(const CompiledCode& code)
 {
-    uint64_t end = 0;
+    using Kind = CodeUnit::Kind;
+    const CodeBody& body = code.body;
+    if (body.units.isEmpty())
+        return CodeUnitsError::None;
+    Vector<CodeUnit> units = body.units.unpack();
+    size_t codeSize = body.bytes.size();
+    uint64_t endOfUnits = 0;
     for (const CodeUnit& unit : units) {
-        if (unit.offset != end || !unit.length)
-            return false;
-        end += unit.length;
+        if (unit.offset != endOfUnits || !unit.length)
+            return CodeUnitsError::UnitsDoNotTileCode;
+        endOfUnits += unit.length;
     }
-    return end == size;
-}
+    if (endOfUnits != codeSize)
+        return CodeUnitsError::UnitsDoNotTileCode;
+    if (!ascendStrictly(body.relocations, &Relocation::offset) || !ascendStrictly(body.localSites, &LinkedSite::offset) || !ascendStrictly(body.returnSites, &ReturnSite::offset))
+        return CodeUnitsError::OffsetsDoNotAscend;
 
-static const CodeUnit* findUnitStartingAt(std::span<const CodeUnit> units, uint32_t offset)
-{
-    auto found = std::ranges::lower_bound(units, offset, { }, &CodeUnit::offset);
-    return found != units.end() && found->offset == offset ? &*found : nullptr;
-}
-
-static bool isUnitBoundary(std::span<const CodeUnit> units, size_t size, uint32_t offset)
-{
-    return offset == size || findUnitStartingAt(units, offset);
-}
-
-static bool liesInPinnedUnits(std::span<const CodeUnit> units, uint32_t begin, uint32_t end)
-{
-    if (begin == end)
-        return true;
-    auto unit = std::ranges::upper_bound(units, begin, { }, &CodeUnit::offset);
-    RELEASE_ASSERT(unit != units.begin());
-    for (--unit; unit != units.end() && unit->offset < end; ++unit) {
-        if (unit->kind != CodeUnit::Kind::Pinned)
-            return false;
-    }
-    return true;
-}
-
-namespace {
-
-class CodeOffsetVerifier {
-public:
-    CodeOffsetVerifier(std::span<const CodeUnit> units, size_t codeSize)
-        : m_units(units)
-        , m_codeSize(codeSize)
-    {
-    }
-
-    void visit(uint32_t offset, CodeOffsetRole role, unsigned size)
-    {
-        if (m_error == CodeUnitsError::None)
-            m_error = verify(offset, role, size);
-    }
-
-    CodeUnitsError finish() const
-    {
-        if (m_error != CodeUnitsError::None)
-            return m_error;
-        size_t numberOfCallUnits = static_cast<size_t>(std::ranges::count(m_units, CodeUnit::Kind::Call, &CodeUnit::kind));
-        return m_numberOfCallUnitsVisited == numberOfCallUnits ? CodeUnitsError::None : CodeUnitsError::CallIsNotAUnit;
-    }
-
-private:
-    bool splitsUnitInWindow(uint32_t offset) const
-    {
-        return !isUnitBoundary(m_units, m_codeSize, offset) && !liesInPinnedUnits(m_units, offset, offset + 1);
-    }
-
-    CodeUnitsError verifyCall(uint32_t offset, unsigned size)
-    {
-        const CodeUnit* unit = findUnitStartingAt(m_units, offset);
-        if (unit && unit->kind == CodeUnit::Kind::Call && unit->length == size) {
-            ++m_numberOfCallUnitsVisited;
-            return CodeUnitsError::None;
+    auto findUnitStartingAt = [&](uint32_t offset) -> const CodeUnit* {
+        auto found = std::ranges::lower_bound(units, offset, { }, &CodeUnit::offset);
+        return found != units.end() && found->offset == offset ? &*found : nullptr;
+    };
+    auto liesInPinnedUnits = [&](uint32_t begin, uint32_t end) {
+        if (begin == end)
+            return true;
+        auto unit = std::ranges::upper_bound(units, begin, { }, &CodeUnit::offset);
+        RELEASE_ASSERT(unit != units.begin());
+        for (--unit; unit != units.end() && unit->offset < end; ++unit) {
+            if (unit->kind != Kind::Pinned)
+                return false;
         }
-        return liesInPinnedUnits(m_units, offset, offset + size) ? CodeUnitsError::None : CodeUnitsError::CallIsNotAUnit;
-    }
-
-    CodeUnitsError verify(uint32_t offset, CodeOffsetRole role, unsigned size)
-    {
-        if (static_cast<uint64_t>(offset) + size > m_codeSize)
+        return true;
+    };
+    auto splitsUnitInWindow = [&](uint32_t offset) {
+        return offset != codeSize && !findUnitStartingAt(offset) && !liesInPinnedUnits(offset, offset + 1);
+    };
+    size_t numberOfCallUnitsVisited = 0;
+    auto verify = [&](uint32_t offset, CodeOffsetRole role, unsigned size) {
+        if (static_cast<uint64_t>(offset) + size > codeSize)
             return CodeUnitsError::OffsetOutsideCode;
         switch (role) {
         case CodeOffsetRole::Call:
-            return verifyCall(offset, size);
+            if (const CodeUnit* unit = findUnitStartingAt(offset); unit && unit->kind == Kind::Call && unit->length == size) {
+                ++numberOfCallUnitsVisited;
+                return CodeUnitsError::None;
+            }
+            return liesInPinnedUnits(offset, offset + size) ? CodeUnitsError::None : CodeUnitsError::CallIsNotAUnit;
         case CodeOffsetRole::Site:
-            return liesInPinnedUnits(m_units, offset, offset + size) ? CodeUnitsError::None : CodeUnitsError::SiteIsNotPinned;
+            return liesInPinnedUnits(offset, offset + size) ? CodeUnitsError::None : CodeUnitsError::SiteIsNotPinned;
         case CodeOffsetRole::Target:
             return splitsUnitInWindow(offset) ? CodeUnitsError::TargetIsNotABoundary : CodeUnitsError::None;
         case CodeOffsetRole::ReturnAddress:
@@ -656,33 +598,15 @@ private:
             return CodeUnitsError::None;
         }
         RELEASE_ASSERT_NOT_REACHED();
-    }
-
-    std::span<const CodeUnit> m_units;
-    size_t m_codeSize;
-    size_t m_numberOfCallUnitsVisited { 0 };
-    CodeUnitsError m_error { CodeUnitsError::None };
-};
-
-} // anonymous namespace
-
-CodeUnitsError verifyCodeUnits(const CompiledCode& code)
-{
-    const CodeBody& body = code.body;
-    if (body.units.isEmpty())
-        return CodeUnitsError::None;
-    Vector<CodeUnit> unpackedUnits = body.units.unpack();
-    std::span<const CodeUnit> units = unpackedUnits.span();
-    if (!unitsTileCode(units, body.bytes.size()))
-        return CodeUnitsError::UnitsDoNotTileCode;
-    if (!ascendStrictly(body.relocations, &Relocation::offset) || !ascendStrictly(body.localSites, &LinkedSite::offset) || !ascendStrictly(body.returnSites, &ReturnSite::offset))
-        return CodeUnitsError::OffsetsDoNotAscend;
-
-    CodeOffsetVerifier verifier(units, body.bytes.size());
+    };
+    CodeUnitsError error = CodeUnitsError::None;
     forEachCodeOffset(code, [&](uint32_t offset, CodeOffsetRole role, unsigned size) {
-        verifier.visit(offset, role, size);
+        if (error == CodeUnitsError::None)
+            error = verify(offset, role, size);
     });
-    return verifier.finish();
+    if (error != CodeUnitsError::None)
+        return error;
+    return numberOfCallUnitsVisited == static_cast<size_t>(std::ranges::count(units, Kind::Call, &CodeUnit::kind)) ? CodeUnitsError::None : CodeUnitsError::CallIsNotAUnit;
 }
 
 } } // namespace JSC::AOT

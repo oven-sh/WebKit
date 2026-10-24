@@ -10,7 +10,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Box" fields=[{key="k" declared={type=number} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 
 function f0 name="forOf" parameters=[{type=Array<number, proven, Double, pristine[Storage, Names, Dense]>}] results=[{type=number}] {
-  b0(v0: Array<number, proven, Double, pristine[Storage, Names, Dense]>):
     v1 = Integer
     v2 = IteratorOpen v0
     Jump -> next b1(v1)
@@ -26,20 +25,17 @@ function f0 name="forOf" parameters=[{type=Array<number, proven, Double, pristin
     Jump -> next b1(v9)
   b3():
     Return v3
-}
-# CHECK-LABEL: function f0 name="forOf"
 # CHECK-NOT: IteratorOpen
 # CHECK-NOT: IteratorResume
 # CHECK: = CallBuiltin v0 overload=ArrayPrototypeLength/0
 # CHECK-NOT: IteratorResume
 # CHECK: = GetArrayElement v0, {{*}} level=Proven
 # CHECK-NOT: IteratorResume
-# UNEXPANDED-LABEL: function f0 name="forOf"
 # UNEXPANDED: = IteratorOpen v0
 # UNEXPANDED: = IteratorResume v2
+}
 
 function f1 name="indexed" parameters=[{type=Array<number, proven, Double, pristine[Storage, Names, Dense]>}] results=[{type=number}] {
-  b0(v0: Array<number, proven, Double, pristine[Storage, Names, Dense]>):
     v1 = Integer
     Jump -> next b1(v1, v1)
   b1(v2: number, v3: int[0, 4294967295]):
@@ -86,61 +82,52 @@ function f2 name="forOfExpectedArray" parameters=[{type=Array<number> flags=[IsE
 # UNEXPANDED-LABEL: function f2 name="forOfExpectedArray"
 
 function f3 name="aroundForOf" parameters=[{type=L0}, {type=Array<number, proven, Double, pristine[Storage, Names, Dense]>}] results=[{type=boolean}] {
-  b0(v0: L0, v1: Array<number, proven, Double, pristine[Storage, Names, Dense]>):
     v2 = PropGet v0 key="k"
     v3 = CallDirect v1 function=f0 [isNeverInlined]
     v4 = PropGet v0 key="k"
     v5 = StrictEq v2, v4
     Return v5
-}
-# CHECK-LABEL: function f3 name="aroundForOf"
 # CHECK: [[first3]]: {{*}} = GetSlot v0{{*}} key="k"
 # CHECK: = CallDirect v1 function=f0 [isNeverInlined]
 # CHECK-NOT: GetSlot
 # CHECK: = Upcast [[first3]]
 # CHECK-NOT: GetSlot
-# UNEXPANDED-LABEL: function f3 name="aroundForOf"
 # UNEXPANDED: = GetSlot v0{{*}} key="k"
 # UNEXPANDED: = CallDirect v1 function=f0 [isNeverInlined]
 # UNEXPANDED: = GetSlot v0{{*}} key="k"
+}
 
 function f4 name="aroundIndexed" parameters=[{type=L0}, {type=Array<number, proven, Double, pristine[Storage, Names, Dense]>}] results=[{type=boolean}] {
-  b0(v0: L0, v1: Array<number, proven, Double, pristine[Storage, Names, Dense]>):
     v2 = PropGet v0 key="k"
     v3 = CallDirect v1 function=f1 [isNeverInlined]
     v4 = PropGet v0 key="k"
     v5 = StrictEq v2, v4
     Return v5
-}
-# CHECK-LABEL: function f4 name="aroundIndexed"
 # CHECK: [[first4]]: {{*}} = GetSlot v0{{*}} key="k"
 # CHECK: = CallDirect v1 function=f1 [isNeverInlined]
 # CHECK-NOT: GetSlot
 # CHECK: = Upcast [[first4]]
 # CHECK-NOT: GetSlot
-# UNEXPANDED-LABEL: function f4 name="aroundIndexed"
 # UNEXPANDED: [[unexpandedFirst4]]: {{*}} = GetSlot v0{{*}} key="k"
 # UNEXPANDED: = CallDirect v1 function=f1 [isNeverInlined]
 # UNEXPANDED-NOT: GetSlot
 # UNEXPANDED: = Upcast [[unexpandedFirst4]]
 # UNEXPANDED-NOT: GetSlot
+}
 
 function f5 name="aroundForOfExpectedArray" parameters=[{type=L0}, {type=anything}] results=[{type=boolean}] {
-  b0(v0: L0, v1: anything):
     v2 = PropGet v0 key="k"
     v3 = CallDirect v1 function=f2 [isNeverInlined]
     v4 = PropGet v0 key="k"
     v5 = StrictEq v2, v4
     Return v5
-}
-# CHECK-LABEL: function f5 name="aroundForOfExpectedArray"
 # CHECK: = GetSlot v0{{*}} key="k"
 # CHECK: = CallDirect v1 function=f2 [isNeverInlined]
 # CHECK: = GetSlot v0{{*}} key="k"
-# UNEXPANDED-LABEL: function f5 name="aroundForOfExpectedArray"
 # UNEXPANDED: = GetSlot v0{{*}} key="k"
 # UNEXPANDED: = CallDirect v1 function=f2 [isNeverInlined]
 # UNEXPANDED: = GetSlot v0{{*}} key="k"
+}
 
 # A summary that has unknown code names where it comes from at the end of its line.
 # SUMMARIES: f0 return:

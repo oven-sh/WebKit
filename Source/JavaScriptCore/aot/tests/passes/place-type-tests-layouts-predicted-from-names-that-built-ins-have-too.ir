@@ -16,40 +16,36 @@ function f0 name="besideNameOfItsOwn" parameters=[{type=object flags=[IsExpected
     v1 = PropGet v0 key="flags"
     v2 = PropGet v0 key="tag"
     Return v2
-}
-# CHECK-LABEL: function f0 name="besideNameOfItsOwn"
 # CHECK-NEXT: b0(v0: anything ~ L4):
 # CHECK-NEXT: = TypeTest v0 testedType=L4
 # CHECK: = GetSlot {{*}} key="flags" receivers=[L4] level=Expected
 # CHECK: = GetSlot {{*}} key="tag" receivers=[L4] level=Expected
+}
 
 function f1 name="methodOfBuiltinsReadAndNotCalled" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ object):
     v1 = PropGet v0 key="return"
     Return v1
-}
-# CHECK-LABEL: function f1 name="methodOfBuiltinsReadAndNotCalled"
 # CHECK-NEXT: b0(v0: anything ~ L4):
 # CHECK-NEXT: = TypeTest v0 testedType=L4
 # CHECK: = GetSlot {{*}} key="return" receivers=[L4] level=Expected
+}
 
 function f2 name="methodOfBuiltinsCalled" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ object):
     v1 = PropGet v0 key="return"
     v2 = Call v1, v0 calleeKey="return"
     Return v2
-}
-# CHECK-LABEL: function f2 name="methodOfBuiltinsCalled"
 # CHECK-NOT: testedType=L4
+}
 
 function f3 name="dataOfBuiltinsAlone" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ object):
     v1 = PropGet v0 key="size"
     Return v1
-}
-# CHECK-LABEL: function f3 name="dataOfBuiltinsAlone"
 # CHECK-NEXT: b0(v0: anything ~ object):
 # CHECK-NEXT: = PropGet v0 key="size"
+}
 
 function f4 name="Token" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
 function f5 name="Shape" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1

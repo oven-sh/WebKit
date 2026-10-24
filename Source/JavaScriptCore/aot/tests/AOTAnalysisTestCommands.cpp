@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTCallGraph.h"
-#include "AOTEffectSummaries.h"
 #include "AOTEffectsDescription.h"
 #include "AOTFlowApply.h"
 #include "AOTHeatGraph.h"
@@ -20,22 +19,14 @@
 #include "AOTSSARepair.h"
 #include "AOTValueFlowResults.h"
 #include "AOTValueSubstitution.h"
-#include "AOTVector.h"
 #include "AOTVerifier.h"
 #include <algorithm>
 #include <wtf/EnumTraits.h>
-#include <wtf/StringPrintStream.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-namespace {
-
-enum class TestedBlockEdit : uint8_t { Split, RemoveParameters, EraseValues };
-
 using FunctionCommand = void (*)(TestCommandContext&, CommandWords&, Session&);
 using ArgumentOnEdge = std::pair<Edge, ValueID>;
-
-} // anonymous namespace
 
 FlowPreparation prepareFlow(TestCommandContext& context, CommandWords& words)
 {
@@ -118,8 +109,10 @@ static void runOnFunction(TestCommandContext& context)
     if (printsUseLists)
         session.analyses.setRunningPass(PassID::CompactBlocks);
     run(context, words, session);
-    if (printsUseLists)
-        dumpAnalyses(context.out, session.analyses, FunctionAnalysis::UseLists);
+    if (printsUseLists) {
+        context.out.println("use-lists:");
+        dumpUseLists(context.out, session.function, session.analyses.useLists());
+    }
 }
 
 static bool beginRewrite(CommandWords& words, Session& session)
@@ -130,10 +123,27 @@ static bool beginRewrite(CommandWords& words, Session& session)
     return true;
 }
 
-static void finishRewrite(TestCommandContext& context, Session& session)
+static void printAndVerify(TestCommandContext& context, FunctionID id, const Function& function)
 {
-    printFunction(context.out, *context.program, session.id, session.function);
-    verifyFunction(*context.program, session.id, session.function, context.form, context.build);
+    printFunction(context.out, *context.program, id, function);
+    verifyFunction(*context.program, id, function, context.form, context.build);
+}
+
+static void rewriteAndPrint(TestCommandContext& context, CommandWords& words, Session& session, NOESCAPE const auto& edit)
+{
+    if (!beginRewrite(words, session))
+        return;
+    if constexpr (std::is_void_v<decltype(edit())>)
+        edit();
+    else if (!edit())
+        return;
+    printAndVerify(context, session.id, session.function);
+}
+
+static bool printCloneCheck(PrintStream& out, CloneCheck check)
+{
+    out.println("check: ", enumName(check));
+    return check == CloneCheck::CanClone;
 }
 
 static auto valueInBlockParser(Session& session)
@@ -143,39 +153,10 @@ static auto valueInBlockParser(Session& session)
     });
 }
 
-static auto typeParser(const Program& program)
-{
-    return [&program](StringView text) -> std::optional<TypeID> {
-        for (uint32_t index = 0; index < program.types.size(); ++index) {
-            StringPrintStream printed;
-            printType(printed, program, TypeID(index));
-            String printedText = printed.toString();
-            if (printedText == text)
-                return TypeID(index);
-        }
-        return std::nullopt;
-    };
-}
-
 static ProgramPoint pointBefore(Session& session, ValueID value)
 {
     ValueLocation location = session.analyses.useLists().locationOf(value);
     return { location.block, location.index };
-}
-
-static void appendExpansionArm(IRBuilder& builder, const IRBuilder::Expansion& expansion, const Value& original, bool isReadByResultAt)
-{
-    ValueID copy = builder.append(Value(original));
-    Vector<ValueID, 2> results;
-    if (isReadByResultAt) {
-        for (uint32_t index = 0; index < expansion.results.size(); ++index) {
-            Value result = IRBuilder::make(Opcode::ResultAt, { copy });
-            result.setIndex(index);
-            results.append(builder.append(WTF::move(result)));
-        }
-    } else if (!expansion.results.isEmpty())
-        results.append(copy);
-    builder.endExpansion(expansion, results.span());
 }
 
 static void expandValue(TestCommandContext& context, CommandWords& words, Session& session)
@@ -193,44 +174,50 @@ static void expandValue(TestCommandContext& context, CommandWords& words, Sessio
         return candidate.opcode == Opcode::ResultAt && candidate.operand(0) == value;
     });
     std::optional<Vector<ValueID>> reads = words.parseOptional("reads"_s, listParser(parseRead));
-    if (!beginRewrite(words, session))
-        return;
 
-    IRBuilder& builder = session.builder;
-    const Value original = session.function.at(value);
-    bool isReadByResultAt = numberOfResultsOf(*context.program, session.function, original).has_value();
-    ProgramPoint point = pointBefore(session, value);
-    IRBuilder::Expansion expansion = reads ? builder.beginExpansion(point, reads->span()) : builder.beginExpansion(point);
-    if (numberOfArms == maxNumberOfArms) {
-        IRBuilder::BranchBlocks blocks = builder.emitBranch(builder.appendBoolean(true), BlockFrequency::Normal, BlockFrequency::Unlikely);
-        appendExpansionArm(builder, expansion, original, isReadByResultAt);
-        builder.moveToEndOf(blocks.notTaken);
-    }
-    appendExpansionArm(builder, expansion, original, isReadByResultAt);
-    finishRewrite(context, session);
+    rewriteAndPrint(context, words, session, [&] {
+        IRBuilder& builder = session.builder;
+        const Value original = session.function.at(value);
+        bool isReadByResultAt = numberOfResultsOf(*context.program, session.function, original).has_value();
+        ProgramPoint point = pointBefore(session, value);
+        IRBuilder::Expansion expansion = reads ? builder.beginExpansion(point, reads->span()) : builder.beginExpansion(point);
+        auto appendArm = [&] {
+            ValueID copy = builder.append(Value(original));
+            Vector<ValueID, 2> results;
+            if (isReadByResultAt) {
+                for (uint32_t index = 0; index < expansion.results.size(); ++index) {
+                    Value result = IRBuilder::make(Opcode::ResultAt, { copy });
+                    result.setIndex(index);
+                    results.append(builder.append(WTF::move(result)));
+                }
+            } else if (!expansion.results.isEmpty())
+                results.append(copy);
+            builder.endExpansion(expansion, results.span());
+        };
+        if (numberOfArms == maxNumberOfArms) {
+            IRBuilder::BranchBlocks blocks = builder.emitBranch(builder.appendBoolean(true), BlockFrequency::Normal, BlockFrequency::Unlikely);
+            appendArm();
+            builder.moveToEndOf(blocks.notTaken);
+        }
+        appendArm();
+    });
 }
 
 static void coverBlocks(TestCommandContext& context, CommandWords& words, Session& session)
 {
     BlockID handler = words.parseRequired("handler"_s, edgeTargetParser(session.function));
     Vector<BlockID> blocks = words.parseRequired("blocks"_s, listParser(blockParser(session.function)));
-    if (!beginRewrite(words, session))
-        return;
-
-    session.builder.coverWithHandler(blocks.span(), Target { handler, { }, { } });
-    finishRewrite(context, session);
+    rewriteAndPrint(context, words, session, [&] { session.builder.coverWithHandler(blocks.span(), Target { handler, { }, { } }); });
 }
 
-static void addVariables(SSARepair& repair, const Vector<Vector<ValueID>>& variables)
+static Vector<Vector<ValueID>> parseVariables(CommandWords& words, const Function& function)
 {
-    for (const Vector<ValueID>& definitions : variables) {
-        SSARepair::Variable variable = repair.addVariable(definitions.first());
-        for (ValueID definition : definitions.subspan(1))
-            repair.addDefinition(variable, definition);
-    }
+    BitVector isDefinition;
+    auto parseDefinition = filterParser(valueParser(function), [&](ValueID value) { return !isDefinition.set(value.index()); });
+    return words.parseAll("variable"_s, listParser(parseDefinition));
 }
 
-static void nameFirstDefinitions(Session& session, const Vector<Vector<ValueID>>& variables)
+static void repairVariables(Session& session, const Vector<Vector<ValueID>>& variables, RegionCloner* cloner = nullptr)
 {
     ValueSubstitution substitution(session.function);
     for (const Vector<ValueID>& definitions : variables) {
@@ -238,6 +225,16 @@ static void nameFirstDefinitions(Session& session, const Vector<Vector<ValueID>>
             substitution.replace(definition, definitions.first());
     }
     substitution.apply(session.function, &session.analyses);
+
+    SSARepair repair(session.builder, session.analyses);
+    for (const Vector<ValueID>& definitions : variables) {
+        SSARepair::Variable variable = repair.addVariable(definitions.first());
+        for (ValueID definition : definitions.subspan(1))
+            repair.addDefinition(variable, definition);
+    }
+    if (cloner)
+        cloner->addVariablesTo(repair, session.analyses);
+    repair.run();
 }
 
 static void duplicateRegion(TestCommandContext& context, CommandWords& words, Session& session)
@@ -246,45 +243,29 @@ static void duplicateRegion(TestCommandContext& context, CommandWords& words, Se
     Vector<BlockID> region = words.parseRequired("region"_s, listParser(blockParser(function)));
     auto entersRegion = [&](Edge edge) { return region.contains(targetOf(function, edge).block); };
     Vector<Edge> redirectedEdges = words.parseAll("redirect"_s, filterParser(edgeParser(function), entersRegion));
-    BitVector isDefinition;
-    auto parseDefinition = filterParser(valueParser(function), [&](ValueID value) { return !isDefinition.set(value.index()); });
-    Vector<Vector<ValueID>> variables = words.parseAll("variable"_s, listParser(parseDefinition));
-    if (!beginRewrite(words, session))
-        return;
+    Vector<Vector<ValueID>> variables = parseVariables(words, function);
 
-    Vector<BlockID> entries;
-    for (Edge edge : redirectedEdges) {
-        BlockID target = targetOf(function, edge).block;
-        if (region.contains(edge.from) && !entries.contains(target))
-            entries.append(target);
-    }
-    CloneCheck check = RegionCloner::checkCanDuplicate(session.analyses, region.span(), entries.span());
-    context.out.println("check: ", enumName(check));
-    if (check != CloneCheck::CanClone)
-        return;
+    rewriteAndPrint(context, words, session, [&] {
+        Vector<BlockID> entries;
+        for (Edge edge : redirectedEdges) {
+            BlockID target = targetOf(function, edge).block;
+            if (region.contains(edge.from) && !entries.contains(target))
+                entries.append(target);
+        }
+        if (!printCloneCheck(context.out, RegionCloner::checkCanDuplicate(session.analyses, region.span(), entries.span())))
+            return false;
 
-    RegionCloner cloner(session.builder, function);
-    cloner.cloneBlocks(region.span(), [](ValueID, Value&) { });
-    for (Edge edge : redirectedEdges) {
-        if (entersRegion(edge))
-            session.builder.redirectEdge(edge, cloner.cloneOf(targetOf(function, edge).block), Arguments(targetOf(function, edge).arguments));
-    }
-    if (variables.isEmpty())
-        cloner.repairSSA(session.analyses);
-    else {
-        nameFirstDefinitions(session, variables);
-        SSARepair repair(session.builder, session.analyses);
-        addVariables(repair, variables);
-        cloner.addVariablesTo(repair, session.analyses);
-        repair.run();
-    }
-    finishRewrite(context, session);
-}
-
-static bool hasEdgeLeavingRegion(const Function& function, const Vector<BlockID>& region)
-{
-    return std::ranges::any_of(region, [&](BlockID block) {
-        return std::ranges::any_of(function.at(block).terminator.targets, [&](const Target& target) { return !region.contains(target.block); });
+        RegionCloner cloner(session.builder, function);
+        cloner.cloneBlocks(region.span(), [](ValueID, Value&) { });
+        for (Edge edge : redirectedEdges) {
+            if (entersRegion(edge))
+                session.builder.redirectEdge(edge, cloner.cloneOf(targetOf(function, edge).block), Arguments(targetOf(function, edge).arguments));
+        }
+        if (variables.isEmpty())
+            cloner.repairSSA(session.analyses);
+        else
+            repairVariables(session, variables, &cloner);
+        return true;
     });
 }
 
@@ -327,14 +308,12 @@ static Function outlineRegion(Session& session, const Vector<BlockID>& region, c
 static void extractRegion(TestCommandContext& context, CommandWords& words, Session& session)
 {
     Vector<BlockID> region = words.parseRequired("region"_s, listParser(blockParser(session.function)));
-    if (!beginRewrite(words, session))
+    if (!beginRewrite(words, session) || !printCloneCheck(context.out, RegionCloner::checkCanExtract(session.analyses, region.span())))
         return;
-
-    CloneCheck check = RegionCloner::checkCanExtract(session.analyses, region.span());
-    context.out.println("check: ", enumName(check));
-    if (check != CloneCheck::CanClone)
-        return;
-    if (hasEdgeLeavingRegion(session.function, region)) {
+    bool hasEdgeLeavingRegion = std::ranges::any_of(region, [&](BlockID block) {
+        return std::ranges::any_of(session.function.at(block).terminator.targets, [&](const Target& target) { return !region.contains(target.block); });
+    });
+    if (hasEdgeLeavingRegion) {
         words.fail("region"_s);
         return;
     }
@@ -342,21 +321,8 @@ static void extractRegion(TestCommandContext& context, CommandWords& words, Sess
     Vector<ValueID> liveIns = RegionCloner::findLiveIns(session.function, region.span());
     dumpLine(context.out, "live-ins: "_s, liveIns);
     Function outlined = outlineRegion(session, region, liveIns);
-
     FunctionID outlinedID = ProgramEditor(*context.program).addFunctionLike(session.id, WTF::move(outlined));
-    const Function& addedFunction = context.program->at(outlinedID);
-    printFunction(context.out, *context.program, outlinedID, addedFunction);
-    verifyFunction(*context.program, outlinedID, addedFunction, context.form, context.build);
-}
-
-static void demoteReturnCalls(Session& session, FunctionID id, Function& function)
-{
-    const AnalysisContext& context = session.analysisContext;
-    IRBuilder builder(AnalysisContext { context.build, context.program, context.flow, context.effects, id }, function, session.types);
-    for (uint32_t index = 0; index < function.blocks.size(); ++index) {
-        if (function.blocks[index].terminator.kind == TerminatorKind::ReturnCall)
-            builder.demoteReturnCall(BlockID(index));
-    }
+    printAndVerify(context, outlinedID, context.program->at(outlinedID));
 }
 
 static void inlineCall(TestCommandContext& context, CommandWords& words, Session& session)
@@ -367,90 +333,80 @@ static void inlineCall(TestCommandContext& context, CommandWords& words, Session
         const Value& value = function.at(id);
         return value.opcode == Opcode::CallDirect && program.at(value.function()).hasBody() && !numberOfResultsOf(program, function, value);
     }));
-    if (!beginRewrite(words, session))
-        return;
 
-    IRBuilder& builder = session.builder;
-    const Value call = function.at(callID);
-    CloneCheck check = RegionCloner::checkCanInline(program.at(call.function()));
-    context.out.println("check: ", enumName(check));
-    if (check != CloneCheck::CanClone)
-        return;
+    rewriteAndPrint(context, words, session, [&] {
+        IRBuilder& builder = session.builder;
+        const Value call = function.at(callID);
+        if (!printCloneCheck(context.out, RegionCloner::checkCanInline(program.at(call.function()))))
+            return false;
 
-    Function callee = program.at(call.function());
-    demoteReturnCalls(session, call.function(), callee);
-    IRBuilder::Expansion expansion = builder.beginExpansion(pointBefore(session, callID));
-    builder.setHandler(expansion.handler);
-    RegionCloner cloner(builder, callee);
-    for (uint32_t index = 0; index < callee.blocks[0].parameters.size(); ++index)
-        cloner.mapValue(callee.blocks[0].parameters[index], call.operand(index));
-    cloner.cloneBlocks(idsMatching<BlockID>(callee.blocks.size(), [](BlockID) { return true; }).span(), [](ValueID, Value&) { });
-    builder.emitJump(cloner.cloneOf(entryBlock));
-    for (BlockID block : cloner.clonedBlocks()) {
-        Terminator& terminator = function.edit(block).terminator;
-        if (terminator.kind != TerminatorKind::Return)
-            continue;
-        ValueID result = std::exchange(terminator, Terminator { }).valueOperand();
-        builder.moveToEndOf(block);
-        builder.endExpansion(expansion, result ? result : builder.appendUndefined());
-    }
-    finishRewrite(context, session);
+        Function callee = program.at(call.function());
+        {
+            const AnalysisContext& caller = session.analysisContext;
+            IRBuilder calleeBuilder(AnalysisContext { caller.build, caller.program, caller.flow, caller.effects, call.function() }, callee, session.types);
+            for (uint32_t index = 0; index < callee.blocks.size(); ++index) {
+                if (callee.blocks[index].terminator.kind == TerminatorKind::ReturnCall)
+                    calleeBuilder.demoteReturnCall(BlockID(index));
+            }
+        }
+        IRBuilder::Expansion expansion = builder.beginExpansion(pointBefore(session, callID));
+        builder.setHandler(expansion.handler);
+        RegionCloner cloner(builder, callee);
+        for (uint32_t index = 0; index < callee.blocks[0].parameters.size(); ++index)
+            cloner.mapValue(callee.blocks[0].parameters[index], call.operand(index));
+        cloner.cloneBlocks(idsMatching<BlockID>(callee.blocks.size(), [](BlockID) { return true; }).span(), [](ValueID, Value&) { });
+        builder.emitJump(cloner.cloneOf(entryBlock));
+        for (BlockID block : cloner.clonedBlocks()) {
+            Terminator& terminator = function.edit(block).terminator;
+            if (terminator.kind != TerminatorKind::Return)
+                continue;
+            ValueID result = std::exchange(terminator, Terminator { }).valueOperand();
+            builder.moveToEndOf(block);
+            builder.endExpansion(expansion, result ? result : builder.appendUndefined());
+        }
+        return true;
+    });
 }
 
 static void repairSSA(TestCommandContext& context, CommandWords& words, Session& session)
 {
     const Function& function = session.function;
-    BitVector isDefinition;
-    auto parseDefinition = filterParser(valueParser(function), [&](ValueID value) { return !isDefinition.set(value.index()); });
     auto redirects = words.parseAll("redirect"_s, pairParser(':', edgeParser(function), edgeTargetParser(function)));
-    Vector<Vector<ValueID>> variables = words.parseAll("variable"_s, listParser(parseDefinition));
-    if (!beginRewrite(words, session))
-        return;
-
-    for (auto [edge, target] : redirects)
-        session.builder.redirectEdge(edge, target, { });
-    nameFirstDefinitions(session, variables);
-    SSARepair repair(session.builder, session.analyses);
-    addVariables(repair, variables);
-    repair.run();
-    finishRewrite(context, session);
+    Vector<Vector<ValueID>> variables = parseVariables(words, function);
+    rewriteAndPrint(context, words, session, [&] {
+        for (auto [edge, target] : redirects)
+            session.builder.redirectEdge(edge, target, { });
+        repairVariables(session, variables);
+    });
 }
 
-static size_t numberOfEditableIndexes(TestedBlockEdit edit, const Block& block)
+static void editBlock(TestCommandContext& context, CommandWords& words, Session& session, bool canEditEntry, size_t (*numberOfIndexes)(const Block&), NOESCAPE const auto& edit)
 {
-    switch (edit) {
-    case TestedBlockEdit::Split:
-        return numberOfInsertionPoints(block);
-    case TestedBlockEdit::RemoveParameters:
-        return block.parameters.size();
-    case TestedBlockEdit::EraseValues:
-        return block.values.size();
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-template<TestedBlockEdit edit>
-static void editBlock(TestCommandContext& context, CommandWords& words, Session& session)
-{
-    auto canBeEdited = [](BlockID block) { return edit != TestedBlockEdit::RemoveParameters || block != entryBlock; };
+    auto canBeEdited = [&](BlockID block) { return canEditEntry || block != entryBlock; };
     BlockID block = words.parseRequired("block"_s, filterParser(blockParser(session.function), canBeEdited));
-    size_t numberOfIndexes = block ? numberOfEditableIndexes(edit, session.function.at(block)) : 0;
-    BitVector indexes = words.parseRequired("indexes"_s, collectionParser<BitVector>(indexParser(numberOfIndexes)));
-    if (!beginRewrite(words, session))
-        return;
+    BitVector indexes = words.parseRequired("indexes"_s, collectionParser<BitVector>(indexParser(block ? numberOfIndexes(session.function.at(block)) : 0)));
+    rewriteAndPrint(context, words, session, [&] { edit(block, indexes); });
+}
 
-    switch (edit) {
-    case TestedBlockEdit::Split:
+static void splitBlock(TestCommandContext& context, CommandWords& words, Session& session)
+{
+    editBlock(context, words, session, true, [](const Block& block) -> size_t { return block.values.size() + 1; }, [&](BlockID block, const BitVector& indexes) {
         session.builder.splitBlock(block, idsIn<uint32_t>(indexes).span());
-        break;
-    case TestedBlockEdit::RemoveParameters:
+    });
+}
+
+static void removeParameters(TestCommandContext& context, CommandWords& words, Session& session)
+{
+    editBlock(context, words, session, false, [](const Block& block) -> size_t { return block.parameters.size(); }, [&](BlockID block, const BitVector& indexes) {
         session.builder.removeParameters(block, indexes);
-        break;
-    case TestedBlockEdit::EraseValues:
+    });
+}
+
+static void eraseValues(TestCommandContext& context, CommandWords& words, Session& session)
+{
+    editBlock(context, words, session, true, [](const Block& block) -> size_t { return block.values.size(); }, [&](BlockID block, const BitVector& indexes) {
         session.builder.eraseValues(block, indexes);
-        break;
-    }
-    finishRewrite(context, session);
+    });
 }
 
 static void convertBranch(TestCommandContext& context, CommandWords& words, Session& session)
@@ -459,33 +415,22 @@ static void convertBranch(TestCommandContext& context, CommandWords& words, Sess
     auto endsInBranch = [&](BlockID block) { return session.function.at(block).terminator.isConditionalBranch(); };
     BlockID block = words.parseRequired("block"_s, filterParser(blockParser(session.function), endsInBranch));
     uint32_t targetIndex = words.parseRequired("target"_s, indexParser(numberOfBranchTargets));
-    if (!beginRewrite(words, session))
-        return;
-
-    session.builder.convertBranchToJump(block, targetIndex);
-    finishRewrite(context, session);
+    rewriteAndPrint(context, words, session, [&] { session.builder.convertBranchToJump(block, targetIndex); });
 }
 
 static void emptyUnreachableBlocks(TestCommandContext& context, CommandWords& words, Session& session)
 {
-    if (!beginRewrite(words, session))
-        return;
-
-    size_t numberOfEmptiedBlocks = session.builder.emptyUnreachableBlocks();
-    context.out.println("emptied: ", numberOfEmptiedBlocks);
-    finishRewrite(context, session);
+    rewriteAndPrint(context, words, session, [&] { context.out.println("emptied: ", session.builder.emptyUnreachableBlocks()); });
 }
 
 static void insertValues(TestCommandContext& context, CommandWords& words, Session& session)
 {
     Vector<ProgramPoint> points = words.parseRequired("points"_s, listParser(insertionPointParser(session.function)));
-    if (!beginRewrite(words, session))
-        return;
-
-    for (ProgramPoint point : points)
-        session.builder.insertBefore(point, IRBuilder::make(Opcode::Undefined));
-    session.builder.applyInsertions();
-    finishRewrite(context, session);
+    rewriteAndPrint(context, words, session, [&] {
+        for (ProgramPoint point : points)
+            session.builder.insertBefore(point, IRBuilder::make(Opcode::Undefined));
+        session.builder.applyInsertions();
+    });
 }
 
 static void substituteValues(TestCommandContext& context, CommandWords& words, Session& session)
@@ -500,23 +445,26 @@ static void substituteValues(TestCommandContext& context, CommandWords& words, S
         substitution.replace(from, to);
     }
     bool printsFrequencies = words.parseFlag("frequencies"_s);
-    if (!beginRewrite(words, session))
-        return;
-
-    substitution.apply(session.function, &session.analyses);
-    finishRewrite(context, session);
-    if (printsFrequencies)
+    rewriteAndPrint(context, words, session, [&] { substitution.apply(session.function, &session.analyses); });
+    if (printsFrequencies && !words.hasFailed())
         session.analyses.blockFrequencies().dump(context.out, session.function);
+}
+
+static std::optional<FunctionAnalysis> parseSectionName(StringView name)
+{
+    for (FunctionAnalysis analysis : allAnalyses) {
+        if (name == sectionNameOf(analysis))
+            return analysis;
+    }
+    return std::nullopt;
 }
 
 static void dumpComputedAnalyses(PrintStream& out, const FunctionAnalyses& analyses)
 {
-    Vector<FunctionAnalysis, 16> computedAnalyses;
+    Vector<ASCIILiteral> names;
     for (FunctionAnalysis analysis : analyses.computed())
-        computedAnalyses.append(analysis);
-    out.print("computed: ");
-    dumpList(out, computedAnalyses.span(), [](PrintStream& out, FunctionAnalysis analysis) { out.print(sectionNameOf(analysis)); });
-    out.print("\n");
+        names.append(sectionNameOf(analysis));
+    dumpLine(out, "computed: "_s, names);
 }
 
 static void invalidateAnalyses(TestCommandContext& context, CommandWords& words, Session& session)
@@ -532,54 +480,41 @@ static void invalidateAnalyses(TestCommandContext& context, CommandWords& words,
     dumpComputedAnalyses(context.out, session.analyses);
 }
 
-static bool haveDistinctEdges(const Vector<ArgumentOnEdge>& arguments)
-{
-    for (size_t index = 0; index < arguments.size(); ++index) {
-        for (size_t earlier = 0; earlier < index; ++earlier) {
-            if (arguments[earlier].first == arguments[index].first)
-                return false;
-        }
-    }
-    return true;
-}
-
-static size_t numberOfEdgesInto(const Function& function, BlockID block)
-{
-    size_t numberOfEdges = 0;
-    for (size_t index = 0; index < function.blocks.size(); ++index) {
-        forEachOutgoingEdge(function, BlockID(index), [&](Edge, const Target& target) {
-            if (target.block == block)
-                ++numberOfEdges;
-        });
-    }
-    return numberOfEdges;
-}
-
 static void addParameters(TestCommandContext& context, CommandWords& words, Session& session)
 {
+    const Program& program = *context.program;
     const Function& function = session.function;
     BlockID block = words.parseRequired("block"_s, edgeTargetParser(function));
-    Vector<TypeID> types = words.parseAll("type"_s, typeParser(*context.program));
+    Vector<TypeID> types = words.parseAll("type"_s, printedIDParser<TypeID>(program.types.size(), [&](PrintStream& out, TypeID type) { printType(out, program, type); }));
     auto entersBlock = [&](const ArgumentOnEdge& argument) { return targetOf(function, argument.first).block == block; };
     auto parseArgument = filterParser(pairParser(':', edgeParser(function), valueParser(function)), entersBlock);
     auto fillsEveryEdgeOnce = [&](const Vector<ArgumentOnEdge>& arguments) {
-        return haveDistinctEdges(arguments) && arguments.size() == numberOfEdgesInto(function, block);
+        size_t numberOfEdgesFilledOnce = 0;
+        size_t numberOfEdges = 0;
+        for (size_t index = 0; index < function.blocks.size(); ++index) {
+            forEachOutgoingEdge(function, BlockID(index), [&](Edge edge, const Target& target) {
+                if (target.block != block)
+                    return;
+                ++numberOfEdges;
+                numberOfEdgesFilledOnce += std::ranges::count(arguments, edge, &ArgumentOnEdge::first) == 1;
+            });
+        }
+        return numberOfEdgesFilledOnce == numberOfEdges && arguments.size() == numberOfEdges;
     };
     Vector<Vector<ArgumentOnEdge>> argumentLists = words.parseAll("arguments"_s, filterParser(listParser(parseArgument), fillsEveryEdgeOnce));
     if (types.isEmpty() || argumentLists.isEmpty())
         words.failMissingArgument();
     else if (types.size() != argumentLists.size())
         words.fail("arguments"_s);
-    if (!beginRewrite(words, session))
-        return;
 
-    for (TypeID type : types)
-        session.builder.addParameter(block, type);
-    for (const Vector<ArgumentOnEdge>& arguments : argumentLists) {
-        for (auto [edge, value] : arguments)
-            session.builder.appendArgument(edge, value);
-    }
-    finishRewrite(context, session);
+    rewriteAndPrint(context, words, session, [&] {
+        for (TypeID type : types)
+            session.builder.addParameter(block, type);
+        for (const Vector<ArgumentOnEdge>& arguments : argumentLists) {
+            for (auto [edge, value] : arguments)
+                session.builder.appendArgument(edge, value);
+        }
+    });
 }
 
 static bool canProveOperand(const Value& test, uint32_t operandIndex)
@@ -600,49 +535,35 @@ static void branchWithProof(TestCommandContext& context, CommandWords& words, Se
     uint32_t provenOperand = words.parseOptional("operand"_s, indexParser(UINT32_MAX)).value_or(0);
     if (test && !canProveOperand(function.at(test), provenOperand))
         words.fail("operand"_s);
-    if (!beginRewrite(words, session))
-        return;
 
-    IRBuilder& builder = session.builder;
-    builder.moveToEndOf(block);
-    IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, provenOperand);
-    builder.emitReturn(isGuardValue(function, branch.provenOnTaken) ? std::nullopt : std::optional(branch.provenOnTaken));
-    builder.moveToEndOf(branch.notTaken);
-    builder.emitUnreachable();
-    finishRewrite(context, session);
+    rewriteAndPrint(context, words, session, [&] {
+        IRBuilder& builder = session.builder;
+        builder.moveToEndOf(block);
+        IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, provenOperand);
+        builder.emitReturn(isGuardValue(function, branch.provenOnTaken) ? std::nullopt : std::optional(branch.provenOnTaken));
+        builder.moveToEndOf(branch.notTaken);
+        builder.emitUnreachable();
+    });
 }
 
 static void splitEdge(TestCommandContext& context, CommandWords& words, Session& session)
 {
-    auto isNormalEdge = [](Edge edge) { return !edge.isHandlerEdge(); };
-    Edge edge = words.parseRequired("edge"_s, filterParser(edgeParser(session.function), isNormalEdge));
-    if (!beginRewrite(words, session))
-        return;
-
-    session.builder.splitEdge(edge);
-    finishRewrite(context, session);
+    Edge edge = words.parseRequired("edge"_s, filterParser(edgeParser(session.function), [](Edge edge) { return !edge.isHandlerEdge(); }));
+    rewriteAndPrint(context, words, session, [&] { session.builder.splitEdge(edge); });
 }
 
 static void demoteReturnCall(TestCommandContext& context, CommandWords& words, Session& session)
 {
     auto endsInReturnCall = [&](BlockID block) { return session.function.at(block).terminator.kind == TerminatorKind::ReturnCall; };
     BlockID block = words.parseRequired("block"_s, filterParser(blockParser(session.function), endsInReturnCall));
-    if (!beginRewrite(words, session))
-        return;
-
-    session.builder.demoteReturnCall(block);
-    finishRewrite(context, session);
+    rewriteAndPrint(context, words, session, [&] { session.builder.demoteReturnCall(block); });
 }
 
 static void removeHandler(TestCommandContext& context, CommandWords& words, Session& session)
 {
     auto hasHandler = [&](BlockID block) { return session.function.at(block).handler.has_value(); };
     BlockID block = words.parseRequired("block"_s, filterParser(blockParser(session.function), hasHandler));
-    if (!beginRewrite(words, session))
-        return;
-
-    session.builder.removeHandler(block);
-    finishRewrite(context, session);
+    rewriteAndPrint(context, words, session, [&] { session.builder.removeHandler(block); });
 }
 
 static void runHeatGraph(TestCommandContext& context)
@@ -686,22 +607,16 @@ static void runFunctionsSeeing(TestCommandContext& context)
 {
     const Program& program = *context.program;
     CommandWords words(context);
-    Vector<LayoutID> layouts = words.parseOptional("layouts"_s, listParser(idParser<LayoutID>('L', program.layouts.size()))).value_or(Vector<LayoutID> { });
-    auto fieldsAsParsed = words.parseOptional("fields"_s, listParser(pairParser(':', idParser<LayoutID>('L', program.layouts.size()), indexParser(UINT32_MAX))));
+    auto parseLayout = idParser<LayoutID>('L', program.layouts.size());
+    auto parseField = [&](StringView text) -> std::optional<FieldReference> {
+        auto field = pairParser(':', parseLayout, indexParser(UINT32_MAX))(text);
+        return field && field->second < program.at(field->first).fields.size() ? std::optional(FieldReference { field->first, field->second }) : std::nullopt;
+    };
+    Vector<LayoutID> layouts = words.parseOptional("layouts"_s, listParser(parseLayout)).value_or(Vector<LayoutID> { });
+    Vector<FieldReference> fields = words.parseOptional("fields"_s, listParser(parseField)).value_or(Vector<FieldReference> { });
     Vector<VariableID> variables = words.parseOptional("variables"_s, listParser(idParser<VariableID>('g', program.variables.size()))).value_or(Vector<VariableID> { });
     if (!words.finish())
         return;
-
-    Vector<FieldReference> fields;
-    if (fieldsAsParsed) {
-        for (auto [layout, field] : *fieldsAsParsed) {
-            if (field >= program.at(layout).fields.size()) {
-                context.out.println("no such field");
-                return;
-            }
-            fields.append({ layout, static_cast<uint32_t>(field) });
-        }
-    }
 
     Vector<uint8_t> followsFieldsOfOperands(program.functions.size(), [&](size_t index) -> uint8_t {
         const Function& function = program.functions[index];
@@ -726,9 +641,9 @@ std::span<const TestCommand> analysisTestCommands()
         { "extract"_s, IRForm::Prepared, runOnFunction<extractRegion>, ProgramAsRead::TypedAndVerified },
         { "inline"_s, IRForm::Prepared, runOnFunction<inlineCall>, ProgramAsRead::TypedAndVerified },
         { "repair"_s, IRForm::Prepared, runOnFunction<repairSSA>, ProgramAsRead::TypedAndVerified },
-        { "split-block"_s, IRForm::Prepared, runOnFunction<editBlock<TestedBlockEdit::Split>>, ProgramAsRead::TypedAndVerified },
-        { "remove-parameters"_s, IRForm::Prepared, runOnFunction<editBlock<TestedBlockEdit::RemoveParameters>>, ProgramAsRead::TypedAndVerified },
-        { "erase-values"_s, IRForm::Prepared, runOnFunction<editBlock<TestedBlockEdit::EraseValues>>, ProgramAsRead::TypedAndVerified },
+        { "split-block"_s, IRForm::Prepared, runOnFunction<splitBlock>, ProgramAsRead::TypedAndVerified },
+        { "remove-parameters"_s, IRForm::Prepared, runOnFunction<removeParameters>, ProgramAsRead::TypedAndVerified },
+        { "erase-values"_s, IRForm::Prepared, runOnFunction<eraseValues>, ProgramAsRead::TypedAndVerified },
         { "convert-branch"_s, IRForm::Prepared, runOnFunction<convertBranch>, ProgramAsRead::TypedAndVerified },
         { "empty-unreachable-blocks"_s, IRForm::Prepared, runOnFunction<emptyUnreachableBlocks>, ProgramAsRead::TypedAndVerified },
         { "insert"_s, IRForm::Prepared, runOnFunction<insertValues>, ProgramAsRead::TypedAndVerified },

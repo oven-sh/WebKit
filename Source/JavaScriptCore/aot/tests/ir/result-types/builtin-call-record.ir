@@ -15,7 +15,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="records" parameters=[{type=MapIterator}, {type=object}, {type=string}] results=[{type=undefined}] {
-  b0(v0: MapIterator, v1: object, v2: string):
     v3 = CallBuiltin v0 overload=MapIteratorPrototypeNext/0
     v4 = CallBuiltin -, v1, v2 overload=ObjectGetOwnPropertyDescriptor/0
     v5 = Builtin builtin=Promise

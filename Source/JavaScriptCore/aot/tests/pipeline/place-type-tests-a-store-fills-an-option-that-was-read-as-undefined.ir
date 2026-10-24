@@ -7,7 +7,6 @@ entry module=m0
 layout L0 name="Style" module=m0 fields=[{key="children" declared={type=anything}}, {key="color" declared={type=undefined|string}}, {key="bold" declared={type=undefined|boolean}}, {key="dim" declared={type=undefined|boolean}}, {key="wrap" declared={type=undefined|string}}]
 
 function f0 name="" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="register" [isFreeName]
     v2 = String string="a"

@@ -5,17 +5,14 @@
 
 module m0 path="main.ts" displayPath="main.ts"
 function f0 name="double" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Add v0, v0
     Return v1
 }
 function f1 name="calls" parameters=[{type=f0|builtin(MathAbs)}, {type=number}] results=[{type=anything}] {
-  b0(v0: f0|builtin(MathAbs), v1: number):
     v2 = Call v0, -, v1
     Return v2
-}
-# CHECK-LABEL: function f1 name="calls"
 # CHECK: [[isDouble]]: boolean = TypeTest v0 testedType=f0
 # CHECK: = CallDirect v1 function=f0
 # CHECK: ({{*}}: builtin(MathAbs)) frequency=Unlikely:
 # CHECK-NEXT: = CallBuiltin -, v1 overload=MathAbs/0
+}

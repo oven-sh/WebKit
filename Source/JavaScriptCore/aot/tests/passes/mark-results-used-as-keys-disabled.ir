@@ -7,13 +7,11 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="pairKey" parameters=[{type=number}, {type=number}] results=[{type=string}] {
-  b0(v0: number, v1: number):
     v2 = String string=","
     v3 = Strcat v0, v2, v1
     Return v3
 }
 function f1 name="looksUp" parameters=[{type=Map}, {type=number}] results=[{type=anything}] {
-  b0(v0: Map, v1: number):
     v2 = CallDirect v1, v1 function=f0
     v3 = CallBuiltin v0, v2 overload=MapPrototypeGet/0
     Return v3

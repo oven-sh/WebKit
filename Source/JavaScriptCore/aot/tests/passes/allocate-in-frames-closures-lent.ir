@@ -9,7 +9,6 @@ entry module=m0
 layout L0 kind=Environment name="scope" fields=[{key="x" declared={type=anything}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToBoolean v1
@@ -25,7 +24,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="handedToUnknownCallee" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f10
     v2 = Call v0, -, v1
     v3 = ToBoolean v2
@@ -35,7 +33,6 @@ function f1 name="handedToUnknownCallee" parameters=[{type=anything}] results=[{
 # CHECK: = NewClosure function=f10 {{*}}storage=Frame [isLent]
 
 function f2 name="secondArgumentAndBoth" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f10
     v2 = Call v0, -, v0, v1
     v3 = NewClosure function=f10
@@ -49,7 +46,6 @@ function f2 name="secondArgumentAndBoth" parameters=[{type=anything}] results=[{
 # CHECK: v4: f11 = NewClosure function=f11 {{*}}storage=Frame [isLent]
 
 function f3 name="thirdArgument" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f10
     v2 = Call v0, -, v0, v0, v1
     Return v2
@@ -58,7 +54,6 @@ function f3 name="thirdArgument" parameters=[{type=anything}] results=[{type=any
 # CHECK-NOT: storage=
 
 function f4 name="usedTwice" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f10
     v2 = Call v0, -, v1
     v3 = Call v0, -, v1
@@ -72,7 +67,6 @@ function f4 name="usedTwice" parameters=[{type=anything}] results=[{type=anythin
 # CHECK-NOT: storage=
 
 function f5 name="madeOutsideTheLoop" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f10
     Jump -> next b1()
   b1():
@@ -87,7 +81,6 @@ function f5 name="madeOutsideTheLoop" parameters=[{type=anything}] results=[{typ
 # CHECK-NOT: storage=
 
 function f6 name="madeInTheLoop" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     LoopHint
@@ -102,7 +95,6 @@ function f6 name="madeInTheLoop" parameters=[{type=anything}] results=[{type=any
 # CHECK: = NewClosure function=f10 {{*}}storage=Frame [isLent]
 
 function f7 name="inTailPosition" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f10
     v2 = Call v0, -, v1
     ReturnCall v2
@@ -112,7 +104,6 @@ function f7 name="inTailPosition" parameters=[{type=anything}] results=[{type=an
 # CHECK: ReturnCall v2
 
 function f8 name="overAnEnvironment" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewClosure v1 function=f12
     v3 = Call v0, -, v2
@@ -126,7 +117,6 @@ function f8 name="overAnEnvironment" parameters=[{type=anything}] results=[{type
 # CHECK: = NewClosure v1 function=f12 {{*}}storage=Frame [isLent]
 
 function f9 name="constructed" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f10
     v2 = Construct v0, -, v1
     Return v2
@@ -135,12 +125,10 @@ function f9 name="constructed" parameters=[{type=anything}] results=[{type=anyth
 # CHECK-NOT: storage=
 
 function f10 name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 
 function f11 name="otherCallback" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 

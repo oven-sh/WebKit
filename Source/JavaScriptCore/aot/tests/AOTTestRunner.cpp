@@ -267,9 +267,9 @@ static void runOneDirective(const TestFile& file, const RunDirective& run, const
     });
 }
 
-Vector<TestFailure> runTestText(String&& text, Vector<RunOutput>* outputs, const TestVariant& variant, std::optional<TestTodo>* todo)
+Vector<TestFailure> runTestText(String&& text, Vector<RunOutput>* outputs, const TestVariant& variant, std::optional<TestTodo>* todo, const String& folder)
 {
-    TestFile file = parseTestFile(WTF::move(text));
+    TestFile file = parseTestFile(WTF::move(text), hostArchitecture(), folder);
     if (variant.onlyDiagnostic) {
         // The plain run of the file says what is wrong with its directives, and a file that plants the cause of the diagnostic has nothing to show here.
         bool expectsDiagnostic = file.diagnostics.containsIf([&](const ExpectedDiagnostic& expected) {
@@ -317,7 +317,7 @@ static Vector<TestFailure> runOneFile(const String& path, Vector<RunOutput>* out
     String text = String::fromUTF8(bytes->span());
     if (text.isNull())
         return { TestFailure { 1, "is not UTF-8"_s } };
-    return runTestText(WTF::move(text), outputs, variant, todo);
+    return runTestText(WTF::move(text), outputs, variant, todo, FileSystem::parentPath(path));
 }
 
 enum class FileOutcome : uint8_t { Passed, Failed, Todo };

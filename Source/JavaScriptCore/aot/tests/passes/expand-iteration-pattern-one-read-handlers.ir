@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="handlerGetsOuterValues" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1() handler=b6(v1):
     v2 = IteratorOpen v0 elementCount=2 [isDestructuring]
@@ -30,15 +29,12 @@ function f0 name="handlerGetsOuterValues" parameters=[{type=anything}, {type=any
   b6(v12) role=CatchHandler:
     v13 = CatchValue
     Return v12
-}
-# CHECK-LABEL: function f0 name="handlerGetsOuterValues"
 # CHECK: = DestructureIterable {{*}} count=2
-# ABSENT-LABEL: function f0 name="handlerGetsOuterValues"
 # ABSENT-NOT: key="next"
 # ABSENT-NOT: [isNeverInlined]
+}
 
 function f1 name="handlerGetsFirstElement" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1() handler=b6(v1):
     v2 = IteratorOpen v0 elementCount=2 [isDestructuring]
@@ -62,15 +58,12 @@ function f1 name="handlerGetsFirstElement" parameters=[{type=anything}, {type=an
   b6(v12) role=CatchHandler:
     v13 = CatchValue
     Return v12
-}
 # A second step that throws leaves the first element in the variable that the handler reads.
-# CHECK-LABEL: function f1 name="handlerGetsFirstElement"
 # CHECK: function=[[openIterator]] [isNeverInlined]
-# ABSENT-LABEL: function f1 name="handlerGetsFirstElement"
 # ABSENT-NOT: DestructureIterable
+}
 
 function f2 name="handlerOfCloseGetsElement" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1() handler=b5(v1):
     v2 = IteratorOpen v0 elementCount=2 [isDestructuring]
@@ -92,9 +85,7 @@ function f2 name="handlerOfCloseGetsElement" parameters=[{type=anything}, {type=
   b5(v12) role=CatchHandler:
     v13 = CatchValue
     Return v12
-}
 # A `return` that throws comes after both elements are bound.
-# CHECK-LABEL: function f2 name="handlerOfCloseGetsElement"
 # CHECK: function=[[openIterator]] [isNeverInlined]
-# ABSENT-LABEL: function f2 name="handlerOfCloseGetsElement"
 # ABSENT-NOT: DestructureIterable
+}

@@ -13,7 +13,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class BindingEmitter final : public OperationEmitter {
 public:
-    explicit BindingEmitter(CodeGenerator&);
+    explicit BindingEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generateGetModuleVariable(const ValueContext&);
     void generateGetEncodedModuleVariable(const ValueContext&);

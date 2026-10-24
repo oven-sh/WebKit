@@ -16,7 +16,6 @@
 #include "AOTRepresentation.h"
 #include "AOTResultRules.h"
 #include "AOTSort.h"
-#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/PrintStream.h>
 #include <wtf/StdLibExtras.h>

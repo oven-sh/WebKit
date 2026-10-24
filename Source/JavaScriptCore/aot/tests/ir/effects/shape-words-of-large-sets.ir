@@ -8,7 +8,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L%(i) name="Layout%(i)"
 # END REPEAT
 function f0 name="sizes" parameters=[{type=object}] results=[{type=undefined}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0, L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12, L13, L14, L15, L16, L17, L18, L19, L20, L21, L22, L23, L24, L25, L26, L27, L28, L29, L30, L31, L32, L33, L34, L35, L36, L37, L38, L39, L40, L41, L42, L43, L44, L45, L46, L47, L48, L49, L50, L51, L52, L53, L54, L55, L56, L57, L58, L59, L60, L61, L62, L63]
     v2 = ShapeTest v0 layouts=[L0, L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12, L13, L14, L15, L16, L17, L18, L19, L20, L21, L22, L23, L24, L25, L26, L27, L28, L29, L30, L31, L32, L33, L34, L35, L36, L37, L38, L39, L40, L41, L42, L43, L44, L45, L46, L47, L48, L49, L50, L51, L52, L53, L54, L55, L56, L57, L58, L59, L60, L61, L62, L63, L64]
     Return
@@ -17,7 +16,6 @@ function f0 name="sizes" parameters=[{type=object}] results=[{type=undefined}] {
 # CHECK-NEXT: v1 ShapeTest: reads(ShapeWords/{{*}})
 # CHECK-NEXT: v2 ShapeTest: reads(ShapeWords)
 function f1 name="bothHaveMembersWithoutLayout" parameters=[{type=object}] results=[{type=undefined}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0, nolayout]
     v2 = ShapeTest v0 layouts=[L1, nolayout]
     Return
@@ -29,7 +27,6 @@ function f1 name="bothHaveMembersWithoutLayout" parameters=[{type=object}] resul
 # L: overlap ShapeWords[L0|nolayout] ShapeWords[L1|nolayout]: May
 # L-NOT: overlap
 function f2 name="oneHasMembersWithoutLayout" parameters=[{type=object}] results=[{type=undefined}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0, nolayout]
     v2 = ShapeTest v0 layouts=[L1]
     Return

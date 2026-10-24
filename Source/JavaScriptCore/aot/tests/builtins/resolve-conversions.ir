@@ -7,292 +7,239 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="toNumber" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Builtin builtin=MathFloor
     v2 = Call v1, -, v0
     Return v2
-}
-# CHECK-LABEL: function f0 name="toNumber"
 # CHECK: [[number0]]: number = ToNumber v0
 # CHECK-NEXT: v2: {{*}} = CallBuiltin -, [[number0]] overload=MathFloor/0
+}
 
 function f1 name="toString" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = Builtin builtin=DateParse
     v2 = Call v1, -, v0
     Return v2
-}
-# CHECK-LABEL: function f1 name="toString"
 # CHECK: [[text1]]: string = ToString v0
 # CHECK-NEXT: v2: number = CallBuiltin -, [[text1]] overload=DateParse/0
+}
 
 function f2 name="toBoolean" parameters=[{type=DataView}, {type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: DataView, v1: number, v2: number):
     v3 = Builtin builtin=DataViewPrototypeGetInt16
     v4 = Call v3, v0, v1, v2
     Return v4
-}
-# CHECK-LABEL: function f2 name="toBoolean"
 # CHECK: [[flag2]]: boolean = ToBoolean v2
 # CHECK-NEXT: v4: int[-32768, 32767] = CallBuiltin v0, v1, [[flag2]] overload=DataViewPrototypeGetInt16/0
+}
 
 function f3 name="toNumeric" parameters=[{type=string|bigint}] results=[{type=anything}] {
-  b0(v0: string|bigint):
     v1 = Builtin builtin=Number
     v2 = Call v1, -, v0
     Return v2
-}
-# CHECK-LABEL: function f3 name="toNumeric"
 # CHECK: [[numeric3]]: number|bigint = ToNumeric v0
 # CHECK-NEXT: v2: number = CallBuiltin -, [[numeric3]] overload=Number/1
+}
 
 function f4 name="toPropertyKey" parameters=[{type=object}, {type=number}] results=[{type=anything}] {
-  b0(v0: object, v1: number):
     v2 = Builtin builtin=ObjectHasOwn
     v3 = Call v2, -, v0, v1
     Return v3
-}
-# CHECK-LABEL: function f4 name="toPropertyKey"
 # CHECK: [[key4]]: string|symbol = ToPropertyKey v1
 # CHECK-NEXT: v3: boolean = CallBuiltin -, v0, [[key4]] overload=ObjectHasOwn/0
+}
 
 function f5 name="toObject" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Builtin builtin=ObjectKeys
     v2 = Call v1, -, v0
     Return v2
-}
-# CHECK-LABEL: function f5 name="toObject"
 # CHECK: [[object5]]: object = ToObject v0
 # CHECK-NEXT: v2: Array<string> = CallBuiltin -, [[object5]] overload=ObjectKeys/0
+}
 
 function f6 name="toIntegerOrInfinity" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
-  b0(v0: string, v1: string):
     v2 = Builtin builtin=StringPrototypeAt
     v3 = Call v2, v0, v1
     Return v3
-}
-# CHECK-LABEL: function f6 name="toIntegerOrInfinity"
 # CHECK: [[number6]]: number = ToNumber v1
 # CHECK-NEXT: [[integer6]]: {{*}} = ToIntegerOrInfinity [[number6]]
 # CHECK-NEXT: v3: undefined|string = CallBuiltin v0, [[integer6]] overload=StringPrototypeAt/0
+}
 
 function f7 name="toInt32" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Builtin builtin=MathClz32
     v2 = Call v1, -, v0
     Return v2
-}
-# CHECK-LABEL: function f7 name="toInt32"
 # CHECK: [[number7]]: number = ToNumber v0
 # CHECK-NEXT: [[integer7]]: i32 = ToInt32 [[number7]]
 # CHECK-NEXT: v2: int[0, 32] = CallBuiltin -, [[integer7]] overload=MathClz32/0
+}
 
 function f8 name="toUint32" parameters=[{type=string}, {type=string}, {type=string}] results=[{type=anything}] {
-  b0(v0: string, v1: string, v2: string):
     v3 = Builtin builtin=StringPrototypeSplit
     v4 = Call v3, v0, v1, v2
     Return v4
-}
-# CHECK-LABEL: function f8 name="toUint32"
 # CHECK: [[number8]]: number = ToNumber v2
 # CHECK-NEXT: [[integer8]]: int[0, 4294967295] = ToUint32 [[number8]]
 # CHECK-NEXT: v4: Array<string> = CallBuiltin v0, v1, [[integer8]] overload=StringPrototypeSplit/4
+}
 
 function f9 name="toIndexHasNoOperation" parameters=[{type=string}, {type=bigint}] results=[{type=anything}] {
-  b0(v0: string, v1: bigint):
     v2 = Builtin builtin=BigIntAsIntN
     v3 = Call v2, -, v0, v1
     Return v3
-}
-# CHECK-LABEL: function f9 name="toIndexHasNoOperation"
 # CHECK: v2: {{*}} = Builtin
 # CHECK-NEXT: v3: bigint = CallBuiltin -, v0, v1 overload=BigIntAsIntN/0 builtinCallForm=AnyReceiver
+}
 
 function f10 name="toBigIntHasNoOperation" parameters=[{type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: number, v1: number):
     v2 = Builtin builtin=BigIntAsIntN
     v3 = Call v2, -, v0, v1
     Return v3
-}
-# CHECK-LABEL: function f10 name="toBigIntHasNoOperation"
 # CHECK: v2: {{*}} = Builtin
 # CHECK-NEXT: v3: bigint = CallBuiltin -, v0, v1 overload=BigIntAsIntN/0 builtinCallForm=AnyReceiver
+}
 
 function f11 name="toPrimitiveHasNoOperation" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = Builtin builtin=BigInt
     v2 = Call v1, -, v0
     Return v2
-}
-# CHECK-LABEL: function f11 name="toPrimitiveHasNoOperation"
 # CHECK: v1: {{*}} = Builtin
 # CHECK-NEXT: v2: bigint = CallBuiltin -, v0 overload=BigInt/0 builtinCallForm=AnyReceiver
+}
 
 function f12 name="dictionaryHasNoOperation" parameters=[{type=string}, {type=object}] results=[{type=anything}] {
-  b0(v0: string, v1: object):
     v2 = Builtin builtin=Uint8ArrayFromBase64
     v3 = Call v2, -, v0, v1
     Return v3
-}
-# CHECK-LABEL: function f12 name="dictionaryHasNoOperation"
 # CHECK: v2: {{*}} = Builtin
 # CHECK-NEXT: v3: Uint8Array = CallBuiltin -, v0, v1 overload=Uint8ArrayFromBase64/0 builtinCallForm=AnyReceiver
+}
 
 function f13 name="omittedOptionalArgument" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Builtin builtin=Uint8ArrayFromBase64
     v2 = Call v1, -, v0
     Return v2
-}
-# CHECK-LABEL: function f13 name="omittedOptionalArgument"
 # CHECK: v1: {{*}} = Builtin
 # CHECK-NEXT: v2: Uint8Array = CallBuiltin -, v0 overload=Uint8ArrayFromBase64/0
 # CHECK-NEXT: Return v2
+}
 
 function f14 name="omittedRequiredArgument" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=MathFloor
     v1 = Call v0
     Return v1
-}
-# CHECK-LABEL: function f14 name="omittedRequiredArgument"
 # CHECK: [[omitted14]]: undefined = Undefined
 # CHECK-NEXT: [[number14]]: number = ToNumber [[omitted14]]
 # CHECK-NEXT: v1: {{*}} = CallBuiltin -, [[number14]] overload=MathFloor/0
+}
 
 function f15 name="surplusArgument" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     v2 = Builtin builtin=MathFloor
     v3 = Call v2, -, v0, v1
     Return v3
-}
-# CHECK-LABEL: function f15 name="surplusArgument"
 # CHECK: v2: {{*}} = Builtin
 # CHECK-NEXT: v3: {{*}} = CallBuiltin -, v0 overload=MathFloor/0
 # CHECK-NEXT: Return v3
+}
 
 function f16 name="conversionThatCanRunUserCode" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: anything):
     v2 = Builtin builtin=StringPrototypePadStart
     v3 = Call v2, v0, v1
     Return v3
-}
-# CHECK-LABEL: function f16 name="conversionThatCanRunUserCode"
 # CHECK: [[number16]]: number = ToNumber v1
 # CHECK-NEXT: [[integer16]]: {{*}} = ToIntegerOrInfinity [[number16]]
 # CHECK-NEXT: v3: string = CallBuiltin v0, [[integer16]] overload=StringPrototypePadStart/1
+}
 
 function f17 name="receiverBeforeArguments" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     v2 = Builtin builtin=StringPrototypePadStart
     v3 = Call v2, v0, v1
     Return v3
-}
-# CHECK-LABEL: function f17 name="receiverBeforeArguments"
 # CHECK: [[text17]]: string = ToString v0
 # CHECK-NEXT: [[number17]]: number = ToNumber v1
 # CHECK-NEXT: [[integer17]]: {{*}} = ToIntegerOrInfinity [[number17]]
 # CHECK-NEXT: v3: string = CallBuiltin [[text17]], [[integer17]] overload=StringPrototypePadStart/1
+}
 
 function f18 name="argumentsInOrder" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Builtin builtin=MathImul
     v3 = Call v2, -, v0, v1
     Return v3
-}
-# CHECK-LABEL: function f18 name="argumentsInOrder"
 # CHECK: [[first18]]: number = ToNumber v0
 # CHECK-NEXT: [[firstInteger18]]: i32 = ToInt32 [[first18]]
 # CHECK-NEXT: [[second18]]: number = ToNumber v1
 # CHECK-NEXT: [[secondInteger18]]: i32 = ToInt32 [[second18]]
 # CHECK-NEXT: v3: i32 = CallBuiltin -, [[firstInteger18]], [[secondInteger18]] overload=MathImul/0
+}
 
 function f19 name="readsStateBeforeConversions" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=anything}, {type=anything}, {type=object}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage, Names]>, v1: anything, v2: anything, v3: object):
     v4 = Builtin builtin=ArrayPrototypeFill
     v5 = Call v4, v0, v1, v2
     v6 = Call v4, v0, v1, v3
     Return v6
-}
-# CHECK-LABEL: function f19 name="readsStateBeforeConversions"
 # CHECK-NOT: ToNumber
 # CHECK: v5: {{*}} = CallBuiltin v0, v1, v2 overload=ArrayPrototypeFill/0 builtinCallForm=AnyReceiver
 # CHECK-NEXT: v6: {{*}} = CallBuiltin v0, v1, v3 overload=ArrayPrototypeFill/0 builtinCallForm=AnyReceiver
+}
 
 function f20 name="readsStateBeforeConversionWithoutUserCode" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=anything}, {type=string}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage, Names]>, v1: anything, v2: string):
     v3 = Builtin builtin=ArrayPrototypeFill
     v4 = Call v3, v0, v1, v2
     Return v4
-}
-# CHECK-LABEL: function f20 name="readsStateBeforeConversionWithoutUserCode"
 # CHECK: [[number20]]: number = ToNumber v2
 # CHECK-NEXT: [[integer20]]: {{*}} = ToIntegerOrInfinity [[number20]]
 # CHECK-NEXT: v4: {{*}} = CallBuiltin v0, v1, [[integer20]] overload=ArrayPrototypeFill/0
 # CHECK-NEXT: Return v4
+}
 
 function f21 name="objectWhereNoStateIsReadFirst" parameters=[{type=string}, {type=object}] results=[{type=anything}] {
-  b0(v0: string, v1: object):
     v2 = Builtin builtin=StringPrototypePadStart
     v3 = Call v2, v0, v1
     Return v3
-}
-# CHECK-LABEL: function f21 name="objectWhereNoStateIsReadFirst"
 # CHECK: [[number21]]: number = ToNumber v1
 # CHECK-NEXT: [[integer21]]: {{*}} = ToIntegerOrInfinity [[number21]]
 # CHECK-NEXT: v3: string = CallBuiltin v0, [[integer21]] overload=StringPrototypePadStart/1
+}
 
 function f22 name="nullishReceiverThrowsInBuiltin" parameters=[{type=anything}, {type=undefined|string}] results=[{type=anything}] {
-  b0(v0: anything, v1: undefined|string):
     v2 = Builtin builtin=StringPrototypeTrim
     v3 = Call v2, v0
     v4 = Call v2, v1
     Return v4
-}
-# CHECK-LABEL: function f22 name="nullishReceiverThrowsInBuiltin"
 # CHECK-NOT: RequireObjectCoercible
 # CHECK: v3: string = CallBuiltin v0 overload=StringPrototypeTrim/0 builtinCallForm=AnyReceiver
 # The second call is direct too, and waits so for the test of its receiver, which is expected to be there: resolve-receiver-expected-to-be-present.ir
 # CHECK-NEXT: v4: string = CallBuiltin v1 overload=StringPrototypeTrim/0 builtinCallForm=AnyReceiver
+}
 
 function f23 name="nullishReceiverThrowsAtRead" parameters=[{type=undefined|string}] results=[{type=anything}] {
-  b0(v0: undefined|string):
     v1 = PropGet v0 key="length"
     Return v1
-}
-# CHECK-LABEL: function f23 name="nullishReceiverThrowsAtRead"
 # CHECK: [[checked23]]: string = RequireObjectCoercible v0 name="length"
 # CHECK-NEXT: v1: int[0, 2147483647] = CallBuiltin [[checked23]] overload=StringPrototypeLength/0
+}
 
 function f24 name="acceptedUndefinedIsNotConverted" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=anything}, {type=undefined|number}, {type=undefined|string}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage, Names]>, v1: anything, v2: undefined|number, v3: undefined|string, v4: number):
     v5 = Builtin builtin=ArrayPrototypeJoin
     v6 = Call v5, v0, v1
     v7 = Call v5, v0, v2
     v8 = Call v5, v0, v3
     v9 = Call v5, v0, v4
     Return v9
-}
-# CHECK-LABEL: function f24 name="acceptedUndefinedIsNotConverted"
 # CHECK-NOT: ToString
 # CHECK: v6: string = CallBuiltin v0, v1 overload=ArrayPrototypeJoin/0 builtinCallForm=AnyReceiver
 # CHECK-NEXT: v7: string = CallBuiltin v0, v2 overload=ArrayPrototypeJoin/0 builtinCallForm=AnyReceiver
 # CHECK-NEXT: v8: string = CallBuiltin v0, v3 overload=ArrayPrototypeJoin/0
 # CHECK-NEXT: [[text24]]: string = ToString v4
 # CHECK-NEXT: v9: string = CallBuiltin v0, [[text24]] overload=ArrayPrototypeJoin/0
+}
 
 function f25 name="expectedInsideAcceptedType" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=string flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: Array<anything, pristine[Storage, Names]>, v1: anything ~ string):
     v2 = Builtin builtin=ArrayPrototypeJoin
     v3 = Call v2, v0, v1
     Return v3
-}
-# CHECK-LABEL: function f25 name="expectedInsideAcceptedType"
 # CHECK-NOT: ToString
 # The callee is proven, so the call is direct at once, with the result that the table gives. What its operands still have to be is tested by PlaceTypeTests, and the side that passes gets the matched form.
 # CHECK: v3: string = CallBuiltin v0, v1 overload=ArrayPrototypeJoin/0 builtinCallForm=AnyReceiver
-# PLACED-LABEL: function f25 name="expectedInsideAcceptedType"
 # PLACED-NOT: ToString
 # PLACED: = TypeTest v1 testedType=string
 # PLACED: ([[tested25]]: string):
@@ -301,23 +248,20 @@ function f25 name="expectedInsideAcceptedType" parameters=[{type=Array<anything,
 # PLACED-NOT: ToString
 # PLACED: frequency=Unlikely:
 # PLACED-NEXT: string = CallBuiltin v0, {{*}} overload=ArrayPrototypeJoin/0 builtinCallForm=AnyReceiver
+}
 
 function f26 name="codeBehindAnIndexStaysInTheBuiltin" parameters=[{type=DataView}, {type=number}, {type=object}, {type=anything}, {type=string}] results=[{type=anything}] {
-  b0(v0: DataView, v1: number, v2: object, v3: anything, v4: string):
     v5 = Builtin builtin=DataViewPrototypeSetInt8
     v6 = Call v5, v0, v1, v2
     v7 = Call v5, v0, v1, v3
     v8 = Call v5, v0, v1, v4
     Return v8
-}
 # The built-in refuses a negative index before it converts the value, so a conversion that may run code or throw is left to it.
-# CHECK-LABEL: function f26 name="codeBehindAnIndexStaysInTheBuiltin"
 # CHECK: v6: undefined = CallBuiltin v0, v1, v2 overload=DataViewPrototypeSetInt8/0 builtinCallForm=AnyReceiver
 # CHECK-NEXT: v7: undefined = CallBuiltin v0, v1, v3 overload=DataViewPrototypeSetInt8/0 builtinCallForm=AnyReceiver
 # CHECK-NEXT: [[number26]]: number = ToNumber v4
 # CHECK-NEXT: v8: undefined = CallBuiltin v0, v1, [[number26]] overload=DataViewPrototypeSetInt8/0
 # A value of which nothing is known is tested for one whose conversion does neither, which nearly every stored value is.
-# PLACED-LABEL: function f26 name="codeBehindAnIndexStaysInTheBuiltin"
 # PLACED: v6: undefined = CallBuiltin v0, v1, v2 overload=DataViewPrototypeSetInt8/0 builtinCallForm=AnyReceiver
 # PLACED: ([[tested26]]: undefined|null|boolean|number|string):
 # PLACED-NEXT: [[converted26]]: number = ToNumber [[tested26]]
@@ -325,3 +269,4 @@ function f26 name="codeBehindAnIndexStaysInTheBuiltin" parameters=[{type=DataVie
 # PLACED: = TypeTest v3 testedType=undefined|null|boolean|number|string
 # PLACED: frequency=Unlikely:
 # PLACED-NEXT: undefined = CallBuiltin v0, v1, {{*}} overload=DataViewPrototypeSetInt8/0 builtinCallForm=AnyReceiver
+}

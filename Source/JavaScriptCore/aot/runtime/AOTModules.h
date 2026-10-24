@@ -11,24 +11,11 @@
 #include "AOTModuleRecord.h"
 #include "AOTModuleTable.h"
 #include "AOTModuleWords.h"
-#include "AOTVector.h"
-#include "ArgList.h"
-#include "Identifier.h"
 #include "JSPromise.h"
 #include "RememberedSlot.h"
 #include "ScriptFetcher.h"
 #include "SourceOrigin.h"
-#include <algorithm>
-#include <memory>
-#include <optional>
-#include <span>
-#include <wtf/BitVector.h>
-#include <wtf/FastMalloc.h>
 #include <wtf/HashMap.h>
-#include <wtf/HashSet.h>
-#include <wtf/Noncopyable.h>
-#include <wtf/OptionSet.h>
-#include <wtf/ScopedLambda.h>
 #include <wtf/SetForScope.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -36,23 +23,19 @@ namespace JSC {
 
 class JSCellButterfly;
 class JSModuleLoader;
-class JSObject;
-class JSString;
 class ScriptFetchParameters;
 class ThrowScope;
 
 namespace AOT {
 
 class ModuleLinkWalk;
-enum class LoaderChange : uint8_t;
 class StarExportResolver;
-struct EvaluationFrame;
 struct EvaluationInProgress;
 struct Instance;
 struct State;
 
 enum class ModuleStatus : uint8_t {
-    Unlinked,
+    Unlinked = static_cast<uint8_t>(CyclicModuleRecord::Status::Unlinked),
     Linking,
     Linked,
     Evaluating,
@@ -60,6 +43,7 @@ enum class ModuleStatus : uint8_t {
     Evaluated,
     Failed,
 };
+static_assert(static_cast<uint8_t>(ModuleStatus::Evaluated) == static_cast<uint8_t>(CyclicModuleRecord::Status::Evaluated));
 
 enum class SynchronousEvaluationReason : uint8_t { Require, DeferredNamespace };
 
@@ -68,6 +52,22 @@ struct LinkContext {
     unsigned index { 0 };
     RefPtr<ScriptFetcher> scriptFetcher { };
 };
+
+// capturedFields: in place of capturedExports, until somebody asks for all the names.
+#define FOR_EACH_REFERENCE_OF_LOADED_MODULE(macro) \
+    macro(JSObject*, namespaceObject) \
+    macro(JSObject*, deferredNamespaceObject) \
+    macro(JSObject*, importMeta) \
+    macro(JSObject*, requirer) \
+    macro(JSValue, requireFunction) \
+    macro(JSValue, requiredValue) \
+    macro(JSObject*, exportsWhileRequired) \
+    macro(JSObject*, capturedExports) \
+    macro(JSObject*, deferredExportsSource) \
+    macro(JSCellButterfly*, capturedFields) \
+    macro(JSCellButterfly*, capturedStars) \
+    macro(JSObject*, sourceOfCapturedFields) \
+    macro(AbstractModuleRecord*, uncompiledRecord)
 
 struct EvaluationContext {
     ModuleEvaluationStack& stack;
@@ -81,7 +81,6 @@ class Modules {
     WTF_MAKE_TZONE_ALLOCATED(Modules);
 public:
     using ModulePhase = AbstractModuleRecord::ModulePhase;
-    using EvaluationFrames = Vector<EvaluationFrame, 16>;
 
     explicit Modules(State&);
     ~Modules();
@@ -99,7 +98,7 @@ public:
     JSValue readExportIfInitialized(ModuleID, unsigned index) const;
     bool isExportAmbiguous(ModuleID, unsigned index) const;
     JSObject* capturedExports(ModuleID);
-    // Empty if the module has no export of the name. Reads a deferred export now and keeps the value.
+    // Empty if the module has no export of the name.
     JSValue capturedValue(ModuleID, const Identifier&);
     bool hasCapturedExport(ModuleID, const Identifier&);
     JSObject* moduleNamespace(ModuleID, ModulePhase);
@@ -111,12 +110,12 @@ public:
     void throwFailure(ModuleFailureID, bool isForRequire);
     void throwExportNotFound(ModuleID exporter, uint32_t nameIdentifier);
     void throwExportAmbiguous(ModuleID exporter, uint32_t nameIdentifier);
-    void didRequestFromHost(ModuleID);
+    void didRequestFromHost(ModuleID module) { m_firstModuleRequestedByHost = m_firstModuleRequestedByHost.value_or(module); }
     std::optional<ModuleID> firstModuleRequestedByHost() const { return m_firstModuleRequestedByHost; }
     bool refusesCodeOutsideImage() const { return !m_admitsCodeOutsideImage; }
     bool refusesLoadsByName() const { return !m_loadsModulesByName && !m_isAskingHost; }
     bool isAskingHost() const { return m_isAskingHost; }
-    // A name that the build did not follow finds an entry point and no other file of the image, as in an executable that `bun build --compile` makes without --aot.
+    // A name that the build did not follow finds an entry point and no other file of the image.
     bool refusesRequestFromHost(ModuleID module) const { return !m_admitsInspector && !m_isAskingHost && !data(module).isEntryPoint() && data(module).kind != ModuleKind::Data && m_table.hasFilePath(module) && !data(module).isLibraryCodeWithFilePath(); }
     void admitCodeNamedBy(JSValue specifier);
     void abandonEvaluation(ModuleID, JSValue error);
@@ -132,36 +131,29 @@ public:
     void innerModuleEvaluation(ModuleID root, EvaluationContext&);
     void gatherAsynchronousTransitiveDependencies(ModuleID, OrderedHashSet<AbstractModuleRecord*>& result, VisitedModuleRecords& seen);
     bool readyForSyncExecution(ModuleID, VisitedModuleRecords& seen);
-
-    JSValue callBody(ModuleID);
-    // For a body that stores no status of its own. The modules that compiled code begins to evaluate below it fail with it.
-    JSValue callBodyOfModuleEnteredByLoader(ModuleID);
-    bool beginEvaluationOfModuleInRecord(ModuleID);
+    // The modules that compiled code begins to evaluate below the body fail with it.
+    JSValue callBodyOfModuleEnteredByLoader(ModuleID module) { return callBodyUnderOwnMark(module, false); }
+    void evaluateModuleInRecord(ModuleID);
     JSValue execute(ModuleID);
 
     JSValue require(ModuleID);
     void evaluateCommonJS(ModuleID);
-    // What `module.exports` holds. Undefined for a module whose exports are variables and nothing else: no code asks for their object.
     JSValue commonJSExports(ModuleID) const;
-    // What the loader takes for it. Whoever holds the module object may have defined another property in the place of `exports`, and compiled code reads the exports of such a module off that object.
     JSValue exportsSeenByLoader(ModuleID);
-    void setCommonJSExports(ModuleID, JSValue);
+    void setCommonJSExports(ModuleID module, JSValue exports) { setValue(module, exports); }
     void recordRequire(ModuleID, ModuleID referrer);
     JSObject* moduleObject(ModuleID);
     JSObject* mainModuleObject();
     JSObject* parentModuleObject(ModuleID);
     bool forEachNewChild(ModuleID, const ScopedLambda<void(JSObject*)>&);
-    JSValue requireFunction(ModuleID);
-    JSValue requireDynamic(JSValue specifier, ModuleID referrer);
+    JSValue requireSpecifier(JSValue specifier, ModuleID referrer, bool isNamedByBuild);
     JSValue resolveDynamic(JSValue specifier, ModuleID referrer, ResolvedSpecifierForm);
-    void willSetRequireCacheEntry(ModuleID, JSValue entry);
-    void willChangeRequireOverride(RequireOverride, bool isOverridden);
 
-    JSPromise* import(ModuleID, std::optional<ModuleID> referrer);
-    JSPromise* importFromHost(ModuleID, std::optional<int64_t> referrerAsyncOrder);
+    JSPromise* import(ModuleID, ModuleID referrer);
+    JSPromise* startImport(ModuleID, std::optional<int64_t> referrerAsyncOrder);
     JSPromise* importDynamic(JSValue specifier, JSValue options, ModuleID referrer);
     void continueImport(JSPromise* importPromise, ModuleID, std::optional<int64_t> referrerAsyncOrder);
-    void didSettleImport(JSPromise* importPromise, ModuleID, JSValue resolution, JSPromise::Status);
+    void resolveWithNamespace(JSPromise* importPromise, ModuleID);
 
     ModuleRecord* exposeRecord(ModuleID);
     AbstractModuleRecord* uncompiledRecord(ModuleID);
@@ -170,7 +162,7 @@ public:
 private:
     friend class RequestToHostScope;
 
-    // What the collector finds through a loaded module. A store is recorded: the roots are visited at every stop of the mutator, and the loaded modules only after a store.
+    // The roots are visited at every stop of the mutator, and the loaded modules only after a store.
     template<typename T>
     class Reference {
         WTF_MAKE_NONCOPYABLE(Reference);
@@ -195,35 +187,18 @@ private:
     struct LoadedModule {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(LoadedModule);
 
-        Reference<JSObject*>& namespaceObjectFor(ModulePhase);
+        Reference<JSObject*>& namespaceObjectFor(ModulePhase phase) { return phase == ModulePhase::Defer ? deferredNamespaceObject : namespaceObject; }
 
-        // Of a module without a word for it.
-        Reference<JSObject*> namespaceObject;
-        Reference<JSObject*> deferredNamespaceObject;
-        Reference<JSObject*> importMeta;
-        // The module object, which the require function is bound to.
-        Reference<JSObject*> requirer;
-        Reference<JSValue> requireFunction;
-        // What the loader's require() has answered for a module with an export table: the namespace object, or the export "module.exports".
-        Reference<JSValue> requiredValue;
-        // The loader's require() is evaluating the module. In plain Bun the cache holds a module object with empty exports for that time, which a require() of the module inside that evaluation answers.
+#define AOT_DECLARE_REFERENCE(type, name) Reference<type> name;
+        FOR_EACH_REFERENCE_OF_LOADED_MODULE(AOT_DECLARE_REFERENCE)
+#undef AOT_DECLARE_REFERENCE
         bool isBeingRequired { false };
-        Reference<JSObject*> exportsWhileRequired;
-        Reference<JSObject*> capturedExports;
-        Reference<JSObject*> deferredExportsSource;
-        // In place of capturedExports, until somebody asks for all the names: the values that the fields of the exports object held when the exports were captured.
-        Reference<JSCellButterfly*> capturedFields;
-        // Beside them, of an exports object with pending stars: what the getters of their bindings answered then.
-        Reference<JSCellButterfly*> capturedStars;
-        Reference<JSObject*> sourceOfCapturedFields;
         bool capturedFieldsAreOfESModule { false };
         bool capturedFieldsAreOfRuntimeModule { false };
-        Reference<AbstractModuleRecord*> uncompiledRecord;
         Identifier resolvedKey;
         std::optional<uint32_t> firstAbsentExport;
         BitVector ambiguousExports;
         std::unique_ptr<SourceOrigin> sourceOrigin;
-        // What the program has recorded: the CommonJS modules that a require() of this module came to, each once, in the order of time, and the module whose require() came to this one first.
         Vector<ModuleID> requiredModules;
         unsigned numberOfChildrenShown { 0 };
         std::optional<ModuleID> firstRequirer;
@@ -237,14 +212,13 @@ private:
 
     StoredModuleStatus storedStatus(ModuleID) const;
     void setStoredStatus(ModuleID, StoredModuleStatus);
-    bool isLinkedWithoutStoredStatus(const ModuleData&) const;
     ModuleStatus statusInRecord(ModuleID) const;
     void setStatus(ModuleID, ModuleStatus);
     void setFailed(ModuleID, JSValue error);
     void retireRecord(ModuleRecord*);
     void setValue(ModuleID, JSValue);
     LoadedModule& ensureLoaded(ModuleID);
-    LoadedModule* loadedIfExists(ModuleID) const;
+    LoadedModule* loadedIfExists(ModuleID module) const { return m_loaded.get(module); }
     void throwEvaluationError(ModuleID);
     static JSPromise* rejectedPromiseWithPendingException(JSGlobalObject*, ThrowScope&);
     Identifier moduleKey(ModuleID);
@@ -252,7 +226,6 @@ private:
     void setNamespace(ModuleID, ModulePhase, JSObject*);
     JSObject* createNamespace(ModuleID, ModulePhase);
     JSObject* createTableOfExports();
-    Structure* namespaceStructure();
     JSModuleLoader* loader() const;
 
     bool loadRuntimeModules(const ModuleLinkWalk&);
@@ -275,44 +248,23 @@ private:
     bool findsItsNamesInLibraryAlone(ModuleID) const;
     Vector<DynamicExport> collectDynamicExports(ModuleID);
 
-    bool enterModule(ModuleID, EvaluationContext&, EvaluationFrames&);
-    void evaluateUncompiledRecord(AbstractModuleRecord*, EvaluationContext&, EvaluationFrames&);
-    void didEvaluateRequiredModule(EvaluationFrame& importer, CyclicModuleRecord* required, EvaluationContext&);
-    void leaveModule(EvaluationFrame&, EvaluationContext&);
-    void pushRecord(EvaluationFrame&, ModuleRecord*, EvaluationContext&);
-    ModuleRecord* ensureFrameRecord(EvaluationFrame&, EvaluationContext&);
-    void materializeFrames(EvaluationFrames&, EvaluationContext&);
-    void failFrames(JSValue error, const EvaluationFrames&);
-    void failStack(JSValue error, ModuleEvaluationStack&);
     void evaluateWithOwnStack(ModuleID root);
-    void evaluateByCallingBody(ModuleID);
+    JSValue callBody(ModuleID);
+    JSValue callBodyUnderOwnMark(ModuleID, bool bodyStoresStatus);
+    void evaluateByCallingBody(ModuleID module) { callBodyUnderOwnMark(module, true); }
     void didThrowInBody(ModuleID, JSValue error);
-    void failModulesLeftEvaluating(uint8_t mark, JSValue error);
     void failEvaluatedModulesOfUnfinishedCycles(std::span<const ModuleID> failedModules, JSValue error);
     void recordEvaluationIfNothingIsLeftToRun(ModuleID);
     bool isPassedOverByEvaluationInProgress(ModuleID) const;
 
-    JSValue executeValueBody(ModuleID);
-    JSValue executeRuntimeValue(ModuleID);
-    JSValue executeHostValue(ModuleID);
-
     std::optional<ModuleID> mainCommonJSModule() const;
-    bool mayHandOutModuleObject(ModuleID) const;
-    JSValue namespaceForRequire(ModuleID);
+    bool mayHandOutModuleObject(ModuleID module) const { return data(module).kind != ModuleKind::CommonJs || data(module).hasValue(); }
     JSValue readExportForRequire(JSObject* namespaceObject, const Identifier& name);
     void markNamespaceAsRequired(ModuleID);
-    JSValue requireThroughHost(JSValue specifier, ModuleID referrer);
-    void throwLoaderChangeRefused(LoaderChange, StringView changed);
 
-    JSPromise* startImport(ModuleID, std::optional<int64_t> referrerAsyncOrder);
     JSPromise* importUncompiled(const Identifier& key, ModuleID referrer, RefPtr<ScriptFetchParameters>&&);
-    void resolveWithNamespace(JSPromise* importPromise, ModuleID);
     std::optional<int64_t> asyncEvaluationOrder(ModuleID) const;
-
-    void appendUncompiledRequests(ModuleRecord*);
     ModuleRecord* registerWithLoader(ModuleID);
-    JSPromise* importThroughLoader(ModuleID, std::optional<int64_t> referrerAsyncOrder);
-    JSPromise* evaluateThroughLoaderSynchronously(ModuleID);
     const Identifier& resolvedKey(ModuleID);
 
     State& m_state;
@@ -328,22 +280,19 @@ private:
     Identifier m_moduleExportsName;
     // The pairs of a requiring and a required module that recordRequire() has seen, and whether a require() of the pair has returned.
     UncheckedKeyHashMap<uint64_t, bool> m_recordedRequires;
-    // A require() has answered the namespace object of the module, which reads `true` under `__esModule` from then on. The object is made when somebody wants it.
     BitVector m_modulesWithMarkOfRequire;
     std::optional<ModuleID> m_firstModuleRequestedByHost;
-    // Uncompiled code loads its own dependencies at any later time, so the first module the build named as external admits all.
     bool m_admitsCodeOutsideImage;
     const bool m_admitsInspector;
     bool m_loadsModulesByName;
     bool m_isAskingHost { false };
     bool m_isStartingRuntimeModule { false };
-    // The link of the entry point that the image has a plan for stores no status: this says Linked for every module with ModuleData::isLinkedWithEntryPoint().
+    // The link of the entry point that the image has a plan for stores no status.
     bool m_entryPointIsLinked { false };
 };
 
-// The engine asks the host for a module that the code of the image names. What the host then asks the engine for is no load by a name that the build did not follow.
+// What the host asks the engine for while the engine asks it for a module that the image names is no load by a name that the build did not follow.
 class RequestToHostScope {
-    WTF_MAKE_NONCOPYABLE(RequestToHostScope);
 public:
     explicit RequestToHostScope(Modules& modules)
         : m_isAskingHost(modules.m_isAskingHost, true)
@@ -357,17 +306,6 @@ private:
 Modules& modulesOf(Instance&);
 Modules* modulesOf(JSGlobalObject*);
 
-inline auto Modules::LoadedModule::namespaceObjectFor(ModulePhase phase) -> Reference<JSObject*>&
-{
-    switch (phase) {
-    case ModulePhase::Evaluation:
-        return namespaceObject;
-    case ModulePhase::Defer:
-        return deferredNamespaceObject;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 ALWAYS_INLINE StoredModuleStatus Modules::storedStatus(ModuleID module) const
 {
     RELEASE_ASSERT(module.index() < m_storedStatuses.size());
@@ -380,16 +318,11 @@ ALWAYS_INLINE void Modules::setStoredStatus(ModuleID module, StoredModuleStatus 
     m_storedStatuses[module.index()] = static_cast<uint8_t>(status);
 }
 
-ALWAYS_INLINE bool Modules::isLinkedWithoutStoredStatus(const ModuleData& moduleData) const
-{
-    return !moduleData.needsLink() || (m_entryPointIsLinked && moduleData.isLinkedWithEntryPoint());
-}
-
 ALWAYS_INLINE ModuleStatus Modules::status(ModuleID module) const
 {
     switch (storedStatus(module)) {
     case StoredModuleStatus::Unlinked:
-        return isLinkedWithoutStoredStatus(data(module)) ? ModuleStatus::Linked : ModuleStatus::Unlinked;
+        return !data(module).needsLink() || (m_entryPointIsLinked && data(module).isLinkedWithEntryPoint()) ? ModuleStatus::Linked : ModuleStatus::Unlinked;
     case StoredModuleStatus::Linked:
         return ModuleStatus::Linked;
     case StoredModuleStatus::Evaluating:
@@ -405,12 +338,6 @@ ALWAYS_INLINE ModuleStatus Modules::status(ModuleID module) const
 ALWAYS_INLINE ModuleRecord* Modules::recordIfExists(ModuleID module) const
 {
     return storedStatus(module) == StoredModuleStatus::InRecord ? m_records.get(module) : nullptr;
-}
-
-inline void Modules::didRequestFromHost(ModuleID module)
-{
-    if (!m_firstModuleRequestedByHost)
-        m_firstModuleRequestedByHost = module;
 }
 
 } } // namespace JSC::AOT

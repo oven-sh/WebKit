@@ -14,18 +14,15 @@ layout L4 kind=Environment name="wide" fields=[{key="k0" declared={type=anything
 layout L5 name="Box" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
 
 function f0 name="initialFieldRead" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = GetEnvironmentField v1 layout=L0 field=0
     Return v2
-}
-# CHECK-LABEL: function f0 name="initialFieldRead"
 # CHECK: b0(
 # CHECK-NEXT: v2: anything = Upcast v0 castType=anything
 # CHECK-NEXT: Return v2
+}
 
 function f1 name="storedOnBothPaths" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     v3 = NewObject layout=L0
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -37,8 +34,6 @@ function f1 name="storedOnBothPaths" parameters=[{type=anything}, {type=anything
   b3():
     v6 = GetEnvironmentField v3 layout=L0 field=0
     Return v6
-}
-# CHECK-LABEL: function f1 name="storedOnBothPaths"
 # CHECK-NOT: NewObject
 # CHECK-NOT: PutEnvironmentField
 # CHECK: Jump -> next b3(v0)
@@ -47,9 +42,9 @@ function f1 name="storedOnBothPaths" parameters=[{type=anything}, {type=anything
 # CHECK-NEXT: b3([[x1]]: anything):
 # CHECK-NEXT: v6: anything = Upcast [[x1]] castType=anything
 # CHECK-NEXT: Return v6
+}
 
 function f2 name="loopCarriedField" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     Jump -> next b1()
   b1():
@@ -62,8 +57,6 @@ function f2 name="loopCarriedField" parameters=[{type=anything}, {type=boolean}]
     Jump -> next b1()
   b3():
     Return v4
-}
-# CHECK-LABEL: function f2 name="loopCarriedField"
 # CHECK-NOT: NewObject
 # CHECK: Jump -> next b1(v0)
 # CHECK-NEXT: b1([[x2]]: anything):
@@ -71,21 +64,20 @@ function f2 name="loopCarriedField" parameters=[{type=anything}, {type=boolean}]
 # CHECK-NEXT: v4: anything = Upcast [[x2]] castType=anything
 # CHECK-NOT: PutEnvironmentField
 # CHECK: Jump -> next b1(v5)
+}
 
 function f3 name="twoEnvironments" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     v3 = NewObject -, v1 layout=L0 fields=[0]
     v4 = GetEnvironmentField v2 layout=L0 field=0
     v5 = GetEnvironmentField v3 layout=L0 field=0
     v6 = Call v4, -, v5
     Return v6
-}
-# CHECK-LABEL: function f3 name="twoEnvironments"
 # CHECK: b0(
 # CHECK-NEXT: v4: anything = Upcast v0 castType=anything
 # CHECK-NEXT: v5: anything = Upcast v1 castType=anything
 # CHECK-NEXT: = Call v4, -, v5
+}
 
 function f4 name="environmentInField" captures=[{type=env L0}] results=[{type=anything}] {
   b0(v0: env L0):
@@ -93,60 +85,52 @@ function f4 name="environmentInField" captures=[{type=env L0}] results=[{type=an
     v2 = GetEnvironmentField v1 layout=L1 field=0
     v3 = GetEnvironmentField v2 layout=L0 field=0
     Return v3
-}
-# CHECK-LABEL: function f4 name="environmentInField"
 # CHECK-NOT: NewObject
 # CHECK-NOT: layout=L1
 # CHECK: = GetEnvironmentField v0 layout=L0
+}
 
 function f5 name="storedAfterDeadZone" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Absent
     v2 = NewObject -, v1 layout=L2 fields=[0]
     PutEnvironmentField v2, v0 layout=L2 field=0
     v4 = GetEnvironmentField v2 layout=L2 field=0
     v5 = CheckInitialized v4 name="x"
     Return v5
-}
-# CHECK-LABEL: function f5 name="storedAfterDeadZone"
 # CHECK-NOT: NewObject
 # CHECK-NOT: PutEnvironmentField
 # CHECK-NOT: GetEnvironmentField
 # CHECK: v4:{{*}}= Upcast v0
 # CHECK-NEXT: v5:{{*}}= CheckInitialized v4 name="x"
+}
 
 function f6 name="readInDeadZone" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Absent
     v2 = NewObject -, v1 layout=L2 fields=[0]
     v3 = GetEnvironmentField v2 layout=L2 field=0
     v4 = CheckInitialized v3 name="x"
     PutEnvironmentField v2, v0 layout=L2 field=0
     Return v4
-}
-# CHECK-LABEL: function f6 name="readInDeadZone"
 # CHECK-NOT: NewObject
 # CHECK-NOT: GetEnvironmentField
 # CHECK: v3:{{*}}= Upcast v1
 # CHECK-NEXT: = CheckInitialized v3 name="x"
 # CHECK-NOT: PutEnvironmentField
+}
 
 function f7 name="literalInField" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L5 fields=[0]
     v2 = NewObject -, v1 layout=L2 fields=[0]
     v3 = GetEnvironmentField v2 layout=L2 field=0
     v4 = CheckInitialized v3 name="x"
     v5 = PropGet v4 key="value" receivers=[L5]
     Return v5
-}
-# CHECK-LABEL: function f7 name="literalInField"
 # CHECK: b0(
 # CHECK-NEXT: v5: anything = Upcast v0 castType=anything
 # CHECK-NEXT: Return v5
+}
 
 function f8 name="closureBuiltInOneBranch" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     v3 = NewClosure v2 function=f15
     Branch v1 -> taken b1(), notTaken b2()
@@ -156,8 +140,6 @@ function f8 name="closureBuiltInOneBranch" parameters=[{type=anything}, {type=bo
   b2():
     v5 = GetEnvironmentField v2 layout=L0 field=0
     Return v5
-}
-# CHECK-LABEL: function f8 name="closureBuiltInOneBranch"
 # CHECK: b0(
 # CHECK-NEXT: Branch
 # CHECK-NEXT: b1():
@@ -166,9 +148,9 @@ function f8 name="closureBuiltInOneBranch" parameters=[{type=anything}, {type=bo
 # CHECK-NEXT: = Call v0, -, [[closure8]]
 # CHECK: b2():
 # CHECK-NEXT: v5: anything = Upcast v0 castType=anything
+}
 
 function f9 name="closureInItsOwnEnvironment" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewObject layout=L3
     v3 = NewClosure v2 function=f16
     PutEnvironmentField v2, v3 layout=L3 field=0
@@ -178,8 +160,6 @@ function f9 name="closureInItsOwnEnvironment" parameters=[{type=anything}, {type
     Return v5
   b2():
     Return
-}
-# CHECK-LABEL: function f9 name="closureInItsOwnEnvironment"
 # CHECK: b0(
 # CHECK-NEXT: Branch
 # CHECK-NEXT: b1():
@@ -189,37 +169,33 @@ function f9 name="closureInItsOwnEnvironment" parameters=[{type=anything}, {type
 # CHECK-NEXT: = Call v0, -, [[closure9]]
 # CHECK: b2():
 # CHECK-NEXT: Return
+}
 
 function f10 name="fortyFields" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewObject -, v0, v1, v0, v1, v0, v1, v0, v1, v0, v1, v0, v1, v0, v1, v0, v1, v0, v1, v0, v1, v0, v1, v0, v1, v0, v1, v0, v1, v0, v1, v0, v1, v0, v1, v0, v1, v0, v1, v0, v1 layout=L4 fields=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]
     v3 = GetEnvironmentField v2 layout=L4 field=38
     v4 = GetEnvironmentField v2 layout=L4 field=39
     v5 = Call v3, -, v4
     Return v5
-}
-# CHECK-LABEL: function f10 name="fortyFields"
 # CHECK: b0(
 # CHECK-NEXT: v3: anything = Upcast v0 castType=anything
 # CHECK-NEXT: v4: anything = Upcast v1 castType=anything
 # CHECK-NEXT: = Call v3, -, v4
+}
 
 function f11 name="closureNeededOnEveryPath" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = GetEnvironmentField v1 layout=L0 field=0
     v3 = NewClosure v1 function=f15
     v4 = Call v0, -, v3
     Return v2
-}
-# CHECK-LABEL: function f11 name="closureNeededOnEveryPath"
 # CHECK: b0(
 # CHECK-NEXT: v1: env L0 = NewObject -, v0 layout=L0 fields=[0]
 # CHECK-NEXT: v2: anything = GetEnvironmentField v1 layout=L0
 # CHECK-NEXT: v3:{{*}}= NewClosure v1 function=f15
+}
 
 function f12 name="readWhereOnePathDidNotStore" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewObject layout=L0
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -230,37 +206,32 @@ function f12 name="readWhereOnePathDidNotStore" parameters=[{type=anything}, {ty
   b3():
     v4 = GetEnvironmentField v2 layout=L0 field=0
     Return v4
-}
-# CHECK-LABEL: function f12 name="readWhereOnePathDidNotStore"
 # CHECK: v2: env L0 = NewObject layout=L0
 # CHECK: PutEnvironmentField v2, v0 layout=L0
 # CHECK: v4: anything = GetEnvironmentField v2 layout=L0
+}
 
 function f13 name="passedToDirectCall" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = GetEnvironmentField v1 layout=L0 field=0
     v3 = CallDirect v1 function=f15
     Return v2
-}
-# CHECK-LABEL: function f13 name="passedToDirectCall"
 # CHECK: v1: env L0 = NewObject -, v0 layout=L0 fields=[0]
 # CHECK-NEXT: v2: anything = GetEnvironmentField v1 layout=L0
 # CHECK-NEXT: = CallDirect v1 function=f15
+}
 
 function f14 name="heldByEnvironmentThatIsPassedOn" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewObject -, v1 layout=L1 fields=[0]
     v3 = CallDirect v2 function=f17
     v4 = GetEnvironmentField v1 layout=L0 field=0
     Return v4
-}
-# CHECK-LABEL: function f14 name="heldByEnvironmentThatIsPassedOn"
 # CHECK: v1: env L0 = NewObject -, v0 layout=L0 fields=[0]
 # CHECK-NEXT: v2: env L1 = NewObject -, v1 layout=L1 fields=[0]
 # CHECK-NEXT: = CallDirect v2 function=f17
 # CHECK-NEXT: v4: anything = GetEnvironmentField v1 layout=L0
+}
 
 function f15 name="capturesScope" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
   b0(v0: env L0):

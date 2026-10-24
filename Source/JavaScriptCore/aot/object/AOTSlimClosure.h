@@ -54,22 +54,22 @@ public:
     static CallData getConstructData(JSCell*);
 
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
-    static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned, PropertySlot&);
+    static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned, PropertySlot&) { return false; }
     static void getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
     static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
     static bool putByIndex(JSCell*, JSGlobalObject*, unsigned, JSValue, bool shouldThrow);
     static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
-    static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned);
+    static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned) { return true; }
     static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
     static bool preventExtensions(JSObject*, JSGlobalObject*);
-    static bool isExtensible(JSObject*, JSGlobalObject*);
+    static bool isExtensible(JSObject*, JSGlobalObject*) { return true; }
     static bool setPrototype(JSObject*, JSGlobalObject*, JSValue, bool shouldThrowIfCantSet);
     static bool customHasInstance(JSObject*, JSGlobalObject*, JSValue);
 
     FunctionID function() const { return FunctionID(ClosureWord::functionOf(m_word)); }
     FunctionKindData kind() const { return functionKindData(function()); }
     bool canConstruct() const { return FunctionTables::canConstruct(kind()); }
-    bool isBound() const { return kind().callable() == CallableKind::Bound; }
+    bool isBound() const { return kind().isBound(); }
     std::span<const uint64_t> captures() const { return { reinterpret_cast<const uint64_t*>(this + 1), captureCountsOf(function()).captures }; }
     unsigned numberOfReferences() const { return captureCountsOf(function()).references; }
     State& state() const;
@@ -120,7 +120,6 @@ public:
     static CompleteSubspace* subspaceFor(VM& vm) { return vm.heap.aotClosureSpace<mode>(); }
 
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype, Variant);
-    static GetValueFunc prototypePropertyCreator();
 
     static constexpr ptrdiff_t offsetOfFunctionIndexInButterfly() { return offsetInButterfly(firstOutOfLineOffset) * static_cast<ptrdiff_t>(sizeof(EncodedJSValue)); }
 
@@ -141,7 +140,7 @@ public:
     FunctionID function() const { return FunctionID(*reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(butterfly()) + offsetOfFunctionIndexInButterfly())); }
     FunctionKindData kind() const { return functionKindData(function()); }
     bool canConstruct() const { return FunctionTables::canConstruct(kind()); }
-    bool isBound() const { return kind().callable() == CallableKind::Bound; }
+    bool isBound() const { return kind().isBound(); }
     std::span<const uint64_t> captures() const { return { reinterpret_cast<const uint64_t*>(this + 1), captureCountsOf(function()).captures }; }
     unsigned numberOfReferences() const { return captureCountsOf(function()).references; }
     State& state() const;
@@ -149,6 +148,8 @@ public:
 private:
     ReifiedSlimClosure() = delete;
 };
+
+JSC_DECLARE_CUSTOM_GETTER(createPrototypeProperty);
 
 static_assert(SlimClosure::offsetOfWord() == offsetOfSlimClosureWord);
 static_assert(sizeof(SlimClosure) == offsetOfSlimClosureCaptures);

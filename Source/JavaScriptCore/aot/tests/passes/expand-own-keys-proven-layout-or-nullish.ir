@@ -10,27 +10,22 @@ layout L1 name="OneProvenOrder" fields=[{key="a" declared={type=number} flow={oc
 layout L2 name="OrderIsOnlyExpected" fields=[{key="a" declared={type=number}}, {key="b" declared={type=number}}] flow={constructorOrders=[{fields=[0, 1]}]}
 
 function f0 name="surelyThere" parameters=[{type=L1}] results=[{type=anything}] {
-  b0(v0: L1):
     v1 = NewObject layout=L0 fields=[]
     CopyDataProperties v1, v0
     v3 = FinishObject v1
     Return v3
-}
-# CHECK-LABEL: function f0 name="surelyThere"
 # CHECK-NOT: TypeTest
 # CHECK-NOT: HasKeyOrder
 # CHECK-NOT: CopyDataProperties
 # CHECK: = GetSlot v0 key="b" receivers=[L1]
 # CHECK-NOT: CopyDataProperties
+}
 
 function f1 name="mayBeUndefinedOrNull" parameters=[{type=undefined|null|L1}] results=[{type=anything}] {
-  b0(v0: undefined|null|L1):
     v1 = NewObject layout=L0 fields=[]
     CopyDataProperties v1, v0
     v3 = FinishObject v1
     Return v3
-}
-# CHECK-LABEL: function f1 name="mayBeUndefinedOrNull"
 # CHECK: = TypeTest v0 testedType=undefined|null
 # CHECK-NOT: TypeTest
 # CHECK-NOT: HasKeyOrder
@@ -42,18 +37,17 @@ function f1 name="mayBeUndefinedOrNull" parameters=[{type=undefined|null|L1}] re
 # CHECK: = GetSlot [[object1]] key="b" receivers=[L1]
 # CHECK-NOT: TypeTest
 # CHECK-NOT: CopyDataProperties
+}
 
 function f2 name="orderIsTestedOnWhatIsLeft" parameters=[{type=undefined|L2}] results=[{type=anything}] {
-  b0(v0: undefined|L2):
     v1 = NewObject layout=L0 fields=[]
     CopyDataProperties v1, v0
     v3 = FinishObject v1
     Return v3
-}
-# CHECK-LABEL: function f2 name="orderIsTestedOnWhatIsLeft"
 # CHECK: = TypeTest v0 testedType=undefined|null
 # CHECK-NOT: testedType=object
 # CHECK: ([[object2]]: L2):
 # CHECK-NOT: testedType=object
 # CHECK: = HasKeyOrder [[object2]] layout=L2 fields=[0, 1]
 # CHECK-NOT: testedType=object
+}

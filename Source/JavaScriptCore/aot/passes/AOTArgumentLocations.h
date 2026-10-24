@@ -12,8 +12,6 @@
 #include "AOTVector.h"
 #include "Reg.h"
 #include <algorithm>
-#include <span>
-#include <wtf/Forward.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -21,8 +19,6 @@ enum class EntryConvention : uint8_t { Direct, GenericRegisters, GenericBuffer }
 
 struct ArgumentLocation {
     enum class Kind : uint8_t { None, GPR, FPR, Stack };
-
-    bool isInRegister() const { return kind == Kind::GPR || kind == Kind::FPR; }
 
     friend bool operator==(const ArgumentLocation&, const ArgumentLocation&) = default;
 
@@ -70,30 +66,7 @@ constexpr bool isPassedInFPR(Representation representation)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-class ArgumentAllocator {
-public:
-    explicit ArgumentAllocator(ConventionRegisters registers)
-        : m_registers(registers)
-    {
-    }
-
-    ArgumentLocation allocate(Representation);
-    ArgumentLocation allocateGPR(Representation);
-    ArgumentLocation allocateFPR(Representation);
-    ArgumentLocation allocateStackWord(Representation);
-
-    uint32_t numberOfStackWords() const { return m_nextStackIndex; }
-
-private:
-    ConventionRegisters m_registers;
-    unsigned m_nextGPR { 0 };
-    unsigned m_nextFPR { 0 };
-    uint32_t m_nextStackIndex { 0 };
-};
-
 EntryConvention entryConventionOf(const Function&);
-
-ConventionRegisters maxConventionRegisters();
 
 constexpr bool isCellOrBoxedValue(Representation representation)
 {
@@ -105,8 +78,6 @@ constexpr bool haveSameRegisterRepresentation(Representation returned, Represent
 {
     return returned == expected || (isCellOrBoxedValue(returned) && isCellOrBoxedValue(expected));
 }
-
-void dump(PrintStream&, const ArgumentLocation&);
 
 } } } // namespace JSC::AOT::Typed
 

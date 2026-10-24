@@ -8,7 +8,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="proofOfSentValue" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
-  b0(v0: function, v1: anything):
     InitialYield @10
     v3 = Await v1 @11
     v4 = Yield v3 @12
@@ -27,7 +26,6 @@ function f0 name="proofOfSentValue" flags=[IsAsync, IsGenerator, TakesCallee] pa
     Return v7
 }
 function f1 name="readWhereArmsMeet" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
-  b0(v0: function, v1: anything):
     InitialYield @10
     v3 = Await v1 @11
     v4 = Yield v3 @12
@@ -45,7 +43,6 @@ function f1 name="readWhereArmsMeet" flags=[IsAsync, IsGenerator, TakesCallee] p
     Return v6
 }
 function f2 name="noAwaitInFront" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
-  b0(v0: function, v1: anything):
     InitialYield @10
     v3 = Yield v1 @12
     v4 = ResultAt v3 index=0
@@ -60,7 +57,6 @@ function f2 name="noAwaitInFront" flags=[IsAsync, IsGenerator, TakesCallee] para
     Return v5
 }
 function f3 name="castOfProof" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
-  b0(v0: function, v1: anything):
     InitialYield @10
     v3 = Await v1 @11
     v4 = Yield v3 @12

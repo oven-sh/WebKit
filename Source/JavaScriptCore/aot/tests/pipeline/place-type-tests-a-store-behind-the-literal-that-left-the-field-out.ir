@@ -7,7 +7,6 @@ entry module=m0
 layout L0 name="Context" module=m0 fields=[{key="cwd" declared={type=anything}}, {key="file" declared={type=anything}}]
 
 function f0 name="" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="register" [isFreeName]
     v2 = NewClosure function=f1
@@ -17,7 +16,6 @@ function f0 name="" module=m0 kind=Module results=[{type=anything}] {
 }
 
 function f1 name="makeContext" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = FinishObject v1
     v3 = Builtin builtin=GlobalThis

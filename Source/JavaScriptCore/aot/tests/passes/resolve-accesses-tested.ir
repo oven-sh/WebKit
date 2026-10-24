@@ -14,8 +14,6 @@ function f0 name="object-with-an-expected-layout" parameters=[{type=object}] res
   b0(v0: object ~ L0):
     v1 = PropGet v0 key="x"
     Return v1
-}
-# CHECK-LABEL: function f0 name="object-with-an-expected-layout"
 # CHECK-NEXT: b0(v0: object ~ L0):
 # CHECK-NEXT: [[isPair]]: boolean{{*}}= TypeTest v0 testedType=L0
 # CHECK-NEXT: Branch [[isPair]] -> taken [[pairs]](| 0), notTaken {{*}}
@@ -27,12 +25,11 @@ function f0 name="object-with-an-expected-layout" parameters=[{type=object}] res
 # CHECK: [[pairs]]([[pair]]: L0):
 # CHECK-NEXT: = BelongsToInstance [[pair]]
 # CHECK-NOT: ShapeTest
+}
 function f1 name="expected-parameter" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ L0):
     v1 = PropGet v0 key="x"
     Return v1
-}
-# CHECK-LABEL: function f1 name="expected-parameter"
 # CHECK-NEXT: b0(v0: anything ~ L0):
 # CHECK-NEXT: [[isExpected]]: boolean{{*}}= TypeTest v0 testedType=L0
 # CHECK-NEXT: Branch [[isExpected]] -> taken [[expectedObjects]](| 0), notTaken {{*}}
@@ -44,12 +41,10 @@ function f1 name="expected-parameter" parameters=[{type=L0 flags=[IsExpected]}] 
 # CHECK: [[expectedObjects]]([[expectedObject]]: L0):
 # CHECK-NEXT: = BelongsToInstance [[expectedObject]]
 # CHECK-NOT: TypeTest
+}
 function f2 name="proven-receiver-may-be-undefined" parameters=[{type=undefined|L1}] results=[{type=anything}] {
-  b0(v0: undefined|L1):
     v1 = PropGet v0 key="x"
     Return v1
-}
-# CHECK-LABEL: function f2 name="proven-receiver-may-be-undefined"
 # CHECK-NEXT: b0(v0: undefined|L1):
 # CHECK-NEXT: [[isObject]]: boolean{{*}}= TypeTest v0 testedType=object
 # CHECK-NEXT: Branch [[isObject]] -> taken [[objects]](| 0), notTaken {{*}}(| 0)
@@ -60,12 +55,10 @@ function f2 name="proven-receiver-may-be-undefined" parameters=[{type=undefined|
 # CHECK-NOT: BelongsToInstance
 # CHECK: : never = PropGet {{*}} key="x"
 # CHECK-NEXT: Unreachable
+}
 function f3 name="proven-receiver-slot-may-be-empty" parameters=[{type=L1}] results=[{type=anything}] {
-  b0(v0: L1):
     v1 = PropGet v0 key="z"
     Return v1
-}
-# CHECK-LABEL: function f3 name="proven-receiver-slot-may-be-empty"
 # CHECK-NEXT: b0(v0: L1):
 # CHECK-NEXT: [[isFilled]]: boolean = IsSlotFilled v0 key="z" receivers=[L1] level=Expected [holdsDeclaredType]
 # CHECK-NEXT: Branch [[isFilled]] -> taken [[filled]](| 0), notTaken {{*}}()
@@ -75,13 +68,12 @@ function f3 name="proven-receiver-slot-may-be-empty" parameters=[{type=L1}] resu
 # CHECK: v1: number = GetSlot v0, [[filledGuard]] key="z" receivers=[L1] level=Expected [holdsDeclaredType]
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: = PropGet v0 key="z"
+}
 function f4 name="two-reads-in-a-row" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ L0):
     v1 = PropGet v0 key="x"
     v2 = PropGet v0 key="y"
     Return v2
-}
-# CHECK-LABEL: function f4 name="two-reads-in-a-row"
 # CHECK: = TypeTest v0 testedType=L0
 # CHECK-NOT: TypeTest
 # CHECK: = GetSlot [[shared]], [[sharedGuard]] key="x" receivers=[L0] level=Expected
@@ -90,38 +82,33 @@ function f4 name="two-reads-in-a-row" parameters=[{type=L0 flags=[IsExpected]}] 
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: = PropGet v0 key="x"
 # CHECK-NEXT: = PropGet v0 key="y"
+}
 function f5 name="absent-member-of-an-extensible-object" parameters=[{type=L2}] results=[{type=anything}] {
-  b0(v0: L2):
     v1 = PropGet v0 key="missing"
     Return v1
-}
-# CHECK-LABEL: function f5 name="absent-member-of-an-extensible-object"
 # CHECK-NEXT: b0(v0: L2):
 # CHECK-NEXT: [[hasNoExtra]]: boolean = HasNoExtraProperties v0
 # CHECK-NEXT: Branch [[hasNoExtra]] -> taken {{*}}(| 0), notTaken {{*}}()
 # CHECK: v1: undefined = Undefined
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: = PropGet v0 key="missing"
+}
 function f6 name="nothing-expected" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = PropGet v0 key="x"
     Return v1
-}
-# CHECK-LABEL: function f6 name="nothing-expected"
 # CHECK-NEXT: b0(v0: object):
 # CHECK-NEXT: = PropGet v0 key="x"
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
+}
 function f7 name="no-object-in-the-type" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = PropGet v0 key="x"
     Return v1
-}
-# CHECK-LABEL: function f7 name="no-object-in-the-type"
 # CHECK-NEXT: b0(v0: string):
 # CHECK-NEXT: = PropGet v0 key="x"
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
+}
 function f8 name="rare-block" parameters=[{type=L0 flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
   b0(v0: anything ~ L0, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
@@ -130,19 +117,15 @@ function f8 name="rare-block" parameters=[{type=L0 flags=[IsExpected]}, {type=bo
     Return v2
   b2():
     Return
-}
-# CHECK-LABEL: function f8 name="rare-block"
 # CHECK-NOT: TypeTest
 # CHECK: frequency=Rare:
 # CHECK-NEXT: = PropGet v0 key="x"
 # CHECK-NEXT: Return v2
 # CHECK-NOT: TypeTest
+}
 function f9 name="store-to-possibly-frozen-object" parameters=[{type=L3}, {type=number}] results=[{type=anything}] {
-  b0(v0: L3, v1: number):
     PropSet v0, v1 key="x"
     Return
-}
-# CHECK-LABEL: function f9 name="store-to-possibly-frozen-object"
 # CHECK-NEXT: b0(v0: L3, v1: number):
 # CHECK-NEXT: [[isNotFrozen]]: boolean = IsNotFrozen v0
 # CHECK-NEXT: Branch [[isNotFrozen]] -> taken [[notFrozen]](| 0), notTaken {{*}}()
@@ -150,12 +133,10 @@ function f9 name="store-to-possibly-frozen-object" parameters=[{type=L3}, {type=
 # CHECK: PutSlot v0, [[notFrozenGuard]], v1 key="x" receivers=[L3] level=Expected
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: PropSet v0, v1 key="x"
+}
 function f10 name="stored-value-may-not-fit" parameters=[{type=L1}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L1, v1: anything):
     PropSet v0, v1 key="x"
     Return
-}
-# CHECK-LABEL: function f10 name="stored-value-may-not-fit"
 # CHECK-NEXT: b0(v0: L1, v1: anything):
 # CHECK-NEXT: [[fits]]: boolean = TypeTest v1 testedType=number
 # CHECK-NEXT: Branch [[fits]] -> taken [[fitting]](| 0), notTaken {{*}}(| 0)
@@ -163,25 +144,22 @@ function f10 name="stored-value-may-not-fit" parameters=[{type=L1}, {type=anythi
 # CHECK: PutSlot v0, -, [[number]] key="x" receivers=[L1] level=Expected
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: PropSet v0, {{*}} key="x"
+}
 function f11 name="store-to-possibly-moved-out-slot" parameters=[{type=L1}, {type=number}] results=[{type=anything}] {
-  b0(v0: L1, v1: number):
     PropSet v0, v1 key="z"
     Return
-}
-# CHECK-LABEL: function f11 name="store-to-possibly-moved-out-slot"
 # CHECK-NEXT: b0(v0: L1, v1: number):
 # CHECK-NEXT: [[hasNoOthers]]: boolean = HasNoFieldOutsideSlot v0
 # CHECK: ([[hasNoOthersGuard]]: guard):
 # CHECK: PutSlotOrAdd v0, [[hasNoOthersGuard]], v1 key="z" receivers=[L1] level=Expected
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: PropSet v0, v1 key="z"
+}
 function f12 name="stored-value-never-fits" parameters=[{type=L1}, {type=string}] results=[{type=anything}] {
-  b0(v0: L1, v1: string):
     PropSet v0, v1 key="x"
     Return
-}
-# CHECK-LABEL: function f12 name="stored-value-never-fits"
 # CHECK-NEXT: b0(v0: L1, v1: string):
 # CHECK-NEXT: PropSet v0, v1 key="x"
 # CHECK-NEXT: Return
 # CHECK-NEXT: }
+}

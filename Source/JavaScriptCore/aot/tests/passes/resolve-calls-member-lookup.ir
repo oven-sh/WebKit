@@ -21,25 +21,20 @@ layout L11 kind=Instance name="Abstract" constructor=f16 flow={allocation=NeverA
 layout L12 name="Options" flow={impossibleMutations=[AddProperty, ChangePrototype]}
 function f0 name="A" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f1 name="foo" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f2 name="bar" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f3 name="both" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f4 name="both" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f5 name="B" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f6 name="Overriding" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f7 name="foo" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f8 name="Shadowing" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
@@ -52,62 +47,50 @@ function f14 name="BelowComputedMember" kind=DerivedConstructor flags=[HasNewTar
 function f15 name="UnknownBase" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f16 name="Abstract" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f17 name="foo" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 
 function f18 name="own-method" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="foo"
     v2 = Call v1, v0 calleeKey="foo"
     Return v2
-}
-# CHECK-LABEL: function f18 name="own-method"
 # CHECK-NEXT: b0(v0: L0):
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: = CallDirect v0 function=f1
 # CHECK-NOT: = Call v
+}
 function f19 name="inherited-method" parameters=[{type=L1}] results=[{type=anything}] {
-  b0(v0: L1):
     v1 = PropGet v0 key="foo"
     v2 = Call v1, v0 calleeKey="foo"
     Return v2
-}
-# CHECK-LABEL: function f19 name="inherited-method"
 # CHECK-NEXT: b0(v0: L1):
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: = CallDirect v0 function=f1
 # CHECK-NOT: = Call v
+}
 function f20 name="overriding-method" parameters=[{type=L2}] results=[{type=anything}] {
-  b0(v0: L2):
     v1 = PropGet v0 key="foo"
     v2 = Call v1, v0 calleeKey="foo"
     Return v2
-}
-# CHECK-LABEL: function f20 name="overriding-method"
 # CHECK-NEXT: b0(v0: L2):
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: = CallDirect v0 function=f7
 # CHECK-NOT: = Call v
+}
 function f21 name="field-hides-the-method" parameters=[{type=L3}] results=[{type=anything}] {
-  b0(v0: L3):
     v1 = PropGet v0 key="foo"
     v2 = Call v1, v0 calleeKey="foo"
     Return v2
-}
-# CHECK-LABEL: function f21 name="field-hides-the-method"
 # CHECK-NEXT: b0(v0: L3):
 # CHECK-NEXT: = PropGet v0 key="foo"
 # CHECK-NEXT: = Call v1, v0 calleeKey="foo"
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
+}
 function f22 name="own-property-may-hide-the-method" parameters=[{type=L4}] results=[{type=anything}] {
-  b0(v0: L4):
     v1 = PropGet v0 key="foo"
     v2 = Call v1, v0 calleeKey="foo"
     Return v2
-}
-# CHECK-LABEL: function f22 name="own-property-may-hide-the-method"
 # CHECK-NEXT: b0(v0: L4):
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: [[isFound22]]: boolean = AreMembersUnchanged conditions=[{{*}}layout=L4{{*}}key="foo"}]
@@ -117,13 +100,11 @@ function f22 name="own-property-may-hide-the-method" parameters=[{type=L4}] resu
 # CHECK: [[lost22]]() frequency=Unlikely:
 # CHECK-NEXT: [[read22]]: anything = PropGet v0 key="foo" receivers=[L4]
 # CHECK-NEXT: = Call [[read22]], v0 calleeKey="foo"
+}
 function f23 name="object-gains-the-name" parameters=[{type=L5}] results=[{type=anything}] {
-  b0(v0: L5):
     v1 = PropGet v0 key="foo"
     v2 = Call v1, v0 calleeKey="foo"
     Return v2
-}
-# CHECK-LABEL: function f23 name="object-gains-the-name"
 # CHECK-NEXT: b0(v0: L5):
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: [[isFound23]]: boolean = AreMembersUnchanged conditions=[{{*}}layout=L5{{*}}key="foo"}]
@@ -133,24 +114,20 @@ function f23 name="object-gains-the-name" parameters=[{type=L5}] results=[{type=
 # CHECK: [[lost23]]() frequency=Unlikely:
 # CHECK-NEXT: [[read23]]: anything = PropGet v0 key="foo" receivers=[L5]
 # CHECK-NEXT: = Call [[read23]], v0 calleeKey="foo"
+}
 function f24 name="object-gains-another-name" parameters=[{type=L6}] results=[{type=anything}] {
-  b0(v0: L6):
     v1 = PropGet v0 key="foo"
     v2 = Call v1, v0 calleeKey="foo"
     Return v2
-}
-# CHECK-LABEL: function f24 name="object-gains-another-name"
 # CHECK-NEXT: b0(v0: L6):
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: = CallDirect v0 function=f1
 # CHECK-NOT: = Call v
+}
 function f25 name="object-may-change-its-prototype" parameters=[{type=L7}] results=[{type=anything}] {
-  b0(v0: L7):
     v1 = PropGet v0 key="foo"
     v2 = Call v1, v0 calleeKey="foo"
     Return v2
-}
-# CHECK-LABEL: function f25 name="object-may-change-its-prototype"
 # CHECK-NEXT: b0(v0: L7):
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: [[isFound25]]: boolean = AreMembersUnchanged conditions=[{{*}}layout=L7{{*}}key="foo"}]
@@ -160,13 +137,11 @@ function f25 name="object-may-change-its-prototype" parameters=[{type=L7}] resul
 # CHECK: [[lost25]]() frequency=Unlikely:
 # CHECK-NEXT: [[read25]]: anything = PropGet v0 key="foo" receivers=[L7]
 # CHECK-NEXT: = Call [[read25]], v0 calleeKey="foo"
+}
 function f26 name="method-may-be-replaced" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="bar"
     v2 = Call v1, v0 calleeKey="bar"
     Return v2
-}
-# CHECK-LABEL: function f26 name="method-may-be-replaced"
 # CHECK-NEXT: b0(v0: L0):
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: [[isFound26]]: boolean = AreMembersUnchanged conditions=[{{*}}layout=L0{{*}}key="bar"}]
@@ -176,25 +151,21 @@ function f26 name="method-may-be-replaced" parameters=[{type=L0}] results=[{type
 # CHECK: [[lost26]]() frequency=Unlikely:
 # CHECK-NEXT: [[read26]]: anything = PropGet v0 key="bar" receivers=[L0]
 # CHECK-NEXT: = Call [[read26]], v0 calleeKey="bar"
+}
 function f27 name="method-and-getter-under-one-key" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="both"
     v2 = Call v1, v0 calleeKey="both"
     Return v2
-}
-# CHECK-LABEL: function f27 name="method-and-getter-under-one-key"
 # CHECK-NEXT: b0(v0: L0):
 # CHECK-NEXT: = PropGet v0 key="both"
 # CHECK-NEXT: = Call v1, v0 calleeKey="both"
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
+}
 function f28 name="class-with-computed-member" parameters=[{type=L8}] results=[{type=anything}] {
-  b0(v0: L8):
     v1 = PropGet v0 key="foo"
     v2 = Call v1, v0 calleeKey="foo"
     Return v2
-}
-# CHECK-LABEL: function f28 name="class-with-computed-member"
 # CHECK-NEXT: b0(v0: L8):
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: [[isFound28]]: boolean = AreMembersUnchanged conditions=[{{*}}layout=L8{{*}}key="foo"}]
@@ -204,13 +175,11 @@ function f28 name="class-with-computed-member" parameters=[{type=L8}] results=[{
 # CHECK: [[lost28]]() frequency=Unlikely:
 # CHECK-NEXT: [[read28]]: anything = PropGet v0 key="foo" receivers=[L8]
 # CHECK-NEXT: = Call [[read28]], v0 calleeKey="foo"
+}
 function f29 name="base-with-computed-member" parameters=[{type=L9}] results=[{type=anything}] {
-  b0(v0: L9):
     v1 = PropGet v0 key="foo"
     v2 = Call v1, v0 calleeKey="foo"
     Return v2
-}
-# CHECK-LABEL: function f29 name="base-with-computed-member"
 # CHECK-NEXT: b0(v0: L9):
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: [[isFound29]]: boolean = AreMembersUnchanged conditions=[{{*}}layout=L9{{*}}key="foo"}]
@@ -220,25 +189,21 @@ function f29 name="base-with-computed-member" parameters=[{type=L9}] results=[{t
 # CHECK: [[lost29]]() frequency=Unlikely:
 # CHECK-NEXT: [[read29]]: anything = PropGet v0 key="foo" receivers=[L9]
 # CHECK-NEXT: = Call [[read29]], v0 calleeKey="foo"
+}
 function f30 name="unknown-base" parameters=[{type=L10}] results=[{type=anything}] {
-  b0(v0: L10):
     v1 = PropGet v0 key="foo"
     v2 = Call v1, v0 calleeKey="foo"
     Return v2
-}
-# CHECK-LABEL: function f30 name="unknown-base"
 # CHECK-NEXT: b0(v0: L10):
 # CHECK-NEXT: = PropGet v0 key="foo"
 # CHECK-NEXT: = Call v1, v0 calleeKey="foo"
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
+}
 function f31 name="unknown-base-in-one-of-three" parameters=[{type=L1|L2|L10}] results=[{type=anything}] {
-  b0(v0: L1|L2|L10):
     v1 = PropGet v0 key="foo"
     v2 = Call v1, v0 calleeKey="foo"
     Return v2
-}
-# CHECK-LABEL: function f31 name="unknown-base-in-one-of-three"
 # CHECK-NEXT: b0(v0: L1|L2|L10):
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NEXT: [[isB]]: boolean = TypeTest v0 testedType=L1
@@ -253,75 +218,64 @@ function f31 name="unknown-base-in-one-of-three" parameters=[{type=L1|L2|L10}] r
 # CHECK: [[rest]]([[unknown]]: L10) frequency=Unlikely:
 # CHECK-NEXT: [[read]]: anything = PropGet [[unknown]] key="foo" receivers=[L10]
 # CHECK-NEXT: = Call [[read]], [[unknown]] calleeKey="foo"
+}
 function f32 name="member-without-objects" parameters=[{type=L1|L11}] results=[{type=anything}] {
-  b0(v0: L1|L11):
     v1 = PropGet v0 key="foo"
     v2 = Call v1, v0 calleeKey="foo"
     Return v2
-}
-# CHECK-LABEL: function f32 name="member-without-objects"
 # CHECK-NEXT: b0(v0: L1|L11):
 # CHECK-NEXT: v1: undefined = Undefined
 # CHECK-NOT: function=f17
 # CHECK: = CallDirect {{*}} function=f1
 # CHECK-NOT: function=f17
+}
 function f33 name="constructor-name" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="constructor"
     v2 = Call v1, v0 calleeKey="constructor"
     Return v2
-}
-# CHECK-LABEL: function f33 name="constructor-name"
 # CHECK-NEXT: b0(v0: L0):
 # CHECK-NEXT: = PropGet v0 key="constructor"
 # CHECK-NEXT: = Call v1, v0 calleeKey="constructor"
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
+}
 function f34 name="object-prototype-name" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="hasOwnProperty"
     v2 = Call v1, v0 calleeKey="hasOwnProperty"
     Return v2
-}
-# CHECK-LABEL: function f34 name="object-prototype-name"
 # CHECK-NEXT: b0(v0: L0):
 # CHECK-NEXT: = PropGet v0 key="hasOwnProperty"
 # CHECK-NEXT: = Call v1, v0 calleeKey="hasOwnProperty"
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
+}
 function f35 name="index-name" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="0"
     v2 = Call v1, v0 calleeKey="0"
     Return v2
-}
-# CHECK-LABEL: function f35 name="index-name"
 # CHECK-NEXT: b0(v0: L0):
 # CHECK-NEXT: = PropGet v0 key="0"
 # CHECK-NEXT: = Call v1, v0 calleeKey="0"
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
+}
 function f36 name="absent-member" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="missing"
     v2 = Call v1, v0 calleeKey="missing"
     Return v2
-}
-# CHECK-LABEL: function f36 name="absent-member"
 # CHECK-NEXT: b0(v0: L0):
 # CHECK-NEXT: = PropGet v0 key="missing"
 # CHECK-NEXT: = Call v1, v0 calleeKey="missing"
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
+}
 function f37 name="record-without-the-field" parameters=[{type=L12}] results=[{type=anything}] {
-  b0(v0: L12):
     v1 = PropGet v0 key="foo"
     v2 = Call v1, v0 calleeKey="foo"
     Return v2
-}
-# CHECK-LABEL: function f37 name="record-without-the-field"
 # CHECK-NEXT: b0(v0: L12):
 # CHECK-NEXT: = PropGet v0 key="foo"
 # CHECK-NEXT: = Call v1, v0 calleeKey="foo"
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
+}

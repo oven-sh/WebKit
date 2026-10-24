@@ -7,7 +7,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Record" fields=[{key="a0" declared={type=number}}, {key="a1" declared={type=number}}, {key="a2" declared={type=number}}, {key="a3" declared={type=number}}, {key="a4" declared={type=number}}, {key="a5" declared={type=number}}, {key="a6" declared={type=number}}, {key="a7" declared={type=number}}, {key="a8" declared={type=number}}, {key="b0" declared={type=number}}, {key="b1" declared={type=number}}, {key="b2" declared={type=number}}, {key="b3" declared={type=number}}, {key="b4" declared={type=number}}, {key="b5" declared={type=number}}, {key="b6" declared={type=number}}, {key="b7" declared={type=number}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=MathRandom
     v1 = Call v0
     v2 = ToNumber v1
@@ -31,7 +30,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 # REPEAT: i = 0..7
 function f%(i+1) name="add%(i)" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0, v1: number):
     PropSet v0, v1 key="b%(i)"
     Return
 }

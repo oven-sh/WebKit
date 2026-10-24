@@ -309,7 +309,6 @@ variable g1 name="b" module=m0 declared={type=L0 flags=[IsExpected]}
 variable g2 name="c" module=m0 declared={type=L2}
 module m0 path="/a.ts" displayPath="a.ts"
 function f0 name="f" module=m0 parameters=[{type=L1}] results=[{type=anything}] {
-  b0(v0: L1):
     Return v0
 }
 entry module=m0

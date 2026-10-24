@@ -9,6 +9,7 @@
 
 #include "AOTIR.h"
 #include "AOTVector.h"
+#include <algorithm>
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/FastMalloc.h>
@@ -21,6 +22,7 @@ class BuildContext;
 namespace Typed {
 
 class FlowResults;
+struct FramePlan;
 struct OptimizationInputs;
 
 struct CaptureReference {
@@ -35,42 +37,24 @@ class FrameAllocation {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(FrameAllocation);
 public:
     FrameAllocation() = default;
+    FrameAllocation(const Program&, std::span<const FramePlan>);
 
-    bool mayBeInFrame(LayoutID layout) const { RELEASE_ASSERT(m_isFinished); return m_layoutsInFrames.get(layout.index()); }
+    bool mayBeInFrame(LayoutID layout) const { return m_layoutsInFrames.get(layout.index()); }
     bool isOnlyInFrames(LayoutID layout) const { return mayBeInFrame(layout) && !m_layoutsOnHeap.get(layout.index()); }
-    bool mayBeInFrame(FunctionID closureFunction) const { RELEASE_ASSERT(m_isFinished); return m_closuresInFrames.get(closureFunction.index()); }
+    bool mayBeInFrame(FunctionID closureFunction) const { return m_closuresInFrames.get(closureFunction.index()); }
     bool isOnlyInFrames(FunctionID closureFunction) const { return mayBeInFrame(closureFunction) && !m_closuresOnHeap.get(closureFunction.index()); }
-
-    bool mayHoldFramePointer(FieldReference) const;
-    bool mayHoldFramePointer(CaptureReference) const;
-    std::span<const FieldReference> fieldsHoldingFramePointers() const LIFETIME_BOUND { return m_fieldsHoldingFramePointers.span(); }
-    std::span<const CaptureReference> capturesHoldingFramePointers() const LIFETIME_BOUND { return m_capturesHoldingFramePointers.span(); }
-
-    void addCell(LayoutID, AllocationStorage);
-    void addClosure(FunctionID closureFunction, AllocationStorage);
-    void addHolder(FieldReference);
-    void addHolder(CaptureReference);
-    void merge(const FrameAllocation&);
-    void finish();
+    bool mayHoldFramePointer(FieldReference field) const { return std::ranges::binary_search(m_fieldsHoldingFramePointers, field); }
+    bool mayHoldFramePointer(CaptureReference capture) const { return std::ranges::binary_search(m_capturesHoldingFramePointers, capture); }
 
     void dump(PrintStream&, const Program&) const;
 
 private:
-    template<typename IDType>
-    struct PendingStorage {
-        IDType id;
-        AllocationStorage storage { AllocationStorage::Heap };
-    };
-
-    Vector<PendingStorage<LayoutID>> m_pendingCells;
-    Vector<PendingStorage<FunctionID>> m_pendingClosures;
     BitVector m_layoutsInFrames;
     BitVector m_layoutsOnHeap;
     BitVector m_closuresInFrames;
     BitVector m_closuresOnHeap;
     Vector<FieldReference> m_fieldsHoldingFramePointers;
     Vector<CaptureReference> m_capturesHoldingFramePointers;
-    bool m_isFinished { true };
 };
 
 // The flow results are those of the inputs. Their table of borrowed parameters grows by what the plans put into frames.

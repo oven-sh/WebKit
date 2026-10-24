@@ -14,7 +14,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class PromiseBuiltinEmitter final : public BuiltinFamilyEmitter {
 public:
-    explicit PromiseBuiltinEmitter(CodeGenerator&);
+    explicit PromiseBuiltinEmitter(CodeGenerator& generator) : BuiltinFamilyEmitter(generator) { }
 
     void generatePromiseResolve(const InlineCall&);
     void generatePromiseThen(const InlineCall&);

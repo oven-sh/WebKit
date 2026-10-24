@@ -9,31 +9,13 @@
 
 #include "AOTChainDependents.h"
 #include "AOTRuntimeWords.h"
-#include "AOTVector.h"
 #include "AOTWatchpoints.h"
-#include "CollectionScope.h"
 #include "Identifier.h"
-#include "RememberedSlot.h"
-#include <memory>
-#include <span>
 #include <wtf/BitVector.h>
-#include <wtf/FastMalloc.h>
-#include <wtf/HashMap.h>
-#include <wtf/HashSet.h>
-#include <wtf/Noncopyable.h>
-#include <wtf/TZoneMalloc.h>
 
-namespace JSC {
+namespace JSC { namespace AOT {
 
-class JSObject;
-class Structure;
-class VM;
-
-namespace AOT {
-
-struct State;
-
-// Fills and drops the records that compiled code reads at GetGlobalBinding and SetGlobalBinding. Nothing is filled at start: a record is filed by the first access that misses it.
+// Fills and drops the records that compiled code reads at GetGlobalBinding and SetGlobalBinding. A record is filed by the first access that misses it.
 class GlobalBindings final : public ChainDependentOwner {
     WTF_MAKE_NONCOPYABLE(GlobalBindings);
     WTF_MAKE_TZONE_ALLOCATED(GlobalBindings);
@@ -45,9 +27,12 @@ public:
     static constexpr uint32_t identifierMask = isForTypeOfFlag - 1;
 
     explicit GlobalBindings(State&);
-    ~GlobalBindings();
 
-    GlobalBinding& at(uint32_t number);
+    GlobalBinding& at(uint32_t number)
+    {
+        RELEASE_ASSERT(number < m_records.size());
+        return m_records[number];
+    }
     Identifier nameOf(uint32_t number) const;
     bool seesScriptBindings(uint32_t number) const { return m_names[number] & seesScriptBindingsFlag; }
     // A free name that nothing is bound to throws. `typeof` of it and a read of the global object answer undefined.
@@ -55,7 +40,7 @@ public:
 
     // Without a holder to watch, the value is fixed for ever. With one, false where no watch can be set: then nothing is filed.
     bool fileConstant(VM&, uint32_t number, JSObject* holderToWatch, JSValue);
-    // Neither the global object nor one of the objects above it has the name. The record answers undefined until one of them reports a change under the name.
+    // The record answers undefined until the global object or one of the objects above it reports a change under the name.
     void fileAbsence(VM&, uint32_t number, std::span<JSObject* const> objectsAboveGlobalObject);
     void fileLocation(uint32_t number, Structure*, int64_t location);
     // An inline store replaces the value without a report, so no record of the name holds a watched constant again.
@@ -68,30 +53,13 @@ public:
     size_t removeDeadEntries(VM&, CollectionScope);
 
 private:
-    struct Watch {
-        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Watch);
-
-        Watch(GlobalBindings& owner, uint32_t number)
-            : owner(owner)
-            , number(number)
-        {
-        }
-
-        PropertyValueWatchpoint watchpoint;
-        GlobalBindings& owner;
-        uint32_t number;
-        bool hasFired { false };
-    };
-
     using NumberHashTraits = WTF::UnsignedWithZeroKeyHashTraits<uint32_t>;
 
     void dropChainDependent(VM&, uint32_t number, UniquedStringImpl*) final;
-    bool hasChainDependent(VM&, uint32_t number, UniquedStringImpl*) const final;
+    bool hasChainDependent(VM&, uint32_t number, UniquedStringImpl*) const final { return m_isFiledAsAbsent.get(number); }
 
     uint32_t identifierNumberOf(uint32_t number) const { return m_names[number] & identifierMask; }
-    void setConstant(uint32_t number, JSValue);
-    bool tryWatch(VM&, uint32_t number, JSObject* holder, JSValue expected);
-    static void didFire(VM&, void* watch);
+    void setConstant(uint32_t number, JSValue, bool isAbsence);
 
     State& m_state;
     std::span<GlobalBinding> m_records;
@@ -103,7 +71,7 @@ private:
     ChainDependentOwnerID m_chainDependentOwner;
     BitVector m_isStoredThrough;
     UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, NumberHashTraits> m_identifiersStoredThrough;
-    UncheckedKeyHashMap<uint32_t, std::unique_ptr<Watch>, IntHash<uint32_t>, NumberHashTraits> m_watches;
+    UncheckedKeyHashMap<uint32_t, std::unique_ptr<PropertyValueWatchpoint>, IntHash<uint32_t>, NumberHashTraits> m_watches;
     RememberedSlotSet m_writtenSinceCollection;
 };
 

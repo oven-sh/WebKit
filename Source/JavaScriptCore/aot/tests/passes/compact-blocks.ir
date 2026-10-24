@@ -9,7 +9,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="emptiedBlockAndUnlistedValue" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = Add v1, v1
     v3 = Mul v1, v1
     v4 = IteratorOpen v0
@@ -33,8 +32,6 @@ function f0 name="emptiedBlockAndUnlistedValue" parameters=[{type=anything}, {ty
     v12 = CatchValue
     v13 = Call v0, -, v11, v12
     Return v13
-}
-# CHECK-LABEL: function f0 name="emptiedBlockAndUnlistedValue"
 # CHECK-NEXT: b0(v0: anything, v1: number):
 # CHECK-NEXT: v2: number = Mul v1, v1
 # CHECK-NEXT: v3: iteratorstate = IteratorOpen v0
@@ -57,9 +54,9 @@ function f0 name="emptiedBlockAndUnlistedValue" parameters=[{type=anything}, {ty
 # CHECK-NEXT: v12: anything = Call v0, -, v10, v11
 # CHECK-NEXT: Return v12
 # CHECK-NEXT: }
+}
 
 function f1 name="unlistedValueOnly" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
-  b0(v0: number, v1: boolean):
     v2 = Add v0, v0
     v3 = Mul v0, v0
     Branch v1 -> taken b1(v3), notTaken b2()
@@ -67,8 +64,6 @@ function f1 name="unlistedValueOnly" parameters=[{type=number}, {type=boolean}] 
     Return v4
   b2():
     Return v3
-}
-# CHECK-LABEL: function f1 name="unlistedValueOnly"
 # CHECK-NEXT: b0(v0: number, v1: boolean):
 # CHECK-NEXT: v2: number = Mul v0, v0
 # CHECK-NEXT: Branch v1 -> taken b1(v2), notTaken b2()
@@ -77,9 +72,9 @@ function f1 name="unlistedValueOnly" parameters=[{type=number}, {type=boolean}] 
 # CHECK-NEXT: b2():
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
+}
 
 function f2 name="unreachableBlockWithValues" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Jump -> next b2()
   b1():
     v1 = Add v0, v0
@@ -87,17 +82,15 @@ function f2 name="unreachableBlockWithValues" parameters=[{type=number}] results
   b2():
     v2 = Mul v0, v0
     Return v2
-}
-# CHECK-LABEL: function f2 name="unreachableBlockWithValues"
 # CHECK-NEXT: b0(v0: number):
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v1: number = Mul v0, v0
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
+}
 
 function f3 name="blockAheadOfItsOnlyPredecessor" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Jump -> next b2()
   b1():
     v1 = Add v2, v0
@@ -105,8 +98,6 @@ function f3 name="blockAheadOfItsOnlyPredecessor" parameters=[{type=number}] res
   b2():
     v2 = Mul v0, v0
     Jump -> next b1()
-}
-# CHECK-LABEL: function f3 name="blockAheadOfItsOnlyPredecessor"
 # CHECK-NEXT: b0(v0: number):
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1():
@@ -116,9 +107,9 @@ function f3 name="blockAheadOfItsOnlyPredecessor" parameters=[{type=number}] res
 # CHECK-NEXT: v2: number = Add v1, v0
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
+}
 
 function f4 name="withoutGaps" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = Mul v1, v1
     Jump -> next b1()
   b1() handler=b4(v2):
@@ -133,8 +124,6 @@ function f4 name="withoutGaps" parameters=[{type=anything}, {type=number}] resul
     v7 = CatchValue
     v8 = Call v0, -, v6, v7
     Return v8
-}
-# CHECK-LABEL: function f4 name="withoutGaps"
 # CHECK-NEXT: b0(v0: anything, v1: number):
 # CHECK-NEXT: v2: number = Mul v1, v1
 # CHECK-NEXT: Jump -> next b1()
@@ -151,3 +140,4 @@ function f4 name="withoutGaps" parameters=[{type=anything}, {type=number}] resul
 # CHECK-NEXT: v8: anything = Call v0, -, v6, v7
 # CHECK-NEXT: Return v8
 # CHECK-NEXT: }
+}

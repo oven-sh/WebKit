@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="fails" kind=Arrow results=[{type=never}] {
-  b0():
     v0 = Undefined
     Throw v0
 }

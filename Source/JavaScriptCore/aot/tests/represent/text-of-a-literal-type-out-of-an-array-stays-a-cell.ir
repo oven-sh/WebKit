@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="switchOnElement" parameters=[{type=Array<"close"|"open", proven, Contiguous, pristine[Storage, Names, Dense]>}, {type=i32}] results=[{type=i32}] {
-  b0(v0: Array<"close"|"open", proven, Contiguous, pristine[Storage, Names, Dense]>, v1: i32):
     v2 = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven [keyIsIntegral]
     SwitchString v2 strings=["open", "close"] -> case b1(), case b2(), otherwise b3()
   b1():
@@ -19,13 +18,11 @@ function f0 name="switchOnElement" parameters=[{type=Array<"close"|"open", prove
   b3():
     v5 = Integer
     Return v5
-}
-# CHECK-LABEL: function f0 name="switchOnElement"
 # CHECK: undefined|"close"|"open" @JSValue = GetArrayElement
 # CHECK-NEXT: SwitchString v2
+}
 
 function f1 name="compareElement" parameters=[{type=Array<"close"|"open", proven, Contiguous, pristine[Storage, Names, Dense]>}, {type=i32}] results=[{type=boolean}] {
-  b0(v0: Array<"close"|"open", proven, Contiguous, pristine[Storage, Names, Dense]>, v1: i32):
     v2 = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven [keyIsIntegral]
     v3 = String string="open"
     v4 = StrictEq v2, v3 form=NullableStrings

@@ -7,7 +7,6 @@ entry module=m0
 layout L0 kind=Instance name="Counter" constructor=f1 fields=[{key="count" declared={type=anything}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = NewClosure function=f2
@@ -25,13 +24,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v8
 }
 function f1 name="Counter" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
     PropSet v3, v1 key="count" mode=Strict
     Return v3
-}
-# CHECK-LABEL: function f1 name="Counter"
 # CHECK-NOT: IsSlotFilled
 # CHECK: = HasLayoutPrototype
 # CHECK: ([[fits]]: undefined|int[-2147483643, 2147483647]):
@@ -42,15 +38,15 @@ function f1 name="Counter" kind=BaseConstructor flags=[HasNewTarget] parameters=
 # CHECK: = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L0}, {kind=MemberPassedByStores layout=L0 key="count"}]
 # CHECK: = TypeTest v1 testedType=undefined|int[-2147483643, 2147483647]
 # CHECK-NOT: IsSlotFilled
+}
 function f2 name="reset" kind=Method flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
   b0(v0: anything ~ L0):
     v1 = Integer integer=0
     PropSet v0, v1 key="count" mode=Strict
     Return
-}
-# CHECK-LABEL: function f2 name="reset"
 # CHECK-NOT: PutSlotOrAdd
 # CHECK: PutSlot [[object]], {{*}}, v1 key="count" receivers=[L0] level=Expected
 # CHECK-NOT: AreMembersUnchanged
 # The constructor fills the field, so the cell answers for the slot.
 # CHECK: = HasBirthFieldsFilled [[object]]
+}

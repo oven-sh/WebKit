@@ -16,7 +16,6 @@ entry module=m0
 layout L0 name="Holder"
 layout L1 name="Plain"
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L0 fields=[]
     v1 = NewClosure function=f4
     DefineGetter v0, v1 key="made"
@@ -32,24 +31,19 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="one" results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="two" results=[{type=anything}] {
-  b0():
     Return
 }
 function f3 name="three" results=[{type=anything}] {
-  b0():
     Return
 }
 function f4 name="made" kind=Getter results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     Return v0
 }
 function f5 name="taken" kind=Setter parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0
     Return
 }

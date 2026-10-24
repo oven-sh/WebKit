@@ -10,7 +10,6 @@ layout L0 name="Sparse" fields=[{key="a" declared={type=number} flow={stability=
 layout L1 name="Other" fields=[{key="a" declared={type=number}}]
 
 function f0 name="branchPassesGuard" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = IsSlotFilled v0 key="a" receivers=[L0] level=Expected [holdsDeclaredType]
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
@@ -33,7 +32,6 @@ function f0 name="branchPassesGuard" parameters=[{type=L0}] results=[{type=anyth
 # IR-NEXT: }
 
 function f1 name="branchPassesNothing" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0, v1: number):
     v2 = IsSlotFilled v0 key="a" receivers=[L0] level=Expected [holdsDeclaredType]
     Branch v2 -> taken b1(v1), notTaken b2()
   b1(v3):
@@ -55,7 +53,6 @@ function f1 name="branchPassesNothing" parameters=[{type=L0}, {type=number}] res
 # IR-NOT: frequency=Unlikely
 
 function f2 name="sharedTarget" parameters=[{type=L0}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: L0, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = IsSlotFilled v0 key="a" receivers=[L0] level=Expected [holdsDeclaredType]
@@ -87,7 +84,6 @@ function f2 name="sharedTarget" parameters=[{type=L0}, {type=boolean}] results=[
 # IR-NEXT: }
 
 function f3 name="writeBeforeBranch" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     v2 = IsSlotFilled v0 key="a" receivers=[L0] level=Expected [holdsDeclaredType]
     PropSet v1, v0 key="owner"
     Branch v2 -> taken b1(), notTaken b2()
@@ -110,7 +106,6 @@ function f3 name="writeBeforeBranch" parameters=[{type=L0}, {type=anything}] res
 
 # No rule asks for a shape test, so the site is named by the run.
 function f4 name="switchOnShape" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     SwitchOnShape v0 layoutSets=[[L1], [L0]] -> case b1(), case b2(), otherwise b3()
   b1():
     Return v0
@@ -127,7 +122,6 @@ function f4 name="switchOnShape" parameters=[{type=object}] results=[{type=anyth
 # PLAN-NOT: stretch
 
 function f5 name="guardEndedByCall" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = IsSlotFilled v0 key="a" receivers=[L0] level=Expected [holdsDeclaredType]
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
@@ -148,7 +142,6 @@ function f5 name="guardEndedByCall" parameters=[{type=L0}] results=[{type=anythi
 # IR-NEXT: Branch [[test5]] -> taken [[passed5]](| 0), notTaken
 
 function f6 name="allGuards" parameters=[{type=L0}, {type=L0}] results=[{type=anything}] {
-  b0(v0: L0, v1: L0):
     v2 = IsSlotFilled v0 key="a" receivers=[L0] level=Expected [holdsDeclaredType]
     Branch v2 -> taken b1(| 0), notTaken b3()
   b1(v3):
@@ -173,7 +166,6 @@ function f6 name="allGuards" parameters=[{type=L0}, {type=L0}] results=[{type=an
 # IR-NOT: IsSlotFilled
 
 function f7 name="testOnOtherValue" parameters=[{type=L0}, {type=L0}] results=[{type=anything}] {
-  b0(v0: L0, v1: L0):
     v2 = IsSlotFilled v1 key="a" receivers=[L0] level=Expected [holdsDeclaredType]
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3):
@@ -214,7 +206,6 @@ function f8 name="permanentTestPassesNothing" parameters=[{type=number flags=[Is
 # PLAN-LABEL: function f9
 
 function f9 name="unknown" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="sink" [isFreeName]
     v2 = Call v1

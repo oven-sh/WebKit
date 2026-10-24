@@ -10,7 +10,6 @@ layout L1 name="Count" fields=[{key="value" declared={type=undefined|number}}] f
 variable g0 name="saved" declared={type=anything} initialization=Undefined
 
 function f0 name="store-between-test-and-branch" parameters=[{type=L0|L1}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0|L1, v1: anything):
     v2 = IsSlotFilled v0 key="value" receivers=[L0, L1] level=Proven
     PutModuleVariable v1 variable=g0
     Branch v2 -> taken b1(| 0), notTaken b2()
@@ -19,8 +18,6 @@ function f0 name="store-between-test-and-branch" parameters=[{type=L0|L1}, {type
     Return v5
   b2():
     Return
-}
-# CHECK-LABEL: function f0 name="store-between-test-and-branch"
 # CHECK-NEXT: b0(v0: L0|L1, v1: anything):
 # CHECK-NEXT: PutModuleVariable v1 variable=g0
 # CHECK-NEXT: = TypeTest v0 testedType=L0
@@ -30,9 +27,9 @@ function f0 name="store-between-test-and-branch" parameters=[{type=L0|L1}, {type
 # CHECK-NEXT: TestAndBranch [[countBehindStore]] -> taken [[filledCountBehindStore]](| 0), notTaken
 # CHECK-NOT: IsSlotFilled
 # CHECK-NOT: receivers=[L0, L1]
+}
 
 function f1 name="branch-in-later-block" parameters=[{type=L0|L1}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: L0|L1, v1: boolean):
     v2 = IsSlotFilled v0 key="value" receivers=[L0, L1] level=Proven
     Branch v1 -> taken b1(), notTaken b3()
   b1():
@@ -42,8 +39,6 @@ function f1 name="branch-in-later-block" parameters=[{type=L0|L1}, {type=boolean
     Return v4
   b3():
     Return
-}
-# CHECK-LABEL: function f1 name="branch-in-later-block"
 # CHECK-NEXT: b0(v0: L0|L1, v1: boolean):
 # CHECK-NEXT: Branch v1 -> taken [[later]](), notTaken
 # CHECK-NEXT: [[later]]():
@@ -54,9 +49,9 @@ function f1 name="branch-in-later-block" parameters=[{type=L0|L1}, {type=boolean
 # CHECK-NEXT: TestAndBranch [[countLater]] -> taken [[filledCountLater]](| 0), notTaken
 # CHECK-NOT: IsSlotFilled
 # CHECK-NOT: receivers=[L0, L1]
+}
 
 function f2 name="two-branches" parameters=[{type=L0|L1}] results=[{type=anything}] {
-  b0(v0: L0|L1):
     v1 = IsSlotFilled v0 key="value" receivers=[L0, L1] level=Proven
     Branch v1 -> taken b1(| 0), notTaken b3()
   b1(v2):
@@ -68,8 +63,6 @@ function f2 name="two-branches" parameters=[{type=L0|L1}] results=[{type=anythin
     Return v6
   b3():
     Return
-}
-# CHECK-LABEL: function f2 name="two-branches"
 # CHECK-NEXT: b0(v0: L0|L1):
 # CHECK-NEXT: = TypeTest v0 testedType=L0
 # CHECK: [[firstText]]: boolean = IsSlotFilled {{*}} key="value" receivers=[L0] level=Proven
@@ -83,10 +76,10 @@ function f2 name="two-branches" parameters=[{type=L0|L1}] results=[{type=anythin
 # CHECK: [[secondCount]]: boolean = IsSlotFilled {{*}} key="value" receivers=[L1] level=Proven
 # CHECK-NEXT: TestAndBranch [[secondCount]] -> taken
 # CHECK-NOT: receivers=[L0, L1]
+}
 
 # The other user keeps the test, which no branch names any more: its arms join in a boolean.
 function f3 name="branched-on-and-returned" parameters=[{type=L0|L1}] results=[{type=anything}] {
-  b0(v0: L0|L1):
     v1 = IsSlotFilled v0 key="value" receivers=[L0, L1] level=Proven
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
@@ -94,8 +87,6 @@ function f3 name="branched-on-and-returned" parameters=[{type=L0|L1}] results=[{
     Return v3
   b2():
     Return v1
-}
-# CHECK-LABEL: function f3 name="branched-on-and-returned"
 # CHECK-NEXT: b0(v0: L0|L1):
 # CHECK-NEXT: = TypeTest v0 testedType=L0
 # CHECK: [[joined]]([[answer]]: boolean):
@@ -104,6 +95,7 @@ function f3 name="branched-on-and-returned" parameters=[{type=L0|L1}] results=[{
 # CHECK-NEXT: TestAndBranch [[textOfBranch]] -> taken
 # CHECK: Return [[answer]]
 # CHECK-NOT: receivers=[L0, L1]
+}
 
 # PLACE-NOT: {L0 L1}
 # PLACE: access 0 "value" {L0} read EveryMember

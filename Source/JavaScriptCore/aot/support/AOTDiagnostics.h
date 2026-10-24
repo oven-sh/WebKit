@@ -117,6 +117,8 @@ public:
     JS_EXPORT_PRIVATE const String& messageOfInternalError(size_t index) const;
 
 private:
+    template<typename Record> void appendTo(Vector<Record> Diagnostics::*, Vector<Record>&&);
+
     Lock m_lock;
     Vector<UserDiagnostic> m_userDiagnostics WTF_GUARDED_BY_LOCK(m_lock);
     Vector<InternalError> m_internalErrors WTF_GUARDED_BY_LOCK(m_lock);

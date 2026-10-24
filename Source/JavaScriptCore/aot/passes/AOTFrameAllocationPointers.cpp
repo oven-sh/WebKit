@@ -11,10 +11,8 @@
 #include "AOTArrayStorageForms.h"
 #include "AOTBuildContext.h"
 #include "AOTBuiltinPristine.h"
-#include "AOTCFG.h"
 #include "AOTClosureWord.h"
 #include "AOTConvention.h"
-#include "AOTEdgeResults.h"
 #include "AOTEffectSummaries.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsDescription.h"
@@ -30,6 +28,7 @@
 #include "AOTVector.h"
 #include <algorithm>
 #include <optional>
+#include <ranges>
 #include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -138,7 +137,7 @@ bool readsArrayWhereItLies(const Program& program, const Function& function, con
     }
 }
 
-bool mayHandFrameArrayTo(const Program& program, const FlowResults* flow, const Value& call, uint32_t operandIndex)
+static bool mayHandFrameArrayTo(const Program& program, const FlowResults* flow, const Value& call, uint32_t operandIndex)
 {
     if (!flow || effectRuleOf(call.opcode) != EffectRule::Call || maySuspend(call.opcode) || call.operandUses(operandIndex).containsAny(callingUses))
         return false;
@@ -234,6 +233,66 @@ ValueID cellAccessedBy(const Value& followedAccess)
     return followedAccess.objectOperand();
 }
 
+std::optional<CellPlace> placeStoredTo(const Value& store, uint32_t operandIndex)
+{
+    static_assert(OperandIndex::PutSlot::value == OperandIndex::PutSlotOrAdd::value);
+    std::optional<uint32_t> position = store.variadicOperandIndex(operandIndex);
+    switch (store.opcode) {
+    case Opcode::NewObject:
+        if (!position || *position >= store.fields().size())
+            return std::nullopt;
+        return CellPlace { CellPlace::Kind::Field, store.layout().index(), store.fields()[*position] };
+    case Opcode::NewClosure:
+        if (!position)
+            return std::nullopt;
+        return CellPlace { CellPlace::Kind::Capture, store.function().index(), *position };
+    case Opcode::PutSlots:
+        if (!position)
+            return std::nullopt;
+        return CellPlace { CellPlace::Kind::Key, store.placedKeys()[*position].key.index(), 0 };
+    case Opcode::PutEnvironmentField:
+        if (operandIndex != OperandIndex::PutEnvironmentField::value)
+            return std::nullopt;
+        return CellPlace { CellPlace::Kind::Field, store.layout().index(), store.field() };
+    case Opcode::PutSlot:
+    case Opcode::PutSlotOrAdd:
+        if (operandIndex != OperandIndex::PutSlot::value)
+            return std::nullopt;
+        return CellPlace { CellPlace::Kind::Key, store.key().index(), 0 };
+    default:
+        ASSERT(!storesFollowedByFramePointers.contains(store.opcode));
+        return std::nullopt;
+    }
+}
+
+CellPlace placeReadBy(const Value& followedRead)
+{
+    switch (followedRead.opcode) {
+    case Opcode::GetEnvironmentField:
+        return { CellPlace::Kind::Field, followedRead.layout().index(), followedRead.field() };
+    case Opcode::GetCapture:
+        return { CellPlace::Kind::Capture, followedRead.function().index(), followedRead.index() };
+    case Opcode::GetSlot:
+    case Opcode::GetSlotOrUndefined:
+        return { CellPlace::Kind::Key, followedRead.key().index(), 0 };
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
+bool cellHasPlace(const Program& program, const Value& allocation, const CellPlace& place)
+{
+    switch (place.kind) {
+    case CellPlace::Kind::Field:
+        return allocation.opcode == Opcode::NewObject && allocation.layout().index() == place.owner;
+    case CellPlace::Kind::Capture:
+        return allocation.opcode == Opcode::NewClosure && allocation.function().index() == place.owner;
+    case CellPlace::Kind::Key:
+        return allocation.opcode == Opcode::NewObject && program.at(allocation.layout()).findField(PropertyKeyID(place.owner)).has_value();
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 void forEachReturnedOperand(const Function& function, const Value& value, NOESCAPE const ScopedLambda<void(ValueID)>& functor)
 {
     if (value.opcode == Opcode::ResultAt) {
@@ -292,27 +351,6 @@ static void forEachValueHandedOn(FunctionAnalyses& analyses, ValueID id, NOESCAP
         if (ValueID passed = valuePassedOn(function, edge, parameterIndex))
             functor(passed);
     }
-}
-
-bool mayBeUnspecified(FunctionAnalyses& analyses, ValueID start)
-{
-    if (!hasSourceOfUnspecifiedValues(analyses))
-        return false;
-
-    const Function& function = analyses.function();
-    BitVector visited;
-    Vector<ValueID, 8> worklist { start };
-    while (!worklist.isEmpty()) {
-        ValueID id = worklist.takeLast();
-        if (!visited.add(id.index()))
-            continue;
-        if (isSourceOfUnspecifiedValues(function, function.at(id)))
-            return true;
-        forEachValueHandedOn(analyses, id, [&](ValueID source) {
-            worklist.append(source);
-        });
-    }
-    return false;
 }
 
 UnspecifiedValues::UnspecifiedValues(FunctionAnalyses& analyses)
@@ -386,105 +424,31 @@ FramePointers::FramePointers(const Program* program, const Function& function, F
         return;
     AOT::sort(m_allocations);
 
-    for (bool changed = true; changed;) {
-        changed = false;
-        for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
-            BlockID block(blockIndex);
-            for (ValueID id : function.at(block).values)
-                changed |= propagate(function, id);
-
-            forEachOutgoingEdge(function, block, [&](Edge edge, const Target& target) {
-                const CompactList<ValueID>& parameters = function.at(target.block).parameters;
-                for (uint32_t argumentIndex = 0; argumentIndex < target.arguments.size(); ++argumentIndex) {
-                    if (contains(target.arguments[argumentIndex]))
-                        changed |= add(function, parameters[argumentIndex]);
-                }
-                if (edge.isHandlerEdge())
-                    return;
-
-                uint32_t firstParameter = firstEdgeResultParameter(function, block, edge.targetIndex);
-                uint32_t numberOfResults = numberOfEdgeResults(function, block, edge.targetIndex);
-                for (uint32_t resultIndex = 0; resultIndex < numberOfResults; ++resultIndex) {
-                    EdgeResult result = edgeResultAt(function, { block, edge.targetIndex, resultIndex });
-                    if (result.kind == EdgeResultKind::NarrowedOperand && contains(result.subject))
-                        changed |= add(function, parameters[firstParameter + resultIndex]);
-                }
-            });
-        }
-    }
+    propagateUntilNothingChanges(function, std::views::iota(0u, function.blocks.size()), [&](BlockID, ValueID id) {
+        return propagate(function, id);
+    }, [&](Edge, ValueID passed, ValueID parameter) {
+        return contains(passed) && add(function, parameter);
+    });
 }
 
 bool FramePointers::propagate(const Function& function, ValueID id)
 {
     const Value& value = function.at(id);
-    bool changed = propagateStore(function, value);
+    bool changed = false;
+    if (Value::opcodesWithStorage.contains(value.opcode) || storesFollowedByFramePointers.contains(value.opcode)) {
+        value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+            if (std::optional<CellPlace> place = contains(operand) ? placeStoredTo(value, operandIndex) : std::nullopt)
+                changed |= m_placesWithPointers.appendIfNotContains(*place);
+        });
+    }
     if (contains(id))
         return changed;
 
-    bool mayBeFramePointer = readsPointer(function, value);
+    bool mayBeFramePointer = readsFollowedByFramePointers.contains(value.opcode) && contains(cellAccessedBy(value)) && m_placesWithPointers.contains(placeReadBy(value));
     forEachReturnedOperand(function, value, [&](ValueID operand) {
         mayBeFramePointer |= contains(operand);
     });
-    if (mayBeFramePointer)
-        changed |= add(function, id);
-    return changed;
-}
-
-bool FramePointers::propagateStore(const Function&, const Value& value)
-{
-    bool changed = false;
-    switch (value.opcode) {
-    case Opcode::NewObject: {
-        std::span<const ValueID> values = value.valuesOperands();
-        std::span<const uint32_t> fields = value.fields();
-        for (size_t index = 0; index < values.size(); ++index) {
-            if (contains(values[index]))
-                changed |= m_environmentFieldsWithPointers.appendIfNotContains(FieldReference { value.layout(), fields[index] });
-        }
-        return changed;
-    }
-    case Opcode::NewClosure: {
-        std::span<const ValueID> captures = value.capturesOperands();
-        for (uint32_t index = 0; index < captures.size(); ++index) {
-            if (contains(captures[index]))
-                changed |= m_capturesWithPointers.appendIfNotContains(CaptureReference { value.function(), index });
-        }
-        return changed;
-    }
-    case Opcode::PutEnvironmentField:
-        return contains(value.valueOperand()) && m_environmentFieldsWithPointers.appendIfNotContains(FieldReference { value.layout(), value.field() });
-    case Opcode::PutSlot:
-    case Opcode::PutSlotOrAdd:
-        return contains(value.valueOperand()) && m_keysWithPointers.appendIfNotContains(value.key());
-    case Opcode::PutSlots: {
-        std::span<const ValueID> values = value.valuesOperands();
-        PayloadListView<PlacedKey> placedKeys = value.placedKeys();
-        for (size_t index = 0; index < values.size(); ++index) {
-            if (contains(values[index]))
-                changed |= m_keysWithPointers.appendIfNotContains(placedKeys[index].key);
-        }
-        return changed;
-    }
-    default:
-        ASSERT(!storesFollowedByFramePointers.contains(value.opcode));
-        return false;
-    }
-}
-
-bool FramePointers::readsPointer(const Function&, const Value& value) const
-{
-    switch (value.opcode) {
-    case Opcode::GetEnvironmentField:
-        return contains(value.environmentOperand()) && m_environmentFieldsWithPointers.contains(FieldReference { value.layout(), value.field() });
-    case Opcode::GetCapture:
-        return contains(value.closureOperand()) && m_capturesWithPointers.contains(CaptureReference { value.function(), value.index() });
-    case Opcode::GetSlot:
-    case Opcode::GetSlotOrUndefined:
-        return contains(value.objectOperand()) && m_keysWithPointers.contains(value.key());
-    default:
-        ASSERT(!readsFollowedByFramePointers.contains(value.opcode));
-        return false;
-    }
+    return (mayBeFramePointer && add(function, id)) || changed;
 }
 
 bool FramePointers::add(const Function& function, ValueID id)
@@ -500,26 +464,12 @@ bool FramePointers::mayHoldPointers(const Program& program, const Function& func
     // An array holds values of the heap alone, wherever it lies.
     if (arrayAllocationsWithStorage.contains(definition.opcode))
         return false;
-    if (definition.opcode == Opcode::NewClosure) {
-        return std::ranges::any_of(m_capturesWithPointers, [&](const CaptureReference& capture) {
-            return capture.function == definition.function();
-        });
-    }
     // An environment holds what its fields hold, wherever the cell was read from.
-    if (LayoutID environment = program.typeOf(function, cell).environment) {
-        return std::ranges::any_of(m_environmentFieldsWithPointers, [&](const FieldReference& field) {
-            return field.layout == environment;
-        });
-    }
-    if (definition.opcode != Opcode::NewObject)
-        return !m_environmentFieldsWithPointers.isEmpty() || !m_keysWithPointers.isEmpty() || !m_capturesWithPointers.isEmpty();
-
-    LayoutID layout = definition.layout();
-    bool holdsPointerInField = std::ranges::any_of(m_environmentFieldsWithPointers, [&](const FieldReference& field) {
-        return field.layout == layout;
-    });
-    return holdsPointerInField || std::ranges::any_of(m_keysWithPointers, [&](PropertyKeyID key) {
-        return program.at(layout).findField(key).has_value();
+    LayoutID environment = definition.opcode == Opcode::NewClosure ? LayoutID() : program.typeOf(function, cell).environment;
+    return std::ranges::any_of(m_placesWithPointers, [&](const CellPlace& place) {
+        if (environment)
+            return place.kind == CellPlace::Kind::Field && place.owner == environment.index();
+        return !Value::opcodesWithStorage.contains(definition.opcode) || cellHasPlace(program, definition, place);
     });
 }
 
@@ -567,12 +517,6 @@ OperandSummary summarizeFramePointerUse(const Program& program, const FlowResult
     if (effectRuleOf(user.opcode) == EffectRule::Call)
         return flow ? summarizeCallOperand(program, *flow, user, operandIndex) : OperandSummary();
 
-    EffectSummaries unknownSummaries;
-    return summarizeOperand(EffectContext { program, unknownSummaries }, function, user, operandIndex);
-}
-
-OperandSummary summarizeFramePointerUse(const Program& program, const FlowResults*, const Function& function, const Terminator& user, uint32_t operandIndex)
-{
     EffectSummaries unknownSummaries;
     return summarizeOperand(EffectContext { program, unknownSummaries }, function, user, operandIndex);
 }
@@ -670,9 +614,10 @@ bool mayLeakContents(const Program& program, const FlowResults* flow, const Func
     return summarizeFramePointerUse(program, flow, function, user, operandIndex).uses.containsAny(usesLeakingContents);
 }
 
-bool mayLeakFramePointer(const Program& program, const FlowResults* flow, const Function& function, const Terminator& user, uint32_t operandIndex)
+bool mayLeakFramePointer(const Program& program, const FlowResults*, const Function& function, const Terminator& user, uint32_t operandIndex)
 {
-    return summarizeFramePointerUse(program, flow, function, user, operandIndex).uses.containsAny(usesLeakingFramePointers);
+    EffectSummaries unknownSummaries;
+    return summarizeOperand(EffectContext { program, unknownSummaries }, function, user, operandIndex).uses.containsAny(usesLeakingFramePointers);
 }
 
 // A captured closure keeps the strict rule: its captures may be pointers into a frame, and the callee can read them.

@@ -26,7 +26,6 @@ layout L0 kind=Instance name="Shape" constructor=f1
 layout L1 kind=Instance name="Circle" base=L0 constructor=f4 supertypes=[L0] flags=[HasHeritage]
 layout L2 kind=Instance name="Square" base=L0 constructor=f6 supertypes=[L0] flags=[HasHeritage]
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = NewClosure function=f2
@@ -55,41 +54,34 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Shape" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0 fields=[]
     Return v2
 }
 function f2 name="area" module=m0 kind=Method flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="name"
     Return
 }
 function f3 name="describe" module=m0 kind=Method flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="area"
     v2 = Call v1, v0 calleeKey="area"
     Return
 }
 function f4 name="Circle" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=object}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0
     v3 = SuperConstruct v2, v1 layout=L1
     Return v3
 }
 function f5 name="area" module=m0 kind=Method flags=[HasThis] thisType={type=L1} results=[{type=anything}] {
-  b0(v0: L1):
     v1 = PropGet v0 key="radius"
     Return
 }
 function f6 name="Square" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=object}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0
     v3 = SuperConstruct v2, v1 layout=L2
     Return v3
 }
 function f7 name="area" module=m0 kind=Method flags=[HasThis] thisType={type=L2} results=[{type=anything}] {
-  b0(v0: L2):
     v1 = PropGet v0 key="side"
     Return
 }

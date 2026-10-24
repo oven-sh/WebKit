@@ -17,7 +17,6 @@ layout L2 name="CheckedRow" module=m0 position=30 fields=[{key="id" declared={ty
 layout L3 name="CheckedPage" module=m0 position=40 fields=[{key="items" declared={type=Array<L2>}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="text" [isFreeName]
     v2 = ToString v1
@@ -33,31 +32,24 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="converted" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Builtin builtin=JSONParse
     v2 = Call v1, -, v0
     v3 = Convert v2 declared={type=undefined|null|L1} illTypedCause=FromLooseType
     Return v3
-}
-# CHECK-LABEL: function f1 name="converted"
 # CHECK: = CallDirect {{*}} function=[[parserOfPage]]
+}
 
 function f2 name="validated" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Builtin builtin=JSONParse
     v2 = Call v1, -, v0 expectedResult=x0
     Return v2
-}
-# CHECK-LABEL: function f2 name="validated"
 # CHECK: = CallDirect {{*}} function=[[parserOfCheckedPage]]
+}
 
 function f3 name="validatedValue" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=BunBundleValidate
     v2 = Call v1, -, v0 expectedResult=x0
     Return v2
-}
-# CHECK-LABEL: function f3 name="validatedValue"
 # CHECK: = CallDirect v0 function=[[validatorOfCheckedPage]]
 # CHECK: function [[parserOfRows]] {{*}}role=Parser {{*}}type=undefined|Array<L0>}
 # CHECK: function [[parserOfPage]] {{*}}role=Parser
@@ -78,3 +70,4 @@ function f3 name="validatedValue" parameters=[{type=anything}] results=[{type=an
 # CHECK: = NewObject -, [[assumedCopy]] layout=L3 fields=[0]
 # CHECK: [[assumedCopyAgain]]: {{*}}pristine[Storage, Names]> = AssumeType {{*}} castType=Array<
 # CHECK: = CloneAs {{*}}, [[assumedCopyAgain]] layout=L3 fields=[0]
+}

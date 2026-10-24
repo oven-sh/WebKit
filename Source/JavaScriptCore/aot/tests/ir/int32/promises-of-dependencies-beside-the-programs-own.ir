@@ -10,7 +10,6 @@ entry module=m0
 typesite w0 module=m1 position=20 kind=Variable
 typesite w1 module=m0 position=30 kind=Variable
 function f0 name="both" module=m0 parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = Convert v0 declared={type=i32 site=w0 flags=[IsInt32Promise, IsDeclaredByDependency]}
     v2 = Convert v0 declared={type=i32 site=w1 flags=[IsInt32Promise]}
     Return v2

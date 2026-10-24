@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="element-switch-string" parameters=[{type=string}, {type=int}] results=[{type=int}] {
-  b0(v0: string, v1: int):
     v2 = ElemGet v0, v1
     SwitchString v2 strings=["a", "b"] -> case b1(), case b2(), otherwise b3()
   b1():

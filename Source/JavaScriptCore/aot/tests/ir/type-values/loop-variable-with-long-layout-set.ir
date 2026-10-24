@@ -13,7 +13,6 @@ layout L4
 layout L5
 
 function f0 name="memberOfTheSet" parameters=[{type=boolean}, {type=L0|L1|L2|L3|L4}, {type=L1}] results=[{type=anything}] {
-  b0(v0: boolean, v1: L0|L1|L2|L3|L4, v2: L1):
     Jump -> next b1(v1)
   b1(v3):
     LoopHint
@@ -22,12 +21,10 @@ function f0 name="memberOfTheSet" parameters=[{type=boolean}, {type=L0|L1|L2|L3|
     Jump -> next b1(v2)
   b3():
     Return v3
-}
-# CHECK-LABEL: function f0 name="memberOfTheSet"
 # CHECK: b1(v3: L0|L1|L2|L3|L4):
+}
 
 function f1 name="layoutFromOutside" parameters=[{type=boolean}, {type=L0|L1|L2|L3|L4}, {type=L5}] results=[{type=anything}] {
-  b0(v0: boolean, v1: L0|L1|L2|L3|L4, v2: L5):
     Jump -> next b1(v1)
   b1(v3):
     LoopHint
@@ -36,6 +33,5 @@ function f1 name="layoutFromOutside" parameters=[{type=boolean}, {type=L0|L1|L2|
     Jump -> next b1(v2)
   b3():
     Return v3
-}
-# CHECK-LABEL: function f1 name="layoutFromOutside"
 # CHECK: b1(v3: object):
+}

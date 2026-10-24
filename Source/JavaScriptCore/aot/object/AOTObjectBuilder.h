@@ -135,7 +135,6 @@ private:
     static constexpr size_t numberOfWordsFor(size_t numberOfBytes) { return WTF::roundUpToMultipleOf<sizeof(uint64_t)>(numberOfBytes) / sizeof(uint64_t); }
 
     std::span<uint8_t> cellBytes() { return asMutableByteSpan(m_cellWords.mutableSpan()); }
-    // Every granule of the layout at its offset. finish() copies the ones that are used.
     std::span<uint8_t> extensionBytes() { return asMutableByteSpan(m_extensionWords.mutableSpan()); }
     void* slotOf(const FieldData& field) { return (field.isOutOfLine() ? extensionBytes() : cellBytes()).subspan(field.slot.offset).data(); }
     void didStore(unsigned index) { m_stored.set(index); }

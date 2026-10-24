@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="landingBlockLeadsBelowAnotherChild" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Jump -> next b1()
   b1() handler=b5():
     v2 = Call v0
@@ -32,7 +31,6 @@ function f0 name="landingBlockLeadsBelowAnotherChild" parameters=[{type=anything
 # CHECK: b4 terminator dominates: [b6 b7 b8]
 # CHECK: b6 terminator dominates: [b7 b8]
 function f1 name="coveredBlockInLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: anything, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -58,7 +56,6 @@ function f1 name="coveredBlockInLoop" parameters=[{type=anything}, {type=boolean
 # CHECK: b4 terminator dominates: [b5]
 # CHECK: b6 terminator dominates: []
 function f2 name="neitherCoveredBlockDominatesTheLandingBlock" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1() handler=b5():
     v2 = Call v0
@@ -79,7 +76,6 @@ function f2 name="neitherCoveredBlockDominatesTheLandingBlock" parameters=[{type
 # CHECK: b1 terminator dominates: [b3]
 # CHECK: b2 terminator dominates: [b4]
 function f3 name="coveredBlockBehindLandingBlock" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1() handler=b3():
     v1 = Call v0

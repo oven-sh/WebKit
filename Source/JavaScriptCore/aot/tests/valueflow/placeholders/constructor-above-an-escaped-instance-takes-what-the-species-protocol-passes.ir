@@ -8,7 +8,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Labeled" constructor=f1 flags=[HasHeritage]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Array
     v1 = NewClosure function=f1
     v2 = ResolveHeritage v0
@@ -24,7 +23,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Labeled" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: function, v1: anything, v2: anything):
     v3 = GetSuperBase v0 homeKind=Object
     v4 = SuperConstruct v3, v1 layout=L0
     Return v4

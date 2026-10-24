@@ -10,7 +10,6 @@ module m0 path="main.js" displayPath="main.js"
 variable g0 name="sink" declared={type=anything} initialization=Undefined
 
 function f0 name="arrayBesideObjects" parameters=[{type=undefined|string|Array<number, proven, pristine[Storage, Names]>|Object}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: undefined|string|Array<number, proven, pristine[Storage, Names]>|Object, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -26,8 +25,6 @@ function f0 name="arrayBesideObjects" parameters=[{type=undefined|string|Array<n
     Branch v1 -> taken b1(), notTaken b4()
   b4():
     Return
-}
-# SIMPLE-LABEL: function f0 name="arrayBesideObjects"
 # SIMPLE: = TypeTest v0 testedType=Array
 # SIMPLE-NOT: TypeTest
 # SIMPLE: LoopHint
@@ -39,3 +36,4 @@ function f0 name="arrayBesideObjects" parameters=[{type=undefined|string|Array<n
 # SIMPLE: LoopHint
 # SIMPLE-NOT: TypeTest
 # SIMPLE-NOT: ArrayPrototypeLength
+}

@@ -153,8 +153,6 @@ void generateCallInternalFunction(StubAssembler& jit)
 void generateCallProxy(StubAssembler& jit)
 {
     static_assert(numberOfArgumentGPRs >= 3);
-    constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
-    constexpr GPRReg fp = GPRInfo::callFrameRegister;
     constexpr GPRReg function = GPRInfo::returnValueGPR;
     constexpr GPRReg list = GPRInfo::returnValueGPR2;
     const unsigned count = jit.key().count();

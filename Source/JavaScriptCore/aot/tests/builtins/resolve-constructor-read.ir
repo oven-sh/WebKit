@@ -5,73 +5,57 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="constructorOfString" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = PropGet v0 key="constructor"
     Return v1
-}
-# CHECK-LABEL: function f0 name="constructorOfString"
 # CHECK: v1: builtin(String) = Builtin builtin=String
+}
 
 function f1 name="constructorOfPristineArray" parameters=[{type=Array<anything, pristine[Names]>}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Names]>):
     v1 = PropGet v0 key="constructor"
     Return v1
-}
-# CHECK-LABEL: function f1 name="constructorOfPristineArray"
 # CHECK: v1: builtin(Array) = Builtin builtin=Array
+}
 
 function f2 name="constructorOfUnprovenArray" parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     v1 = PropGet v0 key="constructor"
     Return v1
-}
-# CHECK-LABEL: function f2 name="constructorOfUnprovenArray"
 # CHECK-NOT: Builtin
 # CHECK-NOT: IsPristine
 # CHECK: v1: anything = PropGet v0 key="constructor"
+}
 
 function f3 name="constructorOfArrayWithPristineStorage" parameters=[{type=Array<anything, pristine[Storage]>}] results=[{type=anything}] {
-  b0(v0: Array<anything, pristine[Storage]>):
     v1 = PropGet v0 key="constructor"
     Return v1
-}
-# CHECK-LABEL: function f3 name="constructorOfArrayWithPristineStorage"
 # CHECK-NOT: Builtin
 # CHECK: v1: anything = PropGet v0 key="constructor"
+}
 
 function f4 name="constructorOfPristineTypedArray" parameters=[{type=Int8Array<number, pristine[Names]>}] results=[{type=anything}] {
-  b0(v0: Int8Array<number, pristine[Names]>):
     v1 = PropGet v0 key="constructor"
     Return v1
-}
-# CHECK-LABEL: function f4 name="constructorOfPristineTypedArray"
 # CHECK: v1: builtin(Int8Array) = Builtin builtin=Int8Array
+}
 
 function f5 name="constructorOfUnprovenTypedArray" parameters=[{type=Int8Array}] results=[{type=anything}] {
-  b0(v0: Int8Array):
     v1 = PropGet v0 key="constructor"
     Return v1
-}
-# CHECK-LABEL: function f5 name="constructorOfUnprovenTypedArray"
 # CHECK-NOT: Builtin
 # CHECK: v1: anything = PropGet v0 key="constructor"
+}
 
 function f6 name="constructReadConstructor" parameters=[{type=Int8Array<number, pristine[Names]>}, {type=number}] results=[{type=anything}] {
-  b0(v0: Int8Array<number, pristine[Names]>, v1: number):
     v2 = PropGet v0 key="constructor"
     v3 = Construct v2, -, v1
     Return v3
-}
-# CHECK-LABEL: function f6 name="constructReadConstructor"
 # CHECK: v2: builtin(Int8Array) = Builtin builtin=Int8Array
 # CHECK-NEXT: v3: Int8Array = CallBuiltin -, v1 overload=Int8Array/4
+}
 
 function f7 name="constructUnresolvedConstructor" parameters=[{type=Int8Array}, {type=number}] results=[{type=anything}] {
-  b0(v0: Int8Array, v1: number):
     v2 = PropGet v0 key="constructor"
     v3 = Construct v2, -, v1
     Return v3
-}
-# CHECK-LABEL: function f7 name="constructUnresolvedConstructor"
 # CHECK-NOT: CallBuiltin
 # CHECK: v3: anything ~ object = Construct v2, -, v1
+}

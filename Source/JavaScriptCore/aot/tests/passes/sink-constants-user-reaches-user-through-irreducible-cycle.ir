@@ -9,13 +9,11 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="callback" results=[{type=undefined}] {
-  b0():
     v0 = Undefined
     Return v0
 }
 
 function f1 name="throughIrreducibleCycle" parameters=[{type=boolean}, {type=function}] results=[{type=anything}] {
-  b0(v0: boolean, v1: function):
     v2 = NewClosure function=f0
     Branch v0 -> taken b1(), notTaken b3()
   b1():
@@ -35,8 +33,6 @@ function f1 name="throughIrreducibleCycle" parameters=[{type=boolean}, {type=fun
     Jump -> next b5()
   b5():
     Return v9
-}
-# CHECK-LABEL: function f1 name="throughIrreducibleCycle"
 # CHECK: b0(v0: boolean, v1: function):
 # CHECK-NEXT: v2: f0 = NewClosure function=f0
 # CHECK: b1():
@@ -44,9 +40,9 @@ function f1 name="throughIrreducibleCycle" parameters=[{type=boolean}, {type=fun
 # CHECK: b4():
 # CHECK-NEXT: = Call v1, -, v2
 # CHECK-NOT: NewClosure
+}
 
 function f2 name="leavesCycleAtItsOtherEntry" parameters=[{type=boolean}, {type=function}] results=[{type=anything}] {
-  b0(v0: boolean, v1: function):
     v2 = NewClosure function=f0
     Branch v0 -> taken b1(), notTaken b3()
   b1():
@@ -63,16 +59,14 @@ function f2 name="leavesCycleAtItsOtherEntry" parameters=[{type=boolean}, {type=
   b4():
     v8 = Call v1, -, v2
     Return v8
-}
-# CHECK-LABEL: function f2 name="leavesCycleAtItsOtherEntry"
 # CHECK: b0(v0: boolean, v1: function):
 # CHECK-NEXT: v2: f0 = NewClosure function=f0
 # CHECK: b4():
 # CHECK-NEXT: = Call v1, -, v2
 # CHECK-NOT: NewClosure
+}
 
 function f3 name="throughHandlerEdge" parameters=[{type=boolean}, {type=function}] results=[{type=anything}] {
-  b0(v0: boolean, v1: function):
     v2 = NewClosure function=f0
     Branch v0 -> taken b1(), notTaken b2()
   b1() handler=b3():
@@ -84,16 +78,14 @@ function f3 name="throughHandlerEdge" parameters=[{type=boolean}, {type=function
     v4 = CatchValue
     v5 = Call v1, -, v2, v4
     Return v5
-}
-# CHECK-LABEL: function f3 name="throughHandlerEdge"
 # CHECK: b0(v0: boolean, v1: function):
 # CHECK-NEXT: v2: f0 = NewClosure function=f0
 # CHECK: = Call v1, -, v2
 # CHECK: = Call v1, -, v2, v4
 # CHECK-NOT: NewClosure
+}
 
 function f4 name="cycleLeadsToNoUser" parameters=[{type=i32}, {type=function}] results=[{type=anything}] {
-  b0(v0: i32, v1: function):
     v2 = NewClosure function=f0
     Switch v0 cases=[0, 1] -> case b1(), case b3(), otherwise b5()
   b1():
@@ -113,8 +105,6 @@ function f4 name="cycleLeadsToNoUser" parameters=[{type=i32}, {type=function}] r
   b5():
     v9 = Call v1, -, v2
     Return v9
-}
-# CHECK-LABEL: function f4 name="cycleLeadsToNoUser"
 # CHECK: b0(v0: i32, v1: function):
 # CHECK-NEXT: Switch v0
 # CHECK-NEXT: b1():
@@ -123,3 +113,4 @@ function f4 name="cycleLeadsToNoUser" parameters=[{type=i32}, {type=function}] r
 # CHECK: b5():
 # CHECK-NEXT: [[second]]: f0 = NewClosure function=f0
 # CHECK-NEXT: = Call v1, -, [[second]]
+}

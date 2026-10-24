@@ -9,7 +9,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number}}]
 function f0 name="typeTest" parameters=[{type=number|string}] results=[{type=string}] {
-  b0(v0: number|string):
     v1 = TypeTest v0 testedType=string
     Unreachable
 }
@@ -23,7 +22,6 @@ function f0 name="typeTest" parameters=[{type=number|string}] results=[{type=str
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 function f1 name="secondOperand" parameters=[{type=string}, {type=number|string}] results=[{type=string}] {
-  b0(v0: string, v1: number|string):
     v2 = StrictEq v0, v1
     Unreachable
 }
@@ -37,7 +35,6 @@ function f1 name="secondOperand" parameters=[{type=string}, {type=number|string}
 # SECOND-NEXT: Unreachable
 # SECOND-NEXT: }
 function f2 name="shapeTest" parameters=[{type=object}] results=[{type=undefined}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Unreachable
 }
@@ -54,7 +51,6 @@ function f2 name="shapeTest" parameters=[{type=object}] results=[{type=undefined
 # STRETCH: error: bad argument operand
 # STRETCH-NOT: function f2
 function f3 name="provesNothing" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     v1 = LogicalNot v0
     Unreachable
 }

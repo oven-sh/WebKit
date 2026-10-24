@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="passes-cursor" results=[{type=anything}] {
-  b0():
     v0 = StringBuilderBegin
     v1 = StringBuilderReserve v0 size=8
     v2 = CallDirect v0, v1 function=f2
@@ -13,7 +12,6 @@ function f0 name="passes-cursor" results=[{type=anything}] {
     Return v2
 }
 function f1 name="passes-number" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = StringBuilderBegin
     v2 = StringBuilderReserve v1 size=8
     StringBuilderCommit v1, v2

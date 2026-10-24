@@ -45,11 +45,6 @@ bool needsStorageFor(const PlacedSlot& slot, const Type& stored)
     return !(slot.isOutOfLine() && slot.mayExistWithoutStorage && isUndefined);
 }
 
-SlotEmitter::SlotEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
-
 LValue SlotEmitter::constantWithBits(LType type, uint64_t bits)
 {
     if (type == B3::Int32)
@@ -282,7 +277,7 @@ Pointer SlotEmitter::branchUnlessExtensionHolds(CellPointer cell, const PlacedSl
     return extension;
 }
 
-void SlotEmitter::ensureExtensionHolds(const OperationContext& context, CellPointer cell, const PlacedSlot& extensionWord, uint64_t testedBits, uint64_t reservedBits, OwnerBarrier barrier)
+void SlotEmitter::ensureExtensionHolds(const OperationContext& context, CellPointer cell, const PlacedSlot& extensionWord, uint64_t testedBits, uint64_t reservedBits, OwnerBarrier barrier, bool mayCollect)
 {
     RELEASE_ASSERT(testedBits && !(testedBits & ~reservedBits));
     unsigned size = extensionCellSizeFor(std::popcount(reservedBits));
@@ -292,34 +287,21 @@ void SlotEmitter::ensureExtensionHolds(const OperationContext& context, CellPoin
     m_out.jump(done);
 
     m_out.appendTo(lacksGranule);
+    CallOptions options { .isOnRarePath = true };
     if (size <= maxExtensionSizeFromStub) {
-        callStub(context, allocateExtension(size), { cell.value(), m_out.constIntPtr(extensionWord.offset), m_out.constInt64(static_cast<int64_t>(reservedBits)) }, { .isOnRarePath = true });
+        LValue operands[] { cell.value(), m_out.constIntPtr(extensionWord.offset), m_out.constInt64(static_cast<int64_t>(reservedBits)) };
+        if (mayCollect)
+            callStub(context, allocateExtension(size), operands, options);
+        else
+            emitter<RuntimeCallEmitter>().callStubWithoutSite(allocateExtension(size), operands, options);
         if (barrier == OwnerBarrier::Emitted)
             emitter<BarrierEmitter>().barrier(context, cell);
-    } else
-        callVoidOperation(context, RuntimeOperation::EnsureExtensionGranules, { cell, integer(static_cast<int64_t>(reservedBits)) }, { .isOnRarePath = true });
-    m_out.jump(done);
-
-    m_out.appendTo(done);
-}
-
-// For an operation that declares no collection: neither the stub nor the operation behind it collects.
-void SlotEmitter::ensureExtensionHoldsWithoutCollecting(const OperationContext& context, CellPointer cell, const PlacedSlot& extensionWord, uint64_t granuleBits)
-{
-    LBasicBlock done = newBlock();
-    LBasicBlock lacksGranule = newBlock();
-    branchUnlessExtensionHolds(cell, extensionWord, granuleBits, rareEdge(lacksGranule));
-    m_out.jump(done);
-
-    m_out.appendTo(lacksGranule);
-    unsigned size = extensionCellSizeFor(std::popcount(granuleBits));
-    if (size <= maxExtensionSizeFromStub) {
-        LValue operands[] { cell.value(), m_out.constIntPtr(extensionWord.offset), m_out.constInt64(static_cast<int64_t>(granuleBits)) };
-        emitter<RuntimeCallEmitter>().callStubWithoutSite(allocateExtension(size), operands, { .isOnRarePath = true });
-        emitter<BarrierEmitter>().barrier(context, cell);
     } else {
-        Operand arguments[] { cell, integer(static_cast<int64_t>(granuleBits)) };
-        callWithoutSite(RuntimeOperation::EnsureExtensionGranulesWithoutCollecting, arguments, Representation::Void, { .isOnRarePath = true });
+        Operand arguments[] { cell, integer(static_cast<int64_t>(reservedBits)) };
+        if (mayCollect)
+            callOperation(context, RuntimeOperation::EnsureExtensionGranules, arguments, Representation::Void, options);
+        else
+            callWithoutSite(RuntimeOperation::EnsureExtensionGranulesWithoutCollecting, arguments, Representation::Void, options);
     }
     m_out.jump(done);
 

@@ -301,8 +301,7 @@ public:
     bool tryCopyFieldsOf(VM&, const Object& source);
     static Object* tryCreateCopyOfFields(VM&, const Object& source);
     // To make a plan costs several copies by name. A caller that can copy by name asks for one only from the second copy between the same shapes on.
-    enum class PlanCreation : bool { AtFirstCopy, AtSecondCopy };
-    bool tryAssignPropertiesOf(VM&, JSObject* source, std::span<UniquedStringImpl* const> excludedNames = { }, PlanCreation = PlanCreation::AtFirstCopy);
+    bool tryAssignPropertiesOf(VM&, JSObject* source, std::span<UniquedStringImpl* const> excludedNames = { });
     // Defines data properties in this order where each is a field that takes its value. The key order is looked up once, however many fields are created.
     bool tryDefineFields(VM&, std::span<UniquedStringImpl* const> names, std::span<const EncodedJSValue> values);
 

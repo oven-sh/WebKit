@@ -22,11 +22,9 @@ layout L6 name="Token" fields=[{key="tag" declared={type=number} flags=[IsRequir
 layout L7 name="Word" fields=[{key="tag" declared={type=1} flags=[IsRequired]}, {key="at" declared={type=number} flags=[IsRequired]}, {key="text" declared={type=string} flags=[IsRequired]}] supertypes=[L6]
 layout L8 name="Mark" fields=[{key="tag" declared={type=2} flags=[IsRequired]}, {key="at" declared={type=number} flags=[IsRequired]}] supertypes=[L6]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f1 name="NodeObject" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}, {type=number}] results=[{type=object flags=[IsFromCompiler]}] {
-  b0(v0: anything, v1: number, v2: number):
     v3 = GetConstructPrototype v0 layout=L0
     v4 = NewObject v3 layout=L0
     PropSet v4, v1 key="kind" mode=Strict
@@ -34,13 +32,11 @@ function f1 name="NodeObject" kind=BaseConstructor flags=[HasNewTarget] paramete
     Return v4
 }
 function f2 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object flags=[IsFromCompiler]}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L4
     v2 = NewObject v1 layout=L4
     Return v2
 }
 function f3 name="Heir" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=number}, {type=number}] results=[{type=object flags=[IsFromCompiler]}] {
-  b0(v0: function, v1: anything, v2: number, v3: number):
     v4 = GetSuperBase v0 homeKind=Object
     v5 = SuperConstruct v4, v1 layout=L5
     PropSet v5, v2 key="tag" mode=Strict
@@ -48,7 +44,6 @@ function f3 name="Heir" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee
     Return v5
 }
 function f4 name="valueOf" parameters=[{type=L2}] results=[{type=anything}] {
-  b0(v0: L2):
     v1 = PropGet v0 key="value"
     Return v1
 }

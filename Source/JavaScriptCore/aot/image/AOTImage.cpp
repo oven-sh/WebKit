@@ -8,15 +8,12 @@
 
 #if ENABLE(AOT)
 
-#include "AOTImageStamp.h"
 #include "AOTRegExpRecord.h"
 #include "AOTStubBlob.h"
-#include "CPUFeatureSet.h"
 #include "JSCellButterfly.h"
 #include "MarkedBlockCage.h"
 #include "Options.h"
 #include <algorithm>
-#include <bit>
 #include <cstring>
 #include <iterator>
 #include <limits>
@@ -67,67 +64,18 @@ static_assert(alignof(ImageHeader) <= imageSectionAlignment && alignof(ProgramTa
 
 static constexpr bool hasFixedInstructionSize = sizeOfNearCall == codeOffsetUnit;
 
-static constexpr size_t elementSizeOf(ImageSection section)
-{
-    switch (section) {
-    case ImageSection::Functions:
-        return sizeof(ImageFunction);
-    case ImageSection::InnerEntries:
-        return sizeof(ImageInnerEntry);
-    case ImageSection::Frames:
-        return sizeof(ImageFrame);
-    case ImageSection::ClosureWords:
-        return sizeof(uint64_t);
-    case ImageSection::Strings:
-        return sizeof(ImageStringWord);
-    case ImageSection::LongStrings:
-        return sizeof(uint32_t);
-    case ImageSection::Identifiers:
-        return sizeof(ImageIdentifierWord);
-    case ImageSection::StringHeaders:
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
-        return sizeof(ImageStringRecord);
+using ImageStringHeaderOrRecord = ImageStringRecord;
 #else
-        return sizeof(ImageStringHeader);
+using ImageStringHeaderOrRecord = ImageStringHeader;
 #endif
-    case ImageSection::RegExps:
-        return sizeof(ImageRegExp);
-    case ImageSection::RegExpHashes:
-        return sizeof(ImageRegExpHash);
-    case ImageSection::StubAddresses:
-        return sizeof(StubAddressInImage);
-    case ImageSection::StubReturnSites:
-        return sizeof(StubReturnSite);
-    case ImageSection::FunctionStarts:
-    case ImageSection::CodeGranules:
-    case ImageSection::FrameMaps:
-    case ImageSection::SharedCodeCopies:
-    case ImageSection::StringConstants:
-    case ImageSection::SlotHandlers:
-    case ImageSection::MethodLookups:
-    case ImageSection::MethodTable:
-        return sizeof(uint32_t);
-    case ImageSection::Positions:
-    case ImageSection::FaultSites:
-    case ImageSection::SideTables:
-    case ImageSection::Text:
-    case ImageSection::RegExpDetails:
-    case ImageSection::WebAssemblyDirectory:
-    case ImageSection::ProgramTables:
-        return 1;
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-}
 
-static ImageSectionRange rangeOf(const ImageHeader& header, ImageSection section)
-{
-    return header.sections[static_cast<unsigned>(section)];
-}
-
-static uint64_t numberOfElements(const ImageHeader& header, ImageSection section)
-{
-    return rangeOf(header, section).size / elementSizeOf(section);
-}
+static constexpr size_t elementSizes[] = {
+#define AOT_SIZE_OF_ELEMENT(name, Element, statistic) sizeof(Element),
+    FOR_EACH_AOT_IMAGE_SECTION(AOT_SIZE_OF_ELEMENT)
+#undef AOT_SIZE_OF_ELEMENT
+};
+static_assert(std::size(elementSizes) == numberOfImageSections);
 
 static bool hasMatchingHeapOptions(const ImageHeader& header)
 {
@@ -135,113 +83,80 @@ static bool hasMatchingHeapOptions(const ImageHeader& header)
         && header.heap.markedBlockCageShift == MarkedBlockCage::shift;
 }
 
-static bool hasValidCodeRange(const ImageHeader& header)
+static uint64_t endOfCodePart(uint32_t offset, uint32_t size)
 {
-    return !(header.size % imagePageSize)
+    return static_cast<uint64_t>(offset) + size;
+}
+
+static bool hasWellFormedTables(const ImageHeader& header, std::span<const uint8_t> bytes)
+{
+    const ImageCodeRanges& code = header.code;
+    auto rangeOf = [&](ImageSection section) {
+        return header.sections[static_cast<unsigned>(section)];
+    };
+    auto numberOfElements = [&](ImageSection section) -> uint64_t {
+        return rangeOf(section).size / elementSizes[static_cast<unsigned>(section)];
+    };
+
+    bool hasValidCodeRange = !(header.size % imagePageSize)
         && !(header.codeOffset % imagePageSize)
         && header.codeOffset <= header.size
         && header.codeSize <= header.size - header.codeOffset
         && header.codeSize <= std::numeric_limits<uint32_t>::max()
         && !(header.executableSize % imagePageSize)
         && header.executableSize <= header.codeSize;
-}
+    if (!hasValidCodeRange)
+        return false;
 
-static bool hasValidSectionRanges(const ImageHeader& header)
-{
     uint64_t end = sizeof(ImageHeader);
     for (unsigned index = 0; index < numberOfImageSections; ++index) {
         ImageSectionRange range = header.sections[index];
         uint64_t rangeEnd = static_cast<uint64_t>(range.offset) + range.size;
         if (range.offset % imageSectionAlignment || range.offset < end || rangeEnd > header.codeOffset)
             return false;
-        if (range.size % elementSizeOf(static_cast<ImageSection>(index)))
+        if (range.size % elementSizes[index])
             return false;
         if (static_cast<ImageSection>(index) == ImageSection::MethodTable && range.size && range.offset % imagePageSize)
             return false;
         end = rangeEnd;
     }
-    return true;
-}
 
-static bool hasValidFunctionTables(const ImageHeader& header)
-{
     uint64_t numberOfFunctions = header.counts.functions;
-    if (numberOfElements(header, ImageSection::Functions) != numberOfFunctions
-        || numberOfElements(header, ImageSection::FunctionStarts) != numberOfFunctions + 1)
+    if (numberOfElements(ImageSection::Functions) != numberOfFunctions
+        || numberOfElements(ImageSection::FunctionStarts) != numberOfFunctions + 1)
         return false;
-    if (header.code.functionsEnd > header.codeSize || header.code.codeGranuleShift >= 32)
+    if (code.functionsEnd > header.codeSize || code.codeGranuleShift >= 32)
         return false;
-    uint64_t granuleSize = 1ull << header.code.codeGranuleShift;
-    uint64_t numberOfGranules = (header.code.functionsEnd + granuleSize - 1) >> header.code.codeGranuleShift;
-    return numberOfElements(header, ImageSection::CodeGranules) >= numberOfGranules;
-}
+    uint64_t granuleSize = 1ull << code.codeGranuleShift;
+    if (numberOfElements(ImageSection::CodeGranules) < (code.functionsEnd + granuleSize - 1) >> code.codeGranuleShift)
+        return false;
 
-static bool hasValidSharedCodeCopies(const ImageHeader& header, std::span<const uint8_t> bytes)
-{
-    ImageSectionRange range = rangeOf(header, ImageSection::SharedCodeCopies);
-    std::span copies { reinterpret_cast<const uint32_t*>(bytes.data() + range.offset), range.size / sizeof(uint32_t) };
+    std::span copies { reinterpret_cast<const uint32_t*>(bytes.data() + rangeOf(ImageSection::SharedCodeCopies).offset), static_cast<size_t>(numberOfElements(ImageSection::SharedCodeCopies)) };
     uint64_t endOfPreviousCopy = 0;
     for (uint32_t copy : copies) {
-        if (copy < endOfPreviousCopy || copy > header.code.functionsEnd || header.code.sharedCodeSize > header.code.functionsEnd - copy)
+        if (copy < endOfPreviousCopy || copy > code.functionsEnd || code.sharedCodeSize > code.functionsEnd - copy)
             return false;
-        endOfPreviousCopy = static_cast<uint64_t>(copy) + header.code.sharedCodeSize;
+        endOfPreviousCopy = static_cast<uint64_t>(copy) + code.sharedCodeSize;
     }
-    return true;
-}
 
-static uint64_t endOfCodePart(uint32_t offset, uint32_t size)
-{
-    return static_cast<uint64_t>(offset) + size;
-}
-
-static bool hasValidCodeParts(const ImageHeader& header)
-{
-    const ImageCodeRanges& code = header.code;
-    return code.functionsEnd <= code.webAssemblyCodeOffset
+    bool hasValidCodeParts = code.functionsEnd <= code.webAssemblyCodeOffset
         && endOfCodePart(code.webAssemblyCodeOffset, code.webAssemblyCodeSize) <= code.ffiCodeOffset
         && endOfCodePart(code.ffiCodeOffset, code.ffiCodeSize) <= code.regExpCodeOffset
         && code.regExpCodeOffset <= header.executableSize
         && header.executableSize <= code.constantsOffset
         && endOfCodePart(code.constantsOffset, code.constantsSize) <= header.codeSize
         && (!code.ffiCodeSize || !(code.ffiCodeOffset % imagePageSize));
-}
-
-static const ProgramTables& programTablesOf(const ImageHeader& header, std::span<const uint8_t> bytes)
-{
-    return *reinterpret_cast<const ProgramTables*>(bytes.data() + rangeOf(header, ImageSection::ProgramTables).offset);
-}
-
-static bool hasProgramTables(const ImageHeader& header, std::span<const uint8_t> bytes)
-{
-    return rangeOf(header, ImageSection::ProgramTables).size >= sizeof(ProgramTables)
-        && programTablesOf(header, bytes).magic == ProgramTables::expectedMagic;
-}
-
-static bool hasValidClosureWords(const ImageHeader& header, const ProgramTables& tables)
-{
-    const ClosureFunctionRangeData& range = tables.closureFunctions;
-    return range.omittedWordCount <= range.first
-        && range.first <= range.end
-        && numberOfElements(header, ImageSection::ClosureWords) == range.end - range.omittedWordCount;
-}
-
-static bool hasValidText(const ImageHeader& header, const ProgramTables& tables)
-{
-    return numberOfElements(header, ImageSection::StringConstants) == tables.instanceSizes.numberOfStringCells
-        && numberOfElements(header, ImageSection::StringHeaders) >= numberOfElements(header, ImageSection::Identifiers);
-}
-
-static bool hasWellFormedTables(const ImageHeader& header, std::span<const uint8_t> bytes)
-{
-    if (!hasValidCodeRange(header)
-        || !hasValidSectionRanges(header)
-        || !hasValidFunctionTables(header)
-        || !hasValidSharedCodeCopies(header, bytes)
-        || !hasValidCodeParts(header)
-        || !hasProgramTables(header, bytes))
+    if (!hasValidCodeParts || rangeOf(ImageSection::ProgramTables).size < sizeof(ProgramTables))
         return false;
-    const ProgramTables& tables = programTablesOf(header, bytes);
-    return hasValidClosureWords(header, tables) && hasValidText(header, tables);
+
+    auto& tables = *reinterpret_cast<const ProgramTables*>(bytes.data() + rangeOf(ImageSection::ProgramTables).offset);
+    const ClosureFunctionRangeData& closures = tables.closureFunctions;
+    return tables.magic == ProgramTables::expectedMagic
+        && closures.omittedWordCount <= closures.first
+        && closures.first <= closures.end
+        && numberOfElements(ImageSection::ClosureWords) == closures.end - closures.omittedWordCount
+        && numberOfElements(ImageSection::StringConstants) == tables.instanceSizes.numberOfStringCells
+        && numberOfElements(ImageSection::StringHeaders) >= numberOfElements(ImageSection::Identifiers);
 }
 
 Wire::ImageVerdict Image::check(std::span<const uint8_t> bytes, const std::array<uint8_t, 16>& identity)
@@ -334,24 +249,6 @@ void Image::publish(std::unique_ptr<Image>&& unpublishedImage, std::span<const u
     t_currentImage = image.get();
     s_current.store(images.isEmpty() ? image.get() : differsByThread(), std::memory_order_release);
     images.append(image.release());
-}
-
-std::span<const uint8_t> Image::regExpCode() const
-{
-    const ImageCodeRanges& ranges = header().code;
-    return code().subspan(ranges.regExpCodeOffset, ranges.constantsOffset - ranges.regExpCodeOffset);
-}
-
-std::span<const uint8_t> Image::webAssemblyCode() const
-{
-    const ImageCodeRanges& ranges = header().code;
-    return code().subspan(ranges.webAssemblyCodeOffset, ranges.webAssemblyCodeSize);
-}
-
-std::span<const uint8_t> Image::ffiCode() const
-{
-    const ImageCodeRanges& ranges = header().code;
-    return code().subspan(ranges.ffiCodeOffset, ranges.ffiCodeSize);
 }
 
 std::span<const uint8_t> Image::ffiDirectory() const

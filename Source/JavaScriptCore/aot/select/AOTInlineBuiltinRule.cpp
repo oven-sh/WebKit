@@ -99,33 +99,16 @@ static bool hasSlowPath(const BuiltinImplementation& implementation, BuiltinCall
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool exceedsArgumentCount(const BuiltinImplementation& implementation, const Value& call)
+template<typename Entry>
+static void fillInlineCall(Entry& entry, const Program& program, const Value& original, InlineBuiltin builtin)
 {
-    if (call.builtinCallForm() != BuiltinCallForm::Whole)
-        return false;
-    return implementation.maximumArgumentCount && call.argumentsOperands().size() > *implementation.maximumArgumentCount;
-}
-
-static bool isOwnedByReturnCall(const Function& function, BlockID block, ValueID call)
-{
-    const Terminator& terminator = function.at(block).terminator;
-    return terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == call;
-}
-
-static Vector<uint32_t, 4> parametersOf(const BuiltinImplementation& implementation, InlineBuiltin builtin)
-{
+    const BuiltinImplementation& implementation = overloadOf(program, original).code.implementation;
     uint32_t numberOfParameters = numberOfParametersOf(builtin);
     RELEASE_ASSERT(!numberOfParameters || implementation.inlineBuiltin == builtin);
     Vector<uint32_t, 4> parameters;
     for (uint8_t parameter : std::span(implementation.inlineParameters).first(numberOfParameters))
         parameters.append(parameter);
-    return parameters;
-}
 
-template<typename Entry>
-static void fillInlineCall(Entry& entry, const Program& program, const Value& original, InlineBuiltin builtin)
-{
-    Vector<uint32_t, 4> parameters = parametersOf(overloadOf(program, original).code.implementation, builtin);
     entry.setInlineBuiltin(builtin);
     entry.setInlineParameters(parameters.span());
     entry.setOverload(original.overload());
@@ -152,7 +135,8 @@ std::optional<InlineBuiltinSite> findInlineBuiltinSite(SelectionContext& context
     const BuiltinOverload& overload = overloadOf(program, call);
     const BuiltinImplementation& implementation = overload.code.implementation;
     bool callHasSlowPath = hasSlowPath(implementation, call.builtinCallForm());
-    if (exceedsArgumentCount(implementation, call)) {
+    bool isWhole = call.builtinCallForm() == BuiltinCallForm::Whole;
+    if (isWhole && implementation.maximumArgumentCount && call.argumentsOperands().size() > *implementation.maximumArgumentCount) {
         RELEASE_ASSERT(callHasSlowPath);
         return std::nullopt;
     }
@@ -165,8 +149,7 @@ static std::optional<InlineMatch> findInlineMatch(SelectionContext& context, Val
     std::optional<InlineBuiltinSite> site = findInlineBuiltinSite(context, id);
     if (!site)
         return std::nullopt;
-    BlockID block = context.analyses().useLists().blockOf(id);
-    if (site->hasSlowPath && (context.isOnSlowPath(id) || isOwnedByReturnCall(function, block, id)))
+    if (site->hasSlowPath && (context.isOnSlowPath(id) || isOwnedByReturnCall(context, id)))
         return std::nullopt;
 
     InlineForm form = chooseInlineForm(*site);
@@ -194,7 +177,8 @@ static void rewriteInlineCall(const Program& program, GroupRewriter& rewriter, c
         return;
     }
     case InlineForm::Whole:
-        if (isOwnedByReturnCall(rewriter.function(), rewriter.rootBlock(), root))
+        const Terminator& terminator = rewriter.function().at(rewriter.rootBlock()).terminator;
+        if (terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == root)
             rewriter.builder().demoteReturnCall(rewriter.rootBlock());
         Value& inlineCall = rewriter.replaceRoot(Opcode::CallInline);
         fillInlineCall(inlineCall, program, original, match.builtin);

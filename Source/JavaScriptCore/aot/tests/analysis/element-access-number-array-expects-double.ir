@@ -18,7 +18,6 @@ function f0 name="expected-receivers" parameters=[{type=Array<number> flags=[IsE
 # CHECK-NEXT: F0 v7 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Contiguous integralKey tests=[class, pristine(Storage), storage]
 # CHECK-NEXT: F0 v8 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Other integralKey tests=[class, pristine(Storage)]
 function f1 name="numbers" parameters=[{type=Array<number>}, {type=Array<undefined|number>}, {type=Array<null|number>}, {type=Array<undefined|null|number>}, {type=Array<int[0, 4294967295]>}, {type=int[0, 9]}] results=[{type=anything}] {
-  b0(v0: Array<number>, v1: Array<undefined|number>, v2: Array<null|number>, v3: Array<undefined|null|number>, v4: Array<int[0, 4294967295]>, v5: int[0, 9]):
     v6 = ElemGet v0, v5
     v7 = ElemGet v1, v5
     v8 = ElemGet v2, v5
@@ -32,7 +31,6 @@ function f1 name="numbers" parameters=[{type=Array<number>}, {type=Array<undefin
 # CHECK-NEXT: F1 v9 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Double integralKey tests=[pristine(Storage), storage]
 # CHECK-NEXT: F1 v10 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Double integralKey tests=[pristine(Storage), storage]
 function f2 name="integers-that-fit-an-int32" parameters=[{type=Array<i32>}, {type=Array<int[0, 7]>}, {type=Array<undefined|int[0, 7]>}, {type=Array<int[-1, 1]>}, {type=int[0, 9]}] results=[{type=anything}] {
-  b0(v0: Array<i32>, v1: Array<int[0, 7]>, v2: Array<undefined|int[0, 7]>, v3: Array<int[-1, 1]>, v4: int[0, 9]):
     v5 = ElemGet v0, v4
     v6 = ElemGet v1, v4
     v7 = ElemGet v2, v4
@@ -44,7 +42,6 @@ function f2 name="integers-that-fit-an-int32" parameters=[{type=Array<i32>}, {ty
 # CHECK-NEXT: F2 v7 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Int32 integralKey tests=[pristine(Storage), storage]
 # CHECK-NEXT: F2 v8 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Int32 integralKey tests=[pristine(Storage), storage]
 function f3 name="other-elements" parameters=[{type=Array<string>}, {type=Array<number|string>}, {type=Array<boolean>}, {type=Array<bigint>}, {type=Array<L0>}, {type=Array<undefined|L0>}, {type=Array<number|L0>}, {type=int[0, 9]}] results=[{type=anything}] {
-  b0(v0: Array<string>, v1: Array<number|string>, v2: Array<boolean>, v3: Array<bigint>, v4: Array<L0>, v5: Array<undefined|L0>, v6: Array<number|L0>, v7: int[0, 9]):
     v8 = ElemGet v0, v7
     v9 = ElemGet v1, v7
     v10 = ElemGet v2, v7
@@ -62,7 +59,6 @@ function f3 name="other-elements" parameters=[{type=Array<string>}, {type=Array<
 # CHECK-NEXT: F3 v13 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Contiguous integralKey tests=[pristine(Storage), storage]
 # CHECK-NEXT: F3 v14 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Contiguous integralKey tests=[pristine(Storage), storage]
 function f4 name="nothing-declared" parameters=[{type=Array<anything>}, {type=Array<undefined>}, {type=Array<undefined|null>}, {type=int[0, 9]}] results=[{type=anything}] {
-  b0(v0: Array<anything>, v1: Array<undefined>, v2: Array<undefined|null>, v3: int[0, 9]):
     v4 = ElemGet v0, v3
     v5 = ElemGet v1, v3
     v6 = ElemGet v2, v3
@@ -86,7 +82,6 @@ function f5 name="named-kind-goes-first" parameters=[{type=Array<number, Int32> 
 # CHECK-NEXT: F5 v9 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Double integralKey tests=[pristine(Storage), storage]
 # CHECK-NEXT: F5 v10 ElemGet: form=Array level=Expected operation=GetArrayElement class=[[array]] storage=Double integralKey tests=[pristine(Storage), storage]
 function f6 name="every-access-expects-the-same-kind" parameters=[{type=Array<int[0, 7]>}, {type=Array<string>}, {type=int[0, 9]}, {type=int[0, 7]}, {type=string}] results=[{type=boolean}] {
-  b0(v0: Array<int[0, 7]>, v1: Array<string>, v2: int[0, 9], v3: int[0, 7], v4: string):
     ElemSet v0, v2, v3
     ElemDefine v0, v2, v3
     v7 = ElemHas v0, v2

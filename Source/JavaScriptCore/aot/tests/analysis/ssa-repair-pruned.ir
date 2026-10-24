@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="mergePoints" parameters=[{type=boolean}, {type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: boolean, v1: boolean, v2: number, v3: number):
     Branch v0 -> taken b1(), notTaken b8()
   b1():
     Branch v1 -> taken b2(), notTaken b6()
@@ -52,7 +51,6 @@ function f0 name="mergePoints" parameters=[{type=boolean}, {type=boolean}, {type
 # MERGE: b8():
 # MERGE: Return v2
 function f1 name="redefinedBeforeUse" parameters=[{type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: boolean, v1: number, v2: number):
     Branch v0 -> taken b1(), notTaken b4(v1)
   b1():
     v3 = Add v1, v2

@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="escapesAfterLastGuard" parameters=[{type=anything}, {type=Array<anything, pristine[Storage, Names]>}] results=[{type=undefined}] {
-  b0(v0: anything, v1: Array<anything, pristine[Storage, Names]>):
     Jump -> next b1()
   b1():
     LoopHint
@@ -37,8 +36,6 @@ function f0 name="escapesAfterLastGuard" parameters=[{type=anything}, {type=Arra
     Branch v18 -> taken b1(), notTaken b8()
   b8():
     Return
-}
-# CHECK-LABEL: function f0 name="escapesAfterLastGuard"
 # CHECK: LoopHint
 # CHECK-NEXT: v3: Array = NewArray contents=anything
 # CHECK-NEXT: [[guard0]]: guard = AllGuards v3
@@ -50,9 +47,9 @@ function f0 name="escapesAfterLastGuard" parameters=[{type=anything}, {type=Arra
 # CHECK-NEXT: Unreachable
 # CHECK: = CallBuiltin v1, v3 overload=ArrayPrototypePush/0
 # CHECK-NEXT: = Call v0, -, v1
+}
 
 function f1 name="escapesBeforeGuard" parameters=[{type=anything}, {type=Array<anything, pristine[Storage, Names]>}] results=[{type=undefined}] {
-  b0(v0: anything, v1: Array<anything, pristine[Storage, Names]>):
     Jump -> next b1()
   b1():
     LoopHint
@@ -73,8 +70,7 @@ function f1 name="escapesBeforeGuard" parameters=[{type=anything}, {type=Array<a
     Branch v12 -> taken b1(), notTaken b5()
   b5():
     Return
-}
-# CHECK-LABEL: function f1 name="escapesBeforeGuard"
 # CHECK: = Call v0, -, v1
 # CHECK-NEXT: v6: boolean = IsPristine v3 builtinClass=Array aspects=[Storage, Names]
 # CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b3()
+}

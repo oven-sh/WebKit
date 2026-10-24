@@ -11,6 +11,8 @@
 #include "AOTImageForward.h"
 #include "AOTVector.h"
 #include "CallFrame.h"
+#include "HandlerInfo.h"
+#include "LineColumn.h"
 #include <optional>
 #include <span>
 
@@ -18,6 +20,8 @@ namespace JSC { namespace AOT {
 
 class LinkedFunctions;
 struct CompiledCode;
+struct SiteDescription;
+struct SiteHandler;
 
 struct CallSiteRecord {
     CallSiteIndex callSite;
@@ -67,11 +71,47 @@ private:
     unsigned m_frame { 0 };
 };
 
-// A stream for each function. Empty for one without return sites and prologue checks.
 Vector<Vector<uint8_t>> encodeCallSites(const LinkedFunctions&, BuildContext&);
 std::optional<uint32_t> endOfLastReturnSite(const CompiledCode&);
 
 void* resumeAddressAfterStackCheck(const void* returnAddress);
+
+// Where a call goes on when its callee returns a value that is not of the type it promises (PromisedResults). No exception is caught there. Compiled code has no use for the type that the engine gives this number.
+inline constexpr HandlerType landingOfMisfit = HandlerType::SynthesizedFinally;
+
+struct HandlerRecord {
+    friend bool operator==(const HandlerRecord&, const HandlerRecord&) = default;
+
+    constexpr bool ignoresValue() const { return type == HandlerType::SynthesizedCatch; }
+    constexpr bool catchesExceptions() const { return type != landingOfMisfit; }
+
+    uint32_t codeOffset;
+    HandlerType type;
+};
+
+void encodeHandlers(Vector<uint8_t>& bytes, std::span<const SiteHandler>);
+std::optional<HandlerRecord> findHandler(std::span<const uint8_t> handlers, CallSiteIndex);
+bool catchesExceptions(const Image&, uint32_t function);
+
+struct SourcePosition {
+    friend bool operator==(const SourcePosition&, const SourcePosition&) = default;
+
+    LineColumn lineColumn;
+    ModuleID source;
+};
+
+static constexpr unsigned sitesBetweenPositionCheckpoints = 512;
+
+struct OwnPosition {
+    static OwnPosition of(const SiteDescription&);
+
+    uint32_t line { 0 };
+    uint32_t source { 0 };
+};
+
+void encodePositions(Vector<uint8_t>& stream, const SiteDescription&, OwnPosition ofFunctionInFront);
+std::optional<SourcePosition> decodePosition(const Image&, uint32_t function, const uint8_t* entry, OwnPosition ofFunctionInFront, CallSiteIndex);
+void forgetRememberedPositions();
 
 } } // namespace JSC::AOT
 

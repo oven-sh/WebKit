@@ -8,7 +8,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Point" fields=[{key="clamped" declared={type=int[0, 1000]} flags=[IsRequired]}, {key="passed" declared={type=int[0, 1000]} flags=[IsRequired]}, {key="sum" declared={type=int[0, 1000]} flags=[IsRequired]}, {key="turnedAway" declared={type=int[0, 1000]} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=MathRandom
     v1 = Call v0
     v2 = ToNumber v1

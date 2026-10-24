@@ -14,7 +14,6 @@ entry module=m0
 layout L0 name="Bag" fields=[{key="state" declared={type=anything} flags=[IsRequired]}, {key="other" declared={type=anything} flags=[IsRequired]}, {key="undefined" declared={type=anything} flags=[IsRequired]}]
 layout L1 name="Stored"
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = NewClosure function=f3
@@ -41,18 +40,14 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="one" results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="two" results=[{type=anything}] {
-  b0():
     Return
 }
 function f3 name="three" results=[{type=anything}] {
-  b0():
     Return
 }
 function f4 name="four" results=[{type=anything}] {
-  b0():
     Return
 }

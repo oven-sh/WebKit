@@ -13,7 +13,6 @@ layout L0 kind=Instance name="Router" constructor=f1 fields=[{key="update" decla
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="whatTheClosureHolds" module=m0 declared={type=L0} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = NewClosure function=f1
@@ -23,7 +22,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Router" flags=[HasThis] thisType={type=L0} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
-  b0(v0: L0, v1: anything):
     v2 = NewClosure v0 function=f2
     PropSet v0, v2 key="update"
     v4 = NewClosure v0 function=f6
@@ -40,7 +38,6 @@ function f1 name="Router" flags=[HasThis] thisType={type=L0} parameters=[{type=a
     Return
 }
 function f2 name="update" kind=Arrow captures=[{type=L0}] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     PropSet v0, v1 key="options"
     v3 = CallDirect v0, v1 function=f3
     v4 = ToBoolean v1
@@ -52,27 +49,22 @@ function f2 name="update" kind=Arrow captures=[{type=L0}] parameters=[{type=anyt
     Return
 }
 function f3 name="reset" kind=Method flags=[HasThis] thisType={type=L0} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     PropSet v0, v1 key="origin"
     Return
 }
 function f4 name="fill" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     PropSet v0, v1 key="filled"
     Return
 }
 function f5 name="calledInBranch" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     PropSet v0, v1 key="rarely"
     Return
 }
 function f6 name="listen" kind=Arrow captures=[{type=L0}] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     PropSet v0, v1 key="later"
     Return
 }
 function f7 name="storesLater" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     PropSet v0, v1 key="other"
     Return
 }

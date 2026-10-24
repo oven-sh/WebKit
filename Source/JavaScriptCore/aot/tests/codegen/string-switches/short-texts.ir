@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="onOrdinaryPath" parameters=[{type=string}] results=[{type=i32}] {
-  b0(v0: string):
     SwitchString v0 strings=["GET", "PUT", "POST", "DELETE"] -> case b1(), case b2(), case b3(), case b4(), otherwise b5()
 # REPEAT: i = 1..5
   b%(i)():
@@ -18,7 +17,6 @@ function f0 name="onOrdinaryPath" parameters=[{type=string}] results=[{type=i32}
 # CHECK-NOT: stub
 
 function f1 name="onRarePath" parameters=[{type=string}, {type=boolean}] results=[{type=i32}] {
-  b0(v0: string, v1: boolean):
     Branch v1 -> taken b1(), notTaken b6()
   b1() frequency=Rare:
     SwitchString v0 strings=["GET", "PUT", "POST", "DELETE"] -> case b2(), case b3(), case b4(), case b5(), otherwise b6()

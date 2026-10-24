@@ -8,10 +8,7 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="returnsItsParameter" flags=[IsAsync] parameters=[{type=number}] results=[{type=Promise}] {
-  b0(v0: number):
     Return v0
-}
-# CHECK-LABEL: function f0 name="returnsItsParameter"
 # CHECK: role=CoroutineRamp flags=[IsAsync]
 # CHECK: parameters=[{type=number}] results=[{type=Promise}]
 # CHECK: creator=Coroutine{kind=AsyncFunction ramp=f0 body=f11 promiseType=Promise worker=f11}
@@ -29,18 +26,16 @@ function f0 name="returnsItsParameter" flags=[IsAsync] parameters=[{type=number}
 # CHECK-NEXT: [[promise0]]: Promise = NewPromise
 # CHECK-NEXT: ResolvePromise [[promise0]], [[result0]]
 # CHECK-NEXT: Return [[promise0]]
+}
 
 # One await on one path is enough: the function is split as before, into a ramp that passes the promise and a body that saves its frame
 function f1 name="awaitsOnOnePath" flags=[IsAsync] parameters=[{type=boolean}, {type=anything}] results=[{type=Promise}] {
-  b0(v0: boolean, v1: anything):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v2 = Await v1 @10
     Return v2
   b2():
     Return v1
-}
-# CHECK-LABEL: function f1 name="awaitsOnOnePath"
 # CHECK: role=CoroutineRamp flags=[IsAsync]
 # CHECK: creator=Coroutine{kind=AsyncFunction ramp=f1 body=f12 entryWithoutPromise=f12 promiseType=Promise promiseParameter=2}
 # CHECK-NEXT: b0(v0: boolean, v1: anything):
@@ -48,46 +43,40 @@ function f1 name="awaitsOnOnePath" flags=[IsAsync] parameters=[{type=boolean}, {
 # CHECK-NEXT: = CallDirect v0, v1, [[promise1]] function=f12
 # CHECK-NOT: ResolvePromise
 # CHECK-NOT: RejectPromise
+}
 
 function f2 name="onlyThrows" flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] {
-  b0(v0: anything):
     Throw v0
-}
-# CHECK-LABEL: function f2 name="onlyThrows"
 # CHECK: creator=Coroutine{kind=AsyncFunction ramp=f2 body=f13 promiseType=Promise worker=f13}
 # CHECK: [[rejection2]]() role=CatchHandler frequency=Rare:
 # CHECK: () handler=[[rejection2]]():
 # CHECK-NEXT: = CallDirect v0 function=f13
+}
 
 function f3 name="returnsNothing" flags=[IsAsync] results=[{type=Promise}] {
-  b0():
     Return
-}
-# CHECK-LABEL: function f3 name="returnsNothing"
 # CHECK: creator=Coroutine{kind=AsyncFunction ramp=f3 body=f14 promiseType=Promise worker=f14}
 # CHECK: [[result3]]: anything = CallDirect function=f14
 # CHECK: ResolvePromise {{*}}, [[result3]]
+}
 
 # The callee suspends its own frame, not the frame of its caller. The promise it returns is what the ramp resolves the new promise with
 function f4 name="returnsTheCallOfAnAsyncFunction" flags=[IsAsync] parameters=[{type=boolean}, {type=anything}] results=[{type=Promise}] {
-  b0(v0: boolean, v1: anything):
     v2 = CallDirect v0, v1 function=f1
     Return v2
-}
-# CHECK-LABEL: function f4 name="returnsTheCallOfAnAsyncFunction"
 # CHECK: creator=Coroutine{kind=AsyncFunction ramp=f4 body=f15 promiseType=Promise worker=f15}
 # CHECK: = CallDirect v0, v1 function=f15
+}
 
 # The ramp hands every entry parameter on and appends nothing, so a hidden rest stays the last one
 function f5 name="keepsItsSignature" position=7 text={start=7 end=60} flags=[IsAsync, HasThis, HasArgumentCount, HasHiddenRest] length=1 captures=[{type=number}] thisType={type=object} parameters=[{type=string}] results=[{type=Promise}] {
   b0(v0: number, v1: object, v2: int[0, 4294967295], v3: string, v4: Array):
     Return v3
-}
-# CHECK-LABEL: function f5 name="keepsItsSignature"
 # CHECK: position=7 text={start=7 end=60} role=CoroutineRamp flags=[IsAsync, HasThis, HasArgumentCount, HasHiddenRest] length=1 captures=[{type=number}] thisType={type=object} parameters=[{type=string}] results=[{type=Promise}]
 # CHECK: creator=Coroutine{kind=AsyncFunction ramp=f5 body=f16 promiseType=Promise worker=f16}
 # CHECK-NEXT: b0(v0: number, v1: object, v2: int[0, 4294967295], v3: string, v4: Array):
 # CHECK: = CallDirect v0, v1, v2, v3, v4 function=f16 @7
+}
 
 function f6 name="catchesItsOwnErrors" flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] {
   b0(v0: anything) handler=b1():
@@ -96,50 +85,41 @@ function f6 name="catchesItsOwnErrors" flags=[IsAsync] parameters=[{type=anythin
   b1() role=CatchHandler:
     v2 = CatchValue
     Return v2
-}
-# CHECK-LABEL: function f6 name="catchesItsOwnErrors"
 # CHECK: creator=Coroutine{kind=AsyncFunction ramp=f6 body=f17 promiseType=Promise worker=f17}
 # CHECK-NOT: = Call v0
 # CHECK: = CallDirect v0 function=f17
 # CHECK-NOT: = Call v0
+}
 
 # Only an async function has a worker. A generator suspends where it starts
 function f7 name="generatorNeverYields" flags=[IsGenerator, TakesCallee] parameters=[{type=number}] results=[{type=Generator}] {
-  b0(v0: function, v1: number):
     InitialYield
     Return v1
-}
-# CHECK-LABEL: function f7 name="generatorNeverYields"
 # CHECK: creator=Coroutine{ramp=f7 body=f18 promiseParameter=2}
+}
 function f8 name="asyncGeneratorNeverAwaits" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=number}] results=[{type=AsyncGenerator}] {
-  b0(v0: function, v1: number):
     InitialYield
     Return v1
-}
-# CHECK-LABEL: function f8 name="asyncGeneratorNeverAwaits"
 # CHECK: creator=Coroutine{kind=AsyncGenerator ramp=f8 body=f19 promiseType=Promise promiseParameter=2}
+}
 
 # A step of an async generator suspends the frame where the generator does not answer at once
 function f9 name="stepsAnAsyncGenerator" flags=[IsAsync] parameters=[{type=AsyncGenerator}] results=[{type=Promise}] {
-  b0(v0: AsyncGenerator):
     v1 = Undefined
     v2 = StepAsyncGenerator v0, v1, v1
     v3 = ResultAt v2 index=0
     Return v3
-}
-# CHECK-LABEL: function f9 name="stepsAnAsyncGenerator"
 # CHECK: creator=Coroutine{kind=AsyncFunction ramp=f9 body=f20 entryWithoutPromise=f20 promiseType=Promise promiseParameter=1}
+}
 
 # The ramp keeps the id, so a caller that wants the promise is left as it is
 function f10 name="callsTheRamp" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f0
     Return v1
-}
-# CHECK-LABEL: function f10 name="callsTheRamp"
 # CHECK-NOT: role=
 # CHECK: v1: Promise = CallDirect v0 function=f0
 # CHECK-NEXT: Return v1
+}
 
 # The worker is no async function any more: it may be inlined and has an ordinary frame. Its result is what the returned values are proven to be
 # CHECK-LABEL: function f11 name="returnsItsParameter"

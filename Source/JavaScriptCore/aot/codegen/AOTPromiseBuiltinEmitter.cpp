@@ -13,11 +13,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-PromiseBuiltinEmitter::PromiseBuiltinEmitter(CodeGenerator& generator)
-    : BuiltinFamilyEmitter(generator)
-{
-}
-
 Boxed PromiseBuiltinEmitter::argumentOrUndefined(const InlineCall& call, unsigned index)
 {
     ValueID id = call.argumentOrNull(index);

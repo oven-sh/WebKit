@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="returnsCachedOrComputes" parameters=[{type=undefined|object}, {type=number}] results=[{type=number}] {
-  b0(v0: undefined|object, v1: number):
     v2 = TypeTest v0 testedType=undefined|null
     Branch v2 -> taken b2(), notTaken b1()
   b1():

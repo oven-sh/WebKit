@@ -8,7 +8,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="anyValue" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     v1 = String string="constructor"
     v2 = Eq v0, v1 form=Generic
     v3 = ValueLooselyEqualsLiteral v0 literal="constructor"
@@ -22,7 +21,6 @@ function f0 name="anyValue" parameters=[{type=anything}] results=[{type=undefine
 # USES: v2 Eq 0: [Inspects, PassesToUserCode]
 # USES: v3 ValueLooselyEqualsLiteral 0: [Inspects, PassesToUserCode]
 function f1 name="neverObject" parameters=[{type=undefined|number|string}] results=[{type=undefined}] {
-  b0(v0: undefined|number|string):
     v1 = String string="constructor"
     v2 = Eq v0, v1 form=Generic
     v3 = ValueLooselyEqualsLiteral v0 literal="constructor"
@@ -36,7 +34,6 @@ function f1 name="neverObject" parameters=[{type=undefined|number|string}] resul
 # USES: v3 ValueLooselyEqualsLiteral 0: [Inspects]
 # USES-NOT: PassesToUserCode
 function f2 name="neverStringOrObject" parameters=[{type=undefined|boolean|number}] results=[{type=undefined}] {
-  b0(v0: undefined|boolean|number):
     v1 = String string="constructor"
     v2 = Eq v0, v1 form=Generic
     v3 = ValueLooselyEqualsLiteral v0 literal="constructor"
@@ -46,7 +43,6 @@ function f2 name="neverStringOrObject" parameters=[{type=undefined|boolean|numbe
 # CHECK: v3 ValueLooselyEqualsLiteral: none
 # NUMBER: valid
 function f3 name="string" parameters=[{type=string}] results=[{type=undefined}] {
-  b0(v0: string):
     v1 = StringEqualsLiteral v0 literal="constructor"
     Return
 }

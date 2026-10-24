@@ -7,7 +7,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="sum" parameters=[{type=number}, {type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean, v2: anything):
     v3 = Boolean boolean=false
     Branch v3 -> taken b1(), notTaken b2()
   b1():
@@ -22,16 +21,13 @@ function f0 name="sum" parameters=[{type=number}, {type=boolean}, {type=anything
     Jump -> next b3(v6)
   b5():
     Return v4
-}
-# CHECK-LABEL: function f0 name="sum"
 # CHECK: b3(v4: number):
 # CHECK: v6: number = Add v4, v0
-# STALE-LABEL: function f0 name="sum"
 # STALE: b3(v4: anything):
 # STALE: v6: number|string|bigint = Add v4, v0
+}
 
 function f1 name="concatenation" parameters=[{type=string}, {type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: boolean, v2: anything):
     v3 = Boolean boolean=false
     Branch v3 -> taken b1(), notTaken b2()
   b1():
@@ -46,13 +42,11 @@ function f1 name="concatenation" parameters=[{type=string}, {type=boolean}, {typ
     Jump -> next b3(v6)
   b5():
     Return v4
-}
-# CHECK-LABEL: function f1 name="concatenation"
 # CHECK: b3(v4: string):
 # CHECK: v6: string = Add v4, v0
+}
 
 function f2 name="innerLoopCarriesOuterSum" parameters=[{type=number}, {type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean, v2: anything):
     v3 = Boolean boolean=false
     Branch v3 -> taken b1(), notTaken b2()
   b1():
@@ -73,15 +67,13 @@ function f2 name="innerLoopCarriesOuterSum" parameters=[{type=number}, {type=boo
     Jump -> next b3(v6)
   b7():
     Return v4
-}
-# CHECK-LABEL: function f2 name="innerLoopCarriesOuterSum"
 # CHECK: b3(v4: number):
 # CHECK: b4(v6: number):
 # CHECK: v8: number = Mul v6, v0
 # CHECK-NEXT: v9: number = Add v8, v4
+}
 
 function f3 name="unknownValueAddedInLoop" parameters=[{type=number}, {type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean, v2: anything):
     v3 = Boolean boolean=false
     Branch v3 -> taken b1(), notTaken b2()
   b1():
@@ -96,13 +88,11 @@ function f3 name="unknownValueAddedInLoop" parameters=[{type=number}, {type=bool
     Jump -> next b3(v6)
   b5():
     Return v4
-}
-# CHECK-LABEL: function f3 name="unknownValueAddedInLoop"
 # CHECK: b3(v4: number|string|bigint):
 # CHECK: v6: number|string|bigint = Add v4, v2
+}
 
 function f4 name="textAddedOnOnePath" parameters=[{type=number}, {type=boolean}, {type=anything}, {type=string}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean, v2: anything, v3: string):
     v4 = Boolean boolean=false
     Branch v4 -> taken b1(), notTaken b2()
   b1():
@@ -122,7 +112,6 @@ function f4 name="textAddedOnOnePath" parameters=[{type=number}, {type=boolean},
     Jump -> next b3(v7)
   b7():
     Return v5
-}
-# CHECK-LABEL: function f4 name="textAddedOnOnePath"
 # CHECK: b3(v5: number|string
 # CHECK: v8: string = Add v7, v3
+}

@@ -8,7 +8,6 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinFamilyEmitter.h"
-#include "AOTSchemaInlineBuiltins.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -16,12 +15,7 @@ class DateBuiltinEmitter final : public BuiltinFamilyEmitter {
 public:
     explicit DateBuiltinEmitter(CodeGenerator&);
 
-    void generateDateGetField(const InlineCall&);
-    void generateDateToISOString(const InlineCall&);
-    void generateDateNow(const InlineCall&);
-    void generateDateGetTime(const InlineCall&);
-    void generateDateGetMilliseconds(const InlineCall&);
-    void generateDateSetTime(const InlineCall&);
+    FOR_EACH_AOT_INLINE_BUILTIN_IN_DATE_BUILTIN(AOT_DECLARE_INLINE_BUILTIN_GENERATOR)
 
 private:
     struct BitField {

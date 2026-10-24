@@ -15,7 +15,6 @@ entry module=m0
 variable g0 name="limit" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="register" [isFreeName]
     v2 = NewClosure function=f1
@@ -26,7 +25,6 @@ function f0 name="" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="counts" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=0
     v2 = BitOr v0, v1
     Jump -> next b1(v1, v2)
@@ -45,20 +43,17 @@ function f1 name="counts" parameters=[{type=anything}] results=[{type=anything}]
 }
 
 function f2 name="step" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=3
     v2 = BitAnd v0, v1
     Return v2
 }
 
 function f3 name="setsLimit" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     PutModuleVariable v0 variable=g0
     Return
 }
 
 function f4 name="waitsForLimit" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     LoopHint

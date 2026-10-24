@@ -25,8 +25,6 @@ layout L6 name="OnlyIntoT" fields=[{key="only" declared={type=number} flags=[IsR
 # CHECK-NEXT: L6: members [L6]
 
 function f0 name="take" parameters=[{type=L0}, {type=L1}, {type=L3}, {type=L0|L3}, {type=L4}, {type=L5}] results=[{type=anything}] {
-  b0(v0: L0, v1: L1, v2: L3, v3: L0|L3, v4: L4, v5: L5):
     Return
-}
-# READ-LABEL: function f0 name="take"
 # READ: parameters=[{type=L2}, {type=L2}, {type=object}, {type=object}, {type=L4}, {type=anything}]
+}

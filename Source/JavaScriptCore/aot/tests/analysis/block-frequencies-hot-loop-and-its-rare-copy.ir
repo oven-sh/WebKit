@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="rareSideIsTheSecondSuccessor" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Branch v0 -> taken b1(), notTaken b5()
   b1():
     Jump -> next b2()
@@ -45,7 +44,6 @@ function f0 name="rareSideIsTheSecondSuccessor" parameters=[{type=boolean}] resu
 # CHECK-NEXT: b10 frequency: Rare count: 0.00
 # CHECK-NOT: frequency
 function f1 name="rareSideIsTheFirstSuccessor" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Branch v0 -> taken b5(), notTaken b1()
   b1():
     Jump -> next b2()

@@ -36,10 +36,7 @@ struct UnitTarget {
     uint32_t offset { 0 };
 };
 
-struct PlacedUnit {
-    uint32_t unit;
-    uint32_t offset;
-};
+using PlacedUnit = UnitTarget;
 
 // uniqueUnitOffsets is indexed like SectionLinkInputs::units. The entry of a Copyable unit is 0: copies has its offsets.
 struct LinkedSection {

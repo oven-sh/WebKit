@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="usedByValue" parameters=[{type=anything}, {type=boolean}] results=[{type=boolean}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = Integer integer=1
@@ -17,17 +16,15 @@ function f0 name="usedByValue" parameters=[{type=anything}, {type=boolean}] resu
     v4 = Check v3 castType=number
     v5 = StrictEq v3, v4
     Return v5
-}
-# CHECK-LABEL: function f0 name="usedByValue"
 # CHECK: b2():
 # CHECK-NEXT: Jump -> next b3(v0)
 # CHECK-NEXT: b3(v3: anything):
 # CHECK-NEXT: v4: number = Check v3 castType=number
 # CHECK-NEXT: v5: boolean = StrictEq v3, v4
 # CHECK-NEXT: Return v5
+}
 
 function f1 name="usedAsHandlerArgument" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = Integer integer=1
@@ -43,11 +40,10 @@ function f1 name="usedAsHandlerArgument" parameters=[{type=anything}, {type=bool
   b5(v6) role=CatchHandler:
     v7 = CatchValue
     Return v6
-}
-# CHECK-LABEL: function f1 name="usedAsHandlerArgument"
 # CHECK: b2():
 # CHECK-NEXT: Jump -> next b3(v0)
 # CHECK-NEXT: b3(v3: anything):
 # CHECK-NEXT: v4: number = Check v3 castType=number
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b4() handler=b5(v3):
+}

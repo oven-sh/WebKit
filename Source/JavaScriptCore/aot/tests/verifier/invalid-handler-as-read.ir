@@ -13,7 +13,6 @@ function f0 name="badOrdinaryBlockAsHandler" parameters=[{type=anything}] result
     Return
 }
 function f1 name="badJumpIntoHandlerBlock" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1() handler=b2():
     v2 = Call v0
@@ -23,7 +22,6 @@ function f1 name="badJumpIntoHandlerBlock" parameters=[{type=anything}, {type=bo
     Return
 }
 function f2 name="good" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b3()
   b1() handler=b2():
     v2 = Call v0

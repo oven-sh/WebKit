@@ -13,7 +13,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class EnvironmentEmitter final : public OperationEmitter {
 public:
-    explicit EnvironmentEmitter(CodeGenerator&);
+    explicit EnvironmentEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generateGetCapture(const ValueContext&);
     void generateMaterializeEnvironment(const ValueContext&);

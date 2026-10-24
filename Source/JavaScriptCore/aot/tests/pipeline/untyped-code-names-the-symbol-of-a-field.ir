@@ -29,7 +29,6 @@ layout L0 name="Body" fields=[{key="plain" declared={type=number} flags=[IsRequi
 variable g0 name="kMass" module=m0 declared={type=anything} flags=[IsImmutable]
 variable g1 name="kLabel" module=m0 declared={type=anything} flags=[IsImmutable]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Symbol
     v1 = String string="mass"
     v2 = Call v0, -, v1 @100
@@ -48,7 +47,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="make" flags=[IsChecked] parameters=[{type=number site=w0}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = Integer integer=1
     v2 = NewObject -, v1 layout=L0 fields=[0]
     v3 = GetModuleVariable variable=g0
@@ -62,28 +60,24 @@ function f1 name="make" flags=[IsChecked] parameters=[{type=number site=w0}] res
     Return v10
 }
 function f2 name="readAny" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g0
     v2 = CheckInitialized v1 name="kMass"
     v3 = ElemGet v0, v2
     Return v3
 }
 function f3 name="writeAny" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = GetModuleVariable variable=g0
     v3 = CheckInitialized v2 name="kMass"
     ElemSet v0, v3, v1 mode=Strict
     Return
 }
 function f4 name="has" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g0
     v2 = CheckInitialized v1 name="kMass"
     v3 = ElemHas v0, v2
     Return v3
 }
 function f5 name="remove" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g0
     v2 = CheckInitialized v1 name="kMass"
     v3 = ElemDelete v0, v2 mode=Strict

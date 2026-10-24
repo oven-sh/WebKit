@@ -11,16 +11,16 @@
 #include "AOTSchemaEnums.h"
 #include "AOTVector.h"
 #include <array>
+#include <optional>
+#include <span>
 #include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT {
 
 using Typed::PropertyKeyID;
 
-// The numbers of the constants and of the keys count every body. A body without code names no string.
 struct StringUses {
     BitVector isNamed;
-    // Named by something else than the operation that makes the cell of a string constant and those that have the text for a message: an operation that reads the text, a key, a regular expression.
     BitVector isNamedBesideCreation;
     BitVector isConstant;
     BitVector isCreatedRepeatedly;
@@ -49,6 +49,34 @@ struct ProgramUses {
 };
 
 ProgramUses collectProgramUses(const Typed::PipelineOutput&, const BitVector& bodiesWithoutCode, BuildContext&);
+
+template<typename ID>
+std::optional<uint32_t> numberIn(const Vector<uint32_t>& numbers, ID id)
+{
+    if (!id || id.index() >= numbers.size() || !numbers[id.index()])
+        return std::nullopt;
+    return numbers[id.index()];
+}
+
+class StringConstantNumbering {
+public:
+    std::optional<uint32_t> numberOf(StringID string) const
+    {
+        std::optional<uint32_t> numberPlusOne = numberIn(m_numbersPlusOne, string);
+        return numberPlusOne ? std::optional(*numberPlusOne - 1) : std::nullopt;
+    }
+    StringID stringOf(uint32_t number) const { return m_strings[number]; }
+    uint32_t count() const { return m_strings.size(); }
+    std::span<const StringID> strings() const { return m_strings.span(); }
+
+private:
+    friend StringConstantNumbering numberStringConstants(const Typed::Program&, const StringUses&, BuildContext&);
+
+    Vector<uint32_t> m_numbersPlusOne;
+    Vector<StringID> m_strings;
+};
+
+StringConstantNumbering numberStringConstants(const Typed::Program&, const StringUses&, BuildContext&);
 
 } } // namespace JSC::AOT
 

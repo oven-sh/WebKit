@@ -7,7 +7,6 @@ entry module=m0
 variable g0 name="input" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = ToBoolean v0
     v2 = NewClosure function=f2
@@ -39,7 +38,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="callsInLoop" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = ToBoolean v0
     Jump -> next b1()
   b1():
@@ -50,37 +48,29 @@ function f1 name="callsInLoop" parameters=[{type=anything}, {type=anything}] res
     Return
 }
 function f2 name="handedOverOnce" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 function f3 name="handedOverInNestedLoops" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 function f4 name="handedOverInRareBlock" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 function f5 name="calledOnceByReceiver" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 function f6 name="callsOnce" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Call v1, -, v0
     Return v2
 }
 function f7 name="handsOn" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = CallDirect v0, v1 function=f1
     Return v2
 }
 function f8 name="handedOverToFunctionThatHandsOn" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 function f9 name="handsOnInLoopToItself" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = ToBoolean v0
     v3 = Call v1, -, v0
     Jump -> next b1()
@@ -92,7 +82,6 @@ function f9 name="handsOnInLoopToItself" parameters=[{type=anything}, {type=anyt
     Return
 }
 function f10 name="handedOverToRecursiveFunction" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 # CHECK: f0 size {{*}}: f1*101.000977 f2*63.000000 f3*6300.000000 f4*0.061523 f6*1.000000 f7*1.000000 f8*63.000000 f9*1.000000 f10*63.000000

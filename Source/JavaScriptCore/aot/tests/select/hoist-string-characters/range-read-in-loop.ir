@@ -14,7 +14,6 @@
 # CHECK-NOT: FlattenString
 module m0 path="main.js" displayPath="main.js"
 function f0 name="slice-equals-literal" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
-  b0(v0: string, v1: number):
     v2 = Undefined
     v3 = Integer integer=0
     v4 = Integer integer=2
@@ -46,7 +45,6 @@ function f0 name="slice-equals-literal" parameters=[{type=string}, {type=number}
 # CHECK: : boolean = StrictEq [[unit1]], [[codeUnit1]]
 # CHECK-NOT: FlattenString
 function f1 name="character-equals-literal" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
-  b0(v0: string, v1: number):
     v2 = Undefined
     v3 = Integer integer=0
     v4 = Integer integer=1
@@ -74,7 +72,6 @@ function f1 name="character-equals-literal" parameters=[{type=string}, {type=num
 # CHECK-NOT: StringRangeCodeUnitOr
 # CHECK-NOT: FlattenString
 function f2 name="character-compared-twice" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
-  b0(v0: string, v1: number):
     v2 = Undefined
     v3 = Integer integer=0
     v4 = Integer integer=1

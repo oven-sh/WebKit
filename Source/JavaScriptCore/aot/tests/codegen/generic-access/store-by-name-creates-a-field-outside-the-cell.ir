@@ -45,7 +45,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Record name="Wide" module=m0 fields=[{key="required" declared={type=number} flags=[IsRequired]}, {key="late0" declared={type=anything}}, {key="late1" declared={type=anything}}, {key="late2" declared={type=anything}}, {key="late3" declared={type=anything}}, {key="late4" declared={type=anything}}, {key="late5" declared={type=anything}}, {key="late6" declared={type=anything}}, {key="late7" declared={type=anything}}, {key="late8" declared={type=anything}}, {key="late9" declared={type=anything}}, {key="late10" declared={type=anything}}, {key="late11" declared={type=anything}}, {key="text" declared={type=string}}, {key="whole" declared={type=int}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
 # REPEAT: i = 1..14
     v%(i) = NewClosure function=f%(i)
@@ -55,18 +54,15 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="make" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = FinishObject v1
     Return v2
 }
 function f2 name="other" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     Return v0
 }
 # REPEAT: i = 3..6; a = 0 3 7 11
 function f%(i) name="proven_late%(a)" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = ToBoolean v0
     Branch v3 -> taken b1(), notTaken b2()
   b1() frequency=Unlikely:
@@ -78,7 +74,6 @@ function f%(i) name="proven_late%(a)" parameters=[{type=anything}, {type=anythin
 }
 # END REPEAT
 function f7 name="proven_text" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = ToBoolean v0
     Branch v3 -> taken b1(), notTaken b2()
   b1() frequency=Unlikely:
@@ -89,7 +84,6 @@ function f7 name="proven_text" parameters=[{type=anything}, {type=anything}, {ty
     Return v0
 }
 function f8 name="proven_whole" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = ToBoolean v0
     Branch v3 -> taken b1(), notTaken b2()
   b1() frequency=Unlikely:
@@ -101,18 +95,15 @@ function f8 name="proven_whole" parameters=[{type=anything}, {type=anything}, {t
 }
 # REPEAT: i = 9..12; a = 0 3 7 11
 function f%(i) name="unproven_late%(a)" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     PropSet v1, v2 key="late%(a)" mode=Strict
     Return v1
 }
 # END REPEAT
 function f13 name="unproven_text" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     PropSet v1, v2 key="text" mode=Strict
     Return v1
 }
 function f14 name="unproven_whole" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     PropSet v1, v2 key="whole" mode=Strict
     Return v1
 }

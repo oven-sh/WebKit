@@ -166,23 +166,25 @@ FOR_EACH_AOT_FUNCTION_PASS(AOT_DECLARE_FUNCTION_PASS)
 #undef AOT_DECLARE_FUNCTION_PASS
 
 struct PassDescriptor {
+    constexpr bool accepts(IRForm form) const { return firstForm <= form && form <= lastForm; }
+
     PassID id;
     PassScope scope;
     PassNecessity necessity;
     IRForm firstForm;
     IRForm lastForm;
-    std::optional<IRForm> produces;
+    std::optional<IRForm> produces { };
     OptionSet<ProgramResult> inputs;
-    OptionSet<ProgramResult> outputs;
-    OptionSet<ProgramResult> invalidatedResults;
-    InvalidatedAnalyses invalidatedAnalyses;
-    EditedFunctions editedFunctions;
-    Effects effectsAddedByEdits;
-    bool readsOtherBodies;
-    bool derivesFunctions;
-    bool countsOwnChanges;
-    bool isVerifiedAfterNextPass;
-    FunctionPass run;
+    OptionSet<ProgramResult> outputs { };
+    OptionSet<ProgramResult> invalidatedResults { };
+    InvalidatedAnalyses invalidatedAnalyses { InvalidatedAnalyses::None };
+    EditedFunctions editedFunctions { EditedFunctions::DoAnything };
+    Effects effectsAddedByEdits { Effects::none() };
+    bool readsOtherBodies { false };
+    bool derivesFunctions { false };
+    bool countsOwnChanges { false };
+    bool isVerifiedAfterNextPass { false };
+    FunctionPass run { nullptr };
 };
 
 const PassDescriptor& descriptorOf(PassID);

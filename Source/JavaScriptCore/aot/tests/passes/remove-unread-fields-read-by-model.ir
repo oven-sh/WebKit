@@ -13,7 +13,6 @@ module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibr
 entry module=m0
 layout L0 name="Label" fields=[{key="toString" declared={type=anything} flags=[IsRequired]}, {key="unused" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = Integer integer=1
@@ -25,12 +24,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="toString" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="label"
     Return v1
 }
 function f2 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=131085 thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="toString"
     v2 = Call v1, v0 calleeKey="toString"
     ReturnCall v2

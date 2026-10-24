@@ -144,7 +144,6 @@ function f28 name="size" kind=Getter flags=[HasThis] results=[{type=anything}]
 function f29 name="Writer" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L17
 function f30 name="size" kind=Setter flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}]
 function f31 name="otherKeys" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="missing"
     v2 = PropGet v0 key="constructor"
     v3 = PropGet v0 key="0"

@@ -76,6 +76,14 @@ private:
     struct Worker {
         void didChangeFunctions() WTF_REQUIRES_LOCK(lock) { numberOfFunctions.store(functions.size(), std::memory_order_relaxed); }
 
+        void setFunctions(Vector<QueuedFunction>&& newFunctions)
+        {
+            Locker locker { lock };
+            RELEASE_ASSERT(functions.isEmpty());
+            functions = WTF::move(newFunctions);
+            didChangeFunctions();
+        }
+
         FunctionQueue* queue { nullptr };
         Lock lock;
         Vector<QueuedFunction> functions WTF_GUARDED_BY_LOCK(lock);
@@ -85,9 +93,6 @@ private:
         uint8_t restOfCacheLine[16];
     };
 
-    Word& ensureProvisionalWord(FunctionID);
-    const Word* provisionalWord(FunctionID) const;
-    bool isSpeculative(FunctionID) const;
     SpeculativeFunction& speculativeFunction(FunctionID) LIFETIME_BOUND;
     Confirmation confirm(FunctionID);
     void confirmFoundFunctions(FoundFunctions&);

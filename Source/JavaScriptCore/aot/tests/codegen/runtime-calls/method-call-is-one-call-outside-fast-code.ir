@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="inBalancedCode" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = CallMethod v0, v1 key="method" @30
     v3 = NewArray v2 contents=anything
     Return v3
@@ -18,7 +17,6 @@ function f0 name="inBalancedCode" parameters=[{type=anything}, {type=anything}] 
 # S: f0 b0 Balanced
 # CHECK: f1: size=
 function f1 name="inFastCode" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     Jump -> next b1()
   b1():
     LoopHint

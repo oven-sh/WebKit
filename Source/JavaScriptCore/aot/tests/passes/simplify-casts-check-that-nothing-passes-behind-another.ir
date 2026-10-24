@@ -11,7 +11,6 @@ layout L0 name="A"
 layout L1 name="B"
 layout L2 name="C"
 function f0 name="twoChecks" parameters=[{type=L0|L1|L2}] results=[{type=anything}] {
-  b0(v0: L0|L1|L2):
     v1 = Check v0 castType=L0|L1
     v2 = Check v0 castType=undefined|L2
     v3 = NewArray v1, v2 contents=anything

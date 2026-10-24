@@ -8,10 +8,10 @@
 #if ENABLE(AOT)
 
 #include "AOTChildProcess.h"
-#include "AOTGlobalBindingPlacement.h"
 #include "AOTGlobalBindings.h"
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
+#include "AOTPlacement.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTShellProgramTestSupport.h"
@@ -33,7 +33,6 @@ static_assert(GlobalBindings::identifierMask == Typed::GlobalBindingTable::ident
 static constexpr ASCIILiteral accessesOfOneName = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -45,31 +44,26 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="read" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="shared" [isFreeName]
     Return v1
 }
 function f2 name="store" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     PropSet v1, v0 key="shared" mode=Strict [isFreeName]
     Return
 }
 function f3 name="storeSloppy" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     PropSet v1, v0 key="shared" mode=Sloppy [isFreeName]
     Return
 }
 function f4 name="readOfGlobalObject" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="shared"
     Return v1
 }
 function f5 name="storeToGlobalObject" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     PropSet v1, v0 key="shared" mode=Strict
     Return
@@ -80,7 +74,6 @@ function f5 name="storeToGlobalObject" parameters=[{type=anything}] results=[{ty
 static constexpr ASCIILiteral questionsAboutOneName = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -91,26 +84,22 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="typeOfName" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="shared" [isFreeName, isForTypeOf]
     v2 = TypeOf v1
     Return v2
 }
 function f2 name="read" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="shared" [isFreeName]
     Return v1
 }
 function f3 name="readOfGlobalObject" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="shared"
     Return v1
 }
 function f4 name="storeSloppy" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     PropSet v1, v0 key="shared" mode=Sloppy [isFreeName]
     Return
@@ -120,7 +109,6 @@ function f4 name="storeSloppy" parameters=[{type=anything}] results=[{type=anyth
 static constexpr ASCIILiteral accessesOfLazyGlobal = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -129,13 +117,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="readLazy" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="Intl" [isFreeName]
     Return v1
 }
 function f2 name="storeLazy" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     PropSet v1, v0 key="Intl" mode=Sloppy [isFreeName]
     Return
@@ -147,7 +133,6 @@ static constexpr ASCIILiteral programForManyInstances = R"IR(variable g0 name="w
 module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="worker" variable=g0}]
 entry hostReads=[{exportName="worker"}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Worker
     PutModuleVariable v0 variable=g0
     v2 = Builtin builtin=GlobalThis

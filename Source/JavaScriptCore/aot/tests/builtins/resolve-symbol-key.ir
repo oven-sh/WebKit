@@ -5,75 +5,61 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="symbolRead" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Symbol
     v1 = PropGet v0 key="iterator"
     Return v1
-}
-# CHECK-LABEL: function f0 name="symbolRead"
 # CHECK: v1: @@iterator = KeyConstant key=@@iterator
+}
 
 function f1 name="stringIterator" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = PropGet v0 key=@@iterator
     v2 = Call v1, v0 calleeKey=@@iterator
     Return v2
-}
-# CHECK-LABEL: function f1 name="stringIterator"
 # CHECK: v1: builtin(StringPrototypeSymbolIterator) = Builtin builtin=StringPrototypeSymbolIterator
 # CHECK-NEXT: v2: StringIterator = CallBuiltin v0 overload=StringPrototypeSymbolIterator/0
+}
 
 function f2 name="typedArrayIterator" parameters=[{type=Uint8Array<number, pristine[Names]>}] results=[{type=anything}] {
-  b0(v0: Uint8Array<number, pristine[Names]>):
     v1 = PropGet v0 key=@@iterator
     v2 = Call v1, v0 calleeKey=@@iterator
     Return v2
-}
-# CHECK-LABEL: function f2 name="typedArrayIterator"
 # CHECK: v1: builtin(TypedArrayPrototypeValues) = Builtin builtin=TypedArrayPrototypeValues
 # CHECK-NEXT: v2: ArrayIterator = CallBuiltin v0 overload=TypedArrayPrototypeValues/0
+}
 
 function f3 name="typedArrayWithoutProof" parameters=[{type=Uint8Array}] results=[{type=anything}] {
-  b0(v0: Uint8Array):
     v1 = PropGet v0 key=@@iterator
     v2 = Call v1, v0 calleeKey=@@iterator
     Return v2
-}
-# CHECK-LABEL: function f3 name="typedArrayWithoutProof"
 # CHECK-NOT: Builtin
 # CHECK: v1: anything = PropGet v0 key=@@iterator
 # CHECK-NEXT: v2: anything = Call v1, v0 calleeKey=@@iterator
+}
 
 function f4 name="keyWithoutMember" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = PropGet v0 key=@@toPrimitive
     v2 = Call v1, v0 calleeKey=@@toPrimitive
     Return v2
-}
-# CHECK-LABEL: function f4 name="keyWithoutMember"
 # CHECK-NOT: Builtin
 # CHECK: v1: anything = PropGet v0 key=@@toPrimitive
 # CHECK-NEXT: v2: anything = Call v1, v0 calleeKey=@@toPrimitive
+}
 
 function f5 name="elementAccessWithConstantKey" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = KeyConstant key=@@iterator
     v2 = ElemGet v0, v1
     v3 = Call v2, v0
     Return v3
-}
-# CHECK-LABEL: function f5 name="elementAccessWithConstantKey"
 # CHECK-NOT: Builtin
 # CHECK: v2: anything = ElemGet v0, v1
 # CHECK-NEXT: v3: anything = Call v2, v0
+}
 
 function f6 name="elementAccessWithVariableKey" parameters=[{type=string}, {type=symbol}] results=[{type=anything}] {
-  b0(v0: string, v1: symbol):
     v2 = ElemGet v0, v1
     v3 = Call v2, v0
     Return v3
-}
-# CHECK-LABEL: function f6 name="elementAccessWithVariableKey"
 # CHECK-NOT: Builtin
 # CHECK: v2: anything = ElemGet v0, v1
 # CHECK-NEXT: v3: anything = Call v2, v0
+}

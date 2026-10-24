@@ -10,7 +10,6 @@
 #include "AOTFrameAllocation.h"
 #include "AOTFreshResults.h"
 #include "AOTSinkAllocationsInternal.h"
-#include "AOTSinkAllocationsState.h"
 #include "AOTVirtualObject.h"
 #include "AOTVirtualObjectShapes.h"
 #include <wtf/CommaPrinter.h>
@@ -435,7 +434,6 @@ static void dumpStorage(PrintStream& out, ASCIILiteral prefix, const BitVector& 
 
 void FrameAllocation::dump(PrintStream& out, const Program&) const
 {
-    RELEASE_ASSERT(m_isFinished);
     if (m_layoutsInFrames.isEmpty() && m_closuresInFrames.isEmpty()) {
         out.println("nothing in frames");
         return;

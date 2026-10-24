@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="main" parameters=[{type=object}, {type=anything}] results=[{type=boolean}] {
-  b0(v0: object, v1: anything):
     v2 = TryPutByIds v0, v1, v1 keys=["a", "b"]
     v3 = TryPutByIds v0, v1, v1, v1 keys=["a", "b", "c"]
     Return v2

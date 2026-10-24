@@ -11,7 +11,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Node" fields=[{key="next" declared={type=null|L0} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="count" declared={type=i32} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L0] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 function f0 name="narrowedInTheLoop" parameters=[{type=L0}, {type=i32}] results=[{type=i32}] {
-  b0(v0: L0, v1: i32):
     v2 = GetSlot v0 key="next" receivers=[L0] level=Proven
     v3 = Integer integer=0
     Jump -> next b1(v3, v3)
@@ -33,7 +32,6 @@ function f0 name="narrowedInTheLoop" parameters=[{type=L0}, {type=i32}] results=
     Return v5
 }
 function f1 name="handedOnBehindTheTest" parameters=[{type=L0}] results=[{type=i32}] {
-  b0(v0: L0):
     v1 = GetSlot v0 key="next" receivers=[L0] level=Proven
     v2 = TypeTest v1 testedType=L0
     TestAndBranch v2 -> taken b1(| 0), notTaken b3()
@@ -47,7 +45,6 @@ function f1 name="handedOnBehindTheTest" parameters=[{type=L0}] results=[{type=i
     Return v6
 }
 function f2 name="onlyWhatTheCallerHandsOver" parameters=[{type=L0}, {type=L0}, {type=i32}] results=[{type=i32}] {
-  b0(v0: L0, v1: L0, v2: i32):
     v3 = Less v2, v2 form=Integers
     TestAndBranch v3 -> taken b1(v0), notTaken b1(v1)
   b1(v4: L0):
@@ -55,7 +52,6 @@ function f2 name="onlyWhatTheCallerHandsOver" parameters=[{type=L0}, {type=L0}, 
     Return v5
 }
 function f3 name="keptAsItWasRead" parameters=[{type=L0}, {type=L0}] results=[{type=i32}] {
-  b0(v0: L0, v1: L0):
     v2 = GetSlot v0 key="next" receivers=[L0] level=Proven
     v3 = TypeTest v2 testedType=L0
     TestAndBranch v3 -> taken b1(| 0), notTaken b2()
@@ -68,7 +64,6 @@ function f3 name="keptAsItWasRead" parameters=[{type=L0}, {type=L0}] results=[{t
     Return v7
 }
 function f4 name="keptAsAnyValue" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=L0
     TestAndBranch v1 -> taken b1(| 0), notTaken b2()
   b1(v2: L0):

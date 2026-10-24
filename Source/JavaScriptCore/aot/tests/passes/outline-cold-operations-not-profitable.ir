@@ -8,7 +8,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="onlySite" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: anything):
     Branch v0 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v3 = String string="fatal"
@@ -25,7 +24,6 @@ function f0 name="onlySite" parameters=[{type=boolean}, {type=anything}, {type=a
 # CHECK-NOT: CallDirect
 
 function f1 name="sitesSmallerThanCall" parameters=[{type=number}, {type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number, v2: number):
     Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
 # REPEAT: i = 3..8
   b%(i-2)() frequency=Rare:
@@ -41,7 +39,6 @@ function f1 name="sitesSmallerThanCall" parameters=[{type=number}, {type=number}
 # CHECK-NOT: CallDirect
 
 function f2 name="largeSites" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything, v2: anything):
     Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
 # REPEAT: i = 1..6
   b%(i)() frequency=Rare:

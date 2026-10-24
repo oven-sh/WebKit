@@ -32,8 +32,6 @@ namespace AOT {
 
 struct State;
 
-// Where the keys end that the entries of an object's key order count, in the table of its extra properties. A removed key keeps its number in that table until the table is rehashed,
-// so an entry counts a key exactly if the key stands no further back than the last one that the entry counts. All zero: nothing is remembered.
 struct PlacesOfPositionedKeys {
     AOT_CLASS_THRESHOLD(uint32_t, maxNumberOfCounts, 4);
 
@@ -45,7 +43,6 @@ struct PlacesOfPositionedKeys {
     uint32_t numberOfCounts;
     std::array<uint32_t, maxNumberOfCounts> counts;
     std::array<uint32_t, maxNumberOfCounts> lastEntries;
-    // What extraKeyOrdinal() was last asked for, until didRemoveExtraKey() has heard of it.
     uint32_t entryOfKeyAskedFor;
     uint32_t keyAskedForIsExtraKey;
 };
@@ -59,7 +56,6 @@ public:
     // What entriesInOrder() and propertiesInOrder() return stays where it is, unchanged, for as long as the table lives.
     std::span<const uint16_t> entriesInOrder(const LayoutData&, uint32_t order);
     std::optional<uint32_t> orderStartingWith(const LayoutData&, std::span<const uint16_t> entries);
-    // Published: compiled code finds the step of an object without extra keys by itself from then on.
     enum class Step : bool { IsPublished, IsNotPublished };
     std::optional<uint32_t> orderAfterCreating(const LayoutData&, uint32_t orderWord, uint16_t entry, Step = Step::IsPublished);
     bool positionsExtraKeys(const LayoutData&, uint32_t orderWord, uint32_t numberOfExtraKeys);
@@ -69,7 +65,6 @@ public:
     std::optional<std::span<const FieldAsProperty>> propertiesInOrder(VM&, const LayoutData&, uint32_t orderWord, Object::SymbolKeys = Object::SymbolKeys::Skip);
     JSPropertyNameEnumerator* enumerator(const LayoutData&, uint32_t orderWord, StructureChain* prototypeChain) const;
     void setEnumerator(VM&, const LayoutData&, uint32_t orderWord, JSPropertyNameEnumerator*, StructureChain* prototypeChain);
-    // Compiled code finds a published enumerator by the Structure and the order word alone, until an object on the prototype chain changes. Nothing is published under a prototype that can change unreported.
     void publishEnumerator(const Object&, JSPropertyNameEnumerator*);
     void dropChainDependent(VM&, uint32_t subject, UniquedStringImpl* uidOrNull) final;
     bool hasChainDependent(VM&, uint32_t subject, UniquedStringImpl* uidOrNull) const final;
@@ -92,7 +87,6 @@ public:
     }
     PlacesOfPositionedKeys& placesOfPositionedKeys(const Object& object) LIFETIME_BOUND { return m_placesOfPositionedKeys[std::bit_cast<uintptr_t>(&object) >> 4 & (m_placesOfPositionedKeys.size() - 1)]; }
 
-    // Two questions that fall on one place may be asked in turns for ever: a server asks the same few at every request.
     void rememberWhetherOrderLists(uint32_t shape, uint32_t orderAndCount, uint32_t key, bool lists)
     {
         size_t newer = indexOfListedField(shape, orderAndCount, key) & ~static_cast<size_t>(1);
@@ -122,7 +116,6 @@ private:
     RememberedSlotSet m_writes;
     uint32_t m_numberOfTransitions { 0 };
     std::array<ListedField, 128> m_listedFields { };
-    // Where the walk of fieldAt() begins: behind the field that it found last in a layout.
     struct FieldFoundLast {
         uint32_t shape;
         uint32_t next;

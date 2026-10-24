@@ -12,45 +12,36 @@ layout L2 name="Missing" fields=[{key="pos" declared={type=-1} flow={occupancy=A
 layout L3 name="Unset" fields=[{key="pos" declared={type=undefined|null} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 
 function f0 name="any-number" parameters=[{type=L0|L1|L2}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0|L1|L2, v1: number):
     PropSet v0, v1 key="pos"
     Return v0
-}
-# CHECK-LABEL: function f0 name="any-number"
 # CHECK: [[holdsNumbers]]: boolean = TypeTest v0 testedType=L0|L1
 # CHECK: ([[node]]: L0|L1):
 # CHECK-NEXT: PropSet [[node]], v1 key="pos" receivers=[L0, L1]
 # CHECK: ([[missing]]: L2)
 # CHECK-NEXT: PropSet [[missing]], v1 key="pos" receivers=[L2]
-# BOTH-LABEL: function f0 name="any-number"
 # BOTH: PutSlot {{*}}, -, v1 key="pos" receivers=[L0, L1] level=Proven
 # BOTH: PropSet {{*}}, v1 key="pos" receivers=[L2]
+}
 
 function f1 name="nothing-but-undefined-and-null" parameters=[{type=L0|L3}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0|L3, v1: number):
     PropSet v0, v1 key="pos"
     Return v0
-}
-# CHECK-LABEL: function f1 name="nothing-but-undefined-and-null"
 # CHECK: = TypeTest v0 testedType=L0
 # CHECK: PropSet {{*}}, v1 key="pos" receivers=[L0]
 # CHECK: PropSet {{*}}, v1 key="pos" receivers=[L3]
+}
 
 function f2 name="the-one-value" parameters=[{type=L0|L1|L2}] results=[{type=anything}] {
-  b0(v0: L0|L1|L2):
     v1 = Integer integer=-1
     PropSet v0, v1 key="pos"
     Return v0
-}
-# CHECK-LABEL: function f2 name="the-one-value"
 # CHECK-NOT: TypeTest
 # CHECK: PropSet v0, v1 key="pos"
+}
 
 function f3 name="every-slot-holds-one-value" parameters=[{type=L2}, {type=number}] results=[{type=anything}] {
-  b0(v0: L2, v1: number):
     PropSet v0, v1 key="pos"
     Return v0
-}
-# CHECK-LABEL: function f3 name="every-slot-holds-one-value"
 # CHECK-NOT: TypeTest
 # CHECK: PropSet v0, v1 key="pos"
+}

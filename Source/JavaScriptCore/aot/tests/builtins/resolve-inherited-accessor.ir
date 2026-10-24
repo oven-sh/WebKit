@@ -21,103 +21,81 @@ function f4 name="GetterShadows" kind=DerivedConstructor flags=[HasNewTarget] re
 function f5 name="PrototypeMayGainNames" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L5
 function f6 name="InstanceMayGainNames" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L6
 function f7 name="size" kind=Getter flags=[HasThis] results=[{type=number}] {
-  b0(v0: anything):
     v1 = Integer integer=0
     Return v1
 }
 
 function f8 name="accessor" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="size"
     Return v1
-}
-# CHECK-LABEL: function f8 name="accessor"
 # CHECK: v1: int[0, 2147483647] = CallBuiltin v0 overload=MapPrototypeSize/0
+}
 
 function f9 name="throughCompiledBase" parameters=[{type=L1}] results=[{type=anything}] {
-  b0(v0: L1):
     v1 = PropGet v0 key="size"
     Return v1
-}
-# CHECK-LABEL: function f9 name="throughCompiledBase"
 # CHECK: v1: int[0, 2147483647] = CallBuiltin v0 overload=MapPrototypeSize/0
+}
 
 function f10 name="bothLayoutsFindOneEntry" parameters=[{type=L0|L1}] results=[{type=anything}] {
-  b0(v0: L0|L1):
     v1 = PropGet v0 key="size"
     Return v1
-}
-# CHECK-LABEL: function f10 name="bothLayoutsFindOneEntry"
 # CHECK: v1: int[0, 2147483647] = CallBuiltin v0 overload=MapPrototypeSize/0
+}
 
 function f11 name="accessorOfParentClass" parameters=[{type=L2}] results=[{type=anything}] {
-  b0(v0: L2):
     v1 = PropGet v0 key="byteLength"
     Return v1
-}
-# CHECK-LABEL: function f11 name="accessorOfParentClass"
 # CHECK: v1: {{*}} = CallBuiltin v0 overload=TypedArrayPrototypeByteLength/0
+}
 
 function f12 name="shadowingField" parameters=[{type=L3}] results=[{type=anything}] {
-  b0(v0: L3):
     v1 = PropGet v0 key="size"
     Return v1
-}
-# CHECK-LABEL: function f12 name="shadowingField"
 # CHECK-NOT: CallBuiltin
 # CHECK: = PropGet v0 key="size"
+}
 
 function f13 name="shadowingGetter" parameters=[{type=L4}] results=[{type=anything}] {
-  b0(v0: L4):
     v1 = PropGet v0 key="size"
     Return v1
-}
-# CHECK-LABEL: function f13 name="shadowingGetter"
 # CHECK-NOT: CallBuiltin
 # CHECK: = PropGet v0 key="size"
+}
 
 function f14 name="oneLayoutShadows" parameters=[{type=L0|L3}] results=[{type=anything}] {
-  b0(v0: L0|L3):
     v1 = PropGet v0 key="size"
     Return v1
-}
-# CHECK-LABEL: function f14 name="oneLayoutShadows"
 # CHECK-NOT: CallBuiltin
 # CHECK: = PropGet v0 key="size"
+}
 
 function f15 name="prototypeMayGainTheName" parameters=[{type=L5}] results=[{type=anything}] {
-  b0(v0: L5):
     v1 = PropGet v0 key="size"
     Return v1
-}
-# CHECK-LABEL: function f15 name="prototypeMayGainTheName"
 # CHECK-NOT: CallBuiltin
 # CHECK: = PropGet v0 key="size"
+}
 
 function f16 name="instanceMayGainTheName" parameters=[{type=L6}] results=[{type=anything}] {
-  b0(v0: L6):
     v1 = PropGet v0 key="size"
     Return v1
-}
-# CHECK-LABEL: function f16 name="instanceMayGainTheName"
 # CHECK-NOT: CallBuiltin
 # CHECK: = PropGet v0 key="size"
+}
 
 function f17 name="layoutIsOnlyExpected" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ L0):
     v1 = PropGet v0 key="size"
     Return v1
-}
-# CHECK-LABEL: function f17 name="layoutIsOnlyExpected"
 # CHECK-NOT: CallBuiltin
 # CHECK: = PropGet v0 key="size"
+}
 
 function f18 name="method" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="get"
     Return v1
-}
-# CHECK-LABEL: function f18 name="method"
 # CHECK-NOT: CallBuiltin
 # CHECK-NOT: = Builtin
 # CHECK: = PropGet v0 key="get"
+}

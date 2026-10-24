@@ -42,6 +42,5 @@ variable g4 name="t4" declared={type=ArrayBuffer|Map} initialization=Undefined
 variable g5 name="t5" declared={type=SharedArrayBuffer|Map} initialization=Undefined
 variable g6 name="t6" declared={type=ArrayBuffer|L0} initialization=Undefined
 function f0 name="unused" results=[{type=undefined}] {
-  b0():
     Return
 }

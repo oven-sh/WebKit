@@ -24,77 +24,9 @@ bool LayoutsOfObjects::selectsLayoutByPrototype(ValueFlowObjectID object) const
     if (!site || !site->layout || site->ordinal || !m_inputs.program.prototypeMaySelectOtherClass(site->layout))
         return false;
     const Value& allocation = m_inputs.program.at(m_inputs.universe().functionOf(object)).at(site->value);
-    // What a base class that is no class of the program makes for `super(..)` has the prototype that new.target says, like the allocation in the constructor of a base class.
     if (site->origin == ValueFlowSiteOrigin::BuiltinResult)
         return OperandPosition::parent(allocation.opcode).has_value();
     return site->origin == ValueFlowSiteOrigin::Operation && allocation.opcode == Opcode::NewObject && allocation.prototypeOperand();
-}
-
-// The classes whose layout the prototype that an allocation of another class is given may select.
-ValueSetID LayoutsOfObjects::collectClassLayouts(ValueFlowHeapView& heap)
-{
-    const Program& program = m_inputs.program;
-    const ValueFlowUniverse& universe = m_inputs.universe();
-    const ValueSets& sets = m_inputs.sets();
-    Vector<ValueFlowObjectID> prototypeObjects;
-    for (uint32_t index = 0; index < program.layouts.size(); ++index) {
-        const Layout& layout = program.layouts[index];
-        if (!isClassLayout(layout) || !layout.has(LayoutFlags::HasHeritage))
-            continue;
-        ValueFlowObjectID prototype = universe.prototypeOf(LayoutID(index));
-        ValueFlowObjectID classObject = universe.closureOf(layout.constructor);
-        prototypeObjects.append(prototype);
-        if (sets.contains(heap.escaped(), prototype) || sets.contains(heap.escaped(), classObject))
-            m_escapedClasses.append(LayoutID(index));
-        if (sets.contains(heap.lost(), prototype) || sets.contains(heap.lost(), classObject))
-            m_lostClasses.append(LayoutID(index));
-    }
-    return heap.maker().of(prototypeObjects.span());
-}
-
-SetsByNumber LayoutsOfObjects::collectWrittenPrototypeLinks(std::span<const ValueFlowObjectID> objects, ValueFlowHeapView& heap) const
-{
-    const ValueSets& sets = m_inputs.sets();
-    ValueSetMaker& maker = heap.maker();
-    ValueSetID all = maker.of(objects);
-    ValueSetID throughUnknownObject = ValueSets::nothing;
-    ValueSetID throughUntrackedObject = ValueSets::nothing;
-    SetsByNumber links;
-    auto add = [&](ValueFlowObjectID object, ValueSetID value) {
-        ValueSetID& link = links.add(object.index(), ValueSets::nothing).iterator->value;
-        link = maker.unite(link, value);
-    };
-    heap.forEachNodeWrittenUnder(prototypeLinkName, [&](ValueSetID writtenThrough, ValueSetID value) {
-        sets.forEachMember(maker.intersect(writtenThrough, all), [&](ValueFlowObjectID object) {
-            add(object, value);
-        });
-        if (sets.contains(writtenThrough, ValueFlowUniverse::unknownObject()))
-            throughUnknownObject = maker.unite(throughUnknownObject, value);
-        if (sets.contains(writtenThrough, ValueFlowUniverse::untrackedObject()))
-            throughUntrackedObject = maker.unite(throughUntrackedObject, value);
-    });
-    for (ValueFlowObjectID object : objects) {
-        if (sets.contains(heap.escaped(), object))
-            add(object, throughUnknownObject);
-        if (sets.contains(heap.lost(), object))
-            add(object, throughUntrackedObject);
-    }
-    return links;
-}
-
-auto LayoutsOfObjects::layoutsSelectedBy(ValueSetID prototypes, LayoutID named, ValueSetID prototypeObjectsOfClasses, ValueFlowHeapView& heap) const -> SelectedLayouts
-{
-    const ValueSets& sets = m_inputs.sets();
-    SelectedLayouts selected;
-    sets.forEachMember(heap.maker().intersect(prototypes, prototypeObjectsOfClasses), [&](ValueFlowObjectID prototype) {
-        selected.listed.append(m_inputs.universe().classLayoutOf(prototype));
-    });
-    AOT::sort(selected.listed);
-    removeRepeatedElements(selected.listed);
-    selected.listed.removeFirst(named);
-    selected.everyEscapedClass = !m_escapedClasses.isEmpty() && sets.contains(prototypes, ValueFlowUniverse::unknownObject());
-    selected.everyLostClass = !m_lostClasses.isEmpty() && sets.contains(prototypes, ValueFlowUniverse::untrackedObject());
-    return selected;
 }
 
 LayoutsOfObjects::LayoutsOfObjects(const ValueFlowResultInputs& inputs, ValueFlowHeapView& heap)
@@ -105,9 +37,12 @@ LayoutsOfObjects::LayoutsOfObjects(const ValueFlowResultInputs& inputs, ValueFlo
         ValueFlowObjectID object;
     };
 
+    const Program& program = inputs.program;
     const ValueFlowUniverse& universe = inputs.universe();
+    const ValueSets& sets = inputs.sets();
     const ParallelLoops& loops = inputs.loops();
-    uint32_t numberOfLayouts = inputs.program.layouts.size();
+    ValueSetMaker& maker = heap.maker();
+    uint32_t numberOfLayouts = program.layouts.size();
     Vector<ValueFlowObjectID> objectsThatSelectLayout = collectInParallel<ValueFlowObjectID>(loops, universe.numberOfObjects(), [&](unsigned index, Vector<ValueFlowObjectID>& objects) {
         if (namedLayoutOf(ValueFlowObjectID(index)) && selectsLayoutByPrototype(ValueFlowObjectID(index)))
             objects.append(ValueFlowObjectID(index));
@@ -115,10 +50,50 @@ LayoutsOfObjects::LayoutsOfObjects(const ValueFlowResultInputs& inputs, ValueFlo
     Vector<ValueFlowObjectID> objectsOfEveryEscapedClass;
     Vector<ValueFlowObjectID> objectsOfEveryLostClass;
     if (!objectsThatSelectLayout.isEmpty()) {
-        ValueSetID prototypeObjectsOfClasses = collectClassLayouts(heap);
-        SetsByNumber links = collectWrittenPrototypeLinks(objectsThatSelectLayout.span(), heap);
+        Vector<ValueFlowObjectID> prototypeObjects;
+        for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+            const Layout& layout = program.layouts[index];
+            if (!isClassLayout(layout) || !layout.has(LayoutFlags::HasHeritage))
+                continue;
+            ValueFlowObjectID prototype = universe.prototypeOf(LayoutID(index));
+            ValueFlowObjectID classObject = universe.closureOf(layout.constructor);
+            prototypeObjects.append(prototype);
+            if (sets.contains(heap.escaped(), prototype) || sets.contains(heap.escaped(), classObject))
+                m_escapedClasses.append(LayoutID(index));
+            if (sets.contains(heap.lost(), prototype) || sets.contains(heap.lost(), classObject))
+                m_lostClasses.append(LayoutID(index));
+        }
+        ValueSetID prototypeObjectsOfClasses = maker.of(prototypeObjects.span());
+
+        ValueSetID all = maker.of(objectsThatSelectLayout.span());
+        ValueSetID throughUnknownObject = ValueSets::nothing;
+        ValueSetID throughUntrackedObject = ValueSets::nothing;
+        SetsByNumber links;
+        heap.forEachNodeWrittenUnder(prototypeLinkName, [&](ValueSetID writtenThrough, ValueSetID value) {
+            sets.forEachMember(maker.intersect(writtenThrough, all), [&](ValueFlowObjectID object) {
+                ValueSetID& link = links.add(object.index(), ValueSets::nothing).iterator->value;
+                link = maker.unite(link, value);
+            });
+            if (sets.contains(writtenThrough, ValueFlowUniverse::unknownObject()))
+                throughUnknownObject = maker.unite(throughUnknownObject, value);
+            if (sets.contains(writtenThrough, ValueFlowUniverse::untrackedObject()))
+                throughUntrackedObject = maker.unite(throughUntrackedObject, value);
+        });
         for (ValueFlowObjectID object : objectsThatSelectLayout) {
-            SelectedLayouts selected = layoutsSelectedBy(setAt(links, object.index()), namedLayoutOf(object), prototypeObjectsOfClasses, heap);
+            ValueSetID prototypes = setAt(links, object.index());
+            if (sets.contains(heap.escaped(), object))
+                prototypes = maker.unite(prototypes, throughUnknownObject);
+            if (sets.contains(heap.lost(), object))
+                prototypes = maker.unite(prototypes, throughUntrackedObject);
+            SelectedLayouts selected;
+            sets.forEachMember(maker.intersect(prototypes, prototypeObjectsOfClasses), [&](ValueFlowObjectID prototype) {
+                selected.listed.append(universe.classLayoutOf(prototype));
+            });
+            AOT::sort(selected.listed);
+            removeRepeatedElements(selected.listed);
+            selected.listed.removeFirst(namedLayoutOf(object));
+            selected.everyEscapedClass = !m_escapedClasses.isEmpty() && sets.contains(prototypes, ValueFlowUniverse::unknownObject());
+            selected.everyLostClass = !m_lostClasses.isEmpty() && sets.contains(prototypes, ValueFlowUniverse::untrackedObject());
             if (selected.everyEscapedClass)
                 objectsOfEveryEscapedClass.append(object);
             if (selected.everyLostClass)
@@ -128,7 +103,6 @@ LayoutsOfObjects::LayoutsOfObjects(const ValueFlowResultInputs& inputs, ValueFlo
         }
     }
 
-    // The objects of a layout side by side.
     Vector<ObjectOfLayout> objectsWithLayouts = collectInParallel<ObjectOfLayout>(loops, universe.numberOfObjects(), [&](unsigned index, Vector<ObjectOfLayout>& found) {
         ValueFlowObjectID object(index);
         LayoutID named = namedLayoutOf(object);
@@ -163,9 +137,9 @@ LayoutsOfObjects::LayoutsOfObjects(const ValueFlowResultInputs& inputs, ValueFlo
     auto addToEach = [&](const Vector<LayoutID>& layouts, const Vector<ValueFlowObjectID>& objects) {
         if (objects.isEmpty())
             return;
-        ValueSetID set = heap.maker().of(objects.span());
+        ValueSetID set = maker.of(objects.span());
         for (LayoutID layout : layouts)
-            m_objectsOfLayout[layout.index()] = heap.maker().unite(m_objectsOfLayout[layout.index()], set);
+            m_objectsOfLayout[layout.index()] = maker.unite(m_objectsOfLayout[layout.index()], set);
     };
     addToEach(m_escapedClasses, objectsOfEveryEscapedClass);
     addToEach(m_lostClasses, objectsOfEveryLostClass);
@@ -250,7 +224,6 @@ void StoresByLayout::noteListedWrites()
     times.didFinish("stores by layout: copied properties"_s);
 }
 
-// The layouts of the objects whose properties are copied onto an object of the layout. None where one of those objects may hold a property that nobody lists, or one that answers by running code.
 std::optional<Vector<LayoutID, 4>> StoresByLayout::layoutsCopiedOnto(LayoutID target)
 {
     const ValueSets& sets = m_inputs.sets();
@@ -286,7 +259,6 @@ std::optional<Vector<LayoutID, 4>> StoresByLayout::layoutsCopiedOnto(LayoutID ta
     return layouts;
 }
 
-// The rules let the target of a copy find what the source holds as it finds what it inherits.
 void StoresByLayout::followCopiedProperties()
 {
     Vector<LayoutID> targets;
@@ -300,7 +272,6 @@ void StoresByLayout::followCopiedProperties()
             StoresIntoObjects& stores = m_storesOfLayout[target.index()];
             if (!stores.getsCopiedProperties)
                 continue;
-            // An object of the layout may be the source as well.
             stores.getsCopiedProperties = false;
             std::optional<Vector<LayoutID, 4>> sources = layoutsCopiedOnto(target);
             if (!sources) {
@@ -323,7 +294,6 @@ void StoresByLayout::followCopiedProperties()
     }
 }
 
-// Only a function with a Check and with a store through a receiver whose type lists layouts is looked at.
 void StoresByLayout::findReceiversBehindChecks()
 {
     const Program& program = m_inputs.program;
@@ -341,7 +311,6 @@ void StoresByLayout::findReceiversBehindChecks()
                 continue;
             if (std::optional<uint8_t> receiver = receiverOf(value.opcode); receiver && value.operand(*receiver))
                 hasTypedReceiver = program.typeOf(function, value.operand(*receiver)).hasOnlyLayouts(program);
-            // The type of a stored value is asked for its integers.
             if (receiverOf(value.opcode) || value.opcode == Opcode::NewObject) {
                 value.forEachOperand([&](ValueID operand, uint32_t) {
                     hasTypedReceiver |= !program.typeOf(function, operand).integers.isEmpty();
@@ -356,7 +325,6 @@ void StoresByLayout::findReceiversBehindChecks()
     });
 }
 
-// The layouts that the type of the receiver admits. None where the type says nothing.
 LayoutSetID StoresByLayout::familyOfReceiverOf(const ValueFlowStatement& statement) const
 {
     if (statement.kind != ValueFlowStatementKind::Operation)
@@ -373,7 +341,6 @@ LayoutSetID StoresByLayout::familyOfReceiverOf(const ValueFlowStatement& stateme
     return type.layouts;
 }
 
-// The solver is asked once, statement by statement, on all threads. Behind each statement stands the family of its receiver, one more than its number, or zero.
 void StoresByLayout::listWrites()
 {
     constexpr uint32_t madeStatementsPerIndex = 512;
@@ -389,7 +356,6 @@ void StoresByLayout::listWrites()
         auto listWritesOf = [&](ValueFlowStatementID id) {
             bool isListed = false;
             size_t firstWrite = 0;
-            // A statement that keeps what all its runs have asked for names the same nodes again and again. In a long list a node stands once.
             HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> nodesListed;
             m_inputs.forEachMadeNodeAskedForBy(id, kindsOfMadeNodes({ ValueFlowMadeNodeKind::Written }), false, [&](const ValueFlowNodeKey& key, ValueFlowStatementID, ValueFlowNodeID node) {
                 if (solver.valueOf(node) == ValueSets::nothing)
@@ -451,19 +417,6 @@ auto StoresByLayout::findObjectsOf(ValueSetID set) const -> ObjectsOfSet
     return objects;
 }
 
-auto StoresByLayout::objectsOf(ValueSetID set) -> const ObjectsOfSet&
-{
-    if (std::optional<uint32_t> position = positionOfSetLookedAt(set))
-        return objectsOfSetAt(*position);
-    noteObjectsOf(set, findObjectsOf(set));
-    return m_objectsOfOtherSets.last();
-}
-
-auto StoresByLayout::objectsOfSetAt(uint32_t position) const -> const ObjectsOfSet&
-{
-    return position < m_objectsOfSetsOfWrites.size() ? m_objectsOfSetsOfWrites[position] : m_objectsOfOtherSets[position - m_objectsOfSetsOfWrites.size()];
-}
-
 std::optional<uint32_t> StoresByLayout::positionOfSetLookedAt(ValueSetID set) const
 {
     return m_positionOfSetLookedAt.find(IntHash<uint32_t>::hash(set.index()), [&](uint32_t position) {
@@ -471,22 +424,13 @@ std::optional<uint32_t> StoresByLayout::positionOfSetLookedAt(ValueSetID set) co
     });
 }
 
-void StoresByLayout::noteObjectsOf(ValueSetID set, ObjectsOfSet&& objects)
-{
-    m_positionOfSetLookedAt.add(IntHash<uint32_t>::hash(set.index()), m_setsLookedAt.size());
-    m_setsLookedAt.append(set.index());
-    m_objectsOfOtherSets.append(WTF::move(objects));
-}
-
-// noteWrites() has looked at the set of every write.
 auto StoresByLayout::objectsOfSetOfWrite(ValueSetID set) const -> const ObjectsOfSet&
 {
     std::optional<uint32_t> position = positionOfSetLookedAt(set);
     RELEASE_ASSERT(position);
-    return objectsOfSetAt(*position);
+    return *position < m_objectsOfSetsOfWrites.size() ? m_objectsOfSetsOfWrites[*position] : m_objectsOfOtherSets[*position - m_objectsOfSetsOfWrites.size()];
 }
 
-// The type of a receiver is proven, so the object has one of the layouts that it lists, or one that is expected to lie below one of them: an allocation is typed with the layout that it names.
 bool StoresByLayout::admits(std::span<const LayoutID> layoutsOfReceiver, LayoutID layout) const
 {
     if (layoutsOfReceiver.empty())
@@ -538,8 +482,11 @@ void StoresByLayout::lookAt(std::span<const ValueSetID> sets)
     forEachIndexInParallel(m_inputs.loops(), unseen.size(), [&](unsigned position) {
         objects[position] = findObjectsOf(unseen[position]);
     });
-    for (size_t position = 0; position < unseen.size(); ++position)
-        noteObjectsOf(unseen[position], WTF::move(objects[position]));
+    for (ValueSetID set : unseen) {
+        m_positionOfSetLookedAt.add(IntHash<uint32_t>::hash(set.index()), m_setsLookedAt.size());
+        m_setsLookedAt.append(set.index());
+    }
+    m_objectsOfOtherSets.appendVector(WTF::move(objects));
 }
 
 auto StoresByLayout::placeholdersInSetOfWrite(ValueSetID set) const -> PlaceholdersInSet
@@ -553,8 +500,6 @@ bool StoresByLayout::spellsKey(ValueSetMaker& maker, const Writer& writer, Value
     const ValueFlowStatement& statement = writer.statement;
     if (name.kind != ValueFlowNameKind::Property || statement.kind != ValueFlowStatementKind::Operation)
         return false;
-    // A computed key that can be one key alone gets that key as its type, and the store becomes a store by name: `holder[kState] = value`.
-    // `const { kState } = require(..)` may find nothing as far as anybody knows. SplitUnions tests such a key, and with the symbol the store is a store by name all the same.
     if (statement.opcode == Opcode::ElemSet || statement.opcode == Opcode::ElemDefine) {
         static_assert(OperandIndex::ElemSet::property == OperandIndex::ElemDefine::property);
         ValueSetID keys = std::as_const(m_heap).valueOf(maker, m_inputs.bodies().operandsOf(statement)[OperandIndex::ElemSet::property]);
@@ -632,7 +577,6 @@ void StoresByLayout::note(ValueSetMaker& maker, StoresIntoObjects& stores, Value
     }
 }
 
-// None where no operand of the operation is the value.
 static ValueID valueStoredUnder(const Program& program, const Value& operation, ValueFlowName name)
 {
     if (std::optional<uint8_t> stored = storedOf(operation.opcode))
@@ -659,7 +603,6 @@ static ValueID valueStoredUnder(const Program& program, const Value& operation, 
     }
 }
 
-// The node holds what every statement that has asked for it has written, and each of them is looked at. For a node that holds a number.
 ValueFlowNumbers StoresByLayout::numbersStoredBy(const Writer& writer, ValueFlowName name) const
 {
     const ValueFlowStatement& statement = writer.statement;
@@ -670,36 +613,12 @@ ValueFlowNumbers StoresByLayout::numbersStoredBy(const Writer& writer, ValueFlow
     ValueID stored = valueStoredUnder(program, function.at(statement.site), name);
     if (!stored)
         return ValueFlowNumbers::any();
-    // What was found about the positions that the value is computed from bounds it too: the parameter of a constructor has no type of its own in untyped code.
     ValueFlowNumbers found = m_inputs.numbersOfValues ? m_inputs.numbersOfValues->numbersOf(statement.function, stored) : ValueFlowNumbers::any();
-    // Where a check has failed, the generic version stores what the same operations make of whatever the check has turned away.
     if (m_hasChecksNotLookedAt[statement.function.index()] || m_valuesBehindChecks[statement.function.index()].get(stored.index()))
         return found;
     ValueFlowNumbers numbers;
     numbers.add(program.typeOf(function, stored));
     return numbers.meetWith(found);
-}
-
-void StoresByLayout::indexNumbersInData()
-{
-    m_numbersInData.emplace();
-    for (const Data& data : m_inputs.program.data) {
-        forEachDataNodeInPreorder(data.root, [&](uint32_t, const DataNode& node) {
-            const auto* object = node.tryAs<DataNode::Object>();
-            if (!object)
-                return;
-            for (const DataMember& member : object->members) {
-                const auto* number = member.value.tryAs<DataNode::Number>();
-                if (!number)
-                    continue;
-                ValueFlowNumbers& numbers = m_numbersInData->add(static_cast<uint64_t>(object->layout.index()) << 32 | member.key.index(), ValueFlowNumbers { }).iterator->value;
-                if (isTrackedInteger(number->value))
-                    numbers.integers = numbers.integers.unionWith(Range::one(static_cast<int64_t>(number->value)));
-                else
-                    numbers.mayBeOtherThanIntegers = true;
-            }
-        });
-    }
 }
 
 ValueFlowNumbers StoresByLayout::numbersInData(LayoutID layout, ValueFlowName name) const
@@ -720,19 +639,6 @@ void StoresByLayout::noteNumbers(StoresIntoObjects& stores, ValueFlowName name, 
         stores.numbersUnderUnknownKey.unite(numbers);
 }
 
-// One object stands for what the constructor of a base class allocates for the class and for every class below it, so a store to a field of one of them reaches the layouts of all.
-bool StoresByLayout::someReceiverDeclares(PropertyKeyID key, const ObjectsOfSet& objects) const
-{
-    if (objects.holdsObjectOfEveryEscapedClass && m_keysDeclaredByEscapedClasses.get(key.index()))
-        return true;
-    if (objects.holdsObjectOfEveryLostClass && m_keysDeclaredByLostClasses.get(key.index()))
-        return true;
-    return std::ranges::any_of(objects.layouts, [&](LayoutID layout) {
-        return findField(m_inputs.program, layout, key, BaseChain::Predicted).has_value();
-    });
-}
-
-// The names under which findField() finds a field from one of the layouts along the predicted chain.
 static BitVector collectKeysDeclaredBy(const Program& program, std::span<const LayoutID> layouts)
 {
     BitVector keys(program.types.numberOfPropertyKeys());
@@ -761,7 +667,6 @@ static BitVector collectKeysDeclaredBy(const Program& program, std::span<const L
     return keys;
 }
 
-// The call has one callee, a built-in with a typed result, which stores into nothing that it is handed. So the write is what the compiled parser or validator does that takes the place of the call.
 static bool fillsTypedResult(const ValueFlowResultInputs& inputs, const ValueFlowHeapView& heap, ValueSetMaker& maker, const Writer& writer, ValueSetID objects)
 {
     const ValueFlowStatement& statement = writer.statement;
@@ -773,28 +678,6 @@ static bool fillsTypedResult(const ValueFlowResultInputs& inputs, const ValueFlo
         return false;
     ValueSetID callees = heap.valueOf(maker, inputs.bodies().operandsOf(statement)[0]);
     return !ValueSets::isComplement(callees) && inputs.sets().onlyMember(callees);
-}
-
-static bool storesIntoThisOfConstructor(const Program&, const Writer&);
-
-// The type that the receiver of a store has or is tested for, where it lists layouts and nothing else.
-uint32_t StoresByLayout::familyDeclaredForReceiverOf(const Writer& writer) const
-{
-    if (!writer.layoutsOfReceiver.empty())
-        return writer.familyOfReceiver.index();
-    std::optional<uint8_t> receiver = receiverOf(writer.statement.opcode);
-    if (!receiver)
-        return UINT32_MAX;
-    const Program& program = m_inputs.program;
-    const Function& function = program.at(writer.statement.function);
-    const Type& type = program.typeOf(function, function.at(writer.statement.site).operand(*receiver));
-    if (type.hasOnlyLayouts(program))
-        return type.layouts.index();
-    // `this[kState] = value` in a constructor function: the receiver of a computed key is converted to any object, and the function says what its `this` is expected to be.
-    if (!storesIntoThisOfConstructor(program, writer))
-        return UINT32_MAX;
-    const Type& typeOfThis = program.at(function.thisType.type);
-    return typeOfThis.hasOnlyLayouts(program) ? typeOfThis.layouts.index() : UINT32_MAX;
 }
 
 static bool storesIntoThisOfConstructor(const Program& program, const Writer& writer)
@@ -809,7 +692,24 @@ static bool storesIntoThisOfConstructor(const Program& program, const Writer& wr
     return definitionThroughSameValues(function, function.at(writer.statement.site).operand(*receiver)) == function.at(entryBlock).parameters[*thisParameter];
 }
 
-// `Object.defineProperty(object, key, { .. })`: the literals that the call may get. Nothing for any other call, and where the descriptor may be an object that the program has not made.
+uint32_t StoresByLayout::familyDeclaredForReceiverOf(const Writer& writer) const
+{
+    if (!writer.layoutsOfReceiver.empty())
+        return writer.familyOfReceiver.index();
+    std::optional<uint8_t> receiver = receiverOf(writer.statement.opcode);
+    if (!receiver)
+        return UINT32_MAX;
+    const Program& program = m_inputs.program;
+    const Function& function = program.at(writer.statement.function);
+    const Type& type = program.typeOf(function, function.at(writer.statement.site).operand(*receiver));
+    if (type.hasOnlyLayouts(program))
+        return type.layouts.index();
+    if (!storesIntoThisOfConstructor(program, writer))
+        return UINT32_MAX;
+    const Type& typeOfThis = program.at(function.thisType.type);
+    return typeOfThis.hasOnlyLayouts(program) ? typeOfThis.layouts.index() : UINT32_MAX;
+}
+
 std::optional<ValueSetID> StoresByLayout::descriptorsWrittenOutIn(ValueSetMaker& maker, const ValueFlowStatement& statement) const
 {
     constexpr size_t positionOfDescriptor = OperandIndex::Call::arguments + 2;
@@ -823,50 +723,10 @@ std::optional<ValueSetID> StoresByLayout::descriptorsWrittenOutIn(ValueSetMaker&
     return descriptors;
 }
 
-// `{ get name() { .. } }` makes a property that is enumerable and configurable. `Object.defineProperty(object, key, { get, enumerable: true })` makes what the literal says: an attribute that it leaves out is false.
 uint8_t StoresByLayout::formsOfAccessorDefinedBy(ValueSetMaker& maker, const Writer& writer, ValueFlowName name) const
 {
-    switch (name.kind) {
-    case ValueFlowNameKind::Getter:
-    case ValueFlowNameKind::Setter:
-    case ValueFlowNameKind::GetterUnderUnknownKey:
-    case ValueFlowNameKind::SetterUnderUnknownKey:
-        break;
-    case ValueFlowNameKind::Property:
-    case ValueFlowNameKind::Elements:
-    case ValueFlowNameKind::UnknownKey:
-    case ValueFlowNameKind::EveryProperty:
-    case ValueFlowNameKind::EveryGetter:
-    case ValueFlowNameKind::EverySetter:
-    case ValueFlowNameKind::PrototypeLink:
-    case ValueFlowNameKind::CopiedFrom:
-    case ValueFlowNameKind::DeletedMember:
-    case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
-    case ValueFlowNameKind::RedefinedMember:
-    case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
-    case ValueFlowNameKind::PrivateField:
-    case ValueFlowNameKind::Slot:
-    case ValueFlowNameKind::HiddenSlot:
-    case ValueFlowNameKind::InternalFields:
-    case ValueFlowNameKind::SteppedValues:
-    case ValueFlowNameKind::ReturnedValue:
-    case ValueFlowNameKind::SentValues:
-    case ValueFlowNameKind::OpenedBy:
-    case ValueFlowNameKind::ResolvedPromises:
-    case ValueFlowNameKind::RejectedPromises:
-    case ValueFlowNameKind::AllocatedAs:
-    case ValueFlowNameKind::OpenedIterators:
-    case ValueFlowNameKind::IteratedValues:
-    case ValueFlowNameKind::IteratorResults:
-    case ValueFlowNameKind::AwaitedValue:
-    case ValueFlowNameKind::MemberWritten:
-    case ValueFlowNameKind::EveryMemberWritten:
-    case ValueFlowNameKind::EveryMemberRead:
-    case ValueFlowNameKind::RestArgument:
-    case ValueFlowNameKind::AddedNames:
-    case ValueFlowNameKind::FoundThroughEscapedInstances:
+    if (ValueFlowNameShape shape = shapeOf(name.kind); !shape.isAccessor() || shape.reach == ValueFlowNameReach::EveryKey)
         return 0;
-    }
     const ValueFlowStatement& statement = writer.statement;
     if (statement.kind != ValueFlowStatementKind::Operation)
         return 0;
@@ -894,7 +754,6 @@ uint8_t StoresByLayout::formsOfAccessorDefinedBy(ValueSetMaker& maker, const Wri
     return AccessorForms::of(*isEnumerable, *isConfigurable);
 }
 
-// Whatever makes a property with a value, or may: not `object.name = value`, which leaves an accessor as it is, and not a descriptor that is written out without `value`.
 bool StoresByLayout::definesValue(ValueSetMaker& maker, const Writer& writer, ValueFlowName name) const
 {
     const ValueFlowStatement& statement = writer.statement;
@@ -906,33 +765,24 @@ bool StoresByLayout::definesValue(ValueSetMaker& maker, const Writer& writer, Va
     return !descriptors || !m_inputs.sets().isEmpty(std::as_const(m_heap).writtenUnder(maker, *descriptors, ValueFlowName::property(m_inputs.program.keyOf(BuiltinNames::value))));
 }
 
-auto StoresByLayout::describeStore(ValueSetMaker& maker, const Writer& writer, ValueFlowName name) const -> StoreUnderName
-{
-    bool spellsItsKey = spellsKey(maker, writer, name);
-    return {
-        .statement = &writer.statement,
-        .name = name,
-        .spellsKey = spellsItsKey,
-        .isIntoThisOfConstructor = spellsItsKey && storesIntoThisOfConstructor(m_inputs.program, writer),
-        .definesValue = definesValue(maker, writer, name),
-        .accessorForms = formsOfAccessorDefinedBy(maker, writer, name),
-        .familyDeclaredForReceiver = spellsItsKey ? familyDeclaredForReceiverOf(writer) : UINT32_MAX,
-        .numbers = std::nullopt,
-    };
-}
-
-static bool leavesOutComputedKey(const Program& program, const ValueFlowStatement& statement, ValueFlowName name)
-{
-    if (name.kind != ValueFlowNameKind::CopiedFrom || statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::CopyDataProperties)
-        return false;
-    return !program.at(statement.function).at(statement.site).excludedOperands().empty();
-}
-
 auto StoresByLayout::describeWrite(ValueSetMaker& maker, StoreUnderName& store, const Writer& writer, const ValueFlowNodeKey& key, ValueSetID value) const -> WritesThroughSet
 {
+    const ValueFlowStatement& statement = writer.statement;
+    bool isOperation = statement.kind == ValueFlowStatementKind::Operation;
     ValueFlowName name = key.name();
-    if (store.statement != &writer.statement || store.name != name)
-        store = describeStore(maker, writer, name);
+    if (store.statement != &statement || store.name != name) {
+        bool spellsItsKey = spellsKey(maker, writer, name);
+        store = {
+            .statement = &statement,
+            .name = name,
+            .spellsKey = spellsItsKey,
+            .isIntoThisOfConstructor = spellsItsKey && storesIntoThisOfConstructor(m_inputs.program, writer),
+            .definesValue = definesValue(maker, writer, name),
+            .accessorForms = formsOfAccessorDefinedBy(maker, writer, name),
+            .familyDeclaredForReceiver = spellsItsKey ? familyDeclaredForReceiverOf(writer) : UINT32_MAX,
+            .numbers = std::nullopt,
+        };
+    }
     bool holdsNumber = std::ranges::any_of(std::array { PrimitiveSet::Integer, PrimitiveSet::WholeNumber, PrimitiveSet::FractionalNumber }, [&](PrimitiveSet kind) {
         return m_inputs.sets().contains(value, ValueFlowUniverse::primitive(kind));
     });
@@ -948,15 +798,15 @@ auto StoresByLayout::describeWrite(ValueSetMaker& maker, StoreUnderName& store, 
         .familyDeclaredForReceiver = isNamedByOperation ? store.familyDeclaredForReceiver : UINT32_MAX,
         .detail = key.detail,
         .fillsTypedResult = fillsResult,
-        .createsData = !fillsResult && writer.statement.kind == ValueFlowStatementKind::Operation && writer.statement.opcode == Opcode::Data && !numbers.isEmpty(),
+        .createsData = !fillsResult && isOperation && statement.opcode == Opcode::Data && !numbers.isEmpty(),
         .isStoredAfterCreation = !writer.isAllocation,
         .isNamedByOperation = isNamedByOperation,
         .isStoredByConstructor = isNamedByOperation && store.isIntoThisOfConstructor,
-        .isWrittenByOperation = writer.statement.kind == ValueFlowStatementKind::Operation,
-        .givesValueItself = writer.statement.kind == ValueFlowStatementKind::Operation && writer.statement.opcode != Opcode::Call,
-        .isWrittenByCallOfBuiltin = writer.statement.kind == ValueFlowStatementKind::Operation && writer.statement.opcode == Opcode::Call,
+        .isWrittenByOperation = isOperation,
+        .givesValueItself = isOperation && statement.opcode != Opcode::Call,
+        .isWrittenByCallOfBuiltin = isOperation && statement.opcode == Opcode::Call,
         .definesValue = store.definesValue,
-        .leavesOutComputedKey = leavesOutComputedKey(m_inputs.program, writer.statement, name),
+        .leavesOutComputedKey = name.kind == ValueFlowNameKind::CopiedFrom && isOperation && statement.opcode == Opcode::CopyDataProperties && !m_inputs.program.at(statement.function).at(statement.site).excludedOperands().empty(),
         .accessorForms = store.accessorForms,
         .value = value,
         .numbers = numbers,
@@ -969,7 +819,6 @@ auto StoresByLayout::collectWrites(ValueSetMakers& makers) const -> ParallelArra
     auto isInEarlierGroup = [](const WritesThroughSet& a, const WritesThroughSet& b) {
         return a.group() < b.group();
     };
-    // In whatever order the writes of a group are folded, the same record comes out: the node of the group gives the value.
     auto fold = [](WritesThroughSet& merged, const WritesThroughSet& write) {
         merged.isStoredAfterCreation |= write.isStoredAfterCreation;
         merged.isNamedByOperation |= write.isNamedByOperation;
@@ -982,7 +831,6 @@ auto StoresByLayout::collectWrites(ValueSetMakers& makers) const -> ParallelArra
         merged.accessorForms |= write.accessorForms;
         merged.numbers.unite(write.numbers);
     };
-    // Many statements write through one set under one name. Each thread has one record for each group that it has met, so nobody holds a record per statement.
     struct GroupsOfWorker {
         Vector<WritesThroughSet> writes;
         HashedIndex positionOfGroup;
@@ -1041,7 +889,6 @@ void StoresByLayout::noteWritesInto(ValueSetMaker& maker, LayoutID layout, const
 {
     StoresIntoObjects& stores = m_storesOfLayout[layout.index()];
     ValueFlowName name = writes.name();
-    // A parser puts a member that the layout declares into its field: a required one as it allocates the object, any other behind the allocation, if the text has it.
     if (writes.fillsTypedResult) {
         if (name.kind == ValueFlowNameKind::UnknownKey) {
             stores.isStoredUnderIndex = true;
@@ -1093,15 +940,6 @@ void StoresByLayout::noteWritesInto(ValueSetMaker& maker, LayoutID layout, const
         stored.setters = maker.unite(stored.setters, writes.value);
 }
 
-// Where the proven type of the receiver lists layouts, the object that a placeholder stands for has one of them: noteWrites() puts the write down for those.
-void StoresByLayout::noteWritesThroughPlaceholder(ValueSetMaker& maker, StoresIntoObjects& stores, const WritesThroughSet& writes)
-{
-    if (writes.fillsTypedResult || writes.familyOfReceiver != UINT32_MAX)
-        return;
-    note(maker, stores, writes.name(), writes.value, false, writes.isNamedByOperation);
-    noteNumbers(stores, writes.name(), writes.numbers);
-}
-
 void StoresByLayout::noteWrites()
 {
     const ParallelLoops& loops = m_inputs.loops();
@@ -1123,20 +961,41 @@ void StoresByLayout::noteWrites()
     m_keysDeclaredByEscapedClasses = collectKeysDeclaredBy(m_inputs.program, m_layoutsOfObjects.escapedClasses());
     m_keysDeclaredByLostClasses = collectKeysDeclaredBy(m_inputs.program, m_layoutsOfObjects.lostClasses());
 
-    // A store by name whose receiver may have a layout that declares the name is a store to that field. It gives the name no room in the other layouts.
     Vector<ObjectsOfSet> objectsOfSet(numberOfSets);
     forEachIndexInParallel(loops, numberOfSets, [&](unsigned position) {
-        objectsOfSet[position] = findObjectsOf(ValueSetID(writes[firstWriteOfSet[position]].set));
+        ObjectsOfSet& objects = objectsOfSet[position];
+        objects = findObjectsOf(ValueSetID(writes[firstWriteOfSet[position]].set));
         for (WritesThroughSet& write : writesThrough(position)) {
-            if (write.isNamedByOperation && someReceiverDeclares(PropertyKeyID(write.payload), objectsOfSet[position]))
-                write.isNamedByOperation = false;
+            if (!write.isNamedByOperation)
+                continue;
+            bool someReceiverDeclares = (objects.holdsObjectOfEveryEscapedClass && m_keysDeclaredByEscapedClasses.get(write.payload)) || (objects.holdsObjectOfEveryLostClass && m_keysDeclaredByLostClasses.get(write.payload))
+                || std::ranges::any_of(objects.layouts, [&](LayoutID layout) {
+                    return findField(m_inputs.program, layout, PropertyKeyID(write.payload), BaseChain::Predicted).has_value();
+                });
+            write.isNamedByOperation = !someReceiverDeclares;
         }
     });
-    if (std::ranges::any_of(writes.span(), &WritesThroughSet::createsData))
-        indexNumbersInData();
+    if (std::ranges::any_of(writes.span(), &WritesThroughSet::createsData)) {
+        m_numbersInData.emplace();
+        for (const Data& data : m_inputs.program.data) {
+            forEachDataNodeInPreorder(data.root, [&](uint32_t, const DataNode& node) {
+                const auto* object = node.tryAs<DataNode::Object>();
+                if (!object)
+                    return;
+                for (const DataMember& member : object->members) {
+                    const auto* number = member.value.tryAs<DataNode::Number>();
+                    if (!number)
+                        continue;
+                    ValueFlowNumbers& numbers = m_numbersInData->add(static_cast<uint64_t>(object->layout.index()) << 32 | member.key.index(), ValueFlowNumbers { }).iterator->value;
+                    if (isTrackedInteger(number->value))
+                        numbers.integers = numbers.integers.unionWith(Range::one(static_cast<int64_t>(number->value)));
+                    else
+                        numbers.mayBeOtherThanIntegers = true;
+                }
+            });
+        }
+    }
 
-    // An object that has escaped is not listed beside the placeholder that stands for it. A built-in that defines a property makes a new one as a rule: a field of a layout is stored to.
-    // An accessor or a method is defined on a prototype object as a rule, and the objects below it may all have layouts.
     Vector<PropertyKeyID> keysOfAccessorsAndMethods;
     for (uint32_t position = 0; position < numberOfSets; ++position) {
         const ObjectsOfSet& objects = objectsOfSet[position];
@@ -1205,12 +1064,16 @@ void StoresByLayout::noteWrites()
     Vector<Vector<uint32_t>> writesThroughPlaceholdersInto(numberOfLayouts);
     for (uint32_t position = 0; position < numberOfSets; ++position) {
         const ObjectsOfSet& objects = objectsOfSet[position];
-        if (!objects.holdsUnknownObject && !objects.holdsUntrackedObject && !objects.holdsAlmostEverything)
+        uint8_t held = objects.holdsUnknownObject | objects.holdsUntrackedObject << 1 | objects.holdsAlmostEverything << 2;
+        if (!held)
             continue;
         for (uint32_t index = firstWriteOfSet[position]; index < firstWriteOfSet[position + 1]; ++index) {
-            if (writes[index].fillsTypedResult || writes[index].familyOfReceiver == UINT32_MAX)
+            const WritesThroughSet& write = writes[index];
+            if (write.isNamedByOperation && write.familyDeclaredForReceiver != UINT32_MAX)
+                m_namesStoredThroughDeclaredReceivers.append({ write.familyDeclaredForReceiver, held, write.isStoredByConstructor, PropertyKeyID(write.payload) });
+            if (write.fillsTypedResult || write.familyOfReceiver == UINT32_MAX)
                 continue;
-            for (LayoutID layout : layoutsAdmittedBy(LayoutSetID(writes[index].familyOfReceiver))) {
+            for (LayoutID layout : layoutsAdmittedBy(LayoutSetID(write.familyOfReceiver))) {
                 bool isReached = objects.holdsAlmostEverything || (objects.holdsUnknownObject && m_hasEscapedObject.quickGet(layout.index())) || (objects.holdsUntrackedObject && m_hasLostObject.quickGet(layout.index()));
                 if (isReached)
                     writesThroughPlaceholdersInto[layout.index()].append(index);
@@ -1234,8 +1097,12 @@ void StoresByLayout::noteWrites()
             for (uint32_t position = 0; position < numberOfSets; ++position) {
                 if (!(objectsOfSet[position].*placeholders[index].isHeld))
                     continue;
-                for (const WritesThroughSet& write : writesThrough(position))
-                    noteWritesThroughPlaceholder(maker, placeholders[index].stores, write);
+                for (const WritesThroughSet& write : writesThrough(position)) {
+                    if (write.fillsTypedResult || write.familyOfReceiver != UINT32_MAX)
+                        continue;
+                    note(maker, placeholders[index].stores, write.name(), write.value, false, write.isNamedByOperation);
+                    noteNumbers(placeholders[index].stores, write.name(), write.numbers);
+                }
             }
             return;
         }
@@ -1268,17 +1135,6 @@ void StoresByLayout::noteWrites()
         }
     });
 
-    for (uint32_t position = 0; position < numberOfSets; ++position) {
-        const ObjectsOfSet& objects = objectsOfSet[position];
-        uint8_t held = objects.holdsUnknownObject | objects.holdsUntrackedObject << 1 | objects.holdsAlmostEverything << 2;
-        if (!held)
-            continue;
-        for (const WritesThroughSet& write : writesThrough(position)) {
-            if (write.isNamedByOperation && write.familyDeclaredForReceiver != UINT32_MAX)
-                m_namesStoredThroughDeclaredReceivers.append({ write.familyDeclaredForReceiver, held, write.isStoredByConstructor, PropertyKeyID(write.payload) });
-        }
-    }
-
     RELEASE_ASSERT(m_setsLookedAt.isEmpty());
     m_objectsOfSetsOfWrites = WTF::move(objectsOfSet);
     m_setsLookedAt.grow(numberOfSets);
@@ -1293,57 +1149,13 @@ void StoresByLayout::noteWrites()
     m_inputs.build.destroyLater(WTF::move(writesThroughPlaceholdersInto));
 }
 
-// The layouts that the type of a receiver admits and that have an object which the placeholders may stand for.
-Vector<LayoutID> StoresByLayout::receiversNamedBy(LayoutSetID family, uint8_t placeholders)
-{
-    Vector<LayoutID> receivers;
-    for (LayoutID layout : layoutsAdmittedBy(family)) {
-        bool mayBeReceiver = (placeholders & 1 && m_hasEscapedObject.quickGet(layout.index())) || (placeholders & 2 && m_hasLostObject.quickGet(layout.index()))
-            || (placeholders & 4 && !m_inputs.sets().isEmpty(m_layoutsOfObjects.objectsWith(layout)));
-        if (mayBeReceiver)
-            receivers.append(layout);
-    }
-    return receivers;
-}
-
-// How many operations of reached functions name one of the keys on a receiver whose type admits the layout. A type that admits more layouts than `mostLayouts` says nothing about any of them.
-auto StoresByLayout::countAccessesThroughTypesOfFewLayouts(const BitVector& keys, uint64_t mostLayouts) -> AccessesByKeyAndLayout
+void StoresByLayout::noteNamesStoredThroughDeclaredReceivers()
 {
     struct Access {
         PropertyKeyID key;
         LayoutSetID familyOfReceiver;
     };
 
-    const Program& program = m_inputs.program;
-    Vector<Access> accesses = collectInParallel<Access>(m_inputs.loops(), program.functions.size(), [&](unsigned index, Vector<Access>& found) {
-        if (!m_inputs.isReached(FunctionID(index)))
-            return;
-        const Function& function = program.functions[index];
-        for (const Value& value : function.values) {
-            if (!Value::opcodesWithKey.contains(value.opcode) || !value.key() || !keys.quickGet(value.key().index()))
-                continue;
-            std::optional<uint8_t> receiver = receiverOf(value.opcode);
-            if (!receiver)
-                continue;
-            const Type& type = program.typeOf(function, value.operand(*receiver));
-            if (type.hasOnlyLayouts(program))
-                found.append({ value.key(), type.layouts });
-        }
-    });
-    AccessesByKeyAndLayout counts;
-    for (const Access& access : accesses) {
-        const Vector<LayoutID>& admitted = layoutsAdmittedBy(access.familyOfReceiver);
-        if (admitted.size() > mostLayouts)
-            continue;
-        for (LayoutID layout : admitted)
-            ++counts.add(static_cast<uint64_t>(access.key.index()) << 32 | layout.index(), 0).iterator->value;
-    }
-    return counts;
-}
-
-// A placeholder names no layout, but the type of the receiver does: the object is expected to have one of the layouts that it lists.
-void StoresByLayout::noteNamesStoredThroughDeclaredReceivers()
-{
     Vector<NameStoredThroughDeclaredReceiver> names = std::exchange(m_namesStoredThroughDeclaredReceivers, { });
     if (names.isEmpty())
         return;
@@ -1355,7 +1167,6 @@ void StoresByLayout::noteNamesStoredThroughDeclaredReceivers()
     const Program& program = m_inputs.program;
     uint64_t mostLayoutsGivenRoom = m_inputs.build.limit(LimitID::MaxValueFlowMembersToldApart);
     auto forEachNameWithReceivers = [&](NOESCAPE const Invocable<void(const NameStoredThroughDeclaredReceiver&, const Vector<LayoutID>&, bool areTooMany)> auto& functor) {
-        // Whoever constructs with a function that has escaped makes objects of its layout that nobody has seen escape: the placeholder stands for them too.
         auto placeholdersOf = [](const NameStoredThroughDeclaredReceiver& name) -> uint8_t {
             constexpr uint8_t everyPlaceholder = 7;
             return name.isStoredByConstructor ? everyPlaceholder : name.placeholders;
@@ -1363,8 +1174,16 @@ void StoresByLayout::noteNamesStoredThroughDeclaredReceivers()
         Vector<LayoutID> receivers;
         for (size_t index = 0; index < names.size(); ++index) {
             const NameStoredThroughDeclaredReceiver& name = names[index];
-            if (!index || names[index - 1].family != name.family || placeholdersOf(names[index - 1]) != placeholdersOf(name))
-                receivers = receiversNamedBy(LayoutSetID(name.family), placeholdersOf(name));
+            uint8_t placeholders = placeholdersOf(name);
+            if (!index || names[index - 1].family != name.family || placeholdersOf(names[index - 1]) != placeholders) {
+                receivers.shrink(0);
+                for (LayoutID layout : layoutsAdmittedBy(LayoutSetID(name.family))) {
+                    bool mayBeReceiver = (placeholders & 1 && m_hasEscapedObject.quickGet(layout.index())) || (placeholders & 2 && m_hasLostObject.quickGet(layout.index()))
+                        || (placeholders & 4 && !m_inputs.sets().isEmpty(m_layoutsOfObjects.objectsWith(layout)));
+                    if (mayBeReceiver)
+                        receivers.append(layout);
+                }
+            }
             functor(name, receivers, !name.isStoredByConstructor && receivers.size() > mostLayoutsGivenRoom);
         }
     };
@@ -1386,8 +1205,30 @@ void StoresByLayout::noteNamesStoredThroughDeclaredReceivers()
             keysWithTooManyReceivers.quickSet(name.key.index());
     });
     AccessesByKeyAndLayout counts;
-    if (!keysWithTooManyReceivers.isEmpty())
-        counts = countAccessesThroughTypesOfFewLayouts(keysWithTooManyReceivers, mostLayoutsGivenRoom);
+    if (!keysWithTooManyReceivers.isEmpty()) {
+        Vector<Access> accesses = collectInParallel<Access>(m_inputs.loops(), program.functions.size(), [&](unsigned index, Vector<Access>& found) {
+            if (!m_inputs.isReached(FunctionID(index)))
+                return;
+            const Function& function = program.functions[index];
+            for (const Value& value : function.values) {
+                if (!Value::opcodesWithKey.contains(value.opcode) || !value.key() || !keysWithTooManyReceivers.quickGet(value.key().index()))
+                    continue;
+                std::optional<uint8_t> receiver = receiverOf(value.opcode);
+                if (!receiver)
+                    continue;
+                const Type& type = program.typeOf(function, value.operand(*receiver));
+                if (type.hasOnlyLayouts(program))
+                    found.append({ value.key(), type.layouts });
+            }
+        });
+        for (const Access& access : accesses) {
+            const Vector<LayoutID>& admitted = layoutsAdmittedBy(access.familyOfReceiver);
+            if (admitted.size() > mostLayoutsGivenRoom)
+                continue;
+            for (LayoutID layout : admitted)
+                ++counts.add(static_cast<uint64_t>(access.key.index()) << 32 | layout.index(), 0).iterator->value;
+        }
+    }
 
     forEachNameWithReceivers([&](const NameStoredThroughDeclaredReceiver& name, const Vector<LayoutID>& receivers, bool areTooMany) {
         PropertyKeyID key = name.key;
@@ -1425,7 +1266,6 @@ void StoresByLayout::noteNamesStoredThroughDeclaredReceivers()
     });
 }
 
-// Whatever such code takes has escaped, so what it stores it stores through the unknown object. What it allocates is in nobody's set, and it fills the fields with values that nobody has looked at.
 void StoresByLayout::noteCodeWithoutSolve(const Function& function)
 {
     const Program& program = m_inputs.program;
@@ -1557,13 +1397,10 @@ bool StoresByLayout::mayGetAccessorUnder(LayoutID layout, PropertyKeyID key) con
     return mayGetOne;
 }
 
-// `for (const key of names) Object.defineProperty(object, key, { get: getterFor(key) })`: whatever the names are, each of them is an accessor of that form.
 FlowAccessorField StoresByLayout::accessorDefinedUnder(ValueSetMaker& maker, LayoutID layout, PropertyKeyID key) const
 {
     const StoresIntoObjects& stores = m_storesOfLayout[layout.index()];
     const ValueSets& sets = m_inputs.sets();
-    // What is defined under a key nobody knows speaks for the key only in an object that is born empty: see getsAccessorsUnderKeysNobodyKnows(). It speaks against the key in any.
-    // `const flags = {} as Flags`: so is an object born whose type has the names. There it speaks for a field that may be absent, which is an accessor unless an operation gives it a value.
     const Layout& declaring = m_inputs.program.at(layout);
     std::optional<uint32_t> field = declaring.findField(key);
     bool mayBeDefinedUnderUnknownKey = declaring.fields.isEmpty() || (field && !declaring.fields[*field].flags.containsAny({ FieldFlags::IsRequired, FieldFlags::IsRequiredUntilDeleted }));
@@ -1576,26 +1413,21 @@ FlowAccessorField StoresByLayout::accessorDefinedUnder(ValueSetMaker& maker, Lay
         getters = maker.unite(getters, found->value.getters);
         setters = found->value.setters;
         forms |= found->value.accessorForms;
-        // `object.name = value` runs the setter where there is one: what it stores is no value of the property.
         if (setters == ValueSets::nothing) {
             values = maker.unite(values, found->value.valueFromOperations);
             isGivenValue |= found->value.isGivenValueByOperation;
         } else
             isGivenValue |= found->value.isGivenValueByDefinition;
     }
-    // A descriptor without `value` defines none.
     if (isGivenValue || getters == ValueSets::nothing || !sets.isSubset(values, m_inputs.universe().undefinedValue()))
         return { };
     std::optional<OptionSet<FieldForm>> form = AccessorForms::onlyFormIn(forms);
     if (!form)
         return { };
-    // From an heir the run time finds an accessor faster among the extra properties of the object above than in a slot of it.
     if (sets.meet(m_layoutsOfObjects.objectsWith(layout), m_objectsPutAboveOthers))
         return { };
 
-    // A helper that defines the getters of every caller under one roof has hundreds: there the slot takes any function.
     FlowAccessorField accessor { *form, { }, { } };
-    // The closures among them are what to expect.
     auto listClosures = [&](ValueSetID functions, Vector<FunctionID, 1>& list) {
         if (ValueSets::isComplement(functions) || sets.size(functions) > m_inputs.build.limit(LimitID::MaxValueFlowMembersToldApart))
             return;
@@ -1617,14 +1449,12 @@ void StoresByLayout::setReceiversOfReads(ListsOfSetsByNumber&& receivers)
     };
 
     m_receiversOfReads = WTF::move(receivers);
-    // The objects that a link lists. What code that nobody sees may hang above an object that has escaped is a placeholder there.
     UnionOfSets above;
     m_heap.forEachNodeWrittenUnder(prototypeLinkName, [&](ValueSetID, ValueSetID value) {
         above.add(value);
     });
     m_objectsPutAboveOthers = above.takeAsListed(m_heap.maker());
 
-    // Each list of receivers is walked once, for the layouts that ask: never the names once for each layout.
     const ValueSets& sets = m_inputs.sets();
     ValueSetMaker& maker = m_heap.maker();
     uint32_t numberOfLayouts = m_inputs.program.layouts.size();
@@ -1669,10 +1499,8 @@ void StoresByLayout::setReceiversOfReads(ListsOfSetsByNumber&& receivers)
 
 bool StoresByLayout::getsAccessorsUnderKeysNobodyKnows(LayoutID layout) const
 {
-    // The guess is for an object that is born empty and filled by a loop.
     if (!m_inputs.program.at(layout).fields.isEmpty())
         return false;
-    // What is known under a key comes on top of this, so what fails here fails under every key.
     const StoresIntoObjects& stores = m_storesOfLayout[layout.index()];
     return stores.gettersUnderUnknownKey != ValueSets::nothing && !stores.isGivenValueByOperationUnderUnknownKey && m_inputs.sets().isSubset(stores.valueFromOperationsUnderUnknownKey, m_inputs.universe().undefinedValue())
         && AccessorForms::onlyFormIn(stores.formsOfAccessorsUnderUnknownKey) && !m_inputs.sets().meet(m_layoutsOfObjects.objectsWith(layout), m_objectsPutAboveOthers);

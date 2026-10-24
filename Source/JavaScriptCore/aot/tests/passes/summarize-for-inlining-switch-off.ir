@@ -9,7 +9,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="register" [isFreeName]
     v2 = NewClosure function=f1
@@ -20,7 +19,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # PASS: f0: barrier=Unknown bytes=0
 
 function f1 name="callsSmallFunctions" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f2
     v2 = CallDirect v1 function=f3
     Return v2
@@ -29,14 +27,12 @@ function f1 name="callsSmallFunctions" parameters=[{type=anything}] results=[{ty
 # PASS-NEXT: f1: barrier=Unknown bytes=0
 
 function f2 name="returnsParameter" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 # CHECK-NEXT: f2: barrier=Unknown bytes=0
 # PASS-NEXT: f2: barrier=Unknown bytes=0
 
 function f3 name="fails" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Throw v0
 }
 # CHECK-NEXT: f3: barrier=Unknown bytes=0

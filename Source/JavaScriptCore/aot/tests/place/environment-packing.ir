@@ -12,7 +12,6 @@ entry module=m0
 layout L0 kind=Environment name="mixedWidths" fields=[{key="flag" declared={type=boolean}}, {key="total" declared={type=number}}, {key="index" declared={type=i32}}, {key="byte" declared={type=int[0, 255]}}, {key="short" declared={type=int[0, 65535]}}, {key="text" declared={type=string}}]
 layout L1 kind=Environment name="beyondOneByteOffsets" fields=[{key="n0" declared={type=number}}, {key="n1" declared={type=number}}, {key="n2" declared={type=number}}, {key="n3" declared={type=number}}, {key="n4" declared={type=number}}, {key="n5" declared={type=number}}, {key="n6" declared={type=number}}, {key="n7" declared={type=number}}, {key="n8" declared={type=number}}, {key="n9" declared={type=number}}, {key="n10" declared={type=number}}, {key="n11" declared={type=number}}, {key="n12" declared={type=number}}, {key="n13" declared={type=number}}, {key="n14" declared={type=number}}, {key="n15" declared={type=number}}, {key="hot" declared={type=boolean}}, {key="short0" declared={type=int[0, 65535]}}, {key="short1" declared={type=int[0, 65535]}}, {key="byte0" declared={type=int[0, 255]}}, {key="byte1" declared={type=int[0, 255]}}, {key="byte2" declared={type=int[0, 255]}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=MathRandom
     v1 = Call v0
     v2 = ToNumber v1

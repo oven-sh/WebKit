@@ -163,7 +163,6 @@ std::unique_ptr<ObjectBuilderPlan> ObjectBuilder::tryCreatePlan(State& state, co
             numberOfExtraKeys += !parseIndex(*name);
             continue;
         }
-        // What is built has plain data properties.
         if (field->isPrivate() || field->attributes() || defersClosure(*field))
             return nullptr;
         uint16_t index = layout.indexOf(*field);
@@ -189,7 +188,6 @@ std::unique_ptr<ObjectBuilderPlan> ObjectBuilder::tryCreatePlan(State& state, co
         plan->m_fields.append({ .field = field, .acceptsEveryInt32 = acceptsEveryInt32, .acceptsEveryNumber = acceptsEveryNumber, .acceptsBooleans = acceptsBooleans });
     }
     for (size_t index = 0; index < fields.size(); ++index) {
-        // Every allocation that the compiler saw lists the closure that a slot defers.
         bool mayStayAbsent = (fields[index].flags & fieldIsOptional) && fields[index].canLeaveSlot() && !defersClosure(fields[index]);
         if (!namedFields.get(index) && !mayStayAbsent)
             return nullptr;

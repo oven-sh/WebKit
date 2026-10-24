@@ -11,46 +11,31 @@
 #include "AOTFlowOrder.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTGrouping.h"
-#include "AOTVector.h"
-#include <algorithm>
 #include <compare>
-#include <memory>
-#include <optional>
-#include <span>
+#include <type_traits>
 #include <utility>
-#include <wtf/BitVector.h>
-#include <wtf/FastMalloc.h>
-#include <wtf/HashMap.h>
-#include <wtf/Noncopyable.h>
-#include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 using FlowScopeLocation = uint32_t;
 
-struct FlowScopeLocationAccess {
-    FlowScopeLocation location;
+template<typename Subject>
+struct FlowOperationOn {
+    Subject subject;
     FunctionID function;
     ValueID value;
 
-    friend auto operator<=>(const FlowScopeLocationAccess&, const FlowScopeLocationAccess&) = default;
+    friend auto operator<=>(const FlowOperationOn&, const FlowOperationOn&) = default;
 };
+using FlowScopeLocationAccess = FlowOperationOn<FlowScopeLocation>;
+using FlowEnvironmentAllocation = FlowOperationOn<LayoutID>;
+using FlowModuleValueRead = FlowOperationOn<ModuleID>;
 
-struct FlowEnvironmentAllocation {
-    LayoutID layout;
-    FunctionID function;
-    ValueID value;
-
-    friend auto operator<=>(const FlowEnvironmentAllocation&, const FlowEnvironmentAllocation&) = default;
-};
-
-struct FlowModuleValueRead {
-    ModuleID module;
-    FunctionID function;
-    ValueID value;
-
-    friend auto operator<=>(const FlowModuleValueRead&, const FlowModuleValueRead&) = default;
-};
+template<typename Subject>
+std::span<const FlowOperationOn<Subject>> operationsOn(const Vector<FlowOperationOn<Subject>>& sorted LIFETIME_BOUND, std::type_identity_t<Subject> subject)
+{
+    return recordsWith(sorted.span(), subject, &FlowOperationOn<Subject>::subject);
+}
 
 struct FlowFunctionMention {
     FunctionID function;
@@ -58,12 +43,7 @@ struct FlowFunctionMention {
     ValueID value;
 };
 
-struct FlowCallSite {
-    FunctionID caller;
-    ValueID call;
-
-    friend bool operator==(const FlowCallSite&, const FlowCallSite&) = default;
-};
+using FlowCallSite = std::pair<FunctionID, ValueID>;
 
 struct FlowScopeCall {
     FunctionID caller;
@@ -85,8 +65,8 @@ struct FlowScopeCalls {
     Vector<uint32_t> firstByCallee;
     BitVector functionsEnteredByHost;
 
-    std::span<const FlowScopeCall> callsBy(FunctionID caller) const LIFETIME_BOUND { return byCaller.subspan(firstByCaller[caller.index()], firstByCaller[caller.index() + 1] - firstByCaller[caller.index()]); }
-    std::span<const FlowScopeCall> callsOf(FunctionID callee) const LIFETIME_BOUND { return byCallee.subspan(firstByCallee[callee.index()], firstByCallee[callee.index() + 1] - firstByCallee[callee.index()]); }
+    std::span<const FlowScopeCall> callsBy(FunctionID caller) const LIFETIME_BOUND { return entriesOfGroup(firstByCaller, byCaller, caller.index()); }
+    std::span<const FlowScopeCall> callsOf(FunctionID callee) const LIFETIME_BOUND { return entriesOfGroup(firstByCallee, byCallee, callee.index()); }
 };
 
 struct FlowExportedVariable {
@@ -122,177 +102,16 @@ struct FlowScopeIndex {
     BitVector syntheticVariables;
     BitVector functionsEnteredWithoutMention;
     BitVector modulesOfFunctionsEnteredWithoutMention;
-    BitVector modulesReadByHost;
     Vector<FunctionID> locationOwners;
     Vector<FunctionID> environmentOwners;
     FlowScopeCalls calls;
     Vector<FlowScopeOwner> owners;
 
     const Program& program() const { return inputs.program; }
-    std::span<const FlowFunctionMention> mentionsIn(FunctionID function) const LIFETIME_BOUND { return mentions.subspan(firstMention[function.index()], firstMention[function.index() + 1] - firstMention[function.index()]); }
+    std::span<const FlowFunctionMention> mentionsIn(FunctionID function) const LIFETIME_BOUND { return entriesOfGroup(firstMention, mentions, function.index()); }
 };
-
-inline std::span<const FlowScopeLocationAccess> accessesAt(std::span<const FlowScopeLocationAccess> sorted, FlowScopeLocation location)
-{
-    return recordsWith(sorted, location, &FlowScopeLocationAccess::location);
-}
-
-inline std::span<const FlowEnvironmentAllocation> allocationsOf(const FlowScopeIndex& index, LayoutID layout)
-{
-    return recordsWith(index.allocations.span(), layout, &FlowEnvironmentAllocation::layout);
-}
-
-inline std::span<const FlowModuleValueRead> valueReadsOf(const FlowScopeIndex& index, ModuleID module)
-{
-    return recordsWith(index.moduleValueReads.span(), module, &FlowModuleValueRead::module);
-}
-
-inline constexpr FlowScopeEntry unknownScopeEntry { FlowScopeEntryState::Unknown, { }, { } };
-inline constexpr FlowScopeEntry neverScopeEntry { FlowScopeEntryState::Never, { }, { } };
-
-constexpr FlowScopeEntry scopeEntryAfter(FunctionID function, ProgramPoint point) { return { FlowScopeEntryState::AfterPoint, function, point }; }
 
 FlowScopeIndex createScopeIndex(const FlowOrderInputs&, const FlowModuleOrder&);
-void computeSyntheticExportOrders(const FlowScopeIndex&, std::span<FlowLocationOrder>);
-
-struct FlowScopeFrame {
-    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(FlowScopeFrame);
-
-    FlowScopeFrame(const FlowScopeIndex&, FunctionID, FlowScopeFrame* caller, ValueID call);
-
-    FunctionID function;
-    const Function& body;
-    FunctionAnalyses analyses;
-    FlowScopeFrame* caller;
-    ValueID call;
-    unsigned depth;
-    std::optional<FlowScopeEntry> exit;
-};
-
-class FlowScopeOwnerAnalysis {
-    WTF_MAKE_NONCOPYABLE(FlowScopeOwnerAnalysis);
-public:
-    FlowScopeOwnerAnalysis(const FlowScopeIndex&, const FlowScopeOwner&);
-
-    void computeEntries();
-    void computeOrders(std::span<FlowLocationOrder>);
-    Vector<FlowReadOfLocation> takeReadsAfterInitialization() { return std::exchange(m_readsAfterInitialization, { }); }
-
-private:
-    enum class StoredClosureEntry : uint8_t { AtStore, AtRead };
-
-    struct FollowedValue {
-        FlowScopeFrame* frame;
-        ValueID value;
-    };
-
-    struct StoredFunction {
-        FlowScopeLocation location;
-        FunctionID function;
-        FlowScopeEntry store;
-    };
-
-    struct StoredFunctionReader {
-        FunctionID reader;
-        uint32_t first;
-        uint32_t count;
-    };
-
-    using InitializingStores = Vector<FlowScopeLocationAccess, 4>;
-
-    void createFrames();
-    void appendFrame(FunctionID, FlowScopeFrame* caller, ValueID call);
-    FlowScopeFrame& ownerFrame() { return *m_frames[0]; }
-    FlowScopeFrame* findFrame(FunctionID);
-    FlowScopeFrame& frameOf(const FlowScopeEntry&);
-
-    ProgramPoint meet(FlowScopeFrame&, ProgramPoint, ProgramPoint);
-    bool isPassedBefore(const FlowScopeEntry& earlier, const FlowScopeEntry& later);
-    FlowScopeEntry meet(const FlowScopeEntry&, const FlowScopeEntry&);
-    FlowScopeEntry laterOf(const FlowScopeEntry&, const FlowScopeEntry&);
-    FlowScopeEntry entryInCaller(const FlowScopeEntry&);
-    FlowScopeEntry& ensureEntry(FunctionID);
-    void lower(FunctionID, FlowScopeEntry);
-    std::optional<ProgramPoint> pointOf(FlowScopeFrame&, ValueID);
-    FlowScopeEntry entryAt(FlowScopeFrame&, ValueID);
-    FlowScopeEntry entryOf(FunctionID);
-    FlowScopeEntry entryByUseOf(FunctionID);
-    FlowScopeEntry entryByCallsOf(FunctionID);
-    FlowScopeEntry entryByStoresTo(VariableID);
-    FlowScopeEntry computeEntryByStoresTo(VariableID);
-    FlowScopeEntry entryBySubjectOf(FunctionID, ValueID operation);
-    FlowScopeEntry entryOf(const FlowScopeLocationAccess&);
-
-    FlowScopeEntry computeExit(FlowScopeFrame&);
-    FlowScopeEntry exitOf(FlowScopeFrame&);
-    std::span<const FlowExportedVariable> exportsOf(FlowScopeLocation) const;
-    bool isExported(FlowScopeLocation) const;
-    void forEachReader(FlowScopeLocation, NOESCAPE const Invocable<void(const FlowScopeLocationAccess&)> auto&) const;
-
-    void collectPerIterationAllocations();
-    StoredClosureEntry storedClosureEntryOf(FlowScopeFrame&, ValueID closure);
-    void followClosure(FlowScopeFrame&, ValueID, FunctionID);
-    std::optional<ValueID> forwardedValue(const FlowScopeFrame&, const Use&) const;
-    std::optional<FollowedValue> parameterReceiving(FlowScopeFrame&, const Use&);
-    bool isReceiverOfDefinition(const FlowScopeFrame&, const Use&) const;
-    void recordClassEvaluation(FlowScopeFrame&, ValueID closure, FunctionID constructor);
-    void recordDefinition(const FlowScopeFrame&, ValueID definition, FunctionID receiver);
-    std::optional<FlowScopeLocation> storedLocation(const FlowScopeFrame&, const Use&) const;
-    void recordClosureUse(FlowScopeFrame&, const Use&, FunctionID, StoredClosureEntry);
-    void recordStoredFunction(FlowScopeLocation, FunctionID, const FlowScopeEntry& store);
-    void recordOwnReferences();
-    void recordInitialFunctions();
-    void recordOutsideReader(FunctionID);
-    void recordOutsideReaders();
-    void recordReadsOfStoredFunctions();
-    void runFixpoint();
-    void refineEntriesByCalls();
-
-    bool completesBeforeReturn(FlowScopeFrame&, ValueID);
-    bool precedes(const FlowScopeLocationAccess& store, const FlowScopeEntry&);
-    bool anyPrecedes(const InitializingStores&, const FlowScopeEntry&);
-    std::span<const FlowScopeLocationAccess> definitionsOf(FlowScopeLocation) const;
-    InitializingStores initializingStoresOf(FlowScopeLocation);
-    bool isDefinedAtEveryAccessThroughClassObject(FlowScopeLocation, const InitializingStores&);
-    InitializationState initializationOf(FlowScopeLocation, bool isSetAtCreation, bool startsAbsent);
-    bool anyPrecedesCallersOf(const InitializingStores&, FunctionID);
-    bool isStoredBeforeCallersOfReaders(FlowScopeLocation);
-    StoreCount storeCountOf(FlowScopeLocation, bool isSetAtCreation, NOESCAPE const Invocable<bool(const FlowScopeLocationAccess&)> auto& canRunTwice);
-    bool canRunTwice(const FlowScopeLocationAccess&);
-    bool canRunTwicePerInstance(const FlowScopeLocationAccess& store, BlockID allocation);
-    std::optional<BlockID> trackedAllocationBlock(LayoutID, std::span<const FlowEnvironmentAllocation>);
-    bool isListedWithUndefinedAlone(std::span<const FlowEnvironmentAllocation>, uint32_t field);
-    void computeEnvironmentOrders(LayoutID, std::span<FlowLocationOrder>);
-
-    const FlowScopeIndex& m_index;
-    const FlowScopeOwner& m_owner;
-    Vector<std::unique_ptr<FlowScopeFrame>, 1> m_frames;
-    HashMap<FunctionID, FlowScopeFrame*> m_framesByFunction;
-    HashMap<FunctionID, FlowScopeEntry> m_entries;
-    HashMap<FunctionID, FlowScopeEntry> m_entriesByUse;
-    HashMap<VariableID, FlowScopeEntry> m_entriesByStores;
-    Vector<FunctionID> m_queue;
-    Vector<StoredFunction> m_storedFunctions;
-    Vector<StoredFunctionReader> m_storedFunctionReaders;
-    Vector<StoredFunction> m_functionsTakenOut;
-    HashMap<uint32_t, Vector<FlowScopeEntry, 2>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_entriesOfReadersOfRuns;
-    Vector<FlowScopeLocationAccess> m_definitions;
-    Vector<FlowReadOfLocation> m_readsAfterInitialization;
-    BitVector m_classesEvaluatedOnce;
-    Vector<ValueID> m_perIterationAllocations;
-    FlowScopeEntry m_exit { neverScopeEntry };
-    FlowScopeEntry m_hostEntry { unknownScopeEntry };
-};
-
-void FlowScopeOwnerAnalysis::forEachReader(FlowScopeLocation location, NOESCAPE const Invocable<void(const FlowScopeLocationAccess&)> auto& functor) const
-{
-    for (const FlowScopeLocationAccess& read : accessesAt(m_index.reads.span(), location))
-        functor(read);
-    for (const FlowExportedVariable& exported : exportsOf(location)) {
-        for (const FlowModuleValueRead& read : valueReadsOf(m_index, exported.exporter))
-            functor(FlowScopeLocationAccess { location, read.function, read.value });
-    }
-}
 
 } } } // namespace JSC::AOT::Typed
 

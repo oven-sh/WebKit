@@ -15,8 +15,7 @@ class IntlBuiltinEmitter final : public BuiltinFamilyEmitter {
 public:
     explicit IntlBuiltinEmitter(CodeGenerator&);
 
-    void generateFormatDateTime(const InlineCall&);
-    void generateFormatNumber(const InlineCall&);
+    FOR_EACH_AOT_INLINE_BUILTIN_IN_INTL_BUILTIN(AOT_DECLARE_INLINE_BUILTIN_GENERATOR)
 
 private:
     void finishWithTextOrMiss(const InlineCall&, CellPointer textOrNull);

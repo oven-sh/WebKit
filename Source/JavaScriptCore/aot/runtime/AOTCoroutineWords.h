@@ -62,6 +62,19 @@ struct CoroutineWords {
 
 static_assert(std::is_trivially_default_constructible_v<CoroutineWords>);
 
+// The stub StepAsyncGenerator keeps the generator whose body it enters in this slot of its own frame.
+inline constexpr int32_t asyncGeneratorSlotInStubFrame = -1;
+// Of the same frame: what the stub knows of the consumer, the word of the site, and the driver of the consumer.
+inline constexpr int32_t consumerSlotInStubFrame = -2;
+inline constexpr int32_t siteWordSlotInStubFrame = -3;
+inline constexpr int32_t driverSlotInStubFrame = -4;
+// The driver is a SavedFrame that was made at this step, for an async function that was never suspended.
+inline constexpr int32_t consumerOfStepHasNewSavedFrame = 4;
+// The stub could not allocate that SavedFrame. In the place of the driver is what SavedFrame::preservedRegister holds.
+inline constexpr int32_t consumerOfStepNeedsSavedFrame = 8;
+inline constexpr int32_t consumerOfStepAwaitsPromise = 16;
+inline constexpr int32_t consumerOfStepAwaitsCall = 32;
+
 } } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

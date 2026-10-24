@@ -17,7 +17,6 @@ data d1 root=Object{layout=L1 members=[{key="b" value=Number{value=2}}, {key="a"
 data d2 root=Array{contents=anything elements=[Object{layout=L2}]} module=m0
 data d3 root=Object{layout=L3 members=[{key="known" value=Number{value=1}}, {key="other" value=Number{value=2}}]} module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Double number=1.5
     v2 = NewObject -, v1 layout=L0 fields=[0]

@@ -19,7 +19,6 @@
 #include "AOTValueFlowBodies.h"
 #include "AOTValueFlowRulesModules.h"
 #include "AOTValueSets.h"
-#include "AOTVector.h"
 #include <array>
 #include <wtf/HashMap.h>
 
@@ -50,11 +49,6 @@ struct HoldersOfName {
     Vector<ValueFlowObjectID> holdersOfEvaluators;
     Vector<ValueFlowObjectID> prototypesOfInstancesWithName;
     ValueSetID instancesThatKeepProperty { ValueSets::nothing };
-};
-
-struct ObjectsDeclaringField {
-    PropertyKeyID key;
-    ValueSetID objects;
 };
 
 struct ObjectCreatedWithKey {
@@ -667,38 +661,30 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             }
             createdInStretches[stretch] = WTF::move(createdInStretch);
         });
-        endOfObjectsCreatedWithKey.fill(0u, numberOfKeys);
-        for (const ObjectsCreatedWithFields& createdInStretch : createdInStretches) {
-            for (const ObjectCreatedWithKey& created : createdInStretch.underKeys)
-                ++endOfObjectsCreatedWithKey[created.key.index()];
-        }
-        objectsCreatedWithKeys.grow(layOutByKey(endOfObjectsCreatedWithKey));
-        for (const ObjectsCreatedWithFields& createdInStretch : createdInStretches) {
-            for (const ObjectCreatedWithKey& created : createdInStretch.underKeys)
-                objectsCreatedWithKeys[endOfObjectsCreatedWithKey[created.key.index()]++] = created.object;
+        auto layOut = [&](Vector<ObjectCreatedWithKey> ObjectsCreatedWithFields::* list, Vector<uint32_t>& endOfKey, Vector<ValueFlowObjectID>& objects) {
+            endOfKey.fill(0u, numberOfKeys);
+            for (const ObjectsCreatedWithFields& createdInStretch : createdInStretches) {
+                for (const ObjectCreatedWithKey& created : createdInStretch.*list)
+                    ++endOfKey[created.key.index()];
+            }
+            objects.grow(layOutByKey(endOfKey));
+            for (const ObjectsCreatedWithFields& createdInStretch : createdInStretches) {
+                for (const ObjectCreatedWithKey& created : createdInStretch.*list)
+                    objects[endOfKey[created.key.index()]++] = created.object;
+            }
+        };
+        layOut(&ObjectsCreatedWithFields::underKeys, endOfObjectsCreatedWithKey, objectsCreatedWithKeys);
+        layOut(&ObjectsCreatedWithFields::storedToUnderKeys, endOfObjectsStoredToUnderKey, objectsStoredToUnderKeys);
+        for (const ObjectsCreatedWithFields& createdInStretch : createdInStretches)
             objectsCreatedWithFields.appendVector(createdInStretch.objects);
-        }
-        endOfObjectsStoredToUnderKey.fill(0u, numberOfKeys);
-        for (const ObjectsCreatedWithFields& createdInStretch : createdInStretches) {
-            for (const ObjectCreatedWithKey& storedTo : createdInStretch.storedToUnderKeys)
-                ++endOfObjectsStoredToUnderKey[storedTo.key.index()];
-        }
-        objectsStoredToUnderKeys.grow(layOutByKey(endOfObjectsStoredToUnderKey));
-        for (const ObjectsCreatedWithFields& createdInStretch : createdInStretches) {
-            for (const ObjectCreatedWithKey& storedTo : createdInStretch.storedToUnderKeys)
-                objectsStoredToUnderKeys[endOfObjectsStoredToUnderKey[storedTo.key.index()]++] = storedTo.object;
-        }
     };
     auto uniteObjectsDeclaringFields = [&] {
         ValueSetMaker maker(allSets);
-        auto without = [&](ValueSetID set, ValueSetID leftOut) {
-            return maker.intersect(set, ValueSets::complement(leftOut));
-        };
-        Vector<ObjectsDeclaringField> declaredFields;
+        Vector<std::pair<PropertyKeyID, ValueSetID>> declaredFields;
         Vector<uint32_t> endOfObjectsDeclaringField;
         endOfObjectsDeclaringField.fill(0u, numberOfKeys);
         for (uint32_t index = 0; index < program.layouts.size(); ++index) {
-            ValueSetID objects = without(universe.objectsWith(LayoutID(index)), universe.objectsThatMayBeAnything());
+            ValueSetID objects = maker.intersect(universe.objectsWith(LayoutID(index)), ValueSets::complement(universe.objectsThatMayBeAnything()));
             if (objects == ValueSets::nothing)
                 continue;
             for (const Field& field : program.layouts[index].fields) {
@@ -709,22 +695,15 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             }
         }
         Vector<ValueSetID> objectsDeclaringFields(layOutByKey(endOfObjectsDeclaringField));
-        for (const ObjectsDeclaringField& declared : declaredFields)
-            objectsDeclaringFields[endOfObjectsDeclaringField[declared.key.index()]++] = declared.objects;
+        for (auto [key, objects] : declaredFields)
+            objectsDeclaringFields[endOfObjectsDeclaringField[key.index()]++] = objects;
         m_objectsDeclaringField = Vector<ValueSetID>(numberOfKeys, [&](size_t key) {
             return maker.uniteAll(entriesOfKey(objectsDeclaringFields, endOfObjectsDeclaringField, key));
         });
     };
     runTasksInParallel(loops, {
         [&] {
-            runTasksInParallel(loops, {
-                [&] {
-                    describeMembersOfTable();
-                },
-                [&] {
-                    listObjectsCreatedWithKeys();
-                },
-            });
+            runTasksInParallel(loops, { describeMembersOfTable, listObjectsCreatedWithKeys });
             m_holdersThatAnswer.reserveInitialCapacity(numberOfKeys);
             m_holdersThatMayLoseMember.reserveInitialCapacity(numberOfKeys);
             m_objectsStoredToAtCreation.reserveInitialCapacity(numberOfKeys);
@@ -738,9 +717,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             }
             m_holdersThatAnswerUnderSomeKey = maker.unite(m_holdersWithMembers, maker.of(objectsCreatedWithFields.span()));
         },
-        [&] {
-            uniteObjectsDeclaringFields();
-        },
+        uniteObjectsDeclaringFields,
         [&] {
             auto hasHeritage = [&](LayoutID layout) {
                 return layout && program.at(layout).has(LayoutFlags::HasHeritage);

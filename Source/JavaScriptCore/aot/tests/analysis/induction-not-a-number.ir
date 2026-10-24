@@ -5,7 +5,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="boundMayBeNaN" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     v1 = Integer integer=0
     Jump -> next b1(v1)
   b1(v2):
@@ -25,7 +24,6 @@ function f0 name="boundMayBeNaN" parameters=[{type=number}] results=[{type=undef
 # CHECK-NEXT: loop b1 counter: none
 
 function f1 name="boundIsInt32" parameters=[{type=i32}] results=[{type=undefined}] {
-  b0(v0: i32):
     v1 = Integer integer=0
     Jump -> next b1(v1)
   b1(v2):
@@ -45,7 +43,6 @@ function f1 name="boundIsInt32" parameters=[{type=i32}] results=[{type=undefined
 # CHECK-NEXT: loop b1 counter: v2
 
 function f2 name="counterMayBeNaN" parameters=[{type=i32}, {type=number}] results=[{type=undefined}] {
-  b0(v0: i32, v1: number):
     Jump -> next b1(v1)
   b1(v2):
     LoopHint
@@ -63,7 +60,6 @@ function f2 name="counterMayBeNaN" parameters=[{type=i32}, {type=number}] result
 # CHECK-NEXT: loop b1 counter: none
 
 function f3 name="staysOnPassedEdge" parameters=[{type=number}, {type=number}] results=[{type=undefined}] {
-  b0(v0: number, v1: number):
     Jump -> next b1(v1)
   b1(v2):
     LoopHint

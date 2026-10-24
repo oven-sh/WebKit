@@ -16,7 +16,6 @@ layout L3 name="T3" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
 layout L4 name="T4" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
 layout L5 name="T5" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
 function f0 name="allocate" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewObject -, v0 layout=L1 fields=[0]
     v3 = NewObject -, v0 layout=L2 fields=[0]
@@ -26,7 +25,6 @@ function f0 name="allocate" parameters=[{type=number}] results=[{type=undefined}
     Return
 }
 function f1 name="firstBlock" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 1..300
     v%(i) = ShapeTest v0 layouts=[L0, L1]
 # END REPEAT
@@ -37,7 +35,6 @@ function f1 name="firstBlock" parameters=[{type=anything}] results=[{type=anythi
     Return
 }
 function f2 name="laterBlock" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 1..270
     v%(i) = ShapeTest v0 layouts=[L2, L3]
 # END REPEAT

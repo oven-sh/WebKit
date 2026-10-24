@@ -8,10 +8,9 @@
 
 #if ENABLE(AOT)
 
-#include "AOTAsyncAwaitConditions.h"
 #include "AOTConvention.h"
+#include "AOTCoroutineWords.h"
 #include "AOTInstance.h"
-#include "AOTJobs.h"
 #include "AOTSavedFrame.h"
 #include "CallFrame.h"
 #include "CompleteSubspace.h"
@@ -28,14 +27,9 @@ namespace JSC { namespace AOT {
 
 using Field = JSAsyncGenerator::Field;
 
-// What the stubs know about the coroutine that iterates.
+// What the stubs know about the coroutine that iterates: these two bits and the consumerOfStep bits.
 static constexpr int32_t consumerMayContinue = 1;
 static constexpr int32_t consumerIsAsyncGenerator = 2;
-// An async function that has not been suspended yet, for which the step has made the SavedFrame that the generator resumes.
-static constexpr int32_t consumerHasNewSavedFrame = consumerOfStepHasNewSavedFrame;
-static constexpr int32_t consumerNeedsSavedFrame = consumerOfStepNeedsSavedFrame;
-static constexpr int32_t consumerAwaitsPromise = consumerOfStepAwaitsPromise;
-static constexpr int32_t consumerAwaitsCall = consumerOfStepAwaitsCall;
 static_assert(consumerMayContinue == SavedFrame::isEnteredByJobLoopFlag);
 
 // The frame of RunAsyncGeneratorStep. Its caller is the frame of the consumer.
@@ -50,11 +44,7 @@ static_assert(StepFrame::offsetOfConsumer == consumerSlotInStubFrame * static_ca
 static_assert(StepFrame::offsetOfSiteWord == siteWordSlotInStubFrame * static_cast<int32_t>(sizeof(void*)));
 static_assert(StepFrame::offsetOfProducer == -8 && -StepFrame::offsetOfDriver == static_cast<int32_t>(StepFrame::size) && !(StepFrame::size % stackAlignmentBytes()));
 
-static constexpr int32_t stateOf(JSAsyncGenerator::AsyncGeneratorSuspendReason reason)
-{
-    return (1 << JSAsyncGenerator::reasonShift) | static_cast<int32_t>(reason);
-}
-
+static constexpr int32_t stateOf(JSAsyncGenerator::AsyncGeneratorSuspendReason reason) { return (1 << JSAsyncGenerator::reasonShift) | static_cast<int32_t>(reason); }
 static constexpr int32_t suspendedAtYield = stateOf(JSAsyncGenerator::AsyncGeneratorSuspendReason::Yield);
 static constexpr int32_t hasYieldedWithoutAwait = stateOf(JSAsyncGenerator::AsyncGeneratorSuspendReason::YieldNoAwait);
 static_assert(!static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::Init));
@@ -62,15 +52,8 @@ static_assert(!static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::Init)
 static constexpr const AwaitCondition& noJobIsQueued = awaitConditionsOnState[1];
 static_assert(noJobIsQueued.word.base == AwaitConditionBase::MicrotaskQueue && noJobIsQueued.test == AwaitConditionTest::EqualsOther);
 
-static Address fieldOf(GPRReg generator, Field field)
-{
-    return Address(generator, JSAsyncGenerator::offsetOfInternalField(static_cast<unsigned>(field)));
-}
-
-static TrustedImm64 boxedInt32(int32_t number)
-{
-    return TrustedImm64(JSValue::encode(jsNumber(number)));
-}
+static Address fieldOf(GPRReg generator, Field field) { return Address(generator, JSAsyncGenerator::offsetOfInternalField(static_cast<unsigned>(field))); }
+static TrustedImm64 boxedInt32(int32_t number) { return TrustedImm64(JSValue::encode(jsNumber(number))); }
 
 static Jump branchIfRealmWatchpointSetIsNotWatched(StubAssembler& jit, ptrdiff_t offsetInGlobalObject, GPRReg scratch)
 {
@@ -78,30 +61,19 @@ static Jump branchIfRealmWatchpointSetIsNotWatched(StubAssembler& jit, ptrdiff_t
     return branchIfWatchpointSetIsNotWatched(jit, Address(scratch, static_cast<int32_t>(offsetInGlobalObject)), scratch);
 }
 
-static StubSignature signatureOfStep(std::initializer_list<Reg> operands)
-{
-    StubSignature signature = StubSignature::withGPRResult(operands);
-    signature.result = StubResult::TwoGPRs;
-    signature.secondResult = gprOf(resumeModeRegister);
-    return signature;
-}
-
 // The iterator, the driver of the consumer, the value sent, the site word. The empty value stands for a next() without an argument.
-StubSignature signatureOfStepAsyncGenerator(StubKey)
-{
-    return signatureOfStep({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::T9) });
-}
+StubSignature signatureOfStepAsyncGenerator(StubKey) { return signatureWithResumeMode({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::T9) }); }
 
 // The generator, the settlement target of its request, the value sent, the generator's SavedFrame, the bits about the consumer, the site word.
 StubSignature signatureOfRunAsyncGeneratorStep(StubKey)
 {
-    return signatureOfStep({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3), gprOf(StubRegister::T13), gprOf(StubRegister::T9) });
+    return signatureWithResumeMode({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3), gprOf(StubRegister::T13), gprOf(StubRegister::T9) });
 }
 
 // The iterator, the driver of the consumer, the value sent, the bits about the consumer, the site word.
 StubSignature signatureOfStepAsyncIteratorInEngine(StubKey)
 {
-    return signatureOfStep({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::T13), gprOf(StubRegister::T9) });
+    return signatureWithResumeMode({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::T13), gprOf(StubRegister::T9) });
 }
 
 // One step of "for await" over an async generator of compiled code, as asyncIteratorNextWithDriver does it for an idle generator: the request is written as JSAsyncGenerator::enqueue writes the first one, and the body is entered from here.
@@ -122,7 +94,7 @@ void generateStepAsyncGenerator(StubAssembler& jit)
     RELEASE_ASSERT(noOverlap(iterator, driver, value, siteWord, saved, word, other, consumer, instanceGPR));
 
     JumpList mayNotContinue;
-    jit.move(TrustedImm32((consumerKind == StepConsumer::AsyncGenerator ? consumerIsAsyncGenerator : 0) | (awaitsCall ? consumerAwaitsCall : 0)), consumer);
+    jit.move(TrustedImm32((consumerKind == StepConsumer::AsyncGenerator ? consumerIsAsyncGenerator : 0) | (awaitsCall ? consumerOfStepAwaitsCall : 0)), consumer);
     emitBranchUnlessFrameMayContinue(jit, { InvalidGPRReg, InvalidGPRReg, word, other }, mayNotContinue);
     jit.or32(TrustedImm32(consumerMayContinue), consumer);
     mayNotContinue.link(&jit);
@@ -130,7 +102,7 @@ void generateStepAsyncGenerator(StubAssembler& jit)
     JumpList stepsInEngine;
     if (awaitsCall) {
         Jump keepsNoAsyncContext = emitBranchIfTracksNoAsyncContext(jit, word);
-        jit.or32(TrustedImm32(consumerAwaitsPromise), consumer);
+        jit.or32(TrustedImm32(consumerOfStepAwaitsPromise), consumer);
         keepsNoAsyncContext.link(&jit);
     }
     std::optional<AssemblyHelpers::FreeListRefill> refill;
@@ -146,7 +118,7 @@ void generateStepAsyncGenerator(StubAssembler& jit)
         hasNoSavedFrame.link(&jit);
         stepsInEngine.append(jit.branchTest32(CCallHelpers::NonZero, consumer, TrustedImm32(consumerMayContinue)));
         refill = emitAllocateSavedFrame(jit, CoroutineKind::AsyncFunction, siteWord, { driver, saved, word, other }, isNotAllocatedHere);
-        jit.or32(TrustedImm32(consumerHasNewSavedFrame), consumer);
+        jit.or32(TrustedImm32(consumerOfStepHasNewSavedFrame), consumer);
         hasDriver.link(&jit);
     }
 
@@ -186,7 +158,7 @@ void generateStepAsyncGenerator(StubAssembler& jit)
         emitLateRefill(jit, *refill, isNotAllocatedHere);
         isNotAllocatedHere.link(&jit);
         // The operation makes it. The register that a SavedFrame keeps may hold the promise of the function, and the operation does not see it.
-        jit.or32(TrustedImm32(consumerNeedsSavedFrame), consumer);
+        jit.or32(TrustedImm32(consumerOfStepNeedsSavedFrame), consumer);
         if constexpr (SavedFrame::preservedRegister != InvalidGPRReg)
             jit.move(SavedFrame::preservedRegister, driver);
         else
@@ -203,6 +175,20 @@ static void emitFinishOnlyRequestAtYield(StubAssembler& jit, GPRReg generator, G
     jit.store64(scratch, fieldOf(generator, Field::ResumeValue));
     jit.store64(scratch, fieldOf(generator, Field::ResumePromise));
     jit.store64(boxedInt32(suspendedAtYield), fieldOf(generator, Field::State));
+}
+
+// The generator has yielded a value that needs no await, no job comes first, and its request is the only one. Stores nothing.
+static void emitBranchUnlessYieldEndsStep(StubAssembler& jit, GPRReg generator, GPRReg yielded, GPRReg word, GPRReg other, JumpList& otherwise)
+{
+    jit.load32(fieldOf(generator, Field::State), word);
+    Jump needsNoAwait = jit.branch32(CCallHelpers::Equal, word, TrustedImm32(hasYieldedWithoutAwait));
+    otherwise.append(jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(suspendedAtYield)));
+    emitBranchIfMayBeThenable(jit, yielded, word, other, otherwise);
+    needsNoAwait.link(&jit);
+    emitBranchUnlessHolds(jit, noJobIsQueued, { InvalidGPRReg, InvalidGPRReg, word, other }, otherwise);
+    otherwise.append(jit.branch64(CCallHelpers::NotEqual, fieldOf(generator, Field::Queue), TrustedImm64(JSValue::ValueNull)));
+    // The body may have given Object.prototype a "then", which the iterator result that is not made here would inherit.
+    otherwise.append(branchIfRealmWatchpointSetIsNotWatched(jit, OBJECT_OFFSETOF(JSGlobalObject, m_promiseThenWatchpointSet), other));
 }
 
 static void emitPushStepFrame(StubAssembler& jit, GPRReg producer, GPRReg consumer, GPRReg siteWord, GPRReg driver)
@@ -263,22 +249,14 @@ void generateRunAsyncGeneratorStep(StubAssembler& jit)
     // Whoever returned the sentinel has seen to the rest: a body that waits for a step of its own, or the operation that rejected the request of a body that threw.
     Jump isNotCell = jit.branchIfNotCell(result);
     Jump isNotSentinel = jit.branchIfNotType(result, SentinelType);
-    suspendsConsumer.append(jit.branchTest32(CCallHelpers::Zero, consumer, TrustedImm32(consumerAwaitsPromise)));
+    suspendsConsumer.append(jit.branchTest32(CCallHelpers::Zero, consumer, TrustedImm32(consumerOfStepAwaitsPromise)));
     needsOperation.append(jit.jump());
     isNotSentinel.link(&jit);
     isNotCell.link(&jit);
 
     // What follows is asyncGeneratorDispatchSuspend, asyncGeneratorYield and asyncGeneratorCompleteStep for a step that tryAwaitForStepInProgress and tryFinishStepInProgress finish, with the request of the stub as the only one.
     finishesInEngine.append(jit.branchTestPtr(CCallHelpers::Zero, word));
-    jit.load32(fieldOf(generator, Field::State), word);
-    Jump needsNoAwait = jit.branch32(CCallHelpers::Equal, word, TrustedImm32(hasYieldedWithoutAwait));
-    finishesInEngine.append(jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(suspendedAtYield)));
-    emitBranchIfMayBeThenable(jit, result, word, other, finishesInEngine);
-    needsNoAwait.link(&jit);
-    emitBranchUnlessHolds(jit, noJobIsQueued, { InvalidGPRReg, InvalidGPRReg, word, other }, finishesInEngine);
-    finishesInEngine.append(jit.branch64(CCallHelpers::NotEqual, fieldOf(generator, Field::Queue), TrustedImm64(JSValue::ValueNull)));
-    // The body may have given Object.prototype a "then", which the iterator result that is not made here would inherit.
-    finishesInEngine.append(branchIfRealmWatchpointSetIsNotWatched(jit, OBJECT_OFFSETOF(JSGlobalObject, m_promiseThenWatchpointSet), other));
+    emitBranchUnlessYieldEndsStep(jit, generator, result, word, other, finishesInEngine);
     emitFinishOnlyRequestAtYield(jit, generator, word);
     jit.move(TrustedImm32(static_cast<int32_t>(AsyncGeneratorStepStatus::Yielded)), status);
     jit.emitFunctionEpilogue();
@@ -286,7 +264,7 @@ void generateRunAsyncGeneratorStep(StubAssembler& jit)
 
     // The consumer has to wait. What asyncGeneratorDispatchSuspend does with a yielded value then: it is awaited, and the job behind the await finishes the step.
     finishesInEngine.link(&jit);
-    needsOperation.append(jit.branchTest32(CCallHelpers::NonZero, consumer, TrustedImm32(consumerAwaitsPromise)));
+    needsOperation.append(jit.branchTest32(CCallHelpers::NonZero, consumer, TrustedImm32(consumerOfStepAwaitsPromise)));
     emitAwaitYieldedValue(jit, { generator, result, word, other }, { sent, saved, word, other }, needsOperation);
     suspendsConsumer.append(jit.jump());
 
@@ -311,7 +289,7 @@ void generateRunAsyncGeneratorStep(StubAssembler& jit)
     jit.loadPair64(fp, TrustedImm32(StepFrame::offsetOfDriver), secondOperand, siteWord);
     jit.emitFunctionEpilogue();
     Jump isAsyncGenerator = jit.branchTest32(CCallHelpers::NonZero, consumer, TrustedImm32(consumerIsAsyncGenerator));
-    Jump hasNewSavedFrame = jit.branchTest32(CCallHelpers::NonZero, consumer, TrustedImm32(consumerHasNewSavedFrame));
+    Jump hasNewSavedFrame = jit.branchTest32(CCallHelpers::NonZero, consumer, TrustedImm32(consumerOfStepHasNewSavedFrame));
     jit.move(result, secondOperand);
     checkStubOperands(awaitBySavingFrame(), { secondOperand, siteWord });
     jit.jumpToStub(awaitBySavingFrame());
@@ -376,10 +354,7 @@ static void emitLoadFrameOfWaitingDriver(StubAssembler& jit, WaitingDriver what,
     hasFrame.link(&jit);
 }
 
-static constexpr int32_t flagsOfStep(AsyncGeneratorStepStatus status)
-{
-    return SavedFrame::isEnteredByJobLoopFlag | static_cast<int32_t>(status) << SavedFrame::stepStatusShift;
-}
+static constexpr int32_t flagsOfStep(AsyncGeneratorStepStatus status) { return SavedFrame::isEnteredByJobLoopFlag | static_cast<int32_t>(status) << SavedFrame::stepStatusShift; }
 
 void emitDeliverYieldToSuspendedConsumer(StubAssembler& jit, const YieldDeliveryRegisters& registers, JumpList& slowPath)
 {
@@ -387,14 +362,7 @@ void emitDeliverYieldToSuspendedConsumer(StubAssembler& jit, const YieldDelivery
     RELEASE_ASSERT(noOverlap(yielded, producer, driver, consumerFrame, word, other, instanceGPR));
 
     slowPath.append(jit.branchTest8(CCallHelpers::NonZero, Address(instanceGPR, AOT_INSTANCE_OFFSET(awaitMustSuspend))));
-    jit.load32(fieldOf(producer, Field::State), word);
-    Jump needsNoAwait = jit.branch32(CCallHelpers::Equal, word, TrustedImm32(hasYieldedWithoutAwait));
-    slowPath.append(jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(suspendedAtYield)));
-    emitBranchIfMayBeThenable(jit, yielded, word, other, slowPath);
-    needsNoAwait.link(&jit);
-    emitBranchUnlessHolds(jit, noJobIsQueued, { InvalidGPRReg, InvalidGPRReg, word, other }, slowPath);
-    slowPath.append(jit.branch64(CCallHelpers::NotEqual, fieldOf(producer, Field::Queue), TrustedImm64(JSValue::ValueNull)));
-    slowPath.append(branchIfRealmWatchpointSetIsNotWatched(jit, OBJECT_OFFSETOF(JSGlobalObject, m_promiseThenWatchpointSet), other));
+    emitBranchUnlessYieldEndsStep(jit, producer, yielded, word, other, slowPath);
     jit.load64(fieldOf(producer, Field::ResumePromise), driver);
     emitLoadFrameOfWaitingDriver(jit, WaitingDriver::IsEnteredNext, driver, consumerFrame, word, slowPath);
 
@@ -487,10 +455,7 @@ void emitTakeYieldAwaitedJob(StubAssembler& jit, const GeneratorJobRegisters& re
     jit.move(TrustedImm32(static_cast<int32_t>(ResumeMode::Next)), mode);
 }
 
-StubSignature signatureOfNewGenerator(StubKey)
-{
-    return StubSignature::withGPRResult({ gprOf(StubRegister::A1) });
-}
+StubSignature signatureOfNewGenerator(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1) }); }
 
 // createGenerator where InternalFunction::createSubclassStructure finds the Structure that the closure remembers.
 void generateNewGenerator(StubAssembler& jit)

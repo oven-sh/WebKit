@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="describe" parameters=[{type=string}, {type=number}, {type=null|string}, {type=boolean}] results=[{type=string}] {
-  b0(v0: string, v1: number, v2: null|string, v3: boolean):
     Branch v3 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v4 = StringBuilderBegin

@@ -20,7 +20,6 @@ layout L5 name="Heir"
 # CHECK: layout L4 name="OverSetter" {{*}}initialization=SetAtCreation isUnchangedDuringActivation=true
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = Integer integer=1
     v2 = PropGet v0 key="Object" [isFreeName]
@@ -47,14 +46,12 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v23 = FinishObject v21
     PropSet v23, v1 key="tag" mode=Strict
     Return
-}
-# CHECK-LABEL: function f0 name="main"
 # CHECK: layout=L0 fields=[0]
 # CHECK: = NewObject layout=L1 allocationSite=
 # CHECK: = NewObject layout=L2 allocationSite=
 # CHECK: layout=L4 fields=[0]
+}
 
 function f1 name="tag" kind=Method parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }

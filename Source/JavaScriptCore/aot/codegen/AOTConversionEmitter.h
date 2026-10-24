@@ -15,22 +15,25 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class ConversionEmitter final : public OperationEmitter {
 public:
-    explicit ConversionEmitter(CodeGenerator&);
+    explicit ConversionEmitter(CodeGenerator& generator)
+        : OperationEmitter(generator)
+    {
+    }
 
     // B3 moves code without branches out of a loop and leaves a branch where it stands.
     enum class NumberUnboxing : uint8_t { Branches, ComputesBothSides };
 
-    Boxed box(const OperationContext&, Operand, const Type&);
+    Boxed box(const OperationContext& context, Operand operand, const Type& type) { return box(context, operand, type, isSeldomEntered(context)); }
     // In the arm of an operation that seldom runs, however often its block is entered: a number is boxed by the stub.
-    Boxed boxInArm(const OperationContext&, Operand, const Type&);
+    Boxed boxInArm(const OperationContext& context, Operand operand, const Type& type) { return box(context, operand, type, true); }
     Operand unbox(Boxed, const Type&, Representation, NumberUnboxing = NumberUnboxing::Branches);
     Operand toOptional(Operand, const Type&, Representation);
     // For the code of an operation whose result is produced in one representation and wanted in another.
     Operand inRepresentation(const OperationContext&, Operand produced, const Type& producedType, Representation wanted);
 
     Boxed boxNumber(Number);
-    Boxed boxDouble(Number);
-    Boxed boxNumberByStub(Number);
+    Boxed boxDouble(Number value) { return boxBitsOfPurifiedDouble(purified(value)); }
+    Boxed boxNumberByStub(Number value) { return boxByStub(BoxedNumberForm::Double, value.value()); }
     Boxed boxInteger(Integer, Range);
     Number toNumber(Integer, Range);
     Integer toInteger(Number);
@@ -41,7 +44,7 @@ public:
     // The result, without rounding, of the integer arithmetic that made a number.
     std::optional<Integer> exactIntegerBehind(Number);
     Integer widen(Word32, Range);
-    Word32 narrow(Integer);
+    Word32 narrow(Integer value) { return low32(value); }
     Word32 toInt32(Number);
     Number purified(Number);
 
@@ -52,7 +55,7 @@ public:
     Operand fromBits(Integer, Representation);
     static uint64_t markerBits(uint16_t primitive, Representation);
     Condition isMarker(Operand);
-    Condition isMarker(Operand, uint64_t marker);
+    Condition isMarker(Operand operand, uint64_t marker) { return equal(bitsOf(operand), integer(static_cast<int64_t>(marker))); }
     Condition isAbsent(Operand);
     Operand withoutMarkers(Operand);
 
@@ -73,12 +76,15 @@ public:
 private:
     struct ExactInteger;
     std::optional<ExactInteger> findExactIntegerBehind(LValue number);
+    Operand convertMarkers(Operand source, const Type&, Representation to, std::optional<Operand> unmarked = std::nullopt);
+    Integer integerPartOf(Operand, const Type&);
+    Number numberPartOf(Operand, const Type&);
     Boxed box(const OperationContext&, Operand, const Type&, bool isSeldomEntered);
     Boxed boxOptional(Operand, const Type&, bool isSeldomEntered);
     bool isSeldomEntered(const OperationContext&) const;
     CodeShape shapeAt(const OperationContext& context) const { return m_placeOnEdge ? m_placeOnEdge->shape : context.shape(); }
     Boxed boxByStub(BoxedNumberForm, LValue);
-    Boxed boxBitsOfPurifiedDouble(Number);
+    Boxed boxBitsOfPurifiedDouble(Number value) { return Boxed(m_out.sub(m_out.bitCast(value.value(), B3::Int64), m_numberTag)); }
     Operand unboxOptional(Boxed, const Type&, Representation, NumberUnboxing);
 
     std::optional<PlaceOnEdge> m_placeOnEdge;

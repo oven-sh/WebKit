@@ -14,31 +14,25 @@ function f0 name="narrow" role=Signature results=[{type=anything}] functionTypes
 function f1 name="wide" role=Signature results=[{type=anything}] builtinMembers=[MathFloor]
 function f2 name="onlyBuiltin" role=Signature results=[{type=anything}] builtinMembers=[MathCeil]
 function f3 name="double" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f0] {
-  b0(v0: anything):
     Return v0
 }
 function f4 name="takesNarrow" parameters=[{type=f0 site=w0}] results=[{type=anything}] {
-  b0(v0: f0):
     Return v0
 }
 # CHECK-LABEL: function f4 name="takesNarrow" {{*}}parameters=[{type=function|f3|builtin(MathAbs) site=w0}]
 function f5 name="takesWide" parameters=[{type=undefined|f1 site=w0}] results=[{type=anything}] {
-  b0(v0: undefined|f1):
     Return v0
 }
 # CHECK-LABEL: function f5 name="takesWide" {{*}}parameters=[{type=undefined|function|f3|builtin(MathAbs)|builtin(MathFloor) site=w0}]
 function f6 name="takesOnlyBuiltin" parameters=[{type=f2 site=w0}] results=[{type=anything}] {
-  b0(v0: f2):
     Return v0
 }
 # CHECK-LABEL: function f6 name="takesOnlyBuiltin" {{*}}parameters=[{type=function|builtin(MathCeil) site=w0}]
 function f7 name="converts" parameters=[{type=builtin(MathAbs)}, {type=builtin(MathFloor)}] results=[{type=anything}] {
-  b0(v0: builtin(MathAbs), v1: builtin(MathFloor)):
     v2 = Convert v0 declared={type=f0}
     v3 = Convert v0 declared={type=f1}
     v4 = Convert v1 declared={type=f0}
     Return v4
-}
-# CHECK-LABEL: function f7 name="converts"
 # CHECK-NOT: Check
 # CHECK: Return v1
+}

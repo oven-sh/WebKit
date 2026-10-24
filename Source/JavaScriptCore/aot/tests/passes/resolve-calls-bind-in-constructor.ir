@@ -9,7 +9,6 @@ entry module=m0
 layout L0 kind=Instance name="Worker" constructor=f1 fields=[{key="count" declared={type=anything}}]
 layout L1 kind=Instance name="Patched" constructor=f3 fields=[{key="count" declared={type=anything}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = NewClosure function=f2
@@ -30,11 +29,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v17 = PropGet v16 key="bound"
     v18 = Call v17
     Return
-}
-# CHECK-LABEL: function f0 name="main"
 # CHECK-NOT: IsClosureOf
+}
 function f1 name="Worker" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0 fields=[]
     v3 = PropGet v2 key="run"
@@ -44,19 +41,16 @@ function f1 name="Worker" kind=BaseConstructor flags=[HasNewTarget] results=[{ty
     v7 = Integer integer=1
     PropSet v2, v7 key="count" mode=Strict
     Return v2
-}
-# CHECK-LABEL: function f1 name="Worker"
 # CHECK: [[allocated]]: L0 = NewObject
 # CHECK: [[object]]: L0 = AssumeType [[allocated]] castType=L0
 # CHECK: = NewClosure [[object]] function=[[bound]]
 # CHECK-NOT: CallBuiltin
+}
 function f2 name="run" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="count"
     Return v1
 }
 function f3 name="Patched" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L1
     v2 = NewObject v1 layout=L1 fields=[]
     v3 = PropGet v2 key="run"
@@ -66,23 +60,19 @@ function f3 name="Patched" kind=BaseConstructor flags=[HasNewTarget] results=[{t
     v7 = Integer integer=1
     PropSet v2, v7 key="count" mode=Strict
     Return v2
-}
-# CHECK-LABEL: function f3 name="Patched"
 # CHECK: = AreMembersUnchanged conditions=[{layout=L1 key="run"}
 # CHECK: = NewClosure function=f4 [isHeldByClosureTable]
 # CHECK: frequency=Unlikely:
 # CHECK: = PropGet {{*}} key="run"
 # CHECK: = CallBuiltin {{*}} overload=FunctionPrototypeBind/0
 # CHECK-NOT: NewClosure
+}
 function f4 name="run" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="count"
     Return v1
 }
 function f5 name="patch" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Return
-}
-# CHECK-LABEL: function f5 name="patch"
 # CHECK: function [[bound]] name="run"{{*}}role=BoundFunction captures=[{type=L0}]
 # CHECK: = CallDirect {{*}} function=f2
+}

@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="diamondInLoop" parameters=[{type=boolean}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint

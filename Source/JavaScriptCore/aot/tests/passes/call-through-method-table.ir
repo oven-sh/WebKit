@@ -20,7 +20,6 @@ function f1 name="scaled" kind=Method flags=[HasThis] thisType={type=L0} paramet
     Return v1
 }
 function f2 name="name" kind=Method flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
-  b0(v0: L0):
     Return
 }
 function f3 name="Circle" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
@@ -30,51 +29,40 @@ function f4 name="scaled" kind=Method flags=[HasThis] thisType={type=L1} paramet
     Return v2
 }
 function f5 name="passesNumber" parameters=[{type=undefined|null|L0|L1}, {type=number}] results=[{type=anything}] {
-  b0(v0: undefined|null|L0|L1, v1: number):
     v2 = PropGet v0 key="scaled"
     v3 = Call v2, v0, v1 calleeKey="scaled"
     Return v3
-}
-# CHECK-LABEL: function f5 name="passesNumber"
 # CHECK: [[receiver]]: L0|L1 = RequireObjectCoercible v0
 # CHECK: = CallTable [[receiver]], v1 function=[[typedLookup]] key="scaled" receivers=[L0, L1] entrypoints=[f
 # CHECK-NOT: AreMembersUnchanged
+}
 function f6 name="passesAnything" parameters=[{type=L0|L1}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0|L1, v1: anything):
     v2 = PropGet v0 key="scaled"
     v3 = Call v2, v0, v1 calleeKey="scaled"
     v4 = PropGet v0 key="scaled"
     v5 = Call v4, v0 calleeKey="scaled"
     Return v5
-}
-# CHECK-LABEL: function f6 name="passesAnything"
 # CHECK: = CallTable v0, v1 function=[[boxedLookup]] key="scaled" receivers=[L0, L1]
 # CHECK: = CallTable v0 function=[[lookupWithoutArguments]] key="scaled" receivers=[L0, L1]
+}
 function f7 name="oneMethod" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="name"
     v2 = Call v1, v0 calleeKey="name"
     Return v2
-}
-# CHECK-LABEL: function f7 name="oneMethod"
 # CHECK: = PropGet v0 key="name"
 # CHECK-NEXT: = Call
+}
 function f8 name="tailCall" parameters=[{type=L0|L1}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0|L1, v1: number):
     v2 = PropGet v0 key="scaled"
     v3 = Call v2, v0, v1 calleeKey="scaled"
     ReturnCall v3 requirement=Required
-}
-# CHECK-LABEL: function f8 name="tailCall"
 # CHECK: = PropGet v0 key="scaled"
 # CHECK-NEXT: = Call
+}
 function f9 name="oneLayoutHasAField" parameters=[{type=L0|L1|L2}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0|L1|L2, v1: number):
     v2 = PropGet v0 key="scaled"
     v3 = Call v2, v0, v1 calleeKey="scaled"
     Return v3
-}
-# CHECK-LABEL: function f9 name="oneLayoutHasAField"
 # CHECK: [[isInstance]]: boolean = TypeTest v0 testedType=L0|L1
 # CHECK-NEXT: Branch [[isInstance]]
 # CHECK: ([[instance]]: L0|L1):
@@ -90,3 +78,4 @@ function f9 name="oneLayoutHasAField" parameters=[{type=L0|L1|L2}, {type=number}
 # CHECK-NEXT: [[this]]: L0 = AssumeType v0 castType=L0
 # CHECK: [[result]]: anything = CallDirect [[this]], {{*}} function=f1
 # CHECK-NEXT: ReturnCall [[result]] requirement=Allowed
+}

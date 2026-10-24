@@ -8,7 +8,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="setOfNumbers" parameters=[{type=Set<number, proven, pristine[Names]>}] results=[{type=anything}] {
-  b0(v0: Set<number, proven, pristine[Names]>):
     v1 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -19,8 +18,6 @@ function f0 name="setOfNumbers" parameters=[{type=Set<number, proven, pristine[N
     Branch v4 -> taken b2(), notTaken b1()
   b2():
     Return v5
-}
-# CHECK-LABEL: function f0 name="setOfNumbers"
 # CHECK: [[step0]]: undefined = SetNext v0,
 # CHECK: [[element0]]: undefined|number = ResultAt [[step0]] index=2
 # CHECK: Branch {{*}} -> taken [[found0]](), notTaken {{*}}()
@@ -28,9 +25,9 @@ function f0 name="setOfNumbers" parameters=[{type=Set<number, proven, pristine[N
 # CHECK-NEXT: ValidateType [[element0]] validatedType=number
 # CHECK-NEXT: [[number0]]: number = AssumeType [[element0]] castType=number
 # CHECK-NEXT: = CollectionTable v0
+}
 
 function f1 name="mapOfNumbers" parameters=[{type=Map<number, number, proven, pristine[Names]>}] results=[{type=anything}] {
-  b0(v0: Map<number, number, proven, pristine[Names]>):
     v1 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -41,8 +38,6 @@ function f1 name="mapOfNumbers" parameters=[{type=Map<number, number, proven, pr
     Branch v4 -> taken b2(), notTaken b1()
   b2():
     Return v5
-}
-# CHECK-LABEL: function f1 name="mapOfNumbers"
 # CHECK: [[step1]]: undefined = MapNext v0,
 # CHECK: [[key1]]: undefined|number = ResultAt [[step1]] index=2
 # CHECK-NEXT: [[value1]]: undefined|number = ResultAt [[step1]] index=3
@@ -53,9 +48,9 @@ function f1 name="mapOfNumbers" parameters=[{type=Map<number, number, proven, pr
 # CHECK-NEXT: ValidateType [[value1]] validatedType=number
 # CHECK-NEXT: = AssumeType [[value1]] castType=number
 # CHECK-NEXT: = CollectionTable v0
+}
 
 function f2 name="contentsNotProven" parameters=[{type=Set<number, pristine[Names]>}] results=[{type=anything}] {
-  b0(v0: Set<number, pristine[Names]>):
     v1 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -66,9 +61,8 @@ function f2 name="contentsNotProven" parameters=[{type=Set<number, pristine[Name
     Branch v4 -> taken b2(), notTaken b1()
   b2():
     Return v5
-}
 # Nothing is said about contents that are only expected, so there is nothing to test.
-# CHECK-LABEL: function f2 name="contentsNotProven"
 # CHECK: = SetNext v0,
 # CHECK-NOT: ValidateType
 # CHECK-NOT: AssumeType
+}

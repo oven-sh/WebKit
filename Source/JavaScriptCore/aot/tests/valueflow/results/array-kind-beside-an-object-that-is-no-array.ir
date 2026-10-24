@@ -24,7 +24,6 @@ variable g4 name="holdsFractions" module=m0 declared={type=anything} initializat
 variable g5 name="besideText" module=m0 declared={type=anything} initialization=Undefined
 variable g6 name="holdsText" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = Integer integer=2
     v2 = Double number=1.5
@@ -47,6 +46,5 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="other" results=[{type=anything}] {
-  b0():
     Return
 }

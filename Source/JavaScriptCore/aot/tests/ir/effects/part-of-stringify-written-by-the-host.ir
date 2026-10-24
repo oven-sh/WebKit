@@ -7,7 +7,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Plain" fields=[{key="x" declared={type=number} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
 layout L1 name="ReachedUnknownCode" fields=[{key="x" declared={type=number}}]
 function f0 name="written" parameters=[{type=L0}, {type=L1}, {type=object}, {type=string}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
-  b0(v0: L0, v1: L1, v2: object, v3: string):
     v4 = Undefined
     v5 = StringBuilderBegin
     v6 = CallBuiltin -, v0, v4, v4 overload=JSONStringify/0

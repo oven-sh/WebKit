@@ -9,7 +9,6 @@ variable g0 name="n" module=m0 declared={type=undefined|number} initialization=U
 layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
 
 function f0 name="narrowedValueOnEdge" parameters=[{type=number}, {type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: number, v2: anything):
     PutModuleVariable v0 variable=g0
     v4 = TypeTest v2 testedType=string
     Branch v4 -> taken b1(), notTaken b2(| 0)
@@ -19,15 +18,13 @@ function f0 name="narrowedValueOnEdge" parameters=[{type=number}, {type=number},
   b2(v6):
     v7 = GetModuleVariable variable=g0
     Return v7
-}
-# CHECK-LABEL: function f0 name="narrowedValueOnEdge"
 # CHECK: Branch v4 -> taken b1(), notTaken b2(| 0)
 # CHECK: Jump -> next b2(v2)
 # CHECK: b2(v6{{*}}):
 # CHECK-NEXT: v7: undefined|number = GetModuleVariable variable=g0
+}
 
 function f1 name="guardOnEachEdge" parameters=[{type=number}, {type=number}, {type=object}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: number, v2: object, v3: boolean):
     v4 = ShapeTest v2 layouts=[L0]
     Branch v3 -> taken b1(), notTaken b2()
   b1():
@@ -41,8 +38,7 @@ function f1 name="guardOnEachEdge" parameters=[{type=number}, {type=number}, {ty
     Return v8
   b4():
     Return
-}
-# CHECK-LABEL: function f1 name="guardOnEachEdge"
 # CHECK-COUNT-2: Branch v4 -> taken b3(| 0), notTaken b4()
 # CHECK: b3(v7{{*}}):
 # CHECK-NEXT: v8: undefined|number = GetModuleVariable variable=g0
+}

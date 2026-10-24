@@ -12,14 +12,12 @@ layout L0 name="ValueDescriptor" fields=[{key="value" declared={type=anything} f
 layout L1 name="SetterDescriptor" fields=[{key="set" declared={type=anything} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = CallDirect function=f1
     v1 = CallDirect function=f2
     v2 = CallDirect function=f3
     Return v0
 }
 function f1 name="otherName" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f4
     v1 = Builtin builtin=ObjectDefineProperty
     v2 = String string="name"
@@ -30,7 +28,6 @@ function f1 name="otherName" results=[{type=anything}] {
     Return v6
 }
 function f2 name="sameName" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f5
     v1 = Builtin builtin=ObjectDefineProperty
     v2 = String string="bind"
@@ -41,7 +38,6 @@ function f2 name="sameName" results=[{type=anything}] {
     Return v6
 }
 function f3 name="unknownName" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f6
     v1 = Builtin builtin=ObjectDefineProperty
     v2 = Builtin builtin=MathRandom
@@ -54,18 +50,14 @@ function f3 name="unknownName" results=[{type=anything}] {
     Return v8
 }
 function f4 name="first" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f5 name="second" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f6 name="third" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f7 name="taker" kind=Arrow length=1 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }

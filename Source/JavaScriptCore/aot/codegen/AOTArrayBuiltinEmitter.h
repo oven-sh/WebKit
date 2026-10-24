@@ -20,15 +20,15 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class ArrayBuiltinEmitter final : public BuiltinFamilyEmitter {
 public:
-    explicit ArrayBuiltinEmitter(CodeGenerator&);
+    explicit ArrayBuiltinEmitter(CodeGenerator& generator) : BuiltinFamilyEmitter(generator) { }
 
     void generateArrayAt(const InlineCall&);
     void generateArrayIndexOf(const InlineCall&);
     void generateArrayIncludes(const InlineCall&);
     void generateArrayJoin(const InlineCall&);
     void generateArrayConcat(const InlineCall&);
-    void generateArrayShift(const InlineCall&);
-    void generateArrayPop(const InlineCall&);
+    void generateArrayShift(const InlineCall& call) { removeElementAtEnd(call, true); }
+    void generateArrayPop(const InlineCall& call) { removeElementAtEnd(call, false); }
     bool resultGetsNamedProperties(const InlineCall&);
     void generateArraySlice(const InlineCall&);
     void generateArraySplice(const InlineCall&);
@@ -39,17 +39,11 @@ public:
 private:
     static constexpr size_t maxConcatenatedArrays = 1 + maxInlineConcatOperands;
 
-    struct ConcatOperands {
-        Vector<CellPointer, maxConcatenatedArrays> arrays;
-        Vector<ArrayElements, maxConcatenatedArrays> elements;
-        Vector<Integer, maxConcatenatedArrays> lengths;
-        Integer length;
-    };
+    enum class CopyDirection : bool { Forward, Backward };
 
-    struct ConcatTarget {
-        Pointer storage;
-        Integer capacity;
+    struct ElementRange {
         ArrayElements elements;
+        Integer first;
     };
 
     struct InlineSplice {
@@ -69,23 +63,22 @@ private:
     // The functor ends the block it is called in.
     using SpliceArm = ScopedLambda<void(const InlineSplice&, const ArrayStorageForm&)>;
 
+    ElementAccessEmitter& elements() { return emitter<ElementAccessEmitter>(); }
     bool checkChosenForm(const InlineCall&, bool isHandled);
-    CellPointer receiverOf(const InlineCall&);
+    CellPointer receiverOf(const InlineCall& call) { return in<CellPointer>(call.receiver()); }
     Operand resultFromRawElement(const InlineCall&, const ArrayStorageForm&, Operand rawElement);
     Operand undefinedResult(const InlineCall&);
     ArrayStorageFormList candidateFormsOf(const InlineCall&);
-    void forEachReadableFormOrMiss(const InlineCall&, CellPointer array, const ScopedLambda<void(const ArrayStorageForm&)>&);
-    void forEachWritableFormOrMiss(const InlineCall&, CellPointer array, const ScopedLambda<void(const ArrayStorageForm&)>&);
+    // The mask is arrayStorageTestMask for a read and IndexingShapeAndWritabilityMask for a store.
+    void forEachFormOrMiss(const InlineCall&, CellPointer array, IndexingType mask, const ScopedLambda<void(const ArrayStorageForm&)>&);
 
-    CellPointer joinOrMiss(const InlineCall&);
-    ConcatOperands collectConcatOperands(const InlineCall&, const ArrayStorageForm&);
-    void copyConcatenatedElements(const InlineCall&, const ConcatOperands&, const ConcatTarget&, const ArrayStorageForm&);
+    void removeElementAtEnd(const InlineCall&, bool removesFirst);
+    void copyElements(const ArrayStorageForm&, const ElementRange& source, const ElementRange& target, Integer count, CopyDirection);
     Operand removeFirstElement(const InlineCall&, const ArrayStorageForm&, const ArrayElements&, LBasicBlock isAbsent);
     bool hasIntegerSpliceRange(const InlineCall&);
     std::optional<int64_t> deleteCountOfInlineSplice(const InlineCall&);
     Integer wholeNumberOrElse(ValueID, LBasicBlock isNotWhole);
     void spliceInline(const InlineCall&, Integer start, int64_t removed, LBasicBlock outOfLine, const SpliceArm&);
-    void spliceElements(const InlineCall&, OperandJoin&, const InlineSplice&, const ArrayStorageForm&, LBasicBlock outOfLine);
     // nullopt: an item never fits the form, and the block has ended.
     std::optional<RawItems> rawItemsToInsert(const InlineCall&, const ArrayStorageForm&, LBasicBlock doesNotFit);
     void replaceElements(const InlineCall&, const InlineSplice&, const ArrayStorageForm&, std::span<const Operand> inserted);
@@ -93,15 +86,14 @@ private:
     RemovedPrefix loadRemovedPrefix(const InlineSplice&, const ArrayStorageForm&, unsigned count);
     // Leaves for `otherwise` where the range does not fit the operation, or the operation does not move the elements of such an array.
     Boxed spliceByOperation(const InlineCall&, LBasicBlock otherwise, const CallOptions&);
-    Boxed spliceByFunction(const InlineCall&);
     RemovedPrefix readRemovedPrefix(const InlineCall&, Boxed removedElements, unsigned count);
     Integer indexOfNumber(const InlineCall&, CellPointer array);
     // What the search takes a hole for: indexOf() passes it over, includes() reads undefined there.
     enum class HoleIs : bool { Nothing, Undefined };
     Integer indexOfValueComparedByIdentity(const InlineCall&, CellPointer array, HoleIs);
     Integer indexOfSearched(const InlineCall&, HoleIs);
-    // Ends the block it is called in. The answer for a short vector goes to `found`, a longer one goes to `isLong` with nothing compared.
-    void scanShortVector(const ArrayStorageForm&, const ArrayElements&, Operand searchedRawElement, Join<Integer>& found, LBasicBlock isLong);
+    // The answer for a short vector goes to `found`. The code behind it is reached by a longer one, with nothing compared. Compact code scans nothing.
+    void scanShortVector(const InlineCall&, const ArrayStorageForm&, CellPointer array, Operand searchedRawElement, Join<Integer>& found);
 };
 
 static_assert(sizeof(ArrayBuiltinEmitter) == sizeof(OperationEmitter));

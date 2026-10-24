@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="functionOfNamespace" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Math
     v1 = PropGet v0 key="sign"
     Return v1
@@ -23,7 +22,6 @@ function f0 name="functionOfNamespace" results=[{type=anything}] {
 # CHECK-NEXT: anything = PropGet v0 key="sign"
 
 function f1 name="methodOfPrimitive" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = PropGet v0 key="at"
     Return v1
 }
@@ -39,7 +37,6 @@ function f1 name="methodOfPrimitive" parameters=[{type=string}] results=[{type=a
 # CHECK-NEXT: anything = PropGet v0 key="at"
 
 function f2 name="readAndCall" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = Builtin builtin=Math
     v2 = PropGet v1 key="sign"
     v3 = Call v2, v1, v0 calleeKey="sign"
@@ -67,7 +64,6 @@ function f3 name="expectedReceiver" parameters=[{type=builtin(Math) flags=[IsExp
 # CHECK: = IsBuiltinLocationUnchanged member=MathSign
 
 function f4 name="usesOfOneLocationShareTheTest" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Math
     v1 = PropGet v0 key="sign"
     v2 = PropGet v0 key="sign"
@@ -81,7 +77,6 @@ function f4 name="usesOfOneLocationShareTheTest" results=[{type=anything}] {
 # CHECK-NOT: = IsBuiltinLocationUnchanged
 
 function f5 name="eachLocationHasItsTest" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Math
     v1 = PropGet v0 key="sign"
     v2 = PropGet v0 key="sinh"
@@ -95,22 +90,19 @@ function f5 name="eachLocationHasItsTest" results=[{type=anything}] {
 # CHECK: = IsBuiltinLocationUnchanged member=MathSinh
 
 function f6 name="unknownCodeEndsTheProof" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=Math
     v2 = PropGet v1 key="sign"
     v3 = Call v0
     v4 = PropGet v1 key="sign"
     v5 = NewArray v2, v4 contents=anything
     Return v5
-}
-# CHECK-LABEL: function f6 name="unknownCodeEndsTheProof"
 # CHECK: = IsBuiltinLocationUnchanged member=MathSign
 # CHECK: v2: builtin(MathSign) = Builtin builtin=MathSign
 # CHECK: v3: anything = Call v0
 # CHECK: = IsBuiltinLocationUnchanged member=MathSign
+}
 
 function f7 name="lockedMemberNeedsNoTest" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Math
     v1 = PropGet v0 key="min"
     Return v1
@@ -121,7 +113,6 @@ function f7 name="lockedMemberNeedsNoTest" results=[{type=anything}] {
 # CHECK-NOT: IsBuiltinLocationUnchanged
 
 function f8 name="memberThatChangesOnItsOwn" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Process
     v1 = PropGet v0 key="title"
     Return v1
@@ -135,7 +126,6 @@ function f8 name="memberThatChangesOnItsOwn" results=[{type=anything}] {
 
 # The engine reports an object that the host makes, and a primitive it does not: nobody would know it again. builtin-use-guarded-location-made-by-the-host.ir has the objects
 function f9 name="primitiveCreatedAtFirstRead" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Process
     v1 = PropGet v0 key="pid"
     Return v1
@@ -149,7 +139,6 @@ function f9 name="primitiveCreatedAtFirstRead" results=[{type=anything}] {
 
 # No test of a class whose prototypes may change says that the lookup gets as far as the member
 function f10 name="methodOfInstanceThatIsNeverPristine" parameters=[{type=WeakRef}] results=[{type=anything}] {
-  b0(v0: WeakRef):
     v1 = PropGet v0 key="deref"
     Return v1
 }
@@ -161,7 +150,6 @@ function f10 name="methodOfInstanceThatIsNeverPristine" parameters=[{type=WeakRe
 
 # The store is itself the write
 function f11 name="storeToTheLocation" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     v1 = Builtin builtin=Math
     PropSet v1, v0 key="cbrt" mode=Strict
     Return

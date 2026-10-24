@@ -18,7 +18,6 @@ variable g1 name="Button" module=m0 declared={type=anything} initialization=Unde
 variable g2 name="Keyed" module=m0 declared={type=anything} initialization=Undefined
 variable g3 name="Made" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -54,49 +53,39 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Widget" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2
 }
 function f2 name="Button" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0 homeKind=Object
     v3 = SuperConstruct v2, v1 layout=L1
     Return v3
 }
 function f3 name="Keyed" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L2
     v2 = NewObject v1 layout=L2
     Return v2
 }
 function f4 name="Made" flags=[HasThis] thisType={type=L3 flags=[IsExpected]} results=[{type=anything}] {
-  b0(v0: L3):
     Return
 }
 function f5 name="first" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f6 name="second" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f7 name="computed" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f8 name="third" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f9 name="fourth" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f10 name="use" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g1
     v1 = Construct v0, -
     v2 = PropGet v1 key="first"

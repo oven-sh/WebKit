@@ -18,7 +18,6 @@ data d0 root=Object{layout=L0 members=[{key="a" value=Number{value=1}}]} module=
 data d1 root=Object{layout=L1 members=[{key="inner" value=Object{layout=L0 members=[{key="a" value=Number{value=2}}]}}]} module=m0
 data d2 root=Object{layout=L2 members=[{key="a" value=Number{value=3}}]} module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Data data=d0
     v1 = CallDirect v0 function=f1
     v2 = Data data=d1
@@ -29,18 +28,15 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v1
 }
 function f1 name="read" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="a"
     Return v1
 }
 function f2 name="readInner" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="inner"
     v2 = PropGet v1 key="a"
     Return v2
 }
 function f3 name="readDeleted" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="a"
     Return v1
 }

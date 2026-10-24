@@ -4,23 +4,20 @@
  */
 
 #include "config.h"
-#include "AOTImageSymbols.h"
+#include "AOTImageBuilder.h"
 
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
-#include "AOTCodeIndex.h"
 #include "AOTFunctionDescriptions.h"
 #include "AOTIRProgram.h"
 #include "AOTIdentifierNumbering.h"
-#include "AOTImageBuilder.h"
 #include "AOTProgramTables.h"
 #include "AOTRegExpRequests.h"
 #include "AOTRuntimeTable.h"
 #include "AOTSort.h"
 #include "AOTStubDescriptor.h"
-#include "AOTVector.h"
 #include "AOTWasmModules.h"
 #include <algorithm>
 #include <tuple>
@@ -33,25 +30,11 @@
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringHash.h>
-#include <wtf/text/StringHash.h>
 #include <wtf/text/StringView.h>
 
 namespace JSC { namespace AOT {
 
 using SymbolKind = ImageSymbol::Kind;
-
-static constexpr size_t symbolTableHeaderWords = 4;
-static constexpr size_t symbolTableEntryWords = 3;
-
-namespace {
-
-struct ImageSymbolEntry {
-    uint32_t offset;
-    const String* name;
-    uint32_t nameOffset { 0 };
-};
-
-} // anonymous namespace
 
 static String escapeForMapLine(StringView text)
 {
@@ -63,9 +46,7 @@ static String escapeForMapLine(StringView text)
 
 static String textOf(const Typed::Program& program, StringID id)
 {
-    if (!id)
-        return emptyString();
-    return program.strings.toWTFString(id);
+    return id ? program.strings.toWTFString(id) : emptyString();
 }
 
 static String descriptionOf(const Typed::Program& program, const NumberedIdentifier& identifier)
@@ -84,14 +65,6 @@ static const ImageHeader& headerOf(std::span<const uint8_t> image)
 {
     RELEASE_ASSERT(image.size() >= sizeof(ImageHeader));
     return *reinterpret_cast<const ImageHeader*>(image.data());
-}
-
-static void forEachSymbol(std::span<const ImageSymbol> symbols, SymbolKind kind, NOESCAPE const Invocable<void(const ImageSymbol&)> auto& functor)
-{
-    for (const ImageSymbol& symbol : symbols) {
-        if (symbol.kind == kind)
-            functor(symbol);
-    }
 }
 
 static String functionName(const Typed::Program& program, FunctionID id, const String& description)
@@ -121,234 +94,119 @@ static String stubName(StubKey key)
     return out.toString();
 }
 
-static void appendFunctions(Vector<ImageSymbol>& symbols, const ImageSymbolInputs& inputs)
+Vector<ImageSymbol> collectSymbols(const ImageSymbolInputs& inputs)
 {
     const BuiltImage& built = inputs.built;
-    Vector<String> descriptions = describeFunctions(inputs.program, inputs.heat);
-    auto append = [&](SymbolKind kind, uint32_t position, uint32_t size, FunctionID function) {
-        const String& description = descriptions[function.index()];
-        symbols.append(ImageSymbol { kind, built.layout.bodyStarts[position], size, position, function, functionName(inputs.program, function, description), description });
+    const CodeLayout& layout = built.layout;
+    const SharedCode& sharedCode = built.sharedCode;
+    Vector<ImageSymbol> symbols;
+    auto add = [&](SymbolKind kind, size_t offset, size_t size, String&& name = { }, uint32_t index = 0) {
+        symbols.append(ImageSymbol { kind, safeCast<uint32_t>(offset), safeCast<uint32_t>(size), index, { }, WTF::move(name) });
     };
 
-    symbols.reserveCapacity(symbols.size() + built.functions.size() + built.foldedFunctions.size());
-    for (uint32_t position = 0; position < built.functions.size(); ++position) {
-        const CompiledCode& code = built.functions[position];
-        append(SymbolKind::Function, position, safeCast<uint32_t>(code.body.bytes.size()), code.function);
-    }
-
+    Vector<String> descriptions = describeFunctions(inputs.program, inputs.heat);
+    auto addFunction = [&](SymbolKind kind, uint32_t position, size_t size, FunctionID function) {
+        const String& description = descriptions[function.index()];
+        symbols.append(ImageSymbol { kind, layout.bodyStarts[position], safeCast<uint32_t>(size), position, function, functionName(inputs.program, function, description), description });
+    };
+    symbols.reserveCapacity(built.functions.size() + built.foldedFunctions.size());
+    for (uint32_t position = 0; position < built.functions.size(); ++position)
+        addFunction(SymbolKind::Function, position, built.functions[position].body.bytes.size(), built.functions[position].function);
     CodeIndex index(built.functions.span());
     for (const FoldedFunction& folded : built.foldedFunctions) {
         if (std::optional<uint32_t> canonical = index.indexOf(folded.canonicalFunction))
-            append(SymbolKind::FoldedFunction, *canonical, folded.size, folded.function);
+            addFunction(SymbolKind::FoldedFunction, *canonical, folded.size, folded.function);
     }
-}
 
-static void appendSharedCodeCopies(Vector<ImageSymbol>& symbols, const CodeLayout& layout)
-{
-    for (uint32_t number = 0; number < layout.sharedCodeCopies.size(); ++number) {
-        symbols.append(ImageSymbol {
-            .kind = SymbolKind::SharedCodeCopy,
-            .offset = layout.sharedCodeCopies[number],
-            .size = layout.sharedCodeSize,
-            .index = number,
-            .name = "(stubs of compiled code)"_s,
-        });
-    }
-}
+    for (uint32_t number = 0; number < layout.sharedCodeCopies.size(); ++number)
+        add(SymbolKind::SharedCodeCopy, layout.sharedCodeCopies[number], layout.sharedCodeSize, "(stubs of compiled code)"_s, number);
 
-static void appendStubs(Vector<ImageSymbol>& symbols, const StubBlob& blob)
-{
-    Vector<StubPlacement> placements = blob.placements;
+    Vector<StubPlacement> placements = sharedCode.blob.placements;
     AOT::sort(placements, [](const StubPlacement& a, const StubPlacement& b) {
         return std::tie(a.offset, a.key) < std::tie(b.offset, b.key);
     });
-
     for (size_t first = 0; first < placements.size();) {
         uint32_t offset = placements[first].offset;
         size_t next = first;
         while (next < placements.size() && placements[next].offset == offset)
             ++next;
-        uint32_t end = next < placements.size() ? placements[next].offset : safeCast<uint32_t>(blob.code.bytes.size());
-        for (; first < next; ++first) {
-            symbols.append(ImageSymbol {
-                .kind = SymbolKind::SharedCode,
-                .offset = offset,
-                .size = end - offset,
-                .name = stubName(placements[first].key),
-            });
-        }
+        size_t end = next < placements.size() ? placements[next].offset : sharedCode.blob.code.bytes.size();
+        for (; first < next; ++first)
+            add(SymbolKind::SharedCode, offset, end - offset, stubName(placements[first].key));
     }
-}
 
-static void appendArgumentThunks(Vector<ImageSymbol>& symbols, const SharedCode& sharedCode)
-{
     const ArgumentThunks& thunks = sharedCode.argumentThunks;
     RELEASE_ASSERT(thunks.offsets.size() == sharedCode.argumentMoves.size());
     for (size_t i = 0; i < thunks.offsets.size(); ++i) {
-        uint32_t end = i + 1 < thunks.offsets.size() ? thunks.offsets[i + 1] : safeCast<uint32_t>(thunks.code.bytes.size());
-        symbols.append(ImageSymbol {
-            .kind = SymbolKind::SharedCode,
-            .offset = sharedCode.argumentThunksOffset + thunks.offsets[i],
-            .size = end - thunks.offsets[i],
-            .name = makeString(stubName(StubKey::fromBits(sharedCode.argumentMoves[i]->at(0))), " with arguments"_s),
-        });
+        size_t end = i + 1 < thunks.offsets.size() ? thunks.offsets[i + 1] : thunks.code.bytes.size();
+        add(SymbolKind::SharedCode, sharedCode.argumentThunksOffset + thunks.offsets[i], end - thunks.offsets[i], makeString(stubName(StubKey::fromBits(sharedCode.argumentMoves[i]->at(0))), " with arguments"_s));
     }
-}
 
-static void appendSharedOutlinedBodies(Vector<ImageSymbol>& symbols, const BuiltImage& built)
-{
-    const OutlinedBodies& sharedBodies = built.outlinedCode.sharedBodies;
-    for (uint32_t number = 0; number < built.outlining.bodies.size(); ++number) {
-        if (built.outlining.bodies[number].singleCaller)
+    const Vector<OutlinedBody>& outlinedBodies = built.outlining.bodies;
+    const OutlinedCode& outlinedCode = built.outlinedCode;
+    for (uint32_t number = 0; number < outlinedBodies.size(); ++number) {
+        if (outlinedBodies[number].singleCaller)
             continue;
-        uint32_t indexWithinKind = built.outlinedCode.indexWithinKind[number];
-        symbols.append(ImageSymbol {
-            .kind = SymbolKind::SharedCode,
-            .offset = built.sharedCode.sharedBodiesOffset + sharedBodies.offsets[indexWithinKind],
-            .size = safeCast<uint32_t>(sharedBodies.sizeOf(indexWithinKind)),
-            .name = makeString("outlined "_s, number),
-        });
+        uint32_t indexWithinKind = outlinedCode.indexWithinKind[number];
+        add(SymbolKind::SharedCode, sharedCode.sharedBodiesOffset + outlinedCode.sharedBodies.offsets[indexWithinKind], outlinedCode.sharedBodies.sizeOf(indexWithinKind), makeString("outlined "_s, number));
     }
-}
-
-static void appendSharedCodeVeneers(Vector<ImageSymbol>& symbols, const BuiltImage& built)
-{
-    uint32_t veneersOffset = built.sharedCode.veneersOffset;
-    if (veneersOffset >= built.layout.sharedCodeSize)
-        return;
-    symbols.append(ImageSymbol {
-        .kind = SymbolKind::SharedCode,
-        .offset = veneersOffset,
-        .size = built.layout.sharedCodeSize - veneersOffset,
-        .name = "veneers"_s,
-    });
-}
-
-static void appendOwnOutlinedBodies(Vector<ImageSymbol>& symbols, const BuiltImage& built)
-{
-    const OutlinedBodies& ownBodies = built.outlinedCode.ownBodies;
-    for (uint32_t number = 0; number < built.outlining.bodies.size(); ++number) {
-        OptionalIndex singleCaller = built.outlining.bodies[number].singleCaller;
+    if (sharedCode.veneersOffset < layout.sharedCodeSize)
+        add(SymbolKind::SharedCode, sharedCode.veneersOffset, layout.sharedCodeSize - sharedCode.veneersOffset, "veneers"_s);
+    for (uint32_t number = 0; number < outlinedBodies.size(); ++number) {
+        OptionalIndex singleCaller = outlinedBodies[number].singleCaller;
         if (!singleCaller)
             continue;
-        uint32_t indexWithinKind = built.outlinedCode.indexWithinKind[number];
-        symbols.append(ImageSymbol {
-            .kind = SymbolKind::OwnOutlinedBody,
-            .offset = built.layout.ownBodyOffsets[indexWithinKind],
-            .size = safeCast<uint32_t>(ownBodies.sizeOf(indexWithinKind)),
-            .index = *singleCaller,
-            .name = makeString("outlined "_s, number),
-        });
+        uint32_t indexWithinKind = outlinedCode.indexWithinKind[number];
+        add(SymbolKind::OwnOutlinedBody, layout.ownBodyOffsets[indexWithinKind], outlinedCode.ownBodies.sizeOf(indexWithinKind), makeString("outlined "_s, number), *singleCaller);
     }
-}
 
-static void appendRegExpCode(Vector<ImageSymbol>& symbols, const ImageSymbolInputs& inputs)
-{
-    const RegExpSection& section = inputs.built.regExpSection;
-    if (section.bytes.isEmpty())
-        return;
-
-    uint32_t sectionOffset = inputs.built.layout.regExpCodeOffset;
-    symbols.append(ImageSymbol {
-        .kind = SymbolKind::RegExpSection,
-        .offset = sectionOffset,
-        .size = safeCast<uint32_t>(section.bytes.size()),
-        .name = "(regular expressions)"_s,
-    });
-
-    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> bodySizes;
-    BitVector hasCode(section.entries.size());
-    Vector<ImageSymbol> routines;
-    for (const RegExpSectionItem& item : section.items) {
-        switch (item.kind) {
-        case RegExpSectionItem::Kind::Body:
-            bodySizes.add(item.offset, item.size);
-            hasCode.quickSet(item.regExp);
-            break;
-        case RegExpSectionItem::Kind::DuplicateBody:
-            hasCode.quickSet(item.regExp);
-            break;
-        case RegExpSectionItem::Kind::Routine:
-            routines.append(ImageSymbol { .kind = SymbolKind::RegExpRoutine, .offset = sectionOffset + item.offset, .size = item.size });
-            break;
-        case RegExpSectionItem::Kind::Table:
-            break;
+    if (const RegExpSection& section = built.regExpSection; !section.bytes.isEmpty()) {
+        add(SymbolKind::RegExpSection, layout.regExpCodeOffset, section.bytes.size(), "(regular expressions)"_s);
+        UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> bodySizes;
+        BitVector hasCode(section.entries.size());
+        Vector<ImageSymbol> routines;
+        for (const RegExpSectionItem& item : section.items) {
+            switch (item.kind) {
+            case RegExpSectionItem::Kind::Body:
+                bodySizes.add(item.offset, item.size);
+                hasCode.quickSet(item.regExp);
+                break;
+            case RegExpSectionItem::Kind::DuplicateBody:
+                hasCode.quickSet(item.regExp);
+                break;
+            case RegExpSectionItem::Kind::Routine:
+                routines.append(ImageSymbol { .kind = SymbolKind::RegExpRoutine, .offset = layout.regExpCodeOffset + item.offset, .size = item.size });
+                break;
+            case RegExpSectionItem::Kind::Table:
+                break;
+            }
         }
-    }
-
-    std::span<const RegExpRequest> requests = inputs.regExpRequests.all();
-    for (size_t regExp : hasCode) {
-        String pattern = textOf(inputs.program, requests[regExp].pattern);
-        for (uint32_t is16Bit : { 0u, 1u }) {
-            uint32_t entry = section.entries[regExp][is16Bit];
-            symbols.append(ImageSymbol {
-                .kind = SymbolKind::RegExpBody,
-                .offset = sectionOffset + entry,
-                .size = bodySizes.get(entry),
-                .index = safeCast<uint32_t>(regExp) << 1 | is16Bit,
-                .name = pattern,
-            });
+        for (size_t regExp : hasCode) {
+            String pattern = textOf(inputs.program, inputs.regExpRequests.all()[regExp].pattern);
+            for (uint32_t is16Bit : { 0u, 1u }) {
+                uint32_t entry = section.entries[regExp][is16Bit];
+                add(SymbolKind::RegExpBody, layout.regExpCodeOffset + entry, bodySizes.get(entry), String(pattern), safeCast<uint32_t>(regExp) << 1 | is16Bit);
+            }
         }
+        symbols.appendVector(WTF::move(routines));
     }
-    symbols.appendVector(WTF::move(routines));
-}
 
-static void appendWebAssemblyCode(Vector<ImageSymbol>& symbols, const CodeLayout& layout, const Typed::Program& program)
-{
-    if (!mayHaveWebAssemblyModules(program) || layout.webAssemblyCodeOffset >= layout.ffiCodeOffset)
-        return;
-    symbols.append(ImageSymbol {
-        .kind = SymbolKind::WebAssemblyCode,
-        .offset = layout.webAssemblyCodeOffset,
-        .size = layout.ffiCodeOffset - layout.webAssemblyCodeOffset,
-        .name = "(WebAssembly code)"_s,
-    });
-}
-
-static void appendConstants(Vector<ImageSymbol>& symbols, const BuiltImage& built)
-{
-    if (built.constants.bytes.isEmpty())
-        return;
-    symbols.append(ImageSymbol {
-        .kind = SymbolKind::Constants,
-        .offset = built.layout.constantsOffset,
-        .size = safeCast<uint32_t>(built.constants.bytes.size()),
-        .name = "(constants)"_s,
-    });
-}
-
-static void appendFFICode(Vector<ImageSymbol>& symbols, const CodeLayout& layout)
-{
-    if (!layout.ffiCodeSize)
-        return;
-    symbols.append(ImageSymbol {
-        .kind = SymbolKind::FFICode,
-        .offset = layout.ffiCodeOffset,
-        .size = layout.ffiCodeSize,
-        .name = "(FFI code)"_s,
-    });
-}
-
-Vector<ImageSymbol> collectSymbols(const ImageSymbolInputs& inputs)
-{
-    const BuiltImage& built = inputs.built;
-    Vector<ImageSymbol> symbols;
-    appendFunctions(symbols, inputs);
-    appendSharedCodeCopies(symbols, built.layout);
-    appendStubs(symbols, built.sharedCode.blob);
-    appendArgumentThunks(symbols, built.sharedCode);
-    appendSharedOutlinedBodies(symbols, built);
-    appendSharedCodeVeneers(symbols, built);
-    appendOwnOutlinedBodies(symbols, built);
-    appendRegExpCode(symbols, inputs);
-    appendWebAssemblyCode(symbols, built.layout, inputs.program);
-    appendConstants(symbols, built);
-    appendFFICode(symbols, built.layout);
+    if (mayHaveWebAssemblyModules(inputs.program) && layout.webAssemblyCodeOffset < layout.ffiCodeOffset)
+        add(SymbolKind::WebAssemblyCode, layout.webAssemblyCodeOffset, layout.ffiCodeOffset - layout.webAssemblyCodeOffset, "(WebAssembly code)"_s);
+    if (!built.constants.bytes.isEmpty())
+        add(SymbolKind::Constants, layout.constantsOffset, built.constants.bytes.size(), "(constants)"_s);
+    if (layout.ffiCodeSize)
+        add(SymbolKind::FFICode, layout.ffiCodeOffset, layout.ffiCodeSize, "(FFI code)"_s);
     return symbols;
 }
 
-static Vector<ImageSymbolEntry> collectTableEntries(std::span<const ImageSymbol> symbols)
+Vector<uint8_t> encodeSymbols(std::span<const ImageSymbol> symbols, std::span<const uint8_t> image)
 {
+    struct Entry {
+        uint32_t offset;
+        const String* name;
+        uint32_t nameOffset { 0 };
+    };
     Vector<uint32_t, 4> sharedCodeCopies;
     bool hasSharedCode = false;
     for (const ImageSymbol& symbol : symbols) {
@@ -357,7 +215,7 @@ static Vector<ImageSymbolEntry> collectTableEntries(std::span<const ImageSymbol>
         hasSharedCode |= symbol.kind == SymbolKind::SharedCode;
     }
 
-    Vector<ImageSymbolEntry> entries;
+    Vector<Entry> entries;
     entries.reserveInitialCapacity(symbols.size());
     for (const ImageSymbol& symbol : symbols) {
         switch (symbol.kind) {
@@ -366,15 +224,15 @@ static Vector<ImageSymbolEntry> collectTableEntries(std::span<const ImageSymbol>
         case SymbolKind::WebAssemblyCode:
         case SymbolKind::Constants:
         case SymbolKind::FFICode:
-            entries.append(ImageSymbolEntry { symbol.offset, &symbol.name });
+            entries.append(Entry { symbol.offset, &symbol.name });
             break;
         case SymbolKind::SharedCode:
             for (uint32_t sharedCodeCopy : sharedCodeCopies)
-                entries.append(ImageSymbolEntry { sharedCodeCopy + symbol.offset, &symbol.name });
+                entries.append(Entry { sharedCodeCopy + symbol.offset, &symbol.name });
             break;
         case SymbolKind::SharedCodeCopy:
             if (!hasSharedCode)
-                entries.append(ImageSymbolEntry { symbol.offset, &symbol.name });
+                entries.append(Entry { symbol.offset, &symbol.name });
             break;
         case SymbolKind::FoldedFunction:
         case SymbolKind::OwnOutlinedBody:
@@ -383,20 +241,12 @@ static Vector<ImageSymbolEntry> collectTableEntries(std::span<const ImageSymbol>
             break;
         }
     }
-    return entries;
-}
-
-Vector<uint8_t> encodeSymbols(std::span<const ImageSymbol> symbols, std::span<const uint8_t> image)
-{
-    const ImageHeader& header = headerOf(image);
-
-    Vector<ImageSymbolEntry> entries = collectTableEntries(symbols);
-    AOT::stableSort(entries, { }, &ImageSymbolEntry::offset);
-    entries.shrink(std::ranges::unique(entries, { }, &ImageSymbolEntry::offset).begin() - entries.begin());
+    AOT::stableSort(entries, { }, &Entry::offset);
+    entries.shrink(std::ranges::unique(entries, { }, &Entry::offset).begin() - entries.begin());
 
     Vector<uint8_t> names;
     UncheckedKeyHashMap<String, uint32_t> nameOffsets;
-    for (ImageSymbolEntry& entry : entries) {
+    for (Entry& entry : entries) {
         entry.nameOffset = nameOffsets.ensure(*entry.name, [&] {
             uint32_t offset = safeCast<uint32_t>(names.size());
             names.append(byteCast<uint8_t>(entry.name->utf8().span()));
@@ -405,122 +255,37 @@ Vector<uint8_t> encodeSymbols(std::span<const ImageSymbol> symbols, std::span<co
         }).iterator->value;
     }
 
+    const ImageHeader& header = headerOf(image);
     Vector<uint8_t> result;
-    auto appendWord = [&](uint32_t word) {
+    auto appendWord = [&](uint64_t word) {
         for (unsigned shift = 0; shift < 32; shift += 8)
-            result.append(static_cast<uint8_t>(word >> shift));
+            result.append(static_cast<uint8_t>(safeCast<uint32_t>(word) >> shift));
     };
-    result.reserveInitialCapacity((symbolTableHeaderWords + entries.size() * symbolTableEntryWords) * sizeof(uint32_t) + names.size());
-    appendWord(safeCast<uint32_t>(entries.size()));
-    appendWord(safeCast<uint32_t>(names.size()));
-    appendWord(safeCast<uint32_t>(header.codeOffset));
-    appendWord(safeCast<uint32_t>(header.size - header.codeOffset));
-    uint32_t codeSize = safeCast<uint32_t>(header.codeSize);
+    result.reserveInitialCapacity((4 + entries.size() * 3) * sizeof(uint32_t) + names.size());
+    appendWord(entries.size());
+    appendWord(names.size());
+    appendWord(header.codeOffset);
+    appendWord(header.size - header.codeOffset);
     for (size_t i = 0; i < entries.size(); ++i) {
         appendWord(entries[i].offset);
-        appendWord((i + 1 < entries.size() ? entries[i + 1].offset : codeSize) - entries[i].offset);
+        appendWord((i + 1 < entries.size() ? entries[i + 1].offset : safeCast<uint32_t>(header.codeSize)) - entries[i].offset);
         appendWord(entries[i].nameOffset);
     }
     result.appendVector(names);
     return result;
 }
 
-static void printFunctionColumns(PrintStream& out, const ImageSymbol& symbol, const Typed::Program& program)
+static unsigned countDescribedTypes(std::span<const uint8_t> tableBytes)
 {
-    const Typed::Function& function = program.at(symbol.function);
-    uint32_t module = function.module ? function.module.index() + 1 : 0;
-    out.println(symbol.offset, "\t", symbol.size, "\t", module, "\t", symbol.function.index(), "\t", static_cast<unsigned>(function.role), "\t", symbol.description);
-}
-
-static void printFunctions(PrintStream& out, std::span<const ImageSymbol> symbols, const LinkedFunctions& functions, const Typed::Program& program)
-{
-    forEachSymbol(symbols, SymbolKind::Function, [&](const ImageSymbol& symbol) {
-        const CompiledCode& code = functions[symbol.index];
-        out.print("F\t", symbol.index, "\t");
-        printFunctionColumns(out, symbol, program);
-        if (!code.sizesByOperation.isNull())
-            out.println("O\t", symbol.index, code.sizesByOperation);
-    });
-    forEachSymbol(symbols, SymbolKind::FoldedFunction, [&](const ImageSymbol& symbol) {
-        out.print("A\t");
-        printFunctionColumns(out, symbol, program);
-    });
-}
-
-static void printSharedCode(PrintStream& out, std::span<const ImageSymbol> symbols, const StubBlob& blob)
-{
-    forEachSymbol(symbols, SymbolKind::SharedCodeCopy, [&](const ImageSymbol& symbol) {
-        out.println("C\t", symbol.offset);
-    });
-    forEachSymbol(symbols, SymbolKind::SharedCode, [&](const ImageSymbol& symbol) {
-        out.println("T\t", symbol.offset, "\t", symbol.name);
-    });
-    for (const StubPlacement& placement : blob.placements) {
-        if (neverReturns(placement.key))
-            out.println("TN\t", placement.offset);
-    }
-}
-
-static void printOutlining(PrintStream& out, std::span<const ImageSymbol> symbols, const Outlining& outlining, const OutlinedCode& outlinedCode)
-{
-    if (!outlining.bodies.isEmpty())
-        out.println("Y\tO holds offsets of the functions before outlining");
-    forEachSymbol(symbols, SymbolKind::OwnOutlinedBody, [&](const ImageSymbol& symbol) {
-        out.println("U\t", symbol.offset, "\t", symbol.size, "\t", symbol.index, "\t", symbol.name);
-    });
-    for (size_t position = 0; position < outlining.sites.size(); ++position) {
-        if (outlining.sites[position].isEmpty())
-            continue;
-        out.print("P\t", position);
-        for (const OutlinedSite& site : outlining.sites[position])
-            out.print("\t", site.offset, "\t", site.length, "\t", site.body);
-        out.println();
-        if (outlinedCode.paddingBeforeAliases[position].isEmpty())
-            continue;
-        out.print("E\t", position);
-        for (auto [offset, size] : outlinedCode.paddingBeforeAliases[position])
-            out.print("\t", offset, "\t", size);
-        out.println();
-    }
-}
-
-static void printTables(PrintStream& out, std::span<const uint8_t> image, const Typed::Program& program, const IdentifierNumbering& identifiers)
-{
-    ImageSectionRange range = headerOf(image).sections[static_cast<size_t>(ImageSection::ProgramTables)];
-    constexpr unsigned layoutsWithMessageData = 0;
+    if (tableBytes.empty())
+        return 0;
+    auto& tables = *reinterpret_cast<const ProgramTables*>(tableBytes.data());
+    Vector<uint32_t> typeOffsets(tables.types().subspan(1 + ProgramTables::numberOfTypeGroupWords(tables.numberOfTypes())));
+    AOT::sort(typeOffsets);
     unsigned describedTypes = 0;
-    if (range.size) {
-        auto& tables = *reinterpret_cast<const ProgramTables*>(image.subspan(range.offset, range.size).data());
-        Vector<uint32_t> typeOffsets(tables.types().subspan(1 + ProgramTables::numberOfTypeGroupWords(tables.numberOfTypes())));
-        AOT::sort(typeOffsets);
-        for (size_t i = 0; i < typeOffsets.size(); ++i)
-            describedTypes += typeOffsets[i] && (!i || typeOffsets[i] != typeOffsets[i - 1]);
-    }
-    out.println("Z\t", range.size, "\t", layoutsWithMessageData, "\t", describedTypes);
-
-    for (uint32_t number = 1; number < identifiers.count(); ++number)
-        out.println("I\t", number, "\t", escapeForMapLine(descriptionOf(program, identifiers.at(number))));
-}
-
-static void printRegExps(PrintStream& out, std::span<const ImageSymbol> symbols, const RegExpRequests& requests, const Typed::Program& program)
-{
-    forEachSymbol(symbols, SymbolKind::RegExpBody, [&](const ImageSymbol& symbol) {
-        const RegExpRequest& request = requests.all()[symbol.index >> 1];
-        out.println("X\t", symbol.offset, "\t", symbol.size, "\t", symbol.index & 1 ? 16 : 8, "\t", request.flags.toRaw(), "\t", escapeForMapLine(textOf(program, request.pattern)));
-    });
-    forEachSymbol(symbols, SymbolKind::RegExpRoutine, [&](const ImageSymbol& symbol) {
-        out.println("XR\t", symbol.offset, "\t", symbol.size);
-    });
-}
-
-static void printConstantsAndFFICode(PrintStream& out, std::span<const ImageSymbol> symbols)
-{
-    forEachSymbol(symbols, SymbolKind::Constants, [&](const ImageSymbol& symbol) {
-        out.println("K\t", symbol.offset, "\t", symbol.size);
-    });
-    forEachSymbol(symbols, SymbolKind::FFICode, [&](const ImageSymbol& symbol) {
-        out.println("N\t", symbol.offset, "\t", symbol.size);
-    });
+    for (size_t i = 0; i < typeOffsets.size(); ++i)
+        describedTypes += typeOffsets[i] && (!i || typeOffsets[i] != typeOffsets[i - 1]);
+    return describedTypes;
 }
 
 void writeMapFile(const UTF8CString& path, std::span<const ImageSymbol> symbols, const ImageSymbolInputs& inputs, std::span<const uint8_t> image, const BuildContext& context)
@@ -540,13 +305,78 @@ void writeMapFile(const UTF8CString& path, std::span<const ImageSymbol> symbols,
     }
     PrintStream& out = *map;
     const BuiltImage& built = inputs.built;
-    printFunctions(out, symbols, built.functions, inputs.program);
-    printSharedCode(out, symbols, built.sharedCode.blob);
-    printOutlining(out, symbols, built.outlining, built.outlinedCode);
+    const Typed::Program& program = inputs.program;
+    auto forEachSymbol = [&](SymbolKind kind, const auto& functor) {
+        for (const ImageSymbol& symbol : symbols) {
+            if (symbol.kind == kind)
+                functor(symbol);
+        }
+    };
+    auto printFunctionColumns = [&](const ImageSymbol& symbol) {
+        const Typed::Function& function = program.at(symbol.function);
+        out.println(symbol.offset, "\t", symbol.size, "\t", function.module ? function.module.index() + 1 : 0, "\t", symbol.function.index(), "\t", static_cast<unsigned>(function.role), "\t", symbol.description);
+    };
+    auto printOffsetAndSize = [&](SymbolKind kind, ASCIILiteral letters) {
+        forEachSymbol(kind, [&](const ImageSymbol& symbol) {
+            out.println(letters, "\t", symbol.offset, "\t", symbol.size);
+        });
+    };
+
+    forEachSymbol(SymbolKind::Function, [&](const ImageSymbol& symbol) {
+        out.print("F\t", symbol.index, "\t");
+        printFunctionColumns(symbol);
+        if (const String& sizes = built.functions[symbol.index].sizesByOperation; !sizes.isNull())
+            out.println("O\t", symbol.index, sizes);
+    });
+    forEachSymbol(SymbolKind::FoldedFunction, [&](const ImageSymbol& symbol) {
+        out.print("A\t");
+        printFunctionColumns(symbol);
+    });
+
+    forEachSymbol(SymbolKind::SharedCodeCopy, [&](const ImageSymbol& symbol) {
+        out.println("C\t", symbol.offset);
+    });
+    forEachSymbol(SymbolKind::SharedCode, [&](const ImageSymbol& symbol) {
+        out.println("T\t", symbol.offset, "\t", symbol.name);
+    });
+    for (const StubPlacement& placement : built.sharedCode.blob.placements) {
+        if (neverReturns(placement.key))
+            out.println("TN\t", placement.offset);
+    }
+
+    if (!built.outlining.bodies.isEmpty())
+        out.println("Y\tO holds offsets of the functions before outlining");
+    forEachSymbol(SymbolKind::OwnOutlinedBody, [&](const ImageSymbol& symbol) {
+        out.println("U\t", symbol.offset, "\t", symbol.size, "\t", symbol.index, "\t", symbol.name);
+    });
+    for (size_t position = 0; position < built.outlining.sites.size(); ++position) {
+        if (built.outlining.sites[position].isEmpty())
+            continue;
+        out.print("P\t", position);
+        for (const OutlinedSite& site : built.outlining.sites[position])
+            out.print("\t", site.offset, "\t", site.length, "\t", site.body);
+        out.println();
+        if (built.outlinedCode.paddingBeforeAliases[position].isEmpty())
+            continue;
+        out.print("E\t", position);
+        for (auto [offset, size] : built.outlinedCode.paddingBeforeAliases[position])
+            out.print("\t", offset, "\t", size);
+        out.println();
+    }
     out.println("R\t", built.layout.functionsEnd);
-    printTables(out, image, inputs.program, context.identifierNumbering());
-    printRegExps(out, symbols, inputs.regExpRequests, inputs.program);
-    printConstantsAndFFICode(out, symbols);
+
+    ImageSectionRange tables = headerOf(image).sections[static_cast<size_t>(ImageSection::ProgramTables)];
+    out.println("Z\t", tables.size, "\t0\t", countDescribedTypes(image.subspan(tables.offset, tables.size)));
+    const IdentifierNumbering& identifiers = context.identifierNumbering();
+    for (uint32_t identifier = 1; identifier < identifiers.count(); ++identifier)
+        out.println("I\t", identifier, "\t", escapeForMapLine(descriptionOf(program, identifiers.at(identifier))));
+
+    forEachSymbol(SymbolKind::RegExpBody, [&](const ImageSymbol& symbol) {
+        out.println("X\t", symbol.offset, "\t", symbol.size, "\t", symbol.index & 1 ? 16 : 8, "\t", inputs.regExpRequests.all()[symbol.index >> 1].flags.toRaw(), "\t", escapeForMapLine(symbol.name));
+    });
+    printOffsetAndSize(SymbolKind::RegExpRoutine, "XR"_s);
+    printOffsetAndSize(SymbolKind::Constants, "K"_s);
+    printOffsetAndSize(SymbolKind::FFICode, "N"_s);
     if (!inputs.arrivalSites.isNull())
         out.print(inputs.arrivalSites);
     out.println("B\t", built.layout.codeSize);

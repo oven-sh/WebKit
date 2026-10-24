@@ -5,13 +5,11 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="isWanted" kind=Arrow parameters=[{type=anything}] results=[{type=boolean}] {
-  b0(v0: anything):
     v1 = Undefined
     v2 = StrictEq v0, v1
     Return v2
 }
 function f1 name="one-known-callee" parameters=[{type=anything}, {type=boolean}] results=[{type=boolean}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewClosure function=f0
     Jump -> next b1()
   b1():

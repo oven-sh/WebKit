@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="bothFresh" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewArray contents=anything
     v3 = NewArray contents=anything
     Jump -> next b1()
@@ -34,8 +33,6 @@ function f0 name="bothFresh" parameters=[{type=anything}, {type=boolean}] result
     Branch v1 -> taken b1(), notTaken b8()
   b8():
     Return
-}
-# CHECK-LABEL: function f0 name="bothFresh"
 # CHECK-NOT: IsPristine
 # CHECK: b3():
 # CHECK-NEXT: Unreachable
@@ -43,9 +40,9 @@ function f0 name="bothFresh" parameters=[{type=anything}, {type=boolean}] result
 # CHECK: b6():
 # CHECK-NEXT: Unreachable
 # CHECK-NOT: IsPristine
+}
 
 function f1 name="oneFromParameter" parameters=[{type=anything}, {type=boolean}, {type=Array<anything>}] results=[{type=undefined}] {
-  b0(v0: anything, v1: boolean, v2: Array<anything>):
     v3 = NewArray contents=anything
     Jump -> next b1()
   b1():
@@ -73,15 +70,13 @@ function f1 name="oneFromParameter" parameters=[{type=anything}, {type=boolean},
     Branch v1 -> taken b1(), notTaken b8()
   b8():
     Return
-}
-# CHECK-LABEL: function f1 name="oneFromParameter"
 # CHECK: v5: boolean = IsPristine v3 builtinClass=Array aspects=[Storage, Names]
 # CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b3()
 # CHECK: v10: boolean = IsPristine v2 builtinClass=Array aspects=[Storage, Names]
 # CHECK-NEXT: Branch v10 -> taken b5(| 0), notTaken b6()
+}
 
 function f2 name="testBehindFoldedFailingEdge" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray contents=anything
     v2 = IsPristine v1 builtinClass=Array aspects=[Storage, Names]
     Branch v2 -> taken b1(| 0), notTaken b2()
@@ -102,11 +97,10 @@ function f2 name="testBehindFoldedFailingEdge" parameters=[{type=anything}] resu
     Jump -> next b6(v10)
   b6(v11):
     Return v11
-}
-# CHECK-LABEL: function f2 name="testBehindFoldedFailingEdge"
 # CHECK: [[guard2]]: guard = AllGuards v1
 # CHECK-NEXT: Jump -> next b1([[guard2]])
 # CHECK-NOT: IsPristine
 # CHECK: b2():
 # CHECK-NEXT: Unreachable
 # CHECK-NOT: IsPristine
+}

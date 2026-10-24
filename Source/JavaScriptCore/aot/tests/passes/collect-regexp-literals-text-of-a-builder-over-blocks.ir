@@ -9,7 +9,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="oneArmIsNeverTaken" results=[{type=anything}] {
-  b0():
     v0 = String string="[0-9]+"
     v1 = TypeTest v0 testedType=string
     TestAndBranch v1 -> taken b1(), notTaken b2()
@@ -34,7 +33,6 @@ function f0 name="oneArmIsNeverTaken" results=[{type=anything}] {
 }
 
 function f1 name="twoArmsFillIt" parameters=[{type=boolean}] results=[{type=anything}] {
-  b0(v0: boolean):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v1 = StringBuilderBegin

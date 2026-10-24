@@ -8,7 +8,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="read" parameters=[{type=Uint8Array}, {type=number}] results=[{type=anything}] {
-  b0(v0: Uint8Array, v1: number):
     v2 = ElemGet v0, v1
     Return v2
 }
@@ -35,7 +34,6 @@ function f0 name="read" parameters=[{type=Uint8Array}, {type=number}] results=[{
 # DIRECT-NEXT: Return [[generic0]]
 
 function f1 name="readAtInteger" parameters=[{type=Uint8Array}, {type=int[0, 1000]}] results=[{type=anything}] {
-  b0(v0: Uint8Array, v1: int[0, 1000]):
     v2 = ElemGet v0, v1
     Return v2
 }
@@ -51,7 +49,6 @@ function f1 name="readAtInteger" parameters=[{type=Uint8Array}, {type=int[0, 100
 
 # A store outside a typed array does nothing, and no program relies on that
 function f2 name="store" parameters=[{type=Uint8Array}, {type=number}, {type=number}] results=[{type=undefined}] {
-  b0(v0: Uint8Array, v1: number, v2: number):
     ElemSet v0, v1, v2
     Return
 }
@@ -70,7 +67,6 @@ function f2 name="store" parameters=[{type=Uint8Array}, {type=number}, {type=num
 # DIRECT-NEXT: ElemSet v0, v1, v2
 
 function f3 name="floats" parameters=[{type=Float64Array}, {type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: Float64Array, v1: number, v2: number):
     ElemSet v0, v1, v2
     v4 = ElemGet v0, v1
     Return v4
@@ -87,7 +83,6 @@ function f3 name="floats" parameters=[{type=Float64Array}, {type=number}, {type=
 # DIRECT-NEXT: v4: number = GetTypedArrayElement v0, v1, [[inside3]] typedArrayType=10 level=Proven [isInsideView]
 
 function f4 name="halfFloats" parameters=[{type=Float16Array}, {type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: Float16Array, v1: number, v2: number):
     ElemSet v0, v1, v2
     v4 = ElemGet v0, v1
     Return v4
@@ -108,7 +103,6 @@ function f4 name="halfFloats" parameters=[{type=Float16Array}, {type=number}, {t
 # DIRECT-NEXT: }
 
 function f5 name="bigIntegers" parameters=[{type=BigInt64Array}, {type=number}, {type=bigint}] results=[{type=anything}] {
-  b0(v0: BigInt64Array, v1: number, v2: bigint):
     ElemSet v0, v1, v2
     v4 = ElemGet v0, v1
     Return v4
@@ -130,7 +124,6 @@ function f5 name="bigIntegers" parameters=[{type=BigInt64Array}, {type=number}, 
 
 # b[k] === undefined
 function f6 name="comparedWithUndefined" parameters=[{type=Uint8Array}, {type=number}] results=[{type=boolean}] {
-  b0(v0: Uint8Array, v1: number):
     v2 = ElemGet v0, v1
     v3 = Undefined
     v4 = StrictEq v2, v3

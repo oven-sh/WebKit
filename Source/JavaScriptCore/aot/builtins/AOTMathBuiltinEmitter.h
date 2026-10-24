@@ -8,7 +8,6 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinFamilyEmitter.h"
-#include "AOTSchemaInlineBuiltins.h"
 #include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -17,36 +16,8 @@ class MathBuiltinEmitter final : public BuiltinFamilyEmitter {
 public:
     explicit MathBuiltinEmitter(CodeGenerator&);
 
-    void generateMathMinOfArray(const InlineCall&);
-    void generateMathMaxOfArray(const InlineCall&);
-    void generateCallNumberConstructor(const InlineCall&);
+    FOR_EACH_AOT_INLINE_BUILTIN_IN_MATH_BUILTIN(AOT_DECLARE_INLINE_BUILTIN_GENERATOR)
     Number stringToNumber(const InlineCall&, CellPointer string);
-    void generateNumberToString(const InlineCall&);
-    void generateParseInt(const InlineCall&);
-    void generateMathAbs(const InlineCall&);
-    void generateMathFloor(const InlineCall&);
-    void generateMathCeil(const InlineCall&);
-    void generateMathTrunc(const InlineCall&);
-    void generateMathRound(const InlineCall&);
-    void generateMathFround(const InlineCall&);
-    void generateMathF16Round(const InlineCall&);
-    void generateMathSqrt(const InlineCall&);
-    void generateMathPow(const InlineCall&);
-    void generateMathMin(const InlineCall&);
-    void generateMathMax(const InlineCall&);
-    void generateMathImul(const InlineCall&);
-    void generateMathClz32(const InlineCall&);
-    void generateMathSign(const InlineCall&);
-    void generateMathFunction(const InlineCall&);
-    void generateMathATan2(const InlineCall&);
-    void generateMathHypot(const InlineCall&);
-    void generateIsNaN(const InlineCall&);
-    void generateIsFinite(const InlineCall&);
-    void generateNumberIsNaN(const InlineCall&);
-    void generateNumberIsFinite(const InlineCall&);
-    void generateNumberIsInteger(const InlineCall&);
-    void generateNumberIsSafeInteger(const InlineCall&);
-    void generateMathRandom(const InlineCall&);
 
 private:
     enum class Rounding : uint8_t { Floor, Ceil, Trunc, Round };

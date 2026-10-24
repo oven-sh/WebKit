@@ -9,7 +9,6 @@ layout L0 name="CreatedLate" fields=[{key="required" declared={type=number} flag
 layout L1 name="ListedAtCreation" fields=[{key="required" declared={type=number} flags=[IsRequired]}, {key="listed0" declared={type=undefined|number}}, {key="listed1" declared={type=undefined|number}}, {key="listed2" declared={type=undefined|number}}, {key="listed3" declared={type=undefined|number}}, {key="listed4" declared={type=undefined|number}}, {key="listed5" declared={type=undefined|number}}, {key="listed6" declared={type=undefined|number}}, {key="listed7" declared={type=undefined|number}}, {key="listed8" declared={type=undefined|number}}, {key="listed9" declared={type=undefined|number}}, {key="listed10" declared={type=undefined|number}}, {key="listed11" declared={type=undefined|number}}, {key="listed12" declared={type=undefined|number}}, {key="listed13" declared={type=undefined|number}}, {key="listed14" declared={type=undefined|number}}, {key="listed15" declared={type=undefined|number}}, {key="listed16" declared={type=undefined|number}}, {key="listed17" declared={type=undefined|number}}, {key="listed18" declared={type=undefined|number}}, {key="listed19" declared={type=undefined|number}}]
 layout L2 name="FilledInEveryObject" fields=[{key="required" declared={type=number} flags=[IsRequired]}, {key="filled0" declared={type=undefined|number}}, {key="filled1" declared={type=undefined|number}}, {key="filled2" declared={type=undefined|number}}, {key="filled3" declared={type=undefined|number}}, {key="filled4" declared={type=undefined|number}}, {key="filled5" declared={type=undefined|number}}, {key="filled6" declared={type=undefined|number}}, {key="filled7" declared={type=undefined|number}}, {key="filled8" declared={type=undefined|number}}, {key="filled9" declared={type=undefined|number}}, {key="filled10" declared={type=undefined|number}}, {key="filled11" declared={type=undefined|number}}, {key="filled12" declared={type=undefined|number}}, {key="filled13" declared={type=undefined|number}}, {key="filled14" declared={type=undefined|number}}, {key="filled15" declared={type=undefined|number}}, {key="filled16" declared={type=undefined|number}}, {key="filled17" declared={type=undefined|number}}, {key="filled18" declared={type=undefined|number}}, {key="filled19" declared={type=undefined|number}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=MathRandom
     v1 = Call v0
     v2 = ToNumber v1
@@ -40,42 +39,36 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="storeNumbers" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
 # REPEAT: i = 0..19
     PropSet v0, v1 key="late%(i)"
 # END REPEAT
     Return
 }
 function f2 name="storeStrings" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
-  b0(v0: anything, v1: string):
 # REPEAT: i = 0..19
     PropSet v0, v1 key="late%(i)"
 # END REPEAT
     Return
 }
 function f3 name="storeNumbersInListed" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
 # REPEAT: i = 0..19
     PropSet v0, v1 key="listed%(i)"
 # END REPEAT
     Return
 }
 function f4 name="storeStringsInListed" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
-  b0(v0: anything, v1: string):
 # REPEAT: i = 0..19
     PropSet v0, v1 key="listed%(i)"
 # END REPEAT
     Return
 }
 function f5 name="storeNumbersInFilled" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
 # REPEAT: i = 0..19
     PropSet v0, v1 key="filled%(i)"
 # END REPEAT
     Return
 }
 function f6 name="storeStringsInFilled" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
-  b0(v0: anything, v1: string):
 # REPEAT: i = 0..19
     PropSet v0, v1 key="filled%(i)"
 # END REPEAT

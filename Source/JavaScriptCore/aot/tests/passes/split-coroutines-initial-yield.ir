@@ -6,26 +6,22 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="suspendsAtOnce" flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] {
-  b0(v0: function, v1: anything):
     InitialYield @10
     v3 = Call v1 @11
     Return v3
 }
 function f1 name="callsFirst" flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] {
-  b0(v0: function, v1: anything):
     v2 = Call v1 @20
     InitialYield @21
     v4 = Call v2 @22
     Return v4
 }
 function f2 name="asyncGenerator" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
-  b0(v0: function, v1: anything):
     InitialYield @30
     v3 = Call v1 @31
     Return v3
 }
 function f3 name="yieldsWithModeArms" flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] {
-  b0(v0: function, v1: anything):
     InitialYield @40
     v3 = Yield v1 @41
     v4 = ResultAt v3 index=0
@@ -52,11 +48,9 @@ function f3 name="yieldsWithModeArms" flags=[IsGenerator, TakesCallee] parameter
     Return v4
 }
 function f4 name="throwsBeforeItsInitialYield" flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] {
-  b0(v0: function, v1: anything):
     Throw v1
 }
 function f5 name="suspendsInLaterBlock" flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] {
-  b0(v0: function, v1: anything):
     v2 = TypeTest v1 testedType=undefined
     Branch v2 -> taken b1(), notTaken b2(v1)
   b1():

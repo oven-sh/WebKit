@@ -24,7 +24,6 @@ layout L2 name="Other"
 variable g0 name="picked" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="tools" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = NewClosure function=f3
     v2 = NewClosure function=f4
@@ -50,22 +49,17 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="one" results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="first" results=[{type=anything}] {
-  b0():
     Return
 }
 function f3 name="second" results=[{type=anything}] {
-  b0():
     Return
 }
 function f4 name="third" results=[{type=anything}] {
-  b0():
     Return
 }
 function f5 name="kept" results=[{type=anything}] {
-  b0():
     Return
 }

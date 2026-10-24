@@ -10,7 +10,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="nullable-comparator" parameters=[{type=undefined|string}, {type=undefined|string}] results=[{type=int}] {
-  b0(v0: undefined|string, v1: undefined|string):
     v2 = Less v0, v1
     Branch v2 -> taken b1(), notTaken b2()
   b1():

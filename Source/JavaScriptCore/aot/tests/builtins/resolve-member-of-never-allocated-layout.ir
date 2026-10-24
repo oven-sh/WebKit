@@ -7,7 +7,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Instance name="NeverMade" constructor=f4 flags=[HasHeritage] flow={allocation=NeverAllocated baseState=BuiltinClass baseClass=Map constructorOrders=[{}] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType] ownAccessorsAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
 layout L1 kind=Instance name="Made" constructor=f5 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Map constructorOrders=[{}] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType] ownAccessorsAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
 function f0 name="sizeOfNeverMade" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="size"
     Return v1
 }
@@ -18,7 +17,6 @@ function f0 name="sizeOfNeverMade" parameters=[{type=L0}] results=[{type=anythin
 # EFFECTS: v1 PropGet: collects
 
 function f1 name="sizeOfMade" parameters=[{type=L1}] results=[{type=anything}] {
-  b0(v0: L1):
     v1 = PropGet v0 key="size"
     Return v1
 }
@@ -29,22 +27,18 @@ function f1 name="sizeOfMade" parameters=[{type=L1}] results=[{type=anything}] {
 # EFFECTS: v1 PropGet: unknownCode
 
 function f2 name="sizeOfEither" parameters=[{type=L0|L1}] results=[{type=anything}] {
-  b0(v0: L0|L1):
     v1 = PropGet v0 key="size"
     Return v1
-}
-# CHECK-LABEL: function f2 name="sizeOfEither"
 # CHECK-NOT: PropGet
 # CHECK: v1: int[0, 2147483647] = CallBuiltin v0 overload=MapPrototypeSize/0
+}
 
 function f3 name="sizeOfNeverMadeOrUndefined" parameters=[{type=undefined|L0}] results=[{type=anything}] {
-  b0(v0: undefined|L0):
     v1 = PropGet v0 key="size"
     Return v1
-}
-# CHECK-LABEL: function f3 name="sizeOfNeverMadeOrUndefined"
 # CHECK-NOT: CallBuiltin
 # CHECK: = PropGet v0 key="size"
+}
 
 function f4 name="NeverMade" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
 function f5 name="Made" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1

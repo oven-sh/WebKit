@@ -9,7 +9,6 @@ entry module=m0
 layout L0 name="View" fields=[{key="a" declared={type=number} flags=[IsRequired]}]
 expectedresult x0 type=L0 layouts=[L0]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=JSONParse
     v1 = NewClosure function=f1
     v2 = Builtin builtin=GlobalThis
@@ -25,6 +24,5 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v6
 }
 function f1 name="other" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }

@@ -13,16 +13,191 @@
 #include "AOTIRBuilder.h"
 #include "AOTLiveness.h"
 #include "AOTSinkAllocations.h"
-#include "AOTSinkAllocationsState.h"
 #include "AOTVector.h"
+#include "AOTVirtualObjectShapes.h"
+#include <algorithm>
+#include <compare>
 #include <optional>
 #include <span>
+#include <utility>
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT { namespace Typed {
+
+template<typename Entry, size_t inlineCapacity, typename Key>
+size_t positionOfEntry(const Vector<Entry, inlineCapacity>& entries, Key Entry::* key, Key value)
+{
+    return std::ranges::lower_bound(entries, value, { }, key) - entries.begin();
+}
+
+template<typename Entry, size_t inlineCapacity, typename Key>
+const Entry* findEntry(const Vector<Entry, inlineCapacity>& entries, Key Entry::* key, Key value)
+{
+    size_t position = positionOfEntry(entries, key, value);
+    return position < entries.size() && entries[position].*key == value ? &entries[position] : nullptr;
+}
+
+template<typename Entry, size_t inlineCapacity, typename Key>
+Entry& ensureEntry(Vector<Entry, inlineCapacity>& entries, Key Entry::* key, Key value)
+{
+    size_t position = positionOfEntry(entries, key, value);
+    if (position == entries.size() || entries[position].*key != value) {
+        entries.insert(position, Entry { });
+        entries[position].*key = value;
+    }
+    return entries[position];
+}
+
+template<typename Entry, size_t inlineCapacity, typename Key>
+void removeEntry(Vector<Entry, inlineCapacity>& entries, Key Entry::* key, Key value)
+{
+    if (const Entry* entry = findEntry(entries, key, value))
+        entries.removeAt(entry - entries.begin());
+}
+
+struct ObjectVariant {
+    std::optional<uint8_t> tagBit;
+    VirtualShapeID shape;
+
+    uint32_t tagMask() const { return tagBit ? 1u << *tagBit : 0; }
+
+    friend bool operator==(const ObjectVariant&, const ObjectVariant&) = default;
+    friend auto operator<=>(const ObjectVariant&, const ObjectVariant&) = default;
+};
+
+struct HeldObject {
+    uint32_t field { 0 };
+    VirtualObjectID object;
+
+    friend bool operator==(const HeldObject&, const HeldObject&) = default;
+};
+
+struct ObjectState {
+    Vector<ObjectVariant, 1> variants;
+    Vector<HeldObject, 1> heldObjects;
+    BitVector fieldsValidInCell;
+    BlockID cellJoinedAt;
+    Vector<TypeID, 1> assumedTypes;
+    bool lacksFieldsOnSomeWay { false };
+    bool isMissingOnSomeWay { false };
+
+    static ObjectState withShape(VirtualShapeID shape) { return { { ObjectVariant { std::nullopt, shape } }, { }, { }, { }, { }, false, false }; }
+
+    bool hasCell() const;
+    bool isCell() const { return variants.size() == 1 && variants[0].shape == cellShape; }
+    bool isVirtual() const { return !hasCell(); }
+    bool hasOneShape() const;
+    bool needsTag() const { return !hasOneShape(); }
+    bool hasConflictingTags() const;
+    uint32_t tagBits() const;
+
+    VirtualObjectID objectHeldIn(uint32_t field) const;
+    void hold(uint32_t field, VirtualObjectID object) { ensureEntry(heldObjects, &HeldObject::field, field).object = object; }
+    void release(uint32_t field) { removeEntry(heldObjects, &HeldObject::field, field); }
+
+    void assume(TypeID);
+    void keepAssumedTypesOf(const ObjectState&);
+
+    void addVariant(ObjectVariant);
+    void becomeCell();
+    void normalize();
+
+    friend bool operator==(const ObjectState&, const ObjectState&) = default;
+};
+
+struct ObjectEntry {
+    VirtualObjectID object;
+    ObjectState state;
+
+    friend bool operator==(const ObjectEntry&, const ObjectEntry&) = default;
+};
+
+enum class AliasKind : uint8_t { Object, Guard, Results };
+
+struct AliasEntry {
+    ValueID value;
+    VirtualObjectID object;
+    AliasKind kind { AliasKind::Object };
+
+    friend bool operator==(const AliasEntry&, const AliasEntry&) = default;
+};
+
+struct TestEntry {
+    ValueID test;
+    VirtualObjectID object;
+    std::optional<bool> result;
+    uint32_t tagBitsWhenTrue { 0 };
+
+    friend bool operator==(const TestEntry&, const TestEntry&) = default;
+};
+
+struct SinkingState {
+    bool isReachable { true };
+    bool isAtHead { true };
+    BlockID block;
+    Vector<ObjectEntry, 2> objects;
+    Vector<AliasEntry, 4> aliases;
+    Vector<TestEntry, 1> tests;
+
+    static SinkingState unreachableAt(BlockID block) { return { .isReachable = false, .block = block }; }
+    static SinkingState nothingAt(BlockID block) { return { .block = block }; }
+
+    bool holdsNothing() const { return objects.isEmpty() && aliases.isEmpty() && tests.isEmpty(); }
+    ObjectState* find(VirtualObjectID object) { return const_cast<ObjectState*>(std::as_const(*this).find(object)); }
+    const ObjectState* find(VirtualObjectID) const;
+    std::optional<size_t> indexOf(VirtualObjectID) const;
+    ObjectState& add(VirtualObjectID, ObjectState&&);
+    void set(std::span<ObjectEntry> movedEntries);
+    size_t weight() const;
+    void remove(VirtualObjectID object) { removeEntry(objects, &ObjectEntry::object, object); }
+    bool canReach(VirtualObjectID from, VirtualObjectID to) const;
+
+    const AliasEntry* findAlias(ValueID value) const { return findEntry(aliases, &AliasEntry::value, value); }
+    void setAlias(ValueID value, VirtualObjectID object, AliasKind kind) { ensureEntry(aliases, &AliasEntry::value, value) = { value, object, kind }; }
+    bool isDestructured(VirtualObjectID) const;
+
+    const TestEntry* findTest(ValueID test) const { return findEntry(tests, &TestEntry::test, test); }
+    void setTest(const TestEntry& entry) { ensureEntry(tests, &TestEntry::test, entry.test) = entry; }
+
+    void dump(PrintStream&) const;
+
+    friend bool operator==(const SinkingState&, const SinkingState&) = default;
+};
+
+class SinkingDecisions {
+public:
+    bool isBuiltAtHead(BlockID block, VirtualObjectID object) const { return m_objectsBuiltAtHeads.contains(pairOf(block.index(), object.index())); }
+    bool buildsAtHeadOf(BlockID block) const { return m_blocksWithObjectsBuiltAtHeads.get(block.index()); }
+    bool holdsCells(ValueID parameterOrCast) const { return m_parametersHoldingCells.get(parameterOrCast.index()); }
+    bool holdsCells(VirtualObjectID holder, uint32_t field) const { return m_fieldsHoldingCells.contains(pairOf(holder.index(), field)); }
+
+    void buildAtHead(BlockID, VirtualObjectID);
+    void holdCells(ValueID parameterOrCast, VirtualObjectID boundObject);
+    void holdCellsAsBefore(ValueID parameter) { m_parametersHoldingCells.set(parameter.index()); }
+    void holdObjectsAgain(ValueID parameter) { m_parametersHoldingCells.clear(parameter.index()); }
+    void holdCells(VirtualObjectID holder, uint32_t field);
+
+    bool takeDidChange() { return std::exchange(m_didChange, false); }
+    std::span<const VirtualObjectID> objectsOfNewDecisions() const LIFETIME_BOUND { return m_objectsOfNewDecisions.span(); }
+    void forgetNewDecisions() { m_objectsOfNewDecisions.clear(); }
+
+private:
+    using PairSet = UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+
+    static uint64_t pairOf(uint32_t first, uint32_t second) { return static_cast<uint64_t>(first) << 32 | second; }
+    void didDecide(VirtualObjectID);
+
+    PairSet m_objectsBuiltAtHeads;
+    BitVector m_blocksWithObjectsBuiltAtHeads;
+    PairSet m_fieldsHoldingCells;
+    BitVector m_parametersHoldingCells;
+    Vector<VirtualObjectID, 4> m_objectsOfNewDecisions;
+    bool m_didChange { false };
+};
 
 inline constexpr OpcodeSet storesWithoutValue { Opcode::AppendHole, Opcode::PropDelete };
 
@@ -123,11 +298,9 @@ struct ObjectValues {
 
 class ObjectValueMap {
 public:
-    ObjectValues& ensure(VirtualObjectID);
+    ObjectValues& ensure(VirtualObjectID object) { return ensureEntry(m_entries, &Entry::object, object).values; }
     const ObjectValues* find(VirtualObjectID) const;
-    void remove(VirtualObjectID);
-    void move(VirtualObjectID from, VirtualObjectID to);
-    void clear() { m_entries.clear(); }
+    void remove(VirtualObjectID object) { removeEntry(m_entries, &Entry::object, object); }
 
 private:
     struct Entry {
@@ -186,11 +359,11 @@ public:
     BlockID block() const { return m_builder.currentBlock(); }
 
     void beginBlock(BlockID original, std::optional<Target>&& handler, ObjectInterpreter&);
-    void finishBlock(Terminator&&);
 
-    ValueID emit(Value&&);
-    void keep(ValueID);
+    ValueID emit(Value&& value) { return m_builder.append(WTF::move(value)); }
+    void keep(ValueID id) { m_function.edit(block(), BlockEdit::Values).values.append(id); }
     ValueID takeConditionOf(const Terminator&);
+    ValueID emitSelection(ValueID condition, ValueID whenTrue, ValueID whenFalse, TypeID);
     void setOrigin(Origin origin) { m_builder.setOrigin(origin); }
 
     void stateDidChange() { m_handlerArgumentsAreStale = true; }
@@ -303,7 +476,7 @@ public:
         if (isEnteredWithNothing(block))
             return true;
         const SinkingState* head = headOf(block);
-        return head && head->objects.isEmpty() && head->aliases.isEmpty() && head->tests.isEmpty();
+        return head && head->holdsNothing();
     }
     std::span<const VirtualReturn> virtualReturns() const LIFETIME_BOUND { return m_returns.span(); }
     const FreshResultShape* resultShape() const { return m_resultShape; }
@@ -347,8 +520,6 @@ public:
 
 private:
     friend class RewriteCursor;
-    friend class SinkingProblem;
-
 
     Vector<DescribedObject> collectAllocations();
     bool findsThatNoAllocationPays(std::span<const DescribedObject>);
@@ -363,7 +534,6 @@ private:
     void computeInputsOf(BlockID);
 
     void solve();
-    void giveUpOnNewDecisions();
     void giveUpOnEveryCandidate();
     bool startOverWithFewerCandidates();
     void giveUpForLackOfWork(std::span<const uint32_t> candidates);
@@ -395,16 +565,13 @@ private:
     bool needsHeadParameters(BlockID) const;
     bool isLeftAsItIs(BlockID) const;
     void rewriteBlock(BlockID);
-    void rewriteEdges(ObjectInterpreter&, Terminator&, std::span<const OutgoingEdge>);
     void rewriteEdge(ObjectInterpreter&, Terminator&, const OutgoingEdge&);
     bool foldTerminator(ObjectInterpreter&, Terminator&);
     void convertProofsToArguments(ObjectInterpreter&, const OutgoingEdge&, Target&);
     void loadHeadValues(BlockID, const SinkingState& head, ObjectValueMap&);
     void fillTarget(ObjectInterpreter&, const OutgoingEdge&, Target&);
     bool isBoundParameter(BlockID, ValueID parameter) const;
-    void insertEntryConstants();
     void removeBoundParameters(IRBuilder&);
-    void applyReplacements();
 
     void recordRemovedAllocation(const Candidate&);
     void recordDecline(const Candidate&);
@@ -472,34 +639,6 @@ private:
 
 bool isFrameAllocatable(const AllocationSinking&, const Candidate&);
 bool buildsItsOperands(const Program&, const Value& user);
-
-class SinkingProblem {
-public:
-    using State = SinkingState;
-
-    explicit SinkingProblem(AllocationSinking& sinking)
-        : m_sinking(sinking)
-    {
-    }
-
-    State stateAtEntry();
-    void enterEdge(State&, Edge);
-    bool merge(State& into, const State& from);
-    bool merge(State& into, State&& from);
-
-private:
-    bool replaces(const State& into, const State& from) const;
-    bool mergeParts(State& into, const State& from);
-    bool mergeObjects(State& into, const State& from);
-    bool mergeObject(State& into, VirtualObjectID, ObjectState& target, const ObjectState& source);
-    bool mergeVariants(State& into, VirtualObjectID, ObjectState& target, const ObjectState& source);
-    bool mergeHeldObjects(VirtualObjectID, ObjectState& target, const ObjectState& source);
-    bool mergeAliases(State& into, const State& from);
-    bool mergeTests(State& into, const State& from);
-    bool mustBeBuiltBefore(BlockID, VirtualObjectID, const ObjectState&) const;
-
-    AllocationSinking& m_sinking;
-};
 
 } } } // namespace JSC::AOT::Typed
 

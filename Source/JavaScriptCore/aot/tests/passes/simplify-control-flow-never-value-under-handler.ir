@@ -12,15 +12,13 @@ function f0 name="calleeCannotThrow" results=[{type=anything}] {
   b1() role=CatchHandler:
     v1 = CatchValue
     Return v1
-}
-# CHECK-LABEL: function f0 name="calleeCannotThrow"
 # CHECK: b0() handler=b1():
 # CHECK: = CatchValue
-# BOTH-LABEL: function f0 name="calleeCannotThrow"
 # BOTH: b0():
 # BOTH-NEXT: = CallDirect
 # BOTH-NEXT: Unreachable
 # BOTH-NOT: CatchValue
+}
 
 function f1 name="calleeThrows" results=[{type=anything}] {
   b0() handler=b1():
@@ -29,19 +27,16 @@ function f1 name="calleeThrows" results=[{type=anything}] {
   b1() role=CatchHandler:
     v1 = CatchValue
     Return v1
-}
-# BOTH-LABEL: function f1 name="calleeThrows"
 # BOTH: b0() handler=b1():
 # BOTH-NEXT: = CallDirect
 # BOTH-NEXT: Unreachable
 # BOTH: = CatchValue
+}
 
 function f2 name="neverReached" results=[{type=never}] {
-  b0():
     Unreachable
 }
 function f3 name="alwaysThrows" results=[{type=never}] {
-  b0():
     v0 = Undefined
     Throw v0
 }

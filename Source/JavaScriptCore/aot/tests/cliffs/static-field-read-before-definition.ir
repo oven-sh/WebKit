@@ -48,7 +48,6 @@ variable g9 name="unusedSecond" module=m0 declared={type=anything} initializatio
 variable g%(i) module=m0 declared={type=anything} owner=L%(a)
 # END REPEAT
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="sink" [isFreeName]
     v2 = NewClosure function=f1
@@ -104,13 +103,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Jump -> next b2()
 }
 function f1 name="ReadAbove" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2
 }
 function f2 name="initializeReadAbove" kind=Initializer flags=[HasThis] thisType={type=function} results=[{type=anything}] {
-  b0(v0: function):
     v1 = PropGet v0 key="second"
     PropDefine v0, v1 key="first"
     v3 = Integer integer=1
@@ -118,25 +115,20 @@ function f2 name="initializeReadAbove" kind=Initializer flags=[HasThis] thisType
     v5 = PropGet v0 key="first"
     PropDefine v0, v3 key="third"
     Return v5
-}
-# CHECK-LABEL: function f2 name="initializeReadAbove"
 # CHECK: = PropGet [[readAboveInInitializer]] key="second"
 # CHECK: = GetModuleVariable variable=g10
+}
 function f3 name="CalledAbove" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L1
     v2 = NewObject v1 layout=L1
     Return v2
 }
 function f4 name="peek" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="count"
     Return v1
-}
-# CHECK-LABEL: function f4 name="peek"
 # CHECK: = PropGet [[calledAboveInMethod]] key="count"
+}
 function f5 name="initializeCalledAbove" kind=Initializer flags=[HasThis] thisType={type=function} results=[{type=anything}] {
-  b0(v0: function):
     v1 = PropGet v0 key="peek"
     v2 = Call v1, v0 calleeKey="peek"
     PropDefine v0, v2 key="early"
@@ -145,13 +137,11 @@ function f5 name="initializeCalledAbove" kind=Initializer flags=[HasThis] thisTy
     Return v4
 }
 function f6 name="EscapesAbove" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L2
     v2 = NewObject v1 layout=L2
     Return v2
 }
 function f7 name="initializeEscapesAbove" kind=Initializer flags=[HasThis] thisType={type=function} results=[{type=anything}] {
-  b0(v0: function):
     v1 = Integer integer=1
     PropDefine v0, v1 key="before"
     v3 = Builtin builtin=GlobalThis
@@ -162,25 +152,21 @@ function f7 name="initializeEscapesAbove" kind=Initializer flags=[HasThis] thisT
     Return v1
 }
 function f8 name="EscapesBelow" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L3
     v2 = NewObject v1 layout=L3
     Return v2
 }
 function f9 name="initializeEscapesBelow" kind=Initializer flags=[HasThis] thisType={type=function} results=[{type=anything}] {
-  b0(v0: function):
     v1 = Integer integer=1
     PropDefine v0, v1 key="count"
     Return v1
 }
 function f10 name="DefinedOnOnePath" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L4
     v2 = NewObject v1 layout=L4
     Return v2
 }
 function f11 name="initializeDefinedOnOnePath" kind=Initializer flags=[HasThis] thisType={type=function} results=[{type=anything}] {
-  b0(v0: function):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="flag" [isFreeName]
     v3 = ToBoolean v2
@@ -193,13 +179,11 @@ function f11 name="initializeDefinedOnOnePath" kind=Initializer flags=[HasThis] 
     Return
 }
 function f12 name="ReadInHandler" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L5
     v2 = NewObject v1 layout=L5
     Return v2
 }
 function f13 name="initializeReadInHandler" kind=Initializer flags=[HasThis] thisType={type=function} results=[{type=anything}] {
-  b0(v0: function):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="mayThrow" [isFreeName]
     v3 = Call v2
@@ -207,19 +191,16 @@ function f13 name="initializeReadInHandler" kind=Initializer flags=[HasThis] thi
     Return v3
 }
 function f14 name="InitializerIsClosure" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L6
     v2 = NewObject v1 layout=L6
     Return v2
 }
 function f15 name="initializeByCall" flags=[HasThis] thisType={type=function} results=[{type=anything}] {
-  b0(v0: function):
     v1 = Integer integer=1
     PropDefine v0, v1 key="count"
     Return v1
 }
 function f16 name="readAll" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = CheckInitialized v0 name="ReadAbove"
     v2 = PropGet v1 key="first"
@@ -247,8 +228,6 @@ function f16 name="readAll" results=[{type=anything}] {
     v24 = CheckInitialized v23 name="InitializerIsClosure"
     v25 = PropGet v24 key="count"
     Return
-}
-# CHECK-LABEL: function f16 name="readAll"
 # CHECK: = GetModuleVariable variable=g10
 # CHECK-NEXT: = PropGet [[readAbove]] key="second"
 # CHECK-NEXT: = GetModuleVariable variable=g12
@@ -261,3 +240,4 @@ function f16 name="readAll" results=[{type=anything}] {
 # CHECK: = PropGet [[definedOnOnePath]] key="count"
 # CHECK: = PropGet [[readInHandler]] key="count"
 # CHECK: = PropGet [[initializerIsClosure]] key="count"
+}

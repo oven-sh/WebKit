@@ -10,7 +10,6 @@ layout L1 name="B" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
 layout L2 name="FilledLate" fields=[{key="x" declared={type=number}}, {key="y" declared={type=number}}]
 variable g0 name="either" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToNumber v1
@@ -41,11 +40,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="none" flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f2 name="two" flags=[HasNewTarget] captures=[{type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: number, v1: number, v2: anything):
     Return
 }
 # CHECK-LABEL: function f0 name="main"

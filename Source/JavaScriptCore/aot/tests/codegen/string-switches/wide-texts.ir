@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="charactersToEscape" parameters=[{type=string}] results=[{type=i32}] {
-  b0(v0: string):
     SwitchString v0 strings=["\"", "\\", "<", "\u{2028}", "\u{2029}", ""] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
 # REPEAT: i = 1..7
   b%(i)():
@@ -17,7 +16,6 @@ function f0 name="charactersToEscape" parameters=[{type=string}] results=[{type=
 # CHECK-NEXT: f1: size=
 
 function f1 name="longTextsOfOneLength" parameters=[{type=string}] results=[{type=i32}] {
-  b0(v0: string):
     SwitchString v0 strings=["constructor", "description", "application"] -> case b1(), case b2(), case b3(), otherwise b4()
 # REPEAT: i = 1..4
   b%(i)():
@@ -30,7 +28,6 @@ function f1 name="longTextsOfOneLength" parameters=[{type=string}] results=[{typ
 # CHECK-NEXT: f2: size=
 
 function f2 name="onRarePath" parameters=[{type=string}, {type=boolean}] results=[{type=i32}] {
-  b0(v0: string, v1: boolean):
     Branch v1 -> taken b1(), notTaken b5()
   b1() frequency=Rare:
     SwitchString v0 strings=["\"", "ab", "\u{2028}"] -> case b2(), case b3(), case b4(), otherwise b5()

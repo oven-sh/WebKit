@@ -14,7 +14,6 @@ namespace JSC { namespace AOT {
 static constexpr ASCIILiteral arrayReadInLoopThatCollects = R"IR(layout L0 name="Token" fields=[{key="text" declared={type=anything} flags=[IsRequired]}]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     Jump -> next b1()
   b1():
     v0 = NewClosure function=f1
@@ -86,7 +85,6 @@ function f0 kind=Module thisType={type=anything} results=[{type=anything}] {
     Return v49
 }
 function f1 name="lex" length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=Array<L0> flags=[IsExpected]}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = NewArray contents=anything
@@ -123,7 +121,6 @@ function f1 name="lex" length=1 thisType={type=anything} parameters=[{type=anyth
     Return v24
 }
 function f2 name="count" length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=Map flags=[IsExpected]}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = Builtin builtin=GlobalThis

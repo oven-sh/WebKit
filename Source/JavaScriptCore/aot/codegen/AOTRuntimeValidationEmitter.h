@@ -55,7 +55,6 @@ public:
     void checkSlotAccessWithoutGuard(const OperationContext&);
     void checkAssumedType(const ValueContext&);
 
-    void checkValue(const OperationContext&, ValueID, Operand);
     void checkPrecondition(const ValueContext&, Condition);
     void checkBindingIsStored(const ValueContext&, Condition);
     void checkGuardIsAvailable(const OperationContext&, ValueID guard, uint32_t operandIndex);

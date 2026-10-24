@@ -16,8 +16,6 @@ function f0 name="twoKnownSources" parameters=[{type=object}, {type=object}] res
     v2 = NewObject layout=L0 fields=[]
     v3 = CallBuiltin -, v2, v0, v1 overload=ObjectAssign/0
     Return v3
-}
-# CHECK-LABEL: function f0 name="twoKnownSources"
 # CHECK: v2:{{*}}= NewObject layout=L0
 # CHECK-NEXT: = ShapeTest v0 layouts=[L1]
 # CHECK: [[done0]](v3:{{*}}):
@@ -41,27 +39,25 @@ function f0 name="twoKnownSources" parameters=[{type=object}, {type=object}] res
 # CHECK-NEXT: PropSet v2, [[c0]] key="c"
 # CHECK-NEXT: Jump -> next [[done0]](v2)
 # CHECK-NOT: CallBuiltin
+}
 
 function f1 name="threeKnownSources" parameters=[{type=object}, {type=object}, {type=object}] results=[{type=anything}] {
   b0(v0: object ~ L1, v1: object ~ L2, v2: object ~ L1):
     v3 = NewObject layout=L0 fields=[]
     v4 = CallBuiltin -, v3, v0, v1, v2 overload=ObjectAssign/0
     Return v4
-}
-# CHECK-LABEL: function f1 name="threeKnownSources"
 # CHECK: = CallBuiltin -, v3, v0, v1, v2 overload=ObjectAssign/0
 # CHECK: = CallBuiltin -, v3, v1, v2 overload=ObjectAssign/0
 # CHECK: = CallBuiltin -, v3, v2 overload=ObjectAssign/0
 # CHECK: = GetSlot v2, {{*}} key="a" receivers=[L1] level=Expected
 # CHECK-NOT: CallBuiltin
+}
 
 function f2 name="secondSourceUnknown" parameters=[{type=object}, {type=anything}, {type=object}] results=[{type=anything}] {
   b0(v0: object ~ L1, v1: anything, v2: object ~ L2):
     v3 = NewObject layout=L0 fields=[]
     v4 = CallBuiltin -, v3, v0, v1, v2 overload=ObjectAssign/0
     Return v4
-}
-# CHECK-LABEL: function f2 name="secondSourceUnknown"
 # CHECK: [[done2]](v4:{{*}}):
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: [[rest2]]():
@@ -75,39 +71,36 @@ function f2 name="secondSourceUnknown" parameters=[{type=object}, {type=anything
 # CHECK: PropSet v3, {{*}} key="b"
 # CHECK-NEXT: Jump -> next [[rest2]]()
 # CHECK-NOT: ShapeTest v2
+}
 
 function f3 name="firstSourceUnknown" parameters=[{type=anything}, {type=object}] results=[{type=anything}] {
   b0(v0: anything, v1: object ~ L1):
     v2 = NewObject layout=L0 fields=[]
     v3 = CallBuiltin -, v2, v0, v1 overload=ObjectAssign/0
     Return v3
-}
-# CHECK-LABEL: function f3 name="firstSourceUnknown"
 # CHECK: v2:{{*}}= NewObject layout=L0
 # CHECK-NEXT: v3:{{*}}= CallBuiltin -, v2, v0, v1 overload=ObjectAssign/0
 # CHECK-NEXT: Return v3
+}
 
 function f4 name="secondSourceHasFieldNamedProto" parameters=[{type=object}, {type=object}, {type=object}] results=[{type=anything}] {
   b0(v0: object ~ L1, v1: object ~ L3, v2: object ~ L2):
     v3 = NewObject layout=L0 fields=[]
     v4 = CallBuiltin -, v3, v0, v1, v2 overload=ObjectAssign/0
     Return v4
-}
-# CHECK-LABEL: function f4 name="secondSourceHasFieldNamedProto"
 # CHECK: Return v4
 # CHECK-NEXT: [[rest4]]():
 # CHECK-NEXT: = CallBuiltin -, v3, v1, v2 overload=ObjectAssign/0
 # CHECK-NOT: ShapeTest v1
 # CHECK-NOT: ShapeTest v2
 # CHECK: Jump -> next [[rest4]]()
+}
 
 function f5 name="secondSourceIsTarget" parameters=[{type=object}, {type=number}, {type=string}] results=[{type=anything}] {
   b0(v0: object ~ L2, v1: number, v2: string):
     v3 = NewObject -, v1, v2 layout=L1 fields=[0, 1]
     v4 = CallBuiltin -, v3, v0, v3 overload=ObjectAssign/0
     Return v4
-}
-# CHECK-LABEL: function f5 name="secondSourceIsTarget"
 # CHECK: Return v4
 # CHECK-NEXT: [[second5]]():
 # CHECK-NEXT: = HasKeyOrder v3 layout=L1 fields=[0, 1]
@@ -115,6 +108,7 @@ function f5 name="secondSourceIsTarget" parameters=[{type=object}, {type=number}
 # CHECK-NEXT: Jump -> next [[second5]]()
 # CHECK: = HasNoExtraProperties v3
 # CHECK-NOT: GetSlot v3, v3
+}
 
 function f6 name="secondSourceIsUnescapedAllocation" parameters=[{type=object}, {type=string}, {type=number}] results=[{type=anything}] {
   b0(v0: object ~ L1, v1: string, v2: number):
@@ -122,12 +116,11 @@ function f6 name="secondSourceIsUnescapedAllocation" parameters=[{type=object}, 
     v4 = NewObject layout=L0 fields=[]
     v5 = CallBuiltin -, v4, v0, v3 overload=ObjectAssign/0
     Return v5
-}
-# CHECK-LABEL: function f6 name="secondSourceIsUnescapedAllocation"
 # CHECK-NOT: ShapeTest v3
 # CHECK-NOT: HasKeyOrder v3
 # CHECK-NOT: HasNoExtraProperties v3
 # CHECK: = GetSlot v3, {{*}} key="b" receivers=[L2] level=Expected
+}
 
 function f7 name="secondSourceIsEscapedAllocation" parameters=[{type=object}, {type=string}, {type=number}] results=[{type=anything}] {
   b0(v0: object ~ L1, v1: string, v2: number):
@@ -136,12 +129,11 @@ function f7 name="secondSourceIsEscapedAllocation" parameters=[{type=object}, {t
     v5 = NewObject layout=L0 fields=[]
     v6 = CallBuiltin -, v5, v0, v3 overload=ObjectAssign/0
     Return v6
-}
-# CHECK-LABEL: function f7 name="secondSourceIsEscapedAllocation"
 # CHECK-NOT: ShapeTest v3
 # CHECK: = HasKeyOrder v3 layout=L2 fields=[0, 1]
 # CHECK: = HasNoExtraProperties v3
 # CHECK-NOT: GetSlot v3, v3
+}
 
 function f8 name="targetPassedToCallBefore" parameters=[{type=object}, {type=object}, {type=anything}] results=[{type=anything}] {
   b0(v0: object ~ L1, v1: object ~ L2, v2: anything):
@@ -149,8 +141,7 @@ function f8 name="targetPassedToCallBefore" parameters=[{type=object}, {type=obj
     v4 = Call v2, -, v3
     v5 = CallBuiltin -, v3, v0, v1 overload=ObjectAssign/0
     Return v5
-}
-# CHECK-LABEL: function f8 name="targetPassedToCallBefore"
 # CHECK: v4:{{*}}= Call v2, -, v3
 # CHECK-NEXT: v5:{{*}}= CallBuiltin -, v3, v0, v1 overload=ObjectAssign/0
 # CHECK-NEXT: Return v5
+}

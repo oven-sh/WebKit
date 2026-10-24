@@ -22,47 +22,38 @@ function f3 name="Proven" kind=BaseConstructor flags=[HasNewTarget] results=[{ty
 function f4 name="ReadEarly" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L4
 
 function f5 name="read" parameters=[{type=f0}] results=[{type=anything}] {
-  b0(v0: f0):
     v1 = PropGet v0 key="count"
     Return v1
-}
-# CHECK-LABEL: function f5 name="read"
 # CHECK-NEXT: b0(v0: f0):
 # CHECK-NEXT: [[unchanged5]]: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="count"}]
 # CHECK-NEXT: Branch [[unchanged5]] -> taken
 # CHECK: v1: number = GetModuleVariable variable=g0
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: = PropGet v0 key="count"
+}
 function f6 name="store" parameters=[{type=f0}, {type=number}] results=[{type=anything}] {
-  b0(v0: f0, v1: number):
     PropSet v0, v1 key="count"
     Return
-}
-# CHECK-LABEL: function f6 name="store"
 # CHECK: [[unchanged6]]: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="count"}]
 # CHECK-NEXT: Branch [[unchanged6]] -> taken
 # CHECK: PutModuleVariable v1 variable=g0
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: PropSet v0, v1 key="count"
+}
 function f7 name="test" parameters=[{type=f0}] results=[{type=anything}] {
-  b0(v0: f0):
     v1 = PropHas v0 key="count"
     Return v1
-}
-# CHECK-LABEL: function f7 name="test"
 # CHECK: [[unchanged7]]: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="count"}]
 # CHECK-NEXT: Branch [[unchanged7]] -> taken
 # CHECK: v1: true = Boolean boolean=true
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: = PropHas v0 key="count"
+}
 function f8 name="two-reads" parameters=[{type=f0}] results=[{type=anything}] {
-  b0(v0: f0):
     v1 = PropGet v0 key="count"
     v2 = PropGet v0 key="count"
     v3 = Add v1, v2
     Return v3
-}
-# CHECK-LABEL: function f8 name="two-reads"
 # CHECK: = AreMembersUnchanged conditions=[{layout=L0 side=Static key="count"}]
 # CHECK-NOT: AreMembersUnchanged
 # CHECK: v1: number = GetModuleVariable variable=g0
@@ -72,73 +63,61 @@ function f8 name="two-reads" parameters=[{type=f0}] results=[{type=anything}] {
 # CHECK-NEXT: = PropGet v0 key="count"
 # CHECK-NEXT: = PropGet v0 key="count"
 # CHECK-NOT: AreMembersUnchanged
+}
 function f9 name="class-may-be-evaluated-again" parameters=[{type=f1}] results=[{type=anything}] {
-  b0(v0: f1):
     v1 = PropGet v0 key="count"
     Return v1
-}
-# CHECK-LABEL: function f9 name="class-may-be-evaluated-again"
 # CHECK-NOT: AreMembersUnchanged
 # CHECK: [[once9]]: boolean = AreMembersUnchanged conditions=[{kind=ClassEvaluatedOnce layout=L1}]
 # CHECK-NEXT: Branch [[once9]] -> taken
 # CHECK: v1: number = GetModuleVariable variable=g1
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: = PropGet v0 key="count"
+}
 function f10 name="through-subclass-whose-link-may-change" parameters=[{type=f2}] results=[{type=anything}] {
-  b0(v0: f2):
     v1 = PropGet v0 key="count"
     Return v1
-}
-# CHECK-LABEL: function f10 name="through-subclass-whose-link-may-change"
 # CHECK: v1: number = GetModuleVariable variable=g0
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: = PropGet v0 key="count"
-# ORDER-LABEL: function f10 name="through-subclass-whose-link-may-change"
 # ORDER-NEXT: b0(v0: f2):
 # ORDER-NEXT: [[unchanged]]: boolean = AreMembersUnchanged conditions=[{layout=L2 side=Static key="count"}, {kind=PrototypeLinkUnchanged layout=L2 side=Static}]
 # ORDER-NEXT: Branch [[unchanged]] -> taken
 # ORDER-NOT: AreMembersUnchanged
+}
 function f11 name="proven" parameters=[{type=f3}] results=[{type=anything}] {
-  b0(v0: f3):
     v1 = PropGet v0 key="count"
     Return v1
-}
-# CHECK-LABEL: function f11 name="proven"
 # CHECK-NEXT: b0(v0: f3):
 # CHECK-NEXT: = PropGet v0 key="count"
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
+}
 function f12 name="definition-may-not-have-run" parameters=[{type=f4}] results=[{type=anything}] {
-  b0(v0: f4):
     v1 = PropGet v0 key="count"
     Return v1
-}
-# CHECK-LABEL: function f12 name="definition-may-not-have-run"
 # CHECK-NEXT: b0(v0: f4):
 # CHECK-NEXT: = PropGet v0 key="count"
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
+}
 function f13 name="stored-value-may-not-fit" parameters=[{type=f0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: f0, v1: anything):
     PropSet v0, v1 key="count"
     Return
-}
-# CHECK-LABEL: function f13 name="stored-value-may-not-fit"
 # CHECK-NEXT: b0(v0: f0, v1: anything):
 # CHECK-NEXT: PropSet v0, v1 key="count"
 # CHECK-NEXT: Return
 # CHECK-NEXT: }
+}
 function f14 name="rare-block" parameters=[{type=f0}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: f0, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v2 = PropGet v0 key="count"
     Return v2
   b2():
     Return
-}
-# CHECK-LABEL: function f14 name="rare-block"
 # CHECK-NOT: AreMembersUnchanged
 # CHECK: frequency=Rare:
 # CHECK-NEXT: = PropGet v0 key="count"
 # CHECK-NOT: AreMembersUnchanged
+}

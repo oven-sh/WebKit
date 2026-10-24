@@ -8,7 +8,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Borrowed"
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = NewClosure function=f1
     v2 = Call v1, -, v0
@@ -38,10 +37,8 @@ function f1 name="spreads" flags=[HasArgumentCount, HasHiddenRest] results=[{typ
     Return
 }
 function f2 name="one" results=[{type=anything}] {
-  b0():
     Return
 }
 function f3 name="two" results=[{type=anything}] {
-  b0():
     Return
 }

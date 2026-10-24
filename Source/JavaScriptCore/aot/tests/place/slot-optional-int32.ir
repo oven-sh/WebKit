@@ -11,7 +11,6 @@ layout L1 name="OtherIntegers" fields=[{key="whole" declared={type=undefined|i32
 layout L2 name="Required" fields=[{key="flags" declared={type=undefined|null|int[0, 1073741824]} flags=[IsRequired]}, {key="maybe" declared={type=undefined|null|i32}}, {key="kind" declared={type=undefined|null|int[0, 400]} flags=[IsRequired]}, {key="sign" declared={type=undefined|null|int[-1, 1]} flags=[IsRequired]}, {key="fifth" declared={type=undefined|null|int[0, 7]} flags=[IsRequired]}, {key="sixth" declared={type=undefined|null|int[0, 7]} flags=[IsRequired]}]
 layout L3 name="OtherNumbers" fields=[{key="fraction" declared={type=undefined|null|number} flags=[IsRequired]}, {key="large" declared={type=undefined|null|number} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = Integer integer=0

@@ -7,7 +7,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
 function f0 name="goodNothingWritten" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = NewArray v0, v0 contents=anything
@@ -24,7 +23,6 @@ function f0 name="goodNothingWritten" parameters=[{type=anything}, {type=boolean
     Return v10
 }
 function f1 name="badCallBeforeOneEdge" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = NewArray v0, v0 contents=anything
@@ -40,7 +38,6 @@ function f1 name="badCallBeforeOneEdge" parameters=[{type=anything}, {type=boole
     Return v9
 }
 function f2 name="badCallAfterTheEdges" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = NewArray v0, v0 contents=anything
@@ -56,7 +53,6 @@ function f2 name="badCallAfterTheEdges" parameters=[{type=anything}, {type=boole
     Return v9
 }
 function f3 name="badCallBetweenTestAndOneEdge" parameters=[{type=Array}, {type=Array}, {type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array, v1: Array, v2: boolean, v3: anything):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v4 = IsPristine v0 builtinClass=Array aspects=[Storage]
@@ -72,7 +68,6 @@ function f3 name="badCallBetweenTestAndOneEdge" parameters=[{type=Array}, {type=
     Return
 }
 function f4 name="goodCallBeforeTheTests" parameters=[{type=Array}, {type=Array}, {type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array, v1: Array, v2: boolean, v3: anything):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v4 = Call v3
@@ -89,7 +84,6 @@ function f4 name="goodCallBeforeTheTests" parameters=[{type=Array}, {type=Array}
     Return
 }
 function f5 name="badCallInLoop" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray v0, v0 contents=anything
     v2 = AllGuards v1
     Jump -> next b1(v1, v2)
@@ -107,7 +101,6 @@ function f5 name="badCallInLoop" parameters=[{type=anything}] results=[{type=any
     Return v6
 }
 function f6 name="badCallBeforeTheOnlyEdgeThatPassesAnObject" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = NewArray v0, v0 contents=anything
@@ -123,7 +116,6 @@ function f6 name="badCallBeforeTheOnlyEdgeThatPassesAnObject" parameters=[{type=
     Return v9
 }
 function f7 name="goodShapeOutlastsTheCalls" parameters=[{type=object}, {type=object}, {type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: object, v2: boolean, v3: anything):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v4 = ShapeTest v0 layouts=[L0]

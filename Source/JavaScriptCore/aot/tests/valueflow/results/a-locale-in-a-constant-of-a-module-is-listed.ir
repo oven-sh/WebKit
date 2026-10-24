@@ -8,7 +8,6 @@ variable g0 name="locale" module=m0 declared={type=string} flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = String string="ja"
     PutModuleVariable v0 variable=g0
     v2 = NewClosure function=f1
@@ -17,7 +16,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v4
 }
 function f1 name="show" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=NumberPrototypeToLocaleString
     v2 = GetModuleVariable variable=g0
     v3 = CheckInitialized v2 name="locale"

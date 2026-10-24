@@ -9,7 +9,6 @@ layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" decl
 layout L1 kind=Environment fields=[{key="count" declared={type=anything}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = NewClosure function=f3
@@ -23,7 +22,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v9
 }
 function f1 name="objects" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     v2 = FinishObject v1
     v3 = NewObject layout=L0
@@ -34,13 +32,11 @@ function f1 name="objects" parameters=[{type=anything}] results=[{type=anything}
     Return v7
 }
 function f2 name="environments" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L1 fields=[0]
     v2 = NewClosure v1 function=f8
     Return v2
 }
 function f3 name="arrays" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray v0, v0 contents=anything holes=[1]
     v2 = NewArray contents=number
     AppendElement v1, v0
@@ -49,19 +45,16 @@ function f3 name="arrays" parameters=[{type=anything}] results=[{type=anything}]
     Return v1
 }
 function f4 name="regularExpressions" results=[{type=anything}] {
-  b0():
     v0 = NewRegExp pattern="a+" regExpFlags=[HasIndices, Global, IgnoreCase, Multiline, DotAll, Unicode, Sticky]
     v1 = NewRegExp pattern="b"
     v2 = NewArray v0, v1 contents=anything
     Return v2
 }
 function f5 name="templateObject" results=[{type=anything}] {
-  b0():
     v0 = NewTemplateObject templateStrings=[{cooked="c" raw="c"}, {raw="\\u"}]
     Return v0
 }
 function f6 name="errors" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewRuntimeError runtimeError=ConstantAssignment name="k"
     v2 = NewRuntimeError runtimeError=NotDestructurable
     v3 = NewSuppressedError v1, v0

@@ -12,7 +12,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f3
     v2 = Builtin builtin=GlobalThis
@@ -21,18 +20,15 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v4
 }
 function f1 name="callsCovered" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f2
     v2 = Add v1, v0
     Return v2
 }
 function f2 name="covered" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Pow v0, v0
     Return v1
 }
 function f3 name="callsItself" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f3
     v2 = Add v1, v0
     Return v2

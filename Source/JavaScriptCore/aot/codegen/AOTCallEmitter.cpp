@@ -58,37 +58,6 @@ static B3::ValueRep stackWordRep(size_t stackIndex)
     return B3::ValueRep::stackArgument(safeCast<B3::ValueRep::OffsetType>(stackIndex * sizeOfStackWord));
 }
 
-CallEmitter::CallTarget CallEmitter::CallTarget::function(FunctionID calledFunction, uint16_t entry)
-{
-    CallTarget target;
-    target.kind = TargetKind::Function;
-    target.calledFunction = calledFunction;
-    target.entry = entry;
-    return target;
-}
-
-CallEmitter::CallTarget CallEmitter::CallTarget::address(LValue calledAddress)
-{
-    CallTarget target;
-    target.kind = TargetKind::Address;
-    target.calledAddress = calledAddress;
-    return target;
-}
-
-CallEmitter::CallTarget CallEmitter::CallTarget::stub(StubKey calledStub, std::optional<uint32_t> immediate)
-{
-    CallTarget target;
-    target.kind = TargetKind::Stub;
-    target.calledStub = calledStub;
-    target.immediate = immediate;
-    return target;
-}
-
-CallEmitter::CallEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
-
 bool CallEmitter::isUndefinedConstant(LValue value)
 {
     return value->hasInt64() && value->asInt64() == static_cast<int64_t>(JSValue::ValueUndefined);
@@ -97,6 +66,13 @@ bool CallEmitter::isUndefinedConstant(LValue value)
 Boxed CallEmitter::thisOrUndefined(ValueID id)
 {
     return id ? in<Boxed>(id) : undefined();
+}
+
+std::optional<ThrowSite> CallEmitter::siteThatNamesCallee(const ValueContext& value)
+{
+    if (!value->calleeName())
+        return std::nullopt;
+    return ThrowSite { ThrowKind::NotAFunction, value->calleeName().index(), std::nullopt };
 }
 
 Vector<Boxed, 8> CallEmitter::boxedOperands(std::span<const ValueID> ids)
@@ -408,38 +384,35 @@ NativeCallExpectation CallEmitter::expectationOf(const OperationContext& context
     return expectation;
 }
 
+// countOperand lives as long as the call does.
+void CallEmitter::chooseStubThatCallsValue(ConventionCall& call, LValue& countOperand)
+{
+    unsigned count = static_cast<unsigned>(call.arguments.size());
+    if (count > numberOfArgumentGPRs) {
+        countOperand = m_out.constInt64(count);
+        call.stub = callValueWithCount();
+        call.stubOperands = singleElementSpan(countOperand);
+    } else if (isUndefinedConstant(call.thisValue)) {
+        call.stub = callValueWithoutThis(count);
+        call.thisValue = nullptr;
+    } else
+        call.stub = AOT::callValue(count);
+}
+
 Boxed CallEmitter::callValue(const OperationContext& context, const ValueCall& call, const CallOptions& options)
 {
     unsigned count = static_cast<unsigned>(call.arguments.size());
-    bool passesStackWords = count > numberOfArgumentGPRs;
     Vector<LValue, 8> values;
     for (Boxed argument : call.arguments)
         values.append(argument.value());
 
-    ConventionCall conventionCall;
-    conventionCall.callee = call.callee.value();
-    conventionCall.thisValue = call.thisValue.value();
-    conventionCall.arguments = values.span();
-    conventionCall.builtin = call.builtin;
-
+    ConventionCall conventionCall { .callee = call.callee.value(), .thisValue = call.thisValue.value(), .arguments = values.span(), .builtin = call.builtin };
+    LValue countOperand = nullptr;
     if (call.lentArguments) {
-        RELEASE_ASSERT(!passesStackWords && !(call.lentArguments >> count));
+        RELEASE_ASSERT(count <= numberOfArgumentGPRs && !(call.lentArguments >> count));
         conventionCall.stub = callValueLending(count, call.lentArguments);
-        return callByConvention(context, conventionCall, options);
-    }
-
-    if (passesStackWords) {
-        LValue countOperand = m_out.constInt64(count);
-        conventionCall.stub = callValueWithCount();
-        conventionCall.stubOperands = { &countOperand, 1 };
-        return callByConvention(context, conventionCall, options);
-    }
-    if (isUndefinedConstant(conventionCall.thisValue)) {
-        conventionCall.stub = callValueWithoutThis(count);
-        conventionCall.thisValue = nullptr;
-        return callByConvention(context, conventionCall, options);
-    }
-    conventionCall.stub = AOT::callValue(count);
+    } else
+        chooseStubThatCallsValue(conventionCall, countOperand);
     return callByConvention(context, conventionCall, options);
 }
 
@@ -450,7 +423,7 @@ void CallEmitter::generateCall(const ValueContext& value)
     ValueID callee = value->calleeOperand();
     // The stub that calls a value does not know what the program calls it. What is no object is never called, so the place throws by itself and says the name.
     if (const Type& type = typeOf(callee); value->calleeName() && !type.hasObjects() && type.isJavaScriptValue() && !type.isNever()) {
-        emitter<ThrowEmitter>().throwAt(value, { ThrowKind::NotAFunction, value->calleeName().index(), std::nullopt }, get(callee));
+        emitter<ThrowEmitter>().throwAt(value, *siteThatNamesCallee(value), get(callee));
         if (value.returnCall()) {
             m_out.unreachable();
             return;
@@ -466,10 +439,7 @@ void CallEmitter::generateCall(const ValueContext& value)
         tailCallValue(value, call);
         return;
     }
-    std::optional<ThrowSite> siteThatNamesCallee;
-    if (value->calleeName())
-        siteThatNamesCallee = ThrowSite { ThrowKind::NotAFunction, value->calleeName().index(), std::nullopt };
-    define(value, callValue(value, call, { .throwSite = siteThatNamesCallee, .isTailCall = value->isDemotedTailCall() }));
+    define(value, callValue(value, call, { .throwSite = siteThatNamesCallee(value), .isTailCall = value->isDemotedTailCall() }));
 }
 
 } } } // namespace JSC::AOT::Typed

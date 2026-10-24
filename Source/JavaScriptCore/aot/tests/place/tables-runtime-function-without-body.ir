@@ -11,7 +11,6 @@ runtimefunction id=31 function=f2
 runtimefunction id=44 function=f1
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     Jump -> next b1()
   b1() handler=b3():
     v0 = Integer integer=1
@@ -27,14 +26,12 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="reached" role=Library flags=[HasThis] enclosingRuntimeFunction=44 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Integer integer=0
     v3 = ElemGet v0, v2
     v4 = Call v1, -, v3
     Return
 }
 function f2 name="unreached" role=Library flags=[HasThis] enclosingRuntimeFunction=31 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Integer integer=0
     v3 = ElemGet v0, v2
     v4 = Call v1, -, v3
@@ -42,7 +39,6 @@ function f2 name="unreached" role=Library flags=[HasThis] enclosingRuntimeFuncti
 }
 function f3 name="sentWithoutBody" role=Library enclosingRuntimeFunction=0 results=[{type=anything}]
 function f4 name="callback" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 

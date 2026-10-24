@@ -28,14 +28,12 @@
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include <algorithm>
-#include <functional>
+#include <array>
 #include <map>
 #include <optional>
 #include <tuple>
 #include <utility>
-#include <wtf/CommaPrinter.h>
 #include <wtf/HashMap.h>
-#include <wtf/Hasher.h>
 #include <wtf/Lock.h>
 #include <wtf/Scope.h>
 #include <wtf/SetForScope.h>
@@ -52,15 +50,6 @@ static_assert(Typed::Value::opcodesWithPattern == Typed::Value::opcodesWithRegEx
 
 namespace {
 
-struct CallsWithUnknownText;
-
-struct CollectionInputs {
-    const Typed::Program& program;
-    const Typed::FlowResults& flow;
-    BuildContext& context;
-    CallsWithUnknownText& callsWithUnknownText;
-};
-
 struct FoundRegExp {
     RegExpRequestOrigin origin;
     StringID pattern;
@@ -68,66 +57,35 @@ struct FoundRegExp {
     RegExpSite site;
 };
 
-struct RegExpConstructorCall {
-    Typed::BuiltinCall builtinCall;
-    Typed::AccessSiteID accessSite;
-    RegExpSite site;
-    Typed::BlockID block;
-    SourceLocation location;
-};
-
 using FlagSets = Vector<OptionSet<Yarr::Flags>, 8>;
 
 struct CallWithUnknownText {
     RegExpSite site;
     Typed::BlockID block;
-    SourceLocation location;
     ValueID pattern;
     ValueID flags;
     FlagSets flagSets;
     bool flagsAreComplete;
 };
 
-struct CallsWithUnknownText {
-    Lock lock;
-    Vector<CallWithUnknownText> calls;
+struct CollectionInputs {
+    const Typed::Program& program;
+    const Typed::FlowResults& flow;
+    BuildContext& context;
+    Lock lock { };
+    Vector<CallWithUnknownText> callsWithUnknownText { };
 };
 
-// The calls that lead to the function, as one number; no call and a function and a value of it, or a call and a layout and a field that is seen through it.
-struct MemoKey {
-    uint32_t callChain { UINT32_MAX };
-    const Typed::Value* call { nullptr };
-    uint32_t functionOrLayout { 0 };
-    uint32_t valueOrField { 0 };
-
-    friend bool operator==(const MemoKey&, const MemoKey&) = default;
-};
-
-struct MemoKeyHash {
-    static unsigned hash(const MemoKey& key) { return computeHash(key.callChain, key.call, key.functionOrLayout, key.valueOrField); }
-    static bool equal(const MemoKey& a, const MemoKey& b) { return a == b; }
-    static constexpr bool safeToCompareToEmptyOrDeleted = true;
-};
-
-struct MemoKeyHashTraits : WTF::GenericHashTraits<MemoKey> {
-    static void constructDeletedValue(MemoKey& slot) { slot = MemoKey { UINT32_MAX - 1, nullptr, 0, 0 }; }
-    static bool isDeletedValue(const MemoKey& key) { return key.callChain == UINT32_MAX - 1; }
-};
-
-// The texts that an operand may have, read off the operations that make it.
 class TextsFromConstants {
 public:
-    // A primitive, a RegExp literal, or an object or array literal: the operation that makes it, or a node of constant data.
     struct Constant {
         Typed::KnownValue primitive;
         std::optional<Typed::RegExpLiteralInType> regExp { };
         FunctionID function { };
         ValueID literal { };
         const Typed::DataNode* data { nullptr };
-        // The call under which the function made the literal, where the walk came through one: what the literal is made of is read with that call's operands.
         FunctionID caller { };
         const Typed::Value* call { nullptr };
-        // A function declaration, which no operation makes.
         FunctionID declaration { };
 
         bool isObjectOrArray() const { return literal || data || declaration; }
@@ -245,13 +203,13 @@ private:
     };
 
     using ValueKey = std::pair<FunctionID, ValueID>;
+    using MemoKey = std::tuple<uint32_t, const Typed::Value*, uint32_t, uint32_t>;
 
     struct Split {
         ValueKey value;
         Constants alternatives;
     };
 
-    // A value that is one of several objects, as a row of a table is, is given each of them in turn, so that what is read of one object stays together: its text with its flags.
     void explore(const CallWithUnknownText& call, Patterns& result)
     {
         m_split.reset();
@@ -321,7 +279,6 @@ private:
 
     uint64_t maxAlternatives() const { return m_context.limit(LimitID::RegExpCandidatesPerSite); }
 
-    // False once there are more alternatives than a call may have: a crowd says little about the text that the call gets.
     bool add(Constants& constants, const Constant& constant) const
     {
         if (constants.contains(constant))
@@ -367,13 +324,33 @@ private:
         Activation activation;
     };
 
+    // Never 0, so that no key of m_remembered is the empty one.
     uint32_t callsLeadingTo(const Activation& activation)
     {
         if (!activation.call)
-            return 0;
+            return 1;
         if (!activation.cachedCallChain)
-            activation.cachedCallChain = m_chainsOfCalls.try_emplace({ callsLeadingTo(*activation.caller), activation.call }, static_cast<uint32_t>(m_chainsOfCalls.size() + 1)).first->second;
+            activation.cachedCallChain = m_chainsOfCalls.try_emplace({ callsLeadingTo(*activation.caller), activation.call }, static_cast<uint32_t>(m_chainsOfCalls.size() + 2)).first->second;
         return *activation.cachedCallChain;
+    }
+
+    const Constants* recall(const MemoKey& key)
+    {
+        auto remembered = m_bindings.isEmpty() ? m_remembered.find(key) : m_remembered.end();
+        if (remembered == m_remembered.end())
+            return nullptr;
+        m_sawEverything &= remembered->value->sawEverything;
+        if (remembered->value->split)
+            m_split = remembered->value->split;
+        return &remembered->value->values;
+    }
+
+    bool mayFollowAnotherValue()
+    {
+        if (m_stackCheck.isSafeToRecurse() && ++m_valuesFollowed <= m_budget)
+            return true;
+        ++m_walksCutShort;
+        return false;
     }
 
     bool isActive(const Activation& activation, FunctionID function) const
@@ -389,10 +366,8 @@ private:
     {
         if (!id)
             return { Constant { Typed::KnownValue::undefined() } };
-        if (!m_stackCheck.isSafeToRecurse() || ++m_valuesFollowed > m_budget) {
-            ++m_walksCutShort;
+        if (!mayFollowAnotherValue())
             return { };
-        }
         for (auto& [value, constant] : m_bindings) {
             if (value == ValueKey { activation.function, id })
                 return { constant };
@@ -408,17 +383,10 @@ private:
             return { };
         }
 
-        // What a value is does not depend on who asks, as long as no object has been chosen for another value and the calls that lead here are the same.
         bool mayRemember = m_bindings.isEmpty();
         MemoKey memoKey { callsLeadingTo(activation), nullptr, activation.function.index(), id.index() };
-        if (mayRemember) {
-            if (auto remembered = m_remembered.find(memoKey); remembered != m_remembered.end()) {
-                m_sawEverything &= remembered->value->sawEverything;
-                if (remembered->value->split)
-                    m_split = remembered->value->split;
-                return remembered->value->values;
-            }
-        }
+        if (const Constants* remembered = recall(memoKey))
+            return *remembered;
 
         unsigned walksCutShortBefore = m_walksCutShort;
         bool sawEverythingBefore = std::exchange(m_sawEverything, true);
@@ -427,7 +395,6 @@ private:
         Constants result = evaluateOperation(activation, function, id);
         m_active.removeLast();
         bool isOneOfSeveralObjects = result.size() > 1 && std::ranges::all_of(result, &Constant::isObjectOrArray);
-        // The last such value is the nearest to the pattern: what it is made of, several ways perhaps, needs no choice of its own then.
         if (isOneOfSeveralObjects)
             m_split = Split { { activation.function, id }, result };
         if (mayRemember && m_walksCutShort == walksCutShortBefore && m_valuesFollowed <= maxValuesFollowed)
@@ -451,12 +418,8 @@ private:
         case Typed::Opcode::NewContiguousArray:
         case Typed::Opcode::NewClosure:
             return { literalIn(activation, id) };
-        case Typed::Opcode::TruncateNewArray:
-            return evaluate(activation, value.arrayOperand());
         case Typed::Opcode::Data:
             return { constantOf(m_program.at(value.data()).root) };
-        case Typed::Opcode::FinishObject:
-            return evaluate(activation, value.objectOperand());
         case Typed::Opcode::GetSlot:
         case Typed::Opcode::GetSlotOrUndefined:
         case Typed::Opcode::PropGet:
@@ -473,18 +436,19 @@ private:
             return fieldSeenThrough(activation, value.environmentOperand(), value.layout(), value.field());
         case Typed::Opcode::StringBuilderFinish:
         case Typed::Opcode::StringBuilderToString:
-            return textsBuiltBy(activation, function, id);
+            return textsBuiltUpTo(activation, function, value.builderOperand(), id);
         case Typed::Opcode::GetModuleVariable:
             return valuesOf(value.variable());
         case Typed::Opcode::Upcast:
         case Typed::Opcode::AssumeType:
         case Typed::Opcode::CheckInitialized:
         case Typed::Opcode::FlattenString:
+        case Typed::Opcode::TruncateNewArray:
+        case Typed::Opcode::FinishObject:
             return evaluate(activation, value.operand(0));
         case Typed::Opcode::RequireObjectCoercible:
         case Typed::Opcode::RequireObject:
         case Typed::Opcode::ToObject: {
-            // Each throws where it is given undefined or null.
             Constants values = evaluate(activation, value.operand(0));
             values.removeAllMatching([](const Constant& constant) {
                 return constant.primitive.isNullish();
@@ -494,7 +458,6 @@ private:
         case Typed::Opcode::Parameter:
             return valuesArrivingAt(activation, function, id);
         case Typed::Opcode::CallDirect:
-            // The function of the library that `map` is.
             if (m_functionsOfMap.contains(sourceOf(value.function())) && value.argumentsOperands().size() >= 2)
                 return { literalIn(activation, id) };
             return resultsOf(activation, value);
@@ -576,7 +539,6 @@ private:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    // What the literal is made with. A store that comes later is not looked for.
     Constants fieldsOf(const Constants& objects, Typed::PropertyKeyID key)
     {
         Constants values;
@@ -608,7 +570,6 @@ private:
                 return layout.fields[field].key == key;
             }) - fields.begin();
             if (index == fields.size()) {
-                // `{ ...others, key: value }` is made empty and filled behind that.
                 const Typed::Function& maker = m_program.at(object.function);
                 ValueID defined;
                 bool isFilledFromOthers = false;
@@ -633,7 +594,6 @@ private:
         return values;
     }
 
-    // None for the counter of a loop, of which the walk sees where it begins and no more. That leaves nothing out: every element is taken then.
     std::optional<uint32_t> positionOf(const Activation& activation, ValueID id)
     {
         bool sawEverythingBefore = std::exchange(m_sawEverything, true);
@@ -676,64 +636,58 @@ private:
         return id;
     }
 
-    // An array as long as another whose element at a position is an expression over the other's element at that position: what `map` makes once it is a loop in the function.
     struct MappedArray {
         Constant source;
         ValueID stored;
-        Vector<ValueID, 2> readsOfSource;
-    };
-
-    // The same where `map` is a call: the expression is what the callback returns, over its first parameter.
-    struct ArrayMappedByCallback {
-        Constant source;
         FunctionID callback;
+        Vector<ValueKey, 2> readsOfSource;
     };
-
-    std::optional<ArrayMappedByCallback> arrayMappedByCallbackOf(const Constant& array)
-    {
-        const Typed::Value& call = m_program.at(array.function).at(array.literal);
-        ValueID receiver;
-        ValueID callback;
-        if (call.opcode == Typed::Opcode::CallDirect) {
-            receiver = call.argumentsOperands()[0];
-            callback = call.argumentsOperands()[1];
-        } else {
-            forEachBuiltinCall(call, [&](const Typed::BuiltinCall& builtinCall) {
-                receiver = builtinCall.receiver;
-                callback = builtinCall.arguments[0];
-            });
-        }
-        WhereMade whereMade(array);
-        Constants sources = evaluate(whereMade.activation, receiver);
-        Constants callbacks = evaluate(whereMade.activation, callback);
-        if (sources.size() != 1 || !sources[0].isObjectOrArray() || callbacks.size() != 1)
-            return std::nullopt;
-        FunctionID callee = callbacks[0].declaration;
-        if (callbacks[0].literal) {
-            const Typed::Value& closure = m_program.at(callbacks[0].function).at(callbacks[0].literal);
-            if (closure.opcode == Typed::Opcode::NewClosure)
-                callee = closure.function();
-        }
-        if (!callee || !m_program.at(callee).hasBody())
-            return std::nullopt;
-        return ArrayMappedByCallback { sources[0], callee };
-    }
 
     std::optional<MappedArray> mappedArrayOf(const Constant& array)
     {
         const Typed::Function& function = m_program.at(array.function);
-        ValueID sourceOperand = function.at(array.literal).sourceOperand();
-        if (!sourceOperand)
+        const Typed::Value& literal = function.at(array.literal);
+        ValueID sourceOperand = literal.opcode == Typed::Opcode::NewArrayLike ? literal.sourceOperand() : ValueID();
+        ValueID callback;
+        if (literal.opcode == Typed::Opcode::CallDirect) {
+            sourceOperand = literal.argumentsOperands()[0];
+            callback = literal.argumentsOperands()[1];
+        } else {
+            forEachBuiltinCall(literal, [&](const Typed::BuiltinCall& builtinCall) {
+                sourceOperand = builtinCall.receiver;
+                callback = builtinCall.arguments[0];
+            });
+        }
+        bool isMappedByCallback = isCall(literal.opcode);
+        if (!sourceOperand && !isMappedByCallback)
             return std::nullopt;
-        Constants sources = evaluate(WhereMade(array).activation, sourceOperand);
+        WhereMade whereMade(array);
+        Constants sources = evaluate(whereMade.activation, sourceOperand);
+        Constants callbacks = isMappedByCallback ? evaluate(whereMade.activation, callback) : Constants();
         if (sources.size() != 1 || !sources[0].isObjectOrArray())
             return std::nullopt;
+        MappedArray mapped { sources[0], { }, { }, { } };
 
-        MappedArray mapped { sources[0], { }, { } };
+        if (isMappedByCallback) {
+            if (callbacks.size() != 1)
+                return std::nullopt;
+            mapped.callback = callbacks[0].declaration;
+            if (callbacks[0].literal) {
+                const Typed::Value& closure = m_program.at(callbacks[0].function).at(callbacks[0].literal);
+                if (closure.opcode == Typed::Opcode::NewClosure)
+                    mapped.callback = closure.function();
+            }
+            if (!mapped.callback || !m_program.at(mapped.callback).hasBody())
+                return std::nullopt;
+            const Typed::Function& body = m_program.at(mapped.callback);
+            if (body.firstParameterIndex() < body.blocks.first().parameters.size())
+                mapped.readsOfSource.append(ValueKey { mapped.callback, body.blocks.first().parameters[body.firstParameterIndex()] });
+            return mapped;
+        }
+
         ValueID source = throughCasts(function, sourceOperand);
         ValueID position;
-        for (uint32_t index = 0; index < function.values.size(); ++index) {
-            const Typed::Value& value = function.values[index];
+        for (const Typed::Value& value : function.values) {
             if (value.opcode == Typed::Opcode::PutArrayElement && throughCasts(function, value.arrayOperand()) == array.literal) {
                 if (mapped.stored)
                     return std::nullopt;
@@ -746,12 +700,11 @@ private:
         for (uint32_t index = 0; index < function.values.size(); ++index) {
             const Typed::Value& value = function.values[index];
             if (value.opcode == Typed::Opcode::GetArrayElement && throughCasts(function, value.arrayOperand()) == source && throughCasts(function, value.positionOperand()) == position)
-                mapped.readsOfSource.append(ValueID(index));
+                mapped.readsOfSource.append(ValueKey { array.function, ValueID(index) });
         }
         return mapped;
     }
 
-    // A long literal is an array of its length and a store for each element.
     const Vector<ValueID>& elementsOfLongLiteral(const Constant& array)
     {
         return m_longLiterals.ensure(static_cast<uint64_t>(array.function.index()) << 32 | array.literal.index(), [&] {
@@ -778,12 +731,8 @@ private:
             return literal->elementsOperands().size();
         if (literal && literal->opcode == Typed::Opcode::NewContiguousArray)
             return elementsOfLongLiteral(array).size();
-        if (literal && literal->opcode == Typed::Opcode::NewArrayLike) {
+        if (literal && (literal->opcode == Typed::Opcode::NewArrayLike || isCall(literal->opcode))) {
             if (std::optional<MappedArray> mapped = mappedArrayOf(array))
-                return sizeOf(mapped->source);
-        }
-        if (literal && isCall(literal->opcode)) {
-            if (std::optional<ArrayMappedByCallback> mapped = arrayMappedByCallbackOf(array))
                 return sizeOf(mapped->source);
         }
         return notFound;
@@ -799,31 +748,16 @@ private:
         if (literal.opcode == Typed::Opcode::NewContiguousArray)
             return evaluate(WhereMade(array).activation, elementsOfLongLiteral(array)[index]);
 
-        if (isCall(literal.opcode)) {
-            std::optional<ArrayMappedByCallback> mapped = arrayMappedByCallbackOf(array);
-            if (!mapped)
-                return { };
-            Constants elements = elementOf(mapped->source, index);
-            const Typed::Function& callback = m_program.at(mapped->callback);
-            unsigned first = callback.firstParameterIndex();
-            if (elements.size() != 1 || first >= callback.blocks.first().parameters.size())
-                return { };
-            m_bindings.append({ ValueKey { mapped->callback, callback.blocks.first().parameters[first] }, elements[0] });
-            Constants values = returnsOf(Activation { mapped->callback });
-            m_bindings.removeLast();
-            return values;
-        }
-
         std::optional<MappedArray> mapped = mappedArrayOf(array);
         if (!mapped)
             return { };
         Constants elements = elementOf(mapped->source, index);
-        if (elements.size() != 1)
+        if (elements.size() != 1 || (mapped->callback && mapped->readsOfSource.isEmpty()))
             return { };
         size_t numberOfBindings = m_bindings.size();
-        for (ValueID read : mapped->readsOfSource)
-            m_bindings.append({ ValueKey { array.function, read }, elements[0] });
-        Constants values = evaluate(WhereMade(array).activation, mapped->stored);
+        for (ValueKey read : mapped->readsOfSource)
+            m_bindings.append({ read, elements[0] });
+        Constants values = mapped->callback ? returnsOf(Activation { mapped->callback }) : evaluate(WhereMade(array).activation, mapped->stored);
         m_bindings.shrink(numberOfBindings);
         return values;
     }
@@ -841,40 +775,24 @@ private:
         return lengths;
     }
 
-    // A builder that is begun, filled and read in one block is a concatenation.
-    Constants textsBuiltBy(const Activation& activation, const Typed::Function& function, ValueID end)
-    {
-        return textsBuiltUpTo(activation, function, function.at(end).builderOperand(), end);
-    }
-
-    // What a string builder holds at an operation of the block that begins it, or at the end of that block.
     Constants textsBuiltUpTo(const Activation& activation, const Typed::Function& function, ValueID builder, ValueID end)
     {
-        if (!m_stackCheck.isSafeToRecurse() || ++m_valuesFollowed > m_budget) {
-            ++m_walksCutShort;
+        if (!mayFollowAnotherValue())
             return { };
-        }
         Vector<Constants, 8> parts;
         const Typed::Block* blockOfBuilder = nullptr;
-        if (function.at(builder).opcode == Typed::Opcode::Parameter) {
-            for (uint32_t block = 1; block < function.blocks.size() && !blockOfBuilder; ++block) {
-                size_t index = function.blocks[block].parameters.find(builder);
-                if (index == notFound)
+        if (std::optional<BlockParameter> merge = findMerge(activation.function, function, builder)) {
+            blockOfBuilder = &function.at(merge->block);
+            const Typed::CFG& cfg = cfgOf(activation.function);
+            Constants before;
+            for (Typed::Edge edge : cfg.incomingEdges(merge->block)) {
+                if (edge.from >= merge->block || isRuledOut(activation, function, cfg, edge))
                     continue;
-                blockOfBuilder = &function.blocks[block];
-                const Typed::CFG& cfg = *m_cfgs.ensure(activation.function.index(), [&] {
-                    return makeUnique<Typed::CFG>(function);
-                }).iterator->value;
-                Constants before;
-                for (Typed::Edge edge : cfg.incomingEdges(Typed::BlockID(block))) {
-                    if (edge.from.index() >= block || isRuledOut(activation, function, cfg, edge))
-                        continue;
-                    Typed::IncomingValue incoming = incomingValueOf(function, edge, static_cast<uint32_t>(index));
-                    if (incoming.kind != Typed::IncomingValue::Kind::Argument || !addAll(before, textsBuiltUpTo(activation, function, incoming.argument, ValueID())))
-                        return { };
-                }
-                parts.append(WTF::move(before));
+                Typed::IncomingValue incoming = incomingValueOf(function, edge, merge->index);
+                if (incoming.kind != Typed::IncomingValue::Kind::Argument || !addAll(before, textsBuiltUpTo(activation, function, incoming.argument, ValueID())))
+                    return { };
             }
+            parts.append(WTF::move(before));
         } else if (function.at(builder).opcode == Typed::Opcode::StringBuilderBegin) {
             for (const Typed::Block& block : function.blocks) {
                 if (block.values.contains(builder))
@@ -909,8 +827,7 @@ private:
     Constants concatenated(std::span<const Constants> parts)
     {
         Constants texts;
-        bool isWithinLimits = true;
-        bool hasChoices = forEachChoice(parts, [&](std::span<const Constant> choice) {
+        addAnswerForEachChoice(texts, parts, [&](std::span<const Constant> choice) -> std::optional<Constant> {
             StringBuilder builder;
             Vector<char16_t> buffer;
             for (const Constant& part : choice) {
@@ -919,18 +836,13 @@ private:
                 else if (part.primitive.kind() == Typed::KnownValue::Kind::String)
                     builder.append(m_program.strings.viewOf(part.primitive.asString(), buffer));
                 else
-                    return;
+                    return std::nullopt;
             }
-            if (!isWithinLimits || builder.hasOverflowed() || m_context.exceeds(LimitID::RegExpCandidateTextLength, builder.length() * sizeof(char16_t), m_subject))
-                return;
-            isWithinLimits = add(texts, Constant { Typed::KnownValue::string(m_strings.intern(builder.toString())) });
+            return textWithinLimit(builder);
         });
-        if (!hasChoices || !isWithinLimits)
-            return { };
         return texts;
     }
 
-    // A template object and its `raw` array are frozen, so they hold the strings of the site.
     Constants rawTextsOf(const Activation& activation, std::span<const ValueID> arguments)
     {
         const Typed::Function& function = m_program.at(activation.function);
@@ -959,8 +871,7 @@ private:
             parts.append(separators);
             for (size_t index = 0; index < size; ++index)
                 parts.append(elementOf(array, index));
-            bool isWithinLimits = true;
-            bool hasChoices = forEachChoice(parts.span(), [&](std::span<const Constant> choice) {
+            bool isWithinLimits = addAnswerForEachChoice(texts, parts.span(), [&](std::span<const Constant> choice) -> std::optional<Constant> {
                 StringBuilder builder;
                 Vector<char16_t> buffer;
                 for (size_t index = 1; index < choice.size(); ++index) {
@@ -970,20 +881,18 @@ private:
                         else if (choice[0].primitive.kind() == Typed::KnownValue::Kind::String)
                             builder.append(m_program.strings.viewOf(choice[0].primitive.asString(), buffer));
                         else
-                            return;
+                            return std::nullopt;
                     }
-                    if (choice[index].primitive.kind() == Typed::KnownValue::Kind::Undefined || choice[index].primitive.kind() == Typed::KnownValue::Kind::Null)
+                    if (choice[index].primitive.isNullish())
                         continue;
                     if (choice[index].primitive.kind() != Typed::KnownValue::Kind::String)
-                        return;
+                        return std::nullopt;
                     builder.append(m_program.strings.viewOf(choice[index].primitive.asString(), buffer));
                 }
-                if (!isWithinLimits || builder.hasOverflowed() || m_context.exceeds(LimitID::RegExpCandidateTextLength, builder.length() * sizeof(char16_t), m_subject))
-                    return;
-                isWithinLimits = add(texts, Constant { Typed::KnownValue::string(m_strings.intern(builder.toString())) });
+                return textWithinLimit(builder);
             });
-            if (!hasChoices || !isWithinLimits)
-                return { };
+            if (!isWithinLimits)
+                break;
         }
         return texts;
     }
@@ -993,6 +902,19 @@ private:
         Typed::BlockID block;
         uint32_t index;
     };
+
+    const Typed::CFG& cfgOf(FunctionID function)
+    {
+        return *m_cfgs.ensure(function.index(), [&] {
+            return makeUnique<Typed::CFG>(m_program.at(function));
+        }).iterator->value;
+    }
+
+    std::optional<BlockParameter> findMerge(FunctionID id, const Typed::Function& function, ValueID parameter)
+    {
+        std::optional<BlockParameter> found = function.at(parameter).opcode == Typed::Opcode::Parameter ? findBlockParameter(id, function, parameter) : std::nullopt;
+        return found && found->block != Typed::entryBlock ? found : std::nullopt;
+    }
 
     std::optional<BlockParameter> findBlockParameter(FunctionID id, const Typed::Function& function, ValueID parameter)
     {
@@ -1019,9 +941,7 @@ private:
             return { };
         if (location->block == Typed::entryBlock)
             return argumentsFor(activation, function, location->index);
-        const Typed::CFG& cfg = *m_cfgs.ensure(activation.function.index(), [&] {
-            return makeUnique<Typed::CFG>(function);
-        }).iterator->value;
+        const Typed::CFG& cfg = cfgOf(activation.function);
         Constants values;
         for (Typed::Edge edge : cfg.incomingEdges(location->block)) {
             if (isRuledOut(activation, function, cfg, edge))
@@ -1032,7 +952,6 @@ private:
                     break;
                 continue;
             }
-            // The operand of a test, narrowed on this edge: what does not have the type of the parameter does not come this way.
             ValueID narrowed = operandNarrowedOnEdge(function, incoming.result);
             Constants arriving = narrowed ? evaluate(activation, narrowed) : Constants();
             if (arriving.isEmpty()) {
@@ -1041,9 +960,7 @@ private:
             }
             const Typed::Type& type = m_program.typeOf(function, parameter);
             arriving.removeAllMatching([&](const Constant& constant) {
-                if (constant.regExp || constant.isObjectOrArray())
-                    return type.withOnlyObjects().isNever();
-                return constant.primitive.isKnown() && !constant.primitive.isObject() && evaluateTypeTest(m_program, constant.primitive, type) == Typed::KnownBoolean::False;
+                return hasType(constant, type) == Typed::KnownBoolean::False;
             });
             if (!arriving.isEmpty() && !addAll(values, arriving))
                 break;
@@ -1051,7 +968,13 @@ private:
         return values;
     }
 
-    // What a test answers for every value that its operands may have, if that is one answer.
+    Typed::KnownBoolean hasType(const Constant& constant, const Typed::Type& type) const
+    {
+        if (constant.regExp || constant.isObjectOrArray())
+            return type.withOnlyObjects().isNever() ? Typed::KnownBoolean::False : Typed::KnownBoolean::Unknown;
+        return constant.primitive.isKnown() && !constant.primitive.isObject() ? evaluateTypeTest(m_program, constant.primitive, type) : Typed::KnownBoolean::Unknown;
+    }
+
     Typed::KnownBoolean answerOf(const Activation& activation, const Typed::Function& function, ValueID test)
     {
         const Typed::Value& value = function.at(test);
@@ -1059,26 +982,19 @@ private:
         auto restore = makeScopeExit([&] {
             m_sawEverything = sawEverythingBefore;
         });
-        auto sameForAll = [&](const Constants& constants, NOESCAPE const Invocable<Typed::KnownBoolean(const Constant&)> auto& answer) {
+        switch (value.opcode) {
+        case Typed::Opcode::TypeTest: {
+            Constants constants = evaluate(activation, value.valueOperand());
             Typed::KnownBoolean common = Typed::KnownBoolean::Unknown;
             if (!m_sawEverything)
                 return common;
             for (const Constant& constant : constants) {
-                Typed::KnownBoolean one = answer(constant);
+                Typed::KnownBoolean one = hasType(constant, m_program.at(value.testedType()));
                 if (one == Typed::KnownBoolean::Unknown || (common != Typed::KnownBoolean::Unknown && one != common))
                     return Typed::KnownBoolean::Unknown;
                 common = one;
             }
             return common;
-        };
-        switch (value.opcode) {
-        case Typed::Opcode::TypeTest: {
-            const Typed::Type& tested = m_program.at(value.testedType());
-            return sameForAll(evaluate(activation, value.valueOperand()), [&](const Constant& constant) {
-                if (constant.regExp || constant.isObjectOrArray())
-                    return tested.withOnlyObjects().isNever() ? Typed::KnownBoolean::False : Typed::KnownBoolean::Unknown;
-                return constant.primitive.isKnown() && !constant.primitive.isObject() ? evaluateTypeTest(m_program, constant.primitive, tested) : Typed::KnownBoolean::Unknown;
-            });
         }
         case Typed::Opcode::Less:
         case Typed::Opcode::LessEq:
@@ -1086,19 +1002,16 @@ private:
         case Typed::Opcode::GreaterEq: {
             Constants left = evaluate(activation, value.leftOperand());
             Constants right = evaluate(activation, value.rightOperand());
-            if (!m_sawEverything || left.size() != 1 || right.size() != 1 || !left[0].primitive.isNumber() || !right[0].primitive.isNumber())
+            if (!m_sawEverything || left.size() != 1 || right.size() != 1)
                 return Typed::KnownBoolean::Unknown;
-            double a = left[0].primitive.asNumber();
-            double b = right[0].primitive.asNumber();
-            bool answer = value.opcode == Typed::Opcode::Less ? a < b : value.opcode == Typed::Opcode::LessEq ? a <= b : value.opcode == Typed::Opcode::Greater ? a > b : a >= b;
-            return answer ? Typed::KnownBoolean::True : Typed::KnownBoolean::False;
+            Typed::KnownValue answer = Typed::evaluateOperation(m_program, function, value, { left[0].primitive, right[0].primitive });
+            return answer.isKnown() ? Typed::knownBoolean(answer.asBoolean()) : Typed::KnownBoolean::Unknown;
         }
         default:
             return Typed::KnownBoolean::Unknown;
         }
     }
 
-    // An arm of a condition that the known values never take gives no text. The way into the merge comes straight from the branch or through a block that only the branch enters.
     bool isRuledOut(const Activation& activation, const Typed::Function& function, const Typed::CFG& cfg, Typed::Edge edge)
     {
         if (function.at(edge.from).terminator.kind == Typed::TerminatorKind::Jump) {
@@ -1109,9 +1022,6 @@ private:
         }
         const Typed::Terminator& terminator = function.at(edge.from).terminator;
         if ((terminator.kind != Typed::TerminatorKind::TestAndBranch && terminator.kind != Typed::TerminatorKind::Branch) || edge.isHandlerEdge())
-            return false;
-        Typed::Opcode test = function.at(terminator.conditionOperand()).opcode;
-        if (test != Typed::Opcode::TypeTest && test != Typed::Opcode::Less && test != Typed::Opcode::LessEq && test != Typed::Opcode::Greater && test != Typed::Opcode::GreaterEq)
             return false;
         // The operands of a test are walked with a small part of the walk's budget, and few tests deep: a test in a loop asks for the loop's own values.
         if (m_testsBeingAnswered == maxTestsBeingAnswered)
@@ -1141,8 +1051,7 @@ private:
         // Other operations may enter the function too.
         m_sawEverything = false;
         Constants values;
-        auto calls = std::ranges::equal_range(m_directCalls, activation.function, { }, &DirectCall::callee);
-        for (const DirectCall& call : calls) {
+        for (const DirectCall& call : std::ranges::equal_range(m_directCalls, activation.function, { }, &DirectCall::callee)) {
             std::span<const ValueID> arguments = m_program.at(call.caller).at(call.call).argumentsOperands();
             if (numberOfParameters == arguments.size() && !addAll(values, evaluate(Activation { call.caller }, arguments[index])))
                 return { };
@@ -1152,13 +1061,21 @@ private:
         return values;
     }
 
-    // A variable that closures share and rewrite, as the text in a builder whose methods answer the builder itself: `make(a).replace(b, c).replace(d, e).finish()`.
+    static std::optional<ValueID> initialValueOf(const Typed::Value& newObject, Typed::LayoutID layout, uint32_t field)
+    {
+        if (newObject.layout() != layout)
+            return std::nullopt;
+        std::span<const uint32_t> fields = newObject.fields();
+        size_t index = std::ranges::find(fields, field) - fields.begin();
+        if (index == fields.size())
+            return std::nullopt;
+        return newObject.valuesOperands()[index];
+    }
+
     Constants fieldSeenThrough(const Activation& activation, ValueID environment, Typed::LayoutID layout, uint32_t field)
     {
-        if (!m_stackCheck.isSafeToRecurse() || ++m_valuesFollowed > m_budget) {
-            ++m_walksCutShort;
+        if (!mayFollowAnotherValue())
             return { };
-        }
         const Typed::Function& function = m_program.at(activation.function);
         const Typed::Value& value = function.at(environment);
         switch (value.opcode) {
@@ -1186,13 +1103,10 @@ private:
                 return { };
             return fieldSeenThrough(*activation.caller, activation.call->argumentsOperands()[index], layout, field);
         }
-        case Typed::Opcode::NewObject: {
-            std::span<const uint32_t> fields = value.fields();
-            size_t index = std::ranges::find(fields, field) - fields.begin();
-            if (value.layout() != layout || index == fields.size())
-                return { };
-            return evaluate(activation, value.valuesOperands()[index]);
-        }
+        case Typed::Opcode::NewObject:
+            if (std::optional<ValueID> initial = initialValueOf(value, layout, field))
+                return evaluate(activation, *initial);
+            return { };
         case Typed::Opcode::CallDirect: {
             FunctionID callee = value.function();
             const Typed::Function& body = m_program.at(callee);
@@ -1202,15 +1116,10 @@ private:
                 ++m_walksCutShort;
                 return { };
             }
-            // Each step of a long chain is asked for by every store of the step behind it.
             bool mayRemember = m_bindings.isEmpty();
             MemoKey memoKey { callsLeadingTo(activation), &value, layout.index(), field };
-            if (mayRemember) {
-                if (auto remembered = m_remembered.find(memoKey); remembered != m_remembered.end()) {
-                    m_sawEverything &= remembered->value->sawEverything;
-                    return remembered->value->values;
-                }
-            }
+            if (const Constants* remembered = recall(memoKey))
+                return *remembered;
             unsigned walksCutShortBefore = m_walksCutShort;
             bool sawEverythingBefore = std::exchange(m_sawEverything, true);
             auto remember = makeScopeExit([&] {
@@ -1220,18 +1129,15 @@ private:
             Constants values;
             bool leavesFieldAlone = true;
             for (const Typed::Value& store : body.values) {
-                bool storesField = store.opcode == Typed::Opcode::PutEnvironmentField && store.layout() == layout && store.field() == field;
-                bool makesEnvironment = store.opcode == Typed::Opcode::NewObject && store.layout() == layout && std::ranges::contains(store.fields(), field);
-                leavesFieldAlone &= !storesField && !makesEnvironment;
-                if (storesField && !addAll(values, evaluate(inCallee, store.valueOperand())))
+                std::optional<ValueID> stored;
+                if (store.opcode == Typed::Opcode::PutEnvironmentField && store.layout() == layout && store.field() == field)
+                    stored = store.valueOperand();
+                else if (store.opcode == Typed::Opcode::NewObject)
+                    stored = initialValueOf(store, layout, field);
+                leavesFieldAlone &= !stored;
+                if (stored && !addAll(values, evaluate(inCallee, *stored)))
                     return { };
-                if (makesEnvironment) {
-                    std::span<const uint32_t> fields = store.fields();
-                    if (!addAll(values, evaluate(inCallee, store.valuesOperands()[std::ranges::find(fields, field) - fields.begin()])))
-                        return { };
-                }
             }
-            // A function that only stands in front of another, a version of it for some operands, leaves the variable as its own calls leave it.
             if (leavesFieldAlone) {
                 for (uint32_t inner = 0; inner < body.values.size(); ++inner) {
                     if (body.values[inner].opcode != Typed::Opcode::CallDirect)
@@ -1241,7 +1147,6 @@ private:
                         return { };
                 }
             }
-            // A step that does not touch the variable hands it on as it got it, with the environment among its operands.
             if (leavesFieldAlone && values.isEmpty()) {
                 for (ValueID operand : value.argumentsOperands()) {
                     Typed::Opcode opcode = function.at(throughCasts(function, operand)).opcode;
@@ -1272,26 +1177,17 @@ private:
         auto leave = makeScopeExit([&] {
             m_active.removeLast();
         });
-        for (uint32_t block = 1; block < function.blocks.size(); ++block) {
-            size_t index = function.blocks[block].parameters.find(parameter);
-            if (index == notFound)
-                continue;
-            const Typed::CFG& cfg = *m_cfgs.ensure(activation.function.index(), [&] {
-                return makeUnique<Typed::CFG>(function);
-            }).iterator->value;
-            Constants values;
-            for (Typed::Edge edge : cfg.incomingEdges(Typed::BlockID(block))) {
-                Typed::IncomingValue incoming = incomingValueOf(function, edge, static_cast<uint32_t>(index));
-                ValueID arriving = incoming.kind == Typed::IncomingValue::Kind::Argument ? incoming.argument : operandNarrowedOnEdge(function, incoming.result);
-                if (arriving && !addAll(values, fieldSeenThrough(activation, arriving, layout, field)))
-                    return { };
-            }
-            return values;
+        Constants values;
+        std::optional<BlockParameter> merge = findMerge(activation.function, function, parameter);
+        for (Typed::Edge edge : merge ? cfgOf(activation.function).incomingEdges(merge->block) : std::span<const Typed::Edge>()) {
+            Typed::IncomingValue incoming = incomingValueOf(function, edge, merge->index);
+            ValueID arriving = incoming.kind == Typed::IncomingValue::Kind::Argument ? incoming.argument : operandNarrowedOnEdge(function, incoming.result);
+            if (arriving && !addAll(values, fieldSeenThrough(activation, arriving, layout, field)))
+                break;
         }
-        return { };
+        return values;
     }
 
-    // What the closure is made with, where the walk knows the closure. Else what any closure of the function is made with.
     Constants capturesOf(const Activation& activation, const Typed::Value& read)
     {
         bool sawEverythingBefore = m_sawEverything;
@@ -1373,7 +1269,6 @@ private:
         return { };
     }
 
-    // Calls the functor with the call as each overload that it may be describes it.
     void forEachBuiltinCall(const Typed::Value& value, NOESCAPE const Invocable<void(const Typed::BuiltinCall&)> auto& functor) const
     {
         if (Typed::builtinCallOpcodes.contains(value.opcode)) {
@@ -1393,7 +1288,6 @@ private:
         }
     }
 
-    // The table of built-ins says what a built-in calls an operand with: `map` its callback with the elements of its receiver.
     bool addArgumentsGivenByBuiltin(Constants& values, const Activation& activation, const Typed::Function& function, const Typed::Value& use, ValueID closure, uint32_t parameter)
     {
         bool isWithinLimits = true;
@@ -1436,7 +1330,6 @@ private:
         return isWithinLimits;
     }
 
-    // A function that is made a closure and handed to another function is called there.
     bool addArgumentsGivenToClosures(Constants& values, FunctionID callee, uint32_t parameter)
     {
         for (const DirectCall& closure : std::ranges::equal_range(m_closures, sourceOf(callee), { }, &DirectCall::callee)) {
@@ -1463,14 +1356,12 @@ private:
                 if (!handsClosureOver)
                     continue;
                 Activation inReceiver { use.function(), &inMaker, &use };
-                Constant handedOver { .function = closure.caller, .literal = closure.call };
                 for (const Typed::Value& call : receiver.values) {
                     if (call.opcode != Typed::Opcode::Call && call.opcode != Typed::Opcode::CallResolved)
                         continue;
-                    // The callee may have come a long way from the parameter: through tests, merges and loops.
                     bool sawEverythingBefore = m_sawEverything;
                     bool callsClosure = evaluate(inReceiver, call.calleeOperand()).containsIf([&](const Constant& callee) {
-                        return callee.function == handedOver.function && callee.literal == handedOver.literal;
+                        return callee.function == closure.caller && callee.literal == closure.call;
                     });
                     m_sawEverything = sawEverythingBefore;
                     if (!callsClosure)
@@ -1523,8 +1414,7 @@ private:
         return values;
     }
 
-    // Calls the functor with every choice of one alternative an operand. False if there are more choices than a call may have alternatives.
-    bool forEachChoice(std::span<const Constants> operands, NOESCAPE const Invocable<void(std::span<const Constant>)> auto& functor) const
+    bool addAnswerForEachChoice(Constants& answers, std::span<const Constants> operands, NOESCAPE const Invocable<std::optional<Constant>(std::span<const Constant>)> auto& functor) const
     {
         uint64_t choices = 1;
         unsigned operandsWithAlternatives = 0;
@@ -1532,21 +1422,30 @@ private:
             choices *= alternatives.size();
             operandsWithAlternatives += alternatives.size() > 1;
             if (!choices || choices > maxAlternatives())
-                return false;
+                break;
         }
         // Alternatives of one operand are an enumeration: callers, stores, rows. Alternatives of two, multiplied, are mostly texts that nobody makes.
-        if (operandsWithAlternatives > 1)
-            return false;
-        Vector<Constant, 8> choice(operands.size());
-        for (uint64_t number = 0; number < choices; ++number) {
+        bool isWithinLimits = choices && choices <= maxAlternatives() && operandsWithAlternatives <= 1;
+        Vector<Constant, 8> choice(isWithinLimits ? operands.size() : 0);
+        for (uint64_t number = 0; isWithinLimits && number < choices; ++number) {
             uint64_t rest = number;
             for (size_t index = 0; index < operands.size(); ++index) {
                 choice[index] = operands[index][rest % operands[index].size()];
                 rest /= operands[index].size();
             }
-            functor(choice.span());
+            std::optional<Constant> answer = functor(choice.span());
+            isWithinLimits = !answer || add(answers, *answer);
         }
-        return true;
+        if (!isWithinLimits)
+            answers.clear();
+        return isWithinLimits;
+    }
+
+    std::optional<Constant> textWithinLimit(StringBuilder& builder)
+    {
+        if (builder.hasOverflowed() || m_context.exceeds(LimitID::RegExpCandidateTextLength, builder.length() * sizeof(char16_t), m_subject))
+            return std::nullopt;
+        return Constant { Typed::KnownValue::string(m_strings.intern(builder.toString())) };
     }
 
     uint64_t bytesOf(const Constant& constant) const
@@ -1565,7 +1464,6 @@ private:
         return summary.sourceIsPattern ? literal.pattern : m_strings.intern(StringView(summary.source));
     }
 
-    // A function of the engine that depends on its operands and on nothing else, no locale and no clock, answers in a realm of the build's own.
     Constants answersOfBuiltin(const Activation& activation, const Typed::Value& value, const Typed::BuiltinCall& call)
     {
         const BuiltinTable& table = m_program.builtins();
@@ -1614,7 +1512,6 @@ private:
         return answersOf(callee, WTF::move(operands));
     }
 
-    // One of the several results of an operation.
     Constants resultsAt(const Activation& activation, const Typed::Function& function, ValueID results, uint32_t index)
     {
         const Typed::Value& value = function.at(results);
@@ -1633,7 +1530,6 @@ private:
             for (const Typed::Block& block : body.blocks) {
                 if (block.terminator.kind != Typed::TerminatorKind::Return || !block.terminator.valueOperand())
                     continue;
-                // A result that a way out of the function does not give is left unspecified there.
                 Constants given = resultsAt(inCallee, body, block.terminator.valueOperand(), index);
                 if (!given.isEmpty() && !addAll(values, given))
                     return { };
@@ -1649,11 +1545,10 @@ private:
     {
         Vector<Constants, 3> operands { evaluate(activation, range.lengthOperand()), evaluate(activation, range.firstOperand()), evaluate(activation, range.secondOperand()) };
         Constants bounds;
-        bool isWithinLimits = true;
-        bool hasChoices = forEachChoice(operands.span(), [&](std::span<const Constant> choice) {
+        addAnswerForEachChoice(bounds, operands.span(), [&](std::span<const Constant> choice) -> std::optional<Constant> {
             bool hasSecond = choice[2].primitive.kind() != Typed::KnownValue::Kind::Undefined;
-            if (!isWithinLimits || !choice[0].primitive.isNumber() || !choice[1].primitive.isNumber() || (hasSecond && !choice[2].primitive.isNumber()))
-                return;
+            if (!choice[0].primitive.isNumber() || !choice[1].primitive.isNumber() || (hasSecond && !choice[2].primitive.isNumber()))
+                return std::nullopt;
             double length = choice[0].primitive.asNumber();
             auto integral = [](double number) {
                 return std::isnan(number) ? 0 : std::trunc(number);
@@ -1682,16 +1577,13 @@ private:
                 break;
             case Typed::StringRangeMethod::SingleIndex:
             case Typed::StringRangeMethod::SingleRelativeIndex:
-                return;
+                return std::nullopt;
             }
-            isWithinLimits = add(bounds, Constant { Typed::KnownValue::number(index ? end : begin) });
+            return Constant { Typed::KnownValue::number(index ? end : begin) };
         });
-        if (!hasChoices || !isWithinLimits)
-            return { };
         return bounds;
     }
 
-    // `slice`, `substring` and `substr` are an operation that makes two bounds of their operands and one that cuts. The engine's function is asked with the operands.
     Constants substringsOf(const Activation& activation, const Typed::Function& function, const Typed::Value& value)
     {
         const Typed::Value& start = function.at(value.startOperand());
@@ -1718,52 +1610,46 @@ private:
         return answersOf(method, { evaluate(activation, value.stringOperand()), evaluate(activation, range.firstOperand()), evaluate(activation, range.secondOperand()) });
     }
 
-    // A RegExp that is made of a known text and known flags is as good as a literal where its source is read or another is made of it.
     Constants createdBy(const Activation& activation, const Typed::BuiltinCall& call)
     {
         if (call.arguments.empty() || call.arguments.size() > 2)
             return { };
         Vector<Constants, 2> operands { evaluate(activation, call.arguments[0]), evaluate(activation, call.arguments.size() > 1 ? call.arguments[1] : ValueID()) };
         Constants created;
-        bool isWithinLimits = true;
         Vector<char16_t> buffer;
-        bool hasChoices = forEachChoice(operands.span(), [&](std::span<const Constant> choice) {
+        addAnswerForEachChoice(created, operands.span(), [&](std::span<const Constant> choice) -> std::optional<Constant> {
             StringID text = choice[0].regExp ? choice[0].regExp->pattern : choice[0].primitive.kind() == Typed::KnownValue::Kind::String ? choice[0].primitive.asString() : StringID();
-            if (!text || !isWithinLimits)
-                return;
+            if (!text)
+                return std::nullopt;
             OptionSet<Typed::RegExpFlags> flags = choice[0].regExp ? choice[0].regExp->flags() : OptionSet<Typed::RegExpFlags> { };
             if (choice[1].primitive.kind() == Typed::KnownValue::Kind::String) {
                 std::optional<OptionSet<Yarr::Flags>> parsed = Yarr::parseFlags(m_program.strings.viewOf(choice[1].primitive.asString(), buffer));
                 if (!parsed)
-                    return;
+                    return std::nullopt;
                 flags = { };
                 for (Typed::RegExpFlags flag : allMembersOf<Typed::RegExpFlags>) {
                     if (parsed->contains(toYarrFlag(flag)))
                         flags.add(flag);
                 }
             } else if (choice[1].primitive.kind() != Typed::KnownValue::Kind::Undefined)
-                return;
-            isWithinLimits = add(created, Constant { .regExp = Typed::RegExpLiteralInType { text, flags.toRaw() } });
+                return std::nullopt;
+            return Constant { .regExp = Typed::RegExpLiteralInType { text, flags.toRaw() } };
         });
-        if (!hasChoices || !isWithinLimits)
-            return { };
         return created;
     }
 
-    // The first operand is the receiver.
     Constants answersOf(BuiltinID callee, Vector<Constants, 4>&& operands)
     {
         Constants answers;
-        bool isWithinLimits = true;
-        bool hasChoices = forEachChoice(operands.span(), [&](std::span<const Constant> choice) {
-            if (!isWithinLimits || (choice[0].primitive.kind() != Typed::KnownValue::Kind::String && !choice[0].primitive.isNumber()))
-                return;
+        addAnswerForEachChoice(answers, operands.span(), [&](std::span<const Constant> choice) -> std::optional<Constant> {
+            if (choice[0].primitive.kind() != Typed::KnownValue::Kind::String && !choice[0].primitive.isNumber())
+                return std::nullopt;
             uint64_t bytes = 0;
             double largestNumber = 1;
             Vector<Typed::ScratchRealm::Operand, 4> arguments;
             for (const Constant& operand : choice) {
                 if (operand.isObjectOrArray() || (!operand.regExp && !operand.primitive.isKnown()))
-                    return;
+                    return std::nullopt;
                 arguments.append(Typed::ScratchRealm::Operand { operand.primitive, operand.regExp });
                 bytes += bytesOf(operand);
                 if (operand.primitive.isNumber())
@@ -1772,22 +1658,18 @@ private:
             // A number among the operands may set the length of the answer: a count, a length. The limit is asked before the answer is made.
             double bytesOfAnswer = static_cast<double>(bytes) * largestNumber;
             if (bytesOfAnswer >= static_cast<double>(std::numeric_limits<uint32_t>::max()) || m_context.exceeds(LimitID::RegExpCandidateTextLength, static_cast<uint64_t>(bytesOfAnswer), m_subject))
-                return;
+                return std::nullopt;
             if (!m_scratchRealm)
                 m_scratchRealm.emplace();
             std::optional<Typed::ScratchRealm::Answer> answer = m_scratchRealm->call(m_program, callee, choice[0].primitive, arguments.span().subspan(1));
             if (!answer)
-                return;
-            Typed::KnownValue primitive = answer->primitive;
-            if (!answer->text.isNull()) {
-                if (m_context.exceeds(LimitID::RegExpCandidateTextLength, answer->text.sizeInBytes(), m_subject))
-                    return;
-                primitive = Typed::KnownValue::string(m_strings.intern(StringView(answer->text)));
-            }
-            isWithinLimits = add(answers, Constant { primitive });
+                return std::nullopt;
+            if (answer->text.isNull())
+                return Constant { answer->primitive };
+            if (m_context.exceeds(LimitID::RegExpCandidateTextLength, answer->text.sizeInBytes(), m_subject))
+                return std::nullopt;
+            return Constant { Typed::KnownValue::string(m_strings.intern(StringView(answer->text))) };
         });
-        if (!hasChoices || !isWithinLimits)
-            return { };
         return answers;
     }
 
@@ -1798,28 +1680,23 @@ private:
             operands.append(evaluate(activation, value.operand(index)));
 
         Constants texts;
-        bool isWithinLimits = true;
-        bool hasChoices = forEachChoice(operands.span(), [&](std::span<const Constant> choice) {
+        addAnswerForEachChoice(texts, operands.span(), [&](std::span<const Constant> choice) -> std::optional<Constant> {
             uint64_t bytes = 0;
             for (const Constant& operand : choice) {
                 if (operand.primitive.kind() != Typed::KnownValue::Kind::String && !operand.primitive.isNumber())
-                    return;
+                    return std::nullopt;
                 bytes += bytesOf(operand);
             }
-            if (!isWithinLimits || m_context.exceeds(LimitID::RegExpCandidateTextLength, bytes, m_subject))
-                return;
+            if (m_context.exceeds(LimitID::RegExpCandidateTextLength, bytes, m_subject))
+                return std::nullopt;
             uint32_t next = 0;
             Typed::KnownValue text = evaluateStringOperation(m_program, m_strings, m_program.at(activation.function), value, [&](ValueID) {
                 return choice[next++].primitive;
             });
-            if (text.kind() == Typed::KnownValue::Kind::String)
-                isWithinLimits = add(texts, Constant { text });
+            return text.kind() == Typed::KnownValue::Kind::String ? std::optional(Constant { text }) : std::nullopt;
         });
-        if (!hasChoices || !isWithinLimits)
-            return { };
         return texts;
     }
-
 
     const Typed::Program& m_program;
     Typed::StringArena& m_strings;
@@ -1837,7 +1714,7 @@ private:
     unsigned m_valuesFollowed { 0 };
     unsigned m_walksCutShort { 0 };
     unsigned m_worlds { 0 };
-    HashMap<MemoKey, std::unique_ptr<Remembered>, MemoKeyHash, MemoKeyHashTraits> m_remembered;
+    HashMap<MemoKey, std::unique_ptr<Remembered>> m_remembered;
     bool m_sawEverything { true };
     std::optional<Split> m_split;
     Vector<std::pair<ValueKey, Constant>, 4> m_bindings;
@@ -1858,11 +1735,6 @@ private:
 static auto keyOf(const RegExpRequest& request)
 {
     return std::pair { request.pattern.index(), request.flags.toRaw() };
-}
-
-static auto orderKey(const FoundRegExp& found)
-{
-    return std::tuple { found.origin, found.pattern, found.flags.toRaw(), found.site };
 }
 
 static bool isAscendingList(std::span<const RegExpRequest> requests, bool holdsLiterals)
@@ -1898,12 +1770,6 @@ RegExpRecordID RegExpRequests::recordOf(StringID pattern, OptionSet<Yarr::Flags>
     return RegExpRecordID(*index);
 }
 
-static bool callsRegExpConstructor(const Typed::Program& program, BuiltinOverloadID overload)
-{
-    const BuiltinTable& builtins = program.builtins();
-    return builtins.canonicalID(builtins.at(overload).builtin) == Builtins::RegExp;
-}
-
 static bool mayPassArgument(const Typed::BuiltinCall& call, uint32_t argumentIndex)
 {
     switch (call.form) {
@@ -1926,15 +1792,13 @@ static FlagSets parseFlagSets(const Typed::Program& program, const Typed::SinkCa
         flagSets.append(OptionSet<Yarr::Flags> { });
     Vector<char16_t> buffer;
     for (StringID text : candidates.strings) {
-        std::optional<OptionSet<Yarr::Flags>> flags = Yarr::parseFlags(program.strings.viewOf(text, buffer));
-        if (!flags)
-            continue;
-        flagSets.appendIfNotContains(ImageRegExp::significantFlags(*flags));
+        if (std::optional<OptionSet<Yarr::Flags>> flags = Yarr::parseFlags(program.strings.viewOf(text, buffer)))
+            flagSets.appendIfNotContains(ImageRegExp::significantFlags(*flags));
     }
     return flagSets;
 }
 
-static void reportTextKnownAtRunTime(BuildContext& context, RegExpSite site, Typed::BlockID block, SourceLocation location)
+static void reportTextKnownAtRunTime(BuildContext& context, RegExpSite site, Typed::BlockID block)
 {
     context.diagnostics().add(UserDiagnostic {
         .kind = UserDiagnosticKind::RegExpWithoutCode,
@@ -1942,14 +1806,8 @@ static void reportTextKnownAtRunTime(BuildContext& context, RegExpSite site, Typ
         .block = block,
         .value = site.value,
         .count = static_cast<uint32_t>(RegExpDeclineReason::TextKnownAtRunTime),
-        .location = location,
+        .location = site.location,
     });
-}
-
-// Plain characters are searched for without code, and the run time sees that they are plain when it parses them.
-static bool mayHaveCode(const RegExpSummary& summary)
-{
-    return summary.isValid() && summary.atom.isNull();
 }
 
 static void addCandidates(const Typed::Program& program, BuildContext& context, RegExpRequestOrigin origin, StringID pattern, const FlagSets& flagSets, RegExpSite site, Vector<FoundRegExp>& found)
@@ -1957,52 +1815,42 @@ static void addCandidates(const Typed::Program& program, BuildContext& context, 
     Vector<char16_t> buffer;
     StringView text = program.strings.viewOf(pattern, buffer);
     for (OptionSet<Yarr::Flags> flagSet : flagSets) {
-        if (mayHaveCode(context.regExpSummaries().summaryOf(pattern, flagSet, text)))
+        const RegExpSummary& summary = context.regExpSummaries().summaryOf(pattern, flagSet, text);
+        if (summary.isValid() && summary.atom.isNull())
             found.append(FoundRegExp { origin, pattern, flagSet, site });
     }
 }
 
-static void addCandidatesOfFlow(const CollectionInputs& inputs, const Typed::SinkCandidates& patterns, const FlagSets& flagSets, RegExpSite site, Vector<FoundRegExp>& found)
-{
-    const Typed::StringTable& strings = inputs.program.strings;
-    auto addPattern = [&](StringID pattern) {
-        addCandidates(inputs.program, inputs.context, RegExpRequestOrigin::Candidate, pattern, flagSets, site, found);
-    };
-    for (StringID pattern : patterns.strings)
-        addPattern(pattern);
-    // The record of an operand that flow knows nothing about says mayBeUndefined too.
-    bool flowSawUndefined = patterns.mayBeUndefined && patterns != Typed::SinkCandidates { };
-    if (flowSawUndefined && !patterns.strings.contains(strings.emptyString()))
-        addPattern(strings.emptyString());
-}
-
-static void collectCandidates(const CollectionInputs& inputs, const RegExpConstructorCall& call, Vector<FoundRegExp>& found)
+static void collectCandidates(CollectionInputs& inputs, const Typed::BuiltinCall& call, Typed::AccessSiteID accessSite, RegExpSite site, Typed::BlockID block, Vector<FoundRegExp>& found)
 {
     const Typed::SinkCandidates notPassed { .strings = { }, .mayBeUndefined = true, .isComplete = true };
     auto candidatesOf = [&](uint32_t argumentIndex) -> const Typed::SinkCandidates& {
-        return mayPassArgument(call.builtinCall, argumentIndex) ? inputs.flow.sinkCandidates(call.accessSite, argumentIndex) : notPassed;
+        return mayPassArgument(call, argumentIndex) ? inputs.flow.sinkCandidates(accessSite, argumentIndex) : notPassed;
     };
     const Typed::SinkCandidates& patterns = candidatesOf(0);
     const Typed::SinkCandidates& flags = candidatesOf(1);
     FlagSets flagSets = parseFlagSets(inputs.program, flags);
 
-    Subject subject { .function = call.site.function, .block = call.block, .value = call.site.value, .location = call.location };
-    // A crowd of texts at one call says little about the text that the call gets.
-    bool takesTextsOfFlow = !inputs.context.exceeds(LimitID::RegExpCandidatesPerSite, patterns.strings.size(), subject);
-    if (takesTextsOfFlow)
-        addCandidatesOfFlow(inputs, patterns, flagSets, call.site, found);
+    bool takesTextsOfFlow = !inputs.context.exceeds(LimitID::RegExpCandidatesPerSite, patterns.strings.size(), Subject { .function = site.function, .block = block, .value = site.value, .location = site.location });
+    if (takesTextsOfFlow) {
+        for (StringID pattern : patterns.strings)
+            addCandidates(inputs.program, inputs.context, RegExpRequestOrigin::Candidate, pattern, flagSets, site, found);
+        // The record of an operand that flow knows nothing about says mayBeUndefined too.
+        StringID emptyString = inputs.program.strings.emptyString();
+        if (patterns.mayBeUndefined && patterns != Typed::SinkCandidates { } && !patterns.strings.contains(emptyString))
+            addCandidates(inputs.program, inputs.context, RegExpRequestOrigin::Candidate, emptyString, flagSets, site, found);
+    }
     bool flowKnowsEveryText = takesTextsOfFlow && patterns.isComplete;
     if (flowKnowsEveryText && flags.isComplete)
         return;
 
-    bool passesPatternAsOperand = call.builtinCall.form != Typed::BuiltinCallForm::List && !call.builtinCall.arguments.empty();
+    bool passesPatternAsOperand = call.form != Typed::BuiltinCallForm::List && !call.arguments.empty();
     if (flowKnowsEveryText || !passesPatternAsOperand) {
-        reportTextKnownAtRunTime(inputs.context, call.site, call.block, call.location);
+        reportTextKnownAtRunTime(inputs.context, site, block);
         return;
     }
-    Locker locker { inputs.callsWithUnknownText.lock };
-    ValueID flagsOperand = call.builtinCall.arguments.size() > 1 ? call.builtinCall.arguments[1] : ValueID();
-    inputs.callsWithUnknownText.calls.append(CallWithUnknownText { call.site, call.block, call.location, call.builtinCall.arguments[0], flagsOperand, WTF::move(flagSets), flags.isComplete });
+    Locker locker { inputs.lock };
+    inputs.callsWithUnknownText.append(CallWithUnknownText { site, block, call.arguments[0], call.arguments.size() > 1 ? call.arguments[1] : ValueID(), WTF::move(flagSets), flags.isComplete });
 }
 
 static void addCandidatesFromConstants(const Typed::Program& program, Typed::StringArena& strings, BuildContext& context, Vector<CallWithUnknownText>&& calls, Vector<FoundRegExp>& found)
@@ -2013,43 +1861,35 @@ static void addCandidatesFromConstants(const Typed::Program& program, Typed::Str
     TextsFromConstants constants(program, strings, context);
     for (const CallWithUnknownText& call : calls) {
         TextsFromConstants::Patterns known = constants.patternsOf(call);
-        // What the walk has seen all of is as good as literals. Of the others the call makes some, and they share what code one call may have.
         RegExpRequestOrigin origin = known.sawEveryText || known.patterns.size() == 1 ? RegExpRequestOrigin::Evaluated : RegExpRequestOrigin::Candidate;
         for (const TextsFromConstants::Pattern& pattern : known.patterns)
             addCandidates(program, context, origin, pattern.text, FlagSets { pattern.flags }, call.site, found);
-        bool knowsTexts = known.sawEveryText && !known.patterns.isEmpty();
-        bool knowsFlags = known.sawAllFlags;
-        auto& patterns = known.patterns;
-        if (!knowsTexts || !knowsFlags)
-            reportTextKnownAtRunTime(context, call.site, call.block, call.location);
+        if (!known.sawEveryText || known.patterns.isEmpty() || !known.sawAllFlags)
+            reportTextKnownAtRunTime(context, call.site, call.block);
     }
 }
 
-static void collectFromFunction(const CollectionInputs& inputs, FunctionID id, Vector<FoundRegExp>& found)
+static void collectFromFunction(CollectionInputs& inputs, FunctionID id, Vector<FoundRegExp>& found)
 {
     const Typed::Program& program = inputs.program;
     const Typed::Function& function = program.at(id);
-
-    Vector<RegExpConstructorCall, 4> calls;
+    const BuiltinTable& builtins = program.builtins();
+    std::optional<Typed::CFG> cfg;
     // Placement asks for the record of a literal in every block, reachable or not.
-    forEachListedValue(program, id, Typed::Value::opcodesWithPattern | Typed::builtinCallOpcodes, [&](Typed::BlockID blockID, uint32_t, ValueID valueID, const Typed::Value& value) {
+    forEachListedValue(program, id, Typed::Value::opcodesWithPattern | Typed::builtinCallOpcodes, [&](Typed::BlockID block, uint32_t, ValueID valueID, const Typed::Value& value) {
         bool isLiteral = Typed::Value::opcodesWithPattern.contains(value.opcode);
-        if (!isLiteral && !callsRegExpConstructor(program, value.overload()))
+        if (!isLiteral && builtins.canonicalID(builtins.at(value.overload()).builtin) != Builtins::RegExp)
             return;
         RegExpSite site { id, valueID, function.locationOf(valueID) };
-        if (isLiteral)
+        if (isLiteral) {
             found.append(FoundRegExp { RegExpRequestOrigin::Literal, value.pattern(), ImageRegExp::significantFlags(toYarrFlags(value.regExpFlags())), site });
-        else
-            calls.append(RegExpConstructorCall { builtinCallOf(program, value), value.accessSite(), site, blockID, site.location });
+            return;
+        }
+        if (!cfg)
+            cfg.emplace(function);
+        if (cfg->isReachable(block))
+            collectCandidates(inputs, builtinCallOf(program, value), value.accessSite(), site, block, found);
     });
-    if (calls.isEmpty())
-        return;
-
-    Typed::CFG cfg(function);
-    for (const RegExpConstructorCall& call : calls) {
-        if (cfg.isReachable(call.block))
-            collectCandidates(inputs, call, found);
-    }
 }
 
 static void addToRequests(Vector<RegExpRequest>& ascendingRequests, const FoundRegExp& found)
@@ -2098,16 +1938,15 @@ static void internMetadataStrings(RegExpRequest& request, const Typed::Program& 
 RegExpRequests collectRegExpRequests(const Typed::Program& program, const Typed::FlowResults& flow, Typed::StringArena& strings, BuildContext& context)
 {
     PhaseTimes times(context, PassID::CollectRegExpLiterals);
-    CallsWithUnknownText callsWithUnknownText;
-    CollectionInputs inputs { program, flow, context, callsWithUnknownText };
+    CollectionInputs inputs { program, flow, context };
     Vector<FoundRegExp> found = collectInParallel<FoundRegExp>(context.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<FoundRegExp>& foundInFunction) {
         collectFromFunction(inputs, FunctionID(index), foundInFunction);
     });
     times.didFinish("collect from functions"_s);
-    addCandidatesFromConstants(program, strings, context, WTF::move(callsWithUnknownText.calls), found);
+    addCandidatesFromConstants(program, strings, context, WTF::move(inputs.callsWithUnknownText), found);
     times.didFinish("addCandidatesFromConstants"_s);
     parallelSort(context.parallelLoops(), found.mutableSpan(), [](const FoundRegExp& a, const FoundRegExp& b) {
-        return orderKey(a) < orderKey(b);
+        return std::tuple { a.origin, a.pattern, a.flags.toRaw(), a.site } < std::tuple { b.origin, b.pattern, b.flags.toRaw(), b.site };
     });
 
     Vector<RegExpRequest> literals;

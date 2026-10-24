@@ -10,6 +10,15 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+std::span<const TestCommand> flowTestCommands()
+{
+    static constexpr TestCommand commands[] = {
+        { "flow"_s, IRForm::AsRead, runFlowTestCommand, ProgramAsRead::TypedAndVerified },
+        { "flow-report"_s, IRForm::AsRead, runFlowReportTestCommand, ProgramAsRead::TypedAndVerified },
+    };
+    return commands;
+}
+
 std::span<const TestCommand> valueFlowTestCommands()
 {
     static constexpr TestCommand commands[] = {

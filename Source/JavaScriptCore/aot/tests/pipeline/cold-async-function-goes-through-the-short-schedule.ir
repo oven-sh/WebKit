@@ -8,7 +8,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = NewClosure function=f1
@@ -29,54 +28,45 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="asyncAndSeldomCalled" flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] {
-  b0(v0: anything):
     v1 = Await v0
     v2 = CallDirect v1 function=f4
     Return v2
 }
 
 function f2 name="seldomCalled" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f4
     Return v1
-}
-# CHECK-LABEL: function f2 name="seldomCalled"
 # CHECK-NOT: = CallDirect
 # CHECK: = TypeTest
+}
 
 function f3 name="asyncAndCalledByFour" flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] {
-  b0(v0: anything):
     v1 = Await v0
     v2 = CallDirect v1 function=f4
     Return v2
 }
 
 function f4 name="isMissing" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=undefined
     Return v1
 }
 
 function f5 name="firstCaller" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f3
     Return v1
 }
 
 function f6 name="secondCaller" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f3
     Return v1
 }
 
 function f7 name="thirdCaller" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f3
     Return v1
 }
 
 function f8 name="fourthCaller" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f3
     Return v1
 }

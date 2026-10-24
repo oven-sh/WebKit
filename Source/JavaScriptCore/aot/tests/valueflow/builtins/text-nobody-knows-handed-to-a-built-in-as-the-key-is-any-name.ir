@@ -7,7 +7,6 @@ layout L0 fields=[{key="value" declared={type=anything}}] ownFieldCount=1
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Object
     v1 = Builtin builtin=ObjectDefineProperty
     v2 = Builtin builtin=GlobalThis

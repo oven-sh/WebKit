@@ -9,7 +9,6 @@
 
 #include "AOTPropertyAccess.h"
 #include "TypedArrayType.h"
-#include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -26,15 +25,7 @@ struct ElementAccessQuery {
     const Type* storedExpected { nullptr };
 };
 
-enum class ElementAccessForm : uint8_t {
-    ByKey,
-    NamedKey,
-    Array,
-    TypedArray,
-    String,
-    ArgumentsElement,
-    Split,
-};
+enum class ElementAccessForm : uint8_t { ByKey, NamedKey, Array, TypedArray, String, ArgumentsElement, Split };
 
 enum class ConstantKeyKind : uint8_t { None, Text, Symbol };
 
@@ -77,7 +68,6 @@ struct ElementAccessPlan {
 
     bool isResolved() const { return form == ElementAccessForm::NamedKey || form == ElementAccessForm::Array || form == ElementAccessForm::TypedArray; }
     bool needsNoTest() const { return !testsReceiverClass && !testsReceiverIsString && !checksNullish && !testsKeyIsNumber && !testsStoredValue && !testsArrayStorage && !testsInBounds && !testsPresence && requiredAspects.isEmpty(); }
-    // The form String says that the types prove a character read. This access has that form once its tests have narrowed its operands.
     bool isCharacterReadAfterTests() const { return form == ElementAccessForm::ByKey && !needsNoTest(); }
 
     void dump(PrintStream&) const;

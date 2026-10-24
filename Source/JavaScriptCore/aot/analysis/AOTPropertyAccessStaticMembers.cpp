@@ -28,13 +28,6 @@ static bool isOwnFunctionProperty(const Program& program, PropertyKeyID key)
     return nameClass == NameClass::Length || nameClass == NameClass::Prototype || program.builtinNameOf(key) == BuiltinNames::name;
 }
 
-static void addConditionWithFirstCause(MemberAnswer& walked, const MemberCondition& condition, UnprovenCause cause)
-{
-    addCondition(walked.conditions, condition);
-    if (walked.cause == UnprovenCause::Unknown)
-        walked.cause = cause;
-}
-
 static MemberCondition createMemberUnchangedCondition(const MemberQuery& query)
 {
     return { MemberCondition::Kind::MemberUnchanged, query.layout, ClassSide::Static, query.key };
@@ -57,13 +50,6 @@ static bool mayInterceptStore(MemberKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Until its definition has run, a store to a static field reaches the other members of the class and the classes above it.
-static MemberAnswer findMemberBeforeDefinition(const PropertyAccessContext& context, const MemberQuery& store)
-{
-    MemberQuery read { MemberStart::ClassObject, store.layout, store.key, Access::Read, false };
-    return findFromClassObject(context, read, StaticFieldDefinition::HasNotRun);
-}
-
 static MemberAnswer finishAtStaticField(const PropertyAccessContext& context, const MemberQuery& query, MemberAnswer&& walked, LayoutID holder, VariableID variable)
 {
     const Program& program = context.program;
@@ -71,35 +57,25 @@ static MemberAnswer finishAtStaticField(const PropertyAccessContext& context, co
     if (isStore && holder != query.layout)
         return MemberAnswer::unknown(UnprovenCause::Unknown);
 
-    // For a static field the proof covers every access through the class object but the definition itself.
     bool definitionHasRun = program.at(variable).flow.initialization != InitializationState::Unknown;
     if (query.access == Access::Store && !definitionHasRun) {
-        // A store to a private name throws until the definition has run.
         bool isPrivateName = program.at(query.key).kind == PropertyKeyKind::PrivateName;
-        MemberAnswer beforeDefinition = findMemberBeforeDefinition(context, query);
+        MemberAnswer beforeDefinition = findFromClassObject(context, { MemberStart::ClassObject, query.layout, query.key, Access::Read, false }, StaticFieldDefinition::HasNotRun);
         if (isPrivateName || mayInterceptStore(beforeDefinition.kind))
             return MemberAnswer::unknown(UnprovenCause::PropertyAdded);
         for (const MemberCondition& condition : beforeDefinition.conditions)
-            addConditionWithFirstCause(walked, condition, beforeDefinition.cause);
+            addConditionWithCause(walked, condition, beforeDefinition.cause);
     }
 
     walked.kind = MemberKind::Variable;
     walked.variable = variable;
     walked.holder = holder;
     if (!program.at(holder).classFlow.staticNamesAreComplete)
-        addConditionWithFirstCause(walked, createMemberUnchangedCondition(query), UnprovenCause::UnknownKeyStore);
+        addConditionWithCause(walked, createMemberUnchangedCondition(query), UnprovenCause::UnknownKeyStore);
     else if (program.at(variable).flow.writers != WriterState::AllKnown)
-        addConditionWithFirstCause(walked, createMemberUnchangedCondition(query), UnprovenCause::UnknownWriter);
+        addConditionWithCause(walked, createMemberUnchangedCondition(query), UnprovenCause::UnknownWriter);
     setLevel(walked);
     return WTF::move(walked);
-}
-
-static MemberAnswer finishAtBuiltinConstructor(const PropertyAccessContext& context, const MemberQuery& query, MemberAnswer&& walked, BuiltinClassID base)
-{
-    BuiltinID constructor = context.program.builtins().at(base).constructor;
-    if (!constructor)
-        return MemberAnswer::unknown(UnprovenCause::UnknownBase);
-    return finishAtChainEnd(WTF::move(walked), findBuiltinObjectMember(context, constructor, query.key, query.access));
 }
 
 static MemberAnswer findFromClassObject(const PropertyAccessContext& context, const MemberQuery& query, StaticFieldDefinition definition)
@@ -115,9 +91,8 @@ static MemberAnswer findFromClassObject(const PropertyAccessContext& context, co
             return MemberAnswer::unknown(UnprovenCause::NonLayoutObject);
         const ClassFlow& classFlow = layout.classFlow;
         if (classFlow.evaluations != ExecutionCount::AtMostOnce)
-            addConditionWithFirstCause(walked, { MemberCondition::Kind::ClassEvaluatedOnce, current, ClassSide::Prototype, { } }, UnprovenCause::ClassEvaluatedAgain);
+            addConditionWithCause(walked, { MemberCondition::Kind::ClassEvaluatedOnce, current, ClassSide::Prototype, { } }, UnprovenCause::ClassEvaluatedAgain);
 
-        // A class may be created while a static initializer of its base runs, so no static field on the chain counts as defined.
         bool skipsStaticField = definition == StaticFieldDefinition::HasNotRun;
         if (VariableID variable = skipsStaticField ? VariableID() : findStaticFieldVariable(program, layout.constructor, query.key))
             return finishAtStaticField(context, query, WTF::move(walked), current, variable);
@@ -129,7 +104,7 @@ static MemberAnswer findFromClassObject(const PropertyAccessContext& context, co
         }
         if (member.isDeclared()) {
             if (member.mutability != MemberMutability::Fixed)
-                addConditionWithFirstCause(walked, createMemberUnchangedCondition(query), UnprovenCause::PropertyRedefined);
+                addConditionWithCause(walked, createMemberUnchangedCondition(query), UnprovenCause::PropertyRedefined);
             setDeclaredMember(walked, member, current);
             setLevel(walked);
             return walked;
@@ -137,14 +112,13 @@ static MemberAnswer findFromClassObject(const PropertyAccessContext& context, co
         if (member.isListedWithoutDefinition())
             return MemberAnswer::unknown(UnprovenCause::PropertyAdded);
         if (!classFlow.staticNamesAreComplete)
-            addConditionWithFirstCause(walked, createMemberUnchangedCondition(query), UnprovenCause::UnknownKeyStore);
+            addConditionWithCause(walked, createMemberUnchangedCondition(query), UnprovenCause::UnknownKeyStore);
         if (query.isOwnLookup) {
             walked.kind = MemberKind::Absent;
             setLevel(walked);
             return walked;
         }
 
-        // The run time expects Function.prototype above a constructor function. Where the program itself puts something else there, the guard of the link never holds.
         if (layout.has(LayoutFlags::IsConstructorFunction) && classFlow.staticLink != MemberMutability::Fixed && context.flow && context.flow->closuresAreRelinkedByProgram(layout.constructor))
             return MemberAnswer::unknown(UnprovenCause::PrototypeChanged);
 
@@ -156,7 +130,9 @@ static MemberAnswer findFromClassObject(const PropertyAccessContext& context, co
             current = next.layout;
             continue;
         case ChainStep::BuiltinClass:
-            return finishAtBuiltinConstructor(context, query, WTF::move(walked), next.builtinClass);
+            if (BuiltinID constructor = program.builtins().at(next.builtinClass).constructor)
+                return finishAtChainEnd(WTF::move(walked), findBuiltinObjectMember(context, constructor, query.key, query.access));
+            return MemberAnswer::unknown(UnprovenCause::UnknownBase);
         case ChainStep::NoBase:
             return finishAtChainEnd(WTF::move(walked), findBuiltinInstanceMember(context, BuiltinClasses::Function, query.key, query.access));
         }
@@ -171,34 +147,6 @@ MemberAnswer findStaticMember(const PropertyAccessContext& context, const Member
     if (keyLookupOf(program, query.key) != KeyLookup::Ordinary || isOwnFunctionProperty(program, query.key))
         return MemberAnswer::unknown(UnprovenCause::Unknown);
     return findFromClassObject(context, query, StaticFieldDefinition::HasRun);
-}
-
-static bool isAddedByRequire(const Program& program, PropertyKeyID key)
-{
-    return program.builtinNameOf(key) == BuiltinNames::__esModule;
-}
-
-static MemberAnswer createExportAnswer(const MemberQuery& query, const ModuleExport& entry, uint32_t field)
-{
-    switch (entry.kind) {
-    case ModuleExportKind::Variable: {
-        MemberAnswer answer = createProvenAnswer(MemberKind::Variable);
-        answer.variable = entry.variable;
-        answer.holder = query.layout;
-        answer.field = field;
-        return answer;
-    }
-    case ModuleExportKind::Namespace: {
-        if (entry.phase != ImportPhase::Evaluation)
-            return MemberAnswer::unknown(UnprovenCause::Unknown);
-        MemberAnswer answer = createProvenAnswer(MemberKind::Namespace);
-        answer.module = entry.module;
-        return answer;
-    }
-    case ModuleExportKind::Indirect:
-        return MemberAnswer::unknown(UnprovenCause::UnknownObject);
-    }
-    RELEASE_ASSERT_NOT_REACHED();
 }
 
 MemberAnswer findNamespaceExport(const PropertyAccessContext& context, const MemberQuery& query)
@@ -230,7 +178,7 @@ MemberAnswer findNamespaceExport(const PropertyAccessContext& context, const Mem
     if (!field) {
         if (!listsEveryName)
             return MemberAnswer::unknown(UnprovenCause::UnknownObject);
-        if (isAddedByRequire(program, query.key))
+        if (program.builtinNameOf(query.key) == BuiltinNames::__esModule)
             return MemberAnswer::unknown(UnprovenCause::PropertyAdded);
         return createProvenAnswer(MemberKind::Absent);
     }
@@ -239,7 +187,17 @@ MemberAnswer findNamespaceExport(const PropertyAccessContext& context, const Mem
     bool mayBeAmbiguous = entry.isFromStarExport && !listsEveryName;
     if (mayBeAmbiguous)
         return MemberAnswer::unknown(UnprovenCause::UnknownObject);
-    return createExportAnswer(query, entry, *field);
+    switch (entry.kind) {
+    case ModuleExportKind::Variable:
+        return { .kind = MemberKind::Variable, .level = KnowledgeLevel::Proven, .holder = query.layout, .field = *field, .variable = entry.variable };
+    case ModuleExportKind::Namespace:
+        if (entry.phase != ImportPhase::Evaluation)
+            return MemberAnswer::unknown(UnprovenCause::Unknown);
+        return { .kind = MemberKind::Namespace, .level = KnowledgeLevel::Proven, .module = entry.module };
+    case ModuleExportKind::Indirect:
+        return MemberAnswer::unknown(UnprovenCause::UnknownObject);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 } } } // namespace JSC::AOT::Typed

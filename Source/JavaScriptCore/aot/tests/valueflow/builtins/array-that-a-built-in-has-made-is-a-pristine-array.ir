@@ -14,7 +14,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewArray v0 contents=anything
     v2 = Builtin builtin=ArrayPrototypeMap
@@ -35,26 +34,20 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="element" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="same" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 function f3 name="keep" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 function f4 name="other" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f5 name="alike" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 function f6 name="take" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }

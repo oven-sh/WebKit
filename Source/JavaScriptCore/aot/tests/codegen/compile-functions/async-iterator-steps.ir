@@ -11,7 +11,6 @@ module m0 path="main.js" displayPath="main.js" flags=[HasTopLevelAwait] body=f0
 entry module=m0
 
 function f0 name="main" kind=Module flags=[IsAsync] results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = Builtin builtin=GlobalThis
@@ -28,7 +27,6 @@ function f0 name="main" kind=Module flags=[IsAsync] results=[{type=anything}] {
     Return
 }
 function f1 name="inFunction" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = IteratorOpen v0 iteratorKind=Async
     Jump -> next b1()
   b1():
@@ -41,7 +39,6 @@ function f1 name="inFunction" flags=[IsAsync] parameters=[{type=anything}] resul
     Return v5
 }
 function f2 name="inGenerator" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: function, v1: anything, v2: anything):
     InitialYield
     v4 = IteratorOpen v1 iteratorKind=Async
     Jump -> next b1()

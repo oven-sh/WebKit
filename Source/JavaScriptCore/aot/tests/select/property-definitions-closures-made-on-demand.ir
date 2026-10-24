@@ -9,51 +9,43 @@ layout L0 name="GetterOverNothing" fields=[{key="get" declared={type=anything} f
 layout L1 name="ValueOverNothing" fields=[{key="value" declared={type=anything} flow={location={initialization=SetAtCreation deferral=CapturesNothing deferredFunction=f0} occupancy=AlwaysFilled}}]
 layout L2 name="GetterOverLiteral" fields=[{key="get" declared={type=anything} flow={location={initialization=SetAtCreation deferral=CapturesObject deferredFunction=f1} occupancy=AlwaysFilled}}]
 function f0 name="overNothing" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f1 name="overLiteral" kind=Arrow captures=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     Return
 }
 function f2 name="getterOverNothing" parameters=[{type=object}, {type=string}] results=[{type=anything}] {
-  b0(v0: object, v1: string):
     v2 = Boolean boolean=true
     v3 = NewClosure function=f0 [isMadeOnDemand]
     v4 = NewObject -, v3, v2 layout=L0 fields=[0, 1]
     v5 = FinishObject v4
     v6 = CallBuiltin -, v0, v1, v5 overload=ObjectDefineProperty/0
     Return v6
-}
-# CHECK-LABEL: function f2 name="getterOverNothing"
 # CHECK-NOT: isMadeOnDemand
 # CHECK-NOT: NewObject
 # CHECK: [[getter]]:{{*}}= NewClosure function=f0
 # CHECK-NOT: closureForm=Deferred
 # CHECK: = DefineOwnProperty v0, v1, -, [[getter]] descriptorFlags=[HasConfigurable, IsConfigurable, HasGet]
+}
 function f3 name="valueOverNothingThroughCast" parameters=[{type=object}, {type=string}] results=[{type=anything}] {
-  b0(v0: object, v1: string):
     v2 = NewClosure function=f0 [isMadeOnDemand]
     v3 = Upcast v2 castType=anything
     v4 = NewObject -, v3 layout=L1 fields=[0]
     v5 = FinishObject v4
     v6 = CallBuiltin -, v0, v1, v5 overload=ObjectDefineProperty/0
     Return v6
-}
-# CHECK-LABEL: function f3 name="valueOverNothingThroughCast"
 # CHECK-NOT: isMadeOnDemand
 # CHECK-NOT: NewObject
 # CHECK: = DefineOwnProperty v0, v1, v3 descriptorFlags=[HasValue]
+}
 function f4 name="getterOverLiteral" parameters=[{type=object}, {type=string}] results=[{type=anything}] {
-  b0(v0: object, v1: string):
     v2 = NewClosure function=f1 [isMadeOnDemand]
     v3 = NewObject -, v2 layout=L2 fields=[0]
     v4 = FinishObject v3
     v5 = CallBuiltin -, v0, v1, v4 overload=ObjectDefineProperty/0
     Return v5
-}
-# CHECK-LABEL: function f4 name="getterOverLiteral"
 # CHECK-NOT: DefineOwnProperty
 # CHECK: = NewClosure function=f1 {{*}}closureForm=Deferred [isMadeOnDemand]
 # CHECK-NEXT: = NewObject -, v2 layout=L2 fields=[0]
 # CHECK-NOT: DefineOwnProperty
+}

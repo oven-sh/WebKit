@@ -8,8 +8,8 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBuiltinCells.h"
 #include "AOTBuiltinIDs.h"
+#include "AOTBuiltinOperationSupport.h"
 #include "AOTInstance.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
@@ -315,6 +315,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedArraySubarrayOfAnyValue, EncodedJSValu
     OPERATION_RETURN(scope, encodedJSValue());
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedArrayLength, uint64_t, (JSCell* view))
+{
+    return cellArgument<JSArrayBufferView>(view, Entry::operationAOTTypedArrayLength)->length();
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedArrayPut, void, (Instance* instance, JSCell* cell, uint64_t index, double number))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTTypedArrayPut);
@@ -344,22 +349,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowIfTypedArrayIsDetached, void, (Instanc
     if (view->isDetached() || view->isOutOfBounds())
         throwTypeError(globalObject, scope, typedArrayBufferHasBeenDetachedErrorMessage);
     OPERATION_RETURN(scope);
-}
-
-static JSValue callMethodInEngine(JSGlobalObject* globalObject, BuiltinID method, JSValue receiver, JSValue first, JSValue second = JSValue())
-{
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    JSCell* function = Instance::of(globalObject)->state->builtinCells->findObject(method);
-    RELEASE_ASSERT(function);
-    MarkedArgumentBuffer arguments;
-    arguments.append(first);
-    if (second)
-        arguments.append(second);
-    ASSERT(!arguments.hasOverflowed());
-    // Where the stack has no room for the call, what it answers is not empty.
-    JSValue result = call(globalObject, function, JSC::getCallData(function), receiver, arguments);
-    RETURN_IF_EXCEPTION(scope, { });
-    return result;
 }
 
 // A view over the buffer that has lost its memory with it. The constructor refuses such a buffer, so the view loses the memory of a buffer of its own, and is then handed the other.
@@ -418,7 +407,7 @@ extern "C" JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__viewOrRangeOfByte
     using namespace JSC;
     if (JSValue::decode(encodedStart).asInt32() >= 0) [[likely]]
         return encodedView;
-    return JSValue::encode(AOT::callMethodInEngine(globalObject, AOT::Builtins::TypedArrayPrototypeSubarray, JSValue::decode(encodedView), JSValue::decode(encodedBegin)));
+    return JSValue::encode(AOT::callMethodInEngine(AOT::Instance::of(globalObject), AOT::Builtins::TypedArrayPrototypeSubarray, JSValue::decode(encodedView), JSValue::decode(encodedBegin)));
 }
 
 extern "C" JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__rangeOfBytes(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedView, JSC::EncodedJSValue encodedStart)
@@ -448,7 +437,7 @@ extern "C" JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__encodeIntoRangeOf
         destination = AOT::makeRangeOfBytes(globalObject, destination, start);
         RETURN_IF_EXCEPTION(scope, { });
     }
-    RELEASE_AND_RETURN(scope, JSValue::encode(AOT::callMethodInEngine(globalObject, AOT::Builtins::TextEncoderPrototypeEncodeInto, JSValue::decode(encodedEncoder), JSValue::decode(encodedSource), destination)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(AOT::callMethodInEngine(AOT::Instance::of(globalObject), AOT::Builtins::TextEncoderPrototypeEncodeInto, JSValue::decode(encodedEncoder), JSValue::decode(encodedSource), destination)));
 }
 
 #endif // ENABLE(AOT)

@@ -9,7 +9,6 @@ layout L0 kind=Instance name="Context" constructor=f1 fields=[{key=#"#"@L0 decla
 variable g0 name="token" module=m0 declared={type=classtoken} flags=[IsImmutable]
 variable g1 name="Context" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClassToken layout=L0
     PutModuleVariable v0 variable=g0
     v2 = NewClosure function=f1
@@ -25,7 +24,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Context" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
-  b0(v0: anything, v1: anything):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
     v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
@@ -35,7 +33,6 @@ function f1 name="Context" kind=BaseConstructor flags=[HasNewTarget] parameters=
     Return v4
 }
 function f2 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
-  b0(v0: L0):
     v1 = GetModuleVariable variable=g0
     PrivateDefine v0, v1, v1 layout=L0
     v3 = Undefined
@@ -51,7 +48,6 @@ function f2 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={ty
     Return v12
 }
 function f3 name="text" kind=Arrow captures=[{type=L0 flags=[IsFromCompiler]}] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     v2 = GetModuleVariable variable=g0
     v3 = PrivateGet v0, v2 layout=L0 field=3
     PrivateSet v0, v2, v1 layout=L0 field=3
@@ -64,7 +60,6 @@ function f3 name="text" kind=Arrow captures=[{type=L0 flags=[IsFromCompiler]}] p
 # CHECK-NOT: IsSlotFilled
 # CHECK: PrivateSet
 function f4 name="handle" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g1
     v2 = Construct v1, -, v0
     v3 = Builtin builtin=GlobalThis

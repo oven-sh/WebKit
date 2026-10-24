@@ -9,8 +9,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBarrierEmitter.h"
-#include "AOTCellAllocationEmitter.h"
 #include "AOTConvention.h"
 #include "AOTConversionEmitter.h"
 #include "AOTElementAccessEmitter.h"
@@ -18,13 +16,11 @@
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStaticsEmitter.h"
 #include "AOTTypeTable.h"
-#include "AOTVector.h"
 #include "ArrayConventions.h"
 #include "IndexingHeader.h"
 #include "JSArray.h"
 #include "MarkedSpace.h"
 #include <algorithm>
-#include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -36,14 +32,7 @@ static constexpr uint64_t largestDefaultOf(LimitID limit)
 static_assert(largestDefaultOf(LimitID::MaxInlineArrayLiteralLength) < (1u << holeArrayCapacityShift));
 static_assert(((largestDefaultOf(LimitID::MaxPlannedArrayCapacity) | 1) << holeArrayCapacityShift) <= UINT32_MAX);
 
-static Vector<uint32_t, 16> consecutiveIndexes(unsigned count)
-{
-    return Vector<uint32_t, 16>(count, [](size_t index) {
-        return static_cast<uint32_t>(index);
-    });
-}
-
-static Vector<uint32_t, 16> indexesWithoutHoles(unsigned length, std::span<const uint32_t> holes)
+static Vector<uint32_t, 16> indexesWithoutHoles(unsigned length, std::span<const uint32_t> holes = { })
 {
     Vector<uint32_t, 16> indexes;
     size_t nextHole = 0;
@@ -115,11 +104,6 @@ static Integer plannedCapacityOf(CodeGenerator& generator, const ValueContext& l
     return operand.as<Integer>();
 }
 
-ArrayAllocationEmitter::ArrayAllocationEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
-
 const ArrayStorageForm& ArrayAllocationEmitter::formAtAllocation(const Type& array) const
 {
     return arrayStorageFormOf(arrayStorageAtAllocation(m_program, array));
@@ -173,7 +157,7 @@ CellPointer ArrayAllocationEmitter::newLiteral(const ValueContext& value)
         emitter<CellAllocationEmitter>().storeHeader(array, header);
         m_out.storePtr(butterfly.value(), array.value(), m_heaps.JSObject_butterfly);
     }
-    storeElements(array, form, rawElements.span(), consecutiveIndexes(length).span());
+    storeElements(array, form, rawElements.span(), indexesWithoutHoles(length).span());
     emitter<AllocationEmitter>().didFillInnerCell(*room);
     emitter<BarrierEmitter>().fenceAfterInitialization();
     m_out.jump(continuation);
@@ -198,7 +182,7 @@ CellPointer ArrayAllocationEmitter::newLiteral(const ValueContext& value)
 CellPointer ArrayAllocationEmitter::newLiteralOnItsOwn(const ValueContext& value)
 {
     if (value->storage() != AllocationStorage::Heap)
-        return emitter<CellAllocationEmitter>().newArrayInFrameOf(value, boxElements<Boxed>(generator(), value, value->elementsOperands()).span());
+        return emitter<CellAllocationEmitter>().newArrayOf(value, boxElements<Boxed>(generator(), value, value->elementsOperands()).span(), value->storage());
 
     switch (value->literalStorage()) {
     case ArrayLiteralStorage::Fresh:
@@ -447,7 +431,7 @@ CellPointer ArrayAllocationEmitter::newArrayOf(const OperationContext& context, 
         ? callNewArrayWithLength(context, form, integer(length | arrayLiteralVectorLength(length) << holeArrayCapacityShift))
         : callNewEmptyArray(context, emptyNumberArray(form));
     branchUnless(Condition(m_out.notNull(newArray.value())), slowPath);
-    storeElements(newArray, form, rawElements.span(), consecutiveIndexes(length).span());
+    storeElements(newArray, form, rawElements.span(), indexesWithoutHoles(length).span());
     join.add(newArray);
 
     m_out.appendTo(slowPath);
@@ -513,7 +497,7 @@ CellPointer ArrayAllocationEmitter::newLiteralWithCapacity(const ValueContext& v
         lengthAndCapacity = bitOr(lengthAndCapacity, integer(length));
     CellPointer newArray = callNewArrayWithLength(value, form, lengthAndCapacity);
     branchUnless(Condition(m_out.notNull(newArray.value())), fallback);
-    storeElements(newArray, form, rawElements.span(), consecutiveIndexes(length).span());
+    storeElements(newArray, form, rawElements.span(), indexesWithoutHoles(length).span());
     join.add(newArray);
 
     m_out.appendTo(fallback);

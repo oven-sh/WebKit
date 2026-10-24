@@ -10,7 +10,6 @@ layout L0 kind=Environment name="calleeDeclaresIt" fields=[{key="x" declared={ty
 layout L1 kind=Environment name="calleeWithoutBody" fields=[{key="x" declared={type=anything}}]
 
 function f0 name="calleeDeclaresIt" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -23,8 +22,6 @@ function f0 name="calleeDeclaresIt" parameters=[{type=anything}, {type=boolean}]
   b3():
     v6 = CallDirect v3, v0 function=f2
     ReturnCall v6
-}
-# CHECK-LABEL: function f0 name="calleeDeclaresIt"
 # CHECK-NOT: ReleaseEnvironment
 # CHECK-NOT: MarkEnvironmentEscaped
 # CHECK: = GetEnvironmentField v3
@@ -34,9 +31,9 @@ function f0 name="calleeDeclaresIt" parameters=[{type=anything}, {type=boolean}]
 # CHECK-NEXT: [[tail]]: anything = CallDirect v3, v0 function=f2
 # CHECK-NEXT: ReturnCall [[tail]]
 # CHECK-NEXT: }
+}
 
 function f1 name="calleeWithoutBody" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -49,19 +46,17 @@ function f1 name="calleeWithoutBody" parameters=[{type=anything}, {type=boolean}
   b3():
     v6 = CallDirect v3, v0 function=f3
     ReturnCall v6
-}
-# CHECK-LABEL: function f1 name="calleeWithoutBody"
 # CHECK-NOT: ReleaseEnvironment
 # CHECK-NOT: MarkEnvironmentEscaped
+}
 
 function f2 name="readsCapture" kind=Arrow captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: env L0, v1: anything):
     v2 = GetEnvironmentField v0 layout=L0 field=0
     v3 = Call v1, -, v2
     Return v3
-}
-# CHECK-LABEL: function f2 name="readsCapture"
 # CHECK-NOT: ReleaseEnvironment
 # CHECK-NOT: MarkEnvironmentEscaped
+}
 
 function f3 name="withoutBody" kind=Arrow captures=[{type=env L1}] parameters=[{type=anything}] results=[{type=anything}]

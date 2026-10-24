@@ -10,7 +10,6 @@ function f0 name="badEntryBlockIsHandler" results=[{type=undefined}] {
     Return
 }
 function f1 name="badSubjectOfOrdinaryBlock" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1() subject=v0:
     Return
@@ -24,7 +23,6 @@ function f2 name="badSubjectOfCatchHandler" parameters=[{type=anything}] results
     Return
 }
 function f3 name="badIterationCleanupWithoutSubject" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     v1 = IteratorOpen v0
     Jump -> next b1()
   b1() handler=b2():
@@ -35,7 +33,6 @@ function f3 name="badIterationCleanupWithoutSubject" parameters=[{type=anything}
     Rethrow v3
 }
 function f4 name="badSubjectOfIterationCleanupIsNoIterator" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     v1 = IteratorOpen v0
     Jump -> next b1()
   b1() handler=b2():
@@ -54,7 +51,6 @@ function f5 name="badDisposalCleanupWithoutSubject" parameters=[{type=anything}]
     Rethrow v2
 }
 function f6 name="good" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     v1 = IteratorOpen v0
     Jump -> next b1()
   b1() handler=b2():

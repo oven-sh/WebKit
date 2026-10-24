@@ -11,7 +11,6 @@ data d1 root=Array{contents=anything}
 data d2 root=Array{contents=anything}
 
 function f0 name="unusedValues" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     v1 = Data data=d0
     v2 = NewSetFromData data=d1
     v3 = NewMapFromData data=d2

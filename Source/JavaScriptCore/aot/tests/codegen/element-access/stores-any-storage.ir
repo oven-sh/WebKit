@@ -9,7 +9,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="strictStoresInOtherStorage" parameters=[{type=Array<anything, pristine[Storage]>}, {type=i32}, {type=i32}, {type=int}, {type=fractional}, {type=number}, {type=undefined|number}, {type=string}, {type=object}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: i32, v2: i32, v3: int, v4: fractional, v5: number, v6: undefined|number, v7: string, v8: object, v9: anything, v10: boolean):
     PutArrayElement v0, v1, v2 level=Proven
     PutArrayElement v0, v1, v3 level=Proven
     PutArrayElement v0, v1, v4 level=Proven
@@ -58,7 +57,6 @@ function f0 name="strictStoresInOtherStorage" parameters=[{type=Array<anything, 
 # R: PutArrayElement v0, v1, {{*}} level=Proven
 # R: PutArrayElement v0, v1, v9 level=Proven
 function f1 name="sloppyStoresInOtherStorage" parameters=[{type=Array<anything, pristine[Storage]>}, {type=i32}, {type=i32}, {type=int}, {type=fractional}, {type=number}, {type=undefined|number}, {type=string}, {type=object}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: i32, v2: i32, v3: int, v4: fractional, v5: number, v6: undefined|number, v7: string, v8: object, v9: anything, v10: boolean):
     PutArrayElement v0, v1, v2 mode=Sloppy level=Proven
     PutArrayElement v0, v1, v3 mode=Sloppy level=Proven
     PutArrayElement v0, v1, v4 mode=Sloppy level=Proven
@@ -107,7 +105,6 @@ function f1 name="sloppyStoresInOtherStorage" parameters=[{type=Array<anything, 
 # R: PutArrayElement v0, v1, {{*}} mode=Sloppy
 # R: PutArrayElement v0, v1, v9 mode=Sloppy
 function f2 name="strictStoresAtPositionsInOtherStorage" parameters=[{type=Array<anything, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=i32}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: i32, v2: int, v3: number, v4: whole, v5: i32, v6: anything, v7: boolean):
     PutArrayElement v0, v1, v5 level=Proven [keyIsIntegral]
     PutArrayElement v0, v2, v5 level=Proven
     PutArrayElement v0, v3, v5 level=Proven
@@ -138,7 +135,6 @@ function f2 name="strictStoresAtPositionsInOtherStorage" parameters=[{type=Array
 # S: f2 b1 Fast
 # S: f2 b3 Compact
 function f3 name="sloppyStoresAtPositionsInOtherStorage" parameters=[{type=Array<anything, pristine[Storage]>}, {type=i32}, {type=int}, {type=number}, {type=whole}, {type=i32}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: i32, v2: int, v3: number, v4: whole, v5: i32, v6: anything, v7: boolean):
     PutArrayElement v0, v1, v5 mode=Sloppy level=Proven [keyIsIntegral]
     PutArrayElement v0, v2, v5 mode=Sloppy level=Proven
     PutArrayElement v0, v3, v5 mode=Sloppy level=Proven

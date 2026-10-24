@@ -15,7 +15,6 @@ variable g3 name="stored" module=m0 declared={type=function} initialization=Func
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = GetModuleVariable variable=g0
@@ -33,24 +32,20 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="onlyCalled" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 0..15
     v%(i+1) = Mul v%(i), v0
 # END REPEAT
     Return v16
 }
 function f2 name="watched" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Mul v0, v0
     Return v1
 }
 function f3 name="passedOn" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Mul v0, v0
     Return v1
 }
 function f4 name="stored" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Mul v0, v0
     Return v1
 }

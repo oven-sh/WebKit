@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="oneEdgeIsInside" parameters=[{type=anything}, {type=boolean}, {type=number}] results=[{type=number}] {
-  b0(v0: anything, v1: boolean, v2: number):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v2)
@@ -16,8 +15,6 @@ function f0 name="oneEdgeIsInside" parameters=[{type=anything}, {type=boolean}, 
     ValidateType v3 validatedType=number
     v5 = AssumeType v3 castType=number
     Return v5
-}
-# CHECK-LABEL: function f0 name="oneEdgeIsInside"
 # CHECK: b1():
 # CHECK-NEXT: Jump -> next b3(v2)
 # CHECK-NEXT: b2():
@@ -26,9 +23,9 @@ function f0 name="oneEdgeIsInside" parameters=[{type=anything}, {type=boolean}, 
 # CHECK-NEXT: Jump -> next b3([[onEdge]])
 # CHECK-NEXT: b3(v3: number):
 # CHECK-NEXT: Return v3
+}
 
 function f1 name="testOfAnotherType" parameters=[{type=anything}, {type=boolean}, {type=number}] results=[{type=number}] {
-  b0(v0: anything, v1: boolean, v2: number):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v2)
@@ -38,8 +35,7 @@ function f1 name="testOfAnotherType" parameters=[{type=anything}, {type=boolean}
     ValidateType v3 validatedType=string|number
     v5 = AssumeType v3 castType=number
     Return v5
-}
-# CHECK-LABEL: function f1 name="testOfAnotherType"
 # CHECK: b3(v3: anything):
 # CHECK-NEXT: ValidateType v3 validatedType=number|string
 # CHECK-NEXT: = AssumeType v3 castType=number
+}

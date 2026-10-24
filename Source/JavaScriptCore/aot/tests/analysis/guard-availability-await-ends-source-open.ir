@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="openSource" flags=[IsAsync] parameters=[{type=string}, {type=anything}, {type=function}] results=[{type=anything}] {
-  b0(v0: string, v1: anything, v2: function):
     v3 = JSONSourceOpen v0
     Branch v3 -> taken b1(| 0), notTaken b2()
   b1(v4: guard):

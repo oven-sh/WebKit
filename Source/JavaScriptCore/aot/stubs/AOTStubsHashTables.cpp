@@ -25,10 +25,7 @@ static_assert(CompactTable::maxCapacityWithTags == sizeof(uint64_t));
 static_assert(CompactTable::hashBits + StringImpl::s_flagCount == 32);
 static_assert(CompactTable::probeStartFor(CompactTable::hashBits, CompactTable::hashMask) == CompactTable::hashMask && CompactTable::probeStartFor(CompactTable::hashBits + 2, 1) == 4);
 
-enum class IndexSlotWidth : uint8_t { Short, Long };
-
 struct IndexSlotFormat {
-    IndexSlotWidth width;
     CCallHelpers::Scale scale;
     unsigned tagShift;
     unsigned entryBits;
@@ -41,10 +38,8 @@ static constexpr IndexSlotFormat indexSlotFormatOf()
 {
     using Format = CompactTable::SlotFormat<kind>;
     using Slot = typename Format::Slot;
-    constexpr bool isShort = sizeof(Slot) == sizeof(uint16_t);
     return {
-        isShort ? IndexSlotWidth::Short : IndexSlotWidth::Long,
-        isShort ? CCallHelpers::TimesTwo : CCallHelpers::TimesFour,
+        sizeof(Slot) == sizeof(uint16_t) ? CCallHelpers::TimesTwo : CCallHelpers::TimesFour,
         Format::tagShift,
         Format::entryBits,
         static_cast<Slot>(~0u << Format::entryBits),
@@ -63,12 +58,6 @@ struct CompactTableSearch {
     bool keysAreNarrow;
     bool findsInsertionPoint;
     JumpList needsCharacters;
-};
-
-struct StringLeafCall {
-    Entry leaf;
-    GPRReg first;
-    std::optional<GPRReg> second;
 };
 
 ptrdiff_t offsetOfHashTableStorage()
@@ -158,28 +147,20 @@ static Vector<GPRReg, 8> registersToSaveForLeafCall(const StubAssembler& jit, co
 }
 
 // The answer is in leafFunctionGPR. owner, key, entry and the operands of the stub are intact afterward. hash, table, cursor, keys and candidate are not.
-static void emitCallStringLeaf(StubAssembler& jit, const HashTableRegisters& registers, const StringLeafCall& call)
+static void emitCallStringLeaf(StubAssembler& jit, const HashTableRegisters& registers, Entry leaf, GPRReg first, std::optional<GPRReg> second)
 {
     constexpr GPRReg scratch = leafFunctionGPR;
-    RELEASE_ASSERT(call.second != scratch);
+    RELEASE_ASSERT(second != scratch);
     const Vector<GPRReg, 8> saved = registersToSaveForLeafCall(jit, registers);
     jit.preserving(saved.span(), [&] {
         jit.recordClobbers(RegisterSet { leafArgumentGPR(0), leafArgumentGPR(1) });
-        jit.move(call.first, scratch);
-        if (call.second)
-            jit.move(*call.second, leafArgumentGPR(1));
+        jit.move(first, scratch);
+        if (second)
+            jit.move(*second, leafArgumentGPR(1));
         jit.move(scratch, leafArgumentGPR(0));
-        jit.callLeaf(call.leaf, WTF::roundUpToMultipleOf<stackAlignmentBytes()>(saved.size() * sizeof(CPURegister)));
+        jit.callLeaf(leaf, WTF::roundUpToMultipleOf<stackAlignmentBytes()>(saved.size() * sizeof(CPURegister)));
         jit.move(GPRInfo::returnValueGPR, scratch);
     });
-}
-
-// Never falls through.
-static void emitBranchOnStringLeaf(StubAssembler& jit, const HashTableRegisters& registers, const StringLeafCall& call, JumpList& isTrue, JumpList& isFalse)
-{
-    emitCallStringLeaf(jit, registers, call);
-    isTrue.append(jit.branchTest32(CCallHelpers::NonZero, leafFunctionGPR));
-    isFalse.append(jit.jump());
 }
 
 static void emitReloadTable(StubAssembler& jit, const HashTableRegisters& registers, const CompactTableSearch& search)
@@ -215,11 +196,16 @@ static void emitLoadCandidate(StubAssembler& jit, const HashTableRegisters& regi
 }
 
 // Falls through or jumps to next when the entry holds another key, with table intact.
-static void emitCompareWithHeapKey(StubAssembler& jit, const HashTableRegisters& registers, CompactTableSearch& search, JumpList& next, HashTableExits& exits)
+static void emitCompareWithEntry(StubAssembler& jit, const HashTableRegisters& registers, CompactTableSearch& search, JumpList& next, HashTableExits& exits)
 {
     const GPRReg key = registers.key;
     const GPRReg table = registers.table;
     const GPRReg candidate = registers.candidate;
+    if (search.isInImage) {
+        // The operation looks at every entry whose tag matches.
+        search.needsCharacters.append(jit.jump());
+        return;
+    }
 
     JumpList& found = search.keysAreNarrow ? exits.foundAmongNarrowKeys : exits.foundInCompactTable;
     if (search.keysAreNarrow) {
@@ -301,31 +287,14 @@ static void emitCompareCharactersOfHeapKey(StubAssembler& jit, const HashTableRe
     emitCompareLatin1Characters(jit, candidate, impl, length, registers.cursor, registers.keys, areSame, exits.unknown);
 
     hasWideCharacters.link(&jit);
-    emitBranchOnStringLeaf(jit, registers, { Entry::operationAOTStringImplsAreEqual, candidate, impl }, areSame, exits.unknown);
+    emitCallStringLeaf(jit, registers, Entry::operationAOTStringImplsAreEqual, candidate, impl);
+    areSame.append(jit.branchTest32(CCallHelpers::NonZero, leafFunctionGPR));
+    exits.unknown.append(jit.jump());
 
     areSame.link(&jit);
     emitReloadTable(jit, registers, search);
     emitLoadKeys(jit, registers);
     (search.keysAreNarrow ? exits.foundAmongNarrowKeys : exits.foundInCompactTable).append(jit.jump());
-}
-
-// Never falls through: the operation looks at every entry whose tag matches.
-static void emitCompareWithKeyInImage(StubAssembler& jit, CompactTableSearch& search)
-{
-    search.needsCharacters.append(jit.jump());
-}
-
-static void emitCompareCharactersOfKeyInImage(CompactTableSearch& search, HashTableExits& exits)
-{
-    exits.unknown.append(search.needsCharacters);
-}
-
-static void emitCompareWithEntry(StubAssembler& jit, const HashTableRegisters& registers, CompactTableSearch& search, JumpList& next, HashTableExits& exits)
-{
-    if (search.isInImage)
-        emitCompareWithKeyInImage(jit, search);
-    else
-        emitCompareWithHeapKey(jit, registers, search, next, exits);
 }
 
 static void emitProbeTags(StubAssembler& jit, const HashTableRegisters& registers, CompactTableSearch& search, HashTableExits& exits)
@@ -390,22 +359,13 @@ static void emitLoadProbeStart(StubAssembler& jit, const HashTableRegisters& reg
     jit.and32(spreadHash, start);
 }
 
-static JumpList& insertionPointFor(IndexSlotWidth width, InsertionPointExits& exits)
-{
-    switch (width) {
-    case IndexSlotWidth::Short:
-        return exits.atShortSlot;
-    case IndexSlotWidth::Long:
-        return exits.atLongSlot;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static void emitProbeSlots(StubAssembler& jit, const HashTableRegisters& registers, CompactTableSearch& search, const IndexSlotFormat& format, HashTableExits& exits)
 {
     constexpr int32_t index = CompactTable::offsetOfIndex();
     auto [owner, key, hash, table, cursor, keys, entry, candidate] = registers;
-    JumpList& absent = search.findsInsertionPoint ? insertionPointFor(format.width, exits.insertionPoints) : exits.absent;
+    const bool isShort = format.scale == CCallHelpers::TimesTwo;
+    JumpList& atFreeSlot = isShort ? exits.insertionPoints.atShortSlot : exits.insertionPoints.atLongSlot;
+    JumpList& absent = search.findsInsertionPoint ? atFreeSlot : exits.absent;
     jit.move(TrustedImm32(1), keys);
     jit.lshift32(cursor, keys);
     emitLoadProbeStart(jit, registers, format);
@@ -414,14 +374,10 @@ static void emitProbeSlots(StubAssembler& jit, const HashTableRegisters& registe
     emitMoveTagIntoSlotPosition(jit, hash, format);
 
     Label loop = jit.label();
-    switch (format.width) {
-    case IndexSlotWidth::Short:
+    if (isShort)
         jit.load16(Address(cursor), entry);
-        break;
-    case IndexSlotWidth::Long:
+    else
         jit.load32(Address(cursor), entry);
-        break;
-    }
     absent.append(jit.branch32(CCallHelpers::Equal, entry, TrustedImm32(static_cast<int32_t>(format.freeSlot))));
     jit.xor32(hash, entry);
     JumpList next;
@@ -457,7 +413,7 @@ static void emitSearchCompactTable(StubAssembler& jit, const HashTableRegisters&
     if (!search.comparesStrings)
         return;
     if (search.isInImage)
-        emitCompareCharactersOfKeyInImage(search, exits);
+        exits.unknown.append(search.needsCharacters);
     else
         emitCompareCharactersOfHeapKey(jit, registers, search, exits);
 }
@@ -535,7 +491,7 @@ static void emitFindStringKey(StubAssembler& jit, const HashTableRegisters& regi
 
     isNotHashed.link(&jit);
     branchToAbsentIfNoStorage();
-    emitCallStringLeaf(jit, registers, { Entry::operationAOTHashStringImpl, impl, std::nullopt });
+    emitCallStringLeaf(jit, registers, Entry::operationAOTHashStringImpl, impl, std::nullopt);
     jit.move(leafFunctionGPR, hash);
     jit.jump().linkTo(isHashed, &jit);
 

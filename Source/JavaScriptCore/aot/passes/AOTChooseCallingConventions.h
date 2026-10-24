@@ -44,8 +44,6 @@ public:
     CallingConventions();
     explicit CallingConventions(CallingConventionTables&&);
 
-    ConventionRegisters registers() const { return m_tables.registers; }
-
     FunctionConvention of(const Program&, FunctionID) const;
     Representation parameterRepresentation(const Program&, FunctionID, unsigned entryParameterIndex) const;
     Representation resultRepresentation(const Program&, FunctionID, unsigned resultIndex = 0) const;
@@ -65,9 +63,6 @@ private:
 CallingConventions chooseCallingConventions(ProgramEditor&, const OptimizationInputs&, const PassRunner&);
 
 Representation declaredRepresentationOf(const Program&, const DeclaredType&);
-ArgumentLocations computeArgumentLocations(const Program&, const Function& callee, FunctionConvention, ConventionRegisters);
-Representation parameterRepresentationOf(const Program&, const Function& callee, unsigned entryParameterIndex);
-Representation resultRepresentationOf(const Program&, const Function& callee, FunctionConvention, unsigned resultIndex);
 
 } } } // namespace JSC::AOT::Typed
 

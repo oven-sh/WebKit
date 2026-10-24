@@ -44,7 +44,7 @@ testaot native [<filter>] [--after=<name>] [--single-process]
 testaot list commands|passes|options|limits|statistics|diagnostics
 testaot print <program> [--until=<PassID>] [--function=f<n>].. [--wire] { option word }
 testaot compile <program> --output=<image> { option word }        prints "entry <i> <id>" for each entry point
-testaot write-out <file>                                          prints IR text with its REPEAT blocks written out
+testaot write-out <file>                                          prints IR text with REPEAT, PROGRAM-OF and the labels of check lines inside functions written out
 testaot fuzz-reader [--seed=<n>] [--count=<n>] [<program>..]
 ```
 
@@ -82,9 +82,7 @@ Any other `--<name>=<value>` is set as a JSC option, as in `jsc`. Without `--fun
 testaot print main.bin --until=<PassID> --aotFunctionToDump=<name>
 ```
 
-Only `testaot` reads IR text, and without assertions only `testaot` prints it: the lexer and the parser are sources of `testaot`,
-and the sources that print are empty in the library (`AOTIRPrinter.h` says how). So `dumpAOTIR` prints IR in a build with
-assertions alone, in Bun, `jsc` and `testaot` alike.
+Only `testaot` reads and prints IR text: the lexer, the parser and the printer are sources of `testaot`.
 
 WebKit's own test script runs `testaot all` on this folder:
 
@@ -143,6 +141,7 @@ LIBRARY: own
 TODO: <owner>: <what is lost>
 REPEAT: <name> = ( <first>..<last> | <word> { <word> } ) { ; <name> = .. }
 END REPEAT
+PROGRAM-OF: <file>
 ```
 
 A directive is a whole comment line: `#`, a name in capitals, then `:`. A comment after IR tokens on the same line is never a
@@ -220,6 +219,23 @@ function f%(i+3) name="m%(i:2)" kind=Method flags=[HasThis] results=[{type=anyth
 # END REPEAT
 ```
 
+Check lines written inside the braces of a function are about that function. In front of the first one of each prefix stands, unwritten,
+`<P>-LABEL: function fN name=".."` with the id and the name of the function's line, which is how `print`, `pass` and most commands begin a
+function. Check lines about output that begins otherwise stand outside the braces, with a label of their own:
+
+```
+function f13 name="two-getters" parameters=[{type=L0|L2}] results=[{type=anything}] {
+    v1 = PropGet v0 key="size"
+    Return v1
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK-NOT: TypeTest
+}
+```
+
+`PROGRAM-OF` is for a test of a program that another test has: the same text under other options, in another form, through another command.
+The line stands for the lines of the named file that are no comments, so none of its directives come along. The path is relative to the
+folder of the file that has the line. The named file has the program itself, not a `PROGRAM-OF` line.
+
 Directives can appear in any order. Only the order of the check lines with the same prefix matters.
 
 A directive the driver does not understand fails the test, so a misspelled `CHECK-NXT` cannot pass silently. For the same reason
@@ -251,6 +267,10 @@ schema is the reference for every keyword, field, operand, payload name and flag
   still takes the next id.
 - A terminator is `Name operands.. name=value.. -> target bK(arguments | proofs), ..`.
 - A block is `bN(parameters) role=.. subject=vK frequency=.. handler=bK(arguments):`.
+- The head of `b0` may be left out. The block then has the parameters that the function's line gives it, `v0` onward: the captures, `this`, the
+  callee, the new target and the parameters, in this order, each with its declared type (`function` for the callee, `anything` for the new
+  target). A head that says more is written: an attribute, an expected type, a representation. So is the head of a function that takes an
+  argument count or a hidden rest. The printer always prints the head.
 
 Three fields of a value are the engine's: `vN: TYPE`, `~ EXPECTED` and `@REPRESENTATION`, in this order and all left of
 the `=`. The type is proven. The expected type lies inside it and is there only where the best that is known is not proven. They are legal in every form. Text in form `AsRead` needs none: `TypeValues` types every value. Text in a later form writes types on entry positions,

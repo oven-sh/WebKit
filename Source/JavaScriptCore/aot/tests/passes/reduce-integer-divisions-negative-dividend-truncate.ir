@@ -7,32 +7,27 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="eitherSign" parameters=[{type=int[-100, 100]}, {type=int[1, 8]}] results=[{type=number}] {
-  b0(v0: int[-100, 100], v1: int[1, 8]):
     v2 = Div v0, v1
     v3 = CallBuiltin -, v2 overload=MathTrunc/0 builtinCallForm=Whole
     Return v3
 }
 function f1 name="alwaysNegative" parameters=[{type=int[-100, -1]}, {type=int[1, 8]}] results=[{type=number}] {
-  b0(v0: int[-100, -1], v1: int[1, 8]):
     v2 = Div v0, v1
     v3 = CallBuiltin -, v2 overload=MathTrunc/0 builtinCallForm=Whole
     Return v3
 }
 function f2 name="minusOneOrZero" parameters=[{type=int[-1, 0]}, {type=int[1, 8]}] results=[{type=number}] {
-  b0(v0: int[-1, 0], v1: int[1, 8]):
     v2 = Div v0, v1
     v3 = CallBuiltin -, v2 overload=MathTrunc/0 builtinCallForm=Whole
     Return v3
 }
 function f3 name="constantDivisor" parameters=[{type=int[-100, 100]}] results=[{type=number}] {
-  b0(v0: int[-100, 100]):
     v1 = Integer integer=2
     v2 = Div v0, v1
     v3 = CallBuiltin -, v2 overload=MathTrunc/0 builtinCallForm=Whole
     Return v3
 }
 function f4 name="constantDividend" parameters=[{type=int[1, 8]}] results=[{type=number}] {
-  b0(v0: int[1, 8]):
     v1 = Integer integer=-1
     v2 = Div v1, v0
     v3 = CallBuiltin -, v2 overload=MathTrunc/0 builtinCallForm=Whole

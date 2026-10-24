@@ -28,7 +28,6 @@ variable g7 name="pushBelowSetter" module=m0 declared={type=anything} initializa
 variable g8 name="toStringOfNullObject" module=m0 declared={type=anything} initialization=Undefined
 variable g9 name="nothingOfArray" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Map
     v1 = Construct v0, -
     v2 = PropGet v1 key="size"
@@ -68,6 +67,5 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="setter" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }

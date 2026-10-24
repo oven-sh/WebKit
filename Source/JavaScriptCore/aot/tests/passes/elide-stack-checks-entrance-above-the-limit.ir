@@ -10,7 +10,6 @@ module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = CallDirect v0 function=f1
     Return v1
@@ -29,7 +28,6 @@ function f1 name="outer" role=EntryChecks flags=[IsChecked] length=1 thisType={t
 }
 
 function f2 name="outer" flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1} {
-  b0(v0: number):
     v1 = CallDirect v0 function=f4
     Return v1
 }
@@ -40,7 +38,6 @@ function f3 name="outer" role=GenericVersion flags=[IsChecked] length=1 thisType
 }
 
 function f4 name="inner" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     Return v0
 }
 # CHECK: f0 stack check: Required

@@ -12,7 +12,6 @@ layout L1 name="Other" fields=[{key="c" declared={type=number}}]
 
 # Code that is not usual, as a handler is, gets a test only where another test of the value has failed on the way in.
 function f0 name="useInHandler" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L1]
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -32,7 +31,6 @@ function f0 name="useInHandler" parameters=[{type=object}] results=[{type=anythi
 # F0-NOT: stretch
 
 function f1 name="useAfterJump" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = PropGet v0 key="a"
     Jump -> next b1()
   b1():

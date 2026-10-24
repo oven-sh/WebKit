@@ -30,7 +30,6 @@ layout L2 kind=Environment name="copiedLate" fields=[{key="x" declared={type=any
 layout L3 kind=Environment name="twoFields" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToBoolean v1
@@ -55,7 +54,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="literal" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1] @10
     PropSet v2, v1 key="a" mode=Strict
     v4 = PropGet v2 key="a"
@@ -64,7 +62,6 @@ function f1 name="literal" parameters=[{type=anything}, {type=anything}] results
 }
 
 function f2 name="tuple" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewArray v0, v1 contents=anything @20
     v3 = Integer integer=1
     ElemSet v2, v3, v0 mode=Strict
@@ -73,7 +70,6 @@ function f2 name="tuple" parameters=[{type=anything}, {type=anything}] results=[
 }
 
 function f3 name="callback" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L1 fields=[0] @30
     v2 = NewClosure v1 function=f10 @31
     v3 = NewClosure function=f11
@@ -82,7 +78,6 @@ function f3 name="callback" parameters=[{type=anything}] results=[{type=anything
 }
 
 function f4 name="sum" flags=[HasRestParameter] parameters=[{type=Array<anything>}] results=[{type=anything}] {
-  b0(v0: Array<anything>):
     v1 = PropGet v0 key="length"
     v2 = Integer integer=0
     v3 = ElemGet v0, v2
@@ -91,7 +86,6 @@ function f4 name="sum" flags=[HasRestParameter] parameters=[{type=Array<anything
 }
 
 function f5 name="late" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewArray v0, v0 contents=anything @50
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -102,20 +96,17 @@ function f5 name="late" parameters=[{type=anything}, {type=boolean}] results=[{t
 }
 
 function f6 name="returned" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1] @60
     Return v1
 }
 
 function f7 name="passedToUnknownCode" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1] @70
     v2 = Call v0, -, v1
     Return v2
 }
 
 function f8 name="allocatedAtTwoSites" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1] @80
     Switch v0 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
   b1():
@@ -129,7 +120,6 @@ function f8 name="allocatedAtTwoSites" parameters=[{type=anything}] results=[{ty
 }
 
 function f9 name="neverCalled" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1] @90
     Return v1
 }
@@ -142,7 +132,6 @@ function f10 name="add" kind=Arrow captures=[{type=env L1}] results=[{type=anyth
 }
 
 function f11 name="each" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     LoopHint
@@ -155,7 +144,6 @@ function f11 name="each" parameters=[{type=anything}] results=[{type=anything}] 
 }
 
 function f12 name="copiedLate" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewObject -, v0 layout=L2 fields=[0] @100
     v3 = NewClosure v2 function=f13 @101
     v4 = NewClosure function=f11
@@ -184,7 +172,6 @@ function f14 name="addAfterCopy" kind=Arrow captures=[{type=env L2}] results=[{t
 }
 
 function f15 name="moreFieldsThanTheLimit" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0, v0 layout=L3 fields=[0, 1] @110
     v2 = NewClosure v1 function=f16 @111
     v3 = NewClosure function=f11
@@ -202,7 +189,6 @@ function f16 name="addTwoFields" kind=Arrow captures=[{type=env L3}] results=[{t
 }
 
 function f17 name="twoAtOnePosition" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1] @120
     v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1] @120
     v3 = Call v0, -, v1, v2

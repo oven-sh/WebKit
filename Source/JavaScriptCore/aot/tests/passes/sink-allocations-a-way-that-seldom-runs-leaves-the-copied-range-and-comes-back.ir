@@ -7,14 +7,12 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 module=m0 fields=[{key="high" declared={type=int} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=SetAtCreation} occupancy=FilledAtBirth stability=[IsNeverDeleted, IsNeverRedefined]}}, {key="low" declared={type=int} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=SetAtCreation} occupancy=FilledAtBirth stability=[IsNeverDeleted, IsNeverRedefined]}}] declaredOrder=[1, 0] ownFieldCount=2 flow={baseState=None constructorOrders=[{fields=[1, 0]}] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation] keys=NeverEnumerated addedKeysAreComplete=true}
 
 function f0 name="worker" parameters=[{type=L0}, {type=int}] results=[{type=i32}, {type=L0}, {type=int}, {type=int}] {
-  b0(v0: L0, v1: int):
     v2 = Integer integer=1
     v3 = Results v2, v0, v1, v1
     Return v3
 }
 
 function f1 name="testedTwice" parameters=[{type=L0}, {type=int}] results=[{type=anything}] {
-  b0(v0: L0, v1: int):
     v2 = CallDirect v0, v1 function=f0
     v3 = ResultAt v2
     v4 = ResultAt v2 index=1
@@ -56,13 +54,11 @@ function f1 name="testedTwice" parameters=[{type=L0}, {type=int}] results=[{type
     Return v23
   b12():
     Return v18
-}
-# CHECK-LABEL: function f1 name="testedTwice"
 # CHECK: Switch v3 cases=[1, 2] -> case b3(v4), case b1(), otherwise b2()
 # CHECK: Branch v10 -> taken b9(| 0), notTaken b12()
+}
 
 function f2 name="testedAnew" parameters=[{type=L0}, {type=int}] results=[{type=anything}] {
-  b0(v0: L0, v1: int):
     v2 = CallDirect v0, v1 function=f0
     v3 = ResultAt v2
     v4 = ResultAt v2 index=1
@@ -105,9 +101,8 @@ function f2 name="testedAnew" parameters=[{type=L0}, {type=int}] results=[{type=
     Return v24
   b12():
     Return v18
-}
-# CHECK-LABEL: function f2 name="testedAnew"
 # CHECK: Switch v3 cases=[1, 2] -> case [[copy]](v4), case b1(), otherwise b2()
 # CHECK: b7([[met]]: null|L0):
 # CHECK: [[copy]]([[cell]]: null|L0):
 # CHECK-NEXT: = ToBoolean [[cell]]
+}

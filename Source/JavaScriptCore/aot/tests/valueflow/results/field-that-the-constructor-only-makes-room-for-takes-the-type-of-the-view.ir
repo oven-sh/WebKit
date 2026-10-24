@@ -13,7 +13,6 @@ layout L1 name="Plain" fields=[{key="flags" declared={type=number}}] flags=[IsNe
 layout L2 name="WithLinks" fields=[{key="count" declared={type=number}}, {key="flags" declared={type=number}}, {key="links" declared={type=L3}}] supertypes=[L1] flags=[IsNeverAllocated]
 layout L3 name="Links" fields=[{key="id" declared={type=number}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewClosure function=f1
     v2 = Construct v1, -, v0
@@ -25,7 +24,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Made" flags=[HasThis] thisType={type=L0} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
-  b0(v0: L0, v1: anything):
     PropSet v0, v1 key="flags" mode=Strict
     v3 = Undefined
     PropSet v0, v3 key="links" mode=Strict

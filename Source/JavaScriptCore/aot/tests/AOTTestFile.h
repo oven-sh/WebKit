@@ -95,7 +95,7 @@ struct TestFile {
     std::span<const CheckLine> checkLinesFor(StringView prefix) const;
 };
 
-TestFile parseTestFile(String&& text, Architecture = hostArchitecture());
+TestFile parseTestFile(String&& text, Architecture = hostArchitecture(), const String& folder = { });
 bool holds(StatisticComparison, uint64_t actual, uint64_t expected);
 
 } } } // namespace JSC::AOT::Typed

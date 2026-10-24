@@ -361,11 +361,6 @@ static void testSeveralStrings()
     AOT_TEST_CHECK(writer.finish() == expected.toString());
 }
 
-static bool hasRoomForEscaped(Writer& writer, const String& text)
-{
-    return writer.builder().hasRoomAt(writer.cursor(), 6 * text.length() + 2 + maxStringBuilderReservation);
-}
-
 static String longTextWithOneEscape()
 {
     return makeString(repeatedCharacter(1000, 'e'), '"');
@@ -388,16 +383,7 @@ static void testPositionAfterStrings()
         append(plainText);
         AOT_TEST_CHECK(writer.builder().length() == position);
     }
-    for (const String& escapedText : { String("a\"b"_s), String("\\\n\x01"_s), repeatedCharacter(100, '"') }) {
-        AOT_TEST_CHECK(hasRoomForEscaped(writer, escapedText));
-        append(escapedText);
-        AOT_TEST_CHECK(writer.builder().length() == position);
-    }
-
-    String escapedTextWithoutRoom = longTextWithOneEscape();
-    AOT_TEST_CHECK(writer.builder().hasRoomAt(writer.cursor(), escapedTextWithoutRoom.length() + 2 + maxStringBuilderReservation));
-    AOT_TEST_CHECK(!hasRoomForEscaped(writer, escapedTextWithoutRoom));
-    for (const String& otherText : { escapedTextWithoutRoom, repeatedCharacter(100 * KB, 'l'), text16(u"日本") }) {
+    for (const String& otherText : { String("a\"b"_s), String("\\\n\x01"_s), repeatedCharacter(100, '"'), longTextWithOneEscape(), repeatedCharacter(100 * KB, 'l'), text16(u"日本") }) {
         append(otherText);
         AOT_TEST_CHECK(writer.builder().length() > position);
         position = writer.builder().length();
@@ -418,14 +404,12 @@ static void testPositionAfterValues()
 
     append(fixture.string("the first buffer holds one reservation"_s));
     uint32_t position = writer.builder().length();
-    for (JSValue value : { jsNumber(1), jsNumber(1.5), jsBoolean(true), jsNull(), JSValue(fixture.string("plain text"_s)), JSValue(fixture.string("a\"b"_s)) }) {
+    for (JSValue value : { jsNumber(1), jsNumber(1.5), jsBoolean(true), jsNull(), JSValue(fixture.string("plain text"_s)) }) {
         append(value);
         AOT_TEST_CHECK(writer.builder().length() == position);
     }
 
-    String escapedTextWithoutRoom = longTextWithOneEscape();
-    AOT_TEST_CHECK(!hasRoomForEscaped(writer, escapedTextWithoutRoom));
-    for (JSValue value : { jsUndefined(), JSValue(fixture.string(escapedTextWithoutRoom)), JSValue(fixture.string(text16(u"日本"))) }) {
+    for (JSValue value : { jsUndefined(), JSValue(fixture.string("a\"b"_s)), JSValue(fixture.string(longTextWithOneEscape())), JSValue(fixture.string(text16(u"日本"))) }) {
         append(value);
         AOT_TEST_CHECK(writer.builder().length() > position);
         position = writer.builder().length();

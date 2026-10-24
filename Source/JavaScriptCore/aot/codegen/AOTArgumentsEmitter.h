@@ -13,7 +13,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class ArgumentsEmitter final : public OperationEmitter {
 public:
-    explicit ArgumentsEmitter(CodeGenerator&);
+    explicit ArgumentsEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generateGetArgument(const ValueContext&);
     void generateGetRestLength(const ValueContext&);
@@ -25,7 +25,6 @@ public:
 private:
     Word32 restLength(uint32_t firstArgument);
     Pointer restList(uint32_t firstArgument);
-    Boxed loadArgument(Pointer list, Integer index);
     Integer indexOfBoxedKey(Boxed key, LBasicBlock isNotIndex);
     Boxed readFromMaterializedList(const ValueContext&, Boxed key);
     void emitTailCallWithList(Boxed callee, Boxed thisValue, Word32 count, Pointer list);

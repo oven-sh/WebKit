@@ -18,25 +18,21 @@ function f4 name="BelowHides" kind=BaseConstructor flags=[HasNewTarget] results=
 function f5 name="GetsADefault" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L3
 
 function f6 name="the-setter-runs" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0, v1: number):
     PropSet v0, v1 key="x"
     Return
 }
 # CHECK: F6 v2 PropSet {{*}}: form=Call level=Expected receivers=[L0] {{*}}member=(Accessor level=Expected holder=L0 getter=none setter=F1
 function f7 name="the-method-hides-the-setter" parameters=[{type=L1}, {type=number}] results=[{type=anything}] {
-  b0(v0: L1, v1: number):
     PropSet v0, v1 key="x"
     Return
 }
 # CHECK-NEXT: F7 v2 PropSet {{*}}: form=ByName level=Unknown receivers=[L1] member=(Absent level=Expected proofs=[NoExtraProperties])
 function f8 name="also-from-a-class-below" parameters=[{type=L2}, {type=number}] results=[{type=anything}] {
-  b0(v0: L2, v1: number):
     PropSet v0, v1 key="x"
     Return
 }
 # CHECK-NEXT: F8 v2 PropSet {{*}}: form=ByName level=Unknown receivers=[L2] member=(Absent level=Expected proofs=[NoExtraProperties])
 function f9 name="a-default-may-not-be-there-yet" parameters=[{type=L3}, {type=number}] results=[{type=anything}] {
-  b0(v0: L3, v1: number):
     PropSet v0, v1 key="x"
     Return
 }

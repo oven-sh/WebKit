@@ -8,35 +8,30 @@ variable g0 name="settled" module=m0 declared={type=anything|absent} flow={write
 variable g1 name="storedTwice" module=m0 declared={type=anything|absent} flow={writers=AllKnown}
 
 function f0 name="provenBeforeCall" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g0
     v2 = AssumeType v1 castType=anything
     v3 = Call v0, -, v2
     v4 = GetModuleVariable variable=g0
     v5 = CheckInitialized v4 name="settled"
     Return v5
-}
-# CHECK-LABEL: function f0 name="provenBeforeCall"
 # CHECK: v2: anything = AssumeType v1
 # CHECK-NEXT: = Call v0
 # CHECK-NEXT: v4: anything = Upcast v2
 # CHECK-NOT: GetModuleVariable
+}
 
 function f1 name="storedTwice" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g1
     v2 = AssumeType v1 castType=anything
     v3 = Call v0, -, v2
     v4 = GetModuleVariable variable=g1
     v5 = CheckInitialized v4 name="storedTwice"
     Return v5
-}
-# CHECK-LABEL: function f1 name="storedTwice"
 # CHECK: = Call v0
 # CHECK-NEXT: v4: anything|absent = GetModuleVariable variable=g1
+}
 
 function f2 name="storesTwice" parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: anything, v1: anything):
     PutModuleVariable v0 variable=g1
     PutModuleVariable v1 variable=g1
     Return

@@ -7,14 +7,12 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewRegExp pattern="a+" regExpFlags=[Global] @30
     PutModuleVariable v0 variable=g0
     v2 = CallDirect function=f1
     Return
 }
 function f1 name="other" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=MathRandom
     v1 = Call v0
     v2 = ToString v1

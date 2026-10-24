@@ -8,7 +8,10 @@
 #if ENABLE(AOT)
 
 #include "AOTPass.h"
+#include "AOTProgramCaches.h"
+#include "AOTTypeArena.h"
 #include <memory>
+#include <optional>
 #include <span>
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
@@ -26,6 +29,31 @@ class PassRunner;
 
 enum class EffectSummariesFor : uint8_t { Reader, Nobody };
 enum class HeatFor : uint8_t;
+
+// Around steps that read the program beside each other. Where no interning phase is open, the types that they intern are dropped at the end.
+class ProgramCachesWithScratchTypes {
+    WTF_MAKE_NONCOPYABLE(ProgramCachesWithScratchTypes);
+public:
+    ProgramCachesWithScratchTypes(const Program& program, BuildContext& build, bool isNeeded = true)
+    {
+        if (!isNeeded)
+            return;
+        if (!program.types.hasOpenPhase())
+            m_scratch.emplace(program.types, 0u, TypeInterningPhase::Scratch);
+        m_caches.emplace(program, build);
+    }
+
+    ~ProgramCachesWithScratchTypes()
+    {
+        m_caches.reset();
+        if (m_scratch)
+            m_scratch->discard();
+    }
+
+private:
+    std::optional<TypeInterningPhase> m_scratch;
+    std::optional<ProgramCaches> m_caches;
+};
 
 class ProgramAnalyses {
     WTF_MAKE_NONCOPYABLE(ProgramAnalyses);
@@ -75,6 +103,7 @@ public:
 private:
     struct BorrowingBodiesOfHeat;
 
+    bool lacksAnyOf(OptionSet<ProgramResult> resultsComputedFromCallGraph) const;
     void prepareToUpdateEffects() const;
     EffectSummaries createSummariesFromFlowWithKeptBodies(const FlowResults&) const;
     void didChangeBodies(std::span<const FunctionID>);

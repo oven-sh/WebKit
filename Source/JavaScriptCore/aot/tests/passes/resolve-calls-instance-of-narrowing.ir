@@ -15,7 +15,6 @@ function f2 name="Other" kind=BaseConstructor flags=[HasNewTarget] results=[{typ
 function f3 name="Reparented" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
 
 function f4 name="both-edges" parameters=[{type=L0|L1|L2}, {type=f0}] results=[{type=anything}] {
-  b0(v0: L0|L1|L2, v1: f0):
     v2 = InstanceOf v0, v1
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -24,8 +23,6 @@ function f4 name="both-edges" parameters=[{type=L0|L1|L2}, {type=f0}] results=[{
   b2():
     v4 = PropGet v0 key="name"
     Return v4
-}
-# CHECK-LABEL: function f4 name="both-edges"
 # CHECK-NEXT: b0(v0: L0|L1|L2, v1: f0):
 # CHECK-NEXT: v2: boolean = TypeTest v0 testedType=L0|L1
 # CHECK-NEXT: Branch v2 -> taken [[isShape]](| 0), notTaken [[isNoShape]](| 0)
@@ -35,8 +32,8 @@ function f4 name="both-edges" parameters=[{type=L0|L1|L2}, {type=f0}] results=[{
 # CHECK: = PropGet [[other]] key="name"
 # CHECK: [[isShape]]([[shape]]: L0|L1):
 # CHECK: [[isNoShape]]([[other]]: L2):
+}
 function f5 name="union-with-primitives" parameters=[{type=undefined|L1|L2}, {type=f0}] results=[{type=anything}] {
-  b0(v0: undefined|L1|L2, v1: f0):
     v2 = InstanceOf v0, v1
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -44,8 +41,6 @@ function f5 name="union-with-primitives" parameters=[{type=undefined|L1|L2}, {ty
     Return v3
   b2():
     Return v0
-}
-# CHECK-LABEL: function f5 name="union-with-primitives"
 # CHECK: v2: boolean = TypeTest v0 testedType=L1
 # CHECK-NEXT: Branch v2 -> taken [[isCircle]](| 0), notTaken [[isNoCircle]](| 0)
 # CHECK: = PropGet [[circle]] key="pos"
@@ -53,8 +48,8 @@ function f5 name="union-with-primitives" parameters=[{type=undefined|L1|L2}, {ty
 # CHECK: Return [[noCircle]]
 # CHECK: [[isCircle]]([[circle]]: L1):
 # CHECK: [[isNoCircle]]([[noCircle]]: undefined|L2):
+}
 function f6 name="use-in-a-block-below" parameters=[{type=L0|L2}, {type=f0}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: L0|L2, v1: f0, v2: boolean):
     v3 = InstanceOf v0, v1
     Branch v3 -> taken b1(), notTaken b3()
   b1():
@@ -65,15 +60,13 @@ function f6 name="use-in-a-block-below" parameters=[{type=L0|L2}, {type=f0}, {ty
   b3():
     v5 = PropGet v0 key="name"
     Return v5
-}
-# CHECK-LABEL: function f6 name="use-in-a-block-below"
 # CHECK: v3: boolean = TypeTest v0 testedType=L0
 # CHECK-NEXT: Branch v3 -> taken [[below]](| 0), notTaken {{*}}(| 0)
 # CHECK: = PropGet [[narrowedBelow]] key="pos"
 # CHECK-NOT: = PropGet [[narrowedBelow]] key="name"
 # CHECK: [[below]]([[narrowedBelow]]: L0):
+}
 function f7 name="answer-is-stored-in-a-variable" parameters=[{type=L0|L1|L2}, {type=f0}] results=[{type=anything}] {
-  b0(v0: L0|L1|L2, v1: f0):
     v2 = InstanceOf v0, v1
     Jump -> next b1(v2)
   b1(v3):
@@ -83,8 +76,6 @@ function f7 name="answer-is-stored-in-a-variable" parameters=[{type=L0|L1|L2}, {
     Return v4
   b3():
     Return
-}
-# CHECK-LABEL: function f7 name="answer-is-stored-in-a-variable"
 # CHECK-NEXT: b0(v0: L0|L1|L2, v1: f0):
 # CHECK-NEXT: v2: boolean = TypeTest v0 testedType=L0|L1
 # CHECK-NEXT: Jump -> next b1(v2)
@@ -93,8 +84,8 @@ function f7 name="answer-is-stored-in-a-variable" parameters=[{type=L0|L1|L2}, {
 # CHECK-NEXT: b2():
 # CHECK-NEXT: = PropGet v0 key="pos"
 # The layouts answer only while no object of L3 has got another prototype. The answer then comes from two places, and the branch on it passes nothing on
+}
 function f8 name="member-may-change-its-prototype" parameters=[{type=L0|L3}, {type=f0}] results=[{type=anything}] {
-  b0(v0: L0|L3, v1: f0):
     v2 = InstanceOf v0, v1
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -102,8 +93,6 @@ function f8 name="member-may-change-its-prototype" parameters=[{type=L0|L3}, {ty
     Return v3
   b2():
     Return
-}
-# CHECK-LABEL: function f8 name="member-may-change-its-prototype"
 # CHECK-NEXT: b0(v0: L0|L3, v1: f0):
 # CHECK-NEXT: [[keepsPrototype]]: boolean = AreMembersUnchanged conditions=[{kind=InstancePrototypeUnchanged layout=L3}]
 # CHECK-NEXT: Branch [[keepsPrototype]] -> taken [[byLayout]](), notTaken [[byOperation]]()
@@ -113,8 +102,8 @@ function f8 name="member-may-change-its-prototype" parameters=[{type=L0|L3}, {ty
 # CHECK-NEXT: = TypeTest v0 testedType=L0
 # CHECK: [[byOperation]]() frequency=Unlikely:
 # CHECK-NEXT: = InstanceOf v0, v1
+}
 function f9 name="unknown-subject" parameters=[{type=anything}, {type=f0}] results=[{type=anything}] {
-  b0(v0: anything, v1: f0):
     v2 = InstanceOf v0, v1
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -122,8 +111,7 @@ function f9 name="unknown-subject" parameters=[{type=anything}, {type=f0}] resul
     Return v3
   b2():
     Return
-}
-# CHECK-LABEL: function f9 name="unknown-subject"
 # CHECK: = TypeTest v0 testedType=L0|L1
 # CHECK: = PropGet v0 key="pos"
 # CHECK: Branch v2 -> taken b1(), notTaken b2()
+}

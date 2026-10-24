@@ -18,39 +18,4 @@
 # CHECK: f9: size={{*}} frame=none entries=1 sites=0 {{*}} prologueChecks=0 enteredWithoutStackCheck
 # CHECK: function f3 x1
 # CHECK: statistic FunctionsWithoutFrame 6
-
-module m0 path="main.js" displayPath="main.js" body=f0
-entry module=m0
-function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
-    v0 = Builtin builtin=GlobalThis
-    v1 = NewClosure function=f1
-    v2 = NewClosure function=f2
-    v3 = NewClosure function=f4
-    v4 = PropGet v0 key="register" [isFreeName]
-    v5 = Call v4, -, v1, v2, v3
-    Return v5
-}
-function f1 name="takesArguments" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
-    v2 = Call v0, -, v1
-    v3 = Call v1, -, v2
-    Return v3
-}
-function f2 name="takesThis" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
-    v3 = Call v1, v0, v2
-    v4 = Call v2, v0, v3
-    Return v4
-}
-function f3 name="takesCaptures" captures=[{type=anything}, {type=anything}] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
-    v3 = Call v0, -, v1
-    v4 = Call v2, -, v3
-    Return v4
-}
-function f4 name="makesClosure" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
-    v2 = NewClosure v0, v1 function=f3
-    Return v2
-}
+# PROGRAM-OF: entrypoints-that-hand-on-what-they-were-given.ir

@@ -54,49 +54,42 @@ module m4 path="plain.js" displayPath="plain.js" kind=External referrer=m2
 layout L0 kind=Instance name="Holder" fields=[{key=#"x"@L0 declared={type=number} flags=[IsPrivate]}]
 
 function f0 name="read-export" results=[{type=anything}] {
-  b0():
     v0 = ModuleNamespace module=m0
     v1 = PropGet v0 key="a"
     Return v1
 }
 # CHECK: F0 v1 PropGet [[a]]: form=Variable level=Proven operation=GetModuleVariable receivers=[{{*}}[[main]]] member=(Variable level=Proven holder=[[main]] variable=V0)
 function f1 name="read-export-maybe-uninitialized" results=[{type=anything}] {
-  b0():
     v0 = ModuleNamespace module=m0
     v1 = PropGet v0 key="late"
     Return v1
 }
 # CHECK-NEXT: F1 v1 PropGet [[late]]: form=Variable level=Proven operation=GetModuleVariable receivers=[{{*}}[[main]]] member=(Variable level=Proven holder=[[main]] variable=V1)
 function f2 name="read-namespace-export" results=[{type=anything}] {
-  b0():
     v0 = ModuleNamespace module=m0
     v1 = PropGet v0 key="n"
     Return v1
 }
 # CHECK-NEXT: F2 v1 PropGet [[n]]: form=Namespace level=Proven receivers=[{{*}}[[main]]] member=(Namespace level=Proven module=M1)
 function f3 name="read-deferred-namespace-export" results=[{type=anything}] {
-  b0():
     v0 = ModuleNamespace module=m0
     v1 = PropGet v0 key="lazy"
     Return v1
 }
 # CHECK-NEXT: F3 v1 PropGet [[lazy]]: form=ByName level=Unknown receivers=[{{*}}[[main]]]
 function f4 name="read-name-not-exported" results=[{type=anything}] {
-  b0():
     v0 = ModuleNamespace module=m0
     v1 = PropGet v0 key="zz"
     Return v1
 }
 # CHECK-NEXT: F4 v1 PropGet [[zz]]: form=Constant level=Proven operation=Undefined receivers=[{{*}}[[main]]] member=(Absent level=Proven)
 function f5 name="read-name-a-dynamic-star-may-export" results=[{type=anything}] {
-  b0():
     v0 = ModuleNamespace module=m2
     v1 = PropGet v0 key="zz"
     Return v1
 }
 # CHECK-NEXT: F5 v1 PropGet [[zz]]: form=ByName level=Unknown receivers=[{{*}}[[star]]] cause=UnknownObject
 function f6 name="test-export" results=[{type=anything}] {
-  b0():
     v0 = ModuleNamespace module=m0
     v1 = PropHas v0 key="a"
     v2 = PropHas v0 key="n"
@@ -109,7 +102,6 @@ function f6 name="test-export" results=[{type=anything}] {
 # CHECK-NEXT: F6 v3 PropHas [[late]]: form=Constant level=Proven operation=Boolean value=true receivers=[{{*}}[[main]]]
 # CHECK-NEXT: F6 v4 PropHas [[zz]]: form=Constant level=Proven operation=Boolean value=false receivers=[{{*}}[[main]]]
 function f7 name="own-test-reads-the-binding" results=[{type=anything}] {
-  b0():
     v0 = ModuleNamespace module=m0
     v1 = PropHasOwn v0 key="a"
     v2 = PropHasOwn v0 key="late"
@@ -118,14 +110,12 @@ function f7 name="own-test-reads-the-binding" results=[{type=anything}] {
 # CHECK-NEXT: F7 v1 PropHasOwn [[a]]: form=Constant level=Proven operation=Boolean value=true receivers=[{{*}}[[main]]]
 # CHECK-NEXT: F7 v2 PropHasOwn [[late]]: form=ByName level=Unknown receivers=[{{*}}[[main]]]
 function f8 name="store-to-export" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = ModuleNamespace module=m0
     PropSet v1, v0 key="a"
     Return
 }
 # CHECK-NEXT: F8 v2 PropSet [[a]]: form=ByName level=Unknown receivers=[{{*}}[[main]]]
 function f9 name="read-of-one-of-two-namespaces" parameters=[{type=L(m0)|L(m1)}] results=[{type=anything}] {
-  b0(v0: L(m0)|L(m1)):
     v1 = PropGet v0 key="a"
     Return v1
 }
@@ -137,14 +127,12 @@ function f10 name="read-of-expected-namespace" parameters=[{type=L(m0) flags=[Is
 }
 # CHECK-NEXT: F10 v1 PropGet [[a]]: form=Variable level=Expected operation=GetModuleVariable receivers=[{{*}}[[main]]] receiverTest=Type proofs=[OwnInstance] missPath member=(Variable level=Proven holder=[[main]] variable=V0)
 function f11 name="read-of-deferred-namespace" results=[{type=anything}] {
-  b0():
     v0 = ModuleNamespace module=m3 phase=Defer
     v1 = PropGet v0 key="a"
     Return v1
 }
 # CHECK-NEXT: F11 v1 PropGet [[a]]: form=ByName level=Unknown receivers=[] cause=UnknownObject
 function f12 name="otherKeys" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key=@@toStringTag
     v2 = PropGet v0 key=@@iterator
     v3 = PropGet v0 key="__esModule"

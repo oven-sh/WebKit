@@ -9,7 +9,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="wellKnownSymbols" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = KeyConstant key=@@iterator
     v2 = KeyConstant key=@@asyncIterator
     v3 = KeyConstant key=@@toPrimitive
@@ -17,61 +16,53 @@ function f0 name="wellKnownSymbols" parameters=[{type=anything}] results=[{type=
     v5 = ElemGet v0, v2
     v6 = ElemGet v0, v3
     Return v4
-}
-# CHECK-LABEL: function f0 name="wellKnownSymbols"
 # CHECK-NOT: ElemGet
 # CHECK: v4:{{*}}= PropGet v0 key=@@iterator
 # CHECK-NEXT: v5:{{*}}= PropGet v0 key=@@asyncIterator
 # CHECK-NEXT: v6:{{*}}= PropGet v0 key=@@toPrimitive
 # CHECK-NEXT: Return v4
+}
 
 function f1 name="symbolsKnownByType" parameters=[{type=anything}, {type=@@hasInstance}, {type=symbol@m0:10}, {type=symbol("tag")@m0:20}, {type=Symbol.for("shared")}] results=[{type=anything}] {
-  b0(v0: anything, v1: @@hasInstance, v2: symbol@m0:10, v3: symbol("tag")@m0:20, v4: Symbol.for("shared")):
     v5 = ElemGet v0, v1
     v6 = ElemGet v0, v2
     v7 = ElemGet v0, v3
     v8 = ElemGet v0, v4
     Return v5
-}
-# CHECK-LABEL: function f1 name="symbolsKnownByType"
 # CHECK-NOT: ElemGet
 # CHECK: v5:{{*}}= PropGet v0 key=@@hasInstance
 # CHECK-NEXT: v6:{{*}}= PropGet v0 key=symbol@m0:10
 # CHECK-NEXT: v7:{{*}}= PropGet v0 key=symbol("tag")@m0:20
 # CHECK-NEXT: v8:{{*}}= PropGet v0 key=Symbol.for("shared")
 # CHECK-NEXT: Return v5
+}
 
 function f2 name="everyAccess" parameters=[{type=object}, {type=anything}, {type=symbol@m0:10}] results=[{type=anything}] {
-  b0(v0: object, v1: anything, v2: symbol@m0:10):
     v3 = ElemGet v0, v2
     ElemSet v0, v2, v1 mode=Sloppy
     v5 = ElemHas v0, v2
     v6 = ElemDelete v0, v2
     ElemDefine v0, v2, v1
     Return v3
-}
-# CHECK-LABEL: function f2 name="everyAccess"
 # CHECK: v3:{{*}}= PropGet v0 key=symbol@m0:10
 # CHECK-NEXT: PropSet v0, v1 key=symbol@m0:10 mode=Sloppy
 # CHECK-NEXT: v5:{{*}}= PropHas v0 key=symbol@m0:10
 # CHECK-NEXT: v6:{{*}}= PropDelete v0 key=symbol@m0:10
 # CHECK-NEXT: PropDefine v0, v1 key=symbol@m0:10
 # CHECK-NEXT: Return v3
+}
 
 function f3 name="superAccess" parameters=[{type=object}, {type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: object, v2: anything):
     v3 = KeyConstant key=@@iterator
     v4 = SuperGet v0, v1, v3
     SuperSet v0, v1, v2, v3
     Return v4
-}
-# CHECK-LABEL: function f3 name="superAccess"
 # CHECK: v4:{{*}}= SuperGet v0, v1 key=@@iterator
 # CHECK-NEXT: SuperSet v0, v1, v2 key=@@iterator
 # CHECK-NEXT: Return v4
+}
 
 function f4 name="notOneSymbol" parameters=[{type=anything}, {type=symbol}, {type=@@iterator|@@asyncIterator}, {type=symbol@m0:10|symbol@m0:20}, {type="a"|@@iterator}, {type=undefined|@@iterator}, {type=string|symbol}] results=[{type=anything}] {
-  b0(v0: anything, v1: symbol, v2: @@iterator|@@asyncIterator, v3: symbol@m0:10|symbol@m0:20, v4: "a"|@@iterator, v5: undefined|@@iterator, v6: string|symbol):
     v7 = ElemGet v0, v1
     v8 = ElemGet v0, v2
     v9 = ElemGet v0, v3
@@ -79,8 +70,6 @@ function f4 name="notOneSymbol" parameters=[{type=anything}, {type=symbol}, {typ
     v11 = ElemGet v0, v5
     v12 = ElemGet v0, v6
     Return v7
-}
-# CHECK-LABEL: function f4 name="notOneSymbol"
 # CHECK-NOT: PropGet
 # CHECK: v7:{{*}}= ElemGet v0, v1
 # CHECK-NEXT: v8:{{*}}= ElemGet v0, v2
@@ -89,3 +78,4 @@ function f4 name="notOneSymbol" parameters=[{type=anything}, {type=symbol}, {typ
 # CHECK-NEXT: v11:{{*}}= ElemGet v0, v5
 # CHECK-NEXT: v12:{{*}}= ElemGet v0, v6
 # CHECK-NEXT: Return v7
+}

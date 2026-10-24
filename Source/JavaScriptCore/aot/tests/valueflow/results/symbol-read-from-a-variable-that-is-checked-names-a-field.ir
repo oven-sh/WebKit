@@ -14,7 +14,6 @@ entry module=m0
 layout L0 name="Holder" fields=[{key="a" declared={type=number}}]
 variable g0 name="kState" module=m0 declared={type=undefined|null|symbol|absent site=w0 flags=[IsExpected]} flags=[IsImmutable]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Symbol
     v1 = String string="state"
     v2 = Call v0, -, v1 @100

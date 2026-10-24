@@ -10,7 +10,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Environment fields=[{key="x" declared={type=anything}}]
 function f0 name="storeOfNumber" results=[{type=undefined}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject layout=L0 fields=[]
     PutEnvironmentField v1, v0 layout=L0 field=0

@@ -12,7 +12,6 @@ entry module=m0
 layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = Double number=1.5
@@ -31,7 +30,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 # REPEAT: i = 1..38
 function f%(i) name="small%(i)" parameters=[{type=null|L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: null|L0, v1: number):
     v2 = Integer integer=%(i)
     Jump -> next b1(v2)
   b1(v3):
@@ -48,7 +46,6 @@ function f%(i) name="small%(i)" parameters=[{type=null|L0}, {type=number}] resul
 }
 # END REPEAT
 function f39 name="large" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 1..65
     v%(i) = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0
 # END REPEAT

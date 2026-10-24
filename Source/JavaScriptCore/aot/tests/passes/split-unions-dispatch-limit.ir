@@ -11,11 +11,8 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="five-parts" parameters=[{type=string|Array<number>|Float64Array|Int8Array|Uint8Array}] results=[{type=anything}] {
-  b0(v0: string|Array<number>|Float64Array|Int8Array|Uint8Array):
     v1 = PropGet v0 key="length"
     Return v1
-}
-# CHECK-LABEL: function f0 name="five-parts"
 # CHECK-NEXT: b0(v0: string|Array<number>|Float64Array|Int8Array|Uint8Array):
 # CHECK-NEXT: = TypeTest v0 testedType=string
 # CHECK: ([[text]]: string):
@@ -28,7 +25,6 @@ function f0 name="five-parts" parameters=[{type=string|Array<number>|Float64Arra
 # CHECK: ([[views]]: Float64Array|Int8Array|Uint8Array) frequency=Unlikely:
 # CHECK-NEXT: = PropGet [[views]] key="length"
 # CHECK-NOT: TypeTest
-# AGAIN-LABEL: function f0 name="five-parts"
 # AGAIN: ([[viewsAgain]]: Float64Array|Int8Array|Uint8Array) frequency=Unlikely:
 # AGAIN-NEXT: = TypeTest [[viewsAgain]] testedType=Float64Array
 # AGAIN: ([[doubles]]: Float64Array)
@@ -40,17 +36,15 @@ function f0 name="five-parts" parameters=[{type=string|Array<number>|Float64Arra
 # AGAIN-NEXT: = PropGet [[signed]] key="length"
 # AGAIN: ([[unsigned]]: Uint8Array)
 # AGAIN-NEXT: = PropGet [[unsigned]] key="length"
+}
 function f1 name="as-many-parts-as-the-limit" parameters=[{type=string|Array<number>}] results=[{type=anything}] {
-  b0(v0: string|Array<number>):
     v1 = PropGet v0 key="length"
     Return v1
-}
-# CHECK-LABEL: function f1 name="as-many-parts-as-the-limit"
 # CHECK: = TypeTest v0 testedType=string
 # CHECK-NOT: TypeTest
 # CHECK-NOT: frequency=Unlikely
 # CHECK: ([[onlyList]]: Array<number>):
 # CHECK-NEXT: = PropGet [[onlyList]] key="length"
-# AGAIN-LABEL: function f1 name="as-many-parts-as-the-limit"
 # AGAIN: = TypeTest v0 testedType=string
 # AGAIN-NOT: TypeTest
+}

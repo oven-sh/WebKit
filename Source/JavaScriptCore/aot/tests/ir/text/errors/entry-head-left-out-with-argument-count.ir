@@ -1,0 +1,8 @@
+# The head of the entry block is written where the function takes an argument count
+# RUN: print
+# DIAGNOSTIC: IRTextError
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="f" flags=[HasArgumentCount] results=[{type=undefined}] {
+    Return
+}

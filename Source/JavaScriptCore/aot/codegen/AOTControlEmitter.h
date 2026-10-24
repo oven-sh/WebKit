@@ -18,7 +18,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class ControlEmitter final : public OperationEmitter {
 public:
-    explicit ControlEmitter(CodeGenerator&);
+    explicit ControlEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generateJump(const TerminatorContext&);
     void generateBranch(const TerminatorContext&);
@@ -37,7 +37,6 @@ public:
 
 private:
     bool leavesAnotherWayUnlessPromised(const TerminatorContext&, ValueID);
-    void countBranch(const TerminatorContext&, uint32_t targetIndex, B3::FrequentedBlock& edge);
     void testBitsOfWindow(const TerminatorContext&, const SwitchWindow&, LValue subject, LType, B3::FrequentedBlock otherwise);
     void switchOnInteger(const TerminatorContext&, LValue subject, LType, B3::FrequentedBlock otherwise);
     void switchOnBoxedInteger(const TerminatorContext&, Boxed subject, B3::FrequentedBlock otherwise);

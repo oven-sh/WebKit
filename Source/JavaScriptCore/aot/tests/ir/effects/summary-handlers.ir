@@ -5,7 +5,6 @@
 module m0 path="main.js" displayPath="main.js"
 variable g0 name="log" declared={type=anything} initialization=Undefined
 function f0 name="writesBeforeThrow" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     PutModuleVariable v0 variable=g0
@@ -33,7 +32,6 @@ function f2 name="handlerRethrows" parameters=[{type=boolean}] results=[{type=un
 }
 # CHECK-NEXT: f2 return: throws collects throw: reads(RuntimeState) writes(ModuleVariables/1, RuntimeState) throws collects
 function f3 name="noHandler" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     v1 = CallDirect v0 function=f0
     Return
 }

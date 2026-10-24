@@ -10,7 +10,6 @@ layout L0 name="AllocatedLayout" fields=[{key="fieldKey" declared={type=number} 
 layout L1 name="UnallocatedLayout" fields=[{key="otherFieldKey" declared={type=number} flags=[IsRequired]}]
 variable g0 name="variableName" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="moduleBody" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=MathRandom
     v1 = Call v0
     v2 = ToNumber v1
@@ -24,7 +23,6 @@ function f0 name="moduleBody" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="calledFunction" results=[{type=anything}] {
-  b0():
     Return
 }
 # CHECK: "\u{f8}.ts"

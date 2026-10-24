@@ -10,7 +10,6 @@ entry module=m0
 layout L0 name="Pair" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = Builtin builtin=GlobalThis
@@ -19,13 +18,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v4
 }
 function f1 name="allocates" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject layout=L0 fields=[]
     PropSet v1, v0 key="x" mode=Strict
     Return v1
 }
 function f2 name="allocatesAndMayThrow" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = RequireObjectCoercible v0 name="length"
     v2 = NewObject layout=L0 fields=[]
     PropSet v2, v1 key="x" mode=Strict

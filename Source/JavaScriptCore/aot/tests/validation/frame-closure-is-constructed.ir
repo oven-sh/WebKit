@@ -22,7 +22,6 @@ entry module=m0
 layout L0 kind=Instance name="Holder" constructor=f3 flags=[IsConstructorFunction]
 layout L1 kind=Instance name="Holder" constructor=f4 flags=[IsConstructorFunction]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = Builtin builtin=GlobalThis
@@ -31,24 +30,20 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="inFrame" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f3 storage=Frame
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2
 }
 function f2 name="onHeap" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f4
     v1 = GetConstructPrototype v0 layout=L1
     v2 = NewObject v1 layout=L1
     Return v2
 }
 function f3 name="Holder" thisType={type=anything} results=[{type=anything}] {
-  b0():
     Return
 }
 function f4 name="Holder" thisType={type=anything} results=[{type=anything}] {
-  b0():
     Return
 }

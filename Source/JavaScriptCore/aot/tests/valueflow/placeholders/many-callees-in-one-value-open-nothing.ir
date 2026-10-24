@@ -4,35 +4,4 @@
 # RUN(NUMBERS): valueflow-solve
 # NUMBERS: unseen-code 0
 # STATISTIC: MaxValueFlowSetMembersHits = 0
-
-layout L0 fields=[{key="kept" declared={type=anything}}] ownFieldCount=1
-module m0 path="main.js" displayPath="main.js" body=f0
-entry module=m0
-function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
-# REPEAT: i = 0..69
-    v%(i) = NewClosure function=f%(i+1)
-# END REPEAT
-    v70 = NewArray v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31, v32, v33, v34, v35, v36, v37, v38, v39, v40, v41, v42, v43, v44, v45, v46, v47, v48, v49, v50, v51, v52, v53, v54, v55, v56, v57, v58, v59, v60, v61, v62, v63, v64, v65, v66, v67, v68, v69 contents=anything
-    v71 = NewClosure function=f71
-    v72 = NewObject -, v71 layout=L0 fields=[0]
-    v73 = Builtin builtin=GlobalThis
-    v74 = PropGet v73 key="index" [isFreeName]
-    v75 = ElemGet v70, v74
-    v76 = Call v75, -
-    v77 = PropGet v75 key="kept"
-    v78 = Call v77, v75
-    v79 = PropGet v73 key="register" [isFreeName]
-    v80 = Call v79, -, v75
-    Return
-}
-# REPEAT: i = 1..70
-function f%(i) name="choice%(i)" results=[{type=anything}] {
-  b0():
-    Return
-}
-# END REPEAT
-function f71 name="kept" results=[{type=anything}] {
-  b0():
-    Return
-}
+# PROGRAM-OF: set-that-is-given-up-opens-nothing.ir

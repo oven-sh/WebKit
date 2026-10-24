@@ -21,11 +21,6 @@ static bool isPlacedInEnvironment(const PlacedSlot& slot)
     return slot.hasStorage() && !slot.needsExtension();
 }
 
-BindingEmitter::BindingEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
-
 void BindingEmitter::failAndDefineZero(const ValueContext& value, InternalErrorKind kind)
 {
     fail(value, kind);

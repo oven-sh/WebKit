@@ -29,7 +29,6 @@ typesite w4 module=m0 position=340 kind=Parameter
 layout L0 name="Holder" fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key=symbol("state")@m0:100 declared={type=number} flags=[IsRequired]}, {key="z" declared={type=number} flags=[IsRequired]}]
 variable g0 name="kState" module=m0 declared={type=anything} flags=[IsImmutable]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Symbol
     v1 = String string="state"
     v2 = Call v0, -, v1 @100
@@ -44,7 +43,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="make" flags=[IsChecked] parameters=[{type=number site=w0}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = Integer integer=1
     v2 = Integer integer=3
     v3 = NewObject -, v1, v0, v2 layout=L0 fields=[0, 1, 2]
@@ -52,21 +50,18 @@ function f1 name="make" flags=[IsChecked] parameters=[{type=number site=w0}] res
     Return v4
 }
 function f2 name="read" flags=[IsChecked] parameters=[{type=L0 site=w1}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = GetModuleVariable variable=g0
     v2 = CheckInitialized v1 name="kState"
     v3 = ElemGet v0, v2
     Return v3
 }
 function f3 name="write" flags=[IsChecked] parameters=[{type=L0 site=w2}, {type=number site=w3}] results=[{type=anything}] {
-  b0(v0: L0, v1: number):
     v2 = GetModuleVariable variable=g0
     v3 = CheckInitialized v2 name="kState"
     ElemSet v0, v3, v1 mode=Strict
     Return
 }
 function f4 name="readName" flags=[IsChecked] parameters=[{type=L0 site=w4}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="z"
     Return v1
 }

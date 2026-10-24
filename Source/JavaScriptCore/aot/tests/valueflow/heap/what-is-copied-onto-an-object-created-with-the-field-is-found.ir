@@ -11,13 +11,11 @@ layout L1 name="Patch" fields=[{key="leaf" declared={type=anything} flags=[IsReq
 layout L2 name="Kept" fields=[{key="leaf" declared={type=anything} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = CallDirect function=f1
     v1 = CallDirect function=f2
     Return v0
 }
 function f1 name="copiedOnto" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = Null
@@ -29,7 +27,6 @@ function f1 name="copiedOnto" results=[{type=anything}] {
     Return v7
 }
 function f2 name="leftAlone" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L2 fields=[0]
     v2 = PropGet v1 key="leaf"

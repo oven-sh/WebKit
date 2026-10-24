@@ -10,8 +10,6 @@ function f0 name="expected-first" parameters=[{type=string|ArrayIterator}] resul
   b0(v0: string|ArrayIterator ~ ArrayIterator):
     v1 = PropGet v0 key="toString"
     Return v1
-}
-# CHECK-LABEL: function f0 name="expected-first"
 # CHECK-NEXT: b0(v0: string|ArrayIterator{{*}}):
 # CHECK-NEXT: [[isObject]]: boolean{{*}} = TypeTest v0 testedType=object
 # CHECK-NEXT: Branch [[isObject]] -> taken [[iteratorArm]](| 0), notTaken [[stringArm]](| 0)
@@ -20,13 +18,12 @@ function f0 name="expected-first" parameters=[{type=string|ArrayIterator}] resul
 # CHECK-NEXT: = PropGet [[iterator]] key="toString"
 # CHECK: [[stringArm]]([[string]]: string) frequency=Unlikely:
 # CHECK-NEXT: = PropGet [[string]] key="toString"
+}
 function f1 name="beside-another-object" parameters=[{type=Array<number>|ArrayIterator}] results=[{type=anything}] {
   b0(v0: Array<number>|ArrayIterator ~ ArrayIterator):
     v1 = PropGet v0 key="toString"
     Return v1
-}
 # Beside another object no test for an object tells it apart. The test for the array does, and what fails it is the iterator.
-# CHECK-LABEL: function f1 name="beside-another-object"
 # CHECK-NOT: testedType=object
 # CHECK-NOT: testedType=ArrayIterator
 # CHECK: [[isArray]]: boolean = TypeTest v0 testedType=Array
@@ -37,3 +34,4 @@ function f1 name="beside-another-object" parameters=[{type=Array<number>|ArrayIt
 # CHECK-NEXT: = PropGet [[array]] key="toString"
 # CHECK: [[rest]]([[expected]]: ArrayIterator):
 # CHECK-NEXT: = PropGet [[expected]] key="toString"
+}

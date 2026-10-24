@@ -10,19 +10,16 @@ layout L1 name="Count" fields=[{key="value" declared={type=undefined|number}}] f
 layout L2 name="NeverStored" fields=[{key="value" declared={type=undefined} flow={location={writers=AllKnown stores=Never}}}] flow={members=[L2]}
 
 function f0 name="read-in-two-places" parameters=[{type=L0|L1}] results=[{type=anything}] {
-  b0(v0: L0|L1):
     v1 = GetSlotOrUndefined v0 key="value" receivers=[L0, L1] level=Proven
     Return v1
 }
 function f1 name="store-without-slot" parameters=[{type=L0|L2}] results=[{type=anything}] {
-  b0(v0: L0|L2):
     v1 = Undefined
     PutSlotOrAdd v0, -, v1 key="value" receivers=[L0, L2] level=Proven
     Return
 }
 # A read through the same receivers finds the field absent in the member without the slot.
 function f2 name="read-without-slot" parameters=[{type=L0|L2}] results=[{type=anything}] {
-  b0(v0: L0|L2):
     v1 = GetSlotOrUndefined v0 key="value" receivers=[L0, L2] level=Proven
     Return v1
 }

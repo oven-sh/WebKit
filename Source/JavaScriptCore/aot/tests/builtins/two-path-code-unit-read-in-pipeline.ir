@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="comparesUnit" parameters=[{type=string}, {type=int[0, 1000]}] results=[{type=number}] {
-  b0(v0: string, v1: int[0, 1000]):
     v2 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
     v3 = Integer integer=47
     v4 = StrictEq v2, v3

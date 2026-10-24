@@ -11,13 +11,9 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-enum class FlowOwnListing : uint8_t {
-    MayHaveOthers,
-    Complete,
-};
+enum class FlowOwnListing : uint8_t { MayHaveOthers, Complete };
 
 FlowOwnListing exportListingOf(const Program&, ModuleID);
-
 VariableID findStaticFieldVariable(const Program&, FunctionID classConstructor, PropertyKeyID);
 
 } } } // namespace JSC::AOT::Typed

@@ -12,11 +12,8 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="awaitsOnce" kind=Arrow flags=[IsAsync] captures=[{type=number}] parameters=[{type=anything}] results=[{type=Promise}] {
-  b0(v0: number, v1: anything):
     v2 = Await v1 @11
     Return v2
-}
-# CHECK-LABEL: function f0 name="awaitsOnce"
 # CHECK: kind=Arrow role=CoroutineRamp flags=[IsAsync] captures=[{type=number}] {{*}} parameters=[{type=anything}] results=[{type=Promise}]
 # CHECK: creator=Coroutine{kind=AsyncFunction ramp=f0 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=2}
 # CHECK-NEXT: b0(v0: number, v1: anything):
@@ -24,8 +21,8 @@ function f0 name="awaitsOnce" kind=Arrow flags=[IsAsync] captures=[{type=number}
 # CHECK-NEXT: [[started]]: anything = CallDirect v0, v1, [[promise]] function=f3
 # CHECK-NEXT: [[returned]]: Promise = AssumeType [[started]] castType=Promise
 # CHECK-NEXT: Return [[returned]]
+}
 function f1 name="yieldsOnce" flags=[IsGenerator, TakesCallee] captures=[{type=number}] parameters=[{type=anything}] results=[{type=Generator}] {
-  b0(v0: number, v1: function, v2: anything):
     InitialYield @20
     v4 = Yield v2 @21
     v5 = ResultAt v4 index=0
@@ -37,27 +34,24 @@ function f1 name="yieldsOnce" flags=[IsGenerator, TakesCallee] captures=[{type=n
     Return v5
   b3():
     Return v0
-}
-# CHECK-LABEL: function f1 name="yieldsOnce"
 # CHECK: role=CoroutineRamp flags=[IsGenerator, TakesCallee] captures=[{type=number}] {{*}} parameters=[{type=anything}] results=[{type=Generator}]
 # CHECK: creator=Coroutine{ramp=f1 body=f4 promiseParameter=3}
 # CHECK-NEXT: b0(v0: number, v1: function, v2: anything):
 # CHECK-NEXT: [[generator]]: Generator = NewGenerator v1 function=f1
 # CHECK-NEXT: = CallDirect v0, v1, v2, [[generator]] function=f4
 # CHECK-NEXT: Return [[generator]]
+}
 function f2 name="awaitsInAsyncGenerator" flags=[IsAsync, IsGenerator, TakesCallee] captures=[{type=number}] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
-  b0(v0: number, v1: function, v2: anything):
     InitialYield @30
     v4 = Await v2 @31
     Return v4
-}
-# CHECK-LABEL: function f2 name="awaitsInAsyncGenerator"
 # CHECK: role=CoroutineRamp flags=[IsAsync, IsGenerator, TakesCallee]
 # CHECK: creator=Coroutine{kind=AsyncGenerator ramp=f2 body=f5 promiseType=Promise promiseParameter=3}
 # CHECK-NEXT: b0(v0: number, v1: function, v2: anything):
 # CHECK-NEXT: [[asyncGenerator]]: AsyncGenerator = NewAsyncGenerator v1 function=f2
 # CHECK-NEXT: = CallDirect v0, v1, v2, [[asyncGenerator]] function=f5
 # CHECK-NEXT: Return [[asyncGenerator]]
+}
 
 # CHECK-LABEL: function f3 name="awaitsOnce"
 # CHECK: kind=Arrow role=CoroutineBody flags=[IsAsync] captures=[{type=number}] {{*}} parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f0 parameterMap=[{original=0}, {original=1}, {}]}

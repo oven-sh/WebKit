@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="loop-in-try-entered-from-outside" parameters=[{type=int}, {type=number}] results=[{type=anything}] {
-  b0(v0: int, v1: number):
     v2 = Integer integer=1
     v3 = Integer integer=0
     Jump -> next b1(v0)
@@ -22,10 +21,9 @@ function f0 name="loop-in-try-entered-from-outside" parameters=[{type=int}, {typ
   b4() role=CatchHandler:
     v9 = CatchValue
     Return v9
-}
-# CHECK-LABEL: function f0 name="loop-in-try-entered-from-outside"
 # CHECK-NOT: IntegerBound
 # CHECK: boolean = Less v4, v1
+}
 
 function f1 name="loop-and-entry-in-one-try" parameters=[{type=int}, {type=number}] results=[{type=anything}] {
   b0(v0: int, v1: number) handler=b4():
@@ -45,8 +43,7 @@ function f1 name="loop-and-entry-in-one-try" parameters=[{type=int}, {type=numbe
   b4() role=CatchHandler:
     v9 = CatchValue
     Return v9
-}
-# CHECK-LABEL: function f1 name="loop-and-entry-in-one-try"
 # CHECK: [[bound]]: int = IntegerBound v1 comparison=Less
 # CHECK-NEXT: Jump -> next b1(v0)
 # CHECK: boolean = Less v4, [[bound]]
+}

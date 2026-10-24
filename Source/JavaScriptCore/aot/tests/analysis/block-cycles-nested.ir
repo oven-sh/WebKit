@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="threeNestedLoops" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -38,7 +37,6 @@ function f0 name="threeNestedLoops" parameters=[{type=boolean}] results=[{type=u
 # CHECK-NEXT: b7 depth: 0
 # CHECK-NEXT: b7 outermost cycle: none
 function f1 name="twoLoopsInSequence" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -74,7 +72,6 @@ function f1 name="twoLoopsInSequence" parameters=[{type=boolean}] results=[{type
 # CHECK-NEXT: b5 depth: 0
 # CHECK-NEXT: b5 outermost cycle: none
 function f2 name="diamond" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3()

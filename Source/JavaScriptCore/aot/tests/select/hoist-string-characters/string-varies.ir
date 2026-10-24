@@ -10,7 +10,6 @@ module m0 path="main.js" displayPath="main.js"
 # CHECK: v12: number = StringRangeCodeUnitOrNaN v8, -, -, v6
 # CHECK-NOT: FlattenString
 function f0 name="string-is-loop-parameter" parameters=[{type=string}, {type=number}, {type=string}] results=[{type=anything}] {
-  b0(v0: string, v1: number, v2: string):
     v3 = Integer integer=0
     v4 = Integer integer=1
     v5 = Undefined
@@ -36,7 +35,6 @@ function f0 name="string-is-loop-parameter" parameters=[{type=string}, {type=num
 # CHECK-COUNT-1: : flatstring = FlattenString
 # CHECK: ([[flat1]]: flatstring):
 function f1 name="cast-in-loop" parameters=[{type=undefined|string}, {type=number}] results=[{type=anything}] {
-  b0(v0: undefined|string, v1: number):
     v2 = Undefined
     v3 = Integer integer=0
     v4 = Integer integer=1
@@ -64,7 +62,6 @@ function f1 name="cast-in-loop" parameters=[{type=undefined|string}, {type=numbe
 # CHECK: v10: number = StringRangeCodeUnitOrNaN [[flat2]], -, -, v6
 # CHECK-NOT: FlattenString
 function f2 name="cast-outside-loop" parameters=[{type=undefined|string}, {type=number}] results=[{type=anything}] {
-  b0(v0: undefined|string, v1: number):
     v2 = Undefined
     v3 = Integer integer=0
     v4 = Integer integer=1

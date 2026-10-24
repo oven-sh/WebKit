@@ -11,7 +11,6 @@ layout L4 kind=Instance name="Gauge" constructor=f3 flow={baseState=None impossi
 layout L5 kind=Instance name="ReplaceableGauge" constructor=f4 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="level" kind=Setter function=f5}] namedMembers=[{key="level" kind=Setter function=f5}]}
 variable g0 name="lastLevel" declared={type=anything} initialization=Undefined
 function f0 name="fields" parameters=[{type=L0}, {type=L1}, {type=L2}, {type=L3}, {type=null|L0}, {type=number}, {type=string}] results=[{type=undefined}] {
-  b0(v0: L0, v1: L1, v2: L2, v3: L3, v4: null|L0, v5: number, v6: string):
     PropSet v0, v5 key="x"
     PropSet v4, v5 key="x"
     PropSet v1, v5 key="y"
@@ -30,7 +29,6 @@ function f0 name="fields" parameters=[{type=L0}, {type=L1}, {type=L2}, {type=L3}
 # CHECK: v11 PropSet: reads(all) {{*}}ShapeWords{{*}}callsUnknownCode
 # CHECK-NEXT: v12 PropSet: reads(all) {{*}}ShapeWords{{*}}callsUnknownCode
 function f1 name="setters" parameters=[{type=L4}, {type=L5}, {type=number}] results=[{type=undefined}] {
-  b0(v0: L4, v1: L5, v2: number):
     PropSet v0, v2 key="level"
     PropSet v1, v2 key="level"
     Return
@@ -40,7 +38,6 @@ function f1 name="setters" parameters=[{type=L4}, {type=L5}, {type=number}] resu
 # CHECK-NOT: callsUnknownCode
 # CHECK: v4 PropSet: reads(all) {{*}}callsUnknownCode
 function f2 name="definitions" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     PropDefine v1, v0 key="x"
     v3 = NewObject layout=L1
@@ -54,7 +51,6 @@ function f2 name="definitions" parameters=[{type=number}] results=[{type=undefin
 function f3 name="Gauge" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L4
 function f4 name="ReplaceableGauge" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L5
 function f5 name="level" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything, v1: anything):
     PutModuleVariable v1 variable=g0
     Return
 }

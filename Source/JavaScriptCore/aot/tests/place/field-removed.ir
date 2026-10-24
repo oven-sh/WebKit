@@ -11,7 +11,6 @@ variable g1 name="fullyRead" module=m0 declared={type=anything} initialization=U
 layout L0 name="PartlyRead" fields=[{key="unread" declared={type=anything} flags=[IsRequired]}, {key="count" declared={type=anything} flags=[IsRequired]}]
 layout L1 name="FullyRead" fields=[{key="observed" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = Integer integer=1
@@ -24,13 +23,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="readCount" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = PropGet v0 key="count"
     Return v1
 }
 function f2 name="readObserved" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g1
     v1 = PropGet v0 key="observed"
     Return v1

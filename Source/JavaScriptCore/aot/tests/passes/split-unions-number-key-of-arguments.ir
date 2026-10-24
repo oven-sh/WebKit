@@ -36,22 +36,20 @@ function f1 name="store" flags=[HasArgumentCount, HasHiddenRest] parameters=[{ty
     v4 = CreateUnmappedArguments v0, v3, v1, v2
     ElemSet v4, v1, v2 mode=Strict
     Return
-}
-# CHECK-LABEL: function f1 name="store"
 # CHECK-NOT: TypeTest
 # CHECK: ElemSet v4, v1, v2
 # CHECK-NOT: TypeTest
+}
 
 function f2 name="mapped" flags=[IsSloppy, TakesCallee, HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: function, v1: int[0, 4294967295], v2: anything, v3: Array):
     v4 = CreateMappedArguments v0, v1, v3, v2
     v5 = ElemGet v4, v2
     Return v5
-}
-# CHECK-LABEL: function f2 name="mapped"
 # CHECK-NOT: TypeTest
 # CHECK: v5: anything = ElemGet v4, v2
 # CHECK-NOT: TypeTest
+}
 
 function f3 name="object-leaves-the-function" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: int[0, 4294967295], v1: anything, v2: anything, v3: Array):
@@ -59,57 +57,50 @@ function f3 name="object-leaves-the-function" flags=[HasArgumentCount, HasHidden
     v5 = ElemGet v4, v1
     v6 = Call v2, -, v4
     Return v5
-}
-# CHECK-LABEL: function f3 name="object-leaves-the-function"
 # CHECK-NOT: TypeTest
 # CHECK: v5: anything = ElemGet v4, v1
 # CHECK-NOT: TypeTest
+}
 
 function f4 name="number-or-undefined" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=undefined|int[0, 9]}] results=[{type=anything}] {
   b0(v0: int[0, 4294967295], v1: undefined|int[0, 9], v2: Array):
     v3 = CreateUnmappedArguments v0, v2, v1
     v4 = ElemGet v3, v1
     Return v4
-}
-# CHECK-LABEL: function f4 name="number-or-undefined"
 # CHECK: = TypeTest v1 testedType=int[0, 9]
 # CHECK-NOT: TypeTest
 # CHECK: ([[position]]: int[0, 9]):
 # CHECK-NEXT: = ElemGet v3, [[position]]
 # CHECK: ([[missing]]: undefined) frequency=Unlikely:
 # CHECK-NEXT: = ElemGet v3, [[missing]]
-# SUNK-LABEL: function f4 name="number-or-undefined"
 # SUNK-NOT: CreateUnmappedArguments
 # SUNK: ([[missingKey]]: undefined) frequency=Unlikely:
+}
 
 function f5 name="object-of-a-caller" parameters=[{type=Arguments}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Arguments, v1: anything):
     v2 = ElemGet v0, v1
     Return v2
-}
-# CHECK-LABEL: function f5 name="object-of-a-caller"
 # CHECK-NOT: TypeTest
 # CHECK: v2: anything = ElemGet v0, v1
 # CHECK-NOT: TypeTest
+}
 
 function f6 name="test-with-in" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=boolean}] {
   b0(v0: int[0, 4294967295], v1: anything, v2: Array):
     v3 = CreateUnmappedArguments v0, v2, v1
     v4 = ElemHas v3, v1
     Return v4
-}
-# CHECK-LABEL: function f6 name="test-with-in"
 # CHECK-NOT: TypeTest
 # CHECK: v4: boolean = ElemHas v3, v1
 # CHECK-NOT: TypeTest
+}
 
 function f7 name="key-is-a-number" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=number}] results=[{type=anything}] {
   b0(v0: int[0, 4294967295], v1: number, v2: Array):
     v3 = CreateUnmappedArguments v0, v2, v1
     v4 = ElemGet v3, v1
     Return v4
-}
-# CHECK-LABEL: function f7 name="key-is-a-number"
 # CHECK-NOT: TypeTest
 # CHECK: v4: anything = ElemGet v3, v1
 # CHECK-NOT: TypeTest
+}

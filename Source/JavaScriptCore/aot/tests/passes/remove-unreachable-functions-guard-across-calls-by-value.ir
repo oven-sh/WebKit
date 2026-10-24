@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = NewClosure function=f3
@@ -22,43 +21,36 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="first" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Double number=1.5
     v2 = Add v0, v1
     Return v2
 }
 function f2 name="second" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Double number=2.5
     v2 = Add v0, v1
     Return v2
 }
 function f3 name="third" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Double number=3.5
     v2 = Add v0, v1
     Return v2
 }
 function f4 name="fourth" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Double number=4.5
     v2 = Add v0, v1
     Return v2
 }
 function f5 name="fifth" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Double number=5.5
     v2 = Add v0, v1
     Return v2
 }
 function f6 name="sixth" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Double number=6.5
     v2 = Add v0, v1
     Return v2
 }
 function f7 name="callByIndex" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=0
     v2 = Double number=0.5
     Jump -> next b1(v1, v2)
@@ -77,8 +69,6 @@ function f7 name="callByIndex" parameters=[{type=anything}] results=[{type=anyth
     Jump -> next b1(v13, v11)
   b3():
     Return v4
-}
-# CHECK-LABEL: function f7 name="callByIndex"
 # CHECK: LoopHint
 # CHECK-NOT: = HasArrayStorage
 # CHECK-NOT: = IsPristine
@@ -86,3 +76,4 @@ function f7 name="callByIndex" parameters=[{type=anything}] results=[{type=anyth
 # CHECK-NOT: = HasArrayStorage
 # CHECK-NOT: = IsPristine
 # CHECK: = Call{{*}}callees=[
+}

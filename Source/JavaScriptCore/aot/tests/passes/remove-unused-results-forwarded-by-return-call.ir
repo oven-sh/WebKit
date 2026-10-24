@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="forwardedWhole" role=ResultWorker parameters=[{type=int}] results=[{type=number}, {type=number}] creator=ResultWorker{origin=f1} {
-  b0(v0: int):
     v1 = Add v0, v0
     v2 = Mul v0, v0
     v3 = Results v1, v2
@@ -20,7 +19,6 @@ function f0 name="forwardedWhole" role=ResultWorker parameters=[{type=int}] resu
 function f1 name="forwardedWhole" role=ResultWrapper parameters=[{type=int}] results=[{type=Array<number>}] creator=ResultWrapper{worker=f0}
 
 function f2 name="readOneByOne" role=ResultWorker parameters=[{type=int}] results=[{type=number}, {type=number}] creator=ResultWorker{origin=f3} {
-  b0(v0: int):
     v1 = Add v0, v0
     v2 = Mul v0, v0
     v3 = Results v1, v2
@@ -33,7 +31,6 @@ function f2 name="readOneByOne" role=ResultWorker parameters=[{type=int}] result
 function f3 name="readOneByOne" role=ResultWrapper parameters=[{type=int}] results=[{type=Array<number>}] creator=ResultWrapper{worker=f2}
 
 function f4 name="returnsTheCall" role=ResultWorker parameters=[{type=int}] results=[{type=number}, {type=number}] creator=ResultWorker{origin=f5} {
-  b0(v0: int):
     v1 = CallDirect v0 function=f0
     Return v1
 }
@@ -44,16 +41,14 @@ function f4 name="returnsTheCall" role=ResultWorker parameters=[{type=int}] resu
 function f5 name="returnsTheCall" role=ResultWrapper parameters=[{type=int}] results=[{type=Array<number>}] creator=ResultWrapper{worker=f4}
 
 function f6 name="readsFirstOfEach" parameters=[{type=int}] results=[{type=number}] {
-  b0(v0: int):
     v1 = CallDirect v0 function=f4
     v2 = ResultAt v1 index=0
     v3 = CallDirect v0 function=f2
     v4 = ResultAt v3 index=0
     v5 = Add v2, v4
     Return v5
-}
-# CHECK-LABEL: function f6 name="readsFirstOfEach"
 # CHECK: [[both]]:{{*}}= CallDirect v0 function=f4
 # CHECK-NEXT: [[first]]: number = ResultAt [[both]]
 # CHECK-NEXT: [[single]]: number = CallDirect v0 function=f2
 # CHECK-NEXT: = Add [[first]], [[single]]
+}

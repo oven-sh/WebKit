@@ -31,7 +31,6 @@ layout L12 name="HasPrototype" fields=[{key="x" declared={type=number} flags=[Is
 layout L13 name="Prototype" fields=[]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToNumber v1
@@ -45,7 +44,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK-LABEL: function f0 name="main"
 
 function f1 name="passedToReader" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     v2 = CallDirect v1 function=f12
     Return v2
@@ -56,7 +54,6 @@ function f1 name="passedToReader" parameters=[{type=number}] results=[{type=anyt
 # PLAN-NEXT: v1: Frame
 
 function f2 name="capturedByFrameClosure" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L1 fields=[0]
     v2 = NewClosure v1 function=f14
     v3 = CallDirect v2 function=f11
@@ -70,7 +67,6 @@ function f2 name="capturedByFrameClosure" parameters=[{type=number}] results=[{t
 # PLAN-NEXT: v2: Frame
 
 function f3 name="heldByFrameEnvironment" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L2 fields=[0]
     v2 = NewObject -, v1 layout=L3 fields=[0]
     v3 = CallDirect v2 function=f15
@@ -85,7 +81,6 @@ function f3 name="heldByFrameEnvironment" parameters=[{type=number}] results=[{t
 # PLAN-NEXT: v2: Frame
 
 function f4 name="passedToBuiltin" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L4 fields=[0]
     v2 = Builtin builtin=ObjectIsFrozen
     v3 = Call v2, -, v1
@@ -97,7 +92,6 @@ function f4 name="passedToBuiltin" parameters=[{type=number}] results=[{type=any
 # PLAN-NEXT: v1: Heap Escapes by v3(2)
 
 function f5 name="calleeAddsProperty" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L5 fields=[0]
     v2 = CallDirect v1, v0 function=f16
     Return v2
@@ -108,7 +102,6 @@ function f5 name="calleeAddsProperty" parameters=[{type=number}] results=[{type=
 # PLAN-NEXT: v1: Heap FieldsCreatedLater
 
 function f6 name="fieldCreatedLater" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject layout=L6
     PropSet v1, v0 key="x"
     v3 = CallDirect v1 function=f17
@@ -120,7 +113,6 @@ function f6 name="fieldCreatedLater" parameters=[{type=number}] results=[{type=a
 # PLAN-NEXT: v1: Heap FieldsCreatedLater
 
 function f7 name="frameClosureAddsProperty" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L7 fields=[0]
     v2 = NewClosure v1 function=f18
     v3 = CallDirect v2 function=f11
@@ -135,7 +127,6 @@ function f7 name="frameClosureAddsProperty" parameters=[{type=number}] results=[
 # PLAN-NEXT: v2: Frame
 
 function f8 name="propertyAddedThroughFrameEnvironment" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L8 fields=[0]
     v2 = NewObject -, v1 layout=L9 fields=[0]
     v3 = CallDirect v2 function=f19
@@ -150,7 +141,6 @@ function f8 name="propertyAddedThroughFrameEnvironment" parameters=[{type=number
 # PLAN-NEXT: v2: Frame
 
 function f9 name="fieldDeletedThroughFrameEnvironment" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L10 fields=[0]
     v2 = NewObject -, v1 layout=L11 fields=[0]
     v3 = CallDirect v2 function=f20
@@ -165,7 +155,6 @@ function f9 name="fieldDeletedThroughFrameEnvironment" parameters=[{type=number}
 # PLAN-NEXT: v2: Frame
 
 function f10 name="prototypeOperand" parameters=[{type=number}, {type=object}] results=[{type=anything}] {
-  b0(v0: number, v1: object):
     v2 = NewObject v1, v0 layout=L12 fields=[0]
     v3 = CallDirect v2 function=f13
     Return v3
@@ -177,7 +166,6 @@ function f10 name="prototypeOperand" parameters=[{type=number}, {type=object}] r
 # PLAN-NOT: by
 
 function f11 name="callsParameter" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0
     Return v1
 }
@@ -185,20 +173,17 @@ function f11 name="callsParameter" parameters=[{type=anything}] results=[{type=a
 # PLAN-LABEL: function f11
 
 function f12 name="addsFields" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="x"
     v2 = PropGet v0 key="y"
     v3 = Add v1, v2
     Return v3
 }
 function f13 name="testsWithPrototype" parameters=[{type=L12}] results=[{type=anything}] {
-  b0(v0: L12):
     v1 = PropGet v0 key="x"
     v2 = ToBoolean v1
     Return v2
 }
 function f14 name="testsCapture" kind=Arrow captures=[{type=L1}] results=[{type=anything}] {
-  b0(v0: L1):
     v1 = PropGet v0 key="x"
     v2 = ToBoolean v1
     Return v2
@@ -211,17 +196,14 @@ function f15 name="testsField" kind=Arrow captures=[{type=env L3}] results=[{typ
     Return v3
 }
 function f16 name="addsProperty" parameters=[{type=L5}, {type=number}] results=[{type=anything}] {
-  b0(v0: L5, v1: number):
     PropSet v0, v1 key="extra"
     Return
 }
 function f17 name="testsFilledLater" parameters=[{type=L6}] results=[{type=anything}] {
-  b0(v0: L6):
     v1 = ToBoolean v0
     Return v1
 }
 function f18 name="addsPropertyToCapture" kind=Arrow captures=[{type=L7}] results=[{type=anything}] {
-  b0(v0: L7):
     v1 = Integer integer=1
     PropSet v0, v1 key="extra"
     Return

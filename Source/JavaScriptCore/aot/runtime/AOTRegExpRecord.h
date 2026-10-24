@@ -37,24 +37,7 @@ struct ImageRegExp {
     Yarr::SpecificPattern specificPattern() const { return static_cast<Yarr::SpecificPattern>(rawSpecificPattern); }
     OptionSet<Yarr::Flags> flags() const { return OptionSet<Yarr::Flags>::fromRaw(rawFlags); }
 
-    bool hasCharacterSet() const
-    {
-        switch (specificPattern()) {
-        case Yarr::SpecificPattern::CharacterClass:
-        case Yarr::SpecificPattern::CharacterClassPlus:
-            return true;
-        case Yarr::SpecificPattern::None:
-        case Yarr::SpecificPattern::Atom:
-        case Yarr::SpecificPattern::LeadingSpacesStar:
-        case Yarr::SpecificPattern::LeadingSpacesPlus:
-        case Yarr::SpecificPattern::TrailingSpacesStar:
-        case Yarr::SpecificPattern::TrailingSpacesPlus:
-        case Yarr::SpecificPattern::Newlines:
-        case Yarr::SpecificPattern::OptionalCRThenLF:
-            return false;
-        }
-        RELEASE_ASSERT_NOT_REACHED();
-    }
+    bool hasCharacterSet() const { return specificPattern() == Yarr::SpecificPattern::CharacterClass || specificPattern() == Yarr::SpecificPattern::CharacterClassPlus; }
 
     uint32_t pattern;
     uint32_t atom;

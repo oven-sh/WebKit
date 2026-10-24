@@ -55,7 +55,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="r" parameters=[{type=int[2, 5]}, {type=int[-3, 4]}, {type=int[1, 3]}, {type=int[9007199254740990, 9007199254740992]}, {type=number}, {type=int[1, 1]}] results=[{type=undefined}] {
-  b0(v0: int[2, 5], v1: int[-3, 4], v2: int[1, 3], v3: int[9007199254740990, 9007199254740992], v4: number, v5: int[1, 1]):
     v6 = Add v0, v1
     v7 = Sub v0, v1
     v8 = Increment v0
@@ -85,7 +84,6 @@ function f0 name="r" parameters=[{type=int[2, 5]}, {type=int[-3, 4]}, {type=int[
     Return
 }
 function f1 name="q" parameters=[{type=int[2, 5]}, {type=int[-3, 4]}, {type=int[1, 3]}, {type=int[-2147483648, -2147483648]}, {type=int[-1, -1]}] results=[{type=undefined}] {
-  b0(v0: int[2, 5], v1: int[-3, 4], v2: int[1, 3], v3: int[-2147483648, -2147483648], v4: int[-1, -1]):
     v5 = DivideIntegers v0, v2
     v6 = DivideIntegers v1, v2
     v7 = DivideIntegers v0, v1
@@ -94,7 +92,6 @@ function f1 name="q" parameters=[{type=int[2, 5]}, {type=int[-3, 4]}, {type=int[
     Return
 }
 function f2 name="pastInt32" parameters=[{type=int[-2147483645, 2147483650]}, {type=int[31, 31]}, {type=int|whole}] results=[{type=undefined}] {
-  b0(v0: int[-2147483645, 2147483650], v1: int[31, 31], v2: int|whole):
     v3 = BitAnd v0, v1
     v4 = BitAnd v2, v1
     v5 = URShift v0, v1
@@ -102,7 +99,6 @@ function f2 name="pastInt32" parameters=[{type=int[-2147483645, 2147483650]}, {t
     Return
 }
 function f3 name="lengths" parameters=[{type=int[0, 4294967295]}, {type=int[-3, 4]}, {type=int[-5, -2]}, {type=int[9007199254740990, 9007199254740992]}, {type=number}, {type=int|whole}] results=[{type=undefined}] {
-  b0(v0: int[0, 4294967295], v1: int[-3, 4], v2: int[-5, -2], v3: int[9007199254740990, 9007199254740992], v4: number, v5: int|whole):
     v6 = ToLength v0
     v7 = ToLength v1
     v8 = ToLength v2
@@ -112,7 +108,6 @@ function f3 name="lengths" parameters=[{type=int[0, 4294967295]}, {type=int[-3, 
     Return
 }
 function f4 name="orWithNegativeOperands" parameters=[{type=int[2, 5]}, {type=int[-3, 4]}, {type=int[-5, -2]}, {type=int[-2147483643, 2147483647]}] results=[{type=undefined}] {
-  b0(v0: int[2, 5], v1: int[-3, 4], v2: int[-5, -2], v3: int[-2147483643, 2147483647]):
     v4 = BitOr v0, v1
     v5 = BitOr v0, v2
     v6 = BitOr v3, v0

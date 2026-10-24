@@ -7,7 +7,6 @@ entry module=m0
 layout L0 name="Merged" fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
 layout L1 name="Source" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Undefined
     v2 = Double number=1.5

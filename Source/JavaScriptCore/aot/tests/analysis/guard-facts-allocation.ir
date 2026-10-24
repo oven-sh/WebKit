@@ -6,7 +6,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
 
 function f0 name="objectNamedAsGuard" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = GetSlot v1, v1 key="x" receivers=[L0] level=Proven
     Return v2
@@ -16,7 +15,6 @@ function f0 name="objectNamedAsGuard" parameters=[{type=anything}] results=[{typ
 # CHECK-NEXT: b0 available at head: []
 
 function f1 name="arrayNamedAsGuard" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray v0 contents=anything
     v2 = GetArrayLength v1, v1
     Return v2
@@ -26,7 +24,6 @@ function f1 name="arrayNamedAsGuard" parameters=[{type=anything}] results=[{type
 # CHECK-NEXT: b0 available at head: []
 
 function f2 name="objectNobodyNames" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewObject -, v0 layout=L0 fields=[0]
     v3 = GetSlot v2, v2 key="x" receivers=[L0] level=Proven
@@ -39,7 +36,6 @@ function f2 name="objectNobodyNames" parameters=[{type=anything}] results=[{type
 # CHECK-NOT: v1 facts:
 
 function f3 name="arrayNobodyNames" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray v0 contents=anything
     Return v1
 }

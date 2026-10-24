@@ -13,56 +13,10 @@
 #include "AOTIRBuilder.h"
 #include "AOTSummarizeForInlining.h"
 #include "AOTValueSubstitution.h"
-#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
-
-namespace {
-
-struct TailRecursionSite {
-    BlockID block;
-    ValueID call;
-};
-
-} // anonymous namespace
-
-static bool isTailRecursion(const FunctionPassContext& context, const Block& block)
-{
-    if (block.terminator.kind != TerminatorKind::ReturnCall || block.handler)
-        return false;
-
-    const Value& call = context.function.at(block.terminator.callOperand());
-    return call.opcode == Opcode::CallDirect
-        && call.function() == context.id
-        && call.numberOfOperands() == context.function.numberOfEntryParameters();
-}
-
-static Vector<TailRecursionSite, 2> findTailRecursionSites(FunctionPassContext& context)
-{
-    const Function& function = context.function;
-    Vector<TailRecursionSite, 2> sites;
-    for (BlockID id : context.analyses.cfg().reversePostOrder()) {
-        const Block& block = function.at(id);
-        if (isTailRecursion(context, block))
-            sites.append(TailRecursionSite { id, block.terminator.callOperand() });
-    }
-    return sites;
-}
-
-static bool hasOperationBoundToFrame(FunctionPassContext& context)
-{
-    const Function& function = context.function;
-    return std::ranges::any_of(context.analyses.cfg().reversePostOrder(), [&](BlockID id) {
-        const Block& block = function.at(id);
-        for (uint32_t index = 0; index < block.values.size(); ++index) {
-            if (isBoundToFrame(function, block, index))
-                return true;
-        }
-        return false;
-    });
-}
 
 static BlockID createLoopHeader(FunctionPassContext& context, IRBuilder& builder)
 {
@@ -90,42 +44,54 @@ static BlockID createLoopHeader(FunctionPassContext& context, IRBuilder& builder
     return header;
 }
 
-static void replaceCallWithJump(const BuildContext& build, IRBuilder& builder, TailRecursionSite site, BlockID header)
-{
-    Function& function = builder.function();
-    const Value& call = function.at(site.call);
-    Arguments arguments(call.variadicOperands());
-    if (build.isSabotaged(Sabotage::TailCallsSwapTheirLastArguments) && arguments.size() > 1 && function.at(arguments[arguments.size() - 1]).type == function.at(arguments[arguments.size() - 2]).type)
-        std::swap(arguments[arguments.size() - 1], arguments[arguments.size() - 2]);
-
-    Block& block = function.edit(site.block);
-    size_t indexOfCall = block.values.reverseFind(site.call);
-    RELEASE_ASSERT(indexOfCall != notFound);
-    block.terminator = Terminator { };
-    BitVector erasedIndexes;
-    erasedIndexes.set(indexOfCall);
-    builder.eraseValues(site.block, erasedIndexes);
-    builder.moveToEndOf(site.block);
-    builder.setOrigin(call.origin());
-    builder.emitJump(header, WTF::move(arguments));
-}
-
 PassOutcome eliminateTailRecursion(FunctionPassContext& context)
 {
     Function& function = context.function;
     if (!function.hasOrdinaryFrame())
         return PassOutcome::Unchanged;
 
-    Vector<TailRecursionSite, 2> sites = findTailRecursionSites(context);
-    if (sites.isEmpty() || hasOperationBoundToFrame(context))
+    std::span<const BlockID> blocks = context.analyses.cfg().reversePostOrder();
+    Vector<BlockID, 2> sites;
+    for (BlockID id : blocks) {
+        const Block& block = function.at(id);
+        if (block.terminator.kind != TerminatorKind::ReturnCall || block.handler)
+            continue;
+        const Value& call = function.at(block.terminator.callOperand());
+        if (call.opcode == Opcode::CallDirect && call.function() == context.id && call.numberOfOperands() == function.numberOfEntryParameters())
+            sites.append(id);
+    }
+    auto hasOperationBoundToFrame = [&](BlockID id) {
+        const Block& block = function.at(id);
+        for (uint32_t index = 0; index < block.values.size(); ++index) {
+            if (isBoundToFrame(function, block, index))
+                return true;
+        }
+        return false;
+    };
+    if (sites.isEmpty() || std::ranges::any_of(blocks, hasOperationBoundToFrame))
         return PassOutcome::Unchanged;
 
     IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
     BlockID header = createLoopHeader(context, builder);
-    for (TailRecursionSite site : sites) {
-        if (site.block == entryBlock)
-            site.block = header;
-        replaceCallWithJump(context.build, builder, site, header);
+    for (BlockID site : sites) {
+        if (site == entryBlock)
+            site = header;
+        ValueID callID = function.at(site).terminator.callOperand();
+        const Value& call = function.at(callID);
+        Arguments arguments(call.variadicOperands());
+        if (context.build.isSabotaged(Sabotage::TailCallsSwapTheirLastArguments) && arguments.size() > 1 && function.at(arguments[arguments.size() - 1]).type == function.at(arguments[arguments.size() - 2]).type)
+            std::swap(arguments[arguments.size() - 1], arguments[arguments.size() - 2]);
+
+        Block& block = function.edit(site);
+        size_t indexOfCall = block.values.reverseFind(callID);
+        RELEASE_ASSERT(indexOfCall != notFound);
+        block.terminator = Terminator { };
+        BitVector erasedIndexes;
+        erasedIndexes.set(indexOfCall);
+        builder.eraseValues(site, erasedIndexes);
+        builder.moveToEndOf(site);
+        builder.setOrigin(call.origin());
+        builder.emitJump(header, WTF::move(arguments));
     }
 
     context.build.statistics().count(StatisticID::TailRecursionsEliminated, sites.size());

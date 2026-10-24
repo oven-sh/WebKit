@@ -17,7 +17,6 @@ variable g0 name="a" module=m0 declared={type=anything}
 module m0 path="/a.ts" displayPath="a.ts" body=f0 exports=[{name="apply" variable=g0}, {name="default" variable=g0}, {name="fetch" variable=g0}]
 module m1 path="/b.ts" displayPath="b.ts"
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     Return
 }
 entry module=m0 hostReads=[{exportName="default" builtin=BunServe}, {exportName="apply" builtin=ReflectApply parameter=1}, {exportName="fetch"}]

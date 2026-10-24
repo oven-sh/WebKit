@@ -40,7 +40,6 @@ variable g0 name="value" module=m0 declared={type=anything} initialization=Undef
 variable g1 name="shape" module=m0 declared={type=undefined|L0|L1|L2|L3} initialization=Undefined
 variable g2 name="only" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L1 fields=[]
     v1 = NewClosure function=f1
     PropSet v0, v1 key="go" mode=Strict
@@ -68,18 +67,14 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="held" module=m0 results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="take" module=m0 parameters=[{type=L0|L1|L2|L3}] results=[{type=anything}] {
-  b0(v0: L0|L1|L2|L3):
     Return
 }
 function f3 name="keep" module=m0 parameters=[{type=undefined|L0|L1|L2|L3}] results=[{type=anything}] {
-  b0(v0: undefined|L0|L1|L2|L3):
     Return
 }
 function f4 name="one" module=m0 parameters=[{type=L0|L1|L2|L3}] results=[{type=anything}] {
-  b0(v0: L0|L1|L2|L3):
     Return
 }

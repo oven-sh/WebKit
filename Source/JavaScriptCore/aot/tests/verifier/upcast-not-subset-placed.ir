@@ -5,17 +5,14 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="badStringToNumber" parameters=[{type=string}] results=[{type=number}] {
-  b0(v0: string):
     v1 = Upcast v0 castType=number
     Unreachable
 }
 function f1 name="badValueToNumber" parameters=[{type=anything}] results=[{type=number}] {
-  b0(v0: anything):
     v1 = Upcast v0 castType=number
     Return v1
 }
 function f2 name="good" parameters=[{type=i32}] results=[{type=number}] {
-  b0(v0: i32):
     v1 = Upcast v0 castType=number
     Return v1
 }

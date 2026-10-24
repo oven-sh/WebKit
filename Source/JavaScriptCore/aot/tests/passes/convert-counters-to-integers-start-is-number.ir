@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="startIsNumber" parameters=[{type=number}, {type=i32}] results=[{type=undefined}] {
-  b0(v0: number, v1: i32):
     v2 = Integer integer=1
     Jump -> next b1(v0)
   b1(v3):
@@ -19,15 +18,13 @@ function f0 name="startIsNumber" parameters=[{type=number}, {type=i32}] results=
     Jump -> next b1(v6)
   b3():
     Return
-}
-# CHECK-LABEL: function f0 name="startIsNumber"
 # CHECK: b1(v3: number):
 # CHECK: Branch v5 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v6: number = Add v3, v2
+}
 
 function f1 name="startIsWholeNumber" parameters=[{type=int|whole}, {type=i32}] results=[{type=undefined}] {
-  b0(v0: int|whole, v1: i32):
     v2 = Integer integer=1
     Jump -> next b1(v0)
   b1(v3):
@@ -39,15 +36,13 @@ function f1 name="startIsWholeNumber" parameters=[{type=int|whole}, {type=i32}] 
     Jump -> next b1(v6)
   b3():
     Return
-}
-# CHECK-LABEL: function f1 name="startIsWholeNumber"
 # CHECK: b1(v3: int|whole):
 # CHECK: Branch v5 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v6: int|whole = Add v3, v2
+}
 
 function f2 name="startIsQuotient" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=1
     v2 = Integer integer=2
     v3 = Div v0, v2
@@ -61,16 +56,14 @@ function f2 name="startIsQuotient" parameters=[{type=int[0, 100]}] results=[{typ
     Jump -> next b1(v7)
   b3():
     Return
-}
-# CHECK-LABEL: function f2 name="startIsQuotient"
 # CHECK: v3: number = Div v0, v2
 # CHECK: b1(v4: number):
 # CHECK: Branch v6 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v7: number = Add v4, v1
+}
 
 function f3 name="decreasingFromNumber" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     v1 = Integer integer=0
     v2 = Integer integer=1
     Jump -> next b1(v0)
@@ -83,9 +76,8 @@ function f3 name="decreasingFromNumber" parameters=[{type=number}] results=[{typ
     Jump -> next b1(v6)
   b3():
     Return
-}
-# CHECK-LABEL: function f3 name="decreasingFromNumber"
 # CHECK: b1(v3: number):
 # CHECK: Branch v5 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v6: number = Sub v3, v2
+}

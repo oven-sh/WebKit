@@ -12,7 +12,6 @@ layout L0 name="Descriptor" fields=[{key="value" declared={type=anything} flags=
 layout L1 name="Literal" fields=[{key="depth" declared={type=anything} flags=[IsRequired]}]
 layout L2 name="AccessorDescriptor" fields=[{key="get" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Construct v0
     v2 = Builtin builtin=GlobalThis
@@ -39,7 +38,6 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Rule" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     v2 = NewObject -, v1 layout=L0 fields=[0]
     v3 = String string="inner"
@@ -50,6 +48,5 @@ function f1 name="Rule" module=m0 flags=[HasThis] thisType={type=anything} resul
     Return
 }
 function f2 name="one" module=m0 results=[{type=anything}] {
-  b0():
     Return
 }

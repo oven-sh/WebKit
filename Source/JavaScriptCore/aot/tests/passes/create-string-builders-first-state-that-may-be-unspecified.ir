@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="firstStateMayBeUnspecified" parameters=[{type=string}, {type=number}] results=[{type=string}] {
-  b0(v0: string, v1: number):
     v2 = Integer integer=0
     v3 = Integer integer=1
     v4 = Integer integer=2
@@ -45,7 +44,6 @@ function f0 name="firstStateMayBeUnspecified" parameters=[{type=string}, {type=n
 # CHECK-NOT: StringBuilderBegin
 
 function f1 name="firstStateIsAlwaysThere" parameters=[{type=string}, {type=number}] results=[{type=string}] {
-  b0(v0: string, v1: number):
     v2 = Integer integer=0
     v3 = Integer integer=1
     v4 = Integer integer=2
@@ -84,7 +82,6 @@ function f1 name="firstStateIsAlwaysThere" parameters=[{type=string}, {type=numb
 # CHECK: StringBuilderBegin
 
 function f2 name="makesAStringOrThrows" results=[{type=string}] {
-  b0():
     v0 = String string="made"
     Return v0
 }

@@ -15,7 +15,6 @@ static constexpr ASCIILiteral everyObjectHasAppendedFields = R"IR(module m0 path
 entry module=m0
 layout L0 name="Named" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = Integer integer=1
@@ -36,7 +35,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="describe" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="JSON" [isFreeName]
     v3 = PropGet v2 key="stringify"
@@ -51,7 +49,6 @@ function f1 name="describe" parameters=[{type=anything}] results=[{type=anything
     Return v11
 }
 function f2 name="make" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     Return v1
 }
@@ -67,7 +64,6 @@ static constexpr ASCIILiteral oneObjectIsAsCreated = R"IR(module m0 path="main.j
 entry module=m0
 layout L0 name="Named" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = Integer integer=1
@@ -86,7 +82,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="describe" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="JSON" [isFreeName]
     v3 = PropGet v2 key="stringify"
@@ -101,7 +96,6 @@ function f1 name="describe" parameters=[{type=anything}] results=[{type=anything
     Return v11
 }
 function f2 name="make" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     Return v1
 }

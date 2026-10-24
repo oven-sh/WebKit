@@ -16,7 +16,6 @@ layout L0 fields=[{key="held" declared={type=anything} flags=[IsRequired]}]
 variable g0 name="given" module=m1 declared={type=anything|absent}
 variable g1 name="table" module=m0 declared={type=L0}
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = CheckInitialized v0 name="given"
     v2 = NewObject -, v1 layout=L0 fields=[0]
@@ -30,7 +29,6 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="imported" module=m1 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f2
@@ -39,13 +37,11 @@ function f1 name="imported" module=m1 kind=Module results=[{type=anything}] {
     Return
 }
 function f2 name="early" module=m1 results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = CheckInitialized v0 name="given"
     Return v1
 }
 function f3 name="reader" module=m0 results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g1
     v1 = PropGet v0 key="held"
     Return v1

@@ -8,19 +8,16 @@ module m0 path="main.js" displayPath="main.js"
 function f0 name="withoutBody" parameters=[{type=number}] results=[{type=anything}]
 
 function f1 name="castsToNumberOrString" parameters=[{type=number}] results=[{type=number|string}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f0
     ReturnCall v1 casts=[{declared={type=number|string} resolution=Assume}]
 }
 
 function f2 name="castsNothing" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f0
     ReturnCall v1
 }
 
 function f3 name="returnsOrTailCalls" parameters=[{type=number}, {type=boolean}, {type=number|string}] results=[{type=number|string}] {
-  b0(v0: number, v1: boolean, v2: number|string):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v3 = CallDirect v0 function=f0
@@ -30,7 +27,6 @@ function f3 name="returnsOrTailCalls" parameters=[{type=number}, {type=boolean},
 }
 
 function f4 name="bothCast" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f1
     ReturnCall v1 casts=[{declared={type=number} resolution=Assume}]
 }
@@ -40,7 +36,6 @@ function f4 name="bothCast" parameters=[{type=number}] results=[{type=number}] {
 # CHECK-NEXT: ReturnCall [[call4]] casts=[{declared={type=number|string} resolution=Assume}, {declared={type=number} resolution=Assume}]
 
 function f5 name="onlySiteCasts" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f2
     ReturnCall v1 casts=[{declared={type=number} resolution=Assume}]
 }
@@ -50,7 +45,6 @@ function f5 name="onlySiteCasts" parameters=[{type=number}] results=[{type=numbe
 # CHECK-NEXT: ReturnCall [[call5]] casts=[{declared={type=number} resolution=Assume}]
 
 function f6 name="onlyCalleeCasts" parameters=[{type=number}] results=[{type=number|string}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f1
     ReturnCall v1
 }
@@ -60,7 +54,6 @@ function f6 name="onlyCalleeCasts" parameters=[{type=number}] results=[{type=num
 # CHECK-NEXT: ReturnCall [[call6]] casts=[{declared={type=number|string} resolution=Assume}]
 
 function f7 name="calleeAlsoReturns" parameters=[{type=number}, {type=boolean}, {type=number|string}] results=[{type=number}] {
-  b0(v0: number, v1: boolean, v2: number|string):
     v3 = CallDirect v0, v1, v2 function=f3
     ReturnCall v3 casts=[{declared={type=number} resolution=Assume}]
 }

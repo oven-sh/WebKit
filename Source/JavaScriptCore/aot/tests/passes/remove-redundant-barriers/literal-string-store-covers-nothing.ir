@@ -11,17 +11,15 @@ function f0 name="literal-string-store-covers-nothing" captures=[{type=env L0}] 
     PutEnvironmentField v0, v1 layout=L0 field=0
     PutEnvironmentField v0, v2 layout=L0 field=1
     Return
-}
-# CHECK-LABEL: function f0 name="literal-string-store-covers-nothing"
 # CHECK: PutEnvironmentField v0, v1 layout=L0
 # CHECK-NOT: laterBarrierCovers
+}
 function f1 name="value-store-covers" captures=[{type=env L0}] parameters=[{type=anything}, {type="a"|"b"}] results=[{type=undefined}] {
   b0(v0: env L0 @Cell, v1: anything @JSValue, v2: "a"|"b" @LiteralString):
     PutEnvironmentField v0, v1 layout=L0 field=0
     PutEnvironmentField v0, v1 layout=L0 field=2
     Return
-}
-# CHECK-LABEL: function f1 name="value-store-covers"
 # CHECK: PutEnvironmentField v0, v1 layout=L0 [laterBarrierCovers]
 # CHECK-NEXT: PutEnvironmentField v0, v1 layout=L0 field=2
 # CHECK-NOT: laterBarrierCovers
+}

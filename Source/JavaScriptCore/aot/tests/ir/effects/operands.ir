@@ -6,7 +6,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Pair" fields=[{key="first" declared={type=object} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="second" declared={type=object} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype]}
 layout L1 kind=Instance name="Counter" constructor=f11 fields=[{key=#"count"@L1 declared={type=number} flags=[IsPrivate]}]
 function f0 name="putSlot" parameters=[{type=L0}, {type=object}] results=[{type=undefined}] {
-  b0(v0: L0, v1: object):
     PutSlot v0, -, v1 key="first" receivers=[L0] level=Proven
     Return
 }
@@ -16,7 +15,6 @@ function f0 name="putSlot" parameters=[{type=L0}, {type=object}] results=[{type=
 # CHECK-NOT: reads
 # CHECK-NOT: writes
 function f1 name="putSlots" parameters=[{type=L0}, {type=object}, {type=object}] results=[{type=undefined}] {
-  b0(v0: L0, v1: object, v2: object):
     PutSlots v0, -, v1, v2 placedKeys=[{key="first" level=Proven}, {key="second" level=Proven}] receivers=[L0]
     Return
 }
@@ -26,7 +24,6 @@ function f1 name="putSlots" parameters=[{type=L0}, {type=object}, {type=object}]
 # CHECK-NEXT: v3 PutSlots 3: [Retains] in operand 0
 # CHECK-NOT: writes
 function f2 name="newObject" parameters=[{type=object}, {type=object}] results=[{type=object}] {
-  b0(v0: object, v1: object):
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
     Return v2
 }
@@ -35,14 +32,12 @@ function f2 name="newObject" parameters=[{type=object}, {type=object}] results=[
 # CHECK-NEXT: v2 NewObject 2: [Retains] in result
 # CHECK-NEXT: b0 Return 0: [Returns]
 function f3 name="scopeHasBinding" parameters=[{type=object}] results=[{type=boolean}] {
-  b0(v0: object):
     v1 = ScopeHasBinding v0 key="first"
     Return v1
 }
 # CHECK-LABEL: function f3
 # CHECK-NEXT: v1 ScopeHasBinding 0: [Inspects, PassesToUserCode]
 function f4 name="copyDataProperties" parameters=[{type=object}, {type=L0}, {type=object}] results=[{type=undefined}] {
-  b0(v0: object, v1: L0, v2: object):
     CopyDataProperties v0, v1
     CopyDataProperties v0, v2
     Return
@@ -53,13 +48,11 @@ function f4 name="copyDataProperties" parameters=[{type=object}, {type=L0}, {typ
 # CHECK-NEXT: v4 CopyDataProperties 0: [Inspects, AssignsFrom]
 # CHECK-NEXT: v4 CopyDataProperties 1: [Inspects, RetainsContents, PassesToUserCode]
 function f5 name="throws" parameters=[{type=object}] results=[{type=undefined}] {
-  b0(v0: object):
     Throw v0
 }
 # CHECK-LABEL: function f5
 # CHECK-NEXT: b0 Throw 0: [Retains]
 function f6 name="resultAt" parameters=[{type=object}, {type=object}] results=[{type=object}] {
-  b0(v0: object, v1: object):
     v2 = CallDirect v0, v1 function=f7
     v3 = ResultAt v2 index=1
     Return v3
@@ -67,7 +60,6 @@ function f6 name="resultAt" parameters=[{type=object}, {type=object}] results=[{
 # CHECK-LABEL: function f6
 # CHECK: v3 ResultAt 0: [Inspects, Returns]
 function f7 name="results" parameters=[{type=object}, {type=object}] results=[{type=object}, {type=object}] {
-  b0(v0: object, v1: object):
     v2 = Results v0, v1
     Return v2
 }
@@ -75,7 +67,6 @@ function f7 name="results" parameters=[{type=object}, {type=object}] results=[{t
 # CHECK-NEXT: v2 Results 0: [Returns]
 # CHECK-NEXT: v2 Results 1: [Returns]
 function f8 name="defineMethod" parameters=[{type=function}, {type=function}] results=[{type=undefined}] {
-  b0(v0: function, v1: function):
     DefineMethod v0, v1 layout=L1 key="step"
     Return
 }
@@ -83,7 +74,6 @@ function f8 name="defineMethod" parameters=[{type=function}, {type=function}] re
 # CHECK-NEXT: v2 DefineMethod 0: [Inspects, DefinesName] reads(ObjectFields, ShapeWords, OrderWords, NamedProperties) writes(ObjectFields, ShapeWords, OrderWords, NamedProperties)
 # CHECK-NEXT: v2 DefineMethod 1: [Retains] in operand 0 reads(ObjectFields, ShapeWords, OrderWords, NamedProperties) writes(ObjectFields, ShapeWords, OrderWords, NamedProperties)
 function f9 name="privateGet" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClassToken layout=L1
     v2 = PrivateGet v0, v1 layout=L1 field=0
     Return v2
@@ -92,7 +82,6 @@ function f9 name="privateGet" parameters=[{type=anything}] results=[{type=anythi
 # CHECK-NEXT: v2 PrivateGet 0: [Inspects] reads(ObjectFields, ShapeWords, NamedProperties)
 # CHECK-NOT: PassesToUserCode
 function f10 name="callbacks" parameters=[{type=Uint8Array}, {type=f12}, {type=f13}, {type=function}] results=[{type=undefined}] {
-  b0(v0: Uint8Array, v1: f12, v2: f13, v3: function):
     v4 = CallBuiltin v0, v1 overload=TypedArrayPrototypeForEach/0
     v5 = CallBuiltin v0, v2 overload=TypedArrayPrototypeForEach/0
     v6 = CallBuiltin v0, v3 overload=TypedArrayPrototypeForEach/0
@@ -104,10 +93,8 @@ function f10 name="callbacks" parameters=[{type=Uint8Array}, {type=f12}, {type=f
 # CHECK: v6 CallBuiltin 1: [Inspects, Calls, CallsPerElement, PassesToUserCode]
 function f11 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
 function f12 name="ignoresItsClosure" kind=Arrow parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     Return
 }
 function f13 name="takesItsClosure" flags=[TakesCallee] parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: function, v1: anything):
     Return
 }

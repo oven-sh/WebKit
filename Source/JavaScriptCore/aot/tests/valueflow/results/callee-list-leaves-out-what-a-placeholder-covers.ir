@@ -16,7 +16,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = NewClosure function=f3
@@ -50,17 +49,14 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="handed" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     Return v0
 }
 function f2 name="alsoHanded" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=2
     Return v0
 }
 function f3 name="kept" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=3
     Return v0
 }

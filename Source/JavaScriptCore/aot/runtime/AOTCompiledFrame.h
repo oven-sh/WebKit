@@ -40,6 +40,12 @@ ALWAYS_INLINE CallFrame* frameAtReturnSite(const ImageFrame& frame, const void* 
     return std::bit_cast<CallFrame*>(std::bit_cast<uintptr_t>(stackPointer) + frame.frameSizeInBytes());
 }
 
+// A run of compiled code ends at the frame of one of these.
+constexpr bool isAdapterFrame(StubFrameKind kind)
+{
+    return kind == StubFrameKind::Adapter || kind == StubFrameKind::ConstructAdapter || kind == StubFrameKind::SavedFrameAdapter || kind == StubFrameKind::HandlerOfJob;
+}
+
 constexpr ImageFrame frameAtStubReturnSite(StubFrameKind kind)
 {
     return kind == StubFrameKind::AtStubEntry ? ImageFrame::empty() : ImageFrame { };
@@ -78,10 +84,6 @@ struct MachineFrame {
     CallFrame* framePointer { nullptr };
     bool hasFrameRecord { true };
     unsigned bytesAboveReturnAddress { 0 };
-};
-
-struct TrustedStack {
-    bool contains(const void*) const { return true; }
 };
 
 struct SuspendedThreadStack {
@@ -131,7 +133,6 @@ private:
     {
         return code.kind == CodeKind::Stub ? bytesAboveReturnAddressOf(code.stubFrameKind) : bytesAboveReturnAddressOf(imageFrame);
     }
-
 
     const Image* m_image;
     Stack m_stack;
@@ -253,7 +254,8 @@ public:
     bool calleeWasEntered() const { return m_calleeWasEntered; }
     EntryFrame* entryFrame() const { return m_cursor.entryFrame; }
     CallFrame* framePointer() const { return m_cursor.framePointer; }
-    void* stackPointer() const { return m_cursor.stackPointer; }
+    // The frame that returns to callSite().address.
+    CallFrame* calleeFrame() const { return m_cursor.calleeFrame; }
     CallFrame* generatorStubFrameLeft() const { return m_cursor.generatorStubFrame; }
     CallFrame* asyncGeneratorStubFrameLeft() const { return m_cursor.asyncGeneratorStubFrame; }
     // The frame that returns to that stub frame: the body's, or that of the stub that throws because the stack has no room for the body's.

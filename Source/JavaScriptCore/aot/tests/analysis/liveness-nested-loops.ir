@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="nested" parameters=[{type=number}, {type=boolean}, {type=boolean}] results=[{type=number}] {
-  b0(v0: number, v1: boolean, v2: boolean):
     v3 = Integer integer=0
     Jump -> next b1(v3)
   b1(v4):

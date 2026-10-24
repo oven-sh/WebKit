@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="length" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=undefined}] {
-  b0(v0: Array<number, pristine[Storage, Names]>):
     v1 = PropGet v0 key="length"
     v2 = GetArrayLength v0
     Return

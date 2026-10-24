@@ -20,8 +20,6 @@ function f0 name="one-site-of-each-form" parameters=[{type=L0}, {type=number}, {
     v14 = PropGet v5 key="x"
     v15 = NewArray v6, v8, v9, v10, v11, v12, v13, v14 contents=anything
     Return v15
-}
-# CHECK-LABEL: function f0 name="one-site-of-each-form"
 # CHECK-NEXT: b0(v0: L0, v1: number, v2: anything, v3: int, v4: Uint8Array, v5: anything ~ L0):
 # CHECK-NEXT: v6: number = GetSlot v0 key="x" receivers=[L0] level=Proven
 # CHECK-NEXT: PutSlot v0, -, v1 key="x" receivers=[L0] level=Proven
@@ -35,13 +33,12 @@ function f0 name="one-site-of-each-form" parameters=[{type=L0}, {type=number}, {
 # CHECK-NEXT: = NewArray v6, v8, v9, v10, v11, v12, v13, v14 contents=anything
 # CHECK-NEXT: Return v15
 # CHECK-NEXT: }
+}
 function f1 name="key-may-have-a-fraction" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = ElemGet v0, v1
     Return v2
-}
-# CHECK-LABEL: function f1 name="key-may-have-a-fraction"
 # CHECK-NEXT: b0(v0: anything, v1: number):
 # CHECK-NEXT: v2: anything = ElemGet v0, v1
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
+}

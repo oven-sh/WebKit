@@ -14,7 +14,6 @@ namespace JSC { namespace AOT {
 static constexpr ASCIILiteral staticMethodsOfClassEvaluatedOnce = R"IR(layout L0 kind=Instance module=m0 position=28 constructor=f2
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     Jump -> next b1()
   b1():
     v0 = NewClosure function=f1
@@ -76,7 +75,6 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     Return v55
 }
 function f1 name="make" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=function flags=[IsExpected]}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = NewClosure function=f2
@@ -94,7 +92,6 @@ function f1 name="make" module=m0 flags=[HasExplicitName] length=1 thisType={typ
     Return v12
 }
 function f2 module=m0 position=28 kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=object}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = GetConstructPrototype v0 layout=L0
@@ -102,7 +99,6 @@ function f2 module=m0 position=28 kind=BaseConstructor flags=[HasNewTarget] this
     Return v2
 }
 function f3 name="call" module=m0 position=36 kind=Method flags=[HasExplicitName] length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=string flags=[IsExpected]}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = String string="call"
@@ -112,7 +108,6 @@ function f3 name="call" module=m0 position=36 kind=Method flags=[HasExplicitName
     Return v5
 }
 function f4 name="apply" module=m0 position=79 kind=Method flags=[HasExplicitName] length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=string flags=[IsExpected]}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = String string="apply"
@@ -122,7 +117,6 @@ function f4 name="apply" module=m0 position=79 kind=Method flags=[HasExplicitNam
     Return v5
 }
 function f5 name="bind" module=m0 position=124 kind=Method flags=[HasExplicitName] length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=string flags=[IsExpected]}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = String string="bind"
@@ -132,19 +126,16 @@ function f5 name="bind" module=m0 position=124 kind=Method flags=[HasExplicitNam
     Return v5
 }
 function f6 name="toString" module=m0 position=167 kind=Method flags=[HasExplicitName] captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     Return v0
 }
 entry module=m0
 function f7 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 enclosingRuntimeFunction=12 thisType={type=anything} parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = CallList v0, v1, v2
     Return v3
 }
 function f8 name="apply" role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = Convert v2 declared={type=Array<anything>}
     v4 = CallList v0, v1, v3
     Return v4
@@ -156,7 +147,6 @@ runtimefunction id=12 function=f7
 static constexpr ASCIILiteral staticMethodsOfClassEvaluatedTwice = R"IR(layout L0 kind=Instance module=m0 position=28 constructor=f2
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     Jump -> next b1()
   b1():
     v0 = NewClosure function=f1
@@ -277,7 +267,6 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     Return v114
 }
 function f1 name="make" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=function flags=[IsExpected]}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = NewClosure function=f2
@@ -295,7 +284,6 @@ function f1 name="make" module=m0 flags=[HasExplicitName] length=1 thisType={typ
     Return v12
 }
 function f2 module=m0 position=28 kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=object}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = GetConstructPrototype v0 layout=L0
@@ -303,7 +291,6 @@ function f2 module=m0 position=28 kind=BaseConstructor flags=[HasNewTarget] this
     Return v2
 }
 function f3 name="call" module=m0 position=36 kind=Method flags=[HasExplicitName] length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=string flags=[IsExpected]}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = String string="call"
@@ -313,7 +300,6 @@ function f3 name="call" module=m0 position=36 kind=Method flags=[HasExplicitName
     Return v5
 }
 function f4 name="apply" module=m0 position=79 kind=Method flags=[HasExplicitName] length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=string flags=[IsExpected]}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = String string="apply"
@@ -323,7 +309,6 @@ function f4 name="apply" module=m0 position=79 kind=Method flags=[HasExplicitNam
     Return v5
 }
 function f5 name="bind" module=m0 position=124 kind=Method flags=[HasExplicitName] length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=string flags=[IsExpected]}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = String string="bind"
@@ -333,19 +318,16 @@ function f5 name="bind" module=m0 position=124 kind=Method flags=[HasExplicitNam
     Return v5
 }
 function f6 name="toString" module=m0 position=167 kind=Method flags=[HasExplicitName] captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     Return v0
 }
 entry module=m0
 function f7 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 enclosingRuntimeFunction=12 thisType={type=anything} parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = CallList v0, v1, v2
     Return v3
 }
 function f8 name="apply" role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = Convert v2 declared={type=Array<anything>}
     v4 = CallList v0, v1, v3
     Return v4
@@ -357,7 +339,6 @@ runtimefunction id=12 function=f7
 static constexpr ASCIILiteral staticMethodsOfClassEvaluatedInLoop = R"IR(layout L0 kind=Instance module=m0 position=28 constructor=f2
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     Jump -> next b1()
   b1():
     v0 = NewClosure function=f1
@@ -409,7 +390,6 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     Return v36
 }
 function f1 name="make" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=function flags=[IsExpected]}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = NewClosure function=f2
@@ -427,7 +407,6 @@ function f1 name="make" module=m0 flags=[HasExplicitName] length=1 thisType={typ
     Return v12
 }
 function f2 module=m0 position=28 kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=object}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = GetConstructPrototype v0 layout=L0
@@ -435,7 +414,6 @@ function f2 module=m0 position=28 kind=BaseConstructor flags=[HasNewTarget] this
     Return v2
 }
 function f3 name="call" module=m0 position=36 kind=Method flags=[HasExplicitName] length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=string flags=[IsExpected]}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = String string="call"
@@ -445,7 +423,6 @@ function f3 name="call" module=m0 position=36 kind=Method flags=[HasExplicitName
     Return v5
 }
 function f4 name="apply" module=m0 position=79 kind=Method flags=[HasExplicitName] length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=string flags=[IsExpected]}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = String string="apply"
@@ -455,7 +432,6 @@ function f4 name="apply" module=m0 position=79 kind=Method flags=[HasExplicitNam
     Return v5
 }
 function f5 name="bind" module=m0 position=124 kind=Method flags=[HasExplicitName] length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=string flags=[IsExpected]}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = String string="bind"
@@ -465,19 +441,16 @@ function f5 name="bind" module=m0 position=124 kind=Method flags=[HasExplicitNam
     Return v5
 }
 function f6 name="toString" module=m0 position=167 kind=Method flags=[HasExplicitName] captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     Return v0
 }
 entry module=m0
 function f7 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 enclosingRuntimeFunction=12 thisType={type=anything} parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = CallList v0, v1, v2
     Return v3
 }
 function f8 name="apply" role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = Convert v2 declared={type=Array<anything>}
     v4 = CallList v0, v1, v3
     Return v4
@@ -489,7 +462,6 @@ runtimefunction id=12 function=f7
 static constexpr ASCIILiteral staticAccessorsNameAndLength = R"IR(layout L0 kind=Instance module=m0 position=28 constructor=f2
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     Jump -> next b1()
   b1():
     v0 = NewClosure function=f1
@@ -556,7 +528,6 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     Return v51
 }
 function f1 name="make" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=function flags=[IsExpected]}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = NewClosure function=f2
@@ -570,7 +541,6 @@ function f1 name="make" module=m0 flags=[HasExplicitName] length=1 thisType={typ
     Return v8
 }
 function f2 module=m0 position=28 kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=object}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = GetConstructPrototype v0 layout=L0
@@ -578,7 +548,6 @@ function f2 module=m0 position=28 kind=BaseConstructor flags=[HasNewTarget] this
     Return v2
 }
 function f3 name="name" module=m0 position=36 kind=Getter flags=[HasExplicitName] captures=[{type=anything}] thisType={type=anything} results=[{type=string flags=[IsExpected]}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = String string="name"
@@ -587,7 +556,6 @@ function f3 name="name" module=m0 position=36 kind=Getter flags=[HasExplicitName
     Return v3
 }
 function f4 name="length" module=m0 position=78 kind=Getter flags=[HasExplicitName] captures=[{type=anything}] thisType={type=anything} results=[{type=string flags=[IsExpected]}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = String string="length"
@@ -597,12 +565,10 @@ function f4 name="length" module=m0 position=78 kind=Getter flags=[HasExplicitNa
 }
 entry module=m0
 function f5 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 enclosingRuntimeFunction=12 thisType={type=anything} parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = CallList v0, v1, v2
     Return v3
 }
 function f6 name="apply" role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = Convert v2 declared={type=Array<anything>}
     v4 = CallList v0, v1, v3
     Return v4
@@ -614,7 +580,6 @@ runtimefunction id=12 function=f5
 static constexpr ASCIILiteral ownAndInheritedMembersAtOneSite = R"IR(layout L0 kind=Instance module=m0 position=28 constructor=f3
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     Jump -> next b1()
   b1():
     v0 = NewClosure function=f1
@@ -683,7 +648,6 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     Return v53
 }
 function f1 name="make" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=function flags=[IsExpected]}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = NewClosure function=f3
@@ -699,7 +663,6 @@ function f1 name="make" module=m0 flags=[HasExplicitName] length=1 thisType={typ
     Return v10
 }
 function f2 name="plain" module=m0 position=163 flags=[HasThis, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=string flags=[IsExpected]}] {
-  b0(v0: anything, v1: anything, v2: anything):
     Jump -> next b1()
   b1():
     v3 = String string="plain"
@@ -710,7 +673,6 @@ function f2 name="plain" module=m0 position=163 flags=[HasThis, HasExplicitName]
     Return v7
 }
 function f3 module=m0 position=28 kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=object}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = GetConstructPrototype v0 layout=L0
@@ -718,14 +680,12 @@ function f3 module=m0 position=28 kind=BaseConstructor flags=[HasNewTarget] this
     Return v2
 }
 function f4 name="call" module=m0 position=36 kind=Method flags=[HasExplicitName] length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = Add v0, v1
     Return v2
 }
 function f5 name="apply" module=m0 position=70 kind=Method flags=[HasExplicitName] length=2 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     Jump -> next b1()
   b1():
     v3 = Add v0, v1
@@ -734,7 +694,6 @@ function f5 name="apply" module=m0 position=70 kind=Method flags=[HasExplicitNam
     Return v5
 }
 function f6 name="bind" module=m0 position=119 kind=Method flags=[HasExplicitName] length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=function flags=[IsExpected]}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = NewClosure v0, v1 function=f7
@@ -742,7 +701,6 @@ function f6 name="bind" module=m0 position=119 kind=Method flags=[HasExplicitNam
     Return v3
 }
 function f7 module=m0 position=143 kind=Arrow captures=[{type=anything}, {type=anything}] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = Add v0, v1
@@ -751,12 +709,10 @@ function f7 module=m0 position=143 kind=Arrow captures=[{type=anything}, {type=a
 data d0 root=Array{contents=anything elements=[Number{value=2}, Number{value=3}]} module=m0
 entry module=m0
 function f8 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 enclosingRuntimeFunction=12 thisType={type=anything} parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = CallList v0, v1, v2
     Return v3
 }
 function f9 name="apply" role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = Convert v2 declared={type=Array<anything>}
     v4 = CallList v0, v1, v3
     Return v4
@@ -769,7 +725,6 @@ static constexpr ASCIILiteral classWithoutTheMember = R"IR(layout L0 kind=Instan
 layout L1 kind=Instance module=m0 position=85 constructor=f4
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     Jump -> next b1()
   b1():
     v0 = NewClosure function=f1
@@ -823,7 +778,6 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     Return v39
 }
 function f1 name="make" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=function flags=[IsExpected]}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = ToBoolean v1
@@ -851,7 +805,6 @@ function f1 name="make" module=m0 flags=[HasExplicitName] length=2 thisType={typ
     Return v16
 }
 function f2 module=m0 position=39 kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=object}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = GetConstructPrototype v0 layout=L0
@@ -859,14 +812,12 @@ function f2 module=m0 position=39 kind=BaseConstructor flags=[HasNewTarget] this
     Return v2
 }
 function f3 name="call" module=m0 position=47 kind=Method flags=[HasExplicitName] length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = Add v0, v1
     Return v2
 }
 function f4 module=m0 position=85 kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=object}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = GetConstructPrototype v0 layout=L1
@@ -874,7 +825,6 @@ function f4 module=m0 position=85 kind=BaseConstructor flags=[HasNewTarget] this
     Return v2
 }
 function f5 name="other" module=m0 position=93 kind=Method flags=[HasExplicitName] length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = Add v0, v1
@@ -882,12 +832,10 @@ function f5 name="other" module=m0 position=93 kind=Method flags=[HasExplicitNam
 }
 entry module=m0
 function f6 name="call" role=Library flags=[HasRestParameter, HasThis] length=1 enclosingRuntimeFunction=12 thisType={type=anything} parameters=[{type=anything}, {type=Array<anything>}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: Array<anything>):
     v3 = CallList v0, v1, v2
     Return v3
 }
 function f7 name="apply" role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = Convert v2 declared={type=Array<anything>}
     v4 = CallList v0, v1, v3
     Return v4

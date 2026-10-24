@@ -15,7 +15,10 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class StringBuilderEmitter final : public OperationEmitter {
 public:
-    explicit StringBuilderEmitter(CodeGenerator&);
+    explicit StringBuilderEmitter(CodeGenerator& generator)
+        : OperationEmitter(generator)
+    {
+    }
 
     void generateStringBuilderBegin(const ValueContext&);
     void generateStringBuilderAppendJSON(const ValueContext&);
@@ -40,8 +43,8 @@ public:
     // For a cursor behind a write of at most StackStringBuilder::maxBytesWrittenPastLimit bytes.
     void advance(const OperationContext&, const StackBuilder&, Pointer cursor);
 
-    TypedPointer storageField(CellPointer builder, ptrdiff_t offset);
-    TypedPointer bytesAt(Pointer cursor, ptrdiff_t offset = 0);
+    TypedPointer storageField(CellPointer builder, ptrdiff_t offset) { return contentsAt(builder.value(), offset); }
+    TypedPointer bytesAt(Pointer cursor, ptrdiff_t offset = 0) { return contentsAt(cursor.value(), offset); }
     Word32 lengthOf(CellPointer builder);
 
     Pointer tryReserve(CellPointer builder, Word32 size, LBasicBlock whenThereIsNoRoom);
@@ -59,7 +62,8 @@ public:
 
 private:
     void findStackBuilders();
-    TypedPointer stackBuilderField(const StackBuilder&, ptrdiff_t offset);
+    TypedPointer contentsAt(LValue base, ptrdiff_t offset) { return TypedPointer(m_heaps.entire(AbstractHeap::StringBuilderContents), base, offset); }
+    TypedPointer stackBuilderField(const StackBuilder& builder, ptrdiff_t offset) { return contentsAt(addressOf(builder).value(), offset); }
     Pointer copyShortLatin1Characters(Pointer cursor, Pointer source, Word32 length);
 
     static constexpr uint32_t noStackBuilder = UINT32_MAX;

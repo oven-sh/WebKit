@@ -4,13 +4,11 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="straightLine" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Add v0, v0
     Return v1
 }
 # CHECK: f0 return: none throw: none
 function f1 name="loops" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -20,13 +18,11 @@ function f1 name="loops" parameters=[{type=boolean}] results=[{type=undefined}] 
 }
 # CHECK-NEXT: f1 return: reads(RuntimeState) writes(RuntimeState) throwsForLackOfMemory collects terminates throw: reads(RuntimeState) writes(RuntimeState) throwsForLackOfMemory collects terminates
 function f2 name="callsLoop" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     v1 = CallDirect v0 function=f1
     Return
 }
 # CHECK-NEXT: f2 return: reads(RuntimeState) writes(RuntimeState) throwsForLackOfMemory collects terminates throw: reads(RuntimeState) writes(RuntimeState) throwsForLackOfMemory collects terminates
 function f3 name="loopsAndThrows" parameters=[{type=boolean}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -40,13 +36,11 @@ function f3 name="loopsAndThrows" parameters=[{type=boolean}, {type=boolean}] re
 }
 # CHECK-NEXT: f3 return: reads(RuntimeState) writes(RuntimeState) throws collects terminates throw: reads(RuntimeState) writes(RuntimeState) throws collects terminates
 function f4 name="callsThrowingLoop" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     v1 = CallDirect v0, v0 function=f3
     Return
 }
 # CHECK-NEXT: f4 return: reads(RuntimeState) writes(RuntimeState) throws collects terminates throw: reads(RuntimeState) writes(RuntimeState) throws collects terminates
 function f5 name="recursionWithoutLoop" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v1 = CallDirect v0 function=f5

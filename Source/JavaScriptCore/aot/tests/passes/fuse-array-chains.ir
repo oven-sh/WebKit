@@ -18,7 +18,6 @@ runtimefunction id=82 function=f8
 runtimefunction id=89 function=f9
 runtimefunction id=131090 function=f0
 function f0 name="traverseArray" role=Library enclosingRuntimeFunction=131090 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
     v6 = Undefined
     Return v6
 }
@@ -87,46 +86,39 @@ function f9 name="some" role=Library flags=[HasThis, HasHiddenRest] enclosingRun
 }
 
 function f10 name="isPositive" kind=Arrow parameters=[{type=number}] results=[{type=boolean}] {
-  b0(v0: number):
     v1 = Integer integer=0
     v2 = Less v1, v0
     Return v2
 }
 
 function f11 name="double" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Add v0, v0
     Return v1
 }
 
 function f12 name="sum" kind=Arrow parameters=[{type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
     v2 = Add v0, v1
     Return v2
 }
 
 function f13 name="pair" kind=Arrow parameters=[{type=number}] results=[{type=Array<number, proven, pristine[Storage, Names]>}] {
-  b0(v0: number):
     v1 = NewArray v0, v0 contents=number
     v2 = AssumeType v1 castType=Array<number, proven, pristine[Storage, Names]>
     Return v2
 }
 
 function f14 name="store" kind=Arrow parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     PutModuleVariable v0 variable=g0
     v2 = Undefined
     Return v2
 }
 
 function f15 name="text" kind=Arrow parameters=[{type=number}] results=[{type=string}] {
-  b0(v0: number):
     v1 = String string="x"
     Return v1
 }
 
 function f16 name="arrayAfterMap" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>):
     v1 = NewClosure function=f10
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f2
@@ -136,8 +128,6 @@ function f16 name="arrayAfterMap" parameters=[{type=Array<number, proven, pristi
     v7 = CallDirect v4, v5, v6 function=f7
     v8 = AssumeType v7 castType=Array<number>
     Return v8
-}
-# CHECK-LABEL: function f16 name="arrayAfterMap"
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
 # CHECK-NOT: NewArray
@@ -149,9 +139,9 @@ function f16 name="arrayAfterMap" parameters=[{type=Array<number, proven, pristi
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
 # CHECK-NOT: NewArray
+}
 
 function f17 name="arrayAfterFilter" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>):
     v1 = NewClosure function=f11
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f7
@@ -161,8 +151,6 @@ function f17 name="arrayAfterFilter" parameters=[{type=Array<number, proven, pri
     v7 = CallDirect v4, v5, v6 function=f2
     v8 = AssumeType v7 castType=Array<number>
     Return v8
-}
-# CHECK-LABEL: function f17 name="arrayAfterFilter"
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
 # CHECK-NOT: NewArray
@@ -173,9 +161,9 @@ function f17 name="arrayAfterFilter" parameters=[{type=Array<number, proven, pri
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
 # CHECK-NOT: NewArray
+}
 
 function f18 name="endsInLength" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>):
     v1 = NewClosure function=f10
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f2
@@ -183,8 +171,6 @@ function f18 name="endsInLength" parameters=[{type=Array<number, proven, pristin
     v5 = AssumeType v4 castType=Array<number, proven, pristine[Storage, Names]>
     v6 = GetArrayLength v5
     Return v6
-}
-# CHECK-LABEL: function f18 name="endsInLength"
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: NewArray
 # CHECK-NOT: GetArrayLength
@@ -196,17 +182,15 @@ function f18 name="endsInLength" parameters=[{type=Array<number, proven, pristin
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: NewArray
 # CHECK-NOT: GetArrayLength
+}
 
 function f19 name="lengthAsCallBuiltin" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>):
     v1 = NewClosure function=f10
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f2
     v4 = AssumeType v3 castType=Array<number>
     v5 = CallBuiltin v4 overload=ArrayPrototypeLength/0
     Return v5
-}
-# CHECK-LABEL: function f19 name="lengthAsCallBuiltin"
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: NewArray
 # CHECK-NOT: CallBuiltin
@@ -216,9 +200,9 @@ function f19 name="lengthAsCallBuiltin" parameters=[{type=Array<number, proven, 
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: NewArray
 # CHECK-NOT: CallBuiltin
+}
 
 function f20 name="endsInForEach" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>):
     v1 = NewClosure function=f11
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f7
@@ -227,8 +211,6 @@ function f20 name="endsInForEach" parameters=[{type=Array<number, proven, pristi
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f6
     Return v7
-}
-# CHECK-LABEL: function f20 name="endsInForEach"
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
 # CHECK-NOT: NewArray
@@ -239,9 +221,9 @@ function f20 name="endsInForEach" parameters=[{type=Array<number, proven, pristi
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
 # CHECK-NOT: NewArray
+}
 
 function f21 name="reduceWithoutInitialValue" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>):
     v1 = NewClosure function=f11
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f7
@@ -251,8 +233,6 @@ function f21 name="reduceWithoutInitialValue" parameters=[{type=Array<number, pr
     v7 = NewArray contents=anything
     v8 = CallDirect v4, v6, v5, v7 function=f8
     Return v8
-}
-# CHECK-LABEL: function f21 name="reduceWithoutInitialValue"
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v6, v5, v7 function=
 # CHECK-NOT: NewArray
@@ -262,9 +242,9 @@ function f21 name="reduceWithoutInitialValue" parameters=[{type=Array<number, pr
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v6, v5, v7 function=
 # CHECK-NOT: NewArray
+}
 
 function f22 name="reduceWithInitialValue" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: number):
     v2 = NewClosure function=f11
     v3 = NewArray contents=anything
     v4 = CallDirect v0, v2, v3 function=f7
@@ -274,8 +254,6 @@ function f22 name="reduceWithInitialValue" parameters=[{type=Array<number, prove
     v8 = NewArray v1 contents=anything
     v9 = CallDirect v5, v7, v6, v8 function=f8
     Return v9
-}
-# CHECK-LABEL: function f22 name="reduceWithInitialValue"
 # CHECK-NOT: = CallDirect v0, v2, v3 function=
 # CHECK-NOT: = CallDirect v5, v7, v6, v8 function=
 # CHECK-NOT: NewArray
@@ -285,9 +263,9 @@ function f22 name="reduceWithInitialValue" parameters=[{type=Array<number, prove
 # CHECK-NOT: = CallDirect v0, v2, v3 function=
 # CHECK-NOT: = CallDirect v5, v7, v6, v8 function=
 # CHECK-NOT: NewArray
+}
 
 function f23 name="endsInSome" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>):
     v1 = NewClosure function=f11
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f7
@@ -296,8 +274,6 @@ function f23 name="endsInSome" parameters=[{type=Array<number, proven, pristine[
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f9
     Return v7
-}
-# CHECK-LABEL: function f23 name="endsInSome"
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
 # CHECK-NOT: NewArray
@@ -307,9 +283,9 @@ function f23 name="endsInSome" parameters=[{type=Array<number, proven, pristine[
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
 # CHECK-NOT: NewArray
+}
 
 function f24 name="endsInEvery" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>):
     v1 = NewClosure function=f11
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f7
@@ -318,8 +294,6 @@ function f24 name="endsInEvery" parameters=[{type=Array<number, proven, pristine
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f1
     Return v7
-}
-# CHECK-LABEL: function f24 name="endsInEvery"
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
 # CHECK-NOT: NewArray
@@ -329,9 +303,9 @@ function f24 name="endsInEvery" parameters=[{type=Array<number, proven, pristine
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
 # CHECK-NOT: NewArray
+}
 
 function f25 name="endsInFind" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>):
     v1 = NewClosure function=f11
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f7
@@ -340,8 +314,6 @@ function f25 name="endsInFind" parameters=[{type=Array<number, proven, pristine[
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f3
     Return v7
-}
-# CHECK-LABEL: function f25 name="endsInFind"
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
 # CHECK-NOT: NewArray
@@ -351,9 +323,9 @@ function f25 name="endsInFind" parameters=[{type=Array<number, proven, pristine[
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
 # CHECK-NOT: NewArray
+}
 
 function f26 name="endsInFindIndex" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>):
     v1 = NewClosure function=f11
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f7
@@ -362,8 +334,6 @@ function f26 name="endsInFindIndex" parameters=[{type=Array<number, proven, pris
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f4
     Return v7
-}
-# CHECK-LABEL: function f26 name="endsInFindIndex"
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
 # CHECK-NOT: NewArray
@@ -373,9 +343,9 @@ function f26 name="endsInFindIndex" parameters=[{type=Array<number, proven, pris
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
 # CHECK-NOT: NewArray
+}
 
 function f27 name="joinWithSeparator" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=string}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: string):
     v2 = NewClosure function=f15
     v3 = NewArray contents=anything
     v4 = CallDirect v0, v2, v3 function=f7
@@ -383,8 +353,6 @@ function f27 name="joinWithSeparator" parameters=[{type=Array<number, proven, pr
     v6 = AssumeType v5 castType=Array<string, proven>
     v7 = CallBuiltin v6, v1 overload=ArrayPrototypeJoin/0
     Return v7
-}
-# CHECK-LABEL: function f27 name="joinWithSeparator"
 # CHECK-NOT: = CallDirect v0, v2, v3 function=
 # CHECK-NOT: NewArray
 # CHECK-NOT: CallBuiltin
@@ -396,9 +364,9 @@ function f27 name="joinWithSeparator" parameters=[{type=Array<number, proven, pr
 # CHECK-NOT: = CallDirect v0, v2, v3 function=
 # CHECK-NOT: NewArray
 # CHECK-NOT: CallBuiltin
+}
 
 function f28 name="joinWithoutSeparator" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>):
     v1 = NewClosure function=f15
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f7
@@ -406,8 +374,6 @@ function f28 name="joinWithoutSeparator" parameters=[{type=Array<number, proven,
     v5 = AssumeType v4 castType=Array<string, proven>
     v6 = CallBuiltin v5 overload=ArrayPrototypeJoin/0
     Return v6
-}
-# CHECK-LABEL: function f28 name="joinWithoutSeparator"
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: NewArray
 # CHECK-NOT: CallBuiltin
@@ -418,9 +384,9 @@ function f28 name="joinWithoutSeparator" parameters=[{type=Array<number, proven,
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: NewArray
 # CHECK-NOT: CallBuiltin
+}
 
 function f29 name="endsInFlatMap" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>):
     v1 = NewClosure function=f10
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f2
@@ -430,8 +396,6 @@ function f29 name="endsInFlatMap" parameters=[{type=Array<number, proven, pristi
     v7 = CallDirect v4, v5, v6 function=f5
     v8 = AssumeType v7 castType=Array<number>
     Return v8
-}
-# CHECK-LABEL: function f29 name="endsInFlatMap"
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
 # CHECK-NOT: NewArray
@@ -441,17 +405,15 @@ function f29 name="endsInFlatMap" parameters=[{type=Array<number, proven, pristi
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
 # CHECK-NOT: NewArray
+}
 
 function f30 name="sliceFirst" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=i32}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: i32, v2: i32):
     v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSlice/0
     v4 = NewClosure function=f11
     v5 = NewArray contents=anything
     v6 = CallDirect v3, v4, v5 function=f7
     v7 = AssumeType v6 castType=Array<number>
     Return v7
-}
-# CHECK-LABEL: function f30 name="sliceFirst"
 # CHECK-NOT: = CallDirect v3, v4, v5 function=
 # CHECK-NOT: NewArray
 # CHECK-NOT: CallBuiltin
@@ -460,17 +422,15 @@ function f30 name="sliceFirst" parameters=[{type=Array<number, proven, pristine[
 # CHECK-NOT: = CallDirect v3, v4, v5 function=
 # CHECK-NOT: NewArray
 # CHECK-NOT: CallBuiltin
+}
 
 function f31 name="sliceToTheEnd" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: i32):
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeSlice/0
     v3 = NewClosure function=f11
     v4 = NewArray contents=anything
     v5 = CallDirect v2, v3, v4 function=f7
     v6 = AssumeType v5 castType=Array<number>
     Return v6
-}
-# CHECK-LABEL: function f31 name="sliceToTheEnd"
 # CHECK-NOT: = CallDirect v2, v3, v4 function=
 # CHECK-NOT: NewArray
 # CHECK-NOT: CallBuiltin
@@ -479,22 +439,20 @@ function f31 name="sliceToTheEnd" parameters=[{type=Array<number, proven, pristi
 # CHECK-NOT: = CallDirect v2, v3, v4 function=
 # CHECK-NOT: NewArray
 # CHECK-NOT: CallBuiltin
+}
 
 function f32 name="sliceWithNumberArgument" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: number):
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeSlice/0
     v3 = NewClosure function=f11
     v4 = NewArray contents=anything
     v5 = CallDirect v2, v3, v4 function=f7
     v6 = AssumeType v5 castType=Array<number>
     Return v6
-}
-# CHECK-LABEL: function f32 name="sliceWithNumberArgument"
 # CHECK: v2: {{*}} = CallBuiltin v0, v1 overload=ArrayPrototypeSlice/0
 # CHECK: v5: anything = CallDirect v2, v3, {{*}} function=f7
+}
 
 function f33 name="thisArguments" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: anything, v2: anything):
     v3 = NewClosure function=f10
     v4 = NewArray v1 contents=anything
     v5 = CallDirect v0, v3, v4 function=f2
@@ -504,8 +462,6 @@ function f33 name="thisArguments" parameters=[{type=Array<number, proven, pristi
     v9 = CallDirect v6, v7, v8 function=f7
     v10 = AssumeType v9 castType=Array<number>
     Return v10
-}
-# CHECK-LABEL: function f33 name="thisArguments"
 # CHECK-NOT: = CallDirect v0, v3, v4 function=
 # CHECK-NOT: = CallDirect v6, v7, v8 function=
 # CHECK-NOT: NewArray
@@ -515,9 +471,9 @@ function f33 name="thisArguments" parameters=[{type=Array<number, proven, pristi
 # CHECK-NOT: = CallDirect v0, v3, v4 function=
 # CHECK-NOT: = CallDirect v6, v7, v8 function=
 # CHECK-NOT: NewArray
+}
 
 function f34 name="fourLinks" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>):
     v1 = NewClosure function=f11
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f7
@@ -537,8 +493,6 @@ function f34 name="fourLinks" parameters=[{type=Array<number, proven, pristine[S
     v17 = CallDirect v14, v15, v16 function=f2
     v18 = AssumeType v17 castType=Array<number>
     Return v18
-}
-# CHECK-LABEL: function f34 name="fourLinks"
 # CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f7
 # CHECK-NOT: = CallDirect v5, v6, v7 function=
 # CHECK-NOT: = CallDirect v10, v11, v12 function=
@@ -549,24 +503,22 @@ function f34 name="fourLinks" parameters=[{type=Array<number, proven, pristine[S
 # CHECK-NOT: = CallDirect v5, v6, v7 function=
 # CHECK-NOT: = CallDirect v10, v11, v12 function=
 # CHECK-NOT: = CallDirect v14, v15, v16 function=
+}
 
 function f35 name="linkAsCallBuiltin" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>):
     v1 = NewClosure function=f10
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeFilter/0
     v3 = NewClosure function=f11
     v4 = CallBuiltin v2, v3 overload=ArrayPrototypeMap/0
     Return v4
-}
-# CHECK-LABEL: function f35 name="linkAsCallBuiltin"
 # CHECK-NOT: CallBuiltin
 # CHECK: [[zero35]]: 0 = Integer
 # CHECK-NEXT: [[none35]]: undefined = Undefined
 # CHECK-NEXT: [[fused35]]: anything = CallDirect v0, [[zero35]], [[none35]], v1, [[none35]], v3, [[none35]] function=[[filterMapToArray]]
 # CHECK-NOT: CallBuiltin
+}
 
 function f36 name="bothFormsOfLink" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>):
     v1 = NewClosure function=f10
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeFilter/0
     v3 = NewClosure function=f11
@@ -574,8 +526,6 @@ function f36 name="bothFormsOfLink" parameters=[{type=Array<number, proven, pris
     v5 = CallDirect v2, v3, v4 function=f7
     v6 = AssumeType v5 castType=Array<number>
     Return v6
-}
-# CHECK-LABEL: function f36 name="bothFormsOfLink"
 # CHECK-NOT: CallBuiltin
 # CHECK-NOT: = CallDirect v2, v3, v4 function=
 # CHECK-NOT: NewArray
@@ -585,9 +535,9 @@ function f36 name="bothFormsOfLink" parameters=[{type=Array<number, proven, pris
 # CHECK-NOT: CallBuiltin
 # CHECK-NOT: = CallDirect v2, v3, v4 function=
 # CHECK-NOT: NewArray
+}
 
 function f37 name="sourceGuardedByTest" parameters=[{type=Array<number, proven>}] results=[{type=anything}] {
-  b0(v0: Array<number, proven>):
     v1 = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
@@ -602,8 +552,6 @@ function f37 name="sourceGuardedByTest" parameters=[{type=Array<number, proven>}
     Return v10
   b2():
     Return v0
-}
-# CHECK-LABEL: function f37 name="sourceGuardedByTest"
 # CHECK-NOT: = CallDirect v0, v3, v4 function=
 # CHECK-NOT: = CallDirect v6, v7, v8 function=
 # CHECK-NOT: NewArray
@@ -613,20 +561,18 @@ function f37 name="sourceGuardedByTest" parameters=[{type=Array<number, proven>}
 # CHECK-NOT: = CallDirect v0, v3, v4 function=
 # CHECK-NOT: = CallDirect v6, v7, v8 function=
 # CHECK-NOT: NewArray
+}
 
 function f38 name="oneCall" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>):
     v1 = NewClosure function=f11
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f7
     v4 = AssumeType v3 castType=Array<number>
     Return v4
-}
-# CHECK-LABEL: function f38 name="oneCall"
 # CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f7
+}
 
 function f39 name="intermediateUsedTwice" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>):
     v1 = NewClosure function=f10
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f2
@@ -637,13 +583,11 @@ function f39 name="intermediateUsedTwice" parameters=[{type=Array<number, proven
     v8 = AssumeType v7 castType=Array<number>
     PutModuleVariable v4 variable=g0
     Return v8
-}
-# CHECK-LABEL: function f39 name="intermediateUsedTwice"
 # CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f2
 # CHECK: v7: anything = CallDirect v4, v5, {{*}} function=f7
+}
 
 function f40 name="otherBlock" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>):
     v1 = NewClosure function=f10
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f2
@@ -655,13 +599,11 @@ function f40 name="otherBlock" parameters=[{type=Array<number, proven, pristine[
     v7 = CallDirect v4, v5, v6 function=f7
     v8 = AssumeType v7 castType=Array<number>
     Return v8
-}
-# CHECK-LABEL: function f40 name="otherBlock"
 # CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f2
 # CHECK: v7: anything = CallDirect v4, v5, {{*}} function=f7
+}
 
 function f41 name="rareBlock" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v2 = NewClosure function=f10
@@ -675,13 +617,11 @@ function f41 name="rareBlock" parameters=[{type=Array<number, proven, pristine[S
     Return v9
   b2():
     Return v0
-}
-# CHECK-LABEL: function f41 name="rareBlock"
 # CHECK: v4: anything = CallDirect v0, v2, {{*}} function=f2
 # CHECK: v8: anything = CallDirect v5, v6, {{*}} function=f7
+}
 
 function f42 name="joinWithUnknownSeparator" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=undefined|string}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: undefined|string):
     v2 = NewClosure function=f15
     v3 = NewArray contents=anything
     v4 = CallDirect v0, v2, v3 function=f7
@@ -689,10 +629,9 @@ function f42 name="joinWithUnknownSeparator" parameters=[{type=Array<number, pro
     v6 = AssumeType v5 castType=Array<string, proven>
     v7 = CallBuiltin v6, v1 overload=ArrayPrototypeJoin/0
     Return v7
-}
-# CHECK-LABEL: function f42 name="joinWithUnknownSeparator"
 # CHECK: v4: anything = CallDirect v0, v2, {{*}} function=f7
 # CHECK: v7: string = CallBuiltin v6, v1 overload=ArrayPrototypeJoin/0
+}
 
 # CHECK: function [[mapToArray]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=16}
 # CHECK: function [[mapToForEach]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=18}

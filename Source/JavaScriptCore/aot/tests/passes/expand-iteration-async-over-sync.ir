@@ -21,7 +21,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Instance name="Backwards" constructor=f12 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Array impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key=@@iterator function=f13 mutability=Fixed}]}
 
 function f0 name="array" flags=[IsAsync] parameters=[{type=Array<number, pristine[Names]>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Names]>, v1: anything):
     v2 = IteratorOpen v0 iteratorKind=Async
     Jump -> next b1()
   b1():
@@ -47,8 +46,6 @@ function f0 name="array" flags=[IsAsync] parameters=[{type=Array<number, pristin
     Rethrow v10
   b7():
     Return v1
-}
-# CHECK-LABEL: function f0 name="array"
 # CHECK: b0(v0: Array<number, pristine[Names]>, v1: anything):
 # CHECK-NEXT: [[zero0]]: 0 = Integer
 # CHECK-NEXT: Jump -> next [[start0]]([[zero0]])
@@ -101,7 +98,6 @@ function f0 name="array" flags=[IsAsync] parameters=[{type=Array<number, pristin
 # CHECK: handler=[[thrown0]]():
 # CHECK-NEXT: [[no0]]: false = Boolean
 # CHECK-NEXT: Jump -> next [[settled0]]([[no0]], [[element0]], [[next0]])
-# ABSENT-LABEL: function f0 name="array"
 # ABSENT-NOT: TypeTest
 # ABSENT-NOT: IsPristine
 # ABSENT-NOT: @@asyncIterator
@@ -113,15 +109,13 @@ function f0 name="array" flags=[IsAsync] parameters=[{type=Array<number, pristin
 # ABSENT-NOT: key="return"
 # ABSENT-NOT: role=IterationCleanup
 # ABSENT-NOT: subject=
-# AWAITS-LABEL: function f0 name="array"
 # AWAITS-COUNT-4: = Await
 # AWAITS-NOT: = Await
-# TURNS-LABEL: function f0 name="array"
 # TURNS-COUNT-1: [takesExtraTurn]
 # TURNS-NOT: [takesExtraTurn]
+}
 
 function f1 name="map" flags=[IsAsync] parameters=[{type=Map<string, number, pristine[Names]>}] results=[{type=anything}] {
-  b0(v0: Map<string, number, pristine[Names]>):
     v1 = IteratorOpen v0 iteratorKind=Async
     Jump -> next b1()
   b1():
@@ -132,9 +126,7 @@ function f1 name="map" flags=[IsAsync] parameters=[{type=Map<string, number, pri
     Branch v4 -> taken b2(), notTaken b1()
   b2():
     Return v5
-}
 # What is awaited is the pair.
-# CHECK-LABEL: function f1 name="map"
 # CHECK: b0(v0: Map<string, number, pristine[Names]>):
 # CHECK-NEXT: = CollectionTable v0
 # CHECK-NEXT: = Integer
@@ -150,7 +142,6 @@ function f1 name="map" flags=[IsAsync] parameters=[{type=Map<string, number, pri
 # CHECK-NEXT: = MapNext v0, [[table1]], [[position1]]
 # CHECK: [[pair1]]: Array = NewArray {{*}} contents=anything
 # CHECK-NEXT: Jump -> next [[settled1]]({{*}}, [[pair1]],
-# ABSENT-LABEL: function f1 name="map"
 # ABSENT-NOT: TypeTest
 # ABSENT-NOT: IsPristine
 # ABSENT-NOT: @@asyncIterator
@@ -158,15 +149,13 @@ function f1 name="map" flags=[IsAsync] parameters=[{type=Map<string, number, pri
 # ABSENT-NOT: [isNeverInlined]
 # ABSENT-NOT: CreateAsyncFromSyncIterator
 # ABSENT-NOT: key="next"
-# AWAITS-LABEL: function f1 name="map"
 # AWAITS-COUNT-2: = Await
 # AWAITS-NOT: = Await
-# TURNS-LABEL: function f1 name="map"
 # TURNS-COUNT-1: [takesExtraTurn]
 # TURNS-NOT: [takesExtraTurn]
+}
 
 function f2 name="set" flags=[IsAsync] parameters=[{type=Set<number, pristine[Names]>}] results=[{type=anything}] {
-  b0(v0: Set<number, pristine[Names]>):
     v1 = IteratorOpen v0 iteratorKind=Async
     Jump -> next b1()
   b1():
@@ -177,8 +166,6 @@ function f2 name="set" flags=[IsAsync] parameters=[{type=Set<number, pristine[Na
     Branch v4 -> taken b2(), notTaken b1()
   b2():
     Return v5
-}
-# CHECK-LABEL: function f2 name="set"
 # CHECK: b0(v0: Set<number, pristine[Names]>):
 # CHECK-NEXT: = CollectionTable v0
 # CHECK: b1([[table2]]: anything, [[position2]]: int[0, 2147483648]):
@@ -188,7 +175,6 @@ function f2 name="set" flags=[IsAsync] parameters=[{type=Set<number, pristine[Na
 # CHECK: [[thrown2]]() role=CleanupHandler frequency=Rare:
 # CHECK: [[attempt2]]() handler=[[thrown2]]():
 # CHECK-NEXT: = SetNext v0, [[table2]], [[position2]]
-# ABSENT-LABEL: function f2 name="set"
 # ABSENT-NOT: TypeTest
 # ABSENT-NOT: IsPristine
 # ABSENT-NOT: @@asyncIterator
@@ -196,15 +182,13 @@ function f2 name="set" flags=[IsAsync] parameters=[{type=Set<number, pristine[Na
 # ABSENT-NOT: [isNeverInlined]
 # ABSENT-NOT: CreateAsyncFromSyncIterator
 # ABSENT-NOT: key="next"
-# AWAITS-LABEL: function f2 name="set"
 # AWAITS-COUNT-2: = Await
 # AWAITS-NOT: = Await
-# TURNS-LABEL: function f2 name="set"
 # TURNS-COUNT-1: [takesExtraTurn]
 # TURNS-NOT: [takesExtraTurn]
+}
 
 function f3 name="uint8Array" flags=[IsAsync] parameters=[{type=Uint8Array<number, pristine[Names]>}] results=[{type=anything}] {
-  b0(v0: Uint8Array<number, pristine[Names]>):
     v1 = IteratorOpen v0 iteratorKind=Async
     Jump -> next b1()
   b1():
@@ -215,9 +199,7 @@ function f3 name="uint8Array" flags=[IsAsync] parameters=[{type=Uint8Array<numbe
     Branch v4 -> taken b2(), notTaken b1()
   b2():
     Return v5
-}
 # The call that makes the iterator throws at once for a detached view. A step throws into the promise of the wrapper, so its test is covered.
-# CHECK-LABEL: function f3 name="uint8Array"
 # CHECK: b0(v0: Uint8Array<number, pristine[Names]>):
 # CHECK-NEXT: RequireAttachedTypedArray v0
 # CHECK-NEXT: [[zero3]]: 0 = Integer
@@ -232,7 +214,6 @@ function f3 name="uint8Array" flags=[IsAsync] parameters=[{type=Uint8Array<numbe
 # CHECK-NEXT: [[length3]]: {{*}} = GetTypedArrayLength v0 typedArrayType=2
 # CHECK-NEXT: = Less [[index3]], [[length3]]
 # CHECK: = GetTypedArrayElement v0, {{*}} typedArrayType=2 [keyIsIntegral]
-# ABSENT-LABEL: function f3 name="uint8Array"
 # ABSENT-NOT: TypeTest
 # ABSENT-NOT: IsPristine
 # ABSENT-NOT: @@asyncIterator
@@ -240,15 +221,13 @@ function f3 name="uint8Array" flags=[IsAsync] parameters=[{type=Uint8Array<numbe
 # ABSENT-NOT: [isNeverInlined]
 # ABSENT-NOT: CreateAsyncFromSyncIterator
 # ABSENT-NOT: key="next"
-# AWAITS-LABEL: function f3 name="uint8Array"
 # AWAITS-COUNT-2: = Await
 # AWAITS-NOT: = Await
-# TURNS-LABEL: function f3 name="uint8Array"
 # TURNS-COUNT-1: [takesExtraTurn]
 # TURNS-NOT: [takesExtraTurn]
+}
 
 function f4 name="arrayOrSet" flags=[IsAsync] parameters=[{type=Array<number, pristine[Names]>|Set<number, pristine[Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Names]>|Set<number, pristine[Names]>):
     v1 = IteratorOpen v0 iteratorKind=Async
     Jump -> next b1()
   b1():
@@ -259,29 +238,24 @@ function f4 name="arrayOrSet" flags=[IsAsync] parameters=[{type=Array<number, pr
     Branch v4 -> taken b2(), notTaken b1()
   b2():
     Return v5
-}
-# CHECK-LABEL: function f4 name="arrayOrSet"
 # CHECK: [[isArray4]]: boolean = TypeTest v0 testedType=Array<number>
 # CHECK-NEXT: Branch [[isArray4]] -> taken [[array4]](| 0), notTaken [[set4]](| 0)
 # CHECK: [[array4]]([[arraySubject4]]: Array<number, pristine[Names]>):
 # CHECK: [[set4]]([[setSubject4]]: Set<number, pristine[Names]>) frequency=Unlikely:
 # CHECK-NEXT: = CollectionTable [[setSubject4]]
-# ABSENT-LABEL: function f4 name="arrayOrSet"
 # ABSENT-NOT: IsPristine
 # ABSENT-NOT: @@asyncIterator
 # ABSENT-NOT: @@iterator
 # ABSENT-NOT: [isNeverInlined]
 # ABSENT-NOT: CreateAsyncFromSyncIterator
 # ABSENT-NOT: key="next"
-# AWAITS-LABEL: function f4 name="arrayOrSet"
 # AWAITS-COUNT-4: = Await
 # AWAITS-NOT: = Await
-# TURNS-LABEL: function f4 name="arrayOrSet"
 # TURNS-COUNT-2: [takesExtraTurn]
 # TURNS-NOT: [takesExtraTurn]
+}
 
 function f5 name="namesAreTested" flags=[IsAsync] parameters=[{type=Array<number>}] results=[{type=anything}] {
-  b0(v0: Array<number>):
     v1 = IteratorOpen v0 iteratorKind=Async
     Jump -> next b1()
   b1():
@@ -343,7 +317,6 @@ function f6 name="expectedArray" flags=[IsAsync] parameters=[{type=Array<number>
 # TURNS-NOT: [takesExtraTurn]
 
 function f7 name="unknown" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = IteratorOpen v0 iteratorKind=Async
     Jump -> next b1()
   b1():
@@ -368,7 +341,6 @@ function f7 name="unknown" flags=[IsAsync] parameters=[{type=anything}] results=
 # TURNS-NOT: [takesExtraTurn]
 
 function f8 name="generator" flags=[IsAsync] parameters=[{type=Generator<anything, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Generator<anything, pristine[Storage, Names]>):
     v1 = IteratorOpen v0 iteratorKind=Async
     Jump -> next b1()
   b1():
@@ -394,7 +366,6 @@ function f8 name="generator" flags=[IsAsync] parameters=[{type=Generator<anythin
 # TURNS-NOT: [takesExtraTurn]
 
 function f9 name="subclassWithItsOwnIterator" flags=[IsAsync] parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = IteratorOpen v0 iteratorKind=Async
     Jump -> next b1()
   b1():
@@ -419,7 +390,6 @@ function f9 name="subclassWithItsOwnIterator" flags=[IsAsync] parameters=[{type=
 # TURNS-NOT: [takesExtraTurn]
 
 function f10 name="valueIsSent" flags=[IsAsync] parameters=[{type=Array<number, pristine[Names]>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Names]>, v1: anything):
     v2 = IteratorOpen v0 iteratorKind=Async
     Jump -> next b1()
   b1():
@@ -444,7 +414,6 @@ function f10 name="valueIsSent" flags=[IsAsync] parameters=[{type=Array<number, 
 # TURNS-NOT: [takesExtraTurn]
 
 function f11 name="inAsyncGenerator" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=Array<number, pristine[Names]>}] results=[{type=anything}] {
-  b0(v0: function, v1: Array<number, pristine[Names]>):
     v2 = IteratorOpen v1 iteratorKind=Async
     Jump -> next b1()
   b1():
@@ -484,7 +453,6 @@ function f15 name="inAsyncGeneratorBody" role=CoroutineRamp flags=[IsAsync, IsGe
 # TURNS-LABEL: function f12 name="Backwards"
 
 function f16 name="inBody" role=CoroutineBody flags=[IsAsync] parameters=[{type=Array<number, pristine[Names]>}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f14} creator=Coroutine{kind=AsyncFunction ramp=f14 body=f16 entryWithoutPromise=f16 promiseType=Promise promiseParameter=1} {
-  b0(v0: Array<number, pristine[Names]>, v1: undefined|Promise):
     v2 = IteratorOpen v0 iteratorKind=Async
     Jump -> next b1()
   b1():
@@ -506,9 +474,7 @@ function f16 name="inBody" role=CoroutineBody flags=[IsAsync] parameters=[{type=
     v10 = Undefined
     v11 = ReturnAsyncResult v1, v10
     Return v11
-}
 # The body of an async function awaits by saving its frame, and the flag goes along.
-# CHECK-LABEL: function f16 name="inBody"
 # CHECK: b3():
 # CHECK-NEXT: [[nothingAtBreak16]]: undefined = Undefined
 # CHECK-NEXT: = AwaitBySavingFrame [[nothingAtBreak16]], v1
@@ -516,20 +482,17 @@ function f16 name="inBody" role=CoroutineBody flags=[IsAsync] parameters=[{type=
 # CHECK-NEXT: [[awaited16]]{{*}} = AwaitBySavingFrame [[value16]], v1 [takesExtraTurn]
 # CHECK-NEXT: Jump -> next {{*}}([[done16]], [[awaited16]])
 # CHECK: = ElemGet v0, {{*}} [keyIsIntegral]
-# ABSENT-LABEL: function f16 name="inBody"
 # ABSENT-NOT: = Await v
 # ABSENT-NOT: @@asyncIterator
 # ABSENT-NOT: CreateAsyncFromSyncIterator
 # ABSENT-NOT: StepAsyncGenerator
-# AWAITS-LABEL: function f16 name="inBody"
 # AWAITS-COUNT-3: = AwaitBySavingFrame
 # AWAITS-NOT: = AwaitBySavingFrame
-# TURNS-LABEL: function f16 name="inBody"
 # TURNS-COUNT-1: [takesExtraTurn]
 # TURNS-NOT: [takesExtraTurn]
+}
 
 function f17 name="inAsyncGeneratorBody" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=Array<number, pristine[Names]>}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f15} creator=Coroutine{kind=AsyncGenerator ramp=f15 body=f17 promiseType=Promise promiseParameter=2} {
-  b0(v0: function, v1: Array<number, pristine[Names]>, v2: AsyncGenerator):
     v3 = IteratorOpen v1 iteratorKind=Async
     Jump -> next b1()
   b1():

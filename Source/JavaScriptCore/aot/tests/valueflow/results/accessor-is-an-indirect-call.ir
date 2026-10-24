@@ -30,7 +30,6 @@ entry module=m0
 layout L0 name="Holder"
 layout L1 name="Shared"
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L0 fields=[]
     v1 = NewClosure function=f1
     DefineGetter v0, v1 key="size"
@@ -49,16 +48,13 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="size" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     Return v1
 }
 function f2 name="size" kind=Setter parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f3 name="size" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=3
     Return v1
 }

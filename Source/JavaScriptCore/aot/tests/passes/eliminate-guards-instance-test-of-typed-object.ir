@@ -8,7 +8,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Node" fields=[{key="next" declared={type=undefined|null|L0} flags=[IsRequired, IsEnforced]}, {key="count" declared={type=number} flags=[IsRequired, IsEnforced]}]
 
 function f0 name="chain" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=L0
     Branch v1 -> taken b1(| 0), notTaken b7()
   b1(v2: L0):
@@ -33,17 +32,15 @@ function f0 name="chain" parameters=[{type=anything}] results=[{type=anything}] 
     Return v15
   b7():
     Return v0
-}
-# CHECK-LABEL: function f0 name="chain"
 # CHECK: = BelongsToInstance v2
 # CHECK: [[next]]: undefined|null|L0 = GetSlot v2, {{*}} key="next"
 # CHECK: = TypeTest [[next]] testedType=L0
 # CHECK-NOT: BelongsToInstance
 # CHECK: [[filled]]: boolean = IsSlotFilled v9
 # CHECK: = GetSlot v9, {{*}} key="count"
+}
 
 function f1 name="joined" parameters=[{type=L0}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: L0, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = PropGet v0 key="next"
@@ -65,13 +62,11 @@ function f1 name="joined" parameters=[{type=L0}, {type=boolean}] results=[{type=
     Return v11
   b7():
     Return v0
-}
-# CHECK-LABEL: function f1 name="joined"
 # CHECK: = BelongsToInstance v6
+}
 
 
 function f2 name="testedValuesMeet" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v3 = TypeTest v0 testedType=L0
@@ -90,6 +85,5 @@ function f2 name="testedValuesMeet" parameters=[{type=anything}, {type=anything}
     Return v10
   b6():
     Return v0
-}
-# CHECK-LABEL: function f2 name="testedValuesMeet"
 # CHECK: = BelongsToInstance v5
+}

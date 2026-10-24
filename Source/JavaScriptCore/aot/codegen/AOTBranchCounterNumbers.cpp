@@ -125,11 +125,6 @@ BranchCounterNumbers numberBranchCounters(const Program& program, BuildContext& 
     return numbers;
 }
 
-uint32_t BranchCounterNumbers::firstOf(FunctionID function) const
-{
-    return function.index() < m_first.size() ? m_first[function.index()] : 0;
-}
-
 std::optional<uint32_t> BranchCounterNumbers::counterFor(FunctionID function, uint32_t ordinal, unsigned side) const
 {
     RELEASE_ASSERT(side < numberOfSides);

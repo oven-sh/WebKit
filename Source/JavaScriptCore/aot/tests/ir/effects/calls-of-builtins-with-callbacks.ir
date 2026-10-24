@@ -9,23 +9,19 @@ layout L0 name="Box" fields=[{key="x" declared={type=number} flags=[IsRequired]}
 variable g0 name="writtenByArgument" module=m0 declared={type=anything} initialization=Undefined flow={writers=AllKnown}
 variable g1 name="writtenByListElement" module=m0 declared={type=anything} initialization=Undefined flow={writers=AllKnown}
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f1 name="passedAsArgument" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = String string="ran"
     PutModuleVariable v3 variable=g0
     Return v2
 }
 function f2 name="passedInList" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = String string="ran"
     PutModuleVariable v3 variable=g1
     Return v2
 }
 function f3 name="calls" parameters=[{type=L0}, {type=Array<f2, proven>}] results=[{type=anything}] {
-  b0(v0: L0, v1: Array<f2, proven>):
     v2 = GetModuleVariable variable=g0
     v3 = GetModuleVariable variable=g1
     v4 = Builtin builtin=JSONStringify

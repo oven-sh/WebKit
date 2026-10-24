@@ -5,34 +5,28 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="one-comparison" parameters=[{type=string}, {type=string}] results=[{type=boolean}] {
-  b0(v0: string, v1: string):
     v2 = Less v0, v1
     Return v2
-}
-# CHECK-LABEL: function f0 name="one-comparison"
 # CHECK-NOT: StringOrder
 # CHECK: boolean = Less v0, v1
+}
 
 function f1 name="two-pairs" parameters=[{type=string}, {type=string}, {type=string}] results=[{type=boolean}] {
-  b0(v0: string, v1: string, v2: string):
     v3 = Less v0, v1
     v4 = Greater v0, v2
     v5 = StrictEq v3, v4
     Return v5
-}
-# CHECK-LABEL: function f1 name="two-pairs"
 # CHECK-NOT: StringOrder
 # CHECK: boolean = Less v0, v1
 # CHECK-NEXT: boolean = Greater v0, v2
+}
 
 function f2 name="string-with-itself" parameters=[{type=string}] results=[{type=boolean}] {
-  b0(v0: string):
     v1 = Less v0, v0
     v2 = Greater v0, v0
     v3 = StrictEq v1, v2
     Return v3
-}
-# CHECK-LABEL: function f2 name="string-with-itself"
 # CHECK-NOT: StringOrder
 # CHECK: boolean = Less v0, v0
 # CHECK-NEXT: boolean = Greater v0, v0
+}

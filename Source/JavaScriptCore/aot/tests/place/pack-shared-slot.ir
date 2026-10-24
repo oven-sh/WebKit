@@ -17,7 +17,6 @@ variable g0 name="smallOrLarge" module=m0 declared={type=anything} initializatio
 variable g1 name="firstOrBoth" module=m0 declared={type=anything} initialization=Undefined
 variable g2 name="bothOrSecond" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=MathRandom
     v1 = Call v0
     v2 = ToNumber v1
@@ -41,7 +40,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="read" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = PropGet v0 key="shared"
     v2 = GetModuleVariable variable=g1

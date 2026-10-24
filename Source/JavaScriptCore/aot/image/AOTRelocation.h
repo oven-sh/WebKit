@@ -12,11 +12,6 @@
 #include "CCallHelpers.h"
 #include "LinkBuffer.h"
 #include "RelocationKind.h"
-#include <expected>
-#include <optional>
-#include <span>
-#include <wtf/Noncopyable.h>
-#include <wtf/text/ASCIILiteral.h>
 
 namespace JSC { namespace AOT {
 

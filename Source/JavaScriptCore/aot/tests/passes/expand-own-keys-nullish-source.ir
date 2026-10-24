@@ -13,8 +13,6 @@ function f0 name="assignFromOptionalSource" parameters=[{type=undefined|object}]
     v1 = NewObject layout=L0 fields=[]
     v2 = CallBuiltin -, v1, v0 overload=ObjectAssign/0
     Return v2
-}
-# CHECK-LABEL: function f0 name="assignFromOptionalSource"
 # CHECK: v1:{{*}}= NewObject layout=L0
 # CHECK-NEXT: [[isNullish0]]: boolean = TypeTest v0 testedType=undefined|null
 # CHECK-NEXT: Branch [[isNullish0]] -> taken [[nothing0]](| 0), notTaken
@@ -26,6 +24,7 @@ function f0 name="assignFromOptionalSource" parameters=[{type=undefined|object}]
 # CHECK: PropSet v1, {{*}} key="a"
 # CHECK-NEXT: PropSet v1, {{*}} key="b"
 # CHECK-NEXT: Jump -> next [[done0]](v1)
+}
 
 function f1 name="spreadOfOptionalSource" parameters=[{type=null|object}] results=[{type=anything}] {
   b0(v0: null|object ~ null|L1):
@@ -33,8 +32,6 @@ function f1 name="spreadOfOptionalSource" parameters=[{type=null|object}] result
     CopyDataProperties v1, v0
     v3 = FinishObject v1
     Return v3
-}
-# CHECK-LABEL: function f1 name="spreadOfOptionalSource"
 # CHECK: v1:{{*}}= NewObject layout=L0
 # CHECK-NEXT: [[isNullish1]]: boolean = TypeTest v0 testedType=undefined|null
 # CHECK-NEXT: Branch [[isNullish1]] -> taken [[nothing1]](| 0), notTaken
@@ -43,13 +40,13 @@ function f1 name="spreadOfOptionalSource" parameters=[{type=null|object}] result
 # CHECK: [[nothing1]]({{*}}):
 # CHECK-NEXT: Jump -> next [[done1]]()
 # CHECK: PropDefine v1, {{*}} key="a"
+}
 
 function f2 name="assignFromObject" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L1):
     v1 = NewObject layout=L0 fields=[]
     v2 = CallBuiltin -, v1, v0 overload=ObjectAssign/0
     Return v2
-}
-# CHECK-LABEL: function f2 name="assignFromObject"
 # CHECK-NOT: testedType=undefined|null
 # CHECK: PropSet v1, {{*}} key="a"
+}

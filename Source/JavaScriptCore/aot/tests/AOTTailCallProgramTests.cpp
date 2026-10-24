@@ -16,7 +16,6 @@ entry module=m0
 typesite w0 module=m0 position=10 kind=Result
 typesite w1 module=m0 position=20 kind=Result
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = PropGet v0 key="id" [isFreeName]
@@ -45,7 +44,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="down" flags=[IsChecked] parameters=[{type=anything}, {type=anything}] results=[{type=undefined|null|number site=w0}] {
-  b0(v0: anything, v1: anything):
     v2 = Integer
     v3 = StrictEq v0, v2
     Branch v3 -> taken b1(), notTaken b2()
@@ -59,7 +57,6 @@ function f1 name="down" flags=[IsChecked] parameters=[{type=anything}, {type=any
     ReturnCall v7 casts=[{declared={type=undefined|null|number site=w0}}]
 }
 function f2 name="text" flags=[IsChecked] parameters=[{type=anything}, {type=anything}] results=[{type=undefined|null|string site=w1}] {
-  b0(v0: anything, v1: anything):
     v2 = Integer
     v3 = StrictEq v0, v2
     Branch v3 -> taken b1(), notTaken b2()
@@ -79,7 +76,6 @@ entry module=m0
 typesite w0 module=m0 position=10 kind=Result
 typesite w1 module=m0 position=20 kind=Result
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = PropGet v0 key="id" [isFreeName]
@@ -103,7 +99,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="down" flags=[IsChecked] parameters=[{type=anything}, {type=anything}] results=[{type=undefined|null|number site=w0}] {
-  b0(v0: anything, v1: anything):
     v2 = Integer
     v3 = StrictEq v0, v2
     Branch v3 -> taken b1(), notTaken b2()
@@ -117,12 +112,10 @@ function f1 name="down" flags=[IsChecked] parameters=[{type=anything}, {type=any
     ReturnCall v7 casts=[{declared={type=undefined|null|number site=w0}}]
 }
 function f2 name="wrong" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = String string="text"
     Return v2
 }
 function f3 name="outer" flags=[IsChecked] parameters=[{type=anything}, {type=anything}] results=[{type=undefined|null|number site=w1}] {
-  b0(v0: anything, v1: anything):
     v2 = Integer integer=1
     v3 = Call v0, -, v2, v1
     v4 = String string="text"

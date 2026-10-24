@@ -9,7 +9,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="appendsInLoop" parameters=[{type=string}, {type=number}] results=[{type=string}] {
-  b0(v0: string, v1: number):
     v2 = String string=""
     v3 = Integer integer=0
     Jump -> next b1(v2, v3)

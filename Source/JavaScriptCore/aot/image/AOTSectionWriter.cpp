@@ -10,7 +10,6 @@
 
 #include "AOTBuildContext.h"
 #include "AOTThreads.h"
-#include "AOTVector.h"
 #include <algorithm>
 #include <utility>
 #include <wtf/MathExtras.h>
@@ -87,12 +86,6 @@ struct HashedStream {
     uint32_t index;
 };
 
-enum class StreamStorage : uint8_t {
-    Empty,
-    SharedWithEarlierStream,
-    New,
-};
-
 } // anonymous namespace
 
 static Vector<HashedStream> sortStreamsByHash(const ParallelLoops& loops, std::span<const Vector<uint8_t>> streams)
@@ -115,8 +108,10 @@ Vector<uint32_t> SectionWriter::appendAll(std::span<const Vector<uint8_t>> strea
 
     const ParallelLoops& loops = m_context.parallelLoops();
     Vector<HashedStream> entries = sortStreamsByHash(loops, streams);
-    Vector<StreamStorage> storage(FillWith { }, streams.size(), StreamStorage::Empty);
-    Vector<uint32_t> earlierEqualStream(FillWith { }, streams.size(), 0);
+    // The first stream with the same bytes: the stream itself where its bytes are stored.
+    Vector<uint32_t> firstEqualStream(streams.size(), [](size_t index) {
+        return static_cast<uint32_t>(index);
+    });
     constexpr size_t entriesInChunk = 4096;
     forEachIndexInParallel(loops, (entries.size() + entriesInChunk - 1) / entriesInChunk, [&](unsigned chunk) {
         size_t end = std::min(entries.size(), (static_cast<size_t>(chunk) + 1) * entriesInChunk);
@@ -133,20 +128,17 @@ Vector<uint32_t> SectionWriter::appendAll(std::span<const Vector<uint8_t>> strea
                 size_t equal = newStreams.findIf([&](uint32_t earlier) {
                     return equalSpans(streams[earlier].span(), bytes);
                 });
-                if (equal != notFound) {
-                    storage[index] = StreamStorage::SharedWithEarlierStream;
-                    earlierEqualStream[index] = newStreams[equal];
-                    continue;
-                }
-                storage[index] = StreamStorage::New;
-                newStreams.append(index);
+                if (equal != notFound)
+                    firstEqualStream[index] = newStreams[equal];
+                else
+                    newStreams.append(index);
             }
         }
     });
 
     size_t newSize = m_bytes.size();
     for (size_t index = 0; index < streams.size(); ++index) {
-        if (storage[index] != StreamStorage::New)
+        if (streams[index].isEmpty() || firstEqualStream[index] != index)
             continue;
         offsets[index] = static_cast<uint32_t>(newSize);
         newSize += streams[index].size();
@@ -158,16 +150,10 @@ Vector<uint32_t> SectionWriter::appendAll(std::span<const Vector<uint8_t>> strea
     growSectionTo(m_bytes, newSize);
     std::span<uint8_t> section = m_bytes.mutableSpan();
     forEachIndexInParallel(loops, streams.size(), [&](unsigned index) {
-        switch (storage[index]) {
-        case StreamStorage::Empty:
-            return;
-        case StreamStorage::SharedWithEarlierStream:
-            offsets[index] = offsets[earlierEqualStream[index]];
-            return;
-        case StreamStorage::New:
+        if (firstEqualStream[index] != index)
+            offsets[index] = offsets[firstEqualStream[index]];
+        else if (!streams[index].isEmpty())
             memcpySpan(section.subspan(offsets[index]), streams[index].span());
-            return;
-        }
     });
     return offsets;
 }

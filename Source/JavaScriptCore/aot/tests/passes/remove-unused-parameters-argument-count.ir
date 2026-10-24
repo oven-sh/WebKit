@@ -10,11 +10,9 @@ function f0 name="ignoresArgumentCount" flags=[HasArgumentCount] parameters=[{ty
     Return v1
 }
 function f1 name="ignoresCallee" flags=[TakesCallee] parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: function, v1: number):
     Return v1
 }
 function f2 name="ignoresNewTarget" kind=Method flags=[HasNewTarget] parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: anything, v1: number):
     Return v1
 }
 # CHECK-LABEL: function f2 name="ignoresNewTarget"{{*}}flags=[HasNewTarget]
@@ -31,13 +29,11 @@ function f4 name="readsArgumentCount" flags=[HasArgumentCount, HasHiddenRest] pa
     v4 = Add v0, v3
     v5 = Add v4, v1
     Return v5
-}
-# CHECK-LABEL: function f4 name="readsArgumentCount"
 # CHECK-NOT: CallDirect
 # CHECK: Return
+}
 
 function f5 name="callsEach" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Integer integer=1
     v2 = CallDirect v1, v0 function=f0
     v3 = NewClosure function=f1
@@ -49,8 +45,6 @@ function f5 name="callsEach" parameters=[{type=number}] results=[{type=number}] 
     v9 = NewArray contents=anything
     v10 = CallDirect v1, v8, v9 function=f4
     Return v10
-}
-# CHECK-LABEL: function f5 name="callsEach"
 # CHECK-NOT: NewClosure
 # CHECK: [[first]]: number = CallDirect v0 function=[[withoutCount]]
 # CHECK: [[second]]: number = CallDirect [[first]] function=[[withoutCallee]]
@@ -64,3 +58,4 @@ function f5 name="callsEach" parameters=[{type=number}] results=[{type=number}] 
 # CHECK-NEXT: b0(v{{*}}: number):
 # CHECK: function [[withoutRest]] name="ignoresHiddenRest"
 # CHECK-NEXT: b0(v{{*}}: number):
+}

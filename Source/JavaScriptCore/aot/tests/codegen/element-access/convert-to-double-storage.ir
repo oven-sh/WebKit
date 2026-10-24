@@ -8,14 +8,12 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="alwaysCalls" parameters=[{type=Array<number>}, {type=i32}] results=[{type=undefined}] {
-  b0(v0: Array<number>, v1: i32):
     ReserveArrayCapacity v0, v1
     Return
 }
 # CHECK: f0: size={{*}} frame={{*}}@[[setup]]-
 # CHECK-NEXT: operation operationAOTReserveArrayCapacity x1
 function f1 name="converts" parameters=[{type=Array<number>}] results=[{type=undefined}] {
-  b0(v0: Array<number>):
     ConvertToDoubleStorage v0
     Return
 }
@@ -24,7 +22,6 @@ function f1 name="converts" parameters=[{type=Array<number>}] results=[{type=und
 # CHECK-NOT: @[[setup]]-
 # CHECK: operation operationAOTConvertToDoubleStorage x1
 function f2 name="convertsInEachShape" parameters=[{type=Array<number>}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<number>, v1: boolean):
     ConvertToDoubleStorage v0
     Jump -> next b1()
   b1():
@@ -45,7 +42,6 @@ function f2 name="convertsInEachShape" parameters=[{type=Array<number>}, {type=b
 # S: f2 b1 Fast
 # S: f2 b3 Compact
 function f3 name="behindFailedTest" parameters=[{type=Array<number>}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Array<number>, v1: i32):
     v2 = HasArrayStorage v0 arrayStorage=Double
     TestAndBranch v2 -> taken b1(| 0), notTaken b3()
   b1(v3):

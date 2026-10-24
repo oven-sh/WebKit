@@ -19,7 +19,6 @@ layout L0 kind=Environment name="onlyRead" fields=[{key="x" declared={type=anyth
 layout L1 kind=Environment name="published" fields=[{key="x" declared={type=anything}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToBoolean v1
@@ -31,7 +30,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="calleeReadsCapture" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -43,16 +41,14 @@ function f1 name="calleeReadsCapture" parameters=[{type=anything}, {type=boolean
   b3(v5):
     v6 = Call v5
     Return v6
-}
-# CHECK-LABEL: function f1 name="calleeReadsCapture"
 # CHECK: v2: env L0 = NewObject -, v0 layout=L0 {{*}}storage=Frame
 # CHECK: = NewClosure v2 function=f3 {{*}}storage=Frame
 # CHECK: = NewClosure v2 function=f3 {{*}}storage=Frame
 # CHECK: [[environment1]]: env L0 = GetCapture v5 function=f3
 # CHECK-NEXT: = CallDirect [[environment1]] function=f3
+}
 
 function f2 name="calleePublishesCapture" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewObject -, v0 layout=L1 fields=[0]
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -64,12 +60,11 @@ function f2 name="calleePublishesCapture" parameters=[{type=anything}, {type=boo
   b3(v5):
     v6 = Call v5
     Return v6
-}
-# CHECK-LABEL: function f2 name="calleePublishesCapture"
 # CHECK-NOT: layout=L1 {{*}}storage=Frame
 # CHECK: = NewClosure v2 function=f4 {{*}}storage=Frame
 # CHECK: [[environment2]]: env L1 = GetCapture v5 function=f4
 # CHECK-NEXT: = CallDirect [[environment2]] function=f4
+}
 
 function f3 name="readsCapture" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
   b0(v0: env L0):

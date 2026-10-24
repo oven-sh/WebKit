@@ -21,11 +21,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-ClassEmitter::ClassEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
-
 void ClassEmitter::generateResolveHeritage(const ValueContext& value)
 {
     define(value, callOperation<Boxed>(value, RuntimeOperation::ResolveHeritage, { in<Boxed>(value->heritageOperand()) }));
@@ -46,15 +41,10 @@ void ClassEmitter::generateNewClass(const ValueContext& value)
 }
 
 // The run time enters the prototype object of a class that is evaluated once in ClassWords::classPrototypes: at the definition of a class, at the first construction by a constructor function.
-static bool hasOnePrototypeObject(const Program& program, const Layout& classLayout)
-{
-    return isEvaluatedOnce(program, classLayout);
-}
-
 std::optional<uint32_t> ClassEmitter::rankOfClassWithOnePrototypeObject(const ValueContext& value) const
 {
     LayoutID classLayout = declaredLayoutOf(m_program, value->layout());
-    if (!hasOnePrototypeObject(m_program, m_program.at(classLayout)))
+    if (!isEvaluatedOnce(m_program, m_program.at(classLayout)))
         return std::nullopt;
     return m_placement.rankOfClass(classLayout);
 }

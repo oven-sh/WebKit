@@ -23,7 +23,6 @@ variable g2 name="provenOdd" module=m0 declared={type=anything} initialization=U
 variable g3 name="provenEven" module=m0 declared={type=anything} initialization=Undefined
 variable g4 name="answer" module=m0 declared={type=boolean} initialization=Uninitialized
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     PutModuleVariable v0 variable=g0
     v2 = Builtin builtin=GlobalThis
@@ -41,20 +40,17 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v14 = CallDirect v11 function=f3
     PutModuleVariable v14 variable=g4
     Return
-}
-# CHECK-LABEL: function f0 name="main"
 # CHECK: [[call]]: anything ~ boolean = CallDirect v11 function=f1
 # CHECK-NEXT: [[tested]]: boolean = Check [[call]] castType=boolean site=w0 cause=AddedByPass
 # CHECK-NEXT: PutModuleVariable [[tested]] variable=g4
 # CHECK-NEXT: [[otherCall]]: anything ~ boolean = CallDirect v11 function=f3
 # CHECK-NEXT: [[otherTested]]: boolean = Check [[otherCall]] castType=boolean site=w2 cause=AddedByPass
 # CHECK-NEXT: PutModuleVariable [[otherTested]] variable=g4
-# APPLIED-LABEL: function f0 name="main"
 # APPLIED: : anything ~ boolean = CallDirect v11 function=f1
 # APPLIED-NEXT: = Check {{*}}castType=boolean site=w0
 # APPLIED: : boolean = CallDirect v11 function=f3
+}
 function f1 name="even" flags=[IsChecked] parameters=[{type=number}] results=[{type=boolean site=w0}] {
-  b0(v0: number):
     v1 = Integer integer=0
     v2 = StrictEq v0, v1
     Branch v2 -> taken b1(), notTaken b2()
@@ -65,15 +61,12 @@ function f1 name="even" flags=[IsChecked] parameters=[{type=number}] results=[{t
     v4 = GetModuleVariable variable=g0
     v5 = Call v4, -, v0
     ReturnCall v5 casts=[{declared={type=boolean site=w0}}]
-}
-# CHECK-LABEL: function f1 name="even"
 # CHECK: results=[{type=boolean site=w0 flags=[IsExpected]}]
 # CHECK: ReturnCall v5 casts=[{declared={type=boolean site=w0 flags=[IsExpected]} resolution=Nothing}]
-# APPLIED-LABEL: function f1 name="even"
 # APPLIED: results=[{type=boolean site=w0 flags=[IsExpected]}]
 # APPLIED: ReturnCall
+}
 function f2 name="odd" flags=[IsChecked] parameters=[{type=number}] results=[{type=boolean site=w1}] {
-  b0(v0: number):
     v1 = Integer integer=0
     v2 = StrictEq v0, v1
     Branch v2 -> taken b1(), notTaken b2()
@@ -84,15 +77,12 @@ function f2 name="odd" flags=[IsChecked] parameters=[{type=number}] results=[{ty
     v4 = GetModuleVariable variable=g1
     v5 = Call v4, -, v0
     ReturnCall v5 casts=[{declared={type=boolean site=w1}}]
-}
-# CHECK-LABEL: function f2 name="odd"
 # CHECK: results=[{type=boolean site=w1 flags=[IsExpected]}]
 # CHECK: ReturnCall v5 casts=[{declared={type=boolean site=w1 flags=[IsExpected]} resolution=Nothing}]
-# APPLIED-LABEL: function f2 name="odd"
 # APPLIED: results=[{type=boolean site=w1 flags=[IsExpected]}]
 # APPLIED: ReturnCall
+}
 function f3 name="provenEven" flags=[IsChecked] parameters=[{type=number}] results=[{type=boolean site=w2}] {
-  b0(v0: number):
     v1 = Integer integer=0
     v2 = StrictEq v0, v1
     Branch v2 -> taken b1(), notTaken b2()
@@ -103,15 +93,12 @@ function f3 name="provenEven" flags=[IsChecked] parameters=[{type=number}] resul
     v4 = GetModuleVariable variable=g2
     v5 = Call v4, -, v0
     ReturnCall v5 casts=[{declared={type=boolean site=w2}}]
-}
-# CHECK-LABEL: function f3 name="provenEven"
 # CHECK: results=[{type=boolean site=w2 flags=[IsExpected]}]
 # CHECK: ReturnCall v5 casts=[{declared={type=boolean site=w2 flags=[IsExpected]} resolution=Nothing}]
-# APPLIED-LABEL: function f3 name="provenEven"
 # APPLIED: results=[{type=boolean site=w2}]
 # APPLIED: ReturnCall
+}
 function f4 name="provenOdd" flags=[IsChecked] parameters=[{type=number}] results=[{type=boolean site=w3}] {
-  b0(v0: number):
     v1 = Integer integer=0
     v2 = StrictEq v0, v1
     Branch v2 -> taken b1(), notTaken b2()
@@ -122,10 +109,8 @@ function f4 name="provenOdd" flags=[IsChecked] parameters=[{type=number}] result
     v4 = GetModuleVariable variable=g3
     v5 = Call v4, -, v0
     ReturnCall v5 casts=[{declared={type=boolean site=w3}}]
-}
-# CHECK-LABEL: function f4 name="provenOdd"
 # CHECK: results=[{type=boolean site=w3 flags=[IsExpected]}]
 # CHECK: ReturnCall v5 casts=[{declared={type=boolean site=w3 flags=[IsExpected]} resolution=Nothing}]
-# APPLIED-LABEL: function f4 name="provenOdd"
 # APPLIED: results=[{type=boolean site=w3}]
 # APPLIED: ReturnCall
+}

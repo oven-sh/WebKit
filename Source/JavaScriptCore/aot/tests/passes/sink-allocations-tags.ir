@@ -9,7 +9,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Options" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=number}}, {key="c" declared={type=anything}}]
 
 function f0 name="storedOnOnePathThenRead" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: number, v2: boolean):
     v3 = NewObject -, v0 layout=L0 fields=[0]
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -20,8 +19,6 @@ function f0 name="storedOnOnePathThenRead" parameters=[{type=anything}, {type=nu
   b3():
     v5 = GetSlotOrUndefined v3, v3 key="b" receivers=[L0] level=Proven
     Return v5
-}
-# CHECK-LABEL: function f0 name="storedOnOnePathThenRead"
 # CHECK-NOT: NewObject
 # CHECK: b1():
 # CHECK-NEXT: [[stored0]]: 2 = Integer integer=2
@@ -38,9 +35,9 @@ function f0 name="storedOnOnePathThenRead" parameters=[{type=anything}, {type=nu
 # CHECK-NEXT: Branch [[isStored0]] -> taken [[merge0]]([[b0]]), notTaken [[merge0]]([[undefined0]])
 # CHECK: [[merge0]]([[read0]]: undefined|null|number):
 # CHECK-NEXT: v5: undefined|null|number ~ undefined|number = Upcast [[read0]] castType=undefined|null|number
+}
 
 function f1 name="storedOnBothPathsThenRead" parameters=[{type=anything}, {type=number}, {type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: number, v2: number, v3: boolean):
     v4 = NewObject -, v0 layout=L0 fields=[0]
     Branch v3 -> taken b1(), notTaken b2()
   b1():
@@ -52,8 +49,6 @@ function f1 name="storedOnBothPathsThenRead" parameters=[{type=anything}, {type=
   b3():
     v7 = GetSlotOrUndefined v4, v4 key="b" receivers=[L0] level=Proven
     Return v7
-}
-# CHECK-LABEL: function f1 name="storedOnBothPathsThenRead"
 # CHECK-NOT: NewObject
 # CHECK-NOT: Integer
 # CHECK: Jump -> next b3(v0, v1)
@@ -61,9 +56,9 @@ function f1 name="storedOnBothPathsThenRead" parameters=[{type=anything}, {type=
 # CHECK: b3({{*}}: anything, [[b1]]: number):
 # CHECK-NEXT: v7: undefined|null|number ~ undefined|number = Upcast [[b1]] castType=undefined|null|number
 # CHECK-NEXT: Return v7
+}
 
 function f2 name="storedOnOnePathThenPassedOn" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: number, v2: boolean):
     v3 = NewObject -, v0 layout=L0 fields=[0]
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -79,8 +74,6 @@ function f2 name="storedOnOnePathThenPassedOn" parameters=[{type=anything}, {typ
     Return v6
   b5():
     Return v0
-}
-# CHECK-LABEL: function f2 name="storedOnOnePathThenPassedOn"
 # CHECK-NOT: NewObject
 # CHECK: b3([[tag2]]: i32, [[a2]]: anything, [[b2]]: number):
 # CHECK-NOT: NewObject
@@ -94,9 +87,9 @@ function f2 name="storedOnOnePathThenPassedOn" parameters=[{type=anything}, {typ
 # CHECK: [[long2]]():
 # CHECK-NEXT: [[longCell2]]:{{*}}= NewObject -, [[a2]], [[b2]] layout=L0 fields=[0, 1]
 # CHECK-NEXT: Jump -> next [[continuation2]]([[longCell2]])
+}
 
 function f3 name="storeAfterMergeKeepsTagBits" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     v3 = NewObject layout=L0
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -113,8 +106,6 @@ function f3 name="storeAfterMergeKeepsTagBits" parameters=[{type=anything}, {typ
     Return v7
   b5():
     Return v0
-}
-# CHECK-LABEL: function f3 name="storeAfterMergeKeepsTagBits"
 # CHECK-NOT: NewObject
 # CHECK: b3([[tag3]]: i32, [[a3]]: anything):
 # CHECK-NEXT: = ToBoolean v0
@@ -125,9 +116,9 @@ function f3 name="storeAfterMergeKeepsTagBits" parameters=[{type=anything}, {typ
 # CHECK-NEXT: = NewObject -, v1 layout=L0 fields=[2]
 # CHECK: [[long3]]():
 # CHECK-NEXT: = NewObject -, [[a3]], v1 layout=L0 fields=[0, 2]
+}
 
 function f4 name="equalShapesLoseTheTag" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     v3 = NewObject layout=L0
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -144,17 +135,15 @@ function f4 name="equalShapesLoseTheTag" parameters=[{type=anything}, {type=anyt
     Return v7
   b5():
     Return v0
-}
-# CHECK-LABEL: function f4 name="equalShapesLoseTheTag"
 # CHECK-NOT: NewObject
 # CHECK-NOT: Switch
 # CHECK: b4():
 # CHECK-NEXT: [[cell4]]:{{*}}= NewObject -, v1 layout=L0 fields=[0]
 # CHECK-NEXT: = Call v0, -, [[cell4]]
 # CHECK-NOT: NewObject
+}
 
 function f5 name="testOfFieldIsTestOfTag" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: number, v2: boolean):
     v3 = NewObject -, v0 layout=L0 fields=[0]
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -171,8 +160,6 @@ function f5 name="testOfFieldIsTestOfTag" parameters=[{type=anything}, {type=num
     Return v8
   b5():
     Return v0
-}
-# CHECK-LABEL: function f5 name="testOfFieldIsTestOfTag"
 # CHECK-NOT: NewObject
 # CHECK: b3([[tag5]]: i32, {{*}}: anything, [[b5]]: number):
 # CHECK-NOT: IsSlotFilled
@@ -185,9 +172,9 @@ function f5 name="testOfFieldIsTestOfTag" parameters=[{type=anything}, {type=num
 # CHECK-NOT: BitAnd
 # CHECK: v8: undefined|null|number ~ number = Upcast [[b5]] castType=undefined|null|number
 # CHECK-NEXT: Return v8
+}
 
 function f6 name="builtOnOnePathThenPassedOn" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     v3 = NewObject -, v0 layout=L0 fields=[0]
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -203,8 +190,6 @@ function f6 name="builtOnOnePathThenPassedOn" parameters=[{type=anything}, {type
     Return v6
   b5():
     Return v0
-}
-# CHECK-LABEL: function f6 name="builtOnOnePathThenPassedOn"
 # CHECK: b0(
 # CHECK-NEXT: Branch v2
 # CHECK: b1():
@@ -221,9 +206,9 @@ function f6 name="builtOnOnePathThenPassedOn" parameters=[{type=anything}, {type
 # CHECK: Jump -> next [[continuation6]]([[carried6]])
 # CHECK: [[late6]]:{{*}}= NewObject -, [[a6]] layout=L0 fields=[0]
 # CHECK-NEXT: Jump -> next [[continuation6]]([[late6]])
+}
 
 function f7 name="twoArrayLengths" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     v3 = NewArray v0, v1, v0 contents=anything
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -234,8 +219,6 @@ function f7 name="twoArrayLengths" parameters=[{type=anything}, {type=anything},
   b3():
     v5 = PropGet v3 key="length"
     Return v5
-}
-# CHECK-LABEL: function f7 name="twoArrayLengths"
 # CHECK-NOT: NewArray
 # CHECK-NOT: AppendElement
 # CHECK: [[three7]]: 3 = Integer integer=3
@@ -247,9 +230,9 @@ function f7 name="twoArrayLengths" parameters=[{type=anything}, {type=anything},
 # CHECK: b3([[tag7]]: i32, {{*}}[[length7]]: int
 # CHECK-NOT: PropGet
 # CHECK: v5: anything = Upcast [[length7]] castType=anything
+}
 
 function f8 name="oneArrayLength" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     v3 = NewArray v0, v1, v0 contents=anything
     v4 = Integer integer=0
     Branch v2 -> taken b1(), notTaken b2()
@@ -261,16 +244,14 @@ function f8 name="oneArrayLength" parameters=[{type=anything}, {type=anything}, 
   b3():
     v6 = ElemGet v3, v4
     Return v6
-}
-# CHECK-LABEL: function f8 name="oneArrayLength"
 # CHECK-NOT: NewArray
 # CHECK-NOT: ElemSet
 # CHECK-NOT: : i32
 # CHECK: b3([[first8]]: anything, 
 # CHECK-NEXT: v6: anything = Upcast [[first8]] castType=anything
+}
 
 function f9 name="twoLiteralsOfDifferentLengths" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v3 = NewArray v0, v1, v0 contents=anything
@@ -284,8 +265,6 @@ function f9 name="twoLiteralsOfDifferentLengths" parameters=[{type=anything}, {t
     v8 = ElemGet v5, v7
     v9 = Call v0, -, v6, v8
     Return v9
-}
-# CHECK-LABEL: function f9 name="twoLiteralsOfDifferentLengths"
 # CHECK-NOT: NewArray
 # CHECK: b1():
 # CHECK: [[three9]]: 3 = Integer integer=3
@@ -300,3 +279,4 @@ function f9 name="twoLiteralsOfDifferentLengths" parameters=[{type=anything}, {t
 # CHECK: = BitAnd [[tag9]], 
 # CHECK-NOT: ElemGet
 # CHECK: = Call v0, -, v6, v8
+}

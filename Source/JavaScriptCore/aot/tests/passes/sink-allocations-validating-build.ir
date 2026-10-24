@@ -8,7 +8,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="returnedInOneBranch" parameters=[{type=anything}, {type=Array<anything, pristine[Storage]>}, {type=boolean}] results=[{type=Array<anything, pristine[Storage]>}] {
-  b0(v0: anything, v1: Array<anything, pristine[Storage]>, v2: boolean):
     v3 = NewArray v0 contents=anything
     ValidateType v3 validatedType=Array<anything, Contiguous, pristine[Storage]>
     v5 = AssumeType v3 castType=Array<anything, Contiguous, pristine[Storage]>
@@ -17,8 +16,6 @@ function f0 name="returnedInOneBranch" parameters=[{type=anything}, {type=Array<
     Return v5
   b2():
     Return v1
-}
-# CHECK-LABEL: function f0 name="returnedInOneBranch"
 # CHECK: b0(
 # CHECK-NOT: NewArray
 # CHECK-NOT: ValidateType
@@ -28,16 +25,15 @@ function f0 name="returnedInOneBranch" parameters=[{type=anything}, {type=Array<
 # CHECK-NEXT: = AssumeType [[cell]] castType=Array<anything, pristine[Storage]>
 # CHECK: b2():
 # CHECK-NEXT: Return v1
+}
 
 function f1 name="neverBuilt" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray v0 contents=anything
     ValidateType v1 validatedType=Array<anything, Contiguous, pristine[Storage]>
     v3 = AssumeType v1 castType=Array<anything, Contiguous, pristine[Storage]>
     v4 = Integer integer=0
     v5 = ElemGet v3, v4
     Return v5
-}
-# CHECK-LABEL: function f1 name="neverBuilt"
 # CHECK-NOT: NewArray
 # CHECK-NOT: ValidateType
+}

@@ -839,6 +839,31 @@ static void testIndexAccessorInRealmThatPrototypeInheritsFrom()
     AOT_TEST_CHECK(realms.evaluate(locked, "inheritor[1] === 'inherited' && heir[1] === 'inherited' && Object.create(heir)[1] === 'inherited' && [1][1] === undefined && ({})[1] === undefined"_s) == jsBoolean(true));
 }
 
+static void testTypedArraysInterceptIndexedStoresAfterIndexAccessorOnPrototype()
+{
+    Realms realms;
+    JSGlobalObject* locked = realms.locked();
+
+    JSObject* createdBefore = realms.object(locked, "var createdBefore = Object.create(new Uint8Array(4)); createdBefore[0] = 1; createdBefore"_s);
+    JSArray* ordinary = realms.array(locked, "[1, 2].slice()"_s);
+    AOT_TEST_CHECK(realms.evaluate(locked, "var early = Object.create(new Uint8Array(4)); early[9] = 9; early[9] === 9"_s) == jsBoolean(true));
+    AOT_TEST_CHECK(!locked->typedArraysInterceptIndexedStores());
+    AOT_TEST_CHECK(!hasSlowPutArrayStorage(createdBefore->indexingType()));
+
+    realms.evaluate(locked, "var watched = { }; var heir = Object.create(watched); Object.defineProperty(watched, 3, { set(value) { }, configurable: true })"_s);
+    AOT_TEST_CHECK(!locked->isHavingABadTime());
+    AOT_TEST_CHECK(locked->typedArraysInterceptIndexedStores());
+    AOT_TEST_CHECK(hasSlowPutArrayStorage(createdBefore->indexingType()));
+    AOT_TEST_CHECK(hasInt32(ordinary->indexingType()));
+    AOT_TEST_CHECK(hasInt32(realms.array(locked, "[1, 2].slice()"_s)->indexingType()));
+    AOT_TEST_CHECK(realms.evaluate(locked, "createdBefore[1] = 1; createdBefore[9] = 9; createdBefore[1] === 1 && !(9 in createdBefore)"_s) == jsBoolean(true));
+    AOT_TEST_CHECK(realms.evaluate(locked, "var createdAfter = Object.create(new Uint8Array(4)); createdAfter[1] = 1; createdAfter[9] = 9; createdAfter[1] === 1 && !(9 in createdAfter)"_s) == jsBoolean(true));
+    AOT_TEST_CHECK(realms.evaluate(locked, "var moved = [1]; Object.setPrototypeOf(moved, new Uint8Array(4)); moved[9] = 9; !(9 in moved) && Reflect.set(moved, 9, 9) && !(9 in moved)"_s) == jsBoolean(true));
+    AOT_TEST_CHECK(realms.evaluate(locked, "var middle = { }; var below = Object.create(middle); below[0] = 1; Object.setPrototypeOf(middle, new Uint8Array(4)); below[9] = 9; !(9 in below)"_s) == jsBoolean(true));
+    AOT_TEST_CHECK(!realms.plain()->typedArraysInterceptIndexedStores());
+    AOT_TEST_CHECK(realms.evaluate(realms.plain(), "var elsewhere = Object.create(new Uint8Array(4)); elsewhere[9] = 9; elsewhere[9] === 9"_s) == jsBoolean(true));
+}
+
 static void testPristineArrayCachedTransitions()
 {
     Realms realms;
@@ -1021,6 +1046,7 @@ std::span<const NativeTest> lockedRealmTests()
         { "locked-realm/non-pristine-values"_s, testNonPristineValues },
         { "locked-realm/transitions-of-pristine-arrays"_s, testPristineArrayTransitions },
         { "locked-realm/index-accessor-in-a-realm-that-a-prototype-inherits-from"_s, testIndexAccessorInRealmThatPrototypeInheritsFrom },
+        { "locked-realm/typed-arrays-intercept-indexed-stores-after-an-index-accessor-on-a-prototype"_s, testTypedArraysInterceptIndexedStoresAfterIndexAccessorOnPrototype },
         { "locked-realm/cached-transitions-of-pristine-arrays"_s, testPristineArrayCachedTransitions },
         { "locked-realm/start-up-locks-objects"_s, withoutBuiltins<testStartUpLocksObjects> },
         { "locked-realm/start-up-creates-no-class"_s, withoutBuiltins<testStartUpCreatesNoClass> },

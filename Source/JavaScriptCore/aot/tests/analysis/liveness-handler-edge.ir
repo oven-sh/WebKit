@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="covered" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = Add v1, v1
     Jump -> next b1()
   b1() handler=b3(v2):
@@ -33,7 +32,6 @@ function f0 name="covered" parameters=[{type=anything}, {type=number}] results=[
 # CHECK-NEXT: b3:1 live: [v1 v4]
 # CHECK-NEXT: b3:2 live: [v6]
 function f1 name="uncovered" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = Add v1, v1
     Jump -> next b1()
   b1():

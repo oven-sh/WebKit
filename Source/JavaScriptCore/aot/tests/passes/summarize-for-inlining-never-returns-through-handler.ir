@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="register" [isFreeName]
     v2 = NewClosure function=f1
@@ -47,7 +46,6 @@ function f2 name="handlerReturns" parameters=[{type=anything}] results=[{type=an
 # PASS-NOT: noReturn
 
 function f3 name="noHandler" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f6
     Jump -> next b1()
   b1():
@@ -85,14 +83,12 @@ function f5 name="throwsUnderHandler" parameters=[{type=anything}] results=[{typ
 # PASS-NOT: noReturn
 
 function f6 name="fails" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Throw v0
 }
 # CHECK: f6: barrier=None {{*}} noReturn=[b0] neverReturns
 # PASS: f6: barrier=None {{*}} noReturn=[b0] neverReturns
 
 function f7 name="callsAndReturns" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0
     Return v1
 }

@@ -15,10 +15,9 @@ function f0 name="pureValues" parameters=[{type=number}] results=[{type=anything
   b2() role=CatchHandler:
     v2 = CatchValue
     Return v2
-}
-# CHECK-LABEL: function f0 name="pureValues"
 # CHECK: b0(v0: number):
 # CHECK-NOT: CatchValue
+}
 
 function f1 name="unknownCall" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything) handler=b2():
@@ -29,10 +28,9 @@ function f1 name="unknownCall" parameters=[{type=anything}] results=[{type=anyth
   b2() role=CatchHandler:
     v2 = CatchValue
     Return v2
-}
-# CHECK-LABEL: function f1 name="unknownCall"
 # CHECK: b0(v0: anything) handler=b2():
 # CHECK: = CatchValue
+}
 
 function f2 name="slotStore" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything) handler=b2():
@@ -44,11 +42,10 @@ function f2 name="slotStore" parameters=[{type=anything}] results=[{type=anythin
   b2() role=CatchHandler:
     v3 = CatchValue
     Return v3
-}
-# CHECK-LABEL: function f2 name="slotStore"
 # CHECK: b0(v0: anything):
 # CHECK: PutSlot
 # CHECK-NOT: CatchValue
+}
 
 function f3 name="storeByName" parameters=[{type=anything}, {type=object}] results=[{type=anything}] {
   b0(v0: anything, v1: object) handler=b2():
@@ -59,10 +56,9 @@ function f3 name="storeByName" parameters=[{type=anything}, {type=object}] resul
   b2() role=CatchHandler:
     v3 = CatchValue
     Return v3
-}
-# CHECK-LABEL: function f3 name="storeByName"
 # CHECK: b0(v0: anything, v1: object) handler=b2():
 # CHECK: = CatchValue
+}
 
 function f4 name="calleeCannotThrow" parameters=[{type=number}] results=[{type=anything}] {
   b0(v0: number) handler=b2():
@@ -73,11 +69,10 @@ function f4 name="calleeCannotThrow" parameters=[{type=number}] results=[{type=a
   b2() role=CatchHandler:
     v2 = CatchValue
     Return v2
-}
-# CHECK-LABEL: function f4 name="calleeCannotThrow"
 # CHECK: b0(v0: number):
 # CHECK-NEXT: = CallDirect
 # CHECK-NOT: CatchValue
+}
 
 function f5 name="calleeMayThrow" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything) handler=b2():
@@ -88,10 +83,9 @@ function f5 name="calleeMayThrow" parameters=[{type=anything}] results=[{type=an
   b2() role=CatchHandler:
     v2 = CatchValue
     Return v2
-}
-# CHECK-LABEL: function f5 name="calleeMayThrow"
 # CHECK: b0(v0: anything) handler=b2():
 # CHECK: = CatchValue
+}
 
 function f6 name="rethrowsException" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything) handler=b2():
@@ -102,10 +96,9 @@ function f6 name="rethrowsException" parameters=[{type=anything}] results=[{type
   b2() role=CatchHandler:
     v2 = CatchException
     Rethrow v2
-}
-# CHECK-LABEL: function f6 name="rethrowsException"
 # CHECK: b0(v0: anything):
 # CHECK-NOT: CatchException
+}
 
 function f7 name="throwsCaughtValue" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything) handler=b2():
@@ -116,10 +109,9 @@ function f7 name="throwsCaughtValue" parameters=[{type=anything}] results=[{type
   b2() role=CatchHandler:
     v2 = CatchValue
     Throw v2
-}
-# CHECK-LABEL: function f7 name="throwsCaughtValue"
 # CHECK: b0(v0: anything):
 # CHECK-NOT: CatchValue
+}
 
 function f8 name="forwardsToOuterHandler" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything) handler=b2():
@@ -133,11 +125,10 @@ function f8 name="forwardsToOuterHandler" parameters=[{type=anything}] results=[
   b3() role=CatchHandler:
     v3 = CatchValue
     Return v3
-}
-# CHECK-LABEL: function f8 name="forwardsToOuterHandler"
 # CHECK: b0(v0: anything) handler=b3():
 # CHECK-NOT: CatchException
 # CHECK: = CatchValue
+}
 
 function f9 name="outerHandlerTakesArgument" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything) handler=b2():
@@ -150,10 +141,9 @@ function f9 name="outerHandlerTakesArgument" parameters=[{type=anything}] result
     Rethrow v2
   b3(v3) role=CatchHandler:
     Return v3
-}
-# CHECK-LABEL: function f9 name="outerHandlerTakesArgument"
 # CHECK: b0(v0: anything) handler=b3(v0):
 # CHECK-NOT: CatchException
+}
 
 function f10 name="throwIntoRethrowingHandler" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything) handler=b1():
@@ -161,11 +151,10 @@ function f10 name="throwIntoRethrowingHandler" parameters=[{type=anything}] resu
   b1() role=CatchHandler:
     v1 = CatchException
     Rethrow v1
-}
-# CHECK-LABEL: function f10 name="throwIntoRethrowingHandler"
 # CHECK: b0(v0: anything):
 # CHECK-NEXT: Throw v0
 # CHECK-NOT: CatchException
+}
 
 function f11 name="pureValueBeforeRethrow" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
   b0(v0: anything, v1: number) handler=b2():
@@ -177,10 +166,9 @@ function f11 name="pureValueBeforeRethrow" parameters=[{type=anything}, {type=nu
     v3 = CatchException
     v4 = Add v1, v1
     Rethrow v3
-}
-# CHECK-LABEL: function f11 name="pureValueBeforeRethrow"
 # CHECK: b0(v0: anything, v1: number):
 # CHECK-NOT: CatchException
+}
 
 function f12 name="cleanupOnlyRethrows" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything) handler=b2():
@@ -191,10 +179,9 @@ function f12 name="cleanupOnlyRethrows" parameters=[{type=anything}] results=[{t
   b2() role=CleanupHandler:
     v2 = CatchException
     Rethrow v2
-}
-# CHECK-LABEL: function f12 name="cleanupOnlyRethrows"
 # CHECK: b0(v0: anything):
 # CHECK-NOT: CatchException
+}
 
 function f13 name="handlerCallsBeforeRethrow" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything) handler=b2():
@@ -206,9 +193,8 @@ function f13 name="handlerCallsBeforeRethrow" parameters=[{type=anything}] resul
     v2 = CatchValue
     v3 = Call v0, -, v2
     Throw v2
-}
-# CHECK-LABEL: function f13 name="handlerCallsBeforeRethrow"
 # CHECK: b0(v0: anything) handler=b2():
+}
 
 function f14 name="throwsOtherValue" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything) handler=b2():
@@ -219,9 +205,8 @@ function f14 name="throwsOtherValue" parameters=[{type=anything}] results=[{type
   b2() role=CatchHandler:
     v2 = CatchValue
     Throw v0
-}
-# CHECK-LABEL: function f14 name="throwsOtherValue"
 # CHECK: b0(v0: anything) handler=b2():
+}
 
 function f15 name="catchesExceptionAndThrowsValue" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything) handler=b2():
@@ -233,9 +218,8 @@ function f15 name="catchesExceptionAndThrowsValue" parameters=[{type=anything}] 
     v2 = CatchException
     v3 = CatchValue
     Throw v3
-}
-# CHECK-LABEL: function f15 name="catchesExceptionAndThrowsValue"
 # CHECK: b0(v0: anything) handler=b2():
+}
 
 function f16 name="handlerWithParameter" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything) handler=b2(v0):
@@ -246,9 +230,8 @@ function f16 name="handlerWithParameter" parameters=[{type=anything}] results=[{
   b2(v2) role=CatchHandler:
     v3 = CatchException
     Rethrow v3
-}
-# CHECK-LABEL: function f16 name="handlerWithParameter"
 # CHECK: b0(v0: anything) handler=b2(v0):
+}
 
 function f17 name="chainInnerHandlerFirst" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything) handler=b2():
@@ -262,10 +245,9 @@ function f17 name="chainInnerHandlerFirst" parameters=[{type=anything}] results=
   b3() role=CatchHandler:
     v3 = CatchException
     Rethrow v3
-}
-# CHECK-LABEL: function f17 name="chainInnerHandlerFirst"
 # CHECK: b0(v0: anything):
 # CHECK-NOT: CatchException
+}
 
 function f18 name="twoCoveredBlocks" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything) handler=b3():
@@ -279,11 +261,10 @@ function f18 name="twoCoveredBlocks" parameters=[{type=anything}] results=[{type
   b3() role=CatchHandler:
     v3 = CatchException
     Rethrow v3
-}
-# CHECK-LABEL: function f18 name="twoCoveredBlocks"
 # CHECK: b0(v0: anything):
 # CHECK: b1():
 # CHECK-NOT: CatchException
+}
 
 function f19 name="valueNeverCompletes" results=[{type=undefined}] {
   b0() handler=b1():
@@ -292,25 +273,21 @@ function f19 name="valueNeverCompletes" results=[{type=undefined}] {
   b1() role=CatchHandler:
     v1 = CatchException
     Rethrow v1
-}
-# CHECK-LABEL: function f19 name="valueNeverCompletes"
 # CHECK: b0():
 # CHECK-NEXT: = CallDirect
 # CHECK-NEXT: Unreachable
 # CHECK-NOT: CatchException
+}
 
 function f20 name="alwaysThrows" results=[{type=never}] {
-  b0():
     v0 = Undefined
     Throw v0
 }
 function f21 name="doubles" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Add v0, v0
     Return v1
 }
 function f22 name="callsItsArgument" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0
     Return v1
 }

@@ -15,7 +15,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Index" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=RegExp
     v1 = String string="a"
     v2 = Construct v0, -, v1
@@ -31,11 +30,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="converted" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=0
     Return v0
 }
 function f2 name="neverStored" results=[{type=anything}] {
-  b0():
     Return
 }

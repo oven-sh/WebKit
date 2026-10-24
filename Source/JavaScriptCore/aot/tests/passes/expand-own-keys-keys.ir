@@ -13,35 +13,30 @@ function f0 name="expected" parameters=[{type=object}] results=[{type=anything}]
     v1 = CallBuiltin -, v0 overload=ObjectKeys/0
     v2 = CallBuiltin v1 overload=ArrayPrototypeLength/0
     Return v2
-}
 # A layout that is only expected gets no arm: behind arms the list of the built-in is made even where only its length is asked for.
-# CHECK-LABEL: function f0 name="expected"
 # CHECK: b0(v0: object ~ L0):
 # CHECK-NEXT: v1:{{*}}= CallBuiltin -, v0 overload=ObjectKeys/0
 # CHECK-NEXT: v2:{{*}}= CallBuiltin v1 overload=ArrayPrototypeLength/0
 # CHECK-NOT: ShapeTest
+}
 
 function f1 name="symbolAndPrivateFields" parameters=[{type=L1}] results=[{type=anything}] {
-  b0(v0: L1):
     v1 = CallBuiltin -, v0 overload=ObjectKeys/0
     v2 = CallBuiltin v1 overload=ArrayPrototypeLength/0
     Return v2
-}
-# CHECK-LABEL: function f1 name="symbolAndPrivateFields"
 # CHECK: = HasKeyOrder v0 layout=L1 fields=[0, 1, 2]
 # CHECK: [[aKey]]: "a" = String string="a"
 # CHECK-NEXT: = NewArray [[aKey]] contents=string
+}
 
 function f2 name="unchangedAllocation" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
-  b0(v0: number, v1: string):
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
     v3 = CallBuiltin -, v2 overload=ObjectKeys/0
     v4 = CallBuiltin v3 overload=ArrayPrototypeLength/0
     Return v4
-}
-# CHECK-LABEL: function f2 name="unchangedAllocation"
 # CHECK: v2:{{*}}= NewObject -, v0, v1 layout=L0 fields=[0, 1]
 # CHECK-NEXT: [[xKey2]]: "x" = String string="x"
 # CHECK-NEXT: [[yKey2]]: "y" = String string="y"
 # CHECK-NEXT: [[keys2]]: Array<string> = NewArray [[xKey2]], [[yKey2]] contents=string
 # CHECK-NOT: ObjectKeys
+}

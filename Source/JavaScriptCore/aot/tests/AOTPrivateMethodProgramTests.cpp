@@ -19,7 +19,6 @@ variable g2 module=m0 declared={type=anything} flags=[IsImmutable]
 variable g3 module=m0 declared={type=function} flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     Jump -> next b1()
   b1():
     v0 = NewClassToken layout=L0
@@ -99,7 +98,6 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     Return v73
 }
 function f1 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = GetConstructPrototype v0 layout=L0
@@ -138,7 +136,6 @@ function f3 name="onThis" module=m0 kind=Method flags=[HasThis, HasExplicitName]
     ReturnCall v5
 }
 function f4 name="onOther" module=m0 kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = GetModuleVariable variable=g1
@@ -149,7 +146,6 @@ function f4 name="onOther" module=m0 kind=Method flags=[HasExplicitName] length=
     ReturnCall v5
 }
 function f5 name="onArgument" module=m0 kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = GetModuleVariable variable=g1
@@ -168,7 +164,6 @@ function f6 name="inArrow" module=m0 kind=Method flags=[HasThis, HasExplicitName
     ReturnCall v2
 }
 function f7 name="D" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array}] results=[{type=object}] {
-  b0(v0: function, v1: anything, v2: Array):
     Jump -> next b1()
   b1():
     v3 = GetSuperBase v0
@@ -176,7 +171,6 @@ function f7 name="D" module=m0 kind=DerivedConstructor flags=[HasRestParameter, 
     Return v4
 }
 function f8 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
-  b0(v0: L0):
     Jump -> next b1()
   b1():
     v1 = GetModuleVariable variable=g1
@@ -200,7 +194,6 @@ function f9 module=m0 kind=Arrow captures=[{type=L0 flags=[IsExpected]}] thisTyp
     ReturnCall v6
 }
 function f10 name="arrowField" module=m0 kind=Arrow captures=[{type=L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: L0):
     Jump -> next b1()
   b1():
     v1 = Convert v0 declared={type=L0 flags=[IsExpected]}
@@ -221,7 +214,6 @@ variable g1 module=m0 declared={type=classtoken} flags=[IsImmutable]
 variable g2 module=m0 declared={type=anything} flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     Jump -> next b1()
   b1():
     v0 = NewClassToken layout=L0
@@ -288,7 +280,6 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     Return v60
 }
 function f1 name="C" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     v2 = GetConstructPrototype v0 layout=L0
@@ -381,7 +372,6 @@ function f6 name="get" module=m0 kind=Method flags=[HasThis, HasExplicitName] th
     Return v4
 }
 function f7 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
-  b0(v0: L0):
     Jump -> next b1()
   b1():
     v1 = GetModuleVariable variable=g1
@@ -400,7 +390,6 @@ variable g3 module=m0 declared={type=anything} flags=[IsImmutable]
 variable g4 module=m0 declared={type=anything} flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     Jump -> next b1()
   b1():
     v0 = NewClassToken layout=L0
@@ -433,7 +422,6 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     Return v26
 }
 function f1 name="Counter" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = GetConstructPrototype v0 layout=L0
@@ -526,7 +514,6 @@ function f5 name="run" module=m0 kind=Method flags=[HasThis, HasExplicitName] le
     Return v36
 }
 function f6 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
-  b0(v0: L0):
     Jump -> next b1()
   b1():
     v1 = GetModuleVariable variable=g1
@@ -548,7 +535,6 @@ variable g2 module=m0 declared={type=classtoken} flags=[IsImmutable]
 variable g3 module=m0 declared={type=anything} flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     Jump -> next b1()
   b1():
     v0 = NewClosure function=f1
@@ -628,7 +614,6 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     Return v73
 }
 function f1 name="make" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=function flags=[IsExpected]}] {
-  b0():
     Jump -> next b1()
   b1():
     v0 = GetModuleVariable variable=g0
@@ -643,7 +628,6 @@ function f1 name="make" module=m0 flags=[HasExplicitName] thisType={type=anythin
     Return v8
 }
 function f2 name="K" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = GetConstructPrototype v0 layout=L0
@@ -676,7 +660,6 @@ function f4 name="read" module=m0 kind=Method flags=[HasThis, HasExplicitName] t
     ReturnCall v4 casts=[{declared={type=number flags=[IsExpected]}}]
 }
 function f5 name="has" module=m0 kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=boolean flags=[IsExpected]}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     v1 = GetModuleVariable variable=g2
@@ -685,7 +668,6 @@ function f5 name="has" module=m0 kind=Method flags=[HasExplicitName] length=1 th
     Return v3
 }
 function f6 module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] thisType={type=anything} parameters=[{type=Array}] results=[{type=object}] {
-  b0(v0: function, v1: anything, v2: Array):
     Jump -> next b1()
   b1():
     v3 = GetSuperBase v0
@@ -703,7 +685,6 @@ function f7 name="get" module=m0 kind=Method flags=[HasThis, HasExplicitName] th
     Return v2
 }
 function f8 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
-  b0(v0: L0):
     Jump -> next b1()
   b1():
     v1 = GetModuleVariable variable=g2
@@ -719,7 +700,6 @@ function f8 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] th
     Return v10
 }
 function f9 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L1 flags=[IsFromCompiler]} results=[{type=anything}] {
-  b0(v0: L1):
     Jump -> next b1()
   b1():
     v1 = Integer integer=2

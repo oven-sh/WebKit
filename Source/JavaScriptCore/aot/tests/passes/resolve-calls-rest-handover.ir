@@ -8,7 +8,6 @@ module m0 path="main.js" displayPath="main.js"
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="target" flags=[HasThis, HasRestParameter] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=Array}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything, v3: Array):
     PutModuleVariable v3 variable=g0
     Return v1
 }
@@ -17,19 +16,15 @@ function f1 name="countsArguments" flags=[HasThis, HasArgumentCount, HasRestPara
     Return v1
 }
 function f2 name="knowsMoreOfItsRest" flags=[HasThis, HasRestParameter] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=Array<string, proven>}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything, v3: Array<string, proven>):
     Return v1
 }
 
 function f3 name="handsOver" flags=[HasThis, HasRestParameter] thisType={type=anything} parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: Array):
     v3 = NewArray v1, v0 contents=anything
     AppendSpread v3, v2
     v5 = NewClosure function=f0
     v6 = CallList v5, v0, v3
     Return v6
-}
-# CHECK-LABEL: function f3 name="handsOver"
 # CHECK: b0(
 # CHECK-NOT: NewArray
 # CHECK-NOT: AppendSpread
@@ -43,24 +38,22 @@ function f3 name="handsOver" flags=[HasThis, HasRestParameter] thisType={type=an
 # CHECK: Branch [[fits]] -> taken [[direct]](), notTaken [[asBefore]]()
 # CHECK: [[direct]]():
 # CHECK: = CallDirect v0, v1, v0, v2 function=f0
+}
 
 function f4 name="handsOverInTailPosition" flags=[HasThis, HasRestParameter] thisType={type=anything} parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: Array):
     v3 = NewArray v1, v0 contents=anything
     AppendSpread v3, v2
     v5 = NewClosure function=f0
     v6 = CallList v5, v0, v3
     ReturnCall v6
-}
-# CHECK-LABEL: function f4 name="handsOverInTailPosition"
 # CHECK: [[listCall]]: {{*}} = CallList
 # CHECK-NEXT: ReturnCall [[listCall]]
 # CHECK: [[call]]: {{*}} = CallDirect v0, v1, v0, v2 function=f0
 # CHECK-NEXT: ReturnCall [[call]]
+}
 
 # As ExpandIteration leaves a spread.
 function f5 name="handsOverWhereTheSpreadIsExpanded" flags=[HasThis, HasRestParameter] thisType={type=anything} parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: Array):
     v3 = NewArray v1, v0 contents=anything
     v4 = AssumeType v3 castType=Array<anything, proven, Contiguous, pristine[Storage, Names, Dense]>
     v5 = IsPristine v2 builtinClass=Array aspects=[Storage, Names]
@@ -75,8 +68,6 @@ function f5 name="handsOverWhereTheSpreadIsExpanded" flags=[HasThis, HasRestPara
     v9 = NewClosure function=f0
     v10 = CallList v9, v0, v4
     ReturnCall v10
-}
-# CHECK-LABEL: function f5 name="handsOverWhereTheSpreadIsExpanded"
 # CHECK-NOT: AppendElements
 # CHECK-NOT: function=f12
 # CHECK: frequency=Rare:
@@ -85,10 +76,10 @@ function f5 name="handsOverWhereTheSpreadIsExpanded" flags=[HasThis, HasRestPara
 # CHECK-NEXT: = CallList v9, v0, [[listOfExpanded]]
 # CHECK: [[callOfExpanded]]: {{*}} = CallDirect v0, v1, v0, v2 function=f0
 # CHECK-NEXT: ReturnCall [[callOfExpanded]]
+}
 
 # The other way through the function looks at the array, and never meets the call. It is unlikely, so the array is not one that could lie in a frame for most calls.
 function f6 name="handsOverOnTheLikelyWay" flags=[HasThis, HasRestParameter] thisType={type=anything} parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: Array):
     v3 = ToBoolean v1
     Branch v3 -> taken b1(), notTaken b2()
   b1():
@@ -100,35 +91,29 @@ function f6 name="handsOverOnTheLikelyWay" flags=[HasThis, HasRestParameter] thi
   b2() frequency=Unlikely:
     PutModuleVariable v2 variable=g0
     Return v2
-}
-# CHECK-LABEL: function f6 name="handsOverOnTheLikelyWay"
 # CHECK: = CallDirect v0, v1, v0, v2 function=f0
+}
 
 function f7 name="oneValueTooFew" flags=[HasThis, HasRestParameter] thisType={type=anything} parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: Array):
     v3 = NewArray v1 contents=anything
     AppendSpread v3, v2
     v5 = NewClosure function=f0
     v6 = CallList v5, v0, v3
     Return v6
-}
-# CHECK-LABEL: function f7 name="oneValueTooFew"
 # CHECK-NOT: CallDirect
+}
 
 function f8 name="calleeCountsItsArguments" flags=[HasThis, HasRestParameter] thisType={type=anything} parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: Array):
     v3 = NewArray v1, v0 contents=anything
     AppendSpread v3, v2
     v5 = NewClosure function=f1
     v6 = CallList v5, v0, v3
     Return v6
-}
-# CHECK-LABEL: function f8 name="calleeCountsItsArguments"
 # CHECK-NOT: CallDirect
+}
 
 # The callee may change the array, and this function looks at it again.
 function f9 name="restIsReadBehindTheCall" flags=[HasThis, HasRestParameter] thisType={type=anything} parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: Array):
     v3 = NewArray v1, v0 contents=anything
     AppendSpread v3, v2
     v5 = NewClosure function=f0
@@ -136,55 +121,46 @@ function f9 name="restIsReadBehindTheCall" flags=[HasThis, HasRestParameter] thi
     v7 = Integer integer=0
     v8 = ElemGet v2, v7
     Return v8
-}
-# CHECK-LABEL: function f9 name="restIsReadBehindTheCall"
 # CHECK-NOT: CallDirect
+}
 
 # Somebody else has the array, and sees what the callee does to it.
 function f10 name="restIsKeptBeforeTheCall" flags=[HasThis, HasRestParameter] thisType={type=anything} parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: Array):
     PutModuleVariable v2 variable=g0
     v4 = NewArray v1, v0 contents=anything
     AppendSpread v4, v2
     v6 = NewClosure function=f0
     v7 = CallList v6, v0, v4
     Return v7
-}
-# CHECK-LABEL: function f10 name="restIsKeptBeforeTheCall"
 # CHECK-NOT: CallDirect
+}
 
 function f11 name="listIsKept" flags=[HasThis, HasRestParameter] thisType={type=anything} parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: Array):
     v3 = NewArray v1, v0 contents=anything
     AppendSpread v3, v2
     v5 = NewClosure function=f0
     v6 = CallList v5, v0, v3
     Return v3
-}
-# CHECK-LABEL: function f11 name="listIsKept"
 # CHECK-NOT: CallDirect
+}
 
 function f12 name="appendIterable" role=OutlinedBody thisType={type=anything} parameters=[{type=Array}, {type=anything}] results=[{type=undefined}] derivation={node=1 parameterMap=[{}, {}]} {
-  b0(v0: Array, v1: anything):
     AppendSpread v0, v1
     v3 = Undefined
     Return v3
 }
 
 function f13 name="appendedTwice" flags=[HasThis, HasRestParameter] thisType={type=anything} parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: Array):
     v3 = NewArray v1, v0 contents=anything
     AppendSpread v3, v2
     AppendSpread v3, v2
     v6 = NewClosure function=f0
     v7 = CallList v6, v0, v3
     Return v7
-}
-# CHECK-LABEL: function f13 name="appendedTwice"
 # CHECK-NOT: CallDirect
+}
 
 function f14 name="appendedOnOneWayOnly" flags=[HasThis, HasRestParameter] thisType={type=anything} parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: Array):
     v3 = NewArray v1, v0 contents=anything
     v4 = ToBoolean v1
     Branch v4 -> taken b1(), notTaken b2()
@@ -195,13 +171,11 @@ function f14 name="appendedOnOneWayOnly" flags=[HasThis, HasRestParameter] thisT
     v6 = NewClosure function=f0
     v7 = CallList v6, v0, v3
     Return v7
-}
-# CHECK-LABEL: function f14 name="appendedOnOneWayOnly"
 # CHECK-NOT: CallDirect
+}
 
 # The second round would hand over an array that the callee of the first has.
 function f15 name="calledInLoop" flags=[HasThis, HasRestParameter] thisType={type=anything} parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: Array):
     Jump -> next b1()
   b1():
     LoopHint
@@ -213,49 +187,41 @@ function f15 name="calledInLoop" flags=[HasThis, HasRestParameter] thisType={typ
     Branch v8 -> taken b1(), notTaken b2()
   b2():
     Return v7
-}
-# CHECK-LABEL: function f15 name="calledInLoop"
 # CHECK-NOT: CallDirect
+}
 
 # An array that is not this frame's rest array belongs to somebody.
 function f16 name="spreadsAnotherArray" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: Array):
     v3 = NewArray v1, v0 contents=anything
     AppendSpread v3, v2
     v5 = NewClosure function=f0
     v6 = CallList v5, v0, v3
     Return v6
-}
-# CHECK-LABEL: function f16 name="spreadsAnotherArray"
 # CHECK-NOT: CallDirect
+}
 
 function f17 name="calleeKnowsMoreOfItsRestArray" flags=[HasThis, HasRestParameter] thisType={type=anything} parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: Array):
     v3 = NewArray v1, v0 contents=anything
     AppendSpread v3, v2
     v5 = NewClosure function=f2
     v6 = CallList v5, v0, v3
     Return v6
-}
-# CHECK-LABEL: function f17 name="calleeKnowsMoreOfItsRestArray"
 # CHECK-NOT: CallDirect
+}
 
 # What stands between the spread and the call would see what the spread of an array that is not as it was made has done.
 function f18 name="readsBetweenSpreadAndCall" flags=[HasThis, HasRestParameter] thisType={type=anything} parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: Array):
     v3 = NewArray v1, v0 contents=anything
     AppendSpread v3, v2
     v5 = GetModuleVariable variable=g0
     v6 = NewClosure function=f0
     v7 = CallList v6, v5, v3
     Return v7
-}
-# CHECK-LABEL: function f18 name="readsBetweenSpreadAndCall"
 # CHECK-NOT: CallDirect
+}
 
 # A read before the call shows the array to nobody.
 function f19 name="handsOverWhatItHasRead" flags=[HasThis, HasRestParameter] thisType={type=anything} parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: Array):
     v3 = PropGet v2 key="length"
     v4 = Integer integer=0
     v5 = ElemGet v2, v4
@@ -264,13 +230,11 @@ function f19 name="handsOverWhatItHasRead" flags=[HasThis, HasRestParameter] thi
     v8 = NewClosure function=f0
     v9 = CallList v8, v0, v6
     Return v9
-}
-# CHECK-LABEL: function f19 name="handsOverWhatItHasRead"
 # CHECK: = CallDirect v0, v3, v5, v2 function=f0
+}
 
 # A way that is as likely leaves without the call: the array may lie in a frame as long as this function only reads it, and the callee may be one that keeps it.
 function f20 name="anotherWayIsAsLikely" flags=[HasThis, HasRestParameter] thisType={type=anything} parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: Array):
     v3 = ToBoolean v1
     Branch v3 -> taken b1(), notTaken b2()
   b1():
@@ -281,19 +245,16 @@ function f20 name="anotherWayIsAsLikely" flags=[HasThis, HasRestParameter] thisT
     Return v7
   b2():
     Return v1
-}
-# CHECK-LABEL: function f20 name="anotherWayIsAsLikely"
 # CHECK-NOT: CallDirect
+}
 
 # The name under which the array is spread says what the callee wants to know of its rest array.
 function f21 name="spreadsUnderNameThatSaysMore" flags=[HasThis, HasRestParameter] thisType={type=anything} parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: Array):
     v3 = AssumeType v2 castType=Array<string, proven>
     v4 = NewArray v1, v0 contents=anything
     AppendSpread v4, v3
     v6 = NewClosure function=f2
     v7 = CallList v6, v0, v4
     Return v7
-}
-# CHECK-LABEL: function f21 name="spreadsUnderNameThatSaysMore"
 # CHECK: = CallDirect v0, v1, v0, v3 function=f2
+}

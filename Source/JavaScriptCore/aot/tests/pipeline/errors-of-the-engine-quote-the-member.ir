@@ -29,7 +29,6 @@ typesite w0 module=m0 position=40 kind=Parameter
 typesite w1 module=m0 position=80 kind=Parameter
 layout L0 name="Box" fields=[{key="width" declared={type=number} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=7
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = FinishObject v1
@@ -45,36 +44,30 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="readTyped" flags=[IsChecked] parameters=[{type=undefined|null|L0 site=w0}] results=[{type=anything}] {
-  b0(v0: undefined|null|L0):
     v1 = PropGet v0 key="width"
     Return v1
 }
 function f2 name="storeTyped" flags=[IsChecked] parameters=[{type=undefined|null|L0 site=w1}] results=[{type=anything}] {
-  b0(v0: undefined|null|L0):
     v1 = Integer integer=8
     PropSet v0, v1 key="width" mode=Strict
     Return
 }
 function f3 name="readByName" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="height"
     Return v1
 }
 function f4 name="storeByName" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=9
     PropSet v0, v1 key="height" mode=Strict
     Return
 }
 function f5 name="callInTheMiddle" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Undefined
     v2 = Call v1, v0 calleeKey="absent" calleeName="absent"
     v3 = PropGet v2 key="height"
     Return v3
 }
 function f6 name="callLast" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=5
     v2 = Call v1, -, v0 calleeName="five"
     ReturnCall v2

@@ -24,17 +24,14 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" module=m0 position=7
 function f0 name="parse" position=40 results=[{type=undefined}] {
-  b0():
     v0 = Undefined @44
     Return v0
 }
 function f1 position=60 results=[{type=undefined}] {
-  b0():
     v0 = Undefined
     Return v0
 }
 function f2 name="parse" position=80 role=OutlinedBody results=[{type=undefined}] derivation={source=f0} {
-  b0():
     v0 = Undefined
     Return v0
 }

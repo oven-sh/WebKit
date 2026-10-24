@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="only" results=[{type=undefined}] {
-  b0():
     Return
 }
 # CHECK-NOT: function f0

@@ -9,7 +9,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="xorWithIntegerOrUndefined" parameters=[{type=i32}, {type=undefined|i32}] results=[{type=i32}] {
-  b0(v0: i32, v1: undefined|i32):
     v2 = BitXor v0, v1 form=Numbers
     Return v2
 }
@@ -20,7 +19,6 @@ function f0 name="xorWithIntegerOrUndefined" parameters=[{type=i32}, {type=undef
 # CODE-NOT: operation
 
 function f1 name="everyOperatorWithWideIntegerOrNull" parameters=[{type=undefined|null|int}, {type=i32}] results=[{type=int}] {
-  b0(v0: undefined|null|int, v1: i32):
     v2 = BitAnd v0, v1 form=Numbers
     v3 = BitOr v2, v0 form=Numbers
     v4 = LShift v0, v3 form=Numbers
@@ -39,7 +37,6 @@ function f1 name="everyOperatorWithWideIntegerOrNull" parameters=[{type=undefine
 # CODE-NOT: operation
 
 function f2 name="xorWithNumberOrUndefined" parameters=[{type=i32}, {type=undefined|number}] results=[{type=i32}] {
-  b0(v0: i32, v1: undefined|number):
     v2 = BitXor v0, v1 form=Numbers
     Return v2
 }
@@ -51,10 +48,8 @@ function f2 name="xorWithNumberOrUndefined" parameters=[{type=i32}, {type=undefi
 # CALLS: operation operationAOTToInt32 x1
 
 function f3 name="sumWithIntegerOrUndefined" parameters=[{type=i32}, {type=undefined|i32}] results=[{type=number}] {
-  b0(v0: i32, v1: undefined|i32):
     v2 = Add v0, v1 form=Numbers
     Return v2
-}
-# CHECK-LABEL: function f3 name="sumWithIntegerOrUndefined"
 # CHECK: b0(v0: i32 @Int32, v1: undefined|i32 @OptionalInt64):
 # CHECK-NEXT: number @Double = Add v0, v1 form=Numbers
+}

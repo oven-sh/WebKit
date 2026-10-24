@@ -10,7 +10,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="a" flags=[IsAsync] parameters=[{type=number}, {type=Promise<string, proven>}, {type=Promise<string>}, {type=undefined|Promise<string, proven>}, {type=object}] results=[{type=anything}] {
-  b0(v0: number, v1: Promise<string, proven>, v2: Promise<string>, v3: undefined|Promise<string, proven>, v4: object):
     v5 = Await v0
     v6 = Await v1
     v7 = Await v2

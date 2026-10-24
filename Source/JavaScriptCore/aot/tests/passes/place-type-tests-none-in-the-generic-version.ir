@@ -3,20 +3,10 @@
 # RUN: pass PlaceTypeTests
 # STATISTIC: TypeTestsPlaced = 1
 
-module m0 path="main.ts" displayPath="main.ts"
-function f0 name="square" module=m0 parameters=[{type=number flags=[IsExpected]}] results=[{type=number|bigint}] {
-  b0(v0: anything ~ number):
-    v1 = Mul v0, v0
-    Return v1
-}
 # CHECK-LABEL: function f0 name="square"
 # CHECK: = TypeTest v0 testedType=number
 
-function f1 name="square" module=m0 role=GenericVersion parameters=[{type=number flags=[IsExpected]}] results=[{type=number|bigint}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f0} creator=Version{provenVersion=f0} {
-  b0(v0: anything ~ number):
-    v1 = Mul v0, v0
-    Return v1
-}
 # CHECK-LABEL: function f1 name="square"
 # CHECK-NOT: TypeTest
 # CHECK: = Mul v0, v0
+# PROGRAM-OF: ../select/code-shapes-generic-version.ir

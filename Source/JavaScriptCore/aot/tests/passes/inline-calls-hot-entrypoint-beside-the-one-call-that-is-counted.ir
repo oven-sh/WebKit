@@ -3,28 +3,10 @@
 # OPTIONS: check=VerifyEachPass heat=EverythingIsHot only-passes=EstimateHeat,SummarizeForInlining,InlineCalls
 # RUN: pipeline InlineCalls
 
-module m0 path="main.js" displayPath="main.js" body=f0
-entry module=m0
-
-function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="input" [isFreeName]
-    v2 = NewClosure function=f1
-    v3 = Call v2, -, v1
-    Return v3
-}
 # CHECK-LABEL: function f0 name="main"
 # CHECK: = Call {{*}}callees=[f1]
 
-function f1 name="calledAtOnePlace" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
-    v1 = ToNumber v0
-# REPEAT: i = 1..21
-    v%(i+1) = Mul v%(i), v1
-# END REPEAT
-    Return v22
-}
 # CHECK-LABEL: name="calledAtOnePlace" module=m0 role=GenericEntrypoint
 # CHECK-NOT: = CallDirect
 # CHECK-COUNT-21: = Mul
+# PROGRAM-OF: inline-calls-entrypoint-beside-the-one-call-that-is-counted.ir

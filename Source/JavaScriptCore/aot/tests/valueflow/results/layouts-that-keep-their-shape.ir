@@ -22,7 +22,6 @@ layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequir
 layout L1 name="Redefined" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
 layout L2 kind=Instance name="Maker" constructor=f1 fields=[{key="x" declared={type=anything}}] flags=[IsConstructorFunction]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L0 fields=[0]
     PutModuleVariable v1 variable=g0
@@ -37,7 +36,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Maker" flags=[HasThis] thisType={type=L2} results=[{type=anything}] {
-  b0(v0: L2):
     v1 = Integer integer=2
     PropSet v0, v1 key="x"
     Return

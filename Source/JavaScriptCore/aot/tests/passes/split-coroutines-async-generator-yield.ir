@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="adjacent" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
-  b0(v0: function, v1: anything):
     InitialYield @10
     v3 = Await v1 @11
     v4 = Yield v3 @12
@@ -21,7 +20,6 @@ function f0 name="adjacent" flags=[IsAsync, IsGenerator, TakesCallee] parameters
     Return v1
 }
 function f1 name="throughUpcasts" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
-  b0(v0: function, v1: anything):
     InitialYield @10
     v3 = Await v1 @11
     v4 = Upcast v3 castType=anything
@@ -31,7 +29,6 @@ function f1 name="throughUpcasts" flags=[IsAsync, IsGenerator, TakesCallee] para
     Return v7
 }
 function f2 name="twoInOneBlock" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
-  b0(v0: function, v1: anything):
     InitialYield @10
     v3 = Await v1 @11
     v4 = Yield v3 @12
@@ -42,7 +39,6 @@ function f2 name="twoInOneBlock" flags=[IsAsync, IsGenerator, TakesCallee] param
     Return v8
 }
 function f3 name="checkBetween" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
-  b0(v0: function, v1: anything):
     InitialYield @10
     v3 = Await v1 @11
     v4 = Check v3 castType=number cause=AddedByPass
@@ -51,7 +47,6 @@ function f3 name="checkBetween" flags=[IsAsync, IsGenerator, TakesCallee] parame
     Return v6
 }
 function f4 name="awaitedValueHasSecondUse" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
-  b0(v0: function, v1: anything):
     InitialYield @10
     v3 = Await v1 @11
     v4 = Yield v3 @12
@@ -59,7 +54,6 @@ function f4 name="awaitedValueHasSecondUse" flags=[IsAsync, IsGenerator, TakesCa
     Return v3
 }
 function f5 name="upcastHasSecondUse" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
-  b0(v0: function, v1: anything):
     InitialYield @10
     v3 = Await v1 @11
     v4 = Upcast v3 castType=anything
@@ -68,7 +62,6 @@ function f5 name="upcastHasSecondUse" flags=[IsAsync, IsGenerator, TakesCallee] 
     Return v4
 }
 function f6 name="callBetween" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
-  b0(v0: function, v1: anything):
     InitialYield @10
     v3 = Await v1 @11
     v4 = Call v1
@@ -77,7 +70,6 @@ function f6 name="callBetween" flags=[IsAsync, IsGenerator, TakesCallee] paramet
     Return v6
 }
 function f7 name="constantBetween" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
-  b0(v0: function, v1: anything):
     InitialYield @10
     v3 = Await v1 @11
     v4 = Integer integer=7
@@ -86,7 +78,6 @@ function f7 name="constantBetween" flags=[IsAsync, IsGenerator, TakesCallee] par
     Return v4
 }
 function f8 name="yieldInNextBlock" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
-  b0(v0: function, v1: anything):
     InitialYield @10
     v3 = Await v1 @11
     Jump -> next b1()
@@ -96,14 +87,12 @@ function f8 name="yieldInNextBlock" flags=[IsAsync, IsGenerator, TakesCallee] pa
     Return v5
 }
 function f9 name="yieldsWithoutAwait" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
-  b0(v0: function, v1: anything):
     InitialYield @10
     v3 = Yield v1 @12
     v4 = ResultAt v3 index=0
     Return v4
 }
 function f10 name="synchronousGenerator" flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] {
-  b0(v0: function, v1: anything):
     InitialYield @10
     v3 = Yield v1 @12
     v4 = ResultAt v3 index=0

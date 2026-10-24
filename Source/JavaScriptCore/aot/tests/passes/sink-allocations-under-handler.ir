@@ -8,7 +8,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
 
 function f0 name="swapInCoveredBlock" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1() handler=b3():
     v2 = NewArray v1, v0 contents=anything
@@ -22,8 +21,6 @@ function f0 name="swapInCoveredBlock" parameters=[{type=anything}, {type=anythin
   b3() role=CatchHandler:
     v7 = CatchValue
     Return v7
-}
-# CHECK-LABEL: function f0 name="swapInCoveredBlock"
 # CHECK-NOT: NewArray
 # CHECK-NOT: DestructureIterable
 # CHECK: b1() handler=b3():
@@ -31,9 +28,9 @@ function f0 name="swapInCoveredBlock" parameters=[{type=anything}, {type=anythin
 # CHECK-NEXT: v5: anything = Upcast v0 castType=anything
 # CHECK-NEXT: = Call v4, -, v5
 # CHECK-NEXT: Jump -> next b2()
+}
 
 function f1 name="writtenBetweenCallsReadInHandler" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = NewObject -, v0 layout=L0 fields=[0]
     Jump -> next b1()
   b1() handler=b3():
@@ -50,8 +47,6 @@ function f1 name="writtenBetweenCallsReadInHandler" parameters=[{type=anything},
     v10 = CatchValue
     v11 = PropGet v3 key="x" receivers=[L0]
     Return v11
-}
-# CHECK-LABEL: function f1 name="writtenBetweenCallsReadInHandler"
 # CHECK-NOT: NewObject
 # CHECK-NOT: PropSet
 # CHECK: b1() handler=b3(v0):
@@ -67,9 +62,9 @@ function f1 name="writtenBetweenCallsReadInHandler" parameters=[{type=anything},
 # CHECK-NEXT: v8: anything = Call v0
 # CHECK-NEXT: Jump -> next b2()
 # CHECK-NOT: handler=
+}
 
 function f2 name="valueOfCoveredBlockReachesHandler" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     Jump -> next b1()
   b1() handler=b3():
@@ -83,8 +78,6 @@ function f2 name="valueOfCoveredBlockReachesHandler" parameters=[{type=anything}
     v6 = CatchValue
     v7 = Call v6, -, v2
     Return v7
-}
-# CHECK-LABEL: function f2 name="valueOfCoveredBlockReachesHandler"
 # CHECK: b0(
 # CHECK-NEXT: Jump -> next b1()
 # CHECK: b1() handler=b3(v0):
@@ -97,9 +90,9 @@ function f2 name="valueOfCoveredBlockReachesHandler" parameters=[{type=anything}
 # CHECK: [[second2]]() handler=b3(v3):
 # CHECK-NEXT: v5: anything = Call v1
 # CHECK-NOT: NewObject
+}
 
 function f3 name="handlerBuildsByTag" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     Jump -> next b1()
   b1() handler=b3():
@@ -113,8 +106,6 @@ function f3 name="handlerBuildsByTag" parameters=[{type=anything}, {type=anythin
     v6 = CatchValue
     v7 = Call v6, -, v2
     Return v7
-}
-# CHECK-LABEL: function f3 name="handlerBuildsByTag"
 # CHECK: b0(
 # CHECK-NEXT: [[short3]]: 1 = Integer integer=1
 # CHECK-NEXT: [[none3]]: anything = Unspecified valueType=anything
@@ -134,6 +125,7 @@ function f3 name="handlerBuildsByTag" parameters=[{type=anything}, {type=anythin
 # CHECK-NEXT: = NewObject -, [[x3]] layout=L0 fields=[0]
 # CHECK: [[longArm3]]():
 # CHECK-NEXT: = NewObject -, [[x3]], [[y3]] layout=L0 fields=[0, 1]
+}
 
 function f4 name="coveredEntryBlock" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything) handler=b1():
@@ -144,8 +136,6 @@ function f4 name="coveredEntryBlock" parameters=[{type=anything}, {type=anything
   b1() role=CatchHandler:
     v5 = CatchValue
     Return v5
-}
-# CHECK-LABEL: function f4 name="coveredEntryBlock"
 # CHECK-NOT: NewObject
 # CHECK: b0(v0: anything, v1: anything):
 # CHECK-NEXT: Jump -> next [[covered4]]()
@@ -153,9 +143,9 @@ function f4 name="coveredEntryBlock" parameters=[{type=anything}, {type=anything
 # CHECK-NEXT: v3: anything = Call v0
 # CHECK-NEXT: v4: anything = Upcast v0 castType=anything
 # CHECK-NEXT: Return v4
+}
 
 function f5 name="passedToCallInCoveredBlock" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     Jump -> next b1()
   b1() handler=b3():
@@ -167,17 +157,15 @@ function f5 name="passedToCallInCoveredBlock" parameters=[{type=anything}, {type
     v4 = CatchValue
     v5 = PropGet v2 key="x" receivers=[L0]
     Return v5
-}
-# CHECK-LABEL: function f5 name="passedToCallInCoveredBlock"
 # CHECK: b0(
 # CHECK-NEXT: v2:{{*}}= NewObject -, v0 layout=L0 fields=[0]
 # CHECK: b1() handler=b3():
 # CHECK-NEXT: = Call v0, -, v2
 # CHECK: b3() role=CatchHandler:
 # CHECK: = PropGet v2 key="x"
+}
 
 function f6 name="passedToCallInCoveredBlockOnOnePath" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     v3 = NewObject -, v0 layout=L0 fields=[0]
     Branch v2 -> taken b1(), notTaken b4()
   b1() handler=b3():
@@ -191,8 +179,6 @@ function f6 name="passedToCallInCoveredBlockOnOnePath" parameters=[{type=anythin
     Return v6
   b4():
     Return v1
-}
-# CHECK-LABEL: function f6 name="passedToCallInCoveredBlockOnOnePath"
 # CHECK: b0(
 # CHECK-NOT: NewObject
 # CHECK: b1() handler=b3(
@@ -208,3 +194,4 @@ function f6 name="passedToCallInCoveredBlockOnOnePath" parameters=[{type=anythin
 # CHECK: [[continuation6]]([[passed6]]: L0):
 # CHECK-NEXT: = Call v5, -, [[passed6]]
 # CHECK: Jump -> next [[continuation6]]([[carried6]])
+}

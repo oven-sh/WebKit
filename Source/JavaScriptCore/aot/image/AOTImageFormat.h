@@ -14,6 +14,7 @@
 #include "AOTVarint.h"
 #include "AOTVector.h"
 #include "CPU.h"
+#include "CPUFeatureSet.h"
 #include "StackAlignment.h"
 #include <algorithm>
 #include <array>
@@ -43,49 +44,48 @@ static constexpr size_t imageFFIDirectoryAlignment = 4;
 constexpr uint32_t alignmentOfConstant(size_t size) { return static_cast<uint32_t>(std::min(imageConstantsAlignment, size_t { 1 } << std::countr_zero(size))); }
 static_assert(!(imagePageSize % imageSectionAlignment));
 
-#if CPU(X86_64)
-static constexpr size_t sizeOfNearCall = 5;
-static constexpr size_t sizeOfJump = 5;
-static constexpr size_t codeOffsetUnit = 1;
-#else
-static constexpr size_t sizeOfNearCall = sizeof(uint32_t);
-static constexpr size_t sizeOfJump = sizeof(uint32_t);
-static constexpr size_t codeOffsetUnit = sizeof(uint32_t);
-#endif
+static constexpr size_t sizeOfNearCall = isX86_64() ? 5 : sizeof(uint32_t);
+static constexpr size_t sizeOfJump = isX86_64() ? 5 : sizeof(uint32_t);
+static constexpr size_t codeOffsetUnit = isX86_64() ? 1 : sizeof(uint32_t);
+
+// A section, the type of its elements, the statistic that counts its bytes.
+// MethodLookups has the code offset of the lookup of each selector of the method table, in units of codeOffsetUnit.
+// MethodTable has the code offsets that calls through the method table load. Each instance maps a copy-on-write clone of it, so it begins at a page and nothing else lies in its pages. Nothing writes it.
+#define FOR_EACH_AOT_IMAGE_SECTION(macro) \
+    macro(Functions, ImageFunction, FunctionRecordBytesEmitted) \
+    macro(FunctionStarts, uint32_t, FunctionStartBytesEmitted) \
+    macro(CodeGranules, uint32_t, CodeGranuleBytesEmitted) \
+    macro(InnerEntries, ImageInnerEntry, InnerEntryBytesEmitted) \
+    macro(Frames, ImageFrame, OtherTableBytesEmitted) \
+    macro(FrameMaps, uint32_t, FrameMapBytesEmitted) \
+    macro(ClosureWords, uint64_t, ClosureWordBytesEmitted) \
+    macro(Positions, uint8_t, SideTableBytesPositions) \
+    macro(FaultSites, uint8_t, FaultSiteBytesEmitted) \
+    macro(SideTables, uint8_t, SideTableBytesEmitted) \
+    macro(SharedCodeCopies, uint32_t, OtherTableBytesEmitted) \
+    macro(Strings, ImageStringWord, StringRecordBytesEmitted) \
+    macro(LongStrings, uint32_t, StringRecordBytesEmitted) \
+    macro(Text, uint8_t, TextBytesEmitted) \
+    macro(Identifiers, ImageIdentifierWord, IdentifierBytesEmitted) \
+    macro(StringConstants, uint32_t, StringConstantBytesEmitted) \
+    macro(StringHeaders, ImageStringHeaderOrRecord, StringHeaderBytesEmitted) \
+    macro(RegExps, ImageRegExp, RegExpRecordBytesEmitted) \
+    macro(RegExpHashes, ImageRegExpHash, RegExpRecordBytesEmitted) \
+    macro(RegExpDetails, uint8_t, RegExpRecordBytesEmitted) \
+    macro(WebAssemblyDirectory, uint8_t, OtherTableBytesEmitted) \
+    macro(ProgramTables, uint8_t, ProgramTableBytesEmitted) \
+    macro(StubAddresses, StubAddressInImage, OtherTableBytesEmitted) \
+    macro(StubReturnSites, StubReturnSite, OtherTableBytesEmitted) \
+    macro(SlotHandlers, uint32_t, OtherTableBytesEmitted) \
+    macro(MethodLookups, uint32_t, OtherTableBytesEmitted) \
+    macro(MethodTable, uint32_t, OtherTableBytesEmitted)
 
 enum class ImageSection : uint8_t {
-    Functions,
-    FunctionStarts,
-    CodeGranules,
-    InnerEntries,
-    Frames,
-    FrameMaps,
-    ClosureWords,
-    Positions,
-    FaultSites,
-    SideTables,
-    SharedCodeCopies,
-    Strings,
-    LongStrings,
-    Text,
-    Identifiers,
-    StringConstants,
-    StringHeaders,
-    RegExps,
-    RegExpHashes,
-    RegExpDetails,
-    WebAssemblyDirectory,
-    ProgramTables,
-    StubAddresses,
-    StubReturnSites,
-    SlotHandlers,
-    // The code offset of the lookup of each selector of the method table, in units of codeOffsetUnit.
-    MethodLookups,
-    // The code offsets that calls through the method table load. Each instance maps a copy-on-write clone of it, so it begins at a page and nothing else lies in its pages. Nothing writes it.
-    MethodTable,
+#define AOT_NAME_OF_SECTION(name, Element, statistic) name,
+    FOR_EACH_AOT_IMAGE_SECTION(AOT_NAME_OF_SECTION)
+#undef AOT_NAME_OF_SECTION
 };
-static constexpr unsigned numberOfImageSections = 27;
-static_assert(static_cast<unsigned>(ImageSection::MethodTable) + 1 == numberOfImageSections);
+static constexpr unsigned numberOfImageSections = static_cast<unsigned>(ImageSection::MethodTable) + 1;
 
 struct ImageSectionRange {
     uint32_t offset;
@@ -132,12 +132,6 @@ enum class ImageFlag : uint32_t {
 // codeOffset and sections[].offset count from the header.
 struct ImageHeader {
     bool has(ImageFlag flag) const { return flags & static_cast<uint32_t>(flag); }
-    bool isObfuscated() const { return has(ImageFlag::IsObfuscated); }
-    bool admitsUnknownJavaScript() const { return has(ImageFlag::AdmitsUnknownJavaScript); }
-    bool loadsModulesByName() const { return has(ImageFlag::LoadsModulesByName); }
-    bool admitsLibraryText() const { return has(ImageFlag::AdmitsLibraryText); }
-    bool showsWaysBetweenModuleObjects() const { return has(ImageFlag::ShowsWaysBetweenModuleObjects); }
-    bool loadsCodeOutsideImage() const { return !runsOnlyCodeOfImage && has(ImageFlag::LoadsCodeOutsideImage); }
 
     uint64_t magic;
     uint64_t stamp;
@@ -166,6 +160,8 @@ static_assert(offsetof(ImageHeader, address) == 56, "Bun's writers of executable
 static_assert(offsetof(ImageHeader, executableSize) == 64, "Bun's writer of ELF executables reads this member by offset");
 static_assert(offsetof(ImageHeader, formatVersion) == 72 && offsetof(ImageHeader, options) == 80, "whoever reads an image without this header finds the members in front of `options` by offset: they stay where they are");
 static_assert(offsetof(ImageHeader, sections) == 208 && numberOfImageSections == 27 && offsetof(ImageHeader, code) + offsetof(ImageCodeRanges, constantsOffset) == 464 && offsetof(ImageHeader, code) + offsetof(ImageCodeRanges, constantsSize) == 468, "Bun's test/aot/cli/compiled-image.ts reads these members by offset");
+
+JS_EXPORT_PRIVATE uint64_t imageStamp(CPUFeatureSet, const std::array<uint8_t, 16>& identity, Wire::ImageForm = imageFormOfThisRuntime());
 
 enum class ImageFunctionFlag : uint8_t {
     HasInlineFrames = 1 << 0,
@@ -204,18 +200,13 @@ static_assert(defaultLimitValue(LimitID::ImageFunctions, hostArchitecture()) == 
 struct ImageFrame {
     static constexpr unsigned maxCalleeSavesStart = (1u << 6) - 1;
     static constexpr uint16_t hasNoFrameRecordBit = 1u << 15;
-    // Not in the table: Image::frameAtReturnOffset() sets it from ImageFunctionFlag::SpillsArgumentRegisters, which holds where the function has no frame too.
+    // Not in the table: its reader sets it from ImageFunctionFlag::SpillsArgumentRegisters, which holds where the function has no frame too.
     static constexpr uint16_t liesBelowSpilledArgumentsBit = 1u << 14;
     // Not in the table either: of code that has no frame record and nothing else on the stack, so that its return address is on top.
     static constexpr uint16_t isEmptyBit = 1u << 13;
     static constexpr ImageFrame empty() { return { 0, hasNoFrameRecordBit | isEmptyBit, 0 }; }
-#if CPU(ARM64)
-    static constexpr unsigned firstEncodedGPR = 16;
-    static constexpr unsigned firstEncodedFPR = 32;
-#else
-    static constexpr unsigned firstEncodedGPR = 0;
-    static constexpr unsigned firstEncodedFPR = 16;
-#endif
+    static constexpr unsigned firstEncodedGPR = isARM64() ? 16 : 0;
+    static constexpr unsigned firstEncodedFPR = isARM64() ? 32 : 16;
 
     static uint64_t unpackRegisters(uint32_t packed) { return static_cast<uint64_t>(packed & 0xffff) << firstEncodedGPR | static_cast<uint64_t>(packed >> 16) << firstEncodedFPR; }
     static uint32_t packRegisters(uint64_t mask)
@@ -267,7 +258,6 @@ struct SideTableInputs {
 struct SideTableParts {
     static SideTableParts read(const ImageFunction&, const uint8_t* sideTables);
     static void append(Vector<uint8_t>& stream, const SideTableInputs&);
-    static void appendFrameRange(Vector<uint8_t>& bytes, uint32_t previousEnd, uint32_t begin, uint32_t end);
     static void appendFrameChange(Vector<uint8_t>& bytes, uint32_t previousChange, uint32_t change);
 
     bool hasFrameAt(uint32_t offset) const;
@@ -324,13 +314,6 @@ inline void SideTableParts::append(Vector<uint8_t>& stream, const SideTableInput
         stream.append(inputs.handlers);
     }
     stream.append(inputs.callSites);
-}
-
-inline void SideTableParts::appendFrameRange(Vector<uint8_t>& bytes, uint32_t previousEnd, uint32_t begin, uint32_t end)
-{
-    RELEASE_ASSERT(previousEnd <= begin && begin <= end && !(begin % codeOffsetUnit) && !(end % codeOffsetUnit));
-    appendVarint(bytes, (begin - previousEnd) / codeOffsetUnit);
-    appendVarint(bytes, (end - begin) / codeOffsetUnit);
 }
 
 inline void SideTableParts::appendFrameChange(Vector<uint8_t>& bytes, uint32_t previousChange, uint32_t change)

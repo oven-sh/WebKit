@@ -13,10 +13,10 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class StaticsEmitter final : public OperationEmitter {
 public:
-    explicit StaticsEmitter(CodeGenerator&);
+    explicit StaticsEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
-    TypedPointer inStatics(const B3::AbstractHeap&, uint32_t offsetInStatics);
-    TypedPointer inStatics(const B3::AbstractHeap&, StaticsOffset);
+    TypedPointer inStatics(const B3::AbstractHeap& heap, uint32_t offsetInStatics) { return m_out.address(heap, m_statics, offsetInStatics); }
+    TypedPointer inStatics(const B3::AbstractHeap& heap, StaticsOffset offset) { return inStatics(heap, offset.value()); }
     TypedPointer addressOf(VariableID);
     Operand loadVariable(VariableID);
     Operand loadEncodedVariable(VariableID);

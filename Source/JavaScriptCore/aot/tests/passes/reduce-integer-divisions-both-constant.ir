@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="floor" results=[{type=number}] {
-  b0():
     v0 = Integer integer=7
     v1 = Integer integer=2
     v2 = Div v0, v1
@@ -15,7 +14,6 @@ function f0 name="floor" results=[{type=number}] {
     Return v3
 }
 function f1 name="ceil" results=[{type=number}] {
-  b0():
     v0 = Integer integer=7
     v1 = Integer integer=2
     v2 = Div v0, v1
@@ -23,7 +21,6 @@ function f1 name="ceil" results=[{type=number}] {
     Return v3
 }
 function f2 name="trunc" results=[{type=number}] {
-  b0():
     v0 = Integer integer=7
     v1 = Integer integer=2
     v2 = Div v0, v1
@@ -31,7 +28,6 @@ function f2 name="trunc" results=[{type=number}] {
     Return v3
 }
 function f3 name="round" results=[{type=number}] {
-  b0():
     v0 = Integer integer=7
     v1 = Integer integer=2
     v2 = Div v0, v1
@@ -39,7 +35,6 @@ function f3 name="round" results=[{type=number}] {
     Return v3
 }
 function f4 name="bitOr" results=[{type=i32}] {
-  b0():
     v0 = Integer integer=7
     v1 = Integer integer=2
     v2 = Div v0, v1
@@ -48,7 +43,6 @@ function f4 name="bitOr" results=[{type=i32}] {
     Return v4
 }
 function f5 name="toInt32OfDivisionByZero" results=[{type=i32}] {
-  b0():
     v0 = Integer integer=7
     v1 = Integer integer=0
     v2 = Div v0, v1
@@ -56,7 +50,6 @@ function f5 name="toInt32OfDivisionByZero" results=[{type=i32}] {
     Return v3
 }
 function f6 name="parametersOfOneValue" parameters=[{type=7}, {type=2}] results=[{type=number}] {
-  b0(v0: 7, v1: 2):
     v2 = Div v0, v1
     v3 = CallBuiltin -, v2 overload=MathFloor/0 builtinCallForm=Whole
     Return v3

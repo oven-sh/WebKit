@@ -11,17 +11,14 @@ layout L1 name="Node" fields=[{key="kind" declared={type=number} flags=[IsRequir
 layout L2 name="Num" fields=[{key="kind" declared={type=1} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] supertypes=[L1]
 layout L3 name="Add" fields=[{key="kind" declared={type=2} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="left" declared={type=L1} flags=[IsRequired]}, {key="right" declared={type=L1} flags=[IsRequired]}] supertypes=[L1]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f1 name="NodeObject" flags=[HasThis] thisType={type=L1} parameters=[{type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: L1, v1: number, v2: number):
     PropSet v0, v1 key="kind" mode=Strict
     PropSet v0, v2 key="pos" mode=Strict
     Return
 }
 function f2 name="valueOf" parameters=[{type=L2}] results=[{type=anything}] {
-  b0(v0: L2):
     v1 = PropGet v0 key="value"
     Return v1
 }

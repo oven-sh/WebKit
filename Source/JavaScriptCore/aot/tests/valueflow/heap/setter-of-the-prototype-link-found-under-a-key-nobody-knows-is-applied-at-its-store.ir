@@ -14,7 +14,6 @@ entry module=m0
 layout L0 name="HandedOut"
 layout L1 name="Kept"
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="somethingThatNoTableLists" [isFreeName]
     v2 = NewObject layout=L0
@@ -27,10 +26,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="first" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="second" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }

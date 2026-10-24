@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="unlikelyArmThenLikelyCall" parameters=[{type=boolean}, {type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: boolean, v2: anything):
     Branch v0 -> taken b1(), notTaken b2()
   b1() frequency=Unlikely:
     v3 = Call v2

@@ -16,33 +16,26 @@ layout L3 kind=Instance name="Divide" constructor=f6 flow={baseState=None imposs
 layout L4 kind=Instance name="MultiplyChecked" base=L2 constructor=f8 flags=[HasHeritage] flow={baseState=Layout base=L2 impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
 function f0 name="Add" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f1 name="run" kind=Method flags=[HasThis] thisType={type=L0} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     Return
 }
 function f2 name="Subtract" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f3 name="run" kind=Method flags=[HasThis] thisType={type=L1} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: L1, v1: anything):
     Return
 }
 function f4 name="Multiply" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f5 name="run" kind=Method flags=[HasThis] thisType={type=L2|L4} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: L2|L4, v1: anything):
     Return
 }
 function f6 name="Divide" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f7 name="run" kind=Method flags=[HasThis] thisType={type=L3} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: L3, v1: anything):
     Return
 }
 function f8 name="MultiplyChecked" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
 
 function f9 name="four-arms" parameters=[{type=L0|L1|L2|L3|L4}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0|L1|L2|L3|L4, v1: anything):
     v2 = PropGet v0 key="run"
     v3 = Call v2, v0, v1 calleeKey="run"
     Return v3
-}
-# CHECK-LABEL: function f9 name="four-arms"
 # CHECK-NEXT: b0(v0: L0|L1|L2|L3|L4, v1: anything):
 # CHECK-NEXT: v2: undefined = Undefined
 # CHECK-NEXT: = TypeTest v0 testedType=L2|L4
@@ -58,7 +51,6 @@ function f9 name="four-arms" parameters=[{type=L0|L1|L2|L3|L4}, {type=anything}]
 # CHECK-NEXT: [[method]]: anything = PropGet [[rest]] key="run" receivers=[L1, L3]
 # CHECK-NEXT: = Call [[method]], [[rest]], v1 calleeKey="run"
 # CHECK-NOT: CallDirect
-# TWICE-LABEL: function f9 name="four-arms"
 # TWICE: = TypeTest v0 testedType=L2|L4
 # TWICE: = CallDirect {{*}}, v1 function=f5
 # TWICE: = TypeTest {{*}} testedType=L0
@@ -72,18 +64,16 @@ function f9 name="four-arms" parameters=[{type=L0|L1|L2|L3|L4}, {type=anything}]
 # TWICE: ([[quotient]]: L3)
 # TWICE-NEXT: = CallDirect [[quotient]], v1 function=f7
 # TWICE-NOT: = Call v
+}
 function f10 name="as-many-arms-as-the-limit" parameters=[{type=L1|L3}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L1|L3, v1: anything):
     v2 = PropGet v0 key="run"
     v3 = Call v2, v0, v1 calleeKey="run"
     Return v3
-}
-# CHECK-LABEL: function f10 name="as-many-arms-as-the-limit"
 # CHECK: = TypeTest v0 testedType=L1
 # CHECK-NOT: TypeTest
 # CHECK: = CallDirect {{*}}, v1 function=f3
 # CHECK: = CallDirect {{*}}, v1 function=f7
 # CHECK-NOT: = Call v
-# TWICE-LABEL: function f10 name="as-many-arms-as-the-limit"
 # TWICE: = CallDirect {{*}}, v1 function=f3
 # TWICE: = CallDirect {{*}}, v1 function=f7
+}

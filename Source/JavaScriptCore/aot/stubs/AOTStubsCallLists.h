@@ -27,8 +27,11 @@ struct ArgumentList {
     GPRReg words;
 };
 
-void emitPushArgumentListFrame(StubAssembler&, const ArgumentList&, const CallRegisters&, JumpList& doesNotFitOnStack);
 void emitLoadArgumentRegistersFromList(StubAssembler&, const ArgumentList&, unsigned firstRegister = 0);
+// The bytes that count + extraWords words take on the stack.
+void emitAlignedSizeOfWords(StubAssembler&, GPRReg count, int32_t extraWords, GPRReg size);
+// index is the number of words, which is not zero.
+void emitCopyFromLastWord(StubAssembler&, Address source, Address destination, GPRReg index, GPRReg word);
 
 } } // namespace JSC::AOT
 

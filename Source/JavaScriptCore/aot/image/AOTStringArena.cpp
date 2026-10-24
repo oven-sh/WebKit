@@ -71,13 +71,7 @@ auto StringInterningPhase::leaseStorage() -> Storage&
     return storage;
 }
 
-void StringInterningPhase::returnStorages(std::span<Storage* const> storages)
-{
-    for (Storage* storage : storages)
-        m_storages.giveBack(*storage);
-}
-
-void StringInterningPhase::close()
+void StringInterningPhase::discard()
 {
     RELEASE_ASSERT(m_isOpen && !m_storages.hasLeases());
     m_isOpen = false;
@@ -94,7 +88,7 @@ StringRemap StringInterningPhase::finish()
 
 StringRemap StringInterningPhase::finish(std::span<const unsigned> taskOrder)
 {
-    close();
+    discard();
 
     StringRemap remap;
     remap.m_finalIDs = Vector<Vector<StringID>>(ProvisionalStringID::maxStorages, [&](size_t number) {
@@ -118,11 +112,6 @@ StringRemap StringInterningPhase::finish(std::span<const unsigned> taskOrder)
     return remap;
 }
 
-void StringInterningPhase::discard()
-{
-    close();
-}
-
 StringArena::StringArena(StringTable& table)
     : m_table(table)
 {
@@ -138,8 +127,8 @@ StringArena::StringArena(StringInterningPhase& phase, unsigned task)
 
 StringArena::~StringArena()
 {
-    if (m_phase)
-        m_phase->returnStorages(m_storages.span());
+    for (StringInterningPhase::Storage* storage : m_storages)
+        m_phase->m_storages.giveBack(*storage);
 }
 
 StringID StringArena::intern(StringView view)

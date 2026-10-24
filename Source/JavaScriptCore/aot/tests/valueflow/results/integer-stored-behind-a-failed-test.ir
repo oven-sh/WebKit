@@ -11,7 +11,6 @@ layout L0 name="StoredBehindTest" fields=[{key="small" declared={type=int[0, 100
 layout L1 name="StoredProven" fields=[{key="small" declared={type=int[0, 1000]}}]
 
 function f0 name="main" kind=Module flags=[IsChecked] results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=MathRandom
     v1 = Call v0
     v2 = ToNumber v1

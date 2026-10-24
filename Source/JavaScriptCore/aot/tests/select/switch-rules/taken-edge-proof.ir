@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="second-case-passes-proof" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="a"
     v2 = StrictEq v0, v1
     Branch v2 -> taken b1(), notTaken b2()
@@ -27,8 +26,6 @@ function f0 name="second-case-passes-proof" parameters=[{type=anything}] results
     Return v0
   b6():
     Return v0
-}
-# CHECK-LABEL: function f0 name="second-case-passes-proof"
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: [[first]]: "a" = String string="a"
 # CHECK: SwitchString v0 strings=["a", "b", "c"] -> case b1(), case [[stub]](| 0), case [[third]](), otherwise [[rest]]()
@@ -36,9 +33,9 @@ function f0 name="second-case-passes-proof" parameters=[{type=anything}] results
 # CHECK-NEXT: Jump -> next [[target]]([[first]], [[narrowed]])
 # CHECK-NEXT: [[target]]([[left]]: "a", [[right]]: "b"):
 # CHECK-NEXT: = Add [[left]], [[right]]
+}
 
 function f1 name="zero-passes-proof" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Integer integer=0
     v2 = StrictEq v0, v1
     Branch v2 -> taken b1(| 0), notTaken b2()
@@ -58,8 +55,6 @@ function f1 name="zero-passes-proof" parameters=[{type=number}] results=[{type=n
     Return v0
   b6():
     Return v0
-}
-# CHECK-LABEL: function f1 name="zero-passes-proof"
 # CHECK: Switch v0 cases=[0, 1, 2] -> case [[zeroStub]](| 0), case [[oneStub]](| 0), case [[two]](), otherwise [[other]]()
 # CHECK: [[zeroStub]]([[zero]]: 0|whole):
 # CHECK-NEXT: Jump -> next [[zeroTarget]]([[zero]])
@@ -67,9 +62,9 @@ function f1 name="zero-passes-proof" parameters=[{type=number}] results=[{type=n
 # CHECK: [[oneStub]]([[one]]: 1):
 # CHECK-NEXT: Jump -> next [[oneTarget]]([[one]])
 # CHECK-NEXT: [[oneTarget]]([[oneResult]]: 1):
+}
 
 function f2 name="proof-about-constant" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="a"
     v2 = StrictEq v0, v1
     Branch v2 -> taken b1(), notTaken b2()
@@ -89,6 +84,5 @@ function f2 name="proof-about-constant" parameters=[{type=anything}] results=[{t
     Return v0
   b6():
     Return v0
-}
-# CHECK-LABEL: function f2 name="proof-about-constant"
 # CHECK-NOT: Switch
+}

@@ -10,7 +10,6 @@ layout L2 name="Untagged" fields=[{key="size" declared={type=number} flags=[IsRe
 
 # Untagged stays on both edges, in the type and in what is expected
 function f0 name="memberWithoutTheField" parameters=[{type=L0|L1|L2}] results=[{type=undefined}] {
-  b0(v0: L0|L1|L2):
     v1 = PropGet v0 key="kind"
     v2 = Integer integer=1
     v3 = StrictEq v1, v2
@@ -32,7 +31,6 @@ function f0 name="memberWithoutTheField" parameters=[{type=L0|L1|L2}] results=[{
 # CHECK-NEXT: v7: L0|L1|L2 ~ L1|L2
 
 function f1 name="membersWithoutLayout" parameters=[{type=L0|L1|nolayout}] results=[{type=undefined}] {
-  b0(v0: L0|L1|nolayout):
     v1 = PropGet v0 key="kind"
     v2 = Integer integer=1
     v3 = StrictEq v1, v2
@@ -50,7 +48,6 @@ function f1 name="membersWithoutLayout" parameters=[{type=L0|L1|nolayout}] resul
 # CHECK-NEXT: v5: L0|nolayout
 
 function f2 name="onlyMembersWithoutLayoutAreLeft" parameters=[{type=L1|nolayout}] results=[{type=undefined}] {
-  b0(v0: L1|nolayout):
     v1 = PropGet v0 key="kind"
     v2 = Integer integer=1
     v3 = StrictEq v1, v2
@@ -66,7 +63,6 @@ function f2 name="onlyMembersWithoutLayoutAreLeft" parameters=[{type=L1|nolayout
 # CHECK-NEXT: v5: nolayout
 
 function f3 name="otherPartsOfTheType" parameters=[{type=undefined|string|L0|L1|Array<number>}] results=[{type=undefined}] {
-  b0(v0: undefined|string|L0|L1|Array<number>):
     v1 = PropGet v0 key="kind"
     v2 = Integer integer=1
     v3 = StrictEq v1, v2
@@ -84,7 +80,6 @@ function f3 name="otherPartsOfTheType" parameters=[{type=undefined|string|L0|L1|
 # CHECK-NEXT: v5: string|L0|Array<number>
 
 function f4 name="holderWithoutLayouts" parameters=[{type=undefined|null|object}] results=[{type=undefined}] {
-  b0(v0: undefined|null|object):
     v1 = PropGet v0 key="kind"
     v2 = Integer integer=1
     v3 = StrictEq v1, v2

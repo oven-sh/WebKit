@@ -5,11 +5,8 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="integerPosition" parameters=[{type=string}, {type=int[0, 100]}] results=[{type=anything}] {
-  b0(v0: string, v1: int[0, 100]):
     v2 = CallBuiltin v0, v1 overload=StringPrototypeCodePointAt/0
     Return v2
-}
-# CHECK-LABEL: function f0 name="integerPosition"
 # CHECK-NOT: TypeTest
 # CHECK: [[length0]]: int[0, 2147483647] = GetStringLength v0
 # CHECK-NEXT: [[isInside0]]: boolean = Less v1, [[length0]]
@@ -34,13 +31,11 @@ function f0 name="integerPosition" parameters=[{type=string}, {type=int[0, 100]}
 # CHECK: [[single0]]() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next {{*}}([[unit0]])
 # CHECK-NOT: CallBuiltin
+}
 
 function f1 name="numberPosition" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
-  b0(v0: string, v1: number):
     v2 = CallBuiltin v0, v1 overload=StringPrototypeCodePointAt/0
     Return v2
-}
-# CHECK-LABEL: function f1 name="numberPosition"
 # CHECK: [[isInt32Of1]]:{{*}}= TypeTest v1 testedType=i32
 # CHECK-NEXT: Branch [[isInt32Of1]] -> taken [[integer1]](| 0), notTaken [[other1]](| 0)
 # CHECK: [[other1]]([[rest1]]: number) frequency=Unlikely:
@@ -54,9 +49,9 @@ function f1 name="numberPosition" parameters=[{type=string}, {type=number}] resu
 # CHECK: [[single1]]() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next {{*}}([[unit1]])
 # CHECK-NOT: CallBuiltin
+}
 
 function f2 name="positionProvenInside" parameters=[{type=string}, {type=int[0, 100]}] results=[{type=anything}] {
-  b0(v0: string, v1: int[0, 100]):
     v2 = GetStringLength v0
     v3 = Less v1, v2
     Branch v3 -> taken b1(), notTaken b2()
@@ -66,8 +61,6 @@ function f2 name="positionProvenInside" parameters=[{type=string}, {type=int[0, 
   b2():
     v5 = Undefined
     Return v5
-}
-# CHECK-LABEL: function f2 name="positionProvenInside"
 # CHECK: b1():
 # CHECK-NEXT: [[unit2]]: int[0, 65535] = GetStringCodeUnit v0, v1
 # CHECK-NOT: = Less v1
@@ -79,9 +72,9 @@ function f2 name="positionProvenInside" parameters=[{type=string}, {type=int[0, 
 # CHECK: [[single2]]() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next {{*}}([[unit2]])
 # CHECK-NOT: = Less
+}
 
 function f3 name="inUnlikelyCode" parameters=[{type=string}, {type=int[0, 100]}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: string, v1: int[0, 100], v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1() frequency=Unlikely:
     v3 = CallBuiltin v0, v1 overload=StringPrototypeCodePointAt/0
@@ -89,18 +82,15 @@ function f3 name="inUnlikelyCode" parameters=[{type=string}, {type=int[0, 100]},
   b2():
     v4 = Integer
     Return v4
-}
-# CHECK-LABEL: function f3 name="inUnlikelyCode"
 # CHECK-NOT: GetStringCodeUnit
 # CHECK: v3:{{*}}= CallBuiltin v0, v1 overload=StringPrototypeCodePointAt/0
 # CHECK-NOT: GetStringCodeUnit
+}
 
 function f4 name="positionIsOmitted" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = CallBuiltin v0 overload=StringPrototypeCodePointAt/0
     Return v1
-}
-# CHECK-LABEL: function f4 name="positionIsOmitted"
 # CHECK-NOT: GetStringCodeUnit
 # CHECK: v1:{{*}}= CallBuiltin v0 overload=StringPrototypeCodePointAt/0
 # CHECK-NOT: GetStringCodeUnit
+}

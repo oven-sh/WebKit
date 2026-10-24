@@ -8,7 +8,6 @@ module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Undefined
     Return v0
 }
@@ -16,7 +15,6 @@ function f0 kind=Module results=[{type=anything}] {
 # CHECK: b0(
 
 function f1 name="deadCaller" results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f2
     Return v0
 }
@@ -24,7 +22,6 @@ function f1 name="deadCaller" results=[{type=undefined}] {
 # CHECK-NOT: b0(
 
 function f2 name="deadMiddle" results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f3
     Return v0
 }
@@ -32,7 +29,6 @@ function f2 name="deadMiddle" results=[{type=undefined}] {
 # CHECK: b0(
 
 function f3 name="deadLeaf" results=[{type=undefined}] {
-  b0():
     v0 = Undefined
     Return v0
 }

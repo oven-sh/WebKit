@@ -9,7 +9,6 @@ layout L0 kind=Instance name="NeverConstructed" constructor=f2 fields=[{key=#"#"
 evalscope e0 flags=[IsInFunction] bindings=[{name="#run" kind=PrivateMethod layout=L0 field=0 operand=0 function=1}, {name="#size" kind=PrivateAccessor layout=L0 field=0 operand=0 function=2 setter=3}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = NewClassToken layout=L0
@@ -21,20 +20,17 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="evaluates" parameters=[{type=anything}, {type=classtoken}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: classtoken, v2: anything):
     v3 = Undefined
     v4 = DirectEval v0, v3, -, v1, v2, v2, v2 evalScope=e0
     Return v4
 }
 function f2 name="NeverConstructed" kind=BaseConstructor flags=[HasNewTarget] captures=[{type=classtoken}] results=[{type=anything}] {
-  b0(v0: classtoken, v1: anything):
     v2 = GetConstructPrototype v1 layout=L0
     v3 = NewObject v2 layout=L0
     PrivateDefine v3, v0, v0 layout=L0
     Return v3
 }
 function f3 name="member" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 # CHECK: request 8 DirectEval module=m0 strict inFunction

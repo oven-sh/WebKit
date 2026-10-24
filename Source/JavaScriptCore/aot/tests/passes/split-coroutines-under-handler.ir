@@ -17,7 +17,6 @@ function f0 name="awaitsUnderHandler" flags=[IsAsync] parameters=[{type=anything
     Return v3
 }
 function f1 name="yieldsUnderHandler" flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] {
-  b0(v0: function, v1: anything):
     InitialYield @20
     Jump -> next b1()
   b1() handler=b6(v1):

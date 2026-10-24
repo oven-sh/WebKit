@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTVector.h"
 #include <algorithm>
 #include <optional>
 
@@ -51,11 +50,7 @@ Vector<ParameterUse, 8> classifyParameterUses(const Function& function, const Bi
         }
         index = i;
     }
-    auto trackedParameter = [&](ValueID value) -> std::optional<uint32_t> {
-        if (value.index() >= end)
-            return std::nullopt;
-        return parameterIndex[value.index()];
-    };
+    auto trackedParameter = [&](ValueID value) -> std::optional<uint32_t> { return value.index() < end ? parameterIndex[value.index()] : std::nullopt; };
     auto use = [&](ValueID value) {
         if (auto parameter = trackedParameter(value))
             markUsed(*parameter);

@@ -11,7 +11,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="age" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="getTime"
     v2 = Call v1, v0
     Return v2

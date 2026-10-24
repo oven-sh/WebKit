@@ -9,16 +9,13 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="NeverRead" fields=[{key="run" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
 
 function f0 name="allocates" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f1
     v2 = NewObject -, v1, v0 layout=L0 fields=[0, 1]
     Return v2
-}
-# CHECK-LABEL: function f0 name="allocates"
 # CHECK: = NewClosure function=f1
 # CHECK: layout=L0 fields=[0, 1]
+}
 
 function f1 name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }

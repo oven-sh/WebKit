@@ -25,6 +25,17 @@ class Structure;
 
 namespace AOT {
 
+enum class LeafAnswer : size_t { TakeSlowPath, No, Yes };
+enum class LeafPresence : size_t { TakeSlowPath, Absent, Inherited, Own };
+
+// What the code generator told the back end, and a run has found untrue. --aot-check=ClaimsToBackEnd, --aot-check=MovedLoads
+enum class BrokenClaim : uint32_t {
+    StackSlotIsWrittenBeforeRead,
+    WordNeverChanges,
+    LoadMayMove,
+    ValueIsInRange,
+};
+
 #if ASAN_ENABLED && CPU(X86_64) && OS(LINUX)
 #define AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE 1
 #define FOR_EACH_AOT_OPERATION_FOR_ASAN(v) \
@@ -34,28 +45,17 @@ namespace AOT {
 #define FOR_EACH_AOT_OPERATION_FOR_ASAN(v)
 #endif
 
-#define FOR_EACH_AOT_OPERATION_SHARED_WITH_JIT(v) \
-    v(operationArrayIndexOfValueInt32OrContiguous) \
-    v(operationArrayIncludesValueInt32OrContiguous)
-
-#define FOR_EACH_AOT_OPERATION_FOR_UNWINDING(v) \
+// No compiled code calls the reserved ones. The entries behind them keep their numbers.
+#define FOR_EACH_AOT_OPERATION_OUTSIDE_SCHEMA(v, reserved) \
+    v(operationAOTPrepareProxyCall) \
+    FOR_EACH_AOT_OPERATION_FOR_ASAN(v) \
+    v(operationAOTCallNativeFunction) \
+    v(operationAOTReportBrokenClaim) \
+    reserved(operationArrayIndexOfValueInt32OrContiguous) \
+    reserved(operationArrayIncludesValueInt32OrContiguous) \
     v(operationAOTLookupExceptionHandler) \
     v(operationAOTFindLandingOfMisfit) \
     v(operationAOTBytesAllocatedAtPrologueCheck)
-
-#define FOR_EACH_AOT_OPERATION_FOR_VALIDATION(v) \
-    v(operationAOTCallNativeFunction) \
-    v(operationAOTReportBrokenClaim)
-
-#define FOR_EACH_AOT_OPERATION_FOR_STUBS(v) \
-    v(operationAOTPrepareProxyCall)
-
-#define FOR_EACH_AOT_OPERATION_OUTSIDE_SCHEMA(v) \
-    FOR_EACH_AOT_OPERATION_FOR_STUBS(v) \
-    FOR_EACH_AOT_OPERATION_FOR_ASAN(v) \
-    FOR_EACH_AOT_OPERATION_FOR_VALIDATION(v) \
-    FOR_EACH_AOT_OPERATION_SHARED_WITH_JIT(v) \
-    FOR_EACH_AOT_OPERATION_FOR_UNWINDING(v)
 
 #define FOR_EACH_AOT_THUNK(v) \
     v(HandleException)
@@ -75,7 +75,7 @@ enum class Entry : uint16_t {
 #define AOT_DEFINE_SCHEMA_ENTRY(name) operationAOT##name,
 #define AOT_DEFINE_ENTRY(name) name,
     FOR_EACH_AOT_RUNTIME_OPERATION(AOT_DEFINE_SCHEMA_ENTRY)
-    FOR_EACH_AOT_OPERATION_OUTSIDE_SCHEMA(AOT_DEFINE_ENTRY)
+    FOR_EACH_AOT_OPERATION_OUTSIDE_SCHEMA(AOT_DEFINE_ENTRY, AOT_DEFINE_ENTRY)
     FOR_EACH_AOT_THUNK(AOT_DEFINE_ENTRY)
     FOR_EACH_AOT_POINTER(AOT_DEFINE_ENTRY)
 #undef AOT_DEFINE_ENTRY
@@ -122,7 +122,7 @@ constexpr bool isOperation(Entry entry)
         return true;
     switch (entry) {
 #define AOT_CASE_OF_OPERATION(name) case Entry::name:
-    FOR_EACH_AOT_OPERATION_OUTSIDE_SCHEMA(AOT_CASE_OF_OPERATION)
+    FOR_EACH_AOT_OPERATION_OUTSIDE_SCHEMA(AOT_CASE_OF_OPERATION, AOT_CASE_OF_OPERATION)
 #undef AOT_CASE_OF_OPERATION
         return true;
     default:
@@ -199,7 +199,7 @@ public:
     void finishInitialization(VM&);
 
     bool countsCalls() const { return m_countsCalls; }
-    JS_EXPORT_PRIVATE uint64_t callCount(Entry) const;
+    uint64_t callCount(Entry entry) const { return m_callCounts[static_cast<unsigned>(entry)]; }
     void didCall(Entry entry) { ++m_callCounts[static_cast<unsigned>(entry)]; }
 
     Structure* compactTableStructure() const { return m_compactTableStructure; }

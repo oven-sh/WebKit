@@ -20,7 +20,6 @@ layout L3 kind=Record name="T"
 data d0 root=Object{layout=L0 members=[{key="flag" value=Boolean{value=true}}]} module=m0
 data d1 root=Object{layout=L1 members=[{key="flag" value=String{value="x"}}]} module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Data data=d0
     v1 = Data data=d1
     v2 = String string="y"

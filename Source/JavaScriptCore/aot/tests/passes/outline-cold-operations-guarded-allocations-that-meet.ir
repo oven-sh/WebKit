@@ -8,7 +8,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="guardOnEitherArray" parameters=[{type=number}, {type=anything}, {type=object}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: anything, v2: object, v3: boolean):
     Switch v0 cases=[0, 1, 2] -> case b1(), case b7(), case b13(), otherwise b19()
 # REPEAT: i = 0..2
   b%(i*6+1)() frequency=Rare:
@@ -39,7 +38,6 @@ function f0 name="guardOnEitherArray" parameters=[{type=number}, {type=anything}
 # CHECK-NOT: CallDirect
 
 function f1 name="eitherArrayWithoutGuard" parameters=[{type=number}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: anything, v2: boolean):
     Switch v0 cases=[0, 1, 2] -> case b1(), case b5(), case b9(), otherwise b13()
 # REPEAT: i = 0..2
   b%(i*4+1)() frequency=Rare:

@@ -5,7 +5,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="count" [isFreeName]
     v2 = ToNumber v1
@@ -22,7 +21,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="sumOfBits" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Integer integer=0
     v2 = Integer integer=7
     Jump -> next b1(v1, v1)
@@ -38,16 +36,14 @@ function f1 name="sumOfBits" parameters=[{type=number}] results=[{type=number}] 
     Jump -> next b1(v10, v9)
   b3():
     Return v4
-}
-# CHECK-LABEL: function f1 name="sumOfBits"
 # CHECK: = TypeTest v0 testedType=i32
 # CHECK: ({{*}}: int[0, 2147483647], {{*}}: i32):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: = Less {{*}}form=Integers
 # CHECK: = BitAnd {{*}}form=Integers
+}
 
 function f2 name="sumOfCounters" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Integer integer=0
     Jump -> next b1(v1, v1)
   b1(v2, v3):
@@ -60,11 +56,10 @@ function f2 name="sumOfCounters" parameters=[{type=number}] results=[{type=numbe
     Jump -> next b1(v7, v6)
   b3():
     Return v3
-}
-# CHECK-LABEL: function f2 name="sumOfCounters"
 # CHECK-NOT: TypeTest
 # CHECK: = Less {{*}}form=Numbers
 # CHECK-NOT: TypeTest
+}
 
 # The copy of a failed test counts without a bound. What it has counted up comes back into the loop only as an int32, so the counter of the loop is still one.
 function f3 name="sumOfElements" flags=[IsChecked] parameters=[{type=number}, {type=Array<i32, Int32> flags=[IsExpected]}] results=[{type=number}] {
@@ -86,18 +81,16 @@ function f3 name="sumOfElements" flags=[IsChecked] parameters=[{type=number}, {t
     Jump -> next b1(v13, v12)
   b3():
     Return v5
-}
-# CHECK-LABEL: function f3 name="sumOfElements"
 # CHECK: = TypeTest v0 testedType=i32
 # CHECK: ({{*}}: int[0, 2147483647], {{*}}: i32):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: = Less {{*}}form=Integers
 # CHECK: = Increment {{*}}form=Numbers
 # CHECK-NEXT: = TypeTest {{*}}testedType=int[0, 2147483647]
+}
 
 # Around a loop that holds another loop no proof lasts, so the test would stand in the loop and be made at every turn for nothing.
 function f4 name="sumOfSums" parameters=[{type=number}, {type=int[0, 100]}] results=[{type=number}] {
-  b0(v0: number, v1: int[0, 100]):
     v2 = Integer integer=0
     v3 = Integer integer=7
     Jump -> next b1(v2, v2)
@@ -124,8 +117,7 @@ function f4 name="sumOfSums" parameters=[{type=number}, {type=int[0, 100]}] resu
     v17 = BitOr v16, v2
     v18 = Increment v4
     Jump -> next b1(v18, v17)
-}
-# CHECK-LABEL: function f4 name="sumOfSums"
 # CHECK-NOT: TypeTest
 # CHECK: = Less {{*}}form=Numbers
 # CHECK-NOT: TypeTest
+}

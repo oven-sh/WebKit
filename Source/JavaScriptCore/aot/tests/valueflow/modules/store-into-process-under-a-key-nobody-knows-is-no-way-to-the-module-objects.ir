@@ -11,7 +11,6 @@ variable g0 name="exports" module=m0 declared={type=anything} initialization=Und
 module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
 entry module=m0
 function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewDictionary
     PutModuleVariable v0 variable=g0
     v2 = NewClosure function=f1
@@ -27,6 +26,5 @@ function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} r
     Return
 }
 function f1 name="kept" module=m0 results=[{type=anything}] {
-  b0():
     Return
 }

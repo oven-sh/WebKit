@@ -13,7 +13,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Descriptor" fields=[{key="value" declared={type=anything}}, {key="writable" declared={type=anything}}, {key="configurable" declared={type=anything}}]
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="somethingThatNoTableLists" [isFreeName]
     v2 = Builtin builtin=ArrayPrototype
@@ -35,12 +34,10 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return v17
 }
 function f1 name="grouped" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0, -
     Return v1
 }
 function f2 name="callback" module=m0 results=[{type=anything}] {
-  b0():
     v0 = Integer integer=2
     Return v0
 }

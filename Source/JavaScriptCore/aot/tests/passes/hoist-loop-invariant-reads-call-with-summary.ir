@@ -9,22 +9,18 @@ variable g1 name="count" declared={type=number}
 layout L0 kind=Environment name="scope" fields=[{key="limit" declared={type=number}}, {key="count" declared={type=number}}]
 
 function f0 name="writesCount" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     PutModuleVariable v0 variable=g1
     Return
 }
 function f1 name="writesLimit" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     PutModuleVariable v0 variable=g0
     Return
 }
 function f2 name="callsWritesCount" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f0
     Return
 }
 function f3 name="callsWritesLimit" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f1
     Return
 }
@@ -40,7 +36,6 @@ function f5 name="writesLimitField" parameters=[{type=env L0}, {type=number}] re
 }
 
 function f6 name="calleeWritesAnotherVariable" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Jump -> next b1()
   b1():
     LoopHint
@@ -52,15 +47,13 @@ function f6 name="calleeWritesAnotherVariable" parameters=[{type=number}] result
     Jump -> next b1()
   b3():
     Return v2
-}
-# CHECK-LABEL: function f6 name="calleeWritesAnotherVariable"
 # CHECK: b0(
 # CHECK-NEXT: GetModuleVariable variable=g0
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NOT: GetModuleVariable
+}
 
 function f7 name="calleeWritesTheVariable" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Jump -> next b1()
   b1():
     LoopHint
@@ -72,15 +65,13 @@ function f7 name="calleeWritesTheVariable" parameters=[{type=number}] results=[{
     Jump -> next b1()
   b3():
     Return v2
-}
-# CHECK-LABEL: function f7 name="calleeWritesTheVariable"
 # CHECK: b0(
 # CHECK-NEXT: Jump -> next b1()
 # CHECK: LoopHint
 # CHECK-NEXT: GetModuleVariable variable=g0
+}
 
 function f8 name="calleeOfCalleeWritesAnotherVariable" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Jump -> next b1()
   b1():
     LoopHint
@@ -92,15 +83,13 @@ function f8 name="calleeOfCalleeWritesAnotherVariable" parameters=[{type=number}
     Jump -> next b1()
   b3():
     Return v2
-}
-# CHECK-LABEL: function f8 name="calleeOfCalleeWritesAnotherVariable"
 # CHECK: b0(
 # CHECK-NEXT: GetModuleVariable variable=g0
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NOT: GetModuleVariable
+}
 
 function f9 name="calleeOfCalleeWritesTheVariable" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Jump -> next b1()
   b1():
     LoopHint
@@ -112,15 +101,13 @@ function f9 name="calleeOfCalleeWritesTheVariable" parameters=[{type=number}] re
     Jump -> next b1()
   b3():
     Return v2
-}
-# CHECK-LABEL: function f9 name="calleeOfCalleeWritesTheVariable"
 # CHECK: b0(
 # CHECK-NEXT: Jump -> next b1()
 # CHECK: LoopHint
 # CHECK-NEXT: GetModuleVariable variable=g0
+}
 
 function f10 name="callInFrontOfTheRead" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Jump -> next b1()
   b1():
     LoopHint
@@ -133,13 +120,12 @@ function f10 name="callInFrontOfTheRead" parameters=[{type=number}] results=[{ty
     Jump -> next b1()
   b3():
     Return v3
-}
-# CHECK-LABEL: function f10 name="callInFrontOfTheRead"
 # CHECK: b0(
 # CHECK-NEXT: GetModuleVariable variable=g0
 # CHECK-NEXT: Jump -> next b1()
 # CHECK: = CallDirect v0 function=f0
 # CHECK-NEXT: GetModuleVariable variable=g1
+}
 
 function f11 name="calleeWritesAnotherField" captures=[{type=env L0}] parameters=[{type=number}] results=[{type=number}] {
   b0(v0: env L0, v1: number):
@@ -154,12 +140,11 @@ function f11 name="calleeWritesAnotherField" captures=[{type=env L0}] parameters
     Jump -> next b1()
   b3():
     Return v3
-}
-# CHECK-LABEL: function f11 name="calleeWritesAnotherField"
 # CHECK: b0(
 # CHECK-NEXT: GetEnvironmentField v0 layout=L0
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NOT: GetEnvironmentField
+}
 
 function f12 name="calleeWritesTheField" captures=[{type=env L0}] parameters=[{type=number}] results=[{type=number}] {
   b0(v0: env L0, v1: number):
@@ -174,9 +159,8 @@ function f12 name="calleeWritesTheField" captures=[{type=env L0}] parameters=[{t
     Jump -> next b1()
   b3():
     Return v3
-}
-# CHECK-LABEL: function f12 name="calleeWritesTheField"
 # CHECK: b0(
 # CHECK-NEXT: Jump -> next b1()
 # CHECK: LoopHint
 # CHECK-NEXT: GetEnvironmentField v0 layout=L0
+}

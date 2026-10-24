@@ -13,7 +13,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinTableBindings.h"
 #include "AOTBuiltinTableRealm.h"
-#include "AOTImmortalCells.h"
+#include "AOTHeapCacheRegistry.h"
 #include "AOTInstance.h"
 #include "AOTOperationScope.h"
 #include "AOTRealmStartup.h"
@@ -21,29 +21,9 @@
 #include "AOTState.h"
 #include "GetterSetter.h"
 #include "JSCInlines.h"
-#include "ObjectPropertyConditionSet.h"
-#include <algorithm>
-#include <bit>
 #include <cmath>
-#include <optional>
-#include <span>
-#include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT {
-
-static std::optional<uint32_t> numberOfCell(const ProgramTables& tables, BuiltinCellKey key)
-{
-    std::span<const uint32_t> keys = tables.builtinCells();
-    auto position = std::ranges::lower_bound(keys, key.encoded());
-    if (position == keys.end() || *position != key.encoded())
-        return std::nullopt;
-    return static_cast<uint32_t>(position - keys.begin());
-}
-
-static bool isSameNumber(double a, double b)
-{
-    return (std::isnan(a) && std::isnan(b)) || std::bit_cast<uint64_t>(a) == std::bit_cast<uint64_t>(b);
-}
 
 BuiltinLocationWatch::BuiltinLocationWatch(State& state)
     : m_state(state)
@@ -52,8 +32,6 @@ BuiltinLocationWatch::BuiltinLocationWatch(State& state)
     static_assert(InstanceLayout::holdsBuiltinLocationStates(maxNumberOfBuiltins * sizeof(WatchedLocationState)));
     state.instance.builtins.locationStates = std::bit_cast<uint8_t*>(m_states.data());
 }
-
-BuiltinLocationWatch::~BuiltinLocationWatch() = default;
 
 WatchedLocationState BuiltinLocationWatch::stateOf(BuiltinID member) const
 {
@@ -65,18 +43,8 @@ bool BuiltinLocationWatch::arm(VM& vm, BuiltinID member)
 {
     RELEASE_ASSERT(member.index() < m_states.size());
     WatchedLocationState& state = m_states[member.index()];
-    if (state == WatchedLocationState::NotArmed) {
-        switch (tryWatch(vm, member, state)) {
-        case Attempt::Watches:
-            state = WatchedLocationState::Unchanged;
-            break;
-        case Attempt::CannotWatch:
-            state = WatchedLocationState::Changed;
-            break;
-        case Attempt::IsNotMadeYet:
-            break;
-        }
-    }
+    if (state == WatchedLocationState::NotArmed)
+        state = tryWatch(vm, member, state);
     return state == WatchedLocationState::Unchanged;
 }
 
@@ -96,19 +64,22 @@ void BuiltinLocationWatch::didCreateMember(JSObject* holder, UniquedStringImpl* 
 {
     if (!isMadeByCodeOfHolder(holder, key) || !m_objectsMadeByHost.add(Location { holder, key }, created).isNewEntry)
         return;
-    m_keysOfObjectsMadeByHost.append(Identifier::fromUid(*m_state.instance.vm, key));
+    m_keys.append(Identifier::fromUid(*m_state.instance.vm, key));
     m_state.immortalCells->add(holder);
     m_state.immortalCells->add(created);
 }
 
-void BuiltinLocationWatch::didFire(VM&, void* context)
+static std::optional<uint32_t> numberOfCell(const ProgramTables& tables, BuiltinCellKey key)
 {
-    // A watchpoint is not destroyed while it fires. The watch stays in the map until the instance goes.
-    static_cast<Watch*>(context)->state = WatchedLocationState::Changed;
+    std::span<const uint32_t> keys = tables.builtinCells();
+    auto position = std::ranges::lower_bound(keys, key.encoded());
+    if (position == keys.end() || *position != key.encoded())
+        return std::nullopt;
+    return static_cast<uint32_t>(position - keys.begin());
 }
 
 // The program may have replaced a step of the path to the holder, so only a cell of the program's table answers.
-JSObject* BuiltinLocationWatch::findHolder(BuiltinID member)
+static JSObject* findHolder(State& state, BuiltinID member)
 {
     const BuiltinTable& table = BuiltinTable::singleton();
     BuiltinID holder = table.at(member).holder;
@@ -116,43 +87,37 @@ JSObject* BuiltinLocationWatch::findHolder(BuiltinID member)
     if (!holder || table.at(holder).flags.contains(BuiltinFlag::IsGlobalObject))
         return nullptr;
     for (BuiltinID name : { holder, table.canonicalID(holder) }) {
-        std::optional<uint32_t> number = numberOfCell(m_state.tables, BuiltinCellKey::object(name));
-        if (!number)
-            continue;
-        JSCell* cell = m_state.builtinCells->cell(*number);
-        return cell ? cell->getObject() : nullptr;
+        if (std::optional<uint32_t> number = numberOfCell(state.tables, BuiltinCellKey::object(name))) {
+            JSCell* cell = state.builtinCells->cell(*number);
+            return cell ? cell->getObject() : nullptr;
+        }
     }
     return nullptr;
 }
 
-// An empty cell says that nobody kept what the realm was created with.
-JSCell* BuiltinLocationWatch::cellFilledBeforeProgramRan(BuiltinCellKey key) const
-{
-    std::optional<uint32_t> number = numberOfCell(m_state.tables, key);
-    return number ? m_state.builtinCells->cell(*number) : nullptr;
-}
-
-bool BuiltinLocationWatch::isWhatStartUpFound(BuiltinID member, JSValue held) const
+static bool isWhatStartUpFound(State& state, BuiltinID member, JSValue held)
 {
     const BuiltinTable& table = BuiltinTable::singleton();
+    // An empty cell says that nobody kept what the realm was created with.
     auto isCellOf = [&](BuiltinCellKey key, JSCell* candidate) {
-        JSCell* original = cellFilledBeforeProgramRan(key);
+        std::optional<uint32_t> number = numberOfCell(state.tables, key);
+        JSCell* original = number ? state.builtinCells->cell(*number) : nullptr;
         return original && original == candidate;
     };
 
     switch (table.at(member).kind) {
+    case BuiltinKind::Constant:
+        if (!table.nameOfSymbol(member)) {
+            std::optional<double> number = table.numberOf(member);
+            return number && held.isNumber() && ((std::isnan(*number) && std::isnan(held.asNumber())) || std::bit_cast<uint64_t>(*number) == std::bit_cast<uint64_t>(held.asNumber()));
+        }
+        [[fallthrough]];
     case BuiltinKind::Namespace:
     case BuiltinKind::Constructor:
     case BuiltinKind::Function:
     case BuiltinKind::Prototype:
     case BuiltinKind::Method:
         return held.isCell() && isCellOf(BuiltinCellKey::object(member), held.asCell());
-    case BuiltinKind::Constant: {
-        if (table.nameOfSymbol(member))
-            return held.isCell() && isCellOf(BuiltinCellKey::object(member), held.asCell());
-        std::optional<double> number = table.numberOf(member);
-        return number && held.isNumber() && isSameNumber(*number, held.asNumber());
-    }
     case BuiltinKind::Accessor: {
         if (!held.isCell())
             return false;
@@ -177,37 +142,35 @@ bool BuiltinLocationWatch::isWhatStartUpFound(BuiltinID member, JSValue held) co
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-BuiltinLocationWatch::Attempt BuiltinLocationWatch::tryWatch(VM& vm, BuiltinID member, WatchedLocationState& state)
+WatchedLocationState BuiltinLocationWatch::tryWatch(VM& vm, BuiltinID member, WatchedLocationState& state)
 {
     const BuiltinTable& table = BuiltinTable::singleton();
     if (!table.at(member).name)
-        return Attempt::CannotWatch;
-    JSObject* holder = findHolder(member);
+        return WatchedLocationState::Changed;
+    JSObject* holder = findHolder(m_state, member);
     if (!holder || !holder->structure()->propertyAccessesAreCacheable())
-        return Attempt::CannotWatch;
+        return WatchedLocationState::Changed;
 
     Identifier name = table.identifierOf(vm, table.at(member).name);
     JSObject* madeByHost = nullptr;
     if (table.at(member).flags.contains(BuiltinFlag::IsLazilyCreated)) {
         madeByHost = m_objectsMadeByHost.get(Location { holder, name.impl() });
-        if (!madeByHost) {
-            // A store puts an own property in place of the entry of the static table, a definition makes the member first, and a deletion makes every member.
-            if (isValidOffset(holder->getDirectOffset(vm, name)) || !reportsCreationOfMember(holder, name.impl()))
-                return Attempt::CannotWatch;
-            return Attempt::IsNotMadeYet;
-        }
+        // A store puts an own property in place of the entry of the static table, a definition makes the member first, and a deletion makes every member.
+        if (!madeByHost)
+            return isValidOffset(holder->getDirectOffset(vm, name)) || !reportsCreationOfMember(holder, name.impl()) ? WatchedLocationState::Changed : WatchedLocationState::NotArmed;
     }
 
-    ObjectPropertyCondition condition = generateConditionForSelfEquivalence(vm, nullptr, holder, name.impl());
-    if (!condition || !condition.isWatchable(PropertyCondition::EnsureWatchability))
-        return Attempt::CannotWatch;
-    if (madeByHost ? condition.requiredValue() != JSValue(madeByHost) : !isWhatStartUpFound(member, condition.requiredValue()))
-        return Attempt::CannotWatch;
-
-    auto watch = makeUnique<Watch>(name, state);
-    watch->watchpoint.watch(vm, condition, didFire, watch.get());
+    auto isOriginal = [&](JSValue held) {
+        return madeByHost ? held == JSValue(madeByHost) : isWhatStartUpFound(m_state, member, held);
+    };
+    auto watch = PropertyValueWatchpoint::tryWatch(vm, holder, name.impl(), isOriginal, [](PropertyValueWatchpoint& fired) {
+        fired.owner<WatchedLocationState>() = WatchedLocationState::Changed;
+    }, &state);
+    if (!watch)
+        return WatchedLocationState::Changed;
+    m_keys.append(name);
     m_watches.set(member.index(), WTF::move(watch));
-    return Attempt::Watches;
+    return WatchedLocationState::Unchanged;
 }
 
 GetValueFunc::Ptr BuiltinLocationWatch::customGetterOf(BuiltinOverloadID overload)

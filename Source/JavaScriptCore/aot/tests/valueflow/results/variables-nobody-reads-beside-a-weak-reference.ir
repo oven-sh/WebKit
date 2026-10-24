@@ -14,7 +14,6 @@ variable g2 name="watched" module=m0 declared={type=anything} initialization=Fun
 variable g3 name="holder" module=m0 declared={type=anything} initialization=Undefined
 layout L0 name="Held" fields=[{key="n" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = Call v0
     v2 = GetModuleVariable variable=g2
@@ -25,17 +24,14 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return v4
 }
 function f1 name="called" module=m0 results=[{type=anything}] {
-  b0():
     v0 = Integer integer=3
     Return v0
 }
 function f2 name="unread" module=m0 results=[{type=anything}] {
-  b0():
     v0 = Integer integer=4
     Return v0
 }
 function f3 name="watched" module=m0 results=[{type=anything}] {
-  b0():
     v0 = Integer integer=5
     Return v0
 }

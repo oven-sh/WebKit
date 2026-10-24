@@ -11,7 +11,6 @@
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTObject.h"
-#include "AOTObjectCopy.h"
 #include "AOTObjectModel.h"
 #include "AOTOperationCallScope.h"
 #include "AOTProgramIdentifiers.h"
@@ -35,7 +34,6 @@ layout L3 name="Pair" fields=[{key="x" declared={type=anything}}, {key="y" decla
 module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -47,31 +45,26 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="makePoint" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
     v3 = FinishObject v2
     Return v3
 }
 function f2 name="makeCopy" results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L1 fields=[]
     v1 = FinishObject v0
     Return v1
 }
 function f3 name="storeAndDelete" parameters=[{type=anything}, {type=string}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: string, v2: anything):
     ElemSet v0, v1, v2
     v4 = ElemDelete v0, v1
     Return
 }
 function f4 name="makeTail" results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L2 fields=[]
     v1 = FinishObject v0
     Return v1
 }
 function f5 name="makePair" results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L3 fields=[]
     v1 = FinishObject v0
     Return v1
@@ -566,20 +559,6 @@ static void testPlansOutliveCollectionsWhileTheirStructuresLive(LoadedProgram& p
     AOT_TEST_CHECK(valueOf(vm, RuntimeCounterID::AssignmentPlansMade) == plansMade);
 }
 
-static void testMakesPlanAtSecondCopyWhereAsked(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    uint64_t plansMade = valueOf(vm, RuntimeCounterID::AssignmentPlansMade);
-    AOT_TEST_CHECK(!createCopy(program)->tryAssignPropertiesOf(vm, createPointWithAddedName(program), { }, Object::PlanCreation::AtSecondCopy));
-    AOT_TEST_CHECK(valueOf(vm, RuntimeCounterID::AssignmentPlansMade) == plansMade);
-    for (int32_t turn = 0; turn < 2; ++turn) {
-        Object* source = createPointWithAddedName(program);
-        Object* target = createCopy(program);
-        AOT_TEST_CHECK(target->tryAssignPropertiesOf(vm, source, { }, Object::PlanCreation::AtSecondCopy) && holdsPropertiesOf(program, target, source));
-        AOT_TEST_CHECK(valueOf(vm, RuntimeCounterID::AssignmentPlansMade) == plansMade + 1);
-    }
-}
-
 static void testClonedStructuresAreForgottenAtEachCollection(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -617,7 +596,6 @@ std::span<const NativeTest> assignmentPlanTests()
         { "assignment-plans/kinds-of-pairs-that-come-in-turns-keep-their-plans"_s, withPoints<testKindsOfPairsThatComeInTurnsKeepTheirPlans<24, 4>> },
         { "assignment-plans/kinds-of-pairs-that-find-no-place-leave-the-plans-of-others"_s, withPoints<testKindsOfPairsThatComeInTurnsKeepTheirPlans<60, 60>> },
         { "assignment-plans/plans-outlive-collections-while-their-structures-live"_s, withPoints<testPlansOutliveCollectionsWhileTheirStructuresLive> },
-        { "assignment-plans/makes-plan-at-second-copy-where-asked"_s, withPoints<testMakesPlanAtSecondCopyWhereAsked> },
         { "assignment-plans/cloned-structures-are-forgotten-at-each-collection"_s, withPoints<testClonedStructuresAreForgottenAtEachCollection> },
     };
     return tests;

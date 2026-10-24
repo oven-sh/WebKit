@@ -83,7 +83,6 @@ layout L4 kind=Instance name="Patched" module=m0 constructor=f4
 layout L5 kind=Instance name="CapturesOtherScope" module=m0 constructor=f5
 layout L6 kind=Environment name="scope" fields=[{key="captured" declared={type=anything}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="key" [isFreeName]
     v2 = ToPropertyKey v1
@@ -135,93 +134,73 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="ComputedKeyInTheMiddle" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L1
     v2 = NewObject v1 layout=L1
     Return v2
 }
 function f2 name="SymbolKey" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L2
     v2 = NewObject v1 layout=L2
     Return v2
 }
 function f3 name="StaticName" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L3
     v2 = NewObject v1 layout=L3
     Return v2
 }
 function f4 name="Patched" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L4
     v2 = NewObject v1 layout=L4
     Return v2
 }
 function f5 name="CapturesOtherScope" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L5
     v2 = NewObject v1 layout=L5
     Return v2
 }
 function f6 name="z" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f7 name="a" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f8 name="computed" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f9 name="s" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f10 name="b" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f11 name="z" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f12 name="iterator" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f13 name="a" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f14 name="z" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f15 name="name" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f16 name="s" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f17 name="z" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f18 name="a" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f19 name="patch" flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f20 name="z" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f21 name="a" kind=Method flags=[HasThis] captures=[{type=env L6}] results=[{type=anything}] {
@@ -230,7 +209,6 @@ function f21 name="a" kind=Method flags=[HasThis] captures=[{type=env L6}] resul
     Return v2
 }
 function f22 name="makeClass" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L6 fields=[0]
     v2 = NewClosure function=f5
     v3 = NewClass v2 layout=L5

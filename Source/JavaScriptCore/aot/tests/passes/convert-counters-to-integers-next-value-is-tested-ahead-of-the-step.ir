@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="nextValueAtMostBound" parameters=[{type=int[0, 4294967296]}] results=[{type=number}] {
-  b0(v0: int[0, 4294967296]):
     v1 = Integer integer=0
     Jump -> next b1(v1)
   b1(v2):
@@ -19,15 +18,13 @@ function f0 name="nextValueAtMostBound" parameters=[{type=int[0, 4294967296]}] r
     Jump -> next b1(v8)
   b3():
     Return v2
-}
-# CHECK-LABEL: function f0 name="nextValueAtMostBound"
 # CHECK: b1(v2: int[0, 4294967296]):
 # CHECK: Branch v6 -> taken b2(| 0), notTaken b3()
 # CHECK-NEXT: b2([[next0]]: int[4, 4294967296]):
 # CHECK: Jump -> next b1([[next0]])
+}
 
 function f1 name="boundOnTheLeft" parameters=[{type=int[0, 1000]}] results=[{type=number}] {
-  b0(v0: int[0, 1000]):
     v1 = Integer integer=0
     Jump -> next b1(v1)
   b1(v2):
@@ -42,13 +39,11 @@ function f1 name="boundOnTheLeft" parameters=[{type=int[0, 1000]}] results=[{typ
     Jump -> next b1(v8)
   b3():
     Return v2
-}
-# CHECK-LABEL: function f1 name="boundOnTheLeft"
 # CHECK: b1(v2: int[0, 999]):
 # CHECK: Branch v6 -> taken b2(| 1), notTaken b3()
+}
 
 function f2 name="testedSumIsNotTheStep" parameters=[{type=int[0, 1000]}] results=[{type=number}] {
-  b0(v0: int[0, 1000]):
     v1 = Integer integer=0
     Jump -> next b1(v1)
   b1(v2):
@@ -63,13 +58,11 @@ function f2 name="testedSumIsNotTheStep" parameters=[{type=int[0, 1000]}] result
     Jump -> next b1(v8)
   b3():
     Return v2
-}
-# CHECK-LABEL: function f2 name="testedSumIsNotTheStep"
 # CHECK: b1(v2: int|whole):
 # CHECK: Branch v6 -> taken b2(), notTaken b3()
+}
 
 function f3 name="boundIsNumber" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Integer integer=0
     Jump -> next b1(v1)
   b1(v2):
@@ -84,13 +77,11 @@ function f3 name="boundIsNumber" parameters=[{type=number}] results=[{type=numbe
     Jump -> next b1(v8)
   b3():
     Return v2
-}
-# CHECK-LABEL: function f3 name="boundIsNumber"
 # CHECK: b1(v2: int|whole):
 # CHECK: Branch v6 -> taken b2(), notTaken b3()
+}
 
 function f4 name="staysWhereTheTestFails" parameters=[{type=int[0, 1000]}] results=[{type=number}] {
-  b0(v0: int[0, 1000]):
     v1 = Integer integer=0
     Jump -> next b1(v1)
   b1(v2):
@@ -105,12 +96,10 @@ function f4 name="staysWhereTheTestFails" parameters=[{type=int[0, 1000]}] resul
     Jump -> next b1(v8)
   b3():
     Return v2
-}
-# CHECK-LABEL: function f4 name="staysWhereTheTestFails"
 # CHECK: b1(v2: int|whole):
+}
 
 function f5 name="oneStepAmongTwoIsAnother" parameters=[{type=int[0, 1000]}, {type=boolean}] results=[{type=number}] {
-  b0(v0: int[0, 1000], v1: boolean):
     v2 = Integer integer=0
     Jump -> next b1(v2)
   b1(v3):
@@ -131,6 +120,5 @@ function f5 name="oneStepAmongTwoIsAnother" parameters=[{type=int[0, 1000]}, {ty
     Jump -> next b1(v11)
   b5():
     Return v3
-}
-# CHECK-LABEL: function f5 name="oneStepAmongTwoIsAnother"
 # CHECK: b1(v3: int|whole):
+}

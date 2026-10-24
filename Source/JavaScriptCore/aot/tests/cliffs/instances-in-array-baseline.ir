@@ -18,7 +18,6 @@ entry module=m0
 layout L0 kind=Instance name="Node" module=m0 constructor=f1 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="weight" declared={type=number} flags=[IsRequired]}]
 variable g0 name="first" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = FinishClass v1 layout=L0
@@ -38,7 +37,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v15
 }
 function f1 name="Node" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0 fields=[]
     PropSet v3, v3 key="next" mode=Strict
@@ -46,7 +44,6 @@ function f1 name="Node" kind=BaseConstructor flags=[HasNewTarget] parameters=[{t
     Return v3
 }
 function f2 name="follow" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = PropGet v0 key="next"
     v2 = PropGet v1 key="next"

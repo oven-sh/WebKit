@@ -12,9 +12,9 @@
 #include "AOTConstantEmitter.h"
 #include "AOTFlowResults.h"
 #include "AOTIdentifierNumbering.h"
+#include "AOTObjectModelCaches.h"
 #include "AOTPlacement.h"
 #include "AOTRuntimeCallEmitter.h"
-#include "AOTSourcePlans.h"
 #include "AOTStubsPropertyKeys.h"
 #include "AOTVector.h"
 

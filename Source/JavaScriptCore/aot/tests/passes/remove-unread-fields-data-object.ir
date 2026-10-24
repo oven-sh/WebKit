@@ -13,33 +13,25 @@ data d0 root=Object{layout=L0 members=[{key="id" value=Number{value=1}}, {key="i
 # CHECK: layout L2 name="InNoData" fields=[{key="id"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
 
 function f0 name="buildsFromData" results=[{type=anything}] {
-  b0():
     v0 = Data data=d0
     Return v0
-}
-# CHECK-LABEL: function f0 name="buildsFromData"
 # CHECK: = Data data=d0
+}
 
 function f1 name="buildsRootLayout" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     Return v1
-}
-# CHECK-LABEL: function f1 name="buildsRootLayout"
 # CHECK: = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+}
 
 function f2 name="buildsNestedLayout" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
     Return v1
-}
-# CHECK-LABEL: function f2 name="buildsNestedLayout"
 # CHECK: = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+}
 
 function f3 name="buildsLayoutInNoData" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0, v0 layout=L2 fields=[0, 1]
     Return v1
-}
-# CHECK-LABEL: function f3 name="buildsLayoutInNoData"
 # CHECK: = NewObject -, v0 layout=L2 fields=[1]
+}

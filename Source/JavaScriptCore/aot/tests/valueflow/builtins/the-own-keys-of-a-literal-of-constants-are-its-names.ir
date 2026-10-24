@@ -15,7 +15,6 @@ layout L1 kind=Record name="Single" fields=[{key="only" declared={type=number} f
 data d0 root=Object{layout=L0 members=[{key="run" value=Number{value=1}}, {key="stop" value=Number{value=2}}]} module=m0
 data d1 root=Object{layout=L1 members=[{key="only" value=Number{value=1}}]} module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Data data=d0
     v1 = Builtin builtin=Object
     v2 = Builtin builtin=ObjectKeys
@@ -36,7 +35,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v9
 }
 function f1 name="names" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=Object
     v2 = Builtin builtin=ObjectKeys
     v3 = Call v2, v1, v0

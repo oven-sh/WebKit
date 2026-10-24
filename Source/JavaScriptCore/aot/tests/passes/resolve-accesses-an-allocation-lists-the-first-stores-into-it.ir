@@ -14,7 +14,6 @@ function f0 name="somebody" parameters=[{type=anything}] results=[{type=number}]
 function f1 name="lazy" kind=Getter flags=[HasThis] results=[{type=anything}]
 
 function f2 name="definitions-in-the-literal" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = CallDirect v0 function=f0
     PropDefine v1, v2 key="third"
@@ -22,47 +21,41 @@ function f2 name="definitions-in-the-literal" parameters=[{type=number}] results
     PropDefine v1, v4 key="second"
     v6 = FinishObject v1
     Return v6
-}
-# CHECK-LABEL: function f2 name="definitions-in-the-literal"
 # CHECK-NEXT: b0(v0: number):
 # CHECK-NEXT: v2: number = CallDirect v0 function=f0
 # CHECK-NEXT: v4: number = CallDirect v2 function=f0
 # CHECK-NEXT: v1: L0 = NewObject -, v0, v2, v4 layout=L0 fields=[0, 2, 1]
 # CHECK-NEXT: v6: L0 = FinishObject v1
 # CHECK-NEXT: Return v6
+}
 
 function f3 name="stores-behind-the-literal" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = FinishObject v1
     v3 = CallDirect v0 function=f0
     PropSet v2, v3 key="second"
     PropDefine v2, v0 key="third"
     Return v2
-}
-# CHECK-LABEL: function f3 name="stores-behind-the-literal"
 # CHECK-NEXT: b0(v0: number):
 # CHECK-NEXT: v3: number = CallDirect v0 function=f0
 # CHECK-NEXT: v1: L0 = NewObject -, v0, v3, v0 layout=L0 fields=[0, 1, 2]
 # CHECK-NEXT: v2: L0 = FinishObject v1
 # CHECK-NEXT: Return v2
+}
 
 function f4 name="a-filler-gives-way-to-the-value" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = Integer
     v2 = NewObject -, v1 layout=L0 fields=[0]
     v3 = CallDirect v0 function=f0
     PropSet v2, v3 key="first"
     v5 = FinishObject v2
     Return v5
-}
-# CHECK-LABEL: function f4 name="a-filler-gives-way-to-the-value"
 # CHECK: v3: number = CallDirect v0 function=f0
 # CHECK-NEXT: v2: L0 = NewObject -, v3 layout=L0 fields=[0]
 # CHECK-NEXT: v5: L0 = FinishObject v2
+}
 
 function f5 name="a-value-that-the-run-time-looks-at-waits-behind-the-allocation" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     v2 = Integer
     v3 = NewObject -, v2 layout=L0 fields=[0]
     PropSet v3, v1 key="first"
@@ -70,67 +63,57 @@ function f5 name="a-value-that-the-run-time-looks-at-waits-behind-the-allocation
     PropDefine v3, v5 key="second"
     v7 = FinishObject v3
     Return v7
-}
-# CHECK-LABEL: function f5 name="a-value-that-the-run-time-looks-at-waits-behind-the-allocation"
 # CHECK: v5: number = CallDirect v0 function=f0
 # CHECK-NEXT: v3: L0 = NewObject -, v2, v5 layout=L0 fields=[0, 1]
 # CHECK-NEXT: PropSet v3, v1 key="first"
 # CHECK-NEXT: v7: L0 = FinishObject v3
+}
 
 function f6 name="another-prototype" parameters=[{type=number}, {type=object}] results=[{type=anything}] {
-  b0(v0: number, v1: object):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     SetLiteralPrototype v2, v1
     PropDefine v2, v0 key="second"
     v5 = FinishObject v2
     PropSet v5, v0 key="third"
     Return v5
-}
-# CHECK-LABEL: function f6 name="another-prototype"
 # CHECK: v2: L0 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
 # CHECK-NEXT: SetLiteralPrototype v2, v1
 # CHECK-NEXT: v5: L0 = FinishObject v2
 # CHECK-NEXT: PropSet v5, v0 key="third"
+}
 
 function f7 name="handed-on-in-between" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = FinishObject v1
     PropSet v2, v0 key="second"
     v4 = CallDirect v2 function=f0
     PropSet v2, v0 key="third"
     Return v2
-}
-# CHECK-LABEL: function f7 name="handed-on-in-between"
 # CHECK: v1: L0 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
 # CHECK: PropSet v2, v0 key="third"
+}
 
 function f8 name="stored-as-a-value" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     v3 = FinishObject v2
     PropSet v1, v3 key="kept"
     PropSet v3, v0 key="second"
     Return v3
-}
-# CHECK-LABEL: function f8 name="stored-as-a-value"
 # CHECK: v2: L0 = NewObject -, v0 layout=L0 fields=[0]
 # CHECK: PropSet v3, v0 key="second"
+}
 
 function f9 name="stored-into-itself" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = FinishObject v1
     PropSet v2, v2 key="self"
     PropSet v2, v0 key="second"
     Return v2
-}
-# CHECK-LABEL: function f9 name="stored-into-itself"
 # CHECK: v1: L0 = NewObject -, v0 layout=L0 fields=[0]
 # CHECK: PropSet v2, v0 key="second"
+}
 
 function f10 name="the-prototype-of-another-literal" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewObject -, v0 layout=L0 fields=[0]
     SetLiteralPrototype v2, v1
@@ -138,66 +121,56 @@ function f10 name="the-prototype-of-another-literal" parameters=[{type=number}] 
     v5 = FinishObject v1
     v6 = FinishObject v2
     Return v6
-}
-# CHECK-LABEL: function f10 name="the-prototype-of-another-literal"
 # CHECK: v1: L0 = NewObject -, v0 layout=L0 fields=[0]
 # CHECK: PropDefine v1, v0 key="second"
+}
 
 function f11 name="a-name-for-the-second-time" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     PropDefine v1, v0 key="second"
     PropDefine v1, v0 key="second"
     PropDefine v1, v0 key="third"
     v5 = FinishObject v1
     Return v5
-}
-# CHECK-LABEL: function f11 name="a-name-for-the-second-time"
 # CHECK: v1: L0 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
 # CHECK-NEXT: PropDefine v1, v0 key="second"
 # CHECK-NEXT: PropDefine v1, v0 key="third"
+}
 
 function f12 name="something-stands-in-for-a-value-that-the-slot-may-not-admit" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     PropDefine v2, v1 key="second"
     PropDefine v2, v0 key="third"
     v5 = FinishObject v2
     Return v5
-}
-# CHECK-LABEL: function f12 name="something-stands-in-for-a-value-that-the-slot-may-not-admit"
 # CHECK-NEXT: b0(v0: number, v1: anything):
 # CHECK-NEXT: [[filler]]: {{*}} = Integer
 # CHECK-NEXT: v2: L0 = NewObject -, v0, [[filler]], v0 layout=L0 fields=[0, 1, 2]
 # CHECK-NEXT: PropDefine v2, v1 key="second"
 # CHECK-NEXT: v5: L0 = FinishObject v2
+}
 
 function f13 name="a-spread" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     CopyDataProperties v2, v1
     PropDefine v2, v0 key="second"
     v5 = FinishObject v2
     Return v5
-}
-# CHECK-LABEL: function f13 name="a-spread"
 # CHECK: v2: L0 = NewObject -, v0 layout=L0 fields=[0]
 # CHECK: PropDefine v2, v0 key="second"
+}
 
 function f14 name="a-computed-key" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     ElemDefine v2, v1, v0
     PropDefine v2, v0 key="second"
     v5 = FinishObject v2
     Return v5
-}
-# CHECK-LABEL: function f14 name="a-computed-key"
 # CHECK: v2: L0 = NewObject -, v0 layout=L0 fields=[0]
 # CHECK: PropDefine v2, v0 key="second"
+}
 
 function f15 name="an-accessor" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewClosure function=f1
     v2 = NewObject -, v0 layout=L0 fields=[0]
     PropDefine v2, v0 key="second"
@@ -205,37 +178,31 @@ function f15 name="an-accessor" parameters=[{type=number}] results=[{type=anythi
     PropDefine v2, v0 key="third"
     v6 = FinishObject v2
     Return v6
-}
-# CHECK-LABEL: function f15 name="an-accessor"
 # CHECK: v2: L0 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
 # CHECK-NEXT: DefineGetter v2, v1 key="lazy"
 # CHECK-NEXT: PropDefine v2, v0 key="third"
+}
 
 function f16 name="the-setter-that-every-object-inherits" parameters=[{type=number}, {type=object}] results=[{type=anything}] {
-  b0(v0: number, v1: object):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     v3 = FinishObject v2
     PropSet v3, v1 key="__proto__"
     PropSet v3, v0 key="second"
     Return v3
-}
-# CHECK-LABEL: function f16 name="the-setter-that-every-object-inherits"
 # CHECK: v2: L0 = NewObject -, v0 layout=L0 fields=[0]
 # CHECK: PropSet v3, v0 key="second"
+}
 
 function f17 name="a-prototype-given-to-the-allocation" parameters=[{type=number}, {type=object}] results=[{type=anything}] {
-  b0(v0: number, v1: object):
     v2 = NewObject v1, v0 layout=L0 fields=[0]
     v3 = FinishObject v2
     PropSet v3, v0 key="second"
     Return v3
-}
-# CHECK-LABEL: function f17 name="a-prototype-given-to-the-allocation"
 # CHECK: v2: L0 = NewObject v1, v0 layout=L0 fields=[0]
 # CHECK: PropSet v3, v0 key="second"
+}
 
 function f18 name="in-another-block" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     v3 = FinishObject v2
     PropSet v3, v0 key="second"
@@ -247,13 +214,11 @@ function f18 name="in-another-block" parameters=[{type=number}, {type=boolean}] 
     Branch v1 -> taken b1(), notTaken b2()
   b2():
     Return v3
-}
-# CHECK-LABEL: function f18 name="in-another-block"
 # CHECK: v2: L0 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
 # CHECK: PropSet v3, v0 key="third"
+}
 
 function f19 name="allocated-in-a-loop" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -265,31 +230,26 @@ function f19 name="allocated-in-a-loop" parameters=[{type=number}, {type=boolean
     Branch v1 -> taken b1(), notTaken b2()
   b2():
     Return
-}
-# CHECK-LABEL: function f19 name="allocated-in-a-loop"
 # CHECK: v3: L0 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
 # CHECK: PropSet v4, v0 key="third"
+}
 
 function f20 name="nothing-stands-in-for-an-object" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     v2 = NewObject -, v0 layout=L1 fields=[0]
     PropDefine v2, v1 key="held"
     PropDefine v2, v0 key="third"
     v5 = FinishObject v2
     Return v5
-}
-# CHECK-LABEL: function f20 name="nothing-stands-in-for-an-object"
 # CHECK: v2: L1 = NewObject -, v0 layout=L1 fields=[0]
 # CHECK-NEXT: PropDefine v2, v1 key="held"
 # CHECK-NEXT: PropDefine v2, v0 key="third"
+}
 
 function f21 name="nothing-is-listed-for-the-sake-of-a-stand-in-alone" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     PropDefine v2, v1 key="second"
     v4 = FinishObject v2
     Return v4
-}
-# CHECK-LABEL: function f21 name="nothing-is-listed-for-the-sake-of-a-stand-in-alone"
 # CHECK: v2: L0 = NewObject -, v0 layout=L0 fields=[0]
 # CHECK-NEXT: PropDefine v2, v1 key="second"
+}

@@ -10,7 +10,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 evalscope e0
 function f0 name="main" kind=Module parameters=[] results=[{type=anything}] {
-  b0():
     v0 = String string="text"
     v1 = Undefined
     v2 = DirectEval v0, v1 evalScope=e0
@@ -25,6 +24,5 @@ function f0 name="main" kind=Module parameters=[] results=[{type=anything}] {
     Return
 }
 function f1 name="one" results=[{type=anything}] {
-  b0():
     Return
 }

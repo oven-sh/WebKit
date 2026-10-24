@@ -25,7 +25,6 @@ module m2 path="node:fs" displayPath="node:fs" kind=Runtime exportRule=RuntimeMo
 entry module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = ModuleNamespace module=m1
     PropSet v0, v1 key="nativeModule"
@@ -90,7 +89,6 @@ entry module=m1
 entry module=m2
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = GetModuleVariable variable=g0
     PropSet v0, v1 key="moduleObject"
@@ -99,14 +97,12 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="first" module=m1 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = GetModuleVariable variable=g1
     PropSet v0, v1 key="seenByFirst"
     Return
 }
 function f2 name="second" module=m2 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = GetModuleVariable variable=g1
     PropSet v0, v1 key="seenBySecond"

@@ -11,7 +11,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Error
     v1 = NewClosure function=f1
     PropSet v0, v1 key="prepareStackTrace" mode=Strict
@@ -21,6 +20,5 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v5
 }
 function f1 name="make" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Return v0
 }

@@ -30,13 +30,11 @@ function f5 name="untyped-receiver" parameters=[{type=L0 flags=[IsExpected]}] re
 }
 # CHECK-NEXT: F5 v1 PropGet [[x]]: form=Slot level=Expected operation=GetSlot receivers=[L0] receiverTest=Type proofs=[OwnInstance] missPath member=(Field level=Proven holder=L0 field=0)
 function f6 name="typed-receiver-needs-no-test" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="x"
     Return v1
 }
 # CHECK-NEXT: F6 v1 PropGet [[x]]: form=Slot level=Proven operation=GetSlot receivers=[L0] member=(Field level=Proven holder=L0 field=0)
 function f7 name="layouts-of-a-stamp" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = PropGet v0 key="x" receivers=[L1]
     Return v1
 }
@@ -136,7 +134,6 @@ function f22 name="private-name-belongs-to-one-instance" parameters=[{type=L7 fl
 }
 # CHECK-NEXT: F22 v2 PrivateGet [[mark]]: form=Slot level=Expected operation=GetSlot receivers=[L7] receiverTest=Type proofs=[OwnInstance] missPath member=(Field level=Proven holder=L7 field=1)
 function f23 name="proven-receiver-is-of-this-instance" parameters=[{type=L7}] results=[{type=anything}] {
-  b0(v0: L7):
     v1 = PropGet v0 key="next"
     v2 = Call v1, v0 calleeKey="next"
     v3 = NewClassToken layout=L7

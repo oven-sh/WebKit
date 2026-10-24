@@ -12,97 +12,87 @@ function f0 name="nullOrObject" parameters=[{type=null|L0 flags=[IsExpected]}, {
   b0(v0: anything ~ null|L0, v1: anything):
     v2 = StrictEq v1, v0
     Return v2
-}
-# CHECK-LABEL: function f0 name="nullOrObject"
 # CHECK-NOT: testedType=object
 # CHECK: = TypeTest v0 testedType=undefined|null|object
 # CHECK: = StrictEq v1, {{*}}
+}
 
 function f1 name="objectAlone" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=boolean}] {
   b0(v0: anything ~ L0, v1: anything):
     v2 = StrictEq v1, v0
     Return v2
-}
-# CHECK-LABEL: function f1 name="objectAlone"
 # CHECK: = TypeTest v0 testedType=object
+}
 
 function f2 name="optionalBoolean" parameters=[{type=undefined|boolean flags=[IsExpected]}, {type=anything}] results=[{type=boolean}] {
   b0(v0: anything ~ undefined|boolean, v1: anything):
     v2 = StrictEq v1, v0
     Return v2
-}
-# CHECK-LABEL: function f2 name="optionalBoolean"
 # CHECK-NOT: testedType=boolean
 # CHECK: = TypeTest v0 testedType=undefined|null|boolean
 # CHECK: = StrictEq v1, {{*}}
+}
 
 function f3 name="booleanAlone" parameters=[{type=boolean flags=[IsExpected]}, {type=anything}] results=[{type=boolean}] {
   b0(v0: anything ~ boolean, v1: anything):
     v2 = StrictEq v1, v0
     Return v2
-}
-# CHECK-LABEL: function f3 name="booleanAlone"
 # CHECK: = TypeTest v0 testedType=boolean
+}
 
 # Beside any value at all, a string that may be left out is compared as any value is.
 function f4 name="optionalStringBesideAnyValue" parameters=[{type=undefined|string flags=[IsExpected]}, {type=anything}] results=[{type=boolean}] {
   b0(v0: anything ~ undefined|string, v1: anything):
     v2 = StrictEq v1, v0
     Return v2
-}
-# CHECK-LABEL: function f4 name="optionalStringBesideAnyValue"
 # CHECK-NOT: TypeTest
 # CHECK: = StrictEq v1, v0
+}
 
 function f5 name="twoOptionalStrings" parameters=[{type=undefined|string flags=[IsExpected]}, {type=null|string flags=[IsExpected]}] results=[{type=boolean}] {
   b0(v0: anything ~ undefined|string, v1: anything ~ null|string):
     v2 = StrictEq v0, v1
     Return v2
-}
-# CHECK-LABEL: function f5 name="twoOptionalStrings"
 # CHECK-NOT: testedType=string
 # CHECK: = TypeTest v0 testedType=undefined|null|string
 # CHECK-NOT: testedType=string
 # CHECK: = TypeTest v1 testedType=undefined|null|string
+}
 
 # What is compared with a number is taken for a number. Beside a number that may be left out it may have been left out too.
 function f6 name="optionalNumberBesideAnyValue" parameters=[{type=undefined|number flags=[IsExpected]}, {type=anything}] results=[{type=boolean}] {
   b0(v0: anything ~ undefined|number, v1: anything):
     v2 = StrictEq v1, v0
     Return v2
-}
-# CHECK-LABEL: function f6 name="optionalNumberBesideAnyValue"
 # CHECK-NOT: testedType=number
 # CHECK: = TypeTest v1 testedType=undefined|null|number
 # CHECK-NOT: testedType=number
 # CHECK: = TypeTest v0 testedType=undefined|null|number
+}
 
 function f7 name="numberAloneBesideAnyValue" parameters=[{type=number flags=[IsExpected]}, {type=anything}] results=[{type=boolean}] {
   b0(v0: anything ~ number, v1: anything):
     v2 = StrictEq v1, v0
     Return v2
-}
-# CHECK-LABEL: function f7 name="numberAloneBesideAnyValue"
 # CHECK: testedType=number
+}
 
 function f8 name="twoOptionalBooleansComparedLoosely" parameters=[{type=undefined|boolean flags=[IsExpected]}, {type=undefined|boolean flags=[IsExpected]}] results=[{type=boolean}] {
   b0(v0: anything ~ undefined|boolean, v1: anything ~ undefined|boolean):
     v2 = Eq v0, v1
     Return v2
-}
-# CHECK-LABEL: function f8 name="twoOptionalBooleansComparedLoosely"
 # CHECK-NOT: testedType=boolean
 # CHECK: = TypeTest v0 testedType=undefined|null|boolean
 # CHECK-NOT: testedType=boolean
 # CHECK: = TypeTest v1 testedType=undefined|null|boolean
+}
 
 function f9 name="twoOptionalObjectsComparedLoosely" parameters=[{type=undefined|L0 flags=[IsExpected]}, {type=undefined|L0 flags=[IsExpected]}] results=[{type=boolean}] {
   b0(v0: anything ~ undefined|L0, v1: anything ~ undefined|L0):
     v2 = Eq v0, v1
     Return v2
-}
-# CHECK-LABEL: function f9 name="twoOptionalObjectsComparedLoosely"
 # CHECK-NOT: testedType=object
 # CHECK: = TypeTest v0 testedType=undefined|null|object
 # CHECK-NOT: testedType=object
 # CHECK: = TypeTest v1 testedType=undefined|null|object
+}

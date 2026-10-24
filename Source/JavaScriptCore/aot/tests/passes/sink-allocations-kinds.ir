@@ -9,7 +9,6 @@ layout L1 kind=Instance name="Vector" fields=[{key="x" declared={type=anything} 
 layout L2 kind=Environment name="scope" fields=[{key="x" declared={type=anything}}]
 
 function f0 name="objects" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     v3 = NewObject -, v0 layout=L1 fields=[0]
     v4 = NewObject -, v0, v1 layout=L(IteratorResult) fields=[0, 1]
@@ -24,7 +23,6 @@ function f0 name="objects" parameters=[{type=anything}, {type=boolean}] results=
 # CHECK-NEXT: v4: Removed
 
 function f1 name="environment" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L2 fields=[0]
     Return
 }
@@ -33,7 +31,6 @@ function f1 name="environment" parameters=[{type=anything}] results=[{type=undef
 # CHECK-NEXT: v1: Removed
 
 function f2 name="closure" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     v1 = NewClosure v0 function=f3
     Return
 }
@@ -42,13 +39,11 @@ function f2 name="closure" parameters=[{type=anything}] results=[{type=undefined
 # CHECK-NEXT: v1: Removed
 
 function f3 name="callback" kind=Arrow captures=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 # CHECK-LABEL: function f3
 
 function f4 name="arrays" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     v1 = NewArray v0, v0 contents=anything
     v2 = NewArray v0 contents=anything holes=[0]
     v3 = NewArray v0, v0, v0 contents=anything
@@ -81,7 +76,6 @@ function f5 name="argumentsObjects" flags=[IsSloppy, TakesCallee, HasArgumentCou
 # CHECK-NEXT: v8: NotACandidate
 
 function f6 name="stringRange" parameters=[{type=string}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: string, v1: int[0, 100], v2: int[0, 100]):
     v3 = Substring v0, v1, v2
     Return
 }
@@ -90,7 +84,6 @@ function f6 name="stringRange" parameters=[{type=string}, {type=int[0, 100]}, {t
 # CHECK-NEXT: v3: Removed
 
 function f7 name="prefixesOfBuiltinResults" parameters=[{type=RegExp}, {type=string}] results=[{type=undefined}] {
-  b0(v0: RegExp, v1: string):
     v2 = CallBuiltin v0, v1 overload=RegExpPrototypeExec/0
     v3 = CallBuiltin v1, v1 overload=StringPrototypeSplit/0
     Return
@@ -100,7 +93,6 @@ function f7 name="prefixesOfBuiltinResults" parameters=[{type=RegExp}, {type=str
 # CHECK-NEXT: v3: Supported BuiltinPrefix
 
 function f8 name="opaque" results=[{type=undefined}] {
-  b0():
     v0 = NewRegExp pattern="a"
     v1 = NewPromise
     Return
@@ -112,7 +104,6 @@ function f8 name="opaque" results=[{type=undefined}] {
 # CHECK-NEXT: v1: Removed
 
 function f9 name="storageIsChosen" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L2 fields=[0] storage=Frame
     v2 = NewObject -, v0 layout=L2 fields=[0] storage=FrameUntilMaterialized
     v3 = NewClosure v0 function=f3 storage=Frame
@@ -127,7 +118,6 @@ function f9 name="storageIsChosen" parameters=[{type=anything}] results=[{type=u
 # CHECK-NEXT: v3: NotACandidate
 
 function f10 name="effectsWhereItStands" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: object, v1: anything):
     v2 = Data data=d0
     v3 = IsPlainDataObject v0
     Branch v3 -> taken b1(| 0), notTaken b2()
@@ -144,7 +134,6 @@ function f10 name="effectsWhereItStands" parameters=[{type=object}, {type=anythi
 # CHECK-NEXT: v5: NotACandidate
 
 function f11 name="builtinResultsWithoutParts" parameters=[{type=object}] results=[{type=undefined}] {
-  b0(v0: object):
     v1 = CallBuiltin -, v0 overload=ObjectFreeze/0
     v2 = CallBuiltin -, v0 overload=ObjectKeys/0
     Return
@@ -156,7 +145,6 @@ function f11 name="builtinResultsWithoutParts" parameters=[{type=object}] result
 # CHECK-NEXT: v2: NotACandidate
 
 function f12 name="generator" role=CoroutineRamp flags=[IsGenerator, TakesCallee] results=[{type=undefined}] creator=Coroutine{ramp=f12 body=f14} {
-  b0(v0: function):
     v1 = NewGenerator v0 function=f12
     Return
 }
@@ -165,7 +153,6 @@ function f12 name="generator" role=CoroutineRamp flags=[IsGenerator, TakesCallee
 # CHECK-NEXT: v1: NotACandidate
 
 function f13 name="restArray" role=GenericEntrypoint flags=[HasThis] captures=[{type=f3}] results=[{type=anything}] derivation={source=f3} creator=Entrypoint{target=f3} {
-  b0(v0: f3, v1: anything):
     v2 = CreateRest firstArgument=1
     Return
 }
@@ -174,7 +161,6 @@ function f13 name="restArray" role=GenericEntrypoint flags=[HasThis] captures=[{
 # CHECK-NEXT: v2: Removed
 
 function f14 name="generator" role=CoroutineBody parameters=[{type=object}, {type=anything}] results=[{type=anything}] derivation={source=f12} creator=Coroutine{ramp=f12 body=f14} {
-  b0(v0: object, v1: anything):
     Return v1
 }
 # CHECK-LABEL: function f14

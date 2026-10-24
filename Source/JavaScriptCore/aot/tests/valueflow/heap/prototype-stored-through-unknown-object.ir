@@ -10,7 +10,6 @@ layout L0 name="Shown"
 layout L1 name="Kept"
 layout L2 name="Base" fields=[{key="who" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module parameters=[] results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L0 fields=[]
     v1 = NewObject layout=L1 fields=[]
     v2 = NewClosure function=f1
@@ -26,6 +25,5 @@ function f0 name="main" kind=Module parameters=[] results=[{type=anything}] {
     Return
 }
 function f1 name="one" results=[{type=anything}] {
-  b0():
     Return
 }

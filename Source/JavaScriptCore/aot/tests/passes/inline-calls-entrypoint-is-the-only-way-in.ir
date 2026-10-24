@@ -8,7 +8,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -22,7 +21,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK: = Call {{*}}callees=[f2]
 
 function f1 name="enteredByUnknownCodeAlone" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToNumber v0
 # REPEAT: i = 1..20
     v%(i+1) = Mul v%(i), v1
@@ -32,7 +30,6 @@ function f1 name="enteredByUnknownCodeAlone" parameters=[{type=anything}] result
 }
 
 function f2 name="alsoCalledByValue" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToNumber v0
 # REPEAT: i = 1..20
     v%(i+1) = Mul v%(i), v1
@@ -42,7 +39,6 @@ function f2 name="alsoCalledByValue" parameters=[{type=anything}] results=[{type
 }
 
 function f3 name="thirteenOperations" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
 # REPEAT: i = 0..12
     v%(i+1) = Mul v%(i), v0
 # END REPEAT

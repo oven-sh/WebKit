@@ -35,7 +35,7 @@ struct WrittenOutText {
     unsigned sourceLineOf(unsigned line) const { return line - 1 < sourceLines.size() ? sourceLines[line - 1] : line; }
 };
 
-WrittenOutText writeOutRepeats(String&& text);
+WrittenOutText writeOut(String&& text, const String& folder = { });
 
 ProgramFile::Kind programKindOf(std::span<const uint8_t>);
 std::optional<ProgramFile> readProgramFile(const String& path, PrintStream& errors);

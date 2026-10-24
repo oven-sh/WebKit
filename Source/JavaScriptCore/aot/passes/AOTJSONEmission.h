@@ -12,7 +12,10 @@
 #include "AOTDerivedFunctions.h"
 #include "AOTIRBuilder.h"
 #include "AOTPass.h"
+#include "AOTStringArena.h"
+#include "AOTTypeArena.h"
 #include "AOTVector.h"
+#include <functional>
 #include <initializer_list>
 #include <span>
 #include <wtf/Noncopyable.h>
@@ -20,24 +23,14 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-class DerivedFunctionRequests {
-public:
-    explicit DerivedFunctionRequests(FunctionPassContext& pass)
-        : m_pass(&pass)
-    {
-    }
+struct ResultNode;
 
-    explicit DerivedFunctionRequests(DerivedFunctionInputs& inputs)
-        : m_functions(&inputs.derivedFunctions)
-    {
-    }
+struct DerivedFunctionRequests {
+    FunctionID ensure(const DerivedFunctionKey& key) const { return pass ? pass->derivedFunction(key) : functions->ensure(key); }
+    DerivedFunctionKey keyOf(FunctionID provisional) const { return functions->keyOf(provisional); }
 
-    FunctionID ensure(const DerivedFunctionKey&) const;
-    DerivedFunctionKey keyOf(FunctionID provisional) const;
-
-private:
-    FunctionPassContext* m_pass { nullptr };
-    DerivedFunctions* m_functions { nullptr };
+    FunctionPassContext* pass;
+    DerivedFunctions* functions;
 };
 
 struct EmissionInputs {
@@ -45,6 +38,8 @@ struct EmissionInputs {
     EmissionInputs(DerivedFunctionInputs&, FunctionID subject);
 
     AnalysisContext analysisContext() const { return { build, program, &flow, nullptr, function }; }
+    TypeID outcomeType() const { return types.intern(Type::integer({ 0, numberOfEnumerators<JSONOutcome> - 1 })); }
+    TypeID opaqueType(OpaqueKind kind) const { return types.intern(Type::forOpaque(kind)); }
 
     const Program& program;
     const FlowResults& flow;
@@ -69,34 +64,43 @@ struct DerivedFunctionHead {
 };
 
 DerivedFunctionHead createDerivedFunction(const EmissionInputs&, FunctionRole, CreatorRecord&&, const DerivedSignature&);
+DerivedSignature signatureOfSerializer(const EmissionInputs&);
+DerivedSignature signatureOfParser(const EmissionInputs&, const ResultNode&);
 
 class Emission {
     WTF_MAKE_NONCOPYABLE(Emission);
 public:
-    Emission(IRBuilder&, const EmissionInputs&);
+    Emission(IRBuilder& builder, const EmissionInputs& inputs)
+        : m_builder(builder)
+        , m_inputs(inputs)
+    {
+    }
 
     IRBuilder& builder() { return m_builder; }
     const EmissionInputs& inputs() const { return m_inputs; }
     const Program& program() const { return m_inputs.program; }
     const Function& function() const { return m_builder.function(); }
-    const Type& typeOf(ValueID) const;
+    const Type& typeOf(ValueID value) const { return program().typeOf(function(), value); }
+    TypeID outcomeType() { return m_inputs.outcomeType(); }
 
-    TypeID outcomeType();
-    TypeID cursorType();
-    TypeID keyOrderType();
-    TypeID stringBuilderType();
+    // The operation with each attribute handed to its setter.
+    template<auto... setters>
+    static Value make(Opcode opcode, std::initializer_list<ValueID> operands, const auto&... attributes)
+    {
+        Value value = IRBuilder::make(opcode, operands);
+        (std::invoke(setters, value, attributes), ...);
+        return value;
+    }
 
-    ValueID appendOutcome(JSONOutcome);
-    ValueID appendString(StringID);
-    ValueID appendString(StringView text);
-    ValueID appendNull();
+    ValueID appendOutcome(JSONOutcome outcome) { return m_builder.appendInteger(static_cast<int64_t>(outcome)); }
+    ValueID appendString(StringID string) { return m_builder.append(make<&Value::setString>(Opcode::String, { }, string)); }
+    ValueID appendString(StringView text) { return appendString(m_inputs.strings.intern(text)); }
+    ValueID appendNull() { return m_builder.append(Opcode::Null, { }); }
     ValueID appendResultAt(ValueID results, uint32_t index);
-    ValueID appendResults(std::initializer_list<ValueID>);
     void emitReturnOf(std::initializer_list<ValueID>);
 
     ValueID appendCallOf(FunctionID, std::initializer_list<ValueID> arguments);
     ValueID appendHelperCall(BuiltinID helper, std::initializer_list<ValueID> arguments);
-    ValueID appendBuiltinCall(BuiltinOverloadID, ValueID receiver, std::span<const ValueID> arguments);
 
     struct TestedObject {
         ValueID object;
@@ -104,8 +108,7 @@ public:
     };
     TestedObject emitShapeTest(ValueID, std::span<const LayoutID>, BlockID notTaken, BlockFrequency whenTaken = BlockFrequency::Normal);
     ValueID emitKeyOrderTest(const TestedObject&, LayoutID, std::span<const uint32_t> fields, BlockID notTaken);
-    ValueID appendFieldRead(const TestedObject&, LayoutID, uint32_t field);
-    ValueID appendFieldReadOrUndefined(const TestedObject&, LayoutID, uint32_t field);
+    ValueID appendFieldRead(const TestedObject&, LayoutID, uint32_t field, Opcode = Opcode::GetSlot);
 
     void emitBranchOnOutcome(ValueID outcome, BlockID parsed, BlockID rejected, BlockID unknown);
 
@@ -128,12 +131,9 @@ public:
     void emitJumpUnless(ValueID condition, BlockID otherwise);
     void emitJumpIf(ValueID condition, BlockID target);
 
-    LayoutSetID layoutSetOf(std::span<const LayoutID>);
-    bool fitsDeclaredType(ValueID, const DeclaredType&) const;
+    LayoutSetID layoutSetOf(std::span<const LayoutID> layouts) { return m_inputs.types.completeLayoutSet(layouts); }
 
 private:
-    ValueID appendSlotRead(Opcode, const TestedObject&, LayoutID, uint32_t field);
-
     IRBuilder& m_builder;
     const EmissionInputs& m_inputs;
 };

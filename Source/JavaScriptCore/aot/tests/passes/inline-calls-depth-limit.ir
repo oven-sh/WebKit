@@ -11,24 +11,20 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Box" fields=[{key="value" declared={type=number} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled}}]
 
 function f0 name="accessor" kind=Getter flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="value" receivers=[L0]
     Return v1
 }
 function f1 name="forwarder" parameters=[{type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
     v2 = CallDirect v1, v0 function=f2
     Return v2
 }
 function f2 name="manyOperations" parameters=[{type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
 # REPEAT: i = 2..20; a = 0 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19
     v%(i) = Mul v%(a), v1
 # END REPEAT
     Return v20
 }
 function f3 name="fourOperations" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Mul v0, v0
     v2 = Mul v1, v0
     v3 = Mul v2, v0
@@ -37,7 +33,6 @@ function f3 name="fourOperations" parameters=[{type=number}] results=[{type=numb
 }
 
 function f4 name="accessorAtDepthFour" parameters=[{type=L0}] results=[{type=anything}] inlineFrames=[{}, {callee=f2 module=m0}, {callee=f2 parent=1 module=m0}, {callee=f2 parent=2 module=m0}, {callee=f2 parent=3 module=m0}] {
-  b0(v0: L0):
     v1 = CallDirect v0 function=f0 @0:4
     Return v1
 }
@@ -46,7 +41,6 @@ function f4 name="accessorAtDepthFour" parameters=[{type=L0}] results=[{type=any
 # CHECK: = PropGet v0 key="value"
 
 function f5 name="forwarderAtDepthFour" parameters=[{type=number}] results=[{type=number}] inlineFrames=[{}, {callee=f3 module=m0}, {callee=f3 parent=1 module=m0}, {callee=f3 parent=2 module=m0}, {callee=f3 parent=3 module=m0}] {
-  b0(v0: number):
     v1 = CallDirect v0, v0 function=f1 @0:4
     Return v1
 }
@@ -55,7 +49,6 @@ function f5 name="forwarderAtDepthFour" parameters=[{type=number}] results=[{typ
 # CHECK: = CallDirect {{*}} function=f2
 
 function f6 name="fourOperationsAtDepthThree" parameters=[{type=number}] results=[{type=number}] inlineFrames=[{}, {callee=f2 module=m0}, {callee=f2 parent=1 module=m0}, {callee=f2 parent=2 module=m0}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f3 @0:3
     Return v1
 }
@@ -63,7 +56,6 @@ function f6 name="fourOperationsAtDepthThree" parameters=[{type=number}] results
 # CHECK-NOT: CallDirect
 
 function f7 name="fourOperationsAtDepthFour" parameters=[{type=number}] results=[{type=number}] inlineFrames=[{}, {callee=f2 module=m0}, {callee=f2 parent=1 module=m0}, {callee=f2 parent=2 module=m0}, {callee=f2 parent=3 module=m0}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f3 @0:4
     Return v1
 }
@@ -72,24 +64,20 @@ function f7 name="fourOperationsAtDepthFour" parameters=[{type=number}] results=
 # CHECK-NEXT: Return
 
 function f8 name="secondCallOfManyOperations" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0, v0 function=f2
     Return v1
 }
 
 # A body with one call site moves into its caller and is no level
 function f9 name="calledOnce" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Mul v0, v0
     Return v1
 }
 function f10 name="onlyCallerOfCalledOnce" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f9
     Return v1
 }
 function f11 name="fourOperationsInsideFourMovedBodies" parameters=[{type=number}] results=[{type=number}] inlineFrames=[{}, {callee=f9 module=m0}, {callee=f9 parent=1 module=m0}, {callee=f9 parent=2 module=m0}, {callee=f9 parent=3 module=m0}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f3 @0:4
     Return v1
 }
@@ -98,7 +86,6 @@ function f11 name="fourOperationsInsideFourMovedBodies" parameters=[{type=number
 
 # A moved body inside a copy is part of the copy
 function f12 name="fourOperationsInsideMovedBodiesOfCopy" parameters=[{type=number}] results=[{type=number}] inlineFrames=[{}, {callee=f2 module=m0}, {callee=f9 parent=1 module=m0}, {callee=f9 parent=2 module=m0}, {callee=f9 parent=3 module=m0}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f3 @0:4
     Return v1
 }

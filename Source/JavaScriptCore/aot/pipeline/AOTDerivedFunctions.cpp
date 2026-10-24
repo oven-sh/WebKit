@@ -20,6 +20,32 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+static constexpr DerivedFunctionRole derivedFunctionRoles[] = {
+#define AOT_ROLE_DERIVED_ON_REQUEST(role, builder, target, created) \
+    { FunctionRole::role, DerivedFunctionTarget::target, DerivedFunctionCreation::OnRequest, builder, Wire::StatisticID::created },
+    FOR_EACH_AOT_FUNCTION_ROLE_DERIVED_ON_REQUEST(AOT_ROLE_DERIVED_ON_REQUEST)
+#undef AOT_ROLE_DERIVED_ON_REQUEST
+    { FunctionRole::GenericVersion, DerivedFunctionTarget::Function, DerivedFunctionCreation::ByProgramPass, nullptr, Wire::StatisticID::None },
+    { FunctionRole::CoroutineBody, DerivedFunctionTarget::Function, DerivedFunctionCreation::ByProgramPass, nullptr, Wire::StatisticID::None },
+};
+
+static constexpr unsigned numberOfRowsFor(FunctionRole role)
+{
+    return std::ranges::count(derivedFunctionRoles, role, &DerivedFunctionRole::role);
+}
+
+static_assert(std::ranges::all_of(derivedFunctionRoles, [](const DerivedFunctionRole& row) { return numberOfRowsFor(row.role) == 1; }));
+static_assert(!numberOfRowsFor(FunctionRole::Source) && !numberOfRowsFor(FunctionRole::Library) && !numberOfRowsFor(FunctionRole::Model));
+
+const DerivedFunctionRole* findDerivedFunctionRole(FunctionRole role)
+{
+    for (const DerivedFunctionRole& row : derivedFunctionRoles) {
+        if (row.role == role)
+            return &row;
+    }
+    return nullptr;
+}
+
 static bool isValidKey(const DerivedFunctionKey& key, DerivedFunctionTarget target)
 {
     switch (target) {
@@ -55,48 +81,9 @@ static std::unique_ptr<Function> copyWithoutBody(const Function& function)
     return copy;
 }
 
-DerivedFunctions::DerivedFunctions(BuildContext& build)
-    : m_build(build)
-{
-}
-
-DerivedFunctions::~DerivedFunctions()
-{
-    RELEASE_ASSERT(!m_phase);
-}
-
 DerivedFunctions::Entry::~Entry() = default;
 
 thread_local DerivedFunctions::RequestRecorder* DerivedFunctions::RequestRecorder::s_current { nullptr };
-
-DerivedFunctions::RequestRecorder::RequestRecorder(RequestHandling handling)
-    : m_outer(std::exchange(s_current, this))
-    , m_handling(handling)
-{
-}
-
-DerivedFunctions::RequestRecorder::~RequestRecorder()
-{
-    RELEASE_ASSERT(s_current == this);
-    s_current = m_outer;
-}
-
-auto DerivedFunctions::RequestRecorder::current() -> RequestRecorder*
-{
-    return s_current;
-}
-
-void DerivedFunctions::RequestRecorder::record(uint32_t ordinal)
-{
-    if (m_recordedOrdinals.add(ordinal).isNewEntry)
-        m_requests.append(ordinal);
-}
-
-Vector<uint32_t> DerivedFunctions::RequestRecorder::takeRequests()
-{
-    m_recordedOrdinals.clear();
-    return std::exchange(m_requests, { });
-}
 
 DerivedFunctions::IDTable::Slots::Slots(size_t capacity)
     : slots(makeUniqueArray<Slot>(capacity))
@@ -192,12 +179,6 @@ void DerivedFunctions::IDTable::removeIfWhileNobodyLooks(NOESCAPE const ScopedLa
     replaceSlots(current->mask + 1, shouldRemove);
 }
 
-auto DerivedFunctions::shardOf(uint32_t hash) const -> Shard&
-{
-    // The high bits: a shard's table places its keys by the low ones.
-    return m_shards[hash >> (32 - numberOfShardsLog2)];
-}
-
 void DerivedFunctions::removeIDsIf(NOESCAPE const ScopedLambda<bool(FunctionID)>& shouldRemove)
 {
     forEachIndexInParallel(m_build.parallelLoops(), m_shards.size(), [&](unsigned index) {
@@ -220,8 +201,13 @@ FunctionID DerivedFunctions::ensure(const DerivedFunctionKey& key)
     RELEASE_ASSERT(isValidKey(key, role->target));
 
     FunctionID id = findOrAdd(key);
-    if (contains(id))
-        m_phase->didRequest(ordinalOf(id));
+    if (!contains(id) || m_phase->entries[ordinalOf(id)].isConfirmed())
+        return id;
+    RequestRecorder* recorder = RequestRecorder::s_current;
+    if (recorder && recorder->handling == RequestHandling::Record)
+        recorder->record(ordinalOf(id));
+    else
+        m_phase->confirm(ordinalOf(id));
     return id;
 }
 
@@ -286,17 +272,6 @@ void DerivedFunctions::PhaseState::createEntries()
     numberOfCreatedEntries.store(numberCreated + numberAdded, std::memory_order_release);
 }
 
-void DerivedFunctions::PhaseState::didRequest(uint32_t ordinal)
-{
-    if (entries[ordinal].isConfirmed())
-        return;
-    RequestRecorder* recorder = RequestRecorder::current();
-    if (recorder && recorder->handling() == RequestHandling::Record)
-        recorder->record(ordinal);
-    else
-        confirm(ordinal);
-}
-
 // The derivation of a function names the target of its key, so the target needs an id too.
 void DerivedFunctions::PhaseState::confirm(uint32_t requestedOrdinal)
 {
@@ -353,7 +328,17 @@ const Function& DerivedFunctions::buildOrWait(Entry& entry) const
 
     {
         RequestRecorder recorder(RequestHandling::Record);
-        entry.asBuilt = build(entry);
+        {
+            const DerivedFunctionKey& key = entry.key;
+            TaskArenas arenas(m_phase->interning, entry.buildTask);
+            DerivedFunctionInputs inputs { m_phase->program, m_phase->flow, arenas.types, arenas.strings, const_cast<DerivedFunctions&>(*this), m_build };
+            auto function = makeUniqueWithoutFastMallocCheck<Function>(findDerivedFunctionRole(key.role)->build(key, inputs));
+            RELEASE_ASSERT(function->role == key.role && function->hasBody());
+            function->derivation.source = key.target;
+            function->derivation.parameter = key.parameter;
+            function->derivation.node = key.node;
+            entry.asBuilt = WTF::move(function);
+        }
         entry.nestedRequests = recorder.takeRequests();
     }
     entry.published.store(entry.asBuilt.get(), std::memory_order_release);
@@ -366,24 +351,6 @@ const Function& DerivedFunctions::buildOrWait(Entry& entry) const
             m_phase->confirm(ordinal);
     }
     return *entry.asBuilt;
-}
-
-std::unique_ptr<Function> DerivedFunctions::build(const Entry& entry) const
-{
-    const DerivedFunctionKey& key = entry.key;
-    TaskArenas arenas(m_phase->interning, entry.buildTask);
-    DerivedFunctionInputs inputs { m_phase->program, m_phase->flow, arenas.types, arenas.strings, const_cast<DerivedFunctions&>(*this), m_build };
-    auto function = makeUniqueWithoutFastMallocCheck<Function>(findDerivedFunctionRole(key.role)->build(key, inputs));
-    RELEASE_ASSERT(function->role == key.role && function->hasBody());
-    function->derivation.source = key.target;
-    function->derivation.parameter = key.parameter;
-    function->derivation.node = key.node;
-    return function;
-}
-
-DerivedFunctionKey DerivedFunctions::keyOf(FunctionID provisional) const
-{
-    return entryOf(provisional).key;
 }
 
 std::weak_ordering DerivedFunctions::compare(FunctionID a, FunctionID b) const
@@ -481,26 +448,6 @@ DerivedFunctionPhase::~DerivedFunctionPhase()
     m_table.m_build.destroyLater(WTF::move(m_table.m_phase));
 }
 
-unsigned DerivedFunctionPhase::numberOfRequests() const
-{
-    return m_table.m_phase->size();
-}
-
-bool DerivedFunctionPhase::isConfirmed(FunctionID provisional) const
-{
-    return m_table.entryOf(provisional).isConfirmed();
-}
-
-unsigned DerivedFunctionPhase::taskOf(FunctionID provisional) const
-{
-    return m_table.entryOf(provisional).optimizeTask();
-}
-
-void DerivedFunctionPhase::setOptimizedBody(FunctionID provisional, std::unique_ptr<Function> function)
-{
-    m_table.entryOf(provisional).optimized = WTF::move(function);
-}
-
 void DerivedFunctionPhase::confirmRequestsOf(FunctionID requester)
 {
     DerivedFunctions::PhaseState& phase = *m_table.m_phase;
@@ -516,17 +463,37 @@ void DerivedFunctionPhase::confirmRequestsOf(FunctionID requester)
 DerivedFunctionCommit DerivedFunctionPhase::commit(const BitVector& reachedOrdinals)
 {
     RELEASE_ASSERT(!m_didCommit);
-    buildConfirmedFunctions();
-
     DerivedFunctions::PhaseState& phase = *m_table.m_phase;
-    Vector<uint32_t> order = confirmedOrdinalsInKeyOrder();
+    auto& entries = phase.entries;
+
+    // Building a function can confirm one with a lower ordinal.
+    bool didBuild;
+    do {
+        didBuild = false;
+        for (uint32_t ordinal = 0; ordinal < phase.size(); ++ordinal) {
+            if (!entries[ordinal].isConfirmed() || entries[ordinal].published.load(std::memory_order_relaxed))
+                continue;
+            m_table.at(ProvisionalFunctions::idOf(ordinal));
+            didBuild = true;
+        }
+    } while (didBuild);
+
+    Vector<uint32_t> order;
+    order.reserveInitialCapacity(phase.size());
+    for (uint32_t ordinal = 0; ordinal < phase.size(); ++ordinal) {
+        if (entries[ordinal].isConfirmed())
+            order.append(ordinal);
+    }
+    parallelSort(m_table.m_build.parallelLoops(), order.mutableSpan(), [&](uint32_t a, uint32_t b) {
+        return std::is_lt(m_table.compareKeys(entries[a].key, entries[b].key));
+    });
     RELEASE_ASSERT(phase.program.functions.size() + order.size() <= ProvisionalFunctions::firstIndex);
 
     DerivedFunctionCommit result;
     result.firstID = FunctionID(phase.program.functions.size());
     Vector<FunctionID> finalIDs(phase.size());
     for (uint32_t ordinal : order) {
-        DerivedFunctions::Entry& entry = phase.entries[ordinal];
+        DerivedFunctions::Entry& entry = entries[ordinal];
         finalIDs[ordinal] = FunctionID(result.firstID.index() + result.functions.size());
         result.tasks.append(entry.buildTask);
         // Inline frames, derivations and interned types name functions that no call reaches, so an unreached function loses its body and keeps its id.
@@ -541,59 +508,21 @@ DerivedFunctionCommit DerivedFunctionPhase::commit(const BitVector& reachedOrdin
     }
     result.remap = FunctionRemap(WTF::move(finalIDs));
 
-    replaceProvisionalIDs(reachedOrdinals, result.remap);
-    m_didCommit = true;
-    return result;
-}
-
-// Building a function can confirm one with a lower ordinal.
-void DerivedFunctionPhase::buildConfirmedFunctions()
-{
-    const auto& entries = m_table.m_phase->entries;
-    bool didBuild;
-    do {
-        didBuild = false;
-        for (uint32_t ordinal = 0; ordinal < numberOfRequests(); ++ordinal) {
-            const DerivedFunctions::Entry& entry = entries[ordinal];
-            if (!entry.isConfirmed() || entry.published.load(std::memory_order_relaxed))
-                continue;
-            m_table.at(ProvisionalFunctions::idOf(ordinal));
-            didBuild = true;
-        }
-    } while (didBuild);
-}
-
-Vector<uint32_t> DerivedFunctionPhase::confirmedOrdinalsInKeyOrder() const
-{
-    const auto& entries = m_table.m_phase->entries;
-    Vector<uint32_t> order;
-    order.reserveInitialCapacity(m_table.m_phase->size());
-    for (uint32_t ordinal = 0; ordinal < m_table.m_phase->size(); ++ordinal) {
-        if (entries[ordinal].isConfirmed())
-            order.append(ordinal);
-    }
-    parallelSort(m_table.m_build.parallelLoops(), order.mutableSpan(), [&](uint32_t a, uint32_t b) {
-        return std::is_lt(m_table.compareKeys(entries[a].key, entries[b].key));
-    });
-    return order;
-}
-
-void DerivedFunctionPhase::replaceProvisionalIDs(const BitVector& reachedOrdinals, const FunctionRemap& remap)
-{
-    const auto& entries = m_table.m_phase->entries;
     m_table.removeIDsIf([](FunctionID id) {
         return ProvisionalFunctions::contains(id);
     });
-    for (uint32_t ordinal = 0; ordinal < m_table.m_phase->size(); ++ordinal) {
+    for (uint32_t ordinal = 0; ordinal < phase.size(); ++ordinal) {
         if (!reachedOrdinals.get(ordinal))
             continue;
         DerivedFunctionKey key = entries[ordinal].key;
-        key.target = remap(key.target);
+        key.target = result.remap(key.target);
         uint32_t hash = DerivedFunctions::hashOf(key);
         DerivedFunctions::Shard& shard = m_table.shardOf(hash);
         Locker locker { shard.lock };
-        shard.ids.add(key, hash, remap(ProvisionalFunctions::idOf(ordinal)));
+        shard.ids.add(key, hash, result.remap(ProvisionalFunctions::idOf(ordinal)));
     }
+    m_didCommit = true;
+    return result;
 }
 
 DerivedFunctionRequester::DerivedFunctionRequester(DerivedFunctionPhase& phase, FunctionID requester, bool isConfirmed)

@@ -13,7 +13,6 @@ entry module=m0
 layout L0 kind=Environment name="scope" fields=[{key="table" declared={type=anything}}, {key="late" declared={type=anything}}, {key="cleared" declared={type=anything}}]
 layout L1 kind=Record name="Table" fields=[{key="x" declared={type=anything}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Call v0
     v2 = Call v0
@@ -21,7 +20,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v3
 }
 function f1 name="make" results=[{type=anything}] {
-  b0():
     v0 = Undefined
     v1 = NewObject -, v0, v0, v0 layout=L0 fields=[0, 1, 2]
     v2 = NewClosure v1 function=f2

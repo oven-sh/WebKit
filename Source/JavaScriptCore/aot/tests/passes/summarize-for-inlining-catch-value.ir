@@ -5,7 +5,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="register" [isFreeName]
     v2 = NewClosure function=f1
@@ -15,7 +14,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="catchesValue" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=function
     Branch v1 -> taken b1(), notTaken b2()
   b1() handler=b3():
@@ -31,7 +29,6 @@ function f1 name="catchesValue" parameters=[{type=anything}] results=[{type=anyt
 # CHECK-NOT: boundToFrame
 
 function f2 name="catchesExceptionAndValue" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=function
     Branch v1 -> taken b1(), notTaken b2()
   b1() handler=b3():
@@ -49,7 +46,6 @@ function f2 name="catchesExceptionAndValue" parameters=[{type=anything}] results
 # CHECK-NOT: boundToFrame
 
 function f3 name="callsWithoutTry" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=function
     Branch v1 -> taken b1(), notTaken b2()
   b1():

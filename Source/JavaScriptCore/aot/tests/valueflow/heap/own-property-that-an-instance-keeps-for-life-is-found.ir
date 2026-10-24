@@ -19,7 +19,6 @@ variable g3 name="nameOfFunction" module=m0 declared={type=anything} initializat
 variable g4 name="lengthOfHeir" module=m0 declared={type=anything} initialization=Undefined
 variable g5 name="lengthOfEither" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewRegExp pattern="a"
     v1 = PropGet v0 key="lastIndex"
     PutModuleVariable v1 variable=g0
@@ -51,6 +50,5 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="plain" results=[{type=anything}] {
-  b0():
     Return
 }

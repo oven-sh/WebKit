@@ -8,9 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFieldMoves.h"
 #include "AOTInstance.h"
-#include "AOTObjectBuilder.h"
-#include "AOTObjectCopy.h"
 #include "AOTObjectModel.h"
 #include "AOTOperationScope.h"
 #include "AOTRuntimeTable.h"
@@ -53,12 +52,6 @@ namespace JSC { namespace AOT {
 namespace {
 
 SymbolImpl::StaticSymbolImpl expectedResultTypePrivateName { "expectedResultType", SymbolImpl::s_flagIsPrivate };
-
-PropertyName expectedResultTypeName()
-{
-    return PropertyName(&static_cast<SymbolImpl&>(expectedResultTypePrivateName));
-}
-
 SymbolImpl::StaticSymbolImpl deferredReportPrivateName { "deferredReport", SymbolImpl::s_flagIsPrivate };
 SymbolImpl::StaticSymbolImpl reportedValuePrivateName { "reportedValue", SymbolImpl::s_flagIsPrivate };
 
@@ -97,7 +90,7 @@ JSValue tryCopyPlainData(JSGlobalObject* realm, JSValue value, unsigned remainin
         return copy;
     }
 
-    if (!isJSArray(value) || asObject(value)->structure()->realm() != realm)
+    if (!isJSArray(value) || asObject(value)->structure()->realm() != realm || hasAnyArrayStorage(asObject(value)->indexingType()))
         return { };
     JSArray* copy = tryCloneArrayFromFast<ArrayFillMode::Undefined>(realm, value);
     if (!copy)
@@ -238,7 +231,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTExpectRows, void, (Instance* insta
         return;
     if (object->structure()->hasImmutableProperties())
         return;
-    object->putDirect(vm, expectedResultTypeName(), jsNumber(shape), static_cast<unsigned>(PropertyAttribute::DontEnum));
+    object->putDirect(vm, hiddenName(expectedResultTypePrivateName), jsNumber(shape), static_cast<unsigned>(PropertyAttribute::DontEnum));
 }
 
 extern "C" JS_EXPORT_PRIVATE uint32_t JSC__AOT__expectedResultType(JSGlobalObject* globalObject, EncodedJSValue encodedTarget)
@@ -247,7 +240,7 @@ extern "C" JS_EXPORT_PRIVATE uint32_t JSC__AOT__expectedResultType(JSGlobalObjec
     JSValue target = JSValue::decode(encodedTarget);
     if (!instance || !instance->state || !target || !target.isObject())
         return 0;
-    JSValue mark = asObject(target)->getDirect(globalObject->vm(), expectedResultTypeName());
+    JSValue mark = asObject(target)->getDirect(globalObject->vm(), hiddenName(expectedResultTypePrivateName));
     if (!mark || !mark.isInt32() || mark.asInt32() <= 0)
         return 0;
     return mark.asInt32();

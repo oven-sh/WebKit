@@ -8,17 +8,14 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="double" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Add v0, v0
     Return v1
 }
 function f1 name="negate" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Negate v0
     Return v1
 }
 function f2 name="apply" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = Call v0, -, v1
 # REPEAT: i = 2..13
     v%(i+1) = Add v%(i), v1
@@ -26,19 +23,16 @@ function f2 name="apply" parameters=[{type=function}, {type=anything}] results=[
     Return v14
 }
 function f3 name="keep" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
 # REPEAT: i = 1..12
     v%(i+1) = Add v%(i), v1
 # END REPEAT
     Return v0
 }
 function f4 name="applyInFewOperations" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = Call v0, -, v1
     Return v2
 }
 function f5 name="applyDouble" parameters=[{type=f0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: f0, v1: anything):
     v2 = Call v0, -, v1
 # REPEAT: i = 2..13
     v%(i+1) = Add v%(i), v1
@@ -46,7 +40,6 @@ function f5 name="applyDouble" parameters=[{type=f0}, {type=anything}] results=[
     Return v14
 }
 function f6 name="repeat" parameters=[{type=function}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: function, v1: anything, v2: boolean):
     v3 = Call v0, -, v1
 # REPEAT: i = 3..14
     v%(i+1) = Add v%(i), v1
@@ -60,7 +53,6 @@ function f6 name="repeat" parameters=[{type=function}, {type=anything}, {type=bo
 }
 
 function f7 name="passesKnownFunctions" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f0
     v2 = NewClosure function=f1
     v3 = CallDirect v1, v0 function=f2
@@ -74,7 +66,6 @@ function f7 name="passesKnownFunctions" parameters=[{type=anything}] results=[{t
 # CHECK-NEXT: v5{{*}}= CallDirect v1, v0 function=[[forDouble]]
 
 function f8 name="passesUnknownFunction" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = CallDirect v0, v1 function=f2
     Return v2
 }
@@ -82,7 +73,6 @@ function f8 name="passesUnknownFunction" parameters=[{type=function}, {type=anyt
 # CHECK: = CallDirect v0, v1 function=f2
 
 function f9 name="passesOneOfTwoFunctions" parameters=[{type=f0|f1}, {type=anything}] results=[{type=anything}] {
-  b0(v0: f0|f1, v1: anything):
     v2 = CallDirect v0, v1 function=f2
     Return v2
 }
@@ -90,7 +80,6 @@ function f9 name="passesOneOfTwoFunctions" parameters=[{type=f0|f1}, {type=anyth
 # CHECK: = CallDirect v0, v1 function=f2
 
 function f10 name="calleeDoesNotCallTheParameter" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f0
     v2 = CallDirect v1, v0 function=f3
     v3 = CallDirect v1, v0 function=f3
@@ -101,7 +90,6 @@ function f10 name="calleeDoesNotCallTheParameter" parameters=[{type=anything}] r
 # CHECK-NEXT: = CallDirect v1, v0 function=f3
 
 function f11 name="callIsInlined" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f0
     v2 = CallDirect v1, v0 function=f4
     Return v2
@@ -110,7 +98,6 @@ function f11 name="callIsInlined" parameters=[{type=anything}] results=[{type=an
 # CHECK-NOT: CallDirect
 
 function f12 name="parameterHasThatFunctionAsItsType" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f0
     v2 = CallDirect v1, v0 function=f5
     v3 = CallDirect v1, v0 function=f5
@@ -121,7 +108,6 @@ function f12 name="parameterHasThatFunctionAsItsType" parameters=[{type=anything
 # CHECK-NEXT: = CallDirect v1, v0 function=f5
 
 function f13 name="calleeCallsItself" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewClosure function=f0
     v3 = CallDirect v2, v0, v1 function=f6
     Return v3

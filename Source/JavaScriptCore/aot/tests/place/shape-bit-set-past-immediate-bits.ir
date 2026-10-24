@@ -13,7 +13,6 @@ layout L%(i) name="Middle%(i)" fields=[{key="x" declared={type=number}}]
 layout L65 name="Last" fields=[{key="x" declared={type=number}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToNumber v1

@@ -50,7 +50,6 @@ JS_EXPORT_PRIVATE NativeExecutable* builtinExecutable(JSGlobalObject*, uint32_t 
 // The host can run a module or a function of its library from the text. That text requires the modules of the library, and an image without ImageFlag::AdmitsLibraryText holds only what seen code reaches of them.
 JS_EXPORT_PRIVATE bool refusesLibraryText();
 bool refusesToInterpret(ScriptExecutable&);
-// A call of such a function throws before any of it has run.
 JS_EXPORT_PRIVATE bool refusesToRun(JSFunction*);
 void throwLibraryFunctionNotCompiled(JSGlobalObject*, ScriptExecutable&);
 // `builtin`: its name as a program writes it.

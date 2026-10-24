@@ -38,7 +38,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = String string="x+"
     v1 = String string="y+"
     v2 = String string="i"
@@ -91,77 +90,66 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="twoByFour" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
-  b0(v0: string, v1: string):
     v2 = Builtin builtin=RegExp
     v3 = Construct v2, -, v0, v1
     Return v3
 }
 
 function f2 name="threeByThree" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
-  b0(v0: string, v1: string):
     v2 = Builtin builtin=RegExp
     v3 = Construct v2, -, v0, v1
     Return v3
 }
 
 function f3 name="flagsMayBeAbsent" parameters=[{type=string}, {type=undefined|string}] results=[{type=anything}] {
-  b0(v0: string, v1: undefined|string):
     v2 = Builtin builtin=RegExp
     v3 = Construct v2, -, v0, v1
     Return v3
 }
 
 function f4 name="oneInvalidPattern" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Builtin builtin=RegExp
     v2 = Construct v1, -, v0
     Return v2
 }
 
 function f5 name="invalidFlags" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
-  b0(v0: string, v1: string):
     v2 = Builtin builtin=RegExp
     v3 = Construct v2, -, v0, v1
     Return v3
 }
 
 function f6 name="oneInvalidFlagsText" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
-  b0(v0: string, v1: string):
     v2 = Builtin builtin=RegExp
     v3 = Construct v2, -, v0, v1
     Return v3
 }
 
 function f7 name="calledWithoutNew" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Builtin builtin=RegExp
     v2 = Call v1, -, v0
     Return v2
 }
 
 function f8 name="unknownPattern" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Builtin builtin=RegExp
     v2 = Construct v1, -, v0
     Return v2
 }
 
 function f9 name="unknownFlags" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
-  b0(v0: string, v1: string):
     v2 = Builtin builtin=RegExp
     v3 = Construct v2, -, v0, v1
     Return v3
 }
 
 function f10 name="knownAndUnknownPatterns" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Builtin builtin=RegExp
     v2 = Construct v1, -, v0
     Return v2
 }
 
 function f11 name="equalsLiteral" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = NewRegExp pattern="lit+"
     v2 = Builtin builtin=RegExp
     v3 = Construct v2, -, v0

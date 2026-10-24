@@ -11,7 +11,6 @@ layout L2 name="BothWiden" fields=[{key="lower" declared={type=null|int[0, 100]}
 layout L3 name="IntegersAlone" fields=[{key="plain" declared={type=int[0, 100]}}, {key="maybe" declared={type=undefined|int[0, 100]}}, {key="content" declared={type=anything} flags=[IsRequired]}, {key="tail" declared={type=i32} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = Integer integer=1

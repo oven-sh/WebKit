@@ -11,13 +11,11 @@ function f0 name="Readable" kind=BaseConstructor flags=[HasNewTarget] results=[{
 function f1 name="_read" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}]
 
 function f2 name="below-a-name-without-a-function" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     PropSet v0, v1 key="_other"
     Return
 }
 # CHECK: F2 v2 PropSet [[other]]: form=Slot level=Expected operation=PutSlot receivers=[L0] conditions=[MemberPassedByStores(L0, [[other]])]
 function f3 name="below-a-method-whose-function-is-known" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     PropSet v0, v1 key="_read"
     Return
 }

@@ -6,7 +6,6 @@ module m0 path="main.js" displayPath="main.js"
 variable g0 name="amount" module=m0 declared={type=int[1, 8]} initialization=Undefined
 
 function f0 name="addsPositiveAmount" parameters=[{type=int[0, 1000]}, {type=int[1, 8]}] results=[{type=undefined}] {
-  b0(v0: int[0, 1000], v1: int[1, 8]):
     v2 = Integer integer=0
     Jump -> next b1(v2)
   b1(v3):
@@ -25,7 +24,6 @@ function f0 name="addsPositiveAmount" parameters=[{type=int[0, 1000]}, {type=int
 # CHECK-NEXT: loop b1 counter: none
 
 function f1 name="addsAnyNumber" parameters=[{type=int[0, 1000]}, {type=number}] results=[{type=undefined}] {
-  b0(v0: int[0, 1000], v1: number):
     v2 = Integer integer=0
     Jump -> next b1(v2)
   b1(v3):
@@ -44,7 +42,6 @@ function f1 name="addsAnyNumber" parameters=[{type=int[0, 1000]}, {type=number}]
 # CHECK-NEXT: loop b1 counter: none
 
 function f2 name="subtractsPositiveAmount" parameters=[{type=int[0, 1000]}, {type=int[1, 8]}] results=[{type=undefined}] {
-  b0(v0: int[0, 1000], v1: int[1, 8]):
     v2 = Integer integer=0
     Jump -> next b1(v0)
   b1(v3):
@@ -63,7 +60,6 @@ function f2 name="subtractsPositiveAmount" parameters=[{type=int[0, 1000]}, {typ
 # CHECK-NEXT: loop b1 counter: none
 
 function f3 name="amountIsReadInLoop" parameters=[{type=int[0, 1000]}] results=[{type=undefined}] {
-  b0(v0: int[0, 1000]):
     v1 = Integer integer=0
     Jump -> next b1(v1)
   b1(v2):

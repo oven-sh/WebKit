@@ -16,7 +16,6 @@
 #include <algorithm>
 #include <optional>
 #include <utility>
-#include <wtf/Noncopyable.h>
 #include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -24,7 +23,7 @@ namespace JSC { namespace AOT { namespace Typed {
 namespace {
 
 struct Part {
-    StringBuilderPartForm form { StringBuilderPartForm::Value };
+    Opcode row { Opcode::StringBuilderAppendValue };
     ValueID value { };
     StringID constant { };
     std::optional<StringRangeSource> range { };
@@ -39,39 +38,56 @@ struct StringBuilderPartMatch {
     StringBuilderPartList parts;
 };
 
-struct ConstantText {
-    StringID internedString;
-    String text;
-};
-
-class PartCollector {
-    WTF_MAKE_NONCOPYABLE(PartCollector);
-public:
-    PartCollector(SelectionContext& context, CodeShape shapeAtAppend)
-        : m_context(context)
-        , m_shapeAtAppend(shapeAtAppend)
-    {
-    }
-
-    void add(ValueID part);
-    StringBuilderPartList finish();
-
-private:
-    void addConstant(ConstantText&&);
-    void flushConstant();
-
-    SelectionContext& m_context;
-    CodeShape m_shapeAtAppend;
-    StringBuilderPartList m_parts;
-    std::optional<ConstantText> m_pendingConstant;
-};
-
 } // anonymous namespace
 
-static ConstantText constantTextOf(SelectionContext& context, ValueID part)
+static bool isConstantPart(SelectionContext& context, ValueID part, const Type& type)
 {
     if (std::optional<LiteralArgument> literal = literalArgumentOf(context, part))
-        return { literal->literal, WTF::move(literal->text) };
+        return literal->text.containsOnlyLatin1() && !context.pass().exceeds(LimitID::MaxLengthCopiedInline, literal->text.length(), part);
+    return type.isSingleValue() && type.hasOnlyPrimitives(Primitive::UndefinedOrNull | Primitive::Boolean);
+}
+
+static bool isRangeWithSingleUserInBlock(SelectionContext& context, ValueID part)
+{
+    if (context.isClaimed(part))
+        return false;
+    std::optional<StringRangeSource> source = stringRangeSourceOf(context.program(), context.function(), context.function().at(part));
+    if (!source || source->mayBeUndefined)
+        return false;
+    std::optional<ValueID> user = context.singleUser(part);
+    if (!user)
+        return false;
+
+    const UseLists& useLists = context.analyses().useLists();
+    ValueLocation definition = useLists.locationOf(part);
+    return definition.placement == ValuePlacement::InBlock && definition.block == useLists.blockOf(*user);
+}
+
+static Opcode rowOfPart(SelectionContext& context, ValueID part, CodeShape shapeAtAppend)
+{
+    const Type& type = context.typeOf(part);
+    if (isConstantPart(context, part, type))
+        return Opcode::StringBuilderAppendConstant;
+    // In compact code a part is one call. The call for a string takes the string itself: it has no list of values to fill and does not ask what it was given.
+    if (shapeAtAppend == CodeShape::Compact)
+        return type.isAnyString() ? Opcode::StringBuilderAppendString : Opcode::StringBuilderAppendValue;
+    if (type.isInteger())
+        return Opcode::StringBuilderAppendInteger;
+    if (type.isNumber())
+        return Opcode::StringBuilderAppendNumber;
+    if (type.isBoolean())
+        return Opcode::StringBuilderAppendBoolean;
+    if (type.isAnyString())
+        return isRangeWithSingleUserInBlock(context, part) ? Opcode::StringBuilderAppendStringRange : Opcode::StringBuilderAppendString;
+    if (type.isAnyStringOrNullish())
+        return Opcode::StringBuilderAppendStringOrNullish;
+    return Opcode::StringBuilderAppendValue;
+}
+
+static LiteralArgument constantTextOf(SelectionContext& context, ValueID part)
+{
+    if (std::optional<LiteralArgument> literal = literalArgumentOf(context, part))
+        return WTF::move(*literal);
 
     switch (context.typeOf(part).primitives) {
     case Primitive::Undefined:
@@ -88,50 +104,43 @@ static ConstantText constantTextOf(SelectionContext& context, ValueID part)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void PartCollector::add(ValueID id)
+static StringBuilderPartList collectParts(SelectionContext& context, ValueID append)
 {
-    StringBuilderPartForm form = partFormOf(m_context, id, m_shapeAtAppend);
-    if (form == StringBuilderPartForm::Constant) {
-        addConstant(constantTextOf(m_context, id));
-        return;
+    StringBuilderPartList parts;
+    std::optional<LiteralArgument> pendingConstant;
+    auto flushConstant = [&] {
+        if (!pendingConstant)
+            return;
+        LiteralArgument constant = *std::exchange(pendingConstant, std::nullopt);
+        StringID string = constant.literal ? constant.literal : context.pass().strings.intern(constant.text);
+        parts.append(Part { .row = Opcode::StringBuilderAppendConstant, .constant = string });
+    };
+
+    CodeShape shapeAtAppend = context.shapeAt(append);
+    for (ValueID id : context.function().at(append).partsOperands()) {
+        Part part { .row = rowOfPart(context, id, shapeAtAppend), .value = id };
+        if (part.row != Opcode::StringBuilderAppendConstant) {
+            flushConstant();
+            if (part.row == Opcode::StringBuilderAppendStringRange) {
+                part.range = stringRangeSourceOf(context.program(), context.function(), context.function().at(id));
+                RELEASE_ASSERT(part.range);
+            }
+            parts.append(WTF::move(part));
+            continue;
+        }
+
+        LiteralArgument constant = constantTextOf(context, id);
+        if (constant.text.isEmpty())
+            continue;
+        if (pendingConstant && pendingConstant->text.length() + constant.text.length() <= context.pass().limit(LimitID::MaxLengthCopiedInline)) {
+            pendingConstant = LiteralArgument { { }, makeString(pendingConstant->text, constant.text) };
+            continue;
+        }
+        flushConstant();
+        pendingConstant = WTF::move(constant);
     }
-
     flushConstant();
-    Part part { .form = form, .value = id };
-    if (form == StringBuilderPartForm::StringRange) {
-        part.range = stringRangeSourceOf(m_context.program(), m_context.function(), m_context.function().at(id));
-        RELEASE_ASSERT(part.range);
-    }
-    m_parts.append(WTF::move(part));
-}
-
-StringBuilderPartList PartCollector::finish()
-{
-    flushConstant();
-    return std::exchange(m_parts, { });
-}
-
-void PartCollector::addConstant(ConstantText&& constant)
-{
-    if (constant.text.isEmpty())
-        return;
-
-    if (m_pendingConstant && m_pendingConstant->text.length() + constant.text.length() <= m_context.pass().limit(LimitID::MaxLengthCopiedInline)) {
-        m_pendingConstant = ConstantText { { }, makeString(m_pendingConstant->text, constant.text) };
-        return;
-    }
-    flushConstant();
-    m_pendingConstant = WTF::move(constant);
-}
-
-void PartCollector::flushConstant()
-{
-    if (!m_pendingConstant)
-        return;
-
-    ConstantText constant = *std::exchange(m_pendingConstant, std::nullopt);
-    StringID string = constant.internedString ? constant.internedString : m_context.pass().strings.intern(constant.text);
-    m_parts.append(Part { .form = StringBuilderPartForm::Constant, .constant = string });
+    return parts;
 }
 
 static SelectionGroup groupWithRanges(SelectionContext& context, ValueID append, const StringBuilderPartList& parts)
@@ -154,84 +163,32 @@ static SelectionGroup groupWithRanges(SelectionContext& context, ValueID append,
     return group;
 }
 
-static StringBuilderPartMatch createMatch(SelectionContext& context, ValueID append)
-{
-    const Value& value = context.function().at(append);
-    PartCollector collector(context, context.shapeAt(append));
-    for (ValueID part : value.partsOperands())
-        collector.add(part);
-
-    StringBuilderPartList parts = collector.finish();
-    SelectionGroup group = groupWithRanges(context, append, parts);
-    return { WTF::move(group), context.analyses().useLists().pointOf(append), value.builderOperand(), WTF::move(parts) };
-}
-
-static void demoteFirstRange(StringBuilderPartMatch& match)
-{
-    ValueID definition = match.group.members.first().value;
-    Part* part = std::ranges::find(match.parts, definition, &Part::value);
-    RELEASE_ASSERT(part != match.parts.end() && part->range);
-    part->form = StringBuilderPartForm::String;
-    part->range = std::nullopt;
-    match.group.members.removeAt(0);
-}
-
 static void claim(SelectionContext& context, StringBuilderPartMatch& match)
 {
     // What the nearest range may not cross, the ranges in front of it may not cross either.
     while (context.tryClaim(SelectionRuleID::StringBuilderParts, match.group) != ClaimResult::Claimed) {
         RELEASE_ASSERT(match.group.members.size() > 1);
-        demoteFirstRange(match);
+        Part* part = std::ranges::find(match.parts, match.group.members.first().value, &Part::value);
+        RELEASE_ASSERT(part != match.parts.end() && part->range);
+        part->row = Opcode::StringBuilderAppendString;
+        part->range = std::nullopt;
+        match.group.members.removeAt(0);
     }
-}
-
-static Opcode rowOf(StringBuilderPartForm form)
-{
-    switch (form) {
-    case StringBuilderPartForm::Value:
-        return Opcode::StringBuilderAppendValue;
-    case StringBuilderPartForm::Constant:
-        return Opcode::StringBuilderAppendConstant;
-    case StringBuilderPartForm::Integer:
-        return Opcode::StringBuilderAppendInteger;
-    case StringBuilderPartForm::Number:
-        return Opcode::StringBuilderAppendNumber;
-    case StringBuilderPartForm::Boolean:
-        return Opcode::StringBuilderAppendBoolean;
-    case StringBuilderPartForm::String:
-        return Opcode::StringBuilderAppendString;
-    case StringBuilderPartForm::StringRange:
-        return Opcode::StringBuilderAppendStringRange;
-    case StringBuilderPartForm::StringOrNullish:
-        return Opcode::StringBuilderAppendStringOrNullish;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static Value makeRow(GroupRewriter& rewriter, const StringBuilderPartMatch& match, const Part& part)
 {
-    Value row = IRBuilder::make(rowOf(part.form), { match.builder });
-    switch (part.form) {
-    case StringBuilderPartForm::Constant:
+    Value row = IRBuilder::make(part.row, { match.builder });
+    if (part.row == Opcode::StringBuilderAppendConstant)
         row.setString(part.constant);
-        return row;
-    case StringBuilderPartForm::StringRange: {
+    else if (part.range) {
         StringRangeBounds bounds = insertStringRange(rewriter.builder(), match.point, *part.range, std::nullopt);
         row.setStringOperand(part.range->string);
         row.setStartOperand(bounds.start);
         row.setEndOperand(bounds.end);
-        return row;
-    }
-    case StringBuilderPartForm::Value:
-    case StringBuilderPartForm::Integer:
-    case StringBuilderPartForm::Number:
-    case StringBuilderPartForm::Boolean:
-    case StringBuilderPartForm::String:
-    case StringBuilderPartForm::StringOrNullish:
+    } else
         row.setValueOperand(part.value);
-        return row;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    return row;
 }
 
 void selectStringBuilderParts(SelectionContext& context)
@@ -240,9 +197,10 @@ void selectStringBuilderParts(SelectionContext& context)
     for (ValueID append : context.valuesWith(Opcode::StringBuilderAppend)) {
         if (context.isClaimed(append))
             continue;
-        StringBuilderPartMatch match = createMatch(context, append);
-        claim(context, match);
-        matches.append(WTF::move(match));
+        StringBuilderPartList parts = collectParts(context, append);
+        SelectionGroup group = groupWithRanges(context, append, parts);
+        matches.append(StringBuilderPartMatch { WTF::move(group), context.analyses().useLists().pointOf(append), context.function().at(append).builderOperand(), WTF::move(parts) });
+        claim(context, matches.last());
     }
 
     context.rewriteGroups(SelectionRuleID::StringBuilderParts, matches, [](GroupRewriter& rewriter, const StringBuilderPartMatch& match) {

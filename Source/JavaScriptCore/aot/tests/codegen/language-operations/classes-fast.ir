@@ -9,7 +9,6 @@ layout L0 kind=Instance name="Base" constructor=f2
 layout L1 kind=Instance name="Derived" base=L0 constructor=f3 flags=[HasHeritage]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="register" [isFreeName]
@@ -17,7 +16,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v3
 }
 function f1 name="defines" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f2
     v2 = NewClass v1 layout=L0
     v3 = NewClosure function=f4
@@ -39,13 +37,11 @@ function f1 name="defines" parameters=[{type=anything}] results=[{type=anything}
     Return v18
 }
 function f2 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2
 }
 function f3 name="Derived" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: function, v1: anything, v2: anything):
     v3 = GetSuperBase v0
     v4 = ToBoolean v2
     Branch v4 -> taken b1(), notTaken b2()
@@ -58,6 +54,5 @@ function f3 name="Derived" kind=DerivedConstructor flags=[HasNewTarget, TakesCal
     Return v7
 }
 function f4 name="method" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }

@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="readsOneAndGivesUpAnother" parameters=[{type=number}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean, v2: boolean):
     v3 = String string=":"
     v4 = Add v0, v3
     Branch v1 -> taken b1(), notTaken b2()
@@ -24,8 +23,6 @@ function f0 name="readsOneAndGivesUpAnother" parameters=[{type=number}, {type=bo
     Return v9
   b5():
     Return v5
-}
-# CHECK-LABEL: function f0 name="readsOneAndGivesUpAnother"
 # CHECK: b2():
 # CHECK-NEXT: [[copy]]: string = Add v0, v3
 # CHECK-NEXT: string = Add [[copy]], v0
@@ -35,3 +32,4 @@ function f0 name="readsOneAndGivesUpAnother" parameters=[{type=number}, {type=bo
 # CHECK-NEXT: string = Strcat v0, v3, v0
 # CHECK: b4():
 # CHECK-NEXT: string = Strcat v0, [[dash]], v0
+}

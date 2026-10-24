@@ -8,8 +8,8 @@
 #if ENABLE(AOT)
 
 #include "AOTSchemaEnums.h"
-#include "AOTStringBuilderReservation.h"
 #include "AOTStringBuilderStorage.h"
+#include "AOTStringBuilderWords.h"
 #include "DateTimeWriter.h"
 #include <charconv>
 #include <cmath>
@@ -110,15 +110,6 @@ ALWAYS_INLINE Latin1Character* appendJSONTimeValue(Latin1Character* cursor, doub
     *cursor++ = '"';
     return cursor;
 }
-
-Latin1Character* appendQuotedJSONString(JSGlobalObject*, StringBuilderStorage&, Latin1Character* cursor, const StringImpl&);
-
-struct AppendedJSONValue {
-    Latin1Character* cursor { nullptr };
-    Typed::JSONOutcome outcome { Typed::JSONOutcome::Unknown };
-};
-
-AppendedJSONValue appendJSONValue(JSGlobalObject*, StringBuilderStorage&, Latin1Character* cursor, JSValue, Typed::JSONPosition);
 
 } } // namespace JSC::AOT
 

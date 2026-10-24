@@ -10,7 +10,6 @@ layout L0 name="OneFunction" fields=[{key="run" declared={type=function} flags=[
 layout L1 name="TwoFunctions" fields=[{key="run" declared={type=function} flags=[IsRequired]}]
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = FinishObject v1
@@ -26,11 +25,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="run" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="other" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 

@@ -7,7 +7,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTCoroutineData.h"
 #include "AOTFunctionData.h"
 #include "AOTInstanceLayout.h"
 #include "AOTLayoutData.h"
@@ -131,7 +130,6 @@ static_assert(sizeof(MethodTableDependentData) == 12 && isImageRecord<MethodTabl
 #define FOR_EACH_AOT_PROGRAM_TABLE(v) \
     FOR_EACH_AOT_OBJECT_PROGRAM_TABLE(v) \
     FOR_EACH_AOT_FUNCTION_PROGRAM_TABLE(v) \
-    FOR_EACH_AOT_COROUTINE_PROGRAM_TABLE(v) \
     FOR_EACH_AOT_OPERATION_PROGRAM_TABLE(v) \
     FOR_EACH_AOT_MODULE_PROGRAM_TABLE(v)
 

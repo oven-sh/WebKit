@@ -8,42 +8,34 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
 
 function f0 name="objectMayBeMissing" parameters=[{type=undefined|L0}] results=[{type=anything}] {
-  b0(v0: undefined|L0):
     v1 = Builtin builtin=ObjectValues
     v2 = Call v1, -, v0
     Return v2
-}
-# CHECK-LABEL: function f0 name="objectMayBeMissing"
 # CHECK: TypeTest v0 testedType=L0
 # CHECK: ([[object0]]: L0):
 # CHECK: = CallBuiltin -, [[object0]] overload=ObjectValues/0
 # CHECK-NEXT: Return
 # CHECK: CallBuiltin {{*}}, [[missing0]] overload=ObjectValues/0 builtinCallForm=AnyReceiver
 # CHECK: ([[missing0]]: undefined) frequency=Unlikely:
+}
 
 function f1 name="countIsConverted" parameters=[{type=string}, {type=null|number}] results=[{type=anything}] {
-  b0(v0: string, v1: null|number):
     v2 = Builtin builtin=StringPrototypePadStart
     v3 = Call v2, v0, v1
     Return v3
-}
-# CHECK-LABEL: function f1 name="countIsConverted"
 # CHECK-NOT: TypeTest
+}
 
 function f2 name="objectIsConverted" parameters=[{type=undefined|L0}] results=[{type=anything}] {
-  b0(v0: undefined|L0):
     v1 = Builtin builtin=ObjectEntries
     v2 = Call v1, -, v0
     Return v2
-}
-# CHECK-LABEL: function f2 name="objectIsConverted"
 # CHECK-NOT: TypeTest
+}
 
 function f3 name="onlyMissing" parameters=[{type=undefined|null}] results=[{type=anything}] {
-  b0(v0: undefined|null):
     v1 = Builtin builtin=ObjectValues
     v2 = Call v1, -, v0
     Return v2
-}
-# CHECK-LABEL: function f3 name="onlyMissing"
 # CHECK-NOT: TypeTest
+}

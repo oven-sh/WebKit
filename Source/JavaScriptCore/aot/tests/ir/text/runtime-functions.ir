@@ -21,7 +21,6 @@
 module m0 path="/a.ts" displayPath="a.ts" body=f0
 module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     Return
 }
 function f1 name="first" module=m1 role=Library thisType={type=anything} results=[{type=anything}]

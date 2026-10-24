@@ -15,7 +15,6 @@ variable g0 name="Point" module=m0 declared={type=function flags=[IsFromCompiler
 variable g1 name="A" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
 variable g2 name="B" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = NewDictionary
     PropSet v0, v1 key="prototype" mode=Strict
@@ -40,11 +39,9 @@ function f1 name="Point" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} r
     Return
 }
 function f2 name="first" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f3 name="second" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f4 name="A" flags=[HasThis] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] {

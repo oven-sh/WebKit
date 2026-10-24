@@ -28,7 +28,6 @@
 
 namespace JSC { namespace AOT {
 
-// The extra properties, or the pending stars in their place.
 static JSObject* cellInPlaceOfExtraProperties(const Object& object)
 {
     ASSERT(object.hasExtraProperties());
@@ -65,7 +64,6 @@ static CompiledStructure* structureForNewExtraProperties(VM& vm, Object& object,
     return structure ? structure : structures.withExtraProperties(vm, current, nullptr);
 }
 
-// The properties of the Structure are these, in this order, and nothing else.
 static JSObject* createWithStructure(VM& vm, Structure* structure, std::span<const Object::ExtraProperty> inOrder)
 {
     int inlineCapacity = structure->inlineCapacity();
@@ -108,9 +106,9 @@ static JSObject* createExtraPropertiesWithAttributes(JSGlobalObject* realm, std:
 using NameSet = UncheckedKeyHashSet<UniquedStringImpl*>;
 
 static constexpr uint32_t starRuleSourceIsMarkedAsESModule = 1 << 2;
+static constexpr uint32_t starRulesOfReuse = starRuleReusesDescriptors | starRuleSourceIsMarkedAsESModule;
 static constexpr unsigned attributesOfStarBinding = PropertyAttribute::Accessor | PropertyAttribute::DontDelete;
 
-// What a star defines follows from its record alone, whatever has happened to the two objects since.
 class Star {
 public:
     Star() = default;
@@ -144,7 +142,6 @@ public:
     FunctionID getter() const { return FunctionID(m_record->get(getterSlot).asUInt32()); }
     uint32_t rule() const { return m_record->get(ruleSlot).asUInt32(); }
 
-    // The key and the accessor of each property that the star defines, in order. Behind the last of them the list is empty.
     JSCellButterfly* bindings() const { return butterflyIn(bindingsSlot); }
     void setBindings(VM& vm, JSCellButterfly* bindings) const { m_record->setIndex(vm, bindingsSlot, bindings); }
 
@@ -185,97 +182,82 @@ static void forEachBinding(JSCellButterfly* bindings, const Invocable<void(JSStr
         functor(asString(bindings->get(i)), uncheckedDowncast<GetterSetter>(bindings->get(i + 1)));
 }
 
-class StarBinder {
-public:
-    StarBinder(VM& vm, State& state, JSGlobalObject* realm)
-        : m_vm(vm)
-        , m_state(state)
-        , m_realm(realm)
-    {
+static void bindStarsUpTo(VM&, State&, JSGlobalObject* realm, Star last, const LayoutData& layoutOfTarget);
+
+static GetterSetter* createAccessorOfStar(VM& vm, State& state, JSGlobalObject* realm, Star star, JSString* key)
+{
+    unsigned keySlot = star.rule() & starRuleKeyCaptureSlot;
+    std::array<uint64_t, 2> captures;
+    captures[keySlot] = JSValue::encode(key);
+    captures[!keySlot] = JSValue::encode(&star.source());
+    JSObject* getter = state.objects->closures.createClosure(vm, star.getter(), captures, 2);
+    JSObject* setter = nullptr;
+    return GetterSetter::create(vm, realm, getter, setter);
+}
+
+static JSCellButterfly* bindStar(VM& vm, State& state, JSGlobalObject* realm, Star star, const NameSet& namesOfTarget)
+{
+    RuntimeLayoutTable& layouts = state.objects->layouts;
+    const LayoutData& layout = star.source().layout();
+    bindStarsUpTo(vm, state, realm, star.lastStarOfSource(), layout);
+    Vector<Star, 8> starsOfSource = starsInOrderUpTo(star.lastStarOfSource());
+
+    uint32_t orderAndCount = star.orderAndCountOfSource();
+    std::span<const uint16_t> fieldsOfSource = state.objects->keyOrders.entriesInOrder(layout, orderOf(orderAndCount)).first(countOf(orderAndCount));
+    size_t maxNumberOfBindings = fieldsOfSource.size();
+    for (Star starOfSource : starsOfSource)
+        maxNumberOfBindings += starOfSource.bindings()->length() / 2;
+    JSCellButterfly* bindings = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, static_cast<unsigned>(2 * maxNumberOfBindings));
+
+    unsigned end = 0;
+    UniquedStringImpl* defaultName = vm.propertyNames->defaultKeyword.impl();
+    auto isReExported = [&](UniquedStringImpl* name) {
+        return name != defaultName && !namesOfTarget.contains(name);
+    };
+    auto append = [&](JSString* key, GetterSetter* accessor) {
+        bindings->setIndex(vm, end++, key);
+        bindings->setIndex(vm, end++, accessor);
+    };
+
+    for (uint16_t index : fieldsOfSource) {
+        ASSERT(index < layout.numberOfFields);
+        const FieldData& field = layout.fields()[index];
+        if (field.isPrivate() || field.flags & fieldIsNotEnumerable || !layouts.hasStringKey(field))
+            continue;
+        UniquedStringImpl* name = layouts.nameOf(vm, field);
+        if (!isReExported(name))
+            continue;
+        JSString* key = jsOwnedString(vm, String(name));
+        append(key, createAccessorOfStar(vm, state, realm, star, key));
     }
-
-    // Stars get their bindings in the order in which they were recorded, so every star before one that has its bindings has them too.
-    void bindStarsUpTo(Star last, const LayoutData& layoutOfTarget)
-    {
-        if (!last || last.bindings())
-            return;
-        RuntimeLayoutTable& layouts = m_state.objects->layouts;
-        NameSet namesOfTarget;
-        for (const FieldData& field : layoutOfTarget.fields()) {
-            if (!field.isPrivate())
-                namesOfTarget.add(layouts.nameOf(m_vm, field));
-        }
-        for (Star star : starsInOrderUpTo(last)) {
-            if (!star.bindings())
-                star.setBindings(m_vm, bind(star, namesOfTarget));
-            forEachBinding(star.bindings(), [&](JSString* key, GetterSetter*) {
-                namesOfTarget.add(nameOfBindingKey(key));
-            });
-        }
+    bool reusesAccessors = (star.rule() & starRulesOfReuse) == starRulesOfReuse;
+    for (Star starOfSource : starsOfSource) {
+        forEachBinding(starOfSource.bindings(), [&](JSString* key, GetterSetter* accessor) {
+            if (isReExported(nameOfBindingKey(key)))
+                append(key, reusesAccessors ? accessor : createAccessorOfStar(vm, state, realm, star, key));
+        });
     }
+    return bindings;
+}
 
-private:
-    GetterSetter* createAccessor(Star star, JSString* key)
-    {
-        unsigned keySlot = star.rule() & starRuleKeyCaptureSlot;
-        std::array<uint64_t, 2> captures;
-        captures[keySlot] = JSValue::encode(key);
-        captures[!keySlot] = JSValue::encode(&star.source());
-        JSObject* getter = m_state.objects->closures.createClosure(m_vm, star.getter(), captures, 2);
-        JSObject* setter = nullptr;
-        return GetterSetter::create(m_vm, m_realm, getter, setter);
+static void bindStarsUpTo(VM& vm, State& state, JSGlobalObject* realm, Star last, const LayoutData& layoutOfTarget)
+{
+    if (!last || last.bindings())
+        return;
+    RuntimeLayoutTable& layouts = state.objects->layouts;
+    NameSet namesOfTarget;
+    for (const FieldData& field : layoutOfTarget.fields()) {
+        if (!field.isPrivate())
+            namesOfTarget.add(layouts.nameOf(vm, field));
     }
-
-    JSCellButterfly* bind(Star star, const NameSet& namesOfTarget)
-    {
-        RuntimeLayoutTable& layouts = m_state.objects->layouts;
-        const LayoutData& layout = star.source().layout();
-        bindStarsUpTo(star.lastStarOfSource(), layout);
-        Vector<Star, 8> starsOfSource = starsInOrderUpTo(star.lastStarOfSource());
-
-        uint32_t orderAndCount = star.orderAndCountOfSource();
-        std::span<const uint16_t> fieldsOfSource = m_state.objects->keyOrders.entriesInOrder(layout, orderOf(orderAndCount)).first(countOf(orderAndCount));
-        size_t maxNumberOfBindings = fieldsOfSource.size();
-        for (Star starOfSource : starsOfSource)
-            maxNumberOfBindings += starOfSource.bindings()->length() / 2;
-        JSCellButterfly* bindings = JSCellButterfly::create(m_vm, CopyOnWriteArrayWithContiguous, static_cast<unsigned>(2 * maxNumberOfBindings));
-
-        unsigned end = 0;
-        UniquedStringImpl* defaultName = m_vm.propertyNames->defaultKeyword.impl();
-        auto isReExported = [&](UniquedStringImpl* name) {
-            return name != defaultName && !namesOfTarget.contains(name);
-        };
-        auto append = [&](JSString* key, GetterSetter* accessor) {
-            bindings->setIndex(m_vm, end++, key);
-            bindings->setIndex(m_vm, end++, accessor);
-        };
-
-        for (uint16_t index : fieldsOfSource) {
-            ASSERT(index < layout.numberOfFields);
-            const FieldData& field = layout.fields()[index];
-            if (field.isPrivate() || field.flags & fieldIsNotEnumerable || !layouts.hasStringKey(field))
-                continue;
-            UniquedStringImpl* name = layouts.nameOf(m_vm, field);
-            if (!isReExported(name))
-                continue;
-            JSString* key = jsOwnedString(m_vm, String(name));
-            append(key, createAccessor(star, key));
-        }
-        constexpr uint32_t rulesOfReuse = starRuleReusesDescriptors | starRuleSourceIsMarkedAsESModule;
-        bool reusesAccessors = (star.rule() & rulesOfReuse) == rulesOfReuse;
-        for (Star starOfSource : starsOfSource) {
-            forEachBinding(starOfSource.bindings(), [&](JSString* key, GetterSetter* accessor) {
-                if (isReExported(nameOfBindingKey(key)))
-                    append(key, reusesAccessors ? accessor : createAccessor(star, key));
-            });
-        }
-        return bindings;
+    for (Star star : starsInOrderUpTo(last)) {
+        if (!star.bindings())
+            star.setBindings(vm, bindStar(vm, state, realm, star, namesOfTarget));
+        forEachBinding(star.bindings(), [&](JSString* key, GetterSetter*) {
+            namesOfTarget.add(nameOfBindingKey(key));
+        });
     }
-
-    VM& m_vm;
-    State& m_state;
-    JSGlobalObject* m_realm;
-};
+}
 
 static InternalFieldTuple* pendingStarsOf(const Object& object)
 {
@@ -285,14 +267,13 @@ static InternalFieldTuple* pendingStarsOf(const Object& object)
     return cell->type() == InternalFieldTupleType ? uncheckedDowncast<InternalFieldTuple>(cell) : nullptr;
 }
 
-// Nothing of the object changes but the cell in the hidden word: it had the bit and the Structure of an object with extra properties, and none of the names is a field of its layout.
 static JSObject* makePendingStars(Object& target, InternalFieldTuple* pendingStars)
 {
     VM& vm = target.vm();
     DeferGCForAWhile deferGC(vm);
     JSGlobalObject* realm = target.structure()->realm();
     Star last = Star::lastOf(pendingStars);
-    StarBinder(vm, target.state(), realm).bindStarsUpTo(last, target.layout());
+    bindStarsUpTo(vm, target.state(), realm, last, target.layout());
 
     Vector<Object::ExtraProperty, 32> properties;
     for (Star star : starsInOrderUpTo(last)) {
@@ -340,20 +321,16 @@ static bool hasEveryFieldOfLayout(const Object& object)
 static bool canGetPendingStars(const Object& target)
 {
     const LayoutData& layout = target.layout();
-    // Nobody asks for the order of keys that nobody lists.
     bool hasNoOrderToKeep = layout.keysAreNeverEnumerated && !(target.orderWord() & orderWordIntegrityBits) && !target.isInFrame();
     if ((!hasNoOrderToKeep && !hasKeyOrderThatStaysKnown(target)) || target.structure()->mayBePrototype())
         return false;
-    // The guards of a class say of all its instances that none of them has a name of its own. They end when the name is added.
     if (layout.isClass() || !layout.extraPropertiesSlot() || layout.impossibleMutations().contains(ObjectMutation::AddProperty))
         return false;
-    // A name that is a field of the layout and is absent now would become a property outside its slot, which has its place in the key order.
     if (!hasEveryFieldOfLayout(target))
         return false;
     return !target.hasExtraProperties() || pendingStarsOf(target);
 }
 
-// Each name gets the getter that reads it from the source, or the accessor that a star gave the source.
 static bool canBeSourceOfPendingStar(VM& vm, JSGlobalObject* realm, const Object& source)
 {
     if (!hasKeyOrderThatStaysKnown(source) || (source.hasExtraProperties() && !pendingStarsOf(source)))
@@ -366,7 +343,6 @@ static bool canBeSourceOfPendingStar(VM& vm, JSGlobalObject* realm, const Object
     return source.getPrototypeDirect() == JSValue(objectPrototype) && !hasEnumerableStringKeys(vm, objectPrototype);
 }
 
-// A definition reads its descriptor by name, so a descriptor that lacks one of the names takes what Object.prototype has under it.
 static bool descriptorsHaveOnlyOwnMembers(JSGlobalObject* realm)
 {
     if (realm->propertyDescriptorFastPathWatchpointSet().state() == ClearWatchpoint)
@@ -374,7 +350,6 @@ static bool descriptorsHaveOnlyOwnMembers(JSGlobalObject* realm)
     return realm->propertyDescriptorFastPathWatchpointSet().isStillValid() && realm->objectPrototypeChainIsSane();
 }
 
-// No answer where the mark is not in a slot of the source: one of its stars may have defined it, or it may be inherited.
 static std::optional<bool> isMarkedAsESModule(VM& vm, JSGlobalObject* realm, const Object& source)
 {
     const FieldData* mark = source.fieldNamed(source.state(), vm.propertyNames->__esModule);
@@ -435,31 +410,37 @@ static bool listsField(State& state, const LayoutData& layout, uint32_t orderAnd
     return WTF::find16(listed.data(), index, listed.size());
 }
 
-// What StarBinder does for every name, for one: the first star that binds the name decides, and no star binds a name of the layout of its target.
-static Object* findSourceOfBinding(VM& vm, State& state, Star last, const LayoutData& layoutOfTarget, UniquedStringImpl* name)
+struct BindingOfStars {
+    Object* sourceOfGetter { nullptr };
+    Object* holderOfField { nullptr };
+    const FieldData* field { nullptr };
+};
+
+static BindingOfStars findBindingOfStars(VM& vm, State& state, Star last, const LayoutData& layoutOfTarget, UniquedStringImpl* name)
 {
     RuntimeLayoutTable& layouts = state.objects->layouts;
     const FieldData* fieldOfTarget = layouts.field(vm, layoutOfTarget, name);
     if (fieldOfTarget && !fieldOfTarget->isPrivate())
-        return nullptr;
-    constexpr uint32_t rulesOfReuse = starRuleReusesDescriptors | starRuleSourceIsMarkedAsESModule;
+        return { };
     for (Star star : starsInOrderUpTo(last)) {
         Object& source = star.source();
         const LayoutData& layout = source.layout();
         const FieldData* field = layouts.field(vm, layout, name);
         if (field && !field->isPrivate()) {
             if (!(field->flags & fieldIsNotEnumerable) && layouts.hasStringKey(*field) && listsField(state, layout, star.orderAndCountOfSource(), *field))
-                return &source;
+                return { &source, &source, field };
             continue;
         }
-        Object* sourceOfSource = findSourceOfBinding(vm, state, star.lastStarOfSource(), layout, name);
-        if (sourceOfSource)
-            return (star.rule() & rulesOfReuse) == rulesOfReuse ? sourceOfSource : &source;
+        BindingOfStars found = findBindingOfStars(vm, state, star.lastStarOfSource(), layout, name);
+        if (!found.field)
+            continue;
+        if ((star.rule() & starRulesOfReuse) != starRulesOfReuse)
+            found.sourceOfGetter = &source;
+        return found;
     }
-    return nullptr;
+    return { };
 }
 
-// A snapshot: the record of the last star, and behind it each source with the values of its fields.
 static constexpr unsigned lastStarInSnapshot = 0;
 static constexpr unsigned firstSourceInSnapshot = 1;
 
@@ -494,7 +475,6 @@ JSCellButterfly* snapshotOfPendingStars(VM& vm, const Object& target)
     snapshot->setIndex(vm, lastStarInSnapshot, last.record());
     unsigned end = firstSourceInSnapshot;
     for (Object* source : sources) {
-        // Only its own stars may stand in the place of its extra properties: a name that was moved out of its slot, or added since, is anybody's guess.
         if (source->orderWord() & orderWordHasFieldOutsideSlot || (source->hasExtraProperties() && !pendingStarsOf(*source)))
             return nullptr;
         const LayoutData& layout = source->layout();
@@ -514,39 +494,15 @@ JSCellButterfly* snapshotOfPendingStars(VM& vm, const Object& target)
     return snapshot;
 }
 
-// The field that the getter of the binding reads in the end. A getter that reads the name from a source with stars of its own finds the getter of that source there.
-static std::pair<Object*, const FieldData*> findFieldBehindBinding(VM& vm, State& state, Star last, const LayoutData& layoutOfTarget, UniquedStringImpl* name)
-{
-    RuntimeLayoutTable& layouts = state.objects->layouts;
-    const FieldData* fieldOfTarget = layouts.field(vm, layoutOfTarget, name);
-    if (fieldOfTarget && !fieldOfTarget->isPrivate())
-        return { };
-    for (Star star : starsInOrderUpTo(last)) {
-        Object& source = star.source();
-        const LayoutData& layout = source.layout();
-        const FieldData* field = layouts.field(vm, layout, name);
-        if (field && !field->isPrivate()) {
-            if (!(field->flags & fieldIsNotEnumerable) && layouts.hasStringKey(*field) && listsField(state, layout, star.orderAndCountOfSource(), *field))
-                return { &source, field };
-            continue;
-        }
-        auto found = findFieldBehindBinding(vm, state, star.lastStarOfSource(), layout, name);
-        if (found.first)
-            return found;
-    }
-    return { };
-}
-
 JSValue valueInSnapshotOfPendingStars(VM& vm, const Object& target, JSCellButterfly* snapshot, UniquedStringImpl* name)
 {
     if (name->isSymbol() || name == vm.propertyNames->defaultKeyword.impl())
         return { };
     Star last = Star::fromRecord(snapshot->get(lastStarInSnapshot));
-    auto [source, field] = findFieldBehindBinding(vm, target.state(), last, target.layout(), name);
-    if (!source)
+    BindingOfStars found = findBindingOfStars(vm, target.state(), last, target.layout(), name);
+    if (!found.field)
         return { };
-    // The getter of a name that has left its object since the star answers undefined.
-    JSValue held = valuesInSnapshot(snapshot, *source)->get(source->layout().indexOf(*field));
+    JSValue held = valuesInSnapshot(snapshot, *found.holderOfField)->get(found.holderOfField->layout().indexOf(*found.field));
     return held ? held : jsUndefined();
 }
 
@@ -596,7 +552,6 @@ static uint32_t countNamesOfStars(Star last)
 
 std::optional<Object*> sourceOfPendingBinding(VM& vm, const Object& target, UniquedStringImpl* name)
 {
-    // A binding costs about as much as this many searches.
     constexpr uint32_t searchesForOneBinding = 8;
     constexpr unsigned searchesLeftField = 1;
     InternalFieldTuple* pendingStars = pendingStarsOf(target);
@@ -610,7 +565,7 @@ std::optional<Object*> sourceOfPendingBinding(VM& vm, const Object& target, Uniq
     pendingStars->putInternalField(vm, searchesLeftField, jsNumber(searchesLeft - 1));
     if (name == vm.propertyNames->defaultKeyword.impl())
         return nullptr;
-    return findSourceOfBinding(vm, target.state(), last, target.layout(), name);
+    return findBindingOfStars(vm, target.state(), last, target.layout(), name).sourceOfGetter;
 }
 
 JSObject* extraPropertiesIfMade(const Object& object)
@@ -695,7 +650,6 @@ void Object::ensureStructureForExtraProperties(VM& vm)
         return;
     bool wasDictionary = extra->structure()->isDictionary();
     flattenOnce(vm, extra);
-    // Flattening gives the properties other offsets. The extra properties are nobody's prototype, so Structure::flattenDictionaryStructure() tells nobody on their behalf.
     if (wasDictionary && !extra->structure()->isDictionary())
         didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Change, nullptr);
     const CompiledStructure& current = compiledStructure();

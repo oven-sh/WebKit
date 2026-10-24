@@ -27,10 +27,9 @@ function f0 name="iterableMadeInIteration" parameters=[{type=Array<anything, pro
     Branch v13 -> taken b1(), notTaken b3()
   b4():
     Return
-}
-# CHECK-LABEL: function f0 name="iterableMadeInIteration"
 # CHECK-NOT: testedType=L0
 # CHECK: = PropGet v2 key="k"
 # CHECK: : MapIterator = CallBuiltin v1 overload=MapPrototypeValues/0
 # CHECK: = TypeTest {{*}} testedType=builtin(MapPrototypeValues)
 # CHECK-NOT: testedType=L0
+}

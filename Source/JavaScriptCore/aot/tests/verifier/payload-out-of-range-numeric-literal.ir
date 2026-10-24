@@ -5,22 +5,18 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="badDecimalText" parameters=[{type=anything}] results=[{type=boolean}] {
-  b0(v0: anything):
     v1 = ValueLooselyEqualsLiteral v0 literal="1"
     Return v1
 }
 function f1 name="badEmptyText" parameters=[{type=anything}] results=[{type=boolean}] {
-  b0(v0: anything):
     v1 = ValueLooselyEqualsLiteral v0 literal=""
     Return v1
 }
 function f2 name="badInfinity" parameters=[{type=anything}] results=[{type=boolean}] {
-  b0(v0: anything):
     v1 = ValueLooselyEqualsLiteral v0 literal=" -Infinity "
     Return v1
 }
 function f3 name="goodTexts" parameters=[{type=anything}] results=[{type=boolean}] {
-  b0(v0: anything):
     v1 = ValueLooselyEqualsLiteral v0 literal="constructor"
     v2 = ValueLooselyEqualsLiteral v0 literal="NaN"
     v3 = ValueLooselyEqualsLiteral v0 literal="1n"
@@ -28,7 +24,6 @@ function f3 name="goodTexts" parameters=[{type=anything}] results=[{type=boolean
     Return v1
 }
 function f4 name="goodNumericTextForString" parameters=[{type=string}] results=[{type=boolean}] {
-  b0(v0: string):
     v1 = StringEqualsLiteral v0 literal="1"
     Return v1
 }

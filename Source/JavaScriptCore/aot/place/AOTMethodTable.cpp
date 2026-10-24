@@ -22,8 +22,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-using TableFunctions = MethodTableFunctions;
-
 struct RowEntry {
     uint32_t shape { 0 };
     FunctionID target;
@@ -33,7 +31,6 @@ struct RowEntry {
 struct MethodTableRow {
     MethodSelector selector;
     FunctionID lookup;
-    // In ascending order of the shapes, each once.
     Vector<RowEntry> entries;
 };
 
@@ -64,8 +61,7 @@ std::optional<uint32_t> MethodTable::offsetOf(MethodSelector selector) const
 // An entrypoint that has nothing to test hands what it was given to the body, where it was given it, and returns what the body returns. The table names the body then.
 static FunctionID findBodyEnteredAsGiven(const PlacementContext& context, FunctionID id)
 {
-    const Program& program = context.program;
-    const Function& entrypoint = program.at(id);
+    const Function& entrypoint = context.program.at(id);
     if (entrypoint.blocks.size() != 1)
         return { };
     const Block& block = entrypoint.at(entryBlock);
@@ -84,28 +80,26 @@ static FunctionID findBodyEnteredAsGiven(const PlacementContext& context, Functi
     }
 
     const CallingConventions& conventions = context.inputs.callingConventions;
-    ArgumentLocations given = conventions.locationsOf(program, id);
-    ArgumentLocations taken = conventions.locationsOf(program, call.function());
-    if (given.convention != taken.convention || given.parameters != taken.parameters || given.results != taken.results || conventions.stackWordsReservedByCallersOf(program, call.function()))
+    ArgumentLocations given = conventions.locationsOf(context.program, id);
+    ArgumentLocations taken = conventions.locationsOf(context.program, call.function());
+    if (given.convention != taken.convention || given.parameters != taken.parameters || given.results != taken.results || conventions.stackWordsReservedByCallersOf(context.program, call.function()))
         return { };
     return call.function();
 }
 
 MethodTableFunctions collectMethodTableFunctions(const PlacementContext& context)
 {
-    const Program& program = context.program;
-    TableFunctions functions;
-    auto tableFunctions = findIndicesInParallel(context.build.parallelLoops(), program.functions.size(), [&](unsigned index) {
-        const Function& function = program.functions[index];
+    MethodTableFunctions functions;
+    auto tableFunctions = findIndicesInParallel(context.build.parallelLoops(), context.program.functions.size(), [&](unsigned index) {
+        const Function& function = context.program.functions[index];
         return function.hasBody() && (function.role == FunctionRole::TableEntrypoint || function.role == FunctionRole::TableLookup);
     });
     for (uint32_t index : tableFunctions) {
-        const Function& function = program.functions[index];
+        const Function& function = context.program.functions[index];
         if (function.role == FunctionRole::TableEntrypoint) {
             FunctionID body = findBodyEnteredAsGiven(context, FunctionID(index));
             functions.entrypoints.append({ function.derivation.source, selectorOfTableFunction(function), body ? body : FunctionID(index) });
-        }
-        else if (function.role == FunctionRole::TableLookup)
+        } else
             functions.lookups.append({ selectorOfTableFunction(function), FunctionID(index) });
     }
     AOT::sort(functions.entrypoints);
@@ -113,62 +107,44 @@ MethodTableFunctions collectMethodTableFunctions(const PlacementContext& context
     return functions;
 }
 
-static void appendEntries(const ShapeTable& shapes, std::span<const LayoutID> layouts, FunctionID target, GuardBitID guard, MethodTableRow& row)
-{
-    for (LayoutID layout : layouts) {
-        ShapeRange range = shapes.shapesOf(layout);
-        for (uint32_t shape = range.first; shape < range.end(); ++shape)
-            row.entries.append({ shape, target, guard });
-    }
-}
-
 // What the class definitions say holds while the bit of the arm's conditions is set. Conditions without a bit never hold.
-static void appendEntriesOf(const PlacementContext& context, const TableCallUse& use, const TableFunctions& functions, const ShapeTable& shapes, const GuardBitTable& guardBits, MethodTableRow& row)
-{
-    PropertyAccessContext access { context.program, &context.inputs.flow };
-    MemberPartition partition = partitionMembers(access, context.program.at(use.receivers).members.span(), use.selector.key, Access::Read);
-    for (const MemberArm& arm : partition.arms) {
-        FunctionID target = arm.answer.kind == MemberKind::Method && arm.answer.receiverProofs.isEmpty() ? functions.entrypointOf(arm.answer.method, use.selector) : FunctionID();
-        GuardBitID guard;
-        if (target && !arm.answer.conditions.isEmpty()) {
-            guard = guardBits.find(guardsOf(arm.answer.conditions.span()).span());
-            if (!guard)
-                target = { };
-        }
-        if (!target) {
-            appendEntries(shapes, arm.layouts.span(), row.lookup, { }, row);
-            continue;
-        }
-        LayoutList receivers = receiversOfTableEntrypoint(context.program, use.selector.key, arm.answer.method);
-        for (LayoutID layout : arm.layouts) {
-            bool isExpectedByEntrypoint = receivers.contains(layout);
-            appendEntries(shapes, singleElementSpan(layout), isExpectedByEntrypoint ? target : row.lookup, isExpectedByEntrypoint ? guard : GuardBitID(), row);
-        }
-    }
-    appendEntries(shapes, partition.rest.span(), row.lookup, { }, row);
-}
-
-static Vector<MethodTableRow> createRows(const PlacementContext& context, const PlacedSites& sites, const ShapeTable& shapes, const GuardBitTable& guardBits, const TableFunctions& functions)
+static Vector<MethodTableRow> createRows(const PlacementContext& context, const PlacedSites& sites, const ShapeTable& shapes, const GuardBitTable& guardBits, const MethodTableFunctions& functions)
 {
     Vector<MethodTableRow> rows;
     for (const TableCallUse& use : sites.tableCalls) {
         if (rows.isEmpty() || rows.last().selector != use.selector)
             rows.append(MethodTableRow { use.selector, functions.lookupOf(use.selector), { } });
-        RELEASE_ASSERT(rows.last().lookup);
-        appendEntriesOf(context, use, functions, shapes, guardBits, rows.last());
+        MethodTableRow& row = rows.last();
+        RELEASE_ASSERT(row.lookup);
+        auto append = [&](LayoutID layout, FunctionID target, GuardBitID guard) {
+            ShapeRange range = shapes.shapesOf(layout);
+            for (uint32_t shape = range.first; shape < range.end(); ++shape)
+                row.entries.append({ shape, target, guard });
+        };
+        PropertyAccessContext access { context.program, &context.inputs.flow };
+        MemberPartition partition = partitionMembers(access, context.program.at(use.receivers).members.span(), use.selector.key, Access::Read);
+        for (const MemberArm& arm : partition.arms) {
+            FunctionID target = arm.answer.kind == MemberKind::Method && arm.answer.receiverProofs.isEmpty() ? functions.entrypointOf(arm.answer.method, use.selector) : FunctionID();
+            GuardBitID guard;
+            if (target && !arm.answer.conditions.isEmpty()) {
+                guard = guardBits.find(guardsOf(arm.answer.conditions.span()).span());
+                if (!guard)
+                    target = { };
+            }
+            LayoutList receivers = target ? receiversOfTableEntrypoint(context.program, use.selector.key, arm.answer.method) : LayoutList();
+            for (LayoutID layout : arm.layouts) {
+                bool isExpectedByEntrypoint = target && receivers.contains(layout);
+                append(layout, isExpectedByEntrypoint ? target : row.lookup, isExpectedByEntrypoint ? guard : GuardBitID());
+            }
+        }
+        for (LayoutID layout : partition.rest)
+            append(layout, row.lookup, { });
     }
     for (MethodTableRow& row : rows) {
         AOT::stableSort(row.entries, { }, &RowEntry::shape);
         row.entries.shrink(row.entries.size() - std::ranges::unique(row.entries, { }, &RowEntry::shape).size());
     }
     return rows;
-}
-
-static bool fits(const BitVector& isOccupied, const MethodTableRow& row, uint32_t offset)
-{
-    return std::ranges::none_of(row.entries, [&](const RowEntry& entry) {
-        return isOccupied.get(offset - entry.shape);
-    });
 }
 
 MethodTable placeMethodTable(const PlacementContext& context, const PlacedSites& sites, const ShapeTable& shapes, const GuardBitTable& guardBits, const MethodTableFunctions& functions)
@@ -191,7 +167,7 @@ MethodTable placeMethodTable(const PlacementContext& context, const PlacedSites&
         if (row.entries.isEmpty())
             continue;
         uint32_t offset = row.entries.last().shape;
-        while (!fits(isOccupied, row, offset))
+        while (std::ranges::any_of(row.entries, [&](const RowEntry& entry) { return isOccupied.get(offset - entry.shape); }))
             ++offset;
         offsets[index] = offset;
         for (const RowEntry& entry : row.entries)

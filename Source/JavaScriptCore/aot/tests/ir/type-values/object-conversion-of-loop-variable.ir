@@ -6,7 +6,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Node" fields=[{key="next" declared={type=anything}}]
 
 function f0 name="nullThenObjects" parameters=[{type=boolean}, {type=L0}] results=[{type=anything}] {
-  b0(v0: boolean, v1: L0):
     v2 = Null
     Jump -> next b1(v2)
   b1(v3):
@@ -18,23 +17,19 @@ function f0 name="nullThenObjects" parameters=[{type=boolean}, {type=L0}] result
     Jump -> next b1(v6)
   b3():
     Return v5
-}
-# CHECK-LABEL: function f0 name="nullThenObjects"
 # CHECK: b1(v3: null|L0):
 # CHECK: v5: L0 = ToObject v3
+}
 
 function f1 name="onlyNull" results=[{type=anything}] {
-  b0():
     v0 = Null
     v1 = ToObject v0
     Unreachable
-}
-# CHECK-LABEL: function f1 name="onlyNull"
 # CHECK: v1: never = ToObject v0
 # CHECK-NEXT: Unreachable
+}
 
 function f2 name="primitiveThenObjects" parameters=[{type=boolean}, {type=L0}] results=[{type=anything}] {
-  b0(v0: boolean, v1: L0):
     v2 = Integer integer=1
     Jump -> next b1(v2)
   b1(v3):
@@ -46,6 +41,5 @@ function f2 name="primitiveThenObjects" parameters=[{type=boolean}, {type=L0}] r
     Jump -> next b1(v6)
   b3():
     Return v5
-}
-# CHECK-LABEL: function f2 name="primitiveThenObjects"
 # CHECK: v5: object = ToObject v3
+}

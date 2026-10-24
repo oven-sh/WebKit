@@ -353,36 +353,6 @@ static void printColumns(const SlotPlanViewContext& view)
     }
 }
 
-static ASCIILiteral nameOf(FieldTableEntry::Form form)
-{
-    switch (form) {
-    case FieldTableEntry::Form::InlineValue:
-        return "InlineValue"_s;
-    case FieldTableEntry::Form::InlineInt32:
-        return "InlineInt32"_s;
-    case FieldTableEntry::Form::InlineNarrowCell:
-        return "InlineNarrowCell"_s;
-    case FieldTableEntry::Form::OutOfLineValue:
-        return "OutOfLineValue"_s;
-    case FieldTableEntry::Form::Field:
-        return "Field"_s;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void printExpectedForms(const SlotPlanViewContext& view)
-{
-    IRPrinter printer(view.out, view.program());
-    for (unsigned index = 0; index < view.slots().formsExpectedOfNames().endOfNames(); ++index) {
-        PropertyKeyID key(index);
-        std::optional<FieldTableEntry::Form> form = view.slots().formsExpectedOfNames().of(key);
-        if (!form)
-            continue;
-        printer.print(key);
-        view.out.print(" "_s, nameOf(*form), "\n"_s);
-    }
-}
-
 static void printFill(const SlotPlanViewContext& view)
 {
     dumpFillEstimates(view.out, view.program(), collectSlotUsesFor(view));
@@ -399,7 +369,6 @@ static std::span<const SlotPlanView> slotPlanViews()
         { "padding"_s, printPadding },
         { "columns"_s, printColumns },
         { "fill"_s, printFill },
-        { "expected-forms"_s, printExpectedForms },
     };
     return views;
 }

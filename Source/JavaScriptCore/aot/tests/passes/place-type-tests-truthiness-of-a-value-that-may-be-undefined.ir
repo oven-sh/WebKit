@@ -15,10 +15,9 @@ function f0 name="optionalBoolean" parameters=[{type=undefined|boolean flags=[Is
   b2():
     v3 = Integer integer=2
     Return v3
-}
-# CHECK-LABEL: function f0 name="optionalBoolean"
 # CHECK-NOT: testedType=boolean
 # CHECK: = TypeTest v0 testedType=undefined|null|boolean
+}
 
 function f1 name="optionalString" parameters=[{type=undefined|string flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ undefined|string):
@@ -30,10 +29,9 @@ function f1 name="optionalString" parameters=[{type=undefined|string flags=[IsEx
   b2():
     v3 = Integer integer=2
     Return v3
-}
-# CHECK-LABEL: function f1 name="optionalString"
 # CHECK-NOT: testedType=string
 # CHECK: = TypeTest v0 testedType=undefined|null|string
+}
 
 function f2 name="booleanAlone" parameters=[{type=boolean flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ boolean):
@@ -45,6 +43,5 @@ function f2 name="booleanAlone" parameters=[{type=boolean flags=[IsExpected]}] r
   b2():
     v3 = Integer integer=2
     Return v3
-}
-# CHECK-LABEL: function f2 name="booleanAlone"
 # CHECK: = TypeTest v0 testedType=boolean
+}

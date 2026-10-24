@@ -9,7 +9,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="sum" parameters=[{type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
     v2 = ToBoolean v0
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -17,8 +16,6 @@ function f0 name="sum" parameters=[{type=number}, {type=number}] results=[{type=
     ReturnCall v3
   b2():
     Return v1
-}
-# CHECK-LABEL: function f0 name="sum"
 # CHECK-NEXT: b0(v0: number, v1: number):
 # CHECK-NEXT: v2: boolean = ToBoolean v0
 # CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
@@ -27,3 +24,4 @@ function f0 name="sum" parameters=[{type=number}, {type=number}] results=[{type=
 # CHECK-NEXT: ReturnCall v3
 # CHECK-NEXT: b2():
 # CHECK-NEXT: Return v1
+}

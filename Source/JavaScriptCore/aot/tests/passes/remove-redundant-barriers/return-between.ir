@@ -16,11 +16,10 @@ function f0 name="return-between" captures=[{type=env L0}] parameters=[{type=any
   b2():
     PutEnvironmentField v0, v1 layout=L0 field=1
     Return
-}
-# CHECK-LABEL: function f0 name="return-between"
 # CHECK: PutEnvironmentField v0, v1 layout=L0
 # CHECK: PutEnvironmentField v0, v1 layout=L0 field=1
 # CHECK-NOT: laterBarrierCovers
+}
 function f1 name="store-on-both-paths" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=undefined}] {
   b0(v0: env L0 @Cell, v1: anything @JSValue):
     v2 @Boolean = ToBoolean v1 form=Generic
@@ -32,7 +31,6 @@ function f1 name="store-on-both-paths" captures=[{type=env L0}] parameters=[{typ
   b2():
     PutEnvironmentField v0, v1 layout=L0 field=1
     Return
-}
-# CHECK-LABEL: function f1 name="store-on-both-paths"
 # CHECK: PutEnvironmentField v0, v1 layout=L0 [laterBarrierCovers]
 # CHECK-NOT: laterBarrierCovers
+}

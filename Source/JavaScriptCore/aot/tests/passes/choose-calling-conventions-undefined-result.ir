@@ -11,19 +11,16 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="logs" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f1
     ReturnCall v1 requirement=Allowed
 }
 function f1 name="alsoLogs" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f0
     ReturnCall v1 requirement=Allowed
 }
 # CHECK-LABEL: function f2 name="logs"
 # CHECK: ReturnCall v4 requirement=Allowed
 function f2 name="logs" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0 arguments=Registers} {
-  b0(v0: f0, v1: anything, v2: anything):
     v3 = AssumeType v2 castType=number
     v4 = CallDirect v3 function=f0
     ReturnCall v4 requirement=Allowed
@@ -31,12 +28,10 @@ function f2 name="logs" role=GenericEntrypoint flags=[HasThis] captures=[{type=f
 # CHECK-LABEL: function f3 name="neverJumpedTo"
 # CHECK: ReturnCall v1 requirement=Allowed
 function f3 name="neverJumpedTo" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f0
     ReturnCall v1 requirement=Allowed
 }
 function f4 name="calledByHost" parameters=[{type=number}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
-  b0(v0: number):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="sink" [isFreeName]
     v3 = Call v2, -, v0
@@ -46,7 +41,6 @@ function f4 name="calledByHost" parameters=[{type=number}] results=[{type=undefi
 # CHECK: v4: undefined = CallDirect v3 function=f4
 # CHECK-NEXT: Return v4
 function f5 name="calledByHost" role=GenericEntrypoint flags=[HasThis] captures=[{type=f4}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} {
-  b0(v0: f4, v1: anything, v2: anything):
     v3 = AssumeType v2 castType=number
     v4 = CallDirect v3 function=f4
     ReturnCall v4 requirement=Allowed

@@ -8,7 +8,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="readsAtInteger" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=int}] results=[{type=anything}] {
-  b0(v0: Array<anything, proven, pristine[Storage]>, v1: int):
     v2 = GetArrayElement v0, v1 level=Proven
     Return v2
 }
@@ -17,7 +16,6 @@ function f0 name="readsAtInteger" parameters=[{type=Array<anything, proven, pris
 # CHECK-NEXT: stub PollAtPrologue x1
 # CHECK-NEXT: f1: size=
 function f1 name="readsAtNumber" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<anything, proven, pristine[Storage]>, v1: number):
     v2 = GetArrayElement v0, v1 level=Proven
     Return v2
 }
@@ -25,7 +23,6 @@ function f1 name="readsAtNumber" parameters=[{type=Array<anything, proven, prist
 # CHECK-NEXT: stub PollAtPrologue x1
 # CHECK-NEXT: f2: size=
 function f2 name="readsKnownStorageAtNumber" parameters=[{type=Array<anything, proven, Contiguous, pristine[Storage]>}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<anything, proven, Contiguous, pristine[Storage]>, v1: number):
     v2 = GetArrayElement v0, v1 arrayStorage=Contiguous level=Proven
     Return v2
 }
@@ -33,7 +30,6 @@ function f2 name="readsKnownStorageAtNumber" parameters=[{type=Array<anything, p
 # CHECK-NEXT: stub PollAtPrologue x1
 # CHECK-NEXT: f3: size=
 function f3 name="storesAtInteger" parameters=[{type=Array<anything, pristine[Storage]>}, {type=int}, {type=string}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: int, v2: string):
     PutArrayElement v0, v1, v2 level=Proven
     Return
 }
@@ -41,7 +37,6 @@ function f3 name="storesAtInteger" parameters=[{type=Array<anything, pristine[St
 # CHECK-NOT: operation
 # CHECK: f4: size=
 function f4 name="storesAtNumber" parameters=[{type=Array<anything, pristine[Storage]>}, {type=number}, {type=string}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: number, v2: string):
     PutArrayElement v0, v1, v2 level=Proven
     Return
 }
@@ -49,7 +44,6 @@ function f4 name="storesAtNumber" parameters=[{type=Array<anything, pristine[Sto
 # CHECK-NOT: operation
 # CHECK: f5: size=
 function f5 name="storesNumber" parameters=[{type=Array<anything, pristine[Storage]>}, {type=i32}, {type=number}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: i32, v2: number):
     PutArrayElement v0, v1, v2 level=Proven
     Return
 }
@@ -57,7 +51,6 @@ function f5 name="storesNumber" parameters=[{type=Array<anything, pristine[Stora
 # CHECK-NOT: operation
 # CHECK: f6: size=
 function f6 name="inFastCode" parameters=[{type=Array<anything, pristine[Storage]>}, {type=int}, {type=number}, {type=string}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: int, v2: number, v3: string, v4: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -78,7 +71,6 @@ function f6 name="inFastCode" parameters=[{type=Array<anything, pristine[Storage
 # S: f6 b1 Fast
 # CHECK: f7: size=
 function f7 name="inCompactCode" parameters=[{type=Array<anything, pristine[Storage]>}, {type=int}, {type=number}, {type=string}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: int, v2: number, v3: string, v4: boolean):
     Branch v4 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v5 = GetArrayElement v0, v1 level=Proven
@@ -97,7 +89,6 @@ function f7 name="inCompactCode" parameters=[{type=Array<anything, pristine[Stor
 # S: f7 b1 Compact
 # CHECK: f8: size=
 function f8 name="readsTypedArray" parameters=[{type=Uint8Array}, {type=i32}] results=[{type=anything}] {
-  b0(v0: Uint8Array, v1: i32):
     v2 = GetTypedArrayElement v0, v1 typedArrayType=2 level=Proven
     Return v2
 }
@@ -105,7 +96,6 @@ function f8 name="readsTypedArray" parameters=[{type=Uint8Array}, {type=i32}] re
 # CHECK: stub GetByValCached x1
 # CHECK: f9: size=
 function f9 name="hasAtInteger" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=int}] results=[{type=boolean}] {
-  b0(v0: Array<anything, proven, pristine[Storage]>, v1: int):
     v2 = HasArrayElement v0, v1 level=Proven
     Return v2
 }
@@ -113,7 +103,6 @@ function f9 name="hasAtInteger" parameters=[{type=Array<anything, proven, pristi
 # CHECK-NEXT: stub PollAtPrologue x1
 # CHECK-NEXT: f10: size=
 function f10 name="hasAtNumber" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=number}] results=[{type=boolean}] {
-  b0(v0: Array<anything, proven, pristine[Storage]>, v1: number):
     v2 = HasArrayElement v0, v1 level=Proven
     Return v2
 }
@@ -121,7 +110,6 @@ function f10 name="hasAtNumber" parameters=[{type=Array<anything, proven, pristi
 # CHECK-NEXT: stub PollAtPrologue x1
 # CHECK-NEXT: f11: size=
 function f11 name="hasInFastCode" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=int}] results=[{type=undefined}] {
-  b0(v0: Array<anything, proven, pristine[Storage]>, v1: int):
     Jump -> next b1()
   b1():
     LoopHint

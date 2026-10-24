@@ -11,7 +11,6 @@ variable g1 name="changing" module=m0 declared={type=anything} initialization=Un
 variable g2 name="late" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     PutModuleVariable v1 variable=g0
@@ -25,39 +24,33 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="storedOnce" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g0
     v2 = Call v0
     v3 = GetModuleVariable variable=g0
     v4 = StrictEq v1, v3
     Return v4
-}
-# CHECK-LABEL: function f1 name="storedOnce"
 # CHECK: [[first]]:{{*}}= GetModuleVariable variable=g0
 # CHECK-NEXT: = Call v0
 # CHECK-NEXT: = Upcast [[first]]
 # CHECK-NOT: GetModuleVariable
+}
 
 function f2 name="storedTwice" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g1
     v2 = Call v0
     v3 = GetModuleVariable variable=g1
     v4 = StrictEq v1, v3
     Return v4
-}
-# CHECK-LABEL: function f2 name="storedTwice"
 # CHECK: = Call v0
 # CHECK-NEXT: = GetModuleVariable variable=g1
+}
 
 function f3 name="storedAfterRead" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g2
     v2 = Call v0
     v3 = GetModuleVariable variable=g2
     v4 = StrictEq v1, v3
     Return v4
-}
-# CHECK-LABEL: function f3 name="storedAfterRead"
 # CHECK: = Call v0
 # CHECK-NEXT: = GetModuleVariable variable=g2
+}

@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="Class" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Return
 }
 # CHECK: kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget] captures=[{type=f0}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]{{*}}derivation={source=f0} creator=Entrypoint{target=f0 arguments=Registers takesNewTarget=true} {

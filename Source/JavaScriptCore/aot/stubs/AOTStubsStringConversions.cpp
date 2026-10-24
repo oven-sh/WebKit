@@ -22,15 +22,11 @@ namespace JSC { namespace AOT {
 
 StubSignature signatureOfIntegerToString(StubKey)
 {
-    StubSignature signature;
 #if CPU(ARM64)
-    signature.addOperand(gprOf(StubRegister::T11));
+    return StubSignature::withGPRResult({ gprOf(StubRegister::T11) });
 #else
-    signature.addOperand(gprOf(StubRegister::A1));
+    return StubSignature::withGPRResult({ gprOf(StubRegister::A1) });
 #endif
-    signature.result = StubResult::GPR;
-    signature.firstResult = gprOf(StubRegister::R0);
-    return signature;
 }
 
 // The caches hold int32 keys. The operation takes every integer.
@@ -99,11 +95,7 @@ void generateIntegerToString(StubAssembler& jit)
     jit.returnToCaller();
 
     slow.link(&jit);
-    jit.callOperationAndReturn(Entry::operationAOTIntToString, {
-        .saves = OperationCall::Saves::CallerSavedRegisters,
-        .checksException = false,
-        .secondArgumentIn = value,
-    });
+    jit.callOperationAndReturn(Entry::operationAOTIntToString, { .saves = OperationCall::Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = value });
 }
 
 // StringKeyCache::tryFindCaseConversion(): what the conversion of this very string gave the last time.
@@ -166,23 +158,15 @@ static PreludeExit emitUnchangedCasePrelude(StubAssembler& jit, StringKeyCache::
     jit.load32(Address(impl, StringImpl::lengthMemoryOffset()), scanned.size);
     jit.loadPtr(Address(impl, StringImpl::dataOffset()), scanned.bytes);
     branchUnlessASCIIOutsideRange(jit, scanned, firstConvertedLetter, lastConvertedLetter, mayChange);
-    jit.move(string, jit.result());
-    jit.returnToCaller();
+    returnResult(jit, string);
 
     mayChange.link(&jit);
     returnRememberedCaseConversion(jit, letterCase, string, scanned.size, scanned.word, scanned.bytes, scanned.atLeastFirst, scanned.addendForFirst);
     return PreludeExit::CallsOperation;
 }
 
-PreludeExit emitToLowerCasePrelude(StubAssembler& jit)
-{
-    return emitUnchangedCasePrelude(jit, StringKeyCache::LetterCase::Lower);
-}
-
-PreludeExit emitToUpperCasePrelude(StubAssembler& jit)
-{
-    return emitUnchangedCasePrelude(jit, StringKeyCache::LetterCase::Upper);
-}
+PreludeExit emitToLowerCasePrelude(StubAssembler& jit) { return emitUnchangedCasePrelude(jit, StringKeyCache::LetterCase::Lower); }
+PreludeExit emitToUpperCasePrelude(StubAssembler& jit) { return emitUnchangedCasePrelude(jit, StringKeyCache::LetterCase::Upper); }
 
 } } // namespace JSC::AOT
 

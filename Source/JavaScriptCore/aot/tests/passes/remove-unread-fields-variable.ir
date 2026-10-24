@@ -15,7 +15,6 @@ variable g1 name="readAsValue" module=m0 declared={type=anything}
 variable g2 name="exported" module=m1 declared={type=anything}
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     PutModuleVariable v0 variable=g0
     v2 = NewClosure function=f3
@@ -29,34 +28,28 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="library" module=m1 kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f4
     PutModuleVariable v0 variable=g2
     Return
-}
-# CHECK-LABEL: function f1 name="library"
 # CHECK: PutModuleVariable v0 variable=g2
+}
 
 function f2 name="onlyCalled" kind=Arrow results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="effect" [isFreeName]
     v2 = Call v1
     Return
 }
 function f3 name="readAsValue" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f4 name="exported" module=m1 kind=Arrow results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="effect" [isFreeName]
     v2 = Call v1
     Return
 }
 function f5 name="published" kind=Arrow results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = Call v0
     v2 = GetModuleVariable variable=g2

@@ -26,7 +26,6 @@ entry module=m0
 typesite w0 module=m0 position=100 kind=Parameter
 layout L0 name="Holder" fields=[{key="callback" declared={type=f2} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = FinishObject v1
@@ -37,13 +36,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="run" parameters=[{type=L0 site=w0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="callback"
     v2 = Call v1, v0 calleeKey="callback"
     Return v2
 }
 function f2 name="listed" results=[{type=anything}] {
-  b0():
     v0 = String string="listed"
     Return v0
 }

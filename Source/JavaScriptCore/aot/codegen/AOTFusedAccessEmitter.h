@@ -13,13 +13,16 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class FusedAccessEmitter final : public OperationEmitter {
 public:
-    explicit FusedAccessEmitter(CodeGenerator&);
+    explicit FusedAccessEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generatePropGetChain(const ValueContext&);
     void generatePropGetPair(const ValueContext&);
     void generatePropGetAndTest(const ValueContext&);
     void generateCallMethod(const ValueContext&);
     void generateTryPutByIds(const ValueContext&);
+
+private:
+    Condition tryPutByIds(const ValueContext&);
 };
 
 } } } // namespace JSC::AOT::Typed

@@ -9,7 +9,6 @@ module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 typesite w0 module=m0 position=15 kind=Parameter
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="register" [isFreeName]
@@ -17,7 +16,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="readsOfUndefined" module=m0 position=5 flags=[IsChecked] length=1 parameters=[{type=undefined site=w0}] results=[{type=anything}] {
-  b0(v0: undefined):
     v1 = RequireObjectCoercible v0 name="once"
     v2 = PropGet v1 key="once"
     Return v2

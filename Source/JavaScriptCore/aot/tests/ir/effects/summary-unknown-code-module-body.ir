@@ -10,19 +10,16 @@ variable g0 name="writerCalledByCompiledCode" module=m0 declared={type=anything}
 variable g1 name="writerEscapes" module=m0 declared={type=anything} initialization=Undefined flow={writers=AllKnown}
 variable g2 name="writersUnknown" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="calledByCompiledCode" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     PutModuleVariable v0 variable=g0
     Return
 }
 function f1 name="escapes" kind=Arrow results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     PutModuleVariable v0 variable=g1
     Return
 }
 function f2 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = CallDirect function=f0
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="queueMicrotask" [isFreeName]
@@ -32,7 +29,6 @@ function f2 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f3 name="readsAroundUnknownCall" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = GetModuleVariable variable=g1
     v2 = GetModuleVariable variable=g2

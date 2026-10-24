@@ -9,13 +9,10 @@
 
 #include "AOTCompactList.h"
 #include "AOTRelocation.h"
-#include "AOTVector.h"
 #include "AirInstObserver.h"
 #include "B3Origin.h"
 #include "MacroAssembler.h"
 #include "RegisterSet.h"
-#include <span>
-#include <utility>
 #include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT {
@@ -133,20 +130,14 @@ private:
         MacroAssembler::Label end;
         CodeUnit::Kind kind;
     };
-    enum class BlockState : uint8_t {
-        NoBlock,
-        StartsHotBlock,
-        InHotBlock,
-        InColdBlock,
-        StartsColdBlockThatMayRun,
-        InColdBlockThatMayRun,
-    };
+    enum class BlockHeat : uint8_t { Hot, ColdButMayRun, RarelyRun };
 
     void addRange(MacroAssembler::Label begin, MacroAssembler::Label end, CodeUnit::Kind);
 
     BitVector m_coldAirBlocks;
     BitVector m_rarelyRunAirBlocks;
-    BlockState m_blockState { BlockState::NoBlock };
+    BlockHeat m_blockHeat { BlockHeat::Hot };
+    bool m_isAtStartOfBlock { true };
     Vector<std::pair<MacroAssembler::Label, MacroAssembler::Label>> m_hotBlockRanges;
     Vector<std::pair<MacroAssembler::Label, MacroAssembler::Label>> m_rangesOfColdBlocksThatMayRun;
     Vector<Range> m_ranges;

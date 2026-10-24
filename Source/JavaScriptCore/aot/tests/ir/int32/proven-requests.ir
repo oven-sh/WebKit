@@ -15,7 +15,6 @@ variable g0 name="count" module=m0 declared={type=undefined|i32 site=w2 flags=[I
 # CHECK: layout L0 name="Cursor" fields=[{key="line" declared={type=i32 flags=[IsInt32Promise]} flags=[IsRequired]}, {key="column" declared={type=undefined|i32 flags=[IsInt32Promise]}}]
 # CHECK: variable g0 name="count" module=m0 declared={type=undefined|i32 site=w2 flags=[IsInt32Promise]}
 function f0 name="parameter" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
-  b0(v0: i32):
     v1 = Convert v0 declared={type=i32 site=w1 flags=[IsInt32Promise]}
     Return v1
 }
@@ -23,96 +22,76 @@ function f0 name="parameter" parameters=[{type=i32 site=w0 flags=[IsInt32Promise
 # CHECK-NEXT: b0(v0: i32):
 # CHECK-NEXT: Return v0
 function f1 name="maskedNumber" parameters=[{type=number}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
-  b0(v0: number):
     v1 = Integer integer=255
     v2 = BitAnd v0, v1
     v3 = Convert v2 declared={type=i32 site=w1 flags=[IsInt32Promise]}
     Return v3
-}
-# CHECK-LABEL: function f1 name="maskedNumber"
 # CHECK: v2: int[0, 255] = BitAnd v0, v1
 # CHECK-NEXT: Return v2
+}
 function f2 name="field" parameters=[{type=undefined|null|L0}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
-  b0(v0: undefined|null|L0):
     v1 = PropGet v0 key="line"
     v2 = Convert v1 declared={type=i32 site=w1 flags=[IsInt32Promise]}
     Return v2
-}
-# CHECK-LABEL: function f2 name="field"
 # CHECK: v1: anything ~ i32 = PropGet v0 key="line"
 # CHECK-NEXT: v2: i32 = Check v1 castType=i32 site=w1
 # CHECK-NEXT: Return v2
+}
 function f3 name="optionalField" parameters=[{type=undefined|null|L0}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
-  b0(v0: undefined|null|L0):
     v1 = PropGet v0 key="column"
     v2 = Convert v1 declared={type=i32 site=w1 flags=[IsInt32Promise]}
     Return v2
-}
-# CHECK-LABEL: function f3 name="optionalField"
 # CHECK: v1: anything ~ undefined|i32 = PropGet v0 key="column"
 # CHECK-NEXT: v2: i32 = Check v1 castType=i32 site=w1
 # CHECK-NEXT: Return v2
+}
 function f4 name="variable" results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = Convert v0 declared={type=i32 site=w1 flags=[IsInt32Promise]}
     Return v1
-}
-# CHECK-LABEL: function f4 name="variable"
 # CHECK: v0: undefined|i32 = GetModuleVariable variable=g0
 # CHECK-NEXT: v1: i32 = Check v0 castType=i32 site=w1
 # CHECK-NEXT: Return v1
+}
 function f5 name="callResult" results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
-  b0():
     v0 = NewClosure function=f4
     v1 = Call v0
     v2 = Convert v1 declared={type=i32 site=w3 flags=[IsInt32Promise]}
     v3 = Convert v2 declared={type=i32 site=w1 flags=[IsInt32Promise]}
     Return v3
-}
-# CHECK-LABEL: function f5 name="callResult"
 # CHECK: v1: i32 = Call v0
 # CHECK-NEXT: Return v1
+}
 function f6 name="tailCall" results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
-  b0():
     v0 = NewClosure function=f4
     v1 = Call v0
     ReturnCall v1 casts=[{declared={type=i32 site=w3 flags=[IsInt32Promise]}}, {declared={type=i32 site=w1 flags=[IsInt32Promise]}}]
-}
-# CHECK-LABEL: function f6 name="tailCall"
 # CHECK: ReturnCall v1 casts=[{declared={type=i32 site=w3 flags=[IsInt32Promise]} resolution=Nothing}, {declared={type=i32 site=w1 flags=[IsInt32Promise]} resolution=Nothing}]
+}
 function f7 name="nothing" results=[{type=undefined|i32 site=w1 flags=[IsInt32Promise]}] {
-  b0():
     v0 = Undefined
     v1 = Convert v0 declared={type=undefined|i32 site=w1 flags=[IsInt32Promise]}
     Return v1
-}
-# CHECK-LABEL: function f7 name="nothing"
 # CHECK: v0: undefined = Undefined
 # CHECK-NEXT: Return v0
 # A layout that nothing allocates has no objects to read from, so something allocates the layout of the two reads
+}
 function f8 name="make" parameters=[{type=i32 site=w0 flags=[IsInt32Promise]}] results=[{type=undefined|null|L0}] {
-  b0(v0: i32):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     Return v1
-}
-# CHECK-LABEL: function f8 name="make"
 # CHECK: v1: L0 = NewObject -, v0 layout=L0 fields=[0]
+}
 function f9 name="resultOfUnknownCallee" parameters=[{type=anything}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
-  b0(v0: anything):
     v1 = Call v0
     v2 = Convert v1 declared={type=i32 site=w3 flags=[IsInt32Promise]}
     v3 = Convert v2 declared={type=i32 site=w1 flags=[IsInt32Promise]}
     Return v3
-}
-# CHECK-LABEL: function f9 name="resultOfUnknownCallee"
 # CHECK: v1: anything = Call v0
 # CHECK-NEXT: v2: i32 = Check v1 castType=i32 site=w3
 # CHECK-NEXT: Return v2
+}
 function f10 name="tailCallOfUnknownCallee" parameters=[{type=anything}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
-  b0(v0: anything):
     v1 = Call v0
     ReturnCall v1 casts=[{declared={type=i32 site=w3 flags=[IsInt32Promise]}}, {declared={type=i32 site=w1 flags=[IsInt32Promise]}}]
-}
-# CHECK-LABEL: function f10 name="tailCallOfUnknownCallee"
 # CHECK: ReturnCall v1 casts=[{declared={type=i32 site=w3 flags=[IsInt32Promise]} resolution=Check}, {declared={type=i32 site=w1 flags=[IsInt32Promise]} resolution=Nothing}]
+}

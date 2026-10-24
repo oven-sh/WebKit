@@ -11,7 +11,6 @@ variable g0 name="first" module=m0 declared={type=anything} initialization=Undef
 variable g1 name="second" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToNumber v1
@@ -30,7 +29,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="StoresFirst" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
     PropDefine v3, v1 key="total"
@@ -39,7 +37,6 @@ function f1 name="StoresFirst" kind=BaseConstructor flags=[HasNewTarget] paramet
     Return v5
 }
 function f2 name="IsReadFirst" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L1
     v3 = NewObject v2 layout=L1
     v4 = CallDirect v3 function=f4
@@ -48,12 +45,10 @@ function f2 name="IsReadFirst" kind=BaseConstructor flags=[HasNewTarget] paramet
     Return v6
 }
 function f3 name="readsTotal" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="total"
     Return v1
 }
 function f4 name="readsLate" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="late"
     Return v1
 }

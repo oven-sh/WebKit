@@ -10,14 +10,11 @@
 
 #include "AOTClassPrototype.h"
 #include "AOTHeapCacheRegistry.h"
-#include "AOTImmortalCells.h"
 #include "AOTLimits.h"
 #include "AOTObjectModel.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTSort.h"
 #include "AOTState.h"
-#include "AOTThreshold.h"
-#include "AOTVector.h"
 #include "AbstractSlotVisitorInlines.h"
 #include "JSArray.h"
 #include "JSCInlines.h"
@@ -26,7 +23,6 @@
 #include "SlotVisitorInlines.h"
 #include "StructureChain.h"
 #include <algorithm>
-#include <bit>
 #include <cstddef>
 #include <wtf/FastMalloc.h>
 #include <wtf/HashFunctions.h>
@@ -45,17 +41,14 @@ static_assert(maxKeyOrdersPerLayout <= UINT16_MAX);
 
 static constexpr uint32_t initialTransitionTableSize = 1024;
 static_assert(!(initialTransitionTableSize & (initialTransitionTableSize - 1)));
-// The table of transitions doubles when more than this part of it is taken. Compiled code probes it, so it stays emptier than the tables that only this file reads.
 static constexpr uint64_t maxTransitionLoadNumerator = 1;
 static constexpr uint64_t maxTransitionLoadDenominator = 2;
 
-// A bit above the order and the count, in the key of a list of properties.
 static constexpr uint32_t listsSymbolKeys = orderAndCountMask + 1;
 static_assert(!(listsSymbolKeys & orderAndCountMask));
 
 namespace {
 
-// What lies in an arena never moves, and it goes away with the arena.
 class Arena {
     WTF_MAKE_NONCOPYABLE(Arena);
 public:
@@ -84,7 +77,6 @@ public:
         return std::bit_cast<T*>(start);
     }
 
-    // Only the allocation that was made last can get longer where it is.
     bool tryExtend(const void* endOfAllocation, size_t size)
     {
         if (std::bit_cast<uintptr_t>(endOfAllocation) != m_top || m_end - m_top < size)
@@ -103,7 +95,6 @@ private:
     size_t m_nextChunkSize { firstChunkSize };
 };
 
-// Open addressing in zeroed memory: an entry of zeros is free. Nothing is ever removed. The table that a larger one replaces is given back at once.
 template<typename Entry>
 class FlatTable {
     WTF_MAKE_NONCOPYABLE(FlatTable);
@@ -132,7 +123,6 @@ public:
         return nullptr;
     }
 
-    // No entry has the key yet. The entry stays where it is until the next one is added.
     Entry& add(const Entry& entry)
     {
         ASSERT(!entry.isFree());
@@ -192,18 +182,15 @@ private:
     uint32_t m_size { 0 };
 };
 
-// An order that a layout got at run time. Its entries follow it in the arena.
 struct AddedOrder {
     uint16_t* data() { return reinterpret_cast<uint16_t*>(this + 1); }
     std::span<const uint16_t> entries() const { return { reinterpret_cast<const uint16_t*>(this + 1), length }; }
 
     uint16_t length;
     uint16_t capacity;
-    // Of all its entries: it says how many extra keys the whole order positions without a walk over it.
     uint16_t largestEntry;
 };
 
-// The orders that one layout got at run time, by number: the first has the number behind the last order of the image. The array has room for the next power of two.
 struct OrdersOfLayout {
     static unsigned hashOf(uint32_t shape) { return intHash(shape); }
     unsigned hash() const { return hashOf(shape); }
@@ -215,7 +202,6 @@ struct OrdersOfLayout {
     AddedOrder** addedOrders;
 };
 
-// The order `next` starts with the first entries of another order, as many as the count says, and goes on with `entry`, which that order doesn't.
 struct Continuation {
     static unsigned hashOf(uint32_t shape, uint32_t orderAndCount, uint16_t entry) { return intHash(static_cast<uint64_t>((static_cast<uint64_t>(shape) << 32 | orderAndCount) + entry * 0x9e3779b97f4a7c15ull)); }
     unsigned hash() const { return hashOf(shape, orderAndCount, entry); }
@@ -229,7 +215,6 @@ struct Continuation {
 };
 static_assert(sizeof(Continuation) == 12);
 
-// What was made once for all objects of one layout that have one order word.
 template<typename Value>
 struct Listing {
     static unsigned hashOf(uint32_t shape, uint32_t orderWord) { return intHash(static_cast<uint64_t>(shape) << 32 | orderWord); }
@@ -247,7 +232,6 @@ struct CachedEnumerator {
     StructureChain* prototypeChain;
 };
 
-// The properties follow it in the arena, and the text of their JSON keys follows them.
 struct alignas(FieldAsProperty) FieldList {
     std::span<FieldAsProperty> fields() { return { reinterpret_cast<FieldAsProperty*>(this + 1), size }; }
     std::span<const FieldAsProperty> fields() const { return { reinterpret_cast<const FieldAsProperty*>(this + 1), size }; }
@@ -256,144 +240,6 @@ struct alignas(FieldAsProperty) FieldList {
 };
 
 } // anonymous namespace
-
-// The orders of a layout form a tree.
-struct KeyOrderTable::Storage {
-    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Storage);
-    WTF_MAKE_NONCOPYABLE(Storage);
-
-    struct Place {
-        uint32_t order;
-        uint32_t count;
-    };
-
-    Storage(ZeroedPages&, const ProgramTables&);
-
-    std::span<const uint16_t> entriesOf(const LayoutData&, const OrdersOfLayout&, uint32_t order) const;
-    OrdersOfLayout& ordersOf(const LayoutData&);
-    Place follow(const LayoutData&, const OrdersOfLayout&, std::span<const uint16_t> entries) const;
-    AddedOrder* createOrder(std::span<const uint16_t> entries, size_t capacity);
-    void addOrder(OrdersOfLayout&, std::span<const uint16_t> entries);
-    void append(AddedOrder*&, std::span<const uint16_t> entries);
-    const FieldList* createFieldList(std::span<const FieldAsProperty>);
-
-    const ProgramTables& tables;
-    // Orders have an arena of their own, so that the order that an object under construction extends is most often the last allocation.
-    Arena orderArena;
-    Arena listArena;
-    FlatTable<OrdersOfLayout> layouts;
-    OrdersOfLayout* ordersAskedForLast { nullptr };
-    FlatTable<Continuation> continuations;
-    FlatTable<Listing<JSCellButterfly*>> keyLists;
-    FlatTable<Listing<CachedEnumerator>> enumerators;
-    FlatTable<Listing<const FieldList*>> propertyLists;
-};
-
-KeyOrderTable::Storage::Storage(ZeroedPages& pages, const ProgramTables& tables)
-    : tables(tables)
-    , layouts(pages)
-    , continuations(pages)
-    , keyLists(pages)
-    , enumerators(pages)
-    , propertyLists(pages)
-{
-}
-
-std::span<const uint16_t> KeyOrderTable::Storage::entriesOf(const LayoutData& layout, const OrdersOfLayout& orders, uint32_t order) const
-{
-    if (order < layout.numberOfOrders)
-        return tables.keyOrder(layout, order).entries();
-    uint32_t index = order - layout.numberOfOrders;
-    RELEASE_ASSERT(index < orders.numberOfAddedOrders);
-    return orders.addedOrders[index]->entries();
-}
-
-OrdersOfLayout& KeyOrderTable::Storage::ordersOf(const LayoutData& layout)
-{
-    ASSERT(layout.shape);
-    // One object under construction asks several times for each of its fields.
-    if (ordersAskedForLast && ordersAskedForLast->shape == layout.shape) [[likely]]
-        return *ordersAskedForLast;
-    if (OrdersOfLayout* known = layouts.find(layout.shape)) [[likely]] {
-        ordersAskedForLast = known;
-        return *known;
-    }
-    ASSERT(layout.numberOfOrders <= maxKeyOrdersPerLayout);
-    // Nobody else adds to the table, so what is remembered stays where it is until here.
-    OrdersOfLayout& orders = layouts.add({ layout.shape, 0, nullptr });
-    ordersAskedForLast = &orders;
-    if (!layout.numberOfOrders)
-        addOrder(orders, { });
-    for (uint32_t order = 1; order < layout.numberOfOrders; ++order) {
-        std::span<const uint16_t> entries = tables.keyOrder(layout, order).entries();
-        Place reached = follow(layout, orders, entries);
-        if (reached.count < entries.size())
-            continuations.add({ layout.shape, orderWordOf(reached.order, reached.count), entries[reached.count], static_cast<uint16_t>(order) });
-    }
-    return orders;
-}
-
-// The place of the entries in the tree or, where the count falls short of them, the place of the longest part that has one.
-auto KeyOrderTable::Storage::follow(const LayoutData& layout, const OrdersOfLayout& orders, std::span<const uint16_t> entries) const -> Place
-{
-    uint32_t order = 0;
-    uint32_t count = 0;
-    std::span<const uint16_t> listed = entriesOf(layout, orders, order);
-    while (count < entries.size()) {
-        if (count >= listed.size() || listed[count] != entries[count]) {
-            const Continuation* continuation = continuations.find(layout.shape, orderWordOf(order, count), entries[count]);
-            if (!continuation)
-                break;
-            order = continuation->next;
-            listed = entriesOf(layout, orders, order);
-            ASSERT(equalSpans(listed.first(count + 1), entries.first(count + 1)));
-        }
-        ++count;
-    }
-    return { order, count };
-}
-
-AddedOrder* KeyOrderTable::Storage::createOrder(std::span<const uint16_t> entries, size_t capacity)
-{
-    RELEASE_ASSERT(entries.size() <= capacity && capacity <= maxFieldsInOrder);
-    auto* order = orderArena.allocate<AddedOrder>(sizeof(AddedOrder) + capacity * sizeof(uint16_t));
-    order->length = static_cast<uint16_t>(entries.size());
-    order->capacity = static_cast<uint16_t>(capacity);
-    order->largestEntry = entries.empty() ? 0 : std::ranges::max(entries);
-    memcpySpan(std::span { order->data(), entries.size() }, entries);
-    return order;
-}
-
-void KeyOrderTable::Storage::addOrder(OrdersOfLayout& orders, std::span<const uint16_t> entries)
-{
-    uint32_t index = orders.numberOfAddedOrders;
-    bool isFull = !(index & (index - 1));
-    if (isFull) {
-        size_t capacity = index ? static_cast<size_t>(index) * 2 : 1;
-        auto** grown = listArena.allocate<AddedOrder*>(capacity * sizeof(AddedOrder*));
-        memcpySpan(std::span { grown, index }, std::span { orders.addedOrders, index });
-        orders.addedOrders = grown;
-    }
-    orders.addedOrders[index] = createOrder(entries, entries.size());
-    ++orders.numberOfAddedOrders;
-}
-
-// An order that has to move leaves its entries behind as they are, for whoever still reads them.
-void KeyOrderTable::Storage::append(AddedOrder*& order, std::span<const uint16_t> entries)
-{
-    size_t length = order->length + entries.size();
-    RELEASE_ASSERT(length <= maxFieldsInOrder);
-    if (length > order->capacity) {
-        if (orderArena.tryExtend(order->data() + order->capacity, (length - order->capacity) * sizeof(uint16_t)))
-            order->capacity = static_cast<uint16_t>(length);
-        else
-            order = createOrder(order->entries(), std::max<size_t>(length, std::min<size_t>(order->length * 2, maxFieldsInOrder)));
-    }
-    memcpySpan(std::span { order->data() + order->length, entries.size() }, entries);
-    order->length = static_cast<uint16_t>(length);
-    for (uint16_t entry : entries)
-        order->largestEntry = std::max(order->largestEntry, entry);
-}
 
 static bool hasJSONKey(const UniquedStringImpl& name)
 {
@@ -407,57 +253,179 @@ static bool isWrittenAsItIsInJSON(std::span<const Latin1Character> name)
     });
 }
 
-// Nearly every name is written between its quotes as it is. A list is made for whoever walks the fields of an order first, most often a copy, which reads no key.
-const FieldList* KeyOrderTable::Storage::createFieldList(std::span<const FieldAsProperty> properties)
-{
-    constexpr size_t sizeAroundName = 4;
-    Vector<String, 4> escapedKeys;
-    Vector<unsigned, 32> sizes;
-    size_t sizeOfKeys = 0;
-    for (auto& property : properties) {
-        unsigned size = 0;
-        if (hasJSONKey(*property.name)) {
-            size = property.name->length() + sizeAroundName;
-            if (!isWrittenAsItIsInJSON(property.name->span8())) [[unlikely]] {
-                StringBuilder key;
-                key.append(',');
-                key.appendQuotedJSONString(String(property.name));
-                key.append(':');
-                RELEASE_ASSERT(!key.hasOverflowed() && key.is8Bit());
-                size = key.length();
-                escapedKeys.append(key.toString());
-            }
-        }
-        sizes.append(size);
-        sizeOfKeys += size;
+struct KeyOrderTable::Storage {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Storage);
+    WTF_MAKE_NONCOPYABLE(Storage);
+
+    struct Place {
+        uint32_t order;
+        uint32_t count;
+    };
+
+    Storage(ZeroedPages& pages, const ProgramTables& tables)
+        : tables(tables)
+        , layouts(pages)
+        , continuations(pages)
+        , keyLists(pages)
+        , enumerators(pages)
+        , propertyLists(pages)
+    {
     }
 
-    size_t textSize = sizeOfKeys + FieldAsProperty::jsonKeyBlockSize;
-    auto* list = listArena.allocate<FieldList>(sizeof(FieldList) + properties.size_bytes() + textSize);
-    list->size = properties.size();
-    std::span<FieldAsProperty> fields = list->fields();
-    std::span<Latin1Character> remaining { reinterpret_cast<Latin1Character*>(fields.data() + fields.size()), textSize };
-    size_t numberOfEscapedKeysWritten = 0;
-    for (size_t index = 0; index < fields.size(); ++index) {
-        std::span<Latin1Character> key = remaining.first(sizes[index]);
-        remaining = remaining.subspan(sizes[index]);
-        UniquedStringImpl* name = properties[index].name;
-        // An escape makes a key longer.
-        if (key.size() && key.size() == name->length() + sizeAroundName) {
-            key[0] = ',';
-            key[1] = '"';
-            memcpySpan(key.subspan(2, name->length()), name->span8());
-            key[key.size() - 2] = '"';
-            key[key.size() - 1] = ':';
-        } else if (key.size())
-            memcpySpan(key, escapedKeys[numberOfEscapedKeysWritten++].span8());
-        const FieldData* field = properties[index].field;
-        bool isReadFromSlot = !field->isOutOfLine() && !key.empty();
-        new (NotNull, &fields[index]) FieldAsProperty { name, field, key, field->slot.offset, isReadFromSlot ? field->slot.representation() : SlotRepresentation::DeferredClosure };
+    std::span<const uint16_t> entriesOf(const LayoutData& layout, const OrdersOfLayout& orders, uint32_t order) const
+    {
+        if (order < layout.numberOfOrders)
+            return tables.keyOrder(layout, order).entries();
+        uint32_t index = order - layout.numberOfOrders;
+        RELEASE_ASSERT(index < orders.numberOfAddedOrders);
+        return orders.addedOrders[index]->entries();
     }
-    zeroSpan(remaining);
-    return list;
-}
+
+    OrdersOfLayout& ordersOf(const LayoutData& layout)
+    {
+        ASSERT(layout.shape);
+        if (ordersAskedForLast && ordersAskedForLast->shape == layout.shape) [[likely]]
+            return *ordersAskedForLast;
+        if (OrdersOfLayout* known = layouts.find(layout.shape)) [[likely]] {
+            ordersAskedForLast = known;
+            return *known;
+        }
+        ASSERT(layout.numberOfOrders <= maxKeyOrdersPerLayout);
+        OrdersOfLayout& orders = layouts.add({ layout.shape, 0, nullptr });
+        ordersAskedForLast = &orders;
+        if (!layout.numberOfOrders)
+            addOrder(orders, { });
+        for (uint32_t order = 1; order < layout.numberOfOrders; ++order) {
+            std::span<const uint16_t> entries = tables.keyOrder(layout, order).entries();
+            Place reached = follow(layout, orders, entries);
+            if (reached.count < entries.size())
+                continuations.add({ layout.shape, orderWordOf(reached.order, reached.count), entries[reached.count], static_cast<uint16_t>(order) });
+        }
+        return orders;
+    }
+
+    Place follow(const LayoutData& layout, const OrdersOfLayout& orders, std::span<const uint16_t> entries) const
+    {
+        uint32_t order = 0;
+        uint32_t count = 0;
+        std::span<const uint16_t> listed = entriesOf(layout, orders, order);
+        while (count < entries.size()) {
+            if (count >= listed.size() || listed[count] != entries[count]) {
+                const Continuation* continuation = continuations.find(layout.shape, orderWordOf(order, count), entries[count]);
+                if (!continuation)
+                    break;
+                order = continuation->next;
+                listed = entriesOf(layout, orders, order);
+                ASSERT(equalSpans(listed.first(count + 1), entries.first(count + 1)));
+            }
+            ++count;
+        }
+        return { order, count };
+    }
+
+    AddedOrder* createOrder(std::span<const uint16_t> entries, size_t capacity)
+    {
+        RELEASE_ASSERT(entries.size() <= capacity && capacity <= maxFieldsInOrder);
+        auto* order = orderArena.allocate<AddedOrder>(sizeof(AddedOrder) + capacity * sizeof(uint16_t));
+        order->length = static_cast<uint16_t>(entries.size());
+        order->capacity = static_cast<uint16_t>(capacity);
+        order->largestEntry = entries.empty() ? 0 : std::ranges::max(entries);
+        memcpySpan(std::span { order->data(), entries.size() }, entries);
+        return order;
+    }
+
+    void addOrder(OrdersOfLayout& orders, std::span<const uint16_t> entries)
+    {
+        uint32_t index = orders.numberOfAddedOrders;
+        bool isFull = !(index & (index - 1));
+        if (isFull) {
+            size_t capacity = index ? static_cast<size_t>(index) * 2 : 1;
+            auto** grown = listArena.allocate<AddedOrder*>(capacity * sizeof(AddedOrder*));
+            memcpySpan(std::span { grown, index }, std::span { orders.addedOrders, index });
+            orders.addedOrders = grown;
+        }
+        orders.addedOrders[index] = createOrder(entries, entries.size());
+        ++orders.numberOfAddedOrders;
+    }
+
+    // An order that has to move leaves its entries behind as they are, for whoever still reads them.
+    void append(AddedOrder*& order, std::span<const uint16_t> entries)
+    {
+        size_t length = order->length + entries.size();
+        RELEASE_ASSERT(length <= maxFieldsInOrder);
+        if (length > order->capacity) {
+            if (orderArena.tryExtend(order->data() + order->capacity, (length - order->capacity) * sizeof(uint16_t)))
+                order->capacity = static_cast<uint16_t>(length);
+            else
+                order = createOrder(order->entries(), std::max<size_t>(length, std::min<size_t>(order->length * 2, maxFieldsInOrder)));
+        }
+        memcpySpan(std::span { order->data() + order->length, entries.size() }, entries);
+        order->length = static_cast<uint16_t>(length);
+        for (uint16_t entry : entries)
+            order->largestEntry = std::max(order->largestEntry, entry);
+    }
+
+    const FieldList* createFieldList(std::span<const FieldAsProperty> properties)
+    {
+        constexpr size_t sizeAroundName = 4;
+        Vector<String, 4> escapedKeys;
+        Vector<unsigned, 32> sizes;
+        size_t sizeOfKeys = 0;
+        for (auto& property : properties) {
+            unsigned size = 0;
+            if (hasJSONKey(*property.name)) {
+                size = property.name->length() + sizeAroundName;
+                if (!isWrittenAsItIsInJSON(property.name->span8())) [[unlikely]] {
+                    StringBuilder key;
+                    key.append(',');
+                    key.appendQuotedJSONString(String(property.name));
+                    key.append(':');
+                    RELEASE_ASSERT(!key.hasOverflowed() && key.is8Bit());
+                    size = key.length();
+                    escapedKeys.append(key.toString());
+                }
+            }
+            sizes.append(size);
+            sizeOfKeys += size;
+        }
+
+        size_t textSize = sizeOfKeys + FieldAsProperty::jsonKeyBlockSize;
+        auto* list = listArena.allocate<FieldList>(sizeof(FieldList) + properties.size_bytes() + textSize);
+        list->size = properties.size();
+        std::span<FieldAsProperty> fields = list->fields();
+        std::span<Latin1Character> remaining { reinterpret_cast<Latin1Character*>(fields.data() + fields.size()), textSize };
+        size_t numberOfEscapedKeysWritten = 0;
+        for (size_t index = 0; index < fields.size(); ++index) {
+            std::span<Latin1Character> key = remaining.first(sizes[index]);
+            remaining = remaining.subspan(sizes[index]);
+            UniquedStringImpl* name = properties[index].name;
+            // An escape makes a key longer.
+            if (key.size() && key.size() == name->length() + sizeAroundName) {
+                key[0] = ',';
+                key[1] = '"';
+                memcpySpan(key.subspan(2, name->length()), name->span8());
+                key[key.size() - 2] = '"';
+                key[key.size() - 1] = ':';
+            } else if (key.size())
+                memcpySpan(key, escapedKeys[numberOfEscapedKeysWritten++].span8());
+            const FieldData* field = properties[index].field;
+            bool isReadFromSlot = !field->isOutOfLine() && !key.empty();
+            new (NotNull, &fields[index]) FieldAsProperty { name, field, key, field->slot.offset, isReadFromSlot ? field->slot.representation() : SlotRepresentation::DeferredClosure };
+        }
+        zeroSpan(remaining);
+        return list;
+    }
+
+    const ProgramTables& tables;
+    Arena orderArena;
+    Arena listArena;
+    FlatTable<OrdersOfLayout> layouts;
+    OrdersOfLayout* ordersAskedForLast { nullptr };
+    FlatTable<Continuation> continuations;
+    FlatTable<Listing<JSCellButterfly*>> keyLists;
+    FlatTable<Listing<CachedEnumerator>> enumerators;
+    FlatTable<Listing<const FieldList*>> propertyLists;
+};
 
 KeyOrderTable::KeyOrderTable(State& state)
     : m_state(state)
@@ -474,9 +442,7 @@ KeyOrderTable::KeyOrderTable(State& state)
     instance.objects.keyOrderRuns = static_cast<KeyOrderRun*>(state.pages.allocate(numberOfKeyOrderRuns * sizeof(KeyOrderRun)));
     instance.objects.enumerators = state.tableArena.allocate<EnumeratorCacheEntry>(numberOfCachedEnumerators);
     state.caches->add(CacheKind::StrongRoots, "key lists"_s, *this);
-    // A StructureID may name another Structure after a collection.
     state.caches->addClearedEachCollection("published enumerators"_s, asWritableBytes(std::span { instance.objects.enumerators, numberOfCachedEnumerators }));
-    // Another object and another table may lie where these lay.
     state.caches->addClearedEachCollection("places of positioned keys"_s, asWritableBytes(std::span { m_placesOfPositionedKeys }));
 }
 
@@ -487,7 +453,6 @@ std::span<const uint16_t> KeyOrderTable::entriesInOrder(const LayoutData& layout
     ASSERT(order != orderStoredOutOfLine);
     if (order < layout.numberOfOrders)
         return m_tables.keyOrder(layout, order).entries();
-    // A layout without an order in the image has the empty order as its first, and a new object names it before anything has asked for the orders of the layout.
     return m_storage->entriesOf(layout, m_storage->ordersOf(layout), order);
 }
 
@@ -551,7 +516,6 @@ bool KeyOrderTable::positionsExtraKeys(const LayoutData& layout, uint32_t orderW
     uint32_t order = orderOf(orderWord);
     if (order < layout.numberOfOrders)
         return !numberOfExtraKeys;
-    // An object under construction stands at the end of the order that grows with it.
     const AddedOrder& added = *m_storage->ordersOf(layout).addedOrders[order - layout.numberOfOrders];
     ExtraKeyCounter positioned(layout.numberOfFields);
     if (countOf(orderWord) == added.length && added.largestEntry < maxKeyOrderEntry) {
@@ -577,7 +541,6 @@ std::optional<uint32_t> KeyOrderTable::orderStartingWith(const LayoutData& layou
         return orderWordOf(order, size);
     for (uint16_t entry : entries.subspan(count))
         RELEASE_ASSERT(entry <= maxKeyOrderEntry);
-    // The walk ended at the end of an order that was added at run time: that order grows.
     if (order >= layout.numberOfOrders) {
         AddedOrder*& reached = orders.addedOrders[order - layout.numberOfOrders];
         if (reached->length == count) {
@@ -595,7 +558,6 @@ std::optional<uint32_t> KeyOrderTable::orderStartingWith(const LayoutData& layou
     return orderWordOf(added, size);
 }
 
-// No two slots of a layout overlap, and a field without storage has no slot key: one field at the most has the key.
 const FieldData* KeyOrderTable::fieldAt(const LayoutData& layout, uint32_t slotKey)
 {
     if (slotKey == noSlotKey)
@@ -652,7 +614,6 @@ std::optional<uint32_t> KeyOrderTable::orderAfterCreating(const LayoutData& layo
     uint32_t before = orderWordOf(order, count);
     if (const Continuation* known = storage.continuations.find(layout.shape, before, entry))
         return publish(orderWordOf(known->next, count + 1));
-    // The end of an order that was added at run time is the place of its entries in the tree, and nothing continues it with this entry: that order grows.
     if (order >= layout.numberOfOrders && count == entries.size() && count < runtimeLimitValue(*m_state.instance.vm, LimitID::FieldsInKeyOrder)) {
         RELEASE_ASSERT(entry <= maxKeyOrderEntry);
         storage.append(orders.addedOrders[order - layout.numberOfOrders], singleElementSpan(entry));
@@ -663,7 +624,6 @@ std::optional<uint32_t> KeyOrderTable::orderAfterCreating(const LayoutData& layo
     std::optional<uint32_t> result = orderStartingWith(layout, next.span());
     if (!result)
         return std::nullopt;
-    // The walk has left one already if the word named the place of its entries in the tree.
     if (!storage.continuations.find(layout.shape, before, entry))
         storage.continuations.add({ layout.shape, before, entry, static_cast<uint16_t>(orderOf(*result)) });
     return publish(*result);
@@ -686,7 +646,6 @@ void KeyOrderTable::setEnumerator(VM&, const LayoutData& layout, uint32_t orderW
     m_writes.recordAll();
 }
 
-// Any other object gets its first index without a report to ChainDependents.
 static bool reportsEveryChangeOfKeys(JSObject* prototype)
 {
     return prototype->structure()->hasImmutableProperties() || prototype->classInfo() == ClassPrototype::info();
@@ -720,6 +679,14 @@ bool KeyOrderTable::hasChainDependent(VM&, uint32_t, UniquedStringImpl*) const
     return true;
 }
 
+static KeyOrderTransition& placeOfKeyOrderTransition(KeyOrderTransition* transitions, uint32_t mask, uint64_t before, uint32_t key)
+{
+    uint32_t index = KeyOrderTransition::hashOf(before, key) & mask;
+    while (!transitions[index].isEmpty() && (transitions[index].orderAndShapeWordsBefore != before || transitions[index].key != key))
+        index = (index + 1) & mask;
+    return transitions[index];
+}
+
 // Only the thread that runs the instance adds transitions, so it reads them as compiled code does, without the lock.
 std::optional<uint32_t> KeyOrderTable::publishedTransition(const LayoutData& layout, uint32_t orderAndCountBefore, const FieldData& field, uint32_t numberOfExtraKeys) const
 {
@@ -727,16 +694,10 @@ std::optional<uint32_t> KeyOrderTable::publishedTransition(const LayoutData& lay
     uint32_t slotKey = slotKeyFor(field.slot.offset, field.isOutOfLine());
     if (slotKey == noSlotKey)
         return std::nullopt;
-    uint32_t key = transitionKeyFor(slotKey, numberOfExtraKeys);
     uint64_t before = static_cast<uint64_t>(shapeWordOf(layout.shape)) << 32 | orderAndCountBefore;
     const ObjectWords& words = m_state.instance.objects;
-    uint32_t mask = words.keyOrderTransitionMask;
-    for (uint32_t index = KeyOrderTransition::hashOf(before, key) & mask; !words.keyOrderTransitions[index].isEmpty(); index = (index + 1) & mask) {
-        const KeyOrderTransition& known = words.keyOrderTransitions[index];
-        if (known.orderAndShapeWordsBefore == before && known.key == key)
-            return known.orderAndCountAfter;
-    }
-    return std::nullopt;
+    const KeyOrderTransition& known = placeOfKeyOrderTransition(words.keyOrderTransitions, words.keyOrderTransitionMask, before, transitionKeyFor(slotKey, numberOfExtraKeys));
+    return known.isEmpty() ? std::nullopt : std::optional<uint32_t>(known.orderAndCountAfter);
 }
 
 void KeyOrderTable::publishTransition(const LayoutData& layout, uint32_t orderAndCountBefore, const FieldData& field, uint32_t orderAndCountAfter, uint32_t numberOfExtraKeys)
@@ -750,14 +711,9 @@ void KeyOrderTable::publishTransition(const LayoutData& layout, uint32_t orderAn
     ObjectWords& words = m_state.instance.objects;
     Locker locker { m_state.caches->lock() };
     uint32_t mask = words.keyOrderTransitionMask;
-    uint32_t index = KeyOrderTransition::hashOf(before, key) & mask;
-    while (!words.keyOrderTransitions[index].isEmpty()) {
-        const KeyOrderTransition& known = words.keyOrderTransitions[index];
-        if (known.orderAndShapeWordsBefore == before && known.key == key)
-            return;
-        index = (index + 1) & mask;
-    }
-    KeyOrderTransition& transition = words.keyOrderTransitions[index];
+    KeyOrderTransition& transition = placeOfKeyOrderTransition(words.keyOrderTransitions, mask, before, key);
+    if (!transition.isEmpty())
+        return;
     transition.orderAndCountAfter = orderAndCountAfter;
     transition.key = key;
     WTF::storeStoreFence();
@@ -776,12 +732,8 @@ void KeyOrderTable::growTransitions()
     uint32_t mask = static_cast<uint32_t>(size - 1);
     auto* grown = static_cast<KeyOrderTransition*>(m_state.pages.allocate(size * sizeof(KeyOrderTransition), ZeroedPages::FirstUse::AllAtOnce));
     for (const KeyOrderTransition& transition : previous) {
-        if (transition.isEmpty())
-            continue;
-        uint32_t index = KeyOrderTransition::hashOf(transition.orderAndShapeWordsBefore, transition.key) & mask;
-        while (!grown[index].isEmpty())
-            index = (index + 1) & mask;
-        grown[index] = transition;
+        if (!transition.isEmpty())
+            placeOfKeyOrderTransition(grown, mask, transition.orderAndShapeWordsBefore, transition.key) = transition;
     }
     words.keyOrderTransitions = grown;
     words.keyOrderTransitionMask = mask;

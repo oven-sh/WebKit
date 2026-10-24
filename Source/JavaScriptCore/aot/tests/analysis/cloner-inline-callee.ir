@@ -5,13 +5,11 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="caller" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = CallDirect v0, v1 function=f1
     v3 = TypeTest v2 testedType=object
     Return v2
 }
 function f1 name="callee" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     Jump -> next b1(v1)
   b1(v2) handler=b4():
     v3 = Call v0, -, v2
@@ -37,7 +35,6 @@ function f2 name="coveredCaller" parameters=[{type=anything}, {type=number}] res
     Return v3
 }
 function f3 name="tailCallee" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Return v0
 }
 # CHECK: check: CanClone

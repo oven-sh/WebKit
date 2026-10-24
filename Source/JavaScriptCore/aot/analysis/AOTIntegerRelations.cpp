@@ -10,7 +10,6 @@
 
 #include "AOTBuildContext.h"
 #include "AOTSort.h"
-#include "AOTVector.h"
 #include <algorithm>
 #include <wtf/CheckedArithmetic.h>
 
@@ -27,16 +26,12 @@ struct ConstantStep {
 
 static std::optional<int64_t> exactValueOf(CheckedInt64 sum)
 {
-    if (sum.hasOverflowed())
-        return std::nullopt;
-    return sum.value();
+    return sum.hasOverflowed() ? std::nullopt : std::optional<int64_t>(sum.value());
 }
 
 static std::optional<int64_t> constantOf(const Type& type)
 {
-    if (!type.isInteger() || type.integers.minimum != type.integers.maximum)
-        return std::nullopt;
-    return type.integers.minimum;
+    return type.isInteger() && type.integers.minimum == type.integers.maximum ? std::optional<int64_t>(type.integers.minimum) : std::nullopt;
 }
 
 static bool isAlwaysAtMost(Range left, Range right, int64_t offset)
@@ -108,13 +103,11 @@ IntegerRelations::Answer IntegerRelations::isAtMost(ValueID left, ValueID right,
         return Answer::Proven;
 
     Term leftTerm = normalize(left);
-    if (proveTerms(leftTerm, normalize(right), offset, at) == Answer::Proven)
+    if (proveTerms(leftTerm, normalize(right), offset, at))
         return Answer::Proven;
 
-    Term rightTerm = normalize(right, AssumedSums::Follow, at);
-    if (!rightTerm.usedAssumedSum || !isKnownWhole(left, at))
-        return Answer::Unknown;
-    return proveTerms(leftTerm, rightTerm, offset, at);
+    Term rightTerm = normalize(right, at);
+    return answerOf(rightTerm.usedAssumedSum && isKnownWhole(left, at) && proveTerms(leftTerm, rightTerm, offset, at));
 }
 
 IntegerRelations::Answer IntegerRelations::isAtLeast(ValueID id, int64_t minimum, BlockID at)
@@ -126,7 +119,7 @@ IntegerRelations::Answer IntegerRelations::isAtLeast(ValueID id, int64_t minimum
     if (type.isInteger() && type.integers.minimum >= minimum)
         return Answer::Proven;
     LowerBoundGoals goals;
-    return proveValueAtLeast(id, minimum, at, goals);
+    return answerOf(proveValueAtLeast(id, minimum, at, goals));
 }
 
 IntegerRelations::Answer IntegerRelations::isAtMost(ValueID id, int64_t maximum, BlockID at)
@@ -137,16 +130,14 @@ IntegerRelations::Answer IntegerRelations::isAtMost(ValueID id, int64_t maximum,
         return Answer::Unknown;
     if (type.isInteger() && type.integers.maximum <= maximum)
         return Answer::Proven;
-    return proveTerms(normalize(id), Term { }, maximum, at);
+    return answerOf(proveTerms(normalize(id), Term { }, maximum, at));
 }
 
 IntegerRelations::Answer IntegerRelations::isWholeNumber(ValueID id, BlockID at)
 {
     m_steps = 0;
-    if (!m_analyses.cfg().isReachable(at))
-        return Answer::Unknown;
     AssumedWholeParameters assumed;
-    return proveWhole(id, at, assumed);
+    return answerOf(m_analyses.cfg().isReachable(at) && proveWhole(id, at, assumed));
 }
 
 void IntegerRelations::assumeRange(ValueID id, Range range, BlockID scope)
@@ -162,34 +153,15 @@ void IntegerRelations::assumeRange(ValueID id, Range range, BlockID scope)
     m_assumptions.append({ term.base, { *minimum, *maximum }, scope });
 }
 
-void IntegerRelations::assumeSameValue(ValueID copy, ValueID original)
-{
-    if (normalize(copy, AssumedSums::Follow, std::nullopt).base != normalize(original, AssumedSums::Follow, std::nullopt).base) {
-        m_sameValues.append({ m_analyses.identityOf(copy), original });
-        m_comparedBases.shrink(0);
-        m_hasIndexOfComparisons = false;
-    }
-}
-
-std::optional<Range> IntegerRelations::assumedRangeOf(ValueID base, std::optional<BlockID> at) const
+std::optional<Range> IntegerRelations::assumedRangeOf(ValueID base, BlockID at) const
 {
     std::optional<Range> range;
     for (const Assumption& assumption : m_assumptions) {
-        if (assumption.value != base || (at && !isInScope(m_analyses, assumption.scope, *at)))
+        if (assumption.value != base || !isInScope(m_analyses, assumption.scope, at))
             continue;
         range = range ? range->intersectWith(assumption.range) : assumption.range;
     }
     return range;
-}
-
-bool IntegerRelations::isIntegerOrAssumed(ValueID id, BlockID at) const
-{
-    return typeOf(id).isInteger() || hasAssumption(normalize(id).base, at);
-}
-
-bool IntegerRelations::isNumberOrAssumed(ValueID id, BlockID at) const
-{
-    return typeOf(id).isNumber() || hasAssumption(normalize(id).base, at);
 }
 
 bool IntegerRelations::isIdentityConversion(const Value& value) const
@@ -211,17 +183,11 @@ bool IntegerRelations::takeStep()
     return false;
 }
 
-IntegerRelations::Term IntegerRelations::normalize(ValueID id, AssumedSums assumedSums, std::optional<BlockID> at) const
+IntegerRelations::Term IntegerRelations::normalize(ValueID id, std::optional<BlockID> placeOfAssumedSums) const
 {
     Term term { id };
     for (;;) {
         term.base = m_analyses.identityOf(term.base);
-        auto sameValue = std::ranges::find(m_sameValues, term.base, &std::pair<ValueID, ValueID>::first);
-        if (sameValue != m_sameValues.end()) {
-            term.base = sameValue->second;
-            continue;
-        }
-
         const Value& value = m_function.at(term.base);
         if (isIdentityConversion(value)) {
             term.base = value.operand(0);
@@ -241,9 +207,9 @@ IntegerRelations::Term IntegerRelations::normalize(ValueID id, AssumedSums assum
             return term;
         bool isAssumedSum = !type.isInteger();
         if (isAssumedSum) {
-            if (assumedSums == AssumedSums::Stop)
+            if (!placeOfAssumedSums)
                 return term;
-            std::optional<Range> assumedRange = assumedRangeOf(term.base, at);
+            std::optional<Range> assumedRange = assumedRangeOf(term.base, *placeOfAssumedSums);
             if (!assumedRange || assumedRange->maximum >= maxExactInteger)
                 return term;
         }
@@ -315,7 +281,11 @@ bool IntegerRelations::isEnteredOverEdgeOfComparison(BlockID block) const
     return terminator.isConditionalBranch() && edgeComparisons.contains(m_function.at(terminator.conditionOperand()).opcode);
 }
 
-// The nearest block above this one in the tree of dominators that is entered over the edge of a comparison and over no other.
+const Value& IntegerRelations::comparisonOnEdgeInto(BlockID block) const
+{
+    return m_function.at(m_function.at(m_analyses.cfg().singleIncomingEdge(block)->from).terminator.conditionOperand());
+}
+
 BlockID IntegerRelations::nextBlockBehindComparison(BlockID block)
 {
     constexpr uint32_t notAsked = UINT32_MAX;
@@ -343,16 +313,17 @@ BlockID IntegerRelations::nextBlockBehindComparison(BlockID block)
     return next == noBlock ? BlockID() : BlockID(next);
 }
 
-// Behind a row of a thousand loops a thousand edges of comparisons stand above a place, each about the counter of its own loop. relationshipsOfEdge() answers nothing for a comparison that is not about the base.
-bool IntegerRelations::comparisonOnEdgeIntoIsAbout(BlockID block, const Value& comparison, ValueID base)
+bool IntegerRelations::comparisonOnEdgeIntoIsAbout(BlockID block, ValueID base)
 {
     if (m_comparedBases.size() != m_function.blocks.size()) {
         m_comparedBases.shrink(0);
         m_comparedBases.grow(m_function.blocks.size());
     }
     ComparedBases& bases = m_comparedBases[block.index()];
-    if (!bases.isKnown)
+    if (!bases.isKnown) {
+        const Value& comparison = comparisonOnEdgeInto(block);
         bases = { normalize(comparison.operand(0)).base, normalize(comparison.operand(1)).base, true };
+    }
     return bases.left == base || bases.right == base;
 }
 
@@ -385,8 +356,7 @@ void IntegerRelations::indexComparisonsByBase()
         depthOf(block);
         if (!isEnteredOverEdgeOfComparison(block))
             continue;
-        const Value& comparison = m_function.at(m_function.at(cfg.singleIncomingEdge(block)->from).terminator.conditionOperand());
-        comparisonOnEdgeIntoIsAbout(block, comparison, ValueID());
+        comparisonOnEdgeIntoIsAbout(block, ValueID());
         const ComparedBases& bases = m_comparedBases[index];
         auto add = [&](ValueID base) {
             m_blocksBehindComparisonsAbout.add(base ? base.index() + 1 : 0, Vector<BlockID, 2>()).iterator->value.append(block);
@@ -408,14 +378,16 @@ bool IntegerRelations::forEachDominatingRelationship(ValueID base, BlockID at, c
 {
     const CFG& cfg = m_analyses.cfg();
     const Dominators& dominators = m_analyses.dominators();
-    // A comparison that says something about the base stands behind its definition, so no edge above that block has one.
-    BlockID definingBlock = base && m_sameValues.isEmpty() ? m_analyses.useLists().blockOf(base) : BlockID();
-    // Where the definition does not stand above the place, a walk up the tree never meets its block and goes on to the root.
+    BlockID definingBlock = base ? m_analyses.useLists().blockOf(base) : BlockID();
     if (definingBlock && !dominators.dominates(definingBlock, at))
         definingBlock = BlockID();
     auto above = [&](BlockID block) {
         BlockID next = block == definingBlock ? BlockID() : nextBlockBehindComparison(block);
         return next && definingBlock && !dominators.dominates(definingBlock, next) ? BlockID() : next;
+    };
+    auto holdsOnEdgeInto = [&](BlockID block) {
+        EdgeSide side = cfg.singleIncomingEdge(block)->targetIndex ? EdgeSide::NotTaken : EdgeSide::Taken;
+        return std::ranges::any_of(relationshipsOfEdge(comparisonOnEdgeInto(block), side, base, at), functor);
     };
     if (m_hasIndexOfComparisons && m_depthInDominatorTree.size() != m_function.blocks.size())
         m_hasIndexOfComparisons = false;
@@ -424,11 +396,9 @@ bool IntegerRelations::forEachDominatingRelationship(ValueID base, BlockID at, c
         indexComparisonsByBase();
     }
     if (m_hasIndexOfComparisons) {
-        // The blocks above a place stand in a row, so those of the list that are above it come in the order in which a walk up from the place meets them.
         auto found = m_blocksBehindComparisonsAbout.find(base ? base.index() + 1 : 0);
         if (found == m_blocksBehindComparisonsAbout.end())
             return false;
-        // A proof inside the functor asks again, and an index that is made anew would move the list.
         Vector<BlockID, 16> blocks;
         for (BlockID block : found->value) {
             if (m_depthInDominatorTree[block.index()] > m_depthInDominatorTree[at.index()] || !dominators.dominates(block, at))
@@ -437,87 +407,61 @@ bool IntegerRelations::forEachDominatingRelationship(ValueID base, BlockID at, c
                 break;
             blocks.append(block);
         }
-        for (BlockID block : blocks) {
-            Edge edge = *cfg.singleIncomingEdge(block);
-            const Value& comparison = m_function.at(m_function.at(edge.from).terminator.conditionOperand());
-            for (const Relationship& relationship : relationshipsOfEdge(comparison, edge.targetIndex ? EdgeSide::NotTaken : EdgeSide::Taken, base, at)) {
-                if (functor(relationship))
-                    return true;
-            }
-        }
-        return false;
+        return std::ranges::any_of(blocks, holdsOnEdgeInto);
     }
     for (BlockID block = at; block; block = above(block)) {
         ++m_numberOfBlocksWalked;
-        std::optional<Edge> edge = cfg.singleIncomingEdge(block);
-        if (!edge || edge->isHandlerEdge())
-            continue;
-        const Terminator& terminator = m_function.at(edge->from).terminator;
-        if (!terminator.isConditionalBranch())
-            continue;
-        const Value& comparison = m_function.at(terminator.conditionOperand());
-        if (!edgeComparisons.contains(comparison.opcode))
-            continue;
-        if (!comparisonOnEdgeIntoIsAbout(block, comparison, base))
-            continue;
-        EdgeSide side = edge->targetIndex ? EdgeSide::NotTaken : EdgeSide::Taken;
-        for (const Relationship& relationship : relationshipsOfEdge(comparison, side, base, at)) {
-            if (functor(relationship))
-                return true;
-        }
+        if (isEnteredOverEdgeOfComparison(block) && comparisonOnEdgeIntoIsAbout(block, base) && holdsOnEdgeInto(block))
+            return true;
     }
     return false;
 }
 
-IntegerRelations::Answer IntegerRelations::proveTerms(Term left, Term right, int64_t offset, BlockID at)
+bool IntegerRelations::proveTerms(Term left, Term right, int64_t offset, BlockID at)
 {
     std::optional<int64_t> goal = exactValueOf(CheckedInt64(offset) + right.offset - left.offset);
-    if (!goal)
-        return Answer::Unknown;
     UpperBoundGoals goals;
-    return prove(left.base, right.base, *goal, at, goals);
+    return goal && prove(left.base, right.base, *goal, at, goals);
 }
 
-IntegerRelations::Answer IntegerRelations::prove(ValueID left, ValueID right, int64_t offset, BlockID at, UpperBoundGoals& goals)
+bool IntegerRelations::prove(ValueID left, ValueID right, int64_t offset, BlockID at, UpperBoundGoals& goals)
 {
     if (!takeStep())
-        return Answer::Unknown;
+        return false;
     if (left == right && offset >= 0)
-        return Answer::Proven;
+        return true;
 
     std::optional<Range> leftRange = rangeOf(left, at);
     std::optional<Range> rightRange = rangeOf(right, at);
     if (leftRange && rightRange && isAlwaysAtMost(*leftRange, *rightRange, offset))
-        return Answer::Proven;
+        return true;
 
     bool isProvenByRelationship = forEachDominatingRelationship(left, at, [&](const Relationship& relationship) {
         if (relationship.left != left)
             return false;
         std::optional<int64_t> remaining = exactValueOf(CheckedInt64(offset) - relationship.offset);
-        return remaining && prove(relationship.right, right, *remaining, at, goals) == Answer::Proven;
+        return remaining && prove(relationship.right, right, *remaining, at, goals);
     });
-    if (isProvenByRelationship)
-        return Answer::Proven;
-    return proveByInduction(left, right, offset, goals);
+    return isProvenByRelationship || proveByInduction(left, right, offset, goals);
 }
 
-IntegerRelations::Answer IntegerRelations::proveByInduction(ValueID left, ValueID right, int64_t offset, UpperBoundGoals& goals)
+bool IntegerRelations::proveByInduction(ValueID left, ValueID right, int64_t offset, UpperBoundGoals& goals)
 {
     if (!left)
-        return Answer::Unknown;
+        return false;
     const UseLists& useLists = m_analyses.useLists();
     const CFG& cfg = m_analyses.cfg();
     ValueLocation location = useLists.locationOf(left);
     if (location.placement != ValuePlacement::Parameter || location.block == cfg.root())
-        return Answer::Unknown;
+        return false;
     if (right && (useLists.blockOf(right) == location.block || !m_analyses.dominates(right, ProgramPoint::atHeadOf(location.block))))
-        return Answer::Unknown;
+        return false;
 
-    bool isHypothesis = std::ranges::any_of(goals, [&](const UpperBoundGoal& goal) {
-        return goal.parameter == left && goal.bound == right && goal.offset <= offset;
+    bool isHypothesis = std::ranges::any_of(goals, [&](const Relationship& goal) {
+        return goal.left == left && goal.right == right && goal.offset <= offset;
     });
     if (isHypothesis)
-        return Answer::Proven;
+        return true;
 
     goals.append({ left, right, offset });
     bool holdsOnEveryEdge = std::ranges::all_of(cfg.incomingEdges(location.block), [&](Edge edge) {
@@ -526,72 +470,45 @@ IntegerRelations::Answer IntegerRelations::proveByInduction(ValueID left, ValueI
             return false;
         Term argument = normalize(*incoming);
         std::optional<int64_t> remaining = exactValueOf(CheckedInt64(offset) - argument.offset);
-        return remaining && prove(argument.base, right, *remaining, edge.from, goals) == Answer::Proven;
+        return remaining && prove(argument.base, right, *remaining, edge.from, goals);
     });
     goals.removeLast();
-    return holdsOnEveryEdge ? Answer::Proven : Answer::Unknown;
+    return holdsOnEveryEdge;
 }
 
-IntegerRelations::Answer IntegerRelations::proveValueAtLeast(ValueID id, int64_t minimum, BlockID at, LowerBoundGoals& goals)
+bool IntegerRelations::proveValueAtLeast(ValueID id, int64_t minimum, BlockID at, LowerBoundGoals& goals)
 {
     Term term = normalize(id);
     std::optional<int64_t> goal = exactValueOf(CheckedInt64(minimum) - term.offset);
-    if (!goal)
-        return Answer::Unknown;
-    return proveAtLeast(term.base, *goal, at, goals);
+    return goal && proveAtLeast(term.base, *goal, at, goals);
 }
 
-IntegerRelations::Answer IntegerRelations::proveAtLeast(ValueID base, int64_t minimum, BlockID at, LowerBoundGoals& goals)
+bool IntegerRelations::proveAtLeast(ValueID base, int64_t minimum, BlockID at, LowerBoundGoals& goals)
 {
     if (!takeStep())
-        return Answer::Unknown;
+        return false;
 
     std::optional<Range> range = rangeOf(base, at);
     if (range && range->minimum >= minimum)
-        return Answer::Proven;
+        return true;
 
     bool isProvenByRelationship = forEachDominatingRelationship(base, at, [&](const Relationship& relationship) {
         if (relationship.right != base)
             return false;
         std::optional<int64_t> remaining = exactValueOf(CheckedInt64(minimum) + relationship.offset);
-        return remaining && proveAtLeast(relationship.left, *remaining, at, goals) == Answer::Proven;
+        return remaining && proveAtLeast(relationship.left, *remaining, at, goals);
     });
     if (isProvenByRelationship)
-        return Answer::Proven;
+        return true;
     if (!base)
-        return Answer::Unknown;
+        return false;
 
-    if (proveOperationAtLeast(m_function.at(base), minimum, at, goals) == Answer::Proven)
-        return Answer::Proven;
-    return proveParameterAtLeast(base, minimum, goals);
+    const Value& value = m_function.at(base);
+    bool isProvenByOperation = value.opcode == Opcode::Mul ? proveProductAtLeast(value, minimum, at, goals) : proveSumAtLeast(value, minimum, at, goals);
+    return isProvenByOperation || proveParameterAtLeast(base, minimum, goals);
 }
 
-IntegerRelations::Answer IntegerRelations::proveOperationAtLeast(const Value& value, int64_t minimum, BlockID at, LowerBoundGoals& goals)
-{
-    auto operandIsAtLeast = [&](ValueID id, int64_t bound) {
-        return typeOf(id).isNumber() && proveValueAtLeast(id, bound, at, goals) == Answer::Proven;
-    };
-
-    if (value.opcode == Opcode::Mul)
-        return proveProductAtLeast(value, minimum, at, goals);
-    if (!Range::exact().contains(minimum))
-        return Answer::Unknown;
-
-    if (value.opcode == Opcode::Increment) {
-        ValueID operand = value.operand(0);
-        bool isProven = (minimum <= 1 && operandIsAtLeast(operand, 0)) || operandIsAtLeast(operand, minimum);
-        return isProven ? Answer::Proven : Answer::Unknown;
-    }
-    if (value.opcode == Opcode::Add) {
-        ValueID left = value.operand(0);
-        ValueID right = value.operand(1);
-        bool isProven = (operandIsAtLeast(left, 0) && operandIsAtLeast(right, minimum)) || (operandIsAtLeast(left, minimum) && operandIsAtLeast(right, 0));
-        return isProven ? Answer::Proven : Answer::Unknown;
-    }
-    return Answer::Unknown;
-}
-
-IntegerRelations::Answer IntegerRelations::proveProductAtLeast(const Value& product, int64_t minimum, BlockID at, LowerBoundGoals& goals)
+bool IntegerRelations::proveProductAtLeast(const Value& product, int64_t minimum, BlockID at, LowerBoundGoals& goals)
 {
     ValueID left = product.operand(0);
     ValueID right = product.operand(1);
@@ -600,92 +517,98 @@ IntegerRelations::Answer IntegerRelations::proveProductAtLeast(const Value& prod
         return type.isInteger() && type.integers.minimum >= 0;
     };
     auto isPositive = [&](ValueID id) {
-        return typeOf(id).isNumber() && proveValueAtLeast(id, 1, at, goals) == Answer::Proven;
+        return typeOf(id).isNumber() && proveValueAtLeast(id, 1, at, goals);
     };
-
     if (minimum <= 0 && isNonNegativeInteger(left) && isNonNegativeInteger(right))
-        return Answer::Proven;
-    if (minimum <= 1 && isPositive(left) && isPositive(right))
-        return Answer::Proven;
-    return Answer::Unknown;
+        return true;
+    return minimum <= 1 && isPositive(left) && isPositive(right);
 }
 
-IntegerRelations::Answer IntegerRelations::proveParameterAtLeast(ValueID parameter, int64_t minimum, LowerBoundGoals& goals)
+bool IntegerRelations::proveSumAtLeast(const Value& value, int64_t minimum, BlockID at, LowerBoundGoals& goals)
+{
+    auto operandIsAtLeast = [&](ValueID id, int64_t bound) {
+        return typeOf(id).isNumber() && proveValueAtLeast(id, bound, at, goals);
+    };
+    if (!Range::exact().contains(minimum))
+        return false;
+
+    if (value.opcode == Opcode::Increment) {
+        ValueID operand = value.operand(0);
+        return (minimum <= 1 && operandIsAtLeast(operand, 0)) || operandIsAtLeast(operand, minimum);
+    }
+    if (value.opcode == Opcode::Add) {
+        ValueID left = value.operand(0);
+        ValueID right = value.operand(1);
+        return (operandIsAtLeast(left, 0) && operandIsAtLeast(right, minimum)) || (operandIsAtLeast(left, minimum) && operandIsAtLeast(right, 0));
+    }
+    return false;
+}
+
+bool IntegerRelations::proveParameterAtLeast(ValueID parameter, int64_t minimum, LowerBoundGoals& goals)
 {
     const CFG& cfg = m_analyses.cfg();
     ValueLocation location = m_analyses.useLists().locationOf(parameter);
     if (location.placement != ValuePlacement::Parameter || location.block == cfg.root())
-        return Answer::Unknown;
+        return false;
 
     bool isHypothesis = std::ranges::any_of(goals, [&](const LowerBoundGoal& goal) {
         return goal.parameter == parameter && goal.minimum >= minimum;
     });
     if (isHypothesis)
-        return Answer::Proven;
+        return true;
 
     goals.append({ parameter, minimum });
     bool holdsOnEveryEdge = std::ranges::all_of(cfg.incomingEdges(location.block), [&](Edge edge) {
         std::optional<ValueID> incoming = findValueOnEdge(m_function, m_assumptions, edge, location.index);
-        return incoming && proveValueAtLeast(*incoming, minimum, edge.from, goals) == Answer::Proven;
+        return incoming && proveValueAtLeast(*incoming, minimum, edge.from, goals);
     });
     goals.removeLast();
-    return holdsOnEveryEdge ? Answer::Proven : Answer::Unknown;
+    return holdsOnEveryEdge;
 }
 
-IntegerRelations::Answer IntegerRelations::proveWhole(ValueID id, BlockID at, AssumedWholeParameters& assumed)
+bool IntegerRelations::proveWhole(ValueID id, BlockID at, AssumedWholeParameters& assumed)
 {
     if (!takeStep())
-        return Answer::Unknown;
+        return false;
     Term term = normalize(id);
     if (term.base && hasAssumption(term.base, at))
-        return Answer::Proven;
+        return true;
     const Type& type = typeOf(id);
     if (!type.isNumber())
-        return Answer::Unknown;
+        return false;
     if (type.isNumberWithoutFraction() || !term.base)
-        return Answer::Proven;
+        return true;
 
     const Value& value = m_function.at(id);
     if (isIdentityConversion(value) || wholeUnaryOperators.contains(value.opcode))
         return proveWhole(value.operand(0), at, assumed);
-    if (wholeBinaryOperators.contains(value.opcode)) {
-        if (proveWhole(value.operand(0), at, assumed) != Answer::Proven)
-            return Answer::Unknown;
-        return proveWhole(value.operand(1), at, assumed);
-    }
-    if (m_analyses.useLists().locationOf(id).placement == ValuePlacement::Parameter)
-        return proveWholeParameter(id, assumed);
-    return Answer::Unknown;
-}
+    if (wholeBinaryOperators.contains(value.opcode))
+        return proveWhole(value.operand(0), at, assumed) && proveWhole(value.operand(1), at, assumed);
 
-IntegerRelations::Answer IntegerRelations::proveWholeParameter(ValueID parameter, AssumedWholeParameters& assumed)
-{
     const CFG& cfg = m_analyses.cfg();
-    ValueLocation location = m_analyses.useLists().locationOf(parameter);
-    if (location.block == cfg.root())
-        return Answer::Unknown;
-    if (assumed.contains(parameter))
-        return Answer::Proven;
+    ValueLocation location = m_analyses.useLists().locationOf(id);
+    if (location.placement != ValuePlacement::Parameter || location.block == cfg.root())
+        return false;
+    if (assumed.contains(id))
+        return true;
 
     std::span<const Edge> incomingEdges = cfg.incomingEdges(location.block);
     if (incomingEdges.empty())
-        return Answer::Unknown;
+        return false;
 
-    assumed.append(parameter);
+    assumed.append(id);
     bool receivesOnlyWholeNumbers = std::ranges::all_of(incomingEdges, [&](Edge edge) {
         std::optional<ValueID> incoming = findValueOnEdge(m_function, m_assumptions, edge, location.index);
-        return incoming && proveWhole(*incoming, edge.from, assumed) == Answer::Proven;
+        return incoming && proveWhole(*incoming, edge.from, assumed);
     });
     assumed.removeLast();
-    return receivesOnlyWholeNumbers ? Answer::Proven : Answer::Unknown;
+    return receivesOnlyWholeNumbers;
 }
 
 bool IntegerRelations::isKnownWhole(ValueID id, BlockID at)
 {
-    if (typeOf(id).isInteger())
-        return true;
     AssumedWholeParameters assumed;
-    return proveWhole(id, at, assumed) == Answer::Proven;
+    return typeOf(id).isInteger() || proveWhole(id, at, assumed);
 }
 
 } } } // namespace JSC::AOT::Typed

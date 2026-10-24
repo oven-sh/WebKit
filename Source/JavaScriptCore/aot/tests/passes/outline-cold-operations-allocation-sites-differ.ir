@@ -10,7 +10,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Failure" fields=[{key="cause" declared={type=anything}}, {key="detail" declared={type=anything}}]
 
 function f0 name="allocationSitesDiffer" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
 # REPEAT: i = 1..5
   b%(i)() frequency=Rare:
@@ -29,7 +28,6 @@ function f0 name="allocationSitesDiffer" parameters=[{type=number}, {type=anythi
 # CHECK-NOT: CallDirect
 
 function f1 name="copiesOfOneAllocationSite" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
 # REPEAT: i = 2..7
   b%(i-1)() frequency=Rare:

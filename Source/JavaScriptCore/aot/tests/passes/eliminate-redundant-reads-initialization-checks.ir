@@ -10,73 +10,62 @@ variable g1 name="storedTwice" module=m0 declared={type=anything|absent} flow={w
 variable g2 name="unknownWriters" module=m0 declared={type=anything|absent} flow={stores=AtMostOnce}
 
 function f0 name="checkedBeforeCall" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g0
     v2 = CheckInitialized v1 name="settled"
     v3 = Call v0
     v4 = GetModuleVariable variable=g0
     v5 = CheckInitialized v4 name="settled"
     Return v5
-}
-# CHECK-LABEL: function f0 name="checkedBeforeCall"
 # CHECK: v2: anything = CheckInitialized v1
 # CHECK-NEXT: = Call v0
 # CHECK-NEXT: v4: anything = Upcast v2
 # CHECK-NOT: GetModuleVariable
+}
 
 function f1 name="storedBeforeCall" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     PutModuleVariable v1 variable=g0
     v3 = Call v0
     v4 = GetModuleVariable variable=g0
     v5 = CheckInitialized v4 name="settled"
     Return v5
-}
-# CHECK-LABEL: function f1 name="storedBeforeCall"
 # CHECK: = Call v0
 # CHECK-NEXT: v4: anything = Upcast v1
 # CHECK-NOT: GetModuleVariable
+}
 
 function f2 name="readWithoutCheck" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g0
     v2 = Call v0
     v3 = GetModuleVariable variable=g0
     v4 = CheckInitialized v3 name="settled"
     Return v4
-}
-# CHECK-LABEL: function f2 name="readWithoutCheck"
 # CHECK: = Call v0
 # CHECK-NEXT: v3: anything|absent = GetModuleVariable variable=g0
+}
 
 function f3 name="storedTwice" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g1
     v2 = CheckInitialized v1 name="storedTwice"
     v3 = Call v0
     v4 = GetModuleVariable variable=g1
     v5 = CheckInitialized v4 name="storedTwice"
     Return v5
-}
-# CHECK-LABEL: function f3 name="storedTwice"
 # CHECK: = Call v0
 # CHECK-NEXT: v4: anything|absent = GetModuleVariable variable=g1
+}
 
 function f4 name="unknownWriters" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g2
     v2 = CheckInitialized v1 name="unknownWriters"
     v3 = Call v0
     v4 = GetModuleVariable variable=g2
     v5 = CheckInitialized v4 name="unknownWriters"
     Return v5
-}
-# CHECK-LABEL: function f4 name="unknownWriters"
 # CHECK: = Call v0
 # CHECK-NEXT: v4: anything|absent = GetModuleVariable variable=g2
+}
 
 function f5 name="storesTwice" parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: anything, v1: anything):
     PutModuleVariable v0 variable=g1
     PutModuleVariable v1 variable=g1
     Return
@@ -84,7 +73,6 @@ function f5 name="storesTwice" parameters=[{type=anything}, {type=anything}] res
 # CHECK-LABEL: function f5 name="storesTwice"
 
 function f6 name="checkedOnOnePath" parameters=[{type=boolean}] results=[{type=anything}] {
-  b0(v0: boolean):
     v1 = GetModuleVariable variable=g0
     Branch v0 -> taken b1(), notTaken b2()
   b1():
@@ -94,13 +82,11 @@ function f6 name="checkedOnOnePath" parameters=[{type=boolean}] results=[{type=a
     v3 = GetModuleVariable variable=g0
     v4 = CheckInitialized v3 name="settled"
     Return v4
-}
-# CHECK-LABEL: function f6 name="checkedOnOnePath"
 # CHECK: b2():
 # CHECK-NEXT: v3: anything|absent = GetModuleVariable variable=g0
+}
 
 function f7 name="checkedUnderHandler" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1() handler=b3():
     v1 = GetModuleVariable variable=g0
@@ -116,9 +102,8 @@ function f7 name="checkedUnderHandler" parameters=[{type=anything}] results=[{ty
     v7 = GetModuleVariable variable=g0
     v8 = CheckInitialized v7 name="settled"
     Return v8
-}
-# CHECK-LABEL: function f7 name="checkedUnderHandler"
 # CHECK: b2():
 # CHECK-NEXT: v4: anything = Upcast v2
 # CHECK: = CatchValue
 # CHECK-NEXT: v7: anything|absent = GetModuleVariable variable=g0
+}

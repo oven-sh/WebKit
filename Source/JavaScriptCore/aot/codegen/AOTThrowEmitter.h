@@ -26,7 +26,7 @@ class ThrowEmitter final : public OperationEmitter {
 public:
     explicit ThrowEmitter(CodeGenerator&);
 
-    void throwAt(const OperationContext&, const ThrowSite&, std::optional<Operand>);
+    void throwAt(const OperationContext&, const ThrowSite&, std::optional<Operand>, std::optional<ErrorKind> = std::nullopt);
     void requireOrThrow(const OperationContext&, Condition mustHold, const ThrowSite&, std::optional<Operand>);
     void throwError(const OperationContext&, ErrorKind, StringID message);
 
@@ -34,15 +34,10 @@ public:
     void requireInitialized(const OperationContext&, Operand, const Type&, StringID name);
 
 private:
-    void emitThrowSite(const OperationContext&, const ThrowSite&, std::optional<Operand>, std::optional<ErrorKind> = std::nullopt);
-    void checkOrThrow(const OperationContext&, Condition mustHold, const ThrowSite&, std::optional<Operand>);
+    Operand inFormNamedByThrowWords(const OperationContext&, Operand);
     RefPtr<B3::StackmapGenerator> generatorOfCheckedThrowSite(const OperationContext&, const ThrowSite&, Representation);
-    void branchOrThrow(const OperationContext&, Condition mustHold, const ThrowSite&, std::optional<Operand>);
     bool canTrapAt(const OperationContext&);
-    void trapIfNullish(const OperationContext&, Boxed, const ThrowSite&);
-    void trapIfNullish(const OperationContext&, NarrowReference, const ThrowSite&);
     void trapThrough(const OperationContext&, LValue pointer, Representation, const ThrowSite&);
-    static ThrowKind throwKindOf(NullishAccess);
 
     struct CheckedThrowSite {
         ThrowSite site;

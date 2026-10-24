@@ -37,7 +37,6 @@ layout L2 name="Second" fields=[{key="x" declared={type=anything} flags=[IsRequi
 layout L3 name="Third" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
 variable g0 name="many" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = PropGet v1 key="x"
@@ -62,11 +61,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="helper" results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="handed" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="x"
     Return
 }

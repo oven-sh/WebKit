@@ -10,7 +10,6 @@ layout L1 name="Pair" fields=[{key="kind" declared={type=number}}, {key="left" d
 layout L2 name="Counted" fields=[{key="kind" declared={type=number}}, {key="child" declared={type=anything}}, {key="count" declared={type=number}}]
 
 function f0 name="allocatesByTable" parameters=[{type=i32}] results=[{type=anything}] {
-  b0(v0: i32):
     Switch v0 cases=[1, 2, 3, 5] -> case b1(), case b2(), case b3(), case b1(), otherwise b5()
   b1():
     v1 = NewObject layout=L0
@@ -33,7 +32,6 @@ function f0 name="allocatesByTable" parameters=[{type=i32}] results=[{type=anyth
 
 # One of the cases stores a field as well. It stays a case of the switch, and the table has the other two
 function f1 name="allocatesOneCaseForItself" parameters=[{type=i32}, {type=anything}] results=[{type=anything}] {
-  b0(v0: i32, v1: anything):
     Switch v0 cases=[1, 2, 3] -> case b1(), case b2(), case b3(), otherwise b5()
   b1():
     v2 = NewObject layout=L0
@@ -57,7 +55,6 @@ function f1 name="allocatesOneCaseForItself" parameters=[{type=i32}, {type=anyth
 
 # One allocation is no table
 function f2 name="allocatesInOneCase" parameters=[{type=i32}] results=[{type=anything}] {
-  b0(v0: i32):
     Switch v0 cases=[1, 2] -> case b1(), case b1(), otherwise b3()
   b1():
     v1 = NewObject layout=L0

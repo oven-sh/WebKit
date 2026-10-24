@@ -12,6 +12,7 @@
 #include "AOTRemoveUnreadFields.h"
 #include <algorithm>
 #include <wtf/CommaPrinter.h>
+#include <wtf/EnumTraits.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -77,7 +78,6 @@ OwnPropertyGain ownPropertyGainOf(const Program& program, LayoutID id, PropertyK
     ReceiverState state = receiverStateOf(program, id);
     if (state.cannot(ObjectMutation::AddProperty))
         return OwnPropertyGain::Impossible;
-    // The list has names only.
     if (program.nameClassOf(key) == NameClass::Index)
         return OwnPropertyGain::Unknown;
     const LayoutFlow& flow = program.at(id).flow;
@@ -183,19 +183,6 @@ ReceiverCandidates receiverCandidates(const Program& program, const Function& fu
     return candidatesOf(program, program.typeOf(function, receiver), &program.expectedOrTypeOf(function, receiver), stamp);
 }
 
-static ASCIILiteral nameOf(ReceiverProof proof)
-{
-    switch (proof) {
-    case ReceiverProof::Unknown:
-        return "Unknown"_s;
-    case ReceiverProof::Guard:
-        return "Guard"_s;
-    case ReceiverProof::Type:
-        return "Type"_s;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static void dumpLayouts(PrintStream& out, ASCIILiteral label, const LayoutList& layouts)
 {
     if (layouts.isEmpty())
@@ -209,7 +196,7 @@ static void dumpLayouts(PrintStream& out, ASCIILiteral label, const LayoutList& 
 
 void ReceiverCandidates::dump(PrintStream& out) const
 {
-    out.print("proof=", nameOf(proof), " level=", nameOf(level));
+    out.print("proof=", enumName(proof), " level=", nameOf(level));
     dumpLayouts(out, "proven"_s, proven);
     dumpLayouts(out, "predicted"_s, predicted);
     if (hasOtherParts)
@@ -230,25 +217,6 @@ static Type primitivePartOf(const Type& type, uint16_t primitives)
     return part;
 }
 
-static Type builtinClassPartOf(const Type& type, const ClassPart& classPart)
-{
-    Type part;
-    part.classes.append(classPart);
-    if (classPart.builtinClass == BuiltinClasses::RegExp)
-        part.regExpLiteralSet = type.regExpLiteralSet;
-    return part;
-}
-
-static Type otherObjectsPartOf(const Type& type)
-{
-    Type part;
-    part.anyObject = type.anyObject;
-    part.anyFunction = type.anyFunction;
-    part.environment = type.environment;
-    part.opaque = type.opaque;
-    return part;
-}
-
 static void appendPart(UnionParts& parts, UnionPartKind kind, Type&& part)
 {
     part.canonicalize();
@@ -266,8 +234,13 @@ UnionParts unionPartsOf(const Type& type)
 
     if (type.layouts)
         appendPart(parts, UnionPartKind::Layouts, Type::forLayoutSet(type.layouts));
-    for (const ClassPart& classPart : type.classes)
-        appendPart(parts, UnionPartKind::BuiltinClass, builtinClassPartOf(type, classPart));
+    for (const ClassPart& classPart : type.classes) {
+        Type part;
+        part.classes.append(classPart);
+        if (classPart.builtinClass == BuiltinClasses::RegExp)
+            part.regExpLiteralSet = type.regExpLiteralSet;
+        appendPart(parts, UnionPartKind::BuiltinClass, WTF::move(part));
+    }
 
     if (!type.functions.isEmpty()) {
         Type functions;
@@ -281,8 +254,14 @@ UnionParts unionPartsOf(const Type& type)
         appendPart(parts, UnionPartKind::Builtins, WTF::move(builtins));
     }
 
-    if (!isClosedUnion(type))
-        appendPart(parts, UnionPartKind::OtherObjects, otherObjectsPartOf(type));
+    if (!isClosedUnion(type)) {
+        Type others;
+        others.anyObject = type.anyObject;
+        others.anyFunction = type.anyFunction;
+        others.environment = type.environment;
+        others.opaque = type.opaque;
+        appendPart(parts, UnionPartKind::OtherObjects, WTF::move(others));
+    }
     return parts;
 }
 

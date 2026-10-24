@@ -10,7 +10,6 @@ module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=MathRandom
     v1 = Call v0
     v2 = NewClosure v1 function=f1
@@ -27,7 +26,6 @@ function f2 name="called" kind=Arrow captures=[{type=number flags=[IsExpected]}]
   b0(v0):
     v1 = Add v0, v0
     Return v1
-}
-# CHECK-LABEL: function f2 name="called"
 # CHECK: [[read]]: anything ~ number = GetModuleVariable variable=g1
 # CHECK-NEXT: [[proven]]: number = AssumeType [[read]] castType=number
+}

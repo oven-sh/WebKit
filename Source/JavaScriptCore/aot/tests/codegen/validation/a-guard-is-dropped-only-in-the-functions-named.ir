@@ -12,7 +12,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="in-front-of-the-range" parameters=[{type=anything}] results=[{type=i32}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=string
     TestAndBranch v1 -> taken b1(), notTaken b2()
   b1():
@@ -23,7 +22,6 @@ function f0 name="in-front-of-the-range" parameters=[{type=anything}] results=[{
     Return v3
 }
 function f1 name="in-the-range" parameters=[{type=anything}] results=[{type=i32}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=string
     TestAndBranch v1 -> taken b1(), notTaken b2()
   b1():
@@ -40,7 +38,6 @@ function f1 name="in-the-range" parameters=[{type=anything}] results=[{type=i32}
     Return v5
 }
 function f2 name="behind-the-range" parameters=[{type=anything}] results=[{type=i32}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=string
     TestAndBranch v1 -> taken b1(), notTaken b2()
   b1():

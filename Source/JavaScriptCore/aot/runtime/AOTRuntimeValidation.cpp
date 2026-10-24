@@ -40,6 +40,7 @@
 #include "Reg.h"
 #include "SubspaceInlines.h"
 #include <wtf/DataLog.h>
+#include <wtf/HexNumber.h>
 #include <wtf/Lock.h>
 #include <wtf/RawHex.h>
 
@@ -53,7 +54,19 @@ void willReadLegacyRegExpStatics(VM& vm)
 
 static constexpr unsigned maxNumberOfTestedElements = 64;
 
-static void dumpClassOf(PrintStream&, JSValue);
+static void dumpClassOf(PrintStream& out, JSValue found)
+{
+    if (!found || !found.isCell()) {
+        out.print(!found ? "the empty value" : found.isUndefined() ? "undefined" : found.isNull() ? "null" : found.isBoolean() ? "boolean" : found.isInt32() ? "int32" : found.isDouble() ? "double" : "invalid encoding");
+        return;
+    }
+    JSCell* cell = found.asCell();
+    JSType type = cell->type();
+    if (const char* word = type == StringType ? "string" : type == SymbolType ? "symbol" : type == HeapBigIntType ? "bigint" : type == CompiledEnvironmentType ? "environment" : nullptr)
+        out.print(word);
+    else
+        out.print(cell->isObject() ? "object " : "cell ", cell->classInfo()->className);
+}
 
 // Numbers and kinds only: what a program holds is not for a log.
 static bool holdsType(const RuntimeLayoutTable& layouts, const RuntimeType& type, JSValue held, unsigned position)
@@ -85,7 +98,7 @@ static bool entriesHaveType(Instance& instance, Collection* collection, Typed::C
 }
 
 // A data property under a name like "-1" costs the structure its mark and leaves true what the storage aspect says.
-bool hasOrdinaryElements(VM& vm, JSValue value)
+static bool hasOrdinaryElements(VM& vm, JSValue value)
 {
     auto* array = dynamicDowncast<JSArray>(value);
     if (!array)
@@ -148,7 +161,7 @@ static bool shadowsLockedPrototypeChain(VM& vm, Structure* structure)
 }
 
 // The bit of the cell is clear where the elements alone are not pristine. A structure that has been a dictionary carries no mark.
-bool hasPristineNames(VM& vm, JSValue value)
+static bool hasPristineNames(VM& vm, JSValue value)
 {
     if (!value.isCell())
         return false;
@@ -160,7 +173,8 @@ bool hasPristineNames(VM& vm, JSValue value)
     return !shadowsLockedPrototypeChain(vm, structure);
 }
 
-bool contentsHaveType(Instance& instance, JSCell* container, Typed::ContentsSlot slot, const RuntimeType& type)
+// Looks at no more than a fixed number of the values a large container holds.
+static bool contentsHaveType(Instance& instance, JSCell* container, Typed::ContentsSlot slot, const RuntimeType& type)
 {
     if (auto* map = dynamicDowncast<JSMap>(container))
         return slot == Typed::ContentsSlot::Element || entriesHaveType(instance, map, slot, type);
@@ -181,57 +195,6 @@ bool contentsHaveType(Instance& instance, JSCell* container, Typed::ContentsSlot
             return false;
     }
     return true;
-}
-
-static void dumpClassOf(PrintStream& out, JSValue found)
-{
-    if (!found) {
-        out.print("the empty value");
-        return;
-    }
-    if (found.isUndefined()) {
-        out.print("undefined");
-        return;
-    }
-    if (found.isNull()) {
-        out.print("null");
-        return;
-    }
-    if (found.isBoolean()) {
-        out.print("boolean");
-        return;
-    }
-    if (found.isInt32()) {
-        out.print("int32");
-        return;
-    }
-    if (found.isDouble()) {
-        out.print("double");
-        return;
-    }
-    if (!found.isCell()) {
-        out.print("invalid encoding");
-        return;
-    }
-
-    JSCell* cell = found.asCell();
-    switch (cell->type()) {
-    case StringType:
-        out.print("string");
-        return;
-    case SymbolType:
-        out.print("symbol");
-        return;
-    case HeapBigIntType:
-        out.print("bigint");
-        return;
-    case CompiledEnvironmentType:
-        out.print("environment");
-        return;
-    default:
-        out.print(cell->isObject() ? "object " : "cell ", cell->classInfo()->className);
-        return;
-    }
 }
 
 static void dumpChangedRegister(PrintStream& out, JSValue found)
@@ -272,34 +235,6 @@ static void dumpCalledCode(PrintStream& out, JSValue found)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-namespace {
-
-MAKE_PRINT_ADAPTOR(ClassDump, JSValue, dumpClassOf);
-MAKE_PRINT_ADAPTOR(ChangedRegisterDump, JSValue, dumpChangedRegister);
-MAKE_PRINT_ADAPTOR(CalledCodeDump, JSValue, dumpCalledCode);
-
-class IndexDump {
-public:
-    template<typename Tag>
-    explicit IndexDump(Typed::ID<Tag> id)
-        : m_index(id ? std::optional<uint32_t>(id.index()) : std::nullopt)
-    {
-    }
-
-    void dump(PrintStream& out) const
-    {
-        if (m_index)
-            out.print(*m_index);
-        else
-            out.print("-");
-    }
-
-private:
-    std::optional<uint32_t> m_index;
-};
-
-} // anonymous namespace
-
 void crashOnValidationFailure(VM&, const ValidationFailure& failure)
 {
     // Never released: another thread that fails waits here until this one has crashed.
@@ -307,13 +242,17 @@ void crashOnValidationFailure(VM&, const ValidationFailure& failure)
     lock.lock();
 
     // Describing a damaged cell can fault, so the kind and the ids are printed first.
-    dataLog("AOT validation: ", nameOf(failure.kind), " f", IndexDump(failure.function), " v", IndexDump(failure.value), " ");
+    auto numberOrDash = [](auto id) {
+        return id ? String::number(id.index()) : "-"_str;
+    };
+    dataLog("AOT validation: ", nameOf(failure.kind), " f", numberOrDash(failure.function), " v", numberOrDash(failure.value), " ");
     if (failure.kind == ValidationFailureKind::CallChangedKeptRegister || failure.kind == ValidationFailureKind::UnwindingChangedKeptRegister)
-        dataLogLn(ChangedRegisterDump(failure.found));
+        dumpChangedRegister(WTF::dataFile(), failure.found);
     else if (failure.kind == ValidationFailureKind::CallCollected)
-        dataLogLn(CalledCodeDump(failure.found));
+        dumpCalledCode(WTF::dataFile(), failure.found);
     else
-        dataLogLn(ClassDump(failure.found));
+        dumpClassOf(WTF::dataFile(), failure.found);
+    dataLogLn();
     if (ASCIILiteral word = disableOf(failure.kind); !word.isEmpty())
         dataLogLn("AOT: the check belongs to --aot-disable=", word);
     writeCheckedNativeCalls();
@@ -375,20 +314,14 @@ void compareOperandWithPhotograph(VM& vm, JSValue operand, uint32_t positionAndC
 
     bool isArray = isJSArray(object);
     for (const OperandDifference& difference : differencesBetween(vm, object, photograph.before, capture(object))) {
-        AbstractHeaps heaps = difference.change == OperandChange::InternalStateChanged ? heapsOfClassOf(object) : heapsHolding(difference.change);
+        AbstractHeaps heaps = difference.change == OperandChange::InternalStateChanged ? heapsOfClassOf(object) : rowOf(difference.change).heaps;
         // `{ 0: x }` defines a property under the name "0". Whoever reads an element of an object that is no array reads its named properties too.
         if (!isArray && (difference.change == OperandChange::ElementsChanged || difference.change == OperandChange::ArrayStorageChanged))
             heaps.add(AbstractHeap::NamedProperties);
         if (heaps.isEmpty() || written.containsAny(heaps))
             continue;
-        String message = makeString("operand "_s, position, ": "_s, nameOf(difference.change), difference.detail.isEmpty() ? ""_s : " "_s, difference.detail, ", the call writes "_s, describe(written), " through it, not "_s, describe(heaps), " (f"_s, function.index(), " v"_s, value.index(), ')');
-        RuntimeReporter* reporter = vm.aotState().reporter.get();
-        if (reporter && reporter->isExplicitlyEnabled()) {
-            reporter->reportNativeCall(ValidationFailureKind::OperationWroteHeap, describeCalleeOf(positionAndCallee), message);
-            continue;
-        }
-        dataLogLn("AOT operation: ", describeCalleeOf(positionAndCallee), " ", message);
-        crashOnValidationFailure(vm, { ValidationFailureKind::OperationWroteHeap, function, value, object });
+        String message = makeString("operand "_s, position, ": "_s, describe(difference), ", the call writes "_s, describeMembers(written), " through it, not "_s, describeMembers(heaps), " (f"_s, function.index(), " v"_s, value.index(), ')');
+        reportOrCrash(vm, { ValidationFailureKind::OperationWroteHeap, function, value, object }, "operation"_s, describeCalleeOf(positionAndCallee), message);
     }
 }
 
@@ -425,14 +358,14 @@ OperationPermissions permissionsOf(Entry entry)
 {
     std::optional<RuntimeOperation> operation = runtimeOperationOf(entry);
     if (!operation)
-        return { .mayEnterVM = true, .mayCollect = true };
+        return { };
     Typed::Effects effects = Typed::declaredBoundOf(*operation);
     return { .mayEnterVM = effects.mayCallUnknownCode, .mayCollect = effects.mayCollect };
 }
 
-OperationValidationScope::CollectionVersions OperationValidationScope::collectionVersions() const
+CollectionVersions collectionVersionsOf(VM& vm)
 {
-    MarkedSpace& space = m_vm.heap.objectSpace();
+    MarkedSpace& space = vm.heap.objectSpace();
     return { space.markingVersion(), space.edenVersion(), space.newlyAllocatedVersion() };
 }
 
@@ -442,7 +375,7 @@ NEVER_INLINE void OperationValidationScope::open(Entry entry)
     m_entry = entry;
     m_mayNotEnterVM = !permissions.mayEnterVM;
     m_mayNotCollect = !permissions.mayCollect;
-    m_collectionVersions = collectionVersions();
+    m_collectionVersions = collectionVersionsOf(m_vm);
     m_didEnterVMBefore = std::exchange(m_vm.didEnterVM, false);
     m_isOpen = true;
 }
@@ -451,7 +384,7 @@ NEVER_INLINE void OperationValidationScope::close()
 {
     bool didEnterVM = m_mayNotEnterVM && m_vm.didEnterVM;
     // An operation that throws allocates what it throws, and the head of every handler counts on a collection.
-    bool didCollect = m_mayNotCollect && !m_vm.exceptionForInspection() && collectionVersions() != m_collectionVersions;
+    bool didCollect = m_mayNotCollect && !m_vm.exceptionForInspection() && collectionVersionsOf(m_vm) != m_collectionVersions;
     if (didEnterVM || didCollect)
         dataLogLn("AOT: ", nameOf(m_entry), " is declared not to ", didEnterVM ? "enter the VM" : "collect");
     if (didEnterVM)
@@ -701,6 +634,44 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTValidateLookup, size_t, (Instance*
     std::optional<FunctionID> foundFunction = functionOf(found.asCell());
     std::optional<FunctionID> expectedFunction = functionOf(expected);
     return foundFunction && expectedFunction && sourceFunctionOf(*foundFunction) == sourceFunctionOf(*expectedFunction);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReportValidationFailure, void, (Instance* instance, EncodedJSValue value, uint32_t kind, uint32_t function, uint32_t valueIndex))
+{
+    RELEASE_ASSERT(kind < numberOfEnumerators<ValidationFailureKind>);
+    DeferGCForAWhile deferGC(*instance->vm);
+    auto failureKind = static_cast<ValidationFailureKind>(kind);
+    if (failureKind == ValidationFailureKind::ArrayElementsNotOrdinary && hasOrdinaryElements(*instance->vm, JSValue::decode(value)))
+        return;
+    if (failureKind == ValidationFailureKind::ArrayNotPristine && hasPristineNames(*instance->vm, JSValue::decode(value)))
+        return;
+    crashOnValidationFailure(*instance->vm, { failureKind, Typed::FunctionID(function), Typed::ValueID(valueIndex), JSValue::decode(value) });
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTContentsHaveType, size_t, (Instance* instance, JSCell* container, uint32_t contentsSlot, uint32_t type))
+{
+    DeferGCForAWhile deferGC(*instance->vm);
+    const RuntimeType* contents = instance->state->objects->layouts.typeWithIndex(type);
+    RELEASE_ASSERT(contents);
+    return contentsHaveType(*instance, container, static_cast<Typed::ContentsSlot>(contentsSlot), *contents);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReportBrokenClaim, void, (uint32_t claimAndOffset, uint32_t function, uint32_t valueIndex, const uint64_t* foundAndGiven))
+{
+    static constexpr ASCIILiteral names[] { "StackSlotIsWrittenBeforeRead"_s, "WordNeverChanges"_s, "LoadMayMove"_s, "ValueIsInRange"_s };
+    static_assert(std::size(names) == static_cast<size_t>(BrokenClaim::ValueIsInRange) + 1);
+    uint32_t number = claimAndOffset & 0xff;
+    RELEASE_ASSERT(number < std::size(names));
+    auto claim = static_cast<BrokenClaim>(number);
+    static Lock lock;
+    lock.lock();
+    dataLog("AOT claim check: ", names[number], " f", function, " v", static_cast<int32_t>(valueIndex));
+    if (claim != BrokenClaim::ValueIsInRange)
+        dataLog(" at +", static_cast<int32_t>(claimAndOffset) >> 8);
+    if (claim == BrokenClaim::WordNeverChanges || claim == BrokenClaim::LoadMayMove)
+        dataLog(" holds 0x", hex(foundAndGiven[0], Lowercase), ", not 0x", hex(foundAndGiven[1], Lowercase));
+    dataLogLn();
+    CRASH_WITH_INFO(number, function, valueIndex);
 }
 
 } } // namespace JSC::AOT

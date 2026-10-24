@@ -8,31 +8,26 @@ layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired
 layout L1 name="Size" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}]
 
 function f0 name="testNobodyBranchesOn" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Return v0
-}
-# CHECK-LABEL: function f0 name="testNobodyBranchesOn"
 # CHECK-NEXT: b0(
 # CHECK-NEXT: Return v0
+}
 
 function f1 name="guardNobodyNames" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
     Return v0
   b2():
     Return
-}
-# CHECK-LABEL: function f1 name="guardNobodyNames"
 # CHECK: v1: boolean = ShapeTest v0 layouts=[L0]
 # CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: Return v0
+}
 
 function f2 name="guardOfUnusedRead" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
@@ -40,15 +35,13 @@ function f2 name="guardOfUnusedRead" parameters=[{type=object}] results=[{type=a
     Return v0
   b2():
     Return
-}
-# CHECK-LABEL: function f2 name="guardOfUnusedRead"
 # CHECK: v1: boolean = ShapeTest v0 layouts=[L0]
 # CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: Return v0
+}
 
 function f3 name="secondTestNobodyBranchesOn" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
@@ -56,15 +49,13 @@ function f3 name="secondTestNobodyBranchesOn" parameters=[{type=object}] results
     Return v0
   b2():
     Return
-}
-# CHECK-LABEL: function f3 name="secondTestNobodyBranchesOn"
 # CHECK: v1: boolean = ShapeTest v0 layouts=[L0]
 # CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: Return v0
+}
 
 function f4 name="joinedGuardsNobodyNames" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b3()
   b1(v2):
@@ -75,17 +66,15 @@ function f4 name="joinedGuardsNobodyNames" parameters=[{type=object}] results=[{
     Return v0
   b3():
     Return
-}
-# CHECK-LABEL: function f4 name="joinedGuardsNobodyNames"
 # CHECK: Branch v1 -> taken b1(| 0), notTaken b3()
 # CHECK-NEXT: b1(v2: guard):
 # CHECK-NEXT: v3: boolean = IsSlotFilled v0, v2 key="y"
 # CHECK-NEXT: Branch v3 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
 # CHECK-NEXT: Return v0
+}
 
 function f5 name="guardOfShapeCaseNobodyNames" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     SwitchOnShape v0 layoutSets=[[L0], [L1]] -> case b1(| 0), case b2(| 0), otherwise b3()
   b1(v1):
     Return v0
@@ -94,16 +83,14 @@ function f5 name="guardOfShapeCaseNobodyNames" parameters=[{type=object}] result
     Return v3
   b3():
     Return
-}
-# CHECK-LABEL: function f5 name="guardOfShapeCaseNobodyNames"
 # CHECK: SwitchOnShape v0 layoutSets={{*}} -> case b1(), case b2(| 0), otherwise b3()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: b2(v2: guard):
 # CHECK-NEXT: = GetSlot v0, v2 key="x"
+}
 
 function f6 name="guardOfUsedRead" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
@@ -111,9 +98,8 @@ function f6 name="guardOfUsedRead" parameters=[{type=object}] results=[{type=any
     Return v3
   b2():
     Return
-}
-# CHECK-LABEL: function f6 name="guardOfUsedRead"
 # CHECK: v1: boolean = ShapeTest v0 layouts=[L0]
 # CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v2: guard):
 # CHECK-NEXT: = GetSlot v0, v2 key="x"
+}

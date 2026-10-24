@@ -12,7 +12,6 @@ layout L1 kind=Instance name="StoredThroughCasts" constructor=f2 fields=[{key="c
 layout L2 name="InitialField" fields=[{key="run" declared={type=function} flags=[IsRequired]}]
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Upcast v0 castType=function
     v2 = NewObject -, v1 layout=L0 fields=[0]
@@ -30,11 +29,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="run" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="StoredThroughCasts" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L1
     v2 = NewObject v1 layout=L1
     v3 = NewClosure v2 function=f3
@@ -44,11 +41,9 @@ function f2 name="StoredThroughCasts" kind=BaseConstructor flags=[HasNewTarget] 
     Return v2
 }
 function f3 name="call" kind=Arrow captures=[{type=L1}] results=[{type=anything}] {
-  b0(v0: L1):
     Return
 }
 function f4 name="direct" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 

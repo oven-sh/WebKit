@@ -10,7 +10,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
 
 function f0 name="bothFit" parameters=[{type=anything}, {type=anything}, {type=boolean}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean, v3: boolean, v4: boolean):
     v5 = NewObject -, v0 layout=L0 fields=[0]
     Branch v2 -> taken b1(), notTaken b2()
   b1() frequency=Unlikely:
@@ -28,8 +27,6 @@ function f0 name="bothFit" parameters=[{type=anything}, {type=anything}, {type=b
     Return v8
   b6():
     Return v0
-}
-# CHECK-LABEL: function f0 name="bothFit"
 # CHECK: b0(
 # CHECK-NEXT: Branch v2
 # CHECK: b1() frequency=Unlikely:
@@ -40,9 +37,9 @@ function f0 name="bothFit" parameters=[{type=anything}, {type=anything}, {type=b
 # CHECK: b5():
 # CHECK-NEXT: [[frequent]]:{{*}}= NewObject -, v0 layout=L0 fields=[0]
 # CHECK-NEXT: = Call v0, -, [[frequent]]
+}
 
 function f1 name="oneBlockMore" parameters=[{type=anything}, {type=anything}, {type=boolean}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean, v3: boolean, v4: boolean):
     v5 = NewObject -, v0 layout=L0 fields=[0]
     Branch v2 -> taken b1(), notTaken b2()
   b1() frequency=Unlikely:
@@ -62,8 +59,6 @@ function f1 name="oneBlockMore" parameters=[{type=anything}, {type=anything}, {t
     Return v8
   b7():
     Return v0
-}
-# CHECK-LABEL: function f1 name="oneBlockMore"
 # CHECK: b0(
 # CHECK-NEXT: Branch v2
 # CHECK: b1() frequency=Unlikely:
@@ -72,3 +67,4 @@ function f1 name="oneBlockMore" parameters=[{type=anything}, {type=anything}, {t
 # CHECK: b6():
 # CHECK-NEXT: [[kept]]:{{*}}= NewObject -, v0 layout=L0 fields=[0]
 # CHECK-NEXT: = Call v0, -, [[kept]]
+}

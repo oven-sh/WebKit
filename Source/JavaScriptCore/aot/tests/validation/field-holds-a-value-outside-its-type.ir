@@ -33,7 +33,6 @@ layout L0 name="Box" fields=[{key="content" declared={type=L1} flags=[IsRequired
 layout L1 name="Coin" fields=[{key="value" declared={type=number} flags=[IsRequired]}]
 layout L2 name="Stone" fields=[{key="weight" declared={type=number} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Double number=1.5
     v1 = NewObject -, v0 layout=L1 fields=[0]
     v2 = FinishObject v1
@@ -49,7 +48,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="valueIn" parameters=[{type=L0 site=w0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="content"
     v2 = PropGet v1 key="value"
     Return v2

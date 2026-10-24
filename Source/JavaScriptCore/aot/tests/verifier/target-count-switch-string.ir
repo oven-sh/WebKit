@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="bad" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     SwitchString v0 strings=["a"] -> case b1(), case b2(), otherwise b3()
   b1():
     Return
@@ -15,7 +14,6 @@ function f0 name="bad" parameters=[{type=anything}] results=[{type=undefined}] {
     Return
 }
 function f1 name="good" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     SwitchString v0 strings=["a", "b"] -> case b1(), case b2(), otherwise b3()
   b1():
     Return

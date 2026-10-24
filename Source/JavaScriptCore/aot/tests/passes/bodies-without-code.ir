@@ -6,7 +6,6 @@ module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Call v0 callees=[f1]
     v2 = NewClosure function=f3
@@ -22,65 +21,53 @@ function f0 kind=Module results=[{type=anything}] {
     Return v1
 }
 function f1 name="copiedIntoEntrypoint" results=[{type=anything}] {
-  b0():
     v0 = CallDirect function=f7
     v1 = CallDirect function=f10
     Return v0
 }
 function f2 name="copiedIntoEntrypoint" role=GenericEntrypoint captures=[{type=f1}] results=[{type=anything}] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers} {
-  b0(v0: f1):
     v1 = Undefined
     Return v1
 }
 function f3 name="calledByEntrypoint" results=[{type=anything}] {
-  b0():
     v0 = Undefined
     Return v0
 }
 function f4 name="calledByEntrypoint" role=GenericEntrypoint captures=[{type=f3}] results=[{type=anything}] derivation={source=f3} creator=Entrypoint{target=f3 arguments=Registers} {
-  b0(v0: f3):
     v1 = CallDirect function=f3
     Return v1
 }
 function f5 name="copiedAndCalled" results=[{type=anything}] {
-  b0():
     v0 = Undefined
     Return v0
 }
 function f6 name="copiedAndCalled" role=GenericEntrypoint captures=[{type=f5}] results=[{type=anything}] derivation={source=f5} creator=Entrypoint{target=f5 arguments=Registers} {
-  b0(v0: f5):
     v1 = Undefined
     Return v1
 }
 # Its one caller gets no code.
 function f7 name="calledFromBodyWithoutCode" results=[{type=anything}] {
-  b0():
     v0 = Undefined
     Return v0
 }
 function f8 name="calledFromBodyWithoutCode" role=GenericEntrypoint captures=[{type=f7}] results=[{type=anything}] derivation={source=f7} creator=Entrypoint{target=f7 arguments=Registers} {
-  b0(v0: f7):
     v1 = Undefined
     Return v1
 }
 function f9 name="withoutEntrypoint" results=[{type=anything}] {
-  b0():
     v0 = Undefined
     Return v0
 }
 function f10 name="outlinedFromBodyWithoutCode" role=OutlinedBody results=[{type=anything}] {
-  b0():
     v0 = Undefined
     Return v0
 }
 function f11 name="outlinedFromBodyWithCode" role=OutlinedBody results=[{type=anything}] {
-  b0():
     v0 = Undefined
     Return v0
 }
 # Nothing creates its closure, so it has no entrypoint.
 function f12 name="namedByCalleeSetAlone" results=[{type=anything}] {
-  b0():
     v0 = Undefined
     Return v0
 }

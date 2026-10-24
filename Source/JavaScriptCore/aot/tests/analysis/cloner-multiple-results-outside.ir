@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="caller" parameters=[{type=boolean}, {type=anything}, {type=number}] results=[{type=anything}, {type=number}] {
-  b0(v0: boolean, v1: anything, v2: number):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3()
@@ -20,7 +19,6 @@ function f0 name="caller" parameters=[{type=boolean}, {type=anything}, {type=num
     Return v3
 }
 function f1 name="pair" parameters=[{type=anything}, {type=number}] results=[{type=anything}, {type=number}] {
-  b0(v0: anything, v1: number):
     v2 = Results v0, v1
     Return v2
 }

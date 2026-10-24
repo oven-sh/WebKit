@@ -19,7 +19,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-
 // The entry of the table that the callee is known to be. Validation compares the call with it.
 struct CalledBuiltin {
     BuiltinOverloadID overload;
@@ -47,7 +46,10 @@ struct ConventionCall {
 
 class CallEmitter final : public OperationEmitter {
 public:
-    explicit CallEmitter(CodeGenerator&);
+    explicit CallEmitter(CodeGenerator& generator)
+        : OperationEmitter(generator)
+    {
+    }
 
     void generateCall(const ValueContext&);
     void generateConstruct(const ValueContext&);
@@ -68,6 +70,8 @@ public:
     void tailCallByConvention(const OperationContext&, const ConventionCall&);
     void requireCallableBeforeTailCall(const OperationContext&, Boxed callee, std::optional<ThrowSite> siteThatNamesCallee = std::nullopt);
     void didEmitTailCall();
+    // Says what the program calls the callee, where it calls it anything.
+    static std::optional<ThrowSite> siteThatNamesCallee(const ValueContext&);
 
     void returnValues(const TerminatorContext&, std::span<const Operand>);
     void returnMisfit(Boxed);
@@ -77,9 +81,9 @@ private:
     enum class TargetKind : uint8_t { Function, Address, Stub };
 
     struct CallTarget {
-        static CallTarget function(FunctionID, uint16_t entry);
-        static CallTarget address(LValue);
-        static CallTarget stub(StubKey, std::optional<uint32_t> immediate);
+        static CallTarget function(FunctionID calledFunction, uint16_t entry) { return { .kind = TargetKind::Function, .calledFunction = calledFunction, .entry = entry }; }
+        static CallTarget address(LValue calledAddress) { return { .kind = TargetKind::Address, .calledAddress = calledAddress }; }
+        static CallTarget stub(StubKey calledStub, std::optional<uint32_t> immediate) { return { .kind = TargetKind::Stub, .calledStub = calledStub, .immediate = immediate }; }
 
         TargetKind kind { TargetKind::Function };
         FunctionID calledFunction;
@@ -98,6 +102,11 @@ private:
         uint16_t entry { primaryEntry };
     };
 
+    struct StackWord {
+        uint32_t index;
+        LValue value;
+    };
+
     static bool isUndefinedConstant(LValue);
     Boxed thisOrUndefined(ValueID);
     Vector<Boxed, 8> boxedOperands(std::span<const ValueID>);
@@ -111,10 +120,11 @@ private:
     B3::PatchpointValue* emitCall(const OperationContext&, const CallTarget&, const PlacedArguments&, std::span<const ArgumentLocation> results, const CallOptions&);
     void defineResultsOfCall(const ValueContext&, std::span<const ArgumentLocation> results, B3::PatchpointValue*);
     Operand resultOfCall(const ArgumentLocation&, LValue);
-
+    void chooseStubThatCallsValue(ConventionCall&, LValue& countOperand);
 
     void meetLandingOfMisfit(const ValueContext&, LValue returned);
     void emitTailCall(const OperationContext&, const CallTarget&, const PlacedArguments&);
+    B3::PatchpointValue* leaveAfterFrameTeardown(std::span<const B3::ConstrainedValue> inRegisters, std::span<const StackWord>, const Invocable<void(CCallHelpers&)> auto& leave);
     void jumpAfterFrameTeardown(const CallTarget&, const PlacedArguments&);
     void callFromArgumentListFrame(const CallTarget&, const PlacedArguments&);
     void tailCallValue(const ValueContext&, const ValueCall&);

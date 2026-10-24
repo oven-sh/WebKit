@@ -35,8 +35,6 @@ function f0 name="nothingElseWrites" parameters=[{type=env L0}] results=[{type=a
   b6() frequency=Unlikely:
     v12 = Undefined
     Return v12
-}
-# CHECK-LABEL: function f0 name="nothingElseWrites"
 # CHECK: b0(v0: env L0):
 # CHECK-NEXT: [[end0]]: anything = GetEnvironmentField v0 layout=L0 field=1
 # CHECK-NEXT: [[position0]]: anything = GetEnvironmentField v0 layout=L0
@@ -62,6 +60,7 @@ function f0 name="nothingElseWrites" parameters=[{type=env L0}] results=[{type=a
 # CHECK-NEXT: [[leaves0]]():
 # CHECK-NEXT: PutEnvironmentField v0, [[carried0]] layout=L0
 # CHECK-NEXT: Jump -> next b5()
+}
 
 # An unlikely path that runs other code leaves for the copy. The variable is read on the way back, and tested for an integer there and where the loop makes it
 function f1 name="unlikelyPathRunsOtherCode" parameters=[{type=env L0}, {type=anything}, {type=string}] results=[{type=anything}] {
@@ -94,8 +93,6 @@ function f1 name="unlikelyPathRunsOtherCode" parameters=[{type=env L0}, {type=an
   b8() frequency=Unlikely:
     v15 = Undefined
     Return v15
-}
-# CHECK-LABEL: function f1 name="unlikelyPathRunsOtherCode"
 # CHECK: b0(
 # CHECK-NEXT: Jump -> next [[header1]]()
 # CHECK-NEXT: b1({{*}}: i32):
@@ -127,6 +124,7 @@ function f1 name="unlikelyPathRunsOtherCode" parameters=[{type=env L0}, {type=an
 # CHECK: [[toCall1]]() frequency=Unlikely:
 # CHECK-NEXT: PutEnvironmentField v0, {{*}} layout=L0
 # CHECK-NEXT: Jump -> next [[call1]](
+}
 
 # A likely path that runs other code leaves as well: the loop turns without it
 function f2 name="likelyPathRunsOtherCode" parameters=[{type=env L0}, {type=anything}, {type=boolean}] results=[{type=anything}] {
@@ -155,8 +153,6 @@ function f2 name="likelyPathRunsOtherCode" parameters=[{type=env L0}, {type=anyt
   b7() frequency=Unlikely:
     v12 = Undefined
     Return v12
-}
-# CHECK-LABEL: function f2 name="likelyPathRunsOtherCode"
 # CHECK: b0(
 # CHECK-NEXT: Jump -> next [[header2]]()
 # CHECK-NEXT: b1({{*}}: number):
@@ -175,6 +171,7 @@ function f2 name="likelyPathRunsOtherCode" parameters=[{type=env L0}, {type=anyt
 # CHECK: = TypeTest [[entering2]] testedType=number
 # CHECK: [[toCall2]]():
 # CHECK-NEXT: PutEnvironmentField v0, {{*}} layout=L0
+}
 
 # Every turn runs other code: nothing is left to turn without it
 function f3 name="everyTurnRunsOtherCode" parameters=[{type=env L0}, {type=anything}] results=[{type=anything}] {
@@ -197,8 +194,6 @@ function f3 name="everyTurnRunsOtherCode" parameters=[{type=env L0}, {type=anyth
   b5() frequency=Unlikely:
     v9 = Undefined
     Return v9
-}
-# CHECK-LABEL: function f3 name="everyTurnRunsOtherCode"
 # CHECK: b0(
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1():
@@ -208,6 +203,7 @@ function f3 name="everyTurnRunsOtherCode" parameters=[{type=env L0}, {type=anyth
 # CHECK-NEXT: Undefined
 # CHECK-NEXT: Return
 # CHECK-NEXT: }
+}
 
 # A read ahead of the loop stands for the read of the first turn. A variable that only some turns read is read where it was
 function f4 name="readOnOnePath" parameters=[{type=env L0}, {type=boolean}, {type=number}] results=[{type=anything}] {
@@ -229,13 +225,12 @@ function f4 name="readOnOnePath" parameters=[{type=env L0}, {type=boolean}, {typ
     Jump -> next b1(v9)
   b5():
     Return v4
-}
-# CHECK-LABEL: function f4 name="readOnOnePath"
 # CHECK: b0(
 # CHECK-NEXT: Integer
 # CHECK-NEXT: Jump -> next b1(v3)
 # CHECK: b3():
 # CHECK-NEXT: = GetEnvironmentField v0 layout=L0 field=2
+}
 
 # Two environments of one layout may be one object
 function f5 name="storeThroughAnotherEnvironment" parameters=[{type=env L0}, {type=env L0}] results=[{type=anything}] {
@@ -259,16 +254,14 @@ function f5 name="storeThroughAnotherEnvironment" parameters=[{type=env L0}, {ty
   b5() frequency=Unlikely:
     v10 = Undefined
     Return v10
-}
-# CHECK-LABEL: function f5 name="storeThroughAnotherEnvironment"
 # CHECK: b0(
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: = GetEnvironmentField v0 layout=L0
+}
 
 function f6 name="variableOfModule" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     Jump -> next b1()
   b1():
     LoopHint
@@ -287,8 +280,6 @@ function f6 name="variableOfModule" parameters=[{type=number}] results=[{type=an
   b5() frequency=Unlikely:
     v8 = Undefined
     Return v8
-}
-# CHECK-LABEL: function f6 name="variableOfModule"
 # CHECK: b0(
 # CHECK-NEXT: [[first6]]: anything = GetModuleVariable variable=g0
 # CHECK-NEXT: Jump -> next [[tests6]]([[first6]])
@@ -304,6 +295,7 @@ function f6 name="variableOfModule" parameters=[{type=number}] results=[{type=an
 # CHECK: [[leaves6]]():
 # CHECK-NEXT: PutModuleVariable {{*}} variable=g0
 # CHECK-NEXT: Jump -> next b4()
+}
 
 # The path that would leave is entered with a guard, and the copy would be entered there from two tests: two guards do not join
 function f7 name="guardOnTheEdgeThatWouldLeave" parameters=[{type=env L0}, {type=anything}, {type=Array}] results=[{type=anything}] {
@@ -336,8 +328,6 @@ function f7 name="guardOnTheEdgeThatWouldLeave" parameters=[{type=env L0}, {type
   b7():
     v18 = Undefined
     Return v18
-}
-# CHECK-LABEL: function f7 name="guardOnTheEdgeThatWouldLeave"
 # CHECK: b0(
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1():
@@ -350,6 +340,7 @@ function f7 name="guardOnTheEdgeThatWouldLeave" parameters=[{type=env L0}, {type
 # CHECK-NEXT: Undefined
 # CHECK-NEXT: Return
 # CHECK-NEXT: }
+}
 
 # The loop inside is where the time goes: the loop around it would turn for nothing without it
 function f8 name="loopInsideRunsOtherCode" parameters=[{type=env L0}, {type=anything}, {type=number}] results=[{type=anything}] {
@@ -381,8 +372,6 @@ function f8 name="loopInsideRunsOtherCode" parameters=[{type=env L0}, {type=anyt
   b7():
     v16 = Undefined
     Return v16
-}
-# CHECK-LABEL: function f8 name="loopInsideRunsOtherCode"
 # CHECK: b0(
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1():
@@ -394,6 +383,7 @@ function f8 name="loopInsideRunsOtherCode" parameters=[{type=env L0}, {type=anyt
 # CHECK-NEXT: Undefined
 # CHECK-NEXT: Return
 # CHECK-NEXT: }
+}
 
 # Undefined and null are turned away where the text enters the loop, and the copy throws in its turn. With nothing left that throws by the language's rules, the store waits.
 # The text is read behind a test that may end the loop: the first turn, in the copy, has read it when it is read on the way into the loop
@@ -433,8 +423,6 @@ function f9 name="textMayBeUndefined" parameters=[{type=env L0}, {type=anything}
   b8():
     v22 = Undefined
     Return v22
-}
-# CHECK-LABEL: function f9 name="textMayBeUndefined"
 # CHECK: b0(
 # CHECK-NEXT: Jump -> next [[header9]]()
 # CHECK-NEXT: [[header9]]():
@@ -457,6 +445,7 @@ function f9 name="textMayBeUndefined" parameters=[{type=env L0}, {type=anything}
 # CHECK: : 2147483648):
 # CHECK-NEXT: PutEnvironmentField v0, {{*}} layout=L0
 # CHECK: Jump -> next [[header9]]()
+}
 
 # Reading a character throws for lack of memory alone, while it resolves a rope: by the language it never throws. A store waits across it, also where a turn may store ahead of the first read
 function f10 name="storeAheadOfTheRead" parameters=[{type=env L0}, {type=string}] results=[{type=anything}] {
@@ -483,8 +472,6 @@ function f10 name="storeAheadOfTheRead" parameters=[{type=env L0}, {type=string}
   b5():
     v14 = Undefined
     Return v14
-}
-# CHECK-LABEL: function f10 name="storeAheadOfTheRead"
 # CHECK: LoopHint
 # CHECK: = Increment
 # CHECK-NOT: PutEnvironmentField
@@ -492,6 +479,7 @@ function f10 name="storeAheadOfTheRead" parameters=[{type=env L0}, {type=string}
 # CHECK-NOT: PutEnvironmentField
 # CHECK: Jump -> next b1(
 # CHECK: PutEnvironmentField v0, {{*}} layout=L0
+}
 
 # The loop ends at its first test as a rule. What is read behind that test is not read ahead of the loop
 function f11 name="endsAtItsFirstTest" parameters=[{type=env L0}, {type=anything}] results=[{type=anything}] {
@@ -514,10 +502,9 @@ function f11 name="endsAtItsFirstTest" parameters=[{type=env L0}, {type=anything
   b4():
     v11 = Undefined
     Return v11
-}
-# CHECK-LABEL: function f11 name="endsAtItsFirstTest"
 # CHECK: b0(
 # CHECK-NOT: field=1
 # CHECK: LoopHint
 # CHECK: = StrictEq
 # CHECK: = GetEnvironmentField v0 layout=L0 field=1
+}

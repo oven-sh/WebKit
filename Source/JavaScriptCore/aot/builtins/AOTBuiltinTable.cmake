@@ -61,6 +61,7 @@ set(JavaScriptCore_AOT_BUILTIN_TABLE_MODEL_FUNCTIONS
 set(JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_HEADERS
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTBuiltinFeatures.h"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTBuiltinIDs.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTBuiltinTableEnums.h"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTBuiltinTableWords.h"
 )
 
@@ -95,4 +96,5 @@ set(JavaScriptCore_AOT_BUILTIN_TABLE_EXPORTED_HEADERS
 set(JavaScriptCore_AOT_BUILTIN_TABLE_EXPORTED_GENERATED_HEADERS
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTBuiltinFeatures.h"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTBuiltinIDs.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTBuiltinTableEnums.h"
 )

@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="reserveInMap" parameters=[{type=Map<anything, anything>}, {type=i32}, {type=anything}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: Map<anything, anything>, v1: i32, v2: anything, v3: anything):
     ReserveCollectionCapacity v0, v1, v1, v1
     Return
 }
@@ -15,7 +14,6 @@ function f0 name="reserveInMap" parameters=[{type=Map<anything, anything>}, {typ
 # CHECK-NEXT: stub PollAtPrologue x1
 
 function f1 name="reserveInSet" parameters=[{type=Set<anything>}, {type=i32}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: Set<anything>, v1: i32, v2: anything):
     ReserveCollectionCapacity v0, v1, v1, v1
     Return
 }
@@ -24,7 +22,6 @@ function f1 name="reserveInSet" parameters=[{type=Set<anything>}, {type=i32}, {t
 # CHECK-NEXT: stub PollAtPrologue x1
 
 function f2 name="isFull" parameters=[{type=Set<anything>}] results=[{type=boolean}] {
-  b0(v0: Set<anything>):
     v1 = IsCollectionTableFull v0
     Return v1
 }

@@ -9,9 +9,12 @@
 
 #include "AOTInlineCall.h"
 #include "AOTOperationEmitter.h"
+#include "AOTSchemaInlineBuiltins.h"
 #include "PropertyOffset.h"
 #include <optional>
 #include <span>
+
+#define AOT_DECLARE_INLINE_BUILTIN_GENERATOR(name) void generate##name(const InlineCall&);
 
 namespace JSC { namespace AOT { namespace Typed {
 

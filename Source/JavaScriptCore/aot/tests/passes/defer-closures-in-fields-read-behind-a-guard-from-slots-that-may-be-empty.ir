@@ -14,22 +14,18 @@ layout L1 name="MayBeEmpty" fields=[{key="run" declared={type=object} flow={prot
 # CHECK: layout L0 {{*}}deferral=CapturesNothing deferredFunction=f3}
 
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 
 function f1 name="makes" module=m0 results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f3
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewObject layout=L1 fields=[]
     Return v1
-}
-# CHECK-LABEL: function f1 name="makes"
 # CHECK: v0: f3 = NewClosure function=f3 [isMadeOnDemand]
+}
 
 function f2 name="readsBehindTest" module=m0 parameters=[{type=L0|L1}] results=[{type=anything}] {
-  b0(v0: L0|L1):
     v1 = HasNoFieldOutsideSlot v0
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2: guard):
@@ -37,13 +33,11 @@ function f2 name="readsBehindTest" module=m0 parameters=[{type=L0|L1}] results=[
     Return v3
   b2():
     Return
-}
-# CHECK-LABEL: function f2 name="readsBehindTest"
 # CHECK: b1(v2: guard):
 # CHECK-NEXT: = GetDeferredClosureSlotOrUndefined v0, v2 key="run" receivers=[L0, L1] level=Expected
 # CHECK-NEXT: Return
+}
 
 function f3 name="overNothing" module=m0 kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }

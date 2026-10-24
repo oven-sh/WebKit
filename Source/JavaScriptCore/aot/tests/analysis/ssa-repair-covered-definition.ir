@@ -9,7 +9,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="definedTwiceInOneBlock" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
-  b0(v0: anything, v1: number):
     v2 = Add v1, v1
     Jump -> next b1()
   b1() handler=b3():
@@ -51,7 +50,6 @@ function f0 name="definedTwiceInOneBlock" parameters=[{type=anything}, {type=num
 # CHECK-NEXT: }
 
 function f1 name="definedInTwoArms" parameters=[{type=boolean}, {type=anything}, {type=number}] results=[{type=number}] {
-  b0(v0: boolean, v1: anything, v2: number):
     v3 = Add v2, v2
     Branch v0 -> taken b1(), notTaken b3()
   b1() handler=b5():
@@ -97,7 +95,6 @@ function f1 name="definedInTwoArms" parameters=[{type=boolean}, {type=anything},
 # ARMS-NEXT: }
 
 function f2 name="handlerKeepsEarlierDefinition" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = Add v1, v1
     Jump -> next b1()
   b1() handler=b3():
@@ -126,7 +123,6 @@ function f2 name="handlerKeepsEarlierDefinition" parameters=[{type=anything}, {t
 # EARLIER-NEXT: }
 
 function f3 name="definedInFrontOfBranch" parameters=[{type=boolean}, {type=anything}, {type=number}] results=[{type=number}] {
-  b0(v0: boolean, v1: anything, v2: number):
     v3 = Add v2, v2
     Jump -> next b1()
   b1() handler=b4():
@@ -159,7 +155,6 @@ function f3 name="definedInFrontOfBranch" parameters=[{type=boolean}, {type=anyt
 # BRANCH-NEXT: }
 
 function f4 name="nobodyReadsVariable" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
-  b0(v0: anything, v1: number):
     v2 = Add v1, v1
     Jump -> next b1()
   b1() handler=b3():

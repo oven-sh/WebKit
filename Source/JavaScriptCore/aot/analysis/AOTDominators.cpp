@@ -17,24 +17,11 @@ namespace {
 
 using SplitNodeID = ID<struct SplitNodeIDTag>;
 
-class SplitNodeDump {
-public:
-    SplitNodeDump(BlockID block, bool isTerminator)
-        : m_block(block)
-        , m_isTerminator(isTerminator)
-    {
-    }
+struct SplitNodeDump {
+    void dump(PrintStream& out) const { out.print(BlockIDDump { block }, isTerminator ? ".terminator" : ""); }
 
-    void dump(PrintStream& out) const
-    {
-        out.print(BlockIDDump(m_block));
-        if (m_isTerminator)
-            out.print(".terminator");
-    }
-
-private:
-    BlockID m_block;
-    bool m_isTerminator;
+    BlockID block;
+    bool isTerminator;
 };
 
 class SplitBlockGraph {
@@ -45,7 +32,44 @@ public:
     template<typename T> using Map = IndexMap<SplitNodeID, T>;
     using List = Vector<SplitNodeID, 4>;
 
-    explicit SplitBlockGraph(const CFG&);
+    explicit SplitBlockGraph(const CFG& cfg)
+        : m_cfg(cfg)
+    {
+        unsigned numberOfBlocks = m_cfg.numNodes();
+        m_blockOfNode.reserveInitialCapacity(numberOfBlocks);
+        m_terminatorOfBlock.reserveInitialCapacity(numberOfBlocks);
+        for (unsigned index = 0; index < numberOfBlocks; ++index) {
+            m_blockOfNode.append(m_cfg.node(index));
+            m_terminatorOfBlock.append(headOf(BlockID(index)));
+        }
+        for (unsigned index = 0; index < numberOfBlocks; ++index) {
+            BlockID block = m_cfg.node(index);
+            if (!block || !m_cfg.hasHandler(block))
+                continue;
+            m_terminatorOfBlock[index] = Node(m_blockOfNode.size());
+            m_blockOfNode.append(block);
+        }
+
+        unsigned numberOfNodes = numNodes();
+        m_firstSuccessor.reserveInitialCapacity(numberOfNodes + 1);
+        m_firstSuccessor.append(0);
+        for (unsigned index = 0; index < numberOfNodes; ++index) {
+            appendSuccessorsOf(Node(index));
+            m_firstSuccessor.append(m_successors.size());
+        }
+
+        m_firstPredecessor.fill(0, numberOfNodes + 1);
+        for (Node successor : m_successors)
+            ++m_firstPredecessor[successor.index() + 1];
+        for (unsigned index = 0; index < numberOfNodes; ++index)
+            m_firstPredecessor[index + 1] += m_firstPredecessor[index];
+        m_predecessors.grow(m_successors.size());
+        Vector<uint32_t> nextPredecessor = m_firstPredecessor;
+        for (unsigned index = 0; index < numberOfNodes; ++index) {
+            for (Node successor : successors(Node(index)))
+                m_predecessors[nextPredecessor[successor.index()]++] = Node(index);
+        }
+    }
 
     Node root() const { return headOf(m_cfg.root()); }
     unsigned numNodes() const { return m_blockOfNode.size(); }
@@ -59,14 +83,45 @@ public:
     Node headOf(BlockID block) const { return Node(block.index()); }
     Node terminatorOf(BlockID block) const { return m_terminatorOfBlock[block.index()]; }
 
-    SplitNodeDump dump(Node) const;
-    void dump(PrintStream&) const;
+    SplitNodeDump dump(Node node) const
+    {
+        if (!node)
+            return { BlockID(), false };
+        BlockID block = m_blockOfNode[node.index()];
+        return { block, node != headOf(block) };
+    }
+
+    void dump(PrintStream& out) const
+    {
+        for (unsigned index = 0; index < numNodes(); ++index) {
+            Node from = node(index);
+            if (!from)
+                continue;
+            out.print(dump(from), " ->");
+            for (Node successor : successors(from))
+                out.print(" ", dump(successor));
+            out.println();
+        }
+    }
 
 private:
-    void createNodes();
-    void appendSuccessorsOf(Node);
-    void computeSuccessors();
-    void computePredecessors();
+    void appendSuccessorsOf(Node node)
+    {
+        BlockID block = m_blockOfNode[node.index()];
+        if (!block)
+            return;
+        std::span<const BlockID> blockSuccessors = m_cfg.successors(block);
+        if (m_cfg.hasHandler(block)) {
+            if (node == headOf(block)) {
+                m_successors.append(terminatorOf(block));
+                m_successors.append(headOf(blockSuccessors.back()));
+                return;
+            }
+            blockSuccessors = blockSuccessors.first(blockSuccessors.size() - 1);
+        }
+        for (BlockID successor : blockSuccessors)
+            m_successors.append(headOf(successor));
+    }
 
     std::span<const Node> entriesOf(Node node, const Vector<Node>& entries, const Vector<uint32_t>& firstEntry) const
     {
@@ -83,105 +138,6 @@ private:
     Vector<Node> m_predecessors;
     Vector<uint32_t> m_firstPredecessor;
 };
-
-SplitBlockGraph::SplitBlockGraph(const CFG& cfg)
-    : m_cfg(cfg)
-{
-    createNodes();
-    computeSuccessors();
-    computePredecessors();
-}
-
-void SplitBlockGraph::createNodes()
-{
-    unsigned numberOfBlocks = m_cfg.numNodes();
-    m_blockOfNode.reserveInitialCapacity(numberOfBlocks);
-    m_terminatorOfBlock.reserveInitialCapacity(numberOfBlocks);
-    for (unsigned index = 0; index < numberOfBlocks; ++index) {
-        m_blockOfNode.append(m_cfg.node(index));
-        m_terminatorOfBlock.append(headOf(BlockID(index)));
-    }
-    for (unsigned index = 0; index < numberOfBlocks; ++index) {
-        BlockID block = m_cfg.node(index);
-        if (!block || !m_cfg.hasHandler(block))
-            continue;
-        m_terminatorOfBlock[index] = Node(m_blockOfNode.size());
-        m_blockOfNode.append(block);
-    }
-}
-
-void SplitBlockGraph::appendSuccessorsOf(Node node)
-{
-    BlockID block = m_blockOfNode[node.index()];
-    if (!block)
-        return;
-
-    std::span<const BlockID> blockSuccessors = m_cfg.successors(block);
-    if (!m_cfg.hasHandler(block)) {
-        for (BlockID successor : blockSuccessors)
-            m_successors.append(headOf(successor));
-        return;
-    }
-
-    if (node == headOf(block)) {
-        m_successors.append(terminatorOf(block));
-        m_successors.append(headOf(blockSuccessors.back()));
-        return;
-    }
-
-    for (BlockID successor : blockSuccessors.first(blockSuccessors.size() - 1))
-        m_successors.append(headOf(successor));
-}
-
-void SplitBlockGraph::computeSuccessors()
-{
-    unsigned numberOfNodes = numNodes();
-    m_firstSuccessor.reserveInitialCapacity(numberOfNodes + 1);
-    m_firstSuccessor.append(0);
-    for (unsigned index = 0; index < numberOfNodes; ++index) {
-        appendSuccessorsOf(Node(index));
-        m_firstSuccessor.append(m_successors.size());
-    }
-}
-
-void SplitBlockGraph::computePredecessors()
-{
-    unsigned numberOfNodes = numNodes();
-    m_firstPredecessor.fill(0, numberOfNodes + 1);
-    for (Node successor : m_successors)
-        ++m_firstPredecessor[successor.index() + 1];
-    for (unsigned index = 0; index < numberOfNodes; ++index)
-        m_firstPredecessor[index + 1] += m_firstPredecessor[index];
-
-    m_predecessors.grow(m_successors.size());
-    Vector<uint32_t> nextPredecessor = m_firstPredecessor;
-    for (unsigned index = 0; index < numberOfNodes; ++index) {
-        Node predecessor(index);
-        for (Node successor : successors(predecessor))
-            m_predecessors[nextPredecessor[successor.index()]++] = predecessor;
-    }
-}
-
-SplitNodeDump SplitBlockGraph::dump(Node node) const
-{
-    if (!node)
-        return SplitNodeDump(BlockID(), false);
-    BlockID block = m_blockOfNode[node.index()];
-    return SplitNodeDump(block, node != headOf(block));
-}
-
-void SplitBlockGraph::dump(PrintStream& out) const
-{
-    for (unsigned index = 0; index < numNodes(); ++index) {
-        Node from = node(index);
-        if (!from)
-            continue;
-        out.print(dump(from), " ->");
-        for (Node successor : successors(from))
-            out.print(" ", dump(successor));
-        out.println();
-    }
-}
 
 } // anonymous namespace
 
@@ -308,13 +264,6 @@ void Dominators::computePlaces() const
         RELEASE_ASSERT(places[index].idom == tree.idom(BlockID(index)));
 }
 
-auto Dominators::splitBlockDominators() const -> const SplitBlockDominators&
-{
-    if (!m_splitBlockDominators)
-        m_splitBlockDominators = makeUnique<SplitBlockDominators>(m_cfg, m_selfCheck);
-    return *m_splitBlockDominators;
-}
-
 void Dominators::computeChildren() const
 {
     unsigned numberOfBlocks = m_cfg.numNodes();
@@ -368,7 +317,6 @@ BlockID Dominators::nearestCommonDominator(BlockID a, BlockID b) const
     return a;
 }
 
-// A covered block may leave for its handler in front of its terminator, so the terminator dominates what the block dominates, less what the handler reaches without coming through the block again.
 const BitVector& Dominators::blocksReachedFromHandlerOfDominator() const
 {
     if (m_blocksReachedFromHandlerOfDominator)
@@ -389,7 +337,6 @@ const BitVector& Dominators::blocksReachedFromHandlerOfDominator() const
                 return predecessor != block && isReached.quickGet(ancestorAtDepth(predecessor, depthOfChildren).index());
             });
         };
-        // The children stand in reverse post order, so only an edge of a cycle leads from a child to one in front of it.
         bool didReachChild;
         do {
             didReachChild = false;
@@ -406,24 +353,18 @@ const BitVector& Dominators::blocksReachedFromHandlerOfDominator() const
 
 bool Dominators::terminatorDominates(BlockID from, BlockID to) const
 {
-    if (!m_cfg.isReachable(from) || !m_cfg.isReachable(to))
+    if (!m_cfg.isReachable(from) || !m_cfg.isReachable(to) || from == to || m_cfg.reversePostOrderIndex(to) < m_cfg.reversePostOrderIndex(from))
         return false;
-    if (from == to)
-        return false;
-    // A dominator comes before the blocks it dominates in reverse post order.
-    if (m_cfg.reversePostOrderIndex(to) < m_cfg.reversePostOrderIndex(from))
-        return false;
-    if (!m_cfg.hasHandler(from))
-        return strictlyDominates(from, to);
-
-    return strictlyDominates(from, to) && !blocksReachedFromHandlerOfDominator().quickGet(ancestorAtDepth(to, depthOf(from) + 1).index());
+    return strictlyDominates(from, to) && (!m_cfg.hasHandler(from) || !blocksReachedFromHandlerOfDominator().quickGet(ancestorAtDepth(to, depthOf(from) + 1).index()));
 }
 
 bool Dominators::terminatorDominatesInSplitGraph(BlockID from, BlockID to) const
 {
     if (from == to || !m_cfg.isReachable(from) || !m_cfg.isReachable(to))
         return false;
-    const SplitBlockDominators& split = splitBlockDominators();
+    if (!m_splitBlockDominators)
+        m_splitBlockDominators = makeUnique<SplitBlockDominators>(m_cfg, m_selfCheck);
+    const SplitBlockDominators& split = *m_splitBlockDominators;
     return split.dominators.dominates(split.graph.terminatorOf(from), split.graph.headOf(to));
 }
 

@@ -10,7 +10,6 @@ layout L1 kind=Instance name="Stored" constructor=f3 fields=[{key="a" declared={
 variable g0 name="listed" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="stored" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToNumber v1
@@ -33,21 +32,18 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="valuesOfListed" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = Builtin builtin=ObjectValues
     v2 = Call v1, -, v0
     Return v2
 }
 function f2 name="valuesOfStored" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g1
     v1 = Builtin builtin=ObjectValues
     v2 = Call v1, -, v0
     Return v2
 }
 function f3 name="Stored" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L1
     v3 = NewObject v2 layout=L1
     Jump -> next b1()

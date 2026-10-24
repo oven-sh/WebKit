@@ -8,32 +8,48 @@
 #if ENABLE(AOT)
 
 #include "AOTLimits.h"
-#include "AOTPropertyCachesStructureRows.h"
 #include "AOTPropertyCachesWords.h"
 #include "AOTVector.h"
 #include "CollectionScope.h"
 #include "RememberedSlot.h"
+#include "Structure.h"
 #include <algorithm>
-#include <array>
 #include <bit>
 #include <memory>
-#include <optional>
 #include <span>
 #include <wtf/BitVector.h>
-#include <wtf/Noncopyable.h>
 #include <wtf/SegmentedVector.h>
 #include <wtf/TZoneMalloc.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
-namespace JSC {
-
-class VM;
-
-namespace AOT {
+namespace JSC { namespace AOT {
 
 class CacheRegistry;
 class CustomAccessorTable;
+
+class StructureRows {
+    WTF_MAKE_NONCOPYABLE(StructureRows);
+public:
+    static StructureRows& singleton();
+
+    uint32_t rowOf(StructureID id) const { return *wordFor(id); }
+    void setRowOf(StructureID id, uint32_t row) { *wordFor(id) = row; }
+    const uint32_t* rowsForStructureIDZero() const { return m_rowsForStructureIDZero; }
+
+private:
+    StructureRows();
+
+    uint32_t* wordFor(StructureID id) const
+    {
+        ASSERT(id && !id.isNuked());
+        return m_rowsForStructureIDZero + (id.bits() >> StructureRowWords::granuleShift);
+    }
+
+    uint32_t* m_rowsForStructureIDZero { nullptr };
+};
+
+static_assert(sizeof(Structure) >= 1u << StructureRowWords::granuleShift);
 
 class RowDisplacementTable {
     WTF_MAKE_NONCOPYABLE(RowDisplacementTable);
@@ -68,7 +84,7 @@ public:
     bool hasChainDependentCell(StructureID, uint32_t column) const;
     size_t removeChainDependentCells(StructureID, uint32_t column);
 
-    bool hasRow(StructureID id) const { return !!m_structureRows.rowOf(id); }
+    bool hasRow(StructureID id) const { return !!baseOf(id); }
     void releaseRowOf(StructureID);
     void clear();
 
@@ -77,20 +93,13 @@ public:
     template<typename Functor> void forEachSlot(const Functor&) const;
 
 private:
-    struct Bases {
-        uint32_t first { 1 };
-        uint32_t limit { 0 };
-        uint32_t next { 1 };
-        uint32_t end { 1 };
-    };
-
     class RowColumns {
         WTF_MAKE_NONCOPYABLE(RowColumns);
     public:
         RowColumns() = default;
         ~RowColumns() { clear(); }
         unsigned size() const { return m_size; }
-        std::span<const uint16_t> span() const { return { isInline() ? m_storage : outOfLineStorage(), m_size }; }
+        std::span<const uint16_t> span() const { return { const_cast<RowColumns*>(this)->storage(), m_size }; }
         const uint16_t* begin() const { return span().data(); }
         const uint16_t* end() const { return span().data() + m_size; }
         void append(uint16_t);
@@ -98,9 +107,10 @@ private:
 
     private:
         static constexpr uint16_t inlineCapacity = sizeof(uint16_t*) / sizeof(uint16_t);
-        bool isInline() const { return m_capacity == inlineCapacity; }
-        uint16_t* outOfLineStorage() const
+        uint16_t* storage()
         {
+            if (m_capacity == inlineCapacity)
+                return m_storage;
             uint16_t* result;
             memcpy(&result, m_storage, sizeof(result));
             return result;
@@ -122,40 +132,33 @@ private:
         uint32_t row { 0 };
     };
 
-    static uint32_t indexOf(uint32_t base, uint32_t column) { return base + column; }
-    static bool isRowMarker(const PackedSlot& cell) { return cell.name == rowMarkerTag; }
-
     const PackedSlot& cellAt(SlotAccess access, uint32_t index) const { return m_planes[static_cast<unsigned>(access)][index].get(); }
     const PackedSlot& reservationAt(uint32_t index) const { return cellAt(SlotAccess::Read, index); }
-    void writeCell(SlotAccess, uint32_t index, PackedSlot);
-    BitVector& dependsOnChain(SlotAccess access) { return m_dependsOnChain[static_cast<unsigned>(access)]; }
-    const BitVector& dependsOnChain(SlotAccess access) const { return m_dependsOnChain[static_cast<unsigned>(access)]; }
-    void setDependsOnChain(SlotAccess, uint32_t index, bool);
+    PackedSlot emptyCellNamed(uint16_t column) const { return *PackedSlot::tryPack(Slot::createWithoutPayload(StructureID(), Slot::Kind::Empty, 0), column, m_cageBase); }
+    void writeCell(SlotAccess, uint32_t index, PackedSlot, bool dependsOnChain);
+    bool dependsOnChain(SlotAccess access, uint32_t index) const { return m_dependsOnChain[static_cast<unsigned>(access)].get(index); }
 
     uint32_t baseOf(StructureID id) const { return m_structureRows.rowOf(id); }
-    uint32_t rowNumberAt(uint32_t base) const { return reservationAt(base).payload; }
-    Row& rowAt(uint32_t base) { return m_rows[rowNumberAt(base)]; }
-    const Row& rowAt(uint32_t base) const { return m_rows[rowNumberAt(base)]; }
-    uint32_t baseOfOccupant(uint32_t index) const;
-    bool isReservedFor(uint32_t index, uint32_t column) const { return reservationAt(index).name == column; }
+    uint32_t indexOfReservedCell(StructureID, uint32_t column) const;
+    Row& rowAt(uint32_t base) { return m_rows[reservationAt(base).payload]; }
+    uint32_t baseOfOccupant(uint32_t index) const { return reservationAt(index).name == rowMarkerTag ? index : index - reservationAt(index).name; }
 
     uint64_t freeCellsFrom(uint32_t index) const;
     uint32_t firstFittingBase(uint32_t from, std::span<const uint16_t> columns) const;
     uint32_t findBase(std::span<const uint16_t> columns, uint32_t preferredBase = 0);
     uint32_t findBaseEvictingRows(std::span<const uint16_t> columns, StructureID keep);
     void compactBases();
-    void reserve(uint32_t index, uint16_t tag, uint32_t payload);
+    void reserve(uint32_t index, PackedSlot);
     void vacate(uint32_t index);
-    uint32_t allocateRowNumberFor(StructureID);
-    uint32_t createRow(Structure*, uint32_t column);
+    uint32_t createRow(Structure*, uint16_t column);
     uint32_t moveRow(uint32_t base, std::optional<uint16_t> columnToAdd);
-    uint32_t ensureIndex(Structure*, uint32_t column);
+    uint32_t ensureIndex(Structure*, uint16_t column);
     void release(uint32_t base);
     void clearCell(SlotAccess, uint32_t index);
-    // The first access commits a page of a plane, so a region that was never written is not even read.
     bool canHaveCellAt(SlotAccess access, uint32_t index) const { return m_writtenRegions[static_cast<unsigned>(access)]->cards()[index * sizeof(PackedSlot) >> regionShift] != RememberedSlotSet::neverWrittenCard; }
     size_t sweepRow(VM&, uint32_t rowNumber);
-    void decommitEmptyPagesOfPlanes();
+
+    static constexpr uint32_t firstBase = 1;
 
     VM& m_vm;
     const CustomAccessorTable& m_customAccessors;
@@ -163,7 +166,9 @@ private:
     uintptr_t m_cageBase { 0 };
     std::array<RememberedSlot<PackedSlot>*, numberOfSlotAccesses> m_planes { };
     uint64_t* m_occupied { nullptr };
-    Bases m_bases;
+    uint32_t m_limitOfBases { 0 };
+    uint32_t m_nextBase { firstBase };
+    uint32_t m_endOfBases { firstBase };
     SegmentedVector<Row, 128> m_rows;
     Vector<uint32_t> m_freeRows;
     BitVector m_rowsThatCanOutliveWhatTheyName;
@@ -171,7 +176,7 @@ private:
     std::array<RecentRow, 256> m_recentRows { };
     std::array<BitVector, numberOfSlotAccesses> m_dependsOnChain;
     std::array<std::unique_ptr<RememberedSlotSet>, numberOfSlotAccesses> m_writtenRegions;
-    uint32_t m_evictionHand { 1 };
+    uint32_t m_evictionHand { firstBase };
 };
 
 static_assert(RowDisplacementTable::rowMarkerColumn == PackedSlot::noName && RowDisplacementTable::maxColumn < RowDisplacementTable::rowMarkerTag && RowDisplacementTable::rowMarkerTag <= PackedSlot::maxName);
@@ -188,14 +193,12 @@ void RowDisplacementTable::forEachSlot(const Functor& functor) const
         const Row& row = m_rows[number];
         if (!row.owner)
             continue;
-        uint32_t base = baseOf(row.owner);
         for (uint16_t column : row.columns) {
-            uint32_t index = indexOf(base, column);
-            for (SlotAccess access : { SlotAccess::Read, SlotAccess::Store, SlotAccess::Define }) {
+            uint32_t index = baseOf(row.owner) + column;
+            for (SlotAccess access : allSlotAccesses) {
                 const PackedSlot& cell = cellAt(access, index);
-                if (cell.isEmpty() || cell.kind() == Slot::Kind::Empty)
-                    continue;
-                functor(cell.unpack(row.owner, m_cageBase, dependsOnChain(access).get(index)), static_cast<uint32_t>(column), access);
+                if (!cell.isEmpty() && cell.kind() != Slot::Kind::Empty)
+                    functor(cell.unpack(row.owner, m_cageBase, dependsOnChain(access, index)), static_cast<uint32_t>(column), access);
             }
         }
     }

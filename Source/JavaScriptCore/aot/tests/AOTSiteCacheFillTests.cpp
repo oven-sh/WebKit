@@ -23,7 +23,6 @@ std::span<const NativeTest> siteCacheFillTests();
 static constexpr ASCIILiteral programText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -31,7 +30,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="read" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="shared"
     Return v1
 }
@@ -191,7 +189,6 @@ static constexpr ASCIILiteral programWithClassText = R"IR(module m0 path="main.j
 entry module=m0
 layout L0 kind=Instance name="Holder" module=m0 constructor=f1
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -207,29 +204,24 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Holder" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2
 }
 function f2 name="shared" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=7
     Return v1
 }
 function f3 name="size" kind=Getter flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=3
     Return v1
 }
 function f4 name="callShared" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="shared"
     v2 = Call v1, v0 calleeKey="shared"
     Return v2
 }
 function f5 name="readSize" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="size"
     Return v1
 }

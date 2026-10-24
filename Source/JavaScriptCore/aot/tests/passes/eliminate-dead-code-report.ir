@@ -5,19 +5,15 @@
 module m0 path="main.ts" displayPath="main.ts"
 typesite w0 module=m0 position=10 kind=Variable
 function f0 name="inside" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     ReportMismatch v0 expectedType=undefined|null|number site=w0
     Return v0
-}
-# CHECK-LABEL: function f0 name="inside"
 # CHECK: b0(v0: number):
 # CHECK-NEXT: Return v0
+}
 function f1 name="mayFail" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     ReportMismatch v0 expectedType=undefined|null|number site=w0
     Return v0
-}
-# CHECK-LABEL: function f1 name="mayFail"
 # CHECK: b0(v0: anything):
 # CHECK-NEXT: ReportMismatch v0 expectedType=undefined|null|number site=w0
 # CHECK-NEXT: Return v0
+}

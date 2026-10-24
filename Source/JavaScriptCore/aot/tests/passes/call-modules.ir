@@ -32,7 +32,6 @@ entry module=m0
 # What a module imports comes before it, and a module comes once: b, which a imports, then a; the barrel has no code, and what it imports has run. The cycle from b to the entry ends here, in the build.
 # The body of the data stores what the data exports. Nothing is called for a module that runs nothing and leads to nothing that runs. Nothing is stored for a module without a state.
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     PutModuleVariable v0 variable=g1
     Return
@@ -55,7 +54,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK-NEXT: Return [[nothingAgain]]
 # CHECK-NEXT: }
 function f1 name="a" module=m1 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     PutModuleVariable v0 variable=g0
     Return
@@ -67,24 +65,19 @@ function f1 name="a" module=m1 kind=Module results=[{type=anything}] {
 # CHECK-NEXT: Return
 
 function f2 name="barrel" module=m2 kind=Module results=[{type=anything}] {
-  b0():
     Return
-}
-# CHECK-LABEL: function f2 name="barrel"
 # CHECK-NEXT: b0():
 # CHECK-NEXT: Return
+}
 function f3 name="b" module=m3 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=2
     PutModuleVariable v0 variable=g1
     Return
-}
-# CHECK-LABEL: function f3 name="b"
 # CHECK-NOT: ModuleEvaluation
 # CHECK-NOT: CallDirect
+}
 
 function f4 name="c" module=m4 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
-  b0():
     v0 = Integer integer=4
     PutModuleVariable v0 variable=g2
     Return
@@ -92,21 +85,17 @@ function f4 name="c" module=m4 kind=CommonJsModule flags=[IsSloppy] results=[{ty
 # CHECK-LABEL: function f4 name="c"{{*}}HasOnlyDirectCallers, IsNeverCalledByHost] {
 # CHECK-NOT: ModuleEvaluation
 function f5 name="d" module=m5 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=3
     PutModuleVariable v0 variable=g3
     Return
-}
-# CHECK-LABEL: function f5 name="d"
 # CHECK-NOT: ModuleEvaluation
 # CHECK-NOT: CallDirect
-function f6 name="empty" module=m6 kind=Module results=[{type=anything}] {
-  b0():
-    Return
 }
-# CHECK-LABEL: function f6 name="empty"
+function f6 name="empty" module=m6 kind=Module results=[{type=anything}] {
+    Return
 # CHECK-NEXT: b0():
 # CHECK-NEXT: Return
+}
 
 # The code of a module has one caller, and stack traces show it in place of the function that calls it.
 # CHECK-LABEL: function f7 name="main"{{*}}HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f0} {

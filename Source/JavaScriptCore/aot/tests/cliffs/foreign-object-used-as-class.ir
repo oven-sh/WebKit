@@ -31,7 +31,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Node" module=m0 constructor=f1 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="weight" declared={type=number} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = FinishClass v1 layout=L0
@@ -46,7 +45,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v8
 }
 function f1 name="Node" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0 fields=[]
     PropSet v3, v3 key="next" mode=Strict
@@ -54,24 +52,20 @@ function f1 name="Node" kind=BaseConstructor flags=[HasNewTarget] parameters=[{t
     Return v3
 }
 function f2 name="readsInstances" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="next"
     v2 = PropGet v1 key="weight"
     Return v2
 }
 function f3 name="readsForeignObject" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="weight"
     Return v1
 }
 function f4 name="readsBoth" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="weight"
     Return v1
 }
 # The conversion that fails stands in a function of its own: one node of the flow analysis stands for every value of a function that has passed a test, once a test of that function can fail
 function f5 name="passesForeignObject" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = Convert v1 declared={type=L0} illTypedCause=FromLooseType

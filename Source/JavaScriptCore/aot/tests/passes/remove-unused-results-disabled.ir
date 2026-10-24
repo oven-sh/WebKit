@@ -8,7 +8,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="oneOfThree" role=ResultWorker parameters=[{type=int}] results=[{type=number}, {type=number}, {type=number}] creator=ResultWorker{origin=f1} {
-  b0(v0: int):
     v1 = Add v0, v0
     v2 = Mul v0, v0
     v3 = Sub v0, v0
@@ -27,14 +26,12 @@ function f0 name="oneOfThree" role=ResultWorker parameters=[{type=int}] results=
 function f1 name="oneOfThree" role=ResultWrapper parameters=[{type=int}] results=[{type=Array<number>}] creator=ResultWrapper{worker=f0}
 
 function f2 name="readsSecond" parameters=[{type=int}] results=[{type=number}] {
-  b0(v0: int):
     v1 = CallDirect v0 function=f0
     v2 = ResultAt v1 index=1
     Return v2
-}
-# CHECK-LABEL: function f2 name="readsSecond"
 # CHECK-NEXT: b0(v0: int):
 # CHECK-NEXT: v1:{{*}}= CallDirect v0 function=f0
 # CHECK-NEXT: v2: number = ResultAt v1 index=1
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
+}

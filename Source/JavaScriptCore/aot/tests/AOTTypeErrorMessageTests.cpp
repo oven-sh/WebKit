@@ -46,7 +46,6 @@ typesite w0 module=m0 position=200 kind=Assertion text="written behind as"
 typesite w1 module=m0 position=210 kind=Parameter text="written for a parameter"
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = PropGet v0 key="input" [isFreeName]
@@ -73,16 +72,13 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="area" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 function f2 name="perimeter" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0
     Return v1
 }
 function f3 name="checks" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Check v0 castType=string|Array site=w0
     v3 = Check v1 castType=string|Array site=w1
     v4 = Add v2, v3
@@ -258,7 +254,7 @@ static void testIsObject(LoadedProgram& program)
     AOT_TEST_CHECK(isDescribedAs(program, TypeRecord(noPrimitives, { RuntimeCellTest::isObject() }), "object"_s));
     AOT_TEST_CHECK(isDescribedAs(program, TypeRecord({ PrimitiveSet::String }, { RuntimeCellTest::isObject() }), "object | string"_s));
     AOT_TEST_CHECK(isDescribedAs(program, TypeRecord(allPrimitives, { RuntimeCellTest::isObject() }), "any"_s));
-    AOT_TEST_CHECK(hasMessage(program, jsNumber(3), TypeRecord(noPrimitives, { RuntimeCellTest::isObject() }), "expected object, got number 3"_s));
+    AOT_TEST_CHECK(hasMessage(program, jsNumber(3), TypeRecord(noPrimitives, { RuntimeCellTest::isObject() }), "expected object, got number"_s));
 }
 
 static void testIsObjectOfListedLayouts(LoadedProgram& program)
@@ -267,8 +263,8 @@ static void testIsObjectOfListedLayouts(LoadedProgram& program)
     TypeRecord either(noPrimitives, { RuntimeCellTest::isObject() }, { }, std::nullopt, std::nullopt, layoutSetOfBoth(program));
     AOT_TEST_CHECK(isDescribedAs(program, circle, "Circle"_s));
     AOT_TEST_CHECK(isDescribedAs(program, either, "Circle | Square"_s));
-    AOT_TEST_CHECK(hasMessage(program, jsDoubleNumber(1.5), circle, "expected Circle, got number 1.5"_s));
-    AOT_TEST_CHECK(hasMessage(program, jsBoolean(true), either, "expected Circle | Square, got boolean true"_s));
+    AOT_TEST_CHECK(hasMessage(program, jsDoubleNumber(1.5), circle, "expected Circle, got number"_s));
+    AOT_TEST_CHECK(hasMessage(program, jsBoolean(true), either, "expected Circle | Square, got boolean"_s));
     AOT_TEST_CHECK(hasMessage(program, evaluate(program, "Symbol()"_s), either, "expected Circle | Square, got symbol"_s));
     AOT_TEST_CHECK(hasMessage(program, evaluate(program, "1n << 70n"_s), either, "expected Circle | Square, got bigint"_s));
 }
@@ -277,8 +273,8 @@ static void testIsCallable(LoadedProgram& program)
 {
     TypeRecord type(noPrimitives, { RuntimeCellTest::isCallable() });
     AOT_TEST_CHECK(isDescribedAs(program, type, "Function"_s));
-    AOT_TEST_CHECK(hasMessage(program, jsBoolean(true), type, "expected Function, got boolean true"_s));
-    AOT_TEST_CHECK(hasMessage(program, jsDoubleNumber(1.5), type, "expected Function, got number 1.5"_s));
+    AOT_TEST_CHECK(hasMessage(program, jsBoolean(true), type, "expected Function, got boolean"_s));
+    AOT_TEST_CHECK(hasMessage(program, jsDoubleNumber(1.5), type, "expected Function, got number"_s));
     AOT_TEST_CHECK(isDescribedAs(program, TypeRecord(noPrimitives, { RuntimeCellTest::isObject(), RuntimeCellTest::isCallable() }), "object"_s));
 }
 
@@ -300,7 +296,7 @@ static void testCellTypeIs(LoadedProgram& program)
     AOT_TEST_CHECK(isDescribedAs(program, arraysOf(string), "string[]"_s));
     AOT_TEST_CHECK(isDescribedAs(program, arraysOf(anything), "any[]"_s));
     AOT_TEST_CHECK(isDescribedAs(program, arraysOf(circle), "Circle[]"_s));
-    AOT_TEST_CHECK(hasMessage(program, jsNumber(4), arraysOf(string), "expected string[], got number 4"_s));
+    AOT_TEST_CHECK(hasMessage(program, jsNumber(4), arraysOf(string), "expected string[], got number"_s));
     AOT_TEST_CHECK(hasMessage(program, evaluate(program, "new Map"_s), arraysOf(string), "expected string[], got built-in Map"_s));
     AOT_TEST_CHECK(hasMessage(program, evaluate(program, "new Uint8Array(1)"_s), arraysOf(anything), "expected any[], got built-in Uint8Array"_s));
     AOT_TEST_CHECK(hasMessage(program, evaluate(program, "({ length: 0 })"_s), arraysOf(anything), "expected any[], got untyped object"_s));
@@ -317,7 +313,7 @@ static void testShapeIn(LoadedProgram& program)
     AOT_TEST_CHECK(isDescribedAs(program, either, "Circle | Square"_s));
     AOT_TEST_CHECK(isDescribedAs(program, twoTests, "Circle | Square"_s));
     AOT_TEST_CHECK(isDescribedAs(program, TypeRecord({ PrimitiveSet::Undefined }, { RuntimeCellTest::shapeIn(shapeTestOf(program, layoutSetOf(program, "Circle"_s))) }), "Circle | undefined"_s));
-    AOT_TEST_CHECK(hasMessage(program, jsDoubleNumber(1.5), circle, "expected Circle, got number 1.5"_s));
+    AOT_TEST_CHECK(hasMessage(program, jsDoubleNumber(1.5), circle, "expected Circle, got number"_s));
     AOT_TEST_CHECK(hasMessage(program, allocateObject(program, "Square"_s), circle, "expected Circle, got Square"_s));
 }
 
@@ -393,10 +389,10 @@ static void testPrimitives(LoadedProgram& program)
     AOT_TEST_CHECK(isDescribedAs(program, TypeRecord({ PrimitiveSet::String }), "string"_s));
     AOT_TEST_CHECK(isDescribedAs(program, TypeRecord({ PrimitiveSet::True, PrimitiveSet::False }), "boolean"_s));
     AOT_TEST_CHECK(isDescribedAs(program, TypeRecord(everyNumber | Primitives { PrimitiveSet::Undefined }), "number | undefined"_s));
-    AOT_TEST_CHECK(hasMessage(program, evaluate(program, "'wrong'"_s), TypeRecord(everyNumber | Primitives { PrimitiveSet::Undefined }), "expected number | undefined, got string \"wrong\""_s));
-    AOT_TEST_CHECK(hasMessage(program, jsNumber(7), TypeRecord({ PrimitiveSet::String }), "expected string, got number 7"_s));
-    AOT_TEST_CHECK(hasMessage(program, jsNumber(5), TypeRecord({ PrimitiveSet::True, PrimitiveSet::False }), "expected boolean, got number 5"_s));
-    AOT_TEST_CHECK(hasMessage(program, jsString(program.vm(), String("abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij"_s)), TypeRecord(everyNumber), "expected number, got string \"abcdefghijabcdefghijabcdefghijabcdefghij...\""_s));
+    AOT_TEST_CHECK(hasMessage(program, evaluate(program, "'wrong'"_s), TypeRecord(everyNumber | Primitives { PrimitiveSet::Undefined }), "expected number | undefined, got string"_s));
+    AOT_TEST_CHECK(hasMessage(program, jsNumber(7), TypeRecord({ PrimitiveSet::String }), "expected string, got number"_s));
+    AOT_TEST_CHECK(hasMessage(program, jsNumber(5), TypeRecord({ PrimitiveSet::True, PrimitiveSet::False }), "expected boolean, got number"_s));
+    AOT_TEST_CHECK(hasMessage(program, jsString(program.vm(), String("abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghij"_s)), TypeRecord(everyNumber), "expected number, got string"_s));
     AOT_TEST_CHECK(hasMessage(program, evaluate(program, "new (class Legacy { })"_s), TypeRecord(everyNumber), "expected number, got untyped Legacy"_s));
 }
 
@@ -411,7 +407,7 @@ static void testLiteralStrings(LoadedProgram& program)
     AOT_TEST_CHECK(isDescribedAs(program, TypeRecord({ PrimitiveSet::String }, { }, { red, green }), "\"red\" | \"green\""_s));
     AOT_TEST_CHECK(isDescribedAs(program, TypeRecord({ PrimitiveSet::String }, { }, { red, green, circle, square }), "\"red\" | \"green\" | \"circle\" | \"square\""_s));
     AOT_TEST_CHECK(isDescribedAs(program, TypeRecord({ PrimitiveSet::String }, { }, { red, green, circle, square, either }), "\"red\" | \"green\" | \"circle\" | \"square\" | ..."_s));
-    AOT_TEST_CHECK(hasMessage(program, jsDoubleNumber(1.5), TypeRecord({ PrimitiveSet::String }, { }, { red, green, circle, square, either }), "expected \"red\" | \"green\" | \"circle\" | \"square\" | ..., got number 1.5"_s));
+    AOT_TEST_CHECK(hasMessage(program, jsDoubleNumber(1.5), TypeRecord({ PrimitiveSet::String }, { }, { red, green, circle, square, either }), "expected \"red\" | \"green\" | \"circle\" | \"square\" | ..., got number"_s));
 }
 
 static Typed::TypeSiteID typeSiteOfKind(LoadedProgram& program, TypeSiteKind kind)

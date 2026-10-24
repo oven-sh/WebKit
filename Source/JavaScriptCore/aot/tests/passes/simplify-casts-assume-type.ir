@@ -6,36 +6,29 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="operandIsInside" parameters=[{type=i32}] results=[{type=number}] {
-  b0(v0: i32):
     v1 = AssumeType v0 castType=number
     Return v1
-}
-# CHECK-LABEL: function f0 name="operandIsInside"
 # CHECK-NEXT: b0(v0: i32):
 # CHECK-NEXT: Return v0
+}
 
 function f1 name="operandIsInsideThroughUpcast" parameters=[{type=i32}] results=[{type=number}] {
-  b0(v0: i32):
     v1 = Upcast v0 castType=anything
     v2 = AssumeType v1 castType=number
     Return v2
-}
-# CHECK-LABEL: function f1 name="operandIsInsideThroughUpcast"
 # CHECK-NEXT: b0(v0: i32):
 # CHECK-NEXT: Return v0
+}
 
 function f2 name="stillNarrows" parameters=[{type=anything}] results=[{type=number}] {
-  b0(v0: anything):
     v1 = AssumeType v0 castType=number
     Return v1
-}
-# CHECK-LABEL: function f2 name="stillNarrows"
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: number = AssumeType v0 castType=number
 # CHECK-NEXT: Return v1
+}
 
 function f3 name="equalOneDominates" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
-  b0(v0: anything, v1: boolean):
     v2 = AssumeType v0 castType=number
     v3 = AssumeType v0 castType=number
     v4 = Add v2, v3
@@ -45,8 +38,6 @@ function f3 name="equalOneDominates" parameters=[{type=anything}, {type=boolean}
     Return v5
   b2():
     Return v4
-}
-# CHECK-LABEL: function f3 name="equalOneDominates"
 # CHECK-NEXT: b0(v0: anything, v1: boolean):
 # CHECK-NEXT: v2: number = AssumeType v0 castType=number
 # CHECK-NEXT: v3: number = AssumeType v0 castType=number
@@ -54,13 +45,12 @@ function f3 name="equalOneDominates" parameters=[{type=anything}, {type=boolean}
 # CHECK: b1():
 # CHECK-NEXT: v5: number = AssumeType v0 castType=number
 # CHECK-NEXT: Return v5
+}
 
 function f4 name="predictionIsNarrower" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 ~ i32 = AssumeType v0 castType=number
     Return v1
-}
-# CHECK-LABEL: function f4 name="predictionIsNarrower"
 # CHECK-NEXT: b0(v0: number):
 # CHECK-NEXT: v1: number ~ i32 = AssumeType v0 castType=number
 # CHECK-NEXT: Return v1
+}

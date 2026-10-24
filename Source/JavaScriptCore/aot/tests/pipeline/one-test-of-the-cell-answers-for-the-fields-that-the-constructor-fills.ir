@@ -8,7 +8,6 @@ entry module=m0
 layout L0 kind=Instance name="Node" constructor=f1 fields=[{key="first" declared={type=anything}}, {key="second" declared={type=anything}}, {key="third" declared={type=anything}}, {key="size" declared={type=number} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = FinishClass v1 layout=L0
@@ -29,7 +28,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v16
 }
 function f1 name="Node" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = GetConstructPrototype v0 layout=L0
     v4 = NewObject v3 layout=L0
     PropSet v4, v1 key="first" mode=Strict
@@ -47,10 +45,9 @@ function f2 name="readsThree" parameters=[{type=L0 flags=[IsExpected]}] results=
     v4 = StrictEq v1, v2
     v5 = StrictEq v4, v3
     Return v5
-}
-# CHECK-LABEL: function f2 name="readsThree"
 # CHECK-COUNT-1: = HasBirthFieldsFilled
 # CHECK-NOT: IsSlotFilled
+}
 function f3 name="callsBetweenTwoReads" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything ~ L0, v1: anything):
     v2 = PropGet v0 key="first"
@@ -58,15 +55,13 @@ function f3 name="callsBetweenTwoReads" parameters=[{type=L0 flags=[IsExpected]}
     v4 = PropGet v0 key="second"
     v5 = StrictEq v2, v4
     Return v5
-}
-# CHECK-LABEL: function f3 name="callsBetweenTwoReads"
 # CHECK-COUNT-2: = HasBirthFieldsFilled
+}
 function f4 name="readsTheNumber" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ L0):
     v1 = PropGet v0 key="size"
     Return v1
-}
-# CHECK-LABEL: function f4 name="readsTheNumber"
 # CHECK: number = GetSlot {{*}} key="size" {{*}}[holdsDeclaredType]
 # CHECK-COUNT-1: = HasBirthFieldsFilled
 # CHECK-NOT: IsSlotFilled
+}

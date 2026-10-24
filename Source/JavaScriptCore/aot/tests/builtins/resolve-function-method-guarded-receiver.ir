@@ -9,27 +9,20 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="callOnPristineFunction" parameters=[{type=Function<pristine[Names]>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Function<pristine[Names]>, v1: anything):
     v2 = PropGet v0 key="call"
     v3 = Call v2, v0, v1 calleeKey="call"
     Return v3
-}
-# CHECK-LABEL: function f0 name="callOnPristineFunction"
 # CHECK: v2: builtin(FunctionPrototypeCall) = Builtin builtin=FunctionPrototypeCall
 # CHECK-NEXT: v3: anything = CallBuiltin v0, v1 overload=FunctionPrototypeCall/0
-# PLACED-LABEL: function f0 name="callOnPristineFunction"
 # PLACED-NOT: TypeTest
+}
 
 function f1 name="callOnFunction" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = PropGet v0 key="call"
     v3 = Call v2, v0, v1 calleeKey="call"
     Return v3
-}
-# CHECK-LABEL: function f1 name="callOnFunction"
 # CHECK: v2: anything = PropGet v0 key="call"
 # CHECK-NEXT: v3: anything = Call v2, v0, v1 calleeKey="call"
-# PLACED-LABEL: function f1 name="callOnFunction"
 # PLACED-NEXT: b0(v0: function, v1: anything):
 # PLACED-NEXT: [[isAsCreated1]]: boolean = IsPristine v0 builtinClass=Function aspects=[Names]
 # PLACED-NEXT: Branch [[isAsCreated1]] -> taken
@@ -43,18 +36,15 @@ function f1 name="callOnFunction" parameters=[{type=function}, {type=anything}] 
 # PLACED-NEXT: Jump -> next [[generic1]]([[read1]])
 # PLACED-NEXT: [[generic1]]([[callee1]]: anything{{*}}) frequency=Unlikely:
 # PLACED-NEXT: anything = Call [[callee1]], v0, v1 calleeKey="call"
+}
 
 function f2 name="applyOnKnownClosure" parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
-  b0(v0: anything, v1: Array):
     v2 = NewClosure function=f7
     v3 = PropGet v2 key="apply"
     v4 = Call v3, v2, v0, v1 calleeKey="apply"
     Return v4
-}
-# CHECK-LABEL: function f2 name="applyOnKnownClosure"
 # CHECK: v3: anything = PropGet v2 key="apply"
 # CHECK-NEXT: v4: anything = Call v3, v2, v0, v1 calleeKey="apply"
-# PLACED-LABEL: function f2 name="applyOnKnownClosure"
 # PLACED: [[isAsCreated2]]: boolean = IsPristine v2 builtinClass=Function aspects=[Names]
 # PLACED-NEXT: Branch [[isAsCreated2]] -> taken
 # PLACED-NOT: PropGet
@@ -67,17 +57,14 @@ function f2 name="applyOnKnownClosure" parameters=[{type=anything}, {type=Array}
 # PLACED-NEXT: Jump -> next [[generic2]]([[read2]])
 # PLACED-NEXT: [[generic2]]([[callee2]]: anything{{*}}) frequency=Unlikely:
 # PLACED-NEXT: anything = Call [[callee2]], v2, v0, v1 calleeKey="apply"
+}
 
 function f3 name="bindOnFunction" parameters=[{type=function}, {type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: function, v1: anything, v2: number):
     v3 = PropGet v0 key="bind"
     v4 = Call v3, v0, v1, v2 calleeKey="bind"
     Return v4
-}
-# CHECK-LABEL: function f3 name="bindOnFunction"
 # CHECK: v3: anything = PropGet v0 key="bind"
 # CHECK-NEXT: v4: anything = Call v3, v0, v1, v2 calleeKey="bind"
-# PLACED-LABEL: function f3 name="bindOnFunction"
 # PLACED: [[isAsCreated3]]: boolean = IsPristine v0 builtinClass=Function aspects=[Names]
 # PLACED-NEXT: Branch [[isAsCreated3]] -> taken
 # PLACED-NOT: PropGet
@@ -90,28 +77,23 @@ function f3 name="bindOnFunction" parameters=[{type=function}, {type=anything}, 
 # PLACED-NEXT: Jump -> next [[generic3]]([[read3]])
 # PLACED-NEXT: [[generic3]]([[callee3]]: anything{{*}}) frequency=Unlikely:
 # PLACED-NEXT: anything = Call [[callee3]], v0, v1, v2 calleeKey="bind"
+}
 
 function f4 name="constructorOfPristineFunction" parameters=[{type=Function<pristine[Names]>}] results=[{type=anything}] {
-  b0(v0: Function<pristine[Names]>):
     v1 = PropGet v0 key="constructor"
     Return v1
-}
-# CHECK-LABEL: function f4 name="constructorOfPristineFunction"
 # CHECK: v1: builtin(Function) = Builtin builtin=Function
+}
 
 function f5 name="readsWithoutCall" parameters=[{type=function}] results=[{type=anything}] {
-  b0(v0: function):
     v1 = PropGet v0 key="length"
     v2 = PropGet v0 key="name"
     v3 = PropGet v0 key="constructor"
     Return v3
-}
-# CHECK-LABEL: function f5 name="readsWithoutCall"
 # CHECK: v1: anything = PropGet v0 key="length"
 # CHECK-NEXT: v2: anything = PropGet v0 key="name"
 # CHECK-NEXT: v3: anything = PropGet v0 key="constructor"
 # A function has length and name itself, and inherits constructor
-# PLACED-LABEL: function f5 name="readsWithoutCall"
 # PLACED-NEXT: b0(v0: function):
 # PLACED-NEXT: v1: anything = PropGet v0 key="length"
 # PLACED: v2: anything = PropGet v0 key="name"
@@ -122,17 +104,14 @@ function f5 name="readsWithoutCall" parameters=[{type=function}] results=[{type=
 # PLACED: frequency=Unlikely:
 # PLACED-NEXT: [[read5]]: anything = PropGet v0 key="constructor"
 # PLACED-NEXT: Return [[read5]]
+}
 
 function f6 name="callOnAsyncFunction" parameters=[{type=AsyncFunction}, {type=anything}] results=[{type=anything}] {
-  b0(v0: AsyncFunction, v1: anything):
     v2 = PropGet v0 key="call"
     v3 = Call v2, v0, v1 calleeKey="call"
     Return v3
-}
-# CHECK-LABEL: function f6 name="callOnAsyncFunction"
 # CHECK: v2: anything = PropGet v0 key="call"
 # CHECK-NEXT: v3: anything = Call v2, v0, v1 calleeKey="call"
-# PLACED-LABEL: function f6 name="callOnAsyncFunction"
 # PLACED-NOT: IsPristine
 # PLACED: v2: anything = PropGet v0 key="call"
 # PLACED-NOT: IsPristine
@@ -143,8 +122,8 @@ function f6 name="callOnAsyncFunction" parameters=[{type=AsyncFunction}, {type=a
 # PLACED-NEXT: frequency=Unlikely
 # PLACED-NEXT: anything = Call v2, v0, v1 calleeKey="call"
 # PLACED-NOT: IsPristine
+}
 
 function f7 name="target" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }

@@ -7,30 +7,24 @@ entry module=m0
 runtimefunction id=65 function=f1
 
 function f0 name="" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Boolean boolean=true
     v1 = CallDirect v0 function=f5
     Return v1
 }
 function f1 name="map" role=Library flags=[HasThis] enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Call v1 callees=[f4]
     Return v2
 }
 function f2 name="firstCandidate" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f3 name="secondCandidate" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f4 name="callback" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f5 name="caller" role=OutlinedBody parameters=[{type=boolean}] results=[{type=anything}] {
-  b0(v0: boolean):
     v1 = CallDirect function=f6
     Jump -> next b1()
   b1():
@@ -54,15 +48,12 @@ function f5 name="caller" role=OutlinedBody parameters=[{type=boolean}] results=
     Return v11
 }
 function f6 name="once" role=OutlinedBody results=[{type=undefined}] {
-  b0():
     Return
 }
 function f7 name="inLoop" role=OutlinedBody results=[{type=undefined}] {
-  b0():
     Return
 }
 function f8 name="inRareBlock" role=OutlinedBody results=[{type=undefined}] {
-  b0():
     Return
 }
 # CHECK: f0 size 3 mass 3.000000: f5*1.000000

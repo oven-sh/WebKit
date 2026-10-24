@@ -57,7 +57,6 @@ FailedTests::FailedTests(FunctionAnalyses& analyses)
     });
 }
 
-// What is none of several types is not one of them.
 static bool failsWhereOtherFailed(FunctionAnalyses& analyses, const Value& test, const Value& failed)
 {
     if (haveSameCondition(analyses, failed, test))
@@ -68,7 +67,6 @@ static bool failsWhereOtherFailed(FunctionAnalyses& analyses, const Value& test,
 
 EarlierTest FailedTests::find(const Value& test, BlockID at) const
 {
-    // Where no test has failed nobody needs the identity of the subject or the dominators to know it.
     if (m_failedEdges.isEmpty() && m_failedSwitches.isEmpty())
         return EarlierTest::Unknown;
     if (!m_analyses.cfg().isReachable(at))

@@ -7,7 +7,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point"
 function f0 name="setsOfObjectsAlonePassLimit" results=[{type=boolean}] {
-  b0():
 # REPEAT: i = 0..70
     v%(i) = NewObject layout=L0 fields=[]
 # END REPEAT
@@ -19,7 +18,6 @@ function f0 name="setsOfObjectsAlonePassLimit" results=[{type=boolean}] {
 # CHECK-NEXT: gave up: true
 # CHECK-NEXT: objects: 0
 function f1 name="setsOfObjectsAloneFit" results=[{type=boolean}] {
-  b0():
 # REPEAT: i = 0..69
     v%(i) = NewObject layout=L0 fields=[]
 # END REPEAT
@@ -32,7 +30,6 @@ function f1 name="setsOfObjectsAloneFit" results=[{type=boolean}] {
 # CHECK: o0 state: DoesNotEscape
 # CHECK: o69 state: DoesNotEscape
 function f2 name="sixCopiesPassLimit" results=[{type=boolean}] {
-  b0():
 # REPEAT: i = 0..64
     v%(i) = NewObject layout=L0 fields=[]
 # END REPEAT
@@ -51,7 +48,6 @@ function f2 name="sixCopiesPassLimit" results=[{type=boolean}] {
 # CHECK: o64 state: Unknown
 # CHECK-NEXT: o64 reasons: [LimitReached]
 function f3 name="fiveCopiesFit" results=[{type=boolean}] {
-  b0():
 # REPEAT: i = 0..64
     v%(i) = NewObject layout=L0 fields=[]
 # END REPEAT

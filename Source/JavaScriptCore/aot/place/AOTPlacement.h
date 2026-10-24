@@ -9,14 +9,13 @@
 
 #include "AOTBuiltinTableRealm.h"
 #include "AOTFunctionKinds.h"
-#include "AOTGlobalBindingPlacement.h"
 #include "AOTIR.h"
 #include "AOTLayoutData.h"
 #include "AOTMethodTable.h"
 #include "AOTOperationData.h"
 #include "AOTRequestRecords.h"
 #include "AOTShapeTest.h"
-#include "AOTSiteCachePlacement.h"
+#include "AOTSiteWeight.h"
 #include "AOTSlotPlan.h"
 #include "AOTVector.h"
 #include "AOTVerifier.h"
@@ -40,17 +39,16 @@ namespace Typed {
 
 class CallGraph;
 class CallingConventions;
-class ConstantCollections;
 class EnvironmentReuse;
 class FlowResults;
 class FrameAllocation;
+class FunctionAnalyses;
 class Heat;
-class LiteralStringTable;
+struct GlobalBindingSite;
 struct KeyCellUse;
 struct PlacedSites;
 struct PlacementContext;
-struct PlacementParts;
-struct ResolvedSites;
+struct TableEncoder;
 
 struct FieldAccess {
     enum class Coverage : uint8_t {
@@ -73,7 +71,6 @@ struct FieldAccess {
     LayoutSetID membersWithField;
     ShapeTest membersWithFieldTest;
     TypeID contents;
-    // The field of every receiver holds the inner object of that receiver, which lies this far behind its start.
     std::optional<uint32_t> offsetOfInnerObject;
 };
 
@@ -104,7 +101,6 @@ struct AllocationTable {
     Vector<AllocationID> byLayout;
 };
 
-// The order word of an object whose keys are the part of an order before some fields, and its order word once those fields are created.
 struct KeyOrderContinuation {
     uint32_t orderWordBefore { 0 };
     uint32_t orderWordAfter { 0 };
@@ -122,7 +118,6 @@ struct PlacedFieldCreation {
 };
 
 inline constexpr OpcodeSet storesThatMayAdd { Opcode::PutSlotOrAdd, Opcode::PutSlots };
-// Compact code asks the run time each time, so it gets no number: the numbers of the places that remember lie close together.
 inline bool remembersKeyOrderStep(const Block& block, const Value& value) { return block.shape == CodeShape::Fast && storesThatMayAdd.contains(value.opcode); }
 
 struct KeyOrders {
@@ -162,7 +157,6 @@ struct ModuleBuiltinCell {
 
 struct StaticsPlan {
     Vector<PlacedVariable> variables;
-    // By module. A module has a word only where something may ask for what the word holds: see ModuleData::value.
     Vector<std::optional<uint32_t>> moduleValueOffsets;
     Vector<std::optional<uint32_t>> freeCellOffsets;
     Vector<ModuleBuiltinCell> moduleBuiltinCells;
@@ -205,6 +199,33 @@ struct GuardBitTable {
 bool isAwaitedBeforeClassExists(const Program&, const PlacedGuardBit&);
 bool setHoldsWhileClear(const Program&, const GuardBitTable&, std::span<const GuardBitID> members);
 
+struct GlobalBindingKey {
+    PropertyKeyID key;
+    bool seesScriptBindings { false };
+    bool isStore { false };
+    bool isForTypeOf { false };
+
+    friend auto operator<=>(const GlobalBindingKey&, const GlobalBindingKey&) = default;
+};
+
+struct PlacedGlobalBinding {
+    GlobalBindingKey key;
+    bool isStoredByName { false };
+};
+
+struct GlobalBindingTable {
+    static constexpr uint32_t seesScriptBindingsFlag = 1u << 31;
+    static constexpr uint32_t isStoredByNameFlag = 1u << 30;
+    static constexpr uint32_t isForTypeOfFlag = 1u << 29;
+    static constexpr uint32_t identifierMask = isForTypeOfFlag - 1;
+
+    JS_EXPORT_PRIVATE void dump(PrintStream&, const Program&) const;
+
+    Vector<PlacedGlobalBinding> bindings;
+};
+
+void encodeGlobalBindingTable(TableEncoder&);
+
 struct RequireEdge {
     ModuleID referrer;
     ModuleID target;
@@ -216,15 +237,12 @@ struct ConstantNumbering {
     Vector<BuiltinCellKey> builtinCells;
     Vector<uint32_t> eagerBuiltinCells;
     Vector<StringID> bigIntConstants;
-    // The keys whose cell compiled code names, in the order of their cells.
     Vector<PropertyKeyID> keyCells;
-    // Indexed by key: one more than the number of its cell, or zero.
     Vector<uint32_t> keyCellNumbersPlusOne;
     Vector<RequireEdge> requireEdges;
     Vector<StringID> requireEdgeSpecifiers;
 };
 
-// Which cell a closure of a function can be.
 enum class ClosureIdentity : uint8_t { Unknown, TableCell };
 
 struct FunctionNumbering {
@@ -235,6 +253,12 @@ struct FunctionNumbering {
     ClosureFunctionRange closureFunctions;
 };
 
+struct ResolvedSites {
+    RequestTable requests;
+    PlacedPropertyRuns propertyRuns;
+    BitVector stringConstantsInTables;
+};
+
 struct PlacementInputs {
     const FlowResults& flow;
     const CallGraph& callGraph;
@@ -242,8 +266,6 @@ struct PlacementInputs {
     const CallingConventions& callingConventions;
     const FrameAllocation& frameAllocation;
     const EnvironmentReuse& environmentReuse;
-    const LiteralStringTable& literalStrings;
-    const ConstantCollections& constantCollections;
     const SlotPlan& slots;
     const RegExpRequests& regExpRequests;
 };
@@ -251,10 +273,6 @@ struct PlacementInputs {
 class Placement {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(Placement);
 public:
-    Placement() = default;
-    JS_EXPORT_PRIVATE explicit Placement(PlacementParts&&);
-    void setResolvedSites(ResolvedSites&&);
-
     const SlotPlan& slots() const { return m_slots ? *m_slots : m_unplaced.slots; }
     const PlannedLayout& layout(LayoutID id) const { return slots().layout(id); }
     const PlacedSlot& slot(LayoutID id, FieldIndex field) const { return slots().slot(id, field); }
@@ -316,12 +334,12 @@ public:
     uint32_t closureCellNumber(FunctionID id) const { return id.index() < m_functions.closureCellNumbers.size() ? m_functions.closureCellNumbers[id.index()] : 0; }
     ClosureFunctionRange closureFunctions() const { return m_functions.closureFunctions; }
 
-    const RequestTable& requests() const { return m_requests; }
-    const PlacedPropertyRuns& propertyRuns() const { return m_propertyRuns; }
+    const RequestTable& requests() const { return m_resolvedSites.requests; }
+    const PlacedPropertyRuns& propertyRuns() const { return m_resolvedSites.propertyRuns; }
     const BitVector& typesNeededAtRunTime() const { return m_typesNeededAtRunTime; }
     // Those, and the types that code tests.
     const BitVector& typesWithCells() const { return m_typesWithCells; }
-    const BitVector& stringConstantsInTables() const { return m_stringConstantsInTables; }
+    const BitVector& stringConstantsInTables() const { return m_resolvedSites.stringConstantsInTables; }
 
     PlacedTableSizes tableSizes() const
     {
@@ -361,14 +379,61 @@ private:
     Vector<std::optional<uint32_t>> m_classRanks;
     BitVector m_layoutsOutOfUse;
     BitVector m_bodiesWithoutCodeWhenPlaced;
-    RequestTable m_requests;
-    PlacedPropertyRuns m_propertyRuns;
+    ResolvedSites m_resolvedSites;
     BitVector m_typesNeededAtRunTime;
     BitVector m_typesWithCells;
-    BitVector m_stringConstantsInTables;
     unsigned m_numberOfRegExpRecords { 0 };
     UnplacedRecords m_unplaced;
 };
+
+class SiteCaches {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(SiteCaches);
+public:
+    SiteCaches() = default;
+    SiteCaches(uint32_t count, uint32_t numberOfSitesWithoutCache)
+        : m_count(count)
+        , m_numberOfSitesWithoutCache(numberOfSitesWithoutCache)
+    {
+    }
+
+    uint32_t count() const { return m_count; }
+    uint32_t numberOfSitesWithoutCache() const { return m_numberOfSitesWithoutCache; }
+
+    JS_EXPORT_PRIVATE void dump(PrintStream&, const Program&) const;
+
+private:
+    uint32_t m_count { 0 };
+    uint32_t m_numberOfSitesWithoutCache { 0 };
+};
+
+// For a store by name whose receiver is proven to have a layout with a plain field of the name, at one place in the record of every layout that it may have: how far behind the data of the layout the record of the field lies.
+enum class NameHasColumn : bool { No, Yes };
+JS_EXPORT_PRIVATE std::optional<uint32_t> findRecordOfStoredField(const Program&, const Placement&, const Function&, const Value&, NameHasColumn);
+// Of a store that has such a record: in every layout of the receiver the slot lies in the cell and holds any value as it is, and the type of the field is that of any value.
+bool storedFieldTakesAnyValue(const Program&, const Placement&, const Function&, const Value&);
+JS_EXPORT_PRIVATE unsigned numberOfSiteCachesUsedBy(const Program&, const Placement&, const Function&, const Value&);
+// Nothing reads what a site that runs at most once would remember, so it has no cache.
+JS_EXPORT_PRIVATE bool mayReadSiteCachesAgain(FunctionAnalyses&, BlockID);
+// Caches and their states are numbered in the order of the program's text: module, function as written, the form of it that holds the site.
+struct SiteCachePosition {
+    uint32_t module { 0 };
+    uint32_t sourceFunction { 0 };
+    uint32_t function { 0 };
+    uint32_t value { 0 };
+
+    friend auto operator<=>(const SiteCachePosition&, const SiteCachePosition&) = default;
+};
+JS_EXPORT_PRIVATE SiteCachePosition siteCachePositionOf(const Program&, FunctionID, ValueID);
+struct SiteCacheRequest {
+    SiteWeight weight { 0 };
+    FunctionID function;
+    ValueID value;
+    bool runsAtMostOnce { false };
+};
+// The requests of one function, in front of the step that writes the requests of runs of stores or behind it.
+void collectSiteCacheRequests(const Program&, const Placement&, const FlowResults&, const Heat&, BuildContext&, FunctionID, bool needsWeights, Vector<SiteCacheRequest>&);
+// With requests by function: what collectSiteCacheRequests() gave for each function with a body. No value has got another number since.
+JS_EXPORT_PRIVATE SiteCaches placeSiteCaches(ProgramEditor&, const Placement&, const FlowResults&, const Heat&, BuildContext&, std::span<const Vector<SiteCacheRequest>> requestsOfFunctions = { });
 
 // What numberAndEncode() takes from one selected body by itself, for whoever has the body in the cache. Of the inputs it reads flow, heat and the slot plan.
 class BodyScansForPlacement {
@@ -384,7 +449,6 @@ public:
     // In the functions that had a body when the sites were taken: no more site caches are asked for than that.
     uint64_t numberOfOperationsWithWordForSiteCache() const;
 
-    // For numberAndEncode().
     const Vector<KeyCellUse>& keyCellUsesOf(FunctionID) const LIFETIME_BOUND;
     const Vector<GlobalBindingSite>& globalBindingSitesOf(FunctionID) const LIFETIME_BOUND;
     PlacedSites takeSites(const PlacementContext&);
@@ -395,22 +459,18 @@ private:
     std::unique_ptr<State> m_state;
 };
 
-// numberAndEncode() in three steps, for a caller that has representations chosen beside the second.
 class PlacementInSteps {
     WTF_MAKE_NONCOPYABLE(PlacementInSteps);
 public:
-    // With scans: every function that has a body was scanned as it is now.
+    // With scans: every function that has a body was scanned as it is now. Without: the first step scans them.
     PlacementInSteps(const PlacementInputs&, BuildContext&, BodyScansForPlacement*);
     ~PlacementInSteps();
 
-    // All of numbering that reads a body, and the words of global bindings.
     Placement numberWhatRepresentationsAsk(ProgramEditor&, NOESCAPE const ScopedLambda<void()>& readBodiesBesideCollectingSites);
     // Reads no body and changes nothing of the program. It leaves where it is what the first step has answered, so others may go on asking for that.
     void numberRest(Placement&);
-    // The words of sites. All of them, or those that are left: see resolveFieldAccessesOf().
     void resolveSites(ProgramEditor&, Placement&);
 
-    // Between the first step and the third, for a caller that changes the bodies in between: see resolveFieldAccesses() in AOTPlacementSteps.h.
     void prepareToResolveFieldAccesses();
     // Once for each function with a body, from any thread.
     void resolveFieldAccessesOf(const Placement&, FunctionID, Function&);
@@ -422,8 +482,6 @@ private:
 
 // The table of modules keeps the path of a file in pieces: see ModuleDirectoryData. The pieces have to be strings of the program before its strings are numbered.
 JS_EXPORT_PRIVATE void internPiecesOfModulePaths(Program&);
-JS_EXPORT_PRIVATE Placement numberAndEncode(ProgramEditor&, const PlacementInputs&, BuildContext&);
-// With scans: every function that has a body was scanned as it is now.
 Placement numberAndEncode(ProgramEditor&, const PlacementInputs&, BuildContext&, NOESCAPE const ScopedLambda<void()>& readBodiesBesideCollectingSites, BodyScansForPlacement* = nullptr);
 JS_EXPORT_PRIVATE void checkPlacement(const Program&, const PlacementInputs&, const Placement&, const SiteCaches&, BuildContext&);
 

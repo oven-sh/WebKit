@@ -9,12 +9,10 @@
 module m0 path="main.ts" displayPath="main.ts"
 typesite w0 module=m0 position=10 kind=Parameter
 function f0 name="double" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Add v0, v0
     Return v1
 }
 function f1 name="negate" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Negate v0
     Return v1
 }
@@ -28,7 +26,6 @@ function f2 name="apply" flags=[IsChecked] parameters=[{type=undefined|null|f0|f
     Return v15
 }
 function f3 name="passesKnownFunction" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f0
     v2 = CallDirect v1, v0 function=f2
     v3 = CallDirect v1, v0 function=f2

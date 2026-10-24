@@ -26,7 +26,6 @@ namespace JSC { namespace AOT {
 static constexpr ASCIILiteral programText = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="registry" [isFreeName]
     v2 = NewClosure function=f1
@@ -92,18 +91,15 @@ function f2 name="catchesCallee" parameters=[{type=anything}] results=[{type=any
     Return v7
 }
 function f3 name="throws" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="thrown" [isFreeName]
     Throw v1 @30
 }
 function f4 name="passes" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0 @40
     Return v1
 }
 function f5 name="keepsValues" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Check v1 castType=number
     v3 = Integer integer=1
     v4 = Add v2, v3
@@ -137,7 +133,6 @@ function f5 name="keepsValues" parameters=[{type=anything}, {type=anything}] res
     Return v37
 }
 function f6 name="spins" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1() handler=b2():
     LoopHint
@@ -163,7 +158,6 @@ function f7 name="cleansUp" parameters=[{type=anything}, {type=anything}] result
     Rethrow v6
 }
 function f8 name="spinsWithoutCalls" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1() handler=b2():
     LoopHint
@@ -174,7 +168,6 @@ function f8 name="spinsWithoutCalls" parameters=[{type=anything}] results=[{type
     Return v3
 }
 function f9 name="asyncCalls" flags=[IsAsync] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Await v0 @100
     v3 = Call v1 @105
     Return v3
@@ -194,7 +187,6 @@ function f10 name="catchesDirectCallee" results=[{type=anything}] {
     Return v6
 }
 function f11 name="throwsNewError" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=RangeError
     v1 = String string="made to be thrown"
     v2 = Construct v0, -, v1 @120
@@ -235,7 +227,6 @@ function f14 name="catchesNamedCallee" parameters=[{type=anything}] results=[{ty
     Return v7
 }
 function f15 name="throwsBelow" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer
     v2 = StrictEq v0, v1
     Branch v2 -> taken b1(), notTaken b2()

@@ -12,19 +12,21 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+class ElementAccessEmitter;
+
 class ArrayIntrinsicEmitter final : public BuiltinFamilyEmitter {
 public:
-    explicit ArrayIntrinsicEmitter(CodeGenerator&);
+    explicit ArrayIntrinsicEmitter(CodeGenerator& generator) : BuiltinFamilyEmitter(generator) { }
 
     void generateIsPristineArray(const ValueContext&);
     void generateArrayStorageKind(const ValueContext&);
     void generateHasContiguousIndex(const ValueContext&);
     void generateGetContiguousIndex(const ValueContext&);
     void generateGetDoubleIndex(const ValueContext&);
-    void generatePutContiguousIndex(const ValueContext&);
-    void generatePutDoubleIndex(const ValueContext&);
-    void generateNewContiguousArray(const ValueContext&);
-    void generateNewDoubleArray(const ValueContext&);
+    void generatePutContiguousIndex(const ValueContext& value) { putInBounds(value, arrayStorageFormOf(ArrayStorage::Contiguous)); }
+    void generatePutDoubleIndex(const ValueContext& value) { putInBounds(value, arrayStorageFormOf(ArrayStorage::Double)); }
+    void generateNewContiguousArray(const ValueContext& value) { newArrayOfForm(value, arrayStorageFormOf(ArrayStorage::Contiguous)); }
+    void generateNewDoubleArray(const ValueContext& value) { newArrayOfForm(value, arrayStorageFormOf(ArrayStorage::Double)); }
     void generateNewArrayLike(const ValueContext&);
     void generateNewArrayWithCapacity(const ValueContext&);
     void generateTryPutByValDirect(const ValueContext&);
@@ -33,13 +35,13 @@ public:
     void generateTruncateNewArray(const ValueContext&);
 
 private:
-    Condition isPristineArrayValue(ValueID);
+    ElementAccessEmitter& elements() { return emitter<ElementAccessEmitter>(); }
     Boxed contiguousElementOrEmpty(CellPointer array, Integer index);
     void putInBounds(const ValueContext&, const ArrayStorageForm&);
+    void newArrayOfForm(const ValueContext&, const ArrayStorageForm&);
     void newArrayOfHoles(const ValueContext&, Integer length, ValueID source, const ArrayStorageForm&, uint32_t flags);
     const ArrayStorageForm& formToConstruct(const ValueContext&) const;
     CellPointer sourceOrNull(ValueID);
-    Condition tryStore(const ValueContext&, const ArrayStorageForm&, CellPointer array, Integer index, ValueID stored);
 };
 
 static_assert(sizeof(ArrayIntrinsicEmitter) == sizeof(OperationEmitter));

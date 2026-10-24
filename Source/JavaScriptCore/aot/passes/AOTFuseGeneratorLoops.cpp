@@ -4,42 +4,73 @@
  */
 
 #include "config.h"
-#include "AOTFuseGeneratorLoops.h"
+#include "AOTPass.h"
 
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
 #include "AOTCodeSizeEstimate.h"
+#include "AOTCoroutines.h"
+#include "AOTEscapeAnalysis.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTIRBuilder.h"
 #include "AOTInlineCopy.h"
+#include "AOTLiveness.h"
+#include "AOTRegionCloner.h"
+#include "AOTResultRules.h"
+#include "AOTRuleSupport.h"
+#include "AOTSSARepair.h"
+#include "AOTSort.h"
 #include "AOTSummarizeForInlining.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <array>
+#include <functional>
+#include <initializer_list>
+#include <optional>
 #include <span>
+#include <tuple>
+#include <utility>
 #include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr uint32_t indexOfTakenTarget = 0;
-
 namespace {
 
-struct ListedStep {
-    BlockID block;
-    ValueID value;
+struct GeneratorBodyDescription {
+    FunctionID body;
+    Vector<ValueID, 8> entryArguments;
+    unsigned generatorParameter { 0 };
+    ValueID startAtCreation;
 };
 
-struct GeneratorOperations {
-    Vector<ValueID, 4> generators;
-    Vector<ListedStep, 8> steps;
+struct GeneratorStepSite {
+    ValueID step;
+    ResumeMode mode { ResumeMode::Next };
+    ValueID sent;
 };
 
-struct CandidateSearch {
-    FunctionPassContext& pass;
-    const EscapeAnalysis& escape;
-    std::span<const ListedStep> steps;
-    uint64_t inlinedBytes { 0 };
+struct FusionCandidate {
+    ValueID generator;
+    GeneratorFusionDeclineReason obstacle { GeneratorFusionDeclineReason::Unknown };
+    GeneratorBodyDescription body;
+    // The first site is body.startAtCreation: a CallDirect with one result, the value, and no sent value. Every other site is a StepGenerator.
+    Vector<GeneratorStepSite, 4> sites;
 };
+
+struct CarriedValues {
+    BitVector bodyValues;
+    BitVector callerValues;
+};
+
+struct GeneratorLoopCut {
+    ProgramPoint point;
+    unsigned index { 0 };
+    Vector<ValueID, 2> resultReads;
+};
+
+constexpr int64_t completed = -1;
+constexpr size_t startSite = 0;
 
 } // anonymous namespace
 
@@ -54,87 +85,489 @@ static bool hasListedGenerator(const Function& function)
     return false;
 }
 
-static GeneratorOperations collectGeneratorOperations(FunctionPassContext& pass)
+static Vector<ValueID, 4> listValues(FunctionAnalyses& analyses, Opcode opcode)
 {
-    GeneratorOperations operations;
-    for (BlockID block : pass.analyses.cfg().reversePostOrder()) {
-        for (ValueID id : pass.function.at(block).values) {
-            Opcode opcode = pass.function.at(id).opcode;
-            if (opcode == Opcode::NewGenerator)
-                operations.generators.append(id);
-            else if (opcode == Opcode::StepGenerator)
-                operations.steps.append(ListedStep { block, id });
+    Vector<ValueID, 4> values;
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        for (ValueID id : analyses.function().at(block).values) {
+            if (analyses.function().at(id).opcode == opcode)
+                values.append(id);
         }
     }
-    return operations;
+    return values;
 }
 
-static uint64_t codeBytesOf(const Program& program, const Function& function)
+static std::optional<GeneratorBodyDescription> describeGeneratorBody(const Program& program, const Function& caller, ValueID newGenerator)
 {
-    uint64_t bytes = 0;
-    for (const Block& block : function.blocks)
-        bytes += estimatedCodeBytes(program, function, block);
-    return bytes;
-}
+    const Value& allocation = caller.at(newGenerator);
+    RELEASE_ASSERT(allocation.opcode == Opcode::NewGenerator);
 
-// The limit on the caller is on what has been added to it. A caller that is large by itself takes in a body like any other.
-static uint64_t inlinedBytesOf(const Program& program, const Function& function)
-{
-    uint64_t bytes = 0;
-    for (const Block& block : function.blocks) {
+    const CreatorRecord::Coroutine* record = coroutineOf(program.at(allocation.function()));
+    if (!record || record->kind != CoroutineKind::Generator || !record->promiseParameter)
+        return std::nullopt;
+    uint32_t generatorParameter = *record->promiseParameter;
+
+    ValueID start;
+    for (const Block& block : caller.blocks) {
         for (ValueID id : block.values) {
-            const Value& value = function.at(id);
-            if (value.inlineFrame)
-                bytes += estimatedCodeBytes(program, function, value);
+            const Value& value = caller.at(id);
+            if (value.opcode != Opcode::CallDirect || value.function() != record->body)
+                continue;
+            std::span<const ValueID> arguments = value.argumentsOperands();
+            if (generatorParameter >= arguments.size() || arguments[generatorParameter] != newGenerator)
+                continue;
+            if (start)
+                return std::nullopt;
+            start = id;
         }
     }
-    return bytes;
+    if (!start)
+        return std::nullopt;
+    return GeneratorBodyDescription { record->body, Vector<ValueID, 8>(caller.at(start).argumentsOperands()), generatorParameter, start };
 }
 
-template<typename Matches>
-static Vector<ValueID, 4> collectMatchingUsers(const UseLists& useLists, std::span<const ValueID> values, NOESCAPE const Matches& matches)
+// FuseGeneratorLoops: whether the body can be merged into the caller.
+
+template<typename Enumeration>
+static Range rangeOf(std::initializer_list<Enumeration> values)
 {
-    Vector<ValueID, 4> users;
-    for (ValueID value : values) {
-        for (const Use& use : useLists.usesOf(value)) {
-            if (use.kind == Use::Kind::Operand && matches(use))
-                users.append(use.user);
+    Range range = Range::empty();
+    for (Enumeration value : values)
+        range = range.unionWith(Range::one(static_cast<int64_t>(value)));
+    return range;
+}
+
+static constexpr int64_t resumePointAfter(unsigned yieldIndex)
+{
+    return static_cast<int64_t>(yieldIndex) + 1;
+}
+
+static bool isYield(const Function& function, ValueID id)
+{
+    return function.at(id).opcode == Opcode::YieldBySavingFrame;
+}
+
+static AnalysisContext contextOfBody(const FunctionPassContext& pass, const FusionCandidate& candidate)
+{
+    return { pass.build, pass.program, &pass.inputs.flow, &pass.inputs.effects, candidate.body.body };
+}
+
+static BitVector collectValuesLiveAcross(FunctionAnalyses& analyses, NOESCAPE const Invocable<bool(ValueID)> auto& isTransfer)
+{
+    const Function& function = analyses.function();
+    const Liveness& liveness = analyses.liveness();
+    BitVector liveAcross(function.values.size());
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        const BlockValues& values = function.at(block).values;
+        if (std::ranges::none_of(values, isTransfer))
+            continue;
+        Liveness::LocalCalc calc(liveness, block);
+        for (uint32_t index = values.size(); index--;) {
+            ValueID transfer = values[index];
+            if (isTransfer(transfer)) {
+                calc.forEachLive([&](ValueID live) {
+                    if (live != transfer)
+                        liveAcross.set(live.index());
+                });
+            }
+            calc.execute(index);
         }
     }
-    return users;
+    return liveAcross;
 }
 
-static bool isStatusRead(const Function& function, const Use& use)
+static CarriedValues collectCarriedValues(FunctionPassContext& pass, const FusionCandidate& candidate, FunctionAnalyses& bodyAnalyses)
 {
-    const Value& user = function.at(use.user);
-    return user.opcode == Opcode::ResultAt && user.index() == static_cast<uint32_t>(StepGeneratorResult::Status);
+    const Function& body = bodyAnalyses.function();
+    CarriedValues carried;
+    carried.bodyValues = collectValuesLiveAcross(bodyAnalyses, [&](ValueID id) { return isYield(body, id); });
+    for (ValueID parameter : body.at(entryBlock).parameters)
+        carried.bodyValues.clear(parameter.index());
+
+    BitVector isStep(pass.function.values.size());
+    for (const GeneratorStepSite& site : candidate.sites.subspan(startSite + 1))
+        isStep.set(site.step.index());
+    BitVector liveAcrossSteps = collectValuesLiveAcross(pass.analyses, [&](ValueID id) { return isStep.get(id.index()); });
+    ProgramPoint start = pass.analyses.useLists().pointOf(candidate.body.startAtCreation);
+    for (size_t index : liveAcrossSteps) {
+        if (!pass.analyses.dominates(ValueID(index), start))
+            carried.callerValues.set(index);
+    }
+    return carried;
 }
 
-static bool isComparisonWithNotStepped(const Function& function, const Use& use)
+static bool canBecomeParameter(FunctionAnalyses& analyses, ValueID id)
 {
-    const Value& user = function.at(use.user);
-    if (user.opcode != Opcode::StrictEq)
+    const Program& program = analyses.program();
+    const Function& function = analyses.function();
+    if (numberOfResultsOf(program, function, function.at(id)))
         return false;
-    const Value& other = function.at(use.operandIndex == OperandIndex::StrictEq::left ? user.rightOperand() : user.leftOperand());
-    return other.opcode == Opcode::Integer && other.integer() == static_cast<int64_t>(GeneratorStepStatus::NotStepped);
+    std::optional<OpaqueKind> opaque = program.typeOf(function, id).opaque;
+    if (opaque && (*opaque == OpaqueKind::Guard || mustBeDefinition(operandKindOf(*opaque))))
+        return false;
+    return std::ranges::none_of(analyses.useLists().usesOf(id), [&](const Use& use) {
+        if (use.kind != Use::Kind::TerminatorOperand)
+            return false;
+        const Terminator& terminator = function.at(use.block).terminator;
+        return terminator.isConditionalBranch() && terminator.targets.containsIf([](const Target& target) { return !target.proofs.isEmpty(); });
+    });
 }
+
+// next() of a generator is in no stack trace: the step stands where the innermost frame that is in one called it.
+static Origin visibleOriginOf(const Program& program, const Function& function, ValueID step)
+{
+    Origin origin = function.at(step).origin();
+    while (origin.inlineFrame) {
+        const InlineFrame& frame = function.inlineFrames[origin.inlineFrame];
+        if (!frame.callee || !program.at(frame.callee).isHiddenInStackTraces())
+            break;
+        origin = { frame.callPosition, frame.parent };
+    }
+    return origin;
+}
+
+// In a stack trace the caller of the body stands at the step that runs it, not where the generator was made.
+static Origin originOfSteps(const Program& program, const Function& function, const FusionCandidate& candidate)
+{
+    std::optional<Origin> ending;
+    for (const GeneratorStepSite& site : candidate.sites.subspan(startSite + 1)) {
+        if (site.mode != ResumeMode::Return)
+            return visibleOriginOf(program, function, site.step);
+        ending = visibleOriginOf(program, function, site.step);
+    }
+    return ending ? *ending : function.at(candidate.generator).origin();
+}
+
+// Only what throws or runs other code has its callers listed.
+static bool mayHaveItsCallersListed(FunctionAnalyses& bodyAnalyses, const FusionCandidate& candidate)
+{
+    const Function& body = bodyAnalyses.function();
+    bool isSentWhatToThrow = candidate.sites.containsIf([](const GeneratorStepSite& site) { return site.mode == ResumeMode::Throw; });
+    auto listsCallers = [](const Effects& effects) { return effects.mayThrow || effects.mayCallUnknownCode; };
+    // Behind a yield stands the throw of what a step may send in.
+    auto throwsWhatStepSends = [&](const Terminator& terminator) {
+        if (terminator.kind != TerminatorKind::Throw)
+            return false;
+        const Value& thrown = body.at(terminator.valueOperand());
+        return thrown.opcode == Opcode::ResultAt && isYield(body, thrown.operand(0));
+    };
+    return std::ranges::any_of(bodyAnalyses.cfg().reversePostOrder(), [&](BlockID block) {
+        if (listsCallers(bodyAnalyses.effectsOfTerminator(block).onAnyEdge()) && (isSentWhatToThrow || !throwsWhatStepSends(body.at(block).terminator)))
+            return true;
+        return std::ranges::any_of(body.at(block).values, [&](ValueID id) {
+            return !isYield(body, id) && body.at(id).opcode != Opcode::LoopHint && listsCallers(bodyAnalyses.effectsOf(id).onAnyEdge());
+        });
+    });
+}
+
+static GeneratorFusionDeclineReason findMergeObstacle(FunctionPassContext& pass, const FusionCandidate& candidate, FunctionAnalyses& bodyAnalyses, const CarriedValues& carried)
+{
+    for (const GeneratorStepSite& site : candidate.sites.subspan(startSite + 1)) {
+        if (!pass.analyses.dominates(candidate.body.startAtCreation, pass.analyses.useLists().pointOf(site.step)))
+            return GeneratorFusionDeclineReason::Unknown;
+    }
+    Origin origin = originOfSteps(pass.program, pass.function, candidate);
+    bool isRunFromOnePlace = std::ranges::all_of(candidate.sites.subspan(startSite + 1), [&](const GeneratorStepSite& site) {
+        return site.mode == ResumeMode::Return || visibleOriginOf(pass.program, pass.function, site.step) == origin;
+    });
+    if (!isRunFromOnePlace && mayHaveItsCallersListed(bodyAnalyses, candidate))
+        return GeneratorFusionDeclineReason::Unknown;
+    for (size_t index : carried.bodyValues) {
+        if (!isYield(bodyAnalyses.function(), ValueID(index)) && !canBecomeParameter(bodyAnalyses, ValueID(index)))
+            return GeneratorFusionDeclineReason::BodyIsBoundToFrame;
+    }
+    for (size_t index : carried.callerValues) {
+        if (!canBecomeParameter(pass.analyses, ValueID(index)) && !candidate.sites.containsIf([&](const GeneratorStepSite& site) { return site.step == ValueID(index); }))
+            return GeneratorFusionDeclineReason::Unknown;
+    }
+    return GeneratorFusionDeclineReason::None;
+}
+
+// FuseGeneratorLoops: the merge.
+
+static Vector<GeneratorLoopCut, 4> findCuts(FunctionAnalyses& analyses, std::span<const ValueID> transfers)
+{
+    const Function& function = analyses.function();
+    const UseLists& useLists = analyses.useLists();
+    Vector<GeneratorLoopCut, 4> cuts;
+    for (unsigned index = 0; index < transfers.size(); ++index) {
+        GeneratorLoopCut cut { useLists.pointOf(transfers[index]), index, { } };
+        for (const Use& use : useLists.usesOf(transfers[index])) {
+            if (use.kind == Use::Kind::Operand && function.at(use.user).opcode == Opcode::ResultAt)
+                cut.resultReads.append(use.user);
+        }
+        cuts.append(WTF::move(cut));
+    }
+    AOT::sort(cuts, std::ranges::greater { }, [](const GeneratorLoopCut& cut) { return std::tuple(cut.point.block, cut.point.index); });
+    return cuts;
+}
+
+static void fuseGenerator(FunctionPassContext& pass, IRBuilder& builder, const FusionCandidate& candidate)
+{
+    RELEASE_ASSERT(candidate.sites[startSite].step == candidate.body.startAtCreation);
+    const Program& program = pass.program;
+    Function& function = pass.function;
+    FunctionAnalyses& analyses = pass.analyses;
+    const Function& body = program.at(candidate.body.body);
+    FunctionAnalyses bodyAnalyses(contextOfBody(pass, candidate), body);
+    CarriedValues carried = collectCarriedValues(pass, candidate, bodyAnalyses);
+    RELEASE_ASSERT(findMergeObstacle(pass, candidate, bodyAnalyses, carried) == GeneratorFusionDeclineReason::None);
+    Vector<ValueID, 4> yields = listValues(bodyAnalyses, Opcode::YieldBySavingFrame);
+    SSARepair repair(builder, analyses);
+
+    // Where the generator was made, the two variables of its state: where the body goes on, and which site it returns to.
+    ProgramPoint pointOfSeeds = analyses.useLists().pointAfter(candidate.generator);
+    Origin origin = function.at(candidate.generator).origin();
+    Origin originOfBody = originOfSteps(program, function, candidate);
+    BlockFrequency frequency = function.at(pointOfSeeds.block).frequency;
+    builder.setOrigin(origin);
+    ValueID resumePoint = builder.insertBefore(pointOfSeeds, makeInteger(0));
+    ValueID returnSite = builder.insertBefore(pointOfSeeds, makeInteger(0));
+    builder.applyInsertions();
+    SSARepair::Variable resumePointVariable = repair.addVariable(resumePoint);
+    SSARepair::Variable returnSiteVariable = repair.addVariable(returnSite);
+
+    builder.setHandler(std::nullopt);
+    BlockID start = builder.addBlock(frequency);
+    BlockID enter = builder.addBlock(frequency);
+    ValueID sent = builder.addParameter(enter, TypeTable::anything);
+    ValueID mode = builder.addParameter(enter, pass.types.intern(Type::integer(rangeOf({ ResumeMode::Next, ResumeMode::Throw, ResumeMode::Return }))));
+    BlockID leave = builder.addBlock(frequency);
+    ValueID value = builder.addParameter(leave, TypeTable::anything);
+    ValueID status = builder.addParameter(leave, pass.types.intern(Type::integer(rangeOf({ GeneratorStepStatus::Yielded, GeneratorStepStatus::Completed }))));
+
+    auto defineResumePoint = [&](int64_t point) {
+        repair.addDefinition(resumePointVariable, builder.appendInteger(point));
+    };
+    auto emitJumpToLeave = [&](ValueID result, GeneratorStepStatus statusOfResult) {
+        builder.emitJump(leave, { result, builder.appendInteger(static_cast<int64_t>(statusOfResult)) });
+    };
+    auto emitSwitchOnReturnSite = [&](Vector<Target, 4>&& targets) {
+        Target last = targets.takeLast();
+        if (targets.isEmpty()) {
+            builder.emitJump(last.block, WTF::move(last.arguments));
+            return;
+        }
+        Vector<std::pair<int64_t, Target>> cases;
+        cases.reserveInitialCapacity(targets.size());
+        for (size_t site = 0; site < targets.size(); ++site)
+            cases.append({ static_cast<int64_t>(site), WTF::move(targets[site]) });
+        builder.emitSwitch(returnSite, WTF::move(cases), WTF::move(last));
+    };
+    auto beginCut = [&](const GeneratorLoopCut& cut) {
+        if (!numberOfResultsOf(program, function, function.at(function.at(cut.point.block).values[cut.point.index])))
+            return builder.beginExpansion(cut.point);
+        // The overload without reads erases them wherever they stand, which moves the points of cuts that are still to come.
+        return builder.beginExpansion(cut.point, cut.resultReads.span());
+    };
+
+    Vector<ValueID, 4> steps(candidate.sites.size(), [&](size_t site) { return candidate.sites[site].step; });
+    Vector<IRBuilder::Expansion, 4> siteCuts;
+    siteCuts.grow(steps.size());
+    Vector<GeneratorLoopCut, 4> cuts = findCuts(analyses, steps.span());
+    for (size_t position = 0; position < cuts.size(); ++position) {
+        const GeneratorLoopCut& cut = cuts[position];
+        // The next cut, if it is in the same block, leaves only what follows it in front of this site.
+        bool isAfterCutInBlock = position + 1 < cuts.size() && cuts[position + 1].point.block == cut.point.block;
+        uint32_t firstIndexOfHead = isAfterCutInBlock ? cuts[position + 1].point.index + 1 : 0;
+        siteCuts[cut.index] = beginCut(cut);
+        // Every cycle the merge creates passes through the block in front of a site. A hint in enter or leave would keep jumps from being threaded through them.
+        if (std::ranges::none_of(function.at(builder.currentBlock()).values.subspan(firstIndexOfHead), [&](ValueID id) { return function.at(id).opcode == Opcode::LoopHint; }))
+            builder.append(Opcode::LoopHint, { });
+        repair.addDefinition(returnSiteVariable, builder.appendInteger(static_cast<int64_t>(cut.index)));
+        if (cut.index == startSite) {
+            builder.emitJump(start);
+            continue;
+        }
+        const GeneratorStepSite& step = candidate.sites[cut.index];
+        ValueID sentBySite = step.sent ? step.sent : builder.appendUndefined();
+        builder.emitJump(enter, { sentBySite, builder.appendInteger(static_cast<int64_t>(step.mode)) });
+    }
+
+    // What the body throws completes the generator and goes on to the handler of the site that runs it.
+    builder.setOrigin(origin);
+    builder.setHandler(std::nullopt);
+    BlockID failed = builder.addHandlerBlock(BlockRole::CleanupHandler, ValueID());
+    builder.moveToEndOf(failed);
+    ValueID exception = builder.append(Opcode::CatchException, { });
+    defineResumePoint(completed);
+    TypeID exceptionType = function.at(exception).type;
+    Vector<Target, 4> rethrowTargets;
+    Vector<std::pair<BlockID, ValueID>, 4> rethrows;
+    for (const IRBuilder::Expansion& cut : siteCuts) {
+        builder.setHandler(cut.handler);
+        BlockID block = builder.addBlock(BlockFrequency::Rare);
+        rethrows.append({ block, builder.addParameter(block, exceptionType) });
+        rethrowTargets.append(Target { block, { exception }, { } });
+    }
+    builder.setHandler(std::nullopt);
+    emitSwitchOnReturnSite(WTF::move(rethrowTargets));
+    for (auto [block, rethrown] : rethrows) {
+        builder.moveToEndOf(block);
+        builder.emitRethrow(rethrown);
+    }
+
+    RegionCloner cloner(builder, body);
+    uint32_t firstFrame = appendInlineFrames(function, InlineFrame { .callee = candidate.body.body, .callPosition = originOfBody.position, .parent = originOfBody.inlineFrame, .module = body.module }, body);
+    builder.setOrigin(origin);
+    builder.moveToEndOf(start);
+    const auto& parameters = body.at(entryBlock).parameters;
+    RELEASE_ASSERT(parameters.size() == candidate.body.entryArguments.size());
+    for (unsigned index = 0; index < parameters.size(); ++index)
+        cloner.mapValue(parameters[index], index == candidate.body.generatorParameter ? candidate.generator : upcastToParameterType(builder, body.at(parameters[index]), candidate.body.entryArguments[index]));
+
+    builder.setHandler(Target { failed, { }, { } });
+    cloneBlocksIntoInlineFrame(builder, cloner, bodyAnalyses.cfg().reversePostOrder(), firstFrame);
+    builder.setHandler(std::nullopt);
+    builder.emitJump(cloner.cloneOf(entryBlock));
+    for (BlockID clone : cloner.clonedBlocks()) {
+        function.edit(clone, BlockEdit::Rest).frequency = rarerOf(function.at(clone).frequency, frequency);
+        // The first site is the start at the creation, which runs up to the initial yield.
+        for (ValueID id : function.at(clone).values) {
+            Value& copy = function.edit(id);
+            if (copy.opcode != Opcode::IsGeneratorRunning)
+                continue;
+            copy.become(Opcode::Boolean);
+            copy.setBoolean(false);
+        }
+    }
+    analyses.didChangeControlFlow();
+
+    // A cut moves the terminator of its block into a block that clonedBlocks() does not list, so the returns come first.
+    for (BlockID block : cloner.clonedBlocks()) {
+        if (function.at(block).terminator.kind == TerminatorKind::ReturnCall)
+            builder.demoteReturnCall(block);
+        if (function.at(block).terminator.kind != TerminatorKind::Return)
+            continue;
+        Terminator returned = std::exchange(function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator, Terminator());
+        analyses.didChangeControlFlow();
+        builder.setOrigin(returned.origin());
+        builder.moveToEndOf(block);
+        ValueID result = returned.valueOperand() ? returned.valueOperand() : builder.appendUndefined();
+        defineResumePoint(completed);
+        emitJumpToLeave(result, GeneratorStepStatus::Completed);
+    }
+
+    Vector<ValueID, 4> copiesOfYields(yields.size(), [&](size_t index) { return cloner.cloneOf(yields[index]); });
+    Vector<IRBuilder::Expansion, 4> yieldCuts;
+    yieldCuts.grow(copiesOfYields.size());
+    for (const GeneratorLoopCut& cut : findCuts(analyses, copiesOfYields.span())) {
+        ValueID yielded = function.at(copiesOfYields[cut.index]).valueOperand();
+        yieldCuts[cut.index] = beginCut(cut);
+        defineResumePoint(resumePointAfter(cut.index));
+        emitJumpToLeave(yielded, GeneratorStepStatus::Yielded);
+    }
+
+    builder.setOrigin(origin);
+    BlockFrequency frequencyWhenFinished = rarerOf(frequency, BlockFrequency::Unlikely);
+    builder.setHandler(std::nullopt);
+    BlockID finished = builder.addBlock(frequencyWhenFinished);
+    BlockID stepped = builder.addBlock(frequencyWhenFinished);
+    BlockID returned = builder.addBlock(frequencyWhenFinished);
+    builder.setHandler(Target { failed, { }, { } });
+    BlockID thrown = builder.addBlock(BlockFrequency::Rare);
+    builder.setHandler(std::nullopt);
+
+    builder.moveToEndOf(finished);
+    builder.emitSwitch(mode, { { static_cast<int64_t>(ResumeMode::Throw), Target { thrown, { }, { } } }, { static_cast<int64_t>(ResumeMode::Return), Target { returned, { }, { } } } }, Target { stepped, { }, { } });
+    builder.moveToEndOf(stepped);
+    emitJumpToLeave(builder.appendUndefined(), GeneratorStepStatus::Completed);
+    builder.moveToEndOf(returned);
+    emitJumpToLeave(sent, GeneratorStepStatus::Completed);
+    builder.moveToEndOf(thrown);
+    builder.emitThrow(sent);
+
+    // enter goes on behind the yield that the body stopped at, leave behind the site that runs it.
+    std::array<ValueID, numberOfEnumerators<YieldResult>> resultsOfYield;
+    resultsOfYield[static_cast<size_t>(YieldResult::Sent)] = sent;
+    resultsOfYield[static_cast<size_t>(YieldResult::Mode)] = mode;
+    Vector<std::pair<int64_t, Target>> resumeCases;
+    resumeCases.reserveInitialCapacity(yieldCuts.size());
+    for (unsigned index = 0; index < yieldCuts.size(); ++index)
+        resumeCases.append({ resumePointAfter(index), Target { yieldCuts[index].continuation, std::span<const ValueID>(resultsOfYield), { } } });
+    builder.moveToEndOf(enter);
+    if (resumeCases.isEmpty())
+        builder.emitJump(finished);
+    else
+        builder.emitSwitch(resumePoint, WTF::move(resumeCases), Target { finished, { }, { } });
+
+    std::array<ValueID, numberOfEnumerators<StepGeneratorResult>> resultsOfStep;
+    resultsOfStep[static_cast<size_t>(StepGeneratorResult::Value)] = value;
+    resultsOfStep[static_cast<size_t>(StepGeneratorResult::Status)] = status;
+    Vector<Target, 4> continuations;
+    for (size_t site = 0; site < siteCuts.size(); ++site)
+        continuations.append(Target { siteCuts[site].continuation, site == startSite ? Arguments { value } : Arguments(std::span<const ValueID>(resultsOfStep)), { } });
+    builder.setOrigin(origin);
+    builder.moveToEndOf(leave);
+    emitSwitchOnReturnSite(WTF::move(continuations));
+
+    // What lives across a yield or a step has one definition on each way round.
+    Vector<ValueID> definitions;
+    BitVector isListed(function.values.size());
+    auto add = [&](ValueID definition) {
+        if (!numberOfResultsOf(program, function, function.at(definition)) && !isListed.set(definition.index()))
+            definitions.append(definition);
+    };
+    for (unsigned index = 0; index < yields.size(); ++index) {
+        if (carried.bodyValues.get(yields[index].index()))
+            std::ranges::for_each(yieldCuts[index].results, add);
+    }
+    for (size_t index : carried.bodyValues)
+        add(cloner.cloneOf(ValueID(index)));
+    for (size_t site = 0; site < siteCuts.size(); ++site) {
+        if (carried.callerValues.get(candidate.sites[site].step.index()))
+            std::ranges::for_each(siteCuts[site].results, add);
+    }
+    for (size_t index : carried.callerValues)
+        add(ValueID(index));
+
+    pointOfSeeds = analyses.useLists().pointAfter(candidate.generator);
+    builder.setOrigin(origin);
+    Vector<ValueID> seeds;
+    seeds.reserveInitialCapacity(definitions.size());
+    for (ValueID id : definitions) {
+        const Value& definition = function.at(id);
+        Value seed = isRematerializable(definition) ? definition : IRBuilder::make(Opcode::Unspecified);
+        if (!isRematerializable(definition)) {
+            seed.setValueType(definition.type);
+            seed.setExpected(definition.expected());
+        }
+        seeds.append(builder.insertBefore(pointOfSeeds, WTF::move(seed)));
+    }
+    builder.applyInsertions();
+    for (size_t index = 0; index < definitions.size(); ++index)
+        repair.addDefinition(repair.addVariable(seeds[index]), definitions[index]);
+    repair.run();
+    builder.setHandler(std::nullopt);
+}
+
+// FuseGeneratorLoops: the search.
 
 static BitVector findBlocksAfterImpossibleStatus(FunctionPassContext& pass, std::span<const ValueID> steps)
 {
     const Function& function = pass.function;
     const UseLists& useLists = pass.analyses.useLists();
-    Vector<ValueID, 4> statuses = collectMatchingUsers(useLists, steps, [&](const Use& use) {
-        return isStatusRead(function, use);
-    });
-    Vector<ValueID, 4> comparisons = collectMatchingUsers(useLists, statuses.span(), [&](const Use& use) {
-        return isComparisonWithNotStepped(function, use);
-    });
+    auto isComparisonWithNotStepped = [&](const Use& use) {
+        const Value& user = function.at(use.user);
+        if (user.opcode != Opcode::StrictEq)
+            return false;
+        const Value& other = function.at(use.operandIndex == OperandIndex::StrictEq::left ? user.rightOperand() : user.leftOperand());
+        return other.opcode == Opcode::Integer && other.integer() == static_cast<int64_t>(GeneratorStepStatus::NotStepped);
+    };
 
     Vector<Edge, 4> impossibleEdges;
-    for (ValueID comparison : comparisons) {
-        for (const Use& use : useLists.usesOf(comparison)) {
-            if (use.kind == Use::Kind::TerminatorOperand && function.at(use.block).terminator.kind == TerminatorKind::Branch)
-                impossibleEdges.append(Edge { use.block, indexOfTakenTarget });
+    for (ValueID step : steps) {
+        for (const Use& read : useLists.usesOf(step)) {
+            if (read.kind != Use::Kind::Operand || function.at(read.user).opcode != Opcode::ResultAt || function.at(read.user).index() != static_cast<uint32_t>(StepGeneratorResult::Status))
+                continue;
+            for (const Use& comparison : useLists.usesOf(read.user)) {
+                if (comparison.kind != Use::Kind::Operand || !isComparisonWithNotStepped(comparison))
+                    continue;
+                for (const Use& use : useLists.usesOf(comparison.user)) {
+                    if (use.kind == Use::Kind::TerminatorOperand && function.at(use.block).terminator.kind == TerminatorKind::Branch)
+                        impossibleEdges.append(Edge { use.block, 0 });
+                }
+            }
         }
     }
 
@@ -143,68 +576,10 @@ static BitVector findBlocksAfterImpossibleStatus(FunctionPassContext& pass, std:
         return blocks;
     blocks.ensureSize(function.blocks.size());
     for (BlockID block : pass.analyses.cfg().reversePostOrder()) {
-        bool isAfterImpossibleEdge = std::ranges::any_of(impossibleEdges, [&](Edge edge) {
-            return pass.analyses.dominates(edge, block);
-        });
-        if (isAfterImpossibleEdge)
+        if (std::ranges::any_of(impossibleEdges, [&](Edge edge) { return pass.analyses.dominates(edge, block); }))
             blocks.quickSet(block.index());
     }
     return blocks;
-}
-
-static Vector<ValueID, 4> findUncheckedStepsOf(const CandidateSearch& search, ObjectID object)
-{
-    Vector<ValueID, 4> steps;
-    for (const ListedStep& step : search.steps) {
-        const Value& value = search.pass.function.at(step.value);
-        if (value.check() == GeneratorStepCheck::None && search.escape.singleObject(value.generatorOperand()) == object)
-            steps.append(step.value);
-    }
-    return steps;
-}
-
-static Vector<ListedStep, 4> findStepsReaching(const CandidateSearch& search, ObjectID object, const BitVector& ignoredBlocks)
-{
-    Vector<ListedStep, 4> steps;
-    for (const ListedStep& step : search.steps) {
-        if (ignoredBlocks.get(step.block.index()))
-            continue;
-        if (search.escape.pointsTo(search.pass.function.at(step.value).generatorOperand()).objects.contains(object))
-            steps.append(step);
-    }
-    return steps;
-}
-
-static bool isListed(FunctionAnalyses& analyses, ValueID value)
-{
-    return value && analyses.useLists().locationOf(value).placement == ValuePlacement::InBlock;
-}
-
-static Use generatorUseOf(const ListedStep& step)
-{
-    return Use { Use::Kind::Operand, step.block, step.value, OperandIndex::StepGenerator::generator, 0 };
-}
-
-static GeneratorFusionDeclineReason addSites(const CandidateSearch& search, std::span<const ListedStep> steps, FusionCandidate& candidate)
-{
-    const Function& function = search.pass.function;
-    candidate.sites.append(GeneratorStepSite { candidate.body.startAtCreation, ResumeMode::Next, ValueID() });
-    for (const ListedStep& step : steps) {
-        const Value& value = function.at(step.value);
-        if (search.escape.singleObject(value.generatorOperand()) != candidate.object) {
-            candidate.witness = generatorUseOf(step);
-            return GeneratorFusionDeclineReason::StepMayReachOtherGenerator;
-        }
-        candidate.sites.append(GeneratorStepSite { step.value, value.resumeMode(), value.valueOperand() });
-    }
-
-    for (const ListedStep& step : steps) {
-        if (function.at(step.value).check() != GeneratorStepCheck::None) {
-            candidate.witness = generatorUseOf(step);
-            return GeneratorFusionDeclineReason::MayEscapeBeforeStep;
-        }
-    }
-    return GeneratorFusionDeclineReason::None;
 }
 
 static bool isGeneratorOperandOfSite(const FusionCandidate& candidate, const Use& use)
@@ -212,10 +587,8 @@ static bool isGeneratorOperandOfSite(const FusionCandidate& candidate, const Use
     if (use.kind != Use::Kind::Operand)
         return false;
     if (use.user == candidate.body.startAtCreation)
-        return candidate.body.generatorParameter && use.operandIndex == OperandIndex::CallDirect::arguments + *candidate.body.generatorParameter;
-    return use.operandIndex == OperandIndex::StepGenerator::generator && candidate.sites.containsIf([&](const GeneratorStepSite& site) {
-        return site.step == use.user;
-    });
+        return use.operandIndex == OperandIndex::CallDirect::arguments + candidate.body.generatorParameter;
+    return use.operandIndex == OperandIndex::StepGenerator::generator && candidate.sites.containsIf([&](const GeneratorStepSite& site) { return site.step == use.user; });
 }
 
 static bool readsGeneratorState(FunctionAnalyses& analyses, const Use& use)
@@ -233,39 +606,16 @@ static bool readsGeneratorState(FunctionAnalyses& analyses, const Use& use)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static GeneratorFusionDeclineReason findUseObservingGenerator(const CandidateSearch& search, const BitVector& ignoredBlocks, FusionCandidate& candidate)
-{
-    for (const ObjectUse& objectUse : search.escape.usesOf(candidate.object)) {
-        const Use& use = objectUse.use;
-        if (ignoredBlocks.get(use.block.index()) || isGeneratorOperandOfSite(candidate, use))
-            continue;
-        if (!objectUse.isEscape && !objectUse.isContentsStore && !readsGeneratorState(search.pass.analyses, use))
-            continue;
-        if (search.pass.build.isSabotaged(Sabotage::FusedGeneratorsAreSeenByOthers))
-            continue;
-        candidate.witness = use;
-        return GeneratorFusionDeclineReason::MayEscapeBeforeStep;
-    }
-    return GeneratorFusionDeclineReason::None;
-}
-
-static bool usesGeneratorOnlyToYield(const Value& value, ValueID generatorParameter)
-{
-    bool usesOnlyToYield = true;
-    value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        if (operand == generatorParameter)
-            usesOnlyToYield &= value.opcode == Opcode::IsGeneratorRunning || (value.opcode == Opcode::YieldBySavingFrame && operandIndex == OperandIndex::YieldBySavingFrame::generator);
-    });
-    return usesOnlyToYield;
-}
-
 static bool canLeaveFrame(const Function& body, const Block& block, ValueID generatorParameter)
 {
     bool canLeave = boundToOf(block.terminator.kind) != BoundTo::Frame;
     for (uint32_t index = 0; index < block.values.size(); ++index) {
         const Value& value = body.at(block.values[index]);
         canLeave &= value.opcode == Opcode::YieldBySavingFrame || !isBoundToFrame(body, block, index);
-        canLeave &= usesGeneratorOnlyToYield(value, generatorParameter);
+        value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+            if (operand == generatorParameter)
+                canLeave &= value.opcode == Opcode::IsGeneratorRunning || (value.opcode == Opcode::YieldBySavingFrame && operandIndex == OperandIndex::YieldBySavingFrame::generator);
+        });
     }
     block.forEachChildOutsideValues([&](ValueID child) {
         canLeave &= !child || child != generatorParameter;
@@ -273,99 +623,106 @@ static bool canLeaveFrame(const Function& body, const Block& block, ValueID gene
     return canLeave;
 }
 
-static GeneratorFusionDeclineReason findObstacleInBody(const Function& body, const GeneratorBodyDescription& description)
-{
-    if (!body.hasBody() || body.at(entryBlock).parameters.size() != description.entryArguments.size())
-        return GeneratorFusionDeclineReason::BodyIsNotDescribed;
-
-    ValueID generatorParameter;
-    if (description.generatorParameter)
-        generatorParameter = body.at(entryBlock).parameters[*description.generatorParameter];
-
-    bool canLeave = std::ranges::all_of(body.blocks, [&](const Block& block) {
-        return canLeaveFrame(body, block, generatorParameter);
-    });
-    return canLeave ? GeneratorFusionDeclineReason::None : GeneratorFusionDeclineReason::BodyIsBoundToFrame;
-}
-
-static GeneratorFusionDeclineReason findSizeObstacle(const CandidateSearch& search, const Function& body, ValueID generator)
-{
-    FunctionPassContext& pass = search.pass;
-    uint64_t bodyBytes = codeBytesOf(pass.program, body);
-    if (pass.exceeds(LimitID::MaxFusedGeneratorBytes, bodyBytes, generator))
-        return GeneratorFusionDeclineReason::BodyIsTooLarge;
-    if (pass.exceeds(LimitID::MaxInlinedCallerBytes, search.inlinedBytes + bodyBytes, generator))
-        return GeneratorFusionDeclineReason::CallerIsTooLarge;
-    if (pass.exceeds(LimitID::InlineFramesPerFunction, inlineFrameCountOf(pass.function) + inlineFrameCountOf(body), generator))
-        return GeneratorFusionDeclineReason::CallerIsTooLarge;
-    return GeneratorFusionDeclineReason::None;
-}
-
-static GeneratorFusionDeclineReason findDepthObstacle(FunctionPassContext& pass, const FusionCandidate& candidate)
+static GeneratorFusionDeclineReason findObstacle(FunctionPassContext& pass, const EscapeAnalysis& escape, std::span<const ValueID> allSteps, uint64_t inlinedBytes, FusionCandidate& candidate)
 {
     const Function& function = pass.function;
-    uint32_t inlineFrame = function.at(candidate.generator).inlineFrame;
-    bool isInsideBody = pass.id == candidate.body.body;
-    for (uint32_t frame = inlineFrame; frame; frame = function.inlineFrames[frame].parent)
-        isInsideBody |= function.inlineFrames[frame].callee == candidate.body.body;
-    if (isInsideBody || pass.exceeds(LimitID::MaxInlineDepth, inlineDepthOf(pass.program, function, inlineFrame) + 1, candidate.generator))
-        return GeneratorFusionDeclineReason::InlineDepth;
-    return GeneratorFusionDeclineReason::None;
-}
-
-static GeneratorFusionDeclineReason findObstacle(const CandidateSearch& search, FusionCandidate& candidate)
-{
-    FunctionPassContext& pass = search.pass;
-    std::optional<ObjectID> object = search.escape.objectDefinedBy(candidate.generator);
+    ValueID generator = candidate.generator;
+    std::optional<ObjectID> object = escape.objectDefinedBy(generator);
     if (!object)
         return GeneratorFusionDeclineReason::Unknown;
-    candidate.object = *object;
 
-    BitVector ignoredBlocks = findBlocksAfterImpossibleStatus(pass, findUncheckedStepsOf(search, *object).span());
-    Vector<ListedStep, 4> steps = findStepsReaching(search, *object, ignoredBlocks);
+    Vector<ValueID, 4> uncheckedSteps;
+    for (ValueID step : allSteps) {
+        if (function.at(step).check() == GeneratorStepCheck::None && escape.singleObject(function.at(step).generatorOperand()) == *object)
+            uncheckedSteps.append(step);
+    }
+    BitVector ignoredBlocks = findBlocksAfterImpossibleStatus(pass, uncheckedSteps.span());
+    const UseLists& useLists = pass.analyses.useLists();
+    Vector<ValueID, 4> steps;
+    for (ValueID step : allSteps) {
+        if (!ignoredBlocks.get(useLists.blockOf(step).index()) && escape.pointsTo(function.at(step).generatorOperand()).objects.contains(*object))
+            steps.append(step);
+    }
     if (steps.isEmpty())
         return GeneratorFusionDeclineReason::HasNoStep;
 
-    std::optional<GeneratorBodyDescription> description = describeGeneratorBody(pass.program, pass.function, candidate.generator);
-    if (!description || !isListed(pass.analyses, description->startAtCreation))
+    std::optional<GeneratorBodyDescription> description = describeGeneratorBody(pass.program, function, generator);
+    if (!description || useLists.locationOf(description->startAtCreation).placement != ValuePlacement::InBlock)
         return GeneratorFusionDeclineReason::BodyIsNotDescribed;
     candidate.body = WTF::move(*description);
-
-    if (search.escape.liveInstancesOf(*object) != LiveInstances::AtMostOne)
+    if (escape.liveInstancesOf(*object) != LiveInstances::AtMostOne)
         return GeneratorFusionDeclineReason::SeveralLiveInstances;
-    if (GeneratorFusionDeclineReason obstacle = addSites(search, steps.span(), candidate); obstacle != GeneratorFusionDeclineReason::None)
-        return obstacle;
-    if (GeneratorFusionDeclineReason obstacle = findUseObservingGenerator(search, ignoredBlocks, candidate); obstacle != GeneratorFusionDeclineReason::None)
-        return obstacle;
+
+    candidate.sites.append(GeneratorStepSite { candidate.body.startAtCreation, ResumeMode::Next, ValueID() });
+    for (ValueID step : steps) {
+        const Value& value = function.at(step);
+        if (escape.singleObject(value.generatorOperand()) != *object)
+            return GeneratorFusionDeclineReason::StepMayReachOtherGenerator;
+        candidate.sites.append(GeneratorStepSite { step, value.resumeMode(), value.valueOperand() });
+    }
+    if (std::ranges::any_of(steps, [&](ValueID step) { return function.at(step).check() != GeneratorStepCheck::None; }))
+        return GeneratorFusionDeclineReason::MayEscapeBeforeStep;
+
+    for (const ObjectUse& objectUse : escape.usesOf(*object)) {
+        const Use& use = objectUse.use;
+        if (ignoredBlocks.get(use.block.index()) || isGeneratorOperandOfSite(candidate, use))
+            continue;
+        if (!objectUse.isEscape && !objectUse.isContentsStore && !readsGeneratorState(pass.analyses, use))
+            continue;
+        if (!pass.build.isSabotaged(Sabotage::FusedGeneratorsAreSeenByOthers))
+            return GeneratorFusionDeclineReason::MayEscapeBeforeStep;
+    }
 
     const Function& body = pass.program.at(candidate.body.body);
-    if (GeneratorFusionDeclineReason obstacle = findObstacleInBody(body, candidate.body); obstacle != GeneratorFusionDeclineReason::None)
-        return obstacle;
-    if (GeneratorFusionDeclineReason obstacle = findSizeObstacle(search, body, candidate.generator); obstacle != GeneratorFusionDeclineReason::None)
-        return obstacle;
-    if (GeneratorFusionDeclineReason obstacle = findDepthObstacle(pass, candidate); obstacle != GeneratorFusionDeclineReason::None)
-        return obstacle;
-    return findMergeObstacle(pass, candidate);
+    if (!body.hasBody() || body.at(entryBlock).parameters.size() != candidate.body.entryArguments.size())
+        return GeneratorFusionDeclineReason::BodyIsNotDescribed;
+    ValueID generatorParameter = body.at(entryBlock).parameters[candidate.body.generatorParameter];
+    if (!std::ranges::all_of(body.blocks, [&](const Block& block) { return canLeaveFrame(body, block, generatorParameter); }))
+        return GeneratorFusionDeclineReason::BodyIsBoundToFrame;
+
+    uint64_t bodyBytes = 0;
+    for (const Block& block : body.blocks)
+        bodyBytes += estimatedCodeBytes(pass.program, body, block);
+    if (pass.exceeds(LimitID::MaxFusedGeneratorBytes, bodyBytes, generator))
+        return GeneratorFusionDeclineReason::BodyIsTooLarge;
+    if (pass.exceeds(LimitID::MaxInlinedCallerBytes, inlinedBytes + bodyBytes, generator) || pass.exceeds(LimitID::InlineFramesPerFunction, inlineFrameCountOf(function) + inlineFrameCountOf(body), generator))
+        return GeneratorFusionDeclineReason::CallerIsTooLarge;
+
+    uint32_t inlineFrame = function.at(generator).inlineFrame;
+    bool isInsideBody = pass.id == candidate.body.body;
+    for (uint32_t frame = inlineFrame; frame; frame = function.inlineFrames[frame].parent)
+        isInsideBody |= function.inlineFrames[frame].callee == candidate.body.body;
+    if (isInsideBody || pass.exceeds(LimitID::MaxInlineDepth, inlineDepthOf(pass.program, function, inlineFrame) + 1, generator))
+        return GeneratorFusionDeclineReason::InlineDepth;
+
+    FunctionAnalyses bodyAnalyses(contextOfBody(pass, candidate), body);
+    return findMergeObstacle(pass, candidate, bodyAnalyses, collectCarriedValues(pass, candidate, bodyAnalyses));
 }
 
-Vector<FusionCandidate> findFusionCandidates(FunctionPassContext& pass)
+static Vector<FusionCandidate> findFusionCandidates(FunctionPassContext& pass)
 {
-    GeneratorOperations operations = collectGeneratorOperations(pass);
-    GeneratorFusionDeclineReason initialObstacle = operations.steps.isEmpty() ? GeneratorFusionDeclineReason::HasNoStep : GeneratorFusionDeclineReason::Unknown;
-    Vector<FusionCandidate> candidates;
-    candidates.reserveInitialCapacity(operations.generators.size());
-    for (ValueID generator : operations.generators)
-        candidates.append(FusionCandidate { .generator = generator, .obstacle = initialObstacle });
-    if (candidates.isEmpty() || operations.steps.isEmpty())
+    Vector<ValueID, 4> steps = listValues(pass.analyses, Opcode::StepGenerator);
+    GeneratorFusionDeclineReason initialObstacle = steps.isEmpty() ? GeneratorFusionDeclineReason::HasNoStep : GeneratorFusionDeclineReason::Unknown;
+    Vector<FusionCandidate> candidates = listValues(pass.analyses, Opcode::NewGenerator).map([&](ValueID generator) {
+        return FusionCandidate { .generator = generator, .obstacle = initialObstacle };
+    });
+    if (candidates.isEmpty() || steps.isEmpty())
         return candidates;
 
     const EscapeAnalysis& escape = pass.analyses.escapeWithLiveInstances();
     if (escape.gaveUp())
         return candidates;
 
-    CandidateSearch search { pass, escape, operations.steps.span(), inlinedBytesOf(pass.program, pass.function) };
+    // The limit on the caller is on what has been added to it. A caller that is large by itself takes in a body like any other.
+    uint64_t inlinedBytes = 0;
+    for (const Block& block : pass.function.blocks) {
+        for (ValueID id : block.values) {
+            if (pass.function.at(id).inlineFrame)
+                inlinedBytes += estimatedCodeBytes(pass.program, pass.function, pass.function.at(id));
+        }
+    }
     for (FusionCandidate& candidate : candidates)
-        candidate.obstacle = findObstacle(search, candidate);
+        candidate.obstacle = findObstacle(pass, escape, steps.span(), inlinedBytes, candidate);
     return candidates;
 }
 
@@ -391,13 +748,6 @@ static LimitID limitOf(GeneratorFusionDeclineReason obstacle)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void reportDecline(FunctionPassContext& pass, const FusionCandidate& candidate)
-{
-    if (candidate.obstacle == GeneratorFusionDeclineReason::HasNoStep)
-        return;
-    pass.addDecline(Wire::DeclineKind::GeneratorLoopNotFused, candidate.generator, candidate.obstacle, limitOf(candidate.obstacle));
-}
-
 PassOutcome fuseGeneratorLoops(FunctionPassContext& pass)
 {
     if (!hasListedGenerator(pass.function))
@@ -405,23 +755,146 @@ PassOutcome fuseGeneratorLoops(FunctionPassContext& pass)
 
     IRBuilder builder(pass.analyses.context(), pass.function, pass.types, &pass.analyses);
     PassOutcome outcome = PassOutcome::Unchanged;
-    Vector<FusionCandidate> candidates = findFusionCandidates(pass);
     for (;;) {
+        Vector<FusionCandidate> candidates = findFusionCandidates(pass);
         auto fusible = std::ranges::find(candidates, GeneratorFusionDeclineReason::None, &FusionCandidate::obstacle);
-        if (fusible == candidates.end())
-            break;
-        fuseGenerator(pass, builder, *fusible);
-        pass.build.statistics().count(StatisticID::GeneratorLoopsFused);
-        outcome = PassOutcome::Changed;
-        candidates = findFusionCandidates(pass);
+        if (fusible != candidates.end()) {
+            fuseGenerator(pass, builder, *fusible);
+            pass.build.statistics().count(StatisticID::GeneratorLoopsFused);
+            outcome = PassOutcome::Changed;
+            continue;
+        }
+        for (const FusionCandidate& candidate : candidates) {
+            if (candidate.obstacle != GeneratorFusionDeclineReason::HasNoStep)
+                pass.addDecline(Wire::DeclineKind::GeneratorLoopNotFused, candidate.generator, candidate.obstacle, limitOf(candidate.obstacle));
+        }
+        // The analyses were told of every edit, and the search that found no more candidates came behind the last one.
+        if (outcome == PassOutcome::Changed)
+            pass.keptAnalyses = allAnalyses;
+        return outcome;
+    }
+}
+
+// StartGeneratorsAtFirstStep.
+
+static PassOutcome startAtFirstStep(FunctionPassContext& pass, IRBuilder& builder, const EscapeAnalysis& escape, ValueID generator)
+{
+    Function& function = pass.function;
+    FunctionAnalyses& analyses = pass.analyses;
+    std::optional<ObjectID> object = escape.objectDefinedBy(generator);
+    if (!object || escape.liveInstancesOf(*object) != LiveInstances::AtMostOne)
+        return PassOutcome::Unchanged;
+    std::optional<GeneratorBodyDescription> description = describeGeneratorBody(pass.program, function, generator);
+    if (!description)
+        return PassOutcome::Unchanged;
+    // The call that starts a generator at its creation runs the head of the body, which evaluates the parameters, up to the initial yield. Nothing tells when a head without an effect has run, and only behind such a head does a body ask whether it is running.
+    const Function& body = pass.program.at(description->body);
+    bool suspendsBeforeAnyEffect = body.hasBody() && std::ranges::any_of(body.at(entryBlock).values, [&, driver = body.at(entryBlock).parameters[description->generatorParameter]](ValueID id) {
+        return body.at(id).opcode == Opcode::IsGeneratorRunning && body.at(id).generatorOperand() == driver;
+    });
+    if (!suspendsBeforeAnyEffect)
+        return PassOutcome::Unchanged;
+
+    const UseLists& useLists = analyses.useLists();
+    ValueID startAtCreation = description->startAtCreation;
+    ValueLocation location = useLists.locationOf(startAtCreation);
+    if (location.placement != ValuePlacement::InBlock || useLists.useCount(startAtCreation))
+        return PassOutcome::Unchanged;
+    // The edge on which the generator has failed the test for an unmodified one. Behind it anything may look at the generator, so it is started there as at its creation.
+    std::optional<Edge> edgeToProtocol;
+    if (const Terminator& terminator = function.at(location.block).terminator; terminator.kind == TerminatorKind::Branch) {
+        const Value& test = function.at(terminator.conditionOperand());
+        if (test.opcode == Opcode::IsUnmodifiedGenerator && analyses.sameObjectThroughCasts(test.valueOperand()) == generator)
+            edgeToProtocol = Edge { location.block, 1 };
+    }
+    auto isBehindFailedTest = [&](BlockID block) { return edgeToProtocol && analyses.dominates(*edgeToProtocol, block); };
+
+    Vector<ValueID, 2> firstSteps;
+    for (const ObjectUse& objectUse : escape.usesOf(*object)) {
+        const Use& use = objectUse.use;
+        if (use.kind != Use::Kind::Operand || isBehindFailedTest(use.block))
+            continue;
+        const Value& user = function.at(use.user);
+        if (user.opcode != Opcode::StepGenerator || user.resumeMode() != ResumeMode::Next || use.operandIndex != OperandIndex::StepGenerator::generator)
+            continue;
+        // What the body throws in its first run leaves the generator as running. Nobody sees that where the exception leaves the function.
+        if (user.check() != GeneratorStepCheck::None || escape.singleObject(user.generatorOperand()) != *object || (function.at(use.block).handler && !pass.build.isSabotaged(Sabotage::FirstStepsStandUnderHandlers)))
+            return PassOutcome::Unchanged;
+        if (!analyses.dominates(startAtCreation, useLists.pointOf(use.user)))
+            return PassOutcome::Unchanged;
+        firstSteps.append(use.user);
+    }
+    if (firstSteps.isEmpty())
+        return PassOutcome::Unchanged;
+
+    // Every other reader finds a generator that has taken a step.
+    for (const ObjectUse& objectUse : escape.usesOf(*object)) {
+        const Use& use = objectUse.use;
+        if (isBehindFailedTest(use.block) || (use.kind == Use::Kind::Operand && function.at(use.user).opcode == Opcode::IsUnmodifiedGenerator))
+            continue;
+        if (use.kind == Use::Kind::Operand && (use.user == startAtCreation || firstSteps.contains(use.user)))
+            continue;
+        bool isBehindStep = firstSteps.containsIf([&](ValueID step) { return analyses.dominates(step, use); });
+        if (!isBehindStep && !pass.build.isSabotaged(Sabotage::GeneratorsAreReadBeforeTheirFirstStep))
+            return PassOutcome::Unchanged;
     }
 
-    for (const FusionCandidate& candidate : candidates)
-        reportDecline(pass, candidate);
-    // The analyses were told of every edit, and the search that found no more candidates came behind the last one.
-    if (outcome == PassOutcome::Changed)
+    Value start(function.at(startAtCreation));
+    // One step outside of every loop is the first step whenever it runs.
+    bool isKnownToBeFirst = firstSteps.size() == 1 && (!analyses.isInCycle(analyses.useLists().blockOf(firstSteps[0])) || pass.build.isSabotaged(Sabotage::StepsInCyclesAreFirstSteps));
+
+    BitVector erased;
+    erased.set(location.index);
+    builder.eraseValues(location.block, erased);
+    if (edgeToProtocol) {
+        BlockID added = builder.splitEdge(*edgeToProtocol);
+        builder.insertBefore(ProgramPoint::atHeadOf(added), Value(start));
+        builder.applyInsertions();
+    }
+
+    for (ValueID site : firstSteps) {
+        Value step(function.at(site));
+        ValueID stepped = step.generatorOperand();
+        builder.setOrigin(step.origin());
+        IRBuilder::Expansion expansion = builder.beginExpansion(analyses.useLists().pointOf(site));
+        std::optional<BlockID> resumes;
+        if (!isKnownToBeFirst)
+            resumes = builder.emitBranch(builder.append(Opcode::IsGeneratorUnstarted, { stepped })).notTaken;
+        builder.append(Opcode::MarkGeneratorRunning, { stepped });
+        ValueID value = builder.append(Value(start));
+        ValueID status = builder.append(Opcode::TakeGeneratorStepStatus, { stepped });
+        builder.endExpansion(expansion, { { value, status } });
+        if (!resumes)
+            continue;
+        builder.moveToEndOf(*resumes);
+        ValueID resumed = builder.append(WTF::move(step));
+        ValueID valueOfStep = builder.append(makeResultAt(resumed, static_cast<uint32_t>(StepGeneratorResult::Value)));
+        builder.endExpansion(expansion, { { valueOfStep, builder.append(makeResultAt(resumed, static_cast<uint32_t>(StepGeneratorResult::Status))) } });
+    }
+    return PassOutcome::Changed;
+}
+
+// A generator that no loop could be fused with is still seldom looked at between its creation and its first step.
+PassOutcome startGeneratorsAtFirstStep(FunctionPassContext& pass)
+{
+    if (!hasListedGenerator(pass.function))
+        return PassOutcome::Unchanged;
+
+    IRBuilder builder(pass.analyses.context(), pass.function, pass.types, &pass.analyses);
+    PassOutcome outcome = PassOutcome::Unchanged;
+    BitVector isTried;
+    for (;;) {
+        const EscapeAnalysis& escape = pass.analyses.escapeWithLiveInstances();
+        if (escape.gaveUp())
+            return outcome;
+        Vector<ValueID, 4> generators = listValues(pass.analyses, Opcode::NewGenerator);
+        if (!generators.containsIf([&](ValueID id) { return !isTried.set(id.index()) && startAtFirstStep(pass, builder, escape, id) == PassOutcome::Changed; }))
+            return outcome;
+        pass.build.statistics().count(StatisticID::GeneratorsStartedAtFirstStep);
+        outcome = PassOutcome::Changed;
+        // The builder makes every edit and tells the analyses, and the pass ends with a search behind the last one.
         pass.keptAnalyses = allAnalyses;
-    return outcome;
+    }
 }
 
 } } } // namespace JSC::AOT::Typed

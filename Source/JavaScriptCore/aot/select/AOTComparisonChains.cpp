@@ -33,11 +33,6 @@ struct SwitchLike {
     Vector<ChainCase, 1> cases;
 };
 
-struct ConstantOperand {
-    uint32_t index { 0 };
-    ValueID constant;
-};
-
 struct ProvenCase {
     uint32_t caseIndex { 0 };
     BlockID stub;
@@ -150,19 +145,6 @@ public:
     }
 
 private:
-    bool isCaseConstant(const Value& constant) const
-    {
-        switch (m_kind) {
-        case ChainKind::Integers:
-            return constant.opcode == Opcode::Integer;
-        case ChainKind::Numbers:
-            return switchCaseOf(constant).has_value();
-        case ChainKind::Strings:
-            return constant.opcode == Opcode::String;
-        }
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-
     bool canBeSubject(const Type& subject) const
     {
         switch (m_kind) {
@@ -176,21 +158,23 @@ private:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    ChainCase createCase(const Value& constant, Edge edge) const
+    std::optional<ChainCase> caseOf(const Value& constant, Edge edge) const
     {
-        ChainCase chainCase { .edge = edge };
         switch (m_kind) {
         case ChainKind::Integers:
-            chainCase.number = constant.integer();
-            break;
+            if (constant.opcode == Opcode::Integer)
+                return ChainCase { .number = constant.integer(), .edge = edge };
+            return std::nullopt;
         case ChainKind::Numbers:
-            chainCase.number = *switchCaseOf(constant);
-            break;
+            if (std::optional<int64_t> number = switchCaseOf(constant))
+                return ChainCase { .number = *number, .edge = edge };
+            return std::nullopt;
         case ChainKind::Strings:
-            chainCase.string = constant.string();
-            break;
+            if (constant.opcode == Opcode::String)
+                return ChainCase { .string = constant.string(), .edge = edge };
+            return std::nullopt;
         }
-        return chainCase;
+        RELEASE_ASSERT_NOT_REACHED();
     }
 
     std::optional<SwitchLike> describe(BlockID block) const
@@ -221,16 +205,6 @@ private:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    std::optional<ConstantOperand> findConstantOperand(const Value& comparison) const
-    {
-        for (uint32_t index = 0; index < 2; ++index) {
-            std::optional<ValueID> constant = constantThroughCasts(m_program, m_function, comparison.operand(index));
-            if (constant && isCaseConstant(m_function.at(*constant)))
-                return ConstantOperand { index, *constant };
-        }
-        return std::nullopt;
-    }
-
     bool isListedWithSingleUse(BlockID block, ValueID comparison) const
     {
         const UseLists& useLists = m_analyses.useLists();
@@ -244,17 +218,21 @@ private:
         const Value& strictEquality = m_function.at(comparison);
         if (strictEquality.opcode != Opcode::StrictEq)
             return std::nullopt;
-        std::optional<ConstantOperand> constant = findConstantOperand(strictEquality);
-        if (!constant)
-            return std::nullopt;
+        for (uint32_t constantIndex = 0; constantIndex < 2; ++constantIndex) {
+            std::optional<ValueID> constant = constantThroughCasts(m_program, m_function, strictEquality.operand(constantIndex));
+            std::optional<ChainCase> chainCase = constant ? caseOf(m_function.at(*constant), Edge { block, 0 }) : std::nullopt;
+            if (!chainCase)
+                continue;
 
-        uint32_t comparedIndex = 1 - constant->index;
-        ValueID compared = strictEquality.operand(comparedIndex);
-        if (constantThroughCasts(m_program, m_function, compared) || !canBeSubject(m_program.typeOf(m_function, compared)))
-            return std::nullopt;
-        if (!passesProofsOnlyAbout(branch, comparedIndex) || !isListedWithSingleUse(block, comparison) || !m_mayJoinChain(comparison))
-            return std::nullopt;
-        return SwitchLike { compared, comparison, { createCase(m_function.at(constant->constant), Edge { block, 0 }) } };
+            uint32_t comparedIndex = 1 - constantIndex;
+            ValueID compared = strictEquality.operand(comparedIndex);
+            if (constantThroughCasts(m_program, m_function, compared) || !canBeSubject(m_program.typeOf(m_function, compared)))
+                return std::nullopt;
+            if (!passesProofsOnlyAbout(branch, comparedIndex) || !isListedWithSingleUse(block, comparison) || !m_mayJoinChain(comparison))
+                return std::nullopt;
+            return SwitchLike { compared, comparison, { *chainCase } };
+        }
+        return std::nullopt;
     }
 
     std::optional<SwitchLike> describeSwitch(BlockID block, const Terminator& terminator) const
@@ -361,23 +339,19 @@ private:
             && canReplaceParameters(chain.fallThrough, numberOfExplicitArguments(m_function, chain.fallThrough), ValueID());
     }
 
-    void removeLastLink(ComparisonChain& chain)
-    {
-        BlockID link = chain.links.takeLast();
-        const Block& block = m_function.at(link);
-        m_links.remove(link);
-        for (ValueID parameter : block.parameters)
-            m_replacements.remove(parameter);
-        chain.cases.shrink(chain.cases.size() - (block.terminator.targets.size() - 1));
-        if (block.terminator.kind == TerminatorKind::Branch)
-            chain.comparisons.removeLast();
-        chain.fallThrough = fallThroughOf(m_function, chain.links.isEmpty() ? chain.head : chain.links.last());
-    }
-
     void trimToConvertibleFallThrough(ComparisonChain& chain)
     {
-        while (!chain.links.isEmpty() && !hasConvertibleFallThrough(chain))
-            removeLastLink(chain);
+        while (!chain.links.isEmpty() && !hasConvertibleFallThrough(chain)) {
+            BlockID link = chain.links.takeLast();
+            const Block& block = m_function.at(link);
+            m_links.remove(link);
+            for (ValueID parameter : block.parameters)
+                m_replacements.remove(parameter);
+            chain.cases.shrink(chain.cases.size() - (block.terminator.targets.size() - 1));
+            if (block.terminator.kind == TerminatorKind::Branch)
+                chain.comparisons.removeLast();
+            chain.fallThrough = fallThroughOf(m_function, chain.links.isEmpty() ? chain.head : chain.links.last());
+        }
     }
 
     FunctionAnalyses& m_analyses;

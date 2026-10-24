@@ -8,7 +8,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="profiledLiterals" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     v1 = NewArray contents=i32 literalStorage=Profiled staticsOffset=0
     v2 = NewArray contents=number literalStorage=Profiled staticsOffset=8
     v3 = NewArray contents=undefined|number literalStorage=Profiled staticsOffset=16
@@ -39,7 +38,6 @@ function f0 name="profiledLiterals" parameters=[{type=boolean}] results=[{type=u
 # S: f0 b1 Fast
 # S: f0 b3 Compact
 function f1 name="profiledLiteralsWithoutStatics" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     v1 = NewArray contents=i32 literalStorage=Profiled
     v2 = NewArray contents=number literalStorage=Profiled
     v3 = NewArray contents=anything literalStorage=Profiled

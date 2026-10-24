@@ -8,7 +8,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Options" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}, {key="c" declared={type=anything}}]
 
 function f0 name="twoShapesAtEachOfTwoMerges" parameters=[{type=anything}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean, v2: boolean):
     v3 = NewObject -, v0 layout=L0 fields=[0]
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -28,7 +27,6 @@ function f0 name="twoShapesAtEachOfTwoMerges" parameters=[{type=anything}, {type
     PropDefine v3, v0 key="c" receivers=[L0]
     v8 = PropGet v3 key="a" receivers=[L0]
     Return v8
-}
-# CHECK-LABEL: function f0 name="twoShapesAtEachOfTwoMerges"
 # CHECK-NOT: NewObject
 # CHECK-NOT: PropDefine
+}

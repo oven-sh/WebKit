@@ -65,7 +65,6 @@ public:
     // Nothing was ever stored in, defined on or deleted from a closure that has the Structure it was made with, so its name and its length are those of its function.
     bool hasStructureOfNewClosure(VM&) const;
     bool hasOrdinaryDefineOwnProperty(VM&, PropertyName) const;
-    // A built-in function that the library writes in JavaScript is a closure like those of the program.
     static bool isNameThatBuiltinFunctionsRefuse(VM&, UniquedStringImpl*);
     bool refusesOwnProperty(VM&, PropertyName) const;
     bool isBuiltinFunction() const;
@@ -109,11 +108,6 @@ JSC_DECLARE_HOST_FUNCTION(constructBoundClosure);
 
 enum class LookupPosition : uint8_t { Receiver, PrototypeChain };
 
-JSObject* boundFunctionTarget(VM&, State&, FunctionID, std::span<const uint64_t> captures, unsigned numberOfReferences);
-// How a closure of a bound function is constructed: not at all, unless its target constructs.
-CallData constructDataOfBoundClosure(FunctionID);
-// The object is marked as a prototype from the start, so the names that the program adds before the first construction are not followed by a transition for the mark.
-JSObject* createPrototypeObjectOfFunction(VM&, JSGlobalObject*, JSObject* function);
 // For DefineMethod. Until its definition ends nothing else has seen the class object or the prototype object of a class, and those of a class that is evaluated once have Structures of their own.
 bool tryDefineClassMemberWithoutTransition(JSGlobalObject*, Closure& classObject, const LayoutData& classLayout, JSObject* holder, PropertyName, JSObject* function, MethodKind);
 bool mayHaveLazyProperty(VM&, JSCell*, UniquedStringImpl*, LookupPosition);

@@ -8,7 +8,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Made" constructor=f3 flags=[IsConstructorFunction]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = ToNumber v1
@@ -21,15 +20,12 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="calledOnly" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="fourCaptures" kind=Arrow captures=[{type=number}, {type=number}, {type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: number, v1: number, v2: number, v3: number):
     Return
 }
 function f3 name="Made" results=[{type=anything}] {
-  b0():
     Return
 }
 # CHECK: f1 Slim

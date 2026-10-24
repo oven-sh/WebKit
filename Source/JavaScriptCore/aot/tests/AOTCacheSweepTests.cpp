@@ -9,7 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTEmptyPages.h"
-#include "AOTSiteCaches.h"
+#include "AOTPropertyCaches.h"
 #include "AOTVector.h"
 #include "JSCInlines.h"
 #include <array>

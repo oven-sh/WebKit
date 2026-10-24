@@ -11,7 +11,6 @@ runtimefunction id=33 function=f1
 runtimefunction id=65 function=f2
 runtimefunction id=131090 function=f0
 function f0 name="traverseArray" role=Library enclosingRuntimeFunction=131090 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
     v6 = Undefined
     Return v6
 }
@@ -31,14 +30,12 @@ function f2 name="map" role=Library flags=[HasThis, HasHiddenRest] enclosingRunt
 }
 
 function f3 name="isPositive" kind=Arrow parameters=[{type=number}] results=[{type=boolean}] {
-  b0(v0: number):
     v1 = Integer integer=0
     v2 = Less v1, v0
     Return v2
 }
 
 function f4 name="double" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Add v0, v0
     Return v1
 }
@@ -59,8 +56,6 @@ function f5 name="insideTry" parameters=[{type=Array<number, proven, pristine[St
   b2() role=CatchHandler:
     v9 = CatchValue
     Return v9
-}
-# CHECK-LABEL: function f5 name="insideTry"
 # CHECK: b0(v0: Array<number, proven, pristine[Storage, Names]>) handler=b2():
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
@@ -72,9 +67,9 @@ function f5 name="insideTry" parameters=[{type=Array<number, proven, pristine[St
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
+}
 
 function f6 name="insideLoop" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: anything):
     Jump -> next b1()
   b1():
     LoopHint
@@ -91,8 +86,6 @@ function f6 name="insideLoop" parameters=[{type=Array<number, proven, pristine[S
     Branch v12 -> taken b1(), notTaken b2()
   b2():
     Return v10
-}
-# CHECK-LABEL: function f6 name="insideLoop"
 # CHECK: LoopHint
 # CHECK-NOT: = CallDirect v0, v3, v4 function=
 # CHECK-NOT: = CallDirect v6, v7, v8 function=
@@ -101,9 +94,9 @@ function f6 name="insideLoop" parameters=[{type=Array<number, proven, pristine[S
 # CHECK-NEXT: [[fused6]]: anything = CallDirect v0, [[zero6]], [[none6]], v3, [[none6]], v7, [[none6]] function=[[filterMapToArray]]
 # CHECK-NOT: = CallDirect v0, v3, v4 function=
 # CHECK-NOT: = CallDirect v6, v7, v8 function=
+}
 
 function f7 name="twoChainsInOneBlock" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: Array<number, proven, pristine[Storage, Names]>):
     v2 = NewClosure function=f3
     v3 = NewArray contents=anything
     v4 = CallDirect v0, v2, v3 function=f1
@@ -122,8 +115,6 @@ function f7 name="twoChainsInOneBlock" parameters=[{type=Array<number, proven, p
     v17 = AssumeType v16 castType=Array<number>
     v18 = NewArray v9, v17 contents=anything
     Return v18
-}
-# CHECK-LABEL: function f7 name="twoChainsInOneBlock"
 # CHECK-NOT: = CallDirect v0, v2, v3 function=
 # CHECK-NOT: = CallDirect v5, v6, v7 function=
 # CHECK-NOT: = CallDirect v1, v10, v11 function=
@@ -138,9 +129,9 @@ function f7 name="twoChainsInOneBlock" parameters=[{type=Array<number, proven, p
 # CHECK-NOT: = CallDirect v5, v6, v7 function=
 # CHECK-NOT: = CallDirect v1, v10, v11 function=
 # CHECK-NOT: = CallDirect v13, v14, v15 function=
+}
 
 function f8 name="chainFeedsChain" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>):
     v1 = NewClosure function=f3
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f1
@@ -160,8 +151,6 @@ function f8 name="chainFeedsChain" parameters=[{type=Array<number, proven, prist
     v17 = CallDirect v14, v15, v16 function=f2
     v18 = AssumeType v17 castType=Array<number>
     Return v18
-}
-# CHECK-LABEL: function f8 name="chainFeedsChain"
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
 # CHECK-NOT: = CallDirect v9, v11, v12 function=
@@ -178,9 +167,9 @@ function f8 name="chainFeedsChain" parameters=[{type=Array<number, proven, prist
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
 # CHECK-NOT: = CallDirect v9, v11, v12 function=
 # CHECK-NOT: = CallDirect v14, v15, v16 function=
+}
 
 function f9 name="castsBetweenLinks" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>):
     v1 = NewClosure function=f3
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f1
@@ -191,8 +180,6 @@ function f9 name="castsBetweenLinks" parameters=[{type=Array<number, proven, pri
     v8 = CallDirect v5, v6, v7 function=f2
     v9 = AssumeType v8 castType=Array<number>
     Return v9
-}
-# CHECK-LABEL: function f9 name="castsBetweenLinks"
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v5, v6, v7 function=
 # CHECK-NOT: Upcast
@@ -202,9 +189,9 @@ function f9 name="castsBetweenLinks" parameters=[{type=Array<number, proven, pri
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v5, v6, v7 function=
 # CHECK-NOT: Upcast
+}
 
 function f10 name="castUsedTwice" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>):
     v1 = NewClosure function=f3
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f1
@@ -216,10 +203,9 @@ function f10 name="castUsedTwice" parameters=[{type=Array<number, proven, pristi
     v9 = AssumeType v8 castType=Array<number>
     PutModuleVariable v5 variable=g0
     Return v9
-}
-# CHECK-LABEL: function f10 name="castUsedTwice"
 # CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f1
 # CHECK: v8: anything = CallDirect v5, v6, {{*}} function=f2
+}
 
 # CHECK: function [[filterMapToArray]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=96}
 # CHECK-NOT: role=ChainStep

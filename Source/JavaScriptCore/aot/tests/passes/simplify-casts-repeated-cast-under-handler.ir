@@ -15,8 +15,6 @@ function f0 name="repeatedInCoveredBlockAndInHandler" parameters=[{type=anything
     v4 = CatchValue
     v5 = Check v0 castType=number
     Return v5
-}
-# CHECK-LABEL: function f0 name="repeatedInCoveredBlockAndInHandler"
 # CHECK-NEXT: b0(v0: anything) handler=b1():
 # CHECK-NEXT: v1: number = Check v0 castType=number
 # CHECK-NEXT: = Add v1, v1
@@ -24,6 +22,7 @@ function f0 name="repeatedInCoveredBlockAndInHandler" parameters=[{type=anything
 # CHECK-NEXT: = CatchValue
 # CHECK-NEXT: v5: number = Check v0 castType=number
 # CHECK-NEXT: Return v5
+}
 
 function f1 name="repeatedBehindHandler" parameters=[{type=anything}, {type=anything}] results=[{type=number}] {
   b0(v0: anything, v1: anything) handler=b1():
@@ -38,13 +37,12 @@ function f1 name="repeatedBehindHandler" parameters=[{type=anything}, {type=anyt
   b2():
     v7 = Check v0 castType=number
     Return v7
-}
-# CHECK-LABEL: function f1 name="repeatedBehindHandler"
 # CHECK: v3: number = Check v0 castType=number
 # CHECK-NEXT: = Add v3, v3
 # CHECK: b2():
 # CHECK-NEXT: v7: number = Check v0 castType=number
 # CHECK-NEXT: Return v7
+}
 
 function f2 name="onlyInHandler" parameters=[{type=anything}, {type=anything}] results=[{type=number}] {
   b0(v0: anything, v1: anything) handler=b1():
@@ -55,10 +53,9 @@ function f2 name="onlyInHandler" parameters=[{type=anything}, {type=anything}] r
     v4 = CatchValue
     v5 = Check v0 castType=number
     Return v5
-}
-# CHECK-LABEL: function f2 name="onlyInHandler"
 # CHECK: v3: number = Check v0 castType=number
 # CHECK: b1() role=CatchHandler:
 # CHECK-NEXT: = CatchValue
 # CHECK-NEXT: v5: number = Check v0 castType=number
 # CHECK-NEXT: Return v5
+}

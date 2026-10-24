@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="stringsInCompactCode" parameters=[{type=Array}, {type=Array<string, pristine[Storage, Names]>}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array, v1: Array<string, pristine[Storage, Names]>, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     AppendElements v0, v1
@@ -20,7 +19,6 @@ function f0 name="stringsInCompactCode" parameters=[{type=Array}, {type=Array<st
 # CHECK-NOT: stub WriteBarrier
 # S: f0 b1 Compact
 function f1 name="stringsInBalancedCode" parameters=[{type=Array}, {type=Array<string, pristine[Storage, Names]>}] results=[{type=undefined}] {
-  b0(v0: Array, v1: Array<string, pristine[Storage, Names]>):
     AppendElements v0, v1
     Return
 }
@@ -30,7 +28,6 @@ function f1 name="stringsInBalancedCode" parameters=[{type=Array}, {type=Array<s
 # CHECK-NOT: stub WriteBarrier
 # S: f1 b0 Balanced
 function f2 name="stringsInFastCode" parameters=[{type=Array}, {type=Array<string, pristine[Storage, Names]>}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array, v1: Array<string, pristine[Storage, Names]>, v2: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -45,7 +42,6 @@ function f2 name="stringsInFastCode" parameters=[{type=Array}, {type=Array<strin
 # CHECK-NOT: stub WriteBarrier
 # S: f2 b1 Fast
 function f3 name="numbersIntoNumbers" parameters=[{type=Array<number>}, {type=Array<number, pristine[Storage, Names]>}] results=[{type=undefined}] {
-  b0(v0: Array<number>, v1: Array<number, pristine[Storage, Names]>):
     AppendElements v0, v1
     Return
 }
@@ -53,7 +49,6 @@ function f3 name="numbersIntoNumbers" parameters=[{type=Array<number>}, {type=Ar
 # CHECK-NOT: operation operationAOTAppendElements
 # CHECK: stub AppendElements x1
 function f4 name="stringsIntoNumbers" parameters=[{type=Array<number>}, {type=Array<string, pristine[Storage, Names]>}] results=[{type=undefined}] {
-  b0(v0: Array<number>, v1: Array<string, pristine[Storage, Names]>):
     AppendElements v0, v1
     Return
 }

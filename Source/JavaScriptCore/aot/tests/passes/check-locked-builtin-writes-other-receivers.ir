@@ -8,7 +8,6 @@ layout L0 name="Plain" fields=[{key="x" declared={type=anything}}]
 layout L1 name="Descriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
 variable g0 name="choice" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = ToBoolean v0
     v2 = Builtin builtin=ObjectPrototype

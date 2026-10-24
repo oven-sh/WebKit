@@ -5,11 +5,9 @@
 
 module m0 path="main.ts" displayPath="main.ts"
 function f0 name="withoutRest" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 function f1 name="withoutRest" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] thisType={type=anything} results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0} {
-  b0(v0: f0, v1: anything):
     v2 = GetArgument argumentIndex=0
     v3 = CreateRest firstArgument=1
     v4 = CallDirect v2 function=f0

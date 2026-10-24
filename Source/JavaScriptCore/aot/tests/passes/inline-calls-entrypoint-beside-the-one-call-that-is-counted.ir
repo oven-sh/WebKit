@@ -8,7 +8,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = NewClosure function=f1
@@ -19,7 +18,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK: = Call {{*}}callees=[f1]
 
 function f1 name="calledAtOnePlace" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToNumber v0
 # REPEAT: i = 1..21
     v%(i+1) = Mul v%(i), v1

@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="edgePassesProof" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: anything):
     Branch v0 -> taken b1(), notTaken b6()
   b1() frequency=Rare:
     v3 = TypeTest v1 testedType=undefined|null
@@ -35,7 +34,6 @@ function f0 name="edgePassesProof" parameters=[{type=boolean}, {type=anything}, 
 # CHECK-NEXT: Return [[narrowed0]]
 
 function f1 name="edgePassesProof2" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: anything):
     Branch v0 -> taken b1(), notTaken b6()
   b1() frequency=Rare:
     v3 = TypeTest v1 testedType=undefined|null
@@ -63,7 +61,6 @@ function f1 name="edgePassesProof2" parameters=[{type=boolean}, {type=anything},
 # CHECK-NEXT: Return [[narrowed1]]
 
 function f2 name="edgePassesProof3" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: anything):
     Branch v0 -> taken b1(), notTaken b6()
   b1() frequency=Rare:
     v3 = TypeTest v1 testedType=undefined|null
@@ -91,7 +88,6 @@ function f2 name="edgePassesProof3" parameters=[{type=boolean}, {type=anything},
 # CHECK-NEXT: Return [[narrowed2]]
 
 function f3 name="edgePassesNothing" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: anything):
     Branch v0 -> taken b1(), notTaken b6()
   b1() frequency=Rare:
     v3 = TypeTest v1 testedType=undefined|null
@@ -117,7 +113,6 @@ function f3 name="edgePassesNothing" parameters=[{type=boolean}, {type=anything}
 # CHECK-NEXT: Jump -> next
 
 function f4 name="edgePassesNothing2" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: anything):
     Branch v0 -> taken b1(), notTaken b6()
   b1() frequency=Rare:
     v3 = TypeTest v1 testedType=undefined|null
@@ -143,7 +138,6 @@ function f4 name="edgePassesNothing2" parameters=[{type=boolean}, {type=anything
 # CHECK-NEXT: Jump -> next
 
 function f5 name="edgePassesNothing3" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: anything):
     Branch v0 -> taken b1(), notTaken b6()
   b1() frequency=Rare:
     v3 = TypeTest v1 testedType=undefined|null

@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="slice-on-edge" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=boolean}] {
-  b0(v0: string, v1: int, v2: int):
     v3 = GetStringLength v0
     v4 = StringRange v3, v1, v2
     v5 = ResultAt v4
@@ -43,37 +42,32 @@ function f1 name="slice-under-handler" parameters=[{type=string}, {type=int}, {t
     v10 = CatchValue
     v11 = Boolean boolean=false
     Return v11
-}
-# CHECK-LABEL: function f1 name="slice-under-handler"
 # CHECK-NOT: = Substring
 # CHECK: [[result1]]: boolean = StringRangeEqualsLiteral v0, v5, v6 literal="ab"
 # CHECK-NEXT: Return [[result1]]
+}
 
 function f2 name="slice-returned" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=string}] {
-  b0(v0: string, v1: int, v2: int):
     v3 = GetStringLength v0
     v4 = StringRange v3, v1, v2
     v5 = ResultAt v4
     v6 = ResultAt v4 index=1
     v7 = Substring v0, v5, v6
     Return v7
-}
-# CHECK-LABEL: function f2 name="slice-returned"
 # CHECK: v7: string = Substring v0, v5, v6
 # CHECK-NEXT: Return v7
+}
 
 function f3 name="slice-without-use" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=string}] {
-  b0(v0: string, v1: int, v2: int):
     v3 = GetStringLength v0
     v4 = StringRange v3, v1, v2
     v5 = ResultAt v4
     v6 = ResultAt v4 index=1
     v7 = Substring v0, v5, v6
     Return v0
-}
-# CHECK-LABEL: function f3 name="slice-without-use"
 # CHECK-NOT: = Substring
 # CHECK: Return v0
+}
 
 function f4 name="slice-converted-under-handler" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=number}] {
   b0(v0: string, v1: int, v2: int) handler=b2():
@@ -90,10 +84,9 @@ function f4 name="slice-converted-under-handler" parameters=[{type=string}, {typ
     v9 = CatchValue
     v10 = Integer integer=0
     Return v10
-}
-# CHECK-LABEL: function f4 name="slice-converted-under-handler"
 # CHECK: b0(v0: string, v1: int, v2: int) {{*}}handler=b2():
 # CHECK-NOT: = Substring
 # CHECK: [[result4]]: number = StringRangeToNumber v0, v5, v6
 # CHECK-NEXT: Jump -> next b1()
 # CHECK: Return [[result4]]
+}

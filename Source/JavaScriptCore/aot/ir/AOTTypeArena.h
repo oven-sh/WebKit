@@ -242,7 +242,6 @@ public:
     LayoutSetID unionOf(LayoutSetID, LayoutSetID);
     LayoutSetID intersectionOf(LayoutSetID, LayoutSetID);
     LayoutSetID differenceOf(LayoutSetID, LayoutSetID);
-    bool isSubsetOf(LayoutSetID, LayoutSetID);
 
     static std::optional<SharedTypeMemo::Key> sharedKeyOf(SharedTypeMemo::Relation relation, TypeID first, TypeID second)
     {
@@ -297,7 +296,6 @@ private:
     TypeInterningPhase::FirstUses* m_firstUses { nullptr };
     Vector<TypeInterningPhase::Storage*, 1> m_storages;
     std::array<LayoutSetPairMap<LayoutSetID>, numberOfLayoutSetOperations> m_layoutSetResultCache;
-    LayoutSetPairMap<bool> m_layoutSubsetCache;
     TypeMemo m_unions;
     TypeMemo m_intersections;
     UncheckedKeyHashMap<LayoutSetID, LayoutSetID> m_adoptedLayoutSets;

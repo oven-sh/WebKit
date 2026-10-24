@@ -10,14 +10,12 @@
 
 #include "AOTBuildContext.h"
 #include "AOTCodeGenerationDriver.h"
-#include "AOTCodeIndex.h"
 #include "AOTCodeTemplates.h"
 #include "AOTCompileOptions.h"
 #include "AOTFFIStubs.h"
 #include "AOTIRProgram.h"
 #include "AOTImageBuilder.h"
 #include "AOTImageFormat.h"
-#include "AOTImageSymbols.h"
 #include "AOTPhaseTimes.h"
 #include "AOTPipeline.h"
 #include "AOTProgramTableEncoder.h"
@@ -25,7 +23,6 @@
 #include "AOTRegExpCompiler.h"
 #include "AOTTextEncoder.h"
 #include "AOTThreads.h"
-#include "AOTVector.h"
 #include "AOTWasmModules.h"
 #include "JSLock.h"
 #include "VM.h"
@@ -34,15 +31,15 @@
 #include <optional>
 #include <tuple>
 #include <type_traits>
+#include <wtf/Box.h>
 #include <wtf/CheckedArithmetic.h>
-#include <wtf/Condition.h>
 #include <wtf/DataLog.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/ScopedLambda.h>
 #include <wtf/StackAllocation.h>
-#include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/Threading.h>
+#include <wtf/threads/BinarySemaphore.h>
 
 namespace JSC { namespace AOT {
 
@@ -55,16 +52,12 @@ static_assert(std::tuple_size_v<decltype(FunctionReport::accessCosts)> == number
 
 namespace {
 
-struct CodeAndTables {
+struct GeneratedProgram {
+    CodeGenerationPlan plan;
     GeneratedCode code;
     Typed::EncodedProgramTables tables;
     EncodedText text;
     CompiledRegExps regExps;
-};
-
-struct GeneratedProgram {
-    CodeGenerationPlan plan;
-    CodeAndTables generated;
 };
 
 struct PreparedProgram {
@@ -86,34 +79,6 @@ struct SiteCounts {
 };
 
 enum class WhatTheBuildLeaves : uint8_t { DiesBeforeTheCallReturns, DiesBesideTheCaller };
-
-class CallerOfBuildThread final : public ThreadSafeRefCounted<CallerOfBuildThread> {
-public:
-    static Ref<CallerOfBuildThread> create() { return adoptRef(*new CallerOfBuildThread); }
-
-    void release()
-    {
-        Locker locker { m_lock };
-        m_isReleased = true;
-        m_condition.notifyOne();
-    }
-
-    void wait()
-    {
-        Locker locker { m_lock };
-        m_condition.wait(m_lock, [this] {
-            assertIsHeld(m_lock);
-            return m_isReleased;
-        });
-    }
-
-private:
-    CallerOfBuildThread() = default;
-
-    Lock m_lock;
-    WTF::Condition m_condition;
-    bool m_isReleased WTF_GUARDED_BY_LOCK(m_lock) { false };
-};
 
 } // anonymous namespace
 
@@ -137,32 +102,6 @@ static void waitAtExitFor(Ref<Thread>&& thread)
 }
 #endif
 
-static CodeAndTables generateCodeAndTables(Typed::PipelineOutput& pipeline, const CodeGenerationPlan& plan, NOESCAPE const ScopedLambda<void()>& buildReport, BuildContext& context)
-{
-    Typed::CodeGenerationInputs inputs = createCodeGenerationInputs(pipeline, plan);
-    CodeGenerationJob codeGeneration(inputs, *pipeline.program, context, &plan.bodiesWithoutCode);
-
-    CodeAndTables result;
-    // Most of encoding the text runs on one thread, so it runs beside code generation, which is longer.
-    auto encodeTablesAndText = [&] {
-        result.tables = Typed::encodeProgramTables({ pipeline, plan.instanceSizes, plan.stringConstants, plan.bodyFactsForTables }, context);
-        if (!context.diagnostics().hasErrors())
-            result.text = encodeText({ *pipeline.program, plan.uses.strings, context.identifierNumbering(), plan.stringConstants, result.tables.namedStrings, &result.tables.stringsOnlyShown }, context);
-    };
-    auto generateCode = [&] {
-        result.code = codeGeneration.run();
-    };
-    auto compileRegExps = [&] {
-        result.regExps = pipeline.takeCompiledRegExps(context);
-    };
-    // So does most of the flow report, which reads what flow has left and no body.
-    auto buildFlowReport = [&] {
-        buildReport();
-    };
-    runTasksInParallel(context.parallelLoops(), { encodeTablesAndText, generateCode, compileRegExps, buildFlowReport });
-    return result;
-}
-
 static void prepareProgram(const Typed::PipelineOutput& pipeline, BuildContext& context, PreparedProgram& prepared)
 {
     runTasksInParallel(context.parallelLoops(), {
@@ -178,10 +117,11 @@ static GeneratedProgram generateProgram(Typed::PipelineOutput& pipeline, Prepare
         prepareProgram(pipeline, context, prepared);
         times.didFinish("prepare code generation, collect type tests"_s);
     }
-    CodeGenerationPlan plan = WTF::move(*prepared.plan);
+    GeneratedProgram result { WTF::move(*prepared.plan), { }, { }, { }, { } };
+    const CodeGenerationPlan& plan = result.plan;
     if (context.diagnostics().hasErrors()) {
         buildReport();
-        return { WTF::move(plan), { } };
+        return result;
     }
 
     if (context.options().writesCodeSizeMap() && context.recordedOptions().countsArrivals) {
@@ -189,9 +129,21 @@ static GeneratedProgram generateProgram(Typed::PipelineOutput& pipeline, Prepare
         times.didFinish("describe arrival sites"_s);
     }
 
-    CodeAndTables generated = generateCodeAndTables(pipeline, plan, buildReport, context);
+    Typed::CodeGenerationInputs inputs = createCodeGenerationInputs(pipeline, plan);
+    CodeGenerationJob codeGeneration(inputs, *pipeline.program, context, &plan.bodiesWithoutCode);
+    // Most of encoding the text runs on one thread, so it runs beside code generation, which is longer. So does most of the flow report, which reads what flow has left and no body.
+    runTasksInParallel(context.parallelLoops(), {
+        [&] {
+            result.tables = Typed::encodeProgramTables({ pipeline, plan.instanceSizes, plan.stringConstants, plan.bodyFactsForTables }, context);
+            if (!context.diagnostics().hasErrors())
+                result.text = encodeText({ *pipeline.program, plan.uses.strings, context.identifierNumbering(), plan.stringConstants, result.tables.namedStrings, &result.tables.stringsOnlyShown }, context);
+        },
+        [&] { result.code = codeGeneration.run(); },
+        [&] { result.regExps = pipeline.takeCompiledRegExps(context); },
+        [&] { buildReport(); },
+    });
     times.didFinish("generate code, encode program tables and text, compile regular expressions"_s);
-    return { WTF::move(plan), WTF::move(generated) };
+    return result;
 }
 
 static WebAssemblyImageInputs compileWebAssembly(const Typed::Program& program, const BitVector& stringsInImage, BuildContext& context)
@@ -232,13 +184,12 @@ static std::optional<ImageParts> createImageParts(const Typed::PipelineOutput& p
     return WTF::move(parts);
 }
 
-static BuiltImage createImage(const Typed::PipelineOutput& pipeline, GeneratedProgram& generatedProgram, BuildContext& context, CompileOutput& output)
+static BuiltImage createImage(const Typed::PipelineOutput& pipeline, GeneratedProgram& generated, BuildContext& context, CompileOutput& output)
 {
     if (context.diagnostics().hasErrors())
         return { };
 
-    const CodeGenerationPlan& plan = generatedProgram.plan;
-    CodeAndTables& generated = generatedProgram.generated;
+    const CodeGenerationPlan& plan = generated.plan;
     std::optional<ImageParts> parts = createImageParts(pipeline, plan, context);
     if (!parts)
         return { };
@@ -315,14 +266,6 @@ static Vector<SiteCounts> countSitesByFunctionAsRead(const Typed::Program& progr
     return counts;
 }
 
-static uint32_t codeBytesOf(const BuiltImage& built, const CodeIndex& index, FunctionID function)
-{
-    std::optional<uint32_t> position = index.indexOf(function);
-    if (!position)
-        return 0;
-    return safeCast<uint32_t>(built.functions[*position].body.bytes.size() + built.outlinedCode.ownBodiesSize(*position));
-}
-
 static Vector<FunctionReport> collectFunctionReports(const Typed::Program& program, const BuiltImage& built, std::span<OperationCounts> operationCountsByFunction, std::span<const SiteCounts> sitesByFunctionAsRead, BuildContext& context)
 {
     CodeIndex index(built.functions.span());
@@ -333,10 +276,11 @@ static Vector<FunctionReport> collectFunctionReports(const Typed::Program& progr
             return;
 
         FunctionID id(functionIndex);
+        std::optional<uint32_t> position = index.indexOf(id);
         reports.append(FunctionReport {
             .source = findFunctionAsRead(&program, id),
             .role = function.role,
-            .codeBytes = codeBytesOf(built, index, id),
+            .codeBytes = position ? safeCast<uint32_t>(built.functions[*position].body.bytes.size() + built.outlinedCode.ownBodiesSize(*position)) : 0,
             .accesses = sites.accesses,
             .accessCosts = sites.accessCosts,
             .calls = sites.calls,
@@ -402,7 +346,7 @@ static void generateImage(Typed::PipelineOutput& pipeline, PreparedProgram& prep
     pipeline.releaseCodeGenerationInputs(context);
     BuiltImage built = createImage(pipeline, generated, context, output);
     if (!context.diagnostics().hasErrors())
-        writeReports(pipeline, built, generated.generated.code.operationCountsByFunction.mutableSpan(), sitesByFunctionAsRead.span(), context, output);
+        writeReports(pipeline, built, generated.code.operationCountsByFunction.mutableSpan(), sitesByFunctionAsRead.span(), context, output);
     if (whatTheBuildLeaves == WhatTheBuildLeaves::DiesBeforeTheCallReturns) {
         PhaseTimes times(context, Stage::BuildImage);
         built.functions.clearOnAllThreads(context);
@@ -410,25 +354,6 @@ static void generateImage(Typed::PipelineOutput& pipeline, PreparedProgram& prep
     }
     context.destroyLater(WTF::move(built));
     context.destroyLater(WTF::move(generated));
-}
-
-static void destroyFunctions(Typed::Program& program, BuildContext& context)
-{
-    PhaseTimes times(context, Stage::BuildImage);
-    forEachIndexInParallel(context.parallelLoops(), program.functions.size(), [&](unsigned index) {
-        Typed::Function function = WTF::move(program.functions[index]);
-    });
-    times.didFinish("destroy functions"_s);
-}
-
-static void makeReportOrImage(Typed::PipelineOutput& pipeline, PreparedProgram& prepared, BuildContext& context, CompileOutput& output, WhatTheBuildLeaves whatTheBuildLeaves)
-{
-    if (context.options().isVerifyOnly()) {
-        PhaseTimes times(context, Stage::AnalyzeFlow);
-        buildFlowReport(pipeline, Typed::collectFlowReportBodyRecords(*pipeline.program, context), context, output);
-        times.didFinish("collect type tests, build flow report"_s);
-    } else
-        generateImage(pipeline, prepared, context, output, whatTheBuildLeaves);
 }
 
 static void run(NOESCAPE const PipelineRunner& runPipeline, BuildContext& context, CompileOutput& output, WhatTheBuildLeaves whatTheBuildLeaves)
@@ -452,15 +377,24 @@ static void run(NOESCAPE const PipelineRunner& runPipeline, BuildContext& contex
     output.entryModuleIDs = program.entries.map([](const Typed::Entry& entry) {
         return entry.module.index() + 1;
     });
-    if (!context.options().isCheckOnly())
-        makeReportOrImage(*pipeline, prepared, context, output, whatTheBuildLeaves);
+    if (context.options().isVerifyOnly()) {
+        PhaseTimes times(context, Stage::AnalyzeFlow);
+        buildFlowReport(*pipeline, Typed::collectFlowReportBodyRecords(program, context), context, output);
+        times.didFinish("collect type tests, build flow report"_s);
+    } else if (!context.options().isCheckOnly())
+        generateImage(*pipeline, prepared, context, output, whatTheBuildLeaves);
 
     diagnostics.finish(&program);
     output.losses = context.takeLosses(&program);
     output.declines = context.takeDeclines(&program);
     output.allocationRemarks = context.takeAllocationRemarks();
-    if (whatTheBuildLeaves == WhatTheBuildLeaves::DiesBeforeTheCallReturns)
-        destroyFunctions(*pipeline->program, context);
+    if (whatTheBuildLeaves == WhatTheBuildLeaves::DiesBeforeTheCallReturns) {
+        PhaseTimes times(context, Stage::BuildImage);
+        forEachIndexInParallel(context.parallelLoops(), program.functions.size(), [&](unsigned index) {
+            Typed::Function function = WTF::move(pipeline->program->functions[index]);
+        });
+        times.didFinish("destroy functions"_s);
+    }
     context.destroyLater(WTF::move(pipeline));
 }
 
@@ -487,8 +421,9 @@ static void takeResults(BuildContext& context, CompileOutput& output, WhatTheBui
 std::unique_ptr<CompileOutput> compileProgram(std::span<const uint8_t> program, const Wire::CompileOptions& options, const HostThreadPool* hostPool, ProgramOwner owner)
 {
     auto output = makeUnique<CompileOutput>();
-    Ref<CallerOfBuildThread> caller = CallerOfBuildThread::create();
-    Ref<Thread> buildThread = Thread::create("AOT build"_s, [&, caller] {
+    // What the build leaves dies on its thread while the caller goes on.
+    Box<BinarySemaphore> outputIsComplete = Box<BinarySemaphore>::create();
+    Ref<Thread> buildThread = Thread::create("AOT build"_s, [&, outputIsComplete] {
         BuildContext context(options, hostPool);
         run([&](const Typed::ReaderOfFinishedBodies& readBesideLastEffectSummaries) {
             return Typed::runPipeline(program, owner.externalBodies, context, [&] {
@@ -498,14 +433,14 @@ std::unique_ptr<CompileOutput> compileProgram(std::span<const uint8_t> program, 
         }, context, *output, WhatTheBuildLeaves::DiesBesideTheCaller);
         takeResults(context, *output, WhatTheBuildLeaves::DiesBesideTheCaller);
         context.parallelLoops().sendRestingThreadsBack();
-        caller->release();
+        outputIsComplete->signal();
     }, ThreadType::Compiler, Thread::defaultQOS, Thread::defaultSchedulingPolicy, StackAllocationSpecification::RequestSize(ParallelLoops::workerStackSize));
 #if ASAN_ENABLED
     waitAtExitFor(WTF::move(buildThread));
 #else
     buildThread->detach();
 #endif
-    caller->wait();
+    outputIsComplete->wait();
     return output;
 }
 

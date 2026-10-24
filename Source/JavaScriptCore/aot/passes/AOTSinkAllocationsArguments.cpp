@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinMembers.h"
+#include "AOTBuiltinTable.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTFlowApply.h"
 #include "AOTForwardedCalls.h"
@@ -17,6 +18,7 @@
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
 #include "Interpreter.h"
+#include <algorithm>
 #include <array>
 #include <utility>
 
@@ -35,13 +37,6 @@ struct ArgumentsPart {
     ArgumentsPartKind kind { ArgumentsPartKind::Unknown };
     VirtualField field;
     uint32_t index { 0 };
-};
-
-struct ArgumentSelection {
-    ValueID index;
-    ValueID count;
-    Vector<ValueID, 8> parameters;
-    TypeID type;
 };
 
 } // anonymous namespace
@@ -237,38 +232,33 @@ static ValueID emitReplacement(AllocationSinking& sinking, ObjectInterpreter& in
 
 static ValueID emitParameterIfPassed(RewriteCursor& cursor, uint32_t index, ValueID count, ValueID parameter, TypeID type)
 {
-    IRBuilder& builder = cursor.builder();
-    ValueID none = builder.appendUndefined();
-    ValueID isPassed = cursor.emit(IRBuilder::make(Opcode::Less, { builder.appendInteger(index), count }));
-    BlockID continuation = cursor.addUncoveredBlock();
-    ValueID result = builder.addParameter(continuation, type);
-    builder.emitBranch(isPassed, Target { continuation, { parameter }, { } }, Target { continuation, { none }, { } });
-    cursor.moveTo(continuation);
-    return result;
+    ValueID none = cursor.builder().appendUndefined();
+    ValueID isPassed = cursor.emit(IRBuilder::make(Opcode::Less, { cursor.builder().appendInteger(index), count }));
+    return cursor.emitSelection(isPassed, parameter, none, type);
 }
 
-static ValueID emitArgumentSelection(AllocationSinking& sinking, ObjectInterpreter& interpreter, ValueID read, const ArgumentSelection& selection, Value&& surplusRead)
+static ValueID emitArgumentSelection(AllocationSinking& sinking, ObjectInterpreter& interpreter, ValueID read, ValueID index, ValueID count, std::span<const ValueID> parameters, Value&& surplusRead)
 {
     RewriteCursor& cursor = sinking.cursor();
     IRBuilder& builder = cursor.builder();
 
     ValueID none = builder.appendUndefined();
-    ValueID isPassed = cursor.emit(IRBuilder::make(Opcode::Less, { selection.index, selection.count }));
+    ValueID isPassed = cursor.emit(IRBuilder::make(Opcode::Less, { index, count }));
     BlockID passed = cursor.addUncoveredBlock();
     BlockID surplus = cursor.addUncoveredBlock();
     BlockID continuation = cursor.addUncoveredBlock();
-    ValueID result = builder.addParameter(continuation, selection.type);
+    ValueID result = builder.addParameter(continuation, TypeTable::anything);
     builder.emitBranch(isPassed, Target { passed, { }, { } }, Target { continuation, { none }, { } });
 
     cursor.moveTo(passed);
     Vector<std::pair<int64_t, Target>> cases;
-    cases.reserveInitialCapacity(selection.parameters.size());
-    for (size_t position = 0; position < selection.parameters.size(); ++position)
-        cases.append({ static_cast<int64_t>(position), Target { continuation, { selection.parameters[position] }, { } } });
+    cases.reserveInitialCapacity(parameters.size());
+    for (size_t position = 0; position < parameters.size(); ++position)
+        cases.append({ static_cast<int64_t>(position), Target { continuation, { parameters[position] }, { } } });
     if (cases.isEmpty())
         builder.emitJump(surplus);
     else
-        builder.emitSwitch(selection.index, WTF::move(cases), Target { surplus, { }, { } });
+        builder.emitSwitch(index, WTF::move(cases), Target { surplus, { }, { } });
 
     cursor.moveTo(surplus);
     ValueID surplusArgument = emitReplacement(sinking, interpreter, read, WTF::move(surplusRead));
@@ -301,7 +291,6 @@ static void becomeForwardingSuperConstruct(Value& construct, uint32_t firstArgum
     construct.setCallees(listConstruct.callees());
 }
 
-// How many arguments the callees look at, where each of them takes the arguments in front by position and sees nothing else of the list: neither how long it is nor what lies behind them.
 static std::optional<uint32_t> numberOfArgumentsThatCalleesSee(const Program& program, const Value& call)
 {
     CalleeSetID stamp = call.callees();
@@ -321,40 +310,32 @@ static std::optional<uint32_t> numberOfArgumentsThatCalleesSee(const Program& pr
     return numberOfArguments;
 }
 
-Execution ObjectInterpreter::readArgumentList(ValueID read, VirtualObjectID object, const VirtualFieldAccess& access)
+void ObjectInterpreter::readArgumentList(ValueID read, VirtualObjectID object, const VirtualFieldAccess& access)
 {
     const VirtualObjectDescription* description = singleDescriptionOf(object);
     std::optional<Value> replacement;
     if (description && description->kind == VirtualObjectKind::ArgumentList)
         replacement = makeArgumentListRead(access, description->firstArgument);
-    if (!replacement || !isResultTypeWithin(program(), function(), *replacement, program().typeOf(function(), read))) {
-        requireCell(function().at(read).operand(0), causeOf(read, 0));
-        return executeOther(read);
-    }
+    if (!replacement || !isResultTypeWithin(program(), function(), *replacement, program().typeOf(function(), read)))
+        return executeOnCell(read, 0);
 
     if (isRewriting()) {
         resolveOperands(*replacement);
         replaceRead(read, emitReplacement(m_sinking, *this, read, WTF::move(*replacement)));
     }
-    return Execution::Interpreted;
 }
 
-Execution ObjectInterpreter::readArguments(ValueID read, VirtualObjectID object, const VirtualFieldAccess& access)
+void ObjectInterpreter::readArguments(ValueID read, VirtualObjectID object, const VirtualFieldAccess& access)
 {
-    auto executeOnCell = [&] {
-        requireCell(function().at(read).operand(0), causeOf(read, 0));
-        return executeOther(read);
-    };
-
     const VirtualObjectDescription* description = singleDescriptionOf(object);
     if (!description || description->kind != VirtualObjectKind::Arguments)
-        return executeOnCell();
+        return executeOnCell(read, 0);
 
     const VirtualFamily& family = m_sinking.familyOf(object);
     ArgumentsPart part = findArgumentsPart(program(), *description, access);
     std::optional<uint32_t> field = family.findField(part.field);
     if (part.kind == ArgumentsPartKind::Unknown || !field)
-        return executeOnCell();
+        return executeOnCell(read, 0);
 
     TypeID type = function().at(read).type;
     uint32_t countField = *family.findField(VirtualField::part(VirtualFieldKind::ArgumentCount));
@@ -366,7 +347,7 @@ Execution ObjectInterpreter::readArguments(ValueID read, VirtualObjectID object,
         if (held)
             kind = kind == FieldRead::Value ? FieldRead::HeldObject : FieldRead::Unknown;
         if (!fitsRead(read, object, *field, kind))
-            return executeOnCell();
+            return executeOnCell(read, 0);
 
         if (held)
             bind(read, held);
@@ -376,10 +357,10 @@ Execution ObjectInterpreter::readArguments(ValueID read, VirtualObjectID object,
                 value = emitParameterIfPassed(cursor(), part.index, valueOfField(object, countField), value, type);
             replaceRead(read, value);
         }
-        return Execution::Interpreted;
+        return;
     }
     if (!description->restListStaysAsCreated)
-        return executeOnCell();
+        return executeOnCell(read, 0);
 
     VirtualObjectID list = stateOf(object)->objectHeldIn(*field);
     const VirtualObjectDescription* frameList = findFrameList(m_sinking, list);
@@ -390,8 +371,7 @@ Execution ObjectInterpreter::readArguments(ValueID read, VirtualObjectID object,
     bool selectsParameter = part.kind == ArgumentsPartKind::DynamicElement
         && !(frameList && !description->isMapped && areParametersFrameArguments(m_sinking, *description, *frameList));
     if (frameList && !surplusRead)
-        return executeOnCell();
-    // What is proven of the contents of the object is proven of the arguments it would hold, which is all that the type of a read of an element comes from.
+        return executeOnCell(read, 0);
     bool assumesTypeOfRead = !fits || (selectsParameter && !program().at(type).isAnything());
 
     Vector<uint32_t, 8> parameterFields;
@@ -412,9 +392,9 @@ Execution ObjectInterpreter::readArguments(ValueID read, VirtualObjectID object,
         forgetFieldsWrittenBy(read);
     }
     if (!singleDescriptionOf(object))
-        return executeOnCell();
+        return executeOnCell(read, 0);
     if (!isRewriting())
-        return Execution::Interpreted;
+        return;
 
     ValueID index = part.kind == ArgumentsPartKind::DynamicElement ? resolve(access.dynamicIndex) : ValueID();
     if (surplusRead)
@@ -428,17 +408,17 @@ Execution ObjectInterpreter::readArguments(ValueID read, VirtualObjectID object,
     };
     if (!selectsParameter) {
         replaceReadBy(emitReplacement(m_sinking, *this, read, WTF::move(*surplusRead)));
-        return Execution::Interpreted;
+        return;
     }
 
-    ArgumentSelection selection { index, valueOfField(object, countField), { }, TypeTable::anything };
+    ValueID count = valueOfField(object, countField);
+    Vector<ValueID, 8> parameters;
     for (uint32_t parameterField : parameterFields)
-        selection.parameters.append(valueOfField(object, parameterField));
-    replaceReadBy(emitArgumentSelection(m_sinking, *this, read, selection, WTF::move(*surplusRead)));
-    return Execution::Interpreted;
+        parameters.append(valueOfField(object, parameterField));
+    replaceReadBy(emitArgumentSelection(m_sinking, *this, read, index, count, parameters.span(), WTF::move(*surplusRead)));
 }
 
-Execution ObjectInterpreter::storeArgument(ValueID store, VirtualObjectID object, const VirtualFieldAccess& access)
+void ObjectInterpreter::storeArgument(ValueID store, VirtualObjectID object, const VirtualFieldAccess& access)
 {
     const VirtualObjectDescription* description = singleDescriptionOf(object);
     bool namesParameter = description && description->kind == VirtualObjectKind::Arguments && description->isMapped
@@ -447,40 +427,26 @@ Execution ObjectInterpreter::storeArgument(ValueID store, VirtualObjectID object
         && (function().at(store).opcode == Opcode::SetMappedArgument || isArgumentPassed(object, access.field.index).value_or(false));
 
     std::optional<uint32_t> field = storesToVariable ? m_sinking.familyOf(object).findField(access.field) : std::nullopt;
-    if (!field || !canStore(object, access, *field, function().at(store).valueOperand())) {
-        requireCell(function().at(store).operand(0), causeOf(store, 0));
-        return executeOther(store);
-    }
+    if (!field || !canStore(object, access, *field, function().at(store).valueOperand()))
+        return executeOnCell(store, 0);
 
     storeField(object, *field, function().at(store).valueOperand());
-    if (m_mode == SinkingMode::Count)
-        ++m_sinking.at(object).numberOfFoldedStores;
-    stateDidChange(object);
-    return Execution::Interpreted;
+    return didFoldStores(object, 1);
 }
 
-Execution ObjectInterpreter::forwardArgumentList(ValueID call, VirtualObjectID object)
+void ObjectInterpreter::forwardArgumentList(ValueID call, VirtualObjectID object)
 {
     constexpr uint32_t listIndex = OperandIndex::CallList::list;
 
     Opcode opcode = function().at(call).opcode;
     const VirtualObjectDescription* description = singleDescriptionOf(object);
     bool isArgumentList = description && description->kind == VirtualObjectKind::ArgumentList;
-    if (!isArgumentList || opcode == Opcode::ConstructList) {
-        requireCell(function().at(call).operand(listIndex), causeOf(call, listIndex));
-        return executeOther(call);
-    }
+    if (!isArgumentList || opcode == Opcode::ConstructList)
+        return executeOnCell(call, listIndex);
     RELEASE_ASSERT(opcode == Opcode::CallList || opcode == Opcode::SuperConstructList);
 
-    Vector<std::pair<ValueID, uint32_t>, 2> otherOperands;
-    function().at(call).forEachOperand([&](ValueID operand, uint32_t index) {
-        if (index != listIndex)
-            otherOperands.append({ operand, index });
-    });
-    for (auto [operand, index] : otherOperands)
-        requireCell(operand, causeOf(call, index));
+    requireCellsOfOperandsBeside(call, listIndex);
 
-    // An argument that was not passed reads as undefined, which is what a callee makes of it.
     Vector<Value, 8> namedArguments;
     std::optional<uint32_t> numberOfNamedArguments = isRewriting() ? numberOfArgumentsThatCalleesSee(program(), function().at(call)) : std::nullopt;
     for (uint32_t index = 0; numberOfNamedArguments && index < *numberOfNamedArguments; ++index) {
@@ -505,13 +471,12 @@ Execution ObjectInterpreter::forwardArgumentList(ValueID call, VirtualObjectID o
 
     forgetFieldsWrittenBy(call);
     keep(call);
-    return Execution::Kept;
 }
 
 ArgumentsParts ObjectInterpreter::partsOfArguments(VirtualObjectID arguments) const
 {
     const VirtualObjectDescription& description = *singleDescriptionOf(arguments);
-    uint32_t restField = *m_sinking.familyOf(arguments).findField(VirtualField::part(VirtualFieldKind::RestList));
+    uint32_t restField = partOf(arguments, VirtualFieldKind::RestList);
     uint32_t numberOfParameters = description.numberOfParameters;
 
     ArgumentsParts parts;
@@ -535,7 +500,6 @@ ArgumentsParts ObjectInterpreter::partsOfArguments(VirtualObjectID arguments) co
     return parts;
 }
 
-// The values of the arguments from one position on, when each has a name: the parameters that were passed, then the elements of a rest list that is a literal.
 std::optional<Vector<uint32_t, 8>> ObjectInterpreter::requireCellsOfNamedArguments(VirtualObjectID arguments, const ArgumentsParts& parts, uint32_t first, const BuildCause& cause)
 {
     if (!parts.numberOfPassedParameters)
@@ -570,7 +534,7 @@ Vector<ValueID, 8> ObjectInterpreter::namedArgumentsOf(VirtualObjectID arguments
     if (parts.restListIsEmpty)
         return values;
 
-    VirtualObjectID list = stateOf(arguments)->objectHeldIn(*m_sinking.familyOf(arguments).findField(VirtualField::part(VirtualFieldKind::RestList)));
+    VirtualObjectID list = stateOf(arguments)->objectHeldIn(partOf(arguments, VirtualFieldKind::RestList));
     Vector<ValueID, 8> elements = listedElementsOf(list);
     size_t skipped = first > *parts.numberOfPassedParameters ? first - *parts.numberOfPassedParameters : 0;
     if (skipped < elements.size())
@@ -578,16 +542,15 @@ Vector<ValueID, 8> ObjectInterpreter::namedArgumentsOf(VirtualObjectID arguments
     return values;
 }
 
-// The rest list as a cell. It holds every argument from the last parameter on, however many arguments were passed.
 bool ObjectInterpreter::requireCellOfRestList(VirtualObjectID arguments, const BuildCause& cause)
 {
     if (!singleDescriptionOf(arguments))
         return false;
-    requireCellOfHeldObject(arguments, *m_sinking.familyOf(arguments).findField(VirtualField::part(VirtualFieldKind::RestList)), cause);
+    requireCellOfHeldObject(arguments, partOf(arguments, VirtualFieldKind::RestList), cause);
     return !!singleDescriptionOf(arguments);
 }
 
-Execution ObjectInterpreter::executeCallOnArguments(ValueID call)
+void ObjectInterpreter::executeCallOnArguments(ValueID call)
 {
     const Value& value = function().at(call);
     auto isArguments = [&](ValueID operand) {
@@ -614,8 +577,7 @@ Execution ObjectInterpreter::executeCallOnArguments(ValueID call)
     return executeOther(call);
 }
 
-// f.apply(t, arguments) passes on what this function was called with.
-Execution ObjectInterpreter::forwardArguments(ValueID call, const ForwardedCallPlan& plan)
+void ObjectInterpreter::forwardArguments(ValueID call, const ForwardedCallPlan& plan)
 {
     if (!program().typeOf(function(), call).isAnything())
         return executeOther(call);
@@ -652,7 +614,7 @@ Execution ObjectInterpreter::forwardArguments(ValueID call, const ForwardedCallP
         Vector<ValueID, 8> values;
         if (parameterFields)
             values = namedArgumentsOf(arguments, parts, parameterFields->span(), 0);
-        ValueID restList = passesRestList ? valueOfField(arguments, *m_sinking.familyOf(arguments).findField(VirtualField::part(VirtualFieldKind::RestList))) : ValueID();
+        ValueID restList = passesRestList ? valueOfField(arguments, partOf(arguments, VirtualFieldKind::RestList)) : ValueID();
         ValueID thisValue = parts.firstFrameArgument && !plan.thisValue ? emitUndefined() : plan.thisValue;
 
         Value& forwarded = cursor().builder().function().edit(call);
@@ -666,10 +628,8 @@ Execution ObjectInterpreter::forwardArguments(ValueID call, const ForwardedCallP
     }
     forgetFieldsWrittenBy(call);
     keep(call);
-    return Execution::Kept;
 }
 
-// A new array of the arguments from one position on, out of the frame or out of values that have names.
 bool ObjectInterpreter::tryCopyArguments(ValueID copy, VirtualObjectID arguments, uint32_t first, const BuildCause& cause)
 {
     ArgumentsParts parts = partsOfArguments(arguments);
@@ -697,28 +657,24 @@ bool ObjectInterpreter::tryCopyArguments(ValueID copy, VirtualObjectID arguments
     return true;
 }
 
-// The list that apply makes of the object. A callee that cannot be called is found by the call that takes the list, and nothing can be seen in between.
-Execution ObjectInterpreter::listArguments(ValueID list)
+void ObjectInterpreter::listArguments(ValueID list)
 {
     ValueID receiver = function().at(list).arrayLikeOperand();
     VirtualObjectID arguments = objectOf(receiver);
     BuildCause cause = causeOf(list, OperandIndex::NewArgumentList::arrayLike);
     requireCell(function().at(list).calleeOperand(), causeOf(list, OperandIndex::NewArgumentList::callee));
     if (singleDescriptionOf(arguments) && tryCopyArguments(list, arguments, 0, cause))
-        return Execution::Interpreted;
+        return;
 
-    // The rest list is an array as it was created, and the list of such an array is a copy that no protocol runs for. The call reads out of the one what it would read out of the other.
     if (!singleDescriptionOf(arguments) || singleDescriptionOf(arguments)->numberOfParameters || !requireCellOfRestList(arguments, cause)) {
         requireCell(receiver, cause);
         return executeOther(list);
     }
     if (isRewriting())
-        replaceRead(list, valueOfField(arguments, *m_sinking.familyOf(arguments).findField(VirtualField::part(VirtualFieldKind::RestList))));
-    return Execution::Interpreted;
+        replaceRead(list, valueOfField(arguments, partOf(arguments, VirtualFieldKind::RestList)));
 }
 
-// Array.prototype.slice.call(arguments, first) is a new array of the arguments from one position on.
-Execution ObjectInterpreter::sliceArguments(ValueID call)
+void ObjectInterpreter::sliceArguments(ValueID call)
 {
     BuiltinCall slice = builtinCallOf(program(), function().at(call));
     auto isOmitted = [&](size_t index) {
@@ -736,7 +692,7 @@ Execution ObjectInterpreter::sliceArguments(ValueID call)
     uint32_t numberOfParameters = singleDescriptionOf(arguments)->numberOfParameters;
     BuildCause cause = causeOf(call, OperandIndex::CallBuiltin::receiver);
     if (tryCopyArguments(call, arguments, first, cause))
-        return Execution::Interpreted;
+        return;
     if (partsOfArguments(arguments).firstFrameArgument)
         return executeOther(call);
 
@@ -746,7 +702,7 @@ Execution ObjectInterpreter::sliceArguments(ValueID call)
     }
     if (isRewriting()) {
         cursor().setOrigin(function().at(call).origin());
-        ValueID restList = valueOfField(arguments, *m_sinking.familyOf(arguments).findField(VirtualField::part(VirtualFieldKind::RestList)));
+        ValueID restList = valueOfField(arguments, partOf(arguments, VirtualFieldKind::RestList));
         ValueID firstInList = cursor().builder().appendInteger(first - numberOfParameters);
         Value& sliceOfList = cursor().builder().function().edit(call);
         sliceOfList.setReceiverOperand(restList);
@@ -754,11 +710,9 @@ Execution ObjectInterpreter::sliceArguments(ValueID call)
     }
     forgetFieldsWrittenBy(call);
     keep(call);
-    return Execution::Kept;
 }
 
-// Math.max(...[a, b]) is Math.max(a, b). Elements that the parameters do not take as they are go through the conversions of an ordinary call.
-Execution ObjectInterpreter::passListedElements(ValueID call)
+void ObjectInterpreter::passListedElements(ValueID call)
 {
     BuiltinCall builtinCall = builtinCallOf(program(), function().at(call));
     BuiltinOverloadID overload = builtinCall.overload;
@@ -810,21 +764,17 @@ Execution ObjectInterpreter::passListedElements(ValueID call)
         }
     }
     forgetFieldsWrittenBy(call);
-    return Execution::Interpreted;
 }
 
-Execution ObjectInterpreter::destructureArgumentList(ValueID destructuring, VirtualObjectID object)
+void ObjectInterpreter::destructureArgumentList(ValueID destructuring, VirtualObjectID object)
 {
     uint32_t count = function().at(destructuring).count();
     const VirtualObjectDescription* description = singleDescriptionOf(object);
     bool isArgumentList = description && description->kind == VirtualObjectKind::ArgumentList;
-    if (!isArgumentList || static_cast<uint64_t>(description->firstArgument) + count > maxArguments) {
-        requireCell(function().at(destructuring).iterableOperand(), causeOf(destructuring, OperandIndex::DestructureIterable::iterable));
-        return executeOther(destructuring);
-    }
+    if (!isArgumentList || static_cast<uint64_t>(description->firstArgument) + count > maxArguments)
+        return executeOnCell(destructuring, OperandIndex::DestructureIterable::iterable);
 
     bind(destructuring, object, AliasKind::Results);
-    return Execution::Interpreted;
 }
 
 std::optional<bool> ObjectInterpreter::isArgumentPassed(VirtualObjectID arguments, uint32_t index) const
@@ -841,6 +791,157 @@ std::optional<bool> ObjectInterpreter::isArgumentPassed(VirtualObjectID argument
     if (count.integers.maximum <= static_cast<int64_t>(index))
         return false;
     return std::nullopt;
+}
+
+struct DeliveredField {
+    uint32_t resultIndex { 0 };
+    uint32_t field { 0 };
+    bool isDeliveredAsBounds { false };
+};
+
+static uint64_t numberOfElementsInUse(const VirtualFamily& family)
+{
+    uint64_t numberOfElements = 0;
+    for (uint32_t field = 0; field < family.numberOfFields(); ++field) {
+        const VirtualField& virtualField = family.fieldAt(field);
+        if (virtualField.kind == VirtualFieldKind::Element)
+            numberOfElements = std::max(numberOfElements, static_cast<uint64_t>(virtualField.index) + 1);
+    }
+    return numberOfElements;
+}
+
+static const VirtualShape* findDeliveredShape(const VirtualFamily& family, uint32_t descriptionIndex)
+{
+    for (uint32_t index = 0; index < family.numberOfShapes(); ++index) {
+        const VirtualShape& shape = family.at(VirtualShapeID(index));
+        if (shape.kind == VirtualShapeKind::Fields && shape.descriptionIndex == descriptionIndex)
+            return &shape;
+    }
+    return nullptr;
+}
+
+static bool deliversEveryField(const Program& program, LayoutID layout, uint32_t numberOfParts)
+{
+    BuiltinLayoutID builtinLayout = program.at(layout).builtinLayout;
+    return builtinLayout && program.builtins().at(builtinLayout).fields.size() == numberOfParts;
+}
+
+static void retypeProducer(const Program& program, IRBuilder& builder, ValueID producer)
+{
+    Function& function = builder.function();
+    Value& value = function.edit(producer);
+    value.type = resultTypeOf(program, function, value, builder.types());
+    value.setExpected(expectedTypeOf(program, function, value, builder.types()));
+}
+
+static ValueID emitResult(IRBuilder& builder, ValueID producer, uint32_t resultIndex)
+{
+    Value result = IRBuilder::make(Opcode::ResultAt, { producer });
+    result.setIndex(resultIndex);
+    return builder.append(WTF::move(result));
+}
+
+static ValueID emitSubstringInBounds(IRBuilder& builder, ValueID string, ValueID producer, uint32_t resultIndexOfStart)
+{
+    ValueID start = emitResult(builder, producer, resultIndexOfStart);
+    ValueID end = emitResult(builder, producer, resultIndexOfStart + 1);
+    return builder.append(Opcode::SubstringOrUndefined, { string, start, end });
+}
+
+ValueID ObjectInterpreter::emitPresenceTag(ValueID isPresent, uint8_t tagBitWhenAbsent)
+{
+    IRBuilder& builder = cursor().builder();
+    ValueID tagWhenAbsent = builder.appendInteger(int64_t(1) << tagBitWhenAbsent);
+    ValueID shift = builder.append(Opcode::ToNumber, { isPresent });
+    return builder.append(Opcode::LShift, { tagWhenAbsent, shift });
+}
+
+void ObjectInterpreter::executeBuiltinResult(ValueID call, VirtualObjectID object)
+{
+    auto leaveWhole = [&](LimitID limit = LimitID::None) {
+        m_sinking.abandon(object, limit);
+        return executeOther(call);
+    };
+
+    if (stateOf(object))
+        return leaveWhole();
+
+    const VirtualObjectDescription& description = m_sinking.descriptionOf(object);
+    if (description.isDead)
+        return;
+
+    VirtualFamily& family = m_sinking.familyOf(object);
+    bool isPrefix = description.kind == VirtualObjectKind::BuiltinPrefix;
+    RELEASE_ASSERT(isPrefix || description.kind == VirtualObjectKind::BuiltinFields);
+    if (isPrefix && numberOfElementsInUse(family) > m_sinking.limit(LimitID::MaxVirtualArrayLength))
+        return leaveWhole(LimitID::MaxVirtualArrayLength);
+
+    BuiltinCallForm form = isPrefix ? BuiltinCallForm::Prefix : BuiltinCallForm::Fields;
+    uint32_t prefixLength = isPrefix ? prefixLengthNeededBy(object) : 0;
+    const BuiltinOverload& overload = program().builtins().at(function().at(call).overload());
+    std::optional<BuiltinResultIndexes> indexes = resultIndexesOf(program().builtins(), function().at(call).overload(), form, prefixLength);
+    RELEASE_ASSERT(indexes);
+    if (description.absentResult && !indexes->presence)
+        return leaveWhole();
+    if (!isPrefix && !deliversEveryField(program(), description.layout, indexes->numberOfParts))
+        return leaveWhole();
+
+    VirtualShape present;
+    present.kind = VirtualShapeKind::Fields;
+    present.descriptionIndex = m_sinking.at(object).descriptionIndex;
+    present.length = prefixLength;
+    Vector<DeliveredField, 8> deliveredFields;
+    auto deliver = [&](uint32_t resultIndex, const VirtualField& virtualField, bool isDeliveredAsBounds = false) {
+        std::optional<uint32_t> field = fieldFor(object, virtualField);
+        if (!field)
+            return false;
+        present.stored.set(*field);
+        if (description.hasKeyOrder && virtualField.isProperty())
+            present.order = m_sinking.orders().append(present.order, *field);
+        deliveredFields.append(DeliveredField { resultIndex, *field, isDeliveredAsBounds });
+        return true;
+    };
+
+    bool hasEveryField = !indexes->length || deliver(*indexes->length, VirtualField::part(VirtualFieldKind::Length));
+    for (uint32_t property = 0; hasEveryField && property < indexes->numberOfProperties; ++property)
+        hasEveryField = deliver(indexes->firstProperty + property, VirtualField::named(program().keyOf(overload.code.prefixProperties[property].name)));
+    for (uint32_t part = 0; hasEveryField && part < indexes->numberOfParts; ++part)
+        hasEveryField = deliver(indexes->resultOfPart(part), isPrefix ? VirtualField::element(part) : fieldOfLayoutField(program(), description.layout, part), indexes->partsAreBounds);
+    if (!hasEveryField)
+        return leaveWhole(LimitID::MaxVirtualObjectFields);
+
+    std::optional<uint8_t> tagBitWhenAbsent = m_sinking.at(object).tagBitWhenAbsent;
+    ObjectState state = stateAtAllocation(object, family.intern(WTF::move(present)));
+
+    requireCellsOfOperands(call);
+    forgetFieldsWrittenBy(call);
+    if (!isRewriting()) {
+        m_state.add(object, WTF::move(state));
+        return;
+    }
+
+    IRBuilder& builder = cursor().builder();
+    builder.function().edit(call, ValueEdit::Definition).setBuiltinCallForm(form);
+    if (isPrefix)
+        builder.function().edit(call, ValueEdit::Definition).setPrefixLength(prefixLength);
+    keep(call);
+    retypeProducer(program(), builder, call);
+    m_state.add(object, WTF::move(state));
+
+    ValueID rangedString = indexes->partsAreBounds ? builtinCallOf(program(), builder.function().at(call)).operandAt(*overload.result.substringOf) : ValueID();
+    ObjectValues& carried = values().ensure(object);
+    if (tagBitWhenAbsent)
+        carried.tag = emitPresenceTag(emitResult(builder, call, *indexes->presence), *tagBitWhenAbsent);
+    for (const DeliveredField& delivered : deliveredFields)
+        carried.setField(delivered.field, delivered.isDeliveredAsBounds ? emitSubstringInBounds(builder, rangedString, call, delivered.resultIndex) : emitResult(builder, call, delivered.resultIndex));
+}
+
+uint32_t ObjectInterpreter::prefixLengthNeededBy(VirtualObjectID object) const
+{
+    const VirtualFamily& family = m_sinking.familyOf(object);
+    if (const VirtualShape* delivered = findDeliveredShape(family, m_sinking.at(object).descriptionIndex))
+        return delivered->length;
+    return static_cast<uint32_t>(std::min(numberOfElementsInUse(family), m_sinking.limit(LimitID::MaxVirtualArrayLength)));
 }
 
 } } } // namespace JSC::AOT::Typed

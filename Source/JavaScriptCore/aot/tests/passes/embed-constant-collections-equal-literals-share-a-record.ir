@@ -15,29 +15,24 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="first" results=[{type=Set<string>}] {
-  b0():
     v0 = String string="a"
     v1 = String string="b"
     v2 = NewArray v0, v1 contents=string
     v3 = CallBuiltin -, v2 overload=Set/2 builtinCallForm=Whole
     Return v3
-}
-# CHECK-LABEL: function f0 name="first"
 # CHECK: = NewSetFromData data=d0
+}
 
 function f1 name="equalInAnotherFunction" results=[{type=Set<string>}] {
-  b0():
     v0 = String string="a"
     v1 = String string="b"
     v2 = NewArray v0, v1 contents=string
     v3 = CallBuiltin -, v2 overload=Set/2 builtinCallForm=Whole
     Return v3
-}
-# CHECK-LABEL: function f1 name="equalInAnotherFunction"
 # CHECK: = NewSetFromData data=d0
+}
 
 function f2 name="equalTwiceInOneFunction" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="a"
     v2 = String string="b"
     v3 = NewArray v1, v2 contents=string @10
@@ -46,97 +41,82 @@ function f2 name="equalTwiceInOneFunction" parameters=[{type=anything}] results=
     v6 = CallBuiltin -, v5 overload=Set/2 builtinCallForm=Whole @21
     v7 = Call v0, -, v4, v6
     Return v7
-}
-# CHECK-LABEL: function f2 name="equalTwiceInOneFunction"
 # CHECK-NOT: NewArray
 # CHECK: [[one]]:{{*}}= NewSetFromData data=d0
 # CHECK-NEXT: [[two]]:{{*}}= NewSetFromData data=d0
 # CHECK-NEXT: = Call v0, -, [[one]], [[two]]
+}
 
 function f3 name="otherOrder" results=[{type=Set<string>}] {
-  b0():
     v0 = String string="b"
     v1 = String string="a"
     v2 = NewArray v0, v1 contents=string
     v3 = CallBuiltin -, v2 overload=Set/2 builtinCallForm=Whole
     Return v3
-}
-# CHECK-LABEL: function f3 name="otherOrder"
 # CHECK: = NewSetFromData data=d1
+}
 
 function f4 name="oneMoreEntry" results=[{type=Set<string>}] {
-  b0():
     v0 = String string="a"
     v1 = String string="b"
     v2 = String string="c"
     v3 = NewArray v0, v1, v2 contents=string
     v4 = CallBuiltin -, v3 overload=Set/2 builtinCallForm=Whole
     Return v4
-}
-# CHECK-LABEL: function f4 name="oneMoreEntry"
 # CHECK: = NewSetFromData data=d2
+}
 
 function f5 name="map" results=[{type=Map<string, number>}] {
-  b0():
     v0 = String string="k"
     v1 = Integer integer=1
     v2 = NewArray v0, v1 contents=anything
     v3 = NewArray v2 contents=Array<anything>
     v4 = CallBuiltin -, v3 overload=Map/2 builtinCallForm=Whole
     Return v4
-}
-# CHECK-LABEL: function f5 name="map"
 # CHECK: = NewMapFromData data=d3
+}
 
 function f6 name="equalMap" results=[{type=Map<string, number>}] {
-  b0():
     v0 = String string="k"
     v1 = Integer integer=1
     v2 = NewArray v0, v1 contents=anything
     v3 = NewArray v2 contents=Array<anything>
     v4 = CallBuiltin -, v3 overload=Map/2 builtinCallForm=Whole
     Return v4
-}
-# CHECK-LABEL: function f6 name="equalMap"
 # CHECK: = NewMapFromData data=d3
+}
 
 function f7 name="mapWithOtherValue" results=[{type=Map<string, number>}] {
-  b0():
     v0 = String string="k"
     v1 = Integer integer=2
     v2 = NewArray v0, v1 contents=anything
     v3 = NewArray v2 contents=Array<anything>
     v4 = CallBuiltin -, v3 overload=Map/2 builtinCallForm=Whole
     Return v4
-}
-# CHECK-LABEL: function f7 name="mapWithOtherValue"
 # CHECK: = NewMapFromData data=d4
+}
 
 function f8 name="notANumberAsValue" results=[{type=Map<string, number>}] {
-  b0():
     v0 = String string="k"
     v1 = Double number=NaN
     v2 = NewArray v0, v1 contents=anything
     v3 = NewArray v2 contents=Array<anything>
     v4 = CallBuiltin -, v3 overload=Map/2 builtinCallForm=Whole
     Return v4
-}
-# CHECK-LABEL: function f8 name="notANumberAsValue"
 # CHECK: = NewMapFromData data=d5
+}
 
 function f9 name="notANumberAsValueAgain" results=[{type=Map<string, number>}] {
-  b0():
     v0 = String string="k"
     v1 = Double number=NaN
     v2 = NewArray v0, v1 contents=anything
     v3 = NewArray v2 contents=Array<anything>
     v4 = CallBuiltin -, v3 overload=Map/2 builtinCallForm=Whole
     Return v4
-}
-# CHECK-LABEL: function f9 name="notANumberAsValueAgain"
 # CHECK: = NewMapFromData data=d5
 # CHECK: data d0 root=Array{contents=string elements=[String{value="a"}, String{value="b"}]}
 # CHECK-NEXT: data d1 root=Array{contents=string elements=[String{value="b"}, String{value="a"}]}
 # CHECK-NEXT: data d2 root=Array{contents=string elements=[String{value="a"}, String{value="b"}, String{value="c"}]}
 # CHECK: data d5
 # CHECK-NOT: data d6
+}

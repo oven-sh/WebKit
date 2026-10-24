@@ -19,7 +19,6 @@ layout L2 kind=Instance name="Plain" constructor=f3 fields=[{key="p" declared={t
 layout L3 name="Spy" fields=[]
 layout L4 name="Source" fields=[{key="prototype" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Double number=1.5
     v1 = NewObject layout=L3 fields=[]
     v2 = NewClosure function=f4
@@ -47,21 +46,17 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="ByKey" flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
-  b0(v0: anything, v1: anything):
     PropSet v0, v1 key="p" mode=Strict
     Return
 }
 function f2 name="ByCopy" flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] constructedClass=L1 {
-  b0(v0: anything, v1: anything):
     PropSet v0, v1 key="p" mode=Strict
     Return
 }
 function f3 name="Plain" flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] constructedClass=L2 {
-  b0(v0: anything, v1: anything):
     PropSet v0, v1 key="p" mode=Strict
     Return
 }
 function f4 name="p" kind=Setter flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Return
 }

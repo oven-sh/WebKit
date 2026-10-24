@@ -12,14 +12,36 @@
 #include "AOTSort.h"
 #include "AOTTypeArena.h"
 #include "AOTValueSubstitution.h"
-#include "AOTVector.h"
 #include <algorithm>
 #include <iterator>
 #include <limits>
-#include <optional>
 #include <tuple>
+#include <wtf/SSACalculator.h>
 
 namespace JSC { namespace AOT { namespace Typed {
+
+namespace {
+
+class SSARepairAdapter {
+public:
+    using CFG = Typed::CFG;
+    using Value = ValueID;
+
+    explicit SSARepairAdapter(FunctionAnalyses& analyses)
+        : m_analyses(analyses)
+    {
+    }
+
+    CFG& cfg() const { return m_analyses.cfg(); }
+    Dominators& dominators() { return m_analyses.dominators(); }
+
+    static void dumpValue(PrintStream& out, ValueID value) { out.print("v", value.index()); }
+
+private:
+    FunctionAnalyses& m_analyses;
+};
+
+} // anonymous namespace
 
 static constexpr uint32_t headOrder = 0;
 static constexpr uint32_t firstValueOrder = 1;
@@ -54,32 +76,17 @@ static bool isUseAtBlockHead(const Use& use)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool mustNameDefinition(const Function& function, const Use& use)
+static std::optional<OperandKind> kindOfOperandNamedBy(const Function& function, const Use& use)
 {
     switch (use.kind) {
     case Use::Kind::Operand:
-        return mustBeDefinition(function.at(use.user).operandKind(use.operandIndex));
+        return function.at(use.user).operandKind(use.operandIndex);
     case Use::Kind::TerminatorOperand:
-        return mustBeDefinition(function.at(use.block).terminator.operandKind(use.operandIndex));
+        return function.at(use.block).terminator.operandKind(use.operandIndex);
     case Use::Kind::EdgeArgument:
     case Use::Kind::HandlerArgument:
     case Use::Kind::BlockSubject:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static bool namesGuard(const Function& function, const Use& use)
-{
-    switch (use.kind) {
-    case Use::Kind::Operand:
-        return function.at(use.user).operandKind(use.operandIndex) == OperandKind::Guard;
-    case Use::Kind::TerminatorOperand:
-        return function.at(use.block).terminator.operandKind(use.operandIndex) == OperandKind::Guard;
-    case Use::Kind::EdgeArgument:
-    case Use::Kind::HandlerArgument:
-    case Use::Kind::BlockSubject:
-        return false;
+        return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -131,28 +138,63 @@ void SSARepair::run()
 
     splitCoveredBlocksAfterDefinitions();
 
+    const Function& function = m_analyses.function();
     Vector<Variable> constantVariables;
     Vector<Variable> mergedVariables;
     for (Variable variable = 0; variable < m_variables.size(); ++variable) {
         VariableData& data = m_variables[variable];
-        collectUses(data);
+        const UseLists& useLists = m_analyses.useLists();
+        for (ValueID value : data.values) {
+            for (const Use& use : useLists.usesOf(value))
+                data.uses.append(RecordedUse { use, useLists.pointOf(use), value, false });
+        }
         if (data.uses.isEmpty())
             continue;
-        collectDefinitions(data);
+        AOT::sort(data.uses, [&](const RecordedUse& a, const RecordedUse& b) {
+            return useLists.isBefore(a.use, b.use);
+        });
+
+        const CFG& cfg = m_analyses.cfg();
+        for (ValueID value : data.values) {
+            ValueLocation location = useLists.locationOf(value);
+            switch (location.placement) {
+            case ValuePlacement::Detached:
+                break;
+            case ValuePlacement::Parameter:
+                data.definitions.append(Definition { location.block, headOrder, value });
+                break;
+            case ValuePlacement::InBlock: {
+                if (!cfg.hasHandler(location.block)) {
+                    data.definitions.append(Definition { location.block, firstValueOrder + location.index, value });
+                    break;
+                }
+                BlockID continuation = findContinuationAfter(function, cfg, location);
+                RELEASE_ASSERT(continuation);
+                data.definitions.append(Definition { continuation, headOrder, value });
+                break;
+            }
+            }
+        }
+
+        data.values.shrink(0);
+        for (const Definition& definition : data.definitions)
+            data.values.append(definition.value);
+        sortDefinitions(data);
         if (data.definitions.isEmpty())
             continue;
-        if (!hasOneConstant(data)) {
-            mergedVariables.append(variable);
-            continue;
-        }
-        findDominatedUses(data);
-        bool needsDefinitionAtBlockHead = data.uses.containsIf([](const RecordedUse& recorded) {
-            return !recorded.isDominated && isUseAtBlockHead(recorded.use);
+
+        const Value& first = function.at(data.values.first());
+        bool needsParameters = !std::ranges::all_of(data.values, [&](ValueID id) {
+            const Value& value = function.at(id);
+            return isRematerializable(value) && value.opcode == first.opcode && value.hasSamePayloadAs(first);
         });
-        if (needsDefinitionAtBlockHead)
-            mergedVariables.append(variable);
-        else
-            constantVariables.append(variable);
+        if (!needsParameters) {
+            for (RecordedUse& recorded : data.uses) {
+                recorded.isDominated = m_analyses.dominates(recorded.operand, recorded.use);
+                needsParameters |= !recorded.isDominated && isUseAtBlockHead(recorded.use);
+            }
+        }
+        (needsParameters ? mergedVariables : constantVariables).append(variable);
     }
 
     if (!constantVariables.isEmpty())
@@ -166,7 +208,6 @@ void SSARepair::run()
     m_builder.setOrigin(savedOrigin);
 }
 
-// An operation may name an allocation as the guard for what holds of a new object.
 void SSARepair::separateUsesAsGuards()
 {
     struct NamedDefinition {
@@ -179,7 +220,6 @@ void SSARepair::separateUsesAsGuards()
     Function& function = m_builder.function();
     Vector<NamedDefinition, 4> namedDefinitions;
     {
-        // An insertion ends the life of the use lists.
         const UseLists& useLists = m_analyses.useLists();
         const CFG& cfg = m_analyses.cfg();
         for (Variable variable = 0; variable < m_variables.size(); ++variable) {
@@ -187,11 +227,9 @@ void SSARepair::separateUsesAsGuards()
             values.removeAllMatching([&](ValueID value) {
                 return useLists.locationOf(value).placement == ValuePlacement::Detached;
             });
-            // A use in the block of its definition keeps that definition.
             auto namesGuardFromOtherBlock = [&](ValueID value, const Use& use) {
-                return namesGuard(function, use) && use.block != useLists.locationOf(value).block;
+                return kindOfOperandNamedBy(function, use) == OperandKind::Guard && use.block != useLists.locationOf(value).block;
             };
-            // So does a use that no other definition reaches.
             auto isReachedByOtherDefinition = [&](ValueID value) {
                 BitVector visited;
                 Vector<BlockID, 16> worklist;
@@ -220,7 +258,6 @@ void SSARepair::separateUsesAsGuards()
                 return false;
             };
             bool isNamedAsGuard = std::ranges::any_of(values, isReachedByOtherDefinition);
-            // Every way to a use needs a definition of the guard.
             bool everyDefinitionCanBeNamed = std::ranges::all_of(values, [&](ValueID value) {
                 return function.at(value).type != TypeTable::guard && useLists.locationOf(value).placement == ValuePlacement::InBlock;
             });
@@ -298,146 +335,75 @@ void SSARepair::splitCoveredBlocksAfterDefinitions()
     }
 }
 
-void SSARepair::collectUses(VariableData& data)
-{
-    const UseLists& useLists = m_analyses.useLists();
-    for (ValueID value : data.values) {
-        for (const Use& use : useLists.usesOf(value))
-            data.uses.append(RecordedUse { use, useLists.pointOf(use), value, false });
-    }
-    AOT::sort(data.uses, [&](const RecordedUse& a, const RecordedUse& b) {
-        return useLists.isBefore(a.use, b.use);
-    });
-}
-
-void SSARepair::collectDefinitions(VariableData& data)
-{
-    const Function& function = m_analyses.function();
-    const CFG& cfg = m_analyses.cfg();
-    const UseLists& useLists = m_analyses.useLists();
-    for (ValueID value : data.values) {
-        ValueLocation location = useLists.locationOf(value);
-        switch (location.placement) {
-        case ValuePlacement::Detached:
-            break;
-        case ValuePlacement::Parameter:
-            data.definitions.append(Definition { location.block, headOrder, value });
-            break;
-        case ValuePlacement::InBlock: {
-            if (!cfg.hasHandler(location.block)) {
-                data.definitions.append(Definition { location.block, firstValueOrder + location.index, value });
-                break;
-            }
-            // The handler edge of a covered block never carries a value of that block, so the value counts as defined at the head of the one block its terminator enters.
-            BlockID continuation = findContinuationAfter(function, cfg, location);
-            RELEASE_ASSERT(continuation);
-            data.definitions.append(Definition { continuation, headOrder, value });
-            break;
-        }
-        }
-    }
-
-    data.values.shrink(0);
-    for (const Definition& definition : data.definitions)
-        data.values.append(definition.value);
-    sortDefinitions(data);
-}
-
-bool SSARepair::hasOneConstant(const VariableData& data) const
-{
-    const Function& function = m_analyses.function();
-    const Value& first = function.at(data.values.first());
-    for (ValueID id : data.values) {
-        const Value& value = function.at(id);
-        if (!isRematerializable(value) || value.opcode != first.opcode || !value.hasSamePayloadAs(first))
-            return false;
-    }
-    return true;
-}
-
-void SSARepair::findDominatedUses(VariableData& data)
-{
-    for (RecordedUse& recorded : data.uses)
-        recorded.isDominated = m_analyses.dominates(recorded.operand, recorded.use);
-}
-
 void SSARepair::rematerializeConstants(std::span<const Variable> variables)
 {
-    unsigned numberOfBlocks = m_analyses.cfg().numNodes();
-    m_constantAtTailStamp.fill(0, numberOfBlocks);
-    m_constantAtTail.fill(ValueID(), numberOfBlocks);
-    for (Variable variable : variables)
-        rematerializeConstant(variable);
-}
-
-void SSARepair::rematerializeConstant(Variable variable)
-{
-    const VariableData& data = m_variables[variable];
     Function& function = m_builder.function();
-    for (const Definition& definition : data.definitions)
-        setConstantAtTail(variable, definition.block, definition.value);
-
-    BlockID block;
-    ValueID constant;
-    for (const RecordedUse& recorded : data.uses) {
-        if (recorded.isDominated)
-            continue;
-        if (recorded.use.block != block) {
-            block = recorded.use.block;
-            constant = findLocalDefinition(data, recorded);
-            if (!constant)
-                constant = findConstantAtHead(variable, block);
-            if (!constant) {
-                constant = insertConstant(data, recorded.point);
-                setConstantAtTail(variable, block, constant);
-            }
-        }
-        replaceUse(function, recorded.use, constant);
-        m_analyses.didChangeBlock(recorded.use.block);
-    }
-}
-
-ValueID SSARepair::insertConstant(const VariableData& data, ProgramPoint point)
-{
-    Function& function = m_builder.function();
-    ValueID copy = m_builder.addValue(Value(function.at(data.values.first())));
-    m_builder.didAddDetachedValue(copy);
-    m_builder.m_insertions.insert(point, copy);
-    return copy;
-}
-
-void SSARepair::setConstantAtTail(Variable variable, BlockID block, ValueID constant)
-{
-    m_constantAtTailStamp[block.index()] = variable + 1;
-    m_constantAtTail[block.index()] = constant;
-}
-
-ValueID SSARepair::findConstantAtHead(Variable variable, BlockID block)
-{
     const CFG& cfg = m_analyses.cfg();
-    const Dominators& dominators = m_analyses.dominators();
-    Vector<BlockID, 16> visitedDominators;
-    ValueID constant;
-    for (BlockID dominator = dominators.idom(block); dominator; dominator = dominators.idom(dominator)) {
-        if (m_constantAtTailStamp[dominator.index()] == variable + 1 && dominators.terminatorDominates(dominator, block)) {
-            constant = m_constantAtTail[dominator.index()];
-            break;
+    Vector<unsigned> constantAtTailStamp(FillWith { }, cfg.numNodes(), 0u);
+    Vector<ValueID> constantAtTail(FillWith { }, cfg.numNodes(), ValueID());
+    for (Variable variable : variables) {
+        const VariableData& data = m_variables[variable];
+        auto setConstantAtTail = [&](BlockID block, ValueID constant) {
+            constantAtTailStamp[block.index()] = variable + 1;
+            constantAtTail[block.index()] = constant;
+        };
+        auto findConstantAtHead = [&](BlockID block) {
+            const Dominators& dominators = m_analyses.dominators();
+            Vector<BlockID, 16> visitedDominators;
+            ValueID constant;
+            for (BlockID dominator = dominators.idom(block); dominator; dominator = dominators.idom(dominator)) {
+                if (constantAtTailStamp[dominator.index()] == variable + 1 && dominators.terminatorDominates(dominator, block)) {
+                    constant = constantAtTail[dominator.index()];
+                    break;
+                }
+                visitedDominators.append(dominator);
+            }
+            if (cfg.hasHandlers())
+                return constant;
+            for (BlockID dominator : visitedDominators)
+                setConstantAtTail(dominator, constant);
+            return constant;
+        };
+        for (const Definition& definition : data.definitions)
+            setConstantAtTail(definition.block, definition.value);
+
+        BlockID block;
+        ValueID constant;
+        for (const RecordedUse& recorded : data.uses) {
+            if (recorded.isDominated)
+                continue;
+            if (recorded.use.block != block) {
+                block = recorded.use.block;
+                constant = findLocalDefinition(data, recorded);
+                if (!constant)
+                    constant = findConstantAtHead(block);
+                if (!constant) {
+                    constant = m_builder.addValue(Value(function.at(data.values.first())));
+                    m_builder.didAddDetachedValue(constant);
+                    m_builder.m_insertions.append(IRBuilder::QueuedInsertion { recorded.point, constant });
+                    setConstantAtTail(block, constant);
+                }
+            }
+            replaceUse(function, recorded.use, constant);
+            m_analyses.didChangeBlock(recorded.use.block);
         }
-        visitedDominators.append(dominator);
     }
-    if (cfg.hasHandlers())
-        return constant;
-    for (BlockID dominator : visitedDominators)
-        setConstantAtTail(variable, dominator, constant);
-    return constant;
 }
 
 void SSARepair::insertParameters(std::span<const Variable> variables)
 {
-    unsigned numberOfBlocks = m_analyses.cfg().numNodes();
-    m_liveAtHeadStamp.fill(0, numberOfBlocks);
-    m_hasDefinitionStamp.fill(0, numberOfBlocks);
-    m_numberOfParametersForEdgeResults.fill(std::numeric_limits<uint32_t>::max(), numberOfBlocks);
+    using Calculator = WTF::SSACalculator<SSARepairAdapter>;
+    Function& function = m_builder.function();
+    const CFG& cfg = m_analyses.cfg();
+    Vector<unsigned> liveAtHeadStamp(FillWith { }, cfg.numNodes(), 0u);
+    Vector<unsigned> hasDefinitionStamp(FillWith { }, cfg.numNodes(), 0u);
+    Vector<uint32_t> knownNumberOfParametersForEdgeResults(FillWith { }, cfg.numNodes(), std::numeric_limits<uint32_t>::max());
+    auto numberOfParametersForEdgeResults = [&](BlockID block) {
+        uint32_t& number = knownNumberOfParametersForEdgeResults[block.index()];
+        if (number == std::numeric_limits<uint32_t>::max())
+            number = m_builder.numberOfParametersForEdgeResults(block);
+        return number;
+    };
 
     Calculator calculator(m_analyses);
     for (Variable variable : variables) {
@@ -446,116 +412,114 @@ void SSARepair::insertParameters(std::span<const Variable> variables)
             calculator.newDef(calculatorVariable, definition.block, definition.value);
     }
 
+    auto computeLiveness = [&](const VariableData& data, unsigned stamp) {
+        for (const Definition& definition : data.definitions)
+            hasDefinitionStamp[definition.block.index()] = stamp;
+
+        Vector<BlockID, 16> worklist;
+        auto mark = [&](BlockID block) {
+            if (std::exchange(liveAtHeadStamp[block.index()], stamp) != stamp)
+                worklist.append(block);
+        };
+        for (const RecordedUse& recorded : data.uses) {
+            if (!findLocalDefinition(data, recorded))
+                mark(recorded.use.block);
+        }
+        while (!worklist.isEmpty()) {
+            for (Edge edge : cfg.incomingEdges(worklist.takeLast())) {
+                switch (edge.kind) {
+                case EdgeKind::Normal:
+                    if (hasDefinitionStamp[edge.from.index()] != stamp)
+                        mark(edge.from);
+                    break;
+                case EdgeKind::Handler:
+                    if (!findLastDefinitionBefore(data, edge.from, firstValueOrder))
+                        mark(edge.from);
+                    break;
+                }
+            }
+        }
+    };
+    auto computeParameterType = [&](VariableData& data) {
+        const Program& program = m_analyses.context().program;
+        const Value& first = function.at(data.values.first());
+        data.type = first.type;
+        TypeID expected = first.expectedOrType();
+        for (ValueID id : data.values) {
+            const Value& value = function.at(id);
+            RELEASE_ASSERT(!numberOfResultsOf(program, function, value));
+            data.type = m_builder.m_types.unionOf(data.type, value.type);
+            expected = m_builder.m_types.unionOf(expected, value.expectedOrType());
+        }
+        data.expected = expected == data.type ? TypeID() : expected;
+    };
+
     std::optional<Variable> livenessVariable;
     calculator.computePhis([&](Calculator::Variable* calculatorVariable, BlockID block) -> ValueID {
         Variable variable = variables[calculatorVariable->index()];
+        VariableData& data = m_variables[variable];
         if (livenessVariable != variable) {
-            computeLiveness(variable);
+            computeLiveness(data, variable + 1);
             livenessVariable = variable;
         }
-        if (!isLiveAtHead(variable, block))
+        if (liveAtHeadStamp[block.index()] != variable + 1)
             return ValueID();
-        return addMergeParameter(m_variables[variable], block);
+        if (!data.type)
+            computeParameterType(data);
+
+        m_builder.setOrigin(function.at(data.values.first()).origin());
+        ValueID parameter = m_builder.addParameter(block, data.type, numberOfParametersForEdgeResults(block));
+        function.edit(parameter, ValueEdit::Type).setExpected(data.expected);
+        data.definitions.append(Definition { block, headOrder, parameter });
+        return parameter;
     });
 
     for (Variable variable : variables)
         sortDefinitions(m_variables[variable]);
 
-    // A recorded use names an argument by index, and appendArgument shifts the arguments after the one it inserts.
-    for (unsigned index = 0; index < variables.size(); ++index)
-        rewriteUses(calculator, calculator.variable(index), m_variables[variables[index]]);
-    appendArguments(calculator, variables);
-}
-
-void SSARepair::computeLiveness(Variable variable)
-{
-    const CFG& cfg = m_analyses.cfg();
-    const VariableData& data = m_variables[variable];
-    unsigned stamp = variable + 1;
-    for (const Definition& definition : data.definitions)
-        m_hasDefinitionStamp[definition.block.index()] = stamp;
-
-    Vector<BlockID, 16> worklist;
-    auto mark = [&](BlockID block) {
-        unsigned& blockStamp = m_liveAtHeadStamp[block.index()];
-        if (blockStamp == stamp)
-            return;
-        blockStamp = stamp;
-        worklist.append(block);
-    };
-    for (const RecordedUse& recorded : data.uses) {
-        if (!findLocalDefinition(data, recorded))
-            mark(recorded.use.block);
-    }
-    while (!worklist.isEmpty()) {
-        for (Edge edge : cfg.incomingEdges(worklist.takeLast())) {
-            switch (edge.kind) {
-            case EdgeKind::Normal:
-                if (m_hasDefinitionStamp[edge.from.index()] != stamp)
-                    mark(edge.from);
-                break;
-            case EdgeKind::Handler:
-                if (!findLastDefinitionBefore(data, edge.from, firstValueOrder))
-                    mark(edge.from);
-                break;
+    for (unsigned index = 0; index < variables.size(); ++index) {
+        const VariableData& data = m_variables[variables[index]];
+        for (const RecordedUse& recorded : data.uses) {
+            const Use& use = recorded.use;
+            ValueID definition = findLocalDefinition(data, recorded);
+            if (!definition) {
+                Calculator::Def* reachingDefinition = calculator.reachingDefAtHead(use.block, calculator.variable(index));
+                RELEASE_ASSERT(reachingDefinition);
+                definition = reachingDefinition->value();
             }
+            if (definition == recorded.operand)
+                continue;
+            if (std::optional<OperandKind> kind = kindOfOperandNamedBy(function, use); kind && mustBeDefinition(*kind))
+                RELEASE_ASSERT(function.at(definition).opcode != Opcode::Parameter);
+            replaceUse(function, use, definition);
+            m_analyses.didChangeBlock(use.block);
         }
     }
-}
 
-void SSARepair::computeParameterType(VariableData& data)
-{
-    const Program& program = m_analyses.context().program;
-    const Function& function = m_analyses.function();
-    const Value& first = function.at(data.values.first());
-    data.type = first.type;
-    TypeID expected = first.expectedOrType();
-    for (ValueID id : data.values) {
-        const Value& value = function.at(id);
-        RELEASE_ASSERT(!numberOfResultsOf(program, function, value));
-        data.type = m_builder.m_types.unionOf(data.type, value.type);
-        expected = m_builder.m_types.unionOf(expected, value.expectedOrType());
-    }
-    data.expected = expected == data.type ? TypeID() : expected;
-}
-
-uint32_t SSARepair::numberOfParametersForEdgeResults(BlockID block)
-{
-    uint32_t& number = m_numberOfParametersForEdgeResults[block.index()];
-    if (number == std::numeric_limits<uint32_t>::max())
-        number = m_builder.numberOfParametersForEdgeResults(block);
-    return number;
-}
-
-ValueID SSARepair::addMergeParameter(VariableData& data, BlockID block)
-{
-    if (!data.type)
-        computeParameterType(data);
-
-    Function& function = m_builder.function();
-    m_builder.setOrigin(function.at(data.values.first()).origin());
-    ValueID parameter = m_builder.addParameter(block, data.type, numberOfParametersForEdgeResults(block));
-    function.edit(parameter, ValueEdit::Type).setExpected(data.expected);
-    data.definitions.append(Definition { block, headOrder, parameter });
-    return parameter;
-}
-
-void SSARepair::appendArguments(Calculator& calculator, std::span<const Variable> variables)
-{
-    const Function& function = m_analyses.function();
-    const CFG& cfg = m_analyses.cfg();
+    auto reachingDefinitionOnEdge = [&](Calculator::Variable* calculatorVariable, Edge edge) -> ValueID {
+        Calculator::Def* reachingDefinition = nullptr;
+        switch (edge.kind) {
+        case EdgeKind::Normal:
+            reachingDefinition = calculator.reachingDefAtTail(edge.from, calculatorVariable);
+            break;
+        case EdgeKind::Handler:
+            if (const Definition* definition = findLastDefinitionBefore(m_variables[variables[calculatorVariable->index()]], edge.from, firstValueOrder))
+                return definition->value;
+            reachingDefinition = calculator.reachingDefAtHead(edge.from, calculatorVariable);
+            break;
+        }
+        RELEASE_ASSERT(reachingDefinition);
+        return reachingDefinition->value();
+    };
     for (BlockID block : cfg.reversePostOrder()) {
         const Vector<Calculator::Def*>& phis = calculator.phisForBlock(block);
         if (phis.isEmpty())
             continue;
         for (Edge edge : cfg.incomingEdges(block)) {
-            for (Calculator::Def* phi : phis) {
-                ValueID argument = reachingDefinitionOnEdge(calculator, phi->variable(), m_variables[variables[phi->variable()->index()]], edge);
-                m_builder.appendArgument(edge, argument, numberOfParametersForEdgeResults(block));
-            }
+            for (Calculator::Def* phi : phis)
+                m_builder.appendArgument(edge, reachingDefinitionOnEdge(phi->variable(), edge), numberOfParametersForEdgeResults(block));
         }
     }
-
     for (Edge edge : m_analyses.edgesFromUnreachableBlocks()) {
         BlockID target = targetOf(function, edge).block;
         for (Calculator::Def* phi : calculator.phisForBlock(target))
@@ -563,44 +527,7 @@ void SSARepair::appendArguments(Calculator& calculator, std::span<const Variable
     }
 }
 
-ValueID SSARepair::reachingDefinitionOnEdge(Calculator& calculator, Calculator::Variable* calculatorVariable, const VariableData& data, Edge edge)
-{
-    Calculator::Def* reachingDefinition = nullptr;
-    switch (edge.kind) {
-    case EdgeKind::Normal:
-        reachingDefinition = calculator.reachingDefAtTail(edge.from, calculatorVariable);
-        break;
-    case EdgeKind::Handler:
-        if (const Definition* definition = findLastDefinitionBefore(data, edge.from, firstValueOrder))
-            return definition->value;
-        reachingDefinition = calculator.reachingDefAtHead(edge.from, calculatorVariable);
-        break;
-    }
-    RELEASE_ASSERT(reachingDefinition);
-    return reachingDefinition->value();
-}
-
-void SSARepair::rewriteUses(Calculator& calculator, Calculator::Variable* calculatorVariable, const VariableData& data)
-{
-    Function& function = m_builder.function();
-    for (const RecordedUse& recorded : data.uses) {
-        const Use& use = recorded.use;
-        ValueID definition = findLocalDefinition(data, recorded);
-        if (!definition) {
-            Calculator::Def* reachingDefinition = calculator.reachingDefAtHead(use.block, calculatorVariable);
-            RELEASE_ASSERT(reachingDefinition);
-            definition = reachingDefinition->value();
-        }
-        if (definition == recorded.operand)
-            continue;
-        if (mustNameDefinition(function, use))
-            RELEASE_ASSERT(function.at(definition).opcode != Opcode::Parameter);
-        replaceUse(function, use, definition);
-        m_analyses.didChangeBlock(use.block);
-    }
-}
-
-ValueID SSARepair::findLocalDefinition(const VariableData& data, const RecordedUse& recorded) const
+ValueID SSARepair::findLocalDefinition(const VariableData& data, const RecordedUse& recorded)
 {
     const Definition* definition = findLastDefinitionBefore(data, recorded.use.block, firstValueOrder + recorded.point.index);
     return definition ? definition->value : ValueID();

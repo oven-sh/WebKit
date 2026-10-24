@@ -33,7 +33,6 @@ layout L9 name="GainsListedNames" fields=[{key="x" declared={type=number}}] flow
 layout L10 name="MayChangePrototype" fields=[{key="x" declared={type=number}}] flow={impossibleMutations=[RedefineProperty, AddProperty]}
 layout L11 kind=Instance name="Matcher" constructor=f13 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key=@@hasInstance side=Static function=f14 mutability=Fixed}]}
 function f0 name="operands" parameters=[{type=number}, {type=string}, {type=bigint}, {type=object}, {type=L0}, {type=L1}, {type=L2}, {type=L3}, {type=L4}, {type=L5}, {type=L6}, {type=L7}, {type=L8}, {type=L9}, {type=L10}, {type=Array<number>}, {type=Array<number, pristine[Storage, Names]>}, {type=builtin(Promise)}, {type=f1}, {type=function}, {type=f13}, {type=BoundFunction<pristine[Storage, Names]>}] results=[{type=undefined}] {
-  b0(v0: number, v1: string, v2: bigint, v3: object, v4: L0, v5: L1, v6: L2, v7: L3, v8: L4, v9: L5, v10: L6, v11: L7, v12: L8, v13: L9, v14: L10, v15: Array<number>, v16: Array<number, pristine[Storage, Names]>, v17: builtin(Promise), v18: f1, v19: function, v20: f13, v21: BoundFunction<pristine[Storage, Names]>):
     Return
 }
 function f1 name="Cache" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1

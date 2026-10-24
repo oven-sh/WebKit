@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="objectSetPrototypeOf" parameters=[{type=object}, {type=null|object}] results=[{type=object}] {
-  b0(v0: object, v1: null|object):
     TryCallInline -, v0, v1 inlineBuiltin=SetPrototypeOf inlineParameters=[0] overload=ObjectSetPrototypeOf/0 -> done b1(), miss b2()
   b1(v2: object):
     Return v2
@@ -18,7 +17,6 @@ function f0 name="objectSetPrototypeOf" parameters=[{type=object}, {type=null|ob
 # CHECK: stub CallHostFunction.n2 x1
 # CHECK: stub WriteBarrier{{*}} x1
 function f1 name="reflectSetPrototypeOf" parameters=[{type=object}, {type=null|object}] results=[{type=boolean}] {
-  b0(v0: object, v1: null|object):
     TryCallInline -, v0, v1 inlineBuiltin=SetPrototypeOf inlineParameters=[1] overload=ReflectSetPrototypeOf/0 -> done b1(), miss b2()
   b1(v2: boolean):
     Return v2
@@ -31,7 +29,6 @@ function f1 name="reflectSetPrototypeOf" parameters=[{type=object}, {type=null|o
 # CHECK: stub CallHostFunctionWithoutBoxedCall.n2 x1
 # CHECK: stub WriteBarrier{{*}} x1
 function f2 name="callWithoutInlineCode" parameters=[{type=object}, {type=null|object}] results=[{type=object}] {
-  b0(v0: object, v1: null|object):
     v2 = CallBuiltin -, v0, v1 overload=ObjectSetPrototypeOf/0
     Return v2
 }

@@ -5,7 +5,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point"
 function f0 name="mergedAndRead" parameters=[{type=number}] results=[{type=boolean}] {
-  b0(v0: number):
     Switch v0 cases=[0, 1, 2, 3, 4, 5, 6, 7] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), case b8(), otherwise b9()
 # REPEAT: i = 1..9
   b%(i)():
@@ -30,7 +29,6 @@ function f0 name="mergedAndRead" parameters=[{type=number}] results=[{type=boole
 # CHECK: v10 points to: [o0 o1 o2 o3 o4 o5 o6 o7 o8]
 # CHECK-NEXT: v10 may be untracked: no
 function f1 name="mergedAndReturned" parameters=[{type=number}] results=[{type=object}] {
-  b0(v0: number):
     v1 = NewObject layout=L0 fields=[]
     v2 = TypeTest v1 testedType=object
     Switch v0 cases=[0, 1, 2, 3, 4, 5, 6, 7] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), case b8(), otherwise b9()
@@ -61,7 +59,6 @@ function f1 name="mergedAndReturned" parameters=[{type=number}] results=[{type=o
 # CHECK: v12 points to: [o1 o2 o3 o4 o5 o6 o7 o8 o9]
 # CHECK-NEXT: v12 may be untracked: no
 function f2 name="moreObjectsThanBitsInOneWord" parameters=[{type=number}] results=[{type=boolean}] {
-  b0(v0: number):
     Switch v0 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), case b8(), case b9(), case b10(), case b11(), case b12(), case b13(), case b14(), case b15(), case b16(), case b17(), case b18(), case b19(), case b20(), case b21(), case b22(), case b23(), case b24(), case b25(), case b26(), case b27(), case b28(), case b29(), case b30(), case b31(), case b32(), case b33(), case b34(), case b35(), case b36(), case b37(), case b38(), case b39(), case b40(), case b41(), case b42(), case b43(), case b44(), case b45(), case b46(), case b47(), case b48(), case b49(), case b50(), case b51(), case b52(), case b53(), case b54(), case b55(), case b56(), case b57(), case b58(), case b59(), case b60(), case b61(), case b62(), case b63(), case b64(), case b65(), case b66(), case b67(), case b68(), case b69(), otherwise b70()
 # REPEAT: i = 1..70
   b%(i)():

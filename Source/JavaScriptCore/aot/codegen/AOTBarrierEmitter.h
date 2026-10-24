@@ -16,7 +16,7 @@ enum class OwnerBarrier : bool { Omitted, Emitted };
 
 class BarrierEmitter final : public OperationEmitter {
 public:
-    explicit BarrierEmitter(CodeGenerator&);
+    explicit BarrierEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void barrierAfterStore(const ValueContext& store, CellPointer owner, Operand stored, const Type& storedType);
     void barrierAfterStores(const ValueContext& store, CellPointer owner, std::span<const ValueID> stored);
@@ -25,7 +25,7 @@ public:
     OwnerBarrier barrierOfExtension(const ValueContext& store) const;
     void markCardOfStatics(uint32_t offsetInStatics);
     Condition isBeyondBarrierThreshold(CellPointer);
-    void fenceAfterInitialization();
+    void fenceAfterInitialization() { mutatorFence(); }
 
     void validateAfterStore(const ValueContext& store);
     void validateBeforeCollection(const OperationContext&);

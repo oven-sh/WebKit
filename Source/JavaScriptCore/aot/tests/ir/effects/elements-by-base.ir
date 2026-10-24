@@ -7,7 +7,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 function f0 name="bothBases" parameters=[{type=Arguments}, {type=Array<number>}, {type=int[0, 10]}, {type=number}] results=[{type=undefined}] {
-  b0(v0: Arguments, v1: Array<number>, v2: int[0, 10], v3: number):
     v4 = GetContiguousIndex v1, v2
     SetMappedArgument v0, v3 index=0
     v6 = GetMappedArgument v0 index=0
@@ -22,13 +21,11 @@ function f0 name="bothBases" parameters=[{type=Arguments}, {type=Array<number>},
 # L: overlap Elements[Array] Elements[Arguments]: None
 # L-NOT: overlap
 function f1 name="oneBase" parameters=[{type=Array<number>}, {type=Array<number>}, {type=int[0, 10]}, {type=number}] results=[{type=undefined}] {
-  b0(v0: Array<number>, v1: Array<number>, v2: int[0, 10], v3: number):
     PutContiguousIndex v0, v2, v3
     PutContiguousIndex v1, v2, v3
     Return
 }
 function f2 name="noBase" parameters=[{type=string}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: string, v1: anything):
     v2 = JSONObjectBegin layout=L0
     v3 = Undefined
     v4 = JSONAddExtraMember v3, v0, v1, v2 layout=L0
@@ -37,7 +34,6 @@ function f2 name="noBase" parameters=[{type=string}, {type=anything}] results=[{
 # CHECK-LABEL: function f2
 # CHECK: v4 JSONAddExtraMember: reads(NamedProperties, Elements, StringStorage, AllocatorState) writes(NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) collects
 function f3 name="calls" parameters=[{type=Arguments}, {type=Array<number>}, {type=int[0, 10]}, {type=number}, {type=string}] results=[{type=undefined}] {
-  b0(v0: Arguments, v1: Array<number>, v2: int[0, 10], v3: number, v4: string):
     v5 = CallDirect v0, v1, v2, v3 function=f0
     v6 = CallDirect v1, v1, v2, v3 function=f1
     v7 = CallDirect v4, v3 function=f2
@@ -48,7 +44,6 @@ function f3 name="calls" parameters=[{type=Arguments}, {type=Array<number>}, {ty
 # CHECK-NEXT: v6 CallDirect: reads(ArrayStorage) writes(Elements/1)
 # CHECK-NEXT: v7 CallDirect: reads(NamedProperties, Elements, StringStorage, AllocatorState) writes(NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) collects
 function f4 name="fieldAcrossElementStores" parameters=[{type=L0}, {type=Array<number, pristine[Storage, Names]>}, {type=int[0, 10]}, {type=number}, {type=Arguments}, {type=object}] results=[{type=undefined}] {
-  b0(v0: L0, v1: Array<number, pristine[Storage, Names]>, v2: int[0, 10], v3: number, v4: Arguments, v5: object):
     v6 = GetSlot v0 key="x" receivers=[L0] level=Proven
     PutArrayElement v1, v2, v3 level=Proven [keyIsIntegral]
     PutArrayElement v1, v3, v3 level=Proven

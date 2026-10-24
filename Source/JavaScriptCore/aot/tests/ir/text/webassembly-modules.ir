@@ -18,7 +18,6 @@ module m0 path="/a.ts" displayPath="a.ts" body=f0
 module m1 path="/w.wasm" displayPath="w.wasm" kind=External exportRule=CommonJsIgnoringAnnotation externalKind=HostValue referrer=m0
 module m2 path="/v.wasm" displayPath="v.wasm" kind=External exportRule=CommonJsIgnoringAnnotation externalKind=HostValue referrer=m0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     Return
 }
 entry module=m0

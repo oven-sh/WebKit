@@ -11,7 +11,6 @@ variable g3 name="late" module=m0 declared={type=anything} initialization=Undefi
 variable g4 name="perhaps" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     PutModuleVariable v0 variable=g0
     PutModuleVariable v0 variable=g1
@@ -44,17 +43,14 @@ function f0 name="" module=m0 kind=Module results=[{type=anything}] {
 }
 
 function f1 name="emit" module=m0 results=[{type=anything}] {
-  b0():
     Return
 }
 
 function f2 name="looped" module=m0 results=[{type=anything}] {
-  b0():
     Return
 }
 
 function f3 name="madeOnce" module=m0 results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = GetModuleVariable variable=g1
     v2 = StrictEq v0, v1
@@ -65,7 +61,6 @@ function f3 name="madeOnce" module=m0 results=[{type=anything}] {
 # CHECK: Boolean boolean=true
 
 function f4 name="madeInLoop" module=m0 results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g2
     v1 = GetModuleVariable variable=g3
     v2 = StrictEq v0, v1
@@ -75,7 +70,6 @@ function f4 name="madeInLoop" module=m0 results=[{type=anything}] {
 # CHECK: StrictEq
 
 function f5 name="perhapsStored" module=m0 results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = GetModuleVariable variable=g4
     v2 = StrictEq v0, v1

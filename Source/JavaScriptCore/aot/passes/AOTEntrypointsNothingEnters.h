@@ -10,7 +10,6 @@
 #include "AOTIR.h"
 #include "AOTVector.h"
 #include <compare>
-#include <span>
 #include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT {
@@ -36,21 +35,12 @@ struct CalleeOfSite {
     friend auto operator<=>(const CalleeOfSite&, const CalleeOfSite&) = default;
 };
 
-// What the call by value at each site may find, as flow left it.
-class CalleesOfSites {
-public:
-    bool wasTaken() const { return m_wasTaken; }
-    bool hadCallByValue(AccessSiteID site) const { return m_hadCallByValue.get(site.index()); }
-    std::span<const CalleeSetOfSite> calleeSetsOf(AccessSiteID) const LIFETIME_BOUND;
-    std::span<const CalleeOfSite> typedCalleesOf(AccessSiteID) const LIFETIME_BOUND;
-
-private:
-    friend CalleesOfSites collectCalleesOfSites(const Program&, BuildContext&);
-
-    Vector<CalleeSetOfSite> m_calleeSets;
-    Vector<CalleeOfSite> m_typedCallees;
-    BitVector m_hadCallByValue;
-    bool m_wasTaken { false };
+// What the call by value at each site may find, as flow left it. The lists are sorted.
+struct CalleesOfSites {
+    Vector<CalleeSetOfSite> calleeSets;
+    Vector<CalleeOfSite> typedCallees;
+    BitVector hadCallByValue;
+    bool wasTaken { false };
 };
 
 CalleesOfSites collectCalleesOfSites(const Program&, BuildContext&);

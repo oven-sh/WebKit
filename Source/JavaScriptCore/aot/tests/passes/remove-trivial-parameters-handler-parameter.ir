@@ -17,13 +17,12 @@ function f0 name="twoCoveredBlocks" parameters=[{type=anything}, {type=anything}
   b3(v4) role=CatchHandler:
     v5 = CatchValue
     Return v4
-}
-# CHECK-LABEL: function f0 name="twoCoveredBlocks"
 # CHECK: b0(v0: anything, v1: anything) handler=b3():
 # CHECK: b1() handler=b3():
 # CHECK: b3() role=CatchHandler:
 # CHECK-NEXT: = CatchValue
 # CHECK-NEXT: Return v1
+}
 
 function f1 name="oneCoveredBlock" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything) handler=b2(v1):
@@ -33,11 +32,10 @@ function f1 name="oneCoveredBlock" parameters=[{type=anything}, {type=anything}]
     Return v2
   b2(v3) role=CatchHandler:
     Return v3
-}
-# CHECK-LABEL: function f1 name="oneCoveredBlock"
 # CHECK: b0(v0: anything, v1: anything) handler=b2():
 # CHECK: b2() role=CatchHandler:
 # CHECK-NEXT: Return v1
+}
 
 function f2 name="oneOfTwoParameters" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything) handler=b3(v1, v0):
@@ -51,12 +49,11 @@ function f2 name="oneOfTwoParameters" parameters=[{type=anything}, {type=anythin
   b3(v4, v5) role=CatchHandler:
     v6 = Call v4, -, v5
     Return v6
-}
-# CHECK-LABEL: function f2 name="oneOfTwoParameters"
 # CHECK: b0(v0: anything, v1: anything) handler=b3(v0):
 # CHECK: b1() handler=b3(v2):
 # CHECK: b3(v5: anything) role=CatchHandler:
 # CHECK-NEXT: = Call v1, -, v5
+}
 
 function f3 name="castGoesBelowCaughtValue" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
   b0(v0: anything, v1: number) handler=b2(v1):
@@ -68,17 +65,15 @@ function f3 name="castGoesBelowCaughtValue" parameters=[{type=anything}, {type=n
     v4 = CatchValue
     v5 = Call v0, -, v4
     Return v3
-}
-# CHECK-LABEL: function f3 name="castGoesBelowCaughtValue"
 # CHECK: b0(v0: anything, v1: number) handler=b2():
 # CHECK: b2() role=CatchHandler:
 # CHECK-NEXT: v4: anything = CatchValue
 # CHECK-NEXT: v3: number ~ i32 = Upcast v1
 # CHECK-NEXT: = Call v0, -, v4
 # CHECK-NEXT: Return v3
+}
 
 function f4 name="coveredBlockHandsOnItsOwnParameter" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1(v1)
   b1(v2) handler=b3(v2):
     v3 = Call v0
@@ -87,12 +82,11 @@ function f4 name="coveredBlockHandsOnItsOwnParameter" parameters=[{type=anything
     Return v3
   b3(v4) role=CatchHandler:
     Return v4
-}
-# CHECK-LABEL: function f4 name="coveredBlockHandsOnItsOwnParameter"
 # CHECK: Jump -> next b1()
 # CHECK-NEXT: b1() handler=b3():
 # CHECK: b3() role=CatchHandler:
 # CHECK-NEXT: Return v1
+}
 
 function f5 name="parameterOfCoveredBlockThatNeedsCastStays" parameters=[{type=anything}, {type=number}, {type=number}] results=[{type=anything}] {
   b0(v0: anything, v1: number, v2: number) handler=b3(v2):
@@ -105,14 +99,13 @@ function f5 name="parameterOfCoveredBlockThatNeedsCastStays" parameters=[{type=a
     Return v4
   b3(v6) role=CatchHandler:
     Return v6
-}
-# CHECK-LABEL: function f5 name="parameterOfCoveredBlockThatNeedsCastStays"
 # CHECK: Jump -> next b1(v1)
 # CHECK-NEXT: b1(v4: number ~ i32) handler=b3(v4):
 # CHECK-NOT: Upcast
 # CHECK: Return v4
 # CHECK-NEXT: b3(v6: number) role=CatchHandler:
 # CHECK-NEXT: Return v6
+}
 
 function f6 name="coveredBlocksDisagree" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything) handler=b3(v1):
@@ -126,12 +119,11 @@ function f6 name="coveredBlocksDisagree" parameters=[{type=anything}, {type=anyt
   b3(v4) role=CatchHandler:
     v5 = CatchValue
     Return v4
-}
-# CHECK-LABEL: function f6 name="coveredBlocksDisagree"
 # CHECK: b0(v0: anything, v1: anything) handler=b3(v1):
 # CHECK: b1() handler=b3(v2):
 # CHECK: b3(v4: anything) role=CatchHandler:
 # CHECK: Return v4
+}
 
 function f7 name="subjectOfCleanupBlockIsNamedAtTheHead" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything) handler=b3(v1):
@@ -146,11 +138,10 @@ function f7 name="subjectOfCleanupBlockIsNamedAtTheHead" parameters=[{type=anyth
     v5 = CatchValue
     v6 = Call v0, -, v4
     Throw v5
-}
-# CHECK-LABEL: function f7 name="subjectOfCleanupBlockIsNamedAtTheHead"
 # CHECK: b0(v0: anything, v1: anything) handler=b3():
 # CHECK: b1() handler=b3():
 # CHECK: b3() role=DisposalCleanup subject=v1:
 # CHECK-NEXT: v5: anything = CatchValue
 # CHECK-NEXT: v4: anything ~ number = Upcast v1
 # CHECK-NEXT: = Call v0, -, v4
+}

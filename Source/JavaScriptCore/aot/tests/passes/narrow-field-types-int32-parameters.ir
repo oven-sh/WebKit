@@ -14,7 +14,6 @@ typesite w%(i) module=m0 position=%(i*10+10) kind=Parameter
 # END REPEAT
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = NewClosure function=f3
@@ -48,7 +47,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="onlyInt32s" module=m0 position=5 flags=[IsChecked] length=2 parameters=[{type=number site=w0}, {type=number site=w1}] results=[{type=anything}] {
-  b0(v0: number, v1: number):
     v2 = Add v0, v1
     v3 = Integer integer=0
     v4 = BitOr v2, v3
@@ -61,49 +59,38 @@ function f1 name="onlyInt32s" module=m0 position=5 flags=[IsChecked] length=2 pa
 # CHECK: int[-4294967296, 4294967294] = Add [[left]], [[right]]
 
 function f2 name="alsoAFraction" module=m0 position=15 flags=[IsChecked] length=1 parameters=[{type=number site=w2}] results=[{type=anything}] {
-  b0(v0: number):
     Return v0
 }
 # CHECK-LABEL: function f2 name="alsoAFraction" {{*}}parameters=[{type=number site=w2 flags=[IsExpected]}]
 # CHECK: number = Check v0 castType=number site=w2
 
 function f3 name="sometimesLeftOut" module=m0 position=25 flags=[IsChecked] length=1 parameters=[{type=number site=w3}] results=[{type=anything}] {
-  b0(v0: number):
     Return v0
-}
-# CHECK-LABEL: function f3 name="sometimesLeftOut"
 # CHECK: number = Check v0 castType=number site=w3
+}
 
 function f4 name="neverCalledHere" module=m0 position=35 flags=[IsChecked] length=1 parameters=[{type=number site=w4}] results=[{type=anything}] {
-  b0(v0: number):
     Return v0
-}
-# CHECK-LABEL: function f4 name="neverCalledHere"
 # CHECK: number = Check v0 castType=number site=w4
+}
 
 function f5 name="numberOrUndefined" module=m0 position=45 flags=[IsChecked] length=1 parameters=[{type=undefined|number site=w5}] results=[{type=anything}] {
-  b0(v0: undefined|number):
     Return v0
-}
-# CHECK-LABEL: function f5 name="numberOrUndefined"
 # CHECK: undefined|number = Check v0 castType=undefined|number site=w5
+}
 
 function f6 name="getsTheResultOfABitOperation" module=m0 position=55 flags=[IsChecked] length=1 parameters=[{type=number site=w6}] results=[{type=anything}] {
-  b0(v0: number):
     Return v0
-}
-# CHECK-LABEL: function f6 name="getsTheResultOfABitOperation"
 # CHECK: i32 = Check v0 castType=i32 site=w6
+}
 
 function f7 name="onlyCalledWithInt32s" module=m0 position=65 flags=[IsChecked] length=1 parameters=[{type=number site=w7}] results=[{type=anything}] {
-  b0(v0: number):
     Return v0
 }
 # CHECK-LABEL: function f7 name="onlyCalledWithInt32s" {{*}}parameters=[{type=i32 site=w7 flags=[IsExpected]}]
 # CHECK: i32 = Check v0 castType=i32 site=w7
 
 function f8 name="onlyCalledAlsoWithASum" module=m0 position=75 flags=[IsChecked] length=1 parameters=[{type=number site=w8}] results=[{type=anything}] {
-  b0(v0: number):
     Return v0
 }
 # CHECK-LABEL: function f8 name="onlyCalledAlsoWithASum" {{*}}parameters=[{type=number site=w8 flags=[IsExpected]}]

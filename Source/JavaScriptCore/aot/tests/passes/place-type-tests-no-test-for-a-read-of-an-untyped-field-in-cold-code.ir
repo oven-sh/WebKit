@@ -10,7 +10,6 @@ layout L0 name="Record" module=m0 fields=[{key="x" declared={type=anything}}]
 layout L1 name="Point" module=m0 fields=[{key="y" declared={type=number}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="register" [isFreeName]
     v2 = NewClosure function=f1

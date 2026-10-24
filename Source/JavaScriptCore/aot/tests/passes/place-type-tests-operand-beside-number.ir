@@ -5,75 +5,62 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number}}]
 function f0 name="besideProvenNumber" parameters=[{type=number}, {type=anything}] results=[{type=number|string|bigint}] {
-  b0(v0: number, v1: anything):
     v2 = Add v0, v1
     Return v2
-}
-# CHECK-LABEL: function f0 name="besideProvenNumber"
 # CHECK: [[test0]]:{{*}}= TypeTest v1 testedType=number
 # CHECK: v2: number = Add v0, [[narrowed0]]
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: number|string|bigint = Add v0,
+}
 
 function f1 name="besideExpectedNumber" parameters=[{type=number|string|bigint}, {type=anything}] results=[{type=number|string|bigint}] {
   b0(v0: number|string|bigint ~ number, v1: anything):
     v2 = Add v0, v1
     Return v2
-}
-# CHECK-LABEL: function f1 name="besideExpectedNumber"
 # CHECK: = TypeTest v0 testedType=number
 # CHECK: v2: number = Add
 # CHECK: = TypeTest v1 testedType=number
+}
 
 function f2 name="everyPrimitiveIsExpected" parameters=[{type=number}, {type=undefined|null|boolean|number|string|symbol|bigint|L0 flags=[IsExpected]}] results=[{type=number|string|bigint}] {
   b0(v0: number, v1: anything ~ undefined|null|boolean|number|string|symbol|bigint|L0):
     v2 = Add v0, v1
     Return v2
-}
-# CHECK-LABEL: function f2 name="everyPrimitiveIsExpected"
 # CHECK: = TypeTest v1 testedType=number
 # CHECK: v2: number = Add v0,
+}
 
 function f3 name="comparison" parameters=[{type=anything}, {type=i32}] results=[{type=boolean}] {
-  b0(v0: anything, v1: i32):
     v2 = Less v0, v1
     Return v2
-}
-# CHECK-LABEL: function f3 name="comparison"
 # CHECK: = TypeTest v0 testedType=number
+}
 
 function f4 name="besideString" parameters=[{type=string}, {type=anything}] results=[{type=string}] {
-  b0(v0: string, v1: anything):
     v2 = Add v0, v1
     Return v2
-}
-# CHECK-LABEL: function f4 name="besideString"
 # CHECK-NOT: = TypeTest
 # CHECK: v2:{{*}}= Add v0, v1
+}
 
 function f5 name="besideUnknown" parameters=[{type=anything}, {type=anything}] results=[{type=number|string|bigint}] {
-  b0(v0: anything, v1: anything):
     v2 = Add v0, v1
     Return v2
-}
-# CHECK-LABEL: function f5 name="besideUnknown"
 # CHECK-NOT: = TypeTest
 # CHECK: v2:{{*}}= Add v0, v1
+}
 
 function f6 name="expectedStringOrNumber" parameters=[{type=number}, {type=number|string flags=[IsExpected]}] results=[{type=number|string|bigint}] {
   b0(v0: number, v1: anything ~ number|string):
     v2 = Add v0, v1
     Return v2
-}
-# CHECK-LABEL: function f6 name="expectedStringOrNumber"
 # CHECK-NOT: = TypeTest
 # CHECK: v2:{{*}}= Add v0, v1
+}
 
 function f7 name="neverNumber" parameters=[{type=number}, {type=undefined|object}] results=[{type=number|string|bigint}] {
-  b0(v0: number, v1: undefined|object):
     v2 = Add v0, v1
     Return v2
-}
-# CHECK-LABEL: function f7 name="neverNumber"
 # CHECK-NOT: = TypeTest
 # CHECK: v2:{{*}}= Add v0, v1
+}

@@ -48,18 +48,14 @@ static constexpr OpcodeSet pathOperators {
     Opcode::StrictEq, Opcode::ToInt32, Opcode::ToUint32
 };
 
-static bool readsTaggedSlot(SelectionContext& context, const Value& read)
-{
-    const SlotAgreement& agreement = context.slots().agreementOf(context.program(), read.key(), read.receivers());
-    return !agreement.groups.isEmpty() && std::ranges::all_of(agreement.groups, [](const SlotGroup& group) {
-        return group.slot.representation == SlotRepresentation::JSValue;
-    });
-}
-
 static bool hasTaggedResult(SelectionContext& context, const Value& definition)
 {
-    if (definition.opcode == Opcode::GetSlot)
-        return readsTaggedSlot(context, definition);
+    if (definition.opcode == Opcode::GetSlot) {
+        const SlotAgreement& agreement = context.slots().agreementOf(context.program(), definition.key(), definition.receivers());
+        return !agreement.groups.isEmpty() && std::ranges::all_of(agreement.groups, [](const SlotGroup& group) {
+            return group.slot.representation == SlotRepresentation::JSValue;
+        });
+    }
     if (definition.opcode == Opcode::GetArrayElement)
         return elementRepresentationOf(definition.arrayStorage()) == Representation::JSValue;
     return definition.opcode == Opcode::CallBuiltin || resultRuleOf(definition.opcode) == ResultRule::Unknown;
@@ -251,22 +247,6 @@ static BlockID splitAroundPath(IRBuilder& builder, const NumberPath& path)
     return builder.splitBlock(path.block, cuts).first();
 }
 
-static void removeUnclonablePaths(FunctionAnalyses& analyses, Vector<SplitPath>& splitPaths)
-{
-    splitPaths.removeAllMatching([&](const SplitPath& split) {
-        return RegionCloner::checkCanDuplicate(analyses, singleElementSpan(split.middle)) != CloneCheck::CanClone;
-    });
-}
-
-static void findHeads(const CFG& cfg, Vector<SplitPath>& splitPaths)
-{
-    for (SplitPath& split : splitPaths) {
-        std::optional<Edge> entry = cfg.singleIncomingEdge(split.middle);
-        RELEASE_ASSERT(entry);
-        split.head = entry->from;
-    }
-}
-
 static void emitIntegerTests(IRBuilder& builder, FunctionAnalyses& analyses, SplitPath& split)
 {
     Function& function = builder.function();
@@ -302,41 +282,39 @@ static void replaceOperandInBlock(Function& function, BlockID block, ValueID ope
     contents.terminator.forEachChild(replace);
 }
 
-static void narrowTestedOperands(Function& function, const RegionCloner& cloner, const SplitPath& split)
-{
-    BlockID copy = cloner.cloneOf(split.middle);
-    for (size_t index = 0; index < split.narrowed.size(); ++index) {
-        ValueID tested = split.path->tested[index];
-        ValueID clone = cloner.cloneOf(tested);
-        replaceOperandInBlock(function, copy, clone ? clone : tested, split.narrowed[index]);
-    }
-}
-
-static void emitJumpToCopy(IRBuilder& builder, const RegionCloner& cloner, const SplitPath& split)
-{
-    builder.setOrigin(builder.function().at(split.path->group.root).origin());
-    builder.moveToEndOf(split.integerArm);
-    builder.emitJump(cloner.cloneOf(split.middle));
-}
-
 static void copySplitPaths(FunctionAnalyses& analyses, IRBuilder& builder, Vector<SplitPath>& splitPaths)
 {
-    removeUnclonablePaths(analyses, splitPaths);
+    splitPaths.removeAllMatching([&](const SplitPath& split) {
+        return RegionCloner::checkCanDuplicate(analyses, singleElementSpan(split.middle)) != CloneCheck::CanClone;
+    });
     if (splitPaths.isEmpty())
         return;
-    findHeads(analyses.cfg(), splitPaths);
 
+    const CFG& cfg = analyses.cfg();
+    for (SplitPath& split : splitPaths) {
+        std::optional<Edge> entry = cfg.singleIncomingEdge(split.middle);
+        RELEASE_ASSERT(entry);
+        split.head = entry->from;
+    }
     for (SplitPath& split : splitPaths)
         emitIntegerTests(builder, analyses, split);
 
+    Function& function = builder.function();
     Vector<BlockID> region = WTF::map(splitPaths, [](const SplitPath& split) {
         return split.middle;
     });
-    RegionCloner cloner(builder, builder.function());
+    RegionCloner cloner(builder, function);
     cloner.cloneBlocks(region.span(), [](ValueID, Value&) { });
     for (const SplitPath& split : splitPaths) {
-        narrowTestedOperands(builder.function(), cloner, split);
-        emitJumpToCopy(builder, cloner, split);
+        BlockID copy = cloner.cloneOf(split.middle);
+        for (size_t index = 0; index < split.narrowed.size(); ++index) {
+            ValueID tested = split.path->tested[index];
+            ValueID clone = cloner.cloneOf(tested);
+            replaceOperandInBlock(function, copy, clone ? clone : tested, split.narrowed[index]);
+        }
+        builder.setOrigin(function.at(split.path->group.root).origin());
+        builder.moveToEndOf(split.integerArm);
+        builder.emitJump(copy);
     }
     cloner.repairSSA(analyses);
 }

@@ -58,7 +58,7 @@ struct RunOutput {
     String text;
 };
 
-Vector<TestFailure> runTestText(String&& text, Vector<RunOutput>* outputs = nullptr, const TestVariant& = { }, std::optional<TestTodo>* = nullptr);
+Vector<TestFailure> runTestText(String&& text, Vector<RunOutput>* outputs = nullptr, const TestVariant& = { }, std::optional<TestTodo>* = nullptr, const String& folder = { });
 
 void reopenDiagnostics(BuildContext&);
 

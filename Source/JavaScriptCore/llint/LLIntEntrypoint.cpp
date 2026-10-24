@@ -25,7 +25,7 @@
 
 #include "config.h"
 #include "LLIntEntrypoint.h"
-#include "AOTInterpreterTripwire.h"
+#include "AOTInterpreterSlowPaths.h"
 #include "AOTRemovableFeature.h"
 #include "CodeBlock.h"
 #include "HeapInlines.h"

@@ -11,7 +11,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="u" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     v1 = Call v0
     v2 = CallMethod v0 key="m"
     v3 = Builtin builtin=GlobalThis

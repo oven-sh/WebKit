@@ -7,7 +7,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 variable g0 name="count" module=m0 declared={type=number} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="flag" [isFreeName]
     v2 = ToBoolean v1
@@ -27,7 +26,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # NOFLOW-NEXT: v5 effects: unknownCode
 # NOFLOW-NEXT: v6 effects: unknownCode
 function f1 name="logsBeforeThrow" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     Return
@@ -38,7 +36,6 @@ function f1 name="logsBeforeThrow" parameters=[{type=boolean}] results=[{type=un
     Throw v0
 }
 function f2 name="outsideTry" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     v1 = CallDirect v0 function=f1
     Return
 }
@@ -63,7 +60,6 @@ function f3 name="insideTry" parameters=[{type=boolean}] results=[{type=undefine
 # NOFLOW-NEXT: effects:
 # NOFLOW: v1 effects: unknownCode
 function f4 name="callsInLoop" parameters=[{type=boolean}, {type=number}] results=[{type=undefined}] {
-  b0(v0: boolean, v1: number):
     Jump -> next b1()
   b1():
     LoopHint
@@ -82,12 +78,10 @@ function f4 name="callsInLoop" parameters=[{type=boolean}, {type=number}] result
 # NOFLOW: v3 effects: unknownCode
 # NOFLOW-NEXT: v4 effects: unknownCode
 function f5 name="pure" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Mul v0, v0
     Return v1
 }
 function f6 name="writesVariable" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     PutModuleVariable v0 variable=g0
     Return
 }

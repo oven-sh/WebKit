@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="fortyCalls" parameters=[{type=anything}] results=[{type=Array<anything>}] {
-  b0(v0: anything):
 # REPEAT: i = 1..40
     v%(i) = Call v0
 # END REPEAT
@@ -26,7 +25,6 @@ function f0 name="fortyCalls" parameters=[{type=anything}] results=[{type=Array<
 # CHECK-NEXT: Return [[literal]]
 
 function f1 name="elementsFromOtherBlock" parameters=[{type=boolean}, {type=anything}] results=[{type=Array<anything>}] {
-  b0(v0: boolean, v1: anything):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v2 = NewArray v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1 contents=anything
@@ -73,7 +71,6 @@ function f2 name="underHandler" parameters=[{type=anything}] results=[{type=anyt
 # CHECK: = TruncateNewArray [[underHandler]],
 
 function f3 name="nestedLiterals" parameters=[{type=anything}] results=[{type=Array<anything>}] {
-  b0(v0: anything):
     v1 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=anything
     v2 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v1 contents=anything
     Return v2
@@ -86,7 +83,6 @@ function f3 name="nestedLiterals" parameters=[{type=anything}] results=[{type=Ar
 # CHECK-NOT: = NewArray
 
 function f4 name="joinParameters" parameters=[{type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = Call v0
@@ -116,7 +112,6 @@ function f4 name="joinParameters" parameters=[{type=anything}, {type=boolean}] r
 # CHECK: TruncateNewArray
 
 function f5 name="trailingHole" parameters=[{type=anything}] results=[{type=Array<anything>}] {
-  b0(v0: anything):
     v1 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=anything holes=[40]
     Return v1
 }
@@ -150,7 +145,6 @@ function f6 name="handlerChangesOnTheWay" parameters=[{type=anything}, {type=any
 # CHECK: TruncateNewArray
 
 function f7 name="literalInLoop" parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1()
   b1():
     LoopHint
@@ -169,7 +163,6 @@ function f7 name="literalInLoop" parameters=[{type=anything}, {type=anything}] r
 # CHECK: NewContiguousArray
 
 function f8 name="irreducibleCycle" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     LoopHint
@@ -191,7 +184,6 @@ function f8 name="irreducibleCycle" parameters=[{type=anything}, {type=anything}
 # CHECK: NewContiguousArray
 
 function f9 name="innerLoopElement" parameters=[{type=anything}] results=[{type=Array<anything>}] {
-  b0(v0: anything):
     v1 = Call v0
     Jump -> next b1()
   b1():
@@ -211,7 +203,6 @@ function f9 name="innerLoopElement" parameters=[{type=anything}] results=[{type=
 # CHECK: PutContiguousIndex
 
 function f10 name="constantsOnly" results=[{type=Array<number>}] {
-  b0():
     v0 = Integer integer=7
     v1 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=number
     Return v1
@@ -221,7 +212,6 @@ function f10 name="constantsOnly" results=[{type=Array<number>}] {
 # CHECK: = NewArray
 
 function f11 name="numbersOnly" parameters=[{type=number}] results=[{type=Array<number>}] {
-  b0(v0: number):
     v1 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=number
     Return v1
 }
@@ -230,7 +220,6 @@ function f11 name="numbersOnly" parameters=[{type=number}] results=[{type=Array<
 # CHECK: = NewArray
 
 function f12 name="atLimit" parameters=[{type=anything}] results=[{type=Array<anything>}] {
-  b0(v0: anything):
     v1 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=anything
     Return v1
 }
@@ -239,7 +228,6 @@ function f12 name="atLimit" parameters=[{type=anything}] results=[{type=Array<an
 # CHECK: = NewArray
 
 function f13 name="mostlyConstantElements" parameters=[{type=anything}] results=[{type=Array<anything>}] {
-  b0(v0: anything):
     v1 = Integer integer=7
     v2 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v1, v1, v1, v1, v1, v1, v1, v1 contents=anything
     Return v2

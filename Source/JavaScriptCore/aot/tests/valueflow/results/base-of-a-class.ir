@@ -24,7 +24,6 @@ layout L4 kind=Instance name="Outside" constructor=f5 flags=[HasHeritage]
 layout L5 kind=Instance name="Bare" constructor=f6 flags=[HasHeritage]
 layout L6 kind=Instance name="Failure" constructor=f7 flags=[HasHeritage]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = FinishClass v1 layout=L0
@@ -68,7 +67,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="A" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0 fields=[]
     v3 = Integer integer=1
@@ -76,7 +74,6 @@ function f1 name="A" kind=BaseConstructor flags=[HasNewTarget] results=[{type=an
     Return v2
 }
 function f2 name="B" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0
     v3 = SuperConstruct v2, v1 layout=L1
     v4 = Integer integer=2
@@ -84,31 +81,26 @@ function f2 name="B" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] r
     Return v3
 }
 function f3 name="Other" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L2
     v2 = NewObject v1 layout=L2 fields=[]
     Return v2
 }
 function f4 name="Either" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0
     v3 = SuperConstruct v2, v1 layout=L3
     Return v3
 }
 function f5 name="Outside" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0
     v3 = SuperConstruct v2, v1 layout=L4
     Return v3
 }
 function f6 name="Bare" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0
     v3 = SuperConstruct v2, v1 layout=L5
     Return v3
 }
 function f7 name="Failure" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0
     v3 = SuperConstruct v2, v1 layout=L6
     Return v3

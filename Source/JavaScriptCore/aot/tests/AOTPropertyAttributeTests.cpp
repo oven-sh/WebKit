@@ -32,7 +32,6 @@ layout L14 name="ChangedLaterHolder" fields=[{key="a" declared={type=anything} f
 layout L15 name="ParameterHolder" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
 layout L16 name="Events"
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -51,7 +50,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="storeToReadOnlyName" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L4 fields=[0]
     v2 = NewObject -, v0 layout=L0 fields=[0]
@@ -72,7 +70,6 @@ function f1 name="storeToReadOnlyName" results=[{type=anything}] {
     Return v10
 }
 function f2 name="storeToReadOnlyNameInSloppyMode" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L5 fields=[0]
     v2 = NewObject -, v0 layout=L0 fields=[0]
@@ -85,7 +82,6 @@ function f2 name="storeToReadOnlyNameInSloppyMode" results=[{type=anything}] {
     Return v8
 }
 function f3 name="storeToHiddenName" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L6 fields=[0]
     v2 = Boolean boolean=true
@@ -106,7 +102,6 @@ function f3 name="storeToHiddenName" results=[{type=anything}] {
     Return v16
 }
 function f4 name="deleteFixedName" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L7 fields=[0]
     v2 = Boolean boolean=true
@@ -121,7 +116,6 @@ function f4 name="deleteFixedName" results=[{type=anything}] {
     Return v10
 }
 function f5 name="usePlainName" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L8 fields=[0]
     v2 = Boolean boolean=true
@@ -140,7 +134,6 @@ function f5 name="usePlainName" results=[{type=anything}] {
     Return v14
 }
 function f6 name="readNamesOfMap" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L9 fields=[0]
     v2 = NewObject -, v0 layout=L0 fields=[0]
@@ -156,7 +149,6 @@ function f6 name="readNamesOfMap" results=[{type=anything}] {
     Return v11
 }
 function f7 name="storeToNameDefinedByReflect" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L10 fields=[0]
     v2 = NewObject -, v0 layout=L0 fields=[0]
@@ -177,7 +169,6 @@ function f7 name="storeToNameDefinedByReflect" results=[{type=anything}] {
     Return v10
 }
 function f8 name="storeToReadOnlyField" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L11 fields=[0]
     v2 = Boolean
@@ -199,7 +190,6 @@ function f8 name="storeToReadOnlyField" results=[{type=anything}] {
     Return v11
 }
 function f9 name="Emitter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L12
     v2 = NewObject v1 layout=L12
     v3 = NewObject layout=L16 fields=[]
@@ -214,7 +204,6 @@ function f9 name="Emitter" kind=BaseConstructor flags=[HasNewTarget] results=[{t
     Return v2
 }
 function f10 name="replaceHiddenNameOfInstance" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f9
     v1 = NewClass v0 layout=L12
     v2 = FinishClass v1 layout=L12
@@ -230,7 +219,6 @@ function f10 name="replaceHiddenNameOfInstance" results=[{type=anything}] {
     Return v11
 }
 function f11 name="captureStack" results=[{type=anything}] {
-  b0():
     v0 = String string="boom"
     v1 = NewObject -, v0 layout=L13 fields=[0]
     v2 = Builtin builtin=ErrorCaptureStackTrace
@@ -247,7 +235,6 @@ function f11 name="captureStack" results=[{type=anything}] {
     Return v12
 }
 function f12 name="changeDescriptorBetweenDefinitions" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = Boolean boolean=true
     v2 = NewObject -, v0, v1, v1, v1 layout=L1 fields=[0, 1, 2, 3]
@@ -268,7 +255,6 @@ function f12 name="changeDescriptorBetweenDefinitions" results=[{type=anything}]
     Return v16
 }
 function f13 name="defineWithAttributes" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = Integer integer=1
     v4 = NewObject -, v3 layout=L15 fields=[0]
     v5 = NewObject -, v3, v0, v1, v2 layout=L1 fields=[0, 1, 2, 3]

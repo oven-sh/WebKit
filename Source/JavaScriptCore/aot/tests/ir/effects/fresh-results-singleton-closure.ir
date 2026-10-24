@@ -7,23 +7,18 @@ layout L0 kind=Instance name="Once" constructor=f0 flags=[IsConstructorFunction]
 layout L1 kind=Instance name="Capturing" constructor=f1 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeProperty=Fixed}
 layout L2 kind=Instance name="Many" constructor=f2 flags=[IsConstructorFunction] flow={baseState=None} classFlow={prototypeProperty=Fixed}
 function f0 name="Once" flags=[HasThis] thisType={type=L0} results=[{type=undefined}] {
-  b0(v0: L0):
     Return
 }
 function f1 name="Capturing" flags=[HasThis] captures=[{type=number}] thisType={type=L1} results=[{type=undefined}] {
-  b0(v0: number, v1: L1):
     Return
 }
 function f2 name="Many" flags=[HasThis] thisType={type=L2} results=[{type=undefined}] {
-  b0(v0: L2):
     Return
 }
 function f3 name="plain" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f4 name="creates" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     v1 = NewClosure function=f0
     v2 = NewClosure v0 function=f1
     v3 = NewClosure function=f2

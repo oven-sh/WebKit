@@ -37,7 +37,6 @@ variable g6 name="t6" declared={type=number|absent} initialization=Undefined
 variable g7 name="t7" declared={type=number} initialization=Undefined
 variable g8 name="t8" declared={type=env L2} initialization=Undefined
 function f0 name="allocate" parameters=[{type=anything}, {type=number}] results=[{type=undefined}] {
-  b0(v0: anything, v1: number):
     v2 = NewObject -, v1 layout=L0 fields=[0]
     v3 = NewObject -, v0 layout=L1 fields=[0]
     v4 = NewObject -, v0 layout=L2 fields=[0]

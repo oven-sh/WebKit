@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="proofBetween" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=number}] results=[{type=AsyncGenerator}] {
-  b0(v0: function, v1: number):
     InitialYield @10
     v3 = Await v1 @11
     v4 = AssumeType v3 castType=int[0, 9]
@@ -15,7 +14,6 @@ function f0 name="proofBetween" flags=[IsAsync, IsGenerator, TakesCallee] parame
     Return v6
 }
 function f1 name="expectedTypeAndProofBetween" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
-  b0(v0: function, v1: anything):
     InitialYield @10
     v3 = Await v1 @11
     v4 ~ number = Upcast v3 castType=anything
@@ -26,7 +24,6 @@ function f1 name="expectedTypeAndProofBetween" flags=[IsAsync, IsGenerator, Take
     Return v8
 }
 function f2 name="proofHasSecondUse" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=number}] results=[{type=AsyncGenerator}] {
-  b0(v0: function, v1: number):
     InitialYield @10
     v3 = Await v1 @11
     v4 = AssumeType v3 castType=int[0, 9]
@@ -35,7 +32,6 @@ function f2 name="proofHasSecondUse" flags=[IsAsync, IsGenerator, TakesCallee] p
     Return v4
 }
 function f3 name="testBehindProof" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
-  b0(v0: function, v1: anything):
     InitialYield @10
     v3 = Await v1 @11
     v4 = AssumeType v3 castType=number|string

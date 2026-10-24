@@ -14,7 +14,6 @@ namespace JSC { namespace AOT {
 static constexpr ASCIILiteral programText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -26,17 +25,14 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="read" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="shared"
     Return v1
 }
 function f2 name="has" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropHas v0 key="shared"
     Return v1
 }
 function f3 name="hasOwn" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="Object" [isFreeName]
     v3 = PropGet v2 key="hasOwn"
@@ -45,12 +41,10 @@ function f3 name="hasOwn" parameters=[{type=anything}] results=[{type=anything}]
     Return v5
 }
 function f4 name="readByKey" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = ElemGet v0, v1
     Return v2
 }
 function f5 name="isTruthy" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="shared"
     v2 = ToBoolean v1
     Branch v2 -> taken b1(), notTaken b2()

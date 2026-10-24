@@ -9,7 +9,6 @@ layout L0 name="Text" fields=[{key="value" declared={type=undefined|string}}, {k
 layout L1 name="Count" fields=[{key="value" declared={type=undefined|number}}] flow={members=[L1]}
 
 function f0 name="slot-stored-between-test-and-branch" parameters=[{type=L0|L1}, {type=L0}] results=[{type=anything}] {
-  b0(v0: L0|L1, v1: L0):
     v2 = IsSlotFilled v0 key="value" receivers=[L0, L1] level=Proven
     v3 = Undefined
     PutSlotOrAdd v1, -, v3 key="value" receivers=[L0] level=Proven

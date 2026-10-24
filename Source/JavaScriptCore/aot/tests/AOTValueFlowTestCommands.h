@@ -8,9 +8,12 @@
 #if ENABLE(AOT)
 
 #include "AOTTestCommand.h"
+#include "AOTValueFlow.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
+void runFlowTestCommand(TestCommandContext&);
+void runFlowReportTestCommand(TestCommandContext&);
 void runValueFlowBodyTestCommand(TestCommandContext&);
 void runValueFlowBodiesTestCommand(TestCommandContext&);
 void runValueFlowSolveTestCommand(TestCommandContext&);
@@ -20,6 +23,7 @@ void runValueFlowResultsTestCommand(TestCommandContext&);
 void runValueFlowApplyTestCommand(TestCommandContext&);
 
 void prepareForFlow(TestCommandContext&);
+ASCIILiteral nameOf(ValueFlowStatementKind);
 
 } } } // namespace JSC::AOT::Typed
 

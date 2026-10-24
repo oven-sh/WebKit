@@ -8,22 +8,16 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBuildContext.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTableRealm.h"
 #include "AOTCallGraph.h"
-#include "AOTEffectsOfOperands.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTKnownClosures.h"
-#include "AOTThreads.h"
 #include "AOTValueIdentity.h"
-#include "AOTVector.h"
 #include <algorithm>
-#include <array>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The holder has a property of this name before the first member is defined.
 static bool isCreatedWithHolder(const Program& program, ClassSide side, PropertyKeyID key)
 {
     NameClass nameClass = program.nameClassOf(key);
@@ -46,11 +40,10 @@ static bool capturesAtMostClassEnvironment(const Program& program, const Functio
     return captured && captured == constructor.captures[0].type && program.at(captured).environment;
 }
 
-bool canClassRecordCreate(const Program& program, const Function& constructor, const ClassMember& member)
+static bool canClassRecordCreate(const Program& program, const Function& constructor, const ClassMember& member)
 {
     if (!member.key || !member.function || program.isIndexLike(member.key) || isCreatedWithHolder(program, member.side, member.key))
         return false;
-    // SetFunctionName names the closure of the definition.
     const Function& function = program.at(member.function);
     return function.name && capturesAtMostClassEnvironment(program, constructor, function);
 }
@@ -60,7 +53,6 @@ static bool isClassEvaluatedOnce(const Program& program, const Layout& layout)
     return layout.kind == LayoutKind::Instance && layout.constructor && !layout.isDerived() && !layout.has(LayoutFlags::IsConstructorFunction) && isEvaluatedOnce(program, layout);
 }
 
-// The prototype property of a built-in constructor of the engine never changes either, and a cell keeps the constructor that the realm was created with, whatever the program puts in its place.
 BuiltinID builtinParentNamedByClassRecord(const Program& program, const Layout& layout)
 {
     if (layout.flow.baseState != BaseState::BuiltinClass)
@@ -75,7 +67,6 @@ BuiltinID builtinParentNamedByClassRecord(const Program& program, const Layout& 
     return isFoundAtAnyTime ? constructor : BuiltinID();
 }
 
-// What a constructor function has as its prototype property when the class below it is defined is known only then. The property of a class never changes.
 static bool hasOnlyClassesAbove(const Program& program, LayoutID id)
 {
     LayoutID current = id;
@@ -99,7 +90,7 @@ static bool hasOnlyClassesAbove(const Program& program, LayoutID id)
     return false;
 }
 
-bool isDefinedByClassRecord(const Program& program, LayoutID id)
+static bool isDefinedByClassRecord(const Program& program, LayoutID id)
 {
     if (!hasOnlyClassesAbove(program, id))
         return false;
@@ -110,7 +101,6 @@ bool isDefinedByClassRecord(const Program& program, LayoutID id)
     });
     if (!recordCreatesEveryMember)
         return false;
-    // The closure table has the one closure of each, whoever asks for it first.
     bool capturesNothing = true;
     forEachFunctionInClassRecord(program, layout, [&](FunctionID function, FunctionReferenceKind) {
         capturesNothing &= program.at(function).captures.isEmpty();
@@ -137,7 +127,6 @@ std::optional<ClassDefinitionSite> findClassDefinitionSite(const Program& progra
         return std::nullopt;
     site.describedByRecord.append(head.constructorOperand());
 
-    // The heritage is proven to be a class, whose prototype property is a data property that holds an object: the look at it finds that and does nothing else.
     for (ValueID current = head.prototypeParentOperand(); current;) {
         const Value& value = function.at(current);
         bool isCastThatDoesNothing = value.opcode == Opcode::AssumeType || value.opcode == Opcode::Upcast;

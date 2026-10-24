@@ -7,8 +7,11 @@
 
 #if ENABLE(AOT)
 
+#include "AOTImage.h"
 #include "AOTProgramTables.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTVector.h"
+#include "JSString.h"
 #include "RememberedSlot.h"
 #include <array>
 #include <optional>
@@ -17,16 +20,8 @@
 #include <wtf/text/AtomString.h>
 #include <wtf/text/StringView.h>
 
-namespace JSC {
+namespace JSC { namespace AOT {
 
-class JSCell;
-class JSGlobalObject;
-class JSString;
-class VM;
-
-namespace AOT {
-
-class Image;
 struct Instance;
 struct State;
 
@@ -38,17 +33,19 @@ public:
 
     Instance& instance() const { return m_instance; }
 
-    static String text(const Image&, StringID);
-    static bool hasText(const Image&, StringID, StringView);
-    static AtomString atomOf(const Image&, StringID);
-    static String text(const ProgramTables&, StringID);
-    static StringView viewInImage(const ProgramTables&, StringID);
-    static StringID identifierString(const ProgramTables&, uint32_t identifier);
+    static String text(const Image& image, StringID string) { return image.text().createString(string); }
+    static bool hasText(const Image& image, StringID string, StringView text) { return image.text().equals(string, text); }
+    static AtomString atomOf(const Image& image, StringID string) { return AtomString(image.text().createAtom(string)); }
+    static String text(const ProgramTables&, StringID string) { return text(*Image::current(), string); }
+    static StringView viewInImage(const ProgramTables&, StringID string) { return Image::current()->text().view(string); }
+    static StringID identifierString(const ProgramTables&, uint32_t identifier) { return Image::current()->text().identifier(identifier).text(); }
 
+    // A constant is made once: its cell is kept, or its site runs at most once.
+    enum class Made : bool { AnyNumberOfTimes, Once };
+    JSString* string(VM&, StringID, Made = Made::AnyNumberOfTimes) const;
     JSString* constant(VM&, uint32_t number);
     JSString* constantIfCreated(uint32_t number) const;
     JSString* createConstant(VM&, uint32_t stringIndex);
-    JSString* string(VM&, StringID);
     // The name as it is written, without "get ", "set " or "bound ".
     JSString* writtenNameOfFunction(VM&, FunctionID);
     // By the position of the name in ProgramTables::functionNames(). operationAOTNewStringConstant() takes such a position with this bit in place of the index of a string.
@@ -71,13 +68,8 @@ public:
 
 private:
     template<typename Appender> void visitRegion(Appender&, size_t begin, size_t end);
-    // A constant is made once: its cell is kept, or its site runs at most once.
-    enum class Made : bool { AnyNumberOfTimes, Once };
-    JSString* createString(VM&, StringID, Made = Made::AnyNumberOfTimes) const;
     // A StringImpl over characters of the image, as the image has one for other texts: static, so nobody counts references to it.
     StringImpl* tryCreateHeader(StringView charactersInImage, unsigned hash) const;
-    bool isHeaderOfConstant(const StringImpl&) const;
-    void setConstant(uint32_t number, JSString*);
     JSCell* immortalCellAt(const uint32_t* narrowCells, JSCell* const* wideCells, uint32_t number) const;
     void setImmortalCellAt(uint32_t* narrowCells, JSCell** wideCells, uint32_t number, JSCell*) const;
     std::optional<uint32_t> findLiteralString(unsigned hash, StringView) const;
@@ -91,6 +83,23 @@ private:
     RememberedSlotSet m_constantCells;
     std::array<RefPtr<StringImpl>, 1 << literalStringCacheIndexBits> m_literalStringCacheKeys;
 };
+
+// No rope is made flat, nothing is allocated in the heap and nothing is thrown.
+template<typename Functor>
+auto withCharactersOf(JSString* string, const Functor& functor)
+{
+    if (const StringImpl* impl = string->tryGetValueImpl())
+        return functor(StringView { *impl });
+    if (string->isSubstring()) {
+        auto* rope = uncheckedDowncast<JSRopeString>(string);
+        return functor(StringView { *rope->substringBase()->tryGetValueImpl() }.substring(rope->substringOffset(), rope->length()));
+    }
+    auto resolve = [&]<typename CharacterType>(Vector<CharacterType, 64> characters) {
+        string->resolveToBuffer(characters.mutableSpan());
+        return functor(StringView { characters.span() });
+    };
+    return string->is8Bit() ? resolve(Vector<Latin1Character, 64>(string->length())) : resolve(Vector<char16_t, 64>(string->length()));
+}
 
 } } // namespace JSC::AOT
 

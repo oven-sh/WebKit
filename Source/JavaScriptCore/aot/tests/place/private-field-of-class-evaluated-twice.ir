@@ -9,7 +9,6 @@ layout L0 kind=Instance name="Once" constructor=f1 fields=[{key=#"#"@L0 declared
 layout L1 kind=Instance name="Twice" constructor=f3 fields=[{key=#"#"@L1 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"count"@L1 declared={type=number} flags=[IsRequired, IsPrivate]}, {key="visible" declared={type=number} flags=[IsRequired]}]
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=MathRandom
     v1 = Call v0
     v2 = ToNumber v1
@@ -24,7 +23,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Once" kind=BaseConstructor flags=[HasNewTarget] captures=[{type=classtoken}] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: classtoken, v1: anything, v2: number):
     v3 = GetConstructPrototype v1 layout=L0
     v4 = NewObject v3 layout=L0
     PrivateDefine v4, v0, v0 layout=L0
@@ -33,7 +31,6 @@ function f1 name="Once" kind=BaseConstructor flags=[HasNewTarget] captures=[{typ
     Return v4
 }
 function f2 name="evaluate" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewClassToken layout=L1
     v2 = NewClosure v1 function=f3
     v3 = NewClass v2 layout=L1
@@ -43,7 +40,6 @@ function f2 name="evaluate" parameters=[{type=number}] results=[{type=anything}]
     Return
 }
 function f3 name="Twice" kind=BaseConstructor flags=[HasNewTarget] captures=[{type=classtoken}] parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: classtoken, v1: anything, v2: number):
     v3 = GetConstructPrototype v1 layout=L1
     v4 = NewObject v3 layout=L1
     PrivateDefine v4, v0, v0 layout=L1

@@ -21,7 +21,6 @@ layout L2 name="RestWithComputedKey"
 layout L3 name="State" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}, {key="c" declared={type=anything}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = NewClosure function=f3
@@ -33,20 +32,17 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v7
 }
 function f1 name="spreadThenName" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = CopyObject v0
     PropDefine v2, v1 key="a"
     Return v2
 }
 function f2 name="rest" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject layout=L1
     CopyDataProperties v1, v0 excludedKeys=["a", "b"]
     v3 = FinishObject v1
     Return v3
 }
 function f3 name="restWithComputedKey" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = ToPropertyKey v1
     v3 = NewObject layout=L2
     CopyDataProperties v3, v0, v2 excludedKeys=["a", "0"]
@@ -54,13 +50,11 @@ function f3 name="restWithComputedKey" parameters=[{type=anything}, {type=anythi
     Return v5
 }
 function f4 name="makeState" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = NewObject -, v0, v1, v2 layout=L3 fields=[0, 1, 2]
     v4 = FinishObject v3
     Return v4
 }
 function f5 name="spreadOfSameLayout" parameters=[{type=L3 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L3, v1: anything):
     v2 = NewObject layout=L3
     CopyDataProperties v2, v0
     PropDefine v2, v1 key="a"

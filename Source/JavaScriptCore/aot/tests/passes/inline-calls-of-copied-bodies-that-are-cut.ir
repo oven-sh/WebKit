@@ -10,12 +10,10 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="leaf" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Mul v0, v0
     Return v1
 }
 function f1 name="middle" parameters=[{type=number}, {type=undefined|number}] results=[{type=number}] {
-  b0(v0: number, v1: undefined|number):
     v2 = Undefined
     v3 = StrictEq v1, v2
     Branch v3 -> taken b1(), notTaken b2()
@@ -27,7 +25,6 @@ function f1 name="middle" parameters=[{type=number}, {type=undefined|number}] re
     Return v5
 }
 function f2 name="caller" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Undefined
     v2 = CallDirect v0, v1 function=f1
     v3 = Add v2, v0
@@ -35,7 +32,6 @@ function f2 name="caller" parameters=[{type=number}] results=[{type=number}] {
     v5 = Mul v4, v3
     v6 = Add v5, v4
     Return v6
-}
-# CHECK-LABEL: function f2 name="caller"
 # CHECK-NOT: CallDirect
 # CHECK: = Mul v0, v0
+}

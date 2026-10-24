@@ -7,7 +7,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Instance name="BehindCasts" constructor=f0 classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
 layout L1 kind=Instance name="KeepsPrototype" constructor=f1 fields=[{key="parent" declared={type=anything}}] classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
 function f0 name="BehindCasts" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] constructedClass=L0 {
-  b0(v0: anything):
     v1 = AssumeType v0 castType=f0
     v2 = GetConstructPrototype v1 layout=L0
     v3: object ~ builtin(ObjectPrototype) = Upcast v2 castType=object
@@ -15,7 +14,6 @@ function f0 name="BehindCasts" kind=BaseConstructor flags=[HasNewTarget] results
     Return v4
 }
 function f1 name="KeepsPrototype" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] constructedClass=L1 {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L1
     v2: object ~ builtin(ObjectPrototype) = Upcast v1 castType=object
     v3 = NewObject v2 layout=L1
@@ -24,22 +22,18 @@ function f1 name="KeepsPrototype" kind=BaseConstructor flags=[HasNewTarget] resu
 }
 
 function f2 name="allocatesInCaller" parameters=[{type=f0}] results=[{type=anything}] {
-  b0(v0: f0):
     v1 = Construct v0 callees=[f0]
     Return v1
-}
-# CHECK-LABEL: function f2 name="allocatesInCaller"
 # CHECK: [[object]]:{{*}}= NewObject layout=L0
 # CHECK-NEXT: = CallDirect [[object]], v0 function=[[version]] [isConstruction]
+}
 
 function f3 name="prototypeHasAnotherUse" parameters=[{type=f1}] results=[{type=anything}] {
-  b0(v0: f1):
     v1 = Construct v0 callees=[f1]
     Return v1
-}
-# CHECK-LABEL: function f3 name="prototypeHasAnotherUse"
 # CHECK-NOT: NewObject
 # CHECK: = CallDirect v0 function=f1 [isConstruction]
+}
 
 # CHECK: function [[version]] name="BehindCasts" {{*}}role=AllocatedThisVersion
 # CHECK-NOT: GetConstructPrototype

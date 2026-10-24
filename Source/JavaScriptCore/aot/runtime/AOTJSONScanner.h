@@ -371,23 +371,13 @@ JSONKeyComparison compareJSONKey(const JSONWords& words, const uint8_t* key, con
     auto compareWith = [&](StringView text) {
         return hasText(text) ? JSONKeyComparison::Equal : JSONKeyComparison::Different;
     };
-    if (hasEscapes) [[unlikely]] {
-        StringBuilder builder(OverflowPolicy::RecordOverflow);
-        if (!decodeJSONString(words, key, findEndOfPlainJSONCharacters(key), builder) || builder.hasOverflowed())
-            return JSONKeyComparison::Unknown;
-        return compareWith(builder);
-    }
     std::span<const uint8_t> characters { key, closingQuote };
-    if (isLatin1(words, characters)) [[likely]]
+    if (!hasEscapes && isLatin1(words, characters)) [[likely]]
         return compareWith(StringView { byteCast<Latin1Character>(characters) });
-    if (words.sourceEncoding == JSONSourceEncoding::UTF16)
-        return compareWith(StringView { original16BitCharacters(words, characters) });
-    if (!StringImpl::isValidLength<char16_t>(characters.size()))
+    StringBuilder builder(OverflowPolicy::RecordOverflow);
+    if (!decodeJSONString(words, key, findEndOfPlainJSONCharacters(key), builder) || builder.hasOverflowed())
         return JSONKeyComparison::Unknown;
-    String decoded = String::fromUTF8(characters);
-    if (decoded.isNull())
-        return JSONKeyComparison::Unknown;
-    return compareWith(decoded);
+    return compareWith(builder);
 }
 
 ALWAYS_INLINE ComparedJSONMember compareJSONMemberKey(const JSONWords& words, const uint8_t* cursor, NOESCAPE const Invocable<bool(StringView)> auto& hasText)

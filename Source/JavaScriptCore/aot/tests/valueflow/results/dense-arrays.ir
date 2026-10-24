@@ -51,7 +51,6 @@ variable g8 name="lengthened" module=m0 declared={type=anything} initialization=
 variable g9 name="elementDeleted" module=m0 declared={type=anything} initialization=Undefined
 variable g10 name="ofLength" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = Integer
     v2 = Integer integer=5
@@ -107,7 +106,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="position" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     Return v0
 }

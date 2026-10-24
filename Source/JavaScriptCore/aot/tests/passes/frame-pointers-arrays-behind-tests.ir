@@ -9,7 +9,6 @@ entry module=m0
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = CallDirect v1 function=f1
@@ -21,7 +20,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="keptAndReturnedWhereItIsNoArray" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -50,7 +48,6 @@ function f1 name="keptAndReturnedWhereItIsNoArray" parameters=[{type=anything}] 
 }
 
 function f2 name="keptWhereItIsAnArray" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -69,7 +66,6 @@ function f2 name="keptWhereItIsAnArray" parameters=[{type=anything}] results=[{t
 }
 
 function f3 name="anotherValueIsTested" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -88,7 +84,6 @@ function f3 name="anotherValueIsTested" parameters=[{type=anything}] results=[{t
 }
 
 function f4 name="bothSidesComeTogetherAgain" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -105,7 +100,6 @@ function f4 name="bothSidesComeTogetherAgain" parameters=[{type=anything}] resul
 }
 
 function f5 name="returnedWhereItIsAnArray" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():

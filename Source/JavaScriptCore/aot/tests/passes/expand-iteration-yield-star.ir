@@ -10,7 +10,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Bag" fields=[{key="x" declared={type=number}}]
 
 function f0 name="overGenerator" flags=[IsGenerator, TakesCallee] parameters=[{type=Generator<anything, pristine[Names]>}] results=[{type=anything}] {
-  b0(v0: function, v1: Generator<anything, pristine[Names]>):
     InitialYield
     v3 = IteratorOpen v1
     v4 = Undefined
@@ -40,8 +39,6 @@ function f0 name="overGenerator" flags=[IsGenerator, TakesCallee] parameters=[{t
     Return v22
   b6(v23):
     Return v23
-}
-# CHECK-LABEL: function f0 name="overGenerator"
 # CHECK: b1(v5: anything):
 # CHECK-NEXT: [[next0]]: undefined = StepGenerator v1, v5 check=None
 # CHECK-NEXT: [[nextValue0]]: anything = ResultAt [[next0]]
@@ -61,7 +58,6 @@ function f0 name="overGenerator" flags=[IsGenerator, TakesCallee] parameters=[{t
 # CHECK-NEXT: [[completed0]]: 1 = Integer integer=1
 # CHECK-NEXT: [[done0]]: boolean = StrictEq [[nextStatus0]], [[completed0]]
 # CHECK-NEXT: Jump -> next [[after0]]([[done0]], [[nextValue0]])
-# ABSENT-LABEL: function f0 name="overGenerator"
 # ABSENT-NOT: IsUnmodifiedGenerator
 # ABSENT-NOT: check=IsUnmodified
 # ABSENT-NOT: @@iterator
@@ -69,9 +65,9 @@ function f0 name="overGenerator" flags=[IsGenerator, TakesCallee] parameters=[{t
 # ABSENT-NOT: key="next"
 # ABSENT-COUNT-3: = StepGenerator
 # ABSENT-NOT: = StepGenerator
+}
 
 function f1 name="overUnprovenGenerator" flags=[IsGenerator, TakesCallee] parameters=[{type=Generator<anything>}] results=[{type=anything}] {
-  b0(v0: function, v1: Generator<anything>):
     InitialYield
     v3 = IteratorOpen v1
     v4 = Undefined
@@ -101,9 +97,7 @@ function f1 name="overUnprovenGenerator" flags=[IsGenerator, TakesCallee] parame
     Return v22
   b6(v23):
     Return v23
-}
 # The methods return and throw are looked up when they are called, so a test at the open says nothing about them.
-# CHECK-LABEL: function f1 name="overUnprovenGenerator"
 # CHECK: InitialYield
 # CHECK-NEXT: [[isUnmodified1]]: boolean = IsUnmodifiedGenerator v1
 # CHECK-NEXT: Branch [[isUnmodified1]] -> taken {{*}}(| 0), notTaken [[modified1]]()
@@ -117,12 +111,11 @@ function f1 name="overUnprovenGenerator" flags=[IsGenerator, TakesCallee] parame
 # CHECK-NEXT: = CallDirect [[iterable1]] function=[[openIterator]] [isNeverInlined]
 # CHECK: [[modified1]]() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next [[protocol1]](v1)
-# ABSENT-LABEL: function f1 name="overUnprovenGenerator"
 # ABSENT-COUNT-3: = StepGenerator
 # ABSENT-NOT: = StepGenerator
+}
 
 function f2 name="overArray" flags=[IsGenerator, TakesCallee] parameters=[{type=Array<number, pristine[Names]>}] results=[{type=anything}] {
-  b0(v0: function, v1: Array<number, pristine[Names]>):
     InitialYield
     v3 = IteratorOpen v1
     v4 = Undefined
@@ -152,8 +145,6 @@ function f2 name="overArray" flags=[IsGenerator, TakesCallee] parameters=[{type=
     Return v22
   b6(v23):
     Return v23
-}
-# CHECK-LABEL: function f2 name="overArray"
 # CHECK: b1(v5: anything, {{*}}: int[0, 9007199254740991]):
 # CHECK-NEXT: = PropGet v1 key="length"
 # CHECK: b3(v14: anything):
@@ -165,14 +156,13 @@ function f2 name="overArray" flags=[IsGenerator, TakesCallee] parameters=[{type=
 # CHECK: [[afterReturn2]](v20: boolean, v21: anything):
 # CHECK: Branch v20 -> taken b5(v21), notTaken b2(v21)
 # CHECK: = ElemGet v1, {{*}} [keyIsIntegral]
-# ABSENT-LABEL: function f2 name="overArray"
 # ABSENT-NOT: key="return"
 # ABSENT-NOT: key="throw"
 # ABSENT-NOT: key="next"
 # ABSENT-NOT: = Call
+}
 
 function f3 name="overUnknown" flags=[IsGenerator, TakesCallee] parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: function, v1: L0):
     InitialYield
     v3 = IteratorOpen v1
     v4 = Undefined
@@ -202,8 +192,6 @@ function f3 name="overUnknown" flags=[IsGenerator, TakesCallee] parameters=[{typ
     Return v22
   b6(v23):
     Return v23
-}
-# CHECK-LABEL: function f3 name="overUnknown"
 # CHECK: b1(v5: anything):
 # CHECK-NEXT: [[result3]]: anything = Call [[next3]], [[iterator3]], v5
 # CHECK-NEXT: [[object3]]: object = RequireObject [[result3]] runtimeError=IteratorResultNotObject
@@ -231,13 +219,12 @@ function f3 name="overUnknown" flags=[IsGenerator, TakesCallee] parameters=[{typ
 # CHECK-NEXT: = Call [[throwCallee3]], [[iterator3]], v14
 # CHECK: [[error3]]: object = NewRuntimeError runtimeError=IteratorWithoutThrowMethod
 # CHECK-NEXT: Throw [[error3]]
-# ABSENT-LABEL: function f3 name="overUnknown"
 # ABSENT-NOT: StepGenerator
 # ABSENT-COUNT-3: key="value"
 # ABSENT-NOT: key="value"
+}
 
 function f4 name="overValueNobodyKnows" flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     InitialYield
     v3 = IteratorOpen v1
     v4 = Undefined
@@ -267,18 +254,16 @@ function f4 name="overValueNobodyKnows" flags=[IsGenerator, TakesCallee] paramet
     Return v22
   b6(v23):
     Return v23
-}
 # Whoever sends values into an iterator expects a generator. passes/expand-iteration-generators.ir, notExpected: a loop that sends nothing is not tested for one
-# CHECK-LABEL: function f4 name="overValueNobodyKnows"
 # CHECK: [[isGenerator4]]: boolean = TypeTest v1 testedType=Generator
 # CHECK-NEXT: Branch [[isGenerator4]] -> taken [[generatorArm4]](| 0), notTaken [[others4]](| 0)
 # CHECK: [[generatorArm4]]([[generator4]]: Generator):
 # CHECK-NEXT: = IsUnmodifiedGenerator [[generator4]]
 # CHECK: [[others4]]([[other4]]: {{*}}) frequency=Unlikely:
 # CHECK-NEXT: = TypeTest [[other4]] testedType=Array
-# ABSENT-LABEL: function f4 name="overValueNobodyKnows"
 # ABSENT: = StepGenerator
 # ABSENT: function=[[openIterator]] [isNeverInlined]
+}
 
 # LEFT-NOT: IteratorOpen
 # LEFT-NOT: IteratorResume

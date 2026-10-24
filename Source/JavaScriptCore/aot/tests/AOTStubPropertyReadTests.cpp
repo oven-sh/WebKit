@@ -19,7 +19,7 @@
 #include "AOTRuntimeRecords.h"
 #include "AOTSlotAccess.h"
 #include "AOTSlotRepresentation.h"
-#include "AOTSlowPaths.h"
+#include "AOTRuntimeTable.h"
 #include "AOTStubRunner.h"
 #include "AOTStubsCalls.h"
 #include "AOTStubsPropertyKeys.h"

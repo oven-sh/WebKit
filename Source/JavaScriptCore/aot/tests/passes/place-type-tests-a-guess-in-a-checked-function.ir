@@ -13,27 +13,24 @@ function f0 name="guessedFromTheName" flags=[IsChecked] parameters=[{type=object
     v2 = PropGet v0 key="memoizedState"
     v3 = Call v1, -, v2
     Return v3
-}
-# CHECK-LABEL: function f0 name="guessedFromTheName"
 # CHECK: = TypeTest v0 testedType=L0
 # CHECK: = GetSlot {{*}} key="memoizedState" receivers=[L0] level=Expected
 # CHECK-COUNT-1: = Call v1
 # CHECK: = PropGet v0 key="memoizedState"
 # CHECK-NOT: = Call v1
+}
 
 function f1 name="saidByTheChecker" flags=[IsChecked] parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
-  b0(v0: anything, v1: function):
     v2: anything ~ L0 = Upcast v0 castType=anything
     v3 = PropGet v2 key="memoizedState"
     v4 = Call v1, -, v3
     Return v4
-}
-# CHECK-LABEL: function f1 name="saidByTheChecker"
 # CHECK: = TypeTest v2 testedType=L0
 # CHECK: = GetSlot {{*}} key="memoizedState" receivers=[L0] level=Expected
 # CHECK: = Call v1
 # CHECK: frequency=Rare:
 # CHECK: = PropGet v2 key="memoizedState"
 # CHECK: = Call v1
+}
 
 function f2 name="Hook" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]

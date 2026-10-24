@@ -15,35 +15,28 @@ layout L4 kind=Instance name="V4" constructor=f8 flow={baseState=None allocation
 # REPEAT: i = 0..4
 function f%(i*2) name="V%(i)" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f%(i*2+1) name="walk" kind=Method flags=[HasThis] thisType={type=L%(i)} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: L%(i), v1: anything):
     Return v1
 }
 # END REPEAT
 function f10 name="nothingBetween" parameters=[{type=L0|L1|L2|L3|L4}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0|L1|L2|L3|L4, v1: anything):
     v2 = PropGet v0 key="walk"
     v3 = Call v2, v0, v1 calleeKey="walk"
     Return v3
-}
-# CHECK-LABEL: function f10 name="nothingBetween"
 # CHECK: = CallTable v0, v1 function={{*}} key="walk" receivers=[L0, L1, L2, L3, L4]
+}
 function f11 name="variableReadBetween" parameters=[{type=L0|L1|L2|L3|L4}] results=[{type=anything}] {
-  b0(v0: L0|L1|L2|L3|L4):
     v1 = PropGet v0 key="walk"
     v2 = GetModuleVariable variable=g0
     v3 = Call v1, v0, v2 calleeKey="walk"
     Return v3
-}
-# CHECK-LABEL: function f11 name="variableReadBetween"
 # CHECK-NOT: = PropGet
 # CHECK: = CallTable v0, v2 function={{*}} key="walk" receivers=[L0, L1, L2, L3, L4]
+}
 function f12 name="unknownCodeBetween" parameters=[{type=L0|L1|L2|L3|L4}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0|L1|L2|L3|L4, v1: anything):
     v2 = PropGet v0 key="walk"
     v3 = Call v1
     v4 = Call v2, v0, v3 calleeKey="walk"
     Return v4
-}
-# CHECK-LABEL: function f12 name="unknownCodeBetween"
 # CHECK-NOT: CallTable
 # CHECK: = PropGet v0 key="walk"
+}

@@ -54,16 +54,12 @@ private:
     ValueSetMaker& m_maker;
 };
 
-// The solved program: what every node holds, which functions are reached, the marks and the uses.
 class ValueFlowSolution {
     WTF_MAKE_NONCOPYABLE(ValueFlowSolution);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueFlowSolution);
 public:
-    // A build that collects the report on sites remembers who logged each edge whatever is asked for here.
     enum class Witnesses : uint8_t { None, ForEveryEdge };
-    // Whether anybody asks the solver how a value has come to a node: see ValueFlowSolverInput::isAskedHowValuesCame.
     enum class WaysOfValues : uint8_t { AreAskedFor, AreNotAskedFor };
-    // It makes property keys of the texts that calls pass where a function takes a key: see ValueFlowInstancedFunctions.
     ValueFlowSolution(Program&, BuildContext&, ValueFlowSolver::Rounds = ValueFlowSolver::Rounds::Due, Witnesses = Witnesses::None, uint32_t mostRounds = UINT32_MAX, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut = { }, WaysOfValues = WaysOfValues::AreAskedFor);
     ~ValueFlowSolution();
 
@@ -72,16 +68,11 @@ public:
     const ValueFlowBodies& bodies() const { return m_bodies; }
     const ValueFlowSolver& solver() const { return *m_solver; }
     ValueSetMakerPool& makerPool() const { return m_makerPool; }
-    // A solve of a program always ends with a result: past its limits it gives sets up, and the untracked object stands for what was in them.
     bool hasResult() const { return m_hasResult; }
-    // Through the mask of the operand, as a rule sees it, but not in the normal form: beside a placeholder the set may or may not list what the placeholder covers.
     ValueSetID valueOf(const ValueFlowOperand&);
-    Seconds timeToReduceBodies() const { return m_timeToReduceBodies; }
-    Seconds timeToSolve() const { return m_timeToSolve; }
 
 private:
     const Program& m_program;
-    // By function: ValueFlowInstancedFunctions::findParametersThatAreKeys().
     Vector<uint32_t> m_positionOfKey;
     ValueFlowBodies m_bodies;
     ValueSetMaker m_maker;
@@ -90,8 +81,6 @@ private:
     ValueFlowSolverInput m_input;
     std::unique_ptr<ValueFlowSolver> m_solver;
     bool m_hasResult { false };
-    Seconds m_timeToReduceBodies;
-    Seconds m_timeToSolve;
 };
 
 } } } // namespace JSC::AOT::Typed

@@ -6,7 +6,6 @@ module m0 path="main.js" displayPath="main.js"
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="callers" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray v0 contents=anything
     v2 = CallDirect v1 function=f1
     v3 = CallDirect v1 function=f2
@@ -42,7 +41,6 @@ function f0 name="callers" parameters=[{type=anything}] results=[{type=anything}
 # CHECK: f0: []
 
 function f1 name="readsLengthAndElement" parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     v1 = Integer integer=0
     v2 = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
     Branch v2 -> taken b1(| 0), notTaken b3()
@@ -61,21 +59,18 @@ function f1 name="readsLengthAndElement" parameters=[{type=Array}] results=[{typ
 # CHECK-NEXT: f1: [0]
 
 function f2 name="lengthByBuiltin" parameters=[{type=Array}] results=[{type=number}] {
-  b0(v0: Array):
     v1 = CallBuiltin v0 overload=ArrayPrototypeLength/0
     Return v1
 }
 # CHECK-NEXT: f2: [0]
 
 function f3 name="handedToUnknownCode" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything):
     v2 = Call v1, -, v0
     Return v2
 }
 # CHECK-NEXT: f3: []
 
 function f4 name="unknownCodeBehindFailedPristineTest" parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     v1 = Integer integer=0
     v2 = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
     Branch v2 -> taken b1(| 0), notTaken b2()
@@ -90,21 +85,18 @@ function f4 name="unknownCodeBehindFailedPristineTest" parameters=[{type=Array}]
 # CHECK-NEXT: f4: [0]
 
 function f5 name="elementByNumber" parameters=[{type=Array}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array, v1: number):
     v2 = ElemGet v0, v1
     Return v2
 }
 # CHECK-NEXT: f5: [0]
 
 function f6 name="elementByAnyKey" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything):
     v2 = ElemGet v0, v1
     Return v2
 }
 # CHECK-NEXT: f6: []
 
 function f7 name="stores" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything):
     v2 = Integer integer=0
     ElemSet v0, v2, v1
     Return v1
@@ -112,26 +104,22 @@ function f7 name="stores" parameters=[{type=Array}, {type=anything}] results=[{t
 # CHECK-NEXT: f7: []
 
 function f8 name="keeps" parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     PutModuleVariable v0 variable=g0
     Return
 }
 # CHECK-NEXT: f8: []
 
 function f9 name="returns" parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     Return v0
 }
 # CHECK-NEXT: f9: []
 
 function f10 name="throws" parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     Throw v0
 }
 # CHECK-NEXT: f10: []
 
 function f11 name="handsOnToReader" parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     v1 = Upcast v0 castType=anything
     v2 = AssumeType v1 castType=Array
     v3 = CallDirect v2 function=f1
@@ -140,14 +128,12 @@ function f11 name="handsOnToReader" parameters=[{type=Array}] results=[{type=any
 # CHECK-NEXT: f11: [0]
 
 function f12 name="handsOnToUnknownCode" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything):
     v2 = CallDirect v0, v1 function=f3
     Return v2
 }
 # CHECK-NEXT: f12: []
 
 function f13 name="handsOnToItself" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything):
     v2 = ToBoolean v1
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -161,14 +147,12 @@ function f13 name="handsOnToItself" parameters=[{type=Array}, {type=anything}] r
 # CHECK-NEXT: f13: [0]
 
 function f14 name="isTheListOfACall" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything):
     v2 = CallList v1, -, v0
     Return v2
 }
 # CHECK-NEXT: f14: [0]
 
 function f15 name="isThisOfACall" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything):
     v2 = NewArray contents=anything
     v3 = CallList v1, v0, v2
     Return v3
@@ -176,7 +160,6 @@ function f15 name="isThisOfACall" parameters=[{type=Array}, {type=anything}] res
 # CHECK-NEXT: f15: []
 
 function f16 name="isAppendedToAnother" parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     v1 = NewArray contents=anything
     v2 = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
     Branch v2 -> taken b1(| 0), notTaken b2()
@@ -190,7 +173,6 @@ function f16 name="isAppendedToAnother" parameters=[{type=Array}] results=[{type
 # CHECK-NEXT: f16: [0]
 
 function f17 name="isAppendedTo" parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     v1 = NewArray contents=anything
     v2 = IsPristine v1 builtinClass=Array aspects=[Storage, Names]
     Branch v2 -> taken b1(| 0), notTaken b2()
@@ -203,7 +185,6 @@ function f17 name="isAppendedTo" parameters=[{type=Array}] results=[{type=anythi
 # CHECK-NEXT: f17: []
 
 function f18 name="isCaptured" parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     v1 = NewClosure v0 function=f27
     v2 = Call v1, -
     Return v2
@@ -212,7 +193,6 @@ function f18 name="isCaptured" parameters=[{type=Array}] results=[{type=anything
 
 # The test says nothing about the other parameter.
 function f19 name="anotherValueIsTested" parameters=[{type=Array}, {type=Array}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array, v1: Array, v2: anything):
     v3 = IsPristine v0 builtinClass=Array aspects=[Storage]
     Branch v3 -> taken b1(| 0), notTaken b2()
   b1(v4: guard):
@@ -225,7 +205,6 @@ function f19 name="anotherValueIsTested" parameters=[{type=Array}, {type=Array},
 # CHECK-NEXT: f19: [0]
 
 function f20 name="storageOfIntegersIsNeverFound" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything):
     v2 = HasArrayStorage v0 arrayStorage=Int32
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3: guard):
@@ -243,7 +222,6 @@ function f20 name="storageOfIntegersIsNeverFound" parameters=[{type=Array}, {typ
 # CHECK-NEXT: f20: [0]
 
 function f21 name="typeTests" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = TypeTest v0 testedType=undefined|null
     Branch v2 -> taken b1(| 0), notTaken b2(| 0)
   b1(v3: undefined|null):
@@ -263,7 +241,6 @@ function f21 name="typeTests" parameters=[{type=anything}, {type=anything}] resu
 
 # What is tested may be another array than the parameter.
 function f22 name="mergedValueIsTested" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything):
     v2 = ToBoolean v1
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -284,21 +261,18 @@ function f22 name="mergedValueIsTested" parameters=[{type=Array}, {type=anything
 # CHECK-NEXT: f22: []
 
 function f23 name="isAsync" flags=[IsAsync] parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     v1 = CallBuiltin v0 overload=ArrayPrototypeLength/0
     Return v1
 }
 # CHECK-NEXT: f23: []
 
 function f24 name="isCompared" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything):
     v2 = StrictEq v0, v1
     Return v2
 }
 # CHECK-NEXT: f24: [0]
 
 function f25 name="otherBuiltin" parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     v1 = CallBuiltin v0 overload=ArrayPrototypeSlice/0
     Return v1
 }
@@ -312,7 +286,6 @@ function f26 name="becomesArgumentsObject" flags=[HasArgumentCount, HasHiddenRes
 # CHECK-NEXT: f26: [1]
 
 function f27 name="closure" kind=Arrow captures=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     v1 = CallBuiltin v0 overload=ArrayPrototypeLength/0
     Return v1
 }
@@ -320,14 +293,12 @@ function f27 name="closure" kind=Arrow captures=[{type=Array}] results=[{type=an
 
 # f.apply(thisValue, list) copies the elements to where arguments go, like a call with a list.
 function f28 name="isTheListOfApply" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything):
     v2 = CallBuiltin v1, v1, v0 overload=FunctionPrototypeApply/0
     Return v2
 }
 # CHECK-NEXT: f28: [0]
 
 function f29 name="isThisOfApply" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything):
     v2 = CallBuiltin v1, v0, v1 overload=FunctionPrototypeApply/0
     Return v2
 }

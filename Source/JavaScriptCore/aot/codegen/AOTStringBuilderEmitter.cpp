@@ -23,21 +23,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 using Storage = StringBuilderStorage;
 
-static LValue loadBytes(Output& out, unsigned width, TypedPointer pointer)
-{
-    switch (width) {
-    case 8:
-        return out.load64(pointer);
-    case 4:
-        return out.load32(pointer);
-    case 2:
-        return out.load16ZeroExt32(pointer);
-    case 1:
-        return out.load8ZeroExt32(pointer);
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static void storeBytes(Output& out, unsigned width, LValue value, TypedPointer pointer)
 {
     switch (width) {
@@ -55,11 +40,6 @@ static void storeBytes(Output& out, unsigned width, LValue value, TypedPointer p
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-StringBuilderEmitter::StringBuilderEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
 }
 
 static constexpr OpcodeSet stackBuilderOperations {
@@ -199,11 +179,6 @@ Pointer StringBuilderEmitter::addressOf(const StackBuilder& builder)
     return Pointer(m_out.m_block->appendNew<B3::SlotBaseValue>(m_proc, m_out.origin(), builder.slot));
 }
 
-TypedPointer StringBuilderEmitter::stackBuilderField(const StackBuilder& builder, ptrdiff_t offset)
-{
-    return TypedPointer(m_heaps.entire(AbstractHeap::StringBuilderContents), addressOf(builder).value(), offset);
-}
-
 Pointer StringBuilderEmitter::cursorOf(const StackBuilder& builder)
 {
     return Pointer(m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Get, m_out.origin(), builder.cursor));
@@ -311,16 +286,6 @@ void StringBuilderEmitter::generateStringBuilderCheckpoint(const ValueContext& v
 void StringBuilderEmitter::generateStringBuilderRollBack(const ValueContext& value)
 {
     callVoidOperation(value, RuntimeOperation::StringBuilderRollBack, { in<CellPointer>(value->builderOperand()), emitter<StringEmitter>().word32Of(value->checkpointOperand()) });
-}
-
-TypedPointer StringBuilderEmitter::storageField(CellPointer builder, ptrdiff_t offset)
-{
-    return TypedPointer(m_heaps.entire(AbstractHeap::StringBuilderContents), builder.value(), offset);
-}
-
-TypedPointer StringBuilderEmitter::bytesAt(Pointer cursor, ptrdiff_t offset)
-{
-    return TypedPointer(m_heaps.entire(AbstractHeap::StringBuilderContents), cursor.value(), offset);
 }
 
 Word32 StringBuilderEmitter::lengthOf(CellPointer builder)

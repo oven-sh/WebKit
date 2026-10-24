@@ -8,7 +8,6 @@ layout L1 name="HasAccessor" fields=[{key="x" declared={type=number}}] flow={imp
 layout L2 name="HasOnlySetter" fields=[{key="x" declared={type=number}}] flow={impossibleMutations=[ChangePrototype] addedKeys=["y"] addedKeysAreComplete=true ownAccessors=[{key="y" kind=Setter function=f2}] ownAccessorsAreComplete=true}
 layout L3 name="ListIsNotComplete" fields=[{key="x" declared={type=number}}] flow={impossibleMutations=[ChangePrototype] addedKeys=["y"] addedKeysAreComplete=true ownAccessors=[{key="y" kind=Getter function=f1}]}
 function f0 name="operands" parameters=[{type=L0}, {type=L1}, {type=L2}, {type=L3}, {type=L0|L1}, {type=L1|L3}] results=[{type=undefined}] {
-  b0(v0: L0, v1: L1, v2: L2, v3: L3, v4: L0|L1, v5: L1|L3):
     Return
 }
 function f1 name="y" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}]

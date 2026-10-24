@@ -10,7 +10,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Bag" fields=[{key="x" declared={type=number}}]
 
 function f0 name="oneBehindTheOther" parameters=[{type=L0}, {type=L0}, {type=L0}] results=[{type=anything}] {
-  b0(v0: L0, v1: L0, v2: L0):
     v3 = IteratorOpen v0 elementCount=2 [isDestructuring]
     Jump -> next b1()
   b1() handler=b7():
@@ -54,8 +53,6 @@ function f0 name="oneBehindTheOther" parameters=[{type=L0}, {type=L0}, {type=L0}
     v25 = CatchException
     IteratorClose v14 completion=Throw
     Rethrow v25
-}
-# CHECK-LABEL: function f0 name="oneBehindTheOther"
 # CHECK: b1():
 # CHECK-NEXT: [[first0]]: {{*}} = DestructureIterable v0 count=2
 # CHECK-NEXT: v5: anything = ResultAt [[first0]]
@@ -72,7 +69,6 @@ function f0 name="oneBehindTheOther" parameters=[{type=L0}, {type=L0}, {type=L0}
 # CHECK-NEXT: v18: anything = ResultAt [[third0]] index=1
 # CHECK-NEXT: Jump
 # CHECK: = NewArray v5, v7, v11, v12, v16, v18 contents=anything
-# ABSENT-LABEL: function f0 name="oneBehindTheOther"
 # ABSENT-NOT: IteratorOpen
 # ABSENT-NOT: IteratorResume
 # ABSENT-NOT: IteratorClose
@@ -81,9 +77,9 @@ function f0 name="oneBehindTheOther" parameters=[{type=L0}, {type=L0}, {type=L0}
 # ABSENT-NOT: role=
 # ABSENT-COUNT-3: DestructureIterable
 # ABSENT-NOT: DestructureIterable
+}
 
 function f1 name="inTwoBranches" parameters=[{type=L0}, {type=L0}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: L0, v1: L0, v2: boolean):
     Branch v2 -> taken b1(), notTaken b4()
   b1():
     v3 = IteratorOpen v0 elementCount=1 [isDestructuring]
@@ -113,8 +109,6 @@ function f1 name="inTwoBranches" parameters=[{type=L0}, {type=L0}, {type=boolean
     v13 = CatchException
     IteratorClose v7 completion=Throw
     Rethrow v13
-}
-# CHECK-LABEL: function f1 name="inTwoBranches"
 # CHECK: b2():
 # CHECK-NEXT: [[taken1]]: {{*}} = DestructureIterable v0 count=1
 # CHECK-NEXT: v5: anything = ResultAt [[taken1]]
@@ -123,10 +117,10 @@ function f1 name="inTwoBranches" parameters=[{type=L0}, {type=L0}, {type=boolean
 # CHECK-NEXT: [[notTaken1]]: {{*}} = DestructureIterable v1 count=1
 # CHECK-NEXT: v9: anything = ResultAt [[notTaken1]]
 # CHECK: Return v9
-# ABSENT-LABEL: function f1 name="inTwoBranches"
 # ABSENT-NOT: IteratorOpen
 # ABSENT-NOT: IteratorResume
 # ABSENT-NOT: IteratorClose
 # ABSENT-NOT: handler=
 # ABSENT-COUNT-2: DestructureIterable
 # ABSENT-NOT: DestructureIterable
+}

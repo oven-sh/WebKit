@@ -12,7 +12,6 @@
 #include "AOTNarrowFieldTypes.h"
 #include "AOTPropertyAccessCache.h"
 #include "AOTTypeArena.h"
-#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -20,14 +19,6 @@ namespace JSC { namespace AOT { namespace Typed {
 static_assert(accessOf(Opcode::PutSlot) == Access::Store && accessOf(Opcode::PutSlotOrAdd) == Access::Store);
 static_assert(accessOf(Opcode::PutModuleVariable) == Access::None);
 
-bool canBeEmpty(const Program& program, LayoutID layout, PropertyKeyID key)
-{
-    std::optional<FieldReference> reference = findField(program, layout, key, BaseChain::Proven);
-    RELEASE_ASSERT(reference);
-    return !staysFilled(program, *reference);
-}
-
-// The slot of an accessor says something of the getter only where the flow analysis has seen the definitions. An accessor may have no getter at all.
 static bool holdsGetterThatIsFunction(const Program& program, const Field& field)
 {
     if (!field.slotType)
@@ -65,7 +56,6 @@ static FieldArmState computeStateOfFieldArm(const Program& program, std::span<co
         state.isInContainer |= program.at(layout).kind == LayoutKind::Container;
         state.cannotMoveOut &= staysInSlot(program, *reference);
         state.mayLieOutOfLine |= program.at(layout).mayKeepFieldsOutOfLine() && flow.location.initialization != InitializationState::SetAtCreation;
-        // A lookup that always finds the slot filled never goes on to the prototypes.
         bool inheritsNothingUnderName = isPrivate || flow.prototypeName == PrototypeNameState::AbsentOnPrototypes;
         state.isAbsentOnPrototypes &= memberIsAlwaysFilled || inheritsNothingUnderName;
         state.inheritsNothingUnderName &= inheritsNothingUnderName;
@@ -97,14 +87,12 @@ static FieldArmState computeStateOfFieldArm(const Program& program, std::span<co
     return state;
 }
 
-// Every writer checks a value against the field of the cell it stores into, so a store without a test needs a value that the slot of every receiver holds.
 static bool storedValueFits(const Program& program, const PropertyAccessQuery& query, const FieldArmState& state)
 {
     if (!query.stored)
         return false;
     std::optional<Type> storedWithoutMarkers;
     const Type* stored = query.stored;
-    // Only the definition of a class field, which finds an object that its constructor has not finished, puts a marker where the mark of the cell answers for a raw value.
     bool mayStoreMarkers = state.slotsHoldUndefinedAndNull && (!state.holdsRawValueFromBirthInSomeMember || query.access == Access::Define);
     if (mayStoreMarkers && stored->mayBeUndefinedOrNull())
         stored = &storedWithoutMarkers.emplace(stored->withoutNullish());
@@ -129,7 +117,6 @@ static bool canCallWithoutFieldRead(const Program& program, const FieldArmState&
         return false;
     switch (state.deferral) {
     case ClosureDeferral::Unknown:
-    // The call has the receiver at hand, not the environment that the object keeps in a hidden slot.
     case ClosureDeferral::CapturesEnvironment:
         return false;
     case ClosureDeferral::CapturesNothing:
@@ -152,18 +139,10 @@ static void requireFilledSlot(const FieldArmState& state, PropertyAccessPlan& pl
         plan.requiredProofs.add(Proof::SlotFilled);
 }
 
-// A store asks for no more than a filled slot.
 static void requireFilledSlotForStore(const FieldArmState& state, PropertyAccessPlan& plan)
 {
     plan.requiredProofs.add(Proof::SlotFilled);
     plan.testsDeclaredType = state.holdsRawNumberOrBoolean;
-}
-
-// An empty slot says that the object has no such property only where the property has not left the slot.
-static void requirePropertyInSlotOrNowhere(const FieldArmState& state, PropertyAccessPlan& plan)
-{
-    if (!state.cannotMoveOut)
-        plan.requiredProofs.add(Proof::NoFieldOutsideSlot);
 }
 
 static void requireStoresAllowed(const PropertyAccessQuery& query, const FieldArmState& state, PropertyAccessPlan& plan)
@@ -182,7 +161,6 @@ static bool isInCodeThatHoldsUnfinishedObjects(const PropertyAccessContext& cont
     return context.flow && context.flow->hasResults() && query.site && context.flow->at(query.site).function && !context.flow->seesOnlyFinishedObjects(query.site);
 }
 
-// The body of a module fills the objects of the module's own layouts, its exports object before all others, as a constructor fills `this`: most of its stores find the slot empty.
 static bool isInBodyOfModuleThatOwnsLayouts(const PropertyAccessContext& context, const PropertyAccessQuery& query, const MemberArm& arm)
 {
     if (!context.flow || !context.flow->hasResults() || !query.site)
@@ -196,7 +174,6 @@ static bool isInBodyOfModuleThatOwnsLayouts(const PropertyAccessContext& context
     });
 }
 
-// No read sees the field of a class empty when the constructor fills it before the object leaks. The store that fills it does.
 static bool mayFindSlotEmpty(const PropertyAccessContext& context, const PropertyAccessQuery& query, const FieldArmState& state)
 {
     if (!state.isAlwaysFilled)
@@ -215,14 +192,13 @@ static bool isAnsweredByTestOfCell(const PropertyAccessContext& context, const P
     return !mayStoreIntoUnfinishedObject(context, query);
 }
 
-static std::optional<CreationTests> computeTestsThatNothingIsInherited(const PropertyAccessContext& context, std::span<const LayoutID> layouts, PropertyKeyID key, Access access)
+static std::optional<TestsOfEmptySlot> computeTestsThatNothingIsInherited(const PropertyAccessContext& context, std::span<const LayoutID> layouts, PropertyKeyID key, Access access)
 {
-    CreationTests tests;
+    TestsOfEmptySlot tests;
     for (LayoutID layout : layouts) {
         MemberAnswer inherited = findMemberOnPrototypes(context, { MemberStart::Instance, layout, key, access, false });
         if (inherited.kind != MemberKind::Absent)
             return std::nullopt;
-        // A test that fails for ever is no plan: what a filled slot holds is the answer without it.
         bool failsForEver = std::ranges::any_of(inherited.conditions, [&](const MemberCondition& condition) {
             return guardsAreNeverSet(context.program, context.program.at(condition.layout));
         });
@@ -234,16 +210,15 @@ static std::optional<CreationTests> computeTestsThatNothingIsInherited(const Pro
     return tests;
 }
 
-// A store passes a method of the class by and creates the property. A read finds the method. So each asks for itself what lies above the object.
-static bool addTestsThatNothingIsInherited(const PropertyAccessContext& context, const PropertyAccessQuery& query, const MemberArm& arm, Access access, CreationTests& tests)
+static bool addTestsThatNothingIsInherited(const PropertyAccessContext& context, const PropertyAccessQuery& query, const MemberArm& arm, Access access, TestsOfEmptySlot& tests)
 {
-    std::optional<CreationTests> computed;
-    const std::optional<CreationTests>* inherited = &computed;
+    std::optional<TestsOfEmptySlot> computed;
+    const std::optional<TestsOfEmptySlot>* inherited = &computed;
     if (PropertyAccessCache* cache = cacheFor(context.program, arm.layouts, query.key)) {
         PropertyAccessCache::CreationKey key { cache->lists.idOf(arm.layouts.span()), query.key, access, context.flow };
         inherited = &findOrCompute(cache->creations, key, computeHash(key.layouts, key.key, key.access, key.flow), [&] {
             return PropertyAccessCache::Creation { key, computeTestsThatNothingIsInherited(context, arm.layouts.span(), query.key, access) };
-        }).tests;
+        }).value;
     } else
         computed = computeTestsThatNothingIsInherited(context, arm.layouts.span(), query.key, access);
     if (!*inherited)
@@ -253,32 +228,17 @@ static bool addTestsThatNothingIsInherited(const PropertyAccessContext& context,
     return true;
 }
 
-// A store that finds the slot empty creates the property only where the object has it nowhere else and inherits nothing of that name.
-static std::optional<CreationTests> testsToCreateField(const PropertyAccessContext& context, const PropertyAccessQuery& query, const MemberArm& arm, const FieldArmState& state)
+static std::optional<TestsOfEmptySlot> testsOfEmptySlotFor(const PropertyAccessContext& context, const PropertyAccessQuery& query, const MemberArm& arm, const FieldArmState& state, Access access)
 {
-    CreationTests tests;
+    TestsOfEmptySlot tests;
     if (!state.cannotMoveOut)
         tests.proofs.add(Proof::NoFieldOutsideSlot);
-    if (state.inheritsNothingUnderName)
-        return tests;
-    if (!addTestsThatNothingIsInherited(context, query, arm, Access::Store, tests))
+    bool inheritsNothing = access == Access::Store ? state.inheritsNothingUnderName : state.isAbsentOnPrototypes;
+    if (!inheritsNothing && !addTestsThatNothingIsInherited(context, query, arm, access, tests))
         return std::nullopt;
     return tests;
 }
 
-static std::optional<CreationTests> testsThatEmptySlotReadsAsUndefined(const PropertyAccessContext& context, const PropertyAccessQuery& query, const MemberArm& arm, const FieldArmState& state)
-{
-    CreationTests tests;
-    if (!state.cannotMoveOut)
-        tests.proofs.add(Proof::NoFieldOutsideSlot);
-    if (state.isAbsentOnPrototypes)
-        return tests;
-    if (!addTestsThatNothingIsInherited(context, query, arm, Access::Read, tests))
-        return std::nullopt;
-    return tests;
-}
-
-// `type.members`, `links.type`: a reference that is stored once the object is out in the world, or never.
 static bool isStoredLateOrNever(const FieldArmState& state)
 {
     return state.isAddedLate && state.admitsUndefined && !state.isRequired && !state.holdsRawNumberOrBoolean;
@@ -289,7 +249,6 @@ static bool isLazilyInitialized(const FieldArmState& state)
     return state.hasConstructor && !state.isRequired && !state.isInContainer && state.admitsUndefined && !state.holdsRawNumberOrBoolean;
 }
 
-// `child.style.position`, where the style is one of two records that leave `position` out and of two other layouts that always have it: the objects that come with an empty slot are those of the records.
 std::optional<TestsOfEmptySlot> testsThatOptionLeftOutReadsAsUndefined(const PropertyAccessContext& context, std::span<const LayoutID> receivers, PropertyKeyID key, OptionSet<OptionKind> kinds)
 {
     LayoutList layoutsWithEmptySlots;
@@ -311,12 +270,9 @@ std::optional<TestsOfEmptySlot> testsThatOptionLeftOutReadsAsUndefined(const Pro
     }
     if (!hasOption)
         return std::nullopt;
-    std::optional<CreationTests> inherited = computeTestsThatNothingIsInherited(context, layoutsWithEmptySlots.span(), key, Access::Read);
-    if (!inherited)
-        return std::nullopt;
-    TestsOfEmptySlot tests { inherited->proofs, WTF::move(inherited->conditions) };
-    if (!cannotMoveOut)
-        tests.proofs.add(Proof::NoFieldOutsideSlot);
+    std::optional<TestsOfEmptySlot> tests = computeTestsThatNothingIsInherited(context, layoutsWithEmptySlots.span(), key, Access::Read);
+    if (tests && !cannotMoveOut)
+        tests->proofs.add(Proof::NoFieldOutsideSlot);
     return tests;
 }
 
@@ -379,7 +335,7 @@ std::optional<LazyFieldCreation> planLazyFieldCreation(const PropertyAccessConte
     if (!state.receivers.cannot(ObjectMutation::ChangeIntegrity))
         creation.proofs.add(Proof::NotFrozen);
     if (!state.inheritsNothingUnderName) {
-        std::optional<CreationTests> inherited = computeTestsThatNothingIsInherited(context, receivers, key, Access::Store);
+        std::optional<TestsOfEmptySlot> inherited = computeTestsThatNothingIsInherited(context, receivers, key, Access::Store);
         if (!inherited)
             return std::nullopt;
         creation.proofs |= inherited->proofs;
@@ -391,18 +347,14 @@ std::optional<LazyFieldCreation> planLazyFieldCreation(const PropertyAccessConte
 static void planFieldRead(const PropertyAccessContext& context, const PropertyAccessQuery& query, const MemberArm& arm, const FieldArmState& state, PropertyAccessPlan& plan)
 {
     const Program& program = context.program;
-    // Every writer of the slot of an accessor tests the getter against the type of the slot, so a filled slot says which functions the getter may be a closure of.
     if (state.form.contains(FieldForm::IsAccessor)) {
-        if (!state.isAccessorInEveryMember) {
-            plan.form = AccessForm::ByName;
+        if (!state.isAccessorInEveryMember)
             return;
-        }
         plan.form = AccessForm::GetterInSlot;
         plan.operation = Opcode::GetSlotGetter;
         requireFilledSlot(state, plan);
         return;
     }
-    // A call tests a slot that may be empty, and goes to the function without making the closure.
     if (canCallWithoutFieldRead(program, state) && (state.isAlwaysFilled || !query.usesOnlyPlansWithoutTests) && query.readIsOnlyCalled()) {
         plan.form = AccessForm::Method;
         plan.member.method = state.deferredFunction;
@@ -410,37 +362,28 @@ static void planFieldRead(const PropertyAccessContext& context, const PropertyAc
         requireFilledSlot(state, plan);
         return;
     }
-    // The slot of a private field never defers its closure.
     bool makesClosure = state.hasDeferredMember && !query.isPrivate;
     Opcode readOfSlotThatMayBeEmpty = makesClosure ? Opcode::GetDeferredClosureSlotOrUndefined : Opcode::GetSlotOrUndefined;
-    // Nobody stores it, so no object has it, and the read finds what lies above the object.
     if (state.hasSlotNowhere) {
-        CreationTests tests;
-        if (state.form.isEmpty() && (state.isAbsentOnPrototypes || addTestsThatNothingIsInherited(context, query, arm, Access::Read, tests))) {
-            plan.requiredProofs |= tests.proofs;
-            addConditions(plan.conditions, tests.conditions.span());
-            plan.form = AccessForm::Constant;
-            plan.operation = Opcode::Undefined;
+        TestsOfEmptySlot tests;
+        if (!state.form.isEmpty() || (!state.isAbsentOnPrototypes && !addTestsThatNothingIsInherited(context, query, arm, Access::Read, tests)))
             return;
-        }
-        plan.form = AccessForm::ByName;
+        plan.requiredProofs |= tests.proofs;
+        addConditions(plan.conditions, tests.conditions.span());
+        plan.form = AccessForm::Constant;
+        plan.operation = Opcode::Undefined;
         return;
     }
-    // The state of the slot is the whole answer. Where the read needs a test, it tests for what is expected.
     if (!state.isAlwaysFilled && state.isAbsentOnPrototypes && state.cannotMoveOut && !query.isPrivate) {
         setSlotOperation(plan, readOfSlotThatMayBeEmpty);
         return;
     }
-    // `if (this[kPending])` asks for a name that is stored late or never.
     bool holdsUnfinishedObjects = !state.isInContainer && isInCodeThatHoldsUnfinishedObjects(context, query);
-    // `(type as ObjectFlagsType).objectFlags` asks for a name that is stored late too, but for a number: undefined is what its type rules out, so its slot is expected to be filled like that of a required field.
     bool isOptionAmongMany = query.expectsEmptySlot && !state.isRequired && state.isLeftOutAtConstruction && !state.hasConstructor && !state.isInContainer;
     bool isOftenEmpty = (state.isAddedLate && state.admitsUndefined && !state.isRequired) || holdsUnfinishedObjects || isOptionAmongMany;
-    // Where the property cannot be elsewhere in the object and nothing has to be tested above it, the state of the slot is the whole answer: the read needs no test and has no side that fails.
     bool mayNeedNoTest = state.isAddedLate || state.cannotMoveOut;
     if ((isOftenEmpty || mayNeedNoTest) && !state.isAlwaysFilled && !query.isPrivate && state.form.isEmpty()) {
-        std::optional<CreationTests> tests = testsThatEmptySlotReadsAsUndefined(context, query, arm, state);
-        // What a filled slot holds is the answer whatever lies above the object or beside the slot.
+        std::optional<TestsOfEmptySlot> tests = testsOfEmptySlotFor(context, query, arm, state, Access::Read);
         bool testsSlotFirst = tests && !tests->isEmpty() && isStoredLateOrNever(state) && !isOptionAmongMany && !holdsUnfinishedObjects && query.mayTestSlotFirst;
         if (tests && (isOftenEmpty || tests->isEmpty()) && !testsSlotFirst) {
             plan.requiredProofs |= tests->proofs;
@@ -448,70 +391,42 @@ static void planFieldRead(const PropertyAccessContext& context, const PropertyAc
             setSlotOperation(plan, readOfSlotThatMayBeEmpty);
             return;
         }
-        if (!tests && holdsUnfinishedObjects && !state.isAddedLate) {
-            plan.form = AccessForm::ByName;
+        if (!tests && holdsUnfinishedObjects && !state.isAddedLate)
             return;
-        }
     }
-    if (makesClosure) {
-        setSlotOperation(plan, Opcode::GetDeferredClosureSlot);
-        requireFilledSlot(state, plan);
-        return;
-    }
-    setSlotOperation(plan, Opcode::GetSlot);
+    setSlotOperation(plan, makesClosure ? Opcode::GetDeferredClosureSlot : Opcode::GetSlot);
     requireFilledSlot(state, plan);
-    // The slot has markers for undefined and null whatever the type of the field says.
+    if (makesClosure)
+        return;
     plan.testsDeclaredType = !state.isAlwaysFilled && (state.holdsRawNumberOrBoolean || (state.isRequired && state.holdsOnlyListedFunctions));
     plan.emptySlotMeansNoOwnProperty = !state.isAlwaysFilled && state.cannotMoveOut && !query.isPrivate;
 }
 
-static void planReadBehindTestOfCell(const PropertyAccessContext& context, const PropertyAccessQuery& query, const MemberArm& arm, const FieldArmState& state, PropertyAccessPlan& plan)
-{
-    FieldArmState whileFilled = state;
-    whileFilled.isAlwaysFilled = true;
-    whileFilled.isAbsentOnPrototypes = true;
-    planFieldRead(context, query, arm, whileFilled, plan);
-    if (plan.form != AccessForm::ByName)
-        plan.requiredProofs.add(Proof::BirthFieldsFilled);
-    if (plan.form == AccessForm::Slot && plan.operation == Opcode::GetSlot)
-        plan.testsDeclaredType = state.holdsRawNumberOrBoolean;
-}
-
 static void planFieldTest(const PropertyAccessQuery& query, const FieldArmState& state, PropertyAccessPlan& plan)
 {
-    if (state.isAlwaysFilled) {
+    if (state.isAlwaysFilled || (state.hasSlotNowhere && state.isAbsentOnPrototypes && state.form.isEmpty())) {
         plan.form = AccessForm::Constant;
         plan.operation = Opcode::Boolean;
-        plan.booleanConstant = true;
+        plan.booleanConstant = state.isAlwaysFilled;
         return;
     }
-    if (state.hasSlotNowhere && state.isAbsentOnPrototypes && state.form.isEmpty()) {
-        plan.form = AccessForm::Constant;
-        plan.operation = Opcode::Boolean;
-        plan.booleanConstant = false;
+    if (!state.isAbsentOnPrototypes && !query.isOwnLookup)
         return;
-    }
-    if (state.isAbsentOnPrototypes || query.isOwnLookup) {
-        requirePropertyInSlotOrNowhere(state, plan);
-        setSlotOperation(plan, Opcode::IsSlotFilled);
-        return;
-    }
-    plan.form = AccessForm::ByName;
+    if (!state.cannotMoveOut)
+        plan.requiredProofs.add(Proof::NoFieldOutsideSlot);
+    setSlotOperation(plan, Opcode::IsSlotFilled);
 }
 
 static void planFieldStore(const PropertyAccessContext& context, const PropertyAccessQuery& query, const MemberArm& arm, const FieldArmState& state, PropertyAccessPlan& plan)
 {
-    // Whatever the setter in a filled slot is, the store calls it. Where nobody has seen a setter the store by name says what becomes of the value.
     if (query.access == Access::Store && !query.isPrivate && state.isAccessorInEveryMember && state.isExpectedToHaveSetterInEveryMember) {
         plan.form = AccessForm::SetterInSlot;
         plan.operation = Opcode::GetSlotSetter;
         requireFilledSlot(state, plan);
         return;
     }
-    if (state.hasImmutableMember || state.form.containsAny({ FieldForm::IsReadOnly, FieldForm::IsAccessor })) {
-        plan.form = AccessForm::ByName;
+    if (state.hasImmutableMember || state.form.containsAny({ FieldForm::IsReadOnly, FieldForm::IsAccessor }))
         return;
-    }
 
     plan.storedValueFits = storedValueFits(context.program, query, state);
     requireStoresAllowed(query, state, plan);
@@ -522,27 +437,19 @@ static void planFieldStore(const PropertyAccessContext& context, const PropertyA
         plan.requiredProofs.add(Proof::BirthFieldsFilled);
         return;
     }
-    if (query.isPrivate) {
-        requireFilledSlotForStore(state, plan);
-        return;
-    }
-    // The allocation has filled the slot and listed the key, so the store creates nothing.
-    if (query.isListedByAllocation) {
+    if (query.isPrivate || query.isListedByAllocation) {
         requireFilledSlotForStore(state, plan);
         return;
     }
 
-    // Where a creating store has to be paid for with tests, the stores of a constructor and of what it calls pay.
-    std::optional<CreationTests> tests = state.form.isEmpty() ? testsToCreateField(context, query, arm, state) : std::nullopt;
-    // Nothing but a store creates a field that was added late, so one of the stores outside the constructor finds the slot empty in every object.
-    bool hasFoundSlotFilled = query.storesWhatWasMadeOfField && !query.expectsEmptySlot && tests && !tests->isEmpty() && !testsThatEmptySlotReadsAsUndefined(context, query, arm, state);
+    std::optional<TestsOfEmptySlot> tests = state.form.isEmpty() ? testsOfEmptySlotFor(context, query, arm, state, Access::Store) : std::nullopt;
+    bool hasFoundSlotFilled = query.storesWhatWasMadeOfField && !query.expectsEmptySlot && tests && !tests->isEmpty() && !testsOfEmptySlotFor(context, query, arm, state, Access::Read);
     if (tests && !hasFoundSlotFilled && (tests->isEmpty() || query.expectsEmptySlot || state.isAddedLateInSomeMember || mayStoreIntoUnfinishedObject(context, query) || isInBodyOfModuleThatOwnsLayouts(context, query, arm))) {
         plan.requiredProofs |= tests->proofs;
         addConditions(plan.conditions, tests->conditions.span());
         setSlotOperation(plan, creatingStoreFor(state));
         return;
     }
-    // The store of a base constructor under a name that a subclass defines later finds the slot empty and goes to what the object inherits: a setter, a property that is read-only.
     if (isInCodeThatHoldsUnfinishedObjects(context, query)) {
         plan.form = AccessForm::ByName;
         plan.operation = PropertyAccessPlan().operation;
@@ -551,29 +458,18 @@ static void planFieldStore(const PropertyAccessContext& context, const PropertyA
     requireFilledSlotForStore(state, plan);
 }
 
-// The constructor of a class without a parent allocates the object, and the definitions of the class run on it once: none finds its name there, whatever happens to the object later.
-static bool definesPrivateNameOnceInEachObject(const Program& program, const PropertyAccessQuery& query)
-{
-    return !program.at(query.declaringLayout).has(LayoutFlags::HasHeritage);
-}
-
 static void planFieldDefinition(const PropertyAccessContext& context, const PropertyAccessQuery& query, const FieldArmState& state, PropertyAccessPlan& plan)
 {
-    if (!state.form.isEmpty()) {
-        plan.form = AccessForm::ByName;
+    if (!state.form.isEmpty())
         return;
-    }
     plan.storedValueFits = storedValueFits(context.program, query, state);
     requireStoresAllowed(query, state, plan);
-    // Every finished object may have the field, and the definition that gives it to an unfinished one still creates it: it puts the name among the keys.
     if (!query.isPrivate && !query.isLeftOutByUnfinishedAllocation && !mayFindSlotEmpty(context, query, state)) {
         setSlotOperation(plan, Opcode::PutSlot);
         return;
     }
-    if (query.isPrivate && !state.createdOnlyAtConstruction && !definesPrivateNameOnceInEachObject(context.program, query)) {
-        plan.form = AccessForm::ByName;
+    if (query.isPrivate && !state.createdOnlyAtConstruction && context.program.at(query.declaringLayout).has(LayoutFlags::HasHeritage))
         return;
-    }
     if (!query.isPrivate && !state.cannotMoveOut)
         plan.requiredProofs.add(Proof::NoFieldOutsideSlot);
     setSlotOperation(plan, creatingStoreFor(state));
@@ -588,7 +484,7 @@ void planFieldArm(const PropertyAccessContext& context, const PropertyAccessQuer
         PropertyAccessCache::FieldArmKey key { cache->lists.idOf(arm.layouts.span()), query.key, query.isPrivate };
         known = &findOrCompute(cache->fieldArms, key, computeHash(key.layouts, key.key, key.isPrivate), [&] {
             return PropertyAccessCache::FieldArm { key, computeStateOfFieldArm(program, arm.layouts.span(), query.key, query.isPrivate) };
-        }).state;
+        }).value;
     } else
         known = &computed.emplace(computeStateOfFieldArm(program, arm.layouts.span(), query.key, query.isPrivate));
     const FieldArmState& state = *known;
@@ -597,12 +493,21 @@ void planFieldArm(const PropertyAccessContext& context, const PropertyAccessQuer
         addCondition(plan.conditions, { MemberCondition::Kind::ClassEvaluatedOnce, query.declaringLayout, ClassSide::Prototype, { } });
 
     switch (query.access) {
-    case Access::Read:
-        if (isAnsweredByTestOfCell(context, query, state))
-            planReadBehindTestOfCell(context, query, arm, state, plan);
-        else
+    case Access::Read: {
+        if (!isAnsweredByTestOfCell(context, query, state)) {
             planFieldRead(context, query, arm, state, plan);
+            return;
+        }
+        FieldArmState whileFilled = state;
+        whileFilled.isAlwaysFilled = true;
+        whileFilled.isAbsentOnPrototypes = true;
+        planFieldRead(context, query, arm, whileFilled, plan);
+        if (plan.form != AccessForm::ByName)
+            plan.requiredProofs.add(Proof::BirthFieldsFilled);
+        if (plan.form == AccessForm::Slot && plan.operation == Opcode::GetSlot)
+            plan.testsDeclaredType = state.holdsRawNumberOrBoolean;
         return;
+    }
     case Access::Has:
         planFieldTest(query, state, plan);
         return;
@@ -618,50 +523,31 @@ void planFieldArm(const PropertyAccessContext& context, const PropertyAccessQuer
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void planVariableRead(const Variable& variable, PropertyAccessPlan& plan)
-{
-    bool isStaticField = !!variable.owner;
-    if (isStaticField && variable.flow.initialization == InitializationState::Unknown) {
-        plan.form = AccessForm::ByName;
-        plan.cause = UnprovenCause::PropertyAdded;
-        return;
-    }
-    plan.form = AccessForm::Variable;
-    plan.operation = Opcode::GetModuleVariable;
-}
-
-// A variable whose type is only expected is boxed.
-static bool fitsVariable(const Program& program, const Type& stored, const Variable& variable)
-{
-    return variable.declared.flags.contains(PositionFlags::IsExpected) || stored.isSubsetOf(program.at(variable.declared.type), program);
-}
-
-static void planVariableStore(const Program& program, const PropertyAccessQuery& query, const Variable& variable, PropertyAccessPlan& plan)
-{
-    bool isStaticField = !!variable.owner;
-    bool valueFits = query.stored && fitsVariable(program, *query.stored, variable);
-    if (!isStaticField || variable.flags.contains(VariableFlags::IsImmutable) || !valueFits) {
-        plan.form = AccessForm::ByName;
-        return;
-    }
-    plan.form = AccessForm::Variable;
-    plan.operation = Opcode::PutModuleVariable;
-    plan.storedValueFits = true;
-}
-
 void planVariableArm(const PropertyAccessContext& context, const PropertyAccessQuery& query, const MemberArm& arm, PropertyAccessPlan& plan)
 {
     const Program& program = context.program;
     const Variable& variable = program.at(arm.answer.variable);
+    bool isStaticField = !!variable.owner;
 
     switch (query.access) {
     case Access::Read:
-        planVariableRead(variable, plan);
+        if (isStaticField && variable.flow.initialization == InitializationState::Unknown) {
+            plan.cause = UnprovenCause::PropertyAdded;
+            return;
+        }
+        plan.form = AccessForm::Variable;
+        plan.operation = Opcode::GetModuleVariable;
         return;
     case Access::Store:
-    case Access::Define:
-        planVariableStore(program, query, variable, plan);
+    case Access::Define: {
+        bool valueFits = query.stored && (variable.declared.flags.contains(PositionFlags::IsExpected) || query.stored->isSubsetOf(program.at(variable.declared.type), program));
+        if (!isStaticField || variable.flags.contains(VariableFlags::IsImmutable) || !valueFits)
+            return;
+        plan.form = AccessForm::Variable;
+        plan.operation = Opcode::PutModuleVariable;
+        plan.storedValueFits = true;
         return;
+    }
     case Access::Has:
     case Access::None:
         break;

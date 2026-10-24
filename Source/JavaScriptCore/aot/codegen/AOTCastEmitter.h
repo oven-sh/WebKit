@@ -13,10 +13,13 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class CastEmitter final : public OperationEmitter {
 public:
-    explicit CastEmitter(CodeGenerator&);
+    explicit CastEmitter(CodeGenerator& generator)
+        : OperationEmitter(generator)
+    {
+    }
 
-    void generateUpcast(const ValueContext&);
-    void generateNarrowByField(const ValueContext&);
+    void generateUpcast(const ValueContext& value) { define(value, get(value->valueOperand())); }
+    void generateNarrowByField(const ValueContext& value) { define(value, get(value->valueOperand())); }
     void generateAssumeType(const ValueContext&);
     void generateReportMismatch(const ValueContext&);
     void generateCheckInitialized(const ValueContext&);
@@ -26,7 +29,7 @@ public:
     void generateTypeTest(const ValueContext&);
 
 private:
-    const TypeTestPlan& planFor(ValueID operand, TypeID to);
+    const TypeTestPlan& planFor(ValueID operand, TypeID to) { return typeTestPlanFor(m_function.at(operand).type, representationOf(operand), to); }
     void testAheadOfNullishCheck(const ValueContext& test, Operand);
     void testAtLandingOfMisfit(const ValueContext& test, ValueID call, const CodeGenerator::LandingOfMisfit&, const TypeTestPlan&);
 };

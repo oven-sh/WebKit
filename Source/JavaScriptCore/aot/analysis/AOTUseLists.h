@@ -66,10 +66,24 @@ class UseLists {
 public:
     UseLists(const Function&, const CFG&);
 
-    std::span<const Use> usesOf(ValueID) const;
-    unsigned useCount(ValueID) const;
-    std::optional<Use> singleUse(ValueID) const;
-    ValueLocation locationOf(ValueID) const;
+    std::span<const Use> usesOf(ValueID id) const
+    {
+        UseRange range = rangeOf(id);
+        if (range.end & isLinked)
+            return layOut(id);
+        return { uses() + range.first, range.end - range.first };
+    }
+    unsigned useCount(ValueID id) const
+    {
+        UseRange range = rangeOf(id);
+        return range.end & isLinked ? range.end & ~isLinked : range.end - range.first;
+    }
+    std::optional<Use> singleUse(ValueID id) const { return useCount(id) == 1 ? std::optional(uses()[rangeOf(id).first]) : std::nullopt; }
+    ValueLocation locationOf(ValueID id) const
+    {
+        RELEASE_ASSERT(id.index() < m_locations.size());
+        return m_locations[id.index()];
+    }
     BlockID blockOf(ValueID id) const { return locationOf(id).block; }
     ProgramPoint pointOf(const Use&) const;
     ProgramPoint pointOf(ValueID valueInBlock) const;
@@ -78,20 +92,12 @@ public:
     bool isBefore(const Use& a, const Use& b) const { return orderOf(a) < orderOf(b); }
     unsigned numberOfValues() const { return m_locations.size(); }
 
-    // What the lists say of a block they read from that block alone.
-    void didChangeBlock(BlockID);
+    void didChangeBlock(BlockID) { m_isUpToDate = false; m_hasChangedBlocks = true; }
     void didChangeOperandsOf(ValueID user);
     void didReplaceUses(ValueID from, ValueID to);
-    void didAddValues() { fallBehind(); }
-    void didChangeControlFlow();
-    void didChangeEverything();
-    void endSilence();
-    bool hasSilentChanges() const { return m_hasSilentChanges; }
-    // The lists describe the function, where a holder that cannot know it throws its lists away: lists made for the next who asks would hold every edit up to then.
-    void didOutliveDrop();
-    void didHandOut() { m_takesSilentChangesAtOnce = false; }
-    // By former index, null for what is gone; no blocks where no block has moved. What stays keeps its place in its block, and the blocks that stay keep their order.
-    void didRenumber(std::span<const BlockID> blocks, std::span<const ValueID> values);
+    void didAddValues() { m_isUpToDate = false; }
+    void didChangeControlFlow() { m_isUpToDate = false; m_graphMayHaveChanged = true; }
+    void didChangeEverything() { m_isUpToDate = false; m_mustBeMadeAnew = true; }
 
     bool isUpToDate() const { return m_isUpToDate; }
     bool mustBeMadeAnew() const { return m_mustBeMadeAnew; }
@@ -121,7 +127,6 @@ private:
         return m_ranges.span().data()[id.index()];
     }
 
-    void fallBehind();
     void makeAnew();
     struct RoomForUses {
         StoredUse* uses;
@@ -140,39 +145,10 @@ private:
     Vector<ValueLocation> m_locations;
     size_t m_numberOfUses { 0 };
     bool m_hasChangedBlocks { false };
-    bool m_hasSilentChanges { false };
-    bool m_takesSilentChangesAtOnce { false };
     bool m_isUpToDate { false };
     bool m_graphMayHaveChanged { false };
     bool m_mustBeMadeAnew { false };
 };
-
-inline std::span<const Use> UseLists::usesOf(ValueID id) const
-{
-    UseRange range = rangeOf(id);
-    if (range.end & isLinked)
-        return layOut(id);
-    return { uses() + range.first, range.end - range.first };
-}
-
-inline unsigned UseLists::useCount(ValueID id) const
-{
-    UseRange range = rangeOf(id);
-    return range.end & isLinked ? range.end & ~isLinked : range.end - range.first;
-}
-
-inline std::optional<Use> UseLists::singleUse(ValueID id) const
-{
-    if (useCount(id) != 1)
-        return std::nullopt;
-    return uses()[rangeOf(id).first];
-}
-
-inline ValueLocation UseLists::locationOf(ValueID id) const
-{
-    RELEASE_ASSERT(id.index() < m_locations.size());
-    return m_locations[id.index()];
-}
 
 } } } // namespace JSC::AOT::Typed
 

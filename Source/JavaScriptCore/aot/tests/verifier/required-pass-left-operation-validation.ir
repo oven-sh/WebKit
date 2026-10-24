@@ -7,13 +7,11 @@ module m0 path="main.js" displayPath="main.js"
 expectedresult x0 type=number validation=[{shape=Primitive{primitive=Number} type=number}]
 expectedresult x1 type=number
 function f0 name="bad" parameters=[{type=string}] results=[{type=undefined}] {
-  b0(v0: string):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1 overload=JSONParse/0 expectedResult=x0
     Return
 }
 function f1 name="good" parameters=[{type=string}] results=[{type=undefined}] {
-  b0(v0: string):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1 overload=JSONParse/0 expectedResult=x1
     v3 = CallBuiltin -, v0, v1 overload=JSONParse/0

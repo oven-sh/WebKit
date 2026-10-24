@@ -7,12 +7,12 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAssignmentPlans.h"
 #include "AOTBuildContext.h"
 #include "AOTChildProcess.h"
 #include "AOTCollectionTestSupport.h"
 #include "AOTCompile.h"
 #include "AOTCompileOptionWords.h"
-#include "AOTFieldMovePlanCache.h"
 #include "AOTFieldMoves.h"
 #include "AOTFunctionNames.h"
 #include "AOTFunctionTables.h"
@@ -32,9 +32,11 @@
 #include "Options.h"
 #include "StrongInlines.h"
 #include <cmath>
+#include <initializer_list>
 #include <limits>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <wtf/DataLog.h>
 #include <wtf/text/MakeString.h>
 
@@ -48,7 +50,6 @@ static constexpr ASCIILiteral programText = R"IR(layout L0 name="Typed" fields=[
 module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -59,23 +60,19 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="make" parameters=[{type=int[0, 255]}, {type=int[-128, 127]}, {type=int[0, 65535]}, {type=int[-32768, 32767]}, {type=i32}, {type=int[0, 4294967295]}, {type=int}, {type=undefined|null|int}, {type=number}, {type=undefined|null|number}, {type=boolean}, {type=undefined|null|boolean}, {type=string}, {type=undefined|null|string}, {type=anything}, {type="red"|"green"}, {type=undefined|null|"red"|"green"}, {type=f3}, {type=undefined|null|int[-2147483643, 2147483647]}] results=[{type=anything}] {
-  b0(v0: int[0, 255], v1: int[-128, 127], v2: int[0, 65535], v3: int[-32768, 32767], v4: i32, v5: int[0, 4294967295], v6: int, v7: undefined|null|int, v8: number, v9: undefined|null|number, v10: boolean, v11: undefined|null|boolean, v12: string, v13: undefined|null|string, v14: anything, v15: "red"|"green", v16: undefined|null|"red"|"green", v17: f3, v18: undefined|null|int[-2147483643, 2147483647]):
     v19 = NewObject -, v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18 layout=L0 fields=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
     v20 = FinishObject v19
     Return v20
 }
 function f2 name="mutate" parameters=[{type=anything}, {type=string}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: string, v2: anything):
     ElemSet v0, v1, v2
     v4 = ElemDelete v0, v1
     Return
 }
 function f3 name="callback" results=[{type=anything}] {
-  b0():
     Return
 }
 function f4 name="otherCallback" results=[{type=anything}] {
-  b0():
     Return
 }
 )IR"_s;
@@ -237,7 +234,8 @@ public:
     Object* createHolding(const FieldData&, JSValue);
     bool isSame(JSValue a, JSValue b) { return a && b && sameValue(m_program.realm(), a, b); }
     bool holdsInitialBits(Object* object, const FieldData& field) { return !memcmp(object->slotOf(field), create()->slotOf(field), widthOf(field.slot.representation())); }
-    void checkPlan(const FieldMovePlan&, JSObject* source, JSValue valueOfSource, const FieldData& to);
+    using FieldPair = std::pair<const FieldData*, const FieldData*>;
+    bool tryCopyByMap(Object* target, Object* source, std::initializer_list<FieldPair>);
 
 private:
     LoadedProgram& m_program;
@@ -317,17 +315,34 @@ Object* Fixture::createHolding(const FieldData& field, JSValue value)
     return object;
 }
 
-void Fixture::checkPlan(const FieldMovePlan& plan, JSObject* source, JSValue valueOfSource, const FieldData& to)
+// A copy that leaves out the names of a run goes by the map between objects of one layout too. What the map knows of such a copy is written here as tryDescribeMappedCopy() writes it, with a move for each pair of fields.
+bool Fixture::tryCopyByMap(Object* target, Object* source, std::initializer_list<FieldPair> pairs)
 {
-    bool fits = !!createHolding(to, valueOfSource);
-    Object* target = create();
-    AOT_TEST_CHECK(!plan.granuleBits && applyMoves(vm(), plan, target, source) == fits);
-    AOT_TEST_CHECK(fits ? isSame(target->read(to), valueOfSource) : holdsInitialBits(target, to));
+    constexpr uint32_t excludedRunNumberPlusOne = 1;
+    State& state = m_program.state();
+    MappedCopy& copy = state.objects->caches->assignmentPlans.mappedCopyAt(target->orderAndShapeWords(), source->orderAndShapeWords(), excludedRunNumberPlusOne);
+    copy = { };
+    copy.targetWords = target->orderAndShapeWords();
+    copy.sourceWords = source->orderAndShapeWords();
+    copy.excludedRunNumberPlusOne = excludedRunNumberPlusOne;
+    copy.orderWordAfter = target->orderWord();
+    copy.state = MappedCopy::State::IsServed;
+    for (auto [from, to] : pairs) {
+        SlotRepresentation representationOfSource = from->slot.representation();
+        SlotRepresentation representationOfTarget = to->slot.representation();
+        bool isTested = !alwaysFits(layouts(), *from, *to);
+        uint8_t acceptedKinds = isTested ? kindsAlwaysAccepted(layouts().typeOf(*to)).toRaw() : 0;
+        copy.moves.append(MappedCopy::Move { from->slot.offset, to->slot.offset, moveKindFor(representationOfSource, representationOfTarget, isTested), static_cast<uint8_t>(widthOf(representationOfTarget)),
+            false, false, representationOfSource, representationOfTarget, acceptedKinds, layout().indexOf(*to) });
+        copy.mayStoreCells |= traitsOf(representationOfTarget).holdsCell;
+    }
+    return tryRepeatAssignment(vm(), state, target, JSValue(source), excludedRunNumberPlusOne) == RepeatedCopy::ByMap;
+}
 
-    JSObject* created = tryCreateByPlan(vm(), plan, source);
-    AOT_TEST_CHECK(!!created == fits);
-    if (created)
-        AOT_TEST_CHECK(created->structure() == structure() && isSame(uncheckedDowncast<Object>(created)->read(to), valueOfSource));
+// AssignmentPlanCache::describeMappedField() leaves a closure that may not be made yet to a plan.
+static bool isMovedByMap(const FieldData& field)
+{
+    return field.slot.representation() != SlotRepresentation::DeferredClosure;
 }
 
 static void checkEveryPairOfRepresentations(LoadedProgram& program)
@@ -337,15 +352,8 @@ static void checkEveryPairOfRepresentations(LoadedProgram& program)
     unsigned numberOfPairsWithRefusal = 0;
     for (const FieldData& from : fixture.fields()) {
         for (const FieldData& to : fixture.fields()) {
-            FieldMovePlan plan;
-            plan.appendFieldToField(fixture.layouts(), from, to);
-            plan.finish(fixture.structure(), fixture.layout().size, unorderedOrderWord);
-            AOT_TEST_CHECK(plan.isUsable() && plan.moves.size() + plan.boxedWordMoves.size() == 1);
-            if (plan.moves.isEmpty())
-                AOT_TEST_CHECK(classifyMove(fixture.layouts(), &from, &to) == FieldMoveKind::CopyBits && plan.boxedWordMoves[0].from == from.slot.offset && plan.boxedWordMoves[0].to == to.slot.offset);
-            else
-                AOT_TEST_CHECK(plan.moves[0].kind == classifyMove(fixture.layouts(), &from, &to) && plan.moves[0].fromField == &from && plan.moves[0].toField == &to);
-
+            if (!isMovedByMap(from) || !isMovedByMap(to))
+                continue;
             bool hasMove = false;
             bool hasRefusal = false;
             for (unsigned index = 0; index < fixture.samples().size(); ++index) {
@@ -353,9 +361,12 @@ static void checkEveryPairOfRepresentations(LoadedProgram& program)
                 if (!source)
                     continue;
                 JSValue value = source->read(from);
-                fixture.checkPlan(plan, source, value, to);
+                bool fits = !!fixture.createHolding(to, value);
+                Object* target = fixture.create();
+                AOT_TEST_CHECK(fixture.tryCopyByMap(target, source, { { &from, &to } }) == fits);
+                AOT_TEST_CHECK(fits ? fixture.isSame(target->read(to), value) : fixture.holdsInitialBits(target, to));
                 AOT_TEST_CHECK(fixture.isSame(source->read(from), value));
-                (fixture.createHolding(to, value) ? hasMove : hasRefusal) = true;
+                (fits ? hasMove : hasRefusal) = true;
             }
             AOT_TEST_CHECK(hasMove || hasRefusal);
             AOT_TEST_CHECK(&from != &to || (hasMove && !hasRefusal));
@@ -371,55 +382,20 @@ static void checkAbsentSourceIsNeverMoved(LoadedProgram& program)
     Fixture fixture(program);
     unsigned numberOfSources = 0;
     for (const FieldData& from : fixture.fields()) {
-        if (!from.canLeaveSlot())
+        if (!from.canLeaveSlot() || !isMovedByMap(from))
             continue;
         ++numberOfSources;
         for (const FieldData& to : fixture.fields()) {
-            FieldMovePlan plan;
-            plan.appendFieldToField(fixture.layouts(), from, to);
-            plan.finish(fixture.structure(), fixture.layout().size, unorderedOrderWord);
+            if (!isMovedByMap(to))
+                continue;
             Object* source = fixture.create();
             source->clear(from);
             Object* target = fixture.create();
             AOT_TEST_CHECK(!source->isInSlot(from) && !source->read(from));
-            AOT_TEST_CHECK(!applyMoves(fixture.vm(), plan, target, source) && fixture.holdsInitialBits(target, to));
-            AOT_TEST_CHECK(!tryCreateByPlan(fixture.vm(), plan, source));
+            AOT_TEST_CHECK(!fixture.tryCopyByMap(target, source, { { &from, &to } }) && fixture.holdsInitialBits(target, to));
         }
     }
     AOT_TEST_CHECK(numberOfSources >= 10);
-}
-
-static void checkPropertyOfOrdinaryObjectToEveryRepresentation(LoadedProgram& program)
-{
-    Fixture fixture(program);
-    VM& vm = fixture.vm();
-    JSObject* source = constructEmptyObject(program.realm());
-    WTF::Vector<Identifier> names;
-    for (unsigned index = 0; index < 12; ++index) {
-        names.append(Identifier::fromString(vm, makeString('p', index)));
-        source->putDirect(vm, names.last(), jsNumber(index));
-    }
-    PropertyOffset inlineOffset = source->structure()->get(vm, names.first());
-    PropertyOffset outOfLineOffset = source->structure()->get(vm, names.last());
-    AOT_TEST_CHECK(isInlineOffset(inlineOffset) && isOutOfLineOffset(outOfLineOffset));
-
-    for (const FieldData& to : fixture.fields()) {
-        for (bool isInline : { true, false }) {
-            FieldMovePlan plan;
-            plan.appendPropertyToField(fixture.layouts(), isInline ? inlineOffset : outOfLineOffset, to);
-            plan.finish(fixture.structure(), fixture.layout().size, unorderedOrderWord);
-            AOT_TEST_CHECK(plan.moves.size() + plan.boxedWordMoves.size() == 1);
-            if (plan.moves.isEmpty())
-                AOT_TEST_CHECK(isInline && classifyMove(fixture.layouts(), nullptr, &to) == FieldMoveKind::CopyBits && plan.boxedWordMoves[0].to == to.slot.offset);
-            else
-                AOT_TEST_CHECK(!plan.moves[0].fromField && plan.moves[0].kind == classifyMove(fixture.layouts(), nullptr, &to));
-            for (unsigned index = 0; index < fixture.samples().size(); ++index) {
-                JSValue value = fixture.samples().at(index);
-                source->putDirect(vm, isInline ? names.first() : names.last(), value);
-                fixture.checkPlan(plan, source, value, to);
-            }
-        }
-    }
 }
 
 static void checkNothingIsStoredWhenOneMoveFails(LoadedProgram& program)
@@ -430,39 +406,45 @@ static void checkNothingIsStoredWhenOneMoveFails(LoadedProgram& program)
     const FieldData& anything = fixture.field(SlotRepresentation::JSValue);
     const FieldData& text = fixture.field(SlotRepresentation::Cell);
 
-    FieldMovePlan plan;
-    plan.appendFieldToField(fixture.layouts(), number, optionalNumber);
-    plan.appendFieldToField(fixture.layouts(), anything, text);
-    plan.finish(fixture.structure(), fixture.layout().size, unorderedOrderWord);
-
     Object* source = fixture.createHolding(number, jsNumber(1.5));
     AOT_TEST_CHECK(source->tryStore(fixture.vm(), anything, jsNumber(7)));
     Object* target = fixture.create();
-    AOT_TEST_CHECK(!applyMoves(fixture.vm(), plan, target, source));
+    AOT_TEST_CHECK(!fixture.tryCopyByMap(target, source, { { &number, &optionalNumber }, { &anything, &text } }));
     AOT_TEST_CHECK(!target->isInSlot(optionalNumber) && !target->isInSlot(text));
 
     AOT_TEST_CHECK(source->tryStore(fixture.vm(), anything, jsNontrivialString(fixture.vm(), "text"_s)));
-    AOT_TEST_CHECK(applyMoves(fixture.vm(), plan, target, source));
+    AOT_TEST_CHECK(fixture.tryCopyByMap(target, source, { { &number, &optionalNumber }, { &anything, &text } }));
     AOT_TEST_CHECK(target->read(optionalNumber) == jsNumber(1.5) && target->read(text) == source->read(anything));
 }
 
-static void checkSetAbsent(LoadedProgram& program)
+static void checkEveryRepresentationToPropertyOfNewObject(LoadedProgram& program)
 {
     Fixture fixture(program);
-    for (const FieldData& to : fixture.fields()) {
-        if (!to.canLeaveSlot())
-            continue;
-        Object* target = nullptr;
-        for (unsigned index = 0; !target && index < fixture.samples().size(); ++index)
-            target = fixture.createHolding(to, fixture.samples().at(index));
-        AOT_TEST_CHECK(target && target->isInSlot(to));
-
+    VM& vm = fixture.vm();
+    PropertyOffset offset = invalidOffset;
+    Structure* empty = JSFinalObject::createStructure(vm, program.realm(), program.realm()->objectPrototype(), 2);
+    Strong<Structure> structure(vm, Structure::addPropertyTransition(vm, empty, Identifier::fromString(vm, "copied"_s), 0, offset));
+    AOT_TEST_CHECK(isInlineOffset(offset));
+    for (const FieldData& from : fixture.fields()) {
         FieldMovePlan plan;
-        plan.appendSetAbsent(to);
-        plan.finish(fixture.structure(), fixture.layout().size, unorderedOrderWord);
-        AOT_TEST_CHECK(plan.moves.size() == 1 && plan.moves[0].kind == FieldMoveKind::SetAbsent);
-        AOT_TEST_CHECK(applyMoves(fixture.vm(), plan, target, fixture.create()));
-        AOT_TEST_CHECK(!target->isInSlot(to) && !target->read(to));
+        plan.appendField(from, offset);
+        plan.structure = structure.get();
+        AOT_TEST_CHECK(plan.moves.size() + plan.boxedWordMoves.size() == 1);
+        unsigned numberOfValues = 0;
+        for (unsigned index = 0; index < fixture.samples().size(); ++index) {
+            Object* source = fixture.createHolding(from, fixture.samples().at(index));
+            if (!source)
+                continue;
+            ++numberOfValues;
+            JSFinalObject* copy = JSFinalObject::create(vm, structure.get());
+            AOT_TEST_CHECK(applyMovesToNewObject(vm, plan, copy, source) && fixture.isSame(copy->getDirect(offset), source->read(from)));
+        }
+        AOT_TEST_CHECK(numberOfValues);
+        if (!from.canLeaveSlot())
+            continue;
+        Object* withoutValue = fixture.create();
+        withoutValue->clear(from);
+        AOT_TEST_CHECK(!withoutValue->read(from) && !applyMovesToNewObject(vm, plan, JSFinalObject::create(vm, structure.get()), withoutValue));
     }
 }
 
@@ -513,7 +495,7 @@ static FieldMovePlanCache& planCacheOf(LoadedProgram& program)
 static FieldMovePlanKey keyWithWords(uint64_t sourceWords, Structure* sourceStructure = nullptr)
 {
     FieldMovePlanKey key;
-    key.purpose = FieldMovePlanPurpose::CopyFields;
+    key.purpose = FieldMovePlanPurpose::CopyAsOrdinaryObject;
     key.sourceWords = sourceWords;
     key.targetWords = 1;
     key.sourceStructure = sourceStructure;
@@ -529,15 +511,15 @@ static void checkPlanCacheNeverRefuses(LoadedProgram& program)
 
     for (unsigned index = 0; index < numberOfKeys; ++index) {
         auto plan = makeUnique<FieldMovePlan>();
-        plan->size = index;
+        plan->clonedMembers.append({ static_cast<PropertyOffset>(index), 0 });
         const FieldMovePlan* added = &cache.add(program.vm(), keyWithWords(index), WTF::move(plan));
-        AOT_TEST_CHECK(cache.find(keyWithWords(index)) == added && added->size == index && !added->isUsable());
+        AOT_TEST_CHECK(cache.find(keyWithWords(index)) == added && !added->isUsable());
     }
 
     unsigned numberFound = 0;
     for (unsigned index = 0; index < numberOfKeys; ++index) {
         if (const FieldMovePlan* plan = cache.find(keyWithWords(index))) {
-            AOT_TEST_CHECK(plan->size == index);
+            AOT_TEST_CHECK(plan->clonedMembers[0].from == static_cast<PropertyOffset>(index));
             ++numberFound;
         }
     }
@@ -561,7 +543,7 @@ static NEVER_INLINE Vector<Structure*> addPlansOfShortLivedStructures(LoadedProg
         Structure* structure = JSFinalObject::createStructure(program.vm(), program.realm(), jsNull(), 0);
         auto plan = makeUnique<FieldMovePlan>();
         if (!isSource)
-            plan->finish(structure, 16, 0);
+            plan->structure = structure;
         planCacheOf(program).add(program.vm(), keyWithWords(index, isSource ? structure : nullptr), WTF::move(plan));
         structures.append(structure);
     }
@@ -575,7 +557,7 @@ static void checkPlansDieWithTheirStructures(LoadedProgram& program)
     for (bool isSource : { true, false }) {
         Strong<Structure> longLived(vm, JSFinalObject::createStructure(vm, program.realm(), jsNull(), 0));
         auto planOfLongLived = makeUnique<FieldMovePlan>();
-        planOfLongLived->finish(longLived.get(), 16, 0);
+        planOfLongLived->structure = longLived.get();
         cache.add(vm, keyWithWords(1000, longLived.get()), WTF::move(planOfLongLived));
         cache.add(vm, keyWithWords(1001), makeUnique<FieldMovePlan>());
         Vector<Structure*> structures = addPlansOfShortLivedStructures(program, isSource);
@@ -640,9 +622,8 @@ std::span<const NativeTest> fieldMoveTests()
     static constexpr NativeTest tests[] = {
         { "field-moves/every-pair-of-representations"_s, runNativeTestWithNarrowReferences<checkEveryPairOfRepresentations> },
         { "field-moves/absent-source-is-never-moved"_s, runNativeTestWithNarrowReferences<checkAbsentSourceIsNeverMoved> },
-        { "field-moves/property-of-ordinary-object-to-every-representation"_s, runNativeTestWithNarrowReferences<checkPropertyOfOrdinaryObjectToEveryRepresentation> },
         { "field-moves/nothing-is-stored-when-one-move-fails"_s, runNativeTestWithNarrowReferences<checkNothingIsStoredWhenOneMoveFails> },
-        { "field-moves/set-absent"_s, runNativeTestWithNarrowReferences<checkSetAbsent> },
+        { "field-moves/every-representation-to-a-property-of-a-new-object"_s, runNativeTestWithNarrowReferences<checkEveryRepresentationToPropertyOfNewObject> },
         { "field-moves/answers-about-types-hold-for-every-value"_s, runNativeTestWithNarrowReferences<checkAnswersAboutTypesHoldForEveryValue> },
         { "field-moves/plan-cache-never-refuses"_s, runNativeTestWithNarrowReferences<checkPlanCacheNeverRefuses> },
         { "field-moves/plans-die-with-their-structures"_s, runNativeTestWithNarrowReferences<checkPlansDieWithTheirStructures> },

@@ -41,22 +41,19 @@ static void checkRequiredAnalyses(AnalysisSet cached)
     check(FunctionAnalysis::Induction, { FunctionAnalysis::ControlFlow, FunctionAnalysis::Dominators, FunctionAnalysis::NaturalLoops });
 }
 
-static void checkControlFlow(const CFG& cached, const CFG& fresh)
+static void checkControlFlow(const Function& function, const CFG& graph, const CFG& fresh)
 {
-    RELEASE_ASSERT(cached.numNodes() == fresh.numNodes());
-    checkEqual(cached.reversePostOrder(), fresh.reversePostOrder());
+    RELEASE_ASSERT(graph.numNodes() == fresh.numNodes());
+    checkEqual(graph.reversePostOrder(), fresh.reversePostOrder());
     for (unsigned blockIndex = 0; blockIndex < fresh.numNodes(); ++blockIndex) {
         BlockID block(blockIndex);
-        RELEASE_ASSERT(cached.isReachable(block) == fresh.isReachable(block));
-        RELEASE_ASSERT(cached.hasHandler(block) == fresh.hasHandler(block));
-        checkEqual(cached.successors(block), fresh.successors(block));
-        checkEqual(cached.predecessors(block), fresh.predecessors(block));
-        checkEqual(cached.incomingEdges(block), fresh.incomingEdges(block));
+        RELEASE_ASSERT(graph.isReachable(block) == fresh.isReachable(block));
+        RELEASE_ASSERT(graph.hasHandler(block) == fresh.hasHandler(block));
+        checkEqual(graph.successors(block), fresh.successors(block));
+        checkEqual(graph.predecessors(block), fresh.predecessors(block));
+        checkEqual(graph.incomingEdges(block), fresh.incomingEdges(block));
     }
-}
 
-static void checkControlFlowAgainstFunction(const Function& function, const CFG& graph)
-{
     unsigned numberOfBlocks = function.blocks.size();
     RELEASE_ASSERT(graph.numNodes() == numberOfBlocks);
 
@@ -153,9 +150,7 @@ static void checkNaturalLoops(const CFG& graph, const NaturalLoops& cached, cons
         const NaturalLoop& freshLoop = fresh.loop(loopIndex);
         const NaturalLoop* cachedLoop = cached.headerOf(freshLoop.header());
         RELEASE_ASSERT(cachedLoop);
-        Vector<BlockID> cachedBlocks = sortedBlocksOf(*cachedLoop);
-        Vector<BlockID> freshBlocks = sortedBlocksOf(freshLoop);
-        checkEqual(cachedBlocks.span(), freshBlocks.span());
+        RELEASE_ASSERT(sortedBlocksOf(*cachedLoop) == sortedBlocksOf(freshLoop));
     }
 }
 
@@ -173,17 +168,14 @@ static void checkBlockCycles(const CFG& graph, const BlockCycles& cached, const 
     }
 }
 
-static void checkUseLists(const Function& function, const UseLists& cached, const UseLists& fresh)
+static void checkUseLists(const Function& function, const CFG& graph, const UseLists& useLists, const UseLists& fresh)
 {
     for (uint32_t valueIndex = 0; valueIndex < function.values.size(); ++valueIndex) {
         ValueID value(valueIndex);
-        RELEASE_ASSERT(cached.locationOf(value) == fresh.locationOf(value));
-        checkEqual(cached.usesOf(value), fresh.usesOf(value));
+        RELEASE_ASSERT(useLists.locationOf(value) == fresh.locationOf(value));
+        checkEqual(useLists.usesOf(value), fresh.usesOf(value));
     }
-}
 
-static void checkUseListsAgainstFunction(const Function& function, const CFG& graph, const UseLists& useLists)
-{
     Vector<uint32_t> numberOfUsesSeen(FillWith { }, function.values.size(), 0u);
     Vector<ValueLocation> locations(function.values.size());
     auto checkNextUse = [&](ValueID used, const Use& use) {
@@ -227,24 +219,24 @@ static void checkUseListsAgainstFunction(const Function& function, const CFG& gr
 
 static void checkIdentities(const Function& function, const ValueIdentities& cached, const ValueIdentities& fresh)
 {
-    for (uint32_t valueIndex = 0; valueIndex < function.values.size(); ++valueIndex) {
-        ValueID value(valueIndex);
-        RELEASE_ASSERT(cached.identityOf(value) == fresh.identityOf(value));
-    }
+    for (uint32_t valueIndex = 0; valueIndex < function.values.size(); ++valueIndex)
+        RELEASE_ASSERT(cached.identityOf(ValueID(valueIndex)) == fresh.identityOf(ValueID(valueIndex)));
 }
 
 static void checkIdentitiesOnDemand(const Function& function, const CFG& graph, const ValueIdentities& fresh)
 {
     ValueIdentities onDemand(function, graph, ValueIdentities::RepeatedWalks::StartAtFirstChangedBlock, nullptr, ValueIdentities::Evaluation::OnDemand);
     for (uint32_t valueIndex = 0; valueIndex < function.values.size(); ++valueIndex) {
-        ValueID value(valueIndex);
-        if (ValueID identity = onDemand.tryResolve(value))
-            RELEASE_ASSERT(identity == fresh.identityOf(value));
+        if (ValueID identity = onDemand.tryResolve(ValueID(valueIndex)))
+            RELEASE_ASSERT(identity == fresh.identityOf(ValueID(valueIndex)));
     }
 }
 
-static void checkLiveness(const CFG& graph, const Liveness& cached, const Liveness& fresh)
+static void checkLiveness(const Function& function, const CFG& graph, const UseLists& useLists, const Liveness& cached)
 {
+    LivenessOptions options;
+    options.solver = LivenessOptions::Solver::PerValue;
+    Liveness fresh(function, graph, useLists, options);
     for (BlockID block : graph.reversePostOrder())
         checkEqual(cached.liveAtHead(block), fresh.liveAtHead(block));
 }
@@ -282,23 +274,20 @@ static void checkEffects(const EffectContext& context, const Function& function,
     }
 }
 
-static void checkTrackedObject(const TrackedObject& cached, const TrackedObject& fresh)
-{
-    RELEASE_ASSERT(cached.definition == fresh.definition);
-    RELEASE_ASSERT(cached.kind == fresh.kind);
-    RELEASE_ASSERT(cached.state == fresh.state);
-    RELEASE_ASSERT(cached.reasons == fresh.reasons);
-    RELEASE_ASSERT(cached.firstEscape == fresh.firstEscape);
-    RELEASE_ASSERT(cached.uses == fresh.uses);
-}
-
 static void checkEscapeAnalysis(const Function& function, const EscapeAnalysis& cached, const EscapeAnalysis& fresh)
 {
     RELEASE_ASSERT(cached.gaveUp() == fresh.gaveUp());
     RELEASE_ASSERT(cached.numberOfObjects() == fresh.numberOfObjects());
     for (unsigned objectIndex = 0; objectIndex < fresh.numberOfObjects(); ++objectIndex) {
         ObjectID object(objectIndex);
-        checkTrackedObject(cached.at(object), fresh.at(object));
+        const TrackedObject& cachedObject = cached.at(object);
+        const TrackedObject& freshObject = fresh.at(object);
+        RELEASE_ASSERT(cachedObject.definition == freshObject.definition);
+        RELEASE_ASSERT(cachedObject.kind == freshObject.kind);
+        RELEASE_ASSERT(cachedObject.state == freshObject.state);
+        RELEASE_ASSERT(cachedObject.reasons == freshObject.reasons);
+        RELEASE_ASSERT(cachedObject.firstEscape == freshObject.firstEscape);
+        RELEASE_ASSERT(cachedObject.uses == freshObject.uses);
         if (cached.hasLiveInstances()) {
             RELEASE_ASSERT(cached.liveInstancesOf(object) == fresh.liveInstancesOf(object));
             RELEASE_ASSERT(cached.objectsRenewedAtMakersOf(object) == fresh.objectsRenewedAtMakersOf(object));
@@ -394,17 +383,10 @@ static void checkFailedTests(const Function& function, const CFG& graph, const F
     }
 }
 
-static void checkInduction(const InductionVariables& cached, const InductionVariables& fresh)
-{
-    checkEqual(cached.loops(), fresh.loops());
-}
-
 void FunctionAnalyses::verifyUseLists() const
 {
     const CFG& graph = *m_controlFlow.cfg;
-    UseLists fresh(m_function, graph);
-    checkUseLists(m_function, *m_values.useLists, fresh);
-    checkUseListsAgainstFunction(m_function, graph, *m_values.useLists);
+    checkUseLists(m_function, graph, *m_values.useLists, UseLists(m_function, graph));
 }
 
 void FunctionAnalyses::verifyIdentities(const CFG& graph) const
@@ -414,23 +396,17 @@ void FunctionAnalyses::verifyIdentities(const CFG& graph) const
 
 void FunctionAnalyses::verifyLiveness() const
 {
-    const CFG& graph = *m_controlFlow.cfg;
-    LivenessOptions options;
-    options.solver = LivenessOptions::Solver::PerValue;
-    checkLiveness(graph, *m_values.liveness, Liveness(m_function, graph, *m_values.useLists, options));
+    checkLiveness(m_function, *m_controlFlow.cfg, *m_values.useLists, *m_values.liveness);
 }
 
 void FunctionAnalyses::verifyFrequencies()
 {
     CFG& graph = *m_controlFlow.cfg;
-    BlockFrequencies fresh(m_context, m_function, graph, *m_controlFlow.blockCycles);
-    checkFrequencies(m_function, graph, *m_values.blockFrequencies, fresh);
+    checkFrequencies(m_function, graph, *m_values.blockFrequencies, BlockFrequencies(m_context, m_function, graph, *m_controlFlow.blockCycles));
 }
 
 void FunctionAnalyses::verifyCached()
 {
-    if (m_values.useLists)
-        m_values.useLists->endSilence();
     if (m_values.useLists && !m_values.useLists->isUpToDate() && !m_values.useLists->mustBeMadeAnew())
         useLists();
 
@@ -451,10 +427,8 @@ void FunctionAnalyses::verifyCached()
     FunctionAnalyses fresh(m_context, m_function);
     CFG& graph = fresh.cfg();
 
-    if (cached.contains(FunctionAnalysis::ControlFlow)) {
-        checkControlFlow(*m_controlFlow.cfg, graph);
-        checkControlFlowAgainstFunction(m_function, *m_controlFlow.cfg);
-    }
+    if (cached.contains(FunctionAnalysis::ControlFlow))
+        checkControlFlow(m_function, *m_controlFlow.cfg, graph);
     if (m_controlFlow.edgesFromUnreachableBlocks)
         checkEqual(m_controlFlow.edgesFromUnreachableBlocks->span(), fresh.edgesFromUnreachableBlocks());
     if (cached.contains(FunctionAnalysis::Dominators)) {
@@ -469,10 +443,8 @@ void FunctionAnalyses::verifyCached()
     if (cached.contains(FunctionAnalysis::Cycles))
         checkBlockCycles(graph, *m_controlFlow.blockCycles, fresh.blockCycles());
 
-    if (cached.contains(FunctionAnalysis::UseLists)) {
-        checkUseLists(m_function, *m_values.useLists, fresh.useLists());
-        checkUseListsAgainstFunction(m_function, graph, *m_values.useLists);
-    }
+    if (cached.contains(FunctionAnalysis::UseLists))
+        checkUseLists(m_function, graph, *m_values.useLists, fresh.useLists());
     if (cached.contains(FunctionAnalysis::Identities)) {
         ValueIdentities freshIdentities(m_function, graph, ValueIdentities::RepeatedWalks::StartAtEntry);
         m_values.identities->setGraph(&graph);
@@ -480,11 +452,8 @@ void FunctionAnalyses::verifyCached()
         m_values.identities->setGraph(nullptr);
         checkIdentitiesOnDemand(m_function, graph, freshIdentities);
     }
-    if (cached.contains(FunctionAnalysis::Liveness)) {
-        LivenessOptions options;
-        options.solver = LivenessOptions::Solver::PerValue;
-        checkLiveness(graph, *m_values.liveness, Liveness(m_function, graph, fresh.useLists(), options));
-    }
+    if (cached.contains(FunctionAnalysis::Liveness))
+        checkLiveness(m_function, graph, fresh.useLists(), *m_values.liveness);
     if (cached.contains(FunctionAnalysis::Escape))
         checkEscapeAnalysis(m_function, *m_values.escape, fresh.escapeWithLiveInstances());
     if (cached.contains(FunctionAnalysis::EscapeHistory))
@@ -500,7 +469,7 @@ void FunctionAnalyses::verifyCached()
     if (cached.contains(FunctionAnalysis::FailedTests))
         checkFailedTests(m_function, graph, *m_values.failedTests, fresh.failedTests());
     if (cached.contains(FunctionAnalysis::Induction))
-        checkInduction(*m_values.inductionVariables, fresh.inductionVariables());
+        checkEqual(m_values.inductionVariables->loops(), fresh.inductionVariables().loops());
 }
 
 } } } // namespace JSC::AOT::Typed

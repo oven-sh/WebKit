@@ -48,7 +48,6 @@ variable g7 name="moved" module=m0 declared={type=anything} initialization=Undef
 variable g8 name="handedOver" module=m0 declared={type=anything} initialization=Undefined
 layout L0 name="Other"
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = Call v0
     PutModuleVariable v1 variable=g0
@@ -86,7 +85,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="run" flags=[IsAsync] results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f3
     v1 = Call v0
     PutModuleVariable v1 variable=g1
@@ -107,45 +105,37 @@ function f1 name="run" flags=[IsAsync] results=[{type=anything}] {
     Return
 }
 function f2 name="plainNumbers" flags=[IsGenerator, TakesCallee] results=[{type=anything}] {
-  b0(v0: function):
     InitialYield
     v2 = Integer integer=1
     v3 = Yield v2
     Return
 }
 function f3 name="numbers" flags=[IsAsync, IsGenerator, TakesCallee] results=[{type=anything}] {
-  b0(v0: function):
     InitialYield
     v2 = Integer integer=1
     v3 = Yield v2
     Return
 }
 function f4 name="extended" flags=[IsAsync, IsGenerator, TakesCallee] results=[{type=anything}] {
-  b0(v0: function):
     InitialYield
     Return
 }
 function f5 name="named" flags=[IsAsync, IsGenerator, TakesCallee] results=[{type=anything}] {
-  b0(v0: function):
     InitialYield
     Return
 }
 function f6 name="replaced" flags=[IsAsync, IsGenerator, TakesCallee] results=[{type=anything}] {
-  b0(v0: function):
     InitialYield
     Return
 }
 function f7 name="moved" flags=[IsAsync, IsGenerator, TakesCallee] results=[{type=anything}] {
-  b0(v0: function):
     InitialYield
     Return
 }
 function f8 name="handedOver" flags=[IsAsync, IsGenerator, TakesCallee] results=[{type=anything}] {
-  b0(v0: function):
     InitialYield
     Return
 }
 function f9 name="other" results=[{type=anything}] {
-  b0():
     Return
 }

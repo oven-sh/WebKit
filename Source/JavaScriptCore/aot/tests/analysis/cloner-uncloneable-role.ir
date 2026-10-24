@@ -7,11 +7,9 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="origin" parameters=[{type=boolean}, {type=number}] results=[{type=number}] {
-  b0(v0: boolean, v1: number):
     Return v1
 }
 function f1 name="outlined" role=OutlinedBody parameters=[{type=boolean}, {type=number}] results=[{type=number}] derivation={source=f0} {
-  b0(v0: boolean, v1: number):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3()
@@ -21,7 +19,6 @@ function f1 name="outlined" role=OutlinedBody parameters=[{type=boolean}, {type=
     Return v1
 }
 function f2 name="caller" role=OutlinedBody parameters=[{type=boolean}, {type=number}] results=[{type=number}] derivation={source=f0} {
-  b0(v0: boolean, v1: number):
     v2 = CallDirect v0, v1 function=f1
     v3 = CallDirect v0, v2 function=f0
     Return v3

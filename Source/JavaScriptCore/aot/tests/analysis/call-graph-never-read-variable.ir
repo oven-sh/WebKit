@@ -10,21 +10,17 @@ variable g0 name="neverRead" module=m0 declared={type=anything} initialization=F
 variable g1 name="onlyCalled" module=m0 declared={type=anything} initialization=Function function=f2 flow={stores=Never reads=OnlyCalled}
 variable g2 name="unknown" module=m0 declared={type=anything} initialization=Function function=f3
 function f0 name="caller" results=[{type=anything}] {
-  b0():
     v0: undefined = CallDirect function=f1
     v1: undefined = CallDirect function=f2
     v2: undefined = CallDirect function=f3
     Return v2
 }
 function f1 name="neverRead" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f2 name="onlyCalled" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f3 name="unknown" results=[{type=undefined}] {
-  b0():
     Return
 }

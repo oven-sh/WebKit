@@ -8,7 +8,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="openInUnreachableBlock" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     Return
   b1():
     v1 = IteratorOpen v0
@@ -16,16 +15,14 @@ function f0 name="openInUnreachableBlock" parameters=[{type=anything}] results=[
     v3 = ResultAt v2 index=1
     IteratorClose v1
     Return
-}
-# CHECK-LABEL: function f0 name="openInUnreachableBlock"
 # CHECK: b0(v0: anything):
 # CHECK-NEXT: Return
 # CHECK-NEXT: b1():
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
+}
 
 function f1 name="stepInUnreachableBlock" parameters=[{type=Array<number, pristine[Names]>}] results=[{type=undefined}] {
-  b0(v0: Array<number, pristine[Names]>):
     v1 = IteratorOpen v0
     Return
   b1():
@@ -33,39 +30,33 @@ function f1 name="stepInUnreachableBlock" parameters=[{type=Array<number, pristi
     v3 = ResultAt v2 index=1
     IteratorClose v1
     Return
-}
-# CHECK-LABEL: function f1 name="stepInUnreachableBlock"
 # CHECK-NOT: ElemGet
 # CHECK: b1():
 # CHECK-NEXT: Unreachable
 # CHECK-NOT: ElemGet
+}
 
 function f2 name="spreadInUnreachableBlock" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     Return
   b1():
     v1 = NewArray contents=anything
     AppendSpread v1, v0
     Return
-}
-# CHECK-LABEL: function f2 name="spreadInUnreachableBlock"
 # CHECK: b1():
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
+}
 
 function f3 name="openWithoutStepOrClose" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     v1 = IteratorOpen v0
     Return
-}
 # What the open does by itself stays: the tests, and on the failing edges the reads and the call of the protocol.
-# CHECK-LABEL: function f3 name="openWithoutStepOrClose"
 # CHECK: = TypeTest v0 testedType=Array
 # CHECK: [[open3]]: undefined = CallDirect {{*}} function=[[openStringOrIterator]] [isNeverInlined]
 # CHECK: = ResultAt [[open3]] index=1
+}
 
 function f4 name="closeOnlyInLandingBlock" parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: anything, v1: anything):
     v2 = IteratorOpen v0
     Jump -> next b1()
   b1() handler=b3():
@@ -77,13 +68,12 @@ function f4 name="closeOnlyInLandingBlock" parameters=[{type=anything}, {type=an
     v4 = CatchException
     IteratorClose v2 completion=Throw
     Rethrow v4
-}
-# CHECK-LABEL: function f4 name="closeOnlyInLandingBlock"
 # CHECK: role=CleanupHandler
 # CHECK: = CallDirect [[subject4]] function=[[closeStringOrIteratorAfterThrow]] [isNeverInlined]
 # CHECK: [[subject4]]: string|object = ResultAt
 # CHECK: function [[openStringOrIterator]] name="openStringOrIterator"
 # CHECK: function [[closeStringOrIteratorAfterThrow]] name="closeStringOrIteratorAfterThrow"
+}
 
 # LEFT-NOT: IteratorOpen
 # LEFT-NOT: IteratorResume

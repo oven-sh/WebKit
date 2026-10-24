@@ -8,7 +8,6 @@ layout L1 name="Size" fields=[{key="x" declared={type=anything}}, {key="y" decla
 layout L2 name="Span" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
 
 function f0 name="threeTests" parameters=[{type=object}, {type=int[0, 2]}] results=[{type=anything}] {
-  b0(v0: object, v1: int[0, 2]):
     Switch v1 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
   b1():
     v2 = ShapeTest v0 layouts=[L0]
@@ -30,7 +29,6 @@ function f0 name="threeTests" parameters=[{type=object}, {type=int[0, 2]}] resul
 # CHECK: v6 guard v5: Available
 
 function f1 name="widerTestCoversTheOther" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: object, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = ShapeTest v0 layouts=[L0]
@@ -47,7 +45,6 @@ function f1 name="widerTestCoversTheOther" parameters=[{type=object}, {type=bool
 # CHECK-NEXT: v4 facts: [Shape of v0 by v3 reads -]
 
 function f2 name="switchCaseMeetsTestAndAllocation" parameters=[{type=anything}, {type=object}, {type=object}, {type=int[0, 2]}] results=[{type=anything}] {
-  b0(v0: anything, v1: object, v2: object, v3: int[0, 2]):
     Switch v3 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
   b1():
     SwitchOnShape v1 layoutSets=[[L0]] -> case b4(v1 | 0), otherwise b5()
@@ -69,7 +66,6 @@ function f2 name="switchCaseMeetsTestAndAllocation" parameters=[{type=anything},
 # CHECK: v9 guard v8: Available
 
 function f3 name="slotsFilledByBothAllocations" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
@@ -88,7 +84,6 @@ function f3 name="slotsFilledByBothAllocations" parameters=[{type=anything}, {ty
 # CHECK: v8 guard v7: Available
 
 function f4 name="noSlotFilledByBothAllocations" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = NewObject -, v0 layout=L0 fields=[1]
@@ -105,7 +100,6 @@ function f4 name="noSlotFilledByBothAllocations" parameters=[{type=anything}, {t
 # CHECK: v7 facts: [Shape OwnInstance of v6 by allocation v2 or allocation v4 reads -, NotFrozen of v6 by allocation v2 or allocation v4 reads ShapeWords[L0] ShapeWords[L1], NoExtraProperties NoFieldOutsideSlot of v6 by allocation v2 or allocation v4 reads NamedProperties, KeyOrder of v6 by allocation v2 or allocation v4 reads ShapeWords[L0] ShapeWords[L1] OrderWords]
 
 function f5 name="testsOfTwoSlots" parameters=[{type=L0}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: L0, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = IsSlotFilled v0 key="x" receivers=[L0] level=Proven
@@ -122,7 +116,6 @@ function f5 name="testsOfTwoSlots" parameters=[{type=L0}, {type=boolean}] result
 # CHECK-NEXT: v4 facts: []
 
 function f6 name="testsOfTwoStorageKinds" parameters=[{type=Array}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: Array, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = HasArrayStorage v0 arrayStorage=Int32
@@ -139,7 +132,6 @@ function f6 name="testsOfTwoStorageKinds" parameters=[{type=Array}, {type=boolea
 # CHECK-NEXT: v4 facts: []
 
 function f7 name="writeToTheObjectOfTheSecondLayout" parameters=[{type=anything}, {type=boolean}, {type=function}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean, v2: function):
     v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     v4 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
     Branch v1 -> taken b1(), notTaken b2()
@@ -161,7 +153,6 @@ function f7 name="writeToTheObjectOfTheSecondLayout" parameters=[{type=anything}
 # CHECK: v9 guard v8: Available
 
 function f8 name="writeToTheObjectOfTheFirstLayout" parameters=[{type=anything}, {type=boolean}, {type=function}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean, v2: function):
     v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     v4 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
     Branch v1 -> taken b1(), notTaken b2()
@@ -182,7 +173,6 @@ function f8 name="writeToTheObjectOfTheFirstLayout" parameters=[{type=anything},
 # CHECK-NEXT: b3:2 available: [v4]
 
 function f9 name="writeToAnotherObject" parameters=[{type=anything}, {type=boolean}, {type=function}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean, v2: function):
     v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     v4 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
     v5 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
@@ -204,7 +194,6 @@ function f9 name="writeToAnotherObject" parameters=[{type=anything}, {type=boole
 # CHECK: v11 guard v9: Available
 
 function f10 name="endedBeforeTheEdgeOfOneLayout" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
@@ -224,7 +213,6 @@ function f10 name="endedBeforeTheEdgeOfOneLayout" parameters=[{type=anything}, {
 # CHECK: b3:0 available: []
 
 function f11 name="anotherLayoutInEachIteration" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     v2 = AllGuards v1
     Jump -> next b1(v1, v2)
@@ -245,7 +233,6 @@ function f11 name="anotherLayoutInEachIteration" parameters=[{type=anything}] re
 # CHECK: v6 guard v4: Available
 
 function f12 name="testsOfTwoKeyOrders" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = HasKeyOrder v0 layout=L0 fields=[0, 1]
     Branch v1 -> taken b2(| 0), notTaken b1()
   b1():

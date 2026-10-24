@@ -5,28 +5,24 @@
 module m0 path="main.js" displayPath="main.js"
 variable g0 name="stored" declared={type=anything} initialization=Undefined
 function f0 name="readAtAnyNumber" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=number}] results=[{type=undefined}] {
-  b0(v0: Array<number, pristine[Storage, Names]>, v1: number):
     PutModuleVariable v1 variable=g0
     v3 = GetArrayElement v0, v1 level=Proven
     Return
 }
 # CHECK: f0 return:{{*}}writes(ModuleVariables/1,{{*}}throws{{*}} throw:{{*}}writes(ModuleVariables/1,{{*}}throws
 function f1 name="testAtAnyNumber" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=number}] results=[{type=undefined}] {
-  b0(v0: Array<number, pristine[Storage, Names]>, v1: number):
     PutModuleVariable v1 variable=g0
     v3 = HasArrayElement v0, v1 level=Proven
     Return
 }
 # CHECK-NEXT: f1 return:{{*}}writes(ModuleVariables/1,{{*}}throws{{*}} throw:{{*}}writes(ModuleVariables/1,{{*}}throws
 function f2 name="readAtIndex" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=int[0, 10]}] results=[{type=undefined}] {
-  b0(v0: Array<number, pristine[Storage, Names]>, v1: int[0, 10]):
     PutModuleVariable v1 variable=g0
     v3 = GetArrayElement v0, v1 level=Proven [keyIsIntegral]
     Return
 }
 # CHECK-NEXT: f2 return: reads({{*}}) writes(ModuleVariables/1) throw: none
 function f3 name="testAtIndex" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=int[0, 10]}] results=[{type=undefined}] {
-  b0(v0: Array<number, pristine[Storage, Names]>, v1: int[0, 10]):
     PutModuleVariable v1 variable=g0
     v3 = HasArrayElement v0, v1 level=Proven [keyIsIntegral]
     Return

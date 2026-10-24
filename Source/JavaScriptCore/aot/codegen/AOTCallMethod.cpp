@@ -34,9 +34,7 @@ void FusedAccessEmitter::generateCallMethod(const ValueContext& value)
     RELEASE_ASSERT(number);
 
     // The stubs know the key. The site knows what the program calls the method: `a.b.key`.
-    std::optional<ThrowSite> siteThatNamesCallee;
-    if (value->calleeName())
-        siteThatNamesCallee = ThrowSite { ThrowKind::NotAFunction, value->calleeName().index(), std::nullopt };
+    std::optional<ThrowSite> siteThatNamesCallee = CallEmitter::siteThatNamesCallee(value);
     CallEmitter& calls = emitter<CallEmitter>();
     ConventionCall call {
         .stub = callMethodById(count),

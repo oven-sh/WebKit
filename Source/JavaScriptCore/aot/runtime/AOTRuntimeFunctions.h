@@ -19,7 +19,11 @@ namespace JSC {
 class Identifier;
 class JSArray;
 class JSGlobalObject;
+class JSMap;
 class JSObject;
+class JSPropertyNameEnumerator;
+class JSSet;
+class JSString;
 class PropertyName;
 class PropertyRun;
 class PutPropertySlot;
@@ -29,7 +33,6 @@ namespace AOT {
 
 const PropertyRun* propertyRunAt(Instance*, uint32_t number);
 
-void copyDataProperties(Instance*, JSGlobalObject*, JSObject* target, JSValue source);
 JS_EXPORT_PRIVATE JSObject* withAllPropertiesInline(JSGlobalObject*, JSObject*);
 
 void defineDataProperty(Instance*, JSObject*, PropertyName, JSValue, PutPropertySlot&);
@@ -42,6 +45,21 @@ unsigned pushToFullVector(VM&, JSArray*, JSValue);
 JSValue valueOfDecodedReference(const Instance*, uint64_t bits);
 JSObject* createRuntimeError(JSGlobalObject*, Typed::RuntimeErrorKind, const Identifier* name);
 ErrorType errorTypeFor(Typed::ErrorKind);
+
+JSValue constantOfDataWord(State&, uint64_t word);
+JSObject* tryBuildData(JSGlobalObject*, State&, const DataRequest&);
+JSSet* tryBuildSet(JSGlobalObject*, State&, const CollectionDataRequest&);
+JSMap* tryBuildMap(JSGlobalObject*, State&, const CollectionDataRequest&);
+
+struct EnumeratedKey {
+    JSString* key { nullptr };
+    uint64_t position { 0 };
+};
+
+JSPropertyNameEnumerator* enumeratorFor(JSGlobalObject*, JSValue object);
+EnumeratedKey findEnumeratedKey(JSGlobalObject*, JSPropertyNameEnumerator*, JSValue object, uint64_t position);
+
+void initializeIterationWords(Instance&);
 
 } } // namespace JSC::AOT
 

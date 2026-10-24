@@ -11,7 +11,6 @@
 #include "AOTVector.h"
 #include <wtf/FastMalloc.h>
 #include <wtf/Forward.h>
-#include <wtf/text/ASCIILiteral.h>
 
 namespace JSC { namespace AOT {
 
@@ -24,8 +23,6 @@ class Program;
 
 enum class StackCheck : uint8_t { Required, CoveredByCallers, DeferredToCallee };
 
-ASCIILiteral nameOf(StackCheck);
-
 class StackChecks {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(StackChecks);
 public:
@@ -36,7 +33,6 @@ public:
     }
 
     StackCheck of(FunctionID id) const { return id && id.index() < m_byFunction.size() ? m_byFunction[id.index()] : StackCheck::Required; }
-
     void dump(PrintStream&, const Program&) const;
 
 private:

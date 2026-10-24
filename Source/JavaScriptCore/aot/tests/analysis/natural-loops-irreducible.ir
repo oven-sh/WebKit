@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="irreducible" parameters=[{type=boolean}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean, v1: boolean):
     Branch v0 -> taken b2(), notTaken b1()
   b1():
     LoopHint

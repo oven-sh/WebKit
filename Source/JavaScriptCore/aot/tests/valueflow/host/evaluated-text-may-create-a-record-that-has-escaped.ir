@@ -14,7 +14,6 @@ layout L0 fields=[{key="value" declared={type=anything}}, {key="issues" declared
 layout L1 fields=[{key="id" declared={type=number}}]
 layout L2 fields=[{key="key" declared={type=anything}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = Builtin builtin=Function

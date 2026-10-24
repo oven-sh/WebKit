@@ -8,7 +8,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="usedBeforeDefinitionInRegion" parameters=[{type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: boolean, v1: number, v2: number):
     v3 = Add v1, v2
     Branch v0 -> taken b1(), notTaken b1()
   b1():
@@ -64,7 +63,6 @@ function f0 name="usedBeforeDefinitionInRegion" parameters=[{type=boolean}, {typ
 # PLAIN: Jump -> next b3([[X4]])
 
 function f1 name="definedInArmOfLoop" parameters=[{type=boolean}, {type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: boolean, v1: boolean, v2: number, v3: number):
     v4 = Add v2, v3
     Branch v0 -> taken b1(), notTaken b1()
   b1():
@@ -104,7 +102,6 @@ function f1 name="definedInArmOfLoop" parameters=[{type=boolean}, {type=boolean}
 # LOOP: Branch v0 -> taken [[C1]]([[CJ]]), notTaken b4()
 
 function f2 name="definedInBothArms" parameters=[{type=boolean}, {type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: boolean, v1: boolean, v2: number, v3: number):
     v4 = Add v2, v3
     Branch v0 -> taken b1(), notTaken b1()
   b1():

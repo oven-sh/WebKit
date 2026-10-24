@@ -5,7 +5,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point"
 function f0 name="copyIsReturned" parameters=[{type=function}] results=[{type=anything}] {
-  b0(v0: function):
     v1 = NewObject layout=L0 fields=[]
     v2 = Call v0
     v3 = TypeTest v1 testedType=object
@@ -35,7 +34,6 @@ function f0 name="copyIsReturned" parameters=[{type=function}] results=[{type=an
 # CHECK-NEXT: aliases:
 # CHECK-NEXT: v1 v4 alias: MustAlias
 function f1 name="copyIsRead" parameters=[{type=function}] results=[{type=anything}] {
-  b0(v0: function):
     v1 = NewObject layout=L0 fields=[]
     v2 = Call v0
     v3 = TypeTest v1 testedType=object
@@ -64,7 +62,6 @@ function f1 name="copyIsRead" parameters=[{type=function}] results=[{type=anythi
 # CHECK-NEXT: aliases:
 # CHECK-NEXT: v1 v4 alias: MustAlias
 function f2 name="copyOfAnotherObject" parameters=[{type=function}] results=[{type=anything}] {
-  b0(v0: function):
     v1 = NewObject layout=L0 fields=[]
     v2 = NewObject layout=L0 fields=[]
     v3 = TypeTest v2 testedType=object
@@ -93,7 +90,6 @@ function f2 name="copyOfAnotherObject" parameters=[{type=function}] results=[{ty
 # CHECK-NEXT: aliases:
 # CHECK-NEXT: v1 v4 alias: NoAlias
 function f3 name="copyOfCopyOnTheFailingEdge" parameters=[{type=function}] results=[{type=anything}] {
-  b0(v0: function):
     v1 = NewObject layout=L0 fields=[]
     v2 = Call v0
     v3 = TypeTest v1 testedType=object

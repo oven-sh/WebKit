@@ -18,15 +18,7 @@ class HashTableBuiltinEmitter final : public BuiltinFamilyEmitter {
 public:
     explicit HashTableBuiltinEmitter(CodeGenerator&);
 
-    void generateNewMap(const InlineCall&);
-    void generateNewSet(const InlineCall&);
-    void generateMapGet(const InlineCall&);
-    void generateMapHas(const InlineCall&);
-    void generateSetHas(const InlineCall&);
-    void generateMapSet(const InlineCall&);
-    void generateSetAdd(const InlineCall&);
-    void generateMapSize(const InlineCall&);
-    void generateSetSize(const InlineCall&);
+    FOR_EACH_AOT_INLINE_BUILTIN_IN_HASH_TABLE_BUILTIN(AOT_DECLARE_INLINE_BUILTIN_GENERATOR)
 
     void remove(const InlineCall&, HashTableOwner);
     Boxed normalizedKey(const OperationContext&, ValueID);

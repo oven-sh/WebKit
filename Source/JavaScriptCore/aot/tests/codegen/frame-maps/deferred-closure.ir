@@ -31,7 +31,6 @@ function f2 name="created-closure" role=CoroutineBody flags=[IsAsync] parameters
 }
 function f3 name="created-closure" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f3 body=f2 promiseType=Promise promiseParameter=1}
 function f4 name="run" results=[{type=undefined}] {
-  b0():
     v0 @Void = Undefined
     Return v0
 }

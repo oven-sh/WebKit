@@ -10,12 +10,21 @@
 
 #include "AOTHeapCacheRegistry.h"
 #include "AOTInstance.h"
+#include "AOTJSONHooks.h"
+#include "AOTOperationArguments.h"
+#include "AOTOperationScope.h"
+#include "AOTPropertyCaches.h"
 #include "AOTRuntimeCounters.h"
+#include "AOTSchemaRuntimeOperations.h"
 #include "AOTState.h"
 #include "AOTVMState.h"
+#include "AOTVector.h"
 #include "JSCInlines.h"
+#include "NumberPrototype.h"
+#include <algorithm>
 #include <array>
 #include <charconv>
+#include <optional>
 #include <wtf/dtoa.h>
 #include <wtf/text/ASCIIFastPath.h>
 
@@ -326,12 +335,6 @@ auto StringBuilderStorage::append(JSGlobalObject* globalObject, JSValue primitiv
         NumberToStringBuffer buffer;
         return append(globalObject, byteCast<Latin1Character>(numberToStringAndSize(primitive.asDouble(), buffer)));
     }
-    if (primitive.isUndefined())
-        return append(globalObject, "undefined"_s.span8());
-    if (primitive.isNull())
-        return append(globalObject, "null"_s.span8());
-    if (primitive.isBoolean())
-        return append(globalObject, primitive.isTrue() ? "true"_s.span8() : "false"_s.span8());
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* string = primitive.toString(globalObject);
@@ -362,11 +365,6 @@ Latin1Character* StringBuilderStorage::reserve(JSGlobalObject* globalObject, siz
         return m_characters + m_position;
     throwOutOfMemory(globalObject);
     return nullptr;
-}
-
-Latin1Character* StringBuilderStorage::tryReserve(size_t size)
-{
-    return tryEnsureRoom(size) ? m_characters + m_position : nullptr;
 }
 
 void StringBuilderStorage::commit(const Latin1Character* cursor)
@@ -429,6 +427,777 @@ Latin1Character* StackStringBuilder::didChangeStorage(JSGlobalObject* globalObje
     limit = std::bit_cast<Latin1Character*>(characters + std::min<size_t>(storage->capacity() - maxBytesWrittenPastLimit, String::MaxLength - storage->m_lengthOutsideBuffer));
     lengthOrigin = std::bit_cast<Latin1Character*>(characters - storage->m_lengthOutsideBuffer);
     return storage->m_characters + storage->m_position;
+}
+
+template<typename Functor>
+void StringBuilderStorage::forEachPiece(const Functor& functor) const
+{
+    uint32_t taken = 0;
+    for (const Segment& segment : m_segments) {
+        if (segment.offsetInBuffer > taken)
+            functor(Piece { nullptr, taken, segment.offsetInBuffer - taken });
+        if (segment.length)
+            functor(Piece { segment.string.get(), 0, segment.length });
+        taken = segment.offsetInBuffer;
+    }
+    if (m_position > taken)
+        functor(Piece { nullptr, taken, m_position - taken });
+}
+
+RefPtr<StringImpl> StringBuilderStorage::tryShareOrGiveAwayBuffer(bool mayGiveBufferAway)
+{
+    ASSERT(m_segments.isEmpty());
+    if (m_position < m_limits.minLengthAdoptedByFinish)
+        return nullptr;
+    if (!mayGiveBufferAway) {
+        m_sharedLength = std::max(m_sharedLength, m_position);
+        return StringImpl::createSubstringSharingImpl(*m_buffer, 0, m_position);
+    }
+    if (capacity() <= m_limits.maxRetainedCapacity)
+        return nullptr;
+    countLimitHit(vm(), LimitID::MaxRetainedStringBuilderCapacity);
+    RefPtr<StringImpl> impl = m_position == capacity() ? m_buffer : RefPtr<StringImpl> { StringImpl::createSubstringSharingImpl(*m_buffer, 0, m_position) };
+    dropBuffer();
+    return impl;
+}
+
+static JSString* stringOfIndex(VM& vm, Instance& instance, uint32_t index)
+{
+    ASSERT(index <= INT32_MAX);
+    if (index < NumericStrings::cacheSize) {
+        JSString* string = int32ToString(vm, static_cast<int32_t>(index), 10);
+        string->tryGetValueImpl()->hash();
+        return string;
+    }
+    StringKeyCache& keys = instance.state->propertyCaches->stringKeys();
+    if (JSString* string = keys.tryFindIntegerKey(index))
+        return string;
+    std::array<char, 10> digits;
+    JSString* string = keys.makeIntegerKey(vm, index, byteCast<Latin1Character>(std::span<const char> { digits.data(), std::to_chars(digits.data(), digits.data() + digits.size(), index).ptr }));
+    vm.numericStrings.setJSString(static_cast<int32_t>(index), string->tryGetValue(), string);
+    return string;
+}
+
+static JSString* tryCreateIndexKey(VM& vm, Instance& instance, std::span<const Latin1Character> characters)
+{
+    constexpr size_t maxLengthOfIndex = 10;
+    if (characters.empty() || characters.size() > maxLengthOfIndex || !isASCIIDigit(characters.back()))
+        return nullptr;
+    std::optional<uint32_t> index = parseIndex(characters);
+    if (!index || *index > INT32_MAX)
+        return nullptr;
+    return stringOfIndex(vm, instance, *index);
+}
+
+ALWAYS_INLINE JSString* StringBuilderStorage::copyBufferToString(JSGlobalObject* globalObject)
+{
+    ASSERT(m_position > 1);
+    std::span<Latin1Character> output;
+    RefPtr<StringImpl> impl = StringImpl::tryCreateUninitialized(m_position, output);
+    if (!impl) [[unlikely]] {
+        throwOutOfMemory(globalObject);
+        return nullptr;
+    }
+    StringImpl::copyCharacters(output, std::span<const Latin1Character> { m_characters, m_position });
+    return jsNontrivialString(globalObject->vm(), String { impl.releaseNonNull() });
+}
+
+static JSString* tryCreateKey(VM& vm, Instance& instance, std::span<const Latin1Character> characters)
+{
+    StringKeyCache& keys = instance.state->propertyCaches->stringKeys();
+    if (JSString* key = tryCreateIndexKey(vm, instance, characters))
+        return key;
+    if (characters.size() <= keys.maxCachedKeyLength())
+        return keys.findOrAdd(vm, characters);
+    countLimitHit(vm, LimitID::MaxCachedKeyLength);
+    return nullptr;
+}
+
+JSString* StringBuilderStorage::createStringFromBuffer(JSGlobalObject* globalObject, Instance& instance, StringUse use, bool mayGiveBufferAway)
+{
+    VM& vm = globalObject->vm();
+    std::span<const Latin1Character> characters { m_characters, m_position };
+    if (m_position == 1)
+        return jsSingleCharacterString(vm, characters[0]);
+    if (use == StringUse::LikelyKey) {
+        if (JSString* key = tryCreateKey(vm, instance, characters))
+            return key;
+    }
+    if (RefPtr<StringImpl> impl = tryShareOrGiveAwayBuffer(mayGiveBufferAway))
+        return jsNontrivialString(vm, String { impl.releaseNonNull() });
+    return copyBufferToString(globalObject);
+}
+
+JSString* StackStringBuilder::finish(JSGlobalObject* globalObject, Instance& instance, const Latin1Character* cursor, StringBuilderStorage::StringUse use)
+{
+    VM& vm = globalObject->vm();
+    if (!isOnStack()) {
+        if (!moveToStorage(globalObject, instance, cursor)) [[unlikely]]
+            return nullptr;
+        return storage->finish(globalObject, instance, use);
+    }
+    std::span<const Latin1Character> characters = charactersOnStack(cursor);
+    if (characters.size() <= 1)
+        return characters.empty() ? jsEmptyString(vm) : jsSingleCharacterString(vm, characters[0]);
+    if (use == StringBuilderStorage::StringUse::LikelyKey) {
+        if (JSString* key = tryCreateKey(vm, instance, characters))
+            return key;
+    }
+    return jsNontrivialString(vm, String(characters));
+}
+
+JSString* StringBuilderStorage::createFlatRun(JSGlobalObject* globalObject, std::span<const Piece> run)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (run.size() == 1 && run[0].string && run[0].length == run[0].string->length())
+        return run[0].string;
+
+    size_t total = 0;
+    bool is8Bit = true;
+    for (const Piece& piece : run) {
+        total += piece.length;
+        is8Bit &= !piece.string || piece.string->is8Bit();
+    }
+
+    std::span<Latin1Character> output8;
+    std::span<char16_t> output16;
+    RefPtr<StringImpl> impl = is8Bit ? StringImpl::tryCreateUninitialized(total, output8) : StringImpl::tryCreateUninitialized(total, output16);
+    if (!impl) {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+
+    auto copyPieces = [&](auto output) {
+        size_t at = 0;
+        for (const Piece& piece : run) {
+            auto destination = output.subspan(at, piece.length);
+            at += piece.length;
+            if (!piece.string) {
+                StringImpl::copyCharacters(destination, std::span<const Latin1Character> { m_characters + piece.start, piece.length });
+                continue;
+            }
+            if (piece.length == piece.string->length()) {
+                piece.string->resolveToBuffer(destination);
+                continue;
+            }
+            auto view = piece.string->view(globalObject);
+            RETURN_IF_EXCEPTION(scope, void());
+            view->left(piece.length).getCharacters(destination);
+        }
+    };
+    if (is8Bit)
+        copyPieces(output8);
+    else
+        copyPieces(output16);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return jsString(vm, String { impl.releaseNonNull() });
+}
+
+JSString* StringBuilderStorage::createStringFromPieces(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    uint32_t minFiberLength = m_limits.minLengthAppendedByReference;
+
+    Vector<Piece, 16> pieces;
+    forEachPiece([&](const Piece& piece) {
+        pieces.append(piece);
+    });
+
+    JSRopeString::RopeBuilder<RecordOverflow> fibers(vm);
+    size_t runStart = 0;
+    for (size_t index = 0; index <= pieces.size(); ++index) {
+        bool hasPiece = index < pieces.size();
+        if (hasPiece && (!pieces[index].string || pieces[index].length < minFiberLength))
+            continue;
+        if (index > runStart) {
+            JSString* run = createFlatRun(globalObject, pieces.span().subspan(runStart, index - runStart));
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            fibers.append(run);
+        }
+        if (hasPiece) {
+            const Piece& piece = pieces[index];
+            JSString* fiber = piece.length == piece.string->length() ? piece.string : jsSubstring(globalObject, piece.string, 0, piece.length);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            fibers.append(fiber);
+        }
+        runStart = index + 1;
+    }
+    if (fibers.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    return fibers.release();
+}
+
+bool StringBuilderStorage::collapseSegments(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* all = createStringFromPieces(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    uint32_t length = all->length();
+    ASSERT(length == this->length());
+    {
+        Locker locker { cellLock() };
+        m_segments.shrink(0);
+        m_segments.append(Segment { 0, length, WriteBarrier<JSString>(vm, this, all) });
+    }
+    m_lengthOutsideBuffer = length;
+    m_position = 0;
+    m_lastString.set(vm, this, all);
+    m_lengthOfLastString = length;
+    updateLimit();
+    return true;
+}
+
+JSString* StringBuilderStorage::createString(JSGlobalObject* globalObject, Instance& instance, StringUse use, bool mayGiveBufferAway)
+{
+    if (!length())
+        return jsEmptyString(globalObject->vm());
+    if (m_segments.isEmpty())
+        return createStringFromBuffer(globalObject, instance, use, mayGiveBufferAway);
+    if (!collapseSegments(globalObject))
+        return nullptr;
+    return m_segments[0].string.get();
+}
+
+JSString* StringBuilderStorage::toString(JSGlobalObject* globalObject, Instance& instance, StringUse use)
+{
+    if (JSString* string = validLastString())
+        return string;
+    JSString* string = createString(globalObject, instance, use, false);
+    if (!string)
+        return nullptr;
+    m_lastString.set(globalObject->vm(), this, string);
+    m_lengthOfLastString = length();
+    return string;
+}
+
+ALWAYS_INLINE std::optional<StringKeyCache::Lookup> StringBuilderStorage::tryFinishWithCachedKey(Instance& instance, JSString*& key, unsigned& hash)
+{
+    if (!holdsOnlyShortTextInOwnBuffer() || m_limit < StringKeyCache::minReadableBytes) [[unlikely]]
+        return std::nullopt;
+    const StringKeyCache& keys = instance.state->propertyCaches->stringKeys();
+    if (m_position > keys.maxCachedKeyLength()) [[unlikely]]
+        return std::nullopt;
+    StringKeyCache::Lookup lookup = keys.findKeyForText(std::span<const Latin1Character> { m_characters, m_position }, key, hash);
+    if (lookup == StringKeyCache::Lookup::Found) {
+        m_position = 0;
+        returnToPool(instance);
+    }
+    return lookup;
+}
+
+ALWAYS_INLINE JSString* StringBuilderStorage::finishWithNewKey(Instance& instance, unsigned hash)
+{
+    JSString* key = instance.state->propertyCaches->stringKeys().makeKey(*instance.vm, std::span<const Latin1Character> { m_characters, m_position }, hash);
+    m_position = 0;
+    returnToPool(instance);
+    return key;
+}
+
+JSString* StringBuilderStorage::finish(JSGlobalObject* globalObject, Instance& instance, StringUse use)
+{
+    if (holdsOnlyShortTextInOwnBuffer()) [[likely]] {
+        JSString* string = use == StringUse::Unknown ? copyBufferToString(globalObject) : createStringFromBuffer(globalObject, instance, use, true);
+        m_position = 0;
+        returnToPool(instance);
+        return string;
+    }
+    JSString* string = validLastString();
+    if (!string)
+        string = createString(globalObject, instance, use, true);
+    release(instance);
+    return string;
+}
+
+static ALWAYS_INLINE void copyShortText(Latin1Character* to, const Latin1Character* from, size_t length)
+{
+    if (length < 2) {
+        if (length)
+            *to = *from;
+        return;
+    }
+    if (length > 16) {
+        memcpy(to, from, length);
+        return;
+    }
+    if (length >= 8) {
+        memcpy(to, from, 8);
+        memcpy(to + length - 8, from + length - 8, 8);
+        return;
+    }
+    if (length >= 4) {
+        memcpy(to, from, 4);
+        memcpy(to + length - 4, from + length - 4, 4);
+        return;
+    }
+    memcpy(to, from, 2);
+    memcpy(to + length - 2, from + length - 2, 2);
+}
+
+static ALWAYS_INLINE bool tryWriteShortKeyInline(std::span<const EncodedJSValue> primitives, ShortKeyCharacters& key)
+{
+    constexpr size_t maxLengthOfInt32 = 11;
+    static_assert(maxLengthOfInt32 >= sizeof(uint64_t));
+    Latin1Character* start = key.characters.data();
+    size_t capacity = key.characters.size();
+    size_t length = 0;
+    for (EncodedJSValue encoded : primitives) {
+        JSValue primitive = JSValue::decode(encoded);
+        size_t room = capacity - length;
+        Latin1Character* cursor = start + length;
+        if (primitive.isString()) {
+            JSString* string = asString(primitive);
+            uint32_t partLength = string->length();
+            if (partLength > room || !string->is8Bit())
+                return false;
+            if (const StringImpl* impl = string->tryGetValueImpl()) [[likely]]
+                copyShortText(cursor, impl->span8().data(), partLength);
+            else {
+                string->resolveToBuffer(std::span<Latin1Character> { cursor, partLength });
+                key.hasRopePart = true;
+            }
+            length += partLength;
+            continue;
+        }
+        std::optional<int32_t> integer = primitive.tryGetAsInt32();
+        if (!integer || room < maxLengthOfInt32)
+            return false;
+        if (static_cast<uint32_t>(*integer) < 100'000'000) [[likely]] {
+            length += writeUpToEightDigits(*integer, cursor);
+            continue;
+        }
+        length = byteCast<Latin1Character>(std::to_chars(byteCast<char>(cursor), byteCast<char>(cursor) + maxLengthOfInt32, *integer).ptr) - start;
+    }
+    key.length = length;
+    return true;
+}
+
+bool tryWriteShortKey(std::span<const EncodedJSValue> primitives, ShortKeyCharacters& key)
+{
+    return tryWriteShortKeyInline(primitives, key);
+}
+
+static ALWAYS_INLINE JSValue onlyPartWithCharacters(VM& vm, std::span<const EncodedJSValue> primitives)
+{
+    if (primitives.size() > 2)
+        return { };
+    EncodedJSValue empty = JSValue::encode(vm.smallStrings.emptyString());
+    JSValue only;
+    for (EncodedJSValue primitive : primitives) {
+        if (primitive == empty)
+            continue;
+        if (only)
+            return { };
+        only = JSValue::decode(primitive);
+    }
+    return only;
+}
+
+static ALWAYS_INLINE bool isIndexOfIntegerKey(JSValue primitive)
+{
+    return primitive.isInt32() && primitive.asInt32() >= 0;
+}
+
+JSString* StringBuilderStorage::tryFindKeyByParts(Instance& instance, std::span<const EncodedJSValue> primitives)
+{
+    StringKeyCache& keys = instance.state->propertyCaches->stringKeys();
+    if (JSValue only = onlyPartWithCharacters(*instance.vm, primitives)) {
+        if (isIndexOfIntegerKey(only))
+            return keys.tryFindIntegerKey(only.asInt32());
+        if (only.isString())
+            return asString(only);
+    }
+    StringKeyCache::KeyByParts parts;
+    return parts.tryTake(keys.cageBase(), primitives) ? keys.tryFindKeyByParts(parts) : nullptr;
+}
+
+static JSString* tryConcatenateShortKey(VM& vm, Instance& instance, std::span<const EncodedJSValue> primitives)
+{
+    StringKeyCache& keys = instance.state->propertyCaches->stringKeys();
+    if (JSValue only = onlyPartWithCharacters(vm, primitives)) {
+        if (isIndexOfIntegerKey(only))
+            return stringOfIndex(vm, instance, only.asInt32());
+        if (only.isString())
+            return asString(only);
+    }
+    ShortKeyCharacters key;
+    if (!tryWriteShortKey(primitives, key))
+        return nullptr;
+    if (JSString* index = tryCreateIndexKey(vm, instance, key.span()))
+        return index;
+    JSString* string = keys.findOrAdd(vm, key.span());
+    StringKeyCache::KeyByParts parts;
+    if (parts.tryTake(keys.cageBase(), primitives))
+        keys.cacheKeyByParts(parts, string);
+    return string;
+}
+
+JSString* StringBuilderStorage::concatenate(JSGlobalObject* globalObject, Instance& instance, std::span<const EncodedJSValue> primitives, StringUse use)
+{
+    VM& vm = globalObject->vm();
+    if (use == StringUse::LikelyKey) {
+        if (JSString* key = tryConcatenateShortKey(vm, instance, primitives))
+            return key;
+    }
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    StringBuilderStorage* storage = acquire(instance);
+    AppendResult result = storage->append(globalObject, primitives);
+    EXCEPTION_ASSERT(!!scope.exception() == (result == AppendResult::Failed));
+    if (result == AppendResult::Failed) [[unlikely]] {
+        storage->release(instance);
+        return nullptr;
+    }
+    RELEASE_AND_RETURN(scope, storage->finish(globalObject, instance, use));
+}
+
+static ALWAYS_INLINE StringBuilderStorage::StringUse stringUse(uint32_t isLikelyKey)
+{
+    return isLikelyKey ? StringBuilderStorage::StringUse::LikelyKey : StringBuilderStorage::StringUse::Unknown;
+}
+
+static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finishStringBuilder(Instance* instance, JSCell* builder, uint32_t isLikelyKey)
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringBuilderFinish);
+    auto* storage = cellArgument<StringBuilderStorage>(builder, Entry::operationAOTStringBuilderFinish);
+    OPERATION_RETURN(scope, storage->finish(globalObject, *instance, stringUse(isLikelyKey)));
+}
+
+static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finishStringBuilderWithNewKey(Instance* instance, JSCell* builder, uint32_t hash)
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringBuilderFinish);
+    OPERATION_RETURN(scope, uncheckedDowncast<StringBuilderStorage>(builder)->finishWithNewKey(*instance, hash));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderFinish, JSCell*, (Instance* instance, JSCell* builder, uint32_t isLikelyKey))
+{
+    JSString* key;
+    unsigned hash;
+    if (std::optional<StringKeyCache::Lookup> lookup = uncheckedDowncast<StringBuilderStorage>(builder)->tryFinishWithCachedKey(*instance, key, hash)) [[likely]] {
+        switch (*lookup) {
+        case StringKeyCache::Lookup::Found:
+            return { key, nullptr };
+        case StringKeyCache::Lookup::Absent:
+            [[clang::musttail]] return finishStringBuilderWithNewKey(instance, builder, hash);
+        case StringKeyCache::Lookup::AbsentIndex:
+            [[clang::musttail]] return finishStringBuilder(instance, builder, true);
+        }
+    }
+    [[clang::musttail]] return finishStringBuilder(instance, builder, isLikelyKey);
+}
+
+static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finishStackStringBuilder(Instance* instance, uint8_t* builder, uint8_t* cursor, uint32_t isLikelyKey)
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStackStringBuilderFinish);
+    OPERATION_RETURN(scope, reinterpret_cast<StackStringBuilder*>(builder)->finish(globalObject, *instance, byteCast<Latin1Character>(cursor), stringUse(isLikelyKey)));
+}
+
+static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finishStackStringBuilderWithNewKey(Instance* instance, uint8_t* builder, uint8_t* cursor, uint32_t hash)
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStackStringBuilderFinish);
+    std::span<const Latin1Character> characters = reinterpret_cast<StackStringBuilder*>(builder)->charactersOnStack(byteCast<Latin1Character>(cursor));
+    OPERATION_RETURN(scope, instance->state->propertyCaches->stringKeys().makeKey(vm, characters, hash, { }));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTStackStringBuilderFinish, JSCell*, (Instance* instance, uint8_t* builder, uint8_t* cursor, uint32_t isLikelyKey))
+{
+    auto& stackBuilder = *reinterpret_cast<StackStringBuilder*>(builder);
+    PropertyCaches* caches = instance->state->propertyCaches.getIfCreated();
+    if (stackBuilder.isOnStack() && caches) [[likely]] {
+        const StringKeyCache& keys = caches->stringKeys();
+        std::span<const Latin1Character> characters = stackBuilder.charactersOnStack(byteCast<Latin1Character>(cursor));
+        if (characters.size() - 2 <= keys.maxCachedKeyLength() - 2) [[likely]] {
+            JSString* key;
+            unsigned hash;
+            switch (keys.findKeyForText(characters, key, hash)) {
+            case StringKeyCache::Lookup::Found:
+                return { key, nullptr };
+            case StringKeyCache::Lookup::Absent:
+                [[clang::musttail]] return finishStackStringBuilderWithNewKey(instance, builder, cursor, hash);
+            case StringKeyCache::Lookup::AbsentIndex:
+                [[clang::musttail]] return finishStackStringBuilder(instance, builder, cursor, true);
+            }
+        }
+    }
+    [[clang::musttail]] return finishStackStringBuilder(instance, builder, cursor, isLikelyKey);
+}
+
+template<uint32_t count>
+static ALWAYS_INLINE JSString* tryFindKeyByParts(StringKeyCache& keys, const EncodedJSValue* parts)
+{
+    StringKeyCache::KeyByParts taken;
+    if (!taken.tryTake<count>(keys.cageBase(), parts)) [[unlikely]]
+        taken.countAndKinds = 0;
+    else if (JSString* key = keys.tryFindKeyByParts(taken)) [[likely]]
+        return key;
+    keys.lastLookupByParts() = taken;
+    return nullptr;
+}
+
+static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concatenateByContents(Instance* instance, uint32_t count, const EncodedJSValue* parts, uint32_t isLikelyKey)
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTConcatenate);
+    OPERATION_RETURN(scope, StringBuilderStorage::concatenate(globalObject, *instance, unsafeMakeSpan(parts, count), stringUse(isLikelyKey)));
+}
+
+static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concatenateShortKey(Instance* instance, uint32_t count, const EncodedJSValue* parts, uint32_t isLikelyKey)
+{
+    ShortKeyCharacters characters;
+    StringKeyCache& keys = instance->state->propertyCaches->stringKeys();
+    if (tryWriteShortKeyInline(unsafeMakeSpan(parts, count), characters) && characters.length - 2 <= keys.maxCachedKeyLength() - 2) [[likely]] {
+        // A rope is made anew each time, so nobody asks for these parts again.
+        if (characters.hasRopePart)
+            keys.lastLookupByParts().countAndKinds = 0;
+        JSString* key;
+        unsigned hash;
+        switch (keys.findKeyForText(characters.span(), key, hash)) {
+        case StringKeyCache::Lookup::Found:
+            if (keys.lastLookupByParts().countAndKinds)
+                keys.cacheKeyByParts(keys.lastLookupByParts(), key);
+            return { key, nullptr };
+        case StringKeyCache::Lookup::Absent: {
+            AOT_OPERATION_BEGIN(instance, Entry::operationAOTConcatenate);
+            return { keys.makeKey(vm, characters.span(), hash, keys.lastLookupByParts()), nullptr };
+        }
+        case StringKeyCache::Lookup::AbsentIndex:
+            break;
+        }
+    }
+    [[clang::musttail]] return concatenateByContents(instance, count, parts, isLikelyKey);
+}
+
+static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concatenateOtherCount(Instance* instance, uint32_t count, const EncodedJSValue* parts, uint32_t isLikelyKey)
+{
+    if (count <= 2) {
+        if (JSString* key = StringBuilderStorage::tryFindKeyByParts(*instance, unsafeMakeSpan(parts, count)))
+            return { key, nullptr };
+        [[clang::musttail]] return concatenateByContents(instance, count, parts, isLikelyKey);
+    }
+    StringKeyCache& keys = instance->state->propertyCaches->stringKeys();
+    StringKeyCache::KeyByParts taken;
+    if (!taken.tryTake(keys.cageBase(), unsafeMakeSpan(parts, count)))
+        taken.countAndKinds = 0;
+    else if (JSString* key = keys.tryFindKeyByParts(taken))
+        return { key, nullptr };
+    keys.lastLookupByParts() = taken;
+    [[clang::musttail]] return concatenateShortKey(instance, count, parts, isLikelyKey);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTConcatenate, JSCell*, (Instance* instance, uint32_t count, const EncodedJSValue* parts, uint32_t isLikelyKey))
+{
+    PropertyCaches* caches = instance->state->propertyCaches.getIfCreated();
+    if (!isLikelyKey || !caches) [[unlikely]]
+        [[clang::musttail]] return concatenateByContents(instance, count, parts, isLikelyKey);
+    StringKeyCache& keys = caches->stringKeys();
+    JSString* key;
+    switch (count) {
+    case 2: {
+        EncodedJSValue empty = JSValue::encode(instance->vm->smallStrings.emptyString());
+        if (parts[0] == empty || parts[1] == empty) {
+            JSValue other = JSValue::decode(parts[parts[0] == empty]);
+            if (other.isString()) [[likely]]
+                return { asString(other), nullptr };
+            [[clang::musttail]] return concatenateOtherCount(instance, count, parts, isLikelyKey);
+        }
+        key = tryFindKeyByParts<2>(keys, parts);
+        break;
+    }
+    case 3:
+        key = tryFindKeyByParts<3>(keys, parts);
+        break;
+    case 4:
+        key = tryFindKeyByParts<4>(keys, parts);
+        break;
+    default:
+        [[clang::musttail]] return concatenateOtherCount(instance, count, parts, isLikelyKey);
+    }
+    if (key) [[likely]]
+        return { key, nullptr };
+    [[clang::musttail]] return concatenateShortKey(instance, count, parts, isLikelyKey);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringBuilderBegin, JSCell*, (Instance* instance))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringBuilderBegin);
+    OPERATION_RETURN(scope, StringBuilderStorage::acquire(*instance));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderAppend, void, (Instance* instance, JSCell* builder, uint32_t count, const EncodedJSValue* parts))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringBuilderAppend);
+    cellArgument<StringBuilderStorage>(builder, Entry::operationAOTStringBuilderAppend)->append(globalObject, unsafeMakeSpan(parts, count));
+    OPERATION_RETURN(scope);
+}
+
+static NEVER_INLINE OperationReturnType<void> JIT_OPERATION_ATTRIBUTES appendAnyString(Instance* instance, JSCell* builder, JSCell* string)
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringBuilderAppendString);
+    auto* storage = cellArgument<StringBuilderStorage>(builder, Entry::operationAOTStringBuilderAppendString);
+    storage->append(globalObject, cellArgument<JSString>(string, Entry::operationAOTStringBuilderAppendString));
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderAppendString, void, (Instance* instance, JSCell* builder, JSCell* string))
+{
+    if (uncheckedDowncast<StringBuilderStorage>(builder)->tryAppendShortSubstring(uncheckedDowncast<JSString>(string)))
+        return { nullptr };
+    [[clang::musttail]] return appendAnyString(instance, builder, string);
+}
+
+static void appendStringRange(JSGlobalObject* globalObject, StringBuilderStorage& storage, JSString* base, int32_t start, int32_t end, Entry entry)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (start < 0 || end < start || static_cast<unsigned>(end) > base->length()) [[unlikely]]
+        crashOnWrongOperand(entry);
+    unsigned length = end - start;
+    if (!length)
+        return;
+    if (length < storage.minLengthAppendedByReference()) {
+        auto view = base->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (view->is8Bit()) {
+            scope.release();
+            storage.append(globalObject, view->span8().subspan(start, length));
+            return;
+        }
+        // One wide character anywhere makes a whole source text wide. Most pieces of it are plain.
+        std::span<const char16_t> units = view->span16().subspan(start, length);
+        if (WTF::charactersAreAllLatin1(units)) {
+            scope.release();
+            storage.append(globalObject, units);
+            return;
+        }
+    }
+    JSString* range = jsSubstring(globalObject, base, start, length);
+    RETURN_IF_EXCEPTION(scope, void());
+    scope.release();
+    storage.append(globalObject, range);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderAppendStringRange, void, (Instance* instance, JSCell* builder, JSCell* string, int32_t start, int32_t end))
+{
+    constexpr Entry entry = Entry::operationAOTStringBuilderAppendStringRange;
+    AOT_OPERATION_BEGIN(instance, entry);
+    appendStringRange(globalObject, *cellArgument<StringBuilderStorage>(builder, entry), cellArgument<JSString>(string, entry), start, end, entry);
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderAppendJSON, size_t, (Instance* instance, JSCell* builder, EncodedJSValue value, EncodedJSValue encodedProperty))
+{
+    constexpr Entry entry = Entry::operationAOTStringBuilderAppendJSON;
+    AOT_OPERATION_BEGIN(instance, entry);
+    auto* storage = cellArgument<StringBuilderStorage>(builder, entry);
+    JSValue property = JSValue::decode(encodedProperty);
+    if (!property.isNumber() && !property.isString()) [[unlikely]]
+        crashOnWrongOperand(entry);
+    uint32_t checkpoint = storage->length();
+    bool isAppended = appendJSONTextOfProperty(globalObject, *storage, JSValue::decode(value), property);
+    if (!isAppended)
+        storage->rollBack(checkpoint);
+    OPERATION_RETURN(scope, isAppended);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderReserve, uint8_t*, (Instance* instance, JSCell* builder, uint64_t size))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringBuilderReserve);
+    auto* storage = cellArgument<StringBuilderStorage>(builder, Entry::operationAOTStringBuilderReserve);
+    OPERATION_RETURN(scope, byteCast<uint8_t>(storage->reserve(globalObject, size)));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringBuilderRollBack, void, (Instance*, JSCell* builder, uint32_t checkpoint))
+{
+    constexpr Entry entry = Entry::operationAOTStringBuilderRollBack;
+    auto* storage = cellArgument<StringBuilderStorage>(builder, entry);
+    if (checkpoint > storage->length()) [[unlikely]]
+        crashOnWrongOperand(entry);
+    storage->rollBack(checkpoint);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderToString, JSCell*, (Instance* instance, JSCell* builder, uint32_t isLikelyKey))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringBuilderToString);
+    auto* storage = cellArgument<StringBuilderStorage>(builder, Entry::operationAOTStringBuilderToString);
+    OPERATION_RETURN(scope, storage->toString(globalObject, *instance, stringUse(isLikelyKey)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTStackStringBuilderGrow, uint8_t*, (Instance* instance, uint8_t* builder, uint8_t* cursor))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStackStringBuilderGrow);
+    auto& stackBuilder = *reinterpret_cast<StackStringBuilder*>(builder);
+    if (!stackBuilder.moveToStorage(globalObject, *instance, byteCast<Latin1Character>(cursor))) [[unlikely]]
+        OPERATION_RETURN(scope, nullptr);
+    OPERATION_RETURN(scope, byteCast<uint8_t>(stackBuilder.didChangeStorage(globalObject)));
+}
+
+static NEVER_INLINE OperationReturnType<uint8_t*> JIT_OPERATION_ATTRIBUTES appendToStorageOfStackStringBuilder(Instance* instance, uint8_t* builder, uint8_t* cursor, EncodedJSValue primitive)
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStackStringBuilderAppend);
+    auto& stackBuilder = *reinterpret_cast<StackStringBuilder*>(builder);
+    StringBuilderStorage* storage = stackBuilder.moveToStorage(globalObject, *instance, byteCast<Latin1Character>(cursor));
+    if (!storage || storage->append(globalObject, JSValue::decode(primitive)) == StringBuilderStorage::AppendResult::Failed) [[unlikely]]
+        OPERATION_RETURN(scope, nullptr);
+    OPERATION_RETURN(scope, byteCast<uint8_t>(stackBuilder.didChangeStorage(globalObject)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTStackStringBuilderAppend, uint8_t*, (Instance* instance, uint8_t* builder, uint8_t* cursor, EncodedJSValue primitive))
+{
+    JSValue value = JSValue::decode(primitive);
+    auto& stackBuilder = *reinterpret_cast<StackStringBuilder*>(builder);
+    size_t room = byteCast<uint8_t>(stackBuilder.limit) - cursor;
+    if (value.isString()) {
+        JSString* string = asString(value);
+        size_t length = string->length();
+        if (length <= room && length < StackStringBuilder::minLengthAppendedByReference && string->is8Bit()) {
+            string->resolveToBuffer(std::span<Latin1Character> { byteCast<Latin1Character>(cursor), length });
+            return { cursor + length, nullptr };
+        }
+    } else if (value.isInt32() && static_cast<uint32_t>(value.asInt32()) < 100'000'000 && room >= sizeof(uint64_t))
+        return { cursor + writeUpToEightDigits(value.asInt32(), byteCast<Latin1Character>(cursor)), nullptr };
+    [[clang::musttail]] return appendToStorageOfStackStringBuilder(instance, builder, cursor, primitive);
+}
+
+static NEVER_INLINE OperationReturnType<uint8_t*> JIT_OPERATION_ATTRIBUTES appendStringRangeToStorageOfStackStringBuilder(Instance* instance, uint8_t* builder, uint8_t* cursor, JSCell* string, int32_t start, int32_t end)
+{
+    constexpr Entry entry = Entry::operationAOTStackStringBuilderAppendStringRange;
+    AOT_OPERATION_BEGIN(instance, entry);
+    auto& stackBuilder = *reinterpret_cast<StackStringBuilder*>(builder);
+    StringBuilderStorage* storage = stackBuilder.moveToStorage(globalObject, *instance, byteCast<Latin1Character>(cursor));
+    if (!storage) [[unlikely]]
+        OPERATION_RETURN(scope, nullptr);
+    appendStringRange(globalObject, *storage, cellArgument<JSString>(string, entry), start, end, entry);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    OPERATION_RETURN(scope, byteCast<uint8_t>(stackBuilder.didChangeStorage(globalObject)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTStackStringBuilderAppendStringRange, uint8_t*, (Instance* instance, uint8_t* builder, uint8_t* cursor, JSCell* string, int32_t start, int32_t end))
+{
+    const StringImpl* impl = uncheckedDowncast<JSString>(string)->tryGetValueImpl();
+    size_t room = byteCast<uint8_t>(reinterpret_cast<StackStringBuilder*>(builder)->limit) - cursor;
+    if (impl && !impl->is8Bit() && start >= 0 && start <= end && static_cast<unsigned>(end) <= impl->length() && static_cast<size_t>(end - start) <= std::min<size_t>(room, StackStringBuilder::minLengthAppendedByReference - 1)) {
+        size_t length = end - start;
+        std::span<const char16_t> units = impl->span16().subspan(start, length);
+        if (WTF::charactersAreAllLatin1(units)) {
+            StringImpl::copyCharacters(std::span<Latin1Character> { byteCast<Latin1Character>(cursor), length }, units);
+            return { cursor + length, nullptr };
+        }
+    }
+    [[clang::musttail]] return appendStringRangeToStorageOfStackStringBuilder(instance, builder, cursor, string, start, end);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStackStringBuilderDiscard, void, (Instance* instance, uint8_t* builder))
+{
+    auto& stackBuilder = *reinterpret_cast<StackStringBuilder*>(builder);
+    if (!stackBuilder.isOnStack())
+        stackBuilder.storage->release(*instance);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringBuilderDiscard, void, (Instance* instance, JSCell* builder))
+{
+    cellArgument<StringBuilderStorage>(builder, Entry::operationAOTStringBuilderDiscard)->release(*instance);
 }
 
 } } // namespace JSC::AOT

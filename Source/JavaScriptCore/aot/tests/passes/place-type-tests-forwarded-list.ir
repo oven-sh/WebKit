@@ -5,61 +5,50 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="unknownList" parameters=[{type=function}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: function, v1: anything, v2: anything):
     v3 = CallBuiltin v0, v1, v2 overload=FunctionPrototypeApply/0
     Return v3
-}
-# CHECK-LABEL: function f0 name="unknownList"
 # CHECK: [[test0]]:{{*}}= TypeTest v2 testedType=Array
 # CHECK: [[array0]]: Array
 # CHECK: v3: anything = CallBuiltin v0, v1, [[array0]] overload=FunctionPrototypeApply/0
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: anything = CallBuiltin v0, v1, {{*}} overload=FunctionPrototypeApply/0
-# RESOLVED-LABEL: function f0 name="unknownList"
 # RESOLVED: v3: anything = CallList v0, v1,
 # RESOLVED: frequency=Unlikely:
 # RESOLVED-NEXT: anything = CallBuiltin v0, v1, {{*}} overload=FunctionPrototypeApply/0
+}
 
 function f1 name="expectedArray" parameters=[{type=function}, {type=Array<number> flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: function, v1: anything ~ Array<number>):
     v2 = Undefined
     v3 = CallBuiltin v0, v2, v1 overload=FunctionPrototypeApply/0
     Return v3
-}
-# CHECK-LABEL: function f1 name="expectedArray"
 # CHECK: = TypeTest v1 testedType=Array
+}
 
 function f2 name="alwaysArray" parameters=[{type=function}, {type=Array}] results=[{type=anything}] {
-  b0(v0: function, v1: Array):
     v2 = Undefined
     v3 = CallBuiltin v0, v2, v1 overload=FunctionPrototypeApply/0
     Return v3
-}
-# CHECK-LABEL: function f2 name="alwaysArray"
 # CHECK-NOT: = TypeTest
+}
 
 function f3 name="neverArray" parameters=[{type=function}, {type=Arguments}] results=[{type=anything}] {
-  b0(v0: function, v1: Arguments):
     v2 = Undefined
     v3 = CallBuiltin v0, v2, v1 overload=FunctionPrototypeApply/0
     Return v3
-}
-# CHECK-LABEL: function f3 name="neverArray"
 # CHECK-NOT: = TypeTest
+}
 
 function f4 name="expectedArguments" parameters=[{type=function}, {type=Arguments flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: function, v1: anything ~ Arguments):
     v2 = Undefined
     v3 = CallBuiltin v0, v2, v1 overload=FunctionPrototypeApply/0
     Return v3
-}
-# CHECK-LABEL: function f4 name="expectedArguments"
 # CHECK-NOT: = TypeTest
+}
 
 function f5 name="noList" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = CallBuiltin v0, v1, v1 overload=FunctionPrototypeCall/0
     Return v2
-}
-# CHECK-LABEL: function f5 name="noList"
 # CHECK-NOT: = TypeTest
+}

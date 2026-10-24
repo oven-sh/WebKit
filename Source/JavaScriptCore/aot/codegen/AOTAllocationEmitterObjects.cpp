@@ -8,12 +8,10 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBarrierEmitter.h"
 #include "AOTConstantEmitter.h"
 #include "AOTRegExpFlags.h"
 #include "AOTStaticsEmitter.h"
 #include "AOTStubsRegExp.h"
-#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

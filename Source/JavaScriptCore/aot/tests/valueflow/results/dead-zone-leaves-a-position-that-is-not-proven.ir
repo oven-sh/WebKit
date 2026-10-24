@@ -12,7 +12,6 @@ entry module=m0
 variable g0 name="early" module=m0 declared={type=number|absent flags=[IsExpected]} initialization=Uninitialized
 variable g1 name="late" module=m0 declared={type=number|absent flags=[IsExpected]} initialization=Uninitialized
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     PutModuleVariable v1 variable=g0
@@ -22,7 +21,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v4
 }
 function f1 name="reader" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = CheckInitialized v0 name="early"
     v2 = GetModuleVariable variable=g1

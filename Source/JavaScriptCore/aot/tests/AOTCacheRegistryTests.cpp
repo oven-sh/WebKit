@@ -232,44 +232,6 @@ static void testSpanIsClearedEveryTime()
     AOT_TEST_CHECK(!bytes[byteIndexInSecondRegion]);
 }
 
-static void testSpanWithSetIsClearedWhereWritten()
-{
-    TestVM test;
-    CacheRegistry registry;
-    TestBytes bytes { };
-    RememberedSlotSet writtenRegions(bytes, byteRegionShift);
-    registry.addClearedEachCollection("bytes"_s, bytes, writtenRegions);
-
-    bytes[byteIndexInFirstRegion] = 1;
-    for (CollectionScope scope : { CollectionScope::Eden, CollectionScope::Full }) {
-        bytes[byteIndexInSecondRegion] = 1;
-        writtenRegions.record(&bytes[byteIndexInSecondRegion]);
-        registry.finalize(test.vm(), scope, CacheValidation::Off);
-        AOT_TEST_CHECK(!bytes[byteIndexInSecondRegion]);
-        AOT_TEST_CHECK(bytes[byteIndexInFirstRegion] == 1);
-    }
-}
-
-static void testSpanWithSetIsNotClearedWithoutRecord()
-{
-    TestVM test;
-    CacheRegistry registry;
-    TestBytes bytes { };
-    RememberedSlotSet writtenRegions(bytes, byteRegionShift);
-    registry.addClearedEachCollection("bytes"_s, bytes, writtenRegions);
-
-    writtenRegions.record(&bytes[byteIndexInSecondRegion]);
-    registry.finalize(test.vm(), CollectionScope::Eden, CacheValidation::Off);
-    AOT_TEST_CHECK(!writtenRegions.hasWrittenRegions());
-
-    bytes[byteIndexInSecondRegion] = 1;
-    registry.finalize(test.vm(), CollectionScope::Eden, CacheValidation::Off);
-    AOT_TEST_CHECK(bytes[byteIndexInSecondRegion] == 1);
-
-    registry.finalize(test.vm(), CollectionScope::Full, CacheValidation::Off);
-    AOT_TEST_CHECK(bytes[byteIndexInSecondRegion] == 1);
-}
-
 static void testWeakOwnerIsAskedAtEveryCollection()
 {
     TestVM test;
@@ -531,18 +493,12 @@ static void testValidationAcceptsRecordedWrites()
     TestVM test;
     CacheRegistry registry;
     TableOfDeadEntries table;
-    TestBytes bytes { };
-    RememberedSlotSet writtenRegions(bytes, byteRegionShift);
     registry.add(CacheKind::WeakByKey, "table"_s, table);
-    registry.addClearedEachCollection("bytes"_s, bytes, writtenRegions);
 
     for (CollectionScope scope : { CollectionScope::Eden, CollectionScope::Eden, CollectionScope::Full }) {
         table.add(1);
-        bytes[byteIndexInSecondRegion] = 1;
-        writtenRegions.record(&bytes[byteIndexInSecondRegion]);
         registry.finalize(test.vm(), scope, CacheValidation::On);
         AOT_TEST_CHECK(!table.firstSlotOfRegion(1));
-        AOT_TEST_CHECK(!bytes[byteIndexInSecondRegion]);
     }
 }
 
@@ -594,30 +550,11 @@ static void testValidationCrashesOnUnrecordedWeakEntry()
     registry.finalize(test.vm(), CollectionScope::Eden, CacheValidation::On);
 }
 
-static void testValidationCrashesOnUnrecordedClearedByte()
-{
-    if (!isUnrecordedWriteRequested()) {
-        checkUnrecordedWriteCrashes("validationCrashesOnUnrecordedClearedByte"_s, "bytes"_s);
-        return;
-    }
-
-    TestVM test;
-    CacheRegistry registry;
-    TestBytes bytes { };
-    RememberedSlotSet writtenRegions(bytes, byteRegionShift);
-    registry.addClearedEachCollection("bytes"_s, bytes, writtenRegions);
-
-    bytes[byteIndexInSecondRegion] = 1;
-    registry.finalize(test.vm(), CollectionScope::Eden, CacheValidation::On);
-}
-
 std::span<const NativeTest> cacheRegistryTests()
 {
     static constexpr NativeTest tests[] = {
         { "callsInRegistrationOrder"_s, testCallsInRegistrationOrder },
         { "spanIsClearedEveryTime"_s, testSpanIsClearedEveryTime },
-        { "spanWithSetIsClearedWhereWritten"_s, testSpanWithSetIsClearedWhereWritten },
-        { "spanWithSetIsNotClearedWithoutRecord"_s, testSpanWithSetIsNotClearedWithoutRecord },
         { "weakOwnerIsAskedAtEveryCollection"_s, testWeakOwnerIsAskedAtEveryCollection },
         { "weakOwnerSweepsNoRegionInEdenUntilRecordAll"_s, testWeakOwnerSweepsNoRegionInEdenUntilRecordAll },
         { "weakOwnerSweepsScannedRegionsInFull"_s, testWeakOwnerSweepsScannedRegionsInFull },
@@ -634,7 +571,6 @@ std::span<const NativeTest> cacheRegistryTests()
         { "heapAnalysisReachesOwnersThatAskForIt"_s, testHeapAnalysisReachesOwnersThatAskForIt },
         { "validationAcceptsRecordedWrites"_s, testValidationAcceptsRecordedWrites },
         { "validationCrashesOnUnrecordedWeakEntry"_s, testValidationCrashesOnUnrecordedWeakEntry },
-        { "validationCrashesOnUnrecordedClearedByte"_s, testValidationCrashesOnUnrecordedClearedByte },
     };
     return tests;
 }

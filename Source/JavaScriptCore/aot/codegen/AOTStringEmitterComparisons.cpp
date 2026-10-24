@@ -28,7 +28,7 @@ static bool fitsInRegister(const String& text)
     return text.is8Bit() && text.length() >= descriptor.minCount && text.length() <= descriptor.maxCount;
 }
 
-static LValue loadBytes(Output& out, TypedPointer pointer, unsigned width)
+LValue loadBytes(Output& out, unsigned width, TypedPointer pointer)
 {
     switch (width) {
     case 8:
@@ -136,11 +136,6 @@ void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, Compa
     }
 
     build().statistics().count(StatisticID::StringLiteralsComparedInPlace);
-    auto continueIf = [&](Condition condition, B3::FrequentedBlock otherwise) {
-        LBasicBlock continuation = newBlock();
-        m_out.branch(condition.value(), normalEdge(continuation), otherwise);
-        m_out.appendTo(continuation);
-    };
     CellPointer string(subject);
     if (operand == ComparedOperand::Value) {
         Boxed boxed(subject);
@@ -155,13 +150,17 @@ void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, Compa
     }
 
     // A rope of the same length and a 16-bit string without a unit above 0xFF may equal the text: the stub answers for them without flattening.
+    // What nobody has read yet is read where it is asked for, so that it becomes the memory operand of the compare that uses it.
     LBasicBlock slow = newBlock();
-    FlatImpl flat = flatImplOf(string, subjectIsFlat);
+    auto openedString = subjectIsFlat ? m_openedStrings.find(string.value()) : m_openedStrings.end();
+    const CharacterSource* source = openedString != m_openedStrings.end() ? &openedString->value.source : nullptr;
+    Pointer impl = source ? openedString->value.impl : subjectIsFlat ? implOfFlatString(string) : loadField<Pointer>(string, m_heaps.JSString_value);
     if (!subjectIsFlat)
-        continueIf(hasNoBits(flat.impl, JSString::isRopeInPointer), unlikelyEdge(slow));
-    continueIf(equal(lengthIn(flat), word32(text.length())), targets.notTaken);
-    continueIf(is8BitIn(flat), unlikelyEdge(slow));
-    branchOnBytesAt(charactersIn(flat), asBytes(text.span8()), m_heaps.characters8.atAnyIndex(), flat.owner, targets);
+        continueIf(hasNoBits(impl, JSString::isRopeInPointer), unlikelyEdge(slow));
+    continueIf(equal(source ? source->length : loadField<Word32>(impl, m_heaps.StringImpl_length), word32(text.length())), targets.notTaken);
+    continueIf(hasBits(source ? source->implFlags : flagsInImpl(impl, subjectIsFlat), StringImpl::flagIs8Bit()), unlikelyEdge(slow));
+    Pointer characters = source ? source->characters : loadField<Pointer>(impl, m_heaps.StringImpl_data);
+    branchOnBytesAt(characters, asBytes(text.span8()), m_heaps.characters8.atAnyIndex(), string, targets);
 
     m_out.appendTo(slow);
     branchOnEqualsLiteralByStub(context, ComparedOperand::String, string.value(), literal, targets);
@@ -178,13 +177,6 @@ Condition StringEmitter::equalsLiteral(const OperationContext& context, Compared
         });
     }
     return Condition(m_out.castToInt32(callStub(context, AOT::equalsLiteral(operand), { subject }, { .immediate = literal.index() }).first));
-}
-
-Condition StringEmitter::looselyEqualsLiteral(const OperationContext& context, Boxed value, StringID literal)
-{
-    // The stub answers false for every number, boolean and BigInt without converting the text.
-    RELEASE_ASSERT(std::isnan(jsToNumber(textOf(literal))));
-    return Condition(m_out.castToInt32(callStub(context, looseEqualsLiteral(), { value.value() }, { .immediate = literal.index() }).first));
 }
 
 void StringEmitter::generateEqualsLiteral(const ValueContext& value, ComparedOperand operand, LValue subject, bool subjectIsFlat, bool everyCellIsString)
@@ -211,7 +203,10 @@ void StringEmitter::generateValueEqualsLiteral(const ValueContext& value)
 
 void StringEmitter::generateValueLooselyEqualsLiteral(const ValueContext& value)
 {
-    defineTest(value, looselyEqualsLiteral(value, in<Boxed>(value->valueOperand()), value->literal()));
+    // The stub answers false for every number, boolean and BigInt without converting the text.
+    RELEASE_ASSERT(std::isnan(jsToNumber(textOf(value->literal()))));
+    Boxed subject = in<Boxed>(value->valueOperand());
+    defineTest(value, Condition(m_out.castToInt32(callStub(value, looseEqualsLiteral(), { subject.value() }, { .immediate = value->literal().index() }).first)));
 }
 
 bool StringEmitter::canCompareInline(StringID literal) const
@@ -243,7 +238,7 @@ void StringEmitter::branchOnBytesAt(Pointer address, std::span<const uint8_t> by
         uint64_t expected = 0;
         for (unsigned i = 0; i < piece.width; ++i)
             expected |= static_cast<uint64_t>(bytes[piece.offset + i]) << (8 * i);
-        LValue loaded = loadBytes(m_out, m_out.address(heap, address.value(), piece.offset), piece.width);
+        LValue loaded = loadBytes(m_out, piece.width, m_out.address(heap, address.value(), piece.offset));
         loaded->as<B3::MemoryValue>()->setReadsMutability(B3::Mutability::Immutable);
         Condition isSame = piece.width == 8 ? equal(Integer(loaded), integer(static_cast<int64_t>(expected))) : equal(Word32(loaded), word32(static_cast<int32_t>(expected)));
         if (!--remainingPieces) {
@@ -251,9 +246,7 @@ void StringEmitter::branchOnBytesAt(Pointer address, std::span<const uint8_t> by
             branch(isSame, targets);
             return;
         }
-        LBasicBlock next = newBlock();
-        m_out.branch(isSame.value(), normalEdge(next), targets.notTaken);
-        m_out.appendTo(next);
+        continueIf(isSame, targets.notTaken);
     }
 }
 
@@ -313,21 +306,9 @@ void StringEmitter::generateEndsLiteral(const ValueContext& value, LiteralEnd en
     CharacterView view = viewOf(value, string);
     Word32 length = word32(textOf(literal).length());
     defineTestByBranching(value, [&](BranchTargets targets) {
-        LBasicBlock isLongEnough = newBlock();
-        m_out.branch(aboveOrEqual(view.length, length).value(), normalEdge(isLongEnough), targets.notTaken);
-        m_out.appendTo(isLongEnough);
+        continueIf(aboveOrEqual(view.length, length), targets.notTaken);
         branchOnTextAt(view, isAtStart ? word32(0) : sub(view.length, length), literal, targets);
     });
-}
-
-void StringEmitter::generateStringStartsWithLiteral(const ValueContext& value)
-{
-    generateEndsLiteral(value, LiteralEnd::Start);
-}
-
-void StringEmitter::generateStringEndsWithLiteral(const ValueContext& value)
-{
-    generateEndsLiteral(value, LiteralEnd::End);
 }
 
 Word32 StringEmitter::findCodeUnit(const CharacterView& subject, Word32 codeUnit, Word32 position, SearchDirection direction)
@@ -336,7 +317,9 @@ Word32 StringEmitter::findCodeUnit(const CharacterView& subject, Word32 codeUnit
     auto search = [&](RuntimeOperation leaf) {
         return low32(callLeaf<Integer>(leaf, { subject.characters, subject.length, codeUnit, position }));
     };
-    Word32 found = selectByWidth<Word32>(subject.is8Bit, [&] {
+    Word32 found = selectByWidth<Word32>(subject.is8Bit, [&](bool is8Bit) {
+        if (!is8Bit)
+            return search(isForward ? RuntimeOperation::StringFindCharacter16 : RuntimeOperation::StringReverseFindCharacter16);
         if (!isForward)
             return search(RuntimeOperation::StringReverseFindCharacter8);
         if (codeUnit.value()->hasInt32() && static_cast<uint32_t>(codeUnit.value()->asInt32()) > 0xFF)
@@ -344,8 +327,6 @@ Word32 StringEmitter::findCodeUnit(const CharacterView& subject, Word32 codeUnit
         // The stub walks a short string itself and hands a long one to the leaf. Like the leaf it reads 32 bits of all but the first operand.
         LValue operands[] = { subject.characters.value(), subject.length.value(), codeUnit.value(), position.value() };
         return low32(Integer(emitter<RuntimeCallEmitter>().callStubWithoutSite(findCharacter8(), operands).first));
-    }, [&] {
-        return search(isForward ? RuntimeOperation::StringFindCharacter16 : RuntimeOperation::StringReverseFindCharacter16);
     });
     ensureStillAliveHere(subject.owner);
     return found;
@@ -354,13 +335,10 @@ Word32 StringEmitter::findCodeUnit(const CharacterView& subject, Word32 codeUnit
 Word32 StringEmitter::find(const CharacterView& subject, const CharacterView& sought, Word32 position, SearchDirection direction)
 {
     bool isForward = direction == SearchDirection::Forward;
-    auto search = [&](RuntimeOperation leaf) {
-        return low32(callLeaf<Integer>(leaf, { subject.characters, subject.length, sought.characters, sought.length, position }));
-    };
-    Word32 found = selectByWidth<Word32>(subject.is8Bit, [&] {
-        return search(isForward ? RuntimeOperation::StringFind8 : RuntimeOperation::StringReverseFind8);
-    }, [&] {
-        return search(isForward ? RuntimeOperation::StringFind16 : RuntimeOperation::StringReverseFind16);
+    Word32 found = selectByWidth<Word32>(subject.is8Bit, [&](bool is8Bit) {
+        RuntimeOperation forward = is8Bit ? RuntimeOperation::StringFind8 : RuntimeOperation::StringFind16;
+        RuntimeOperation backward = is8Bit ? RuntimeOperation::StringReverseFind8 : RuntimeOperation::StringReverseFind16;
+        return low32(callLeaf<Integer>(isForward ? forward : backward, { subject.characters, subject.length, sought.characters, sought.length, position }));
     });
     ensureStillAliveHere(subject.owner);
     ensureStillAliveHere(sought.owner);
@@ -378,9 +356,7 @@ void StringEmitter::generateFindLiteral(const ValueContext& value, SearchDirecti
         CharacterView view = viewOf(value, string);
         Word32 length = word32(textOf(value->literal()).length());
         Condition isAtStart = asBoolean([&](BranchTargets targets) {
-            LBasicBlock isLongEnough = newBlock();
-            m_out.branch(aboveOrEqual(view.length, length).value(), normalEdge(isLongEnough), targets.notTaken);
-            m_out.appendTo(isLongEnough);
+            continueIf(aboveOrEqual(view.length, length), targets.notTaken);
             branchOnTextAt(view, word32(0), value->literal(), targets);
         });
         define(value, select(isAtStart, word32(0), word32(-1)));
@@ -402,22 +378,14 @@ void StringEmitter::generateFindLiteral(const ValueContext& value, SearchDirecti
         return;
     }
 
-    Word32 found = selectByWidth<Word32>(view.is8Bit, [&] {
+    Word32 found = selectByWidth<Word32>(view.is8Bit, [&](bool is8Bit) {
+        if (!is8Bit)
+            return findInCell();
         RuntimeOperation operation = isForward ? RuntimeOperation::StringFindLiteral8 : RuntimeOperation::StringReverseFindLiteral8;
         return low32(callWithoutSite<Integer>(operation, { view.characters, view.length, literal, position }));
-    }, findInCell);
+    });
     ensureStillAliveHere(view.owner);
     define(value, found);
-}
-
-void StringEmitter::generateStringIndexOfLiteral(const ValueContext& value)
-{
-    generateFindLiteral(value, SearchDirection::Forward);
-}
-
-void StringEmitter::generateStringLastIndexOfLiteral(const ValueContext& value)
-{
-    generateFindLiteral(value, SearchDirection::Backward);
 }
 
 void StringEmitter::generateStringIndexOfCharacter(const ValueContext& value)

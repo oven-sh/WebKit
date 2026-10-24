@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="valueInFastCode" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     LoopHint
@@ -22,7 +21,6 @@ function f0 name="valueInFastCode" parameters=[{type=anything}] results=[{type=u
 # CHECK-NOT: stub StringEqualsLiteral
 
 function f1 name="valueInBalancedCode" parameters=[{type=anything}] results=[{type=boolean}] {
-  b0(v0: anything):
     v1 = ValueEqualsLiteral v0 literal=""
     Return v1
 }
@@ -33,7 +31,6 @@ function f1 name="valueInBalancedCode" parameters=[{type=anything}] results=[{ty
 # CHECK-NOT: stub ValueEqualsLiteral x
 
 function f2 name="stringInBalancedCode" parameters=[{type=string}] results=[{type=boolean}] {
-  b0(v0: string):
     v1 = StringEqualsLiteral v0 literal=""
     Return v1
 }

@@ -15,13 +15,7 @@ class OwnPropertyBuiltinEmitter final : public BuiltinFamilyEmitter {
 public:
     explicit OwnPropertyBuiltinEmitter(CodeGenerator&);
 
-    void generateOwnPropertyKeys(const InlineCall&);
-    void generateObjectGetOwnPropertyDescriptor(const InlineCall&);
-    void generateObjectHasOwn(const InlineCall&);
-    void generateObjectPropertyIsEnumerable(const InlineCall&);
-    void generateOwnPropertyDescriptorFields(const InlineCall&);
-    void generateObjectValues(const InlineCall&);
-    void generateObjectEntries(const InlineCall&);
+    FOR_EACH_AOT_INLINE_BUILTIN_IN_OWN_PROPERTY_BUILTIN(AOT_DECLARE_INLINE_BUILTIN_GENERATOR)
 
 private:
     Boxed firstArgumentOrUndefined(const InlineCall&);

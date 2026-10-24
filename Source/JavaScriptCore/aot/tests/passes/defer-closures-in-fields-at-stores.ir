@@ -55,7 +55,6 @@ layout L20 name="MayLeaveItsSlot" fields=[{key="run" declared={type=number|funct
 # CHECK-NEXT: layout L20 {{*}}flow={location={deferral=CapturesNothing deferredFunction=f10}}}]
 
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L0 fields=[0]
     PutModuleVariable v1 variable=g0
@@ -80,7 +79,6 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
 # CHECK: = NewObject layout=L10
 
 function f1 name="storesIntoWhatItIsGiven" module=m0 parameters=[{type=L0}, {type=L1}, {type=L2}] results=[{type=anything}] {
-  b0(v0: L0, v1: L1, v2: L2):
     v3 = NewClosure function=f10
     v4 = NewClosure v0 function=f9
     v5 = Call v0
@@ -119,7 +117,6 @@ function f1 name="storesIntoWhatItIsGiven" module=m0 parameters=[{type=L0}, {typ
 # CHECK-NEXT: PutSlot v2, -, v16 key="run" receivers=[L2] level=Proven
 
 function f2 name="storesThatMakeTheirClosures" module=m0 parameters=[{type=L3}, {type=L3}, {type=L4}, {type=L6}, {type=L7}, {type=L12}, {type=function}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: L3, v1: L3, v2: L4, v3: L6, v4: L7, v5: L12, v6: function, v7: boolean):
     v8 = NewClosure v0 function=f9
     PutSlotOrAdd v0, -, v8 key="run" receivers=[L3] level=Proven
     v10 = NewClosure v0 function=f9
@@ -162,7 +159,6 @@ function f2 name="storesThatMakeTheirClosures" module=m0 parameters=[{type=L3}, 
 # CHECK-NEXT: = NewObject -, v6 layout=L12 fields=[0]
 
 function f3 name="twoFunctions" module=m0 parameters=[{type=L5}] results=[{type=anything}] {
-  b0(v0: L5):
     v1 = NewClosure function=f10
     PutSlotOrAdd v0, -, v1 key="run" receivers=[L5] level=Proven
     v3 = NewClosure function=f12
@@ -180,7 +176,6 @@ function f3 name="twoFunctions" module=m0 parameters=[{type=L5}] results=[{type=
 # CHECK-NEXT: PutSlot
 
 function f4 name="fillsHolders" module=m0 parameters=[{type=L9}, {type=L10}] results=[{type=anything}] {
-  b0(v0: L9, v1: L10):
     v2 = NewClosure v0 function=f9
     PutSlotOrAdd v0, -, v2 key="run" receivers=[L9] level=Proven
     v4 = NewClosure v1 function=f9
@@ -189,7 +184,6 @@ function f4 name="fillsHolders" module=m0 parameters=[{type=L9}, {type=L10}] res
 }
 
 function f5 name="reads" module=m0 parameters=[{type=L9}, {type=L10}, {type=L9}, {type=L3}] results=[{type=anything}] {
-  b0(v0: L9, v1: L10, v2: L9, v3: L3):
 # REPEAT: i = 0..2; a = 9 10 9
     v%(i*5+4) = IsSlotFilled v%(i) key="run" receivers=[L%(a)] level=Proven
     Branch v%(i*5+4) -> taken b%(i+1)(| 0), notTaken b5()
@@ -223,7 +217,6 @@ function f5 name="reads" module=m0 parameters=[{type=L9}, {type=L10}, {type=L9},
 # CHECK-NEXT: = GetCapture [[other]] function=f9
 
 function f6 name="UnderPrototype" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L11 {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L11
     v2 = NewObject v1 layout=L11
     v3 = AssumeType v2 castType=L11
@@ -236,7 +229,6 @@ function f6 name="UnderPrototype" module=m0 kind=BaseConstructor flags=[HasNewTa
 # CHECK-NEXT: = NewObject v1, [[run]] layout=L11 fields=[0]
 
 function f7 name="closureOfAnotherBlock" module=m0 parameters=[{type=L13}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: L13, v1: boolean):
     v2 = NewClosure function=f10
     v3 = NewClosure function=f10
     v4 = NewClosure function=f14
@@ -267,7 +259,6 @@ function f7 name="closureOfAnotherBlock" module=m0 parameters=[{type=L13}, {type
 # CHECK: PutSlotOrAdd v0, -, v3 key="inLoop"
 
 function f8 name="twoReceivers" module=m0 parameters=[{type=L14|L15}] results=[{type=anything}] {
-  b0(v0: L14|L15):
     v1 = NewClosure function=f10
     PutSlotOrAdd v0, -, v1 key="run" receivers=[L14, L15] level=Proven
     Return
@@ -276,11 +267,9 @@ function f8 name="twoReceivers" module=m0 parameters=[{type=L14|L15}] results=[{
 # CHECK-NOT: isMadeOnDemand
 
 function f9 name="overObject" module=m0 kind=Arrow captures=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     Return
 }
 function f10 name="overNothing" module=m0 kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f11 name="overEnvironment" module=m0 kind=Arrow captures=[{type=env L8}] results=[{type=anything}] {
@@ -288,11 +277,9 @@ function f11 name="overEnvironment" module=m0 kind=Arrow captures=[{type=env L8}
     Return
 }
 function f12 name="alsoOverNothing" module=m0 kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f13 name="otherValues" module=m0 parameters=[{type=L16}, {type=L17}, {type=L18}, {type=L19}, {type=L20}] results=[{type=anything}] {
-  b0(v0: L16, v1: L17, v2: L18, v3: L19, v4: L20):
     v5 = NewClosure function=f10
     PutSlotOrAdd v0, -, v5 key="run" receivers=[L16] level=Proven
     v7 = Undefined
@@ -324,6 +311,5 @@ function f13 name="otherValues" module=m0 parameters=[{type=L16}, {type=L17}, {t
 # CHECK: v17: f10 = NewClosure function=f10 [isMadeOnDemand]
 # CHECK-NEXT: PutSlotOrAdd v4, -, v17 key="run"
 function f14 name="plainFunction" module=m0 results=[{type=anything}] {
-  b0():
     Return
 }

@@ -15,7 +15,6 @@ entry module=m0
 variable g0 name="input" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = CallDirect v0 function=f1
     v2 = CallDirect v0 function=f1
@@ -25,7 +24,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="firstCaller" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 1..70
     v%(i) = ToBoolean v0
 # END REPEAT
@@ -34,7 +32,6 @@ function f1 name="firstCaller" parameters=[{type=anything}] results=[{type=anyth
 }
 
 function f2 name="secondCaller" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 1..70
     v%(i) = ToBoolean v0
 # END REPEAT
@@ -43,7 +40,6 @@ function f2 name="secondCaller" parameters=[{type=anything}] results=[{type=anyt
 }
 
 function f3 name="entrance" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 1..71
     v%(i) = ToBoolean v0
 # END REPEAT
@@ -57,7 +53,6 @@ function f3 name="entrance" parameters=[{type=anything}] results=[{type=anything
 }
 
 function f4 name="body" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 1..70
     v%(i) = ToBoolean v0
 # END REPEAT
@@ -66,7 +61,6 @@ function f4 name="body" parameters=[{type=anything}] results=[{type=anything}] {
 }
 
 function f5 name="calledOnUnlikelyPath" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 1..70
     v%(i) = ToBoolean v0
 # END REPEAT
@@ -74,7 +68,6 @@ function f5 name="calledOnUnlikelyPath" parameters=[{type=anything}] results=[{t
 }
 
 function f6 name="calledEveryTimeByTheBody" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
 # REPEAT: i = 1..70
     v%(i) = ToBoolean v0
 # END REPEAT

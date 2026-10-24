@@ -16,18 +16,10 @@
 #include "AOTThreads.h"
 #include "AOTTypeRelations.h"
 #include "AOTValueSets.h"
-#include "AOTVector.h"
 #include <algorithm>
-#include <wtf/BitVector.h>
-#include <wtf/HashMap.h>
 #include <wtf/MonotonicTime.h>
 
 namespace JSC { namespace AOT { namespace Typed {
-
-ValueFlowObjectID ValueFlowUniverse::objectOf(BuiltinID builtin) const
-{
-    return ValueFlowObjectID(m_firstBuiltin + m_builtins->canonicalID(builtin).index());
-}
 
 ValueFlowObjectID ValueFlowUniverse::objectOf(BuiltinID builtin, ModuleID module) const
 {
@@ -47,29 +39,12 @@ void ValueFlowUniverse::appendObjectsOf(BuiltinID builtin, Vector<ValueFlowObjec
         objects.append(ValueFlowObjectID(m_firstModuleBuiltin + static_cast<uint32_t>(first - m_moduleBuiltins.begin())));
 }
 
-ValueFlowObjectID ValueFlowUniverse::resultOf(BuiltinID builtin, uint32_t ordinal) const
-{
-    return ValueFlowObjectID(m_firstResultOfBuiltin + 2 * m_builtins->canonicalID(builtin).index() + ordinal);
-}
-
-ValueFlowObjectID ValueFlowUniverse::hostObject(uint32_t indexOfRecord) const
-{
-    return ValueFlowObjectID(m_firstResultOfBuiltin + 2 * m_builtins->builtinCount() + indexOfRecord);
-}
-
-std::span<const ValueFlowSite> ValueFlowUniverse::sitesOf(FunctionID function) const
-{
-    uint32_t first = m_firstSiteOfFunction[function.index()];
-    return m_sites.subspan(first, m_firstSiteOfFunction[function.index() + 1] - first);
-}
-
 ValueFlowObjectID ValueFlowUniverse::siteObject(const ValueFlowStatement& statement, uint32_t ordinal) const
 {
     if (statement.firstSite == UINT32_MAX)
         return { };
     if (m_sites[statement.firstSite].ordinal == ordinal)
         return m_objectOfSite[statement.firstSite];
-    // A table of data has a site for each of its objects and arrays, and each of them is asked for.
     auto keyOf = [](const ValueFlowSite& site) {
         return std::pair { site.value, site.ordinal };
     };
@@ -94,14 +69,15 @@ bool ValueFlowUniverse::isSiteObjectOf(const ValueFlowStatement& statement, Valu
 
 ValueFlowObjectID ValueFlowUniverse::siteObject(FunctionID function, ValueID value, uint32_t ordinal) const
 {
-    std::span<const ValueFlowSite> sites = sitesOf(function);
+    uint32_t first = m_firstSiteOfFunction[function.index()];
+    std::span<const ValueFlowSite> sites = m_sites.subspan(first, m_firstSiteOfFunction[function.index() + 1] - first);
     auto keyOf = [](const ValueFlowSite& site) {
         return std::pair { site.value, site.ordinal };
     };
     auto found = std::ranges::lower_bound(sites, std::pair { value, ordinal }, { }, keyOf);
     if (found == sites.end() || keyOf(*found) != std::pair { value, ordinal })
         return { };
-    return m_objectOfSite[m_firstSiteOfFunction[function.index()] + static_cast<uint32_t>(found - sites.begin())];
+    return m_objectOfSite[first + static_cast<uint32_t>(found - sites.begin())];
 }
 
 ValueFlowObjectID ValueFlowUniverse::objectNamed(FunctionID body, const ValueFlowObjectName& name) const
@@ -202,11 +178,6 @@ FunctionID ValueFlowUniverse::functionOf(ValueFlowObjectID object) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-FunctionID ValueFlowUniverse::closureFunction(ValueFlowObjectID object) const
-{
-    return object.index() >= m_firstClosure && object.index() < m_firstCoroutineResult ? FunctionID(object.index() - m_firstClosure) : FunctionID();
-}
-
 BuiltinID ValueFlowUniverse::builtinOf(ValueFlowObjectID object) const
 {
     switch (kindOf(object)) {
@@ -263,18 +234,6 @@ ModuleID ValueFlowUniverse::moduleOf(ValueFlowObjectID object) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-PropertyKeyID ValueFlowUniverse::keyOf(ValueFlowObjectID object) const
-{
-    return object.index() >= m_firstKey ? PropertyKeyID(object.index() - m_firstKey) : PropertyKeyID();
-}
-
-const ValueFlowSite* ValueFlowUniverse::siteOf(ValueFlowObjectID object) const
-{
-    if (object.index() < m_firstSite || object.index() >= m_firstKey)
-        return nullptr;
-    return &m_sites[m_siteOfObject[object.index() - m_firstSite]];
-}
-
 static bool layoutIsDefinedByClass(const Layout& layout)
 {
     return layout.kind == LayoutKind::Instance && layout.constructor && !layout.has(LayoutFlags::IsConstructorFunction);
@@ -311,7 +270,6 @@ ValueFlowObjectID ValueFlowUniverse::objectAllocatedUnder(const Program& program
     LayoutID requested = classLayoutOf(prototype);
     if (!requested || !layoutIsDefinedByClass(program.at(requested)))
         return site;
-    // Under the prototype object of its own class the allocation stays as it is, with a layout that may have been derived from that of the class.
     LayoutID allocated = siteOf(site)->layout;
     LayoutID ownClass = declaredLayoutOf(program, allocated);
     if (requested == ownClass)
@@ -323,11 +281,6 @@ ValueFlowObjectID ValueFlowUniverse::objectAllocatedUnder(const Program& program
             return instanceOf(requested);
     }
     return site;
-}
-
-LayoutID ValueFlowUniverse::classLayoutOf(ValueFlowObjectID object) const
-{
-    return kindOf(object) == ValueFlowObjectKind::Prototype ? LayoutID((object.index() - m_firstLayoutObject) / 2) : LayoutID();
 }
 
 BuiltinClassID ValueFlowUniverse::classOf(ValueFlowObjectID object) const
@@ -358,7 +311,6 @@ BuiltinClassID ValueFlowUniverse::classOf(ValueFlowObjectID object) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The function object of a built-in may be a closure of a function of the library.
 void ValueFlowUniverse::appendFunctionObjectsOf(const Program& program, const Type& type, Vector<ValueFlowObjectID, 32>& members, Vector<ValueSetID, 8>& parts) const
 {
     bool listsFunctionOfLibrary = false;
@@ -383,30 +335,52 @@ void ValueFlowUniverse::appendFunctionObjectsOf(const Program& program, const Ty
         appendObjectsOf(builtin, members);
 }
 
-ValueSetID ValueFlowUniverse::objectsWithLayoutIn(ValueSetMaker& maker, const Program& program, LayoutSetID layouts) const
+static ValueSetID rememberedSetOr(std::atomic<uint32_t>* remembered, NOESCAPE const Invocable<ValueSetID()> auto& make)
 {
-    if (!layouts)
-        return ValueSets::nothing;
-    std::atomic<uint32_t>* remembered = layouts.index() < m_numberOfRememberedLayoutSets ? &m_objectsWithLayoutIn[layouts.index()] : nullptr;
     if (remembered) {
         if (uint32_t setPlusOne = remembered->load(std::memory_order_acquire))
             return ValueSetID(setPlusOne - 1);
     }
-
-    Vector<ValueSetID, 8> objectsOfLayouts;
-    for (LayoutID layout : program.at(layouts).members)
-        objectsOfLayouts.append(m_objectsOfLayout[layout.index()]);
-    ValueSetID objects = maker.uniteAll(objectsOfLayouts.span());
+    ValueSetID set = make();
     if (remembered)
-        remembered->store(objects.index() + 1, std::memory_order_release);
-    return objects;
+        remembered->store(set.index() + 1, std::memory_order_release);
+    return set;
+}
+
+ValueSetID ValueFlowUniverse::objectsWithLayoutIn(ValueSetMaker& maker, const Program& program, LayoutSetID layouts) const
+{
+    if (!layouts)
+        return ValueSets::nothing;
+    return rememberedSetOr(layouts.index() < m_numberOfRememberedLayoutSets ? &m_objectsWithLayoutIn[layouts.index()] : nullptr, [&] {
+        Vector<ValueSetID, 8> objectsOfLayouts;
+        for (LayoutID layout : program.at(layouts).members)
+            objectsOfLayouts.append(m_objectsOfLayout[layout.index()]);
+        return maker.uniteAll(objectsOfLayouts.span());
+    });
+}
+
+static void appendKeysInside(const ValueFlowUniverse& universe, const Program& program, const Type& type, ValueSetID textKeys, ValueSetID symbolKeys, Vector<ValueFlowObjectID, 32>& members, auto& parts)
+{
+    if (type.primitives & Primitive::String)
+        parts.append(textKeys);
+    else {
+        for (StringID literal : type.stringLiterals) {
+            if (std::optional<PropertyKeyID> key = program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = literal }))
+                members.append(universe.keyConstant(*key));
+        }
+    }
+    if (type.primitives & Primitive::Symbol)
+        parts.append(symbolKeys);
+    else {
+        for (PropertyKeyID literal : type.symbolLiterals)
+            members.append(universe.keyConstant(literal));
+    }
 }
 
 ValueSetID ValueFlowUniverse::maskOf(ValueSetMaker& maker, const Program& program, const Type& type) const
 {
     if (!type.isJavaScriptValue() || type.isAnything())
         return ValueSets::anything;
-    // A primitive, a host object or an ordinary object was converted into the type, and nothing lists those.
     if (type.layouts && program.at(type.layouts).hasMembersWithoutLayout)
         return ValueSets::anything;
 
@@ -414,31 +388,16 @@ ValueSetID ValueFlowUniverse::maskOf(ValueSetMaker& maker, const Program& progra
     Vector<ValueSetID, 8> parts;
     for (uint16_t rest = type.primitives & ~(Primitive::LiteralString | Primitive::LiteralSymbol); rest; rest &= rest - 1)
         members.append(ValueFlowObjectID(static_cast<uint32_t>(std::countr_zero(rest))));
-    // A value of the kind may be one of the literals.
     if (type.primitives & Primitive::AnyString)
         members.append(primitive(PrimitiveSet::String));
     if (type.primitives & Primitive::AnySymbol)
         members.append(primitive(PrimitiveSet::Symbol));
-    if (type.primitives & Primitive::String)
-        parts.append(m_textKeys);
-    else {
-        for (StringID literal : type.stringLiterals) {
-            if (std::optional<PropertyKeyID> key = program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = literal }))
-                members.append(keyConstant(*key));
-        }
-    }
-    if (type.primitives & Primitive::Symbol)
-        parts.append(m_symbolKeys);
-    else {
-        for (PropertyKeyID literal : type.symbolLiterals)
-            members.append(keyConstant(literal));
-    }
+    appendKeysInside(*this, program, type, m_textKeys, m_symbolKeys, members, parts);
 
     if (type.anyObject)
         parts.append(m_objects);
     else if (type.hasObjects()) {
         parts.append(m_objectsWithAnyLayout);
-        // A test for a function cannot tell a built-in object from one.
         if (type.anyFunction) {
             parts.append(m_callables);
             parts.append(m_builtinObjects);
@@ -463,7 +422,6 @@ ValueSetID ValueFlowUniverse::familyObjectsOf(ValueSetMaker& maker, const Progra
     return maker.uniteAll(parts.span());
 }
 
-// Only the program allocates an object with one of its layouts, at a site that names the layout, and only the program makes a closure of one of its functions.
 bool ValueFlowUniverse::namesProgramObjectsAlone(const Program& program, const Type& type) const
 {
     if (!type.isJavaScriptValue() || type.anyObject || type.anyFunction || !type.classes.isEmpty())
@@ -485,24 +443,15 @@ ValueSetID ValueFlowUniverse::objectsSurelyWithLayoutIn(ValueSetMaker& maker, co
 {
     if (!layouts)
         return ValueSets::nothing;
-    std::atomic<uint32_t>* remembered = layouts.index() < m_numberOfRememberedLayoutSets ? &m_objectsSurelyWithLayoutIn[layouts.index()] : nullptr;
-    if (remembered) {
-        if (uint32_t setPlusOne = remembered->load(std::memory_order_acquire))
-            return ValueSetID(setPlusOne - 1);
-    }
-
-    // An object keeps the layout that it was allocated with. What a built-in makes may have a layout of the table or not.
-    Vector<ValueSetID, 4> objectsOfLayouts;
-    for (LayoutID layout : program.at(layouts).members) {
-        if (!m_isLayoutOfTable.quickGet(layout.index()))
-            objectsOfLayouts.append(m_objectsOfLayout[layout.index()]);
-    }
-    // What a built-in base class makes for a class of the program is filed under the layout of that class and is a cell of the built-in class: the test for the layout turns it away.
-    ValueSetID withoutSureLayout = maker.unite(m_objectsThatPickTheirLayout, m_objectsThatMayBeAnything);
-    ValueSetID objects = maker.intersect(maker.uniteAll(objectsOfLayouts.span()), ValueSets::complement(withoutSureLayout));
-    if (remembered)
-        remembered->store(objects.index() + 1, std::memory_order_release);
-    return objects;
+    return rememberedSetOr(layouts.index() < m_numberOfRememberedLayoutSets ? &m_objectsSurelyWithLayoutIn[layouts.index()] : nullptr, [&] {
+        Vector<ValueSetID, 4> objectsOfLayouts;
+        for (LayoutID layout : program.at(layouts).members) {
+            if (!m_isLayoutOfTable.quickGet(layout.index()))
+                objectsOfLayouts.append(m_objectsOfLayout[layout.index()]);
+        }
+        ValueSetID withoutSureLayout = maker.unite(m_objectsThatPickTheirLayout, m_objectsThatMayBeAnything);
+        return maker.intersect(maker.uniteAll(objectsOfLayouts.span()), ValueSets::complement(withoutSureLayout));
+    });
 }
 
 ValueSetID ValueFlowUniverse::membersSurelyInside(ValueSetMaker& maker, const Program& program, const Type& type) const
@@ -517,20 +466,7 @@ ValueSetID ValueFlowUniverse::membersSurelyInside(ValueSetMaker& maker, const Pr
         wholeKinds &= ~Primitive::Integer;
     for (uint16_t rest = wholeKinds; rest; rest &= rest - 1)
         members.append(ValueFlowObjectID(static_cast<uint32_t>(std::countr_zero(rest))));
-    if (type.primitives & Primitive::String)
-        parts.append(m_textKeys);
-    else {
-        for (StringID literal : type.stringLiterals) {
-            if (std::optional<PropertyKeyID> key = program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = literal }))
-                members.append(keyConstant(*key));
-        }
-    }
-    if (type.primitives & Primitive::Symbol)
-        parts.append(m_symbolKeys);
-    else {
-        for (PropertyKeyID literal : type.symbolLiterals)
-            members.append(keyConstant(literal));
-    }
+    appendKeysInside(*this, program, type, m_textKeys, m_symbolKeys, members, parts);
     if (type.anyObject)
         parts.append(m_objects);
     else {
@@ -542,7 +478,6 @@ ValueSetID ValueFlowUniverse::membersSurelyInside(ValueSetMaker& maker, const Pr
         for (const ClassPart& part : type.classes)
             parts.append(m_sureInstancesOfClass[part.builtinClass.index()]);
     }
-    // A built-in object of the realm is the one object of its type. One that each module has of its own is many.
     for (BuiltinID builtin : type.builtins) {
         if (m_builtins->at(builtin).scope == BuiltinScope::Realm)
             members.append(objectOf(builtin));
@@ -554,15 +489,9 @@ ValueSetID ValueFlowUniverse::membersSurelyInside(ValueSetMaker& maker, const Pr
 
 ValueSetID ValueFlowUniverse::membersSurelyInside(ValueSetMaker& maker, const Program& program, TypeID type) const
 {
-    std::atomic<uint32_t>* remembered = type.index() < m_numberOfRememberedTypes ? &m_membersSurelyInsideType[type.index()] : nullptr;
-    if (remembered) {
-        if (uint32_t setPlusOne = remembered->load(std::memory_order_acquire))
-            return ValueSetID(setPlusOne - 1);
-    }
-    ValueSetID members = membersSurelyInside(maker, program, program.at(type));
-    if (remembered)
-        remembered->store(members.index() + 1, std::memory_order_release);
-    return members;
+    return rememberedSetOr(type.index() < m_numberOfRememberedTypes ? &m_membersSurelyInsideType[type.index()] : nullptr, [&] {
+        return membersSurelyInside(maker, program, program.at(type));
+    });
 }
 
 FunctionID ValueFlowProgramNodes::functionOf(ValueFlowNodeID node) const
@@ -576,7 +505,6 @@ FunctionID ValueFlowProgramNodes::functionOf(ValueFlowNodeID node) const
 class ValueFlowLinker {
     WTF_MAKE_NONCOPYABLE(ValueFlowLinker);
 public:
-    // More of them than a type lists by name would leave whatever holds parsed data without a type.
     Vector<LayoutID> findRecordsThatTypedCodeTakes() const
     {
         BitVector isSeenLayout(m_program.layouts.size());
@@ -588,7 +516,6 @@ public:
                 types.append(type);
         };
         for (const Function& function : m_program.functions) {
-            // The library takes its options in records too. What it is handed was made by the program.
             if (!function.flags.contains(FunctionFlags::IsChecked) || function.role != FunctionRole::Source || !function.module)
                 continue;
             const Module& module = m_program.at(function.module);
@@ -626,7 +553,6 @@ public:
             const Layout& layout = m_program.at(id);
             if (layout.kind != LayoutKind::Record || layout.constructor || layout.base || layout.flags.containsAny(flagsOfOtherLayouts))
                 return true;
-            // No text holds a function.
             bool requiresField = false;
             for (const Field& field : layout.fields) {
                 if (!field.flags.contains(FieldFlags::IsRequired))
@@ -691,7 +617,6 @@ public:
                 });
             },
         });
-        // A function says which file it is written in, and that finds the body of the file. A further module of the file names its body, and nothing leads back.
         for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
             FunctionID body = m_program.modules[index].body;
             if (!body || !m_program.at(body).hasBody() || m_program.at(body).module == ModuleID(index))
@@ -709,7 +634,6 @@ public:
             }
         });
         takeTime(m_result.m_times.reduce, "solve: bodies: reduced"_s);
-        // The numbers of the nodes and the places in the lists come from the sizes of the bodies alone.
         runTasksInParallel(m_loops, {
             [&] {
                 numberObjects();
@@ -725,7 +649,6 @@ public:
                 timesBeside.didFinish("solve: bodies: nodes numbered and lists laid out, beside the masks"_s);
             },
         });
-        // Only the rules ask the tables of built-ins for a set, so the sets are made while the bodies are linked.
         m_result.m_universe.m_builtinTables->makeSets(m_program, m_result.m_universe, *m_result.m_sets, m_loops, [&] {
             forEachIndexInParallel(m_loops, m_bodies.size(), [&](unsigned index, unsigned worker) {
                 linkBody(index, makerOf(worker), m_setsOfType[worker]);
@@ -743,7 +666,6 @@ private:
 
     struct SetsOfType {
         ValueSetID mask;
-        // None unless the type names objects of the program alone.
         ValueSetID familyObjects;
     };
 
@@ -751,6 +673,15 @@ private:
         ValueSetID set { ValueSets::anything };
         ValueFlowMaskKind kind { ValueFlowMaskKind::Plain };
         ValueSetID familyObjects;
+    };
+
+    struct FirstInLists {
+        uint32_t operand;
+        uint32_t edge;
+        uint32_t mask;
+        uint32_t observedValue;
+        uint32_t comparedValues;
+        uint32_t valueAliveForComparisonsOnly;
     };
 
     static constexpr unsigned bodiesInChunk = 1024;
@@ -782,16 +713,6 @@ private:
         });
         return total;
     }
-
-    struct Count {
-        Count& operator+=(const Count& other)
-        {
-            value += other.value;
-            return *this;
-        }
-
-        uint32_t value { 0 };
-    };
 
     ValueSetMaker& makerOf(unsigned worker)
     {
@@ -836,11 +757,11 @@ private:
 
         RELEASE_ASSERT(m_bodies.size() == m_numberOfFunctions + 1 && m_bodies[m_numberOfFunctions].sites.isEmpty());
         universe.m_firstSiteOfFunction.grow(m_numberOfFunctions + 1);
-        uint32_t numberOfSites = sumOverBodies<Count>([&](unsigned index, Count& sites) {
-            sites.value += m_bodies[index].sites.size();
-        }, [&](unsigned index, const Count& sites) {
-            universe.m_firstSiteOfFunction[index] = sites.value;
-        }).value;
+        uint32_t numberOfSites = sumOverBodies<uint32_t>([&](unsigned index, uint32_t& sites) {
+            sites += m_bodies[index].sites.size();
+        }, [&](unsigned index, const uint32_t& sites) {
+            universe.m_firstSiteOfFunction[index] = sites;
+        });
         universe.m_sites.grow(numberOfSites);
         forEachIndexInParallel(m_loops, (m_numberOfFunctions + bodiesInChunk - 1) / bodiesInChunk, [&](unsigned chunk) {
             unsigned end = std::min(m_numberOfFunctions, (chunk + 1) * bodiesInChunk);
@@ -848,7 +769,6 @@ private:
                 std::ranges::copy(m_bodies[index].sites, universe.m_sites.mutableSpan().subspan(universe.m_firstSiteOfFunction[index]).begin());
         });
 
-        // A parser or a validator allocates the same objects for whichever call it stands in, and the sites are made for every call that may turn out to have a typed result.
         Vector<uint32_t> firstTypedResultOfLayout(m_program.layouts.size(), [](size_t) {
             return UINT32_MAX;
         });
@@ -927,20 +847,19 @@ private:
         nodes.m_firstNodeOfFunction.grow(m_bodies.size() + 1);
         nodes.m_firstResultOfFunction.grow(m_bodies.size());
         nodes.m_thrownOfFunction.grow(m_bodies.size());
-        next += sumOverBodies<Count>([&](unsigned index, Count& numberOfNodes) {
-            numberOfNodes.value += m_bodies[index].nodes.size();
-        }, [&](unsigned index, const Count& numberOfNodes) {
+        next += sumOverBodies<uint32_t>([&](unsigned index, uint32_t& numberOfNodes) {
+            numberOfNodes += m_bodies[index].nodes.size();
+        }, [&](unsigned index, const uint32_t& numberOfNodes) {
             const Body& body = m_bodies[index];
-            nodes.m_firstNodeOfFunction[index] = next + numberOfNodes.value;
-            nodes.m_firstResultOfFunction[index] = next + numberOfNodes.value + body.result(0);
-            nodes.m_thrownOfFunction[index] = next + numberOfNodes.value + body.thrown();
-        }).value;
+            nodes.m_firstNodeOfFunction[index] = next + numberOfNodes;
+            nodes.m_firstResultOfFunction[index] = next + numberOfNodes + body.result(0);
+            nodes.m_thrownOfFunction[index] = next + numberOfNodes + body.thrown();
+        });
         nodes.m_firstNodeOfFunction[m_bodies.size()] = next;
         nodes.m_numberOfNodes = next;
         nodes.m_resultSummaries.grow(m_bodies.size());
     }
 
-    // The allocation in the constructor of a base class makes the instances of the classes below it too, and one object stands for all of them.
     void fileAllocationsOfBaseClassesUnderClassesBelow(ValueSetMaker& maker, Vector<Vector<ValueFlowObjectID>>& ofLayout)
     {
         const ValueFlowUniverse& universe = m_result.m_universe;
@@ -959,30 +878,26 @@ private:
             allocatedByAnyClass.append(universe.m_objectOfSite[site]);
         }
         Vector<ValueFlowObjectID> objectsThatPickTheirLayout = allocatedByAnyClass;
-        for (unsigned index = 0; index < m_program.layouts.size(); ++index) {
-            if (m_program.layouts[index].kind != LayoutKind::Instance || !m_program.layouts[index].constructor)
-                continue;
-            objectsThatPickTheirLayout.append(universe.instanceOf(LayoutID(index)));
-        }
-        m_result.m_universe.m_objectsThatPickTheirLayout = maker.of(objectsThatPickTheirLayout.span());
         Vector<ValueFlowObjectID> instancesOfClasses;
         for (unsigned index = 0; index < m_program.layouts.size(); ++index) {
-            if (layoutIsDefinedByClass(m_program.layouts[index]))
+            const Layout& layout = m_program.layouts[index];
+            if (layout.kind == LayoutKind::Instance && layout.constructor)
+                objectsThatPickTheirLayout.append(universe.instanceOf(LayoutID(index)));
+            if (layoutIsDefinedByClass(layout))
                 instancesOfClasses.append(universe.instanceOf(LayoutID(index)));
         }
+        m_result.m_universe.m_objectsThatPickTheirLayout = maker.of(objectsThatPickTheirLayout.span());
         m_result.m_universe.m_instancesOfClasses = maker.of(instancesOfClasses.span());
         if (allocatedByAnyClass.isEmpty())
             return;
 
         for (unsigned index = 0; index < m_program.layouts.size(); ++index) {
-            const Layout& layout = m_program.layouts[index];
-            if (layout.kind != LayoutKind::Instance || !layout.constructor || layout.has(LayoutFlags::IsConstructorFunction))
+            if (!layoutIsDefinedByClass(m_program.layouts[index]))
                 continue;
             LayoutID current(index);
             for (size_t steps = 0; steps < m_program.layouts.size() && m_program.at(current).has(LayoutFlags::HasHeritage); ++steps) {
                 current = predictedHeritageOf(m_program.at(current));
                 if (!current) {
-                    // Nothing says what the class extends.
                     ofLayout[index].appendVector(allocatedByAnyClass);
                     break;
                 }
@@ -991,7 +906,6 @@ private:
         }
     }
 
-    // A module of the library answers what its body returns.
     void appendHoldersOfLibraryExports(Vector<ValueFlowObjectID>& holders)
     {
         const ValueFlowUniverse& universe = m_result.m_universe;
@@ -1051,8 +965,19 @@ private:
         auto rangeOf = [&](uint32_t first, uint32_t end) {
             return maker.ofRange(ValueFlowObjectID(first), ValueFlowObjectID(end));
         };
+        enum class OfModules : bool { No, Yes };
+        auto builtinObjectsWhere = [&](OfModules ofModules, NOESCAPE const Invocable<bool(BuiltinID)> auto& holds) {
+            for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
+                if (holds(BuiltinID(index)))
+                    list.append(ValueFlowObjectID(universe.m_firstBuiltin + index));
+            }
+            for (uint32_t index = 0; ofModules == OfModules::Yes && index < universe.m_moduleBuiltins.size(); ++index) {
+                if (holds(universe.m_moduleBuiltins[index].builtin))
+                    list.append(ValueFlowObjectID(universe.m_firstModuleBuiltin + index));
+            }
+            return take();
+        };
 
-        // A literal is a key or a string of which only the kind is known, so the two bits for literals stand for nothing.
         for (uint16_t rest = Primitive::All & ~(Primitive::LiteralString | Primitive::LiteralSymbol); rest; rest &= rest - 1)
             list.append(ValueFlowObjectID(static_cast<uint32_t>(std::countr_zero(rest))));
         universe.m_anyPrimitive = take();
@@ -1068,7 +993,6 @@ private:
         universe.m_builtinObjects = rangeOf(universe.m_firstBuiltin, universe.m_firstNamespace);
         universe.m_closures = rangeOf(universe.m_firstClosure, universe.m_firstCoroutineResult);
 
-        // Nearly every key is a text.
         Vector<ValueFlowObjectID> symbolKeys;
         for (uint32_t index = 0; index < m_program.types.numberOfPropertyKeys(); ++index) {
             PropertyKeyKind kind = m_program.at(PropertyKeyID(index)).kind;
@@ -1081,15 +1005,9 @@ private:
         universe.m_textKeys = maker.intersect(universe.m_keys, ValueSets::complement(take()));
         universe.m_symbolKeys = maker.of(symbolKeys.span());
 
-        for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
-            if (isCallableBuiltin(builtins, BuiltinID(index)))
-                list.append(ValueFlowObjectID(universe.m_firstBuiltin + index));
-        }
-        for (uint32_t index = 0; index < universe.m_moduleBuiltins.size(); ++index) {
-            if (isCallableBuiltin(builtins, universe.m_moduleBuiltins[index].builtin))
-                list.append(ValueFlowObjectID(universe.m_firstModuleBuiltin + index));
-        }
-        universe.m_builtinFunctions = take();
+        universe.m_builtinFunctions = builtinObjectsWhere(OfModules::Yes, [&](BuiltinID builtin) {
+            return isCallableBuiltin(builtins, builtin);
+        });
 
         BitVector isFunctionOfProtocol(builtins.builtinCount());
         for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
@@ -1099,15 +1017,9 @@ private:
             if (isNameOfProtocol && isCallableBuiltin(builtins, BuiltinID(index)))
                 isFunctionOfProtocol.quickSet(builtins.canonicalID(BuiltinID(index)).index());
         }
-        for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
-            if (isFunctionOfProtocol.quickGet(builtins.canonicalID(BuiltinID(index)).index()))
-                list.append(ValueFlowObjectID(universe.m_firstBuiltin + index));
-        }
-        for (uint32_t index = 0; index < universe.m_moduleBuiltins.size(); ++index) {
-            if (isFunctionOfProtocol.quickGet(builtins.canonicalID(universe.m_moduleBuiltins[index].builtin).index()))
-                list.append(ValueFlowObjectID(universe.m_firstModuleBuiltin + index));
-        }
-        universe.m_builtinFunctionsOfProtocols = take();
+        universe.m_builtinFunctionsOfProtocols = builtinObjectsWhere(OfModules::Yes, [&](BuiltinID builtin) {
+            return isFunctionOfProtocol.quickGet(builtins.canonicalID(builtin).index());
+        });
 
         universe.m_isCanonicalEntryOfCallableBuiltin = BitVector(builtins.builtinCount());
         for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
@@ -1125,22 +1037,15 @@ private:
         }
         universe.m_builtinsThatMayBeAnyLibraryClosure = take();
 
-        for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
-            if (builtins.at(BuiltinID(index)).scope == BuiltinScope::Realm)
-                list.append(ValueFlowObjectID(universe.m_firstBuiltin + index));
-        }
-        universe.m_objectsOfRealm = take();
-
-        for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
-            if (builtins.at(BuiltinID(index)).flags.contains(BuiltinFlag::IsLockedObject))
-                list.append(ValueFlowObjectID(universe.m_firstBuiltin + index));
-        }
-        universe.m_lockedObjects = take();
-        for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
-            if (builtins.hasLockedPrototypeLink(BuiltinID(index)))
-                list.append(ValueFlowObjectID(universe.m_firstBuiltin + index));
-        }
-        universe.m_objectsWithLockedPrototypeLink = take();
+        universe.m_objectsOfRealm = builtinObjectsWhere(OfModules::No, [&](BuiltinID builtin) {
+            return builtins.at(builtin).scope == BuiltinScope::Realm;
+        });
+        universe.m_lockedObjects = builtinObjectsWhere(OfModules::No, [&](BuiltinID builtin) {
+            return builtins.at(builtin).flags.contains(BuiltinFlag::IsLockedObject);
+        });
+        universe.m_objectsWithLockedPrototypeLink = builtinObjectsWhere(OfModules::No, [&](BuiltinID builtin) {
+            return builtins.hasLockedPrototypeLink(builtin);
+        });
 
         appendHoldersOfLibraryExports(list);
         universe.m_holdersOfLibraryExports = take();
@@ -1161,7 +1066,6 @@ private:
             if (BuiltinClassID builtinClass = universe.m_classOfCoroutineResult[index])
                 ofClass[builtinClass.index()].append(universe.coroutineResultOf(FunctionID(index)));
         }
-        // Nothing says what an object is that comes from an operation without a layout and a class, or that a built-in has allocated.
         for (uint32_t site = 0; site < universe.m_sites.size(); ++site) {
             ValueFlowObjectID object = universe.m_objectOfSite[site];
             if (LayoutID layout = universe.m_sites[site].layout)
@@ -1174,7 +1078,6 @@ private:
                 list.append(object);
         }
         fileAllocationsOfBaseClassesUnderClassesBelow(maker, ofLayout);
-        // Native code allocates no object with a layout of the program: what a built-in makes has one of the table's layouts or none.
         universe.m_objectsWithAnyLayout = maker.unite(take(), universe.m_placeholdersAlone);
         for (unsigned index = 0; index < m_numberOfFunctions; ++index) {
             if (m_bodies[index].answersOnlyWhatItConstructs)
@@ -1189,7 +1092,6 @@ private:
                 isLayoutOfTable.quickSet(layout.index());
         }
 
-        // An object with a layout whose class extends something may be an instance of any built-in class: the constructor at the top allocates it.
         auto mayBeAllocatedByBuiltin = [&](LayoutID layout) {
             for (size_t steps = 0; steps < m_program.layouts.size() && layout; ++steps) {
                 if (!m_program.at(layout).has(LayoutFlags::HasHeritage))
@@ -1215,13 +1117,11 @@ private:
             if (isLayoutOfTable.quickGet(index))
                 continue;
             ofLayoutsOfProgram.append(universe.m_objectsOfLayout[index]);
-            // Every layout has the object that stands for what its constructor makes.
             if (ofLayout[index].size() > 1 || m_program.layouts[index].constructor)
                 universe.m_isAllocatedByProgram.quickSet(index);
         }
         universe.m_objectsWithLayoutOfProgram = maker.uniteAll(ofLayoutsOfProgram.span());
         universe.m_isLayoutOfTable = WTF::move(isLayoutOfTable);
-        // A test for a class cannot tell a built-in object from an instance.
         ValueSetID inEveryClassButNoBuiltinObject = maker.unite(maker.uniteAll(inheritingLayouts.span()), universe.m_objectsThatMayBeAnything);
         ValueSetID inEveryClass = maker.unite(inEveryClassButNoBuiltinObject, universe.m_builtinObjects);
 
@@ -1230,7 +1130,6 @@ private:
             const BuiltinClass& b = builtins.at(second);
             return a.instanceTest == BuiltinInstanceTest::JSTypeEquals && b.instanceTest == BuiltinInstanceTest::JSTypeEquals && a.type == b.type;
         };
-        // An object that is allocated as an instance of a class may be one of a class below it, and it passes the tests of the classes above it.
         auto mayBeInstanceOf = [&](BuiltinClassID allocatedAs, BuiltinClassID tested) {
             if (builtins.isSameOrSubclassOf(tested, allocatedAs))
                 return true;
@@ -1243,7 +1142,6 @@ private:
         Vector<ValueSetID> allocatedAs = ofClass.map([&](const Vector<ValueFlowObjectID>& members) {
             return maker.of(members.span());
         });
-        // Every function has the array of its rest parameter, its prototype object and what it constructs, and each of the three kinds lies side by side.
         ValueSetID& allocatedAsArray = allocatedAs[BuiltinClasses::Array.index()];
         allocatedAsArray = maker.unite(allocatedAsArray, rangeOf(universe.m_firstRestArray, universe.m_firstFunctionPrototype));
         ValueSetID& allocatedAsObject = allocatedAs[BuiltinClasses::Object.index()];
@@ -1255,7 +1153,6 @@ private:
             bool hasCallableInstances = Type::builtinClass(tested).overlaps(Type::function(), m_program);
             if (hasCallableInstances)
                 callableInstances.append(allocatedAs[index]);
-            // A class without a test may hold any object.
             if (builtins.at(tested).instanceTest == BuiltinInstanceTest::None)
                 return universe.m_objects;
 
@@ -1304,7 +1201,6 @@ private:
         universe.m_membersSurelyInsideType = std::make_unique<std::atomic<uint32_t>[]>(universe.m_numberOfRememberedTypes);
     }
 
-    // Each body writes its own stretch of every list, so the lists are the same on any number of threads.
     void layOutLists()
     {
         struct Places {
@@ -1314,22 +1210,17 @@ private:
                 range.edgeOnceReached += other.range.edgeOnceReached;
                 range.seedOnceReached += other.range.seedOnceReached;
                 range.functionEntered += other.range.functionEntered;
-                operand += other.operand;
-                edge += other.edge;
-                mask += other.mask;
-                observedValue += other.observedValue;
-                comparedValues += other.comparedValues;
-                valueAliveForComparisonsOnly += other.valueAliveForComparisonsOnly;
+                first.operand += other.first.operand;
+                first.edge += other.first.edge;
+                first.mask += other.first.mask;
+                first.observedValue += other.first.observedValue;
+                first.comparedValues += other.first.comparedValues;
+                first.valueAliveForComparisonsOnly += other.first.valueAliveForComparisonsOnly;
                 return *this;
             }
 
             ValueFlowBodyRange range;
-            uint32_t operand { 0 };
-            uint32_t edge { 0 };
-            uint32_t mask { 0 };
-            uint32_t observedValue { 0 };
-            uint32_t comparedValues { 0 };
-            uint32_t valueAliveForComparisonsOnly { 0 };
+            FirstInLists first { };
         };
         Vector<uint32_t> numberOfNodesWithMask(m_bodies.size());
         forEachIndexInParallel(m_loops, m_bodies.size(), [&](unsigned index) {
@@ -1338,63 +1229,46 @@ private:
             }));
         });
         m_result.m_ranges.grow(m_bodies.size() + 1);
-        m_firstOperand.grow(m_bodies.size());
-        m_firstEdge.grow(m_bodies.size());
-        m_firstMask.grow(m_bodies.size());
-        m_firstObservedValue.grow(m_bodies.size());
-        m_firstComparedValues.grow(m_bodies.size());
-        m_firstValueAliveForComparisonsOnly.grow(m_bodies.size());
+        m_firstInLists.grow(m_bodies.size());
         Places end = sumOverBodies<Places>([&](unsigned index, Places& places) {
             const Body& body = m_bodies[index];
             places.range.statement += body.statements.size();
             places.range.edgeOnceReached += body.edgesOnceReached.size();
             places.range.seedOnceReached += body.seedsOnceReached.size();
             places.range.functionEntered += body.functionsEnteredOnceReached.size();
-            places.operand += body.operands.size();
-            places.edge += body.edges.size();
-            places.observedValue += body.observedValues.size();
-            places.comparedValues += body.comparedValues.size();
-            places.valueAliveForComparisonsOnly += body.valuesAliveForComparisonsOnly.size();
-            places.mask += numberOfNodesWithMask[index];
+            places.first.operand += body.operands.size();
+            places.first.edge += body.edges.size();
+            places.first.observedValue += body.observedValues.size();
+            places.first.comparedValues += body.comparedValues.size();
+            places.first.valueAliveForComparisonsOnly += body.valuesAliveForComparisonsOnly.size();
+            places.first.mask += numberOfNodesWithMask[index];
         }, [&](unsigned index, const Places& places) {
             ValueFlowBodyRange range = places.range;
             range.statementLeavingBody = places.range.statement + m_bodies[index].firstStatementLeavingBody;
             m_result.m_ranges[index] = range;
-            m_firstOperand[index] = places.operand;
-            m_firstEdge[index] = places.edge;
-            m_firstMask[index] = places.mask;
-            m_firstObservedValue[index] = places.observedValue;
-            m_firstComparedValues[index] = places.comparedValues;
-            m_firstValueAliveForComparisonsOnly[index] = places.valueAliveForComparisonsOnly;
+            m_firstInLists[index] = places.first;
         });
         ValueFlowBodyRange next = end.range;
-        uint32_t nextOperand = end.operand;
-        uint32_t nextEdge = end.edge;
-        uint32_t nextMask = end.mask;
-        uint32_t nextObservedValue = end.observedValue;
-        uint32_t nextComparedValues = end.comparedValues;
-        uint32_t nextValueAliveForComparisonsOnly = end.valueAliveForComparisonsOnly;
         next.statementLeavingBody = next.statement;
         m_result.m_ranges[m_bodies.size()] = next;
 
         static_assert(std::is_trivially_copyable_v<ValueFlowStatement> && std::is_trivially_copyable_v<ValueFlowOperand>);
         m_result.m_statements = MallocSpan<ValueFlowStatement>::malloc(next.statement * sizeof(ValueFlowStatement));
-        m_result.m_operands = MallocSpan<ValueFlowOperand>::malloc(nextOperand * sizeof(ValueFlowOperand));
-        // A list that grows writes every entry.
+        m_result.m_operands = MallocSpan<ValueFlowOperand>::malloc(end.first.operand * sizeof(ValueFlowOperand));
         runTasksInParallel(m_loops, {
             [&] {
-                m_result.m_edges.grow(nextEdge);
+                m_result.m_edges.grow(end.first.edge);
             },
             [&] {
-                m_result.m_observedValues.grow(nextObservedValue);
+                m_result.m_observedValues.grow(end.first.observedValue);
             },
             [&] {
-                m_result.m_masks.grow(nextMask);
+                m_result.m_masks.grow(end.first.mask);
                 m_result.m_edgesOnceReached.grow(next.edgeOnceReached);
                 m_result.m_seedsOnceReached.grow(next.seedOnceReached);
                 m_result.m_functionsEnteredOnceReached.grow(next.functionEntered);
-                m_result.m_comparedValues.grow(nextComparedValues);
-                m_result.m_valuesAliveForComparisonsOnly.grow(nextValueAliveForComparisonsOnly);
+                m_result.m_comparedValues.grow(end.first.comparedValues);
+                m_result.m_valuesAliveForComparisonsOnly.grow(end.first.valueAliveForComparisonsOnly);
             },
         });
     }
@@ -1426,7 +1300,6 @@ private:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    // A value that is inside several types is inside the family of each that has one, and a placeholder among them is an object that all the masks admit.
     LinkedMask linkMask(const Body::Mask& mask, ValueSetMaker& maker, HashMap<TypeID, SetsOfType>& setsOfType) const
     {
         if (mask.admitsEverything())
@@ -1442,9 +1315,8 @@ private:
             if (sets.familyObjects)
                 linked.familyObjects = linked.familyObjects ? maker.intersect(linked.familyObjects, sets.familyObjects) : sets.familyObjects;
         }
-        for (TypeID type : mask.outside) {
+        for (TypeID type : mask.outside)
             linked.set = maker.intersect(linked.set, ValueSets::complement(universe.membersSurelyInside(maker, m_program, type)));
-        }
         for (auto [builtin, module] : mask.outsideBuiltinsOfModules) {
             if (ValueFlowObjectID object = universe.objectOf(builtin, module))
                 linked.set = maker.intersect(linked.set, ValueSets::complement(maker.of(object)));
@@ -1459,6 +1331,7 @@ private:
         const Body& body = m_bodies[index];
         const ValueFlowUniverse& universe = m_result.m_universe;
         const ValueFlowBodyRange& range = m_result.m_ranges[index];
+        const FirstInLists& first = m_firstInLists[index];
         FunctionID function(index);
 
         Vector<ValueSetID, 32> constants = body.constants.map<Vector<ValueSetID, 32>>([&](const Body::Constant& constant) {
@@ -1488,12 +1361,12 @@ private:
                 summary.passedParameters.append({ passed.entryParameter, masks[passed.mask].set, masks[passed.mask].kind });
         }
 
-        uint32_t nextMask = m_firstMask[index];
+        uint32_t nextMask = first.mask;
         for (uint32_t node = 0; node < body.nodes.size(); ++node) {
             if (uint32_t mask = body.nodes[node].mask)
                 m_result.m_masks[nextMask++] = { nodeNamed(index, ValueFlowNodeName::ofBody(node)), masks[mask].set, masks[mask].kind, masks[mask].familyObjects };
         }
-        std::ranges::transform(body.edges, m_result.m_edges.mutableSpan().subspan(m_firstEdge[index]).begin(), linkEdge);
+        std::ranges::transform(body.edges, m_result.m_edges.mutableSpan().subspan(first.edge).begin(), linkEdge);
         std::ranges::transform(body.edgesOnceReached, m_result.m_edgesOnceReached.mutableSpan().subspan(range.edgeOnceReached).begin(), linkEdge);
         std::ranges::transform(body.seedsOnceReached, m_result.m_seedsOnceReached.mutableSpan().subspan(range.seedOnceReached).begin(), [&](const Body::Seed& seed) {
             const LinkedMask& mask = masks[seed.mask];
@@ -1503,27 +1376,27 @@ private:
             return ValueFlowNodeSet { nodeNamed(index, seed.node), maker.pass(constant, mask.set, mask.familyObjects, mask.kind, placeholders) };
         });
         std::ranges::copy(body.functionsEnteredOnceReached, m_result.m_functionsEnteredOnceReached.mutableSpan().subspan(range.functionEntered).begin());
-        std::ranges::transform(body.operands, m_result.m_operands.mutableSpan().subspan(m_firstOperand[index]).begin(), link);
+        std::ranges::transform(body.operands, m_result.m_operands.mutableSpan().subspan(first.operand).begin(), link);
         std::ranges::transform(body.statements, m_result.m_statements.mutableSpan().subspan(range.statement).begin(), [&](const Body::Statement& statement) {
             return ValueFlowStatement {
                 statement.kind,
                 statement.opcode,
                 body.function,
                 statement.site,
-                m_firstOperand[index] + statement.firstOperand,
+                first.operand + statement.firstOperand,
                 statement.operandCount,
                 nodeNamed(index, statement.result),
                 nodeNamed(index, statement.thrown),
                 statement.firstSite == Body::none ? UINT32_MAX : universe.m_firstSiteOfFunction[index] + statement.firstSite,
             };
         });
-        std::ranges::transform(body.observedValues, m_result.m_observedValues.mutableSpan().subspan(m_firstObservedValue[index]).begin(), [&](const Body::ObservedValue& observed) {
+        std::ranges::transform(body.observedValues, m_result.m_observedValues.mutableSpan().subspan(first.observedValue).begin(), [&](const Body::ObservedValue& observed) {
             return ValueFlowObservedValue { body.function, observed.test, link(observed.operand) };
         });
-        std::ranges::transform(body.valuesAliveForComparisonsOnly, m_result.m_valuesAliveForComparisonsOnly.mutableSpan().subspan(m_firstValueAliveForComparisonsOnly[index]).begin(), [&](ValueID value) {
+        std::ranges::transform(body.valuesAliveForComparisonsOnly, m_result.m_valuesAliveForComparisonsOnly.mutableSpan().subspan(first.valueAliveForComparisonsOnly).begin(), [&](ValueID value) {
             return ValueFlowValueOfFunction { body.function, value };
         });
-        std::ranges::transform(body.comparedValues, m_result.m_comparedValues.mutableSpan().subspan(m_firstComparedValues[index]).begin(), [&](const Body::ComparedValues& compared) {
+        std::ranges::transform(body.comparedValues, m_result.m_comparedValues.mutableSpan().subspan(first.comparedValues).begin(), [&](const Body::ComparedValues& compared) {
             return ValueFlowComparedValues { body.function, link(compared.left), link(compared.right) };
         });
     }
@@ -1534,14 +1407,8 @@ private:
     unsigned m_numberOfFunctions;
     ParallelArray<ValueFlowBody> m_bodies;
     Vector<std::unique_ptr<ValueSetMaker>> m_makers;
-    // One for each thread.
     Vector<HashMap<TypeID, SetsOfType>> m_setsOfType;
-    Vector<uint32_t> m_firstOperand;
-    Vector<uint32_t> m_firstEdge;
-    Vector<uint32_t> m_firstMask;
-    Vector<uint32_t> m_firstObservedValue;
-    Vector<uint32_t> m_firstComparedValues;
-    Vector<uint32_t> m_firstValueAliveForComparisonsOnly;
+    Vector<FirstInLists> m_firstInLists;
     ValueFlowBodies m_result;
 };
 

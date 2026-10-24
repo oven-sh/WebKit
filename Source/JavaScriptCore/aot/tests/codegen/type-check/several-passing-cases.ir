@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="numberOrNothing" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=undefined|null|number
     TestAndBranch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):
@@ -17,7 +16,6 @@ function f0 name="numberOrNothing" parameters=[{type=anything}] results=[{type=a
 # CHECK-NOT: operation
 # CHECK-NOT: ThrowAtSite
 function f1 name="booleanNumberOrNothing" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=undefined|null|boolean|number
     TestAndBranch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):
@@ -29,7 +27,6 @@ function f1 name="booleanNumberOrNothing" parameters=[{type=anything}] results=[
 # CHECK-NOT: operation
 # CHECK-NOT: ThrowAtSite
 function f2 name="smallIntegerOrNothing" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=undefined|null|int[0, 199999]
     TestAndBranch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):
@@ -41,7 +38,6 @@ function f2 name="smallIntegerOrNothing" parameters=[{type=anything}] results=[{
 # CHECK-NOT: operation
 # CHECK-NOT: ThrowAtSite
 function f3 name="smallInteger" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=int[0, 199999]
     TestAndBranch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):
@@ -53,7 +49,6 @@ function f3 name="smallInteger" parameters=[{type=anything}] results=[{type=anyt
 # CHECK-NOT: operation
 # CHECK-NOT: ThrowAtSite
 function f4 name="stringOrFunction" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=string|function
     TestAndBranch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):
@@ -66,7 +61,6 @@ function f4 name="stringOrFunction" parameters=[{type=anything}] results=[{type=
 # CHECK-NOT: operation
 # CHECK-NOT: ThrowAtSite
 function f5 name="everyCellOrNumber" parameters=[{type=undefined|number|string|object}] results=[{type=anything}] {
-  b0(v0: undefined|number|string|object):
     v1 = TypeTest v0 testedType=number|string|object
     TestAndBranch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):
@@ -78,7 +72,6 @@ function f5 name="everyCellOrNumber" parameters=[{type=undefined|number|string|o
 # CHECK-NOT: operation
 # CHECK-NOT: ThrowAtSite
 function f6 name="branchesOnFunction" parameters=[{type=anything}] results=[{type=i32}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=function
     TestAndBranch v1 -> taken b1(), notTaken b2()
   b1():
@@ -91,7 +84,6 @@ function f6 name="branchesOnFunction" parameters=[{type=anything}] results=[{typ
 # CHECK: f6: size={{*}} sites=0 handlers
 # CHECK-NEXT: stub ValueIsCallable x1
 function f7 name="functionAsValue" parameters=[{type=anything}] results=[{type=boolean}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=undefined|function
     Return v1
 }

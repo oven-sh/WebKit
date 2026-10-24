@@ -19,14 +19,12 @@ typesite w7 module=m0 position=130 kind=Parameter
 layout L0 kind=Instance name="Meter" constructor=f5 fields=[{key="total" declared={type=number site=w4}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     Return
-}
-# CHECK-LABEL: function f0 name="main"
 # CHECK: = NewClosure function=f1
 # CHECK-NEXT: = NewClosure function=f2
+}
 
 # Flow has proven the second parameter, so there is one test. The sum of two numbers is a number whatever the callers do, so the result of the body is proven again
 function f1 name="add" module=m0 position=5 flags=[IsChecked] length=2 parameters=[{type=number site=w0 flags=[IsExpected]}, {type=number site=w1}] results=[{type=number site=w2 flags=[IsExpected]}] {
@@ -59,7 +57,6 @@ function f2 name="read" module=m0 position=55 kind=Method flags=[HasThis, IsChec
 
 # Every check folds: the function stays as it is
 function f3 name="proven" module=m0 position=85 flags=[IsChecked] length=1 parameters=[{type=number site=w5}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = Check v0 castType=number site=w5
     Return v1
 }

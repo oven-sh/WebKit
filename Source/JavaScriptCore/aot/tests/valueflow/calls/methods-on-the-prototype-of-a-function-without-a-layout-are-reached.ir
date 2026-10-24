@@ -13,7 +13,6 @@ entry module=m0
 layout L0 name="Methods" fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
 layout L1 name="Others" fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Call v0
     v2 = NewClosure function=f3
@@ -27,21 +26,17 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v9
 }
 function f1 name="create" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     Return v0
 }
 function f2 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f3 name="run" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     Return v1
 }
 function f4 name="other" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=2
     Return v1
 }

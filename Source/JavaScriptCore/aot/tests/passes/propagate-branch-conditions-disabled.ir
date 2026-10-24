@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="branchedOnAgainOnTrueEdge" parameters=[{type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: boolean, v1: number, v2: number):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     Branch v0 -> taken b3(), notTaken b4()
@@ -17,8 +16,6 @@ function f0 name="branchedOnAgainOnTrueEdge" parameters=[{type=boolean}, {type=n
     Return v1
   b4():
     Return v2
-}
-# CHECK-LABEL: function f0 name="branchedOnAgainOnTrueEdge"
 # CHECK-NEXT: b0(v0: boolean, v1: number, v2: number):
 # CHECK-NEXT: Branch v0 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
@@ -30,3 +27,4 @@ function f0 name="branchedOnAgainOnTrueEdge" parameters=[{type=boolean}, {type=n
 # CHECK-NEXT: b4():
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
+}

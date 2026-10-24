@@ -17,7 +17,6 @@ variable g0 module=m0 declared={type=anything} owner=L0
 variable g1 module=m0 declared={type=anything} owner=L0
 variable g2 module=m0 declared={type=anything} owner=L1
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = Integer integer=7
     v2 = NewClosure function=f1
@@ -41,13 +40,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v19
 }
 function f1 name="Assigned" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0 {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0 fields=[]
     Return v2
 }
 function f2 name="Stored" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1 {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L1
     v2 = NewObject v1 layout=L1 fields=[]
     Return v2

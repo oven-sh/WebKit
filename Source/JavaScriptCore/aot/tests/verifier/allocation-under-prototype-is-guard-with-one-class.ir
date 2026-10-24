@@ -10,7 +10,6 @@ layout L2 name="Record" fields=[{key="x" declared={type=anything}}]
 function f0 name="Only" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f1 name="Legacy" flags=[HasThis] thisType={type=object} results=[{type=undefined}]
 function f2 name="goodNewTargetUnknown" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
     PutSlotOrAdd v3, v3, v1 key="x" receivers=[L0] level=Proven

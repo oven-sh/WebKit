@@ -8,7 +8,6 @@ variable g0 name="late" module=m0 declared={type=anything|absent}
 layout L0 kind=Environment name="scope" fields=[{key=@"binding.0" declared={type=anything|absent}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = CallDirect function=f1
     v1 = Integer integer=1
     PutModuleVariable v1 variable=g0
@@ -23,13 +22,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="reader" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = CheckInitialized v0 name="late"
     Return v1
 }
 function f2 name="owner" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject layout=L0
     v2 = NewClosure v1 function=f3
     v3 = Call v2

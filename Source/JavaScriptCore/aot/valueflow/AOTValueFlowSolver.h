@@ -99,8 +99,6 @@ public:
     T& operator[](size_t index) LIFETIME_BOUND { return mutableSpan()[index]; }
     auto begin() const LIFETIME_BOUND { return span().begin(); }
     auto end() const LIFETIME_BOUND { return span().end(); }
-    auto begin() LIFETIME_BOUND { return mutableSpan().begin(); }
-    auto end() LIFETIME_BOUND { return mutableSpan().end(); }
 
     void reserveCapacity(size_t size)
     {
@@ -127,12 +125,6 @@ public:
     {
         ASSERT(size <= m_size);
         m_size = size;
-    }
-
-    void clear()
-    {
-        m_elements = { };
-        m_size = 0;
     }
 
 private:
@@ -272,8 +264,8 @@ public:
     std::span<const std::unique_ptr<ValueSetMaker>> makersIdleAfterSolve() const LIFETIME_BOUND { return m_makers.span(); }
     ValueSetID valueOf(ValueFlowNodeID node) const { return m_graph.valueOf(node); }
     bool isReached(FunctionID function) const { return m_isReached.get(function.index()); }
-    OptionSet<BuiltinUse> usesOf(BuiltinID) const;
-    OptionSet<ObjectMutation> marksOf(ValueFlowObjectID) const;
+    OptionSet<BuiltinUse> usesOf(BuiltinID builtin) const { return builtin.index() < m_usesOfBuiltin.size() ? m_usesOfBuiltin[builtin.index()] : OptionSet<BuiltinUse>(); }
+    OptionSet<ObjectMutation> marksOf(ValueFlowObjectID object) const { return m_marksOfObject[object.index()]; }
 
     bool holdsObjectOutsideFamily(ValueFlowNodeID node) const { return m_holdsObjectOutsideFamily.get(node.index()); }
 
@@ -313,7 +305,7 @@ public:
     std::span<const LoggedEdge> edgesInOrderLogged() const LIFETIME_BOUND { return m_edgesInOrderLogged.span(); }
     std::optional<ValueFlowUnknownSource> unknownSourceOf(ValueFlowEdge) const;
     std::optional<ValueFlowUnknownSource> unknownSourceOf(ValueFlowNodeID) const;
-    const ValueFlowNodeKey* keyOfMadeNode(ValueFlowNodeID) const LIFETIME_BOUND;
+    const ValueFlowNodeKey* keyOfMadeNode(ValueFlowNodeID node) const LIFETIME_BOUND { return node.index() < m_input.numberOfNodes ? nullptr : &m_madeNodes[m_madeNodesOfNode[node.index() - m_input.numberOfNodes]].key; }
 
     void forEachKindOfStatementRun(NOESCAPE const Invocable<void(ValueFlowStatementKind, Opcode, const RunsAndEdges&)> auto& functor) const
     {
@@ -330,23 +322,16 @@ public:
     bool isMadeByRule(ValueFlowStatementID statement) const { return statement.index() >= m_input.statements.size(); }
     const ValueFlowNodeKey& keyOf(ValueFlowStatementID statement) const LIFETIME_BOUND { return m_madeStatements[statement.index() - m_input.statements.size()].key; }
     bool isAtRest(ValueFlowStatementID) const;
-    void forEachMadeNodeAskedForBy(ValueFlowStatementID statement, NOESCAPE const Invocable<void(const ValueFlowNodeKey&, ValueFlowStatementID)> auto& functor) const
+    void forEachMadeNodeAskedForBy(ValueFlowStatementID statement, NOESCAPE const auto& functor) const
     {
         if (statement.index() >= m_firstUseOfStatement.size())
             return;
         for (uint32_t use = m_firstUseOfStatement[statement.index()]; use != UINT32_MAX; use = m_uses[use].next) {
             const MadeNodes& madeNodes = m_madeNodes[m_uses[use].madeNodes];
-            functor(madeNodes.key, madeNodes.statement);
-        }
-    }
-
-    void forEachMadeNodeAskedForBy(ValueFlowStatementID statement, NOESCAPE const Invocable<void(const ValueFlowNodeKey&, ValueFlowStatementID, ValueFlowNodeID first)> auto& functor) const
-    {
-        if (statement.index() >= m_firstUseOfStatement.size())
-            return;
-        for (uint32_t use = m_firstUseOfStatement[statement.index()]; use != UINT32_MAX; use = m_uses[use].next) {
-            const MadeNodes& madeNodes = m_madeNodes[m_uses[use].madeNodes];
-            functor(madeNodes.key, madeNodes.statement, madeNodes.first);
+            if constexpr (Invocable<decltype(functor), void(const ValueFlowNodeKey&, ValueFlowStatementID, ValueFlowNodeID)>)
+                functor(madeNodes.key, madeNodes.statement, madeNodes.first);
+            else
+                functor(madeNodes.key, madeNodes.statement);
         }
     }
 
@@ -541,11 +526,11 @@ private:
         uint32_t madeNodes { UINT32_MAX };
     };
     class NodeMaker;
-    std::optional<uint32_t> findNumberOfMadeNodes(const ValueFlowNodeKey&) const;
+    std::optional<uint32_t> findNumberOfMadeNodes(const ValueFlowNodeKey&, uint32_t hash) const;
+    std::optional<uint32_t> findNumberOfMadeNodes(const ValueFlowNodeKey& key) const { return findNumberOfMadeNodes(key, key.hash()); }
     void makeNodesOf(std::span<KeyToMake>);
     void takeWhatWasMade(std::span<const std::unique_ptr<NodeMaker>>, std::span<KeyToMake>);
     std::optional<uint32_t> makeNodesWhereAskedFor(const ValueFlowNodeKey&, uint32_t hash, ValueFlowRoundLog&, ValueSetMaker&) const;
-    void letRulesMakeNodes();
     void takeWhatRulesHaveMade();
     static ValueFlowStatement statementMadeWith(const MadeNodes&);
     void runStatementsMadeBy(Thread&);
@@ -554,27 +539,19 @@ private:
     uint64_t contentOf(const ValueFlowNodeKey&) const;
     void fillNumbersThatNobodyGave();
     ValueFlowNodeID makeNodes(const ValueFlowNodeKey&);
-    ValueFlowNodeID ensureConstant(ValueSetID);
-    void listToLink(const MadeNodes&);
-    void prepareNodesToLink();
+    ValueFlowNodeID ensureNodes(const ValueFlowNodeKey&);
+    static void listToLink(const MadeNodes&, auto& readToLink, auto& writtenToLink);
     void linkNamedNodes(unsigned shard, bool isRead);
-    void takeEdgesOfLinkShards();
-    Name& ensureName(ValueFlowName);
     struct Linked;
     struct NodeToLink;
     void link(const NodeOfSet&, bool isRead, NodesOfName& others, uint32_t numberOfName, Linked&);
-    void insert(const NodeToLink&, bool isRead, NodesOfName&);
     void linkNode(const NodeToLink&, bool isRead, Linked&);
     void insertNode(const NodeToLink&, bool isRead);
     void insertNodesOfShards(const ListWithRoomToFill<NodeToLink>&, bool isRead);
-    void finishInsertionOfNodesThatRead();
     void removeNodesAtRestFrom(Vector<NodeOfSet>&);
     void linkInChunks(bool isRead, unsigned numberOfOtherTasks, NOESCAPE const ScopedLambda<void(unsigned task, unsigned worker)>& otherTask);
     void noteReaders(unsigned shard, ValueSetMaker&);
-    void noteWatchers(unsigned numberOfShard);
     size_t numberOfReaders() const;
-    void releaseRoundState();
-    void noteFunctionsAsked();
     void noteNodesAskedFor();
     struct UsesOfThread {
         size_t nextFree { 0 };
@@ -614,9 +591,6 @@ private:
     ValueSetID withoutWhatOtherMembersCover(ValueFlowNodeID, ValueSetMaker&) const;
     ValueSetID withoutWhatOtherMembersCover(ValueSetID, ValueSetMaker&) const;
     ValueSetID findFamilyObjectsOf(ValueSetID mask, ValueSetMaker&) const;
-    void noteWhatPlaceholdersCover();
-    void connectWhatStoppedPlaceholdersCover();
-    void prepareSaturation();
     bool maySaturate(ValueFlowNodeID) const;
     bool isMadeForUnknownObject(ValueFlowNodeID) const;
     bool hasTooManyLayoutsAndCallees(ValueSetID);
@@ -650,11 +624,7 @@ private:
 
         class Table {
         public:
-            Table()
-                : m_bits(0)
-            {
-            }
-
+            Table() = default;
             Table(Slot* slots, unsigned bits)
                 : m_bits(reinterpret_cast<uintptr_t>(slots) | bits)
             {
@@ -665,7 +635,7 @@ private:
             size_t numberOfSlots() const { return static_cast<size_t>(1) << (m_bits & 63); }
 
         private:
-            uintptr_t m_bits;
+            uintptr_t m_bits { 0 };
         };
 
         ~IndexOfMadeNodes();
@@ -758,7 +728,7 @@ private:
     HashMap<uint64_t, ValueFlowStatementID, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_statementOfEdge;
     Vector<LoggedEdge> m_edgesInOrderLogged;
     Vector<uint32_t> m_bodiesReachedInRound;
-    size_t m_numberOfBodiesWhoseStatementsAreDue { 0 };
+    size_t m_paddingThatKeepsSharedListsOnTheirOwnCacheLines { 0 };
 
     mutable ValueFlowSharedBits m_isDue;
     BitVector m_isDear;

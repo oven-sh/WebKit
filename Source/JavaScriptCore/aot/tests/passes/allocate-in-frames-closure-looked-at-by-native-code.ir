@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="handsFreshClosure" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f3
     v1 = CallBuiltin -, v0 overload=ArrayIsArray/0
     Return v1
@@ -15,14 +14,12 @@ function f0 name="handsFreshClosure" results=[{type=anything}] {
 # CHECK-NEXT: v0: Heap SeenByNativeCode by v1(1)
 
 function f1 name="handsParameter" parameters=[{type=f3}] results=[{type=anything}] {
-  b0(v0: f3):
     v1 = CallBuiltin -, v0 overload=ArrayIsArray/0
     Return v1
 }
 # BORROWED-LABEL: f1: 0 leaks
 
 function f2 name="handsFreshClosureOn" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f3
     v1 = CallDirect v0 function=f1
     Return v1
@@ -31,6 +28,5 @@ function f2 name="handsFreshClosureOn" results=[{type=anything}] {
 # CHECK-NEXT: v0: Heap
 
 function f3 name="listener" kind=Arrow results=[{type=undefined}] {
-  b0():
     Return
 }

@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="trueFalseBoolean" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = ToBoolean v1
     v3 = Boolean boolean=false
     Branch v3 -> taken b1(), notTaken b2()
@@ -24,14 +23,11 @@ function f0 name="trueFalseBoolean" parameters=[{type=anything}, {type=anything}
     Jump -> next b6(v2)
   b6(v6):
     Return v6
-}
-# CHECK-LABEL: function f0 name="trueFalseBoolean"
 # CHECK: b6(v6: boolean):
-# STALE-LABEL: function f0 name="trueFalseBoolean"
 # STALE: b6(v6: anything):
+}
 
 function f1 name="trueBooleanFalse" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = ToBoolean v1
     v3 = Boolean boolean=false
     Branch v3 -> taken b1(), notTaken b2()
@@ -49,12 +45,10 @@ function f1 name="trueBooleanFalse" parameters=[{type=anything}, {type=anything}
     Jump -> next b6(v5)
   b6(v6):
     Return v6
-}
-# CHECK-LABEL: function f1 name="trueBooleanFalse"
 # CHECK: b6(v6: boolean):
+}
 
 function f2 name="booleanTrueFalse" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = ToBoolean v1
     v3 = Boolean boolean=false
     Branch v3 -> taken b1(), notTaken b2()
@@ -72,12 +66,10 @@ function f2 name="booleanTrueFalse" parameters=[{type=anything}, {type=anything}
     Jump -> next b6(v5)
   b6(v6):
     Return v6
-}
-# CHECK-LABEL: function f2 name="booleanTrueFalse"
 # CHECK: b6(v6: boolean):
+}
 
 function f3 name="throughUpcast" parameters=[{type=string}, {type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: boolean, v2: anything):
     v3 = Upcast v0 castType=anything
     v4 = Boolean boolean=false
     Branch v4 -> taken b1(), notTaken b2()
@@ -92,12 +84,10 @@ function f3 name="throughUpcast" parameters=[{type=string}, {type=boolean}, {typ
     Jump -> next b5(v5)
   b5(v6):
     Return v6
-}
-# CHECK-LABEL: function f3 name="throughUpcast"
 # CHECK: b5(v6: string):
+}
 
 function f4 name="usersFollow" parameters=[{type=i32}, {type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: i32, v1: boolean, v2: anything):
     v3 = Boolean boolean=false
     Branch v3 -> taken b1(), notTaken b2()
   b1():
@@ -118,14 +108,12 @@ function f4 name="usersFollow" parameters=[{type=i32}, {type=boolean}, {type=any
     Jump -> next b8(v0)
   b8(v7):
     Return v7
-}
-# CHECK-LABEL: function f4 name="usersFollow"
 # CHECK: b5(v5: i32):
 # CHECK-NEXT: v6: int[-4294967296, 4294967294] = Add v5, v5
 # CHECK: b8(v7: int[-4294967296, 4294967294]):
+}
 
 function f5 name="edgeResult" parameters=[{type=number|string}, {type=boolean}, {type=anything}, {type=number|string}] results=[{type=anything}] {
-  b0(v0: number|string, v1: boolean, v2: anything, v3: number|string):
     v4 = Boolean boolean=false
     Branch v4 -> taken b1(), notTaken b2()
   b1():
@@ -143,14 +131,12 @@ function f5 name="edgeResult" parameters=[{type=number|string}, {type=boolean}, 
     Return v7
   b7(v8):
     Return v8
-}
-# CHECK-LABEL: function f5 name="edgeResult"
 # CHECK: b5(v5: number|string):
 # CHECK: b6(v7: string):
 # CHECK: b7(v8: number):
+}
 
 function f6 name="anythingFlowsIn" parameters=[{type=anything}, {type=boolean}, {type=string}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean, v2: string):
     v3 = Boolean boolean=false
     Branch v3 -> taken b1(), notTaken b2()
   b1():
@@ -164,6 +150,5 @@ function f6 name="anythingFlowsIn" parameters=[{type=anything}, {type=boolean}, 
     Jump -> next b5(v0)
   b5(v5):
     Return v5
-}
-# CHECK-LABEL: function f6 name="anythingFlowsIn"
 # CHECK: b5(v5: anything):
+}

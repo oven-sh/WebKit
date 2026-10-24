@@ -6,25 +6,21 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Instance fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"secret"@L0 declared={type=anything} flags=[IsRequired, IsPrivate]}]
 function f0 name="badOnUnknownReceiver" parameters=[{type=anything}, {type=classtoken}] results=[{type=string}] {
-  b0(v0: anything, v1: classtoken):
     v2 = PrivateGet v0, v1 layout=L0
     v3 = TypeOf v2
     Return v3
 }
 function f1 name="badOnProvenReceiver" parameters=[{type=L0}, {type=classtoken}] results=[{type=string}] {
-  b0(v0: L0, v1: classtoken):
     v2 = PrivateGet v0, v1 layout=L0
     v3 = TypeOf v2
     Return v3
 }
 function f2 name="goodField" parameters=[{type=anything}, {type=classtoken}] results=[{type=string}] {
-  b0(v0: anything, v1: classtoken):
     v2 = PrivateGet v0, v1 layout=L0 field=1
     v3 = TypeOf v2
     Return v3
 }
 function f3 name="goodUnusedBrand" parameters=[{type=anything}, {type=classtoken}] results=[{type=undefined}] {
-  b0(v0: anything, v1: classtoken):
     v2 = PrivateGet v0, v1 layout=L0
     Return
 }

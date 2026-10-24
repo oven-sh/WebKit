@@ -13,7 +13,6 @@ layout L0 name="Wide" fields=[{key="required" declared={type=number} flags=[IsRe
 layout L1 name="Pair" fields=[{key="first" declared={type=anything} flags=[IsRequired]}, {key="second" declared={type=anything} flags=[IsRequired]}]
 layout L2 name="Late" fields=[{key="required" declared={type=number} flags=[IsRequired]}, {key="near0" declared={type=anything}}, {key="near1" declared={type=anything}}, {key="empty" declared={type=anything}}, {key="chain0" declared={type=anything}}, {key="chain1" declared={type=anything}}, {key="chain2" declared={type=anything}}, {key="often" declared={type=anything}}, {key="seldom" declared={type=anything}}]
 function f0 name="make" parameters=[{type=number}, {type=boolean}] results=[{type=L0}] {
-  b0(v0: number, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -23,55 +22,46 @@ function f0 name="make" parameters=[{type=number}, {type=boolean}] results=[{typ
     Return v3
 }
 function f1 name="fill" parameters=[{type=L0}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: L0, v1: anything):
 # REPEAT: i = 0..15
     PutSlotOrAdd v0, -, v1 key="late%(i)" receivers=[L0] level=Proven
 # END REPEAT
     Return
 }
 function f2 name="readGranule0" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = GetSlotOrUndefined v0 key="late2" receivers=[L0] level=Proven
     Return v1
 }
 function f3 name="readGranule1" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = GetSlotOrUndefined v0 key="late3" receivers=[L0] level=Proven
     Return v1
 }
 function f4 name="readGranule2" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = GetSlotOrUndefined v0 key="late4" receivers=[L0] level=Proven
     Return v1
 }
 function f5 name="readGranule9" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = GetSlotOrUndefined v0 key="late11" receivers=[L0] level=Proven
     Return v1
 }
 function f6 name="readTwoGranules" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = GetSlotOrUndefined v0 key="late5" receivers=[L0] level=Proven
     v2 = GetSlotOrUndefined v0 key="late6" receivers=[L0] level=Proven
     v3 = NewObject -, v1, v2 layout=L1 fields=[0, 1]
     Return v3
 }
 function f7 name="readTwoObjects" parameters=[{type=L0}, {type=L0}] results=[{type=anything}] {
-  b0(v0: L0, v1: L0):
     v2 = GetSlotOrUndefined v0 key="late7" receivers=[L0] level=Proven
     v3 = GetSlotOrUndefined v1 key="late8" receivers=[L0] level=Proven
     v4 = NewObject -, v2, v3 layout=L1 fields=[0, 1]
     Return v4
 }
 function f8 name="readTheOthers" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
 # REPEAT: i = 1..12; a = 0 0 0 1 1 1 9 10 12 13 14 15
     v%(i) = GetSlotOrUndefined v0 key="late%(a)" receivers=[L0] level=Proven
 # END REPEAT
     Return v12
 }
 function f9 name="makeLate" parameters=[{type=number}, {type=boolean}] results=[{type=L2}] {
-  b0(v0: number, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -81,7 +71,6 @@ function f9 name="makeLate" parameters=[{type=number}, {type=boolean}] results=[
     Return v3
 }
 function f10 name="useNear" parameters=[{type=L2}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L2, v1: anything):
     PutSlotOrAdd v0, -, v1 key="near0" receivers=[L2] level=Proven
     PutSlotOrAdd v0, -, v1 key="near1" receivers=[L2] level=Proven
     v4 = GetSlotOrUndefined v0 key="near0" receivers=[L2] level=Proven
@@ -93,25 +82,21 @@ function f10 name="useNear" parameters=[{type=L2}, {type=anything}] results=[{ty
     Return v9
 }
 function f11 name="storesUndefined" parameters=[{type=L2}] results=[{type=undefined}] {
-  b0(v0: L2):
     v1 = Undefined
     PutSlotOrAdd v0, -, v1 key="empty" receivers=[L2] level=Proven
     Return
 }
 function f12 name="storesValue" parameters=[{type=L2}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: L2, v1: anything):
     PutSlotOrAdd v0, -, v1 key="empty" receivers=[L2] level=Proven
     Return
 }
 function f13 name="storesThreeInARow" parameters=[{type=L2}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: L2, v1: anything):
     PutSlotOrAdd v0, -, v1 key="chain0" receivers=[L2] level=Proven
     PutSlotOrAdd v0, -, v1 key="chain1" receivers=[L2] level=Proven
     PutSlotOrAdd v0, -, v1 key="chain2" receivers=[L2] level=Proven
     Return
 }
 function f14 name="laterStoreIsUnlikely" parameters=[{type=L2}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: L2, v1: anything, v2: boolean):
     PutSlotOrAdd v0, -, v1 key="often" receivers=[L2] level=Proven
     Branch v2 -> taken b1(), notTaken b2()
   b1() frequency=Unlikely:

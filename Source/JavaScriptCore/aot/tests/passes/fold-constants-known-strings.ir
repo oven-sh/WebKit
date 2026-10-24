@@ -9,7 +9,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="concatenation" results=[{type=string}] {
-  b0():
     v0 = String string="a"
     v1 = String string="b"
     v2 = String string=""
@@ -20,17 +19,15 @@ function f0 name="concatenation" results=[{type=string}] {
     v7 = Strcat v0, v3, v4
     v8 = Strcat v1
     Return v5
-}
-# CHECK-LABEL: function f0 name="concatenation"
 # CHECK-NOT: Strcat
 # CHECK: v5: "aba" = String string="aba"
 # CHECK-NEXT: v6: "ab" = String string="ab"
 # CHECK-NEXT: v7: "a7undefined" = String string="a7undefined"
 # CHECK-NEXT: v8: "b" = String string="b"
 # CHECK-NEXT: Return v5
+}
 
 function f1 name="sumOfStringAndPrimitive" results=[{type=string}] {
-  b0():
     v0 = String string="x"
     v1 = Integer integer=1
     v2 = Integer integer=-5
@@ -47,8 +44,6 @@ function f1 name="sumOfStringAndPrimitive" results=[{type=string}] {
     v13 = Add v6, v0
     v14 = Add v0, v0
     Return v7
-}
-# CHECK-LABEL: function f1 name="sumOfStringAndPrimitive"
 # CHECK-NOT: Add
 # CHECK: v7: "x1" = String string="x1"
 # CHECK-NEXT: v8: "1x" = String string="1x"
@@ -59,20 +54,18 @@ function f1 name="sumOfStringAndPrimitive" results=[{type=string}] {
 # CHECK-NEXT: v13: "undefinedx" = String string="undefinedx"
 # CHECK-NEXT: v14: "xx" = String string="xx"
 # CHECK-NEXT: Return v7
+}
 
 function f2 name="sumOfTwoNumbers" results=[{type=number}] {
-  b0():
     v0 = Integer integer=1
     v1 = Integer integer=2
     v2 = Add v0, v1
     Return v2
-}
-# CHECK-LABEL: function f2 name="sumOfTwoNumbers"
 # CHECK-NOT: String
 # CHECK: v2: 3 = Integer integer=3
+}
 
 function f3 name="textOfEachPrimitive" results=[{type=string}] {
-  b0():
     v0 = Undefined
     v1 = Null
     v2 = Boolean boolean=true
@@ -88,8 +81,6 @@ function f3 name="textOfEachPrimitive" results=[{type=string}] {
     v12 = ToString v5
     v13 = ToString v6
     Return v7
-}
-# CHECK-LABEL: function f3 name="textOfEachPrimitive"
 # CHECK-NOT: ToString
 # CHECK: v7: "undefined" = String string="undefined"
 # CHECK-NEXT: v8: "null" = String string="null"
@@ -99,9 +90,9 @@ function f3 name="textOfEachPrimitive" results=[{type=string}] {
 # CHECK-NEXT: v12: "9007199254740991" = String string="9007199254740991"
 # CHECK-NEXT: v13: "kept" = String string="kept"
 # CHECK-NEXT: Return v7
+}
 
 function f4 name="textOfNumbers" results=[{type=string}] {
-  b0():
     v0 = Double number=-0
     v1 = Double number=NaN
     v2 = Double number=Infinity
@@ -119,8 +110,6 @@ function f4 name="textOfNumbers" results=[{type=string}] {
     v14 = ToString v6
     v15 = ToString v7
     Return v8
-}
-# CHECK-LABEL: function f4 name="textOfNumbers"
 # CHECK-NOT: ToString
 # CHECK: v8: "0" = String string="0"
 # CHECK-NEXT: v9: "NaN" = String string="NaN"
@@ -131,9 +120,9 @@ function f4 name="textOfNumbers" results=[{type=string}] {
 # CHECK-NEXT: v14: "1e-7" = String string="1e-7"
 # CHECK-NEXT: v15: "123456789012345680000" = String string="123456789012345680000"
 # CHECK-NEXT: Return v8
+}
 
 function f5 name="surrogateHalves" results=[{type=string}] {
-  b0():
     v0 = String string="\u{d83d}"
     v1 = String string="\u{de00}"
     v2 = String string="a\u{d83d}"
@@ -143,30 +132,26 @@ function f5 name="surrogateHalves" results=[{type=string}] {
     v6 = Add v1, v0
     v7 = Strcat v0, v2
     Return v4
-}
-# CHECK-LABEL: function f5 name="surrogateHalves"
 # CHECK: v4: "\u{1f600}" = String string="\u{1f600}"
 # CHECK-NEXT: v5: "a\u{1f600}b" = String string="a\u{1f600}b"
 # CHECK-NEXT: v6: "\u{de00}\u{d83d}" = String string="\u{de00}\u{d83d}"
 # CHECK-NEXT: v7: "\u{d83d}a\u{d83d}" = String string="\u{d83d}a\u{d83d}"
 # CHECK-NEXT: Return v4
+}
 
 function f6 name="partsKnownByType" parameters=[{type="on"}, {type=3}, {type=true}] results=[{type=string}] {
-  b0(v0: "on", v1: 3, v2: true):
     v3 = String string="Click"
     v4 = Add v0, v3
     v5 = Strcat v0, v1, v2
     v6 = ToString v1
     Return v4
-}
-# CHECK-LABEL: function f6 name="partsKnownByType"
 # CHECK: v4: "onClick" = String string="onClick"
 # CHECK-NEXT: v5: "on3true" = String string="on3true"
 # CHECK-NEXT: v6: "3" = String string="3"
 # CHECK-NEXT: Return v4
+}
 
 function f7 name="oneUnknownPart" parameters=[{type=string}, {type=number}, {type=anything}, {type=object}] results=[{type=string}] {
-  b0(v0: string, v1: number, v2: anything, v3: object):
     v4 = String string="a"
     v5 = Strcat v4, v0, v4
     v6 = Add v4, v1
@@ -175,8 +160,6 @@ function f7 name="oneUnknownPart" parameters=[{type=string}, {type=number}, {typ
     v9 = ToString v1
     v10 = ToString v3
     Return v5
-}
-# CHECK-LABEL: function f7 name="oneUnknownPart"
 # CHECK: v5:{{*}}= Strcat v4, v0, v4
 # CHECK-NEXT: v6:{{*}}= Add v4, v1
 # CHECK-NEXT: v7:{{*}}= Add v2, v4
@@ -184,9 +167,9 @@ function f7 name="oneUnknownPart" parameters=[{type=string}, {type=number}, {typ
 # CHECK-NEXT: v9:{{*}}= ToString v1
 # CHECK-NEXT: v10:{{*}}= ToString v3
 # CHECK-NEXT: Return v5
+}
 
 function f8 name="symbolAndBigInt" results=[{type=string}] {
-  b0():
     v0 = String string="a"
     v1 = KeyConstant key=@@iterator
     v2 = BigInt digits="1"
@@ -196,11 +179,10 @@ function f8 name="symbolAndBigInt" results=[{type=string}] {
     v6 = ToString v2
     v7 = Add v0, v2
     Return v3
-}
-# CHECK-LABEL: function f8 name="symbolAndBigInt"
 # CHECK: v3:{{*}}= ToString v1
 # CHECK-NEXT: v4:{{*}}= Strcat v0, v1
 # CHECK-NEXT: v5:{{*}}= Add v0, v1
 # CHECK-NEXT: v6:{{*}}= ToString v2
 # CHECK-NEXT: v7:{{*}}= Add v0, v2
 # CHECK-NEXT: Return v3
+}

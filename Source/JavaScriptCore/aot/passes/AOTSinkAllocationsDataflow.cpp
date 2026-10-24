@@ -10,12 +10,209 @@
 
 #include "AOTBlockFrequencies.h"
 #include "AOTBuildContext.h"
+#include "AOTEdgeResults.h"
 #include "AOTSort.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <functional>
+#include <utility>
+#include <wtf/CommaPrinter.h>
+#include <wtf/PrintStream.h>
 
 namespace JSC { namespace AOT { namespace Typed {
+
+bool ObjectState::hasCell() const
+{
+    return variants.containsIf([](const ObjectVariant& variant) {
+        return variant.shape == cellShape;
+    });
+}
+
+bool ObjectState::hasOneShape() const
+{
+    return std::ranges::all_of(variants, [&](const ObjectVariant& variant) {
+        return variant.shape == variants[0].shape;
+    });
+}
+
+bool ObjectState::hasConflictingTags() const
+{
+    for (size_t index = 1; index < variants.size(); ++index) {
+        const ObjectVariant& variant = variants[index];
+        if (variant.tagBit && variant.tagBit == variants[index - 1].tagBit)
+            return true;
+    }
+    return false;
+}
+
+uint32_t ObjectState::tagBits() const
+{
+    uint32_t bits = 0;
+    for (const ObjectVariant& variant : variants)
+        bits |= variant.tagMask();
+    return bits;
+}
+
+VirtualObjectID ObjectState::objectHeldIn(uint32_t field) const
+{
+    const HeldObject* held = findEntry(heldObjects, &HeldObject::field, field);
+    return held ? held->object : VirtualObjectID();
+}
+
+void ObjectState::assume(TypeID type)
+{
+    size_t position = std::ranges::lower_bound(assumedTypes, type) - assumedTypes.begin();
+    if (position == assumedTypes.size() || assumedTypes[position] != type)
+        assumedTypes.insert(position, type);
+}
+
+void ObjectState::keepAssumedTypesOf(const ObjectState& other)
+{
+    assumedTypes.removeAllMatching([&](TypeID type) {
+        return !other.assumedTypes.contains(type);
+    });
+}
+
+void ObjectState::addVariant(ObjectVariant variant)
+{
+    size_t position = std::ranges::lower_bound(variants, variant) - variants.begin();
+    if (position < variants.size() && variants[position] == variant)
+        return;
+    variants.insert(position, variant);
+}
+
+void ObjectState::becomeCell()
+{
+    variants = { ObjectVariant { std::nullopt, cellShape } };
+    heldObjects.clear();
+    fieldsValidInCell.clearAll();
+    cellJoinedAt = { };
+    lacksFieldsOnSomeWay = false;
+    isMissingOnSomeWay = false;
+}
+
+void ObjectState::normalize()
+{
+    if (!hasOneShape())
+        return;
+
+    VirtualShapeID shape = variants[0].shape;
+    if (variants.size() > 1 || variants[0].tagBit)
+        variants = { ObjectVariant { std::nullopt, shape } };
+    if (shape == cellShape)
+        cellJoinedAt = { };
+}
+
+const ObjectState* SinkingState::find(VirtualObjectID object) const
+{
+    const ObjectEntry* entry = findEntry(objects, &ObjectEntry::object, object);
+    return entry ? &entry->state : nullptr;
+}
+
+std::optional<size_t> SinkingState::indexOf(VirtualObjectID object) const
+{
+    const ObjectEntry* entry = findEntry(objects, &ObjectEntry::object, object);
+    if (!entry)
+        return std::nullopt;
+    return entry - objects.span().data();
+}
+
+ObjectState& SinkingState::add(VirtualObjectID object, ObjectState&& state)
+{
+    size_t position = positionOfEntry(objects, &ObjectEntry::object, object);
+    RELEASE_ASSERT(position == objects.size() || objects[position].object != object);
+    objects.insert(position, ObjectEntry { object, WTF::move(state) });
+    return objects[position].state;
+}
+
+void SinkingState::set(std::span<ObjectEntry> movedEntries)
+{
+    Vector<ObjectEntry*, 8> addedEntries;
+    for (ObjectEntry& entry : movedEntries) {
+        if (ObjectState* state = find(entry.object))
+            *state = WTF::move(entry.state);
+        else
+            addedEntries.append(&entry);
+    }
+    if (addedEntries.isEmpty())
+        return;
+
+    AOT::sort(addedEntries, { }, &ObjectEntry::object);
+    size_t source = objects.size();
+    size_t destination = source + addedEntries.size();
+    objects.grow(destination);
+    for (size_t added = addedEntries.size(); added;) {
+        if (source && objects[source - 1].object > addedEntries[added - 1]->object) {
+            --source;
+            --destination;
+            objects[destination] = WTF::move(objects[source]);
+            continue;
+        }
+        --added;
+        --destination;
+        objects[destination] = ObjectEntry { addedEntries[added]->object, WTF::move(addedEntries[added]->state) };
+    }
+}
+
+size_t SinkingState::weight() const
+{
+    size_t result = aliases.size() + tests.size();
+    for (const ObjectEntry& entry : objects)
+        result += entry.state.variants.size() + entry.state.heldObjects.size() + entry.state.assumedTypes.size();
+    return result;
+}
+
+bool SinkingState::canReach(VirtualObjectID from, VirtualObjectID to) const
+{
+    BitVector visited;
+    Vector<VirtualObjectID, 4> worklist { from };
+    while (!worklist.isEmpty()) {
+        VirtualObjectID object = worklist.takeLast();
+        if (object == to)
+            return true;
+        if (!visited.add(object.index()))
+            continue;
+        const ObjectState* state = find(object);
+        if (!state)
+            continue;
+        for (const HeldObject& held : state->heldObjects)
+            worklist.append(held.object);
+    }
+    return false;
+}
+
+bool SinkingState::isDestructured(VirtualObjectID object) const
+{
+    return aliases.containsIf([&](const AliasEntry& alias) {
+        return alias.kind == AliasKind::Results && alias.object == object;
+    });
+}
+
+void SinkingDecisions::buildAtHead(BlockID block, VirtualObjectID object)
+{
+    if (m_objectsBuiltAtHeads.add(pairOf(block.index(), object.index())).isNewEntry) {
+        m_blocksWithObjectsBuiltAtHeads.set(block.index());
+        didDecide(object);
+    }
+}
+
+void SinkingDecisions::holdCells(ValueID parameter, VirtualObjectID boundObject)
+{
+    if (m_parametersHoldingCells.add(parameter.index()))
+        didDecide(boundObject);
+}
+
+void SinkingDecisions::holdCells(VirtualObjectID holder, uint32_t field)
+{
+    if (m_fieldsHoldingCells.add(pairOf(holder.index(), field)).isNewEntry)
+        didDecide(holder);
+}
+
+void SinkingDecisions::didDecide(VirtualObjectID object)
+{
+    m_didChange = true;
+    m_objectsOfNewDecisions.appendIfNotContains(object);
+}
 
 static bool willSolveAgainWithCell(AllocationSinking& sinking, BlockID head, VirtualObjectID object)
 {
@@ -52,9 +249,189 @@ static bool retainEqualEntries(Vector<Entry, inlineCapacity>& into, const Vector
     return changed;
 }
 
-static bool holdsNothing(const SinkingState& state)
+static bool mustBeBuiltBefore(AllocationSinking& sinking, BlockID block, VirtualObjectID object, const ObjectState& state)
 {
-    return state.objects.isEmpty() && state.aliases.isEmpty() && state.tests.isEmpty();
+    if (!state.hasCell() || state.isCell())
+        return false;
+    if (!sinking.inputs().blocksInCycles.get(block.index()))
+        return false;
+
+    const BlockCycles& cycles = sinking.analyses().blockCycles();
+    BlockID origin = sinking.at(object).block;
+    return !cycles.areInSameCycle(block, origin) || cycles.depthOf(block) > cycles.depthOf(origin);
+}
+
+static bool mergeAliases(AllocationSinking& sinking, SinkingState& into, const SinkingState& from)
+{
+    const Function& function = sinking.function();
+    bool isHeadMerge = into.isAtHead;
+    return retainEqualEntries(into.aliases, from.aliases, &AliasEntry::value, [&](const AliasEntry& entry) {
+        if (!isHeadMerge)
+            return;
+        Opcode opcode = function.at(entry.value).opcode;
+        if (opcode == Opcode::Parameter || opcode == Opcode::AllGuards || interpretedCasts.contains(opcode))
+            sinking.decisions().holdCells(entry.value, entry.object);
+        else
+            sinking.abandon(entry.object);
+    });
+}
+
+static void holdCellsInFamilyOf(AllocationSinking& sinking, VirtualObjectID object, uint32_t field)
+{
+    VirtualFamilyID family = sinking.at(object).family;
+    for (uint32_t index = 0; index < sinking.numberOfCandidates(); ++index) {
+        VirtualObjectID member(index);
+        if (sinking.at(member).family == family)
+            sinking.decisions().holdCells(member, field);
+    }
+}
+
+static void mergeHeldObjects(AllocationSinking& sinking, VirtualObjectID object, ObjectState& target, const ObjectState& source)
+{
+    if (target.heldObjects.isEmpty() && source.heldObjects.isEmpty())
+        return;
+
+    const VirtualFamily& family = sinking.familyOf(object);
+    auto storesPlainly = [&](const ObjectState& side, uint32_t field) {
+        if (side.objectHeldIn(field))
+            return false;
+        return side.hasCell() || side.variants.containsIf([&](const ObjectVariant& variant) {
+            return hasStored(family.at(variant.shape), field);
+        });
+    };
+
+    Vector<uint32_t, 4> fields;
+    for (const HeldObject& entry : target.heldObjects)
+        fields.append(entry.field);
+    for (const HeldObject& entry : source.heldObjects) {
+        if (!target.objectHeldIn(entry.field))
+            fields.append(entry.field);
+    }
+    AOT::sort(fields);
+
+    for (uint32_t field : fields) {
+        VirtualObjectID objectInTarget = target.objectHeldIn(field);
+        VirtualObjectID objectInSource = source.objectHeldIn(field);
+        if (objectInTarget == objectInSource)
+            continue;
+        if (!objectInSource && !storesPlainly(source, field))
+            continue;
+        if (!objectInTarget && !storesPlainly(target, field)) {
+            target.hold(field, objectInSource);
+            continue;
+        }
+        holdCellsInFamilyOf(sinking, object, field);
+        if (objectInTarget)
+            target.release(field);
+    }
+}
+
+static bool mergeObject(AllocationSinking& sinking, SinkingState& into, VirtualObjectID object, ObjectState& target, const ObjectState& source)
+{
+    bool becomesCell = into.isAtHead && willSolveAgainWithCell(sinking, into.block, object);
+    if (!becomesCell && target.variants.size() == 1 && target == source)
+        return false;
+
+    ObjectState before = target;
+    target.keepAssumedTypesOf(source);
+    target.lacksFieldsOnSomeWay |= source.lacksFieldsOnSomeWay;
+    target.isMissingOnSomeWay |= source.isMissingOnSomeWay;
+    if (becomesCell) {
+        target.becomeCell();
+        return target != before;
+    }
+
+    if (source.hasCell()) {
+        if (target.hasCell())
+            target.fieldsValidInCell.filter(source.fieldsValidInCell);
+        else
+            target.fieldsValidInCell = source.fieldsValidInCell;
+    }
+    mergeHeldObjects(sinking, object, target, source);
+    for (const ObjectVariant& variant : source.variants)
+        target.addVariant(variant);
+
+    if (into.isAtHead) {
+        sinking.tagVariants(into.block, object, target);
+        if (target.hasCell() && !target.isCell() && !target.cellJoinedAt)
+            target.cellJoinedAt = source.cellJoinedAt ? source.cellJoinedAt : into.block;
+        if (mustBeBuiltBefore(sinking, into.block, object, target) || target.hasConflictingTags())
+            sinking.decisions().buildAtHead(into.block, object);
+        if (!target.isCell() && willSolveAgainWithCell(sinking, into.block, object))
+            target.becomeCell();
+    }
+    return target != before;
+}
+
+static bool mergeObjects(AllocationSinking& sinking, SinkingState& into, const SinkingState& from)
+{
+    bool changed = false;
+    size_t index = 0;
+    auto isMissingInSource = [&](ObjectState& target) {
+        if (!target.isCell())
+            changed |= !std::exchange(target.isMissingOnSomeWay, true);
+    };
+    for (const ObjectEntry& source : from.objects) {
+        for (; index < into.objects.size() && into.objects[index].object < source.object; ++index)
+            isMissingInSource(into.objects[index].state);
+        if (index < into.objects.size() && into.objects[index].object == source.object) {
+            changed |= mergeObject(sinking, into, source.object, into.objects[index].state, source.state);
+            ++index;
+            continue;
+        }
+        into.objects.insert(index, source);
+        if (!source.state.isCell())
+            into.objects[index].state.isMissingOnSomeWay = true;
+        ++index;
+        changed = true;
+    }
+    for (; index < into.objects.size(); ++index)
+        isMissingInSource(into.objects[index].state);
+    return changed;
+}
+
+template<typename From>
+static bool mergeStates(AllocationSinking& sinking, SinkingState& into, From&& from)
+{
+    if (!from.isReachable)
+        return false;
+    bool isHeadWithOneIncomingEdge = from.isAtHead && !sinking.inputs().mergeBlocks.get(into.block.index());
+    if (!into.isReachable || isHeadWithOneIncomingEdge) {
+        if (into == from)
+            return false;
+        into = std::forward<From>(from);
+        return true;
+    }
+
+    into.isAtHead = into.isAtHead && from.isAtHead;
+    bool changed = mergeObjects(sinking, into, from);
+    changed |= mergeAliases(sinking, into, from);
+    changed |= retainEqualEntries(into.tests, from.tests, &TestEntry::test, [](const TestEntry&) { });
+    return changed;
+}
+
+static void enterEdge(AllocationSinking& sinking, SinkingState& state, Edge edge)
+{
+    const Function& function = sinking.function();
+    BlockID target = targetOf(function, edge).block;
+    if (!state.isReachable) {
+        state = SinkingState::unreachableAt(target);
+        return;
+    }
+
+    bool isPlain = sinking.isPlain(edge, target) && !sinking.checksShortcuts();
+    if (isPlain && ObjectInterpreter(sinking, SinkingMode::Analyze, state).tryEnterPlainEdge(target))
+        return;
+    OutgoingEdge outgoing = isPlain ? OutgoingEdge { edge, target, { } } : outgoingEdgeOf(function, edge);
+    const Terminator* terminator = edge.isHandlerEdge() ? nullptr : &function.at(edge.from).terminator;
+    if (sinking.checksShortcuts() && sinking.isPlain(edge, target)) [[unlikely]] {
+        SinkingState shortcut = state;
+        bool didEnter = ObjectInterpreter(sinking, SinkingMode::Analyze, shortcut).tryEnterPlainEdge(target);
+        ObjectInterpreter(sinking, SinkingMode::Analyze, state).enterEdge(outgoing, terminator, nullptr);
+        RELEASE_ASSERT(!didEnter || shortcut == state);
+        return;
+    }
+    ObjectInterpreter(sinking, SinkingMode::Analyze, state).enterEdge(outgoing, terminator, nullptr);
 }
 
 namespace {
@@ -62,9 +439,8 @@ namespace {
 class SinkingSolver {
     WTF_MAKE_NONCOPYABLE(SinkingSolver);
 public:
-    SinkingSolver(AllocationSinking& sinking, SinkingProblem& problem)
+    explicit SinkingSolver(AllocationSinking& sinking)
         : m_sinking(sinking)
-        , m_problem(problem)
         , m_function(sinking.function())
         , m_cfg(sinking.analyses().cfg())
         , m_inputs(sinking.inputs())
@@ -103,7 +479,7 @@ private:
     {
         if (entry.includesCurrentState)
             return;
-        m_problem.merge(entry.state, state);
+        mergeStates(m_sinking, entry.state, state);
         entry.includesCurrentState = true;
     }
 
@@ -114,7 +490,6 @@ private:
         return targetOrder <= fromOrder;
     }
 
-    // Most blocks are reached and have nothing to do with any object. Their states are made when somebody wants to see one.
     void makeHeadOfBlockEnteredWithNothing(BlockID block)
     {
         if (m_blocksEnteredWithNothing.quickClear(block.index()))
@@ -126,7 +501,7 @@ private:
         makeHeadOfBlockEnteredWithNothing(target);
         std::optional<SinkingState>& head = m_heads[target.index()];
         if (head) {
-            if (!m_problem.merge(*head, WTF::move(state)))
+            if (!mergeStates(m_sinking, *head, WTF::move(state)))
                 return false;
         } else
             head = WTF::move(state);
@@ -135,10 +510,10 @@ private:
 
     bool propagate(Edge edge, SinkingState&& state, uint32_t fromOrder)
     {
-        if (holdsNothing(state))
+        if (state.holdsNothing())
             return propagateNothing(edge, state.isReachable, fromOrder);
         m_sinking.didWork(1 + state.weight() + m_function.at(targetOf(m_function, edge).block).parameters.size());
-        m_problem.enterEdge(state, edge);
+        enterEdge(m_sinking, state, edge);
         return meetAtHead(targetOf(m_function, edge).block, WTF::move(state), fromOrder);
     }
 
@@ -155,7 +530,7 @@ private:
 
         bool isEntered = m_inputs.blocksWithJoins.get(target.index()) || m_sinking.isIgnored(edge);
         if (!isEntered) {
-            if (isEnteredWithNothing || (head && head->isReachable && holdsNothing(*head)))
+            if (isEnteredWithNothing || (head && head->isReachable && head->holdsNothing()))
                 return false;
             if (!head) {
                 m_blocksEnteredWithNothing.quickSet(target.index());
@@ -167,7 +542,7 @@ private:
         if (isEntered) {
             state.block = edge.from;
             state.isAtHead = false;
-            m_problem.enterEdge(state, edge);
+            enterEdge(m_sinking, state, edge);
         }
         return meetAtHead(target, WTF::move(state), fromOrder);
     }
@@ -189,7 +564,7 @@ private:
             makeHeadOfBlockEnteredWithNothing(id);
         }
         const SinkingState& head = *m_heads[id.index()];
-        if (holdsNothing(head) && (!head.isReachable || !m_inputs.blocksWithCandidates.get(id.index())))
+        if (head.holdsNothing() && (!head.isReachable || !m_inputs.blocksWithCandidates.get(id.index())))
             return propagateNothingFrom(id, head.isReachable, blockOrder);
 
         const Block& block = m_function.at(id);
@@ -208,7 +583,6 @@ private:
         for (uint32_t entry : m_sinking.relevantValuesOf(id)) {
             uint32_t index = entry & ~AllocationSinking::onlyWritesOrThrows;
             ValueID value = block.values[index];
-            // A value that was passed over counts for the handler as one that was executed.
             if (handlerEntry && index > numberOfValuesPassed)
                 handlerEntry->includesCurrentState = false;
             numberOfValuesPassed = index + 1;
@@ -249,7 +623,6 @@ private:
     }
 
     AllocationSinking& m_sinking;
-    SinkingProblem& m_problem;
     const Function& m_function;
     const CFG& m_cfg;
     const SinkingInputs& m_inputs;
@@ -269,11 +642,10 @@ void AllocationSinking::solve()
         for (VirtualFamily& family : m_families)
             family.forgetTagBits();
 
-        SinkingProblem problem(*this);
         if (m_blocksCarrying.size() != numberOfCandidates())
             m_blocksCarrying.fill(0, numberOfCandidates());
         ++m_numberOfSweeps;
-        SinkingSolver solver(*this, problem);
+        SinkingSolver solver(*this);
         m_heads = solver.run();
         m_blocksEnteredWithNothing = solver.takeBlocksEnteredWithNothing();
         if (hasSpentItsWork()) {
@@ -288,8 +660,10 @@ void AllocationSinking::solve()
         bool changed = m_decisions.takeDidChange();
         if (!changed && !m_mustSolveAgain)
             return;
-        if (round >= limit(LimitID::MaxSinkingRounds))
-            giveUpOnNewDecisions();
+        if (round >= limit(LimitID::MaxSinkingRounds)) {
+            for (VirtualObjectID object : Vector<VirtualObjectID, 4>(m_decisions.objectsOfNewDecisions()))
+                abandon(object, LimitID::MaxSinkingRounds);
+        }
         setAsideJoinsThatCarryOnlyCells();
     }
 }
@@ -304,7 +678,6 @@ void AllocationSinking::giveUpOnEveryCandidate()
     giveUpForLackOfWork(candidates.span());
 }
 
-// The work grows with the number of objects that are followed and with the blocks that each is carried through.
 bool AllocationSinking::startOverWithFewerCandidates()
 {
     if (!m_setsAsideJoins)
@@ -321,7 +694,6 @@ bool AllocationSinking::startOverWithFewerCandidates()
         return frequencies.frequencyOf(m_candidates[index].block);
     });
 
-    // An object costs what it is carried through. What may stay is the share of that which the limit pays for, and never more than half of the allocations.
     uint64_t blocksInAll = 0;
     for (uint32_t index : mostFrequentFirst)
         blocksInAll += m_blocksCarrying[index];
@@ -428,14 +800,6 @@ void AllocationSinking::takeBackJoinsSetAside()
     m_joinsSetAside.shrink(0);
 }
 
-void AllocationSinking::giveUpOnNewDecisions()
-{
-    Vector<VirtualObjectID, 4> objects(m_decisions.objectsOfNewDecisions());
-    for (VirtualObjectID object : objects)
-        abandon(object, LimitID::MaxSinkingRounds);
-}
-
-// The object is built on the ways into this one block and stays virtual on every path that does not come here.
 void AllocationSinking::buildAtHeadForLackOfTagBits(BlockID block, VirtualObjectID object)
 {
     if (m_decisions.isBuiltAtHead(block, object)) {
@@ -458,7 +822,6 @@ void AllocationSinking::tagVariants(BlockID block, VirtualObjectID object, Objec
         if (variant.tagBit)
             continue;
 
-        // A head inside a loop is first reached with the one shape of the object and then, over the back edge, with that shape under a tag.
         size_t taggedVariant = state.variants.findIf([&](const ObjectVariant& other) {
             return other.tagBit && other.shape == variant.shape;
         });
@@ -476,232 +839,543 @@ void AllocationSinking::tagVariants(BlockID block, VirtualObjectID object, Objec
     removeRepeatedElements(state.variants);
 }
 
-SinkingProblem::State SinkingProblem::stateAtEntry()
+static IncomingBinding bindingOf(const EdgeResult& result)
 {
-    return State::nothingAt(entryBlock);
+    switch (result.kind) {
+    case EdgeResultKind::NarrowedOperand:
+        return { IncomingBinding::Kind::NarrowedOperand, result.subject };
+    case EdgeResultKind::Guard:
+        return { IncomingBinding::Kind::Guard, result.subject };
+    case EdgeResultKind::DeclaredResult:
+        return { };
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
-void SinkingProblem::enterEdge(State& state, Edge edge)
+// Rewrite asks while the target has head parameters that this edge does not fill yet, so the bindings come from the edge alone.
+OutgoingEdge outgoingEdgeOf(const Function& function, Edge edge)
 {
-    const Function& function = m_sinking.function();
-    BlockID target = targetOf(function, edge).block;
-    if (!state.isReachable) {
-        state = State::unreachableAt(target);
-        return;
+    const Target& target = targetOf(function, edge);
+    uint32_t numberOfResults = edge.isHandlerEdge() ? 0 : numberOfEdgeResults(function, edge.from, edge.targetIndex);
+
+    OutgoingEdge outgoing { edge, target.block, { } };
+    outgoing.bindings.reserveInitialCapacity(target.arguments.size() + numberOfResults);
+    for (ValueID argument : target.arguments)
+        outgoing.bindings.append(IncomingBinding { IncomingBinding::Kind::Argument, argument });
+    for (uint32_t resultIndex = 0; resultIndex < numberOfResults; ++resultIndex)
+        outgoing.bindings.append(bindingOf(edgeResultAt(function, { edge.from, edge.targetIndex, resultIndex })));
+    return outgoing;
+}
+
+static Vector<ValueID, 4> originalParametersOf(AllocationSinking& sinking, SinkingMode mode, BlockID block)
+{
+    Vector<ValueID, 4> parameters(sinking.function().at(block).parameters.span());
+    if (mode != SinkingMode::Rewrite)
+        return parameters;
+
+    const RewriteTables& tables = sinking.tables();
+    if (tables.blocksWithHeadParameters.get(block.index()))
+        parameters.removeAt(tables.firstHeadParameter[block.index()], tables.headValues[block.index()].size());
+    return parameters;
+}
+
+static const IncomingBinding& bindingOfJoin(AllocationSinking& sinking, SinkingMode mode, const OutgoingEdge& outgoing, VirtualObjectID join)
+{
+    size_t index = originalParametersOf(sinking, mode, outgoing.target).find(sinking.at(join).definition);
+    RELEASE_ASSERT(index != notFound);
+    return outgoing.bindings[index];
+}
+
+static bool isJoinReboundOnEdge(const ObjectInterpreter& interpreter, AllocationSinking& sinking, const OutgoingEdge& outgoing, VirtualObjectID object)
+{
+    const Candidate& candidate = sinking.at(object);
+    if (!candidate.isJoin || candidate.block != outgoing.target)
+        return false;
+    return interpreter.objectOf(bindingOfJoin(sinking, interpreter.mode(), outgoing, object).value) != object;
+}
+
+static BitVector collectReferencedObjects(const SinkingState& state)
+{
+    BitVector referencedObjects;
+    for (const AliasEntry& alias : state.aliases)
+        referencedObjects.set(alias.object.index());
+    for (const ObjectEntry& holder : state.objects) {
+        for (const HeldObject& entry : holder.state.heldObjects)
+            referencedObjects.set(entry.object.index());
+    }
+    return referencedObjects;
+}
+
+static bool isParameterOf(const UseLists& useLists, BlockID block, ValueID value)
+{
+    ValueLocation location = useLists.locationOf(value);
+    return location.placement == ValuePlacement::Parameter && location.block == block;
+}
+
+static bool hasFieldHoldingCells(AllocationSinking& sinking, VirtualObjectID object)
+{
+    uint32_t numberOfFields = sinking.familyOf(object).numberOfFields();
+    for (uint32_t field = 0; field < numberOfFields; ++field) {
+        if (sinking.decisions().holdsCells(object, field))
+            return true;
+    }
+    return false;
+}
+
+static void requireCellInCoveredBlock(AllocationSinking& sinking, SinkingState& state, BlockID covered, VirtualObjectID object)
+{
+    if (sinking.decisions().isBuiltAtHead(covered, object))
+        sinking.abandon(object);
+    else
+        sinking.decisions().buildAtHead(covered, object);
+    state.find(object)->becomeCell();
+}
+
+static void buildOnEdge(ObjectInterpreter& interpreter, AllocationSinking& sinking, const OutgoingEdge& outgoing, VirtualObjectID object)
+{
+    if (outgoing.edge.isHandlerEdge())
+        requireCellInCoveredBlock(sinking, interpreter.state(), outgoing.edge.from, object);
+    else
+        interpreter.build(object, BuildCause { });
+}
+
+static VirtualObjectID objectGuardedByTest(const ObjectInterpreter& interpreter, const Terminator& terminator, ValueID subject)
+{
+    const SinkingState& state = interpreter.state();
+    const TestEntry* test = terminator.kind == TerminatorKind::Branch ? state.findTest(terminator.conditionOperand()) : nullptr;
+    if (!test || !test->object)
+        return interpreter.objectOf(subject);
+    return state.find(test->object) ? test->object : VirtualObjectID();
+}
+
+static AliasEntry aliasOfBinding(const ObjectInterpreter& interpreter, const Terminator* terminator, ValueID parameter, const IncomingBinding& binding)
+{
+    switch (binding.kind) {
+    case IncomingBinding::Kind::Other:
+        return { };
+    case IncomingBinding::Kind::Guard:
+        RELEASE_ASSERT(terminator);
+        return { parameter, objectGuardedByTest(interpreter, *terminator, binding.value), AliasKind::Guard };
+    case IncomingBinding::Kind::Argument:
+    case IncomingBinding::Kind::NarrowedOperand:
+        if (VirtualObjectID object = interpreter.objectOf(binding.value))
+            return { parameter, object, AliasKind::Object };
+        return { parameter, interpreter.guardedObjectOf(binding.value), AliasKind::Guard };
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static ObjectValues valuesEnteringJoin(ObjectInterpreter& interpreter, AllocationSinking& sinking, const EnteredEdge& entered, const ObjectEntry& join)
+{
+    ObjectValues values;
+    for (const ConsumedSource& consumed : entered.consumedSources) {
+        if (consumed.join != join.object)
+            continue;
+        if (const ObjectValues* carried = interpreter.values().find(consumed.source))
+            values = *carried;
+        if (join.state.isCell())
+            values.cell = interpreter.cellOf(consumed.source);
+        return values;
     }
 
-    bool isPlain = m_sinking.isPlain(edge, target) && !m_sinking.checksShortcuts();
-    if (isPlain && ObjectInterpreter(m_sinking, SinkingMode::Analyze, state).tryEnterPlainEdge(target))
+    if (join.state.isCell())
+        values.cell = interpreter.resolve(bindingOfJoin(sinking, interpreter.mode(), *entered.edge, join.object).value);
+    return values;
+}
+
+static void removeDeadEntries(AllocationSinking& sinking, SinkingState& state, BlockID target)
+{
+    if (state.holdsNothing())
         return;
-    OutgoingEdge outgoing = isPlain ? OutgoingEdge { edge, target, { } } : outgoingEdgeOf(function, edge);
-    const Terminator* terminator = edge.isHandlerEdge() ? nullptr : &function.at(edge.from).terminator;
-    if (m_sinking.checksShortcuts() && m_sinking.isPlain(edge, target)) [[unlikely]] {
-        State shortcut = state;
-        bool didEnter = ObjectInterpreter(m_sinking, SinkingMode::Analyze, shortcut).tryEnterPlainEdge(target);
-        ObjectInterpreter(m_sinking, SinkingMode::Analyze, state).enterEdge(outgoing, terminator, nullptr);
-        RELEASE_ASSERT(!didEnter || shortcut == state);
-        return;
-    }
-    ObjectInterpreter(m_sinking, SinkingMode::Analyze, state).enterEdge(outgoing, terminator, nullptr);
-}
 
-bool SinkingProblem::replaces(const State& into, const State& from) const
-{
-    bool isHeadWithOneIncomingEdge = from.isAtHead && !m_sinking.inputs().mergeBlocks.get(into.block.index());
-    return !into.isReachable || isHeadWithOneIncomingEdge;
-}
-
-bool SinkingProblem::merge(State& into, const State& from)
-{
-    if (!from.isReachable)
-        return false;
-    if (!replaces(into, from))
-        return mergeParts(into, from);
-    if (into == from)
-        return false;
-    into = from;
-    return true;
-}
-
-bool SinkingProblem::merge(State& into, State&& from)
-{
-    if (!from.isReachable)
-        return false;
-    if (!replaces(into, from))
-        return mergeParts(into, from);
-    if (into == from)
-        return false;
-    into = WTF::move(from);
-    return true;
-}
-
-bool SinkingProblem::mergeParts(State& into, const State& from)
-{
-    into.isAtHead = into.isAtHead && from.isAtHead;
-    bool changed = mergeObjects(into, from);
-    changed |= mergeAliases(into, from);
-    changed |= mergeTests(into, from);
-    return changed;
-}
-
-bool SinkingProblem::mergeObjects(State& into, const State& from)
-{
-    bool changed = false;
-    size_t index = 0;
-    auto isMissingInSource = [&](ObjectState& target) {
-        if (!target.isCell())
-            changed |= !std::exchange(target.isMissingOnSomeWay, true);
+    const UseLists& useLists = sinking.analyses().useLists();
+    auto isLive = [&](ValueID value) {
+        return isParameterOf(useLists, target, value) || sinking.isLiveAtHead(value, target);
     };
-    for (const ObjectEntry& source : from.objects) {
-        for (; index < into.objects.size() && into.objects[index].object < source.object; ++index)
-            isMissingInSource(into.objects[index].state);
-        if (index < into.objects.size() && into.objects[index].object == source.object) {
-            changed |= mergeObject(into, source.object, into.objects[index].state, source.state);
-            ++index;
-            continue;
-        }
-        into.objects.insert(index, source);
-        if (!source.state.isCell())
-            into.objects[index].state.isMissingOnSomeWay = true;
-        ++index;
-        changed = true;
-    }
-    for (; index < into.objects.size(); ++index)
-        isMissingInSource(into.objects[index].state);
-    return changed;
-}
+    bool everyNameIsLive = std::ranges::all_of(state.objects, [&](const ObjectEntry& entry) {
+        return isLive(sinking.at(entry.object).definition);
+    }) && std::ranges::all_of(state.aliases, [&](const AliasEntry& alias) {
+        return isLive(alias.value);
+    }) && std::ranges::all_of(state.tests, [&](const TestEntry& test) {
+        return isLive(test.test);
+    });
+    if (everyNameIsLive)
+        return;
 
-bool SinkingProblem::mergeObject(State& into, VirtualObjectID object, ObjectState& target, const ObjectState& source)
-{
-    bool becomesCell = into.isAtHead && willSolveAgainWithCell(m_sinking, into.block, object);
-    if (!becomesCell && target.variants.size() == 1 && target == source)
-        return false;
+    state.aliases.removeAllMatching([&](const AliasEntry& alias) {
+        return !isLive(alias.value);
+    });
+    state.tests.removeAllMatching([&](const TestEntry& test) {
+        return !isLive(test.test);
+    });
 
-    ObjectState before = target;
-    target.keepAssumedTypesOf(source);
-    target.lacksFieldsOnSomeWay |= source.lacksFieldsOnSomeWay;
-    target.isMissingOnSomeWay |= source.isMissingOnSomeWay;
-    if (into.isAtHead && willSolveAgainWithCell(m_sinking, into.block, object)) {
-        target.becomeCell();
-        return target != before;
-    }
-
-    if (source.hasCell()) {
-        if (target.hasCell())
-            target.fieldsValidInCell.filter(source.fieldsValidInCell);
-        else
-            target.fieldsValidInCell = source.fieldsValidInCell;
-    }
-    mergeHeldObjects(object, target, source);
-    mergeVariants(into, object, target, source);
-
-    if (into.isAtHead) {
-        if (target.hasCell() && !target.isCell() && !target.cellJoinedAt)
-            target.cellJoinedAt = source.cellJoinedAt ? source.cellJoinedAt : into.block;
-        if (mustBeBuiltBefore(into.block, object, target) || target.hasConflictingTags())
-            m_sinking.decisions().buildAtHead(into.block, object);
-        if (!target.isCell() && willSolveAgainWithCell(m_sinking, into.block, object))
-            target.becomeCell();
-    }
-    return target != before;
-}
-
-bool SinkingProblem::mergeVariants(State& into, VirtualObjectID object, ObjectState& target, const ObjectState& source)
-{
-    Vector<ObjectVariant, 1> before = target.variants;
-    for (const ObjectVariant& variant : source.variants)
-        target.addVariant(variant);
-    if (into.isAtHead)
-        m_sinking.tagVariants(into.block, object, target);
-    return target.variants != before;
-}
-
-static void holdCellsInFamilyOf(AllocationSinking& sinking, VirtualObjectID object, uint32_t field)
-{
-    VirtualFamilyID family = sinking.at(object).family;
-    for (uint32_t index = 0; index < sinking.numberOfCandidates(); ++index) {
-        VirtualObjectID member(index);
-        if (sinking.at(member).family == family)
-            sinking.decisions().holdCells(member, field);
-    }
-}
-
-bool SinkingProblem::mergeHeldObjects(VirtualObjectID object, ObjectState& target, const ObjectState& source)
-{
-    if (target.heldObjects.isEmpty() && source.heldObjects.isEmpty())
-        return false;
-
-    const VirtualFamily& family = m_sinking.familyOf(object);
-    auto storesPlainly = [&](const ObjectState& side, uint32_t field) {
-        if (side.objectHeldIn(field))
-            return false;
-        return side.hasCell() || side.variants.containsIf([&](const ObjectVariant& variant) {
-            return hasStored(family.at(variant.shape), field);
-        });
-    };
-
-    Vector<uint32_t, 4> fields;
-    for (const HeldObject& entry : target.heldObjects)
-        fields.append(entry.field);
-    for (const HeldObject& entry : source.heldObjects) {
-        if (!target.objectHeldIn(entry.field))
-            fields.append(entry.field);
-    }
-    AOT::sort(fields);
-
-    bool changed = false;
-    for (uint32_t field : fields) {
-        VirtualObjectID objectInTarget = target.objectHeldIn(field);
-        VirtualObjectID objectInSource = source.objectHeldIn(field);
-        if (objectInTarget == objectInSource)
-            continue;
-        if (!objectInSource && !storesPlainly(source, field))
-            continue;
-        if (!objectInTarget && !storesPlainly(target, field)) {
-            target.hold(field, objectInSource);
-            changed = true;
-            continue;
-        }
-        holdCellsInFamilyOf(m_sinking, object, field);
-        if (objectInTarget) {
-            target.release(field);
-            changed = true;
-        }
-    }
-    return changed;
-}
-
-bool SinkingProblem::mergeAliases(State& into, const State& from)
-{
-    const Function& function = m_sinking.function();
-    bool isHeadMerge = into.isAtHead;
-    return retainEqualEntries(into.aliases, from.aliases, &AliasEntry::value, [&](const AliasEntry& entry) {
-        if (!isHeadMerge)
+    size_t numberOfEntries = state.objects.size();
+    Vector<bool, 16> isLiveEntry(FillWith { }, numberOfEntries, false);
+    size_t numberOfLiveEntries = 0;
+    Vector<uint32_t, 8> worklist;
+    auto markEntryLive = [&](size_t index) {
+        if (std::exchange(isLiveEntry[index], true))
             return;
-        // An alias that reaches a head is used behind it, where the name stands for no object from here on: it has to be a value.
-        Opcode opcode = function.at(entry.value).opcode;
-        if (opcode == Opcode::Parameter || opcode == Opcode::AllGuards || interpretedCasts.contains(opcode))
-            m_sinking.decisions().holdCells(entry.value, entry.object);
-        else
-            m_sinking.abandon(entry.object);
+        ++numberOfLiveEntries;
+        if (!state.objects[index].state.heldObjects.isEmpty())
+            worklist.append(static_cast<uint32_t>(index));
+    };
+    auto markLive = [&](VirtualObjectID object) {
+        if (!object || numberOfLiveEntries == numberOfEntries)
+            return;
+        if (std::optional<size_t> index = state.indexOf(object))
+            markEntryLive(*index);
+    };
+    for (size_t index = 0; index < numberOfEntries; ++index) {
+        if (isLive(sinking.at(state.objects[index].object).definition))
+            markEntryLive(index);
+    }
+    for (const AliasEntry& alias : state.aliases)
+        markLive(alias.object);
+    for (const TestEntry& test : state.tests)
+        markLive(test.object);
+    while (!worklist.isEmpty()) {
+        for (const HeldObject& entry : state.objects[worklist.takeLast()].state.heldObjects)
+            markLive(entry.object);
+    }
+    if (numberOfLiveEntries == numberOfEntries)
+        return;
+    size_t index = 0;
+    state.objects.removeAllMatching([&](const ObjectEntry&) {
+        return !isLiveEntry[index++];
     });
 }
 
-bool SinkingProblem::mergeTests(State& into, const State& from)
+void ObjectInterpreter::enterEdge(const OutgoingEdge& outgoing, const Terminator* terminator, const SinkingState* headOfTarget)
 {
-    return retainEqualEntries(into.tests, from.tests, &TestEntry::test, [](const TestEntry&) { });
+    m_enteredEdge.edge = &outgoing;
+    m_enteredEdge.terminator = terminator;
+    m_enteredEdge.newAliases.shrink(0);
+    m_enteredEdge.newJoinStates.shrink(0);
+    m_enteredEdge.consumedSources.shrink(0);
+    uint32_t targetIndex = outgoing.edge.targetIndex;
+    bool isPlain = !isRewriting() && m_sinking.isPlain(outgoing.edge, outgoing.target);
+    bool takesShortcuts = isPlain && !m_sinking.checksShortcuts();
+    bool isTaken = m_state.isReachable && (takesShortcuts || (!m_sinking.isIgnored(outgoing.edge) && !(terminator && isDeadEdge(*terminator, targetIndex))));
+    RELEASE_ASSERT(!isPlain || isTaken || !m_state.isReachable);
+    if (!isTaken || (m_mode != SinkingMode::Analyze && !headOfTarget)) {
+        m_state = SinkingState::unreachableAt(outgoing.target);
+        return;
+    }
+
+    if (takesShortcuts) {
+        forgetAnswersOfTests();
+        if (m_sinking.decisions().buildsAtHeadOf(outgoing.target))
+            applyDecisions(outgoing);
+    } else {
+        std::optional<SinkingState> stateBefore;
+        if (isPlain) [[unlikely]] {
+            stateBefore = m_state;
+            ObjectInterpreter(m_sinking, m_mode, *stateBefore).forgetAnswersOfTests();
+        }
+        if (terminator)
+            narrowOnEdge(*terminator, targetIndex);
+        bindParameters(outgoing);
+        RELEASE_ASSERT(!isPlain || (m_state == *stateBefore && m_enteredEdge.newAliases.isEmpty() && m_enteredEdge.newJoinStates.isEmpty() && m_enteredEdge.consumedSources.isEmpty()));
+        RELEASE_ASSERT(!isPlain || !objectOf(function().at(outgoing.target).subject));
+        applyDecisions(outgoing);
+        RELEASE_ASSERT(!isPlain || m_sinking.decisions().buildsAtHeadOf(outgoing.target) || m_state == *stateBefore);
+        if (isPlain) [[unlikely]]
+            stateBefore = m_state;
+        commitBindings();
+        RELEASE_ASSERT(!isPlain || m_state == *stateBefore);
+    }
+    dropDeadEntries(outgoing.target, headOfTarget);
+    if (!takesShortcuts)
+        abandonJoinsOfLiveSources();
+    makeFieldsOfCellsValid(outgoing, headOfTarget);
+
+    bool meetsStatesOfCoveredBlock = m_mode == SinkingMode::Analyze && outgoing.edge.isHandlerEdge();
+    for (ObjectEntry& entry : m_state.objects) {
+        entry.state.normalize();
+        if (!meetsStatesOfCoveredBlock)
+            continue;
+        m_sinking.tagVariants(outgoing.target, entry.object, entry.state);
+        if (entry.state.hasConflictingTags())
+            requireCellInCoveredBlock(m_sinking, m_state, outgoing.edge.from, entry.object);
+    }
+    m_state.block = outgoing.target;
+    m_state.isAtHead = true;
 }
 
-bool SinkingProblem::mustBeBuiltBefore(BlockID block, VirtualObjectID object, const ObjectState& state) const
+bool ObjectInterpreter::tryEnterPlainEdge(BlockID target)
 {
-    if (!state.hasCell() || state.isCell())
+    ASSERT(m_mode == SinkingMode::Analyze && m_state.isReachable);
+    if (m_sinking.decisions().buildsAtHeadOf(target) || !m_state.aliases.isEmpty() || !m_state.tests.isEmpty())
         return false;
-    if (!m_sinking.inputs().blocksInCycles.get(block.index()))
-        return false;
+    for (const ObjectEntry& entry : m_state.objects) {
+        if (!m_sinking.isDefinitionLiveIn(entry.object, target))
+            return false;
+    }
 
-    const BlockCycles& cycles = m_sinking.analyses().blockCycles();
-    BlockID origin = m_sinking.at(object).block;
-    return !cycles.areInSameCycle(block, origin) || cycles.depthOf(block) > cycles.depthOf(origin);
+    bool canMeetOtherShapes = m_sinking.inputs().mergeBlocks.get(target.index());
+    for (ObjectEntry& entry : m_state.objects) {
+        ObjectState& state = entry.state;
+        if (state.isCell()) {
+            if (canMeetOtherShapes && !m_sinking.at(entry.object).isJoin)
+                state.fieldsValidInCell = m_sinking.loadableFieldsOf(entry.object);
+            else
+                state.fieldsValidInCell.clearAll();
+        }
+        state.normalize();
+    }
+    m_state.block = target;
+    m_state.isAtHead = true;
+    return true;
+}
+
+void ObjectInterpreter::applyDecisions(const OutgoingEdge& outgoing)
+{
+    VirtualObjectID subject = objectOf(function().at(outgoing.target).subject);
+    Vector<VirtualObjectID, 4> objects;
+    for (const ObjectEntry& entry : m_state.objects) {
+        if (!entry.state.isCell() && (entry.object == subject || m_sinking.decisions().isBuiltAtHead(outgoing.target, entry.object)))
+            objects.append(entry.object);
+    }
+    for (VirtualObjectID object : objects) {
+        if (stateOf(object)->isCell())
+            continue;
+        willEmitOnEdge(outgoing);
+        buildOnEdge(*this, m_sinking, outgoing, object);
+    }
+}
+
+void ObjectInterpreter::bindParameters(const OutgoingEdge& outgoing)
+{
+    Vector<ValueID, 4> parameters = originalParametersOf(m_sinking, m_mode, outgoing.target);
+    RELEASE_ASSERT(parameters.size() == outgoing.bindings.size());
+
+    // Asked before anything is built on the edge: a build turns the subject of an interpreted SwitchOnShape into a cell.
+    const Terminator* terminator = m_enteredEdge.terminator;
+    bool isTestKept = terminator && !hasInterpretedTest(*terminator);
+    for (size_t index = 0; index < parameters.size(); ++index) {
+        IncomingBinding binding = outgoing.bindings[index];
+        if (isTestKept && binding.kind != IncomingBinding::Kind::Argument)
+            binding.kind = IncomingBinding::Kind::Other;
+        bindParameter(parameters[index], binding);
+    }
+}
+
+void ObjectInterpreter::bindParameter(ValueID parameter, const IncomingBinding& binding)
+{
+    if (VirtualObjectID join = m_sinking.candidateDefinedBy(parameter)) {
+        enterJoin(join, binding);
+        return;
+    }
+
+    const OutgoingEdge& outgoing = *m_enteredEdge.edge;
+    AliasEntry alias = aliasOfBinding(*this, m_enteredEdge.terminator, parameter, binding);
+    if (!alias.object)
+        return;
+    if (isJoinReboundOnEdge(*this, m_sinking, outgoing, alias.object))
+        m_sinking.abandon(alias.object);
+    TypeID parameterType = function().at(parameter).type;
+    if (alias.kind == AliasKind::Object && !fitsType(alias.object, parameterType))
+        m_sinking.abandon(alias.object);
+    if (alias.kind == AliasKind::Object)
+        assumeTypeOfAlias(alias.object, parameterType);
+    bool isSubject = parameter == function().at(outgoing.target).subject;
+    if (!isSubject && !m_sinking.decisions().holdsCells(parameter)) {
+        m_enteredEdge.newAliases.append(alias);
+        return;
+    }
+
+    if (alias.kind == AliasKind::Object && outgoing.edge.isHandlerEdge() && !fitsTypeWithoutCasts(alias.object, parameterType))
+        m_sinking.abandon(alias.object);
+    if (alias.kind == AliasKind::Guard && m_sinking.mayBeListOfNumbers(alias.object))
+        m_sinking.abandon(alias.object);
+    if (alias.kind == AliasKind::Guard && m_mode == SinkingMode::Count)
+        m_sinking.at(alias.object).needsGuard = true;
+    if (stateOf(alias.object)->isCell())
+        return;
+    willEmitOnEdge(outgoing);
+    buildOnEdge(*this, m_sinking, outgoing, alias.object);
+}
+
+void ObjectInterpreter::enterJoin(VirtualObjectID join, const IncomingBinding& binding)
+{
+    const OutgoingEdge& outgoing = *m_enteredEdge.edge;
+    VirtualObjectID source = objectOf(binding.value);
+    if (source == join)
+        return;
+    if (m_mode == SinkingMode::Count && source)
+        m_sinking.didEnterJoin(join, source);
+    if (binding.kind == IncomingBinding::Kind::Other)
+        m_sinking.abandon(join);
+    if (source) {
+        const ObjectState& sourceState = *stateOf(source);
+        TypeID joinType = function().at(m_sinking.at(join).definition).type;
+        bool canCastCell = !outgoing.edge.isHandlerEdge() && (sourceState.isCell() || !sourceState.hasCell());
+        if (!(canCastCell ? fitsType(source, joinType) : fitsTypeWithoutCasts(source, joinType)))
+            m_sinking.abandon(join);
+    }
+
+    bool isOfOtherFamily = source && m_sinking.at(source).family != m_sinking.at(join).family;
+    bool entersAsCell = isOfOtherFamily || m_sinking.decisions().isBuiltAtHead(outgoing.target, join);
+    if (source && !entersAsCell) {
+        m_enteredEdge.consumedSources.append(ConsumedSource { source, join });
+        return;
+    }
+    if (source && !stateOf(source)->isCell()) {
+        willEmitOnEdge(outgoing);
+        buildOnEdge(*this, m_sinking, outgoing, source);
+    }
+
+    VirtualShapeID shape = cellShape;
+    if (!entersAsCell) {
+        if (std::optional<VirtualConstant> constant = virtualConstantOf(program(), function(), binding.value))
+            shape = m_sinking.familyOf(join).intern(VirtualShape::ofConstant(*constant));
+    }
+    m_enteredEdge.newJoinStates.append(ObjectEntry { join, ObjectState::withShape(shape) });
+}
+
+void ObjectInterpreter::commitBindings()
+{
+    // Building the holder of a source for another parameter builds the source too, so its state is read after every build of the edge.
+    for (const ConsumedSource& consumed : m_enteredEdge.consumedSources)
+        m_enteredEdge.newJoinStates.append(ObjectEntry { consumed.join, *stateOf(consumed.source) });
+
+    Vector<std::pair<VirtualObjectID, ObjectValues>, 1> valuesOfJoins;
+    if (isRewriting()) {
+        for (const ObjectEntry& join : m_enteredEdge.newJoinStates)
+            valuesOfJoins.append({ join.object, valuesEnteringJoin(*this, m_sinking, m_enteredEdge, join) });
+    }
+
+    BlockID target = m_enteredEdge.edge->target;
+    if (isRewriting()) {
+        const CompactList<ValueID>& parameters = function().at(target).parameters;
+        m_state.aliases.removeAllMatching([&](const AliasEntry& alias) {
+            return parameters.contains(alias.value);
+        });
+    } else if (!m_state.aliases.isEmpty()) {
+        const UseLists& useLists = m_sinking.analyses().useLists();
+        m_state.aliases.removeAllMatching([&](const AliasEntry& alias) {
+            return isParameterOf(useLists, target, alias.value);
+        });
+    }
+    for (const AliasEntry& alias : m_enteredEdge.newAliases)
+        m_state.setAlias(alias.value, alias.object, alias.kind);
+    m_state.set(m_enteredEdge.newJoinStates.mutableSpan());
+    for (auto& [join, joinValues] : valuesOfJoins)
+        values().ensure(join) = WTF::move(joinValues);
+}
+
+void ObjectInterpreter::abandonJoinsOfLiveSources()
+{
+    if (m_mode != SinkingMode::Analyze)
+        return;
+
+    for (const ConsumedSource& consumed : m_enteredEdge.consumedSources) {
+        if (stateOf(consumed.join)->isCell())
+            continue;
+        bool hasSeveralJoins = std::ranges::count(m_enteredEdge.consumedSources, consumed.source, &ConsumedSource::source) > 1;
+        if (hasSeveralJoins || stateOf(consumed.source))
+            m_sinking.abandon(consumed.join);
+    }
+    if (m_enteredEdge.newJoinStates.isEmpty())
+        return;
+    BitVector referencedObjects = collectReferencedObjects(m_state);
+    for (const ObjectEntry& join : m_enteredEdge.newJoinStates) {
+        if (referencedObjects.get(join.object.index()))
+            m_sinking.abandon(join.object);
+    }
+}
+
+void ObjectInterpreter::makeFieldsOfCellsValid(const OutgoingEdge& outgoing, const SinkingState* headOfTarget)
+{
+    bool isHandlerEdge = outgoing.edge.isHandlerEdge();
+    bool canMeetOtherShapes = m_sinking.inputs().mergeBlocks.get(outgoing.target.index());
+    m_noCellHasValidFields = false;
+    for (ObjectEntry& entry : m_state.objects) {
+        ObjectState& state = entry.state;
+        if (!state.hasCell())
+            continue;
+        bool isJoin = m_sinking.at(entry.object).isJoin;
+        if (isHandlerEdge || (isJoin && state.isCell())) {
+            state.fieldsValidInCell.clearAll();
+            continue;
+        }
+        if (isJoin || !state.isCell())
+            continue;
+        if (m_mode == SinkingMode::Analyze) {
+            if (canMeetOtherShapes)
+                state.fieldsValidInCell = m_sinking.loadableFieldsOf(entry.object);
+            else
+                state.fieldsValidInCell.clearAll();
+            continue;
+        }
+
+        const ObjectState* head = headOfTarget->find(entry.object);
+        if (!head || !head->hasCell() || head->isCell())
+            continue;
+        if (m_mode == SinkingMode::Count && hasFieldHoldingCells(m_sinking, entry.object))
+            m_sinking.didBuildAfterMerge(entry.object, outgoing.target);
+        state.fieldsValidInCell = head->fieldsValidInCell;
+        if (state.fieldsValidInCell.isEmpty())
+            continue;
+
+        willEmitOnEdge(outgoing);
+        const VirtualObjectDescription& description = m_sinking.descriptionOf(entry.object);
+        if (m_mode == SinkingMode::Count) {
+            if (description.kind == VirtualObjectKind::Object)
+                m_sinking.at(entry.object).needsGuard = true;
+            continue;
+        }
+
+        const VirtualFamily& family = m_sinking.familyOf(entry.object);
+        ObjectValues& carried = values().ensure(entry.object);
+        for (size_t bit : state.fieldsValidInCell) {
+            uint32_t field = static_cast<uint32_t>(bit);
+            Value load = makeFieldRead(program(), description, family.fieldAt(field), carried.cell, carried.guard);
+            if (Value::opcodesWithReceivers.contains(load.opcode))
+                setExactReceivers(load, description.layout, cursor().builder().types());
+            carried.setField(field, cursor().emit(WTF::move(load)));
+        }
+    }
+}
+
+void ObjectInterpreter::dropDeadEntries(BlockID target, const SinkingState* headOfTarget)
+{
+    if (m_mode == SinkingMode::Analyze) {
+        removeDeadEntries(m_sinking, m_state, target);
+        return;
+    }
+
+    // fillTarget() resolves the arguments of the edge after this, so a cell stays although the head does not have it.
+    Vector<VirtualObjectID, 4> deadObjects;
+    for (const ObjectEntry& entry : m_state.objects) {
+        if (!entry.state.isCell() && !headOfTarget->find(entry.object))
+            deadObjects.append(entry.object);
+    }
+    for (VirtualObjectID object : deadObjects) {
+        m_state.remove(object);
+        if (isRewriting()) {
+            values().remove(object);
+            continue;
+        }
+        Candidate& candidate = m_sinking.at(object);
+        candidate.diesVirtual = true;
+        candidate.diesOutsideJoins |= !std::ranges::contains(m_enteredEdge.consumedSources, object, &ConsumedSource::source);
+    }
+    m_state.aliases.removeAllMatching([&](const AliasEntry& alias) {
+        return !stateOf(alias.object);
+    });
+    m_state.tests.removeAllMatching([&](const TestEntry& test) {
+        return !headOfTarget->findTest(test.test);
+    });
+}
+
+void ObjectInterpreter::willEmitOnEdge(const OutgoingEdge& outgoing)
+{
+    if (m_mode != SinkingMode::Count || outgoing.edge.isHandlerEdge())
+        return;
+    if (function().at(outgoing.edge.from).terminator.targets.size() > 1)
+        m_sinking.addEdgeNeedingCode(outgoing.edge);
 }
 
 } } } // namespace JSC::AOT::Typed

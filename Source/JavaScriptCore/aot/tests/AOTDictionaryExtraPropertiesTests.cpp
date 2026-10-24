@@ -13,8 +13,8 @@
 #include "AOTObjectModel.h"
 #include "AOTPropertyCaches.h"
 #include "AOTPropertyList.h"
+#include "AOTRuntimeTable.h"
 #include "AOTSchemaRuntimeOperations.h"
-#include "AOTSlowPaths.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
 #include "PropertyNameArray.h"
@@ -28,7 +28,6 @@ static constexpr ASCIILiteral programText = R"IR(layout L0 name="Counter" fields
 module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -37,13 +36,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="makeCounter" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = FinishObject v1
     Return v2
 }
 function f2 name="count" parameters=[{type=anything}, {type=string}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: string, v2: anything):
     ElemSet v0, v1, v2
     v4 = ElemDelete v0, v1
     Return

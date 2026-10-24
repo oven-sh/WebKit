@@ -13,7 +13,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class EvalEmitter final : public OperationEmitter {
 public:
-    explicit EvalEmitter(CodeGenerator&);
+    explicit EvalEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generateDirectEval(const ValueContext&);
 };

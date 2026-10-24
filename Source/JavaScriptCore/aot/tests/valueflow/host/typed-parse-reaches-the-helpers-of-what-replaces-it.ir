@@ -13,7 +13,6 @@ expectedresult x0 type=L0 layouts=[L0] validation=[{shape=Object{layout=L0 membe
 layout L0 name="Row" module=m0 position=10 fields=[{key="id" declared={type=number}}]
 runtimefunction id=131117 function=f1
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = String string="{\"id\":1}"
     v1 = Builtin builtin=JSON
     v2 = Builtin builtin=JSONParse
@@ -21,6 +20,5 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="validateByPlan" role=Library enclosingRuntimeFunction=131117 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything, v3: anything):
     Return v0
 }

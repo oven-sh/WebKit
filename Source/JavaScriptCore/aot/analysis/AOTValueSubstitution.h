@@ -24,7 +24,10 @@ void becomeUndefined(Function&, ValueID);
 
 class ValueSubstitution {
 public:
-    explicit ValueSubstitution(const Function&);
+    explicit ValueSubstitution(const Function& function)
+        : m_numberOfValues(function.values.size())
+    {
+    }
 
     void replace(ValueID from, ValueID to);
     ValueID resolve(ValueID) const;
@@ -32,8 +35,6 @@ public:
     void apply(Function&, FunctionAnalyses*);
 
 private:
-    void ensureSize(size_t);
-
     mutable Vector<ValueID> m_replacements;
     size_t m_numberOfValues;
     unsigned m_numberOfReplacements { 0 };
@@ -41,12 +42,10 @@ private:
 
 void replaceReadWithValue(const Program&, Function&, ValueSubstitution&, ValueID read, ValueID replacement);
 
-// In a validating build a copy of a read that a pass replaces or moves stays where the read was, and ValidateSameValue compares it with what took the read's place.
 void keepReadForValidation(IRBuilder&, ProgramPoint read, ValueID replacement);
 void appendKeptReadForValidation(IRBuilder&, BlockValues&, ValueID movedRead);
 BitVector findReadsKeptForValidation(const Function&);
 
-// A test of a validating build says something only about a value that the program really looked up: a read that a pass answers from the results under test would agree with them.
 bool isTestedByValidation(const Function&, const UseLists&, ValueID);
 
 } } } // namespace JSC::AOT::Typed

@@ -7,16 +7,14 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="unusedValueChain" parameters=[{type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
     v2 = Add v0, v1
     v3 = Mul v2, v2
     v4 = Less v3, v0
     Return v0
-}
-# CHECK-LABEL: function f0 name="unusedValueChain"
 # CHECK-NEXT: b0(v0: number, v1: number):
 # CHECK-NEXT: v2: number = Add v0, v1
 # CHECK-NEXT: v3: number = Mul v2, v2
 # CHECK-NEXT: v4: boolean = Less v3, v0
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
+}

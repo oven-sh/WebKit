@@ -8,61 +8,37 @@
 
 #if ENABLE(AOT)
 
-#include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTFunctionAnalyses.h"
-#include "AOTStubsArithmetic.h"
-#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static BinaryOperator binaryOperatorFor(BitwiseOperator op)
+namespace {
+
+struct BitwiseTraits {
+    BinaryOperator stub;
+    RuntimeOperation onBigInts;
+};
+
+} // anonymous namespace
+
+static BitwiseTraits traitsOfOperator(BitwiseOperator op)
 {
     switch (op) {
     case BitwiseOperator::And:
-        return BinaryOperator::BitAnd;
+        return { BinaryOperator::BitAnd, RuntimeOperation::ValueBitAnd };
     case BitwiseOperator::Or:
-        return BinaryOperator::BitOr;
+        return { BinaryOperator::BitOr, RuntimeOperation::ValueBitOr };
     case BitwiseOperator::Xor:
-        return BinaryOperator::BitXor;
+        return { BinaryOperator::BitXor, RuntimeOperation::ValueBitXor };
     case BitwiseOperator::LeftShift:
-        return BinaryOperator::LShift;
+        return { BinaryOperator::LShift, RuntimeOperation::ValueLShift };
     case BitwiseOperator::RightShift:
-        return BinaryOperator::RShift;
+        return { BinaryOperator::RShift, RuntimeOperation::ValueRShift };
     case BitwiseOperator::UnsignedRightShift:
-        return BinaryOperator::URShift;
+        return { BinaryOperator::URShift, RuntimeOperation::ValueURShift };
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-void OperatorEmitter::generateBitAnd(const ValueContext& value)
-{
-    generateBitwise(value, BitwiseOperator::And);
-}
-
-void OperatorEmitter::generateBitOr(const ValueContext& value)
-{
-    generateBitwise(value, BitwiseOperator::Or);
-}
-
-void OperatorEmitter::generateBitXor(const ValueContext& value)
-{
-    generateBitwise(value, BitwiseOperator::Xor);
-}
-
-void OperatorEmitter::generateLShift(const ValueContext& value)
-{
-    generateBitwise(value, BitwiseOperator::LeftShift);
-}
-
-void OperatorEmitter::generateRShift(const ValueContext& value)
-{
-    generateBitwise(value, BitwiseOperator::RightShift);
-}
-
-void OperatorEmitter::generateURShift(const ValueContext& value)
-{
-    generateBitwise(value, BitwiseOperator::UnsignedRightShift);
 }
 
 // The conversion of a number has a branch to a call for what lies beyond int64, and B3 shares the arithmetic of two conversions but not their branches.
@@ -79,16 +55,14 @@ Word32 OperatorEmitter::int32ConvertedOnce(const ValueContext& user, ValueID num
     return word;
 }
 
-void OperatorEmitter::generateBitwise(const ValueContext& value, BitwiseOperator op)
+Operand OperatorEmitter::bitwiseResult(const ValueContext& value, BitwiseOperator op)
 {
     ValueID left = value->leftOperand();
     ValueID right = value->rightOperand();
     bool isUnsigned = op == BitwiseOperator::UnsignedRightShift;
-    auto defineWord = [&](Word32 word) {
-        if (isUnsigned)
-            define(value, zeroExtended(word));
-        else
-            define(value, word);
+    auto onWords = [&](Word32 x, Word32 y) -> Operand {
+        Word32 word = bitwiseOnWords(op, x, y);
+        return isUnsigned ? Operand(zeroExtended(word)) : Operand(word);
     };
     auto numberToInt32 = [&](ValueID id) {
         switch (representationOf(id)) {
@@ -130,30 +104,28 @@ void OperatorEmitter::generateBitwise(const ValueContext& value, BitwiseOperator
     };
 
     switch (value->form()) {
-    case OperatorForm::Integers:
-        defineWord(bitwiseOnWords(op, in<Word32>(left), in<Word32>(right)));
-        return;
+    case OperatorForm::Integers: {
+        Word32 x = in<Word32>(left);
+        Word32 y = in<Word32>(right);
+        return onWords(x, y);
+    }
     case OperatorForm::Numbers: {
-        Word32 leftWord = numberToInt32(left);
-        Word32 rightWord = numberToInt32(right);
-        defineWord(bitwiseOnWords(op, leftWord, rightWord));
-        return;
+        Word32 x = numberToInt32(left);
+        Word32 y = numberToInt32(right);
+        return onWords(x, y);
     }
     case OperatorForm::BigInts:
         if (isUnsigned)
             break;
-        define(value, unboxCell(callOperation<Boxed>(value, runtimeOperationOf(op), { boxCell(in<CellPointer>(left)), boxCell(in<CellPointer>(right)) })));
-        return;
+        return unboxCell(callOperation<Boxed>(value, traitsOfOperator(op).onBigInts, { boxCell(in<CellPointer>(left)), boxCell(in<CellPointer>(right)) }));
     case OperatorForm::Generic: {
-        Boxed result = bitwiseOnValues(value, op);
+        Boxed x = in<Boxed>(left);
+        Boxed y = in<Boxed>(right);
+        Boxed result(callBinaryStub(value, traitsOfOperator(op).stub, x, y));
         // A result from 2^31 on comes back as a double.
         if (isUnsigned)
-            define(value, emitter<ConversionEmitter>().unbox(result, typeOf(value.id()), value.representation()));
-        else if (value.representation() == Representation::Int32)
-            define(value, unboxInt32(result));
-        else
-            define(value, result);
-        return;
+            return emitter<ConversionEmitter>().unbox(result, typeOf(value.id()), value.representation());
+        return value.representation() == Representation::Int32 ? Operand(unboxInt32(result)) : Operand(result);
     }
     case OperatorForm::Unselected:
     case OperatorForm::CheckedIntegers:
@@ -175,8 +147,7 @@ void OperatorEmitter::generateBitwise(const ValueContext& value, BitwiseOperator
     case OperatorForm::MayBeStringOrNumber:
         break;
     }
-    fail(value, InternalErrorKind::OpcodeWithoutCode);
-    define(value, emitter<ConstantEmitter>().zeroOf(value.representation()));
+    return failWithZero(value);
 }
 
 Word32 OperatorEmitter::bitwiseOnWords(BitwiseOperator op, Word32 left, Word32 right)
@@ -196,16 +167,6 @@ Word32 OperatorEmitter::bitwiseOnWords(BitwiseOperator op, Word32 left, Word32 r
         return shiftRightUnsigned(left, bitAnd(right, word32(31)));
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-Boxed OperatorEmitter::bitwiseOnValues(const ValueContext& value, BitwiseOperator op)
-{
-    ValueID left = value->leftOperand();
-    ValueID right = value->rightOperand();
-    BinaryOperator binaryOperator = binaryOperatorFor(op);
-    bool mayBothBeInt32 = typeOf(left).primitives & Primitive::Integer && typeOf(right).primitives & Primitive::Integer;
-    bool isAfterInt32Check = !mayBothBeInt32 && hasFormAfterInt32Check(binaryOperator);
-    return Boxed(callStub(value, binaryOperation(binaryOperator, isAfterInt32Check), { in<Boxed>(left).value(), in<Boxed>(right).value() }).first);
 }
 
 } } } // namespace JSC::AOT::Typed

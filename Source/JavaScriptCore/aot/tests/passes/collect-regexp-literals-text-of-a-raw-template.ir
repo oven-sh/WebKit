@@ -16,7 +16,6 @@ variable g0 name="digits" module=m0 declared={type=anything}
 variable g1 name="most" module=m0 declared={type=anything}
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = String string="[0-9]+"
     PutModuleVariable v0 variable=g0
     v2 = CallDirect function=f1
@@ -32,7 +31,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="substitutionsAreKnownTexts" results=[{type=anything}] {
-  b0():
     v0 = NewTemplateObject templateStrings=[{cooked="^" raw="^"}, {cooked="." raw="\\."}, {cooked="$" raw="$"}]
     v1 = GetModuleVariable variable=g0
     v2 = Builtin builtin=String
@@ -44,7 +42,6 @@ function f1 name="substitutionsAreKnownTexts" results=[{type=anything}] {
 }
 
 function f2 name="substitutionNobodyKnows" results=[{type=anything}] {
-  b0():
     v0 = NewTemplateObject templateStrings=[{cooked="^" raw="^"}, {cooked="$" raw="$"}]
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="input" [isFreeName]
@@ -57,7 +54,6 @@ function f2 name="substitutionNobodyKnows" results=[{type=anything}] {
 }
 
 function f3 name="stringsFromElsewhere" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g0
     v2 = Builtin builtin=String
     v3 = PropGet v2 key="raw"
@@ -68,7 +64,6 @@ function f3 name="stringsFromElsewhere" parameters=[{type=anything}] results=[{t
 }
 
 function f4 name="numberInRawTemplate" results=[{type=anything}] {
-  b0():
     v0 = NewTemplateObject templateStrings=[{cooked="^w{1," raw="^\\w{1,"}, {cooked="}$" raw="}$"}]
     v1 = GetModuleVariable variable=g1
     v2 = Builtin builtin=String
@@ -80,7 +75,6 @@ function f4 name="numberInRawTemplate" results=[{type=anything}] {
 }
 
 function f5 name="numbersInTemplate" results=[{type=anything}] {
-  b0():
     v0 = String string="^[a-z]{2,"
     v1 = GetModuleVariable variable=g1
     v2 = String string="}|"

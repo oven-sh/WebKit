@@ -9,7 +9,6 @@ entry module=m0
 layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
@@ -22,23 +21,20 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v9 = CallDirect v1 function=f1
     v10 = Call v5, -, v9
     Return
-}
-# CHECK-LABEL: function f0 name="main"
 # CHECK: v2:{{*}}= NewObject -, v1, v1 layout=L0 fields=[0, 1]
 # CHECK: v4:{{*}}= CallBuiltin -, v2 overload=ObjectValues/0
 # CHECK-NOT: GetSlot
+}
 
 function f1 name="calledTwice" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     v2 = Builtin builtin=ObjectValues
     v3 = Call v2, -, v1
     Return v3
-}
-# CHECK-LABEL: function f1 name="calledTwice"
 # CHECK: v1:{{*}}= NewObject -, v0, v0 layout=L0 fields=[0, 1]
 # CHECK-NOT: CallBuiltin
 # CHECK: [[x]]:{{*}}= GetSlot v1{{*}} key="x" receivers=[L0]
 # CHECK-NEXT: [[y]]:{{*}}= GetSlot v1{{*}} key="y" receivers=[L0]
 # CHECK-NEXT: = NewArray [[x]], [[y]] contents=anything
 # CHECK-NOT: CallBuiltin
+}

@@ -7,7 +7,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="byNumber" parameters=[{type=int}, {type=number}] results=[{type=number}] {
-  b0(v0: int, v1: number):
     Switch v0 cases=[0, 7] -> case b1(), case b2(), otherwise b3()
   b1():
     v2 = Mul v1, v1

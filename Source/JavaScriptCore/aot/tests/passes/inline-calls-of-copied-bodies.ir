@@ -12,44 +12,36 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="leaf" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Mul v0, v0
     Return v1
 }
 function f1 name="middle" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f0
     v2 = Add v1, v0
     Return v2
 }
 function f2 name="outer" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f1
     v2 = Sub v1, v0
     Return v2
 }
 function f3 name="caller" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f2
     Return v1
-}
-# CHECK-LABEL: function f3 name="caller"
 # CHECK: inlineFrames=[{}, {callee=f2 {{*}}}, {callee=f1 {{*}}parent=1 {{*}}}, {callee=f0 {{*}}parent=2 {{*}}}] {
 # CHECK-NOT: CallDirect
 # CHECK: = Mul v0, v0
+}
 
 function f4 name="neverInlined" parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
-  b0(v0: number):
     v1 = Mul v0, v0
     Return v1
 }
 function f5 name="callsBoth" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f4
     v2 = CallDirect v1 function=f0
     Return v2
-}
-# CHECK-LABEL: function f5 name="callsBoth"
 # CHECK: = CallDirect v0 function=f4
 # CHECK-NOT: CallDirect
 # CHECK: = Mul
+}

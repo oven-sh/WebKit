@@ -7,7 +7,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="emptySet" parameters=[{type=Set<never, proven, pristine[Names]>}] results=[{type=anything}] {
-  b0(v0: Set<never, proven, pristine[Names]>):
     v1 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -18,8 +17,6 @@ function f0 name="emptySet" parameters=[{type=Set<never, proven, pristine[Names]
     Branch v4 -> taken b2(), notTaken b1()
   b2():
     Return v5
-}
-# CHECK-LABEL: function f0 name="emptySet"
 # CHECK: [[step0]]: undefined = SetNext v0,
 # CHECK-NEXT: [[hasEntry0]]: boolean = ResultAt [[step0]]
 # CHECK-NEXT: = ResultAt [[step0]] index=1
@@ -32,9 +29,9 @@ function f0 name="emptySet" parameters=[{type=Set<never, proven, pristine[Names]
 # CHECK-NEXT: [[yes0]]: true = Boolean boolean=true
 # CHECK-NEXT: [[nothing0]]: undefined = Undefined
 # CHECK-NEXT: Jump -> next {{*}}([[yes0]], [[nothing0]])
+}
 
 function f1 name="emptyMap" parameters=[{type=Map<never, never, proven, pristine[Names]>}] results=[{type=anything}] {
-  b0(v0: Map<never, never, proven, pristine[Names]>):
     v1 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -45,8 +42,6 @@ function f1 name="emptyMap" parameters=[{type=Map<never, never, proven, pristine
     Branch v4 -> taken b2(), notTaken b1()
   b2():
     Return v5
-}
-# CHECK-LABEL: function f1 name="emptyMap"
 # CHECK: [[step1]]: undefined = MapNext v0,
 # CHECK: [[key1]]: undefined = ResultAt [[step1]] index=2
 # CHECK: Branch {{*}} -> taken [[found1]](), notTaken [[end1]]()
@@ -55,9 +50,9 @@ function f1 name="emptyMap" parameters=[{type=Map<never, never, proven, pristine
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: [[end1]]():
 # CHECK-NOT: NewArray
+}
 
 function f2 name="setOfNumbers" parameters=[{type=Set<number, proven, pristine[Names]>}] results=[{type=anything}] {
-  b0(v0: Set<number, proven, pristine[Names]>):
     v1 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -68,8 +63,6 @@ function f2 name="setOfNumbers" parameters=[{type=Set<number, proven, pristine[N
     Branch v4 -> taken b2(), notTaken b1()
   b2():
     Return v5
-}
-# CHECK-LABEL: function f2 name="setOfNumbers"
 # CHECK: [[step2]]: undefined = SetNext v0,
 # CHECK: [[element2]]: undefined|number = ResultAt [[step2]] index=2
 # CHECK: Branch {{*}} -> taken [[found2]](), notTaken [[end2]]()
@@ -78,3 +71,4 @@ function f2 name="setOfNumbers" parameters=[{type=Set<number, proven, pristine[N
 # CHECK-NEXT: = CollectionTable v0
 # CHECK: [[no2]]: false = Boolean
 # CHECK-NEXT: Jump -> next {{*}}([[no2]], [[number2]],
+}

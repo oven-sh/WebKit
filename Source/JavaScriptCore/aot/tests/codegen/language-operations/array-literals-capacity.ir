@@ -8,7 +8,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="capacitiesForLiteralsOfInt32" parameters=[{type=i32}, {type=int[0, 100000]}, {type=int}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: i32, v1: int[0, 100000], v2: int, v3: boolean):
     v4 = Integer integer=0
     v5 = Integer integer=1
     v6 = Integer integer=3
@@ -57,7 +56,6 @@ function f0 name="capacitiesForLiteralsOfInt32" parameters=[{type=i32}, {type=in
 # S: f0 b1 Fast
 # S: f0 b3 Compact
 function f1 name="capacitiesForLiteralsOfNumbers" parameters=[{type=number}, {type=int[0, 100000]}, {type=int}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: number, v1: int[0, 100000], v2: int, v3: boolean):
     v4 = Integer integer=0
     v5 = Integer integer=1
     v6 = Integer integer=3
@@ -106,7 +104,6 @@ function f1 name="capacitiesForLiteralsOfNumbers" parameters=[{type=number}, {ty
 # S: f1 b1 Fast
 # S: f1 b3 Compact
 function f2 name="capacitiesForLiteralsOfAnything" parameters=[{type=anything}, {type=int[0, 100000]}, {type=int}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: anything, v1: int[0, 100000], v2: int, v3: boolean):
     v4 = Integer integer=0
     v5 = Integer integer=1
     v6 = Integer integer=3

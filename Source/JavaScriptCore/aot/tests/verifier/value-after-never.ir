@@ -5,13 +5,11 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="badFollowedByValue" results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f8
     v1 = Undefined
     Unreachable
 }
 function f1 name="badReturns" results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f8
     Return
 }
@@ -26,7 +24,6 @@ function f2 name="badJumps" results=[{type=undefined}] {
     Return
 }
 function f3 name="badCodeUnderImpossibleProof" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     v1 = TypeTest v0 testedType=string
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
@@ -36,12 +33,10 @@ function f3 name="badCodeUnderImpossibleProof" parameters=[{type=number}] result
     Return
 }
 function f4 name="goodUnreachable" results=[{type=undefined}] {
-  b0():
     v0 = CallDirect function=f8
     Unreachable
 }
 function f5 name="goodThrows" results=[{type=undefined}] {
-  b0():
     v0 = ThrowNewError errorKind=TypeError message="no"
     Unreachable
 }
@@ -54,7 +49,6 @@ function f6 name="goodUnderHandler" results=[{type=undefined}] {
     Return
 }
 function f7 name="goodImpossibleProof" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     v1 = TypeTest v0 testedType=string
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):

@@ -95,10 +95,9 @@ KnownValue knownValueOfType(const Program&, const Type&);
 KnownValue knownValueOf(const DataNode&);
 // The type that has the primitive and nothing else.
 Type typeOfKnownPrimitive(KnownValue);
+// The value keeps its number and its place and is the primitive from now on.
+void becomeConstant(const Program&, Function&, TypeArena&, ValueID, KnownValue);
 
-enum class EqualityKind : uint8_t { Strict, Loose };
-
-KnownBoolean evaluateEquality(KnownValue, KnownValue, EqualityKind);
 KnownBoolean evaluateTypeTest(const Program&, const Type& source, const Type& tested);
 KnownBoolean evaluateTypeTest(const Program&, KnownValue, const Type& tested);
 KnownBoolean evaluateIsClosureOf(const Program&, const Type& source, FunctionID);

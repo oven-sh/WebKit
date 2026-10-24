@@ -23,7 +23,7 @@ struct PlacedSlot;
 
 class AllocationEmitter final : public OperationEmitter {
 public:
-    explicit AllocationEmitter(CodeGenerator&);
+    explicit AllocationEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     PlaceInCell placeInCellOf(const ValueContext&);
     PlaceInCell placeInCellOf(const Value&) const;
@@ -96,20 +96,19 @@ private:
     };
 
     InitialFields collectInitialFields(LayoutID, std::span<const uint32_t> fields, std::span<const ValueID> values);
-    enum class CellBody : uint8_t { Unwritten, Zero };
     CellPointer allocateCell(const ValueContext&, AllocationID, const PlannedLayout&, AllocationStorage, WholeCell, ZeroedBy);
+    CellPointer allocateFrameCell(const ValueContext&, AllocationID, const PlannedLayout&);
     ZeroedBy whoZeroesBodyOfFreshCell(const ValueContext&, AllocationID, const BitVector& isInitialField, AllocationStorage);
     template<typename Visitor> void forEachEmptySlot(LayoutID, const BitVector& isInitialField, EmptySlots, const Visitor&);
-    AllocationID allocationOfOuterObject(LayoutID outerLayout, const InnerObject&) const;
     CellPointer allocateBehindOuterObject(const ValueContext&, AllocationID, const PlaceInCell&);
     CellPointer cellAroundInnerObject(const ValueContext&, const PlaceInCell&);
     TypedPointer addressOfReferenceToInnerObject(CellPointer outer, LayoutID outerLayout, uint32_t field);
     void storeReferenceTo(CellPointer inner, CellPointer outer, LayoutID outerLayout, uint32_t field);
     CellPointer takeReleasedCellOrAllocate(const ValueContext&, AllocationID, WholeCell, uint32_t freeCellOffset);
-    void initializeHiddenFields(CellPointer, LayoutID, AllocationStorage, CellBody = CellBody::Unwritten);
+    void initializeHiddenFields(CellPointer, LayoutID, AllocationStorage, ZeroedBy = ZeroedBy::Nobody);
     void storeInitialFields(CellPointer, LayoutID, const InitialFields&);
-    void storeEmptySlots(CellPointer, LayoutID, const BitVector& isInitialField, EmptySlots = EmptySlots::All, CellBody = CellBody::Unwritten);
-    void emitBarrierIfReleased(const ValueContext&, CellPointer, LayoutID, const InitialFields&);
+    void storeEmptySlots(CellPointer, LayoutID, const BitVector& isInitialField, EmptySlots = EmptySlots::All, ZeroedBy = ZeroedBy::Nobody);
+    void barrierIfCellWasStored(const ValueContext&, CellPointer, const InitialFields&);
     void storeFieldsInExtension(const ValueContext&, CellPointer, LayoutID, const InitialFields&, OwnerBarrier);
     void storePrototype(const ValueContext&, CellPointer, ValueID prototype, std::optional<Word32> numberOfAllocation = std::nullopt);
     Vector<WordOfEmptyObject, 8> wordsOfEmptyObject(LayoutID);

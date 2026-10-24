@@ -10,7 +10,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="boxVoidToJSValue" results=[{type=anything}] {
-  b0():
     v0 @Void = Undefined
     v1 @JSValue = Box v0
     Return v1
@@ -51,7 +50,6 @@ function f7 name="boxOptionalDoubleToJSValue" parameters=[{type=undefined|number
     Return v1
 }
 function f8 name="boxVoidToOptionalInt64" results=[{type=anything}] {
-  b0():
     v0 @Void = Undefined
     v1 @OptionalInt64 = Box v0
     v2 @JSValue = Box v1
@@ -70,7 +68,6 @@ function f10 name="boxInt64ToOptionalInt64" parameters=[{type=int}] results=[{ty
     Return v2
 }
 function f11 name="boxVoidToOptionalDouble" results=[{type=anything}] {
-  b0():
     v0 @Void = Undefined
     v1 @OptionalDouble = Box v0
     v2 @JSValue = Box v1
@@ -242,7 +239,6 @@ function f36 name="compressJSValueToCell32" parameters=[{type=undefined|string}]
     Return v2
 }
 function f37 name="compressVoidToCell32" results=[{type=anything}] {
-  b0():
     v0 @Void = Undefined
     v1 @Cell32 = Compress v0
     v2 @JSValue = Decode v1
@@ -261,7 +257,6 @@ function f39 name="compressJSValueToLiteralString" parameters=[{type=undefined|s
     Return v2
 }
 function f40 name="compressVoidToLiteralString" results=[{type=anything}] {
-  b0():
     v0 @Void = Undefined
     v1 @LiteralString = Compress v0
     v2 @JSValue = Decode v1

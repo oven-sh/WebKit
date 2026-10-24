@@ -17,7 +17,6 @@ entry module=m0
 layout L0 name="Amount" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}, {key="unused" declared={type=anything} flags=[IsRequired]}]
 layout L1 name="Label" fields=[{key="toString" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = Integer integer=1
@@ -35,12 +34,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="valueOf" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=5
     Return v1
 }
 function f2 name="toString" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="label"
     Return v1
 }
@@ -52,7 +49,6 @@ entry module=m0
 layout L0 name="Amount" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}]
 layout L1 name="Hinted" fields=[{key=@@toPrimitive declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = Integer integer=1
@@ -67,12 +63,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="valueOf" kind=Arrow results=[{type=anything}] {
-  b0():
     v0 = Integer integer=5
     Return v0
 }
 function f2 name="toPrimitive" kind=Arrow length=1 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 )IR"_s;
@@ -83,7 +77,6 @@ entry module=m0
 layout L0 name="Heir" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
 layout L1 name="Parent" fields=[{key="m" declared={type=anything} flags=[IsRequired]}, {key="unused" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = Integer integer=1
@@ -104,7 +97,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="m" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=7
     Return v0
 }
@@ -116,7 +108,6 @@ module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibr
 entry module=m0
 layout L0 name="Label" fields=[{key="toString" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = NewClosure function=f1
@@ -127,12 +118,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="toString" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="label"
     Return v1
 }
 function f2 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=131085 thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="toString"
     v2 = Call v1, v0 calleeKey="toString"
     ReturnCall v2
@@ -145,7 +134,6 @@ static constexpr ASCIILiteral keyListedThroughHeirs = R"IR(module m0 path="main.
 entry module=m0
 layout L0 name="Parent" fields=[{key="listed" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = Integer integer=1
@@ -175,7 +163,6 @@ entry module=m0
 variable g0 name="five" module=m0 declared={type=function} initialization=Function function=f1
 variable g1 name="twice" module=m0 declared={type=function} initialization=Function function=f2
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = GetModuleVariable variable=g1
@@ -184,12 +171,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="five" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=5
     Return v0
 }
 function f2 name="twice" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = Call v0 calleeName="five"
     v2 = GetModuleVariable variable=g0
@@ -205,7 +190,6 @@ module m1 path="main.js" displayPath="main.js" body=f0 requests=[{target=m0 comp
 entry module=m1
 variable g0 name="five" module=m0 declared={type=function} initialization=Function function=f2 flags=[IsImmutable]
 function f0 name="main" module=m1 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = ModuleNamespace module=m0
@@ -217,11 +201,9 @@ function f0 name="main" module=m1 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="library" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="five" module=m0 results=[{type=anything}] {
-  b0():
     v0 = Integer integer=5
     Return v0
 }
@@ -231,7 +213,6 @@ function f2 name="five" module=m0 results=[{type=anything}] {
 static constexpr ASCIILiteral callbacksOfNativeCode = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = NewClosure function=f1
@@ -247,12 +228,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="reviver" kind=Arrow length=2 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Integer integer=5
     Return v2
 }
 function f2 name="replacer" kind=Arrow length=2 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Integer integer=2
     Return v2
 }
@@ -263,7 +242,6 @@ static constexpr ASCIILiteral methodCalledInGenericVersion = R"IR(module m0 path
 entry module=m0
 layout L0 name="Holder" fields=[{key="m" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewClosure function=f1
@@ -277,18 +255,15 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="run" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="m"
     v2 = Call v1, v0 calleeKey="m"
     Return v2
 }
 function f2 name="m" kind=Arrow results=[{type=anything}] {
-  b0():
     v0 = Integer integer=8
     Return v0
 }
 function f3 name="padding" results=[{type=anything}] {
-  b0():
     v0 = Undefined
     v1 = Undefined
     v2 = Undefined

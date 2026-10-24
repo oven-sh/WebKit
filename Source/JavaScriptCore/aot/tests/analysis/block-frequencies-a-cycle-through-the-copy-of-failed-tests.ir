@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="oneLoop" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Jump -> next b1()
   b1():
     Jump -> next b2()
@@ -34,7 +33,6 @@ function f0 name="oneLoop" parameters=[{type=boolean}] results=[{type=undefined}
 # CHECK: b7 frequency: Unlikely count: 0.209844
 
 function f1 name="aLoopInALoop" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Jump -> next b1()
   b1():
     LoopHint

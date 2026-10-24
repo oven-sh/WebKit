@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="receiverOfResolvedCall" parameters=[{type=undefined|string}] results=[{type=boolean}] {
-  b0(v0: undefined|string):
     v1 = RequireObjectCoercible v0 name="startsWith"
     v2 = String string="t1"
     v3 = CallBuiltin v0, v2 overload=StringPrototypeStartsWith/1 builtinCallForm=AnyReceiver
@@ -17,7 +16,6 @@ function f0 name="receiverOfResolvedCall" parameters=[{type=undefined|string}] r
 # CHECK: v3: boolean = CallBuiltin v1, v2 overload=StringPrototypeStartsWith/1 builtinCallForm=AnyReceiver
 
 function f1 name="dominatedBlock" parameters=[{type=null|string}, {type=boolean}] results=[{type=null|string}] {
-  b0(v0: null|string, v1: boolean):
     v2 = RequireObjectCoercible v0 name="length"
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -35,7 +33,6 @@ function f1 name="dominatedBlock" parameters=[{type=null|string}, {type=boolean}
 # CHECK-NEXT: Return v2
 
 function f2 name="secondCheckOfSameValue" parameters=[{type=undefined|string}] results=[{type=string}] {
-  b0(v0: undefined|string):
     v1 = RequireObjectCoercible v0 name="trim"
     v2 = RequireObjectCoercible v0 name="length"
     Return v2
@@ -45,7 +42,6 @@ function f2 name="secondCheckOfSameValue" parameters=[{type=undefined|string}] r
 # CHECK-NEXT: v2: string = RequireObjectCoercible v1 name="length"
 
 function f3 name="useBeforeCheck" parameters=[{type=undefined|string}] results=[{type=boolean}] {
-  b0(v0: undefined|string):
     v1 = String string="t1"
     v2 = StrictEq v0, v1
     v3 = RequireObjectCoercible v0 name="length"
@@ -55,7 +51,6 @@ function f3 name="useBeforeCheck" parameters=[{type=undefined|string}] results=[
 # CHECK: = StrictEq v0, v1
 
 function f4 name="siblingBranch" parameters=[{type=undefined|string}, {type=boolean}] results=[{type=undefined|string}] {
-  b0(v0: undefined|string, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = RequireObjectCoercible v0 name="length"
@@ -68,7 +63,6 @@ function f4 name="siblingBranch" parameters=[{type=undefined|string}, {type=bool
 # CHECK-NEXT: Return v0
 
 function f5 name="handlerOfCheck" parameters=[{type=undefined|string}] results=[{type=undefined|string}] {
-  b0(v0: undefined|string):
     Jump -> next b1()
   b1() handler=b3():
     v1 = RequireObjectCoercible v0 name="length"

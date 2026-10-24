@@ -14,37 +14,31 @@ function f1 name="press" kind=Method flags=[HasThis] thisType={type=anything} re
 function f2 name="Below" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
 
 function f3 name="store-passes-a-value" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0, v1: number):
     PropSet v0, v1 key="name"
     Return
 }
 # CHECK: F3 v2 PropSet {{*}}: form=Slot level=Proven operation=PutSlot receivers=[L0] storedValueFits member=(Field level=Proven holder=L0 field=0)
 function f4 name="store-passes-a-method" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     PropSet v0, v1 key="press"
     Return
 }
 # CHECK-NEXT: F4 v2 PropSet {{*}}: form=Slot level=Proven operation=PutSlot receivers=[L0] storedValueFits member=(Field level=Proven holder=L0 field=1)
 function f5 name="value-may-become-read-only" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0, v1: number):
     PropSet v0, v1 key="fragile"
     Return
 }
 # CHECK-NEXT: F5 v2 PropSet [[fragile]]: form=Slot level=Expected operation=PutSlot receivers=[L0] conditions=[MemberPassedByStores(L0, [[fragile]])] storedValueFits missPath
 function f6 name="method-may-become-read-only" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     PropSet v0, v1 key="frozen"
     Return
 }
 # CHECK-NEXT: F6 v2 PropSet {{*}}: form=Slot level=Expected operation=PutSlot receivers=[L0] proofs=[SlotFilled] storedValueFits missPath
 function f7 name="every-class-above-is-passed" parameters=[{type=L1}, {type=number}] results=[{type=anything}] {
-  b0(v0: L1, v1: number):
     PropSet v0, v1 key="name"
     Return
 }
 # CHECK-NEXT: F7 v2 PropSet {{*}}: form=Slot level=Proven operation=PutSlot receivers=[L1] storedValueFits member=(Field level=Proven holder=L1 field=0)
 function f8 name="a-class-above-may-stop-the-store" parameters=[{type=L1}, {type=number}] results=[{type=anything}] {
-  b0(v0: L1, v1: number):
     PropSet v0, v1 key="fragile"
     Return
 }

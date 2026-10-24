@@ -8,9 +8,6 @@
 #if ENABLE(AOT)
 
 #include "AOTPropertyAccessReceivers.h"
-#include "AOTVector.h"
-#include <span>
-#include <wtf/PrintStream.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -24,16 +21,7 @@ struct MemberQuery {
     bool isOwnLookup { false };
 };
 
-enum class MemberKind : uint8_t {
-    Unknown,
-    Absent,
-    Field,
-    Method,
-    Accessor,
-    Variable,
-    Namespace,
-    Builtin,
-};
+enum class MemberKind : uint8_t { Unknown, Absent, Field, Method, Accessor, Variable, Namespace, Builtin };
 
 struct MemberAnswer {
     MemberKind kind { MemberKind::Unknown };
@@ -50,19 +38,20 @@ struct MemberAnswer {
     MemberConditions conditions;
     UnprovenCause cause { UnprovenCause::Unknown };
 
-    static MemberAnswer unknown(UnprovenCause);
+    static MemberAnswer unknown(UnprovenCause cause) { return { .cause = cause }; }
 
     bool isKnown() const { return kind != MemberKind::Unknown; }
     bool needsNoTest() const { return level == KnowledgeLevel::Proven; }
     FunctionID accessorFor(Access) const;
 
     void dump(PrintStream&) const;
+
+    friend bool operator==(const MemberAnswer&, const MemberAnswer&) = default;
 };
 
 MemberAnswer findMember(const PropertyAccessContext&, const MemberQuery&);
 
 MemberAnswer findInstanceMember(const PropertyAccessContext&, const MemberQuery&);
-// What a lookup that misses on an object of the layout itself goes on to find.
 MemberAnswer findMemberOnPrototypes(const PropertyAccessContext&, const MemberQuery&);
 MemberAnswer findPrototypeMember(const PropertyAccessContext&, const MemberQuery&);
 MemberAnswer findStaticMember(const PropertyAccessContext&, const MemberQuery&);

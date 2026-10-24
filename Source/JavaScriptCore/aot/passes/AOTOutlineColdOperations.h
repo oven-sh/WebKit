@@ -8,7 +8,6 @@
 #if ENABLE(AOT)
 
 #include "AOTID.h"
-#include <cstdint>
 #include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT {
@@ -20,8 +19,6 @@ namespace Typed {
 class OutliningSiteFinder;
 class ProgramEditor;
 struct OptimizationInputs;
-
-enum class OutliningDecision : uint8_t { Unknown, NotProfitable, Outlined };
 
 // For whoever wants to read each function once outlining is through with it, while the function is in the cache where that can be.
 struct ReadersOfOutlinedFunctions {

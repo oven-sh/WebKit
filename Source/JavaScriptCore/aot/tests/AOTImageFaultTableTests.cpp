@@ -332,6 +332,11 @@ static void testHandlersTypes()
     checkEncodedHandlers(cycle);
 }
 
+static std::optional<HandlerRecord> handlerAt(const Image& image, uint32_t function, CallSiteIndex site)
+{
+    return findHandler(SideTableParts::read(image.function(function), image.section<uint8_t>(ImageSection::SideTables).data()).handlers, site);
+}
+
 static void testHandlersThroughImage()
 {
     CodeSketch sketch(1);
@@ -345,10 +350,10 @@ static void testHandlersThroughImage()
     BodiesImage built(3, bodies(sketch.take(), bodyWithCalls(2, 3).code));
     const Image& table = built.table();
     uint32_t first = built.image.indexOf(1);
-    AOT_TEST_CHECK(table.handlerAt(first, CallSiteIndex(2)) == handlerRecord(landingPad));
-    AOT_TEST_CHECK(!table.handlerAt(first, CallSiteIndex(1)));
-    AOT_TEST_CHECK(!table.handlerAt(first, CallSiteIndex(3)));
-    AOT_TEST_CHECK(!table.handlerAt(built.image.indexOf(2), CallSiteIndex(1)));
+    AOT_TEST_CHECK(handlerAt(table, first, CallSiteIndex(2)) == handlerRecord(landingPad));
+    AOT_TEST_CHECK(!handlerAt(table, first, CallSiteIndex(1)));
+    AOT_TEST_CHECK(!handlerAt(table, first, CallSiteIndex(3)));
+    AOT_TEST_CHECK(!handlerAt(table, built.image.indexOf(2), CallSiteIndex(1)));
 }
 
 std::span<const NativeTest> faultTableTests()

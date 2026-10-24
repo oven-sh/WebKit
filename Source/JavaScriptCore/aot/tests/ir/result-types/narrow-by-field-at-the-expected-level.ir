@@ -14,7 +14,6 @@ layout L6 name="ProvenSquare" fields=[{key="kind" declared={type=2} flags=[IsReq
 
 # On the edge that is not taken the read is anything, and only what is expected of it excludes 1
 function f0 name="provenHolder" parameters=[{type=L0|L1|L2}] results=[{type=undefined}] {
-  b0(v0: L0|L1|L2):
     v1 = PropGet v0 key="kind"
     v2 = Integer integer=1
     v3 = StrictEq v1, v2
@@ -58,7 +57,6 @@ function f1 name="expectedHolder" parameters=[{type=undefined|L0|L1|L2 flags=[Is
 # CHECK-NEXT: v7: boolean|number|string|symbol|bigint|object ~ L1|L2
 
 function f2 name="memberWithoutTheField" parameters=[{type=L0|L1|L3}] results=[{type=undefined}] {
-  b0(v0: L0|L1|L3):
     v1 = PropGet v0 key="kind"
     v2 = Integer integer=1
     v3 = StrictEq v1, v2
@@ -74,7 +72,6 @@ function f2 name="memberWithoutTheField" parameters=[{type=L0|L1|L3}] results=[{
 # CHECK-NEXT: v5: L0|L1|L3 ~ L0|L3
 
 function f3 name="fieldWithAnExpectedType" parameters=[{type=L0|L4}] results=[{type=undefined}] {
-  b0(v0: L0|L4):
     v1 = PropGet v0 key="kind"
     v2 = Integer integer=1
     v3 = StrictEq v1, v2
@@ -93,7 +90,6 @@ function f3 name="fieldWithAnExpectedType" parameters=[{type=L0|L4}] results=[{t
 
 # An expectation that leaves no member is no expectation
 function f4 name="noMemberIsLeft" parameters=[{type=L1|L2}, {type=1}] results=[{type=undefined}] {
-  b0(v0: L1|L2, v1: 1):
     v2 = NarrowByField v0, v1 key="kind"
     Return
 }
@@ -104,7 +100,6 @@ function f4 name="noMemberIsLeft" parameters=[{type=L1|L2}, {type=1}] results=[{
 
 # Where the fields keep values of their types the same test is a proof, and nothing narrower is left to expect
 function f5 name="fieldsThatKeepTheirValues" parameters=[{type=L5|L6}] results=[{type=undefined}] {
-  b0(v0: L5|L6):
     v1 = PropGet v0 key="kind"
     v2 = Integer integer=1
     v3 = StrictEq v1, v2

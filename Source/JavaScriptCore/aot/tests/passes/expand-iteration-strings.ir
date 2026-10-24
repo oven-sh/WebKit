@@ -9,7 +9,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="string" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -20,8 +19,6 @@ function f0 name="string" parameters=[{type=string}] results=[{type=anything}] {
     Branch v4 -> taken b2(), notTaken b1()
   b2():
     Return v5
-}
-# CHECK-LABEL: function f0 name="string"
 # CHECK: b0(v0: string):
 # CHECK-NEXT: [[zero0]]: 0 = Integer
 # CHECK-NEXT: Jump -> next {{*}}([[zero0]])
@@ -52,19 +49,17 @@ function f0 name="string" parameters=[{type=string}] results=[{type=anything}] {
 # CHECK-NEXT: [[one0]]: 1 = Integer integer=1
 # CHECK-NEXT: [[afterUnit0]]: {{*}} = Add [[proven0]], [[one0]]
 # CHECK-NEXT: Jump -> next [[merge0]]([[afterUnit0]])
-# ABSENT-LABEL: function f0 name="string"
 # ABSENT-NOT: TypeTest
 # ABSENT-NOT: @@iterator
 # ABSENT-NOT: [isNeverInlined]
 # ABSENT-NOT: key="codePointAt"
 # ABSENT-NOT: key="next"
-# RESOLVED-LABEL: function f0 name="string"
 # RESOLVED-NOT: = Call v
 # RESOLVED: = CallBuiltin v0, {{*}} overload=StringPrototypeCodePointAt/0
 # RESOLVED-NOT: = Call v
+}
 
 function f1 name="stringOrNullish" parameters=[{type=undefined|null|string}] results=[{type=anything}] {
-  b0(v0: undefined|null|string):
     v1 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -119,7 +114,6 @@ function f2 name="expectedString" parameters=[{type=string flags=[IsExpected]}] 
 # RESOLVED-LABEL: function f2 name="expectedString"
 
 function f3 name="unknownIsTestedForStringLast" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = IteratorOpen v0
     Jump -> next b1()
   b1():

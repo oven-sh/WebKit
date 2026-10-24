@@ -7,7 +7,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = ToNumber v1
@@ -26,27 +25,21 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="noCapture" flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     Return
 }
 function f2 name="oneCapture" flags=[HasNewTarget] captures=[{type=number}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     Return
 }
 function f3 name="twoCaptures" flags=[HasNewTarget] captures=[{type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: number, v1: number, v2: anything):
     Return
 }
 function f4 name="threeCaptures" flags=[HasNewTarget] captures=[{type=number}, {type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: number, v1: number, v2: number, v3: anything):
     Return
 }
 function f5 name="sixCaptures" kind=Arrow captures=[{type=number}, {type=number}, {type=number}, {type=number}, {type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: number, v1: number, v2: number, v3: number, v4: number, v5: number):
     Return
 }
 function f6 name="onlyCalled" kind=Arrow captures=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     Return
 }
 

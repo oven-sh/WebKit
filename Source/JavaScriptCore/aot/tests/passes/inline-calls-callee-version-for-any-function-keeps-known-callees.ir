@@ -8,21 +8,17 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="double" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Add v0, v0
     Return v1
 }
 function f1 name="negate" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = Negate v0
     Return v1
 }
 function f2 name="later" kind=Arrow captures=[{type=f0|f1}] results=[{type=anything}] {
-  b0(v0: f0|f1):
     Return v0
 }
 function f3 name="each" role=Library parameters=[{type=f0|f1}, {type=anything}] results=[{type=anything}] {
-  b0(v0: f0|f1, v1: anything):
     v2 = NewClosure v0 function=f2
     v3 = Call v0, -, v1, v1
 # REPEAT: i = 3..62
@@ -32,7 +28,6 @@ function f3 name="each" role=Library parameters=[{type=f0|f1}, {type=anything}] 
 }
 
 function f4 name="outsideLoops" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f0
     v2 = NewClosure function=f1
     v3 = CallDirect v1, v0 function=f3

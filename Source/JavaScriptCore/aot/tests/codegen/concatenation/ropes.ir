@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="threeStrings" parameters=[{type=string}, {type=string}] results=[{type=string}] {
-  b0(v0: string, v1: string):
     v2 = String string="-"
     v3 = Strcat v0, v2, v1
     Return v3
@@ -15,7 +14,6 @@ function f0 name="threeStrings" parameters=[{type=string}, {type=string}] result
 # CHECK-NEXT: f1: size=
 
 function f1 name="likelyKey" parameters=[{type=string}, {type=string}] results=[{type=string}] {
-  b0(v0: string, v1: string):
     v2 = String string="-"
     v3 = Strcat v0, v2, v1 [isLikelyKey]
     Return v3
@@ -24,7 +22,6 @@ function f1 name="likelyKey" parameters=[{type=string}, {type=string}] results=[
 # CHECK-NEXT: f2: size=
 
 function f2 name="twoStrings" parameters=[{type=string}, {type=string}] results=[{type=string}] {
-  b0(v0: string, v1: string):
     v2 = Strcat v0, v1
     Return v2
 }
@@ -32,7 +29,6 @@ function f2 name="twoStrings" parameters=[{type=string}, {type=string}] results=
 # CHECK-NEXT: f3: size=
 
 function f3 name="fourStrings" parameters=[{type=string}, {type=string}] results=[{type=string}] {
-  b0(v0: string, v1: string):
     v2 = Strcat v0, v1, v0, v1
     Return v2
 }
@@ -41,7 +37,6 @@ function f3 name="fourStrings" parameters=[{type=string}, {type=string}] results
 # CHECK-NEXT: f4: size=
 
 function f4 name="sevenStrings" parameters=[{type=string}, {type=string}] results=[{type=string}] {
-  b0(v0: string, v1: string):
     v2 = Strcat v0, v1, v0, v1, v0, v1, v0
     Return v2
 }
@@ -49,14 +44,12 @@ function f4 name="sevenStrings" parameters=[{type=string}, {type=string}] result
 # CHECK-NEXT: f5: size=
 
 function f5 name="oneString" parameters=[{type=string}] results=[{type=string}] {
-  b0(v0: string):
     v1 = Strcat v0
     Return v1
 }
 # CHECK-NEXT: f6: size=
 
 function f6 name="integerPart" parameters=[{type=string}, {type=i32}] results=[{type=string}] {
-  b0(v0: string, v1: i32):
     v2 = Strcat v0, v1
     Return v2
 }
@@ -66,7 +59,6 @@ function f6 name="integerPart" parameters=[{type=string}, {type=i32}] results=[{
 # CHECK-NEXT: f7: size=
 
 function f7 name="otherPrimitives" parameters=[{type=string}, {type=undefined}, {type=boolean}] results=[{type=string}] {
-  b0(v0: string, v1: undefined, v2: boolean):
     v3 = Strcat v0, v1, v2
     Return v3
 }
@@ -75,7 +67,6 @@ function f7 name="otherPrimitives" parameters=[{type=string}, {type=undefined}, 
 # CHECK-NEXT: f8: size=
 
 function f8 name="addedInteger" parameters=[{type=string}, {type=i32}] results=[{type=string}] {
-  b0(v0: string, v1: i32):
     v2 = Add v0, v1 form=StringAndPrimitive
     Return v2
 }

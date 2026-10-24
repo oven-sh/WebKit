@@ -34,23 +34,13 @@ static_assert(std::ranges::all_of(arrayStorageForms, [](const ArrayStorageForm& 
     return form.element == Representation::Int32 || form.element == Representation::Double || form.element == Representation::JSValue;
 }));
 
-namespace {
-
-class StorageGuardValidator final : public OperationEmitter {
-public:
-    explicit StorageGuardValidator(CodeGenerator& generator)
-        : OperationEmitter(generator)
-    {
-    }
-
-    void validate(const ValueContext&, CellPointer array, ArrayStorage);
-};
-
-void StorageGuardValidator::validate(const ValueContext& value, CellPointer array, ArrayStorage kind)
+void ElementAccessEmitter::validateStorage(const ValueContext& value, CellPointer array, ArrayStorage kind)
 {
+    if (!generator().validatesOrChecksProofs())
+        return;
     LBasicBlock isInvalid = newBlock();
     LBasicBlock continuation = newBlock();
-    m_out.branch(emitter<ElementAccessEmitter>().hasArrayStorage(array, kind).value(), normalEdge(continuation), rareEdge(isInvalid));
+    m_out.branch(hasArrayStorage(array, kind).value(), normalEdge(continuation), rareEdge(isInvalid));
 
     m_out.appendTo(isInvalid);
     callVoidOperation(value, RuntimeOperation::ReportValidationFailure, { boxCell(array), word32(static_cast<int32_t>(ValidationFailureKind::ValueType)), word32(m_id.index()), word32(value.id().index()) }, { .isOnRarePath = true });
@@ -58,8 +48,6 @@ void StorageGuardValidator::validate(const ValueContext& value, CellPointer arra
 
     m_out.appendTo(continuation);
 }
-
-} // anonymous namespace
 
 static JSValue constantIndexOf(Integer index)
 {
@@ -69,24 +57,9 @@ static JSValue constantIndexOf(Integer index)
     return jsNumber(static_cast<int32_t>(value->asInt64()));
 }
 
+// The functor ends the block it is called in. It gets no form for storage that holdsBoxedElements().
 template<typename Functor>
-static void forEachFormByShape(ElementAccessEmitter& elements, Output& out, Word32 shape, LBasicBlock hasNoForm, const Functor& emitArm)
-{
-    for (const ArrayStorageForm& form : arrayStorageForms | std::views::reverse) {
-        bool isLastForm = &form == &arrayStorageForms.front();
-        LBasicBlock hasForm = out.newBlock();
-        LBasicBlock hasOtherForm = out.newBlock();
-        out.branch(elements.hasShape(shape, form).value(), normalEdge(hasForm), isLastForm ? rareEdge(hasOtherForm) : normalEdge(hasOtherForm));
-        out.appendTo(hasForm);
-        emitArm(form);
-        out.appendTo(hasOtherForm);
-    }
-    out.jump(hasNoForm);
-}
-
-// Each functor ends the block it is called in.
-template<typename BoxedArm, typename DoubleArm>
-static void forBoxedAndDoubleShapes(ElementAccessEmitter& elements, Output& out, Word32 shape, LBasicBlock hasNoForm, const BoxedArm& emitBoxedArm, const DoubleArm& emitDoubleArm)
+static void forBoxedAndDoubleShapes(ElementAccessEmitter& elements, Output& out, Word32 shape, LBasicBlock hasNoForm, const Functor& emitArm)
 {
     const ArrayStorageForm& doubleForm = arrayStorageFormOf(ArrayStorage::Double);
     LBasicBlock holdsBoxed = out.newBlock();
@@ -95,18 +68,13 @@ static void forBoxedAndDoubleShapes(ElementAccessEmitter& elements, Output& out,
     out.branch(elements.holdsBoxedElements(shape).value(), normalEdge(holdsBoxed), normalEdge(holdsUnboxed));
 
     out.appendTo(holdsBoxed);
-    emitBoxedArm();
+    emitArm(nullptr);
 
     out.appendTo(holdsUnboxed);
     out.branch(elements.hasShape(shape, doubleForm).value(), normalEdge(holdsDoubles), rareEdge(hasNoForm));
 
     out.appendTo(holdsDoubles);
-    emitDoubleArm(doubleForm);
-}
-
-ElementAccessEmitter::ElementAccessEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
+    emitArm(&doubleForm);
 }
 
 // Structure::setPristineBits(): the bit of the cell says both of an array.
@@ -173,11 +141,6 @@ Word32 ElementAccessEmitter::indexingMode(CellPointer array, IndexingType mask)
     return mask == IndexingShapeAndWritabilityMask ? byte : bitAnd(byte, word32(mask));
 }
 
-Condition ElementAccessEmitter::hasShape(Word32 maskedMode, const ArrayStorageForm& form)
-{
-    return equal(maskedMode, word32(form.shape));
-}
-
 static constexpr uint32_t bitsOutsideBoxedShapes = ~static_cast<uint32_t>(ContiguousShape - Int32Shape);
 
 static_assert([] {
@@ -193,36 +156,6 @@ static_assert(!arrayStorageFormOf(ArrayStorage::Int32).hole && !arrayStorageForm
 Condition ElementAccessEmitter::holdsBoxedElements(Word32 maskedMode)
 {
     return hasNoBits(sub(maskedMode, word32(Int32Shape)), bitsOutsideBoxedShapes);
-}
-
-Condition ElementAccessEmitter::hasWritableShape(Word32 modeWithWritability, const ArrayStorageForm& form)
-{
-    return equal(modeWithWritability, word32(form.indexingType));
-}
-
-ArrayElements ElementAccessEmitter::elementsOf(CellPointer array)
-{
-    return { array, loadField<Pointer>(array, m_heaps.JSObject_butterfly) };
-}
-
-Integer ElementAccessEmitter::publicLength(const ArrayElements& elements)
-{
-    return zeroExtended(loadField<Word32>(elements.butterfly, m_heaps.Butterfly_publicLength));
-}
-
-Integer ElementAccessEmitter::vectorLength(const ArrayElements& elements)
-{
-    return zeroExtended(loadField<Word32>(elements.butterfly, m_heaps.Butterfly_vectorLength));
-}
-
-void ElementAccessEmitter::setPublicLength(const ArrayElements& elements, Integer length)
-{
-    storeField(elements.butterfly, m_heaps.Butterfly_publicLength, low32(length));
-}
-
-Integer ElementAccessEmitter::arrayLength(CellPointer array)
-{
-    return publicLength(elementsOf(array));
 }
 
 TypedPointer ElementAccessEmitter::elementAt(const ArrayStorageForm& form, const ArrayElements& elements, Integer index)
@@ -476,15 +409,12 @@ Operand ElementAccessEmitter::readElementInsideLength(const ValueContext& value,
         return convertInt32Element(Word32(m_out.load32(elementAt(form, elements, index))), value.representation());
 
     Operand rawElement = loadRawElement(form, elements, index);
-    if (findsElement(value)) {
-        if (generator().validatesOrChecksProofs() && !readsHoleAsNaN(value))
-            emitter<RuntimeValidationEmitter>().checkPrecondition(value, logicalNot(this->isHole(form, rawElement)));
-        return convertRawElement(form, rawElement, value.representation(), typeOf(value.id()));
-    }
-
-    LBasicBlock holdsValue = newBlock();
-    m_out.branch(this->isHole(form, rawElement).value(), rareEdge(isHole), normalEdge(holdsValue));
-    m_out.appendTo(holdsValue);
+    if (!findsElement(value)) {
+        LBasicBlock holdsValue = newBlock();
+        m_out.branch(this->isHole(form, rawElement).value(), rareEdge(isHole), normalEdge(holdsValue));
+        m_out.appendTo(holdsValue);
+    } else if (generator().validatesOrChecksProofs() && !readsHoleAsNaN(value))
+        emitter<RuntimeValidationEmitter>().checkPrecondition(value, logicalNot(this->isHole(form, rawElement)));
     return convertRawElement(form, rawElement, value.representation(), typeOf(value.id()));
 }
 
@@ -502,18 +432,19 @@ Boxed ElementAccessEmitter::readBoxedElement(const ValueContext& value, const Ar
 
 void ElementAccessEmitter::generateGetArrayElement(const ValueContext& value)
 {
-    if (const ArrayStorageForm* form = findArrayStorageForm(value->arrayStorage())) {
+    const ArrayStorageForm* form = findArrayStorageForm(value->arrayStorage());
+    if (!form)
+        readWithAnyStorage(value);
+    else if (value->isInBounds() || value->isPresent())
+        readInsideLength(value, *form);
+    else
         readWithKnownStorage(value, *form);
-        return;
-    }
-    readWithAnyStorage(value);
 }
 
 void ElementAccessEmitter::readInsideLength(const ValueContext& value, const ArrayStorageForm& form)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());
-    if (generator().validatesOrChecksProofs())
-        StorageGuardValidator(generator()).validate(value, array, form.kind);
+    validateStorage(value, array, form.kind);
     ArrayElements elements = elementsOf(array);
     Integer index = indexInsideLength(value->positionOperand());
     if (generator().validatesOrChecksProofs()) {
@@ -537,20 +468,15 @@ void ElementAccessEmitter::readInsideLength(const ValueContext& value, const Arr
 
 void ElementAccessEmitter::readWithKnownStorage(const ValueContext& value, const ArrayStorageForm& form)
 {
-    if (value->isInBounds() || value->isPresent()) {
-        readInsideLength(value, form);
-        return;
-    }
-
     CellPointer array = in<CellPointer>(value->arrayOperand());
     ValueID position = value->positionOperand();
     Representation representation = value.representation();
     LBasicBlock isNotAnIndex = isArrayIndex(typeOf(position)) ? nullptr : newBlock();
-    LBasicBlock isAbsent = isNotAnIndex && leavesAbsentElementsToStub(value) ? isNotAnIndex : newBlock();
+    // The arm for whatever the code in line does not know is there anyway. Outside fast code it is the only one: the stub answers undefined in a few instructions.
+    LBasicBlock isAbsent = isNotAnIndex && value.shape() != CodeShape::Fast ? isNotAnIndex : newBlock();
     OperandJoin join(m_out, representation);
 
-    if (generator().validatesOrChecksProofs())
-        StorageGuardValidator(generator()).validate(value, array, form.kind);
+    validateStorage(value, array, form.kind);
     Integer index = indexOrElse(position, value->keyIsIntegral(), isNotAnIndex, NaNIndexMode::ProduceOutOfBoundsIndex);
     join.add(readElement(value, form, elementsOf(array), index, isAbsent));
 
@@ -590,25 +516,30 @@ void ElementAccessEmitter::readWithAnyStorage(const ValueContext& value)
     ArrayElements elements = elementsOf(array);
     // Storage of numbers holds nothing that a result without numbers admits: there every position is a hole or behind the end.
     bool mayReadNumber = !!(result.primitives & Primitive::Number);
-    auto readWithForm = [&](const ArrayStorageForm& form) {
-        if (!mayReadNumber && form.kind != ArrayStorage::Contiguous) {
+    auto readWithForm = [&](const ArrayStorageForm* form) {
+        if (!form)
+            join.add(readBoxedElement(value, elements, index, isAbsent));
+        else if (!mayReadNumber && form->kind != ArrayStorage::Contiguous)
             m_out.jump(isAbsent);
-            return;
-        }
-        join.add(readElement(value, form, elements, index, isAbsent));
+        else
+            join.add(readElement(value, *form, elements, index, isAbsent));
     };
     // The arm for doubles takes 30 bytes more. The library's loops are there once for all their callers and walk arrays of every kind; a program's own read of storage that nobody knows seldom meets doubles.
-    if (representation == Representation::JSValue && mayReadNumber && isLibraryCode(m_program, m_function)) {
-        forBoxedAndDoubleShapes(*this, m_out, shape, outOfLine, [&] {
-            join.add(readBoxedElement(value, elements, index, isAbsent));
-        }, readWithForm);
-    } else if (representation == Representation::JSValue) {
+    if (representation == Representation::JSValue && mayReadNumber && isLibraryCode(m_program, m_function))
+        forBoxedAndDoubleShapes(*this, m_out, shape, outOfLine, readWithForm);
+    else if (representation == Representation::JSValue) {
         LBasicBlock holdsBoxed = newBlock();
         m_out.branch(holdsBoxedElements(shape).value(), normalEdge(holdsBoxed), rareEdge(outOfLine));
         m_out.appendTo(holdsBoxed);
-        join.add(readBoxedElement(value, elements, index, isAbsent));
-    } else
-        forEachFormByShape(*this, m_out, shape, outOfLine, readWithForm);
+        readWithForm(nullptr);
+    } else {
+        ArrayStorageFormList everyForm;
+        for (const ArrayStorageForm& form : arrayStorageForms | std::views::reverse)
+            everyForm.append(&form);
+        forEachFormByShape(shape, &ElementAccessEmitter::hasShape, everyForm, outOfLine, [&](const ArrayStorageForm& form) {
+            readWithForm(&form);
+        });
+    }
 
     m_out.appendTo(isAbsent);
     if (!isArrayIndex(typeOf(position)))
@@ -618,12 +549,6 @@ void ElementAccessEmitter::readWithAnyStorage(const ValueContext& value)
     m_out.appendTo(outOfLine);
     join.add(conversions.unbox(readOutOfLine(value, array), result, representation));
     define(value, join.finish());
-}
-
-// The arm for whatever the code in line does not know is there anyway. Outside fast code it is the only one: the stub answers undefined in a few instructions.
-bool ElementAccessEmitter::leavesAbsentElementsToStub(const ValueContext& read)
-{
-    return read.shape() != CodeShape::Fast;
 }
 
 // The stubs for arrays take the position as it is, so nothing is boxed here, and keep the registers of the code around the arm.
@@ -639,7 +564,7 @@ Boxed ElementAccessEmitter::readOutOfLine(const ValueContext& value, CellPointer
     return Boxed(callStub(value, arrayGetAtIndex(), { array.value(), integerOf(position).value() }).first);
 }
 
-void ElementAccessEmitter::branchOnElementPresence(const ValueContext& value, const ArrayElements& elements, Integer index, BranchTargets targets, const ScopedLambda<Condition(Integer)>& loadsHole)
+void ElementAccessEmitter::branchOnElementPresence(const ValueContext& value, const ArrayStorageForm* form, const ArrayElements& elements, Integer index, BranchTargets targets)
 {
     LengthTest test = testLength(index, elements);
     if (isDense(value->arrayOperand()) && !generator().validatesOrChecksProofs()) {
@@ -651,24 +576,15 @@ void ElementAccessEmitter::branchOnElementPresence(const ValueContext& value, co
     branch(test.isInside, { normalEdge(isInBounds), targets.notTaken });
 
     m_out.appendTo(isInBounds);
-    branch(loadsHole(test.indexInside), targets.swapped());
-}
-
-void ElementAccessEmitter::branchOnElementPresence(const ValueContext& value, const ArrayStorageForm& form, const ArrayElements& elements, Integer index, BranchTargets targets)
-{
-    branchOnElementPresence(value, elements, index, targets, [&](Integer indexInside) {
-        return isHole(form, loadRawElement(form, elements, indexInside));
-    });
+    branch(form ? isHole(*form, loadRawElement(*form, elements, test.indexInside)) : isEmpty(loadBoxedElement(elements, test.indexInside)), targets.swapped());
 }
 
 void ElementAccessEmitter::branchOnPresentElement(const ValueContext& test, const ArrayStorageForm& form, BranchTargets targets)
 {
     CellPointer array = in<CellPointer>(test->arrayOperand());
-    if (generator().validatesOrChecksProofs())
-        StorageGuardValidator(generator()).validate(test, array, form.kind);
-
+    validateStorage(test, array, form.kind);
     Integer index = indexOrElse(test->positionOperand(), test->keyIsIntegral(), targets.notTaken.block(), NaNIndexMode::ProduceOutOfBoundsIndex);
-    branchOnElementPresence(test, form, elementsOf(array), index, targets);
+    branchOnElementPresence(test, &form, elementsOf(array), index, targets);
 }
 
 void ElementAccessEmitter::generateHasArrayElement(const ValueContext& value)
@@ -688,8 +604,8 @@ void ElementAccessEmitter::generateHasArrayElement(const ValueContext& value)
         return;
     }
 
-    if (knownForm && generator().validatesOrChecksProofs())
-        StorageGuardValidator(generator()).validate(value, array, knownForm->kind);
+    if (knownForm)
+        validateStorage(value, array, knownForm->kind);
 
     // A read of the element on the taken edge repeats these two branches, and B3 folds a branch that an equal one dominates.
     defineTestByBranching(value, [&](BranchTargets targets) {
@@ -701,18 +617,13 @@ void ElementAccessEmitter::generateHasArrayElement(const ValueContext& value)
 
         Integer index = indexOrElse(position, value->keyIsIntegral(), outOfLine);
         ArrayElements elements = elementsOf(array);
-        auto branchOnPresence = [&](const ArrayStorageForm& form) {
+        auto branchOnPresence = [&](const ArrayStorageForm* form) {
             branchOnElementPresence(value, form, elements, index, presenceTargets);
         };
-        auto branchOnBoxedPresence = [&] {
-            branchOnElementPresence(value, elements, index, presenceTargets, [&](Integer indexInside) {
-                return isEmpty(loadBoxedElement(elements, indexInside));
-            });
-        };
         if (knownForm)
-            branchOnPresence(*knownForm);
+            branchOnPresence(knownForm);
         else
-            forBoxedAndDoubleShapes(*this, m_out, indexingMode(array, arrayStorageTestMask), outOfLine, branchOnBoxedPresence, branchOnPresence);
+            forBoxedAndDoubleShapes(*this, m_out, indexingMode(array, arrayStorageTestMask), outOfLine, branchOnPresence);
 
         if (isAbsent && isAbsent != outOfLine) {
             m_out.appendTo(isAbsent);

@@ -12,7 +12,6 @@ variable g0 name="none" module=m0 declared={type=undefined|null|number|absent} f
 layout L0 name="Shown" module=m0 fields=[{key="bits" declared={type=undefined|null|number} flags=[IsRequired]}, {key="mirrored" declared={type=undefined|null|number} flags=[IsRequired]}, {key="counter" declared={type=undefined|null|number} flags=[IsRequired]}, {key="passed" declared={type=undefined|null|number} flags=[IsRequired]}, {key="returned" declared={type=undefined|null|number} flags=[IsRequired]}, {key="untyped" declared={type=anything} flags=[IsRequired]}, {key="ratio" declared={type=undefined|null|number} flags=[IsRequired]}, {key="given" declared={type=undefined|null|number} flags=[IsRequired]}]
 layout L1 name="NeverStored" module=m0 fields=[{key="never" declared={type=undefined|null|number}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToNumber v1
@@ -49,12 +48,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="store" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     PropSet v0, v1 key="passed" mode=Strict
     Return
 }
 function f2 name="mask" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=255
     v2 = BitAnd v0, v1
     Return v2

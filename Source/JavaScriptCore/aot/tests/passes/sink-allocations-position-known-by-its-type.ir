@@ -7,7 +7,6 @@ module m0 path="main.js" displayPath="main.js"
 
 # The first turn of a loop over one of two literals: the position is a parameter that a branch has narrowed to one integer.
 function f0 name="oneOfTwoLiterals" parameters=[{type=boolean}, {type=string}, {type=string}, {type=string}] results=[{type=anything}] {
-  b0(v0: boolean, v1: string, v2: string, v3: string):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v4 = NewArray v1, v2, v3 contents=string
@@ -32,15 +31,13 @@ function f0 name="oneOfTwoLiterals" parameters=[{type=boolean}, {type=string}, {
     Return v15
   b7():
     Return
-}
-# CHECK-LABEL: function f0 name="oneOfTwoLiterals"
 # CHECK: [[test0]]: boolean = IsInBounds [[array0]], [[position0]]
 # CHECK-NEXT: Branch [[test0]] -> taken [[inside0]](| 0), notTaken
 # CHECK: [[inside0]]([[guard0]]: guard):
 # CHECK-NEXT: = GetArrayElement [[array0]], [[position0]], [[guard0]] arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
+}
 
 function f1 name="oneLiteral" parameters=[{type=string}, {type=string}, {type=int[1, 9]}] results=[{type=anything}] {
-  b0(v0: string, v1: string, v2: int[1, 9]):
     v3 = NewArray v0, v1 contents=string
     v4 = AssumeType v3 castType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
     v5 = Integer
@@ -57,16 +54,14 @@ function f1 name="oneLiteral" parameters=[{type=string}, {type=string}, {type=in
     Return v11
   b4():
     Return
-}
-# CHECK-LABEL: function f1 name="oneLiteral"
 # CHECK: [[test1]]: boolean = IsInBounds [[array1]], [[position1]]
 # CHECK-NEXT: Branch [[test1]] -> taken [[inside1]](| 0), notTaken
 # CHECK: [[inside1]]([[guard1]]: guard):
 # CHECK-NEXT: = GetArrayElement [[array1]], [[position1]], [[guard1]] arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
+}
 
 # The position is inside one of the two literals alone, so the answer is a test of the tag and the way of the read has one variant.
 function f2 name="insideTheLongerLiteralAlone" parameters=[{type=boolean}, {type=string}, {type=string}] results=[{type=anything}] {
-  b0(v0: boolean, v1: string, v2: string):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v3 = NewArray v1, v2 contents=string
@@ -91,9 +86,8 @@ function f2 name="insideTheLongerLiteralAlone" parameters=[{type=boolean}, {type
     Return v14
   b7():
     Return
-}
-# CHECK-LABEL: function f2 name="insideTheLongerLiteralAlone"
 # CHECK: [[test2]]: boolean = IsInBounds [[array2]], [[position2]]
 # CHECK-NEXT: Branch [[test2]] -> taken [[inside2]](| 0), notTaken
 # CHECK: [[inside2]]([[guard2]]: guard):
 # CHECK-NEXT: = GetArrayElement [[array2]], [[position2]], [[guard2]] arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
+}

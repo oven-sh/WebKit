@@ -13,12 +13,10 @@ function f4 name="twoBlocks" role=CoroutineRamp flags=[IsAsync] parameters=[{typ
 function f5 name="awaitLeavesTheHandler" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f5 body=f12 entryWithoutPromise=f12 promiseType=Promise promiseParameter=1}
 function f6 name="threeInOneBlock" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f6 body=f13 entryWithoutPromise=f13 promiseType=Promise promiseParameter=1}
 function f7 name="callee" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncFunction ramp=f0 body=f7 entryWithoutPromise=f7 promiseType=Promise promiseParameter=1} {
-  b0(v0: anything, v1: undefined|Promise):
     v2 = ReturnAsyncResult v1, v0
     Return v2
 }
 function f8 name="calleeDeclaredNumber" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f1} creator=Coroutine{kind=AsyncFunction ramp=f1 body=f8 entryWithoutPromise=f8 promiseType=Promise promiseParameter=1} {
-  b0(v0: anything, v1: undefined|Promise):
     v2 = ReturnAsyncResult v1, v0
     Return v2
 }
@@ -36,8 +34,6 @@ function f9 name="oneBlock" role=CoroutineBody flags=[IsAsync] parameters=[{type
     v8 = CatchValue
     v9 = ReturnAsyncResult v1, v7
     Return v9
-}
-# CHECK-LABEL: function f9 name="oneBlock"
 # CHECK-NOT: CallDirect
 # CHECK-NOT: AwaitBySavingFrame
 # CHECK: b0(v0: anything, v1: undefined|Promise) handler=b2(v0):
@@ -47,6 +43,7 @@ function f9 name="oneBlock" role=CoroutineBody flags=[IsAsync] parameters=[{type
 # CHECK-NEXT: v5: anything = AwaitCallBySavingFrame v1, v3 function=f7 @12
 # CHECK: b2(v7{{*}}) role=CatchHandler:
 # CHECK-NEXT: = CatchValue
+}
 function f10 name="oneBlockWithTypedAwait" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f3} creator=Coroutine{kind=AsyncFunction ramp=f3 body=f10 entryWithoutPromise=f10 promiseType=Promise promiseParameter=1} {
   b0(v0: anything, v1: undefined|Promise) handler=b2(v0):
     v2 = CallDirect v0 function=f1 @20
@@ -60,8 +57,6 @@ function f10 name="oneBlockWithTypedAwait" role=CoroutineBody flags=[IsAsync] pa
     v7 = CatchValue
     v8 = ReturnAsyncResult v1, v6
     Return v8
-}
-# CHECK-LABEL: function f10 name="oneBlockWithTypedAwait"
 # CHECK-NOT: CallDirect
 # CHECK-NOT: AwaitBySavingFrame
 # CHECK: b0(v0: anything, v1: undefined|Promise) handler=b2(v0):
@@ -71,6 +66,7 @@ function f10 name="oneBlockWithTypedAwait" role=CoroutineBody flags=[IsAsync] pa
 # CHECK: [[rest]](v3: number) handler=b2(v0):
 # CHECK-NEXT: v4: number = Negate v3
 # CHECK-NEXT: Jump -> next b1()
+}
 function f11 name="twoBlocks" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f4} creator=Coroutine{kind=AsyncFunction ramp=f4 body=f11 entryWithoutPromise=f11 promiseType=Promise promiseParameter=1} {
   b0(v0: anything, v1: undefined|Promise) handler=b3(v0):
     v2 = CallDirect v0 function=f0 @30
@@ -85,14 +81,13 @@ function f11 name="twoBlocks" role=CoroutineBody flags=[IsAsync] parameters=[{ty
     v6 = CatchValue
     v7 = ReturnAsyncResult v1, v5
     Return v7
-}
-# CHECK-LABEL: function f11 name="twoBlocks"
 # CHECK-NOT: CallDirect
 # CHECK: b0(v0: anything, v1: undefined|Promise) handler=b3(v0):
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1() handler=b3(v0):
 # CHECK-NEXT: v3: anything{{*}} = AwaitCallBySavingFrame v1, v0 function={{*}} @30
 # CHECK-NOT: AwaitBySavingFrame
+}
 function f12 name="awaitLeavesTheHandler" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f5} creator=Coroutine{kind=AsyncFunction ramp=f5 body=f12 entryWithoutPromise=f12 promiseType=Promise promiseParameter=1} {
   b0(v0: anything, v1: undefined|Promise) handler=b2(v0):
     v2 = CallDirect v0 function=f0 @40
@@ -105,8 +100,6 @@ function f12 name="awaitLeavesTheHandler" role=CoroutineBody flags=[IsAsync] par
     v6 = CatchValue
     v7 = ReturnAsyncResult v1, v5
     Return v7
-}
-# CHECK-LABEL: function f12 name="awaitLeavesTheHandler"
 # CHECK-NOT: AwaitCallBySavingFrame
 # CHECK: b0(v0: anything, v1: undefined|Promise) handler=b2(v0):
 # CHECK-NEXT: v2: Promise = CallDirect v0 function=f0 @40
@@ -114,6 +107,7 @@ function f12 name="awaitLeavesTheHandler" role=CoroutineBody flags=[IsAsync] par
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v3: anything = AwaitBySavingFrame v2, v1 @41
 # CHECK-NOT: AwaitCallBySavingFrame
+}
 function f13 name="threeInOneBlock" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f6} creator=Coroutine{kind=AsyncFunction ramp=f6 body=f13 entryWithoutPromise=f13 promiseType=Promise promiseParameter=1} {
   b0(v0: anything, v1: undefined|Promise) handler=b2(v0):
     v2 = CallDirect v0 function=f1 @50
@@ -132,8 +126,6 @@ function f13 name="threeInOneBlock" role=CoroutineBody flags=[IsAsync] parameter
     v12 = CatchValue
     v13 = ReturnAsyncResult v1, v11
     Return v13
-}
-# CHECK-LABEL: function f13 name="threeInOneBlock"
 # CHECK-NOT: CallDirect
 # CHECK-NOT: AwaitBySavingFrame
 # CHECK-NOT: Upcast
@@ -149,3 +141,4 @@ function f13 name="threeInOneBlock" role=CoroutineBody flags=[IsAsync] parameter
 # CHECK-NEXT: [[third]]: anything = AwaitCallBySavingFrame v1, v6 function=f8 @54
 # CHECK-NEXT: [[thirdNumber]]: number = AssumeType [[third]] castType=number @55
 # CHECK-NEXT: Jump -> next [[afterThird]]([[thirdNumber]])
+}

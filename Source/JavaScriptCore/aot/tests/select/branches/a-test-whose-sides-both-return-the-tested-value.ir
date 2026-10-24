@@ -4,21 +4,18 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="returnedEitherWay" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=undefined|string
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2: undefined|string):
     Return v2
   b2(v3: null|boolean|number|symbol|bigint|object) frequency=Unlikely:
     Return v3
-}
-# CHECK-LABEL: function f0 name="returnedEitherWay"
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
+}
 
 function f1 name="oneSideReturnsSomethingElse" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=undefined|string
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2: undefined|string):
@@ -26,13 +23,11 @@ function f1 name="oneSideReturnsSomethingElse" parameters=[{type=anything}] resu
   b2(v3: null|boolean|number|symbol|bigint|object) frequency=Unlikely:
     v4 = Undefined
     Return v4
-}
-# CHECK-LABEL: function f1 name="oneSideReturnsSomethingElse"
 # CHECK: = TypeTest v0 testedType=undefined|string
 # CHECK-NEXT: TestAndBranch
+}
 
 function f2 name="twoTestsShareTheSideThatFails" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v3 = TypeTest v0 testedType=undefined|string
@@ -46,10 +41,9 @@ function f2 name="twoTestsShareTheSideThatFails" parameters=[{type=anything}, {t
     Return v6
   b5(v7: null|boolean|number|symbol|bigint|object) frequency=Unlikely:
     Return v7
-}
-# CHECK-LABEL: function f2 name="twoTestsShareTheSideThatFails"
 # CHECK-NOT: TypeTest
 # CHECK: Return v0
 # CHECK-NOT: TypeTest
 # CHECK: Return v1
 # CHECK-NOT: TypeTest
+}

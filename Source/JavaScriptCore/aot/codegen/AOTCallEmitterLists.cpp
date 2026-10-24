@@ -33,17 +33,13 @@ void CallEmitter::generateCallList(const ValueContext& value)
         .callee = callee.value(),
         .thisValue = thisValue.value(),
     };
-
-    std::optional<ThrowSite> siteThatNamesCallee;
-    if (value->calleeName())
-        siteThatNamesCallee = ThrowSite { ThrowKind::NotAFunction, value->calleeName().index(), std::nullopt };
     if (!value.returnCall()) {
-        define(value, callByConvention(value, call, { .throwSite = siteThatNamesCallee, .isTailCall = value->isDemotedTailCall() }));
+        define(value, callByConvention(value, call, { .throwSite = siteThatNamesCallee(value), .isTailCall = value->isDemotedTailCall() }));
         return;
     }
 
     if (!typeOf(value->calleeOperand()).isSubsetOf(m_program.at(TypeTable::function), m_program))
-        requireCallableBeforeTailCall(value, callee, siteThatNamesCallee);
+        requireCallableBeforeTailCall(value, callee, siteThatNamesCallee(value));
     tailCallByConvention(value, call);
 }
 
@@ -75,10 +71,7 @@ void CallEmitter::generateConstruct(const ValueContext& value)
     Boxed callee = in<Boxed>(value->calleeOperand());
     emitter<AccessEmitter>().recordArrival(value, callee);
     Boxed newTarget = inOptional<Boxed>(value->newTargetOperand()).value_or(callee);
-    std::optional<ThrowSite> siteThatNamesCallee;
-    if (value->calleeName())
-        siteThatNamesCallee = ThrowSite { ThrowKind::NotAFunction, value->calleeName().index(), std::nullopt };
-    define(value, constructValue(value, ConstructSyntax::NewExpression, callee, newTarget, value->argumentsOperands(), siteThatNamesCallee));
+    define(value, constructValue(value, ConstructSyntax::NewExpression, callee, newTarget, value->argumentsOperands(), siteThatNamesCallee(value)));
 }
 
 void CallEmitter::generateConstructList(const ValueContext& value)

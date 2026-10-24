@@ -17,7 +17,6 @@ layout L1 kind=Instance name="InFunctionCalledOnce" constructor=f2
 layout L2 kind=Instance name="InLoop" constructor=f3
 layout L3 kind=Instance name="InFunctionCalledTwice" constructor=f4
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = FinishClass v1 layout=L0
@@ -38,31 +37,26 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="AtTop" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0 fields=[]
     Return v2
 }
 function f2 name="InFunctionCalledOnce" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L1
     v2 = NewObject v1 layout=L1 fields=[]
     Return v2
 }
 function f3 name="InLoop" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L2
     v2 = NewObject v1 layout=L2 fields=[]
     Return v2
 }
 function f4 name="InFunctionCalledTwice" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L3
     v2 = NewObject v1 layout=L3 fields=[]
     Return v2
 }
 function f5 name="defineOnce" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = NewClass v0 layout=L1
     v2 = FinishClass v1 layout=L1
@@ -70,7 +64,6 @@ function f5 name="defineOnce" results=[{type=anything}] {
     Return
 }
 function f6 name="defineTwice" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f4
     v1 = NewClass v0 layout=L3
     v2 = FinishClass v1 layout=L3

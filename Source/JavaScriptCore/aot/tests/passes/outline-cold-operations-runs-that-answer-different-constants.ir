@@ -13,7 +13,6 @@ variable g3 name="d" module=m0 declared={type=anything}
 variable g4 name="e" module=m0 declared={type=anything}
 
 function f0 name="answersDiffer" parameters=[{type=number}, {type=anything}] results=[{type=number}] {
-  b0(v0: number, v1: anything):
     Switch v0 cases=[0, 1, 2, 3, 4, 5, 6] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), otherwise b8()
 # REPEAT: i = 1..7; a = 3 21 3 24 3 3 3
   b%(i)() frequency=Rare:

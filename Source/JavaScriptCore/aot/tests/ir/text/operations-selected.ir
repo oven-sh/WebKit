@@ -122,7 +122,6 @@ typesite w0 module=m0 position=3 kind=PropertyRead
 layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=number}}]
 module m0 path="main.js" displayPath="main.js"
 function f0 name="fusedAccesses" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=object}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: object):
     v3 = PropGet v0 key="x" accessSite=1 receivers=[L0, ..]
     v4 = PropGetChain v0 key="x" secondKey="y" readOrigin={position=6} accessSite=2 receivers=[L0] secondAccessSite=3
     v5 = PropGetPair v0, v1 key="x" secondKey="y" readOrigin={position=7} accessSite=4 secondAccessSite=5
@@ -142,7 +141,6 @@ function f0 name="fusedAccesses" module=m0 thisType={type=anything} parameters=[
     Return
 }
 function f1 name="objects" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=number}, {type=object}, {type=string}, {type=function}] results=[{type=anything}] {
-  b0(v0: anything, v1: number, v2: object, v3: string, v4: function):
     v5 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
     PutSlots v5, v5, v0, v1 placedKeys=[{key="x" level=Proven accessSite=1 mayAdd=true}, {key="y" level=Expected}] receivers=[L0]
     v7 = DefineOwnProperty v2, v3, v0 descriptorFlags=[HasValue, HasWritable, IsWritable, HasEnumerable, IsEnumerable, HasConfigurable, IsConfigurable]
@@ -160,7 +158,6 @@ function f1 name="objects" module=m0 thisType={type=anything} parameters=[{type=
     Return
 }
 function f2 name="strings" module=m0 thisType={type=anything} parameters=[{type=string}, {type=int}, {type=number}] results=[{type=anything}] {
-  b0(v0: string, v1: int, v2: number):
     v3 = StringOrder v0, v0
     v4 = StringOrderToCharacter v0 codeUnit=97
     v5 = StringEqualsLiteral v0 literal="a"
@@ -186,7 +183,6 @@ function f2 name="strings" module=m0 thisType={type=anything} parameters=[{type=
     Return v20
 }
 function f3 name="builderParts" module=m0 thisType={type=anything} parameters=[{type=string}, {type=int}, {type=number}, {type=boolean}, {type=anything}, {type=undefined|null|string}] results=[{type=anything}] {
-  b0(v0: string, v1: int, v2: number, v3: boolean, v4: anything, v5: undefined|null|string):
     v6 = StringBuilderBegin
     StringBuilderAppendConstant v6 string="a"
     StringBuilderAppendInteger v6, v1
@@ -200,7 +196,6 @@ function f3 name="builderParts" module=m0 thisType={type=anything} parameters=[{
     Return v15
 }
 function f4 name="calls" module=m0 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=string}, {type=number}, {type=Array}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: string, v3: number, v4: Array):
     v5 = ResolveCallTarget v0 argumentCount=1
     v6 = CallResolved v0, v5, v1, v1 calleeName="f" accessSite=1 callees=[f0, ..]
     v7 = ResolveCallTarget v0
@@ -219,7 +214,6 @@ function f4 name="calls" module=m0 thisType={type=anything} parameters=[{type=an
     Return
 }
 function f5 name="fieldsFromSelected" module=m0 thisType={type=anything} parameters=[{type=number}, {type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: number, v2: anything):
     v3 = Add v0, v1 form=Numbers
     v4 = Add v2, v2 form=Generic
     v5 = ToString v0 form=Number

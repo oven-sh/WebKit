@@ -93,7 +93,6 @@ function f2 name="aMethod" kind=Method flags=[HasThis] thisType={type=L0 flags=[
 # CHECK-NEXT: Return v2
 
 function f3 name="State" parameters=[{type=anything}] results=[{type=L1}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L1 fields=[0]
     Return v1
 }

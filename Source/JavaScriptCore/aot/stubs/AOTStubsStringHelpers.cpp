@@ -92,16 +92,9 @@ static void forEachWordCovering(StubAssembler& jit, std::initializer_list<GPRReg
         return Address(bytes);
     };
     JumpList isDone;
-    auto visitFirstAndLastWord = [&](unsigned width) {
-        visit(width, atStart);
-        visit(width, [&](GPRReg bytes) {
-            return BaseIndex(bytes, size, CCallHelpers::TimesOne, -static_cast<int32_t>(width));
-        });
-        isDone.append(jit.jump());
-    };
 
     constexpr int32_t wordSize = sizeof(uint64_t);
-    Jump isBelowWordSize = jit.branch32(CCallHelpers::Below, size, TrustedImm32(wordSize));
+    Jump isShorter = jit.branch32(CCallHelpers::Below, size, TrustedImm32(wordSize));
     const GPRReg offsetFromLastWord = size;
     for (GPRReg start : starts)
         jit.addPtr(size, start);
@@ -118,15 +111,17 @@ static void forEachWordCovering(StubAssembler& jit, std::initializer_list<GPRReg
     });
     isDone.append(jit.jump());
 
-    isBelowWordSize.link(&jit);
-    Jump isBelowFour = jit.branch32(CCallHelpers::Below, size, TrustedImm32(4));
-    visitFirstAndLastWord(4);
+    for (int32_t width : { 4, 2 }) {
+        isShorter.link(&jit);
+        isShorter = jit.branch32(CCallHelpers::Below, size, TrustedImm32(width));
+        visit(width, atStart);
+        visit(width, [&](GPRReg bytes) {
+            return BaseIndex(bytes, size, CCallHelpers::TimesOne, -width);
+        });
+        isDone.append(jit.jump());
+    }
 
-    isBelowFour.link(&jit);
-    Jump isBelowTwo = jit.branch32(CCallHelpers::Below, size, TrustedImm32(2));
-    visitFirstAndLastWord(2);
-
-    isBelowTwo.link(&jit);
+    isShorter.link(&jit);
     isDone.append(jit.branchTest32(CCallHelpers::Zero, size));
     visit(1, atStart);
     isDone.link(&jit);

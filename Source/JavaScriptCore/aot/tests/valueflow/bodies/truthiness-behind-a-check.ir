@@ -11,7 +11,6 @@
 module m0 path="main.js" displayPath="main.js"
 entry module=m0
 function f0 name="truthiness" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Check v0 castType=undefined|string
     v2 = ToBoolean v1
     Branch v2 -> taken b1(| 0), notTaken b2(| 0)
@@ -21,13 +20,11 @@ function f0 name="truthiness" parameters=[{type=anything}] results=[{type=anythi
     Return v4
 }
 function f1 name="requireObjectCoercible" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Check v0 castType=undefined|string
     v2 = RequireObjectCoercible v1 nullishAccess=Read
     Return v2
 }
 function f2 name="requireObject" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Check v0 castType=undefined|object
     v2 = RequireObject v1 runtimeError=IteratorResultNotObject
     Return v2

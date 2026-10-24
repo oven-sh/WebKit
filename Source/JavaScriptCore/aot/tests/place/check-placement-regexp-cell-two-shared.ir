@@ -5,7 +5,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="first" [isFreeName]
     v2 = CallDirect v1 function=f1 [isAlwaysInlined]
@@ -16,7 +15,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="pieces" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToString v0
     v2 = PropGet v1 key="split"
     v3 = NewRegExp pattern="a+" regExpFlags=[Global] @10

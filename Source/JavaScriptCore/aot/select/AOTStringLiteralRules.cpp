@@ -11,7 +11,6 @@
 #include "AOTBuildContext.h"
 #include "AOTEdgeResults.h"
 #include "AOTFlowResults.h"
-#include "AOTInductionVariables.h"
 #include "AOTInlineBuiltinForms.h"
 #include "AOTRegExpFlags.h"
 #include "AOTRegExpSummary.h"
@@ -23,7 +22,6 @@
 #include "AOTVector.h"
 #include "JSGlobalObjectFunctions.h"
 #include "YarrFlags.h"
-#include <array>
 #include <cmath>
 #include <optional>
 #include <span>
@@ -54,33 +52,18 @@ struct StringLiteralMatch {
 
 enum class LiteralSubjectKind : uint8_t { String, Value };
 
-struct ComparedLiteral {
+// The text that an operand of a comparison or of a call stands for, and what it is compared with or sought in.
+struct LiteralOperand {
     ValueID subject;
     ValueID operand;
     LiteralArgument argument;
-    bool isOnLeft;
-};
-
-struct LiteralCall {
-    ValueID string;
-    ValueID operand;
-    LiteralArgument argument;
-    ValueID position;
+    ValueID position { };
+    bool isOnLeft { false };
 };
 
 } // anonymous namespace
 
 AOT_THRESHOLD(unsigned, maxLengthOfSeparatorFoundInline, 16);
-
-static constexpr std::array equalityOpcodes { Opcode::StrictEq, Opcode::Eq };
-static constexpr std::array relationalOpcodesOfLiterals { Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq };
-
-static_assert([] {
-    OpcodeSet opcodes;
-    for (Opcode opcode : relationalOpcodesOfLiterals)
-        opcodes.add(opcode);
-    return opcodes == relationalOperators;
-}());
 
 static constexpr OptionSet<RegExpFlags> flagsPreventingStringSearch {
     RegExpFlags::Global, RegExpFlags::Sticky, RegExpFlags::IgnoreCase, RegExpFlags::Unicode, RegExpFlags::UnicodeSets
@@ -91,7 +74,18 @@ static bool isUndefined(const Type& type)
     return !type.isNever() && type.hasOnlyPrimitives(Primitive::Undefined);
 }
 
-static std::optional<ComparedLiteral> findComparedLiteral(SelectionContext& context, ValueID id, LiteralSubjectKind kind)
+static StringLiteralMatch createMatch(SelectionContext& context, ValueID id, RootForm rootForm, Opcode row, const LiteralOperand& found)
+{
+    StringLiteralMatch match { groupOfOne(id), rootForm, row, found.subject };
+    match.position = found.position;
+    match.literal = found.argument.literal;
+    match.droppedOperand = found.operand;
+    match.isMirrored = found.isOnLeft;
+    match.isOnlyBranchedOn = rootForm == RootForm::Test && context.isOnlyBranchedOn(id);
+    return match;
+}
+
+static std::optional<LiteralOperand> findComparedLiteral(SelectionContext& context, ValueID id, LiteralSubjectKind kind)
 {
     const Value& comparison = context.function().at(id);
     BlockID block = context.analyses().useLists().blockOf(id);
@@ -103,7 +97,7 @@ static std::optional<ComparedLiteral> findComparedLiteral(SelectionContext& cont
             continue;
         Use useOfSubject { .kind = Use::Kind::Operand, .block = block, .user = id, .operandIndex = subjectIndex };
         if (std::optional<LiteralArgument> argument = comparedLiteralOf(context, useOfSubject))
-            return ComparedLiteral { subject, comparison.operand(subjectIndex == leftIndex ? rightIndex : leftIndex), WTF::move(*argument), subjectIndex == rightIndex };
+            return LiteralOperand { subject, comparison.operand(subjectIndex == leftIndex ? rightIndex : leftIndex), WTF::move(*argument), { }, subjectIndex == rightIndex };
     }
     return std::nullopt;
 }
@@ -136,7 +130,7 @@ static bool isLiteralStringWord(SelectionContext& context, ValueID id)
 
 static std::optional<StringLiteralMatch> findEqualityOfValue(SelectionContext& context, ValueID id)
 {
-    std::optional<ComparedLiteral> compared = findComparedLiteral(context, id, LiteralSubjectKind::Value);
+    std::optional<LiteralOperand> compared = findComparedLiteral(context, id, LiteralSubjectKind::Value);
     if (!compared || isLiteralStringWord(context, compared->subject))
         return std::nullopt;
 
@@ -149,44 +143,32 @@ static std::optional<StringLiteralMatch> findEqualityOfValue(SelectionContext& c
         return std::nullopt;
     if (!isStrict && !std::isnan(jsToNumber(compared->argument.text)))
         return std::nullopt;
-
-    StringLiteralMatch match { groupOfOne(id), RootForm::Test, isStrict ? Opcode::ValueEqualsLiteral : Opcode::ValueLooselyEqualsLiteral, compared->subject };
-    match.literal = compared->argument.literal;
-    match.droppedOperand = compared->operand;
-    match.isOnlyBranchedOn = context.isOnlyBranchedOn(id);
-    return match;
+    return createMatch(context, id, RootForm::Test, isStrict ? Opcode::ValueEqualsLiteral : Opcode::ValueLooselyEqualsLiteral, *compared);
 }
 
 static std::optional<StringLiteralMatch> findEquality(SelectionContext& context, ValueID id)
 {
-    std::optional<ComparedLiteral> compared = findComparedLiteral(context, id, LiteralSubjectKind::String);
+    std::optional<LiteralOperand> compared = findComparedLiteral(context, id, LiteralSubjectKind::String);
     if (!compared)
         return findEqualityOfValue(context, id);
     if (isLiteralStringWord(context, compared->subject))
         return std::nullopt;
-
-    StringLiteralMatch match { groupOfOne(id), RootForm::Test, Opcode::StringEqualsLiteral, compared->subject };
-    match.literal = compared->argument.literal;
-    match.droppedOperand = compared->operand;
-    match.isOnlyBranchedOn = context.isOnlyBranchedOn(id);
-    return match;
+    return createMatch(context, id, RootForm::Test, Opcode::StringEqualsLiteral, *compared);
 }
 
 static std::optional<StringLiteralMatch> findRelation(SelectionContext& context, ValueID id)
 {
-    std::optional<ComparedLiteral> compared = findComparedLiteral(context, id, LiteralSubjectKind::String);
+    std::optional<LiteralOperand> compared = findComparedLiteral(context, id, LiteralSubjectKind::String);
     if (!compared || compared->argument.text.length() != 1)
         return std::nullopt;
-
-    StringLiteralMatch match { groupOfOne(id), RootForm::Relation, Opcode::StringOrderToCharacter, compared->subject };
+    StringLiteralMatch match = createMatch(context, id, RootForm::Relation, Opcode::StringOrderToCharacter, *compared);
     match.codeUnit = compared->argument.text[0];
-    match.droppedOperand = compared->operand;
-    match.isMirrored = compared->isOnLeft;
     return match;
 }
 
-static std::optional<LiteralCall> findLiteralCall(SelectionContext& context, const Value& call)
+static std::optional<LiteralOperand> findLiteralCall(SelectionContext& context, ValueID id)
 {
+    const Value& call = context.function().at(id);
     ValueID receiver = call.receiverOperand();
     std::span<const ValueID> arguments = call.argumentsOperands();
     if (!receiver || arguments.empty() || arguments.size() > 2 || !context.typeOf(receiver).isAnyString())
@@ -196,27 +178,20 @@ static std::optional<LiteralCall> findLiteralCall(SelectionContext& context, con
         return std::nullopt;
 
     bool hasPosition = arguments.size() > 1 && !isUndefined(context.typeOf(arguments[1]));
-    return LiteralCall { receiver, arguments[0], WTF::move(*argument), hasPosition ? arguments[1] : ValueID() };
+    return LiteralOperand { receiver, arguments[0], WTF::move(*argument), hasPosition ? arguments[1] : ValueID() };
 }
 
 static std::optional<StringLiteralMatch> findEndTest(SelectionContext& context, ValueID id, Opcode row)
 {
-    std::optional<LiteralCall> call = findLiteralCall(context, context.function().at(id));
-    if (!call || call->position)
+    std::optional<LiteralOperand> call = findLiteralCall(context, id);
+    if (!call || call->position || context.pass().exceeds(LimitID::MaxInlineStringCompareLength, call->argument.text.length(), id))
         return std::nullopt;
-    if (context.pass().exceeds(LimitID::MaxInlineStringCompareLength, call->argument.text.length(), id))
-        return std::nullopt;
-
-    StringLiteralMatch match { groupOfOne(id), RootForm::Test, row, call->string };
-    match.literal = call->argument.literal;
-    match.droppedOperand = call->operand;
-    match.isOnlyBranchedOn = context.isOnlyBranchedOn(id);
-    return match;
+    return createMatch(context, id, RootForm::Test, row, *call);
 }
 
-static StringLiteralMatch createForwardSearch(ValueID id, RootForm rootForm, ValueID string, StringView sought)
+static StringLiteralMatch createForwardSearch(SelectionContext& context, ValueID id, RootForm rootForm, const LiteralOperand& found, StringView sought)
 {
-    StringLiteralMatch match { groupOfOne(id), rootForm, Opcode::StringIndexOfLiteral, string };
+    StringLiteralMatch match = createMatch(context, id, rootForm, Opcode::StringIndexOfLiteral, found);
     if (sought.length() == 1) {
         match.row = Opcode::StringIndexOfCharacter;
         match.codeUnit = sought[0];
@@ -226,31 +201,18 @@ static StringLiteralMatch createForwardSearch(ValueID id, RootForm rootForm, Val
 
 static std::optional<StringLiteralMatch> findForwardSearch(SelectionContext& context, ValueID id, RootForm rootForm)
 {
-    std::optional<LiteralCall> call = findLiteralCall(context, context.function().at(id));
-    if (!call || call->argument.text.isEmpty())
+    std::optional<LiteralOperand> call = findLiteralCall(context, id);
+    if (!call || call->argument.text.isEmpty() || (call->position && !context.typeOf(call->position).isNumber()))
         return std::nullopt;
-    if (call->position && !context.typeOf(call->position).isNumber())
-        return std::nullopt;
-
-    StringLiteralMatch match = createForwardSearch(id, rootForm, call->string, call->argument.text);
-    match.literal = call->argument.literal;
-    match.droppedOperand = call->operand;
-    match.position = call->position;
-    return match;
+    return createForwardSearch(context, id, rootForm, *call, call->argument.text);
 }
 
 static std::optional<StringLiteralMatch> findBackwardSearch(SelectionContext& context, ValueID id)
 {
-    std::optional<LiteralCall> call = findLiteralCall(context, context.function().at(id));
-    if (!call || call->argument.text.isEmpty())
+    std::optional<LiteralOperand> call = findLiteralCall(context, id);
+    if (!call || call->argument.text.isEmpty() || (call->position && !context.typeOf(call->position).isInteger()))
         return std::nullopt;
-    if (call->position && !context.typeOf(call->position).isInteger())
-        return std::nullopt;
-
-    StringLiteralMatch match { groupOfOne(id), RootForm::Index, Opcode::StringLastIndexOfLiteral, call->string };
-    match.literal = call->argument.literal;
-    match.droppedOperand = call->operand;
-    match.position = call->position;
+    StringLiteralMatch match = createMatch(context, id, RootForm::Index, Opcode::StringLastIndexOfLiteral, *call);
     match.defaultPosition = INT32_MAX;
     return match;
 }
@@ -279,9 +241,8 @@ static std::optional<StringLiteralMatch> findAtomSearch(SelectionContext& contex
     if (summary.metadata != RegExpMetadata::Known || !summary.isValid() || summary.atom.isEmpty())
         return std::nullopt;
 
-    StringLiteralMatch match = createForwardSearch(id, stringIsReceiver ? RootForm::Index : RootForm::Presence, string, summary.atom);
+    StringLiteralMatch match = createForwardSearch(context, id, stringIsReceiver ? RootForm::Index : RootForm::Presence, LiteralOperand { string, regExp, { } }, summary.atom);
     match.atom = summary.atom;
-    match.droppedOperand = regExp;
     return match;
 }
 
@@ -328,13 +289,6 @@ static void rewriteTest(GroupRewriter& rewriter, const StringLiteralMatch& match
         rewriter.leaveUnclaimed(match.group.root);
 }
 
-static StringID literalOf(SelectionContext& context, const StringLiteralMatch& match)
-{
-    if (match.literal || !Value::opcodesWithLiteral.contains(match.row))
-        return match.literal;
-    return context.pass().strings.intern(match.atom);
-}
-
 static ValueID insertPosition(SelectionContext& context, GroupRewriter& rewriter, const StringLiteralMatch& match)
 {
     if (!match.position)
@@ -351,28 +305,27 @@ static ValueID insertPosition(SelectionContext& context, GroupRewriter& rewriter
     return rewriter.insert(makeResultAt(bounds, 0));
 }
 
-static void fillSearch(Value& search, const StringLiteralMatch& match, ValueID position, StringID literal)
-{
-    search.setStringOperand(match.subject);
-    search.setPositionOperand(position);
-    if (Value::opcodesWithLiteral.contains(search.opcode))
-        search.setLiteral(literal);
-    else
-        search.setCodeUnit(match.codeUnit);
-}
-
 static void rewriteSearch(SelectionContext& context, GroupRewriter& rewriter, const StringLiteralMatch& match)
 {
-    StringID literal = literalOf(context, match);
+    bool takesLiteral = Value::opcodesWithLiteral.contains(match.row);
+    StringID literal = match.literal || !takesLiteral ? match.literal : context.pass().strings.intern(match.atom);
     ValueID position = insertPosition(context, rewriter, match);
+    auto fill = [&](Value& search) {
+        search.setStringOperand(match.subject);
+        search.setPositionOperand(position);
+        if (takesLiteral)
+            search.setLiteral(literal);
+        else
+            search.setCodeUnit(match.codeUnit);
+    };
     if (match.rootForm == RootForm::Index) {
-        fillSearch(rewriter.replaceRoot(match.row), match, position, literal);
+        fill(rewriter.replaceRoot(match.row));
         rewriter.leaveUnclaimed(match.group.root);
         return;
     }
 
     Value search = IRBuilder::make(match.row);
-    fillSearch(search, match, position, literal);
+    fill(search);
     ValueID found = rewriter.insert(WTF::move(search));
     rewriter.leaveUnclaimed(found);
 
@@ -456,9 +409,9 @@ void selectStringLiteralForms(SelectionContext& context)
         }
     };
 
-    for (Opcode opcode : equalityOpcodes)
+    for (Opcode opcode : { Opcode::StrictEq, Opcode::Eq })
         addMatches(opcode, findEquality);
-    for (Opcode opcode : relationalOpcodesOfLiterals)
+    for (Opcode opcode : relationalOpcodesOfStrings)
         addMatches(opcode, findRelation);
     addMatches(Opcode::CallBuiltin, findBuiltinCall);
 

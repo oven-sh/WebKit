@@ -9,25 +9,21 @@ layout L0 kind=Instance name="Socket" constructor=f2 fields=[{key="fd" declared=
 layout L1 kind=Instance name="State" constructor=f3 fields=[{key="highWaterMark" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
 
 function f0 name="checked" flags=[IsChecked] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1: anything ~ L0 = Upcast v0 castType=anything
     v2 = PropGet v1 key="highWaterMark"
     Return v2
-}
-# CHECK-LABEL: function f0 name="checked"
 # CHECK-NOT: L1
 # CHECK: = PropGet {{*}} key="highWaterMark"
 # CHECK-NOT: L1
+}
 
 function f1 name="notChecked" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1: anything ~ L0 = Upcast v0 castType=anything
     v2 = PropGet v1 key="highWaterMark"
     Return v2
-}
-# CHECK-LABEL: function f1 name="notChecked"
 # CHECK: = TypeTest {{*}} testedType=L1
 # CHECK: = GetSlot {{*}} key="highWaterMark" receivers=[L1] level=Expected
+}
 
 function f2 name="Socket" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
 function f3 name="State" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]

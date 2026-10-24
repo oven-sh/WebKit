@@ -10,47 +10,37 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static void linkGenerator(ValueFlowRuleContext& context, FunctionID function, ClimbingSet generator)
+void runCoroutine(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     const ValueFlowUniverse& universe = context.universe();
     const ValueFlowProgramNodes& nodes = context.nodes();
-    ValueFlowNodeID yielded = nodes.yielded(function);
+    FunctionID function = statement.function;
+    ClimbingSet coroutine = only(context, universe.coroutineResultOf(function));
     ValueFlowNodeID returned = nodes.result(function, 0);
+    if (!context.program().at(function).has(FunctionFlags::IsGenerator)) {
+        resolvePromises(context, coroutine, context.valueOf(returned));
+        rejectPromises(context, coroutine, { nodes.thrown(function), ValueSets::nothing, ValueSets::anything });
+        return;
+    }
+    ValueFlowNodeID yielded = nodes.yielded(function);
     ValueFlowNodeID sent = nodes.sent(function);
 
-    // An async generator awaits what it yields and what it returns by itself. What `yield*` yields or returns for another iterator goes on as that iterator has handed it out.
-    context.connect(yielded, context.written(generator, steppedValuesName));
-    context.connect(returned, context.written(generator, returnedValueName));
+    context.connect(yielded, context.written(coroutine, steppedValuesName));
+    context.connect(returned, context.written(coroutine, returnedValueName));
     if (context.program().at(function).has(FunctionFlags::IsAsync)) {
-        context.connect(context.lookup(context.valueOf(yielded), awaitedValueName), context.written(generator, steppedValuesName));
-        context.connect(context.lookup(context.valueOf(returned), awaitedValueName), context.written(generator, returnedValueName));
+        context.connect(context.lookup(context.valueOf(yielded), awaitedValueName), context.written(coroutine, steppedValuesName));
+        context.connect(context.lookup(context.valueOf(returned), awaitedValueName), context.written(coroutine, returnedValueName));
     }
 
-    // A step of a loop hands in undefined, and native code whatever it likes.
     context.add(sent, universe.undefinedValue());
-    connectContentsOfSlot(context, generator, sentValuesName, sent);
-    if (context.holdsAnyOf(generator, ValueFlowProgramNodes::escaped()))
+    connectContentsOfSlot(context, coroutine, sentValuesName, sent);
+    if (context.holdsAnyOf(coroutine, ValueFlowProgramNodes::escaped()))
         context.add(sent, unknownValue(context, ValueFlowUnknownSource::ParameterOfEscapedFunction));
 
-    // Whoever resumes the body throws the unknown value.
     context.connect(nodes.thrown(function), ValueFlowProgramNodes::escaped());
 
     ValueFlowNodeID prototype = context.lookup(only(context, universe.closureOf(function)), nameOf(context, BuiltinNames::prototype));
-    context.connect(context.masked(prototype, universe.objects()), context.written(generator, prototypeLinkName));
-}
-
-// One object stands for the promises or the generators that all calls of the function answer, so what goes between the body and that object is the same for every way in which the function is entered.
-void runCoroutine(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
-{
-    const ValueFlowProgramNodes& nodes = context.nodes();
-    FunctionID function = statement.function;
-    ClimbingSet coroutine = only(context, context.universe().coroutineResultOf(function));
-    if (context.program().at(function).has(FunctionFlags::IsGenerator)) {
-        linkGenerator(context, function, coroutine);
-        return;
-    }
-    resolvePromises(context, coroutine, context.valueOf(nodes.result(function, 0)));
-    rejectPromises(context, coroutine, { nodes.thrown(function), ValueSets::nothing, ValueSets::anything });
+    context.connect(context.masked(prototype, universe.objects()), context.written(coroutine, prototypeLinkName));
 }
 
 static BuiltinID methodOfGenerators(ResumeMode mode)
@@ -66,7 +56,6 @@ static BuiltinID methodOfGenerators(ResumeMode mode)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The operands of both operations: the generator, then what is handed in. StepGenerator answers the value itself, ResumeGenerator the iterator result that the method of the prototype answers.
 void runGeneratorOperation(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     const ValueFlowUniverse& universe = context.universe();

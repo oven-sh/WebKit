@@ -10,14 +10,12 @@ layout L0 kind=Environment name="private" fields=[{key=@"sum.0" declared={type=a
 layout L1 kind=Environment name="observed" fields=[{key=@"sum.0" declared={type=anything}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = CallDirect function=f1
     v1 = CallDirect function=f3
     Return
 }
 
 function f1 name="sumsPrivately" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=0
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewClosure v1 function=f2
@@ -46,7 +44,6 @@ function f2 name="add" kind=Arrow captures=[{type=env L0}] parameters=[{type=any
 }
 
 function f3 name="sumsObserved" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=0
     v1 = NewObject -, v0 layout=L1 fields=[0]
     v2 = NewClosure v1 function=f4

@@ -9,13 +9,11 @@ layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired
 layout L1 name="Pixel" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
 
 function f0 name="allocate" parameters=[{type=number}] results=[{type=L0}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     Return v1
 }
 
 function f1 name="read" parameters=[{type=undefined|L0}] results=[{type=anything}] {
-  b0(v0: undefined|L0):
     v1 = PropGet v0 key="x" receivers=[L0] @7
     Return v1
 }
@@ -26,7 +24,6 @@ function f1 name="read" parameters=[{type=undefined|L0}] results=[{type=anything
 # CHECK-NEXT: Return v1
 
 function f2 name="dominatedRead" parameters=[{type=undefined|L0}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: undefined|L0, v1: boolean):
     v2 = PropGet v0 key="x" receivers=[L0]
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -42,7 +39,6 @@ function f2 name="dominatedRead" parameters=[{type=undefined|L0}, {type=boolean}
 # CHECK: v3:{{*}}= PropGet [[C2]] key="x"
 
 function f3 name="store" parameters=[{type=undefined|L0}, {type=number}] results=[{type=undefined}] {
-  b0(v0: undefined|L0, v1: number):
     PropSet v0, v1 key="x" receivers=[L0]
     Return
 }
@@ -51,7 +47,6 @@ function f3 name="store" parameters=[{type=undefined|L0}, {type=number}] results
 # CHECK-NEXT: PropSet [[C3]], v1 key="x"
 
 function f4 name="iteration" parameters=[{type=null|Array<number>}] results=[{type=undefined}] {
-  b0(v0: null|Array<number>):
     v1 = IteratorOpen v0
     Return
 }
@@ -61,7 +56,6 @@ function f4 name="iteration" parameters=[{type=null|Array<number>}] results=[{ty
 # CHECK: v1: iteratorstate = IteratorOpen [[C4]]
 
 function f5 name="methodOfNumber" parameters=[{type=undefined|number}] results=[{type=anything}] {
-  b0(v0: undefined|number):
     v1 = PropGet v0 key="toFixed"
     v2 = Call v1, v0
     Return v2
@@ -72,7 +66,6 @@ function f5 name="methodOfNumber" parameters=[{type=undefined|number}] results=[
 # CHECK-NEXT: v2:{{*}}= Call v1, [[C5]]
 
 function f6 name="elementWithNumberKey" parameters=[{type=null|Array<number>}, {type=int}] results=[{type=anything}] {
-  b0(v0: null|Array<number>, v1: int):
     v2 = ElemGet v0, v1
     Return v2
 }
@@ -82,7 +75,6 @@ function f6 name="elementWithNumberKey" parameters=[{type=null|Array<number>}, {
 # CHECK: v2:{{*}}= ElemGet [[C6]], v1
 
 function f7 name="edgeArgument" parameters=[{type=undefined|L0}] results=[{type=undefined|L0}] {
-  b0(v0: undefined|L0):
     v1 = PropGet v0 key="x" receivers=[L0]
     Jump -> next b1(v0)
   b1(v2):
@@ -94,7 +86,6 @@ function f7 name="edgeArgument" parameters=[{type=undefined|L0}] results=[{type=
 # CHECK-NEXT: b1(v2: L0):
 
 function f8 name="returned" parameters=[{type=undefined|L0}] results=[{type=undefined|L0}] {
-  b0(v0: undefined|L0):
     v1 = PropGet v0 key="x" receivers=[L0]
     Return v0
 }
@@ -111,7 +102,6 @@ function f9 name="expected" parameters=[{type=undefined|L0|L1}] results=[{type=a
 # CHECK: [[C9]]: L0|L1 ~ L0 = RequireObjectCoercible v0 name="x"
 
 function f10 name="underHandler" parameters=[{type=undefined|L0}] results=[{type=anything}] {
-  b0(v0: undefined|L0):
     Jump -> next b1()
   b1() handler=b3():
     v1 = PropGet v0 key="x" receivers=[L0]
@@ -130,7 +120,6 @@ function f10 name="underHandler" parameters=[{type=undefined|L0}] results=[{type
 # CHECK-NEXT: Return v0
 
 function f11 name="siblingBranches" parameters=[{type=undefined|L0}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: undefined|L0, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = PropGet v0 key="x" receivers=[L0]
@@ -146,7 +135,6 @@ function f11 name="siblingBranches" parameters=[{type=undefined|L0}, {type=boole
 # CHECK-NEXT: v3:{{*}}= PropGet [[C11B]] key="x"
 
 function f12 name="afterMerge" parameters=[{type=undefined|L0}, {type=boolean}] results=[{type=undefined|L0}] {
-  b0(v0: undefined|L0, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = PropGet v0 key="x" receivers=[L0]
@@ -162,7 +150,6 @@ function f12 name="afterMerge" parameters=[{type=undefined|L0}, {type=boolean}] 
 # CHECK-NEXT: Return v0
 
 function f13 name="receiversWithAndWithoutAnyObject" parameters=[{type=anything}, {type=null|object}, {type=null|number|string}] results=[{type=undefined}] {
-  b0(v0: anything, v1: null|object, v2: null|number|string):
     v3 = PropGet v0 key="x"
     v4 = PropGet v1 key="x"
     v5 = PropGet v2 key="x"
@@ -175,7 +162,6 @@ function f13 name="receiversWithAndWithoutAnyObject" parameters=[{type=anything}
 # CHECK-NEXT: v5:{{*}}= PropGet [[C13]] key="x"
 
 function f14 name="keyMayBeObject" parameters=[{type=null|Array<number>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: null|Array<number>, v1: anything):
     v2 = ElemGet v0, v1
     Return v2
 }
@@ -183,7 +169,6 @@ function f14 name="keyMayBeObject" parameters=[{type=null|Array<number>}, {type=
 # CHECK-NOT: = RequireObjectCoercible
 
 function f15 name="has" parameters=[{type=undefined|L0}] results=[{type=boolean}] {
-  b0(v0: undefined|L0):
     v1 = PropHas v0 key="x" receivers=[L0]
     Return v1
 }
@@ -191,7 +176,6 @@ function f15 name="has" parameters=[{type=undefined|L0}] results=[{type=boolean}
 # CHECK-NOT: = RequireObjectCoercible
 
 function f16 name="notNullish" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="x" receivers=[L0]
     Return v1
 }
@@ -199,7 +183,6 @@ function f16 name="notNullish" parameters=[{type=L0}] results=[{type=anything}] 
 # CHECK-NOT: = RequireObjectCoercible
 
 function f17 name="guardBelowCheck" parameters=[{type=undefined|string|L0}] results=[{type=anything}] {
-  b0(v0: undefined|string|L0):
     v1 = PropGet v0 key="x" receivers=[L0]
     v2 = TypeTest v0 testedType=string
     Branch v2 -> taken b1(| 0), notTaken b2()
@@ -216,7 +199,6 @@ function f17 name="guardBelowCheck" parameters=[{type=undefined|string|L0}] resu
 # CHECK-NEXT: b1(v3: string):
 
 function f18 name="guardAboveCheck" parameters=[{type=undefined|string|L0}] results=[{type=anything}] {
-  b0(v0: undefined|string|L0):
     v1 = TypeTest v0 testedType=string
     v2 = PropGet v0 key="x" receivers=[L0]
     Branch v1 -> taken b1(| 0), notTaken b2()
@@ -234,7 +216,6 @@ function f18 name="guardAboveCheck" parameters=[{type=undefined|string|L0}] resu
 # CHECK: Return [[C19]]
 
 function f19 name="storeUnderHandler" parameters=[{type=undefined|L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: undefined|L0, v1: number):
     Jump -> next b1()
   b1() handler=b3():
     PropSet v0, v1 key="x" receivers=[L0]

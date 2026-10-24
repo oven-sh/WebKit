@@ -11,7 +11,6 @@ layout L0 name="StoredByComputedKey" fields=[{key="x" declared={type=number} fla
 layout L1 name="OnlyHandedOut" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
 layout L2 name="StoredByIndex" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=MathRandom
     v1 = Call v0
     v2 = ToNumber v1

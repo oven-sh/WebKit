@@ -11,7 +11,6 @@ layout L0 name="Size" fields=[{key="w" declared={type=anything} flags=[IsRequire
 layout L1 name="Rectangle" fields=[{key="size" declared={type=anything} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}, {key="name" declared={type=anything} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}] flow={members=[L1]}
 
 function f0 name="nestedLiteralAfterRareUse" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     v3 = NewObject -, v0 layout=L0 fields=[0]
     v4 = NewObject -, v3, v1 layout=L1 fields=[0, 1]
     Branch v2 -> taken b1(), notTaken b2()
@@ -24,8 +23,6 @@ function f0 name="nestedLiteralAfterRareUse" parameters=[{type=anything}, {type=
     v6 = PropGet v4 key="name" receivers=[L1]
     v7 = ToBoolean v6
     Return v7
-}
-# CHECK-LABEL: function f0 name="nestedLiteralAfterRareUse"
 # CHECK: b0(
 # CHECK-NEXT: v3:{{*}}= NewObject -, v0 layout=L0 fields=[0]
 # CHECK-NEXT: Branch v2
@@ -35,9 +32,9 @@ function f0 name="nestedLiteralAfterRareUse" parameters=[{type=anything}, {type=
 # CHECK-NOT: NewObject
 # CHECK: Return
 # CHECK-NOT: Return
+}
 
 function f1 name="flatLiteralAfterRareUse" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     v3 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
     Branch v2 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
@@ -49,8 +46,6 @@ function f1 name="flatLiteralAfterRareUse" parameters=[{type=anything}, {type=an
     v5 = PropGet v3 key="name" receivers=[L1]
     v6 = ToBoolean v5
     Return v6
-}
-# CHECK-LABEL: function f1 name="flatLiteralAfterRareUse"
 # CHECK: b0(
 # CHECK-NEXT: Branch v2
 # CHECK: b1() frequency=Rare:
@@ -63,3 +58,4 @@ function f1 name="flatLiteralAfterRareUse" parameters=[{type=anything}, {type=an
 # CHECK-NOT: PropGet
 # CHECK: Return
 # CHECK-NOT: Return
+}

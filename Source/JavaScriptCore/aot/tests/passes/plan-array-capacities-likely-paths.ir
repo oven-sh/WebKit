@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="pushWithUnlikelyGenericArm" parameters=[{type=int[0, 1000]}, {type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
-  b0(v0: int[0, 1000], v1: anything, v2: boolean):
     v3 = NewArray contents=anything
     v4 = Integer integer=0
     Jump -> next b1(v4)
@@ -34,7 +33,6 @@ function f0 name="pushWithUnlikelyGenericArm" parameters=[{type=int[0, 1000]}, {
 # CHECK-NEXT: = NewArray {{*}}capacity=[[sum0]]
 
 function f1 name="pushOnUnlikelyArm" parameters=[{type=int[0, 1000]}, {type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
-  b0(v0: int[0, 1000], v1: anything, v2: boolean):
     v3 = NewArray contents=anything
     v4 = Integer integer=0
     Jump -> next b1(v4)
@@ -58,7 +56,6 @@ function f1 name="pushOnUnlikelyArm" parameters=[{type=int[0, 1000]}, {type=anyt
 # CHECK-NOT: capacity=
 
 function f2 name="conditionalPushInUnlikelyLoop" parameters=[{type=int[0, 1000]}, {type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
-  b0(v0: int[0, 1000], v1: anything, v2: boolean):
     v3 = NewArray contents=anything
     v4 = Integer integer=0
     Branch v2 -> taken b1(v4), notTaken b6()
@@ -84,7 +81,6 @@ function f2 name="conditionalPushInUnlikelyLoop" parameters=[{type=int[0, 1000]}
 # CHECK-NOT: capacity=
 
 function f3 name="lengthGetterWithUnknownCodeOnUnlikelyArm" parameters=[{type=Array<anything>}, {type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
-  b0(v0: Array<anything>, v1: anything, v2: boolean):
     v3 = NewArray contents=anything
     v4 = Integer integer=0
     Jump -> next b1(v4)
@@ -114,7 +110,6 @@ function f3 name="lengthGetterWithUnknownCodeOnUnlikelyArm" parameters=[{type=Ar
 # CHECK-NEXT: = NewArray contents=anything capacity=[[sum3]]
 
 function f4 name="loopGoesOnInUnlikelyCopy" parameters=[{type=int[0, 1000]}, {type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
-  b0(v0: int[0, 1000], v1: anything, v2: boolean):
     v3 = NewArray contents=anything
     v4 = Integer integer=0
     Jump -> next b1(v4)
@@ -146,7 +141,6 @@ function f4 name="loopGoesOnInUnlikelyCopy" parameters=[{type=int[0, 1000]}, {ty
 # CHECK-NEXT: = NewArray {{*}}capacity=[[sum4]]
 
 function f5 name="loopGoesOnInLikelyCopy" parameters=[{type=int[0, 1000]}, {type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
-  b0(v0: int[0, 1000], v1: anything, v2: boolean):
     v3 = NewArray contents=anything
     v4 = Integer integer=0
     Jump -> next b1(v4)
@@ -177,7 +171,6 @@ function f5 name="loopGoesOnInLikelyCopy" parameters=[{type=int[0, 1000]}, {type
 # CHECK-NOT: capacity=
 
 function f6 name="unlikelyBlockLeadsIntoLoopOfAnotherLiteral" parameters=[{type=int[0, 1000]}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: int[0, 1000], v1: anything, v2: boolean):
     v3 = Integer integer=0
     Branch v2 -> taken b1(v3), notTaken b8(v3)
   b1(v4):

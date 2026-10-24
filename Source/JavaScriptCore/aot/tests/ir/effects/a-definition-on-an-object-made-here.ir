@@ -6,7 +6,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Empty" fields=[]
 layout L1 name="WithField" fields=[{key="a" declared={type=anything}}]
 function f0 name="made" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject layout=L0 fields=[]
     PropDefine v1, v0 key="a"
     v3 = NewObject layout=L1 fields=[]
@@ -20,7 +19,6 @@ function f0 name="made" parameters=[{type=number}] results=[{type=anything}] {
 # CHECK: v4 PropDefine: reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, AllocatorState) writes(
 # CHECK: v6 PropDefine: reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, AllocatorState) writes(
 function f1 name="given" parameters=[{type=Object}, {type=number}] results=[{type=anything}] {
-  b0(v0: Object, v1: number):
     PropDefine v0, v1 key="a"
     v3 = NewObject layout=L1 fields=[]
     v4 = FinishObject v3

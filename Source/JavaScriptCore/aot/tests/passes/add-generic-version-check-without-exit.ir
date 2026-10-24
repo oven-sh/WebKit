@@ -8,7 +8,6 @@
 module m0 path="main.ts" displayPath="main.ts"
 
 function f0 name="checkWithoutExitBesideOneWithAnExit" parameters=[{type=anything}, {type=anything}] results=[{type=number}] {
-  b0(v0: anything, v1: anything):
     v2 = Check v0 castType=object
     v3 = IteratorOpen v2
     Jump -> next b1()
@@ -24,8 +23,6 @@ function f0 name="checkWithoutExitBesideOneWithAnExit" parameters=[{type=anythin
     v8 = CatchException
     IteratorClose v3 completion=Throw
     Rethrow v8
-}
-# CHECK-LABEL: function f0 name="checkWithoutExitBesideOneWithAnExit"
 # CHECK: = TypeTest v0 testedType=object
 # CHECK-NOT: = TypeTest
 # CHECK: v5: anything ~ number = Upcast v4
@@ -40,3 +37,4 @@ function f0 name="checkWithoutExitBesideOneWithAnExit" parameters=[{type=anythin
 # CHECK: [[assumedInCopy]]: number = AssumeType [[product]] castType=number
 # CHECK-NEXT: Return [[assumedInCopy]]
 # CHECK-NOT: = TypeTest
+}

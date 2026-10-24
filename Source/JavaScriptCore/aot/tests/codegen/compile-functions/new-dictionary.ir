@@ -9,7 +9,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = NewClosure function=f3
@@ -25,13 +24,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CALLS: stub NewDictionary.n0 x1
 
 function f1 name="empty" results=[{type=anything}] {
-  b0():
     v0 = NewDictionary
     Return v0
 }
 
 function f2 name="oneInsideTheOther" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewDictionary
     v2 = NewDictionary
     PropDefine v1, v2 key="inner"
@@ -42,13 +39,11 @@ function f2 name="oneInsideTheOther" parameters=[{type=anything}] results=[{type
 # CALLS: stub NewDictionary.n0 x2
 
 function f3 name="unused" results=[{type=anything}] {
-  b0():
     v0 = NewDictionary
     Return
 }
 
 function f4 name="madeInLoop" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ToBoolean v0
     Jump -> next b1(v0)
   b1(v2: anything):
@@ -61,7 +56,6 @@ function f4 name="madeInLoop" parameters=[{type=anything}] results=[{type=anythi
 }
 
 function f5 name="literalThenKeys" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = NewDictionary
     SetLiteralPrototype v3, v0
     PropDefine v3, v1 key="own"

@@ -8,28 +8,16 @@
 
 #if ENABLE(AOT)
 
-#include "AOTBuildContext.h"
-#include "AOTCFG.h"
-#include "AOTCodeUnits.h"
 #include "AOTCompileFunctions.h"
 #include "AOTExactBuffer.h"
 #include "AOTFlowResults.h"
-#include "AOTIRProgram.h"
 #include "AOTIdentifierNumbering.h"
 #include "AOTPipeline.h"
 #include "AOTPlacement.h"
 #include "AOTProgramCaches.h"
 #include "AOTRegExpRequests.h"
 #include "AOTRemoveUnreachableFunctions.h"
-#include "AOTSiteCachePlacement.h"
 #include "AOTSlotPlan.h"
-#include "AOTStubCatalog.h"
-#include "AOTThreads.h"
-#include "AOTThreshold.h"
-#include "AOTTypeArena.h"
-#include "AOTVector.h"
-#include <algorithm>
-#include <array>
 
 namespace JSC { namespace AOT {
 
@@ -53,33 +41,12 @@ struct Batch {
     uint32_t size;
 };
 
-class BodyReleaser {
-public:
-    BodyReleaser(Typed::Program&, Vector<OperationCounts>&, BuildContext&);
-
-    void willRelease(FunctionID);
-    void hideUntilCompiled(std::span<const FunctionID>, const ParallelLoops&);
-    void show(size_t position, FunctionID);
-    void release(FunctionID);
-
-private:
-    struct Body {
-        Typed::Function::Blocks::Storage blocks;
-        Typed::Function::Values::Storage values;
-    };
-
-    Typed::Program& m_program;
-    Vector<OperationCounts>& m_operationCountsByFunction;
-    BuildContext& m_context;
-    BitVector m_isNamedByLoss;
-    Vector<Body> m_hiddenBodies;
+struct HiddenBody {
+    Typed::Function::Blocks::Storage blocks;
+    Typed::Function::Values::Storage values;
 };
 
 } // anonymous namespace
-
-CodeGenerationPlan::CodeGenerationPlan() = default;
-CodeGenerationPlan::CodeGenerationPlan(CodeGenerationPlan&&) = default;
-CodeGenerationPlan::~CodeGenerationPlan() = default;
 
 CodeGenerationPlan prepareCodeGeneration(const Typed::PipelineOutput& pipeline, BuildContext& context)
 {
@@ -139,6 +106,30 @@ Typed::CodeGenerationInputs createCodeGenerationInputs(const Typed::PipelineOutp
     };
 }
 
+void LinkedFunctions::grow(size_t newSize, BuildContext& context)
+{
+    RELEASE_ASSERT(isEmpty());
+    *this = LinkedFunctions(context.parallelLoops(), safeCast<unsigned>(newSize), [](unsigned) {
+        return CompiledCode { };
+    });
+}
+
+void LinkedFunctions::clearOnAllThreads(BuildContext& context)
+{
+    forEachIndexInParallel(context.parallelLoops(), size(), [&](unsigned index) {
+        CompiledCode code = WTF::move((*this)[index]);
+    });
+    *this = { };
+}
+
+void LinkedFunctions::reorder(std::span<const uint32_t> order, BuildContext& context)
+{
+    LinkedFunctions reordered(context.parallelLoops(), static_cast<unsigned>(order.size()), [&](unsigned index) {
+        return WTF::move((*this)[order[index]]);
+    });
+    context.destroyLater(std::exchange(*this, WTF::move(reordered)));
+}
+
 static Candidates collectCandidates(const Typed::Program& program, const BuildContext& context, const BitVector* bodiesWithoutCode)
 {
     const ParallelLoops& loops = context.parallelLoops();
@@ -194,29 +185,14 @@ void dropUnitsWithoutOutlinableCode(CodeBody& body)
 
 static void shrinkToFit(CompiledCode& code)
 {
+    auto shrink = [](auto&... vectors) {
+        (moveToExactBuffer(vectors), ...);
+    };
     auto& body = code.body;
-    moveToExactBuffer(body.bytes);
-    moveToExactBuffer(body.entries);
-    moveToExactBuffer(body.localSites);
-    moveToExactBuffer(body.relocations);
-    moveToExactBuffer(body.returnSites);
-    moveToExactBuffer(body.firstReadSites);
-    moveToExactBuffer(body.callees);
-    moveToExactBuffer(body.stubKeys);
-    moveToExactBuffer(body.argumentMoves);
-    moveToExactBuffer(body.constants);
-    moveToExactBuffer(body.jumpTables);
-    moveToExactBuffer(code.frame.frameRanges);
-    moveToExactBuffer(code.frame.prologueChecks);
     auto& sites = code.sites;
-    moveToExactBuffer(sites.positions);
-    moveToExactBuffer(sites.inlineFrames);
-    moveToExactBuffer(sites.spreadSites);
-    moveToExactBuffer(sites.flaggedSites);
-    moveToExactBuffer(sites.handlers);
-    moveToExactBuffer(sites.faultingAccesses);
-    moveToExactBuffer(sites.pollSites);
-    moveToExactBuffer(sites.frameMapWords);
+    shrink(body.bytes, body.entries, body.localSites, body.relocations, body.returnSites, body.firstReadSites, body.callees, body.stubKeys, body.argumentMoves, body.constants, body.jumpTables);
+    shrink(code.frame.frameRanges, code.frame.prologueChecks);
+    shrink(sites.positions, sites.inlineFrames, sites.spreadSites, sites.flaggedSites, sites.handlers, sites.faultingAccesses, sites.pollSites, sites.frameMapWords);
 }
 
 static void prepareForImage(CompiledCode& code, BuildContext& context)
@@ -262,69 +238,17 @@ OperationCounts countOperations(const Typed::Function& function)
     return operations;
 }
 
-BodyReleaser::BodyReleaser(Typed::Program& program, Vector<OperationCounts>& operationCountsByFunction, BuildContext& context)
-    : m_program(program)
-    , m_operationCountsByFunction(operationCountsByFunction)
-    , m_context(context)
-    , m_isNamedByLoss(program.functions.size())
-{
-    if (hasFlag(context.options().reports, ReportSet::Functions))
-        m_operationCountsByFunction.grow(program.functions.size());
-    context.diagnostics().resolveLocations(program);
-    for (FunctionID function : context.functionsWithUnresolvedWitnesses()) {
-        if (function.index() < program.functions.size())
-            m_isNamedByLoss.quickSet(function.index());
-    }
-}
-
-// Other threads ask hasBody() while a body is released, so the flag is set before any thread releases one.
-void BodyReleaser::willRelease(FunctionID id)
-{
-    Typed::Function& function = m_program.at(id);
-    // A validating build reads models while it compiles their callers.
-    function.bodyIsReleased = function.role != Typed::FunctionRole::Model && !m_isNamedByLoss.get(id.index());
-}
-
-// Whether a thread finds the body of another function would depend on timing, so it never does.
-void BodyReleaser::hideUntilCompiled(std::span<const FunctionID> ids, const ParallelLoops& loops)
-{
-    m_hiddenBodies.grow(ids.size());
-    forEachIndexInParallel(loops, static_cast<unsigned>(ids.size()), [&](unsigned position) {
-        Typed::Function& function = m_program.at(ids[position]);
-        if (function.bodyIsReleased)
-            m_hiddenBodies[position] = { function.takeBlocks(), function.takeValues() };
-    });
-}
-
-void BodyReleaser::show(size_t position, FunctionID id)
-{
-    Typed::Function& function = m_program.at(id);
-    if (!function.bodyIsReleased)
-        return;
-    Body body = WTF::move(m_hiddenBodies[position]);
-    function.editAllBlocks() = WTF::move(body.blocks);
-    function.editAllValues() = WTF::move(body.values);
-}
-
-void BodyReleaser::release(FunctionID id)
-{
-    Typed::Function& function = m_program.at(id);
-    if (!function.bodyIsReleased || m_context.diagnostics().hasErrors())
-        return;
-    if (!m_operationCountsByFunction.isEmpty())
-        m_operationCountsByFunction[id.index()] = countOperations(function);
-    function.releaseBody();
-}
-
 struct CodeGenerationJob::State {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(State);
 
-    State(const Typed::CodeGenerationInputs& inputs, Typed::Program& program, BuildContext& context)
-        : inputs(inputs)
-        , program(program)
-        , context(context)
-        , releaser(program, result.operationCountsByFunction, context)
+    void release(FunctionID id)
     {
+        Typed::Function& function = program.at(id);
+        if (!function.bodyIsReleased || context.diagnostics().hasErrors())
+            return;
+        if (!result.operationCountsByFunction.isEmpty())
+            result.operationCountsByFunction[id.index()] = countOperations(function);
+        function.releaseBody();
     }
 
     const Typed::CodeGenerationInputs& inputs;
@@ -332,31 +256,49 @@ struct CodeGenerationJob::State {
     BuildContext& context;
     Vector<Batch> batches;
     Vector<FunctionID> ids;
+    Vector<HiddenBody> hiddenBodies;
     GeneratedCode result;
-    BodyReleaser releaser;
 };
 
 CodeGenerationJob::CodeGenerationJob(const Typed::CodeGenerationInputs& inputs, Typed::Program& program, BuildContext& context, const BitVector* bodiesWithoutCode)
     : m_state(makeUnique<State>(inputs, program, context))
 {
     RELEASE_ASSERT(&program == &inputs.program);
+    const ParallelLoops& loops = context.parallelLoops();
+    if (hasFlag(context.options().reports, ReportSet::Functions))
+        m_state->result.operationCountsByFunction.grow(program.functions.size());
+    context.diagnostics().resolveLocations(program);
+    BitVector isNamedByLoss(program.functions.size());
+    for (FunctionID function : context.functionsWithUnresolvedWitnesses()) {
+        if (function.index() < program.functions.size())
+            isNamedByLoss.quickSet(function.index());
+    }
+
     auto [largestFirst, functionsWithoutCode] = collectCandidates(program, context, bodiesWithoutCode);
     m_state->batches = createBatches(largestFirst.span());
     m_state->ids = Vector<FunctionID>(largestFirst.size(), [&](size_t index) {
         return FunctionID(largestFirst[index].function);
     });
-
-    BodyReleaser& releaser = m_state->releaser;
-    const ParallelLoops& loops = context.parallelLoops();
+    std::span<const FunctionID> ids = m_state->ids.span();
+    // Other threads ask hasBody() while a body is released, so the flag is set before any thread releases one.
+    auto willRelease = [&](FunctionID id) {
+        Typed::Function& function = program.at(id);
+        // A validating build reads models while it compiles their callers.
+        function.bodyIsReleased = function.role != Typed::FunctionRole::Model && !isNamedByLoss.get(id.index());
+    };
     forEachIndexInParallel(loops, functionsWithoutCode.size(), [&](unsigned index) {
-        releaser.willRelease(FunctionID(functionsWithoutCode[index]));
+        willRelease(FunctionID(functionsWithoutCode[index]));
     });
-    forEachIndexInParallel(loops, m_state->ids.size(), [&](unsigned index) {
-        releaser.willRelease(m_state->ids[index]);
+    // Whether a thread finds the body of another function would depend on timing, so it never does: a body is hidden until it is compiled.
+    m_state->hiddenBodies.grow(ids.size());
+    forEachIndexInParallel(loops, ids.size(), [&](unsigned position) {
+        willRelease(ids[position]);
+        Typed::Function& function = program.at(ids[position]);
+        if (function.bodyIsReleased)
+            m_state->hiddenBodies[position] = { function.takeBlocks(), function.takeValues() };
     });
-    releaser.hideUntilCompiled(m_state->ids.span(), loops);
     forEachIndexInParallel(loops, functionsWithoutCode.size(), [&](unsigned index) {
-        releaser.release(FunctionID(functionsWithoutCode[index]));
+        m_state->release(FunctionID(functionsWithoutCode[index]));
     });
 }
 
@@ -364,7 +306,7 @@ CodeGenerationJob::~CodeGenerationJob() = default;
 
 GeneratedCode CodeGenerationJob::run()
 {
-    auto& [inputs, program, context, batches, ids, result, releaser] = *m_state;
+    auto& [inputs, program, context, batches, ids, hiddenBodies, result] = *m_state;
     const ParallelLoops& loops = context.parallelLoops();
     result.functions.grow(ids.size(), context);
     std::span<CompiledCode> functions = result.functions.mutableSpan();
@@ -376,8 +318,14 @@ GeneratedCode CodeGenerationJob::run()
             Batch batch = batches[index];
             std::span<const FunctionID> idsInBatch = ids.subspan(batch.first, batch.size);
             std::span<CompiledCode> functionsInBatch = functions.subspan(batch.first, batch.size);
-            for (uint32_t member = 0; member < batch.size; ++member)
-                releaser.show(batch.first + member, idsInBatch[member]);
+            for (uint32_t member = 0; member < batch.size; ++member) {
+                Typed::Function& function = program.at(idsInBatch[member]);
+                if (!function.bodyIsReleased)
+                    continue;
+                HiddenBody body = WTF::move(hiddenBodies[batch.first + member]);
+                function.editAllBlocks() = WTF::move(body.blocks);
+                function.editAllValues() = WTF::move(body.values);
+            }
             Typed::TypeArena arena(phase, index);
             Typed::compileFunctions({ context, arena, context.backEndScratch(worker) }, inputs, idsInBatch, functionsInBatch, totals[worker]);
             for (uint32_t member = 0; member < batch.size; ++member) {
@@ -388,7 +336,7 @@ GeneratedCode CodeGenerationJob::run()
                     prepareForImage(code, context);
             }
             for (FunctionID id : idsInBatch)
-                releaser.release(id);
+                m_state->release(id);
         });
     }
     phase.discard();
@@ -397,11 +345,6 @@ GeneratedCode CodeGenerationJob::run()
         result.entriesUsed.merge(workerTotals.entriesUsed);
     reportFunctionsWithoutCode(result.functions, context);
     return WTF::move(result);
-}
-
-GeneratedCode generateAllCode(const Typed::CodeGenerationInputs& inputs, Typed::Program& program, BuildContext& context)
-{
-    return CodeGenerationJob(inputs, program, context).run();
 }
 
 } } // namespace JSC::AOT

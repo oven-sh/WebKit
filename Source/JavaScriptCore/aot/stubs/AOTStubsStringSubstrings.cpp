@@ -70,10 +70,7 @@ AssemblyHelpers::FreeListRefill makeSubstringOfFlatString(StubAssembler& jit, co
     return refill;
 }
 
-StubSignature signatureOfSubstring(StubKey)
-{
-    return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3) });
-}
+StubSignature signatureOfSubstring(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2), gprOf(StubRegister::A3) }); }
 
 void generateSubstring(StubAssembler& jit)
 {
@@ -134,8 +131,7 @@ void generateSubstring(StubAssembler& jit)
     jit.returnToCaller();
 
     isWhole.link(&jit);
-    jit.move(string, result);
-    jit.returnToCaller();
+    returnResult(jit, string);
 
     isAtMostOne.link(&jit);
     Jump isOne = jit.branch64(CCallHelpers::Equal, span, TrustedImm32(1));

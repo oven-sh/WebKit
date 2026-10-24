@@ -12,16 +12,14 @@ function f0 name="returned-after-store" captures=[{type=env L0}] parameters=[{ty
     v2 = NewObject -, v1, v1 layout=L1 fields=[0, 1]
     PutSlot v2, v2, v1 key="x" receivers=[L1] level=Proven
     Return v2
-}
-# CHECK-LABEL: function f0 name="returned-after-store"
 # CHECK: PutSlot v2, v2, v1 key="x" {{*}} [ownerCannotBeMarked]
+}
 function f1 name="stored-in-environment-before-store" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: env L0, v1: anything):
     v2 = NewObject -, v1, v1 layout=L1 fields=[0, 1]
     PutEnvironmentField v0, v2 layout=L0 field=0
     PutSlot v2, v2, v1 key="x" receivers=[L1] level=Proven
     Return v2
-}
-# CHECK-LABEL: function f1 name="stored-in-environment-before-store"
 # CHECK: PutSlot v2, v2, v1 key="x"
 # CHECK-NOT: ownerCannotBeMarked
+}

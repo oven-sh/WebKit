@@ -27,12 +27,6 @@ namespace JSC { namespace AOT {
 static_assert(JSValue::ValueTrue == (JSValue::ValueFalse | 1));
 static_assert(emptyLiteralStringWord > undefinedCell32 && emptyLiteralStringWord > nullCell32 && emptyLiteralStringWord < minCell32);
 
-struct SharedReadResults {
-    JumpList isUndefined;
-    JumpList isNull;
-    JumpList isNaN;
-};
-
 static bool markersAreEncodedValues(const SlotTraits& traits)
 {
     return (!traits.hasAbsent || traits.absentBits == boxedMarkers.absent)
@@ -69,16 +63,6 @@ static Jump branchIfBitsEqual(StubAssembler& jit, unsigned width, GPRReg bits, u
     if (!expected)
         return jit.branchTest32(CCallHelpers::Zero, bits);
     return jit.branch32(CCallHelpers::Equal, bits, TrustedImm32(static_cast<int32_t>(static_cast<uint32_t>(expected))));
-}
-
-static void branchOnMarkers(StubAssembler& jit, const SlotTraits& traits, GPRReg bits, FieldReadExits& exits, SharedReadResults& shared)
-{
-    if (traits.hasAbsent)
-        exits.isAbsent.append(branchIfBitsEqual(jit, traits.width, bits, traits.absentBits));
-    if (traits.hasUndefined)
-        shared.isUndefined.append(branchIfBitsEqual(jit, traits.width, bits, traits.undefinedBits));
-    if (traits.hasNull)
-        shared.isNull.append(branchIfBitsEqual(jit, traits.width, bits, traits.nullBits));
 }
 
 void loadExtensionWordOffset(StubAssembler& jit, GPRReg object, GPRReg result)
@@ -145,228 +129,6 @@ void loadGetterSetterInField(StubAssembler& jit, GPRReg address, GPRReg represen
     isLoaded.link(&jit);
 }
 
-static void returnValue(StubAssembler& jit, const FieldReadRegisters& r)
-{
-    jit.move(r.value, r.result);
-    jit.returnToCaller();
-}
-
-static void returnInt32(StubAssembler& jit, const FieldReadRegisters& r)
-{
-    boxInt32(jit, r.value, r.result);
-    jit.returnToCaller();
-}
-
-static void returnDouble(StubAssembler& jit, const FieldReadRegisters& r, PureDouble number)
-{
-    boxDouble(jit, number, r.result);
-    jit.returnToCaller();
-}
-
-static void returnNumber(StubAssembler& jit, const FieldReadRegisters& r, PureDouble number)
-{
-    JumpList notInt32;
-    branchIfNotExactInt32(jit, number.fpr(), r.value, notInt32, r.numberScratch);
-    returnInt32(jit, r);
-    notInt32.link(&jit);
-    returnDouble(jit, r, number);
-}
-
-static void readEncodedValue(StubAssembler& jit, const SlotTraits& traits, const FieldReadRegisters& r, FieldReadExits& exits)
-{
-    RELEASE_ASSERT(traits.width == sizeof(EncodedJSValue) && markersAreEncodedValues(traits));
-    jit.load64(Address(r.field.address), r.value);
-    if (traits.hasAbsent)
-        exits.isAbsent.append(jit.branchTest64(CCallHelpers::Zero, r.value));
-    returnValue(jit, r);
-}
-
-static void readReference(StubAssembler& jit, const SlotTraits& traits, const FieldReadRegisters& r, FieldReadExits& exits)
-{
-    RELEASE_ASSERT(traits.hasAbsent && markersAreEncodedValues(traits));
-    const bool mayBeLiteralString = traits.valueKind == SlotValueKind::LiteralString;
-
-    loadSlotBits(jit, traits.width, Address(r.field.address), r.value);
-    Jump notCell;
-    if (traits.isNarrowReference) {
-        notCell = jit.branch32(CCallHelpers::Below, r.value, TrustedImm32(minCell32));
-        decodeCell32(jit, r.value, r.result);
-    } else {
-        notCell = jit.branch64(CCallHelpers::Below, r.value, TrustedImm32(minCell32));
-        jit.move(r.value, r.result);
-    }
-    jit.returnToCaller();
-
-    if (!mayBeLiteralString && !traits.hasUndefined && !traits.hasNull) {
-        exits.isAbsent.append(notCell);
-        return;
-    }
-
-    notCell.link(&jit);
-    Jump isLiteralString;
-    if (mayBeLiteralString)
-        isLiteralString = jit.branch32(CCallHelpers::AboveOrEqual, r.value, TrustedImm32(emptyLiteralStringWord));
-    exits.isAbsent.append(jit.branchTest32(CCallHelpers::Zero, r.value));
-    returnValue(jit, r);
-
-    if (!mayBeLiteralString)
-        return;
-    isLiteralString.link(&jit);
-    loadLiteralString(jit, r.value, r.field.address, exits.cannot);
-    returnValue(jit, r);
-}
-
-static void readNarrowInteger(StubAssembler& jit, const SlotTraits& traits, const FieldReadRegisters& r)
-{
-    RELEASE_ASSERT(!traits.hasAbsent && !traits.hasUndefined && !traits.hasNull);
-    const bool isSigned = traits.valueKind == SlotValueKind::SignedInteger;
-    const Address slot(r.field.address);
-
-    switch (traits.width) {
-    case 1:
-        if (isSigned)
-            jit.load8SignedExtendTo32(slot, r.value);
-        else
-            jit.load8(slot, r.value);
-        returnInt32(jit, r);
-        return;
-    case 2:
-        if (isSigned)
-            jit.load16SignedExtendTo32(slot, r.value);
-        else
-            jit.load16(slot, r.value);
-        returnInt32(jit, r);
-        return;
-    case 4: {
-        jit.load32(slot, r.value);
-        if (isSigned) {
-            returnInt32(jit, r);
-            return;
-        }
-        Jump notInt32 = jit.branch32(CCallHelpers::LessThan, r.value, TrustedImm32(0));
-        returnInt32(jit, r);
-        notInt32.link(&jit);
-        returnDouble(jit, r, PureDouble::convertInt64(jit, r.value, r.number));
-        return;
-    }
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void readInt64(StubAssembler& jit, const SlotTraits& traits, const FieldReadRegisters& r, FieldReadExits& exits, SharedReadResults& shared)
-{
-    RELEASE_ASSERT(traits.valueKind == SlotValueKind::SignedInteger);
-    const GPRReg lowHalf = r.field.address;
-
-    jit.load64(Address(r.field.address), r.value);
-    jit.signExtend32ToPtr(r.value, lowHalf);
-    Jump exceedsInt32 = jit.branch64(CCallHelpers::NotEqual, r.value, lowHalf);
-    returnInt32(jit, r);
-    exceedsInt32.link(&jit);
-    branchOnMarkers(jit, traits, r.value, exits, shared);
-    returnDouble(jit, r, PureDouble::convertInt64(jit, r.value, r.number));
-}
-
-static void readOptionalInt32(StubAssembler& jit, const SlotTraits& traits, const FieldReadRegisters& r, FieldReadExits& exits, SharedReadResults& shared)
-{
-    RELEASE_ASSERT(traits.valueKind == SlotValueKind::SignedInteger && traits.width == sizeof(int32_t) && traits.hasAbsent);
-    jit.load32(Address(r.field.address), r.value);
-    Jump isMarker = jit.branch32(CCallHelpers::LessThan, r.value, TrustedImm32(minInlineInt32));
-    returnInt32(jit, r);
-    isMarker.link(&jit);
-    branchOnMarkers(jit, traits, r.value, exits, shared);
-    exits.cannot.append(jit.jump());
-}
-
-static void readDouble(StubAssembler& jit, const SlotTraits& traits, const FieldReadRegisters& r, FieldReadExits& exits, SharedReadResults& shared)
-{
-    jit.loadDouble(Address(r.field.address), r.number);
-    Jump isNaN;
-    returnNumber(jit, r, PureDouble::branchIfNaN(jit, r.number, isNaN));
-    if (!traits.hasAbsent && !traits.hasUndefined && !traits.hasNull) {
-        shared.isNaN.append(isNaN);
-        return;
-    }
-    isNaN.link(&jit);
-    jit.moveDoubleTo64(r.number, r.value);
-    branchOnMarkers(jit, traits, r.value, exits, shared);
-    shared.isNaN.append(jit.jump());
-}
-
-static void readFloat(StubAssembler& jit, const FieldReadRegisters& r, SharedReadResults& shared)
-{
-    jit.loadFloat(Address(r.field.address), r.number);
-    jit.convertFloatToDouble(r.number, r.number);
-    returnNumber(jit, r, PureDouble::branchIfNaN(jit, r.number, shared.isNaN));
-}
-
-static void readBoolean(StubAssembler& jit, const SlotTraits& traits, const FieldReadRegisters& r, FieldReadExits& exits)
-{
-    jit.load8(Address(r.field.address), r.value);
-    if (!traits.hasAbsent) {
-        jit.or32(TrustedImm32(JSValue::ValueFalse), r.value, r.result);
-        jit.returnToCaller();
-        return;
-    }
-    RELEASE_ASSERT(markersAreEncodedValues(traits));
-    exits.isAbsent.append(jit.branchTest32(CCallHelpers::Zero, r.value));
-    returnValue(jit, r);
-}
-
-static void readDeferredClosure(StubAssembler& jit, const SlotTraits& traits, const FieldReadRegisters& r, FieldReadExits& exits)
-{
-    RELEASE_ASSERT(traits.hasAbsent && traits.absentBits == absentDeferredClosure);
-    jit.load32(Address(r.field.address), r.value);
-    Jump isNotCreated = jit.branch32(CCallHelpers::Below, r.value, TrustedImm32(minCell32));
-    decodeCell32(jit, r.value, r.result);
-    jit.returnToCaller();
-
-    isNotCreated.link(&jit);
-    exits.isAbsent.append(branchIfBitsEqual(jit, traits.width, r.value, traits.absentBits));
-    exits.cannot.append(jit.jump());
-}
-
-static void emitReadOf(StubAssembler& jit, SlotRepresentation representation, const FieldReadRegisters& r, FieldReadExits& exits, SharedReadResults& shared)
-{
-    const SlotTraits traits = traitsOf(representation);
-    switch (traits.valueKind) {
-    case SlotValueKind::Boxed:
-        readEncodedValue(jit, traits, r, exits);
-        return;
-    case SlotValueKind::Cell:
-        if (traits.isNarrowReference)
-            readReference(jit, traits, r, exits);
-        else
-            readEncodedValue(jit, traits, r, exits);
-        return;
-    case SlotValueKind::LiteralString:
-        readReference(jit, traits, r, exits);
-        return;
-    case SlotValueKind::SignedInteger:
-    case SlotValueKind::UnsignedInteger:
-        if (traits.width == sizeof(int64_t))
-            readInt64(jit, traits, r, exits, shared);
-        else if (traits.hasAbsent)
-            readOptionalInt32(jit, traits, r, exits, shared);
-        else
-            readNarrowInteger(jit, traits, r);
-        return;
-    case SlotValueKind::Double:
-        readDouble(jit, traits, r, exits, shared);
-        return;
-    case SlotValueKind::Float:
-        readFloat(jit, r, shared);
-        return;
-    case SlotValueKind::Boolean:
-        readBoolean(jit, traits, r, exits);
-        return;
-    case SlotValueKind::DeferredClosure:
-        readDeferredClosure(jit, traits, r, exits);
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 void readFieldAndReturn(StubAssembler& jit, const FieldReadRegisters& r, FieldReadExits& exits)
 {
     RELEASE_ASSERT(noOverlap(r.field.object, r.field.address, r.field.representation, r.value, r.number, r.numberScratch));
@@ -380,20 +142,198 @@ void readFieldAndReturn(StubAssembler& jit, const FieldReadRegisters& r, FieldRe
     constexpr SlotTraits cell32 = traitsOf(SlotRepresentation::Cell32);
     static_assert(optionalCell32.width == cell32.width && optionalCell32.isNarrowReference && cell32.isNarrowReference && optionalCell32.absentBits == cell32.absentBits && !cell32.absentBits);
 
-    SharedReadResults shared;
+    JumpList returnsUndefined;
+    JumpList returnsNull;
+    JumpList returnsNaN;
+
+    auto returnValue = [&] {
+        jit.move(r.value, r.result);
+        jit.returnToCaller();
+    };
+    auto returnInt32 = [&] {
+        boxInt32(jit, r.value, r.result);
+        jit.returnToCaller();
+    };
+    auto returnDouble = [&](PureDouble number) {
+        boxDouble(jit, number, r.result);
+        jit.returnToCaller();
+    };
+    auto returnNumber = [&](PureDouble number) {
+        JumpList notInt32;
+        branchIfNotExactInt32(jit, number.fpr(), r.value, notInt32, r.numberScratch);
+        returnInt32();
+        notInt32.link(&jit);
+        returnDouble(number);
+    };
+    auto branchOnMarkers = [&](const SlotTraits& traits) {
+        if (traits.hasAbsent)
+            exits.isAbsent.append(branchIfBitsEqual(jit, traits.width, r.value, traits.absentBits));
+        if (traits.hasUndefined)
+            returnsUndefined.append(branchIfBitsEqual(jit, traits.width, r.value, traits.undefinedBits));
+        if (traits.hasNull)
+            returnsNull.append(branchIfBitsEqual(jit, traits.width, r.value, traits.nullBits));
+    };
+    auto readEncodedValue = [&](const SlotTraits& traits) {
+        RELEASE_ASSERT(traits.width == sizeof(EncodedJSValue) && markersAreEncodedValues(traits));
+        jit.load64(Address(r.field.address), r.value);
+        if (traits.hasAbsent)
+            exits.isAbsent.append(jit.branchTest64(CCallHelpers::Zero, r.value));
+        returnValue();
+    };
+    auto readReference = [&](const SlotTraits& traits) {
+        RELEASE_ASSERT(traits.hasAbsent && markersAreEncodedValues(traits));
+        const bool mayBeLiteralString = traits.valueKind == SlotValueKind::LiteralString;
+
+        loadSlotBits(jit, traits.width, Address(r.field.address), r.value);
+        Jump notCell;
+        if (traits.isNarrowReference) {
+            notCell = jit.branch32(CCallHelpers::Below, r.value, TrustedImm32(minCell32));
+            decodeCell32(jit, r.value, r.result);
+        } else {
+            notCell = jit.branch64(CCallHelpers::Below, r.value, TrustedImm32(minCell32));
+            jit.move(r.value, r.result);
+        }
+        jit.returnToCaller();
+
+        if (!mayBeLiteralString && !traits.hasUndefined && !traits.hasNull) {
+            exits.isAbsent.append(notCell);
+            return;
+        }
+
+        notCell.link(&jit);
+        Jump isLiteralString;
+        if (mayBeLiteralString)
+            isLiteralString = jit.branch32(CCallHelpers::AboveOrEqual, r.value, TrustedImm32(emptyLiteralStringWord));
+        exits.isAbsent.append(jit.branchTest32(CCallHelpers::Zero, r.value));
+        returnValue();
+
+        if (!mayBeLiteralString)
+            return;
+        isLiteralString.link(&jit);
+        loadLiteralString(jit, r.value, r.field.address, exits.cannot);
+        returnValue();
+    };
+    auto readNarrowInteger = [&](const SlotTraits& traits) {
+        RELEASE_ASSERT(!traits.hasAbsent && !traits.hasUndefined && !traits.hasNull && traits.width <= sizeof(int32_t));
+        const bool isSigned = traits.valueKind == SlotValueKind::SignedInteger;
+        const Address slot(r.field.address);
+
+        if (isSigned && traits.width == 1)
+            jit.load8SignedExtendTo32(slot, r.value);
+        else if (isSigned && traits.width == 2)
+            jit.load16SignedExtendTo32(slot, r.value);
+        else
+            loadSlotBits(jit, traits.width, slot, r.value);
+        if (isSigned || traits.width < sizeof(int32_t)) {
+            returnInt32();
+            return;
+        }
+        Jump notInt32 = jit.branch32(CCallHelpers::LessThan, r.value, TrustedImm32(0));
+        returnInt32();
+        notInt32.link(&jit);
+        returnDouble(PureDouble::convertInt64(jit, r.value, r.number));
+    };
+    auto readInt64 = [&](const SlotTraits& traits) {
+        RELEASE_ASSERT(traits.valueKind == SlotValueKind::SignedInteger);
+        const GPRReg lowHalf = r.field.address;
+
+        jit.load64(Address(r.field.address), r.value);
+        jit.signExtend32ToPtr(r.value, lowHalf);
+        Jump exceedsInt32 = jit.branch64(CCallHelpers::NotEqual, r.value, lowHalf);
+        returnInt32();
+        exceedsInt32.link(&jit);
+        branchOnMarkers(traits);
+        returnDouble(PureDouble::convertInt64(jit, r.value, r.number));
+    };
+    auto readOptionalInt32 = [&](const SlotTraits& traits) {
+        RELEASE_ASSERT(traits.valueKind == SlotValueKind::SignedInteger && traits.width == sizeof(int32_t) && traits.hasAbsent);
+        jit.load32(Address(r.field.address), r.value);
+        Jump isMarker = jit.branch32(CCallHelpers::LessThan, r.value, TrustedImm32(minInlineInt32));
+        returnInt32();
+        isMarker.link(&jit);
+        branchOnMarkers(traits);
+        exits.cannot.append(jit.jump());
+    };
+
     emitDispatchOnRepresentationForRead(jit, r.field.representation, [&](SlotRepresentation representation) {
-        emitReadOf(jit, representation, r, exits, shared);
+        const SlotTraits traits = traitsOf(representation);
+        switch (traits.valueKind) {
+        case SlotValueKind::Boxed:
+            readEncodedValue(traits);
+            return;
+        case SlotValueKind::Cell:
+            if (traits.isNarrowReference)
+                readReference(traits);
+            else
+                readEncodedValue(traits);
+            return;
+        case SlotValueKind::LiteralString:
+            readReference(traits);
+            return;
+        case SlotValueKind::SignedInteger:
+        case SlotValueKind::UnsignedInteger:
+            if (traits.width == sizeof(int64_t))
+                readInt64(traits);
+            else if (traits.hasAbsent)
+                readOptionalInt32(traits);
+            else
+                readNarrowInteger(traits);
+            return;
+        case SlotValueKind::Double: {
+            jit.loadDouble(Address(r.field.address), r.number);
+            Jump isNaN;
+            returnNumber(PureDouble::branchIfNaN(jit, r.number, isNaN));
+            if (!traits.hasAbsent && !traits.hasUndefined && !traits.hasNull) {
+                returnsNaN.append(isNaN);
+                return;
+            }
+            isNaN.link(&jit);
+            jit.moveDoubleTo64(r.number, r.value);
+            branchOnMarkers(traits);
+            returnsNaN.append(jit.jump());
+            return;
+        }
+        case SlotValueKind::Float:
+            jit.loadFloat(Address(r.field.address), r.number);
+            jit.convertFloatToDouble(r.number, r.number);
+            returnNumber(PureDouble::branchIfNaN(jit, r.number, returnsNaN));
+            return;
+        case SlotValueKind::Boolean:
+            jit.load8(Address(r.field.address), r.value);
+            if (!traits.hasAbsent) {
+                jit.or32(TrustedImm32(JSValue::ValueFalse), r.value, r.result);
+                jit.returnToCaller();
+                return;
+            }
+            RELEASE_ASSERT(markersAreEncodedValues(traits));
+            exits.isAbsent.append(jit.branchTest32(CCallHelpers::Zero, r.value));
+            returnValue();
+            return;
+        case SlotValueKind::DeferredClosure: {
+            RELEASE_ASSERT(traits.hasAbsent && traits.absentBits == absentDeferredClosure);
+            jit.load32(Address(r.field.address), r.value);
+            Jump isNotCreated = jit.branch32(CCallHelpers::Below, r.value, TrustedImm32(minCell32));
+            decodeCell32(jit, r.value, r.result);
+            jit.returnToCaller();
+
+            isNotCreated.link(&jit);
+            exits.isAbsent.append(branchIfBitsEqual(jit, traits.width, r.value, traits.absentBits));
+            exits.cannot.append(jit.jump());
+            return;
+        }
+        }
+        RELEASE_ASSERT_NOT_REACHED();
     });
 
-    shared.isUndefined.link(&jit);
+    returnsUndefined.link(&jit);
     jit.move(TrustedImm64(JSValue::ValueUndefined), r.result);
     jit.returnToCaller();
 
-    shared.isNull.link(&jit);
+    returnsNull.link(&jit);
     jit.move(TrustedImm64(JSValue::ValueNull), r.result);
     jit.returnToCaller();
 
-    shared.isNaN.link(&jit);
+    returnsNaN.link(&jit);
     jit.load64(Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(boxedNaN)), r.result);
     jit.returnToCaller();
 }
@@ -526,13 +466,7 @@ void generatePrivateGet(StubAssembler& jit)
         goesToRunTime.append(jit.branchTest32(CCallHelpers::NonZero, Address(record, static_cast<int32_t>(sizeof(LayoutData) + OBJECT_OFFSETOF(FieldData, flags))), TrustedImm32(flagsLeftToRunTime)));
 
         const FieldReadRegisters registers {
-            .field = {
-                .object = object,
-                .slotData = T10,
-                .extensionWordOffset = T11,
-                .address = T11,
-                .representation = T12,
-            },
+            .field = { .object = object, .slotData = T10, .extensionWordOffset = T11, .address = T11, .representation = T12 },
             .value = T10,
             .result = jit.result(),
             .number = jit.allocateScratch(FPRInfo::fpRegT0),

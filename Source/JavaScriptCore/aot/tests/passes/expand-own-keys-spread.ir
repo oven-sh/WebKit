@@ -15,8 +15,6 @@ function f0 name="expected" parameters=[{type=object}, {type=number}] results=[{
     CopyDataProperties v2, v0
     v4 = FinishObject v2
     Return v4
-}
-# CHECK-LABEL: function f0 name="expected"
 # CHECK: v2:{{*}}= NewObject -, v1 layout=L0 fields=[0]
 # CHECK-NEXT: = ShapeTest v0 layouts=[L1]
 # CHECK: [[done0]]():
@@ -44,6 +42,7 @@ function f0 name="expected" parameters=[{type=object}, {type=number}] results=[{
 # CHECK-NEXT: PropDefine v2, [[aB]] key="a"
 # CHECK-NEXT: Jump -> next [[done0]]()
 # CHECK-NOT: CopyDataProperties
+}
 
 function f1 name="nullishOrExpected" parameters=[{type=undefined|null|object}] results=[{type=anything}] {
   b0(v0: undefined|null|object ~ L1):
@@ -51,8 +50,6 @@ function f1 name="nullishOrExpected" parameters=[{type=undefined|null|object}] r
     CopyDataProperties v1, v0
     v3 = FinishObject v1
     Return v3
-}
-# CHECK-LABEL: function f1 name="nullishOrExpected"
 # CHECK: v1:{{*}}= NewObject layout=L0
 # CHECK-NEXT: = TypeTest v0 testedType=undefined|null
 # CHECK-NOT: testedType=object
@@ -61,6 +58,7 @@ function f1 name="nullishOrExpected" parameters=[{type=undefined|null|object}] r
 # CHECK: frequency=Rare:
 # CHECK-NEXT: CopyDataProperties v1, v0
 # CHECK: = GetSlot [[object1]], {{*}} key="a" receivers=[L1] level=Expected
+}
 
 function f2 name="deferredClosure" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L2):
@@ -68,22 +66,18 @@ function f2 name="deferredClosure" parameters=[{type=object}] results=[{type=any
     CopyDataProperties v1, v0
     v3 = FinishObject v1
     Return v3
-}
-# CHECK-LABEL: function f2 name="deferredClosure"
 # CHECK: [[all2]]: guard = AllGuards
 # CHECK-NEXT: [[run2]]:{{*}}= GetDeferredClosureSlot v0, [[all2]] key="run" receivers=[L2] level=Expected
 # CHECK-NEXT: PropDefine v1, [[run2]] key="run"
+}
 
 function f3 name="unchangedAllocation" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
-  b0(v0: number, v1: string):
     v2 = NewObject -, v1, v0 layout=L1 fields=[3, 1]
     v3 = NewObject layout=L0 fields=[]
     CopyDataProperties v3, v2
     v5 = FinishObject v3
     Return v2
-}
 # The source is read again behind the copy. One that is made for the spread alone is never made: passes/expand-own-keys-spread-of-literals-that-meet.ir
-# CHECK-LABEL: function f3 name="unchangedAllocation"
 # CHECK: v3:{{*}}= NewObject layout=L0
 # CHECK-NEXT: [[b3]]: string = GetSlot v2, v2 key="b" receivers=[L1] level=Expected
 # CHECK-NEXT: [[a3]]: undefined|null|number ~ number = GetSlot v2, v2 key="a" receivers=[L1] level=Expected
@@ -92,17 +86,15 @@ function f3 name="unchangedAllocation" parameters=[{type=number}, {type=string}]
 # CHECK-NOT: ShapeTest
 # CHECK-NOT: HasKeyOrder
 # CHECK-NOT: CopyDataProperties
+}
 
 function f4 name="unchangedAllocationThroughWideningCast" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
-  b0(v0: number, v1: string):
     v2 = NewObject -, v1, v0 layout=L1 fields=[3, 1]
     v3: undefined|object = Upcast v2 castType=undefined|object
     v4 = NewObject layout=L0 fields=[]
     CopyDataProperties v4, v3
     v6 = FinishObject v4
     Return v2
-}
-# CHECK-LABEL: function f4 name="unchangedAllocationThroughWideningCast"
 # CHECK: v4:{{*}}= NewObject layout=L0
 # CHECK-NEXT: [[b4]]: string = GetSlot v2, v2 key="b" receivers=[L1] level=Expected
 # CHECK-NEXT: [[a4]]: undefined|null|number ~ number = GetSlot v2, v2 key="a" receivers=[L1] level=Expected
@@ -111,6 +103,7 @@ function f4 name="unchangedAllocationThroughWideningCast" parameters=[{type=numb
 # CHECK-NOT: ShapeTest
 # CHECK-NOT: HasKeyOrder
 # CHECK-NOT: CopyDataProperties
+}
 
 function f5 name="restPatternWithConstantKeys" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L1):
@@ -118,8 +111,6 @@ function f5 name="restPatternWithConstantKeys" parameters=[{type=object}] result
     CopyDataProperties v1, v0 excludedKeys=["a"]
     v3 = FinishObject v1
     Return v3
-}
-# CHECK-LABEL: function f5 name="restPatternWithConstantKeys"
 # CHECK: v1:{{*}}= NewObject layout=L0
 # CHECK-NEXT: = ShapeTest v0 layouts=[L1]
 # CHECK: frequency=Rare:
@@ -127,6 +118,7 @@ function f5 name="restPatternWithConstantKeys" parameters=[{type=object}] result
 # CHECK-NOT: key="a"
 # CHECK: PropDefine v1, {{*}} key="b"
 # CHECK-NOT: key="a"
+}
 
 function f6 name="restPatternWithComputedKey" parameters=[{type=object}, {type=string}] results=[{type=anything}] {
   b0(v0: object ~ L1, v1: string):
@@ -134,28 +126,24 @@ function f6 name="restPatternWithComputedKey" parameters=[{type=object}, {type=s
     CopyDataProperties v2, v0, v1
     v4 = FinishObject v2
     Return v4
-}
-# CHECK-LABEL: function f6 name="restPatternWithComputedKey"
 # CHECK: v2:{{*}}= NewObject layout=L0
 # CHECK-NEXT: CopyDataProperties v2, v0, v1
 # CHECK-NEXT: v4:{{*}}= FinishObject v2
 # CHECK-NEXT: Return v4
+}
 
 function f7 name="nothingExpected" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject layout=L0 fields=[]
     CopyDataProperties v1, v0
     v3 = FinishObject v1
     Return v3
-}
-# CHECK-LABEL: function f7 name="nothingExpected"
 # CHECK: v1:{{*}}= NewObject layout=L0
 # CHECK-NEXT: CopyDataProperties v1, v0
 # CHECK-NEXT: v3:{{*}}= FinishObject v1
 # CHECK-NEXT: Return v3
+}
 
 function f8 name="run" results=[{type=undefined}] {
-  b0():
     Return
 }
 
@@ -165,8 +153,6 @@ function f9 name="expectedPosition" parameters=[{type=L1 flags=[IsExpected]}] re
     CopyDataProperties v1, v0
     v3 = FinishObject v1
     Return v3
-}
-# CHECK-LABEL: function f9 name="expectedPosition"
 # CHECK: v1:{{*}}= NewObject layout=L0
 # CHECK-NEXT: = TypeTest v0 testedType=undefined|null
 # CHECK: ([[something9]]: boolean|number|string|symbol|bigint|object ~ L1):
@@ -176,3 +162,4 @@ function f9 name="expectedPosition" parameters=[{type=L1 flags=[IsExpected]}] re
 # CHECK: ([[object9]]: object ~ L1):
 # CHECK-NEXT: = ShapeTest [[object9]] layouts=[L1]
 # CHECK: = GetSlot [[object9]], {{*}} key="a" receivers=[L1] level=Expected
+}

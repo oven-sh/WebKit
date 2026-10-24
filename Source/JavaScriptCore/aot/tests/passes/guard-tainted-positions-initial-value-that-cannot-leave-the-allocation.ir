@@ -9,34 +9,4 @@
 # CHECK: layout L0 name="SymbolBeforeMethod" fields=[{key="tag" declared={type=symbol flags=[IsExpected]}
 # CHECK: layout L1 name="FlagBeforeMethod" fields=[{key="flag" declared={type=boolean}
 # CHECK: layout L2 name="SymbolBehindMethod" fields=[{key="tag" declared={type=symbol}
-
-module m0 path="main.ts" displayPath="main.ts" body=f0
-entry module=m0
-layout L0 name="SymbolBeforeMethod" fields=[{key="tag" declared={type=symbol} flags=[IsRequired]}, {key="run" declared={type=f1} flags=[IsRequired, IsMethod]}]
-layout L1 name="FlagBeforeMethod" fields=[{key="flag" declared={type=boolean} flags=[IsRequired]}, {key="run" declared={type=f1} flags=[IsRequired, IsMethod]}]
-layout L2 name="SymbolBehindMethod" fields=[{key="tag" declared={type=symbol} flags=[IsRequired]}, {key="run" declared={type=f1} flags=[IsRequired, IsMethod]}]
-
-function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="given" [isFreeName]
-    v2 = Convert v1 declared={type=symbol}
-    v3 = NewClosure function=f1
-    v4 = NewObject -, v2, v3 layout=L0 fields=[0, 1]
-    v5 = FinishObject v4
-    PropSet v0, v5 key="first" mode=Strict
-    v7 = PropGet v0 key="other" [isFreeName]
-    v8 = Convert v7 declared={type=boolean}
-    v9 = NewObject -, v8, v3 layout=L1 fields=[0, 1]
-    v10 = FinishObject v9
-    PropSet v0, v10 key="second" mode=Strict
-    v12 = NewObject -, v3, v2 layout=L2 fields=[1, 0]
-    v13 = FinishObject v12
-    PropSet v0, v13 key="third" mode=Strict
-    Return
-}
-
-function f1 name="run" results=[{type=anything}] {
-  b0():
-    Return
-}
+# PROGRAM-OF: add-generic-version-initial-values-behind-the-allocation.ir

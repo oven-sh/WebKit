@@ -7,7 +7,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="pushHandOutPush" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray contents=anything
     v2 = IsPristine v1 builtinClass=Array aspects=[Storage, Names]
     Branch v2 -> taken b1(| 0), notTaken b2()
@@ -31,9 +30,8 @@ function f0 name="pushHandOutPush" parameters=[{type=anything}] results=[{type=a
     Jump -> next b6(v13)
   b6(v14):
     Return v14
-}
-# CHECK-LABEL: function f0 name="pushHandOutPush"
 # CHECK: v1: Array = NewArray contents=anything
 # CHECK-NOT: IsPristine
 # CHECK: = Call v0, -, v1
 # CHECK-NEXT: = IsPristine v1 builtinClass=Array aspects=[Storage, Names]
+}

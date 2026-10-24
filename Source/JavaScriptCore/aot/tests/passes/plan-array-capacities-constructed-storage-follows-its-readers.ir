@@ -8,7 +8,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="numbersReadAsDoubles" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=i32}] results=[{type=anything}] {
-  b0(v0: int[0, 100], v1: Array<anything>, v2: i32):
     v3 = NewArrayLike v0, v1
     v4 = Integer integer=0
     v5 = IsPristine v3 builtinClass=Array aspects=[Storage]
@@ -33,7 +32,6 @@ function f0 name="numbersReadAsDoubles" parameters=[{type=int[0, 100]}, {type=Ar
 # CHECK: PutArrayElement v3, v4, v2, v9 arrayStorage=Double
 
 function f1 name="stringsStayAsTheyAre" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=string}] results=[{type=anything}] {
-  b0(v0: int[0, 100], v1: Array<anything>, v2: string):
     v3 = NewArrayLike v0, v1
     v4 = Integer integer=0
     v5 = IsPristine v3 builtinClass=Array aspects=[Storage]
@@ -57,7 +55,6 @@ function f1 name="stringsStayAsTheyAre" parameters=[{type=int[0, 100]}, {type=Ar
 # CHECK: PutArrayElement v3, v4, v2, v9 arrayStorage=Contiguous
 
 function f2 name="nobodyReadsDoubles" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=i32}] results=[{type=anything}] {
-  b0(v0: int[0, 100], v1: Array<anything>, v2: i32):
     v3 = NewArrayLike v0, v1
     v4 = Integer integer=0
     v5 = IsPristine v3 builtinClass=Array aspects=[Storage]
@@ -77,7 +74,6 @@ function f2 name="nobodyReadsDoubles" parameters=[{type=int[0, 100]}, {type=Arra
 # CHECK: PutArrayElement v3, v4, v2, v9 arrayStorage=Contiguous
 
 function f3 name="integersStoredDirectly" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=i32}] results=[{type=anything}] {
-  b0(v0: int[0, 100], v1: Array<anything>, v2: i32):
     v3 = NewArrayLike v0, v1
     v4 = Integer integer=0
     v5 = TryPutByValDirect v3, v4, v2
@@ -94,7 +90,6 @@ function f3 name="integersStoredDirectly" parameters=[{type=int[0, 100]}, {type=
 # CHECK: v5: {{*}} = TryPutByValDirect v3, v4, v2 arrayStorage=Double
 
 function f4 name="integersStoredDirectlyInArraysMadeInTwoPlaces" parameters=[{type=boolean}, {type=int[0, 100]}, {type=Array<anything>}, {type=i32}] results=[{type=anything}] {
-  b0(v0: boolean, v1: int[0, 100], v2: Array<anything>, v3: i32):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v4 = NewArrayLike v1, v2
@@ -119,7 +114,6 @@ function f4 name="integersStoredDirectlyInArraysMadeInTwoPlaces" parameters=[{ty
 # CHECK: v8: {{*}} = TryPutByValDirect v6, v7, v3 arrayStorage=Double
 
 function f5 name="integersStoredDirectlyThatNobodyReadsAsDoubles" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=i32}] results=[{type=anything}] {
-  b0(v0: int[0, 100], v1: Array<anything>, v2: i32):
     v3 = NewArrayLike v0, v1
     v4 = Integer integer=0
     v5 = TryPutByValDirect v3, v4, v2

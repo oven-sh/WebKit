@@ -8,7 +8,6 @@ layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=A
 layout L1 name="Kept" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
 
 function f0 name="underHandler" parameters=[{type=object}, {type=number}] results=[{type=anything}] {
-  b0(v0: object, v1: number):
     Jump -> next b1()
   b1() handler=b7():
     v2 = ShapeTest v0 layouts=[L0]
@@ -32,8 +31,6 @@ function f0 name="underHandler" parameters=[{type=object}, {type=number}] result
   b7() role=CatchHandler:
     v11 = CatchValue
     Return v11
-}
-# CHECK-LABEL: function f0 name="underHandler"
 # CHECK: b1() handler=b7():
 # CHECK-NEXT: v2: boolean = ShapeTest v0 layouts=[L0]
 # CHECK-NEXT: v3:{{*}}= NewObject -, v1 layout=L1 fields=[0]
@@ -44,9 +41,9 @@ function f0 name="underHandler" parameters=[{type=object}, {type=number}] result
 # CHECK-NOT: ShapeTest
 # CHECK: [[rest0]]() handler=b7():
 # CHECK-NEXT: Branch v2 -> taken b2(| 0), notTaken b3([[proof0]])
+}
 
 function f1 name="withoutHandler" parameters=[{type=object}, {type=number}] results=[{type=anything}] {
-  b0(v0: object, v1: number):
     Jump -> next b1()
   b1():
     v2 = ShapeTest v0 layouts=[L0]
@@ -67,11 +64,10 @@ function f1 name="withoutHandler" parameters=[{type=object}, {type=number}] resu
     Return v9
   b6():
     Return v0
-}
-# CHECK-LABEL: function f1 name="withoutHandler"
 # CHECK: b1():
 # CHECK-NEXT: v2: boolean = ShapeTest v0 layouts=[L0]
 # CHECK-NEXT: v3:{{*}}= NewObject -, v1 layout=L1 fields=[0]
 # CHECK-NEXT: [[proof1]]: guard = AllGuards v3
 # CHECK-NEXT: Branch v2 -> taken b2(| 0), notTaken b3([[proof1]])
 # CHECK-NOT: ShapeTest
+}

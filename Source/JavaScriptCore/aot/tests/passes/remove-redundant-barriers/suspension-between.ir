@@ -12,11 +12,10 @@ function f0 name="suspension-between" role=CoroutineBody flags=[IsAsync] capture
     v4 @JSValue = AwaitBySavingFrame v1, v2
     PutEnvironmentField v0, v1 layout=L0 field=1
     Return v1
-}
-# CHECK-LABEL: function f0 name="suspension-between"
 # CHECK: PutEnvironmentField v0, v1 layout=L0
 # CHECK: PutEnvironmentField v0, v1 layout=L0 field=1
 # CHECK-NOT: laterBarrierCovers
+}
 function f1 name="suspension-between" role=CoroutineRamp flags=[IsAsync] captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f0 promiseType=Promise promiseParameter=2}
 function f2 name="suspension-after" role=CoroutineBody flags=[IsAsync] captures=[{type=env L0}] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f3 body=f2 promiseType=Promise promiseParameter=2} {
   b0(v0: env L0 @Cell, v1: anything @JSValue, v2: undefined|Promise @JSValue):
@@ -24,8 +23,7 @@ function f2 name="suspension-after" role=CoroutineBody flags=[IsAsync] captures=
     PutEnvironmentField v0, v1 layout=L0 field=1
     v5 @JSValue = AwaitBySavingFrame v1, v2
     Return v1
-}
-# CHECK-LABEL: function f2 name="suspension-after"
 # CHECK: PutEnvironmentField v0, v1 layout=L0 [laterBarrierCovers]
 # CHECK-NOT: laterBarrierCovers
+}
 function f3 name="suspension-after" role=CoroutineRamp flags=[IsAsync] captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f3 body=f2 promiseType=Promise promiseParameter=2}

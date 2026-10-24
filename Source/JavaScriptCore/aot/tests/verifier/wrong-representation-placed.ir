@@ -10,7 +10,6 @@ function f0 name="badParameterOfOtherType" parameters=[{type=number}] results=[{
     Return v1
 }
 function f1 name="badValueOfOtherType" results=[{type=undefined}] {
-  b0():
     v0 @Cell = Integer integer=1
     v1 @JSValue = Undefined
     Return v1

@@ -11,7 +11,6 @@ layout L0 fields=[{key="x" declared={type=anything}}]
 runtimefunction id=0 function=f38
 
 function f0 name="usedRoot" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: anything):
     Branch v0 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v3 = String string="bad"
@@ -26,7 +25,6 @@ function f0 name="usedRoot" parameters=[{type=boolean}, {type=anything}, {type=a
 # CHECK: anything = CallDirect v1, v2 function=[[usedRoot]]
 
 function f1 name="unusedRoot" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: anything):
     Branch v0 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v3 = String string="miss"
@@ -41,7 +39,6 @@ function f1 name="unusedRoot" parameters=[{type=boolean}, {type=anything}, {type
 # CHECK: undefined = CallDirect v1, v2 function=[[unusedRoot]]
 
 function f2 name="oneValue" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: anything):
     Branch v0 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v3 = String string="fatal"
@@ -54,7 +51,6 @@ function f2 name="oneValue" parameters=[{type=boolean}, {type=anything}, {type=a
 # CHECK: anything = CallDirect v1, v2 function=[[oneValue]]
 
 function f3 name="coldPaths" parameters=[{type=boolean}, {type=boolean}, {type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: boolean, v2: boolean, v3: anything, v4: anything):
     Branch v0 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v5 = String string="bad"
@@ -84,7 +80,6 @@ function f3 name="coldPaths" parameters=[{type=boolean}, {type=boolean}, {type=b
 # CHECK: anything = CallDirect v3, v4 function=[[oneValue]]
 
 function f%(i+2) name="coldPaths%(i)" parameters=[{type=boolean}, {type=boolean}, {type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: boolean, v2: boolean, v3: anything, v4: anything):
     Branch v0 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v5 = String string="bad"
@@ -114,7 +109,6 @@ function f%(i+2) name="coldPaths%(i)" parameters=[{type=boolean}, {type=boolean}
 # CHECK: anything = CallDirect v3, v4 function=[[oneValue]]
 
 function f8 name="rootUnderHandler" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: anything):
     Branch v0 -> taken b1(), notTaken b4()
   b1() frequency=Rare handler=b3():
     v3 = String string="fatal"
@@ -136,7 +130,6 @@ function f8 name="rootUnderHandler" parameters=[{type=boolean}, {type=anything},
 # CHECK-NEXT: Jump -> next b2()
 
 function f9 name="unrepeatedLongRun" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: anything):
     Branch v0 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v3 = String string="fatal"
@@ -151,7 +144,6 @@ function f9 name="unrepeatedLongRun" parameters=[{type=boolean}, {type=anything}
 # CHECK-NEXT: = CallDirect [[holder]], v2 function=[[oneValue]]
 
 function f10 name="guardedCall" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: anything):
     Branch v0 -> taken b1(), notTaken b5()
   b1() frequency=Rare:
     v3 = TypeTest v1 testedType=f26
@@ -175,7 +167,6 @@ function f10 name="guardedCall" parameters=[{type=boolean}, {type=anything}, {ty
 # CHECK-NOT: = Call v1
 
 function f%(i+1) name="guardedCall%(i-8)" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: anything):
     Branch v0 -> taken b1(), notTaken b5()
   b1() frequency=Rare:
     v3 = TypeTest v1 testedType=f26
@@ -199,7 +190,6 @@ function f%(i+1) name="guardedCall%(i-8)" parameters=[{type=boolean}, {type=anyt
 # CHECK-NOT: = Call v1
 
 function f15 name="smallOperation" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: anything):
     Branch v0 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v3 = PropGet v1 key="rare"
@@ -211,7 +201,6 @@ function f15 name="smallOperation" parameters=[{type=boolean}, {type=anything}, 
 # CHECK: = PropGet v1 key="rare"
 
 function f16 name="smallOperation2" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: anything):
     Branch v0 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v3 = PropGet v1 key="rare"
@@ -223,7 +212,6 @@ function f16 name="smallOperation2" parameters=[{type=boolean}, {type=anything},
 # CHECK: = PropGet v1 key="rare"
 
 function f17 name="warmBlock" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = String string="fatal"
     v3 = CallMethod v0, v2, v2, v2, v2, v1 key="fail"
     Return v3
@@ -232,7 +220,6 @@ function f17 name="warmBlock" parameters=[{type=anything}, {type=anything}] resu
 # CHECK: = CallMethod
 
 function f18 name="coldBlockInCycle" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: anything):
     Jump -> next b1(v2)
   b1(v3):
     LoopHint
@@ -248,7 +235,6 @@ function f18 name="coldBlockInCycle" parameters=[{type=boolean}, {type=anything}
 # CHECK: = CallMethod
 
 function f19 name="differentPayload" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: anything):
     Branch v0 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v3 = String string="fatal"
@@ -261,7 +247,6 @@ function f19 name="differentPayload" parameters=[{type=boolean}, {type=anything}
 # CHECK: = CallMethod
 
 function f20 name="twoExitArguments" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: anything):
     Branch v0 -> taken b1(), notTaken b5()
   b1() frequency=Rare:
     v3 = TypeTest v1 testedType=f26
@@ -284,7 +269,6 @@ function f20 name="twoExitArguments" parameters=[{type=boolean}, {type=anything}
 # CHECK: = Call v6, -, v7
 
 function f21 name="twoExitArguments2" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: anything):
     Branch v0 -> taken b1(), notTaken b5()
   b1() frequency=Rare:
     v3 = TypeTest v1 testedType=f26
@@ -305,7 +289,6 @@ function f21 name="twoExitArguments2" parameters=[{type=boolean}, {type=anything
 # CHECK: = TypeTest
 
 function f22 name="twoExitArguments3" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: anything):
     Branch v0 -> taken b1(), notTaken b5()
   b1() frequency=Rare:
     v3 = TypeTest v1 testedType=f26
@@ -326,7 +309,6 @@ function f22 name="twoExitArguments3" parameters=[{type=boolean}, {type=anything
 # CHECK: = TypeTest
 
 function f23 name="sevenLiveIns" parameters=[{type=boolean}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: anything):
     Branch v0 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v8 = CallMethod v1, v2, v3, v4, v5, v6, v7 key="wide"
@@ -338,7 +320,6 @@ function f23 name="sevenLiveIns" parameters=[{type=boolean}, {type=anything}, {t
 # CHECK: = CallMethod
 
 function f24 name="provenLayoutLiveIn" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything, v2: anything):
     v3 = TypeTest v1 testedType=L0
     Branch v3 -> taken b1(| 0), notTaken b8()
   b1(v4):
@@ -358,7 +339,6 @@ function f24 name="provenLayoutLiveIn" parameters=[{type=number}, {type=anything
 # CHECK-NOT: = CallMethod
 
 function f25 name="onlySite" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: anything):
     Branch v0 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v3 = String string="fatal"
@@ -371,13 +351,11 @@ function f25 name="onlySite" parameters=[{type=boolean}, {type=anything}, {type=
 # CHECK: = CallMethod
 
 function f26 name="target" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 # CHECK-LABEL: function f26
 
 function f27 name="unrepeatedRegion" parameters=[{type=boolean}, {type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: boolean, v2: anything, v3: anything):
     Branch v0 -> taken b1(), notTaken b5()
   b1() frequency=Rare:
     Branch v1 -> taken b2(), notTaken b3()
@@ -400,7 +378,6 @@ function f27 name="unrepeatedRegion" parameters=[{type=boolean}, {type=boolean},
 # CHECK-NOT: CallDirect
 
 function f28 name="detailReads" parameters=[{type=number}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything, v2: anything):
     Switch v0 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), case b8(), case b9(), case b10(), otherwise b11()
 # REPEAT: i = 3..12
   b%(i-2)() frequency=Rare:
@@ -416,7 +393,6 @@ function f28 name="detailReads" parameters=[{type=number}, {type=anything}, {typ
 # CHECK-NOT: CallDirect
 
 function f29 name="scopeLookups" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
 # REPEAT: i = 1..6
   b%(i)() frequency=Rare:
@@ -433,7 +409,6 @@ function f29 name="scopeLookups" parameters=[{type=number}, {type=anything}] res
 # CHECK-NOT: CallDirect
 
 function f30 name="inlinedLookup" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f26 module=m0}] {
-  b0(v0: boolean, v1: anything):
     Branch v0 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v2 = Builtin builtin=GlobalThis
@@ -447,7 +422,6 @@ function f30 name="inlinedLookup" parameters=[{type=boolean}, {type=anything}] r
 # CHECK: = PropGet {{*}}key="settings" [isFreeName]
 
 function f31 name="differentFlags" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
 # REPEAT: i = 1..3
   b%(i)() frequency=Rare:
@@ -471,7 +445,6 @@ function f31 name="differentFlags" parameters=[{type=number}, {type=anything}] r
 # CHECK-NOT: CallDirect
 
 function f32 name="setsLength" parameters=[{type=number}, {type=Array<anything, proven>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: Array<anything, proven>, v2: anything):
     Switch v0 cases=[0, 1, 2, 3] -> case b1(), case b2(), case b3(), case b4(), otherwise b5()
 # REPEAT: i = 1..4
   b%(i)() frequency=Rare:
@@ -488,7 +461,6 @@ function f32 name="setsLength" parameters=[{type=number}, {type=Array<anything, 
 # CHECK-NOT: CallBuiltin
 
 function f33 name="sloppyFunctionSetsLength" flags=[IsSloppy] parameters=[{type=number}, {type=Array<anything, proven>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: Array<anything, proven>, v2: anything):
     Switch v0 cases=[0, 1, 2] -> case b1(), case b2(), case b3(), otherwise b4()
 # REPEAT: i = 1..3
   b%(i)() frequency=Rare:
@@ -505,7 +477,6 @@ function f33 name="sloppyFunctionSetsLength" flags=[IsSloppy] parameters=[{type=
 # CHECK-NOT: CallBuiltin
 
 function f34 name="differentExitConstants" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: anything):
     Branch v0 -> taken b1(), notTaken b5()
   b1() frequency=Rare:
     v3 = TypeTest v1 testedType=f26
@@ -528,7 +499,6 @@ function f34 name="differentExitConstants" parameters=[{type=boolean}, {type=any
 # CHECK: = TypeTest
 
 function f35 name="differentExitConstants2" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: anything):
     Branch v0 -> taken b1(), notTaken b5()
   b1() frequency=Rare:
     v3 = TypeTest v1 testedType=f26
@@ -551,7 +521,6 @@ function f35 name="differentExitConstants2" parameters=[{type=boolean}, {type=an
 # CHECK: = TypeTest
 
 function f36 name="differentExitConstants3" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: boolean, v1: anything, v2: anything):
     Branch v0 -> taken b1(), notTaken b5()
   b1() frequency=Rare:
     v3 = TypeTest v1 testedType=f26
@@ -574,7 +543,6 @@ function f36 name="differentExitConstants3" parameters=[{type=boolean}, {type=an
 # CHECK: = TypeTest
 
 function f37 name="createsError" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     Switch v0 cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), case b8(), case b9(), case b10(), otherwise b11()
 # REPEAT: i = 1..10
   b%(i)() frequency=Rare:
@@ -591,7 +559,6 @@ function f37 name="createsError" parameters=[{type=number}, {type=anything}] res
 # CHECK-NOT: CallBuiltin
 
 function f38 name="hiddenLibraryFunctionCreatesError" role=Library flags=[IsHiddenInStackTraces] enclosingRuntimeFunction=0 parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: anything):
     Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
 # REPEAT: i = 1..6
   b%(i)() frequency=Rare:
@@ -608,7 +575,6 @@ function f38 name="hiddenLibraryFunctionCreatesError" role=Library flags=[IsHidd
 # CHECK-NOT: CallDirect
 
 function f39 name="inlinedHiddenLibraryFunction" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f38 module=m0}] {
-  b0(v0: boolean, v1: anything):
     Branch v0 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v2 = String string="bad"

@@ -9,14 +9,12 @@ module m0 path="main.js" displayPath="main.js"
 function f0 name="withoutBody" parameters=[{type=number}] results=[{type=number}, {type=string}]
 
 function f1 name="returnsTuple" parameters=[{type=number}, {type=string}] results=[{type=number}, {type=string}] {
-  b0(v0: number, v1: string):
     v2 = Mul v0, v0
     v3 = Results v2, v1
     Return v3
 }
 
 function f2 name="returnsTupleOnTwoPaths" parameters=[{type=number}, {type=string}, {type=boolean}] results=[{type=number}, {type=string}] {
-  b0(v0: number, v1: string, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v3 = Mul v0, v0
@@ -29,13 +27,11 @@ function f2 name="returnsTupleOnTwoPaths" parameters=[{type=number}, {type=strin
 }
 
 function f3 name="returnsTupleOfCall" parameters=[{type=number}] results=[{type=number}, {type=string}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f0
     Return v1
 }
 
 function f4 name="readsBothResults" parameters=[{type=number}, {type=string}] results=[{type=string}] {
-  b0(v0: number, v1: string):
     v2 = CallDirect v0, v1 function=f1
     v3 = ResultAt v2 index=0
     v4 = ResultAt v2 index=1
@@ -54,7 +50,6 @@ function f4 name="readsBothResults" parameters=[{type=number}, {type=string}] re
 # CHECK-NEXT: Jump -> next [[after4]]([[product4]], v1)
 
 function f5 name="readsSecondResultOnly" parameters=[{type=number}, {type=string}] results=[{type=string}] {
-  b0(v0: number, v1: string):
     v2 = CallDirect v0, v1 function=f1
     v3 = ResultAt v2 index=1
     Return v3
@@ -70,7 +65,6 @@ function f5 name="readsSecondResultOnly" parameters=[{type=number}, {type=string
 # CHECK-NEXT: Jump -> next [[after5]]([[product5]], v1)
 
 function f6 name="passesTupleOn" parameters=[{type=number}, {type=string}] results=[{type=number}, {type=string}] {
-  b0(v0: number, v1: string):
     v2 = CallDirect v0, v1 function=f1
     Return v2
 }
@@ -85,7 +79,6 @@ function f6 name="passesTupleOn" parameters=[{type=number}, {type=string}] resul
 # CHECK-NEXT: Jump -> next [[after6]]([[product6]], v1)
 
 function f7 name="calleeHasTwoExits" parameters=[{type=number}, {type=string}, {type=boolean}] results=[{type=string}] {
-  b0(v0: number, v1: string, v2: boolean):
     v3 = CallDirect v0, v1, v2 function=f2
     v4 = ResultAt v3 index=0
     v5 = ResultAt v3 index=1
@@ -106,7 +99,6 @@ function f7 name="calleeHasTwoExits" parameters=[{type=number}, {type=string}, {
 # CHECK-NEXT: Jump -> next [[after7]](v0, [[doubled7]])
 
 function f8 name="calleePassesTupleOn" parameters=[{type=number}] results=[{type=string}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f3
     v2 = ResultAt v1 index=0
     v3 = ResultAt v1 index=1
@@ -126,7 +118,6 @@ function f8 name="calleePassesTupleOn" parameters=[{type=number}] results=[{type
 # CHECK-NEXT: Jump -> next [[after8]]([[zero8]], [[one8]])
 
 function f9 name="calleeIsNotInlined" parameters=[{type=number}] results=[{type=string}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f0
     v2 = ResultAt v1 index=0
     v3 = ResultAt v1 index=1

@@ -8,7 +8,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="loop" parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: anything, v1: anything):
     v2 = ForInOpen v0
     Jump -> next b1()
   b1():
@@ -23,8 +22,6 @@ function f0 name="loop" parameters=[{type=anything}, {type=anything}] results=[{
   b3():
     v8 = Undefined
     Return v8
-}
-# CHECK-LABEL: function f0 name="loop"
 # CHECK: v2: enumerator = ForInOpen v0
 # CHECK-NEXT: [[zero0]]: 0 = Integer
 # CHECK-NEXT: Jump -> next b1([[zero0]])
@@ -35,9 +32,9 @@ function f0 name="loop" parameters=[{type=anything}, {type=anything}] results=[{
 # CHECK-NEXT: [[one0]]: 1 = Integer integer=1
 # CHECK-NEXT: [[next0]]: {{*}} = Add [[found0]], [[one0]]
 # CHECK: Jump -> next b1([[next0]])
+}
 
 function f1 name="nested" parameters=[{type=object}, {type=object}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: object, v1: object, v2: anything):
     v3 = ForInOpen v0
     Jump -> next b1()
   b1():
@@ -61,8 +58,6 @@ function f1 name="nested" parameters=[{type=object}, {type=object}, {type=anythi
   b5():
     v14 = Undefined
     Return v14
-}
-# CHECK-LABEL: function f1 name="nested"
 # CHECK: v3: enumerator = ForInOpen v0
 # CHECK-NEXT: [[outerZero]]: 0 = Integer
 # CHECK-NEXT: Jump -> next b1([[outerZero]])
@@ -79,9 +74,9 @@ function f1 name="nested" parameters=[{type=object}, {type=object}, {type=anythi
 # CHECK: [[innerNext]]: {{*}} = Add [[innerFound]],
 # CHECK: Branch v11 -> taken b1([[outerNext]]), notTaken b4()
 # CHECK: Jump -> next b3([[innerNext]])
+}
 
 function f2 name="stepInTwoBlocks" parameters=[{type=object}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: object, v1: boolean):
     v2 = ForInOpen v0
     Jump -> next b1()
   b1():
@@ -98,8 +93,6 @@ function f2 name="stepInTwoBlocks" parameters=[{type=object}, {type=boolean}] re
   b4():
     v8 = Undefined
     Return v8
-}
-# CHECK-LABEL: function f2 name="stepInTwoBlocks"
 # CHECK: b1([[position2]]: {{*}}):
 # CHECK: = ForInStep v2, v0 position=[[position2]]
 # CHECK: [[nextOfFirst]]: {{*}} = Add
@@ -107,9 +100,9 @@ function f2 name="stepInTwoBlocks" parameters=[{type=object}, {type=boolean}] re
 # CHECK: = ForInStep v2, v0 position=[[position2]]
 # CHECK: [[nextOfSecond]]: {{*}} = Add
 # CHECK: Branch v7 -> taken b4(), notTaken b1([[nextOfSecond]])
+}
 
 function f3 name="continueInBody" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: object, v1: anything):
     v2 = ForInOpen v0
     Jump -> next b1()
   b1():
@@ -128,13 +121,12 @@ function f3 name="continueInBody" parameters=[{type=object}, {type=anything}] re
   b4():
     v10 = Undefined
     Return v10
-}
-# CHECK-LABEL: function f3 name="continueInBody"
 # CHECK: b1([[position3]]: {{*}}):
 # CHECK: = ForInStep v2, v0 position=[[position3]]
 # CHECK: [[next3]]: {{*}} = Add
 # CHECK: Branch v8 -> taken b1([[next3]]), notTaken b3()
 # CHECK: Jump -> next b1([[next3]])
+}
 
 function f4 name="underHandler" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
   b0(v0: object, v1: anything) handler=b4():
@@ -154,8 +146,6 @@ function f4 name="underHandler" parameters=[{type=object}, {type=anything}] resu
     v7 = CatchValue
     v8 = Undefined
     Return v8
-}
-# CHECK-LABEL: function f4 name="underHandler"
 # CHECK: b0(v0: object, v1: anything) handler=b4():
 # CHECK-NEXT: = ForInOpen v0
 # CHECK-NEXT: [[zero4]]: 0 = Integer
@@ -166,20 +156,18 @@ function f4 name="underHandler" parameters=[{type=object}, {type=anything}] resu
 # CHECK-NEXT: Jump -> next b1([[next4]])
 # CHECK: () handler=b4():
 # CHECK-NEXT: Jump -> next b1([[zero4]])
+}
 
 function f5 name="openWithoutStep" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     v1 = ForInOpen v0
     v2 = Undefined
     Return v2
-}
-# CHECK-LABEL: function f5 name="openWithoutStep"
 # CHECK: v1: enumerator = ForInOpen v0
 # CHECK-NEXT: v2: undefined = Undefined
 # CHECK-NEXT: Return v2
+}
 
 function f6 name="stepsWithoutLoop" parameters=[{type=object}, {type=object}] results=[{type=undefined}] {
-  b0(v0: object, v1: object):
     v2 = ForInOpen v0
     v3 = ForInOpen v1
     Jump -> next b2()
@@ -197,8 +185,6 @@ function f6 name="stepsWithoutLoop" parameters=[{type=object}, {type=object}] re
     v10 = ForInStep v3, v1
     v11 = Undefined
     Return v11
-}
-# CHECK-LABEL: function f6 name="stepsWithoutLoop"
 # CHECK: v2: enumerator = ForInOpen v0
 # CHECK-NEXT: [[firstZero]]: 0 = Integer
 # CHECK-NEXT: v3: enumerator = ForInOpen v1
@@ -210,3 +196,4 @@ function f6 name="stepsWithoutLoop" parameters=[{type=object}, {type=object}] re
 # CHECK: Branch v8 -> taken b3([[secondZero]]), notTaken b1()
 # CHECK: b3([[merged]]: {{*}}):
 # CHECK: v10{{*}} = ForInStep v3, v1 position=[[merged]]
+}

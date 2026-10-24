@@ -10,7 +10,6 @@
 #include "AOTAnalysisContext.h"
 #include "AOTCFG.h"
 #include "AOTIR.h"
-#include "AOTInsertionSet.h"
 #include "AOTValueSubstitution.h"
 #include "AOTVector.h"
 #include <initializer_list>
@@ -39,7 +38,7 @@ public:
     void setOrigin(Origin origin) { m_origin = origin; }
     Origin origin() const { return m_origin; }
 
-    void setHandler(std::optional<Target>);
+    void setHandler(std::optional<Target> handler) { m_handler = WTF::move(handler); }
     const std::optional<Target>& handler() const { return m_handler; }
     void moveToEndOf(BlockID);
     BlockID currentBlock() const { return m_block; }
@@ -47,8 +46,8 @@ public:
     BlockID addBlock(BlockFrequency = BlockFrequency::Normal);
     BlockID addHandlerBlock(BlockRole, ValueID subject, BlockFrequency = BlockFrequency::Rare);
 
-    ValueID addParameter(BlockID, TypeID);
-    void appendArgument(Edge, ValueID);
+    ValueID addParameter(BlockID block, TypeID type) { return addParameter(block, type, numberOfParametersForEdgeResults(block)); }
+    void appendArgument(Edge edge, ValueID value) { appendArgument(edge, value, numberOfParametersForEdgeResults(targetOf(m_function, edge).block)); }
     uint32_t numberOfParametersForEdgeResults(BlockID);
     ValueID addParameter(BlockID, TypeID, uint32_t numberOfParametersForEdgeResults);
     void appendArgument(Edge, ValueID, uint32_t numberOfParametersForEdgeResults);
@@ -66,7 +65,7 @@ public:
     ValueID appendTypeTest(ValueID, TypeID testedType);
     ValueID appendTypeTest(ValueID, const Type& tested);
     ValueID appendAllGuards(std::span<const ValueID> guards);
-    ValueID appendUndefined();
+    ValueID appendUndefined() { return append(make(Opcode::Undefined)); }
     ValueID appendBoolean(bool);
     ValueID appendInteger(int64_t);
     ValueID appendDouble(double);
@@ -92,14 +91,12 @@ public:
         ValueID provenOnNotTaken;
     };
     ProvenBranch emitBranchWithProof(ValueID test, uint32_t provenOperand = 0, BlockFrequency taken = BlockFrequency::Normal, BlockFrequency notTaken = BlockFrequency::Normal);
-    // Blocks that are there already, in place of new ones that only jump to them.
     struct ProvenBranchTargets {
         BlockID enteredOnlyWhenTaken;
         std::optional<Target> whenNotTaken;
     };
     ProvenBranch emitBranchWithProof(ValueID test, uint32_t provenOperand, BlockFrequency taken, BlockFrequency notTaken, ProvenBranchTargets&&);
     void appendValidationOfTestedValue(ValueID test);
-    // TestingSwitch::FailPredictions: in front of tests whose failing side is right for every value, a branch that goes there now and then without asking them.
     bool failsPredictions() const;
     void emitFailureOfPredictions(Target&& whenFailed);
     BlockID beginPrediction();
@@ -116,7 +113,7 @@ public:
     void emitTerminator(Terminator&&);
 
     BlockID splitEdge(Edge);
-    BlockID splitBlock(ProgramPoint);
+    BlockID splitBlock(ProgramPoint point) { return splitBlock(point.block, singleElementSpan(point.index)).first(); }
     Vector<BlockID> splitBlock(BlockID, std::span<const uint32_t> ascendingIndexes);
     void redirectEdge(Edge, BlockID target, Arguments&&);
     void redirectEdge(Edge, Target&&);
@@ -134,7 +131,6 @@ public:
     Expansion beginExpansion(ProgramPoint);
     Expansion beginExpansion(ProgramPoint, std::span<const ValueID> resultReads);
 
-    // For many expansions in one function, each of which would otherwise compute the use lists again.
     class DeferredResultReads {
         WTF_MAKE_NONCOPYABLE(DeferredResultReads);
     public:
@@ -149,9 +145,6 @@ public:
             ValueID producer;
             ValueID read;
         };
-
-        std::span<const Read> readsOf(ValueID producer) const LIFETIME_BOUND;
-        void replace(ValueID read, ValueID replacement);
 
         IRBuilder& m_builder;
         Vector<Read> m_reads;
@@ -173,13 +166,11 @@ private:
     Expansion cutForExpansion(ProgramPoint);
 
     Vector<Edge, 8> incomingEdgesOf(BlockID);
-    uint32_t numberOfSharedExplicitParameters(BlockID);
 
     Terminator& openTerminator();
     void closeBlock();
 
     void didChangeValues();
-    void didChangeControlFlow();
     void didAddDetachedValue(ValueID);
     void didListValues(BlockID, std::span<const ValueID>);
     void didEraseValues(BlockID, std::span<const ValueID>);
@@ -193,7 +184,11 @@ private:
     Origin m_origin;
     std::optional<Target> m_handler;
     BlockID m_block;
-    InsertionSet m_insertions;
+    struct QueuedInsertion {
+        ProgramPoint point;
+        ValueID value;
+    };
+    Vector<QueuedInsertion, 8> m_insertions;
 };
 
 } } } // namespace JSC::AOT::Typed

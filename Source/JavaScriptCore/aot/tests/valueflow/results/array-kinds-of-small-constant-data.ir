@@ -48,7 +48,6 @@ data d7 root=Array{contents=anything elements=[Object{layout=L0 members=[{key="i
 data d8 root=Object{layout=L0 members=[{key="i" value=Number{value=1}}]} module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Data data=d0
     PutModuleVariable v0 variable=g0
     v2 = PropGet v0 key="push"
@@ -77,13 +76,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="first" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer
     v2 = ElemGet v0, v1
     Return v2
 }
 function f2 name="second" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer
     v2 = ElemGet v0, v1
     Return v2

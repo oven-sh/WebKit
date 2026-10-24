@@ -9,13 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
-#include "AOTConvention.h"
 #include "AOTStronglyConnectedComponents.h"
-#include "AOTVector.h"
-#include "CallFrame.h"
-#include <algorithm>
-#include <optional>
-#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT {
 
@@ -41,7 +35,7 @@ static uint64_t frameUsageOf(const FrameDescription& frame)
     return static_cast<uint64_t>(frame.stackUsedAtCalls) + (frame.hasFrame() ? frame.frameSizeInBytes + sizeof(CallerFrameAndPC) : 0);
 }
 
-static Vector<uint32_t> computeOwnCodeEnds(const LinkedFunctions& functions, std::span<const EntryAlias> aliases, const CodeIndex& index)
+static UncheckedCalls collectUncheckedCalls(const LinkedFunctions& functions, const ResolvedCallees& callees, std::span<const EntryAlias> aliases, const CodeIndex& index, BuildContext& context)
 {
     Vector<uint32_t> ownCodeEnds(functions.size(), [&](size_t position) {
         return static_cast<uint32_t>(functions[position].body.bytes.size());
@@ -52,11 +46,6 @@ static Vector<uint32_t> computeOwnCodeEnds(const LinkedFunctions& functions, std
         if (auto position = index.indexOf(alias.body))
             ownCodeEnds[*position] = std::min(ownCodeEnds[*position], alias.start);
     }
-    return ownCodeEnds;
-}
-
-static UncheckedCalls collectUncheckedCalls(const LinkedFunctions& functions, const ResolvedCallees& callees, std::span<const uint32_t> ownCodeEnds, BuildContext& context)
-{
     UncheckedCalls calls(functions.size());
     forEachIndexInParallel(context.parallelLoops(), static_cast<unsigned>(functions.size()), [&](unsigned position) {
         for (const Relocation& relocation : functions[position].body.relocations) {
@@ -75,7 +64,7 @@ static UncheckedCalls collectUncheckedCalls(const LinkedFunctions& functions, co
     return calls;
 }
 
-static BitVector findCoveredBodies(const LinkedFunctions& functions, const UncheckedCalls& calls)
+static std::optional<uint32_t> findCycleUsingStack(const LinkedFunctions& functions, const UncheckedCalls& calls, const StronglyConnectedComponents& components)
 {
     BitVector isCovered(functions.size());
     Vector<uint32_t> worklist;
@@ -91,12 +80,6 @@ static BitVector findCoveredBodies(const LinkedFunctions& functions, const Unche
                 worklist.append(call.callee);
         }
     }
-    return isCovered;
-}
-
-static std::optional<uint32_t> findCycleUsingStack(const LinkedFunctions& functions, const UncheckedCalls& calls, const StronglyConnectedComponents& components)
-{
-    BitVector isCovered = findCoveredBodies(functions, calls);
     BitVector usesStack(components.numberOfComponents);
     for (uint32_t position = 0; position < functions.size(); ++position) {
         if (!components.isInCycle.get(position) || !isCovered.get(position))
@@ -115,7 +98,7 @@ static std::optional<uint32_t> findCycleUsingStack(const LinkedFunctions& functi
     return std::nullopt;
 }
 
-static Vector<uint32_t> sortByComponent(const StronglyConnectedComponents& components)
+static Vector<uint64_t> computeUsageByComponent(const LinkedFunctions& functions, const UncheckedCalls& calls, const StronglyConnectedComponents& components)
 {
     Vector<uint32_t> nextIndex(FillWith { }, components.numberOfComponents + 1, 0);
     for (uint32_t component : components.componentOf)
@@ -125,13 +108,9 @@ static Vector<uint32_t> sortByComponent(const StronglyConnectedComponents& compo
     Vector<uint32_t> positions(FillWith { }, components.componentOf.size(), 0);
     for (uint32_t position = 0; position < positions.size(); ++position)
         positions[nextIndex[components.componentOf[position]]++] = position;
-    return positions;
-}
 
-static Vector<uint64_t> computeUsageByComponent(const LinkedFunctions& functions, const UncheckedCalls& calls, const StronglyConnectedComponents& components)
-{
     Vector<uint64_t> usage(FillWith { }, components.numberOfComponents, 0);
-    for (uint32_t position : sortByComponent(components)) {
+    for (uint32_t position : positions) {
         uint32_t component = components.componentOf[position];
         uint64_t calleeUsage = 0;
         for (const UncheckedCall& call : calls[position]) {
@@ -146,8 +125,7 @@ static Vector<uint64_t> computeUsageByComponent(const LinkedFunctions& functions
 
 void checkUncheckedStackUsage(const LinkedFunctions& functions, const ResolvedCallees& callees, std::span<const EntryAlias> aliases, const CodeIndex& index, BuildContext& context)
 {
-    Vector<uint32_t> ownCodeEnds = computeOwnCodeEnds(functions, aliases, index);
-    UncheckedCalls calls = collectUncheckedCalls(functions, callees, ownCodeEnds.span(), context);
+    UncheckedCalls calls = collectUncheckedCalls(functions, callees, aliases, index, context);
     StronglyConnectedComponents components = Typed::computeStronglyConnectedComponents(static_cast<unsigned>(functions.size()), [&](unsigned position) -> const Vector<UncheckedCall, 0>& {
         return calls[position];
     });

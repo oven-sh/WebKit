@@ -13,7 +13,6 @@ layout L1 name="Sized" fields=[{key="size" declared={type=number}}]
 layout L2 kind=Container name="Kept" module=m0 fields=[{key="size" declared={type=6}}]
 
 function f0 name="main" kind=Module flags=[IsChecked] results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L0
     v1 = FinishObject v0
     v2 = Integer integer=6

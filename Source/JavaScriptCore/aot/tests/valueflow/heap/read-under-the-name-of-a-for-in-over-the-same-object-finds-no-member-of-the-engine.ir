@@ -17,7 +17,6 @@ layout L2 name="Above" fields=[{key="c" declared={type=anything} flags=[IsRequir
 layout L3 name="Names" fields=[{key="d" declared={type=anything} flags=[IsRequired]}]
 layout L4 name="Target" fields=[{key="e" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = ForInOpen v1
@@ -82,18 +81,14 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="first" results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="second" results=[{type=anything}] {
-  b0():
     Return
 }
 function f3 name="third" results=[{type=anything}] {
-  b0():
     Return
 }
 function f4 name="fourth" results=[{type=anything}] {
-  b0():
     Return
 }

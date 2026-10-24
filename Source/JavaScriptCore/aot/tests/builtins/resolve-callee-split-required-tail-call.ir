@@ -6,12 +6,9 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="applyWithArray" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: Array):
     v3 = PropGet v1 key="apply"
     v4 = Call v3, v1, v0, v2 calleeKey="apply"
     ReturnCall v4
-}
-# CHECK-LABEL: function f0 name="applyWithArray"
 # CHECK: v3: anything = PropGet v1 key="apply"
 # CHECK-NEXT: [[isApply0]]: boolean = TypeTest v3 testedType=builtin(FunctionPrototypeApply)
 # CHECK-NEXT: Branch [[isApply0]] -> taken [[arm0]](| 0), notTaken [[rest0]](| 0)
@@ -21,26 +18,22 @@ function f0 name="applyWithArray" flags=[HasThis] thisType={type=anything} param
 # CHECK: [[rest0]]([[other0]]: anything) frequency=Unlikely:
 # CHECK-NEXT: [[generic0]]: anything = Call [[other0]], v1, v0, v2 calleeKey="apply"
 # CHECK-NEXT: ReturnCall [[generic0]]
+}
 
 function f1 name="applyWithArgumentsObject" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=Arguments}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: Arguments):
     v3 = PropGet v1 key="apply"
     v4 = Call v3, v1, v0, v2 calleeKey="apply"
     ReturnCall v4
-}
-# CHECK-LABEL: function f1 name="applyWithArgumentsObject"
 # CHECK: = TypeTest v3 testedType=builtin(FunctionPrototypeApply)
 # CHECK: [[list1]]:{{*}}= NewArgumentList v1, v2
 # CHECK-NEXT: [[forwarded1]]: anything = CallList v1, v0, [[list1]]
 # CHECK-NEXT: ReturnCall [[forwarded1]]
+}
 
 function f2 name="callTestsItsReceiver" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = PropGet v1 key="call"
     v4 = Call v3, v1, v0, v2 calleeKey="call"
     ReturnCall v4
-}
-# CHECK-LABEL: function f2 name="callTestsItsReceiver"
 # CHECK: [[isCall2]]: boolean = TypeTest v3 testedType=builtin(FunctionPrototypeCall)
 # CHECK-NEXT: Branch [[isCall2]] -> taken [[arm2]](| 0), notTaken [[rest2]](| 0)
 # CHECK: [[arm2]]([[call2]]: builtin(FunctionPrototypeCall)):
@@ -52,37 +45,32 @@ function f2 name="callTestsItsReceiver" flags=[HasThis] thisType={type=anything}
 # CHECK: [[other2]]([[noFunction2]]:{{*}}) frequency=Unlikely:
 # CHECK-NEXT: [[throws2]]: anything = Call [[call2]], [[noFunction2]], v0, v2 calleeKey="call"
 # CHECK-NEXT: ReturnCall [[throws2]]
+}
 
 function f3 name="callOfProvenFunction" flags=[HasThis] thisType={type=anything} parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: function, v2: anything):
     v3 = PropGet v1 key="call"
     v4 = Call v3, v1, v0, v2 calleeKey="call"
     ReturnCall v4
-}
-# CHECK-LABEL: function f3 name="callOfProvenFunction"
 # CHECK: = TypeTest v3 testedType=builtin(FunctionPrototypeCall)
 # CHECK-NOT: testedType=function
 # CHECK: [[passed3]]: anything = Call v1, v0, v2
 # CHECK-NEXT: ReturnCall [[passed3]]
+}
 
 function f4 name="methodThatIsNoTailCall" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = PropGet v0 key="get"
     v3 = Call v2, v0, v1 calleeKey="get"
     ReturnCall v3
-}
-# CHECK-LABEL: function f4 name="methodThatIsNoTailCall"
 # CHECK-NEXT: b0(v0: anything, v1: anything):
 # CHECK-NEXT: v2: anything = PropGet v0 key="get"
 # CHECK-NEXT: v3: anything = Call v2, v0, v1 calleeKey="get"
 # CHECK-NEXT: ReturnCall v3
+}
 
 function f5 name="tailCallThatMayBeGivenUp" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = PropGet v0 key="get"
     v3 = Call v2, v0, v1 calleeKey="get"
     ReturnCall v3 requirement=Allowed
-}
-# CHECK-LABEL: function f5 name="tailCallThatMayBeGivenUp"
 # CHECK: = TypeTest v2 testedType=builtin(MapPrototypeGet)
 # CHECK-NOT: ReturnCall
+}

@@ -76,6 +76,7 @@ struct TextItem {
 struct BodyScan {
     unsigned numberOfBlocks { 0 };
     uint32_t numberOfValues { 0 };
+    bool leavesOutEntryHead { false };
 };
 
 struct ValueEngineFields {
@@ -130,6 +131,7 @@ public:
     uint32_t parsePropertyKeyWord();
     uint32_t parseTypeWord();
     uint32_t typeWordOfAnything();
+    uint32_t typeWordOfAnyFunction();
     Wire::Span parseByteString();
     template<typename E> E parseEnumerator();
     template<typename F> uint32_t parseFlagWord();
@@ -189,9 +191,12 @@ private:
     void scanBlockHead(Lexer&, BodyScan&);
 
     void parseItem(const TextItem&);
-    Wire::Body parseBody(const TextItem&);
-    void parseBlock(uint32_t blockIndex);
+    Wire::Body parseBody(const TextItem&, const Wire::Function&);
+    void parseBlock(uint32_t blockIndex, const Wire::Function&);
+    void parseBlockHead(uint32_t blockIndex, Wire::BlockHead&);
+    void appendEntryParameters(const Wire::Function&, Wire::BlockHead&);
     void parseBlockParameter();
+    void appendBlockParameter(ValueID, uint32_t typeWord, ValueEngineFields&&);
     void parseValue();
     void parseEngineValueFields(ValueEngineFields&);
     void parseTerminator();

@@ -7,7 +7,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
 function f0 name="badCallBeforeUse" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything):
     v2 = IsPristine v0 builtinClass=Array aspects=[Storage]
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3):
@@ -18,7 +17,6 @@ function f0 name="badCallBeforeUse" parameters=[{type=Array}, {type=anything}] r
     Return
 }
 function f1 name="goodUseBeforeCall" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything):
     v2 = IsPristine v0 builtinClass=Array aspects=[Storage]
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3):
@@ -29,7 +27,6 @@ function f1 name="goodUseBeforeCall" parameters=[{type=Array}, {type=anything}] 
     Return
 }
 function f2 name="badCallBetweenTestAndBranch" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything):
     v2 = IsPristine v0 builtinClass=Array aspects=[Storage]
     v3 = Call v1
     Branch v2 -> taken b1(| 0), notTaken b2()
@@ -40,7 +37,6 @@ function f2 name="badCallBetweenTestAndBranch" parameters=[{type=Array}, {type=a
     Return
 }
 function f3 name="badAllGuardsOfEndedGuard" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything):
     v2 = IsPristine v0 builtinClass=Array aspects=[Storage]
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3):
@@ -52,7 +48,6 @@ function f3 name="badAllGuardsOfEndedGuard" parameters=[{type=Array}, {type=anyt
     Return
 }
 function f4 name="goodAllGuards" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything):
     v2 = IsPristine v0 builtinClass=Array aspects=[Storage]
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3):
@@ -63,7 +58,6 @@ function f4 name="goodAllGuards" parameters=[{type=Array}, {type=anything}] resu
     Return
 }
 function f5 name="badCallOnOnePathToMerge" parameters=[{type=Array}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything, v2: boolean):
     v3 = IsPristine v0 builtinClass=Array aspects=[Storage]
     Branch v3 -> taken b1(| 0), notTaken b5()
   b1(v4):
@@ -80,7 +74,6 @@ function f5 name="badCallOnOnePathToMerge" parameters=[{type=Array}, {type=anyth
     Return
 }
 function f6 name="goodMergeWithoutCall" parameters=[{type=Array}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything, v2: boolean):
     v3 = IsPristine v0 builtinClass=Array aspects=[Storage]
     Branch v3 -> taken b1(| 0), notTaken b5()
   b1(v4):
@@ -96,21 +89,18 @@ function f6 name="goodMergeWithoutCall" parameters=[{type=Array}, {type=anything
     Return
 }
 function f7 name="badAllocationPassedToCall" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray v0 contents=anything
     v2 = Call v0, -, v1
     v3 = GetArrayLength v1, v1
     Return v3
 }
 function f8 name="goodAllocationUnknownToCall" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray v0 contents=anything
     v2 = Call v0
     v3 = GetArrayLength v1, v1
     Return v3
 }
 function f9 name="badCallLaterInLoop" parameters=[{type=Array}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array, v1: anything, v2: boolean):
     v3 = IsPristine v0 builtinClass=Array aspects=[Storage]
     Branch v3 -> taken b1(| 0), notTaken b3()
   b1(v4):
@@ -124,7 +114,6 @@ function f9 name="badCallLaterInLoop" parameters=[{type=Array}, {type=anything},
     Return
 }
 function f10 name="goodLoopWithoutCall" parameters=[{type=Array}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array, v1: anything, v2: boolean):
     v3 = IsPristine v0 builtinClass=Array aspects=[Storage]
     Branch v3 -> taken b1(| 0), notTaken b3()
   b1(v4):
@@ -137,7 +126,6 @@ function f10 name="goodLoopWithoutCall" parameters=[{type=Array}, {type=anything
     Return
 }
 function f11 name="badUseInHandlerOfCall" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything):
     v2 = IsPristine v0 builtinClass=Array aspects=[Storage]
     Branch v2 -> taken b1(| 0), notTaken b3()
   b1(v3) handler=b2():
@@ -151,7 +139,6 @@ function f11 name="badUseInHandlerOfCall" parameters=[{type=Array}, {type=anythi
     Return
 }
 function f12 name="badStoreMayAddName" parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything):
     v2 = IsPristine v0 builtinClass=Array aspects=[Storage]
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3):
@@ -162,7 +149,6 @@ function f12 name="badStoreMayAddName" parameters=[{type=Array}, {type=anything}
     Return
 }
 function f13 name="goodStoreToElement" parameters=[{type=Array}, {type=anything}, {type=int[0, 9]}] results=[{type=anything}] {
-  b0(v0: Array, v1: anything, v2: int[0, 9]):
     v3 = IsPristine v0 builtinClass=Array aspects=[Storage]
     Branch v3 -> taken b1(| 0), notTaken b2()
   b1(v4):
@@ -173,7 +159,6 @@ function f13 name="goodStoreToElement" parameters=[{type=Array}, {type=anything}
     Return
 }
 function f14 name="goodTestInBlockBeforeBranch" parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: Array):
     v1 = IsPristine v0 builtinClass=Array aspects=[Storage]
     Jump -> next b1()
   b1():
@@ -185,7 +170,6 @@ function f14 name="goodTestInBlockBeforeBranch" parameters=[{type=Array}] result
     Return
 }
 function f15 name="goodShapeOutlastsTheCall" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
     v2 = ShapeTest v0 layouts=[L0]
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3):

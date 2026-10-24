@@ -8,21 +8,13 @@
 #if ENABLE(AOT)
 
 #include "AOTLayoutData.h"
-#include "PropertyOffset.h"
-#include "StructureID.h"
 
 namespace JSC {
 
-class JSCell;
 class JSCellButterfly;
-class JSObject;
-class Structure;
-class Symbol;
 class VM;
 
 namespace AOT {
-
-struct State;
 
 class ClassToken {
 public:
@@ -47,25 +39,7 @@ public:
     static constexpr unsigned recordsProbedByCompiledCode = 2;
     static constexpr unsigned slotOfRecord(uint32_t field, unsigned record) { return (field * recordsPerField + record) * slotsPerRecord; }
 
-    struct KnownLocation {
-        PropertyOffset value { invalidOffset };
-        std::optional<PropertyOffset> brand;
-    };
-    // The offset of the value, if a record for the object's Structure says that the object has the name and belongs to this evaluation.
-    static std::optional<PropertyOffset> findInKnownStructure(JSCell* token, uint32_t field, JSObject*);
-    static void makeRoomForKnownStructures(VM&, State&, JSCell* token);
-    static void addKnownStructure(VM&, JSCell* token, uint32_t field, Structure*, const KnownLocation&);
-    // An object that is no compiled object has the properties that its Structure lists, unless that is a dictionary: a Structure that lacks a name lacks it for ever. The token keeps the Structure, so its number is given to no other.
-    static bool isKnownToLackName(JSCell* token, uint32_t field, JSObject*);
-    static void rememberStructureWithoutName(VM&, JSCell* token, uint32_t field, Structure*);
-
     static JSCellButterfly* create(VM&, const LayoutData& classLayout);
-    static uint32_t classIndexOf(JSCell* token);
-    static const LayoutData& classLayoutOf(State&, JSCell* token);
-    // Null for a class that declares no brand of its own. A brand that the layout inherits from a base class does not count.
-    static const FieldData* brandOf(State&, const LayoutData& classLayout, JSCell* token);
-    static Symbol* privateNameOf(VM&, State&, JSCell* token, uint32_t field);
-    static Symbol* privateNameIfCreated(JSCell* token, uint32_t field);
 };
 
 } } // namespace JSC::AOT

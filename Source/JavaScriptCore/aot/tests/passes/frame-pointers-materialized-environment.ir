@@ -7,7 +7,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Environment name="scope" fields=[{key="callback" declared={type=anything}}]
 
 function f0 name="copiesFrameEnvironment" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f4 storage=Frame
     v1 = NewObject -, v0 layout=L0 fields=[0] storage=Frame
     v2 = MaterializeEnvironment v1 layout=L0
@@ -16,7 +15,6 @@ function f0 name="copiesFrameEnvironment" results=[{type=anything}] {
 }
 
 function f1 name="copiesMergedFrameEnvironment" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = NewObject -, v0 layout=L0 fields=[0] storage=Frame
@@ -31,7 +29,6 @@ function f1 name="copiesMergedFrameEnvironment" parameters=[{type=anything}, {ty
 }
 
 function f2 name="copiesLateEnvironmentBesideFrameEnvironment" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f4 storage=Frame
     v2 = NewObject -, v1 layout=L0 fields=[0] storage=Frame
     v3 = NewObject -, v0 layout=L0 fields=[0] storage=FrameUntilMaterialized
@@ -47,6 +44,5 @@ function f3 name="readsCallback" kind=Arrow captures=[{type=env L0}] results=[{t
 }
 
 function f4 name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }

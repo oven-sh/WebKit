@@ -52,81 +52,14 @@ static constexpr uint32_t classTokenLengthBits = (1u << 17) - 1;
 static_assert(ClassToken::firstNameSlot + std::numeric_limits<decltype(LayoutData::numberOfFields)>::max() <= classTokenLengthBits);
 static_assert(!canPassShapeTest(classTokenLengthBits) && !mayBeUpperHalfOfSlimClosureWord(classTokenLengthBits));
 
-#define FOR_EACH_JS_TYPE_WITH_BUTTERFLY(macro) \
-    macro(ObjectType) \
-    macro(FinalObjectType) \
-    macro(JSCalleeType) \
-    macro(JSFunctionType) \
-    macro(CompiledClosureType) \
-    macro(InternalFunctionType) \
-    macro(NullSetterFunctionType) \
-    macro(BooleanObjectType) \
-    macro(NumberObjectType) \
-    macro(ErrorInstanceType) \
-    macro(GlobalProxyType) \
-    macro(DirectArgumentsType) \
-    macro(ScopedArgumentsType) \
-    macro(ClonedArgumentsType) \
-    macro(ArrayType) \
-    macro(DerivedArrayType) \
-    macro(ArrayBufferType) \
-    macro(Int8ArrayType) \
-    macro(Uint8ArrayType) \
-    macro(Uint8ClampedArrayType) \
-    macro(Int16ArrayType) \
-    macro(Uint16ArrayType) \
-    macro(Int32ArrayType) \
-    macro(Uint32ArrayType) \
-    macro(Float16ArrayType) \
-    macro(Float32ArrayType) \
-    macro(Float64ArrayType) \
-    macro(BigInt64ArrayType) \
-    macro(BigUint64ArrayType) \
-    macro(DataViewType) \
-    macro(GlobalObjectType) \
-    macro(GlobalLexicalEnvironmentType) \
-    macro(LexicalEnvironmentType) \
-    macro(ModuleEnvironmentType) \
-    macro(StrictEvalActivationType) \
-    macro(WithScopeType) \
-    macro(AsyncDisposableStackType) \
-    macro(DisposableStackType) \
-    macro(ModuleNamespaceObjectType) \
-    macro(ShadowRealmType) \
-    macro(RegExpObjectType) \
-    macro(JSDateType) \
-    macro(ProxyObjectType) \
-    macro(JSGeneratorType) \
-    macro(JSAsyncFunctionGeneratorType) \
-    macro(JSAsyncGeneratorType) \
-    macro(JSArrayIteratorType) \
-    macro(JSIteratorType) \
-    macro(JSIteratorHelperType) \
-    macro(JSMapIteratorType) \
-    macro(JSSetIteratorType) \
-    macro(JSStringIteratorType) \
-    macro(JSWrapForValidIteratorType) \
-    macro(JSRegExpStringIteratorType) \
-    macro(JSAsyncFromSyncIteratorType) \
-    macro(JSPromiseType) \
-    macro(JSMapType) \
-    macro(JSSetType) \
-    macro(JSWeakMapType) \
-    macro(JSWeakSetType) \
-    macro(WebAssemblyModuleType) \
-    macro(WebAssemblyInstanceType) \
-    macro(SlimClosureWithPropertiesType) \
-    macro(StringObjectType) \
-    macro(DerivedStringObjectType) \
-    macro(InternalFieldTupleType) \
-
-#define AOT_CHECK_BUTTERFLY_FIELD(type) static_assert(hasButterflyField(type));
-FOR_EACH_JS_TYPE_WITH_BUTTERFLY(AOT_CHECK_BUTTERFLY_FIELD)
-#undef AOT_CHECK_BUTTERFLY_FIELD
+static_assert(LastJSCObjectType - ObjectType + 1 == 69);
 static_assert(!hasButterflyField(WebAssemblyGCObjectType) && !hasButterflyField(CompiledObjectType) && !hasButterflyField(SlimClosureType));
 
 static constexpr WordAtShapeOffset wordAtShapeOffset(JSType type)
 {
+    static_assert(JSObject::butterflyOffset() == 8);
+    if (hasButterflyField(type))
+        return WordAtShapeOffset::UpperHalfOfPointer;
     switch (type) {
     case StringType:
         static_assert(JSString::offsetOfValue() == 8);
@@ -169,12 +102,6 @@ static constexpr WordAtShapeOffset wordAtShapeOffset(JSType type)
     case SlimClosureType:
         static_assert(offsetOfSlimClosureWord == 8);
         return WordAtShapeOffset::UpperHalfOfClosureWord;
-#define AOT_CASE(type) case type:
-    FOR_EACH_JS_TYPE_WITH_BUTTERFLY(AOT_CASE)
-#undef AOT_CASE
-    case MaxJSType:
-        static_assert(JSObject::butterflyOffset() == 8);
-        return WordAtShapeOffset::UpperHalfOfPointer;
     case CellType:
     case StructureType:
     case APIValueWrapperType:
@@ -199,11 +126,10 @@ static constexpr WordAtShapeOffset wordAtShapeOffset(JSType type)
     case JSModuleLoaderType:
     case CompiledEnvironmentType:
         return WordAtShapeOffset::NotAValue;
+    default:
+        return WordAtShapeOffset::Unlisted;
     }
-    return WordAtShapeOffset::Unlisted;
 }
-
-#undef FOR_EACH_JS_TYPE_WITH_BUTTERFLY
 
 #define AOT_CHECK_JS_TYPE(type, speculatedType) static_assert(wordAtShapeOffset(type) != WordAtShapeOffset::Unlisted, #type " needs a line in AOTCellFormat.cpp");
 FOR_EACH_JS_TYPE(AOT_CHECK_JS_TYPE)

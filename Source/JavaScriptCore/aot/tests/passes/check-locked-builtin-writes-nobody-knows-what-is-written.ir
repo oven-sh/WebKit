@@ -10,7 +10,6 @@ entry module=m0
 layout L0 name="Plain" fields=[{key="x" declared={type=anything}}]
 layout L1 name="Descriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="given" [isFreeName] @10
     v2 = Builtin builtin=ObjectPrototype

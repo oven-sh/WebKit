@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="twoBoundedReads" parameters=[{type=string}, {type=int[0, 100]}] results=[{type=int}] {
-  b0(v0: string, v1: int[0, 100]):
     v2 = GetStringLength v0
     v3 = Less v1, v2
     Branch v3 -> taken b1(), notTaken b2()
@@ -25,17 +24,15 @@ function f0 name="twoBoundedReads" parameters=[{type=string}, {type=int[0, 100]}
   b5() frequency=Unlikely:
     v10 = Integer integer=0
     Return v10
-}
-# CHECK-LABEL: function f0 name="twoBoundedReads"
 # CHECK: [[flat0]]: flatstring = FlattenString v0
 # CHECK-NEXT: v2: int[0, 2147483647] = GetStringLength [[flat0]]
 # CHECK-NOT: FlattenString
 # CHECK: v4: int[0, 65535] = GetStringCodeUnit [[flat0]], v1
 # CHECK: v7: int[0, 2147483647] = GetStringLength [[flat0]]
 # CHECK: v9: int[0, 65535] = GetStringCodeUnit [[flat0]], v6
+}
 
 function f1 name="oneBoundedRead" parameters=[{type=string}, {type=int[0, 100]}] results=[{type=int}] {
-  b0(v0: string, v1: int[0, 100]):
     v2 = GetStringLength v0
     v3 = Less v1, v2
     Branch v3 -> taken b1(), notTaken b2()
@@ -45,14 +42,12 @@ function f1 name="oneBoundedRead" parameters=[{type=string}, {type=int[0, 100]}]
   b2() frequency=Unlikely:
     v5 = Integer integer=0
     Return v5
-}
-# CHECK-LABEL: function f1 name="oneBoundedRead"
 # CHECK-NOT: FlattenString
 # CHECK: = GetStringLength v0
 # CHECK: = GetStringCodeUnit v0, v1
+}
 
 function f2 name="readsInRarerBlocks" parameters=[{type=string}, {type=int[0, 100]}] results=[{type=int}] {
-  b0(v0: string, v1: int[0, 100]):
     v2 = GetStringLength v0
     v3 = Less v1, v2
     Branch v3 -> taken b1(), notTaken b2()
@@ -72,15 +67,13 @@ function f2 name="readsInRarerBlocks" parameters=[{type=string}, {type=int[0, 10
   b5():
     v10 = Integer integer=0
     Return v10
-}
-# CHECK-LABEL: function f2 name="readsInRarerBlocks"
 # CHECK-NOT: FlattenString
 # CHECK: = GetStringCodeUnit v0, v1
 # CHECK-NOT: FlattenString
 # CHECK: = GetStringCodeUnit v0, v6
+}
 
 function f3 name="readBehindSecondTest" parameters=[{type=string}, {type=int[0, 100]}, {type=boolean}] results=[{type=int}] {
-  b0(v0: string, v1: int[0, 100], v2: boolean):
     v3 = GetStringLength v0
     v4 = Less v1, v3
     Branch v4 -> taken b1(), notTaken b3()
@@ -94,16 +87,14 @@ function f3 name="readBehindSecondTest" parameters=[{type=string}, {type=int[0, 
   b3():
     v8 = Integer integer=0
     Return v8
-}
-# CHECK-LABEL: function f3 name="readBehindSecondTest"
 # CHECK: = GetStringLength v0
 # CHECK: b2():
 # CHECK-NEXT: [[flat3]]: flatstring = FlattenString v0
 # CHECK-NEXT: = GetStringCodeUnit [[flat3]], v1
 # CHECK-NEXT: = GetStringCodeUnit [[flat3]], v1
+}
 
 function f4 name="readsUnderAnotherHandler" parameters=[{type=string}, {type=int[0, 100]}] results=[{type=int}] {
-  b0(v0: string, v1: int[0, 100]):
     v2 = GetStringLength v0
     v3 = Less v1, v2
     Branch v3 -> taken b1(), notTaken b2()
@@ -119,9 +110,8 @@ function f4 name="readsUnderAnotherHandler" parameters=[{type=string}, {type=int
     v8 = CatchValue
     v9 = Integer integer=1
     Return v9
-}
-# CHECK-LABEL: function f4 name="readsUnderAnotherHandler"
 # CHECK: = GetStringLength v0
 # CHECK: b1() {{*}}handler=b3():
 # CHECK-NEXT: [[flat4]]: flatstring = FlattenString v0
 # CHECK-NEXT: = GetStringCodeUnit [[flat4]], v1
+}

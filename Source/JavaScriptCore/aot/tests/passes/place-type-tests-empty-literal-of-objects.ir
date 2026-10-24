@@ -9,56 +9,46 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Shape" fields=[{key="a" declared={type=number}}]
 
 function f0 name="objects" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = NewArray contents=L0
     v2 = Integer
     ElemSet v1, v2, v0 mode=Strict
     Return v1
-}
-# CHECK-LABEL: function f0 name="objects"
 # CHECK-NOT: HasArrayStorage
 # CHECK: PutArrayElement v1, v2, v0, {{*}} arrayStorage=Contiguous
 # CHECK-NOT: ElemSet
+}
 
 function f1 name="strings" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = NewArray contents=undefined|string
     v2 = Integer
     ElemSet v1, v2, v0 mode=Strict
     Return v1
-}
-# CHECK-LABEL: function f1 name="strings"
 # CHECK-NOT: HasArrayStorage
 # CHECK: PutArrayElement v1, v2, v0, {{*}} arrayStorage=Contiguous
 # CHECK-NOT: ElemSet
+}
 
 function f2 name="numbers" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewArray contents=number
     v2 = Integer
     ElemSet v1, v2, v0 mode=Strict
     Return v1
-}
-# CHECK-LABEL: function f2 name="numbers"
 # CHECK: = HasArrayStorage v1 arrayStorage=Double
+}
 
 function f3 name="nothingDeclared" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = NewArray contents=anything
     v2 = Integer
     ElemSet v1, v2, v0 mode=Strict
     Return v1
-}
-# CHECK-LABEL: function f3 name="nothingDeclared"
 # CHECK: PutArrayElement v1, v2, v0, v1 level=Expected
+}
 
 function f4 name="nothingDeclaredWithCapacity" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = Integer integer=4
     v2 = NewArray contents=anything capacity=v1
     v3 = Integer
     ElemSet v2, v3, v0 mode=Strict
     Return v2
-}
-# CHECK-LABEL: function f4 name="nothingDeclaredWithCapacity"
 # CHECK: PutArrayElement v2, v3, v0, v2 level=Expected
+}

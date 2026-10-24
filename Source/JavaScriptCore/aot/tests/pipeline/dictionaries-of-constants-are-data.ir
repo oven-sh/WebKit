@@ -7,7 +7,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewDictionary
@@ -54,7 +53,6 @@ function f0 module=m0 kind=Module results=[{type=anything}] {
 # CHECK-NEXT: PropDefine {{*}} key="names"
 
 function f1 name="again" module=m0 results=[{type=anything}] {
-  b0():
     v0 = NewDictionary
     v1 = Integer integer=1
     PropDefine v0, v1 key="x"

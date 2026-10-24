@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="add" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Add v0, v1
     Return v2
 }
@@ -14,7 +13,6 @@ function f0 name="add" parameters=[{type=anything}, {type=anything}] results=[{t
 # CHECK: v2: number|string|bigint = Add v0, v1
 
 function f1 name="addsIntegers" parameters=[{type=int[0, 9]}, {type=int[0, 9]}] results=[{type=anything}] {
-  b0(v0: int[0, 9], v1: int[0, 9]):
     v2 = CallDirect v0, v1 function=f0
     v3 = Add v2, v2
     Return v3
@@ -28,7 +26,6 @@ function f1 name="addsIntegers" parameters=[{type=int[0, 9]}, {type=int[0, 9]}] 
 # CHECK-NEXT: Jump -> next {{*}}([[sum1]])
 
 function f2 name="addsStrings" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
-  b0(v0: string, v1: string):
     v2 = CallDirect v0, v1 function=f0
     v3 = Add v2, v2
     Return v3
@@ -42,7 +39,6 @@ function f2 name="addsStrings" parameters=[{type=string}, {type=string}] results
 # CHECK-NEXT: Jump -> next {{*}}([[sum2]])
 
 function f3 name="addsIntegerToUnknown" parameters=[{type=int[0, 9]}, {type=anything}] results=[{type=anything}] {
-  b0(v0: int[0, 9], v1: anything):
     v2 = CallDirect v0, v1 function=f0
     v3 = Add v2, v2
     Return v3
@@ -56,7 +52,6 @@ function f3 name="addsIntegerToUnknown" parameters=[{type=int[0, 9]}, {type=anyt
 # CHECK-NEXT: Jump -> next {{*}}([[sum3]])
 
 function f4 name="addsUnknowns" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = CallDirect v0, v1 function=f0
     v3 = Add v2, v2
     Return v3

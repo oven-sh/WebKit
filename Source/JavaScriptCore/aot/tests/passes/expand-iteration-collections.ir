@@ -10,7 +10,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="map" parameters=[{type=Map<string, number, pristine[Names]>}] results=[{type=anything}] {
-  b0(v0: Map<string, number, pristine[Names]>):
     v1 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -58,7 +57,6 @@ function f0 name="map" parameters=[{type=Map<string, number, pristine[Names]>}] 
 # SUNK-LABEL: function f0 name="map"
 
 function f1 name="set" parameters=[{type=Set<number, pristine[Names]>}] results=[{type=anything}] {
-  b0(v0: Set<number, pristine[Names]>):
     v1 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -94,7 +92,6 @@ function f1 name="set" parameters=[{type=Set<number, pristine[Names]>}] results=
 # SUNK-LABEL: function f1 name="set"
 
 function f2 name="mapWithPattern" parameters=[{type=Map<string, number, pristine[Names]>}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: Map<string, number, pristine[Names]>, v1: anything):
     v2 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -155,7 +152,6 @@ function f2 name="mapWithPattern" parameters=[{type=Map<string, number, pristine
 # SUNK-NOT: [isNeverInlined]
 
 function f3 name="weakSet" parameters=[{type=WeakSet}] results=[{type=anything}] {
-  b0(v0: WeakSet):
     v1 = IteratorOpen v0
     Jump -> next b1()
   b1():

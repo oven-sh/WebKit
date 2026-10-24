@@ -14,7 +14,6 @@ layout L1 kind=Instance name="Other" constructor=f3
 variable g0 name="Other" module=m0 declared={type=anything|absent} initialization=Uninitialized
 variable g1 name="kept" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f3
     v1 = NewClass v0 layout=L1
     v2 = FinishClass v1 layout=L1
@@ -39,25 +38,21 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="List" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0 homeKind=Object
     v3 = SuperConstruct v2, v1 layout=L0
     Return v3
 }
 function f2 name="species" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g0
     v2 = CheckInitialized v1 name="Other"
     Return v2
 }
 function f3 name="Other" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = GetConstructPrototype v0 layout=L1
     v3 = NewObject v2 layout=L1
     PutModuleVariable v3 variable=g1
     Return v3
 }
 function f4 name="element" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }

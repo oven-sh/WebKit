@@ -6,7 +6,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
 
 function f0 name="nothingInLoopEndsIt" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     v2 = HasNoExtraProperties v0
     Branch v2 -> taken b1(| 0), notTaken b5()
   b1(v3):
@@ -37,7 +36,6 @@ function f0 name="nothingInLoopEndsIt" parameters=[{type=L0}, {type=anything}] r
 # CHECK-NEXT: b5:0 available: []
 
 function f1 name="lastBlockOfLoopEndsIt" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     v2 = HasNoExtraProperties v0
     Branch v2 -> taken b1(| 0), notTaken b5()
   b1(v3):
@@ -68,7 +66,6 @@ function f1 name="lastBlockOfLoopEndsIt" parameters=[{type=L0}, {type=anything}]
 # CHECK-NEXT: b5:0 available: []
 
 function f2 name="carriedAroundLoopAndEnded" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     v2 = HasNoExtraProperties v0
     Branch v2 -> taken b1(| 0), notTaken b3()
   b1(v3):
@@ -90,7 +87,6 @@ function f2 name="carriedAroundLoopAndEnded" parameters=[{type=L0}, {type=anythi
 # CHECK-NEXT: b2:0 available: []
 
 function f3 name="carriedAroundLoopAndKept" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     v2 = HasNoExtraProperties v0
     Branch v2 -> taken b1(| 0), notTaken b3()
   b1(v3):
@@ -112,7 +108,6 @@ function f3 name="carriedAroundLoopAndKept" parameters=[{type=L0}, {type=anythin
 # CHECK-NEXT: b2:0 available: [v3]
 
 function f4 name="shapeTestOutlastsUnknownCodeInLoop" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
     v2 = ShapeTest v0 layouts=[L0]
     Branch v2 -> taken b1(| 0), notTaken b5()
   b1(v3):

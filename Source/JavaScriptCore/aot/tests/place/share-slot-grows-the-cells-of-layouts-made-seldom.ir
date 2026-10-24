@@ -7,43 +7,6 @@
 # STATISTIC: SharedSlots = 3
 # STATISTIC: SharesRefused = 0
 
-module m0 path="main.js" displayPath="main.js" body=f0
-entry module=m0
-layout L0 name="HoldsXZ" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="z" declared={type=number} flags=[IsRequired]}]
-layout L1 name="HoldsXY" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
-layout L2 name="HoldsYZ" fields=[{key="y" declared={type=number} flags=[IsRequired]}, {key="z" declared={type=number} flags=[IsRequired]}]
-variable g0 name="holdsX" module=m0 declared={type=anything} initialization=Undefined
-variable g1 name="holdsY" module=m0 declared={type=anything} initialization=Undefined
-variable g2 name="holdsZ" module=m0 declared={type=anything} initialization=Undefined
-
-function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="input" [isFreeName]
-    v2 = ToNumber v1
-    v3 = NewObject -, v2, v2 layout=L0 fields=[0, 1]
-    v4 = FinishObject v3
-    v5 = NewObject -, v2, v2 layout=L1 fields=[0, 1]
-    v6 = FinishObject v5
-    v7 = NewObject -, v2, v2 layout=L2 fields=[0, 1]
-    v8 = FinishObject v7
-    PutModuleVariable v4 variable=g0
-    PutModuleVariable v6 variable=g0
-    PutModuleVariable v6 variable=g1
-    PutModuleVariable v8 variable=g1
-    PutModuleVariable v4 variable=g2
-    PutModuleVariable v8 variable=g2
-    v15 = GetModuleVariable variable=g0
-    v16 = PropGet v15 key="x"
-    v17 = PropGet v15 key="x"
-    v18 = PropGet v15 key="x"
-    v19 = GetModuleVariable variable=g1
-    v20 = PropGet v19 key="y"
-    v21 = PropGet v19 key="y"
-    v22 = GetModuleVariable variable=g2
-    v23 = PropGet v22 key="z"
-    Return
-}
 # CHECK: L0 CompiledObject size=48
 # CHECK: L1 CompiledObject size=32
 # CHECK: L2 CompiledObject size=48
@@ -55,3 +18,4 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK-NEXT: one location Double @32
 
 # PLACED: "z" [L0, L2] read EveryMember Double @32 withField=[L0, L2]
+# PROGRAM-OF: share-slot-without-room.ir

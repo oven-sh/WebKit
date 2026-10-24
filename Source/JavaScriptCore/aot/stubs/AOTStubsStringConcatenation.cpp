@@ -102,8 +102,7 @@ void makeRopeOfTwoValuesAndReturn(StubAssembler& jit, GPRReg first, GPRReg secon
     jit.and32(registers.scratch, registers.flags);
     slow.append(jit.branchAdd32(CCallHelpers::Overflow, lengthOfSecond, registers.length));
     AssemblyHelpers::FreeListRefill refill = allocateAndFillRope(jit, registers, slow);
-    jit.move(registers.rope, result);
-    jit.returnToCaller();
+    returnResult(jit, registers.rope);
 
     firstIsEmpty.link(&jit);
     jit.move(second, result);
@@ -127,7 +126,6 @@ StubSignature signatureOfConcatenate(StubKey key)
 
 void generateConcatenate(StubAssembler& jit)
 {
-    const GPRReg result = jit.result();
     const RopeRegisters registers {
         .first = jit.operand(0),
         .second = jit.operand(1),
@@ -136,7 +134,7 @@ void generateConcatenate(StubAssembler& jit)
 #if CPU(ARM64)
         .length = jit.allocateScratch(StubRegister::T14),
         .scratch = jit.allocateScratch(StubRegister::T15),
-        .rope = result,
+        .rope = jit.result(),
 #else
         .length = jit.allocateScratch(StubRegister::T10),
         .scratch = jit.allocateScratch(StubRegister::T11),
@@ -148,59 +146,47 @@ void generateConcatenate(StubAssembler& jit)
     const GPRReg lengthOfNext = rope;
     static_assert(gprOf(StubRegister::A3) == operationArgumentGPR(3));
     JumpList slow;
-    Jump thirdIsEmpty;
-    loadFlagsAndLength(jit, first, flags, length);
-    Jump firstIsEmpty = jit.branchTest32(CCallHelpers::Zero, length);
-    loadFlagsAndLength(jit, second, scratch, lengthOfNext);
-    Jump secondIsEmpty = jit.branchTest32(CCallHelpers::Zero, lengthOfNext);
-    jit.and32(scratch, flags);
-    slow.append(jit.branchAdd32(CCallHelpers::Overflow, lengthOfNext, length));
-    if (third) {
-        loadFlagsAndLength(jit, *third, scratch, lengthOfNext);
-        thirdIsEmpty = jit.branchTest32(CCallHelpers::Zero, lengthOfNext);
+    Vector<AssemblyHelpers::FreeListRefill, 4> refills;
+    // Returns the jump that an empty string takes.
+    auto addLengthOf = [&](GPRReg string) {
+        loadFlagsAndLength(jit, string, scratch, lengthOfNext);
+        Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, lengthOfNext);
         jit.and32(scratch, flags);
         slow.append(jit.branchAdd32(CCallHelpers::Overflow, lengthOfNext, length));
-    }
-    Vector<AssemblyHelpers::FreeListRefill, 4> refills;
-    refills.append(allocateAndFillRope(jit, registers, slow));
-    jit.move(rope, result);
-    jit.returnToCaller();
-
+        return isEmpty;
+    };
+    auto joinTwoAndReturn = [&](GPRReg former, GPRReg latter) {
+        RopeRegisters both = registers;
+        both.first = former;
+        both.second = latter;
+        both.third = std::nullopt;
+        loadFlagsAndLength(jit, former, flags, length);
+        Jump formerIsEmpty = jit.branchTest32(CCallHelpers::Zero, length);
+        Jump latterIsEmpty = addLengthOf(latter);
+        refills.append(allocateAndFillRope(jit, both, slow));
+        returnResult(jit, rope);
+        formerIsEmpty.link(&jit);
+        returnResult(jit, latter);
+        latterIsEmpty.link(&jit);
+        returnResult(jit, former);
+    };
     if (third) {
+        loadFlagsAndLength(jit, first, flags, length);
+        Jump firstIsEmpty = jit.branchTest32(CCallHelpers::Zero, length);
+        Jump secondIsEmpty = addLengthOf(second);
+        Jump thirdIsEmpty = addLengthOf(*third);
+        refills.append(allocateAndFillRope(jit, registers, slow));
+        returnResult(jit, rope);
+
         // An empty string is no part of a rope: whoever reads the text of `path + "" + ""` would copy the path into a buffer of its own.
-        auto joinOthers = [&](Jump isEmpty, GPRReg former, GPRReg latter) {
-            isEmpty.link(&jit);
-            RopeRegisters others = registers;
-            others.first = former;
-            others.second = latter;
-            others.third = std::nullopt;
-            loadFlagsAndLength(jit, former, flags, length);
-            Jump formerIsEmpty = jit.branchTest32(CCallHelpers::Zero, length);
-            loadFlagsAndLength(jit, latter, scratch, lengthOfNext);
-            Jump latterIsEmpty = jit.branchTest32(CCallHelpers::Zero, lengthOfNext);
-            jit.and32(scratch, flags);
-            slow.append(jit.branchAdd32(CCallHelpers::Overflow, lengthOfNext, length));
-            refills.append(allocateAndFillRope(jit, others, slow));
-            jit.move(rope, result);
-            jit.returnToCaller();
-            formerIsEmpty.link(&jit);
-            jit.move(latter, result);
-            jit.returnToCaller();
-            latterIsEmpty.link(&jit);
-            jit.move(former, result);
-            jit.returnToCaller();
-        };
-        joinOthers(firstIsEmpty, second, *third);
-        joinOthers(secondIsEmpty, first, *third);
-        joinOthers(thirdIsEmpty, first, second);
-    } else {
         firstIsEmpty.link(&jit);
-        jit.move(second, result);
-        jit.returnToCaller();
+        joinTwoAndReturn(second, *third);
         secondIsEmpty.link(&jit);
-        jit.move(first, result);
-        jit.returnToCaller();
-    }
+        joinTwoAndReturn(first, *third);
+        thirdIsEmpty.link(&jit);
+        joinTwoAndReturn(first, second);
+    } else
+        joinTwoAndReturn(first, second);
 
     for (AssemblyHelpers::FreeListRefill& refill : refills)
         emitLateRefill(jit, refill, slow);

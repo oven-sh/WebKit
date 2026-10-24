@@ -5,7 +5,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Made" fields=[{key="value" declared={type=anything}}]
 function f0 name="badTestInFrontOfTheSwitchBesideManyFlags" parameters=[{type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=L0}] results=[{type=anything}] {
-  b0(v0: boolean, v1: boolean, v2: boolean, v3: boolean, v4: boolean, v5: boolean, v6: boolean, v7: boolean, v8: boolean, v9: boolean, v10: boolean, v11: boolean, v12: boolean, v13: boolean, v14: boolean, v15: boolean, v16: boolean, v17: boolean, v18: boolean, v19: L0):
     Branch v0 -> taken b1(), notTaken b6()
   b1():
     Branch v1 -> taken b2(), notTaken b3()

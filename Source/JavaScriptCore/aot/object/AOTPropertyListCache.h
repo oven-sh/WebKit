@@ -33,7 +33,6 @@ struct CachedPropertyList {
     uint32_t orderAndCount { 0 };
     JSCellButterfly* keys { nullptr };
     Vector<PropertyListEntry> properties;
-    // Of the objects whose Structure the enumerator names, below the prototypes of the chain.
     JSPropertyNameEnumerator* enumerator { nullptr };
     StructureChain* prototypeChain { nullptr };
 };
@@ -42,7 +41,6 @@ class PropertyListCache {
     WTF_MAKE_NONCOPYABLE(PropertyListCache);
 public:
     explicit PropertyListCache(State&);
-    ~PropertyListCache();
 
     static constexpr unsigned numberOfEntries = 256;
 

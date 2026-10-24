@@ -13,8 +13,6 @@
 #include "ArgList.h"
 #include "JSCellButterfly.h"
 #include "JSObject.h"
-#include <optional>
-#include <span>
 
 namespace JSC { namespace AOT {
 
@@ -78,9 +76,7 @@ private:
     bool isDynamicExport(UniquedStringImpl*) const;
     JSValue readDynamicExport(JSGlobalObject*, PropertyName);
     bool evaluateIfNeeded(JSGlobalObject*);
-    JSCellButterfly* ensureNames(JSGlobalObject*);
 
-    WriteBarrier<JSCellButterfly> m_names;
     WriteBarrier<JSCellButterfly> m_dynamicExportNames;
     WriteBarrier<JSObject> m_capturedValues;
     WriteBarrier<JSObject> m_liveSources;

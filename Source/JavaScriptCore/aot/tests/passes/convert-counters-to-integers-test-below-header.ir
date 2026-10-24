@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="bodyRunsBeforeTheTest" parameters=[{type=int[0, 100]}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: int[0, 100], v1: anything):
     v2 = Integer integer=0
     v3 = Integer integer=1
     Jump -> next b1(v2)
@@ -26,8 +25,6 @@ function f0 name="bodyRunsBeforeTheTest" parameters=[{type=int[0, 100]}, {type=a
     Jump -> next b1(v10)
   b5():
     Return
-}
-# CHECK-LABEL: function f0 name="bodyRunsBeforeTheTest"
 # CHECK: b1(v4: int[0, 100]):
 # CHECK: = Call v1, -, v4
 # CHECK: b2():
@@ -37,9 +34,9 @@ function f0 name="bodyRunsBeforeTheTest" parameters=[{type=int[0, 100]}, {type=a
 # CHECK-NEXT: Branch v9 -> taken b4(| 0), notTaken b5()
 # CHECK-NEXT: b4([[bottom0]]: int[0, 99]):
 # CHECK-NEXT: v10: int[1, 100] = Add [[bottom0]], v3
+}
 
 function f1 name="testInTheOnlySuccessorOfTheHeader" parameters=[{type=i32}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: i32, v1: anything):
     v2 = Integer integer=0
     v3 = Integer integer=1
     Jump -> next b1(v2)
@@ -55,16 +52,14 @@ function f1 name="testInTheOnlySuccessorOfTheHeader" parameters=[{type=i32}, {ty
     Jump -> next b1(v8)
   b4():
     Return
-}
-# CHECK-LABEL: function f1 name="testInTheOnlySuccessorOfTheHeader"
 # CHECK: b1(v4: int[0, 2147483647]):
 # CHECK: Branch v6 -> taken b3(| 0), notTaken b4()
 # CHECK-NEXT: b3([[bottom1]]: int[0, 2147483646]):
 # CHECK-NEXT: = Call v1, -, [[bottom1]]
 # CHECK-NEXT: v8: int[1, 2147483647] = Add [[bottom1]], v3
+}
 
 function f2 name="testInHeaderHasNumberBound" parameters=[{type=number}, {type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: number, v1: int[0, 100]):
     v2 = Integer integer=0
     v3 = Integer integer=1
     Jump -> next b1(v2)
@@ -80,8 +75,6 @@ function f2 name="testInHeaderHasNumberBound" parameters=[{type=number}, {type=i
     Jump -> next b1(v8)
   b4():
     Return
-}
-# CHECK-LABEL: function f2 name="testInHeaderHasNumberBound"
 # CHECK: b1(v4: int[0, 100]):
 # CHECK: Branch v6 -> taken b2(), notTaken b4()
 # CHECK-NEXT: b2():
@@ -89,9 +82,9 @@ function f2 name="testInHeaderHasNumberBound" parameters=[{type=number}, {type=i
 # CHECK-NEXT: Branch v7 -> taken b3(| 0), notTaken b4()
 # CHECK-NEXT: b3([[bottom2]]: int[0, 99]):
 # CHECK-NEXT: v8: int[1, 100] = Add [[bottom2]], v3
+}
 
 function f3 name="testOnOnePathOnly" parameters=[{type=int[0, 100]}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: int[0, 100], v1: boolean):
     v2 = Integer integer=0
     v3 = Integer integer=1
     Jump -> next b1(v2)
@@ -110,9 +103,8 @@ function f3 name="testOnOnePathOnly" parameters=[{type=int[0, 100]}, {type=boole
     Jump -> next b1(v7)
   b6():
     Return
-}
-# CHECK-LABEL: function f3 name="testOnOnePathOnly"
 # CHECK: b1(v4: int|whole):
 # CHECK: Branch v6 -> taken b3(), notTaken b6()
 # CHECK-NEXT: b3():
 # CHECK: v7: int|whole = Add v4, v3
+}

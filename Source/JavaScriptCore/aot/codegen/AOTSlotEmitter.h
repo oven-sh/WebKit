@@ -21,7 +21,7 @@ bool needsStorageFor(const PlacedSlot&, const Type& stored);
 
 class SlotEmitter final : public OperationEmitter {
 public:
-    explicit SlotEmitter(CodeGenerator&);
+    explicit SlotEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     Operand load(TypedPointer, SlotRepresentation);
     void store(TypedPointer, SlotRepresentation, Operand);
@@ -53,8 +53,12 @@ public:
     void storeIfExtensionHolds(CellPointer, const PlacedSlot&, const MemoryLocation&, Operand, const PlacedSlot& extensionWord);
     Condition hasNoExtension(CellPointer, const PlacedSlot& extensionWord);
     // An extension that lacks one of the tested granules gets the reserved ones, which include them. A granule that nothing was stored into reads as absent.
-    void ensureExtensionHolds(const OperationContext&, CellPointer, const PlacedSlot& extensionWord, uint64_t testedBits, uint64_t reservedBits, OwnerBarrier);
-    void ensureExtensionHoldsWithoutCollecting(const OperationContext&, CellPointer, const PlacedSlot& extensionWord, uint64_t granuleBits);
+    void ensureExtensionHolds(const OperationContext&, CellPointer, const PlacedSlot& extensionWord, uint64_t testedBits, uint64_t reservedBits, OwnerBarrier, bool mayCollect = true);
+    // For an operation that declares no collection: neither the stub nor the operation behind it collects.
+    void ensureExtensionHoldsWithoutCollecting(const OperationContext& context, CellPointer cell, const PlacedSlot& extensionWord, uint64_t granuleBits)
+    {
+        ensureExtensionHolds(context, cell, extensionWord, granuleBits, granuleBits, OwnerBarrier::Emitted, false);
+    }
     void ensureExtensionHolds(const OperationContext& context, CellPointer cell, const PlacedSlot& extensionWord, uint64_t granuleBits, OwnerBarrier barrier) { ensureExtensionHolds(context, cell, extensionWord, granuleBits, granuleBits, barrier); }
 
 private:

@@ -9,7 +9,6 @@ variable g0 name="n" module=m0 declared={type=undefined|number} initialization=U
 layout L0 name="Counter" fields=[{key="count" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[DeleteField, RedefineProperty, ChangeIntegrity]}
 
 function f0 name="storeInEachArm" parameters=[{type=number}, {type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: number, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     PutModuleVariable v0 variable=g0
@@ -20,16 +19,14 @@ function f0 name="storeInEachArm" parameters=[{type=number}, {type=number}, {typ
   b3():
     v5 = GetModuleVariable variable=g0
     Return v5
-}
-# CHECK-LABEL: function f0 name="storeInEachArm"
 # CHECK: Jump -> next b3(v0)
 # CHECK: Jump -> next b3(v1)
 # CHECK: b3([[merged0]]: number):
 # CHECK-NEXT: v5: number = Upcast [[merged0]]
 # CHECK-NOT: GetModuleVariable
+}
 
 function f1 name="readInOneArmStoreInTheOther" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = GetModuleVariable variable=g0
@@ -40,15 +37,13 @@ function f1 name="readInOneArmStoreInTheOther" parameters=[{type=number}, {type=
   b3():
     v4 = GetModuleVariable variable=g0
     Return v4
-}
-# CHECK-LABEL: function f1 name="readInOneArmStoreInTheOther"
 # CHECK: Jump -> next b3(v2)
 # CHECK: Jump -> next b3(v0)
 # CHECK: b3([[merged1]]: undefined|number):
 # CHECK-NEXT: v4: undefined|number = Upcast [[merged1]]
+}
 
 function f2 name="edgeOfBranch" parameters=[{type=number}, {type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: number, v2: boolean):
     PutModuleVariable v0 variable=g0
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -57,15 +52,13 @@ function f2 name="edgeOfBranch" parameters=[{type=number}, {type=number}, {type=
   b2():
     v5 = GetModuleVariable variable=g0
     Return v5
-}
-# CHECK-LABEL: function f2 name="edgeOfBranch"
 # CHECK: Branch v2 -> taken b1(), notTaken b2(v0)
 # CHECK: Jump -> next b2(v1)
 # CHECK: b2([[merged2]]: number):
 # CHECK-NEXT: v5: number = Upcast [[merged2]]
+}
 
 function f3 name="slotStoreInEachArm" parameters=[{type=L0}, {type=number}, {type=number}, {type=boolean}] results=[{type=number}] {
-  b0(v0: L0, v1: number, v2: number, v3: boolean):
     Branch v3 -> taken b1(), notTaken b2()
   b1():
     PutSlot v0, -, v1 key="count" receivers=[L0] level=Proven
@@ -76,15 +69,13 @@ function f3 name="slotStoreInEachArm" parameters=[{type=L0}, {type=number}, {typ
   b3():
     v6 = GetSlot v0 key="count" receivers=[L0] level=Proven
     Return v6
-}
-# CHECK-LABEL: function f3 name="slotStoreInEachArm"
 # CHECK: Jump -> next b3(v1)
 # CHECK: Jump -> next b3(v2)
 # CHECK: b3([[merged3]]: number):
 # CHECK-NEXT: v6: number = Upcast [[merged3]]
+}
 
 function f4 name="storeInOneArmOnly" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     PutModuleVariable v0 variable=g0
@@ -94,13 +85,11 @@ function f4 name="storeInOneArmOnly" parameters=[{type=number}, {type=boolean}] 
   b3():
     v3 = GetModuleVariable variable=g0
     Return v3
-}
-# CHECK-LABEL: function f4 name="storeInOneArmOnly"
 # CHECK: b3():
 # CHECK-NEXT: v3: undefined|number = GetModuleVariable variable=g0
+}
 
 function f5 name="callAfterStoreInOneArm" parameters=[{type=number}, {type=number}, {type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: number, v2: boolean, v3: anything):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     PutModuleVariable v0 variable=g0
@@ -112,13 +101,11 @@ function f5 name="callAfterStoreInOneArm" parameters=[{type=number}, {type=numbe
   b3():
     v7 = GetModuleVariable variable=g0
     Return v7
-}
-# CHECK-LABEL: function f5 name="callAfterStoreInOneArm"
 # CHECK: b3():
 # CHECK-NEXT: v7: undefined|number = GetModuleVariable variable=g0
+}
 
 function f6 name="callInFrontOfRead" parameters=[{type=number}, {type=number}, {type=boolean}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: number, v2: boolean, v3: anything):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     PutModuleVariable v0 variable=g0
@@ -130,14 +117,12 @@ function f6 name="callInFrontOfRead" parameters=[{type=number}, {type=number}, {
     v6 = Call v3
     v7 = GetModuleVariable variable=g0
     Return v7
-}
-# CHECK-LABEL: function f6 name="callInFrontOfRead"
 # CHECK: b3():
 # CHECK-NEXT: = Call v3
 # CHECK-NEXT: v7: undefined|number = GetModuleVariable variable=g0
+}
 
 function f7 name="edgeOfSwitch" parameters=[{type=number}, {type=number}, {type=number}] results=[{type=anything}] {
-  b0(v0: number, v1: number, v2: number):
     PutModuleVariable v0 variable=g0
     Switch v2 cases=[0] -> case b1(), otherwise b2()
   b1():
@@ -146,13 +131,11 @@ function f7 name="edgeOfSwitch" parameters=[{type=number}, {type=number}, {type=
   b2():
     v5 = GetModuleVariable variable=g0
     Return v5
-}
-# CHECK-LABEL: function f7 name="edgeOfSwitch"
 # CHECK: b2():
 # CHECK-NEXT: v5: undefined|number = GetModuleVariable variable=g0
+}
 
 function f8 name="edgeFromTheLoopItself" parameters=[{type=L0}, {type=boolean}] results=[{type=number}] {
-  b0(v0: L0, v1: boolean):
     v2 = GetSlot v0 key="count" receivers=[L0] level=Proven
     Jump -> next b1()
   b1():
@@ -164,16 +147,14 @@ function f8 name="edgeFromTheLoopItself" parameters=[{type=L0}, {type=boolean}] 
     Branch v1 -> taken b1(), notTaken b2()
   b2():
     Return v6
-}
-# CHECK-LABEL: function f8 name="edgeFromTheLoopItself"
 # CHECK: Jump -> next b1(v2)
 # CHECK-NEXT: b1([[merged8]]: number):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v4: number = Upcast [[merged8]]
 # CHECK: Branch v1 -> taken b1(v6), notTaken b2()
+}
 
 function f9 name="callAtTheEndOfTheLoop" parameters=[{type=L0}, {type=boolean}, {type=anything}] results=[{type=number}] {
-  b0(v0: L0, v1: boolean, v2: anything):
     v3 = GetSlot v0 key="count" receivers=[L0] level=Proven
     Jump -> next b1()
   b1():
@@ -186,8 +167,7 @@ function f9 name="callAtTheEndOfTheLoop" parameters=[{type=L0}, {type=boolean}, 
     Branch v1 -> taken b1(), notTaken b2()
   b2():
     Return v7
-}
-# CHECK-LABEL: function f9 name="callAtTheEndOfTheLoop"
 # CHECK: b1():
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v5: number = GetSlot v0
+}

@@ -15,7 +15,6 @@ layout L2 name="Kept" module=m0 fields=[{key="x" declared={type=anything} flags=
 variable g0 name="saved" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = NewClosure function=f7
@@ -29,7 +28,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="receiverOfInheritedMethod" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Construct v0, -, v1
     v3 = NewClosure function=f4
     v4 = Call v3, -, v2 [isNeverInlined]
@@ -39,7 +37,6 @@ function f1 name="receiverOfInheritedMethod" parameters=[{type=anything}, {type=
 # CHECK: = CallDirect {{*}}function=f4 {{*}}[isNeverInlined]
 
 function f2 name="receiverOfInheritedBuiltin" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L1 fields=[0]
     v2 = NewClosure function=f5
     v3 = Call v2, -, v1 [isNeverInlined]
@@ -49,7 +46,6 @@ function f2 name="receiverOfInheritedBuiltin" parameters=[{type=anything}] resul
 # CHECK: = CallDirect {{*}}function=f5 {{*}}[isNeverInlined]
 
 function f3 name="receiverGivenBackAndKept" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L2 fields=[0]
     v2 = NewClosure function=f6
     v3 = Call v2, -, v1 [isNeverInlined]
@@ -59,34 +55,29 @@ function f3 name="receiverGivenBackAndKept" parameters=[{type=anything}] results
 # CHECK: = CallDirect {{*}}function=f6 {{*}}[isNeverInlined]
 
 function f4 name="asksTwice" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="twice"
     v2 = Call v1, v0 calleeKey="twice" [isNeverInlined]
     Return v2
 }
 function f5 name="asksForKey" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="hasOwnProperty"
     v2 = String string="x"
     v3 = Call v1, v0, v2 calleeKey="hasOwnProperty"
     Return v3
 }
 function f6 name="keepsValueOf" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="valueOf"
     v2 = Call v1, v0 calleeKey="valueOf"
     PutModuleVariable v2 variable=g0
     Return
 }
 function f7 name="Asked" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
     PropSet v3, v1 key="x"
     Return v3
 }
 function f8 name="twice" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="x"
     v2 = Add v1, v1
     Return v2

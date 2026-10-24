@@ -33,7 +33,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="p" parameters=[{type=string}, {type=string}, {type=RegExp}, {type=RegExp<pristine[Storage, Names]>}] results=[{type=undefined}] {
-  b0(v0: string, v1: string, v2: RegExp, v3: RegExp<pristine[Storage, Names]>):
     v4 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0 builtinCallForm=Prefix prefixLength=2
     v5 = ResultAt v4 index=0
     v6 = ResultAt v4 index=2

@@ -8,7 +8,7 @@
 
 #if ENABLE(AOT)
 
-#include "AOTInstance.h"
+#include "AOTResultsJoin.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTShapeTestEmitter.h"
 #include "AOTStringEmitter.h"
@@ -16,7 +16,6 @@
 #include "IndexingType.h"
 #include "JSPropertyNameEnumerator.h"
 #include "StructureRareData.h"
-#include <array>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -24,57 +23,14 @@ static_assert(!NonArray && ArrayClass == 1 && UndecidedShape == 2 && ArrayWithUn
 static_assert(sizeof(WriteBarrier<JSString>) == sizeof(JSString*));
 static_assert(sizeof(EnumeratorCacheEntry) == 16 && hasOneBitSet(numberOfCachedEnumerators));
 static_assert(indexOfCachedEnumerator(3 << enumeratorHashShift, numberOfCachedEnumerators + 4) == 7);
-
-namespace {
-
-class ForInStepJoin {
-public:
-    using Results = std::array<Operand, numberOfEnumerators<ForInStepResult>>;
-
-    explicit ForInStepJoin(Output& out)
-        : m_out(out)
-        , m_continuation(out.newBlock())
-    {
-    }
-
-    void add(Condition isDone, CellPointer key, Integer position)
-    {
-        m_isDone.append(m_out.anchor(isDone.value()));
-        m_keys.append(m_out.anchor(key.value()));
-        m_positions.append(m_out.anchor(position.value()));
-        m_out.jump(m_continuation);
-    }
-
-    Results finish()
-    {
-        m_out.appendTo(m_continuation);
-        Results results;
-        results[static_cast<size_t>(ForInStepResult::Done)] = Condition(m_out.phi(b3TypeOf(Condition::representation), m_isDone));
-        results[static_cast<size_t>(ForInStepResult::Key)] = CellPointer(m_out.phi(b3TypeOf(CellPointer::representation), m_keys));
-        results[static_cast<size_t>(ForInStepResult::Position)] = Integer(m_out.phi(b3TypeOf(Integer::representation), m_positions));
-        return results;
-    }
-
-private:
-    Output& m_out;
-    LBasicBlock m_continuation;
-    Vector<ValueFromBlock, 3> m_isDone;
-    Vector<ValueFromBlock, 3> m_keys;
-    Vector<ValueFromBlock, 3> m_positions;
-};
-
-} // anonymous namespace
+static_assert(!static_cast<size_t>(ForInStepResult::Done) && static_cast<size_t>(ForInStepResult::Key) == 1 && static_cast<size_t>(ForInStepResult::Position) == 2);
+static_assert(numberOfEnumerators<ForInStepResult> == 3);
 
 static void takeSlowPathUnless(Output& out, Condition mustHold, LBasicBlock slowPath)
 {
     LBasicBlock continuation = out.newBlock();
     out.branch(mustHold.value(), normalEdge(continuation), unlikelyEdge(slowPath));
     out.appendTo(continuation);
-}
-
-ForInEmitter::ForInEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
 }
 
 void ForInEmitter::generateForInOpen(const ValueContext& value)
@@ -135,7 +91,7 @@ void ForInEmitter::generateForInStep(const ValueContext& value)
     LBasicBlock isNotStructureName = newBlock();
     LBasicBlock isPastEnd = newBlock();
     LBasicBlock slowPath = newBlock();
-    ForInStepJoin join(m_out);
+    ResultsJoin<Condition, CellPointer, Integer> join(m_out);
 
     EnumeratorFields fields = loadFields(enumerator);
     Integer nameIndex = nameIndexOf(fields, position);
@@ -144,7 +100,12 @@ void ForInEmitter::generateForInStep(const ValueContext& value)
     m_out.appendTo(isStructureName);
     takeSlowPathUnless(m_out, isCell(object), slowPath);
     takeSlowPathUnless(m_out, hasCachedKeys(enumerator, fields, unboxCell(object)), slowPath);
-    join.add(boolean(false), nameAt(enumerator, nameIndex), position);
+    Condition isNotDone = boolean(false);
+    Pointer names = loadField<Pointer>(enumerator, m_heaps.JSPropertyNameEnumerator_cachedPropertyNamesVector);
+    CellPointer name(m_out.loadPtr(m_out.baseIndex(m_heaps.JSPropertyNameEnumerator_cachedPropertyNamesVectorContents, names.value(), nameIndex.value())));
+    // The collector reaches the names through the enumerator alone, and B3 may load `names` once in front of the loop and let the enumerator die.
+    ensureStillAliveHere(enumerator);
+    join.add(isNotDone, name, position);
 
     m_out.appendTo(isNotStructureName);
     branch(greaterThanOrEqual(nameIndex, zeroExtended(fields.endGenericPropertyIndex)), { normalEdge(isPastEnd), unlikelyEdge(slowPath) });
@@ -158,8 +119,7 @@ void ForInEmitter::generateForInStep(const ValueContext& value)
     Condition isDone = isZero(Integer(next.first));
     join.add(isDone, select(isDone, emptyString(), CellPointer(next.first)), Integer(next.second));
 
-    ForInStepJoin::Results results = join.finish();
-    defineResults(value, results);
+    defineResults(value, join.finish());
 }
 
 ForInEmitter::EnumeratorFields ForInEmitter::loadFields(CellPointer enumerator)
@@ -172,16 +132,6 @@ ForInEmitter::EnumeratorFields ForInEmitter::loadFields(CellPointer enumerator)
     };
 }
 
-Integer ForInEmitter::nameIndexOf(const EnumeratorFields& fields, Integer position)
-{
-    return sub(position, zeroExtended(fields.indexedLength));
-}
-
-Condition ForInEmitter::isInStructurePart(const EnumeratorFields& fields, Integer nameIndex)
-{
-    return below(nameIndex, zeroExtended(fields.endStructurePropertyIndex));
-}
-
 Condition ForInEmitter::hasCachedKeys(CellPointer enumerator, const EnumeratorFields& fields, CellPointer object)
 {
     Condition hasCachedStructure = equal(loadStructureID(object), fields.cachedStructureID);
@@ -189,20 +139,6 @@ Condition ForInEmitter::hasCachedKeys(CellPointer enumerator, const EnumeratorFi
     Word32 mask = loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_cachedOrderWordMask);
     Word32 cachedOrderWord = loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_cachedOrderWord);
     return logicalAnd(hasCachedStructure, equal(bitAnd(orderWord, mask), cachedOrderWord));
-}
-
-Condition ForInEmitter::describesOrdinaryObject(CellPointer enumerator)
-{
-    return isZero(loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_cachedOrderWordMask));
-}
-
-CellPointer ForInEmitter::nameAt(CellPointer enumerator, Integer nameIndex)
-{
-    Pointer names = loadField<Pointer>(enumerator, m_heaps.JSPropertyNameEnumerator_cachedPropertyNamesVector);
-    CellPointer name(m_out.loadPtr(m_out.baseIndex(m_heaps.JSPropertyNameEnumerator_cachedPropertyNamesVectorContents, names.value(), nameIndex.value())));
-    // The collector reaches the names through the enumerator alone, and B3 may load `names` once in front of the loop and let the enumerator die.
-    ensureStillAliveHere(enumerator);
-    return name;
 }
 
 } } } // namespace JSC::AOT::Typed

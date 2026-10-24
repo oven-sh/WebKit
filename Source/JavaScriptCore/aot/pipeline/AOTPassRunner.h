@@ -26,6 +26,7 @@
 #include <wtf/MonotonicTime.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
+#include <wtf/Scope.h>
 #include <wtf/Seconds.h>
 #include <wtf/text/ASCIILiteral.h>
 
@@ -63,7 +64,6 @@ public:
     bool isStopped() const { return m_isStopped; }
     PassOutcome lastProgramPassOutcome() const { return m_lastProgramPassOutcome; }
     void didFinishFunctionLoop();
-    void didReachForm(const Program&);
 
     void setVerifierInputs(const VerifierInputs& inputs) { m_verifierInputs = inputs; }
     const VerifierInputs& verifierInputs() const { return m_verifierInputs; }
@@ -74,8 +74,12 @@ public:
 private:
     using PassBits = WTF::BitSet<numberOfPasses>;
 
-    static const PassBits& passesEnabledBy(PassID);
-    static const PassBits& passesGivenWorkBy(PassID);
+    // The passes that a change by one pass may give something to do, and those of all passes that do not wait behind such a change.
+    struct AffectedPasses {
+        PassBits enabled;
+        PassBits givenWork;
+    };
+    static const AffectedPasses& passesAffectedBy(PassID);
 
     struct PassTimer {
         MonotonicTime wallStart;
@@ -107,7 +111,8 @@ private:
     struct ScheduleRun {
         void didChange(PassID changer, const PassSet& passesLeftIdle = { }, const PassSet& passesThatCanWait = { })
         {
-            PassBits enabled = passesEnabledBy(changer);
+            const AffectedPasses& passes = passesAffectedBy(changer);
+            PassBits enabled = passes.enabled;
             passesBehindChange.setAll();
             passesEnabledByTable.merge(enabled);
             mayDecideTestsAcrossBlocks |= changer != PassID::SimplifyControlFlow && changer != PassID::EliminateDeadCode;
@@ -115,7 +120,7 @@ private:
                 enabled.clear(static_cast<unsigned>(pass));
             });
             PassBits givenWork = enabled;
-            givenWork.filter(passesGivenWorkBy(changer));
+            givenWork.filter(passes.givenWork);
             passesThatCanWait.forEach([&](PassID pass) {
                 givenWork.clear(static_cast<unsigned>(pass));
             });
@@ -239,9 +244,8 @@ private:
     std::optional<PassTimer> beginProgramPass(PassID, const Program&);
     void endProgramPass(PassID, const Program&, PassTimer, PassOutcome);
     void runTogether(NOESCAPE const ScopedLambda<void()>&, NOESCAPE const ScopedLambda<void()>&) const;
-    bool canVerify(IRForm) const;
+    bool canVerify(IRForm form) const { return form != IRForm::Placed || m_verifierInputs.placed; }
     void verifyAfterProgramPass(const PassDescriptor&, const Program&) const;
-    void updateIsStopped(PassID);
 
     PassOutcome runFunctionPass(PassID, FunctionPassContext&, ScheduleRun&) const;
     PassOutcome runFunctionPassThatMayFire(PassID, FunctionPassContext&, ScheduleRun&) const;
@@ -249,13 +253,11 @@ private:
     void runSteps(std::span<const ScheduleStep>, FunctionPassContext&, ScheduleRun&, WhatFollows = WhatFollows::MoreSteps) const;
     void verifyAfterFunctionPass(const PassDescriptor&, FunctionPassContext&, ScheduleRun&) const;
     void verifySkippedFunctionPass(const PassDescriptor&, const FunctionPassContext&, ScheduleRun&) const;
-    void dumpAfterFunctionPass(PassID, const FunctionPassContext&) const;
     void stopBehind(PassID, ScheduleRun&) const;
 
     void prepare(ScheduleRun&) const;
     void addTotals(const ScheduleRun&, size_t numberOfValuesAtStart) const;
     void flushFunctionPassTotals();
-    void dumpFunctions(const Program&, ASCIILiteral point) const;
 
     BuildContext& m_build;
     std::optional<PassID> m_stopAfter;
@@ -267,87 +269,55 @@ private:
     mutable std::array<FunctionPassTotals, numberOfPasses> m_functionPassTotals { };
     mutable std::array<CountsOfPasses, numberOfSharesOfCounts> m_countsOfPasses { };
     mutable std::array<FunctionPassTotals, numberOfSizeClasses> m_totalsBySize { };
-    mutable Lock m_dumpLock;
 };
 
 template<typename Functor>
 auto PassRunner::runProgramPass(PassID id, Program& program, ProgramAnalyses& analyses, const Functor& functor) -> std::invoke_result_t<Functor, ProgramEditor&>
 {
-    using Result = std::invoke_result_t<Functor, ProgramEditor&>;
     auto timer = beginProgramPass(id, program);
     if (!timer)
-        return Result();
+        return std::invoke_result_t<Functor, ProgramEditor&>();
     ProgramEditor editor(program);
-    if constexpr (std::is_void_v<Result>) {
-        functor(editor);
+    auto endPass = makeScopeExit([&] {
         shrinkChangedFunctionsToFit(program, editor);
         endProgramPass(id, program, *timer, updateAnalyses(id, editor, analyses));
-    } else {
-        Result result = functor(editor);
-        shrinkChangedFunctionsToFit(program, editor);
-        endProgramPass(id, program, *timer, updateAnalyses(id, editor, analyses));
-        return result;
-    }
+    });
+    return functor(editor);
 }
 
 template<typename Functor>
 auto PassRunner::runProgramPassWithoutEditor(PassID id, Program& program, ProgramAnalyses& analyses, const Functor& functor, BodiesAreChanged bodiesAreChanged) -> std::invoke_result_t<Functor>
 {
-    using Result = std::invoke_result_t<Functor>;
     auto timer = beginProgramPass(id, program);
     if (!timer)
-        return Result();
+        return std::invoke_result_t<Functor>();
     if (bodiesAreChanged == BodiesAreChanged::ThroughEditors)
         analyses.willChangeBodiesThroughOwnEditors();
     else
         analyses.willChangeBodiesWithoutEditor();
-    if constexpr (std::is_void_v<Result>) {
-        functor();
+    auto endPass = makeScopeExit([&] {
         analyses.invalidate(descriptorOf(id).invalidatedResults);
         endProgramPass(id, program, *timer, PassOutcome::Changed);
-    } else {
-        Result result = functor();
-        analyses.invalidate(descriptorOf(id).invalidatedResults);
-        endProgramPass(id, program, *timer, PassOutcome::Changed);
-        return result;
-    }
+    });
+    return functor();
 }
 
 template<typename Functor>
 auto PassRunner::runAnalysis(PassID id, const Program& program, const Functor& functor) -> std::invoke_result_t<Functor>
 {
-    using Result = std::invoke_result_t<Functor>;
     auto timer = beginProgramPass(id, program);
     if (!timer)
-        return Result();
-    if constexpr (std::is_void_v<Result>) {
-        functor();
+        return std::invoke_result_t<Functor>();
+    auto endPass = makeScopeExit([&] {
         endProgramPass(id, program, *timer, PassOutcome::Unchanged);
-    } else {
-        Result result = functor();
-        endProgramPass(id, program, *timer, PassOutcome::Unchanged);
-        return result;
-    }
+    });
+    return functor();
 }
 
 template<typename Functor, typename Beside>
 auto PassRunner::runAnalysisBeside(PassID id, const Program& program, const Functor& functor, const Beside& beside) -> std::invoke_result_t<Functor>
 {
-    using Result = std::invoke_result_t<Functor>;
-    RELEASE_ASSERT(mayRunAnalysesTogether());
-    auto timer = beginProgramPass(id, program);
-    if (!timer) {
-        beside();
-        return Result();
-    }
-    std::optional<Result> result;
-    runTogether([&] {
-        result = functor();
-    }, [&] {
-        beside();
-    });
-    endProgramPass(id, program, *timer, PassOutcome::Unchanged);
-    return WTF::move(*result);
+    return runAnalysisInTwoSteps(id, program, [] { }, functor, beside);
 }
 
 template<typename First, typename Second, typename Beside>

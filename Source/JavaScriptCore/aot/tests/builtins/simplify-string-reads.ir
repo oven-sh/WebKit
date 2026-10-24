@@ -5,7 +5,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="loopUnderLength" parameters=[{type=string}] results=[{type=i32}] {
-  b0(v0: string):
     v1 = Integer
     v2 = Integer
     Jump -> next b1(v1, v2)
@@ -23,13 +22,11 @@ function f0 name="loopUnderLength" parameters=[{type=string}] results=[{type=i32
     Jump -> next b1(v12, v13)
   b3():
     Return v3
-}
-# CHECK-LABEL: function f0 name="loopUnderLength"
 # CHECK: v6: int[0, 2147483647] = GetStringLength v0
 # CHECK: v9: int[0, 65535] = GetStringCodeUnit v0, v8
+}
 
 function f1 name="lengthReadOnce" parameters=[{type=string}, {type=int[0, 100]}] results=[{type=number}] {
-  b0(v0: string, v1: int[0, 100]):
     v2 = GetStringLength v0
     v3 = Less v1, v2
     Branch v3 -> taken b1(), notTaken b2()
@@ -39,16 +36,14 @@ function f1 name="lengthReadOnce" parameters=[{type=string}, {type=int[0, 100]}]
   b2():
     v5 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
     Return v5
-}
-# CHECK-LABEL: function f1 name="lengthReadOnce"
 # CHECK: b1():
 # CHECK-NEXT: v4: int[0, 65535] = GetStringCodeUnit v0, v1
 # CHECK: b2():
 # CHECK-NOT: CallBuiltin
 # CHECK: = Less v1,
+}
 
 function f2 name="nextPosition" parameters=[{type=string}, {type=int[0, 100]}] results=[{type=number}] {
-  b0(v0: string, v1: int[0, 100]):
     v2 = GetStringLength v0
     v3 = Increment v1
     v4 = Less v3, v2
@@ -64,8 +59,6 @@ function f2 name="nextPosition" parameters=[{type=string}, {type=int[0, 100]}] r
   b2():
     v11 = Integer
     Return v11
-}
-# CHECK-LABEL: function f2 name="nextPosition"
 # CHECK: v5: int[0, 65535] = GetStringCodeUnit v0, v1
 # CHECK-NEXT: v6: int[0, 65535] = GetStringCodeUnit v0, v3
 # CHECK-NOT: CallBuiltin
@@ -76,9 +69,9 @@ function f2 name="nextPosition" parameters=[{type=string}, {type=int[0, 100]}] r
 # CHECK-NEXT: int[0, 65535] = GetStringCodeUnit v0, [[position2]]
 # CHECK: [[outside2]]({{*}}) frequency=Unlikely:
 # CHECK-NEXT: = Double number=NaN
+}
 
 function f3 name="positionMayEqualLength" parameters=[{type=string}, {type=int[0, 100]}] results=[{type=number}] {
-  b0(v0: string, v1: int[0, 100]):
     v2 = GetStringLength v0
     v3 = LessEq v1, v2
     Branch v3 -> taken b1(), notTaken b2()
@@ -88,16 +81,14 @@ function f3 name="positionMayEqualLength" parameters=[{type=string}, {type=int[0
   b2():
     v5 = Integer
     Return v5
-}
-# CHECK-LABEL: function f3 name="positionMayEqualLength"
 # CHECK-NOT: GetStringCodeUnit v0, v1
 # CHECK: [[isInside3]]: boolean = Less v1,
 # CHECK-NEXT: Branch [[isInside3]] -> taken [[inside3]](| 0),
 # CHECK: [[inside3]]([[position3]]: int[{{*}}]):
 # CHECK-NEXT: = GetStringCodeUnit v0, [[position3]]
+}
 
 function f4 name="lengthOfAnotherString" parameters=[{type=string}, {type=string}, {type=int[0, 100]}] results=[{type=number}] {
-  b0(v0: string, v1: string, v2: int[0, 100]):
     v3 = GetStringLength v1
     v4 = Less v2, v3
     Branch v4 -> taken b1(), notTaken b2()
@@ -107,14 +98,12 @@ function f4 name="lengthOfAnotherString" parameters=[{type=string}, {type=string
   b2():
     v6 = Integer
     Return v6
-}
-# CHECK-LABEL: function f4 name="lengthOfAnotherString"
 # CHECK-NOT: GetStringCodeUnit v0, v2
 # CHECK: [[length4]]: int[0, 2147483647] = GetStringLength v0
 # CHECK-NEXT: = Less v2, [[length4]]
+}
 
 function f5 name="positionMayBeNegative" parameters=[{type=string}, {type=int[-1, 100]}] results=[{type=number}] {
-  b0(v0: string, v1: int[-1, 100]):
     v2 = GetStringLength v0
     v3 = Less v1, v2
     Branch v3 -> taken b1(), notTaken b2()
@@ -124,27 +113,23 @@ function f5 name="positionMayBeNegative" parameters=[{type=string}, {type=int[-1
   b2():
     v5 = Integer
     Return v5
-}
-# CHECK-LABEL: function f5 name="positionMayBeNegative"
 # CHECK-NOT: GetStringCodeUnit v0, v1
 # CHECK: [[unsigned5]]: int[0, 4294967295] = URShift v1,
 # CHECK: = Less [[unsigned5]],
 # CHECK: = Double number=NaN
+}
 
 function f6 name="untestedPosition" parameters=[{type=string}, {type=int[0, 100]}] results=[{type=number}] {
-  b0(v0: string, v1: int[0, 100]):
     v2 = GetStringLength v0
     v3 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
     v4 = Add v2, v3
     Return v4
-}
-# CHECK-LABEL: function f6 name="untestedPosition"
 # CHECK-NOT: GetStringCodeUnit v0, v1
 # CHECK: = Less v1,
 # CHECK: = Double number=NaN
+}
 
 function f7 name="inUnlikelyCode" parameters=[{type=string}, {type=int[0, 100]}, {type=boolean}] results=[{type=number}] {
-  b0(v0: string, v1: int[0, 100], v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1() frequency=Unlikely:
     v3 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
@@ -152,12 +137,10 @@ function f7 name="inUnlikelyCode" parameters=[{type=string}, {type=int[0, 100]},
   b2():
     v4 = Integer
     Return v4
-}
-# CHECK-LABEL: function f7 name="inUnlikelyCode"
 # CHECK: v3: number = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
+}
 
 function f8 name="provenReadOfARange" parameters=[{type=string}, {type=int[0, 100]}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=number}] {
-  b0(v0: string, v1: int[0, 100], v2: int[0, 100], v3: int[0, 100]):
     v4 = Substring v0, v1, v2
     v5 = GetStringLength v4
     v6 = Less v3, v5
@@ -168,7 +151,6 @@ function f8 name="provenReadOfARange" parameters=[{type=string}, {type=int[0, 10
   b2():
     v8 = Integer
     Return v8
-}
-# CHECK-LABEL: function f8 name="provenReadOfARange"
 # CHECK-NOT: CallBuiltin
 # CHECK: = GetStringCodeUnit v4, v3
+}

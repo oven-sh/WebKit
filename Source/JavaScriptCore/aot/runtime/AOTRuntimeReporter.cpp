@@ -13,6 +13,7 @@
 #include "AOTCompiledFrame.h"
 #include "AOTErrorMessages.h"
 #include "AOTFunctionDescription.h"
+#include "AOTFunctionNames.h"
 #include "AOTHost.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
@@ -25,6 +26,7 @@
 #include "AOTRuntimeCounters.h"
 #include "AOTRuntimeType.h"
 #include "AOTSchemaEnums.h"
+#include "AOTSort.h"
 #include "AOTStringTable.h"
 #include "AOTVector.h"
 #include "JSCInlines.h"
@@ -32,9 +34,13 @@
 #include "StackVisitor.h"
 #include <initializer_list>
 #include <mutex>
+#include <ranges>
 #include <stdlib.h>
+#include <wtf/DataLog.h>
 #include <wtf/FilePrintStream.h>
 #include <wtf/HexNumber.h>
+#include <wtf/Lock.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/ProcessID.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
@@ -45,24 +51,22 @@
 
 #if OS(WINDOWS)
 #include <windows.h>
+extern "C" __attribute__((weak)) void Bun__atexit(void (*)());
 #else
 #include <errno.h>
 #include <unistd.h>
 #endif
 
-#if OS(WINDOWS)
-extern "C" __attribute__((weak)) void Bun__atexit(void (*)());
-#endif
-
 namespace JSC { namespace AOT {
 
-using Callers = Vector<String, RuntimeReporter::maxNumberOfCallers>;
-
 static Lock s_lock;
-static bool s_isDestinationSet;
-static intptr_t s_descriptor;
-static bool s_isJSON;
-static RuntimeReporter* s_firstReporter;
+static ReportDestination s_destination;
+
+static Vector<RuntimeReporter*>& reportersUnderLock()
+{
+    static NeverDestroyed<Vector<RuntimeReporter*>> reporters;
+    return reporters;
+}
 
 static intptr_t standardError()
 {
@@ -76,25 +80,22 @@ static intptr_t standardError()
 static ReportDestination currentDestination()
 {
     Locker locker { s_lock };
-    if (!s_isDestinationSet)
-        return { standardError(), s_isJSON, false };
-    if (s_descriptor < 0)
-        return { std::nullopt, false, true };
-    return { s_descriptor, s_isJSON, true };
+    ReportDestination destination = s_destination;
+    if (!destination.isExplicit)
+        destination.descriptor = standardError();
+    return destination;
 }
 
 void setMismatchLog(intptr_t descriptor, bool isJSON)
 {
     Locker locker { s_lock };
-    s_isDestinationSet = true;
-    s_descriptor = descriptor;
-    s_isJSON = isJSON;
+    s_destination = { descriptor < 0 ? std::nullopt : std::optional(descriptor), isJSON, true };
 }
 
 void setMismatchLogFormat(bool isJSON)
 {
     Locker locker { s_lock };
-    s_isJSON = isJSON;
+    s_destination.isJSON = isJSON;
 }
 
 static void writeLine(const ReportDestination& destination, const String& line)
@@ -153,140 +154,44 @@ static bool isPowerOfTen(uint64_t count)
     return count == 1;
 }
 
-static String truncated(const String& text, unsigned maxLength)
-{
-    if (text.length() > maxLength)
-        return makeString(StringView(text).left(maxLength - 3), "..."_s);
-    return text;
-}
-
 static String nonEmptyOr(const String& text, ASCIILiteral fallback)
 {
     return text.isEmpty() ? String(fallback) : text;
 }
 
-static bool acceptsOnlyIntegerNumbers(const RuntimeType& type)
+static String describeKindOf(JSValue value, const RuntimeType& expected)
 {
-    constexpr auto numbers = OptionSet<PrimitiveSet>::fromRaw(Typed::Primitive::Number);
-    return (type.primitiveSet() & numbers) == OptionSet<PrimitiveSet> { PrimitiveSet::Integer };
-}
-
-// The test of describe(), which takes a class of a built-in module for a function, like a native one.
-static bool isDescribedAsClass(JSCell* callable)
-{
-    return CompiledCallee::isCompiledCallee(callable) && CompiledCallee::kind(asObject(callable)) == CompiledCallee::FunctionKind::Class;
-}
-
-static ASCIILiteral kindWordOf(JSValue value, const RuntimeType& expected)
-{
-    if (!value || value.isUndefined())
+    if (!value)
         return "undefined"_s;
-    if (value.isNull())
-        return "null"_s;
-    if (value.isBoolean())
-        return "boolean"_s;
-    if (value.isNumber()) {
-        if (!acceptsOnlyIntegerNumbers(expected))
-            return "number"_s;
+    constexpr auto numbers = OptionSet<PrimitiveSet>::fromRaw(Typed::Primitive::Number);
+    if (value.isNumber() && (expected.primitiveSet() & numbers) == OptionSet<PrimitiveSet> { PrimitiveSet::Integer })
         return value.isInt32AsAnyInt() ? "number, out of range"_s : "number, not an int32"_s;
-    }
-    if (value.isString())
-        return "string"_s;
-    if (value.isCallable() && !isDescribedAsClass(value.asCell()))
+    bool isClass = value.isCell() && CompiledCallee::isCompiledCallee(value.asCell()) && CompiledCallee::kind(asObject(value)) == CompiledCallee::FunctionKind::Class;
+    if (value.isCallable() && !isClass)
         return "function"_s;
-    return { };
+    return describe(value);
 }
 
-static String displayPath(const Image& image, ModuleID module)
+static String shownPath(const Image& image, ModuleID module, String (ModuleTable::*textOf)(ModuleID) const)
 {
     if (image.isObfuscated())
         return emptyString();
-    if (!module)
-        return "unknown"_s;
-    return nonEmptyOr(ModuleTable(image.programTables()).displayPathText(module), "unknown"_s);
+    return nonEmptyOr(module ? (ModuleTable(image.programTables()).*textOf)(module) : String(), "unknown"_s);
 }
 
-static String pathForLineColumns(const Image& image, ModuleID module)
+static std::optional<std::pair<String, LineColumn>> shownPositionOf(const Image& image, const CompiledFrame& frame)
 {
     if (image.isObfuscated())
-        return emptyString();
-    if (!module)
-        return "unknown"_s;
-    return nonEmptyOr(ModuleTable(image.programTables()).pathTextForLineColumns(module), "unknown"_s);
-}
-
-static String pathForCheckID(const Image& image, ModuleID module)
-{
-    if (!module)
-        return { };
-    if (image.isObfuscated())
-        return modulePath(module);
-    return ModuleTable(image.programTables()).displayPathText(module);
-}
-
-struct CheckSite {
-    String file;
-    LineColumn position;
-    String function;
-};
-
-static CheckSite checkSiteWithoutPosition(const Image& image, ModuleID module)
-{
-    return { displayPath(image, module), { }, image.isObfuscated() ? emptyString() : "unknown"_str };
-}
-
-static uint64_t idOf(const Image& image, const TypeSiteData& site)
-{
-    Vector<uint8_t> path = Typed::encodeProgramString(pathForCheckID(image, ModuleID(site.module)));
-    return typeCheckIDOf(path.span(), site.position, static_cast<TypeSiteKind>(site.kind));
-}
-
-static uint64_t idOf(const CheckSite& site)
-{
-    Vector<uint8_t> path = Typed::encodeProgramString(site.file);
-    return computeCheckID(path.span(), { site.position.line, site.position.column }, TypeSiteKind::Unknown);
-}
-
-static std::optional<CompiledFrame> findTopCompiledFrame(VM& vm)
-{
-    auto frames = CompiledFrameIterator::tryCreateAtTop(vm);
-    if (!frames || frames->isAtEnd())
-        return std::nullopt;
-    return frames->frame();
-}
-
-static uint64_t reportedCallSiteKeyOf(const CompiledFrame& frame)
-{
-    return static_cast<uint64_t>(frame.code.index()) << 32 | frame.callSite.bits();
-}
-
-static std::optional<CheckSite> checkSiteOf(VM& vm, const Image& image, const CompiledFrame& frame)
-{
-    if (image.isObfuscated())
-        return CheckSite { emptyString(), frame.lineColumn(), emptyString() };
+        return { { emptyString(), frame.lineColumn() } };
     auto position = image.positionOf(frame.code.index(), frame.callSite);
     if (!position)
         return std::nullopt;
-    FunctionDescription description(frame.function);
-    String function = description.codeType() == ModuleCode ? "module"_str : nonEmptyOr(description.name(vm), "anonymous"_s);
-    return CheckSite { pathForLineColumns(image, position->source), position->lineColumn, WTF::move(function) };
+    return { { shownPath(image, position->source, &ModuleTable::pathTextForLineColumns), position->lineColumn } };
 }
 
-static String describeCaller(const Image& image, const CompiledFrame& frame)
+static Vector<String, RuntimeReporter::maxNumberOfCallers> findCallers(VM& vm)
 {
-    if (image.isObfuscated()) {
-        LineColumn position = frame.lineColumn();
-        return makeString(position.line, ':', position.column);
-    }
-    auto position = image.positionOf(frame.code.index(), frame.callSite);
-    if (!position)
-        return { };
-    return makeString(pathForLineColumns(image, position->source), ':', position->lineColumn.line);
-}
-
-static Callers findCallers(VM& vm)
-{
-    Callers callers;
+    Vector<String, RuntimeReporter::maxNumberOfCallers> callers;
     const Image* image = vm.aotState().image;
     if (!vm.topCallFrame || !image)
         return callers;
@@ -294,8 +199,8 @@ static Callers findCallers(VM& vm)
     StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) {
         if (std::exchange(isFirstFrame, false) || !visitor->isCompiledFrame())
             return IterationStatus::Continue;
-        if (String caller = describeCaller(*image, visitor->compiledFrame()); !caller.isNull())
-            callers.append(WTF::move(caller));
+        if (auto position = shownPositionOf(*image, visitor->compiledFrame()))
+            callers.append(image->isObfuscated() ? makeString(position->second.line, ':', position->second.column) : makeString(position->first, ':', position->second.line));
         return callers.size() < RuntimeReporter::maxNumberOfCallers ? IterationStatus::Continue : IterationStatus::Done;
     });
     return callers;
@@ -307,10 +212,7 @@ RuntimeReporter::RuntimeReporter(VM& vm)
 {
     {
         Locker locker { s_lock };
-        m_next = s_firstReporter;
-        if (m_next)
-            m_next->m_previous = this;
-        s_firstReporter = this;
+        reportersUnderLock().append(this);
     }
     if (Options::aotCountsPath())
         installExitHook();
@@ -319,12 +221,13 @@ RuntimeReporter::RuntimeReporter(VM& vm)
 RuntimeReporter::~RuntimeReporter()
 {
     Locker locker { s_lock };
-    if (m_previous)
-        m_previous->m_next = m_next;
-    else
-        s_firstReporter = m_next;
-    if (m_next)
-        m_next->m_previous = m_previous;
+    reportersUnderLock().removeFirst(this);
+}
+
+RuntimeReporter* RuntimeReporter::ifExplicitlyEnabled(VM& vm)
+{
+    RuntimeReporter* reporter = vm.aotState().reporter.get();
+    return reporter && reporter->m_destination.descriptor && reporter->m_destination.isExplicit ? reporter : nullptr;
 }
 
 void RuntimeReporter::callAtExit(void (*function)())
@@ -347,94 +250,90 @@ void RuntimeReporter::installExitHook()
     std::call_once(once, [] {
         callAtExit([] {
             Locker locker { s_lock };
-            for (auto* reporter = s_firstReporter; reporter; reporter = reporter->m_next)
+            for (RuntimeReporter* reporter : std::views::reverse(reportersUnderLock()))
                 reporter->writeAtExit();
         });
     });
 }
 
-RuntimeReporter::Site* RuntimeReporter::addSite(uint64_t id, NOESCAPE const Invocable<std::unique_ptr<Site>()> auto& create)
+RuntimeReporter::Site* RuntimeReporter::findOrAddSite(Instance& instance, TypeSiteID typeSite, const RuntimeType& expected, const CompiledFrame* frame)
 {
-    Site* site = m_sites.get(id);
-    if (!site && m_sites.size() < maxNumberOfSites) {
-        site = m_sites.add(id, create()).iterator->value.get();
-        m_sitesInOrder.append(site);
-        installExitHook();
+    VM& vm = *instance.vm;
+    const Image& image = *vm.aotState().image;
+    const TypeSiteData* data = typeSite ? instance.tables().findTypeSite(typeSite.index()) : nullptr;
+    if (typeSite && !data) {
+        ASSERT_NOT_REACHED();
+        return nullptr;
     }
-    if (!site && !std::exchange(m_hasOverflowed, true))
-        writeLine(m_destination, m_destination.isJSON ? makeString("{\"aot\":\"type-mismatch\",\"kind\":\"overflow\",\"sites\":"_s, maxNumberOfSites, "}\n"_s) : makeString("[aot] type-mismatch log is full ("_s, maxNumberOfSites, " sites). New sites are not logged\n"_s));
-    return site;
+    ModuleID module = data ? ModuleID(data->module) : ModuleID();
+    TypeSiteKind kind = data ? static_cast<TypeSiteKind>(data->kind) : TypeSiteKind::Unknown;
+    Site site { .kind = logWordOf(kind), .file = shownPath(image, module, &ModuleTable::displayPathText), .function = image.isObfuscated() ? emptyString() : "unknown"_str };
+    if (auto position = frame ? shownPositionOf(image, *frame) : std::nullopt) {
+        std::tie(site.file, site.position) = *position;
+        FunctionDescription description(frame->function);
+        if (!image.isObfuscated())
+            site.function = description.codeType() == ModuleCode ? "module"_str : nonEmptyOr(description.name(vm), "anonymous"_s);
+    }
+    if (data) {
+        String path = !module ? String() : image.isObfuscated() ? modulePath(module) : ModuleTable(image.programTables()).displayPathText(module);
+        site.id = typeCheckIDOf(Typed::encodeProgramString(path).span(), data->position, kind);
+    } else
+        site.id = computeCheckID(Typed::encodeProgramString(site.file).span(), { site.position.line, site.position.column }, kind);
+
+    for (Site& known : m_sites) {
+        if (known.id == site.id)
+            return &known;
+    }
+    if (m_sites.size() == maxNumberOfSites) {
+        if (!std::exchange(m_hasOverflowed, true))
+            writeLine(m_destination, m_destination.isJSON ? makeString("{\"aot\":\"type-mismatch\",\"kind\":\"overflow\",\"sites\":"_s, maxNumberOfSites, "}\n"_s) : makeString("[aot] type-mismatch log is full ("_s, maxNumberOfSites, " sites). New sites are not logged\n"_s));
+        return nullptr;
+    }
+    site.file = site.file.isolatedCopy();
+    site.function = site.function.isolatedCopy();
+    site.expected = describe(instance.tables(), expected, typeSite).isolatedCopy();
+    if (site.expected.length() > maxLengthOfType)
+        site.expected = makeString(StringView(site.expected).left(maxLengthOfType - 3), "..."_s);
+    m_sites.append(WTF::move(site));
+    installExitHook();
+    return &m_sites.last();
 }
 
-uint64_t RuntimeReporter::bump(Site& site, ASCIILiteral word, const String& name)
+void RuntimeReporter::reportFailedCheck(Instance& instance, TypeSiteID typeSite, const RuntimeType& expected, JSValue actual)
 {
-    for (auto& [kind, count] : site.counts) {
-        if (word.isNull() ? kind == name : kind == word)
-            return ++count;
-    }
-    if (site.counts.size() < maxNumberOfKindsAtSite || word == "other"_s) {
-        site.counts.append({ word.isNull() ? name.isolatedCopy() : String(word), 1 });
-        return 1;
-    }
-    return 0;
-}
-
-void RuntimeReporter::reportFailedCheck(Instance& instance, std::optional<uint32_t> typeSite, const RuntimeType& expected, JSValue actual)
-{
-    if (!isEnabled())
+    if (!m_destination.descriptor)
         return;
     Locker locker { m_lock };
     VM& vm = *instance.vm;
-
-    Site* site = nullptr;
-    std::optional<CompiledFrame> frame = findTopCompiledFrame(vm);
-    auto known = frame ? m_sitesByCallSite.find(reportedCallSiteKeyOf(*frame)) : m_sitesByCallSite.end();
-    if (known != m_sitesByCallSite.end())
-        site = known->value;
-    else {
-        const Image& image = *vm.aotState().image;
-        const ProgramTables& tables = instance.tables();
-        const TypeSiteData* data = typeSite ? tables.findTypeSite(*typeSite) : nullptr;
-        if (typeSite && !data) {
-            ASSERT_NOT_REACHED();
-            return;
-        }
-        CheckSite checkSite = checkSiteWithoutPosition(image, data ? ModuleID(data->module) : ModuleID());
-        if (auto compiledSite = frame ? checkSiteOf(vm, image, *frame) : std::nullopt)
-            checkSite = WTF::move(*compiledSite);
-        uint64_t id = data ? idOf(image, *data) : idOf(checkSite);
-        site = addSite(id, [&] {
-            auto newSite = makeUnique<Site>();
-            newSite->id = id;
-            newSite->kind = logWordOf(data ? static_cast<TypeSiteKind>(data->kind) : TypeSiteKind::Unknown);
-            newSite->file = checkSite.file.isolatedCopy();
-            newSite->position = checkSite.position;
-            newSite->function = checkSite.function.isolatedCopy();
-            newSite->expected = truncated(describe(tables, expected, typeSite ? TypeSiteID(*typeSite) : TypeSiteID()), maxLengthOfType).isolatedCopy();
-            return newSite;
-        });
-        if (frame)
-            m_sitesByCallSite.add(reportedCallSiteKeyOf(*frame), site);
-    }
+    auto frames = CompiledFrameIterator::tryCreateAtTop(vm);
+    const CompiledFrame* frame = frames && !frames->isAtEnd() ? &frames->frame() : nullptr;
+    Site* site = frame ? m_sitesByCallSite.ensure(static_cast<uint64_t>(frame->code.index()) << 32 | frame->callSite.bits(), [&] {
+        return findOrAddSite(instance, typeSite, expected, frame);
+    }).iterator->value : findOrAddSite(instance, typeSite, expected, nullptr);
     if (!site)
         return;
-    ASCIILiteral word = kindWordOf(actual, expected);
-    countAndWrite(vm, *site, word, word.isNull() ? describe(actual, ValueDetail::KindOnly) : String());
-}
 
-void RuntimeReporter::countAndWrite(VM& vm, Site& site, ASCIILiteral word, const String& name)
-{
-    uint64_t count = bump(site, word, name);
+    auto bump = [&](const String& kind) -> uint64_t {
+        for (auto& [known, count] : site->counts) {
+            if (known == kind)
+                return ++count;
+        }
+        if (site->counts.size() >= maxNumberOfKindsAtSite && kind != "other"_s)
+            return 0;
+        site->counts.append({ kind.isolatedCopy(), 1 });
+        return 1;
+    };
+    String got = describeKindOf(actual, expected);
+    uint64_t count = bump(got);
     if (!count) {
-        word = "other"_s;
-        count = bump(site, word, name);
+        got = "other"_s;
+        count = bump(got);
     }
-    if (!isPowerOfTen(count))
-        return;
-    write(site, word.isNull() ? name : String(word), count, findCallers(vm), false);
+    if (isPowerOfTen(count))
+        write(*site, got, count, findCallers(vm).span(), false);
 }
 
-void RuntimeReporter::write(const Site& site, const String& got, uint64_t count, const Callers& callers, bool isTotal)
+void RuntimeReporter::write(const Site& site, const String& got, uint64_t count, std::span<const String> callers, bool isTotal)
 {
     StringBuilder line;
     if (m_destination.isJSON) {
@@ -450,15 +349,15 @@ void RuntimeReporter::write(const Site& site, const String& got, uint64_t count,
         member("got"_s, got);
         line.append(",\"action\":\"continued\",\"count\":"_s, count);
         for (auto& caller : callers) {
-            line.append(&caller == callers.begin() ? ",\"from\":["_s : ","_s);
+            line.append(&caller == callers.data() ? ",\"from\":["_s : ","_s);
             line.appendQuotedJSONString(caller);
         }
-        line.append(callers.isEmpty() ? ""_s : "]"_s, isTotal ? ",\"total\":true}\n"_s : "}\n"_s);
+        line.append(callers.empty() ? ""_s : "]"_s, isTotal ? ",\"total\":true}\n"_s : "}\n"_s);
     } else {
         line.append("[aot] type-mismatch "_s, hex(site.id, 12, Lowercase), ' ', site.kind, ' ', site.file, ':', site.position.line, ':', site.position.column, " ("_s, site.function, "): "_s);
         line.append("expected "_s, site.expected, ", got "_s, got, "; continued; count "_s, count);
         for (auto& caller : callers)
-            line.append(&caller == callers.begin() ? "; from "_s : " < "_s, caller);
+            line.append(&caller == callers.data() ? "; from "_s : " < "_s, caller);
         line.append(isTotal ? "; total\n"_s : "\n"_s);
     }
     writeLine(m_destination, line.toString());
@@ -486,23 +385,13 @@ void RuntimeReporter::writeAtExit()
     Locker locker { m_lock };
     if (std::exchange(m_hasWrittenAtExit, true))
         return;
-    writeTotals();
-    writeCounts();
-}
-
-void RuntimeReporter::writeTotals()
-{
-    for (Site* site : m_sitesInOrder) {
-        for (auto& [kind, count] : site->counts) {
+    for (Site& site : m_sites) {
+        for (auto& [kind, count] : site.counts) {
             if (count && !isPowerOfTen(count))
-                write(*site, kind, count, { }, true);
+                write(site, kind, count, { }, true);
             count = 0;
         }
     }
-}
-
-void RuntimeReporter::writeCounts()
-{
     const char* path = byteCast<char>(Options::aotCountsPath());
     if (!path)
         return;
@@ -510,66 +399,83 @@ void RuntimeReporter::writeCounts()
     // Every VM of the process writes to one file, and a reader adds up the lines of one name.
     static Lock lock;
     static bool hasWrittenInThisProcess;
-    Locker locker { lock };
-    auto file = FilePrintStream::open(name.utf8(), std::exchange(hasWrittenInThisProcess, true) ? "ab"_s : "wb"_s);
-    if (!file)
-        return;
-    dumpCounts(m_vm, *file);
-}
-
-static RuntimeReporter& reporterOf(VM& vm)
-{
-    return *vm.aotState().reporter;
-}
-
-static std::optional<uint32_t> indexOf(TypeSiteID site)
-{
-    if (!site)
-        return std::nullopt;
-    return site.index();
+    Locker fileLocker { lock };
+    if (auto file = FilePrintStream::open(name.utf8(), std::exchange(hasWrittenInThisProcess, true) ? "ab"_s : "wb"_s))
+        dumpCounts(m_vm, *file);
 }
 
 void reportFailedCheck(Instance& instance, uint32_t typeSite, const RuntimeType& expected, JSValue actual)
 {
-    reporterOf(*instance.vm).reportFailedCheck(instance, indexOf(TypeSiteID(typeSite)), expected, actual);
+    instance.vm->aotState().reporter->reportFailedCheck(instance, TypeSiteID(typeSite), expected, actual);
+}
+
+void reportOrCrash(VM& vm, const ValidationFailure& failure, ASCIILiteral whatIsCalled, const String& callee, const String& mismatch)
+{
+    if (RuntimeReporter* reporter = RuntimeReporter::ifExplicitlyEnabled(vm)) {
+        reporter->reportNativeCall(failure.kind, callee, mismatch);
+        return;
+    }
+    dataLogLn("AOT ", whatIsCalled, ": ", callee, " ", mismatch);
+    crashOnValidationFailure(vm, failure);
 }
 
 #if ENABLE(WEBASSEMBLY)
-
-struct InterpreterFallbackText {
-    ASCIILiteral word;
-    ASCIILiteral cause;
-};
-
-static InterpreterFallbackText textOf(Wasm::InterpreterFallbackReason reason)
-{
-    switch (reason) {
-    case Wasm::InterpreterFallbackReason::MemoryChecksBounds:
-        return { "no-guard-pages"_s, "its memory has no guard pages"_s };
-    case Wasm::InterpreterFallbackReason::VectorsAreDisabled:
-        return { "no-simd"_s, "SIMD isn't available on this CPU"_s };
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static bool currentImageReportsMismatches()
-{
-    const Image* image = Image::current();
-    return image && image->header().options.policy() == MismatchPolicy::Report;
-}
-
 void reportInterpreterFallback(Wasm::InterpreterFallbackReason reason)
 {
     ReportDestination destination = currentDestination();
-    if (!destination.descriptor)
+    const Image* image = Image::current();
+    if (!destination.descriptor || (!destination.isExplicit && !(image && image->header().options.policy() == MismatchPolicy::Report)))
         return;
-    if (!destination.isExplicit && !currentImageReportsMismatches())
-        return;
-    auto [word, cause] = textOf(reason);
+    bool hasNoGuardPages = reason == Wasm::InterpreterFallbackReason::MemoryChecksBounds;
+    ASSERT(hasNoGuardPages || reason == Wasm::InterpreterFallbackReason::VectorsAreDisabled);
+    ASCIILiteral word = hasNoGuardPages ? "no-guard-pages"_s : "no-simd"_s;
+    ASCIILiteral cause = hasNoGuardPages ? "its memory has no guard pages"_s : "SIMD isn't available on this CPU"_s;
     writeLine(destination, destination.isJSON ? makeString("{\"aot\":\"interpreter-fallback\",\"reason\":\""_s, word, "\"}\n"_s) : makeString("[aot] interpreter-fallback "_s, word, ": a compiled WebAssembly module is running in the interpreter because "_s, cause, '\n'));
 }
+#endif
 
-#endif // ENABLE(WEBASSEMBLY)
+#if !defined(BUN_HARDENED)
+static String symbolNameOf(const Image& image, uint32_t function)
+{
+    if (image.isObfuscated())
+        return makeString('f', function);
+    FunctionDescription description(image.rootFunctionOf(function));
+    String name = description.codeType() == ModuleCode ? String("(module)"_s) : writtenFunctionName(description.sourceFunction());
+    if (name.isEmpty())
+        name = "(anonymous)"_s;
+    auto position = image.positionOf(function, CallSiteIndex(0));
+    if (!position || !position->source)
+        return name;
+    return makeString(name, ' ', ModuleTable(image.programTables()).pathTextForLineColumns(position->source), ':', position->lineColumn.line);
+}
+
+void writePerfMap()
+{
+    const Image* image = Image::current();
+    if (!image)
+        return;
+    // Each entry point of an executable has an image of its own, and a thread that starts one adds its functions to the file.
+    static Lock lock;
+    static bool hasWrittenInThisProcess;
+    Locker locker { lock };
+    auto file = FilePrintStream::open(makeString("/tmp/perf-"_s, getCurrentProcessID(), ".map"_s).utf8(), std::exchange(hasWrittenInThisProcess, true) ? "a"_s : "w"_s);
+    if (!file)
+        return;
+    const uint8_t* code = image->code().data();
+    Vector<std::pair<size_t, String>> symbols;
+    for (uint32_t function = 0; function < image->header().counts.functions; ++function) {
+        if (image->sizeOfCodeOf(function))
+            symbols.append({ static_cast<size_t>(image->codeOf(function) - code), symbolNameOf(*image, function) });
+    }
+    for (unsigned copy = 0; copy < image->sharedCodeCopies().size(); ++copy)
+        symbols.append({ static_cast<size_t>(image->sharedCodeCopy(copy) - code), String("(stubs of compiled code)"_s) });
+    AOT::sort(symbols, { }, &std::pair<size_t, String>::first);
+    for (size_t i = 0; i < symbols.size(); ++i) {
+        size_t end = i + 1 < symbols.size() ? symbols[i + 1].first : image->header().code.functionsEnd;
+        file->println(hex(reinterpret_cast<uintptr_t>(code) + symbols[i].first, Lowercase), " ", hex(end - symbols[i].first, Lowercase), " ", symbols[i].second);
+    }
+}
+#endif
 
 } } // namespace JSC::AOT
 

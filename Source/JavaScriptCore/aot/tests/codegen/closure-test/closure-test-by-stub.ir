@@ -10,7 +10,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 variable g0 name="declared" module=m0 declared={type=function} initialization=Function function=f1
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = NewClosure function=f2
     v2 = NewClosure function=f3
@@ -21,20 +20,16 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v6
 }
 function f1 name="declared" results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="allocated" results=[{type=anything}] {
-  b0():
     Return
 }
 function f3 name="callsDeclared" parameters=[{type=f1 flags=[IsExpected]}] results=[{type=anything}] {
-  b0(v0: f1):
     v1 = Call v0
     Return v1
 }
 function f4 name="callsAllocated" parameters=[{type=f2 flags=[IsExpected]}] results=[{type=anything}] {
-  b0(v0: f2):
     v1 = Call v0
     Return v1
 }

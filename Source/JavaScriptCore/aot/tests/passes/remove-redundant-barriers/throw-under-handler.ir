@@ -7,7 +7,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Environment fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
 function f0 name="store-after-value-may-throw" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject layout=L0 fields=[]
     Jump -> next b1()
   b1() handler=b2():
@@ -18,11 +17,9 @@ function f0 name="store-after-value-may-throw" parameters=[{type=anything}] resu
     v4 = CatchValue
     v5 = GetEnvironmentField v1 layout=L0 field=0
     Return v5
-}
-# CHECK-LABEL: function f0 name="store-after-value-may-throw"
 # CHECK: PutEnvironmentField v1, v0 layout=L0 [ownerCannotBeMarked]
+}
 function f1 name="store-after-call" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject layout=L0 fields=[]
     Jump -> next b1()
   b1() handler=b2():
@@ -33,7 +30,6 @@ function f1 name="store-after-call" parameters=[{type=anything}] results=[{type=
     v4 = CatchValue
     v5 = GetEnvironmentField v1 layout=L0 field=0
     Return v5
-}
-# CHECK-LABEL: function f1 name="store-after-call"
 # CHECK: PutEnvironmentField v1, v0 layout=L0
 # CHECK-NOT: ownerCannotBeMarked
+}

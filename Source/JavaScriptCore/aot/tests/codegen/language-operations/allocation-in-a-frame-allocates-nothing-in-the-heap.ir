@@ -12,13 +12,11 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Node" fields=[{key="next" declared={type=anything} flags=[IsRequired]}]
 function f0 name="inTheFrame" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0] storage=Frame
     v2 = GetSlotOrUndefined v1 key="next" receivers=[L0] level=Proven
     Return v2
 }
 function f1 name="inTheHeap" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     Return v1
 }

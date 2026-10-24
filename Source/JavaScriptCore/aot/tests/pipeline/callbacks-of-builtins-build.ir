@@ -7,7 +7,6 @@ entry module=m0
 layout L0 name="Box" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
 variable g0 name="seen" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewArray v0, v0 contents=anything holes=[]
@@ -38,13 +37,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="callback" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = String string="ran"
     PutModuleVariable v3 variable=g0
     Return v2
 }
 function f2 name="throughParameters" parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything):
     v5 = NewClosure function=f1
     v6 = Builtin builtin=JSONStringify
     v7 = Call v6, -, v0, v5

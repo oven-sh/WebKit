@@ -22,7 +22,6 @@ struct StronglyConnectedComponents {
     Vector<uint32_t> componentOf;
     BitVector isInCycle;
     uint32_t numberOfComponents { 0 };
-    // The nodes, component by component.
     Vector<uint32_t> members;
     Vector<uint32_t> firstMemberOf;
 };

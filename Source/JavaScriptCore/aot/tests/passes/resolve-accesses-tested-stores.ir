@@ -13,8 +13,6 @@ function f0 name="every-test" parameters=[{type=L0 flags=[IsExpected]}, {type=an
   b0(v0: anything ~ L0, v1: anything):
     PropSet v0, v1 key="x"
     Return
-}
-# CHECK-LABEL: function f0 name="every-test"
 # CHECK-NEXT: b0(v0: anything ~ L0, v1: anything):
 # CHECK-NEXT: [[hasLayout]]: boolean{{*}}= TypeTest v0 testedType=L0
 # CHECK-NEXT: Branch [[hasLayout]] -> taken [[typed]](| 0), notTaken {{*}}
@@ -37,12 +35,11 @@ function f0 name="every-test" parameters=[{type=L0 flags=[IsExpected]}, {type=an
 # CHECK: [[notFrozen]]({{*}}: guard):
 # CHECK-NEXT: [[fits]]: boolean = TypeTest v1 testedType=number
 # CHECK-NEXT: Branch [[fits]] -> taken [[fitting]](| 0), notTaken {{*}}
+}
 function f1 name="slot-is-always-filled" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything ~ L0, v1: anything):
     PropSet v0, v1 key="y"
     Return
-}
-# CHECK-LABEL: function f1 name="slot-is-always-filled"
 # CHECK-NOT: IsSlotFilled
 # CHECK: = TypeTest v0 testedType=L0
 # CHECK-NOT: IsSlotFilled
@@ -53,12 +50,11 @@ function f1 name="slot-is-always-filled" parameters=[{type=L0 flags=[IsExpected]
 # CHECK: = IsNotFrozen [[filledObject]]
 # CHECK-NOT: IsSlotFilled
 # CHECK: = TypeTest v1 testedType=number
+}
 function f2 name="value-fits" parameters=[{type=L0 flags=[IsExpected]}, {type=number}] results=[{type=anything}] {
   b0(v0: anything ~ L0, v1: number):
     PropSet v0, v1 key="x"
     Return
-}
-# CHECK-LABEL: function f2 name="value-fits"
 # CHECK: = TypeTest v0 testedType=L0
 # CHECK-NOT: TypeTest
 # CHECK: PutSlotOrAdd [[fittingObject]], {{*}}, v1 key="x" receivers=[L0] level=Expected
@@ -66,12 +62,10 @@ function f2 name="value-fits" parameters=[{type=L0 flags=[IsExpected]}, {type=nu
 # CHECK: = HasNoFieldOutsideSlot [[fittingObject]]
 # CHECK: = IsNotFrozen [[fittingObject]]
 # CHECK-NOT: TypeTest
+}
 function f3 name="object-is-never-frozen" parameters=[{type=L1}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L1, v1: anything):
     PropSet v0, v1 key="x"
     Return
-}
-# CHECK-LABEL: function f3 name="object-is-never-frozen"
 # CHECK-NEXT: b0(v0: L1, v1: anything):
 # CHECK-NEXT: [[sealedHasNoOthers]]: boolean = HasNoFieldOutsideSlot v0
 # CHECK-NEXT: Branch [[sealedHasNoOthers]] -> taken [[sealedPlain]](| 0), notTaken {{*}}()
@@ -81,12 +75,11 @@ function f3 name="object-is-never-frozen" parameters=[{type=L1}, {type=anything}
 # CHECK: PutSlotOrAdd v0, [[sealedGuard]], [[sealedNumber]] key="x" receivers=[L1] level=Expected
 # CHECK: [[sealedPlain]]([[sealedGuard]]: guard):
 # CHECK-NEXT: = TypeTest v1 testedType=number
+}
 function f4 name="store-may-create-the-property" parameters=[{type=L0 flags=[IsExpected]}, {type=number}] results=[{type=anything}] {
   b0(v0: anything ~ L0, v1: number):
     PropSet v0, v1 key="late"
     Return
-}
-# CHECK-LABEL: function f4 name="store-may-create-the-property"
 # CHECK-NOT: IsSlotFilled
 # CHECK: = TypeTest v0 testedType=L0
 # CHECK: PutSlotOrAdd [[lateObject]], {{*}}, v1 key="late" receivers=[L0] level=Expected
@@ -94,34 +87,29 @@ function f4 name="store-may-create-the-property" parameters=[{type=L0 flags=[IsE
 # CHECK-NEXT: PropSet v0, v1 key="late"
 # CHECK: = IsNotFrozen [[lateObject]]
 # CHECK-NOT: IsSlotFilled
+}
 function f5 name="store-may-create-a-property-nobody-enumerates" parameters=[{type=L2}, {type=number}] results=[{type=anything}] {
-  b0(v0: L2, v1: number):
     PropSet v0, v1 key="late"
     Return
-}
-# CHECK-LABEL: function f5 name="store-may-create-a-property-nobody-enumerates"
 # CHECK-NEXT: b0(v0: L2, v1: number):
 # CHECK-NEXT: = IsNotFrozen v0
 # CHECK-NOT: PutSlotOrAdd
 # CHECK: PutSlot v0, {{*}}, v1 key="late" receivers=[L2] level=Expected
 # CHECK-NOT: PutSlotOrAdd
+}
 function f6 name="definition" parameters=[{type=object}, {type=number}] results=[{type=anything}] {
   b0(v0: object ~ L0, v1: number):
     PropDefine v0, v1 key="y"
     Return
-}
-# CHECK-LABEL: function f6 name="definition"
 # CHECK: = TypeTest v0 testedType=L0
 # CHECK: PutSlot [[definedObject]], {{*}}, v1 key="y" receivers=[L0] level=Expected
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: PropDefine v0, v1 key="y"
 # CHECK: = IsNotFrozen [[definedObject]]
+}
 function f7 name="part-of-the-field-type-can-be-tested" parameters=[{type=L3}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L3, v1: anything):
     PropSet v0, v1 key="either"
     Return
-}
-# CHECK-LABEL: function f7 name="part-of-the-field-type-can-be-tested"
 # CHECK-NEXT: b0(v0: L3, v1: anything):
 # CHECK-NEXT: [[isNumber]]: boolean = TypeTest v1 testedType=number
 # CHECK-NEXT: Branch [[isNumber]] -> taken [[numbers]](| 0), notTaken {{*}}(| 0)
@@ -131,63 +119,54 @@ function f7 name="part-of-the-field-type-can-be-tested" parameters=[{type=L3}, {
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: PropSet v0, {{*}} key="either"
 # CHECK-NOT: TypeTest
+}
 function f8 name="class-of-the-field-type-can-be-tested" parameters=[{type=L3}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L3, v1: anything):
     PropSet v0, v1 key="plain"
     Return
-}
-# CHECK-LABEL: function f8 name="class-of-the-field-type-can-be-tested"
 # CHECK-NEXT: b0(v0: L3, v1: anything):
 # CHECK-NEXT: = TypeTest v1 testedType=Array
 # CHECK: ([[testedArray]]: Array):
 # CHECK: PutSlot v0, -, [[testedArray]] key="plain" receivers=[L3] level=Expected
+}
 function f9 name="layout-of-the-field-type-can-be-tested" parameters=[{type=L3}, {type=L1|L2}] results=[{type=anything}] {
-  b0(v0: L3, v1: L1|L2):
     PropSet v0, v1 key="sealed"
     Return
-}
-# CHECK-LABEL: function f9 name="layout-of-the-field-type-can-be-tested"
 # CHECK-NEXT: b0(v0: L3, v1: L1|L2):
 # CHECK-NEXT: = TypeTest v1 testedType=L1
 # CHECK: ([[testedObject]]: L1):
 # CHECK: PutSlot v0, -, [[testedObject]] key="sealed" receivers=[L3] level=Expected
+}
 function f10 name="proven-contents-cannot-be-tested" parameters=[{type=L3}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L3, v1: anything):
     PropSet v0, v1 key="list"
     Return
-}
-# CHECK-LABEL: function f10 name="proven-contents-cannot-be-tested"
 # CHECK-NEXT: b0(v0: L3, v1: anything):
 # CHECK-NEXT: PropSet v0, v1 key="list"
 # CHECK-NEXT: Return
 # CHECK-NEXT: }
+}
 function f11 name="object-of-an-unknown-instance-cannot-be-tested-for-a-layout" parameters=[{type=L3}, {type=object}] results=[{type=anything}] {
-  b0(v0: L3, v1: object):
     PropSet v0, v1 key="loose"
     Return
-}
-# CHECK-LABEL: function f11 name="object-of-an-unknown-instance-cannot-be-tested-for-a-layout"
 # CHECK-NEXT: b0(v0: L3, v1: object):
 # CHECK-NEXT: PropSet v0, v1 key="loose"
 # CHECK-NEXT: Return
 # CHECK-NEXT: }
+}
 function f12 name="value-never-fits" parameters=[{type=L0 flags=[IsExpected]}, {type=string}] results=[{type=anything}] {
   b0(v0: anything ~ L0, v1: string):
     PropSet v0, v1 key="x"
     Return
-}
-# CHECK-LABEL: function f12 name="value-never-fits"
 # CHECK-NEXT: b0(v0: anything ~ L0, v1: string):
 # CHECK-NEXT: PropSet v0, v1 key="x"
 # CHECK-NEXT: Return
 # CHECK-NEXT: }
+}
 function f13 name="field-is-written-by-its-definition-only" parameters=[{type=L0 flags=[IsExpected]}, {type=number}] results=[{type=anything}] {
   b0(v0: anything ~ L0, v1: number):
     PropSet v0, v1 key="fixed"
     Return
-}
-# CHECK-LABEL: function f13 name="field-is-written-by-its-definition-only"
 # CHECK-NEXT: b0(v0: anything ~ L0, v1: number):
 # CHECK-NEXT: PropSet v0, v1 key="fixed"
 # CHECK-NEXT: Return
 # CHECK-NEXT: }
+}

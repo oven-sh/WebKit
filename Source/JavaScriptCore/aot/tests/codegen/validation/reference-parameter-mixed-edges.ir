@@ -20,7 +20,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Null
     v1 = NewObject -, v0, v0, v0, v0 layout=L0 fields=[0, 1, 2, 3]
     v2 = NewObject -, v1, v1, v1, v1 layout=L0 fields=[0, 1, 2, 3]
@@ -42,7 +41,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v12
 }
 function f1 name="parameterThenSlotRead" parameters=[{type=null|L0}] results=[{type=undefined}] {
-  b0(v0: null|L0):
     Jump -> next b1(v0)
   b1(v1):
     LoopHint
@@ -56,7 +54,6 @@ function f1 name="parameterThenSlotRead" parameters=[{type=null|L0}] results=[{t
     Return
 }
 function f2 name="slotReadOrFreshClosure" parameters=[{type=boolean}, {type=L0}, {type=anything}] results=[{type=boolean}] {
-  b0(v0: boolean, v1: L0, v2: anything):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v3 = PropGet v1 key="next"
@@ -70,6 +67,5 @@ function f2 name="slotReadOrFreshClosure" parameters=[{type=boolean}, {type=L0},
     Return v7
 }
 function f3 name="capturesValue" captures=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }

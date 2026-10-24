@@ -10,7 +10,6 @@ layout L2 kind=Instance name="Shape" constructor=f0 flow={baseState=None members
 variable g0 name="made" declared={type=number} initialization=Undefined
 function f0 name="Shape" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
 function f1 name="constructor" flags=[HasThis] thisType={type=L0} parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: L0, v1: number):
     PutSlot v0, -, v1 key="x" receivers=[L0] level=Proven
     PutModuleVariable v1 variable=g0
     Return
@@ -24,7 +23,6 @@ function f2 name="counts" kind=Arrow captures=[{type=env L1}] parameters=[{type=
 # CHECK: f1 return: writes(ModuleVariables/1) throw: none p0: [Inspects] writes(ObjectFields/1)
 # CHECK: f2 return: none throw: none p0: [Inspects] writes(EnvironmentFields/1) p1: [Inspects] writes(ObjectFields/1)
 function f3 name="rows" parameters=[{type=L0}, {type=number}, {type=function}, {type=function}, {type=object}] results=[{type=undefined}] {
-  b0(v0: L0, v1: number, v2: function, v3: function, v4: object):
     PutSlot v0, -, v1 key="x" receivers=[L0] level=Proven
     PutSlotOrAdd v0, -, v1 key="y" receivers=[L0] level=Proven
     v7 = GetSlot v0 key="x" receivers=[L0] level=Proven
@@ -44,7 +42,6 @@ function f3 name="rows" parameters=[{type=L0}, {type=number}, {type=function}, {
 # SAME-NOT: DefineMethod:{{*}}beyond
 # SAME-NOT: PropSet:{{*}}beyond
 function f4 name="calls" parameters=[{type=L0}, {type=number}, {type=f2}] results=[{type=undefined}] {
-  b0(v0: L0, v1: number, v2: f2):
     v3 = CallDirect v0, v1 function=f1
     v4 = Call v2, -, v0, v1 callees=[f2]
     Return

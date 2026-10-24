@@ -14,10 +14,14 @@
 #include "IndexingHeader.h"
 #include "IndexingType.h"
 #include "JSArray.h"
+#include "MarkedSpace.h"
 
 namespace JSC { namespace AOT {
 
 static_assert(maxArrayElementsInRegisters <= 4);
+static_assert(JSObject::butterflyOffset() == sizeof(JSCell) && sizeof(JSCell) == sizeof(uint64_t));
+static_assert(sizeof(IndexingHeader) == sizeof(EncodedJSValue) && MarkedSpace::sizeStep == 2 * sizeof(EncodedJSValue) && sizeof(Allocator) == sizeof(void*));
+static_assert(Butterfly::offsetOfPublicLength() == -static_cast<ptrdiff_t>(sizeof(IndexingHeader)) && Butterfly::offsetOfVectorLength() == Butterfly::offsetOfPublicLength() + static_cast<ptrdiff_t>(sizeof(uint32_t)));
 
 enum class ArrayElementKind : uint8_t { Int32, Double, Contiguous };
 // OwnStorage: the capacity is how many elements the function that makes the array appends itself.
@@ -54,8 +58,12 @@ constexpr ArrayElementKind arrayElementKindOf(IndexingType indexingType)
 
 #if CPU(X86_64)
 inline constexpr StubRegister arrayPushKindRegister = StubRegister::A0;
+inline constexpr StubRegister arrayAllocationScratchRegister = StubRegister::A0;
+inline constexpr StubRegister arrayStorageRegister = StubRegister::A5;
 #elif CPU(ARM64)
 inline constexpr StubRegister arrayPushKindRegister = StubRegister::T11;
+inline constexpr StubRegister arrayAllocationScratchRegister = StubRegister::T11;
+inline constexpr StubRegister arrayStorageRegister = StubRegister::T12;
 #endif
 
 inline constexpr int64_t arraySliceToEnd = 1ll << 32;
@@ -90,25 +98,6 @@ constexpr StubKey arrayGetAtNumber() { return StubKey(StubFamily::ArrayGetAtNumb
 constexpr StubKey arrayHasAtIndex() { return StubKey(StubFamily::ArrayHasAtIndex); }
 constexpr StubKey arrayHasAtNumber() { return StubKey(StubFamily::ArrayHasAtNumber); }
 
-struct ArrayAllocation {
-    GPRReg array;
-    GPRReg storage;
-    GPRReg allocator;
-    GPRReg scratch;
-    unsigned length;
-    unsigned vectorLength;
-    IndexingType indexingType;
-    bool hasStorageOfItsOwn { false };
-};
-
-struct ArrayRefills {
-    std::optional<AssemblyHelpers::FreeListRefill> storage;
-    AssemblyHelpers::FreeListRefill array;
-};
-
-[[nodiscard]] ArrayRefills allocateArrayWithLateRefills(StubAssembler&, const ArrayAllocation&, JumpList& slowPath);
-void finishArrayAllocation(StubAssembler&, const ArrayAllocation&);
-void emitLateRefills(StubAssembler&, const ArrayRefills&, JumpList& slowPath);
 Jump branchIfHavingABadTime(StubAssembler&);
 // In the space of plain cells.
 ptrdiff_t offsetOfArrayWithStorageAllocator(unsigned vectorLength, unsigned propertyRoom = 0);

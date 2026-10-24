@@ -12,7 +12,6 @@ layout L2 name="Leaf" fields=[{key="value" declared={type=number} flags=[IsRequi
 variable g0 name="either" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=MathRandom
     v1 = Call v0
     v2 = ToNumber v1
@@ -51,7 +50,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="fill" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     PropSet v0, v1 key="shared"
 # REPEAT: i = 0..23
     PropSet v0, v1 key="optional%(i)"

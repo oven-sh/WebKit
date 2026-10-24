@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="parameterHasExpectedType" parameters=[{type=string}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: string, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v0)
@@ -18,15 +17,13 @@ function f0 name="parameterHasExpectedType" parameters=[{type=string}, {type=any
     Return v6
   b5(v7):
     Return v7
-}
-# CHECK-LABEL: function f0 name="parameterHasExpectedType"
 # CHECK: b1():
 # CHECK-NEXT: Jump -> next b4(v0)
 # CHECK: b2():
 # CHECK-NEXT: Jump -> next b3(v1)
+}
 
 function f1 name="parameterIsUsedBehindTheTest" parameters=[{type=string}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: string, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v0)
@@ -41,17 +38,15 @@ function f1 name="parameterIsUsedBehindTheTest" parameters=[{type=string}, {type
     Return v7
   b5(v8):
     Return v8
-}
-# CHECK-LABEL: function f1 name="parameterIsUsedBehindTheTest"
 # CHECK: b1():
 # CHECK-NEXT: Jump -> next [[skipping]](v0)
 # CHECK: b2():
 # CHECK-NEXT: Jump -> next b3(v1)
 # CHECK: [[skipping]]([[text]]: string):
 # CHECK-NEXT: Jump -> next b4([[text]], [[text]])
+}
 
 function f2 name="castInFrontOfTest" parameters=[{type=string}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: string, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v0)
@@ -66,13 +61,11 @@ function f2 name="castInFrontOfTest" parameters=[{type=string}, {type=anything},
     Return v7
   b5(v8):
     Return v8
-}
-# CHECK-LABEL: function f2 name="castInFrontOfTest"
 # CHECK: b1():
 # CHECK-NEXT: Jump -> next b3(v0)
+}
 
 function f3 name="bothSidesDecided" parameters=[{type=string}, {type=number}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: string, v1: number, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v0)
@@ -86,15 +79,13 @@ function f3 name="bothSidesDecided" parameters=[{type=string}, {type=number}, {t
     Return v6
   b5(v7):
     Return v7
-}
-# CHECK-LABEL: function f3 name="bothSidesDecided"
 # CHECK: b1():
 # CHECK-NEXT: Jump -> next b4(v0)
 # CHECK: b2():
 # CHECK-NEXT: Jump -> next b5(v1)
+}
 
 function f4 name="typeDecidesNothing" parameters=[{type=number|string}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number|string, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v0)
@@ -108,24 +99,20 @@ function f4 name="typeDecidesNothing" parameters=[{type=number|string}, {type=an
     Return v6
   b5(v7):
     Return v7
-}
-# CHECK-LABEL: function f4 name="typeDecidesNothing"
 # CHECK: b1():
 # CHECK-NEXT: Jump -> next b3(v0)
 # CHECK: b2():
 # CHECK-NEXT: Jump -> next b3(v1)
+}
 
 function f5 name="tested" results=[{type=anything}] {
-  b0():
     Return
 }
 function f6 name="other" results=[{type=anything}] {
-  b0():
     Return
 }
 
 function f7 name="closureOfTestedFunction" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = NewClosure function=f5
@@ -141,15 +128,13 @@ function f7 name="closureOfTestedFunction" parameters=[{type=anything}, {type=bo
   b5():
     v6 = Call v3
     Return v6
-}
-# CHECK-LABEL: function f7 name="closureOfTestedFunction"
 # CHECK: b1():
 # CHECK: Jump -> next b4()
 # CHECK: b2():
 # CHECK-NEXT: Jump -> next b3(v0)
+}
 
 function f8 name="closureOfOtherFunction" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = NewClosure function=f6
@@ -164,15 +149,13 @@ function f8 name="closureOfOtherFunction" parameters=[{type=anything}, {type=boo
     Return v5
   b5():
     Return
-}
-# CHECK-LABEL: function f8 name="closureOfOtherFunction"
 # CHECK: b1():
 # CHECK: Jump -> next b5()
 # CHECK: b2():
 # CHECK-NEXT: Jump -> next b3(v0)
+}
 
 function f9 name="closureOfEitherFunction" parameters=[{type=f5|f6}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: f5|f6, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v0)
@@ -186,9 +169,8 @@ function f9 name="closureOfEitherFunction" parameters=[{type=f5|f6}, {type=anyth
     Return v5
   b5():
     Return
-}
-# CHECK-LABEL: function f9 name="closureOfEitherFunction"
 # CHECK: b1():
 # CHECK-NEXT: Jump -> next b3(v0)
 # CHECK: b2():
 # CHECK-NEXT: Jump -> next b3(v1)
+}

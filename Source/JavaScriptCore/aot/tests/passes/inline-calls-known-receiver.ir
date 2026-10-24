@@ -10,7 +10,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Record" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}, {key="c" declared={type=anything}}, {key="d" declared={type=anything}}, {key="e" declared={type=anything}}, {key="f" declared={type=anything}}, {key="g" declared={type=anything}}, {key="h" declared={type=anything}}]
 
 function f0 name="defineEight" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: object, v1: anything):
     PropDefine v0, v1 key="a"
     PropDefine v0, v1 key="b"
     PropDefine v0, v1 key="c"
@@ -24,7 +23,6 @@ function f0 name="defineEight" parameters=[{type=object}, {type=anything}] resul
 }
 
 function f1 name="storeEightInSecond" parameters=[{type=object}, {type=object}] results=[{type=undefined}] {
-  b0(v0: object, v1: object):
     PropSet v1, v0 key="a"
     PropSet v1, v0 key="b"
     PropSet v1, v0 key="c"
@@ -38,49 +36,39 @@ function f1 name="storeEightInSecond" parameters=[{type=object}, {type=object}] 
 }
 
 function f2 name="allocates" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject layout=L0
     v2 = CallDirect v1, v0 function=f0
     Return v1
-}
-# CHECK-LABEL: function f2 name="allocates"
 # CHECK: = NewObject layout=L0
 # CHECK-NOT: CallDirect
 # CHECK: [[allocated]]: L0 = Upcast v1 castType=object
 # CHECK-NOT: CallDirect
 # CHECK: PropDefine [[allocated]], v0 key="h"
+}
 
 function f3 name="hasProof" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     v2 = CallDirect v0, v1 function=f0
     Return v0
-}
-# CHECK-LABEL: function f3 name="hasProof"
 # CHECK-NOT: CallDirect
 # CHECK: PropDefine [[proven]], v1 key="a"
 # CHECK: PropDefine [[proven]], v1 key="h"
+}
 
 function f4 name="knowsNoLayout" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
     v2 = CallDirect v0, v1 function=f0
     Return v0
-}
-# CHECK-LABEL: function f4 name="knowsNoLayout"
 # CHECK: = CallDirect v0, v1 function=f0
+}
 
 function f5 name="allocatesOtherArgument" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = NewObject layout=L0
     v2 = CallDirect v1, v0 function=f1
     Return v1
-}
-# CHECK-LABEL: function f5 name="allocatesOtherArgument"
 # CHECK: = CallDirect v1, v0 function=f1
+}
 
 function f6 name="knowsNeitherLayout" parameters=[{type=object}, {type=object}] results=[{type=anything}] {
-  b0(v0: object, v1: object):
     v2 = CallDirect v0, v1 function=f1
     Return v1
-}
-# CHECK-LABEL: function f6 name="knowsNeitherLayout"
 # CHECK: = CallDirect v0, v1 function=f1
+}

@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="testInHeader" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     Jump -> next b1(v1)
   b1(v2):
@@ -20,15 +19,13 @@ function f0 name="testInHeader" parameters=[{type=int[0, 100]}] results=[{type=u
     Jump -> next b1(v7)
   b3():
     Return
-}
-# CHECK-LABEL: function f0 name="testInHeader"
 # CHECK: b0(
 # CHECK-NEXT: Integer
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NOT: LoopHint
+}
 
 function f1 name="decreasing" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=100
     Jump -> next b1(v1)
   b1(v2):
@@ -41,15 +38,13 @@ function f1 name="decreasing" parameters=[{type=int[0, 100]}] results=[{type=und
     Jump -> next b1(v7)
   b3():
     Return
-}
-# CHECK-LABEL: function f1 name="decreasing"
 # CHECK: b0(
 # CHECK-NEXT: Integer
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NOT: LoopHint
+}
 
 function f2 name="testBelowHeader" parameters=[{type=int[0, 100]}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: int[0, 100], v1: boolean):
     v2 = Integer integer=0
     Jump -> next b1(v2)
   b1(v3):
@@ -68,15 +63,13 @@ function f2 name="testBelowHeader" parameters=[{type=int[0, 100]}, {type=boolean
     Jump -> next b1(v8)
   b6():
     Return
-}
-# CHECK-LABEL: function f2 name="testBelowHeader"
 # CHECK: b0(
 # CHECK-NEXT: Integer
 # CHECK-NEXT: Jump -> next b6()
 # CHECK-NOT: LoopHint
+}
 
 function f3 name="counterMayLeaveTheIntegers" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     Jump -> next b1(v1)
   b1(v2):
@@ -87,14 +80,12 @@ function f3 name="counterMayLeaveTheIntegers" parameters=[{type=int[0, 100]}] re
     Branch v6 -> taken b1(v5), notTaken b2()
   b2():
     Return
-}
-# CHECK-LABEL: function f3 name="counterMayLeaveTheIntegers"
 # CHECK: Jump -> next b1(v1)
 # CHECK: b1(v2: int|whole):
 # CHECK: Branch v6 -> taken b1(v5), notTaken b2()
+}
 
 function f4 name="steppedValueUsedAfterLoop" parameters=[{type=int[0, 100]}] results=[{type=number}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     Jump -> next b1(v1)
   b1(v2):
@@ -107,13 +98,11 @@ function f4 name="steppedValueUsedAfterLoop" parameters=[{type=int[0, 100]}] res
     Jump -> next b1(v7)
   b3():
     Return v5
-}
-# CHECK-LABEL: function f4 name="steppedValueUsedAfterLoop"
 # CHECK: Jump -> next b1(v1)
 # CHECK: LoopHint
+}
 
 function f5 name="stepsAwayFromBound" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
-  b0(v0: int[0, 100]):
     v1 = Integer integer=0
     Jump -> next b1(v1)
   b1(v2):
@@ -126,7 +115,6 @@ function f5 name="stepsAwayFromBound" parameters=[{type=int[0, 100]}] results=[{
     Jump -> next b1(v7)
   b3():
     Return
-}
-# CHECK-LABEL: function f5 name="stepsAwayFromBound"
 # CHECK: Jump -> next b1(v1)
 # CHECK: LoopHint
+}

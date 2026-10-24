@@ -11,7 +11,6 @@ entry module=m0
 runtimefunction id=131090 function=f1
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="register" [isFreeName]
     v2 = NewClosure function=f3
@@ -22,7 +21,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 
 # The traversal, cut down to two links and the ends Array, Reduce and Join. A shape has the end in bits 0 to 3, the links in bits 4 to 5 and 6 to 7 (1: map, 2: filter), "has an initial value" in bit 10
 function f1 name="traverseArray" role=Library flags=[IsHiddenInStackTraces] enclosingRuntimeFunction=131090 parameters=[{type=Array<anything>}, {type=number}, {type=undefined|number}, {type=number}, {type=Array<anything>}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array<anything>, v1: number, v2: undefined|number, v3: number, v4: Array<anything>, v5: anything):
     v6 = Integer integer=0
     v7 = Integer integer=1
     v8 = Integer integer=2
@@ -138,11 +136,9 @@ function f1 name="traverseArray" role=Library flags=[IsHiddenInStackTraces] encl
     Return v41
 }
 function f2 name="shownTraversal" role=Library parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
     Return v5
 }
 function f3 name="filterThenMapAsBuilt" parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything):
     v7 = Undefined
     v8 = NewArray v3, v4, v5, v6, v7, v7, v7, v7 contents=anything
     v9 = Integer integer=96
@@ -153,7 +149,6 @@ function f3 name="filterThenMapAsBuilt" parameters=[{type=anything}, {type=anyth
     Return v13
 }
 function f4 name="shapeKnownAtRunTime" parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: number):
     v8 = Undefined
     v9 = NewArray v3, v4, v5, v6, v8, v8, v8, v8 contents=anything
     v10 = Check v0 castType=Array<anything>

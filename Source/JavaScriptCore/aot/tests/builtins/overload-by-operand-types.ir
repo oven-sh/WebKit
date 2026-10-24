@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="firstOperandDecides" parameters=[{type=string}, {type=RegExp<pristine[Names]>}, {type=number}, {type=Array}] results=[{type=anything}] {
-  b0(v0: string, v1: RegExp<pristine[Names]>, v2: number, v3: Array):
     v4 = Builtin builtin=RegExp
     v5 = Call v4, -, v0
     v6 = Call v4, -, v1
@@ -22,7 +21,6 @@ function f0 name="firstOperandDecides" parameters=[{type=string}, {type=RegExp<p
 # CHECK-NEXT: v9: {{*}} = CallBuiltin -, v3 overload=RegExp/3
 
 function f1 name="secondOperandDecides" parameters=[{type=string}, {type=string}, {type=function}] results=[{type=anything}] {
-  b0(v0: string, v1: string, v2: function):
     v3 = Builtin builtin=StringPrototypeReplace
     v4 = Call v3, v0, v1, v1
     v5 = Call v3, v0, v1, v2
@@ -33,7 +31,6 @@ function f1 name="secondOperandDecides" parameters=[{type=string}, {type=string}
 # CHECK-NEXT: v5: string = CallBuiltin v0, v1, v2 overload=StringPrototypeReplace/2
 
 function f2 name="classOfOperandDecides" parameters=[{type=string}, {type=string}, {type=RegExp<pristine[Names]>}, {type=Map}, {type=i32}] results=[{type=anything}] {
-  b0(v0: string, v1: string, v2: RegExp<pristine[Names]>, v3: Map, v4: i32):
     v5 = Builtin builtin=StringPrototypeReplace
     v6 = Call v5, v0, v2, v1
     v7 = Call v5, v0, v3, v1
@@ -46,7 +43,6 @@ function f2 name="classOfOperandDecides" parameters=[{type=string}, {type=string
 # CHECK-NEXT: v8: string = CallBuiltin v0, v4, v1 overload=StringPrototypeReplace/2
 
 function f3 name="receiverDecides" parameters=[{type=null}, {type=string}] results=[{type=anything}] {
-  b0(v0: null, v1: string):
     v2 = Builtin builtin=StringPrototypeReplace
     v3 = Call v2, v0, v1, v1
     Return v3
@@ -55,7 +51,6 @@ function f3 name="receiverDecides" parameters=[{type=null}, {type=string}] resul
 # CHECK: v3: anything = CallBuiltin v0, v1, v1 overload=StringPrototypeReplace/3
 
 function f4 name="typesDoNotDecide" parameters=[{type=string}, {type=string}, {type=anything}, {type=object}] results=[{type=anything}] {
-  b0(v0: string, v1: string, v2: anything, v3: object):
     v4 = Builtin builtin=StringPrototypeReplace
     v5 = Call v4, v0, v1, v2
     v6 = Call v4, v0, v3, v1
@@ -66,7 +61,6 @@ function f4 name="typesDoNotDecide" parameters=[{type=string}, {type=string}, {t
 # CHECK-NEXT: v6: anything = CallBuiltin v0, v3, v1 overload=StringPrototypeReplace/{{*}} builtinCallForm=AnyReceiver
 
 function f5 name="overloadNeedsTest" parameters=[{type=string}, {type=string}, {type=RegExp}] results=[{type=anything}] {
-  b0(v0: string, v1: string, v2: RegExp):
     v3 = Builtin builtin=StringPrototypeReplace
     v4 = Call v3, v0, v2, v1
     Return v4
@@ -76,7 +70,6 @@ function f5 name="overloadNeedsTest" parameters=[{type=string}, {type=string}, {
 # CHECK: v4: anything = CallBuiltin v0, v2, v1 overload=StringPrototypeReplace/{{*}} builtinCallForm=AnyReceiver
 
 function f6 name="moveToOverloadOfNarrowedTypes" parameters=[{type=string}, {type=string}, {type=RegExp<pristine[Names]>}] results=[{type=anything}] {
-  b0(v0: string, v1: string, v2: RegExp<pristine[Names]>):
     v3 = CallBuiltin v0, v1, v1 overload=StringPrototypeReplace/2
     v4 = CallBuiltin v0, v2, v1 overload=StringPrototypeReplace/3
     v5 = CallBuiltin v0, v1, v1 overload=StringPrototypeReplace/3 builtinCallForm=AnyReceiver
@@ -90,7 +83,6 @@ function f6 name="moveToOverloadOfNarrowedTypes" parameters=[{type=string}, {typ
 # CHECK-NEXT: v6: string = CallBuiltin v0, v1, v1 overload=StringPrototypeReplace/1
 
 function f7 name="listFormStays" parameters=[{type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
-  b0(v0: Array<number, pristine[Storage, Names]>):
     v1 = CallBuiltin -, v0 overload=MathMax/0 builtinCallForm=List
     Return v1
 }

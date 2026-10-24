@@ -22,9 +22,7 @@ class BlockCycles {
 public:
     using Forest = WTF::CycleForest<CFG>;
 
-    explicit BlockCycles(CFG&);
-    // For estimates of frequency: of the entries of a cycle the likeliest is its header.
-    BlockCycles(CFG&, const Function&);
+    explicit BlockCycles(CFG&, const Function* functionWithFrequencies = nullptr);
 
     bool hasCycleWithSeveralEntries() const;
 
@@ -53,7 +51,6 @@ public:
         return cycle;
     }
 
-    // A definition that is not in every cycle of its use is used many times each time it runs, although the use is written once.
     bool isInEveryCycleOf(BlockID block, BlockID other) const
     {
         std::optional<unsigned> innermost = innermostCycleOf(other);
@@ -70,8 +67,6 @@ public:
     }
 
 private:
-    BlockCycles(CFG&, const Function*);
-
     void computeForest() const;
 
     CFG& m_cfg;

@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = NewClosure v1 function=f1
@@ -23,23 +22,18 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v12
 }
 function f1 name="storedInto" kind=Plain captures=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 function f2 name="readFrom" kind=Plain captures=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 function f3 name="storedIntoThroughCast" kind=Arrow captures=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 function f4 name="storedSomewhere" kind=Plain captures=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 function f5 name="handedOn" kind=Arrow captures=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 

@@ -21,6 +21,7 @@
 #include "AOTProgramAnalyses.h"
 #include "AOTProgramCaches.h"
 #include "AOTLargeVectors.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
@@ -28,13 +29,311 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <utility>
+#include <wtf/ParkingLot.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static uint64_t largestFirstKey(size_t numberOfValues, unsigned index)
+// A thread takes the last of its functions: the largest, which take longest, begin first.
+static bool isProcessedLater(const QueuedFunction& a, const QueuedFunction& b)
 {
-    return static_cast<uint64_t>(UINT32_MAX - numberOfValues) << 32 | index;
+    if (a.size != b.size)
+        return a.size < b.size;
+    return a.id.index() > b.id.index();
+}
+
+enum class Half : uint8_t { WithLargest, WithoutLargest };
+
+// Every other one, so that both halves begin with large ones.
+static Vector<QueuedFunction> takeHalf(Vector<QueuedFunction>& functions, Half half)
+{
+    Vector<QueuedFunction> taken;
+    taken.reserveInitialCapacity((functions.size() + 1) / 2);
+    size_t size = functions.size();
+    size_t numberKept = 0;
+    for (size_t index = 0; index < size; ++index) {
+        bool isInHalfWithLargest = !((size - 1 - index) % 2);
+        if (isInHalfWithLargest == (half == Half::WithLargest))
+            taken.append(functions[index]);
+        else
+            functions[numberKept++] = functions[index];
+    }
+    functions.shrink(numberKept);
+    return taken;
+}
+
+FunctionQueue::FunctionQueue(const ParallelLoops& loops, unsigned numberOfFunctions)
+    : m_loops(loops)
+    , m_workers(makeUniqueArray<Worker>(loops.width()))
+    , m_states(numberOfFunctions)
+{
+    for (unsigned index = 0; index < loops.width(); ++index)
+        m_workers[index].queue = this;
+    for (std::atomic<uint8_t>& state : m_states)
+        state.store(0, std::memory_order_relaxed);
+}
+
+FunctionQueue::~FunctionQueue()
+{
+    for (auto& segment : m_isProvisionalQueued)
+        delete segment.load(std::memory_order_relaxed);
+}
+
+auto FunctionQueue::speculativeFunction(FunctionID id) -> SpeculativeFunction&
+{
+    auto function = std::ranges::lower_bound(m_speculativeFunctions, id, { }, &SpeculativeFunction::id);
+    RELEASE_ASSERT(function != m_speculativeFunctions.end() && function->id == id);
+    return *function;
+}
+
+// Only a confirmed function queues a provisional function, so one bit is enough for it.
+auto FunctionQueue::confirm(FunctionID id) -> Confirmation
+{
+    if (ProvisionalFunctions::contains(id)) {
+        uint32_t wordIndex = ProvisionalFunctions::ordinalOf(id) / bitsPerWord;
+        RELEASE_ASSERT(wordIndex / wordsPerSegment < numberOfSegments);
+        std::atomic<Segment*>& slot = m_isProvisionalQueued[wordIndex / wordsPerSegment];
+        Segment* segment = slot.load(std::memory_order_acquire);
+        if (!segment) {
+            auto created = makeUniqueWithoutFastMallocCheck<Segment>();
+            if (slot.compare_exchange_strong(segment, created.get(), std::memory_order_release, std::memory_order_acquire))
+                segment = created.release();
+        }
+        Word& word = (*segment)[wordIndex % wordsPerSegment];
+        uint64_t bit = 1ull << (id.index() % bitsPerWord);
+        if (word.load(std::memory_order_relaxed) & bit || word.fetch_or(bit, std::memory_order_relaxed) & bit)
+            return Confirmation::AlreadyQueued;
+        return Confirmation::FirstQueued;
+    }
+
+    constexpr uint8_t queuedAndConfirmed = Queued | Confirmed;
+    std::atomic<uint8_t>& state = m_states[id.index()];
+    if ((state.load(std::memory_order_relaxed) & queuedAndConfirmed) == queuedAndConfirmed)
+        return Confirmation::AlreadyQueued;
+    uint8_t previous = state.fetch_or(queuedAndConfirmed, std::memory_order_acq_rel);
+    if (!(previous & Queued))
+        return Confirmation::FirstQueued;
+    if (previous & Confirmed || !(previous & Done))
+        return Confirmation::AlreadyQueued;
+    return Confirmation::FinishedSpeculatively;
+}
+
+void FunctionQueue::confirmFoundFunctions(FoundFunctions& found)
+{
+    size_t numberToProcess = 0;
+    for (size_t index = 0; index < found.size(); ++index) {
+        QueuedFunction function = found[index];
+        switch (confirm(function.id)) {
+        case Confirmation::AlreadyQueued:
+            break;
+        case Confirmation::FirstQueued:
+            found[numberToProcess++] = function;
+            break;
+        case Confirmation::FinishedSpeculatively: {
+            (*m_didConfirm)(function.id);
+            Vector<QueuedFunction> foundSpeculatively = std::exchange(speculativeFunction(function.id).found, { });
+            found.append(foundSpeculatively.span());
+            break;
+        }
+        }
+    }
+    found.shrink(numberToProcess);
+}
+
+// Whichever thread sets the second of Confirmed and Done queues the functions that the speculative function found.
+bool FunctionQueue::finishSpeculativeFunction(FunctionID id, const FoundFunctions& found)
+{
+    std::atomic<uint8_t>& state = m_states[id.index()];
+    if (!(state.load(std::memory_order_relaxed) & Confirmed)) {
+        SpeculativeFunction& function = speculativeFunction(id);
+        function.found = Vector<QueuedFunction>(found.span());
+        if (!(state.fetch_or(Done, std::memory_order_acq_rel) & Confirmed))
+            return false;
+        function.found.clear();
+    }
+    (*m_didConfirm)(id);
+    return true;
+}
+
+bool FunctionQueue::wasQueued(FunctionID id) const
+{
+    if (!ProvisionalFunctions::contains(id))
+        return m_states[id.index()].load(std::memory_order_relaxed) & Queued;
+    uint32_t word = ProvisionalFunctions::ordinalOf(id) / bitsPerWord;
+    if (word / wordsPerSegment >= numberOfSegments)
+        return false;
+    const Segment* segment = m_isProvisionalQueued[word / wordsPerSegment].load(std::memory_order_acquire);
+    return segment && (*segment)[word % wordsPerSegment].load(std::memory_order_relaxed) & 1ull << (id.index() % bitsPerWord);
+}
+
+bool FunctionQueue::wasConfirmed(FunctionID id) const
+{
+    if (!ProvisionalFunctions::contains(id))
+        return m_states[id.index()].load(std::memory_order_relaxed) & Confirmed;
+    return wasQueued(id);
+}
+
+BitVector FunctionQueue::takeQueuedProvisionalOrdinals()
+{
+    BitVector ordinals;
+    for (unsigned segmentIndex = 0; segmentIndex < numberOfSegments; ++segmentIndex) {
+        const Segment* segment = m_isProvisionalQueued[segmentIndex].load(std::memory_order_acquire);
+        if (!segment)
+            continue;
+        for (unsigned wordIndex = 0; wordIndex < wordsPerSegment; ++wordIndex) {
+            uint64_t firstOrdinal = (static_cast<uint64_t>(segmentIndex) * wordsPerSegment + wordIndex) * bitsPerWord;
+            for (uint64_t bits = (*segment)[wordIndex].load(std::memory_order_relaxed); bits; bits &= bits - 1)
+                ordinals.set(firstOrdinal + WTF::ctz(bits));
+        }
+    }
+    return ordinals;
+}
+
+bool FunctionQueue::takeSpareThread()
+{
+    unsigned spare = m_numberOfSpareThreads.load(std::memory_order_relaxed);
+    while (spare) {
+        if (m_numberOfSpareThreads.compare_exchange_weak(spare, spare - 1, std::memory_order_acquire, std::memory_order_relaxed))
+            return true;
+    }
+    return false;
+}
+
+// Whoever has taken a spare thread finds a worker: a worker is idle before its thread counts as spare.
+auto FunctionQueue::takeIdleWorker() -> Worker&
+{
+    for (;;) {
+        for (unsigned index = 0; index < m_loops.width(); ++index) {
+            Worker& worker = m_workers[index];
+            if (!worker.isBusy.load(std::memory_order_relaxed) && !worker.isBusy.exchange(true, std::memory_order_acquire))
+                return worker;
+        }
+    }
+}
+
+void FunctionQueue::start(Vector<QueuedFunction>&& functions)
+{
+    Worker& worker = takeIdleWorker();
+    worker.setFunctions(WTF::move(functions));
+    m_numberOfBusyWorkers.exchangeAdd(1);
+    m_loops.schedule([](void* argument) {
+        Worker& worker = *static_cast<Worker*>(argument);
+        worker.queue->processShare(worker);
+    }, &worker);
+}
+
+// A list whose owner is at it is passed over: the owner hands over half itself as soon as it sees a spare thread.
+bool FunctionQueue::takeHalfOfAnother(Worker& own)
+{
+    unsigned numberOfWorkers = m_loops.width();
+    unsigned ownIndex = static_cast<unsigned>(&own - m_workers.get());
+    for (unsigned distance = 1; distance < numberOfWorkers; ++distance) {
+        Worker& other = m_workers[(ownIndex + distance) % numberOfWorkers];
+        if (!other.numberOfFunctions.load(std::memory_order_relaxed) || !other.lock.tryLock())
+            continue;
+        Vector<QueuedFunction> taken;
+        {
+            Locker locker { AdoptLock, other.lock };
+            taken = takeHalf(other.functions, Half::WithLargest);
+            other.didChangeFunctions();
+        }
+        if (taken.isEmpty())
+            continue;
+        own.setFunctions(WTF::move(taken));
+        return true;
+    }
+    return false;
+}
+
+void FunctionQueue::processShare(Worker& own)
+{
+    FoundFunctions found;
+    Vector<Vector<QueuedFunction>, 4> handedOver;
+    for (;;) {
+        std::optional<QueuedFunction> next;
+        {
+            Locker locker { own.lock };
+            while (own.functions.size() > 1 && takeSpareThread())
+                handedOver.append(takeHalf(own.functions, Half::WithoutLargest));
+            if (!own.functions.isEmpty())
+                next = own.functions.takeLast();
+            own.didChangeFunctions();
+        }
+        for (Vector<QueuedFunction>& functions : handedOver)
+            start(WTF::move(functions));
+        handedOver.shrink(0);
+        if (!next) {
+            if (takeHalfOfAnother(own))
+                continue;
+            break;
+        }
+
+        (*m_process)(next->id, found);
+        bool isSpeculative = !ProvisionalFunctions::contains(next->id) && m_states[next->id.index()].load(std::memory_order_relaxed) & Speculative;
+        if (isSpeculative && !finishSpeculativeFunction(next->id, found)) {
+            found.shrink(0);
+            continue;
+        }
+
+        confirmFoundFunctions(found);
+        AOT::sort(found, isProcessedLater);
+        if (!found.isEmpty()) {
+            Locker locker { own.lock };
+            own.functions.append(found.span());
+            own.didChangeFunctions();
+        }
+        found.shrink(0);
+    }
+
+    own.isBusy.store(false, std::memory_order_release);
+    m_numberOfSpareThreads.fetch_add(1, std::memory_order_release);
+    if (m_numberOfBusyWorkers.exchangeSub(1) == 1)
+        ParkingLot::unparkAll(&m_numberOfBusyWorkers);
+}
+
+void FunctionQueue::processEach(std::span<const QueuedFunction> functions, NOESCAPE const Process& process)
+{
+    processEach(functions, { }, process, [](FunctionID) { });
+}
+
+void FunctionQueue::processEach(std::span<const QueuedFunction> functions, std::span<const QueuedFunction> speculativeFunctions, NOESCAPE const Process& process, NOESCAPE const DidConfirm& didConfirm)
+{
+    RELEASE_ASSERT(!m_process);
+    m_process = &process;
+    m_didConfirm = &didConfirm;
+
+    Vector<QueuedFunction> first;
+    first.reserveInitialCapacity(functions.size() + speculativeFunctions.size());
+    for (QueuedFunction function : functions) {
+        if (confirm(function.id) == Confirmation::FirstQueued)
+            first.append(function);
+    }
+    for (QueuedFunction function : speculativeFunctions) {
+        RELEASE_ASSERT(!ProvisionalFunctions::contains(function.id));
+        std::atomic<uint8_t>& state = m_states[function.id.index()];
+        if (state.load(std::memory_order_relaxed) & Queued)
+            continue;
+        state.store(Queued | Speculative, std::memory_order_relaxed);
+        first.append(function);
+        m_speculativeFunctions.append(SpeculativeFunction { function.id, { } });
+    }
+    AOT::sort(m_speculativeFunctions, { }, &SpeculativeFunction::id);
+    AOT::sort(first, isProcessedLater);
+
+    ParallelRegionScope parallelRegion;
+    m_numberOfSpareThreads.store(m_loops.width() - 1, std::memory_order_relaxed);
+    m_numberOfBusyWorkers.store(1);
+    Worker& own = takeIdleWorker();
+    own.setFunctions(WTF::move(first));
+    processShare(own);
+    if (m_numberOfBusyWorkers.load()) {
+        BusyThreads::WaitScope waitScope;
+        for (uint32_t busy = m_numberOfBusyWorkers.load(); busy; busy = m_numberOfBusyWorkers.load())
+            ParkingLot::compareAndPark(&m_numberOfBusyWorkers, busy);
+    }
+    m_process = nullptr;
+    m_didConfirm = nullptr;
 }
 
 // Select replaces operations by others whose effects it checks against those of the operations they replace.
@@ -48,15 +347,6 @@ static Effects effectsOfConversionsIn(const Function& function)
             effects.merge(declaredBoundOf(Opcode::Decode));
     }
     return effects;
-}
-
-// All that remapIDs() does to a body without provisional ids.
-static void dropExpectedTypesEqualToTypes(Function& function)
-{
-    for (Value& value : function.editAllValues()) {
-        if (value.expected() == value.type)
-            value.setExpected({ });
-    }
 }
 
 static bool holdsExpectedTypeEqualToType(const Function& function)
@@ -74,21 +364,18 @@ struct Batch {
     uint32_t size { 0 };
 };
 
-enum class StateBehindSchedule : uint8_t { IsFinal, AwaitsEndOfLoop };
-
 } // anonymous namespace
 
 static Vector<Batch> createBatches(std::span<const uint64_t> largestFirst, bool hasSeveralSteps)
 {
     AOT_THRESHOLD(uint32_t, maxFunctionsInBatch, 64);
     AOT_THRESHOLD(uint64_t, maxValuesInBatch, 4096);
-    Vector<Batch> batches;
     if (!hasSeveralSteps) {
-        batches = Vector<Batch>(largestFirst.size(), [](size_t position) {
+        return Vector<Batch>(largestFirst.size(), [](size_t position) {
             return Batch { static_cast<uint32_t>(position), 1 };
         });
-        return batches;
     }
+    Vector<Batch> batches;
     uint64_t valuesInBatch = 0;
     for (uint32_t position = 0; position < largestFirst.size(); ++position) {
         uint64_t values = UINT32_MAX - (largestFirst[position] >> 32);
@@ -116,14 +403,14 @@ static void runInPlace(FunctionSchedule schedule, Program& program, const Optimi
     unsigned count = program.functions.size();
     Vector<uint64_t> order = collectInParallel<uint64_t>(loops, count, [&](unsigned index, Vector<uint64_t>& keys) {
         if (hasBody(program, FunctionID(index)))
-            keys.append(largestFirstKey(numberOfValuesIn(program, FunctionID(index)), index));
+            keys.append(static_cast<uint64_t>(UINT32_MAX - numberOfValuesIn(program, FunctionID(index))) << 32 | index);
     });
     parallelSort(loops, order.mutableSpan(), std::less<uint64_t> { });
     Vector<Batch> batches = createBatches(order.span(), reader);
     Vector<uint8_t> didChange(FillWith { }, count, static_cast<uint8_t>(0));
     Vector<uint8_t> hasImpureConversions(FillWith { }, schedule == FunctionSchedule::Represent ? count : 0, static_cast<uint8_t>(0));
     // Of a function that has changed. The task of a function has the number of the function. A task notes every provisional id that it uses: where it has noted none, the body holds none.
-    Vector<StateBehindSchedule> stateBehindSchedule(FillWith { }, reader ? count : 0, StateBehindSchedule::IsFinal);
+    Vector<uint8_t> awaitsEndOfLoop(FillWith { }, reader ? count : 0, static_cast<uint8_t>(0));
     auto phases = makeUnique<InterningPhases>(program, count);
     BodyIndex& bodyIndex = analyses.bodyIndex();
     bodyIndex.growTo(count);
@@ -151,12 +438,12 @@ static void runInPlace(FunctionSchedule schedule, Program& program, const Optimi
                 if (runner.build().options().verifiesAfterEveryPass) [[unlikely]]
                     RELEASE_ASSERT(!numberOfForeignIDs(program.functions[i], arenas.types));
                 if (reader && didChange[i] && (arenas.types.hasUsedProvisionalRecords() || arenas.strings.hasUsedProvisionalStrings() || holdsExpectedTypeEqualToType(program.functions[i])))
-                    stateBehindSchedule[i] = StateBehindSchedule::AwaitsEndOfLoop;
+                    awaitsEndOfLoop[i] = true;
             }
             for (const ReaderOfScheduledFunction* read : steps.behind) {
                 for (uint64_t key : functionsInBatch) {
                     unsigned i = static_cast<unsigned>(key);
-                    if (stateBehindSchedule[i] == StateBehindSchedule::IsFinal)
+                    if (!awaitsEndOfLoop[i])
                         (*read)(FunctionID(i));
                 }
             }
@@ -182,17 +469,22 @@ static void runInPlace(FunctionSchedule schedule, Program& program, const Optimi
     Vector<FunctionID> changedAndNotFinal;
     for (uint64_t key : order) {
         unsigned i = static_cast<unsigned>(key);
-        if (didChange[i] && (!reader || stateBehindSchedule[i] == StateBehindSchedule::AwaitsEndOfLoop))
+        if (didChange[i] && (!reader || awaitsEndOfLoop[i]))
             changedAndNotFinal.append(FunctionID(i));
     }
     if (!remaps.isIdentity()) {
         forEachIndexInParallel(loops, changedAndNotFinal.size(), [&](unsigned position) {
             Function& function = program.at(changedAndNotFinal[position]);
             unsigned task = changedAndNotFinal[position].index();
-            if (remaps.types.isIdentityFor(task) && remaps.strings.isIdentityFor(task))
-                dropExpectedTypesEqualToTypes(function);
-            else
+            if (!remaps.types.isIdentityFor(task) || !remaps.strings.isIdentityFor(task)) {
                 applyRemaps(remaps, function);
+                return;
+            }
+            // All that remapIDs() does to a body without provisional ids.
+            for (Value& value : function.editAllValues()) {
+                if (value.expected() == value.type)
+                    value.setExpected({ });
+            }
         });
     }
     if (reader && !changedAndNotFinal.isEmpty()) {
@@ -253,23 +545,6 @@ struct FinishedCopy {
     BodyIndex::Row row;
 };
 
-struct CopyLoop {
-    const ScheduleDescriptor& schedule;
-    Program& program;
-    const OptimizationInputs& inputs;
-    const PassRunner& runner;
-    InterningPhases& phases;
-    DerivedFunctionPhase& derived;
-    FunctionQueue& queue;
-    Vector<std::unique_ptr<Function>> optimized;
-    // Of a copy that has changed.
-    Vector<std::unique_ptr<FinishedCopy>> finished;
-    Vector<uint8_t> didChange;
-    Vector<QueuedFunction> startedEarly;
-};
-
-using FoundFunctions = FunctionQueue::FoundFunctions;
-
 } // anonymous namespace
 
 static QueuedFunction createQueuedFunction(const Program& program, FunctionID id)
@@ -279,193 +554,173 @@ static QueuedFunction createQueuedFunction(const Program& program, FunctionID id
     return { id, static_cast<uint32_t>(numberOfValuesIn(program, id)) };
 }
 
-static Vector<QueuedFunction> collectScheduledFunctions(const CopyLoop& loop)
+static void runOnCopies(const ScheduleDescriptor& schedule, Program& programToEdit, const OptimizationInputs& inputs, const PassRunner& runner, ProgramAnalyses& analyses)
 {
-    const Program& program = loop.program;
-    Vector<QueuedFunction> functions;
-    switch (loop.schedule.functions) {
-    case ScheduledFunctions::All:
-        functions = collectInParallel<QueuedFunction>(loop.runner.build().parallelLoops(), program.functions.size(), [&](unsigned index, Vector<QueuedFunction>& functionsWithBody) {
-            if (hasBody(program, FunctionID(index)))
-                functionsWithBody.append(createQueuedFunction(program, FunctionID(index)));
-        });
-        break;
-    case ScheduledFunctions::Reached:
-        functions.reserveInitialCapacity(loop.inputs.callGraph.roots().size());
-        for (FunctionID root : loop.inputs.callGraph.roots())
-            functions.append(createQueuedFunction(program, root));
-        break;
-    case ScheduledFunctions::OneAtATime:
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-    return functions;
-}
-
-// A function is found only when one that names it is finished, so long functions that name each other would run one after the other.
-static Vector<QueuedFunction> collectFunctionsToStartEarly(const ScheduleDescriptor& schedule, const Program& program, const ParallelLoops& loops)
-{
-    if (schedule.functions != ScheduledFunctions::Reached)
-        return { };
-    return largeFunctions(program, loops).map([&](uint32_t index) {
-        return createQueuedFunction(program, FunctionID(index));
-    });
-}
-
-static void reach(CopyLoop& loop, FunctionID target, FunctionReferenceKind kind, FoundFunctions& found)
-{
-    const Program& program = loop.program;
-    found.append(createQueuedFunction(program, target));
-    switch (kind) {
-    case FunctionReferenceKind::Call:
-    case FunctionReferenceKind::Dispatch:
-        return;
-    case FunctionReferenceKind::Closure:
-    case FunctionReferenceKind::Constructor:
-        break;
-    }
-    if (loop.schedule.functions != ScheduledFunctions::Reached)
-        return;
-    DerivedFunctions& derivedFunctions = *loop.inputs.derivedFunctions;
-    FunctionRole role = ProvisionalFunctions::contains(target) ? derivedFunctions.keyOf(target).role : program.at(target).role;
-    if (!canBeCalledByValueOf(role))
-        return;
-    found.append(createQueuedFunction(program, derivedFunctions.ensure(derivedFunctionKey(FunctionRole::GenericEntrypoint, target))));
-    // Asked about its instances, a bound function asks its target. Where it captures no closure of the target, the run time makes one, which the tables name by its entrypoint.
-    if (role == FunctionRole::BoundFunction) {
-        FunctionID boundTarget = ProvisionalFunctions::contains(target) ? derivedFunctions.keyOf(target).target : program.at(target).derivation.source;
-        found.append(createQueuedFunction(program, derivedFunctions.ensure(derivedFunctionKey(FunctionRole::GenericEntrypoint, boundTarget))));
-    }
-}
-
-static void optimizeCopy(CopyLoop& loop, FunctionID id, FoundFunctions& found)
-{
-    // Only the const overload of Program::at answers for a provisional id.
-    const Program& program = loop.program;
-    const Function& source = program.at(id);
-    if (!source.hasBody())
-        return;
-    bool isProvisional = ProvisionalFunctions::contains(id);
-    auto copy = makeUniqueWithoutFastMallocCheck<Function>(source);
-    if (source.valuesAreTypedAsDefined())
-        copy->setValuesAreTypedAsDefined();
-    TaskArenas arenas(loop.phases, isProvisional ? loop.derived.taskOf(id) : id.index());
-    if (isProvisional)
-        adoptIDs(*copy, arenas.types);
-    DerivedFunctionRequester requester(loop.derived, id, loop.queue.wasConfirmed(id));
-    BodyIndex* index = program.bodyIndex();
-    PassOutcome outcome = loop.runner.runSchedule(loop.schedule.id, program, loop.inputs, id, *copy, arenas, index && !isProvisional ? index->contentsOf(id) : std::nullopt);
-    if (loop.runner.build().options().verifiesAfterEveryPass) [[unlikely]]
-        RELEASE_ASSERT(!numberOfForeignIDs(*copy, arenas.types));
-    shrinkToFit(*copy);
-    // An All schedule has already queued every function with a body.
-    if (loop.schedule.functions == ScheduledFunctions::Reached) {
-        forEachFunctionReference(program, *copy, [&](FunctionID target, FunctionReferenceKind kind) {
-            reach(loop, target, kind, found);
-        });
-    }
-    if (isProvisional)
-        loop.derived.setOptimizedBody(id, WTF::move(copy));
-    else {
-        loop.didChange[id.index()] = outcome == PassOutcome::Changed;
-        if (outcome == PassOutcome::Changed)
-            loop.finished[id.index()] = makeUnique<FinishedCopy>(*copy);
-        loop.optimized[id.index()] = WTF::move(copy);
-    }
-}
-
-static void commitCopies(CopyLoop& loop, ProgramAnalyses& analyses)
-{
-    Program& program = loop.program;
-    BuildContext& build = loop.runner.build();
-    const ParallelLoops& loops = build.parallelLoops();
-    unsigned count = loop.optimized.size();
-    bool removesUnreachedBodies = loop.schedule.id == FunctionSchedule::Optimize;
-
-    DerivedFunctionCommit commit = loop.derived.commit(loop.queue.takeQueuedProvisionalOrdinals());
-    Vector<unsigned> taskOrder;
-    taskOrder.reserveInitialCapacity(count + commit.tasks.size());
-    for (unsigned task = 0; task < count; ++task) {
-        if (loop.queue.wasConfirmed(FunctionID(task)))
-            taskOrder.append(task);
-    }
-    taskOrder.appendVector(commit.tasks);
-    BodyRemaps remaps = loop.phases.finish(taskOrder.span(), WTF::move(commit.remap), &build.parallelLoops());
-
-    // The list of functions moves when it grows. All threads take the page faults of where it moves to, and there is room for what the passes behind the loop add.
-    if (size_t numberOfFunctions = count + commit.functions.size(); numberOfFunctions > program.functions.capacity())
-        reserveCapacityInParallel(loops, program.functions, numberOfFunctions + numberOfFunctions / 4);
-    ProgramEditor editor(program);
-    FunctionID firstAdded = editor.reserveFunctions(commit.functions.size());
-    RELEASE_ASSERT(firstAdded == commit.firstID && firstAdded.index() == count);
-
-    BodyIndex& bodyIndex = analyses.bodyIndex();
-    std::atomic<uint64_t> numberOfRemovedBodies { 0 };
-    forEachIndexInParallel(loops, count, [&](unsigned index) {
-        FunctionID id(index);
-        if (loop.queue.wasConfirmed(id)) {
-            if (auto& copy = loop.optimized[index]; copy && loop.didChange[index]) {
-                FinishedCopy& finished = *loop.finished[index];
-                if (!finished.remapSites.isEmpty()) {
-                    applyRemaps(remaps, *copy, finished.remapSites);
-                    finished.row.applyRemaps(remaps.types, remaps.functions, finished.remapSites.record ? copy.get() : nullptr);
-                }
-                std::swap(editor.at(id), *copy);
-                bodyIndex.write(id, WTF::move(finished.row));
-            } else if (copy && copy->valuesAreTypedAsDefined())
-                program.functions[index].setValuesAreTypedAsDefined();
-            return;
-        }
-        if (!removesUnreachedBodies || !program.functions[index].hasBody())
-            return;
-        editor.removeBody(id);
-        numberOfRemovedBodies.fetch_add(1, std::memory_order_relaxed);
-    });
-    forEachIndexInParallel(loops, commit.functions.size(), [&](unsigned position) {
-        Function& function = program.functions[count + position];
-        function = WTF::move(*commit.functions[position]);
-        applyRemaps(remaps, function);
-        bodyIndex.write(FunctionID(count + position), function, BodyIDs::Final);
-    });
-
-    if (removesUnreachedBodies) {
-        build.statistics().count(StatisticID::UnreachableFunctionsRemoved, numberOfRemovedBodies.load(std::memory_order_relaxed));
-        build.statistics().count(StatisticID::FunctionsStartedEarly, loop.startedEarly.size());
-        build.statistics().count(StatisticID::FunctionsStartedEarlyButNotReached, static_cast<uint64_t>(std::ranges::count_if(loop.startedEarly, [&](QueuedFunction function) {
-            return !loop.queue.wasConfirmed(function.id);
-        })));
-        loop.inputs.derivedFunctions->forgetFunctionsWithoutBody(program);
-    }
-    analyses.invalidate(resultsAboutBodies, editor);
-    build.resolveFunctionToDump(program);
-    build.destroyLater(WTF::move(loop.optimized));
-    build.destroyLater(WTF::move(loop.finished));
-    build.destroyLater(WTF::move(commit.functions));
-}
-
-static void runOnCopies(const ScheduleDescriptor& schedule, Program& program, const OptimizationInputs& inputs, const PassRunner& runner, ProgramAnalyses& analyses)
-{
+    using FoundFunctions = FunctionQueue::FoundFunctions;
     RELEASE_ASSERT(inputs.derivedFunctions);
+    DerivedFunctions& derivedFunctions = *inputs.derivedFunctions;
+    // Only the const overload of Program::at answers for a provisional id.
+    const Program& program = programToEdit;
     BuildContext& build = runner.build();
     const ParallelLoops& loops = build.parallelLoops();
     unsigned count = program.functions.size();
-    auto phases = makeUnique<InterningPhases>(program, count);
+    auto phases = makeUnique<InterningPhases>(programToEdit, count);
     {
-        DerivedFunctionPhase derived(*inputs.derivedFunctions, program, inputs.flow, *phases);
+        DerivedFunctionPhase derived(derivedFunctions, programToEdit, inputs.flow, *phases);
         FunctionQueue queue(loops, count);
-        CopyLoop loop { schedule, program, inputs, runner, *phases, derived, queue, Vector<std::unique_ptr<Function>>(count), Vector<std::unique_ptr<FinishedCopy>>(count), Vector<uint8_t>(FillWith { }, count, static_cast<uint8_t>(0)), collectFunctionsToStartEarly(schedule, program, loops) };
+        Vector<std::unique_ptr<Function>> optimized(count);
+        // Of a copy that has changed.
+        Vector<std::unique_ptr<FinishedCopy>> finished(count);
+        Vector<uint8_t> didChange(FillWith { }, count, static_cast<uint8_t>(0));
+        // A function is found only when one that names it is finished, so long functions that name each other would run one after the other.
+        Vector<QueuedFunction> startedEarly;
+        if (schedule.functions == ScheduledFunctions::Reached) {
+            startedEarly = largeFunctions(program, loops).map([&](uint32_t index) {
+                return createQueuedFunction(program, FunctionID(index));
+            });
+        }
+
+        auto reach = [&](FunctionID target, FunctionReferenceKind kind, FoundFunctions& found) {
+            found.append(createQueuedFunction(program, target));
+            switch (kind) {
+            case FunctionReferenceKind::Call:
+            case FunctionReferenceKind::Dispatch:
+                return;
+            case FunctionReferenceKind::Closure:
+            case FunctionReferenceKind::Constructor:
+                break;
+            }
+            if (schedule.functions != ScheduledFunctions::Reached)
+                return;
+            FunctionRole role = ProvisionalFunctions::contains(target) ? derivedFunctions.keyOf(target).role : program.at(target).role;
+            if (!canBeCalledByValueOf(role))
+                return;
+            found.append(createQueuedFunction(program, derivedFunctions.ensure(derivedFunctionKey(FunctionRole::GenericEntrypoint, target))));
+            // Asked about its instances, a bound function asks its target. Where it captures no closure of the target, the run time makes one, which the tables name by its entrypoint.
+            if (role == FunctionRole::BoundFunction) {
+                FunctionID boundTarget = ProvisionalFunctions::contains(target) ? derivedFunctions.keyOf(target).target : program.at(target).derivation.source;
+                found.append(createQueuedFunction(program, derivedFunctions.ensure(derivedFunctionKey(FunctionRole::GenericEntrypoint, boundTarget))));
+            }
+        };
 
         {
             ProgramCaches caches(program, build);
-            queue.processEach(collectScheduledFunctions(loop).span(), loop.startedEarly.span(), [&](FunctionID id, FoundFunctions& found) {
-                optimizeCopy(loop, id, found);
+            Vector<QueuedFunction> scheduled;
+            switch (schedule.functions) {
+            case ScheduledFunctions::All:
+                scheduled = collectInParallel<QueuedFunction>(loops, count, [&](unsigned index, Vector<QueuedFunction>& functionsWithBody) {
+                    if (hasBody(program, FunctionID(index)))
+                        functionsWithBody.append(createQueuedFunction(program, FunctionID(index)));
+                });
+                break;
+            case ScheduledFunctions::Reached:
+                scheduled.reserveInitialCapacity(inputs.callGraph.roots().size());
+                for (FunctionID root : inputs.callGraph.roots())
+                    scheduled.append(createQueuedFunction(program, root));
+                break;
+            case ScheduledFunctions::OneAtATime:
+                RELEASE_ASSERT_NOT_REACHED();
+            }
+            queue.processEach(scheduled.span(), startedEarly.span(), [&](FunctionID id, FoundFunctions& found) {
+                const Function& source = program.at(id);
+                if (!source.hasBody())
+                    return;
+                bool isProvisional = ProvisionalFunctions::contains(id);
+                auto copy = makeUniqueWithoutFastMallocCheck<Function>(source);
+                if (source.valuesAreTypedAsDefined())
+                    copy->setValuesAreTypedAsDefined();
+                TaskArenas arenas(*phases, isProvisional ? derived.taskOf(id) : id.index());
+                if (isProvisional)
+                    adoptIDs(*copy, arenas.types);
+                DerivedFunctionRequester requester(derived, id, queue.wasConfirmed(id));
+                BodyIndex* index = program.bodyIndex();
+                PassOutcome outcome = runner.runSchedule(schedule.id, program, inputs, id, *copy, arenas, index && !isProvisional ? index->contentsOf(id) : std::nullopt);
+                if (build.options().verifiesAfterEveryPass) [[unlikely]]
+                    RELEASE_ASSERT(!numberOfForeignIDs(*copy, arenas.types));
+                shrinkToFit(*copy);
+                // An All schedule has already queued every function with a body.
+                if (schedule.functions == ScheduledFunctions::Reached) {
+                    forEachFunctionReference(program, *copy, [&](FunctionID target, FunctionReferenceKind kind) {
+                        reach(target, kind, found);
+                    });
+                }
+                if (isProvisional)
+                    derived.setOptimizedBody(id, WTF::move(copy));
+                else {
+                    didChange[id.index()] = outcome == PassOutcome::Changed;
+                    if (outcome == PassOutcome::Changed)
+                        finished[id.index()] = makeUnique<FinishedCopy>(*copy);
+                    optimized[id.index()] = WTF::move(copy);
+                }
             }, [&](FunctionID id) {
                 derived.confirmRequestsOf(id);
             });
         }
+
         if (build.diagnostics().hasErrors())
             phases->discard();
-        else
-            commitCopies(loop, analyses);
+        else {
+            bool removesUnreachedBodies = schedule.id == FunctionSchedule::Optimize;
+            DerivedFunctionCommit commit = derived.commit(queue.takeQueuedProvisionalOrdinals());
+            Vector<unsigned> taskOrder;
+            taskOrder.reserveInitialCapacity(count + commit.tasks.size());
+            for (unsigned task = 0; task < count; ++task) {
+                if (queue.wasConfirmed(FunctionID(task)))
+                    taskOrder.append(task);
+            }
+            taskOrder.appendVector(commit.tasks);
+            BodyRemaps remaps = phases->finish(taskOrder.span(), WTF::move(commit.remap), &loops);
+
+            // The list of functions moves when it grows. All threads take the page faults of where it moves to, and there is room for what the passes behind the loop add.
+            if (size_t numberOfFunctions = count + commit.functions.size(); numberOfFunctions > program.functions.capacity())
+                reserveCapacityInParallel(loops, programToEdit.functions, numberOfFunctions + numberOfFunctions / 4);
+            ProgramEditor editor(programToEdit);
+            FunctionID firstAdded = editor.reserveFunctions(commit.functions.size());
+            RELEASE_ASSERT(firstAdded == commit.firstID && firstAdded.index() == count);
+
+            BodyIndex& bodyIndex = analyses.bodyIndex();
+            std::atomic<uint64_t> numberOfRemovedBodies { 0 };
+            forEachIndexInParallel(loops, count, [&](unsigned index) {
+                FunctionID id(index);
+                if (queue.wasConfirmed(id)) {
+                    if (auto& copy = optimized[index]; copy && didChange[index]) {
+                        FinishedCopy& finishedCopy = *finished[index];
+                        if (!finishedCopy.remapSites.isEmpty()) {
+                            applyRemaps(remaps, *copy, finishedCopy.remapSites);
+                            finishedCopy.row.applyRemaps(remaps.types, remaps.functions, finishedCopy.remapSites.record ? copy.get() : nullptr);
+                        }
+                        std::swap(editor.at(id), *copy);
+                        bodyIndex.write(id, WTF::move(finishedCopy.row));
+                    } else if (copy && copy->valuesAreTypedAsDefined())
+                        programToEdit.functions[index].setValuesAreTypedAsDefined();
+                    return;
+                }
+                if (!removesUnreachedBodies || !program.functions[index].hasBody())
+                    return;
+                editor.removeBody(id);
+                numberOfRemovedBodies.fetch_add(1, std::memory_order_relaxed);
+            });
+            forEachIndexInParallel(loops, commit.functions.size(), [&](unsigned position) {
+                Function& function = programToEdit.functions[count + position];
+                function = WTF::move(*commit.functions[position]);
+                applyRemaps(remaps, function);
+                bodyIndex.write(FunctionID(count + position), function, BodyIDs::Final);
+            });
+
+            if (removesUnreachedBodies) {
+                build.statistics().count(StatisticID::UnreachableFunctionsRemoved, numberOfRemovedBodies.load(std::memory_order_relaxed));
+                build.statistics().count(StatisticID::FunctionsStartedEarly, startedEarly.size());
+                build.statistics().count(StatisticID::FunctionsStartedEarlyButNotReached, static_cast<uint64_t>(std::ranges::count_if(startedEarly, [&](QueuedFunction function) {
+                    return !queue.wasConfirmed(function.id);
+                })));
+                derivedFunctions.forgetFunctionsWithoutBody(program);
+            }
+            analyses.invalidate(resultsAboutBodies, editor);
+            build.resolveFunctionToDump(program);
+            build.destroyLater(WTF::move(optimized));
+            build.destroyLater(WTF::move(finished));
+            build.destroyLater(WTF::move(commit.functions));
+        }
     }
     build.destroyLater(WTF::move(phases));
 }

@@ -9,7 +9,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="twentyFourOperations" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
 # REPEAT: i = 0..23
     v%(i+1) = Mul v%(i), v0
 # END REPEAT
@@ -17,7 +16,6 @@ function f0 name="twentyFourOperations" parameters=[{type=number}] results=[{typ
 }
 
 function f1 name="markedCall" parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f0 [isAlwaysInlined]
     Return v1
 }

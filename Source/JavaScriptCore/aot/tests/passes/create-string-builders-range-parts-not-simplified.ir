@@ -8,7 +8,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -18,7 +17,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="appendsSlices" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
-  b0(v0: string, v1: number):
     v2 = String string=""
     v3 = Integer integer=0
     Jump -> next b1(v2, v3)
@@ -46,7 +44,6 @@ function f1 name="appendsSlices" parameters=[{type=string}, {type=number}] resul
 # CHECK-NOT: StringPrototypeSlice
 
 function f2 name="keepsSlices" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: number, v2: anything):
     v3 = String string=""
     v4 = Integer integer=0
     Jump -> next b1(v3, v4)

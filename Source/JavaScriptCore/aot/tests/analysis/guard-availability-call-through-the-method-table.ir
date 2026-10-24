@@ -17,7 +17,6 @@ function f3 name="scaled" kind=Method flags=[HasThis] thisType={type=L1} paramet
     Return v1
 }
 function f4 name="theListIsWhole" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=L0|L1}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: L0|L1, v2: number):
     v3 = HasArrayStorage v0 arrayStorage=Int32
     Branch v3 -> taken b1(| 0), notTaken b2()
   b1(v4: guard):
@@ -31,7 +30,6 @@ function f4 name="theListIsWhole" parameters=[{type=Array<number, proven, pristi
 # CHECK-NEXT: b1:1 available: [v4]
 
 function f5 name="theListIsOpen" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=L0|L1}, {type=number}] results=[{type=anything}] {
-  b0(v0: Array<number, proven, pristine[Storage, Names]>, v1: L0|L1, v2: number):
     v3 = HasArrayStorage v0 arrayStorage=Int32
     Branch v3 -> taken b1(| 0), notTaken b2()
   b1(v4: guard):
@@ -45,19 +43,16 @@ function f5 name="theListIsOpen" parameters=[{type=Array<number, proven, pristin
 # CHECK-NEXT: b1:1 available: []
 
 function f6 role=TableLookup flags=[HasThis] length=1 thisType={type=object} parameters=[{type=number}] results=[{type=anything}] derivation={parameter=2147483649} creator=TableLookup{key="scaled"} {
-  b0(v0: object, v1: number):
     v2 = PropGet v0 key="scaled"
     v3 = Call v2, v0, v1 calleeKey="scaled" [isNeverInlined]
     Return v3
 }
 function f7 name="scaled" kind=Method role=TableEntrypoint flags=[HasThis] length=1 thisType={type=object} parameters=[{type=number}] results=[{type=anything}] derivation={source=f1 parameter=2147483649} creator=Entrypoint{target=f1 arguments=Registers} {
-  b0(v0: object, v1: number):
     v2 = AssumeType v0 castType=L0
     v3 = CallDirect v2, v1 function=f1
     ReturnCall v3 requirement=Allowed
 }
 function f8 name="scaled" kind=Method role=TableEntrypoint flags=[HasThis] length=1 thisType={type=object} parameters=[{type=number}] results=[{type=anything}] derivation={source=f3 parameter=2147483649} creator=Entrypoint{target=f3 arguments=Registers} {
-  b0(v0: object, v1: number):
     v2 = AssumeType v0 castType=L1
     v3 = CallDirect v2, v1 function=f3
     ReturnCall v3 requirement=Allowed

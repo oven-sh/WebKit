@@ -15,7 +15,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = Call v0
     v2 = PropGet v1 key="next"
@@ -27,7 +26,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="inner" flags=[IsGenerator, TakesCallee] results=[{type=anything}] {
-  b0(v0: function):
     InitialYield
     v2 = NewClosure function=f3
     v3 = Yield v2
@@ -37,7 +35,6 @@ function f1 name="inner" flags=[IsGenerator, TakesCallee] results=[{type=anythin
     Return v6
 }
 function f2 name="outer" flags=[IsGenerator, TakesCallee] results=[{type=anything}] {
-  b0(v0: function):
     InitialYield
     v2 = NewClosure function=f1
     v3 = Call v2
@@ -59,14 +56,11 @@ function f2 name="outer" flags=[IsGenerator, TakesCallee] results=[{type=anythin
     Return
 }
 function f3 name="one" results=[{type=anything}] {
-  b0():
     Return
 }
 function f4 name="returned" results=[{type=anything}] {
-  b0():
     Return
 }
 function f5 name="sent" results=[{type=anything}] {
-  b0():
     Return
 }

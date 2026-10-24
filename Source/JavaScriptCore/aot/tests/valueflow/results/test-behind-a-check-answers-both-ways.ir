@@ -16,7 +16,6 @@ entry module=m0
 data d0 root=Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
 
 function f0 name="main" kind=Module flags=[IsChecked] results=[{type=anything}] {
-  b0():
     v0 = Data data=d0
     v1 = Convert v0 declared={type=undefined|null|Array<number> site=w0}
     v2 = Integer integer=4
@@ -32,19 +31,16 @@ function f0 name="main" kind=Module flags=[IsChecked] results=[{type=anything}] 
     Return v7
 }
 function f1 name="isUndefined" kind=Arrow flags=[IsChecked] parameters=[{type=number site=w2}] results=[{type=boolean site=w3}] {
-  b0(v0: number):
     v1 = TypeTest v0 testedType=undefined
     v2 = Convert v1 declared={type=boolean site=w3}
     Return v2
 }
 function f2 name="kind" kind=Arrow flags=[IsChecked] parameters=[{type=number site=w4}] results=[{type=string site=w5}] {
-  b0(v0: number):
     v1 = TypeOf v0
     v2 = Convert v1 declared={type=string site=w5}
     Return v2
 }
 function f3 name="restsOnNoCheck" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = TypeTest v0 testedType=undefined
     Return v1

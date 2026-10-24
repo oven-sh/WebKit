@@ -17,14 +17,13 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static ValueSetID constantOf(const ValueFlowOperand& operand)
-{
-    return operand.constant ? operand.constant : ValueSets::nothing;
-}
+static ValueSetID constantOf(const ValueFlowOperand& operand) { return operand.constant ? operand.constant : ValueSets::nothing; }
+static ValueSetID maskOf(const ValueFlowOperand& operand) { return operand.mask ? operand.mask : ValueSets::anything; }
 
-static ValueSetID maskOf(const ValueFlowOperand& operand)
+static ValueSetID valueHeldInGraph(const ValueFlowGraph& graph, ValueFlowNodeID node)
 {
-    return operand.mask ? operand.mask : ValueSets::anything;
+    std::span<const ValueSetID> values = graph.values();
+    return node.index() < values.size() ? values[node.index()] : ValueSets::nothing;
 }
 
 ValueFlowRuleContext::ValueFlowRuleContext(const ValueFlowSolver& solver, ValueFlowRoundLog& log, ValueSetMaker& maker)
@@ -36,25 +35,10 @@ ValueFlowRuleContext::ValueFlowRuleContext(const ValueFlowSolver& solver, ValueF
 {
 }
 
-const Program& ValueFlowRuleContext::program() const
-{
-    return *m_solver.m_input.program;
-}
-
-const ValueFlowUniverse& ValueFlowRuleContext::universe() const
-{
-    return *m_solver.m_input.universe;
-}
-
-const ValueFlowProgramNodes& ValueFlowRuleContext::nodes() const
-{
-    return *m_solver.m_input.nodes;
-}
-
-uint64_t ValueFlowRuleContext::mostMembersToldApart() const
-{
-    return m_solver.m_input.mostMembersToldApart;
-}
+const Program& ValueFlowRuleContext::program() const { return *m_solver.m_input.program; }
+const ValueFlowUniverse& ValueFlowRuleContext::universe() const { return *m_solver.m_input.universe; }
+const ValueFlowProgramNodes& ValueFlowRuleContext::nodes() const { return *m_solver.m_input.nodes; }
+uint64_t ValueFlowRuleContext::mostMembersToldApart() const { return m_solver.m_input.mostMembersToldApart; }
 
 void ValueFlowRuleContext::begin(ValueFlowStatementID statement)
 {
@@ -85,12 +69,8 @@ void ValueFlowRuleContext::beginWhereMade(ValueFlowStatementID statement, const 
     m_rememberedByStatementOfThisTurn = { };
 }
 
-const ValueFlowNodeKey& ValueFlowRuleContext::keyOfStatement() const
-{
-    return m_keyOfStatementOfThisTurn ? *m_keyOfStatementOfThisTurn : m_solver.keyOf(m_statement);
-}
+const ValueFlowNodeKey& ValueFlowRuleContext::keyOfStatement() const { return m_keyOfStatementOfThisTurn ? *m_keyOfStatementOfThisTurn : m_solver.keyOf(m_statement); }
 
-// A statement that runs again asks for most of its edges again, and reads what it has read before. All of that is looked up here, at once, so that one look does not wait for the one before it.
 void ValueFlowRuleContext::leaveOutWhatIsKnown()
 {
     constexpr size_t mostAtOnce = 32;
@@ -183,34 +163,10 @@ void ValueFlowRuleContext::end()
     });
 }
 
-FunctionID ValueFlowRuleContext::functionOfStatement() const
-{
-    if (m_keyOfStatementOfThisTurn)
-        return { };
-    return m_solver.statementAt(m_statement).function;
-}
-
-std::span<const ValueFlowOperand> ValueFlowRuleContext::operandsOf(const ValueFlowStatement& statement) const
-{
-    if (!m_operandsInPlace.empty())
-        return m_operandsInPlace;
-    return m_solver.operandsOf(statement);
-}
-
-const ValueFlowInstancedFunctions* ValueFlowRuleContext::instancedFunctions() const
-{
-    return m_instancedFunctions;
-}
-
-ValueFlowNodeID ValueFlowRuleContext::markersOf(FunctionID function)
-{
-    return nodeFor(ValueFlowNodeKey::markersOf(function));
-}
-
-void ValueFlowRuleContext::makeInstanceOfOtherCalls(FunctionID function)
-{
-    makeInstance(*instancedFunctions()->find(function), ValueFlowInstancedFunctions::markerOfOtherCalls());
-}
+FunctionID ValueFlowRuleContext::functionOfStatement() const { return m_keyOfStatementOfThisTurn ? FunctionID() : m_solver.statementAt(m_statement).function; }
+std::span<const ValueFlowOperand> ValueFlowRuleContext::operandsOf(const ValueFlowStatement& statement) const { return m_operandsInPlace.empty() ? m_solver.operandsOf(statement) : m_operandsInPlace; }
+ValueFlowNodeID ValueFlowRuleContext::markersOf(FunctionID function) { return nodeFor(ValueFlowNodeKey::markersOf(function)); }
+void ValueFlowRuleContext::makeInstanceOfOtherCalls(FunctionID function) { makeInstance(*instancedFunctions()->find(function), ValueFlowInstancedFunctions::markerOfOtherCalls()); }
 
 ValueFlowNodeID ValueFlowRuleContext::restArgumentEntered(FunctionID function, unsigned index)
 {
@@ -226,10 +182,7 @@ ValueFlowNodeID ValueFlowRuleContext::restArgumentOfRun(FunctionID function, uns
     return nodeFor(ValueFlowNodeKey::restArgument(function, index, m_maker.of(m_markerOfRun)));
 }
 
-ValueFlowNodeID ValueFlowRuleContext::instanceOf(ValueFlowNodeID node, ValueFlowObjectID marker)
-{
-    return nodeFor(ValueFlowNodeKey::instance(node, m_maker.of(marker)));
-}
+ValueFlowNodeID ValueFlowRuleContext::instanceOf(ValueFlowNodeID node, ValueFlowObjectID marker) { return nodeFor(ValueFlowNodeKey::instance(node, m_maker.of(marker))); }
 
 ALWAYS_INLINE ValueFlowNodeID ValueFlowRuleContext::nodeRead(ValueFlowNodeID node)
 {
@@ -247,22 +200,18 @@ ALWAYS_INLINE ValueFlowNodeID ValueFlowRuleContext::nodeHandedTo(ValueFlowNodeID
 
 NEVER_INLINE ValueFlowNodeID ValueFlowRuleContext::instanceHandedTo(ValueFlowNodeID node)
 {
-    const ValueFlowInstancedFunctions* instanced = m_instancedFunctions;
     if (node.index() >= m_firstNodeOfInstance && node.index() < m_endOfNodesOfInstance)
         return instanceOf(node, m_markerOfRun);
-    const ValueFlowInstancedFunction* function = instanced->find(nodes().functionOf(node));
     ValueFlowObjectID marker = m_markerEntered ? m_markerEntered : ValueFlowInstancedFunctions::markerOfOtherCalls();
-    makeInstance(*function, marker);
+    makeInstance(*m_instancedFunctions->find(nodes().functionOf(node)), marker);
     return instanceOf(node, marker);
 }
 
-// Whoever is the first to hand something to an instance makes it: the edges and the seeds of the body, between the nodes of the instance, and an edge from each of those to the node that it is a copy of.
 void ValueFlowRuleContext::makeInstance(const ValueFlowInstancedFunction& instanced, ValueFlowObjectID marker)
 {
     uint32_t firstNode = nodes().firstNodeOf(instanced.function);
     uint32_t endOfNodes = nodes().endOfNodesOf(instanced.function);
     ValueSetID markerAlone = m_maker.of(marker);
-    // This thread has made it in this turn, or an earlier turn has.
     uint64_t name = static_cast<uint64_t>(instanced.function.index()) << 32 | marker.index();
     if (m_instancesMadeInTurn.contains(name) || m_solver.findNodeMadeBeforeThisTurn(ValueFlowNodeKey::instance(ValueFlowNodeID(firstNode), markerAlone)))
         return;
@@ -297,64 +246,17 @@ ValueFlowRuleContext::InstanceOfRun::~InstanceOfRun()
     m_context.m_markerOfRun = { };
 }
 
-ValueFlowRuleContext::InstanceEntered::InstanceEntered(ValueFlowRuleContext& context, ValueFlowObjectID marker)
-    : m_context(context)
-    , m_before(std::exchange(context.m_markerEntered, marker))
-{
-    ++context.m_runEpoch;
-}
+ClimbingSet ValueFlowRuleContext::setOfKey() const { return ClimbingSet(keyOfStatement().set); }
+uint32_t ValueFlowRuleContext::numberOfMembersOfKey() const { return sets().size(keyOfStatement().set); }
+ValueFlowName ValueFlowRuleContext::nameOfKey() const { return keyOfStatement().name(); }
+ValueFlowCallKind ValueFlowRuleContext::callKindOfKey() const { return keyOfStatement().callKind(); }
+ValueFlowObjectID ValueFlowRuleContext::markerOfKey() const { return keyOfStatement().markerOfCallGroup(); }
 
-ValueFlowRuleContext::InstanceEntered::~InstanceEntered()
-{
-    ++m_context.m_runEpoch;
-    m_context.m_markerEntered = m_before;
-}
-
-ValueFlowRuleContext::OperandsInPlace::OperandsInPlace(ValueFlowRuleContext& context, std::span<const ValueFlowOperand> operands)
-    : m_context(context)
-    , m_before(std::exchange(context.m_operandsInPlace, operands))
-{
-}
-
-ValueFlowRuleContext::OperandsInPlace::~OperandsInPlace()
-{
-    m_context.m_operandsInPlace = m_before;
-}
-
-ClimbingSet ValueFlowRuleContext::setOfKey() const
-{
-    return ClimbingSet(keyOfStatement().set);
-}
-
-uint32_t ValueFlowRuleContext::numberOfMembersOfKey() const
-{
-    return sets().size(keyOfStatement().set);
-}
-
-ValueFlowName ValueFlowRuleContext::nameOfKey() const
-{
-    return keyOfStatement().name();
-}
-
-ValueFlowCallKind ValueFlowRuleContext::callKindOfKey() const
-{
-    return keyOfStatement().callKind();
-}
-
-ValueFlowObjectID ValueFlowRuleContext::markerOfKey() const
-{
-    return keyOfStatement().markerOfCallGroup();
-}
-
-// What is left out of the normal form has been handed on by what earlier rounds have logged, and the rules for what a placeholder covers deal with it from now on.
 std::optional<ValueSetID> ValueFlowRuleContext::setOfConstantOfThisTurn(ValueFlowNodeID node) const
 {
     if (m_constantsOfThisTurn.isEmpty()) [[likely]]
         return std::nullopt;
-    auto constant = m_constantsOfThisTurn.find(node.index());
-    if (constant == m_constantsOfThisTurn.end())
-        return std::nullopt;
-    return constant->value;
+    return m_constantsOfThisTurn.getOptional(node.index());
 }
 
 ClimbingSet ValueFlowRuleContext::valueOf(ValueFlowNodeID named)
@@ -407,7 +309,6 @@ ClimbingSet ValueFlowRuleContext::valueOf(const ValueFlowOperand& operand)
     ValueSetID value = constantOf(operand);
     if (operand.node)
         value = m_maker.unite(value, valueOf(operand.node).m_set);
-    // What takes the place of a placeholder at the mask moves with what the placeholder covers.
     ValueSetID mask = maskOf(operand);
     if (operand.maskKind != ValueFlowMaskKind::Plain && mask != ValueSets::anything && value != ValueSets::nothing) {
         if (ValueSetID familyObjects = m_solver.familyObjectsOf(mask, m_maker)) {
@@ -431,10 +332,9 @@ ClimbingSet ValueFlowRuleContext::valueWithin(ClimbingSet within, ValueFlowNodeI
         return restrict(ClimbingSet(*constant), within.m_set);
     if (hasNeverRun() || !m_solver.isKnownWatcher(node, within.m_set, m_statement))
         m_log.partsWatched.append(ValueFlowNodeSet { node, within.m_set });
-    // A node of this round holds nothing yet.
     if (ValueFlowRoundLog::isNumberedByLog(node))
         return ClimbingSet();
-    return restrict(ClimbingValues(m_solver.graph().values()).at(node), within.m_set);
+    return restrict(ClimbingSet(valueHeldInGraph(m_solver.graph(), node)), within.m_set);
 }
 
 ClimbingSet ValueFlowRuleContext::valueWithinAskedLast(ClimbingSet within, ValueFlowNodeID node)
@@ -458,12 +358,10 @@ bool ValueFlowRuleContext::holdsAnyOf(ClimbingSet within, ValueFlowNodeID named)
     cached.epochAndValue = m_runEpoch << 1;
     ValueFlowNodeID node = nodeRead(named);
     if (std::optional<ValueSetID> constant = setOfConstantOfThisTurn(node)) {
-        bool result = meet(ClimbingSet(*constant), within.m_set);
-        cached.epochAndValue |= result;
-        return result;
+        cached.epochAndValue |= m_maker.meet(*constant, within.m_set);
+        return cached.epochAndValue & 1;
     }
-    // A node of this round holds nothing yet.
-    if (!ValueFlowRoundLog::isNumberedByLog(node) && meet(ClimbingValues(m_solver.graph().values()).at(node), within.m_set)) {
+    if (!ValueFlowRoundLog::isNumberedByLog(node) && m_maker.meet(valueHeldInGraph(m_solver.graph(), node), within.m_set)) {
         cached.epochAndValue |= 1;
         return true;
     }
@@ -472,10 +370,7 @@ bool ValueFlowRuleContext::holdsAnyOf(ClimbingSet within, ValueFlowNodeID named)
     return false;
 }
 
-ClimbingSet ValueFlowRuleContext::membersMissingFrom(ValueFlowNodeID node, ClimbingSet set)
-{
-    return restrict(set, ValueSets::complement(valueWithin(set, node).m_set));
-}
+ClimbingSet ValueFlowRuleContext::membersMissingFrom(ValueFlowNodeID node, ClimbingSet set) { return restrict(set, ValueSets::complement(valueWithin(set, node).m_set)); }
 
 ValueSetID& ValueFlowRuleContext::rememberedByStatement()
 {
@@ -484,10 +379,7 @@ ValueSetID& ValueFlowRuleContext::rememberedByStatement()
     return m_solver.m_rememberedByStatement[m_statement.index()];
 }
 
-bool ValueFlowRuleContext::isStatementOfBody() const
-{
-    return m_statement.index() < m_solver.m_input.statements.size();
-}
+bool ValueFlowRuleContext::isStatementOfBody() const { return m_statement.index() < m_solver.m_input.statements.size(); }
 
 bool ValueFlowRuleContext::wasAddedInEarlierRound(ValueFlowNodeID node, ClimbingSet set) const
 {
@@ -508,7 +400,6 @@ ClimbingSet ValueFlowRuleContext::newSince(ValueFlowNodeID named)
 {
     ValueFlowNodeID node = nodeRead(named);
     ValueSetID held = valueOf(node).m_set;
-    // The solver takes this over once the turn is done, so a run sees the same however often it asks.
     m_log.valuesShown.append(ValueFlowNodeSet { node, held });
     return ClimbingSet(m_maker.intersect(held, ValueSets::complement(m_solver.valueShownTo(m_statement, node))));
 }
@@ -523,14 +414,12 @@ ClimbingSet ValueFlowRuleContext::markedAmong(ClimbingSet objects, OptionSet<Obj
 
 bool ValueFlowRuleContext::isReached(FunctionID function)
 {
-    // A function that is reached stays reached: nobody has to be told.
     if (m_solver.isReached(function))
         return true;
     m_log.functionsAsked.append(function);
     return false;
 }
 
-// See ValueFlowSolver::keepsAwake().
 ALWAYS_INLINE void ValueFlowRuleContext::logMadeNodesAskedFor(const ValueFlowNodeKey& key, uint32_t madeNodes)
 {
     if (key.kind == ValueFlowMadeNodeKind::Constant || key.kind == ValueFlowMadeNodeKind::Marked || key.kind == ValueFlowMadeNodeKind::Instance)
@@ -559,7 +448,6 @@ NEVER_INLINE ValueFlowNodeID ValueFlowRuleContext::nodeForUncached(const ValueFl
     bool namesNodeOfThisRound = key.kind == ValueFlowMadeNodeKind::Masked && ValueFlowRoundLog::isNumberedByLog(key.maskedNode());
     std::optional<uint32_t> existing = namesNodeOfThisRound ? std::nullopt : m_solver.findOrMakeNodesWhereAskedFor(key, hash, m_log, m_maker);
     ValueFlowNodeID node = existing ? m_solver.m_madeNodes[*existing].first : m_log.nodeFor(key);
-    // A constant of this turn is not remembered: the next run that asks for it has to hear that it is one.
     if (existing && key.kind == ValueFlowMadeNodeKind::Constant && m_solver.m_madeNodes[*existing].isOfThisTurn)
         m_constantsOfThisTurn.add(node.index(), key.set);
     else if (existing)
@@ -568,7 +456,6 @@ NEVER_INLINE ValueFlowNodeID ValueFlowRuleContext::nodeForUncached(const ValueFl
     return node;
 }
 
-// For the source of an edge: nobody asks the answer what it holds, so a constant of the running turn needs no entry in m_constantsOfThisTurn.
 ValueFlowNodeID ValueFlowRuleContext::constantNodeForEdge(const ValueFlowNodeKey& key)
 {
     uint32_t hash = key.hash();
@@ -597,20 +484,9 @@ ValueFlowNodeKey ValueFlowRuleContext::keyOfConstant(ValueSetID set) const
     return ValueFlowNodeKey::constant(set);
 }
 
-bool ValueFlowRuleContext::leavesOut(ValueFlowUnknownSource source) const
-{
-    return m_solver.m_input.unknownSourcesLeftOut.contains(source);
-}
-
-bool ValueFlowRuleContext::leavesOutSomeUnknownSource() const
-{
-    return !m_solver.m_input.unknownSourcesLeftOut.isEmpty();
-}
-
-RefusedCode ValueFlowRuleContext::refusedCode() const
-{
-    return m_solver.m_input.refusedCode;
-}
+bool ValueFlowRuleContext::leavesOut(ValueFlowUnknownSource source) const { return m_solver.m_input.unknownSourcesLeftOut.contains(source); }
+bool ValueFlowRuleContext::leavesOutSomeUnknownSource() const { return !m_solver.m_input.unknownSourcesLeftOut.isEmpty(); }
+RefusedCode ValueFlowRuleContext::refusedCode() const { return m_solver.m_input.refusedCode; }
 
 bool ValueFlowRuleContext::isGuardedByRemovedFeature(BuiltinID builtin) const
 {
@@ -620,11 +496,7 @@ bool ValueFlowRuleContext::isGuardedByRemovedFeature(BuiltinID builtin) const
     });
 }
 
-ValueFlowNodeID ValueFlowRuleContext::holdingNothing()
-{
-    m_holdingNothing = nodeFor(ValueFlowNodeKey::constant(ValueSets::nothing));
-    return m_holdingNothing;
-}
+ValueFlowNodeID ValueFlowRuleContext::holdingNothing() { return m_holdingNothing = nodeFor(ValueFlowNodeKey::constant(ValueSets::nothing)); }
 
 ValueFlowNodeID ValueFlowRuleContext::read(ClimbingSet objects, ValueFlowName name)
 {
@@ -633,10 +505,7 @@ ValueFlowNodeID ValueFlowRuleContext::read(ClimbingSet objects, ValueFlowName na
     return nodeFor(ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Read, objects.m_set, name));
 }
 
-void ValueFlowRuleContext::addObjectsOfProgram(ValueFlowNodeID node, ClimbingSet objects)
-{
-    add(node, restrict(objects, ValueSets::complement(universe().placeholdersAlone())));
-}
+void ValueFlowRuleContext::addObjectsOfProgram(ValueFlowNodeID node, ClimbingSet objects) { add(node, restrict(objects, ValueSets::complement(universe().placeholdersAlone()))); }
 
 ValueFlowNodeID ValueFlowRuleContext::notPlain()
 {
@@ -679,60 +548,18 @@ bool ValueFlowRuleContext::mayFindSomethingWritten(ClimbingSet objects, ValueFlo
     return holdsAnyOf(objects, rareWriteNode(*write));
 }
 
-bool ValueFlowRuleContext::usesGeneralRulesOnly() const
-{
-    return m_solver.m_usesGeneralRulesOnly;
-}
+bool ValueFlowRuleContext::usesGeneralRulesOnly() const { return m_solver.m_usesGeneralRulesOnly; }
 
 ValueFlowNodeID ValueFlowRuleContext::written(ClimbingSet objects, ValueFlowName name)
 {
     if (std::optional<ValueFlowRareWrite> write = rareWriteFoundUnder(name.kind); write && m_solver.m_input.nodes && m_solver.m_input.universe)
         addObjectsOfProgram(rareWriteNode(*write), objects);
-    switch (name.kind) {
-    case ValueFlowNameKind::Getter:
-    case ValueFlowNameKind::Setter:
-    case ValueFlowNameKind::GetterUnderUnknownKey:
-    case ValueFlowNameKind::SetterUnderUnknownKey:
-    case ValueFlowNameKind::DeletedMember:
-    case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
-    case ValueFlowNameKind::RedefinedMember:
-    case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
-    case ValueFlowNameKind::CopiedFrom:
-        if (m_solver.m_input.nodes && m_solver.m_input.universe)
+    if (m_solver.m_input.nodes && m_solver.m_input.universe) {
+        ValueFlowNameShape shape = shapeOf(name.kind);
+        if ((shape.isAccessor() && shape.reach != ValueFlowNameReach::EveryKey) || shape.sort == ValueFlowNameSort::Deletion || shape.sort == ValueFlowNameSort::Redefinition || shape.sort == ValueFlowNameSort::Copy)
             addObjectsOfProgram(notPlain(), objects);
-        break;
-    case ValueFlowNameKind::UnknownKey:
-        if (m_solver.m_input.nodes && m_solver.m_input.universe)
+        else if (name.kind == ValueFlowNameKind::UnknownKey)
             addObjectsOfProgram(writtenUnderUnknownKey(), objects);
-        break;
-    case ValueFlowNameKind::Property:
-    case ValueFlowNameKind::Elements:
-    case ValueFlowNameKind::EveryProperty:
-    case ValueFlowNameKind::EveryGetter:
-    case ValueFlowNameKind::EverySetter:
-    case ValueFlowNameKind::PrototypeLink:
-    case ValueFlowNameKind::PrivateField:
-    case ValueFlowNameKind::Slot:
-    case ValueFlowNameKind::HiddenSlot:
-    case ValueFlowNameKind::InternalFields:
-    case ValueFlowNameKind::SteppedValues:
-    case ValueFlowNameKind::ReturnedValue:
-    case ValueFlowNameKind::SentValues:
-    case ValueFlowNameKind::OpenedBy:
-    case ValueFlowNameKind::ResolvedPromises:
-    case ValueFlowNameKind::RejectedPromises:
-    case ValueFlowNameKind::AllocatedAs:
-    case ValueFlowNameKind::OpenedIterators:
-    case ValueFlowNameKind::IteratedValues:
-    case ValueFlowNameKind::IteratorResults:
-    case ValueFlowNameKind::AwaitedValue:
-    case ValueFlowNameKind::MemberWritten:
-    case ValueFlowNameKind::EveryMemberWritten:
-    case ValueFlowNameKind::EveryMemberRead:
-    case ValueFlowNameKind::RestArgument:
-    case ValueFlowNameKind::AddedNames:
-    case ValueFlowNameKind::FoundThroughEscapedInstances:
-        break;
     }
     ValueFlowNodeID written = nodeFor(ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Written, objects.m_set, name));
     if (name.kind == ValueFlowNameKind::Property && m_solver.m_input.nodes) {
@@ -754,7 +581,6 @@ bool ValueFlowRuleContext::runsCodeThatRecordsDescribe() const
 
 ValueFlowNodeID ValueFlowRuleContext::lookup(ClimbingSet receivers, ValueFlowName name)
 {
-    // The library's code behind a described built-in is entered with operands nobody knows.
     if (sets().contains(receivers.m_set, ValueFlowUniverse::unknownObject()) && runsCodeThatRecordsDescribe()) {
         ValueFlowNodeID found = lookup(ClimbingSet(m_maker.intersect(receivers.m_set, ValueSets::complement(universe().unknownObjectAlone()))), name);
         ValueFlowNodeID answer = masked(found, ValueSets::complement(m_maker.of(calleeOfDescribedCall(universe()))));
@@ -769,7 +595,6 @@ ValueFlowNodeID ValueFlowRuleContext::lookup(ClimbingSet receivers, ValueFlowNam
 
 ValueFlowCallGroup ValueFlowRuleContext::group(ClimbingSet callees, ValueFlowCallKind kind, ValueFlowCalleeOrigin origin)
 {
-    // Whoever asks for the group of the unknown object calls a value nobody knows, and whatever has escaped may be the callee.
     bool mayBeWhateverHasEscaped = origin == ValueFlowCalleeOrigin::Value && kind != ValueFlowCallKind::Get && kind != ValueFlowCallKind::Set;
     if (mayBeWhateverHasEscaped && m_solver.m_input.nodes && m_solver.m_input.universe && sets().contains(callees.m_set, ValueFlowUniverse::unknownObject()))
         add(nodes().ofHost(ValueFlowHostNode::ValueNobodyKnowsIsCalled), ClimbingSet(leavesOutSomeUnknownSource() ? universe().undefinedValue() : universe().unknownObjectAlone()));
@@ -778,7 +603,6 @@ ValueFlowCallGroup ValueFlowRuleContext::group(ClimbingSet callees, ValueFlowCal
 
 ValueFlowNodeID ValueFlowRuleContext::hub(ValueFlowBehaviorID behavior)
 {
-    // The hubs of a program are nodes of the host's body, which also holds their statements.
     if (m_solver.m_input.nodes)
         return nodes().hub(behavior);
     return nodeFor(ValueFlowNodeKey::hub(behavior));
@@ -791,14 +615,10 @@ ValueFlowNodeID ValueFlowRuleContext::masked(ValueFlowNodeID node, ValueSetID ma
     return nodeFor(ValueFlowNodeKey::masked(nodeRead(node), mask, kind));
 }
 
-ValueFlowNodeID ValueFlowRuleContext::holding(ClimbingSet set)
-{
-    return nodeFor(keyOfConstant(set.m_set));
-}
+ValueFlowNodeID ValueFlowRuleContext::holding(ClimbingSet set) { return nodeFor(keyOfConstant(set.m_set)); }
 
 void ValueFlowRuleContext::connect(ValueFlowNodeID from, ValueFlowNodeID to)
 {
-    // Nothing ever comes along an edge out of the node that holds nothing. Whoever hands something to an instance makes it, and so does whoever hands it nothing.
     if (from && from == m_holdingNothing) {
         nodeHandedTo(to);
         return;
@@ -808,7 +628,6 @@ void ValueFlowRuleContext::connect(ValueFlowNodeID from, ValueFlowNodeID to)
 
 void ValueFlowRuleContext::connectAsNamed(ValueFlowNodeID from, ValueFlowNodeID to)
 {
-    // A statement whose result nobody reads has no node for it.
     if (!from || !to || from == to)
         return;
     ++m_log.numberOfConnectionsOfRun;
@@ -817,7 +636,6 @@ void ValueFlowRuleContext::connectAsNamed(ValueFlowNodeID from, ValueFlowNodeID 
     if (cached.key == key && cached.epochAndValue == m_runEpoch)
         return;
     cached = { key, m_runEpoch };
-    // Whether it is there already: leaveOutWhatIsKnown().
     if (m_filtersKnownEdges)
         m_solver.graph().prefetchLinksThatHold(ValueFlowEdge { from, to });
     m_log.edges.append(ValueFlowEdge { from, to });
@@ -838,7 +656,6 @@ void ValueFlowRuleContext::connect(const ValueFlowOperand& operand, ValueFlowNod
         return;
     if (operand.node)
         connect(masked(operand.node, maskOf(operand), operand.maskKind), to);
-    // A placeholder in the constant stops at the mask like one that arrives: the graph says what takes its place.
     ValueSetID constant = constantOf(operand);
     const ValueFlowPlaceholders& placeholders = m_solver.m_input.placeholders;
     bool holdsPlaceholder = (placeholders.unknown && sets().contains(constant, placeholders.unknown)) || (placeholders.untracked && sets().contains(constant, placeholders.untracked));
@@ -896,7 +713,6 @@ void ValueFlowRuleContext::mark(ClimbingSet objects, OptionSet<ObjectMutation> m
 {
     if (objects.m_set == ValueSets::nothing)
         return;
-    // A mark on the unknown object brings no unknown object into being.
     ValueFlowNodeID holdingObjects;
     for (ObjectMutation mutation : mutations) {
         ValueFlowNodeID marked = mutationNode(mutation);
@@ -921,16 +737,13 @@ void ValueFlowRuleContext::use(BuiltinID builtin, OptionSet<BuiltinUse> uses)
 
 void ValueFlowRuleContext::useAsAnswerOfUnknownObject(BuiltinID builtin, OptionSet<BuiltinUse> uses)
 {
-    // What is done below follows from the built-in and from each kind of use by itself. A kind that the solver has merged was noted in an earlier round, and what that run added is in the graph.
     if (m_solver.usesOf(builtin).containsAll(uses))
         return;
     m_log.use(builtin, uses);
 
-    // The host's rules read the built-ins that are used as sets, like everything else that moves.
     if (!m_solver.m_input.nodes || !m_solver.m_input.universe)
         return;
     ClimbingSet object(m_maker.of(universe().objectOf(builtin)));
-    // A store to a member that the host makes when it is first looked for puts the new value in place of a property that is not made yet, and makes nothing: what hangs on such a member is what makes it.
     bool onlyReplaces = uses.contains(BuiltinUse::Written) && program().builtins().at(program().builtins().canonicalID(builtin)).flags.contains(BuiltinFlag::IsLazilyCreated);
     if (uses.containsAny({ BuiltinUse::Read, BuiltinUse::Called, BuiltinUse::Constructed, BuiltinUse::Escaped }) || (uses.contains(BuiltinUse::Written) && !onlyReplaces))
         add(nodes().ofHost(ValueFlowHostNode::UsedBuiltins), object);
@@ -940,10 +753,7 @@ void ValueFlowRuleContext::useAsAnswerOfUnknownObject(BuiltinID builtin, OptionS
         add(nodes().ofHost(ValueFlowHostNode::RunBuiltins), object);
 }
 
-void ValueFlowRuleContext::noteMembersNotToldApart()
-{
-    m_log.statementsWithMembersNotToldApart.append(m_statement);
-}
+void ValueFlowRuleContext::noteMembersNotToldApart() { m_log.statementsWithMembersNotToldApart.append(m_statement); }
 
 } } } // namespace JSC::AOT::Typed
 

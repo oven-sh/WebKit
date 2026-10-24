@@ -45,7 +45,6 @@ layout L1 kind=Instance name="Sub" module=m0 base=L0 constructor=f4 supertypes=[
 variable g0 name="tally" module=m0 declared={type=number} owner=L0
 variable g1 name="label" module=m0 declared={type=string} owner=L0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -56,7 +55,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="define" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = NewClass v0 layout=L0
     v2 = FinishClass v1 layout=L0
@@ -64,13 +62,11 @@ function f1 name="define" results=[{type=anything}] {
     Return v2
 }
 function f2 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2
 }
 function f3 name="initializer" kind=Initializer flags=[HasThis] thisType={type=function} results=[{type=anything}] {
-  b0(v0: function):
     v1 = Integer integer=1
     PropDefine v0, v1 key="tally"
     v3 = String string="one"
@@ -78,13 +74,11 @@ function f3 name="initializer" kind=Initializer flags=[HasThis] thisType={type=f
     Return
 }
 function f4 name="Sub" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0
     v3 = SuperConstruct v2, v1 layout=L1
     Return v3
 }
 function f5 name="defineSub" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ResolveHeritage v0
     v2 = NewClosure function=f4
     v3 = NewClass v2, v0, v1 layout=L1
@@ -92,7 +86,6 @@ function f5 name="defineSub" parameters=[{type=anything}] results=[{type=anythin
     Return v4
 }
 function f6 name="storeAndRead" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-  b0(v0: anything, v1: number):
     PropSet v0, v1 key="tally"
     v3 = PropGet v0 key="tally"
     v4 = PropGet v0 key="label"
@@ -100,7 +93,6 @@ function f6 name="storeAndRead" parameters=[{type=anything}, {type=number}] resu
     Return v5
 }
 function f7 name="mutate" parameters=[{type=anything}, {type=string}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: string, v2: anything):
     ElemSet v0, v1, v2
     v4 = ElemDelete v0, v1
     Return

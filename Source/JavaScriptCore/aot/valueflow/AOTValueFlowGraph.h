@@ -101,7 +101,7 @@ public:
     void wake(ValueFlowNodeID first, uint32_t count);
     bool isAtRest(ValueFlowNodeID node) const { return m_gates[node.index()].flags & IsAtRest; }
 
-    void addInitialEdges(std::span<const ValueFlowEdge>);
+    void addInitialEdges(std::span<const ValueFlowEdge> edges) { addEdges(edges); }
     size_t addEdges(std::span<const ValueFlowEdge>);
     bool hasAdded(ValueFlowEdge edge) const
     {
@@ -115,23 +115,13 @@ public:
             const Links& predecessors = m_predecessors[edge.to.index()];
             if (predecessors.count > mostPredecessorsScanned)
                 return m_shards[shardOf(edge.to.index())]->edgesOutOfConstantsIntoNodesWithManyPredecessors.contains(edge);
-            const uint32_t* others = predecessors.begin();
-            for (uint32_t index = 0; index < predecessors.count; ++index) {
-                if (others[index] == edge.from.index())
-                    return true;
-            }
-            return false;
+            return predecessors.contains(edge.from.index());
         }
         willUse(edge.from.index());
         const Links& successors = m_successors[edge.from.index()];
         if (successors.count > mostSuccessorsScanned)
             return m_shards[shardOf(edge.from.index())]->edgesOfNodesWithManySuccessors.contains(edge);
-        const uint32_t* others = successors.begin();
-        for (uint32_t index = 0; index < successors.count; ++index) {
-            if (others[index] == edge.to.index())
-                return true;
-        }
-        return false;
+        return successors.contains(edge.to.index());
     }
 
     ALWAYS_INLINE void prefetchLinksThatHold(ValueFlowEdge edge) const
@@ -193,7 +183,7 @@ private:
         WTF_MAKE_NONCOPYABLE(ArrayByNode);
     public:
         ArrayByNode() = default;
-        ~ArrayByNode();
+        ~ArrayByNode() { release(); }
 
         void grow(size_t numberInUse, size_t capacity);
         void release();
@@ -202,7 +192,6 @@ private:
         T& operator[](size_t index) LIFETIME_BOUND { return m_elements[index]; }
         const T& operator[](size_t index) const LIFETIME_BOUND { return m_elements[index]; }
         std::span<const T> first(size_t count) const LIFETIME_BOUND { return unsafeMakeSpan(m_elements, count); }
-        size_t memoryInBytes() const { return m_capacity * sizeof(T); }
 
     private:
         T* m_elements { nullptr };
@@ -229,6 +218,15 @@ private:
 
     struct Links {
         const uint32_t* begin() const LIFETIME_BOUND { return count <= 2 ? two : block; }
+        ALWAYS_INLINE bool contains(uint32_t other) const
+        {
+            const uint32_t* others = begin();
+            for (uint32_t index = 0; index < count; ++index) {
+                if (others[index] == other)
+                    return true;
+            }
+            return false;
+        }
 
         union {
             uint32_t two[2];
@@ -242,7 +240,7 @@ private:
         WTF_MAKE_NONCOPYABLE(Arena);
     public:
         Arena() = default;
-        ~Arena();
+        ~Arena() { release(); }
 
         uint32_t* allocate(uint32_t numberOfWords);
         void free(uint32_t* block, uint32_t numberOfWords);
@@ -265,6 +263,8 @@ private:
         size_t memoryInBytes() const { return m_slots.sizeInBytes(); }
 
     private:
+        static uint64_t keyOf(ValueFlowEdge edge) { return static_cast<uint64_t>(edge.from.index()) << 32 | edge.to.index(); }
+        size_t firstPositionOf(uint64_t key) const { return key * 0x9e3779b97f4a7c15ull >> std::countl_zero(m_slots.span().size() - 1); }
         void grow();
 
         MallocSpan<uint64_t> m_slots;
@@ -346,6 +346,7 @@ private:
     uint64_t lowMembersOf(ValueSetID, ValueSetMaker&) const;
     void pass(uint32_t node, uint32_t numberOfMask, uint64_t& low, uint64_t& lowInNoSet, ValueSetID& set, Worker&);
     void hold(uint32_t node, uint64_t low, ValueSetID value, Worker&);
+    void startWithValueOf(ValueFlowNodeID, ValueFlowNodeID other, Worker&);
     void takeArrival(Arrivals&, const Message&);
     void takeArrivals(Arrivals&, std::span<const Message>);
     void evaluate(uint32_t node, Arrivals&, Worker&, NOESCAPE const Invocable<void(const Message&)> auto& leave);
@@ -366,9 +367,9 @@ private:
     bool addEdgeOutOfConstantIfAbsent(ValueFlowEdge);
     bool addEdgeIfAbsent(ValueFlowEdge);
     void willHaveManyPredecessors(Shard&, uint32_t node);
+    void addPredecessor(Shard&, ValueFlowEdge);
     bool isConstant(uint32_t node) const { return m_isConstant[node / 64].load(std::memory_order_relaxed) >> node % 64 & 1; }
     unsigned shardThatKeeps(ValueFlowEdge edge) const { return shardOf(isConstant(edge.from.index()) ? edge.to.index() : edge.from.index()); }
-    void countRecentEdgesAsOlder();
     void layPredecessorsInRows();
 
     bool passesEverythingOn(uint32_t node) const { return !m_gates[node].mask && !(m_gates[node].flags & IsAtRest); }
@@ -380,7 +381,6 @@ private:
     void connectPredecessorsOfRetiredNodes(Team&);
     void connectStraightToCoveredNode(Covering&, uint32_t node);
     void markNodesFlowingIntoCoveredNodes(Team*, std::span<const ValueFlowEdge> added);
-    void retireNodes(Team&, std::span<const ValueFlowNodeID> moved);
     void findIndices(Team*, size_t count, Vector<uint32_t>& found, NOESCAPE const Invocable<bool(size_t)> auto& matches);
 
     const ParallelLoops& m_loops;

@@ -32,7 +32,6 @@ variable g1 name="exported" module=m0 declared={type=RegExp} flow={writers=AllKn
 variable g2 name="mayBeReadWhileUndefined" module=m0 declared={type=undefined|RegExp} initialization=Undefined flow={writers=AllKnown stores=AtMostOnce}
 variable g3 name="usedAtStart" module=m0 declared={type=RegExp} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewRegExp pattern="deferred" regExpFlags=[Global]
     PutModuleVariable v0 variable=g0
     v2 = NewRegExp pattern="exported"
@@ -47,7 +46,6 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="reader" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g0
     v2 = Call v0, -, v1
     Return v2

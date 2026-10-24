@@ -10,6 +10,7 @@
 
 #include "AOTCompactTable.h"
 #include "AOTResultRules.h"
+#include "AOTResultsJoin.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStringEmitter.h"
 #include "AOTVector.h"
@@ -17,7 +18,6 @@
 #include "JSMap.h"
 #include "JSSet.h"
 #include "VM.h"
-#include <array>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -27,6 +27,8 @@ static_assert(JSMap::Helper::aliveEntryCountIndex() == JSSet::Helper::aliveEntry
 static_assert(JSMap::Helper::dataTableStartIndex(JSMap::Helper::LargeCapacity) == JSMap::Helper::hashTableStartIndex() + JSMap::Helper::LargeCapacity);
 static_assert(static_cast<unsigned>(SetNextResult::HasEntry) == static_cast<unsigned>(MapNextResult::HasEntry) && static_cast<unsigned>(SetNextResult::Entry) == static_cast<unsigned>(MapNextResult::Entry) && static_cast<unsigned>(SetNextResult::Element) == static_cast<unsigned>(MapNextResult::Key));
 static_assert(static_cast<unsigned>(MapNextResult::Value) == numberOfEnumerators<SetNextResult> && numberOfEnumerators<MapNextResult> == numberOfEnumerators<SetNextResult> + 1);
+static_assert(!static_cast<unsigned>(MapNextResult::HasEntry) && static_cast<unsigned>(MapNextResult::Entry) == 1 && static_cast<unsigned>(MapNextResult::Key) == 2);
+static_assert(numberOfEnumerators<MapNextResult> == 4);
 
 namespace {
 
@@ -35,61 +37,17 @@ struct TableEntry {
     Boxed value;
 };
 
-class StepJoin {
-public:
-    explicit StepJoin(Output& out)
-        : m_out(out)
-        , m_continuation(out.newBlock())
-    {
-    }
-
-    void add(Condition hasEntry, Word32 entryIndex, const TableEntry& entry)
-    {
-        m_hasEntry.append(m_out.anchor(hasEntry.value()));
-        m_entryIndexes.append(m_out.anchor(entryIndex.value()));
-        m_keys.append(m_out.anchor(entry.key.value()));
-        m_values.append(m_out.anchor(entry.value.value()));
-        m_out.jump(m_continuation);
-    }
-
-    std::array<Operand, numberOfEnumerators<MapNextResult>> finish()
-    {
-        m_out.appendTo(m_continuation);
-        std::array<Operand, numberOfEnumerators<MapNextResult>> results;
-        results[static_cast<size_t>(MapNextResult::HasEntry)] = Condition(m_out.phi(B3::Int32, m_hasEntry));
-        results[static_cast<size_t>(MapNextResult::Entry)] = Word32(m_out.phi(B3::Int32, m_entryIndexes));
-        results[static_cast<size_t>(MapNextResult::Key)] = Boxed(m_out.phi(B3::Int64, m_keys));
-        results[static_cast<size_t>(MapNextResult::Value)] = Boxed(m_out.phi(B3::Int64, m_values));
-        return results;
-    }
-
-private:
-    Output& m_out;
-    LBasicBlock m_continuation;
-    Vector<ValueFromBlock, 4> m_hasEntry;
-    Vector<ValueFromBlock, 4> m_entryIndexes;
-    Vector<ValueFromBlock, 4> m_keys;
-    Vector<ValueFromBlock, 4> m_values;
-};
+using StepJoin = ResultsJoin<Condition, Word32, Boxed, Boxed>;
 
 } // anonymous namespace
 
 class CollectionIntrinsicEmitter::TableReader final : public OperationEmitter {
 public:
-    explicit TableReader(CodeGenerator& generator)
-        : OperationEmitter(generator)
-    {
-    }
+    explicit TableReader(CodeGenerator& generator) : OperationEmitter(generator) { }
 
-    LValue storageOf(CellPointer owner)
-    {
-        return m_out.loadPtr(m_out.address(m_heaps.entire(AbstractHeap::CollectionStorage), owner.value(), JSMap::offsetOfStorage()));
-    }
-
-    TypedPointer tableField(LValue table, ptrdiff_t offset)
-    {
-        return m_out.address(m_heaps.entire(AbstractHeap::CollectionStorage), table, offset);
-    }
+    LValue storageOf(CellPointer owner) { return m_out.loadPtr(m_out.address(m_heaps.entire(AbstractHeap::CollectionStorage), owner.value(), JSMap::offsetOfStorage())); }
+    TypedPointer tableField(LValue table, ptrdiff_t offset) { return m_out.address(m_heaps.entire(AbstractHeap::CollectionStorage), table, offset); }
+    TypedPointer dataAt(LValue base, ptrdiff_t index) { return m_out.address(m_heaps.entire(AbstractHeap::CollectionEntries), base, index * sizeof(EncodedJSValue)); }
 
     LValue keysOf(LValue table)
     {
@@ -101,16 +59,6 @@ public:
     TypedPointer elementAt(LValue base, LValue index, unsigned shift)
     {
         return m_out.address(m_heaps.entire(AbstractHeap::CollectionEntries), m_out.add(base, m_out.shl(index, m_out.constInt32(shift))));
-    }
-
-    TypedPointer dataAt(LValue base, ptrdiff_t index)
-    {
-        return m_out.address(m_heaps.entire(AbstractHeap::CollectionEntries), base, index * sizeof(EncodedJSValue));
-    }
-
-    LValue dataOf(LValue storage)
-    {
-        return m_out.add(storage, m_out.constIntPtr(JSCellButterfly::offsetOfData()));
     }
 
     LValue entriesOf(LValue data)
@@ -132,8 +80,7 @@ public:
         return select(isReference, cell, immediate);
     }
 
-    template<typename Functor>
-    LValue firstAliveEntry(LValue start, LValue used, LBasicBlock hasNoEntry, const Functor& isAlive)
+    LValue firstAliveEntry(LValue start, LValue used, LBasicBlock hasNoEntry, NOESCAPE const Invocable<LValue(LValue)> auto& isAlive)
     {
         LBasicBlock loop = m_out.newBlock();
         LBasicBlock isUsed = m_out.newBlock();
@@ -157,13 +104,6 @@ public:
         return entryIndex;
     }
 
-    LValue isAliveInCompactTable(CompactTable::Width keyWidth, LValue keys, LValue entryIndex)
-    {
-        if (keyWidth == CompactTable::Width::Wide)
-            return m_out.notZero64(m_out.load64(elementAt(keys, entryIndex, 3)));
-        return m_out.notZero32(m_out.load32(elementAt(keys, entryIndex, 2)));
-    }
-
     TableEntry compactEntryAt(Collection kind, CompactTable::Width keyWidth, LValue table, LValue keys, LValue entryIndex)
     {
         const bool keysAreWide = keyWidth == CompactTable::Width::Wide;
@@ -184,19 +124,7 @@ public:
         join.add(Boxed(m_out.load64(elementAt(values, entryIndex, 3))));
         return { key, join.finish() };
     }
-
-    TableEntry storageEntryAt(Collection kind, LValue entries, LValue entryIndex)
-    {
-        LValue words = entryAt(kind, entries, entryIndex);
-        Boxed key(m_out.load64(dataAt(words, 0)));
-        return { key, kind == Collection::Map ? Boxed(m_out.load64(dataAt(words, 1))) : undefined() };
-    }
 };
-
-CollectionIntrinsicEmitter::CollectionIntrinsicEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
 
 void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContext& value)
 {
@@ -215,7 +143,7 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
         };
         TableEntry entryFromOperation { resultInBuffer(0), kind == Collection::Map ? resultInBuffer(1) : undefined() };
         Condition hasEntry(m_out.notZero64(step.first));
-        join.add(hasEntry, Word32(m_out.castToInt32(step.second)), entryFromOperation);
+        join.add(hasEntry, Word32(m_out.castToInt32(step.second)), entryFromOperation.key, entryFromOperation.value);
     };
     if (value.shape() != CodeShape::Fast) {
         StepJoin join(m_out);
@@ -257,7 +185,9 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
     LValue used = m_out.zeroExtPtr(m_out.load32(reader.tableField(storage, CompactTable::offsetOfUsed())));
     LValue column = reader.keysOf(storage);
     LValue entryIndex = reader.firstAliveEntry(start.value(), used, hasNoEntry, [&](LValue candidate) {
-        return reader.isAliveInCompactTable(keyWidth, column, candidate);
+        if (keyWidth == CompactTable::Width::Wide)
+            return m_out.notZero64(m_out.load64(reader.elementAt(column, candidate, 3)));
+        return m_out.notZero32(m_out.load32(reader.elementAt(column, candidate, 2)));
     });
     // From here on the walk stands behind an entry. The mark is bookkeeping that only clear() reads, which comes after a step as a write of the table comes after a read. The other bits of the byte never change.
     LBasicBlock marks = newBlock();
@@ -272,37 +202,29 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
 
     m_out.appendTo(isMarked);
     TableEntry entry = reader.compactEntryAt(kind, keyWidth, storage, column, entryIndex);
-    join.add(boolean(true), low32(Integer(entryIndex)), entry);
+    join.add(boolean(true), low32(Integer(entryIndex)), entry.key, entry.value);
 
     m_out.appendTo(isOrdinary);
-    LValue data = reader.dataOf(storage);
+    LValue data = m_out.add(storage, m_out.constIntPtr(JSCellButterfly::offsetOfData()));
     LValue usedInStorage = m_out.zeroExtPtr(m_out.add(m_out.load32(reader.dataAt(data, JSMap::Helper::aliveEntryCountIndex())), m_out.load32(reader.dataAt(data, JSMap::Helper::deletedEntryCountIndex()))));
     LValue entries = reader.entriesOf(data);
     LValue deletedValue = m_out.loadPtr(m_out.address(m_heaps.AOTInstance_fixedFields, vm().value(), VM::offsetOfOrderedHashTableDeletedValue()));
     LValue entryIndexInStorage = reader.firstAliveEntry(start.value(), usedInStorage, hasNoEntry, [&](LValue candidate) {
         return m_out.notEqual(m_out.load64(reader.dataAt(reader.entryAt(kind, entries, candidate), 0)), deletedValue);
     });
-    TableEntry entryInStorage = reader.storageEntryAt(kind, entries, entryIndexInStorage);
-    join.add(boolean(true), low32(Integer(entryIndexInStorage)), entryInStorage);
+    LValue words = reader.entryAt(kind, entries, entryIndexInStorage);
+    Boxed keyInStorage(m_out.load64(reader.dataAt(words, 0)));
+    Boxed valueInStorage = kind == Collection::Map ? Boxed(m_out.load64(reader.dataAt(words, 1))) : undefined();
+    join.add(boolean(true), low32(Integer(entryIndexInStorage)), keyInStorage, valueInStorage);
 
     m_out.appendTo(hasNoEntry);
-    join.add(boolean(false), word32(0), { undefined(), undefined() });
+    join.add(boolean(false), word32(0), undefined(), undefined());
 
     m_out.appendTo(slowPath);
     addStepByOperation(join);
 
     auto results = join.finish();
     defineResults(value, std::span<const Operand>(results).first(numberOfResults));
-}
-
-void CollectionIntrinsicEmitter::generateMapNext(const ValueContext& value)
-{
-    generateNext(Collection::Map, value);
-}
-
-void CollectionIntrinsicEmitter::generateSetNext(const ValueContext& value)
-{
-    generateNext(Collection::Set, value);
 }
 
 // Storage of another kind answers anything: the operation that follows looks again.

@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="valueFromOutside" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -18,15 +17,13 @@ function f0 name="valueFromOutside" parameters=[{type=anything}, {type=boolean}]
     Jump -> next b1()
   b4():
     Return v0
-}
-# CHECK-LABEL: function f0 name="valueFromOutside"
 # CHECK: b0(
 # CHECK-NEXT: v3: boolean = ToBoolean v0
 # CHECK: b2():
 # CHECK-NEXT: Branch v3 -> taken b1(), notTaken b3()
+}
 
 function f1 name="valueOfTheLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Jump -> next b1(v0)
   b1(v2):
     LoopHint
@@ -37,13 +34,11 @@ function f1 name="valueOfTheLoop" parameters=[{type=anything}, {type=boolean}] r
     Jump -> next b1(v5)
   b3():
     Return v2
-}
-# CHECK-LABEL: function f1 name="valueOfTheLoop"
 # CHECK: b1(v2
 # CHECK: = ToBoolean v2
+}
 
 function f2 name="twoTestsBesideUnspecifiedValue" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     v3 = Unspecified valueType=anything
     Branch v2 -> taken b1(v0, v1, v3), notTaken b1(v1, v0, v0)
   b1(v4, v5, v6):
@@ -57,9 +52,8 @@ function f2 name="twoTestsBesideUnspecifiedValue" parameters=[{type=anything}, {
     Branch v9 -> taken b2(), notTaken b4()
   b4():
     Return v0
-}
-# CHECK-LABEL: function f2 name="twoTestsBesideUnspecifiedValue"
 # CHECK: b1(v4
 # CHECK-NEXT: v8: boolean = ToBoolean v4
 # CHECK-NEXT: v9: boolean = ToBoolean v5
 # CHECK-NEXT: Jump -> next b2()
+}

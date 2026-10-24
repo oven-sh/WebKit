@@ -11,7 +11,6 @@ entry module=m0
 layout L0 kind=Instance name="Sized" constructor=f2
 layout L1 kind=Instance name="Like" constructor=f4
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Integer integer=1
     v2 = NewArray v1 contents=anything
@@ -37,30 +36,25 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="run" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="slice"
     v2 = Call v1, v0 calleeKey="slice"
     Return v2
 }
 function f2 name="Sized" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0 fields=[]
     Return v2
 }
 function f3 name="length" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer
     Return v1
 }
 function f4 name="Like" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L1
     v2 = NewObject v1 layout=L1 fields=[]
     Return v2
 }
 function f5 name="length" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer
     Return v1
 }

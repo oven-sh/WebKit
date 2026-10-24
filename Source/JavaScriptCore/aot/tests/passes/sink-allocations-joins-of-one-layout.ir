@@ -9,7 +9,6 @@ layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequir
 layout L1 name="Line" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="end" declared={type=anything} flags=[IsRequired]}]
 
 function f0 name="oneLayout" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
@@ -30,7 +29,6 @@ function f0 name="oneLayout" parameters=[{type=anything}, {type=anything}, {type
 # CHECK-NEXT: v6: anything = Upcast [[x0]] castType=anything
 
 function f1 name="joinInLoop" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
     Jump -> next b1(v2)
   b1(v3):
@@ -62,7 +60,6 @@ function f1 name="joinInLoop" parameters=[{type=anything}, {type=anything}] resu
 # CHECK: Jump -> next b1(v1, v6)
 
 function f2 name="sourceOfTwoJoins" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
     Switch v2 cases=[0, 1, 2] -> case b1(), case b2(), case b3(), otherwise b4()
   b1():
@@ -100,7 +97,6 @@ function f2 name="sourceOfTwoJoins" parameters=[{type=anything}, {type=anything}
 # CHECK-NEXT: v9: anything = Upcast [[y3]] castType=anything
 
 function f3 name="joinOfHolders" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
@@ -125,7 +121,6 @@ function f3 name="joinOfHolders" parameters=[{type=anything}, {type=anything}, {
 # CHECK-NEXT: v8: anything = Upcast [[y4]] castType=anything
 
 function f4 name="joinWithDifferentContents" parameters=[{type=number}, {type=string}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: string, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v3 = NewArray v0 contents=number
@@ -148,7 +143,6 @@ function f4 name="joinWithDifferentContents" parameters=[{type=number}, {type=st
 # CHECK: v7: anything = Upcast [[element5]] castType=anything
 
 function f5 name="nineArms" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     Switch v2 cases=[0, 1, 2, 3, 4, 5, 6, 7] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), case b7(), case b8(), otherwise b9()
 # REPEAT: i = 3..11; a = 0 1 0 1 0 1 0 1 0; b = 1 0 1 0 1 0 1 0 1
   b%(i-2)():

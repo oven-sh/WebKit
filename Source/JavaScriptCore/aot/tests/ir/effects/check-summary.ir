@@ -12,17 +12,14 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 function f0 name="outer" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
-  b0(v0: L0, v1: number):
     v2 = CallDirect v0, v1 function=f1
     Return
 }
 function f1 name="middle" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
-  b0(v0: L0, v1: number):
     v2 = CallDirect v0, v1 function=f2
     Return
 }
 function f2 name="writes" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
-  b0(v0: L0, v1: number):
     PutSlot v0, -, v1 key="x" receivers=[L0] level=Proven
     Return
 }

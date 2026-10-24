@@ -14,7 +14,6 @@ function f0 name="typed" captures=[{type=number}, {type=string}] parameters=[{ty
     Return
 }
 function f1 name="method" kind=Method flags=[HasThis] thisType={type=L0 site=w2} results=[{type=anything}] {
-  b0(v0: L0):
     Return
 }
 # CHECK: name="typed" module=m0 role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f0} creator=Entrypoint{target=f0 arguments=Registers} {

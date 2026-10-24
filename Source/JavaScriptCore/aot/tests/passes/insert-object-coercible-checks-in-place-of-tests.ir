@@ -11,7 +11,6 @@ typesite w0 module=m0 position=10 kind=Parameter
 variable g0 name="seen" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="lengthOfText" parameters=[{type=undefined|null|string}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: undefined|null|string, v1: anything, v2: boolean):
     Branch v2 -> taken b1(), notTaken b4(v1)
   b1():
     v3 = TypeTest v0 testedType=string
@@ -32,7 +31,6 @@ function f0 name="lengthOfText" parameters=[{type=undefined|null|string}, {type=
 # CHECK: b2(
 
 function f1 name="elementOfList" parameters=[{type=undefined|Array<string>}, {type=i32}] results=[{type=anything}] {
-  b0(v0: undefined|Array<string>, v1: i32):
     v2 = TypeTest v0 testedType=Array<string>
     Branch v2 -> taken b1(| 0), notTaken b2(| 0)
   b1(v3: Array<string>):
@@ -48,7 +46,6 @@ function f1 name="elementOfList" parameters=[{type=undefined|Array<string>}, {ty
 # CHECK-NOT: ElemGet
 
 function f2 name="aNumberFailsToo" parameters=[{type=undefined|number|string}] results=[{type=anything}] {
-  b0(v0: undefined|number|string):
     v1 = TypeTest v0 testedType=string
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2: string):
@@ -62,7 +59,6 @@ function f2 name="aNumberFailsToo" parameters=[{type=undefined|number|string}] r
 # CHECK-NEXT: Branch
 
 function f3 name="nullPasses" parameters=[{type=undefined|null|string}] results=[{type=anything}] {
-  b0(v0: undefined|null|string):
     v1 = TypeTest v0 testedType=null|string
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2: null|string):
@@ -76,7 +72,6 @@ function f3 name="nullPasses" parameters=[{type=undefined|null|string}] results=
 # CHECK-NEXT: Branch
 
 function f4 name="aStoreComesFirst" parameters=[{type=undefined|string}] results=[{type=anything}] {
-  b0(v0: undefined|string):
     v1 = TypeTest v0 testedType=string
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2: string):
@@ -91,7 +86,6 @@ function f4 name="aStoreComesFirst" parameters=[{type=undefined|string}] results
 # CHECK-NEXT: Branch
 
 function f5 name="anotherValueIsRead" parameters=[{type=undefined|string}, {type=anything}] results=[{type=anything}] {
-  b0(v0: undefined|string, v1: anything):
     v2 = TypeTest v0 testedType=string
     Branch v2 -> taken b1(| 0), notTaken b2(| 0)
   b1(v3: string):
@@ -105,7 +99,6 @@ function f5 name="anotherValueIsRead" parameters=[{type=undefined|string}, {type
 # CHECK-NEXT: Branch
 
 function f6 name="theFailingSideReturns" parameters=[{type=undefined|string}] results=[{type=anything}] {
-  b0(v0: undefined|string):
     v1 = TypeTest v0 testedType=string
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2: string):
@@ -118,7 +111,6 @@ function f6 name="theFailingSideReturns" parameters=[{type=undefined|string}] re
 # CHECK-NEXT: Branch
 
 function f7 name="underHandler" parameters=[{type=undefined|string}] results=[{type=anything}] {
-  b0(v0: undefined|string):
     Jump -> next b1()
   b1() handler=b4():
     v1 = TypeTest v0 testedType=string

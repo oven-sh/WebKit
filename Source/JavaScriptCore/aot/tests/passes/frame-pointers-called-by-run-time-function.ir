@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = CallDirect function=f1
     v1 = CallDirect function=f2
     v2 = CallDirect function=f3
@@ -16,7 +15,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 function f1 name="givenToCallWithList" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f10 storage=Frame
     v1 = CallDirect v0 function=f6
     Return
@@ -25,7 +23,6 @@ function f1 name="givenToCallWithList" results=[{type=anything}] {
 # CHECK: v0 v1(0) may leak: yes
 
 function f2 name="givenToConstruction" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f10 storage=Frame
     v1 = CallDirect v0 function=f7
     Return
@@ -34,7 +31,6 @@ function f2 name="givenToConstruction" results=[{type=anything}] {
 # CHECK: v0 v1(0) may leak: yes
 
 function f3 name="givenTwoCallsAboveCallWithList" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f10 storage=Frame
     v1 = CallDirect v0 function=f8
     Return
@@ -43,7 +39,6 @@ function f3 name="givenTwoCallsAboveCallWithList" results=[{type=anything}] {
 # CHECK: v0 v1(0) may leak: yes
 
 function f4 name="givenToPlainCall" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f10 storage=Frame
     v1 = CallDirect v0 function=f9
     Return
@@ -52,7 +47,6 @@ function f4 name="givenToPlainCall" results=[{type=anything}] {
 # CHECK: v0 v1(0) may leak: no
 
 function f5 name="calledWithListByItsOwner" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f10 storage=Frame
     v1 = Integer integer=1
     v2 = NewArray v1 contents=anything
@@ -63,28 +57,23 @@ function f5 name="calledWithListByItsOwner" results=[{type=anything}] {
 # CHECK: v0 v3(0) may leak: yes
 
 function f6 name="callsWithList" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     v2 = NewArray v1 contents=anything
     v3 = CallList v0, -, v2
     Return v3
 }
 function f7 name="constructs" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Construct v0
     Return
 }
 function f8 name="passesToCallWithList" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f6
     Return v1
 }
 function f9 name="calls" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0
     Return v1
 }
 function f10 name="callback" results=[{type=anything}] {
-  b0():
     Return
 }

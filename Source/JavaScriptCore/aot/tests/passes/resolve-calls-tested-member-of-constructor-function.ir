@@ -13,11 +13,9 @@ function f0 name="Animal" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} 
     Return
 }
 function f1 name="walk" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Return v1
 }
 function f2 name="sound" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Return v0
 }
 function f3 name="assigned-once" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
@@ -25,8 +23,6 @@ function f3 name="assigned-once" parameters=[{type=L0 flags=[IsExpected]}, {type
     v2 = PropGet v0 key="walk"
     v3 = Call v2, v0, v1 calleeKey="walk"
     Return v3
-}
-# CHECK-LABEL: function f3 name="assigned-once"
 # CHECK: = TypeTest v0 testedType=L0
 # CHECK: f1 = NewClosure function=f1
 # CHECK: frequency=Unlikely:
@@ -34,13 +30,13 @@ function f3 name="assigned-once" parameters=[{type=L0 flags=[IsExpected]}, {type
 # CHECK: = AreMembersUnchanged conditions=[{{*}}layout=L0{{*}}key="walk"}]
 # CHECK-NOT: HasLayoutPrototype
 # CHECK-NOT: HasNoExtraProperties
+}
 function f4 name="assigned-twice" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything ~ L0, v1: anything):
     v2 = PropGet v0 key="sound"
     v3 = Call v2, v0, v1 calleeKey="sound"
     Return v3
-}
-# CHECK-LABEL: function f4 name="assigned-twice"
 # CHECK-NEXT: b0(v0: anything ~ L0, v1: anything):
 # CHECK-NEXT: = PropGet v0 key="sound"
 # CHECK-NEXT: = Call {{*}}, v0, v1 calleeKey="sound"
+}

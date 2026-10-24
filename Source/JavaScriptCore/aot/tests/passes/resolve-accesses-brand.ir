@@ -13,38 +13,30 @@ function f1 name="Repeated" kind=BaseConstructor flags=[HasNewTarget] results=[{
 function f2 name="Unrelated" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
 
 function f3 name="instance" parameters=[{type=L0}, {type=classtoken}] results=[{type=boolean}] {
-  b0(v0: L0, v1: classtoken):
     v2 = PrivateGet v0, v1 layout=L0
     v3 = PrivateHas v0, v1 layout=L0
     Return v3
-}
-# CHECK-LABEL: function f3 name="instance"
 # CHECK: v2: classtoken = GetSlot v0 key=#"#"@L0 receivers=[L0] level=Proven
 # CHECK-NEXT: v3: true = Boolean boolean=true
+}
 function f4 name="class-may-be-evaluated-again" parameters=[{type=L1}, {type=classtoken}] results=[{type=boolean}] {
-  b0(v0: L1, v1: classtoken):
     v2 = PrivateGet v0, v1 layout=L1
     v3 = PrivateHas v0, v1 layout=L1
     Return v3
-}
-# CHECK-LABEL: function f4 name="class-may-be-evaluated-again"
 # CHECK: v2: classtoken = PrivateGet v0, v1 layout=L1
 # CHECK-NEXT: v3: boolean = PrivateHas v0, v1 layout=L1
+}
 function f5 name="unknown-receiver" parameters=[{type=anything}, {type=classtoken}] results=[{type=boolean}] {
-  b0(v0: anything, v1: classtoken):
     v2 = PrivateGet v0, v1 layout=L0
     v3 = PrivateHas v0, v1 layout=L0
     Return v3
-}
-# CHECK-LABEL: function f5 name="unknown-receiver"
 # CHECK: v2: classtoken = PrivateGet v0, v1 layout=L0
 # CHECK-NEXT: v3: boolean = PrivateHas v0, v1 layout=L0
+}
 function f6 name="instance-of-an-unrelated-class" parameters=[{type=L2}, {type=classtoken}] results=[{type=boolean}] {
-  b0(v0: L2, v1: classtoken):
     v2 = PrivateHas v0, v1 layout=L0
     v3 = PrivateGet v0, v1 layout=L0
     Return v2
-}
-# CHECK-LABEL: function f6 name="instance-of-an-unrelated-class"
 # CHECK: v2: false = Boolean
 # CHECK-NEXT: v3: classtoken = PrivateGet v0, v1 layout=L0
+}

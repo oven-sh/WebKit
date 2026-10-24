@@ -33,20 +33,17 @@
 module m0 path="main.js" displayPath="main.js"
 entry module=m0
 function f0 name="mergeReadByAnOperand" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     Branch v2 -> taken b1(v0), notTaken b1(v1)
   b1(v3):
     v4 = PropGet v3 key="a"
     Return
 }
 function f1 name="mergeThatIsOnlyReturned" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: boolean):
     Branch v2 -> taken b1(v0), notTaken b1(v1)
   b1(v3):
     Return v3
 }
 function f2 name="nodeAndConstant" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = Null
     Branch v1 -> taken b1(v0), notTaken b1(v2)
   b1(v3):

@@ -13,12 +13,10 @@ layout L0 name="Open" fields=[{key="x" declared={type=anything} flags=[IsRequire
 layout L1 name="Other" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
 
 function f0 name="callee" results=[{type=undefined}] {
-  b0():
     Return
 }
 
 function f1 name="knownValues" parameters=[{type=anything}, {type=L0}, {type=string}, {type=string}] results=[{type=anything}] {
-  b0(v0: anything, v1: L0, v2: string, v3: string):
     v4 = Double number=5
     v5 = Double number=-0
     v6 = Double number=NaN
@@ -80,7 +78,6 @@ function f1 name="knownValues" parameters=[{type=anything}, {type=L0}, {type=str
 # CHECK: v32 evaluated: Unknown
 
 function f2 name="casts" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Upcast v0 castType=anything
     v2 = AssumeType v0 castType=number
     v3 = CheckInitialized v0 name="x"
@@ -115,7 +112,6 @@ function f2 name="casts" parameters=[{type=anything}] results=[{type=anything}] 
 # NOTHING: v6 evaluated: Unknown
 
 function f3 name="types" parameters=[{type=L0}, {type=L0|L1}, {type=undefined|L0}, {type=object}, {type=L0|f0}, {type=f0}, {type=function}, {type=7}, {type=int[7, 8]}, {type="a"}, {type="a"|"b"}, {type=null}] results=[{type=undefined}] {
-  b0(v0: L0, v1: L0|L1, v2: undefined|L0, v3: object, v4: L0|f0, v5: f0, v6: function, v7: 7, v8: int[7, 8], v9: "a", v10: "a"|"b", v11: null):
 # REPEAT: i = 0..11
     v%(i+12) = Upcast v%(i) castType=anything
 # END REPEAT
@@ -135,7 +131,6 @@ function f3 name="types" parameters=[{type=L0}, {type=L0|L1}, {type=undefined|L0
 # TYPES: v23 known: Null
 
 function f4 name="switchCases" results=[{type=undefined}] {
-  b0():
     v0 = Integer integer=-3
     v1 = Double number=4
     v2 = Double number=-0

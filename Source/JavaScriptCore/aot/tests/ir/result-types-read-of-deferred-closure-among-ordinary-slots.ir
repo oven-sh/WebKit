@@ -13,7 +13,6 @@ layout L1 name="BoxOfUndefined" fields=[{key="value" declared={type=undefined} f
 layout L2 name="BoxOfNull" fields=[{key="value" declared={type=null} flags=[IsRequired]}]
 layout L3 name="BoxOfBigInt" fields=[{key="value" declared={type=bigint} flags=[IsRequired]}]
 function f0 name="reads" parameters=[{type=L0}, {type=L0|L1|L2|L3}, {type=L0|L1}] results=[{type=anything}] {
-  b0(v0: L0, v1: L0|L1|L2|L3, v2: L0|L1):
     v3 = IsSlotFilled v0 key="value" receivers=[L0] level=Proven
     Branch v3 -> taken b1(| 0), notTaken b4()
   b1(v4: guard):
@@ -31,6 +30,5 @@ function f0 name="reads" parameters=[{type=L0}, {type=L0|L1|L2|L3}, {type=L0|L1}
     Return
 }
 function f1 name="kept" module=m0 kind=Arrow results=[{type=undefined}] {
-  b0():
     Return
 }

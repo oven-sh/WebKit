@@ -17,7 +17,6 @@ layout L0 name="Row" fields=[{key="id" declared={type=number}}]
 layout L1 name="Page" fields=[{key="items" declared={type=Array<L0>}}, {key="total" declared={type=number}}]
 layout L2 name="Changed" fields=[{key="list" declared={type=Array<number>}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = String string="{\"items\":[{\"id\":7},{\"id\":8}],\"total\":2}"
     v1 = CallDirect v0 function=f2
     v2 = String string="{\"items\":[],\"total\":0}"
@@ -35,14 +34,12 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="parse" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Builtin builtin=JSONParse
     v2 = Call v1, -, v0
     v3 = Convert v2 declared={type=undefined|null|L1} illTypedCause=FromLooseType
     Return v3
 }
 function f2 name="describe" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="show" [isFreeName]
     v3 = CallDirect v0 function=f1
@@ -65,7 +62,6 @@ function f2 name="describe" parameters=[{type=string}] results=[{type=anything}]
     Return
 }
 function f3 name="change" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="show" [isFreeName]
     v3 = Builtin builtin=JSONParse
@@ -135,7 +131,6 @@ expectedresult x0 type=L1 layouts=[L0, L1] validation=[{shape=Object{layout=L1 m
 layout L0 name="Row" fields=[{key="id" declared={type=number}}]
 layout L1 name="Page" fields=[{key="items" declared={type=Array<L0>}}, {key="total" declared={type=number}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="show" [isFreeName]
     v2 = PropGet v0 key="make" [isFreeName]
@@ -155,19 +150,16 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="validates" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=BunBundleValidate
     v2 = Call v1, -, v0 expectedResult=x0
     Return v2
 }
 function f2 name="parses" parameters=[{type=string}] results=[{type=anything}] {
-  b0(v0: string):
     v1 = Builtin builtin=JSONParse
     v2 = Call v1, -, v0 expectedResult=x0
     Return v2
 }
 function f3 name="describe" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="show" [isFreeName]
     v3 = PropGet v0 key="items"

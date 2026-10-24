@@ -13,7 +13,6 @@
 # CHECK-NEXT: Jump -> next b1(v3, v2)
 module m0 path="main.js" displayPath="main.js"
 function f0 name="loop-entered-by-branch" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
-  b0(v0: string, v1: number):
     v2 = Undefined
     v3 = Integer integer=0
     v4 = Integer integer=1

@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 fields=[{key="a" declared={type=number} flags=[IsRequired]}]
 function f0 name="badGuardOfOtherTest" parameters=[{type=object}, {type=number}] results=[{type=undefined}] {
-  b0(v0: object, v1: number):
     v2 = ShapeTest v0 layouts=[L0]
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3):
@@ -16,7 +15,6 @@ function f0 name="badGuardOfOtherTest" parameters=[{type=object}, {type=number}]
     Return
 }
 function f1 name="badGuardOnOtherSource" parameters=[{type=object}, {type=object}, {type=number}] results=[{type=undefined}] {
-  b0(v0: object, v1: object, v2: number):
     v3 = IsPlainDataObject v1
     Branch v3 -> taken b1(| 0), notTaken b2()
   b1(v4):
@@ -26,7 +24,6 @@ function f1 name="badGuardOnOtherSource" parameters=[{type=object}, {type=object
     Return
 }
 function f2 name="badReadUnderGuardOnOtherObject" parameters=[{type=object}, {type=object}] results=[{type=anything}] {
-  b0(v0: object, v1: object):
     v2 = IsPlainDataObject v1
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3):
@@ -36,7 +33,6 @@ function f2 name="badReadUnderGuardOnOtherObject" parameters=[{type=object}, {ty
     Return
 }
 function f3 name="good" parameters=[{type=object}, {type=number}] results=[{type=anything}] {
-  b0(v0: object, v1: number):
     v2 = IsPlainDataObject v0
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3):
@@ -47,7 +43,6 @@ function f3 name="good" parameters=[{type=object}, {type=number}] results=[{type
     Return
 }
 function f4 name="goodThroughTypeTest" parameters=[{type=anything}, {type=number}] results=[{type=undefined}] {
-  b0(v0: anything, v1: number):
     v2 = IsPlainDataObject v0
     Branch v2 -> taken b1(| 0), notTaken b3()
   b1(v3):

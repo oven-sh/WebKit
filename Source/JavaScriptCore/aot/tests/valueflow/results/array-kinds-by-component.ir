@@ -58,7 +58,6 @@ variable g8 name="holdsNaN" module=m0 declared={type=anything} initialization=Un
 variable g9 name="holdsUndefined" module=m0 declared={type=anything} initialization=Undefined
 variable g10 name="hasHole" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = Integer integer=2
     v2 = Double number=1.5
@@ -101,19 +100,16 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="first" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer
     v2 = ElemGet v0, v1
     Return v2
 }
 function f2 name="second" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer
     v2 = ElemGet v0, v1
     Return v2
 }
 function f3 name="truncate" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer
     v2 = BitOr v0, v1
     v3 = NewArray v2 contents=anything
@@ -122,7 +118,6 @@ function f3 name="truncate" parameters=[{type=anything}] results=[{type=anything
     Return v3
 }
 function f4 name="wrap" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewArray v0 contents=anything
     v2 = PropGet v1 key="push"
     v3 = Call v2, v1, v0 calleeKey="push"

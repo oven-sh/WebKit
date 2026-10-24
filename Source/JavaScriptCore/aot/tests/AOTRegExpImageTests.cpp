@@ -8,9 +8,8 @@
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
 
 #include "AOTCodeTemplates.h"
-#include "AOTRegExpCodeAddressing.h"
+#include "AOTRegExpCompiler.h"
 #include "AOTRegExpInProcessLoader.h"
-#include "AOTRegExpSection.h"
 #include "AOTRegExpTestSupport.h"
 #include "AOTVector.h"
 #include "JSLock.h"

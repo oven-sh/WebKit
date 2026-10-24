@@ -8,16 +8,27 @@
 #if ENABLE(AOT)
 
 #include "AOTLayoutData.h"
+#include "AOTObjectBuilder.h"
 #include "AOTRuntimeType.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
+#include "CollectionScope.h"
 #include "JSCJSValue.h"
 #include "PropertyOffset.h"
+#include "RememberedSlot.h"
+#include <array>
+#include <memory>
 #include <optional>
+#include <span>
+#include <wtf/BitVector.h>
 #include <wtf/FastMalloc.h>
+#include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
 
 namespace JSC {
 
+class JSFinalObject;
+class JSGlobalObject;
 class JSObject;
 class Structure;
 class VM;
@@ -27,73 +38,7 @@ namespace AOT {
 class AcceptedValue;
 class Object;
 class RuntimeLayoutTable;
-
-enum class FieldMoveKind : uint8_t {
-    CopyBits,
-    PurifyDouble,
-    Int32ToDouble,
-    BoxCell32,
-    UnboxToCell32,
-    BoxedToSlot,
-    SlotToBoxed,
-    SetAbsent,
-};
-
-struct FieldMove {
-    static constexpr uint8_t fromIsOutOfLine = 1;
-    static constexpr uint8_t toIsOutOfLine = 2;
-    // The slot of the source has a marker for undefined or null that the slot of the target lacks.
-    static constexpr uint8_t refusesUndefinedAndNull = 4;
-
-    uint32_t from { 0 };
-    uint32_t to { 0 };
-    FieldMoveKind kind { FieldMoveKind::CopyBits };
-    uint8_t width { 0 };
-    uint8_t flags { 0 };
-    const FieldData* fromField { nullptr };
-    const FieldData* toField { nullptr };
-};
-
-// From a slot in the cell of the source that holds a boxed value, or zero where the field is absent, to such a slot or an inline property of the target.
-struct BoxedWordMove {
-    uint16_t from { 0 };
-    uint16_t to { 0 };
-};
-
-enum class FieldMovePlanStatus : uint8_t { NeverApplies, Usable };
-
-struct FieldMovePlan {
-    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(FieldMovePlan);
-
-    bool isUsable() const { return status == FieldMovePlanStatus::Usable; }
-    bool movesNothing() const { return moves.isEmpty() && boxedWordMoves.isEmpty(); }
-
-    void appendFieldToField(const RuntimeLayoutTable&, const FieldData& from, const FieldData& to);
-    void appendPropertyToField(const RuntimeLayoutTable&, PropertyOffset from, const FieldData& to);
-    void appendFieldToInlineProperty(const RuntimeLayoutTable&, const FieldData& from, PropertyOffset to);
-    void appendPropertyToInlineProperty(PropertyOffset from, PropertyOffset to);
-    void appendSetAbsent(const FieldData& to);
-    void finish(Structure* targetStructure, uint32_t targetSize, uint32_t targetOrderWord);
-
-    FieldMovePlanStatus status { FieldMovePlanStatus::NeverApplies };
-    bool sourceHasDeferredClosures { false };
-    // A move makes one data property that can be written, listed and deleted out of another. No plan applies to a field that its layout gives other attributes.
-    bool namesFieldWithAttributes { false };
-    uint32_t size { 0 };
-    uint32_t orderWord { 0 };
-    uint64_t granuleBits { 0 };
-    Structure* structure { nullptr };
-    Vector<FieldMove, 8> moves;
-    Vector<BoxedWordMove, 8> boxedWordMoves;
-
-private:
-    void append(const FieldMove&);
-};
-
-bool applyMoves(VM&, const FieldMovePlan&, JSObject* target, JSObject* source);
-// Nothing else has seen the target, an ordinary object whose properties are still empty, so it may be left half filled where a move does not apply, and each value is read once.
-bool applyMovesToNewObject(VM&, const FieldMovePlan&, JSFinalObject* target, JSObject* source);
-JSObject* tryCreateByPlan(VM&, const FieldMovePlan&, JSObject* source);
+struct State;
 
 enum class ValueKind : uint8_t {
     Int32 = 1,
@@ -110,7 +55,103 @@ OptionSet<ValueKind> kindsAlwaysAccepted(const RuntimeType&);
 bool alwaysFits(const RuntimeLayoutTable&, const FieldData& from, const FieldData& to);
 // Asks the representation too, so the store of what it returns cannot fail.
 std::optional<AcceptedValue> acceptInSlot(Object& target, const FieldData&, JSValue);
-FieldMoveKind classifyMove(const RuntimeLayoutTable&, const FieldData* fromOrNull, const FieldData* toOrNull);
+
+struct FieldMovePlan {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(FieldMovePlan);
+
+    struct BoxedWordMove {
+        uint16_t from { 0 };
+        uint16_t to { 0 };
+    };
+    struct Move {
+        // Null for a property of an ordinary object that lies `from` bytes below its butterfly.
+        const FieldData* field { nullptr };
+        uint32_t from { 0 };
+        uint32_t to { 0 };
+        bool isNarrowReferenceInCell { false };
+    };
+    struct ClonedMember {
+        PropertyOffset from;
+        // The number of fields of the layout for a name that is no field.
+        uint16_t field;
+    };
+
+    bool isUsable() const { return structure || builder; }
+    bool movesNothing() const { return moves.isEmpty() && boxedWordMoves.isEmpty(); }
+
+    void appendField(const FieldData& from, PropertyOffset to);
+    void appendProperty(PropertyOffset from, PropertyOffset to);
+
+    // An ordinary object with this Structure, all of whose properties lie in its cell.
+    Structure* structure { nullptr };
+    bool sourceHasDeferredClosures { false };
+    Vector<Move, 8> moves;
+    Vector<BoxedWordMove, 8> boxedWordMoves;
+    // Or an object of a layout, out of an ordinary object.
+    std::unique_ptr<ObjectBuilderPlan> builder;
+    Vector<ClonedMember> clonedMembers;
+};
+
+// Nothing else has seen the target, whose properties are still empty, so it may be left half filled where a move does not apply.
+bool applyMovesToNewObject(VM&, const FieldMovePlan&, JSFinalObject* target, JSObject* source);
+
+Object* tryCloneAs(VM&, JSObject* source, const LayoutData&, std::span<const EncodedJSValue> replacedFields);
+// The keys that a copy leaves out, as a run of identifier numbers in the image. The number of the run stands for the list.
+struct ExcludedRun {
+    uint32_t numberPlusOne { 0 };
+    std::span<const uint32_t> identifiers;
+};
+JSFinalObject* tryCopyAsOrdinaryObject(VM&, JSGlobalObject*, JSObject* source, ExcludedRun);
+bool isPlainDataObject(JSValue);
+
+// The collector, which may run in a thread of its own, forgets an entry. The thread whose table of names holds the names of its plan releases it, when the place is taken again.
+enum class FieldMovePlanPurpose : uint8_t { CloneAs, CopyAsOrdinaryObject, Forgotten };
+static constexpr unsigned numberOfFieldMovePlanPurposes = 2;
+static_assert(static_cast<unsigned>(FieldMovePlanPurpose::CopyAsOrdinaryObject) + 1 == numberOfFieldMovePlanPurposes && static_cast<unsigned>(FieldMovePlanPurpose::Forgotten) == numberOfFieldMovePlanPurposes);
+
+struct FieldMovePlanKey {
+    FieldMovePlanPurpose purpose { FieldMovePlanPurpose::CloneAs };
+    uint64_t sourceWords { 0 };
+    uint64_t targetWords { 0 };
+    Structure* sourceStructure { nullptr };
+    BitVector replacedFields;
+
+    friend bool operator==(const FieldMovePlanKey&, const FieldMovePlanKey&) = default;
+};
+
+class FieldMovePlanCache {
+    WTF_MAKE_NONCOPYABLE(FieldMovePlanCache);
+public:
+    explicit FieldMovePlanCache(State&);
+    ~FieldMovePlanCache();
+
+    const FieldMovePlan* find(const FieldMovePlanKey&);
+    const FieldMovePlan& add(VM&, FieldMovePlanKey&&, std::unique_ptr<FieldMovePlan>&&);
+    size_t removeDeadEntries(VM&, CollectionScope);
+
+private:
+    struct Entry {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Entry);
+
+        FieldMovePlanKey key;
+        std::unique_ptr<FieldMovePlan> plan;
+    };
+
+    static constexpr unsigned numberOfSets = 256;
+    AOT_CLASS_THRESHOLD(unsigned, waysPerSet, 4);
+
+    struct Set {
+        std::array<std::unique_ptr<Entry>, waysPerSet> ways;
+        uint8_t nextVictim { 0 };
+    };
+    using Sets = std::array<Set, numberOfSets>;
+
+    Set& setFor(const FieldMovePlanKey&);
+
+    std::unique_ptr<Sets> m_sets;
+    std::array<const Entry*, numberOfFieldMovePlanPurposes> m_lastFound { };
+    RememberedSlotSet m_writes;
+};
 
 } } // namespace JSC::AOT
 

@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="knownConstructor" parameters=[{type=Array<number, proven>}] results=[{type=anything}] {
-  b0(v0: Array<number, proven>):
     v1 = Builtin builtin=LinkTimeConstantTypedArrayFromFast
     v2 = Builtin builtin=Int8Array
     v3 = Call v1, -, v2, v0
@@ -14,22 +13,19 @@ function f0 name="knownConstructor" parameters=[{type=Array<number, proven>}] re
     v6 = Builtin builtin=BigUint64Array
     v7 = Call v1, -, v6, v0
     Return v7
-}
-# CHECK-LABEL: function f0 name="knownConstructor"
 # CHECK: v3: undefined|Int8Array = CallBuiltin -, v2, v0 overload=LinkTimeConstantTypedArrayFromFast/0
 # CHECK: v5: undefined|Float64Array = CallBuiltin -, v4, v0 overload=LinkTimeConstantTypedArrayFromFast/9
 # CHECK: v7: undefined|BigUint64Array = CallBuiltin -, v6, v0 overload=LinkTimeConstantTypedArrayFromFast/11
+}
 
 function f1 name="otherConstructor" parameters=[{type=Array<number, proven>}, {type=function}, {type=anything}] results=[{type=anything}] {
-  b0(v0: Array<number, proven>, v1: function, v2: anything):
     v3 = Builtin builtin=LinkTimeConstantTypedArrayFromFast
     v4 = Call v3, -, v1, v0
     v5 = Call v3, -, v2, v0
     v6 = Builtin builtin=Array
     v7 = Call v3, -, v6, v0
     Return v7
-}
-# CHECK-LABEL: function f1 name="otherConstructor"
 # CHECK: v4: undefined|{{*}}|Int8Array|TypedArray|{{*}} = CallBuiltin -, v1, v0 overload={{*}} builtinCallForm=AnyReceiver
 # CHECK-NEXT: v5: undefined|{{*}}|Int8Array|TypedArray|{{*}} = CallBuiltin -, v2, v0 overload={{*}} builtinCallForm=AnyReceiver
 # CHECK: v7: undefined|TypedArray = CallBuiltin -, v6, v0 overload=LinkTimeConstantTypedArrayFromFast/12
+}

@@ -11,7 +11,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Pair" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 
 function f0 name="resultReadsStayTogether" parameters=[{type=object}] results=[{type=number}] {
-  b0(v0: object):
     v1 = CallDirect v0 function=f8
     v2 = ResultAt v1
     v3 = Add v2, v2
@@ -24,7 +23,6 @@ function f0 name="resultReadsStayTogether" parameters=[{type=object}] results=[{
 # F0-NOT: stretch
 
 function f1 name="oneResultEndsAtUse" parameters=[{type=object}] results=[{type=number}] {
-  b0(v0: object):
     v1 = CallDirect v0 function=f9
     v2 = Add v1, v1
     v3 = Add v2, v1
@@ -35,7 +33,6 @@ function f1 name="oneResultEndsAtUse" parameters=[{type=object}] results=[{type=
 # F1-NOT: stretch
 
 function f2 name="resultsReturned" parameters=[{type=object}, {type=number}] results=[{type=object}, {type=number}] {
-  b0(v0: object, v1: number):
     v2 = Results v0, v1
     v3 = Add v1, v1
     v4 = ShapeTest v0 layouts=[L0]
@@ -151,13 +148,11 @@ function f7 name="enumeratorReadInOtherBlock" parameters=[{type=object}, {type=o
 # PLAN-LABEL: function f8
 
 function f8 name="twoResults" parameters=[{type=object}] results=[{type=number}, {type=number}] {
-  b0(v0: object):
     v1 = Integer integer=1
     v2 = Results v1, v1
     Return v2
 }
 function f9 name="oneResult" parameters=[{type=object}] results=[{type=number}] {
-  b0(v0: object):
     v1 = Integer integer=1
     Return v1
 }

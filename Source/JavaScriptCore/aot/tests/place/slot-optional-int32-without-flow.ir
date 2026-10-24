@@ -9,7 +9,6 @@ entry module=m0
 layout L0 name="Integers" fields=[{key="flags" declared={type=undefined|null|int[0, 1073741824]} flags=[IsRequired]}, {key="maybe" declared={type=undefined|null|i32}}, {key="kind" declared={type=undefined|null|int[0, 400]} flags=[IsRequired]}, {key="sign" declared={type=undefined|null|int[-1, 1]} flags=[IsRequired]}, {key="fifth" declared={type=undefined|null|int[0, 7]} flags=[IsRequired]}, {key="sixth" declared={type=undefined|null|int[0, 7]} flags=[IsRequired]}, {key="seventh" declared={type=undefined|null|int[0, 7]} flags=[IsRequired]}]
 layout L1 name="FilledWithNumbers" fields=[{key="flags" declared={type=undefined|null|int[0, 1073741824]} flags=[IsRequired]}, {key="kind" declared={type=undefined|null|int[0, 400]} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToNumber v1

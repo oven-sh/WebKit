@@ -10,7 +10,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Environment fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
 function f0 name="one-flag-per-store" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     v1 = NewObject layout=L0 fields=[]
     PutEnvironmentField v1, v0 layout=L0 field=0
     PutEnvironmentField v1, v0 layout=L0 field=1

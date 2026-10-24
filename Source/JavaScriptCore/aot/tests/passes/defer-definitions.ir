@@ -30,7 +30,6 @@ variable g4 name="firstOfTwoClosures" module=m0 declared={type=f5} flow={writers
 variable g5 name="secondOfTwoClosures" module=m0 declared={type=f5} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
 variable g6 name="unknownWriters" module=m0 declared={type=anything} flow={stores=AtMostOnce initialization=StoredBeforeEveryRead}
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     PutModuleVariable v0 variable=g0
     v2 = NewClosure function=f2
@@ -55,11 +54,9 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="deferred" module=m0 kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="mayBeReadEarly" module=m0 kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f3 name="capturesSomething" module=m0 kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
@@ -67,14 +64,11 @@ function f3 name="capturesSomething" module=m0 kind=Arrow captures=[{type=env L0
     Return
 }
 function f4 name="closureIsUsedTwice" module=m0 kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f5 name="twoClosures" module=m0 kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 function f6 name="unknownWriters" module=m0 kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }

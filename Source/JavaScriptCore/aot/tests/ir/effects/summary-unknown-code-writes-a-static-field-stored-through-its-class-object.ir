@@ -15,7 +15,6 @@ variable g0 name="value" module=m0 declared={type=anything} owner=L0 flow={write
 variable g1 name="named" module=m0 declared={type=anything} owner=L0 flow={writers=AllKnown storeNaming=EveryStoreNamesLocation}
 variable g2 name="ofModule" module=m0 declared={type=anything} initialization=Undefined flow={writers=AllKnown}
 function f0 name="calls" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0
     v2 = GetModuleVariable variable=g0
     v3 = GetModuleVariable variable=g1

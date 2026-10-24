@@ -15,11 +15,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-OwnAccessEmitter::OwnAccessEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
-
 static bool isArrayAndNothingElse(const Type& type)
 {
     return !type.primitives && !type.anyObject && !type.anyFunction && !type.layouts && type.functions.isEmpty() && type.builtins.isEmpty()

@@ -12,6 +12,49 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+namespace {
+
+enum class LookOfPropertyAction : uint8_t {
+    None,
+    TestsKey,
+    ListsKeysOfValue,
+};
+
+struct ValuesWithOneUse {
+    BitVector onlyCalled;
+    BitVector onlyAccessed;
+};
+
+} // anonymous namespace
+
+static LookOfPropertyAction lookOfAction(BuiltinPropertyActionKind kind)
+{
+    switch (kind) {
+    case BuiltinPropertyActionKind::TestsByKey:
+    case BuiltinPropertyActionKind::ReadsGetter:
+    case BuiltinPropertyActionKind::ReadsSetter:
+        return LookOfPropertyAction::TestsKey;
+    case BuiltinPropertyActionKind::AssignsFrom:
+    case BuiltinPropertyActionKind::DefinesFrom:
+    case BuiltinPropertyActionKind::TakesDescriptorMap:
+        return LookOfPropertyAction::ListsKeysOfValue;
+    case BuiltinPropertyActionKind::ReadsByKey:
+    case BuiltinPropertyActionKind::StoresByKey:
+    case BuiltinPropertyActionKind::DeletesByKey:
+    case BuiltinPropertyActionKind::DefinesName:
+    case BuiltinPropertyActionKind::TakesDescriptor:
+    case BuiltinPropertyActionKind::ChangesIntegrity:
+    case BuiltinPropertyActionKind::ChangesPrototype:
+    case BuiltinPropertyActionKind::BecomesPrototype:
+    case BuiltinPropertyActionKind::DefinesGetter:
+    case BuiltinPropertyActionKind::DefinesSetter:
+    case BuiltinPropertyActionKind::DescribesOwnProperties:
+    case BuiltinPropertyActionKind::DescribesResult:
+        return LookOfPropertyAction::None;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 static bool looksAtObjects(const BuiltinOverload& overload)
 {
     auto listsKeys = [](const BuiltinParameter& parameter) {
@@ -20,29 +63,82 @@ static bool looksAtObjects(const BuiltinOverload& overload)
     if ((overload.receiver && listsKeys(*overload.receiver)) || std::ranges::any_of(overload.parameters, listsKeys))
         return true;
     return std::ranges::any_of(overload.flow.propertyActions, [](const BuiltinPropertyAction& action) {
-        switch (action.kind) {
-        case BuiltinPropertyActionKind::TestsByKey:
-        case BuiltinPropertyActionKind::ReadsGetter:
-        case BuiltinPropertyActionKind::ReadsSetter:
-        case BuiltinPropertyActionKind::AssignsFrom:
-        case BuiltinPropertyActionKind::DefinesFrom:
-        case BuiltinPropertyActionKind::TakesDescriptorMap:
-            return true;
-        case BuiltinPropertyActionKind::ReadsByKey:
-        case BuiltinPropertyActionKind::StoresByKey:
-        case BuiltinPropertyActionKind::DeletesByKey:
-        case BuiltinPropertyActionKind::DefinesName:
-        case BuiltinPropertyActionKind::TakesDescriptor:
-        case BuiltinPropertyActionKind::ChangesIntegrity:
-        case BuiltinPropertyActionKind::ChangesPrototype:
-        case BuiltinPropertyActionKind::BecomesPrototype:
-        case BuiltinPropertyActionKind::DefinesGetter:
-        case BuiltinPropertyActionKind::DefinesSetter:
-        case BuiltinPropertyActionKind::DescribesOwnProperties:
-        case BuiltinPropertyActionKind::DescribesResult:
-            return false;
-        }
+        return lookOfAction(action.kind) != LookOfPropertyAction::None;
     });
+}
+
+static void uniteTakenAtOperand(const ValueFlowBuiltinTables& tables, ValueSetMaker& maker, const BuiltinParameter& parameter, auto& takenAtOperands)
+{
+    ValueSetID taken = parameter.accepted ? tables.membersSurelyOf(parameter.accepted) : ValueSets::anything;
+    if (parameter.converted)
+        taken = maker.unite(taken, tables.membersSurelyOf(parameter.converted));
+    size_t position = takenAtOperands.findIf([&](const auto& entry) {
+        return entry.operand == parameter.operand;
+    });
+    if (position == notFound)
+        takenAtOperands.append({ parameter.operand, taken });
+    else
+        takenAtOperands[position].taken = maker.unite(takenAtOperands[position].taken, taken);
+}
+
+static void forEachLookAtOperands(const ValueFlowResultInputs& inputs, BuiltinID builtin, BuiltinCallMode mode, NOESCAPE const Invocable<void(std::optional<BuiltinOperand>)> auto& listsKeys, NOESCAPE const Invocable<void(BuiltinOperand)> auto& looksUnderAnyKey, NOESCAPE const Invocable<void(BuiltinOperand object, PropertyKeyID, bool looksAtOwnPropertyAlone)> auto& testsName, NOESCAPE const Invocable<void(BuiltinOperand object, BuiltinOperand key, bool looksAtOwnPropertyAlone)> auto& testsKeyInOperand)
+{
+    const BuiltinTable& builtins = inputs.program.builtins();
+    for (const BuiltinOverload& overload : builtins.overloadsOf(builtin)) {
+        if (overload.mode != mode)
+            continue;
+        auto lookAtParameter = [&](const BuiltinParameter& parameter) {
+            if (parameter.uses == OperandUses::all() || !parameter.protocols.containsAny(protocolsListingKeys))
+                return;
+            if (parameter.roles.contains(BuiltinOperandRole::KeysAreNotListed)) {
+                bool hasAction = std::ranges::any_of(overload.flow.propertyActions, [&](const BuiltinPropertyAction& action) {
+                    return action.object == parameter.operand;
+                });
+                if (!hasAction)
+                    looksUnderAnyKey(parameter.operand);
+                return;
+            }
+            bool goesOnToContents = parameter.uses.containsAny({ OperandUse::AppliesTransitively, OperandUse::AppliesToContents });
+            listsKeys(goesOnToContents && !inputs.universe().builtinTables().behaviorOf(parameter) ? std::nullopt : std::optional(parameter.operand));
+        };
+        auto lookAtTest = [&](const BuiltinPropertyAction& action) {
+            const BuiltinParameter* parameter = builtins.parameterFor(overload, action.object);
+            bool looksAtOwnPropertyAlone = parameter && parameter->roles.contains(BuiltinOperandRole::KeysAreNotListed) && !parameter->protocols.contains(Protocol::PrototypeChain);
+            switch (action.key.kind) {
+            case BuiltinKeyKind::None:
+                return;
+            case BuiltinKeyKind::Names:
+                for (BuiltinName name : action.key.names)
+                    testsName(action.object, inputs.program.keyOf(name), looksAtOwnPropertyAlone);
+                return;
+            case BuiltinKeyKind::Operand:
+                testsKeyInOperand(action.object, *action.key.operand, looksAtOwnPropertyAlone);
+                return;
+            case BuiltinKeyKind::Any:
+            case BuiltinKeyKind::Indexes:
+            case BuiltinKeyKind::ElementsOf:
+                looksUnderAnyKey(action.object);
+                return;
+            }
+            RELEASE_ASSERT_NOT_REACHED();
+        };
+        if (overload.receiver)
+            lookAtParameter(*overload.receiver);
+        for (const BuiltinParameter& parameter : overload.parameters)
+            lookAtParameter(parameter);
+        for (const BuiltinPropertyAction& action : overload.flow.propertyActions) {
+            switch (lookOfAction(action.kind)) {
+            case LookOfPropertyAction::TestsKey:
+                lookAtTest(action);
+                break;
+            case LookOfPropertyAction::ListsKeysOfValue:
+                listsKeys(action.value.operand);
+                break;
+            case LookOfPropertyAction::None:
+                break;
+            }
+        }
+    }
 }
 
 static BitVector findBuiltinsThatLookAtObjects(const BuiltinTable& builtins)
@@ -67,8 +163,19 @@ UsesOfObjects::UsesOfObjects(const ValueFlowResultInputs& inputs, const ValueFlo
     times.didFinish("uses of the heap: reads"_s);
     noteOperations(makers);
     noteOperationsWithoutStatement();
-    noteBehaviors();
-    noteObjectsOfRuntimeModules();
+    const ValueFlowBuiltinTables& tables = inputs.universe().builtinTables();
+    for (uint32_t index = 0; index < tables.numberOfBehaviors(); ++index) {
+        const ValueFlowBehavior& behavior = tables.at(ValueFlowBehaviorID(index));
+        bool readsEveryMember = (behavior.protocols.contains(Protocol::Named) && behavior.namedMembers.empty()) || (behavior.protocols.contains(Protocol::CallsNamed) && behavior.calledMembers.empty());
+        if (behavior.protocols.containsAny(protocolsListingKeys) || readsEveryMember)
+            m_notes[0].enumerated.add(inputs.solver().valueOf(inputs.bodies().nodes().hub(ValueFlowBehaviorID(index))));
+    }
+    for (const Module& module : inputs.program.modules) {
+        if (module.kind != ModuleKind::RuntimeSource || module.exportRule == SyntheticExportRule::None || !module.body || !inputs.isReached(module.body))
+            continue;
+        if (!inputs.program.at(module.body).results.isEmpty())
+            m_notes[0].enumerated.add(inputs.solver().valueOf(inputs.bodies().nodes().result(module.body, 0)));
+    }
     findHostFunctionsThatProgramHasStored(makers);
     times.didFinish("uses of the heap: operations, behaviors, modules"_s);
     forEachBuiltinApplicationInParallel(inputs, heap, makers, m_builtinsThatLookAtObjects, ValueFlowBuiltinApplicationOnWorkerFunctor([&](unsigned worker, const ValueFlowBuiltinApplication& application) {
@@ -88,43 +195,55 @@ bool UsesOfObjects::mayBeObservedUnder(ValueSetID objects, PropertyKeyID key) co
     return sets.meet(objects, m_enumerated) || sets.meet(objects, m_observedUnderAnyKey) || sets.meet(objects, setAt(m_observedUnderKey, key.index()));
 }
 
-UnionOfSets UsesOfObjects::takeUnion(UnionOfSets Notes::* parts)
-{
-    UnionOfSets all;
-    for (Notes& notes : m_notes)
-        all.takeFrom(notes.*parts);
-    return all;
-}
-
-Vector<PartOfNumber> UsesOfObjects::takeParts(PartsByNumber Notes::* parts)
-{
-    Vector<PartOfNumber> all;
-    for (Notes& notes : m_notes)
-        all.appendVector((notes.*parts).take());
-    return all;
-}
-
-SetsByNumber UsesOfObjects::takeExpanded(ValueSetMakers& makers, Vector<PartOfNumber>&& parts)
-{
-    PartsOfNumbers partsOfNumbers(m_inputs.loops(), WTF::move(parts));
-    Vector<ValueSetID> expanded(partsOfNumbers.size());
-    forEachIndexInParallel(m_inputs.loops(), partsOfNumbers.size(), [&](unsigned position, unsigned worker) {
-        ValueSetMaker& maker = makers.of(worker);
-        expanded[position] = m_heap.expand(maker, partsOfNumbers.unionAt(position, maker));
-    });
-    SetsByNumber sets;
-    sets.reserveInitialCapacity(partsOfNumbers.size());
-    for (unsigned position = 0; position < partsOfNumbers.size(); ++position)
-        sets.add(partsOfNumbers.numberAt(position), expanded[position]);
-    return sets;
-}
-
-// A walk over the keys of an object may go on to the keys that it inherits, as for-in and the formatter of console.log do, and so does a test of a name that is not a test of an own property.
 void UsesOfObjects::goOnToPrototypes(ValueSetMakers& makers)
 {
-    runTasksInParallel(m_inputs.loops(), {
+    const ParallelLoops& loops = m_inputs.loops();
+    auto takeUnion = [&](UnionOfSets Notes::* parts) {
+        UnionOfSets all;
+        for (Notes& notes : m_notes)
+            all.takeFrom(notes.*parts);
+        return all;
+    };
+    auto takeParts = [&](PartsByNumber Notes::* parts) {
+        Vector<PartOfNumber> all;
+        for (Notes& notes : m_notes)
+            all.appendVector((notes.*parts).take());
+        return all;
+    };
+    auto takeExpanded = [&](ValueSetMakers& makersOfTask, Vector<PartOfNumber>&& parts) {
+        PartsOfNumbers partsOfNumbers(loops, WTF::move(parts));
+        Vector<ValueSetID> expanded(partsOfNumbers.size());
+        forEachIndexInParallel(loops, partsOfNumbers.size(), [&](unsigned position, unsigned worker) {
+            ValueSetMaker& maker = makersOfTask.of(worker);
+            expanded[position] = m_heap.expand(maker, partsOfNumbers.unionAt(position, maker));
+        });
+        SetsByNumber sets;
+        sets.reserveInitialCapacity(partsOfNumbers.size());
+        for (unsigned position = 0; position < partsOfNumbers.size(); ++position)
+            sets.add(partsOfNumbers.numberAt(position), expanded[position]);
+        return sets;
+    };
+    runTasksInParallel(loops, {
         [&] {
-            findObjectsObservedUnderKeys(makers);
+            PartsOfNumbers startsOfTests(loops, takeParts(&Notes::startsOfTestsUnderKey));
+            Vector<ValueSetID> starts(startsOfTests.size());
+            forEachIndexInParallel(loops, startsOfTests.size(), [&](unsigned position, unsigned worker) {
+                starts[position] = m_heap.expand(makers.of(worker), startsOfTests.unionAt(position, makers.of(worker)));
+            });
+            Vector<ValueSetID> distinctStarts = starts;
+            AOT::sort(distinctStarts);
+            removeRepeatedElements(distinctStarts);
+            Vector<ValueSetID> chains(distinctStarts.size());
+            forEachIndexInParallel(loops, distinctStarts.size(), [&](unsigned index, unsigned worker) {
+                chains[index] = m_heap.chainOf(makers.of(worker), distinctStarts[index]);
+            });
+            Vector<PartOfNumber> observedUnderKey = takeParts(&Notes::observedUnderKey);
+            for (unsigned position = 0; position < startsOfTests.size(); ++position) {
+                size_t index = std::ranges::lower_bound(distinctStarts, starts[position]) - distinctStarts.begin();
+                if (chains[index] != ValueSets::nothing)
+                    observedUnderKey.append({ startsOfTests.numberAt(position), chains[index] });
+            }
+            m_observedUnderKey = takeExpanded(makers, WTF::move(observedUnderKey));
         },
         [&] {
             BorrowedValueSetMaker maker(m_inputs.makerPool());
@@ -140,62 +259,19 @@ void UsesOfObjects::goOnToPrototypes(ValueSetMakers& makers)
             m_accessedUnderKey = takeExpanded(makersBeside, takeParts(&Notes::accessedUnderKey));
         },
         [&] {
-            listReceiversOfReads();
+            PartsOfNumbers receiversOfReads(loops, takeParts(&Notes::receiversOfReads));
+            m_receiversOfReads.reserveInitialCapacity(receiversOfReads.size());
+            for (unsigned position = 0; position < receiversOfReads.size(); ++position) {
+                Vector<ValueSetID> receivers;
+                for (const PartOfNumber& part : receiversOfReads.partsAt(position)) {
+                    if (!ValueSets::isComplement(part.set))
+                        receivers.append(part.set);
+                }
+                m_receiversOfReads.add(receiversOfReads.numberAt(position), WTF::move(receivers));
+            }
         },
     });
 }
-
-void UsesOfObjects::findObjectsObservedUnderKeys(ValueSetMakers& makers)
-{
-    const ParallelLoops& loops = m_inputs.loops();
-    // Tests of many names start at the same objects, whose chain is walked once.
-    PartsOfNumbers startsOfTests(loops, takeParts(&Notes::startsOfTestsUnderKey));
-    Vector<ValueSetID> starts(startsOfTests.size());
-    forEachIndexInParallel(loops, startsOfTests.size(), [&](unsigned position, unsigned worker) {
-        starts[position] = m_heap.expand(makers.of(worker), startsOfTests.unionAt(position, makers.of(worker)));
-    });
-    Vector<ValueSetID> distinctStarts = starts;
-    AOT::sort(distinctStarts);
-    removeRepeatedElements(distinctStarts);
-    Vector<ValueSetID> chains(distinctStarts.size());
-    forEachIndexInParallel(loops, distinctStarts.size(), [&](unsigned index, unsigned worker) {
-        chains[index] = m_heap.chainOf(makers.of(worker), distinctStarts[index]);
-    });
-    Vector<PartOfNumber> observedUnderKey = takeParts(&Notes::observedUnderKey);
-    for (unsigned position = 0; position < startsOfTests.size(); ++position) {
-        size_t index = std::ranges::lower_bound(distinctStarts, starts[position]) - distinctStarts.begin();
-        if (chains[index] != ValueSets::nothing)
-            observedUnderKey.append({ startsOfTests.numberAt(position), chains[index] });
-    }
-
-    m_observedUnderKey = takeExpanded(makers, WTF::move(observedUnderKey));
-}
-
-void UsesOfObjects::listReceiversOfReads()
-{
-    // The parts that list their members, each once. Nobody pays for a union that is asked for a handful of objects.
-    PartsOfNumbers receiversOfReads(m_inputs.loops(), takeParts(&Notes::receiversOfReads));
-    m_receiversOfReads.reserveInitialCapacity(receiversOfReads.size());
-    for (unsigned position = 0; position < receiversOfReads.size(); ++position) {
-        Vector<ValueSetID> receivers;
-        for (const PartOfNumber& part : receiversOfReads.partsAt(position)) {
-            if (!ValueSets::isComplement(part.set))
-                receivers.append(part.set);
-        }
-        m_receiversOfReads.add(receiversOfReads.numberAt(position), WTF::move(receivers));
-    }
-}
-
-namespace {
-
-struct ValuesWithOneUse {
-    // The values that go nowhere but into the callee position of calls.
-    BitVector onlyCalled;
-    // The values that go nowhere but into the receiver position of reads and stores by name.
-    BitVector onlyAccessed;
-};
-
-} // anonymous namespace
 
 static ValuesWithOneUse findValuesWithOneUse(const Function& function)
 {
@@ -230,7 +306,6 @@ static ValuesWithOneUse findValuesWithOneUse(const Function& function)
         });
     }
 
-    // A cast hands on what it takes.
     auto followCasts = [&](BitVector& isUsed, BitVector& isUsedOtherwise) {
         for (bool hasChanged = !casts.isEmpty(); hasChanged;) {
             hasChanged = false;
@@ -249,7 +324,6 @@ static ValuesWithOneUse findValuesWithOneUse(const Function& function)
     return { WTF::move(isCalled), WTF::move(isAccessed) };
 }
 
-// A location that is only read as a callee loses its value once the operations that read it are gone, so a pass has to find each of them from the location.
 void UsesOfObjects::noteRead(Noter noter, const ValueFlowNodeKey& key, Reader reader, ValueSetID startOfLookup)
 {
     switch (key.name().kind) {
@@ -298,12 +372,10 @@ void UsesOfObjects::noteRead(Noter noter, const ValueFlowNodeKey& key, Reader re
     case ValueFlowNameKind::RestArgument:
     case ValueFlowNameKind::AddedNames:
     case ValueFlowNameKind::FoundThroughEscapedInstances:
-        // A read of what was stored under a key nobody knows finds nothing that was stored by name. A read under such a key takes every property.
         break;
     }
 }
 
-// Every read of a value goes through a node that is keyed by the objects it looks into: those that the lookup starts at and all that lies above them.
 void UsesOfObjects::noteReads(ValueSetMakers& makers)
 {
     struct Visit {
@@ -311,7 +383,6 @@ void UsesOfObjects::noteReads(ValueSetMakers& makers)
         Reader reader;
     };
 
-    // The nodes that a thread has looked at for the statement that it follows, by ValueFlowSolver::indexOfMadeNodes().
     struct NodesLookedAt {
         BitVector isLookedAt;
         Vector<uint32_t> numbers;
@@ -329,7 +400,6 @@ void UsesOfObjects::noteReads(ValueSetMakers& makers)
     uint32_t numberOfStatements = solver.numberOfStatements();
     uint32_t numberOfMadeStatements = numberOfStatements - static_cast<uint32_t>(statements.size());
 
-    // Bits of Reader. The thread that sets a bit is the one that lists the visit.
     Vector<uint8_t> readersOfMadeStatement;
     readersOfMadeStatement.fill(0, numberOfMadeStatements);
     auto readersOf = [&](ValueFlowStatementID made) {
@@ -341,14 +411,12 @@ void UsesOfObjects::noteReads(ValueSetMakers& makers)
     };
     Vector<Vector<Visit>> visitsListedBy(loops.width());
     Vector<NodesLookedAt> nodesLookedAtBy(loops.width());
-    // A number stands for one made node or for several that were made together.
     uint32_t numberOfMadeNodes = solver.graph().numberOfNodes() - solver.input().numberOfNodes;
     auto follow = [&](unsigned worker, ValueFlowStatementID statement, Reader reader, ValueSetID startOfLookup) {
         Noter noter = noterOf(makers, worker);
         NodesLookedAt& nodesLookedAt = nodesLookedAtBy[worker];
         uint32_t numberOfNodesAskedFor = 0;
         m_inputs.forEachMadeNodeAskedForBy(statement, kindsOfMadeNodes({ ValueFlowMadeNodeKind::Read, ValueFlowMadeNodeKind::Lookup }), true, [&](const ValueFlowNodeKey& key, ValueFlowStatementID made) {
-            // A statement that keeps what all its runs have asked for lists the same nodes again and again. In a long list a node is looked at once.
             if (numberOfNodesAskedFor++ >= mostNodesNotToldApart) {
                 nodesLookedAt.isLookedAt.ensureSize(numberOfMadeNodes);
                 uint32_t number = solver.indexOfMadeNodes(key);
@@ -357,7 +425,6 @@ void UsesOfObjects::noteReads(ValueSetMakers& makers)
                 nodesLookedAt.numbers.append(number);
             }
             bool readsByName = (key.kind == ValueFlowMadeNodeKind::Read || key.kind == ValueFlowMadeNodeKind::Lookup) && key.name().kind == ValueFlowNameKind::Property;
-            // Nobody lists the receivers of a read through a placeholder.
             bool onlyCalls = (reader == Reader::OnlyCalls || isLookupOfCalleeByCall(m_inputs, solver.statementAt(statement), key)) && readsByName && !m_inputs.sets().meet(key.set, placeholders);
             bool onlyAccesses = reader == Reader::OnlyAccesses && readsByName && !m_inputs.sets().meet(key.set, placeholders);
             Reader readerThatLeavesNoValue = onlyCalls ? Reader::OnlyCalls : onlyAccesses ? Reader::OnlyAccesses : Reader::TakesValue;
@@ -393,7 +460,6 @@ void UsesOfObjects::noteReads(ValueSetMakers& makers)
     forEachIndexInParallel(loops, bodies.numberOfBodies(), [&](unsigned body, unsigned worker) {
         if (body != bodies.hostBody() && !m_inputs.isReached(FunctionID(body)))
             return;
-        // No code is emitted for a model: native code reads what it reads, and no pass turns its calls into direct calls.
         bool isEmitted = body != bodies.hostBody() && program.functions[body].role != FunctionRole::Model;
         std::optional<ValuesWithOneUse> values;
         for (uint32_t index = ranges[body].statement; index < ranges[body + 1].statement; ++index) {
@@ -412,7 +478,6 @@ void UsesOfObjects::noteReads(ValueSetMakers& makers)
         }
     });
     followMadeStatements();
-    // Whatever is reached from here on is reached by a reader that takes the value: no made statement is an operation, and only an operation brings another reader up.
     forEachIndexInParallel(loops, (numberOfMadeStatements + madeStatementsPerIndex - 1) / madeStatementsPerIndex, [&](unsigned run, unsigned worker) {
         uint32_t first = static_cast<uint32_t>(statements.size()) + run * madeStatementsPerIndex;
         for (uint32_t index = first; index < std::min(first + madeStatementsPerIndex, numberOfStatements); ++index) {
@@ -425,18 +490,6 @@ void UsesOfObjects::noteReads(ValueSetMakers& makers)
         }
     });
     followMadeStatements();
-}
-
-// Where an import links a module of the run time, the loader lists the names of the object that the body of the module answers.
-void UsesOfObjects::noteObjectsOfRuntimeModules()
-{
-    const Program& program = m_inputs.program;
-    for (const Module& module : program.modules) {
-        if (module.kind != ModuleKind::RuntimeSource || module.exportRule == SyntheticExportRule::None || !module.body || !m_inputs.isReached(module.body))
-            continue;
-        if (!program.at(module.body).results.isEmpty())
-            m_notes[0].enumerated.add(m_inputs.solver().valueOf(m_inputs.bodies().nodes().result(module.body, 0)));
-    }
 }
 
 void UsesOfObjects::noteOperations(ValueSetMakers& makers)
@@ -476,7 +529,6 @@ void UsesOfObjects::noteOperations(ValueSetMakers& makers)
     });
 }
 
-// The bodies keep nothing of an operand that only such a protocol gets hold of where the operation has no rule of its own. No operation of a program as read is like that.
 void UsesOfObjects::noteOperationsWithoutStatement()
 {
     OpcodeSet opcodes;
@@ -506,89 +558,10 @@ void UsesOfObjects::noteOperationsWithoutStatement()
         m_notes[0].enumerated.add(ValueSets::anything);
 }
 
-// The hub of a behavior holds whatever has reached an operand with the behavior, and where the behavior goes on to what an object holds, that too.
-void UsesOfObjects::noteBehaviors()
-{
-    const ValueFlowBuiltinTables& tables = m_inputs.universe().builtinTables();
-    for (uint32_t index = 0; index < tables.numberOfBehaviors(); ++index) {
-        const ValueFlowBehavior& behavior = tables.at(ValueFlowBehaviorID(index));
-        bool readsEveryMember = (behavior.protocols.contains(Protocol::Named) && behavior.namedMembers.empty()) || (behavior.protocols.contains(Protocol::CallsNamed) && behavior.calledMembers.empty());
-        if (behavior.protocols.containsAny(protocolsListingKeys) || readsEveryMember)
-            m_notes[0].enumerated.add(m_inputs.solver().valueOf(m_inputs.bodies().nodes().hub(ValueFlowBehaviorID(index))));
-    }
-}
-
-void UsesOfObjects::noteParameter(Noter noter, const ValueFlowBuiltinApplication& application, const BuiltinParameter& parameter)
-{
-    // Such an operand has escaped.
-    if (parameter.uses == OperandUses::all())
-        return;
-    if (!parameter.protocols.containsAny(protocolsListingKeys) || parameter.roles.contains(BuiltinOperandRole::KeysAreNotListed))
-        return;
-    // What the operand holds is listed too, and only a hub follows that.
-    bool goesOnToContents = parameter.uses.containsAny({ OperandUse::AppliesTransitively, OperandUse::AppliesToContents });
-    if (goesOnToContents && !m_inputs.universe().builtinTables().behaviorOf(parameter)) {
-        noter.notes.enumerated.add(ValueSets::anything);
-        return;
-    }
-    noter.notes.enumerated.add(application.valueAt(parameter.operand, noter.maker));
-}
-
-// The built-in looks at single properties of the operand and shows nobody the order of the keys. Where no action says under which key it looks, as for Reflect.has, the key may be any.
-void UsesOfObjects::noteParameterWithoutAction(Noter noter, const ValueFlowBuiltinApplication& application, const BuiltinOverload& overload, const BuiltinParameter& parameter)
-{
-    if (parameter.uses == OperandUses::all() || !parameter.roles.contains(BuiltinOperandRole::KeysAreNotListed) || !parameter.protocols.containsAny(protocolsListingKeys))
-        return;
-    bool hasAction = std::ranges::any_of(overload.flow.propertyActions, [&](const BuiltinPropertyAction& action) {
-        return action.object == parameter.operand;
-    });
-    if (!hasAction)
-        noter.notes.observedUnderAnyKey.add(application.valueAt(parameter.operand, noter.maker));
-}
-
-// The built-in finds out whether something lies under a key, or what kind of property does. An operation on one own property runs the traps of a proxy, and one that goes on to the prototypes declares the walk.
-void UsesOfObjects::noteTest(Noter noter, const ValueFlowBuiltinApplication& application, const BuiltinOverload& overload, const BuiltinPropertyAction& action)
-{
-    const Program& program = m_inputs.program;
-    const ValueSets& sets = m_inputs.sets();
-    const ValueFlowUniverse& universe = m_inputs.universe();
-    const ValueFlowHeapTables& tables = universe.builtinTables().heap();
-    ValueSetID objects = application.valueAt(action.object, noter.maker);
-    const BuiltinParameter* parameter = program.builtins().parameterFor(overload, action.object);
-    bool looksAtOwnPropertyAlone = parameter && parameter->roles.contains(BuiltinOperandRole::KeysAreNotListed) && !parameter->protocols.contains(Protocol::PrototypeChain);
-    PartsByNumber& underKey = looksAtOwnPropertyAlone ? noter.notes.observedUnderKey : noter.notes.startsOfTestsUnderKey;
-
-    switch (action.key.kind) {
-    case BuiltinKeyKind::None:
-        return;
-    case BuiltinKeyKind::Names:
-        for (BuiltinName name : action.key.names)
-            underKey.add(program.keyOf(name).index(), objects);
-        return;
-    case BuiltinKeyKind::Operand: {
-        ValueSetID keys = application.valueAt(*action.key.operand, noter.maker);
-        // An operand that is left out is undefined, which names a property like any other value.
-        if (sets.isEmpty(keys) || sets.meet(keys, tables.keysNobodyKnows()) || sets.meet(keys, tables.numberKinds()))
-            break;
-        sets.forEachMember(keys, [&](ValueFlowObjectID constant) {
-            underKey.add(universe.keyOf(constant).index(), objects);
-        });
-        return;
-    }
-    case BuiltinKeyKind::Any:
-    case BuiltinKeyKind::Indexes:
-    case BuiltinKeyKind::ElementsOf:
-        break;
-    }
-    noter.notes.observedUnderAnyKey.add(objects);
-}
-
-// Which overload a call selects depends on its operands. Every overload of the mode counts.
 void UsesOfObjects::findHostFunctionsThatProgramHasStored(ValueSetMakers& makers)
 {
     const Program& program = m_inputs.program;
     const ValueSets& sets = m_inputs.sets();
-    // Most functions of the host take whatever they are called on.
     const BuiltinTable& builtins = program.builtins();
     Vector<ValueFlowObjectID> functionsThatRefuseReceivers;
     for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
@@ -628,38 +601,19 @@ void UsesOfObjects::findHostFunctionsThatProgramHasStored(ValueSetMakers& makers
     }
 }
 
-// A function of the host names a value that it refuses in the message of its error: `Received an instance of Point`, `Received {}`, `Received [Object]`.
 void UsesOfObjects::noteRefusedOperands(Noter noter, const ValueFlowBuiltinApplication& application)
 {
     const BuiltinTable& builtins = m_inputs.program.builtins();
     if (builtins.at(application.builtin).origin != BuiltinOrigin::Host)
         return;
     const ValueFlowBuiltinTables& tables = m_inputs.universe().builtinTables();
-    struct TakenAtOperand {
-        BuiltinOperand operand;
-        ValueSetID taken;
-    };
-    Vector<TakenAtOperand, 8> takenAtOperands;
-    auto note = [&](const BuiltinParameter& parameter) {
-        ValueSetID taken = parameter.accepted ? tables.membersSurelyOf(parameter.accepted) : ValueSets::anything;
-        if (parameter.converted)
-            taken = noter.maker.unite(taken, tables.membersSurelyOf(parameter.converted));
-        for (TakenAtOperand& entry : takenAtOperands) {
-            if (entry.operand == parameter.operand) {
-                entry.taken = noter.maker.unite(entry.taken, taken);
-                return;
-            }
-        }
-        takenAtOperands.append({ parameter.operand, taken });
-    };
-    // A call of a bound function that an operation spells out comes with what was bound as `this`.
+    Vector<NotesOfBuiltins::RefusedOperand, 8> takenAtOperands;
     bool mayRunOnObjectOfProgram = application.function && application.kind == ValueFlowCallKind::CallByNativeCode;
     if (PropertyKeyID key = application.function && application.kind == ValueFlowCallKind::Call ? m_inputs.program.at(application.function).at(application.site).calleeKey() : PropertyKeyID()) {
         const ValueFlowUniverse& universe = m_inputs.universe();
         ValueFlowObjectID function = universe.objectOf(application.builtin);
         auto stored = m_hostFunctionsStoredUnderKey.find(key.index());
         if (stored != m_hostFunctionsStoredUnderKey.end() && m_inputs.sets().contains(stored->value, function)) {
-            // One call has many such callees where its receiver is little known, and many calls have the same receivers: the chain above them is walked once for a name.
             ValueSetID found = m_foundAboveReceivers.ensure(static_cast<uint64_t>(application.thisValue.index()) << 32 | key.index(), [&] {
                 ValueSetID ofProgram = noter.maker.intersect(application.thisValue, noter.maker.intersect(universe.knownObjects(), ValueSets::complement(universe.builtinObjects())));
                 return ofProgram == ValueSets::nothing ? ValueSets::nothing : m_heap.writtenUnder(noter.maker, m_heap.chainOf(noter.maker, ofProgram), ValueFlowName::property(key));
@@ -671,11 +625,11 @@ void UsesOfObjects::noteRefusedOperands(Noter noter, const ValueFlowBuiltinAppli
         if (overload.mode != application.mode())
             continue;
         if (overload.receiver && mayRunOnObjectOfProgram)
-            note(*overload.receiver);
+            uniteTakenAtOperand(tables, noter.maker, *overload.receiver, takenAtOperands);
         for (const BuiltinParameter& parameter : overload.parameters)
-            note(parameter);
+            uniteTakenAtOperand(tables, noter.maker, parameter, takenAtOperands);
     }
-    for (const TakenAtOperand& entry : takenAtOperands) {
+    for (const NotesOfBuiltins::RefusedOperand& entry : takenAtOperands) {
         if (entry.taken != ValueSets::anything)
             noter.notes.enumerated.add(noter.maker.intersect(application.valueAt(entry.operand, noter.maker), ValueSets::complement(entry.taken)));
     }
@@ -686,155 +640,50 @@ void UsesOfObjects::noteApplication(Noter noter, const ValueFlowBuiltinApplicati
     if (!m_builtinsThatLookAtObjects.quickGet(application.builtin.index()))
         return;
     noteRefusedOperands(noter, application);
-    for (const BuiltinOverload& overload : m_inputs.program.builtins().overloadsOf(application.builtin)) {
-        if (overload.mode != application.mode())
-            continue;
-        if (overload.receiver) {
-            noteParameter(noter, application, *overload.receiver);
-            noteParameterWithoutAction(noter, application, overload, *overload.receiver);
-        }
-        for (const BuiltinParameter& parameter : overload.parameters) {
-            noteParameter(noter, application, parameter);
-            noteParameterWithoutAction(noter, application, overload, parameter);
-        }
-        for (const BuiltinPropertyAction& action : overload.flow.propertyActions) {
-            switch (action.kind) {
-            case BuiltinPropertyActionKind::TestsByKey:
-            case BuiltinPropertyActionKind::ReadsGetter:
-            case BuiltinPropertyActionKind::ReadsSetter:
-                noteTest(noter, application, overload, action);
-                break;
-            case BuiltinPropertyActionKind::AssignsFrom:
-            case BuiltinPropertyActionKind::DefinesFrom:
-            case BuiltinPropertyActionKind::TakesDescriptorMap:
-                if (action.value.operand)
-                    noter.notes.enumerated.add(application.valueAt(*action.value.operand, noter.maker));
-                else
-                    noter.notes.enumerated.add(ValueSets::anything);
-                break;
-            case BuiltinPropertyActionKind::ReadsByKey:
-            case BuiltinPropertyActionKind::StoresByKey:
-            case BuiltinPropertyActionKind::DeletesByKey:
-            case BuiltinPropertyActionKind::DefinesName:
-            case BuiltinPropertyActionKind::TakesDescriptor:
-            case BuiltinPropertyActionKind::ChangesIntegrity:
-            case BuiltinPropertyActionKind::ChangesPrototype:
-            case BuiltinPropertyActionKind::BecomesPrototype:
-            case BuiltinPropertyActionKind::DefinesGetter:
-            case BuiltinPropertyActionKind::DefinesSetter:
-            case BuiltinPropertyActionKind::DescribesOwnProperties:
-            case BuiltinPropertyActionKind::DescribesResult:
-                break;
-            }
-        }
-    }
+    forEachLookAtOperands(m_inputs, application.builtin, application.mode(), [&](std::optional<BuiltinOperand> operand) {
+        noter.notes.enumerated.add(operand ? application.valueAt(*operand, noter.maker) : ValueSets::anything);
+    }, [&](BuiltinOperand operand) {
+        noter.notes.observedUnderAnyKey.add(application.valueAt(operand, noter.maker));
+    }, [&](BuiltinOperand object, PropertyKeyID key, bool looksAtOwnPropertyAlone) {
+        (looksAtOwnPropertyAlone ? noter.notes.observedUnderKey : noter.notes.startsOfTestsUnderKey).add(key.index(), application.valueAt(object, noter.maker));
+    }, [&](BuiltinOperand object, BuiltinOperand key, bool looksAtOwnPropertyAlone) {
+        noteTestUnderKeys(noter, application, object, key, looksAtOwnPropertyAlone);
+    });
 }
 
 auto UsesOfObjects::findNotesOf(ValueSetMaker& maker, ValueSetID builtinFunctions, BuiltinCallMode mode) const -> std::unique_ptr<NotesOfBuiltins>
 {
-    const Program& program = m_inputs.program;
-    const BuiltinTable& builtins = program.builtins();
-    const ValueFlowBuiltinTables& tables = m_inputs.universe().builtinTables();
+    const BuiltinTable& builtins = m_inputs.program.builtins();
     auto notes = makeUnique<NotesOfBuiltins>();
     auto addOnce = [](auto& list, const auto& entry) {
         if (!list.contains(entry))
             list.append(entry);
     };
-    auto noteParameter = [&](const BuiltinOverload& overload, const BuiltinParameter& parameter) {
-        if (parameter.uses == OperandUses::all() || !parameter.protocols.containsAny(protocolsListingKeys))
-            return;
-        if (parameter.roles.contains(BuiltinOperandRole::KeysAreNotListed)) {
-            bool hasAction = std::ranges::any_of(overload.flow.propertyActions, [&](const BuiltinPropertyAction& action) {
-                return action.object == parameter.operand;
-            });
-            if (!hasAction)
-                addOnce(notes->observedUnderAnyKey, parameter.operand);
-            return;
-        }
-        bool goesOnToContents = parameter.uses.containsAny({ OperandUse::AppliesTransitively, OperandUse::AppliesToContents });
-        if (goesOnToContents && !tables.behaviorOf(parameter))
-            notes->enumeratesAnything = true;
-        else
-            addOnce(notes->enumerated, parameter.operand);
-    };
-    auto noteTest = [&](const BuiltinOverload& overload, const BuiltinPropertyAction& action) {
-        const BuiltinParameter* parameter = builtins.parameterFor(overload, action.object);
-        bool looksAtOwnPropertyAlone = parameter && parameter->roles.contains(BuiltinOperandRole::KeysAreNotListed) && !parameter->protocols.contains(Protocol::PrototypeChain);
-        switch (action.key.kind) {
-        case BuiltinKeyKind::None:
-            return;
-        case BuiltinKeyKind::Names:
-            for (BuiltinName name : action.key.names)
-                addOnce(notes->testsUnderNames, NotesOfBuiltins::TestUnderName { action.object, program.keyOf(name).index(), looksAtOwnPropertyAlone });
-            return;
-        case BuiltinKeyKind::Operand:
-            addOnce(notes->testsUnderOperands, NotesOfBuiltins::TestUnderOperand { action.object, *action.key.operand, looksAtOwnPropertyAlone });
-            return;
-        case BuiltinKeyKind::Any:
-        case BuiltinKeyKind::Indexes:
-        case BuiltinKeyKind::ElementsOf:
-            addOnce(notes->observedUnderAnyKey, action.object);
-            return;
-        }
-        RELEASE_ASSERT_NOT_REACHED();
-    };
-
     m_inputs.sets().forEachMember(builtinFunctions, [&](ValueFlowObjectID callee) {
         BuiltinID builtin = m_inputs.universe().builtinOf(callee);
         if (!m_builtinsThatLookAtObjects.quickGet(builtin.index()))
             return;
+        forEachLookAtOperands(m_inputs, builtin, mode, [&](std::optional<BuiltinOperand> operand) {
+            if (operand)
+                addOnce(notes->enumerated, *operand);
+            else
+                notes->enumeratesAnything = true;
+        }, [&](BuiltinOperand operand) {
+            addOnce(notes->observedUnderAnyKey, operand);
+        }, [&](BuiltinOperand object, PropertyKeyID key, bool looksAtOwnPropertyAlone) {
+            addOnce(notes->testsUnderNames, NotesOfBuiltins::TestUnderName { object, key.index(), looksAtOwnPropertyAlone });
+        }, [&](BuiltinOperand object, BuiltinOperand key, bool looksAtOwnPropertyAlone) {
+            addOnce(notes->testsUnderOperands, NotesOfBuiltins::TestUnderOperand { object, key, looksAtOwnPropertyAlone });
+        });
+        if (builtins.at(builtin).origin != BuiltinOrigin::Host)
+            return;
         Vector<NotesOfBuiltins::RefusedOperand, 8> takenAtOperands;
-        bool isOfHost = builtins.at(builtin).origin == BuiltinOrigin::Host;
         for (const BuiltinOverload& overload : builtins.overloadsOf(builtin)) {
             if (overload.mode != mode)
                 continue;
-            if (overload.receiver)
-                noteParameter(overload, *overload.receiver);
             for (const BuiltinParameter& parameter : overload.parameters) {
-                noteParameter(overload, parameter);
-                if (!isOfHost)
-                    continue;
                 notes->areToldApart |= parameter.operand.isReceiver();
-                ValueSetID taken = parameter.accepted ? tables.membersSurelyOf(parameter.accepted) : ValueSets::anything;
-                if (parameter.converted)
-                    taken = maker.unite(taken, tables.membersSurelyOf(parameter.converted));
-                size_t position = takenAtOperands.findIf([&](const NotesOfBuiltins::RefusedOperand& entry) {
-                    return entry.operand == parameter.operand;
-                });
-                if (position == notFound)
-                    takenAtOperands.append({ parameter.operand, taken });
-                else
-                    takenAtOperands[position].taken = maker.unite(takenAtOperands[position].taken, taken);
-            }
-            for (const BuiltinPropertyAction& action : overload.flow.propertyActions) {
-                switch (action.kind) {
-                case BuiltinPropertyActionKind::TestsByKey:
-                case BuiltinPropertyActionKind::ReadsGetter:
-                case BuiltinPropertyActionKind::ReadsSetter:
-                    noteTest(overload, action);
-                    break;
-                case BuiltinPropertyActionKind::AssignsFrom:
-                case BuiltinPropertyActionKind::DefinesFrom:
-                case BuiltinPropertyActionKind::TakesDescriptorMap:
-                    if (action.value.operand)
-                        addOnce(notes->enumerated, *action.value.operand);
-                    else
-                        notes->enumeratesAnything = true;
-                    break;
-                case BuiltinPropertyActionKind::ReadsByKey:
-                case BuiltinPropertyActionKind::StoresByKey:
-                case BuiltinPropertyActionKind::DeletesByKey:
-                case BuiltinPropertyActionKind::DefinesName:
-                case BuiltinPropertyActionKind::TakesDescriptor:
-                case BuiltinPropertyActionKind::ChangesIntegrity:
-                case BuiltinPropertyActionKind::ChangesPrototype:
-                case BuiltinPropertyActionKind::BecomesPrototype:
-                case BuiltinPropertyActionKind::DefinesGetter:
-                case BuiltinPropertyActionKind::DefinesSetter:
-                case BuiltinPropertyActionKind::DescribesOwnProperties:
-                case BuiltinPropertyActionKind::DescribesResult:
-                    break;
-                }
+                uniteTakenAtOperand(m_inputs.universe().builtinTables(), maker, parameter, takenAtOperands);
             }
         }
         for (const NotesOfBuiltins::RefusedOperand& entry : takenAtOperands) {

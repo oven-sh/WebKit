@@ -52,132 +52,106 @@ variable g0 name="edited" module=m0 declared={type=anything} initialization=Unde
 variable g1 name="other" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="namesEdited" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     Return
 }
 function f1 name="namesHeir" parameters=[{type=L1}] results=[{type=anything}] {
-  b0(v0: L1):
     Return
 }
 function f2 name="namesAbove" parameters=[{type=L2}] results=[{type=anything}] {
-  b0(v0: L2):
     Return
 }
 function f3 name="namesSibling" parameters=[{type=L3}] results=[{type=anything}] {
-  b0(v0: L3):
     Return
 }
 function f4 name="namesHolder" parameters=[{type=L4}] results=[{type=anything}] {
-  b0(v0: L4):
     v1 = PropGet v0 key="count"
     Return v1
 }
 function f5 name="readsHeldObject" parameters=[{type=L4}] results=[{type=anything}] {
-  b0(v0: L4):
     v1 = PropGet v0 key="held"
     v2 = Check v1 castType=L0
     Return v2
 }
 function f6 name="namesArrayOfEdited" parameters=[{type=Array<L0>}] results=[{type=anything}] {
-  b0(v0: Array<L0>):
     Return
 }
 function f7 name="namesUnrelated" parameters=[{type=L5}] results=[{type=anything}] {
-  b0(v0: L5):
     v1 = GetModuleVariable variable=g1
     Return v1
 }
 function f8 name="readsEditedVariable" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     Return v0
 }
 function f9 name="serializesHolderOfHolder" parameters=[{type=L7}] results=[{type=anything}] {
-  b0(v0: L7):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
     Return v2
 }
 function f10 name="serializesHolderOfUnrelated" parameters=[{type=L8}] results=[{type=anything}] {
-  b0(v0: L8):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
     v3 = GetModuleVariable variable=g0
     Return v3
 }
 function f11 name="namesHolderOfHolder" parameters=[{type=L7}] results=[{type=anything}] {
-  b0(v0: L7):
     v1 = PropGet v0 key="inner"
     Return v1
 }
 function f12 name="readsFieldOfEdited" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="amount"
     Return v1
 }
 function f13 name="readsFieldOfHeir" parameters=[{type=L1}] results=[{type=anything}] {
-  b0(v0: L1):
     v1 = PropGet v0 key="amount"
     Return v1
 }
 function f14 name="readsFieldOfAbove" parameters=[{type=L2}] results=[{type=anything}] {
-  b0(v0: L2):
     v1 = PropGet v0 key="amount"
     Return v1
 }
 function f15 name="storesFieldOfEdited" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
-  b0(v0: L0, v1: number):
     PropSet v0, v1 key="amount"
     Return v1
 }
 function f16 name="readsUnderKeyThatIsAnOperand" parameters=[{type=L0}, {type=string}] results=[{type=anything}] {
-  b0(v0: L0, v1: string):
     v2 = ElemGet v0, v1
     Return v2
 }
 function f17 name="makesEdited" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     Return v1
 }
 function f18 name="readsOtherFieldOfHeir" parameters=[{type=L1}] results=[{type=anything}] {
-  b0(v0: L1):
     v1 = PropGet v0 key="bonus"
     Return v1
 }
 function f19 name="readsSameKeyElsewhere" parameters=[{type=L5}] results=[{type=anything}] {
-  b0(v0: L5):
     v1 = PropGet v0 key="amount"
     Return v1
 }
 function f20 name="handsOnEdited" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = CallDirect v0 function=f0
     Return v1
 }
 function f21 name="readsSameKeyElsewhereAndHasEdited" parameters=[{type=L5}, {type=L0}] results=[{type=anything}] {
-  b0(v0: L5, v1: L0):
     v2 = PropGet v0 key="amount"
     Return v2
 }
 function f22 name="convertsEdited" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = ToString v0
     Return v1
 }
 function f23 name="handsEditedToBuiltin" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
     Return v2
 }
 function f24 name="readsFieldThatBuiltinsKnow" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="toString"
     Return v1
 }
 function f25 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="register" [isFreeName]
 # REPEAT: i = 0..24

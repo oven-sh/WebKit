@@ -8,7 +8,6 @@ layout L1 name="Middle" fields=[{key="inner" declared={type=anything}}]
 layout L2 name="Inner" fields=[{key="x" declared={type=anything}}]
 
 function f0 name="holderBuiltBehindTheMerge" parameters=[{type=anything}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean, v2: boolean):
     v3 = NewObject -, v0 layout=L0 fields=[0]
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -26,8 +25,6 @@ function f0 name="holderBuiltBehindTheMerge" parameters=[{type=anything}, {type=
     Return v0
   b5() frequency=Rare:
     Return v3
-}
-# CHECK-LABEL: function f0 name="holderBuiltBehindTheMerge"
 # CHECK: b1():
 # CHECK-NEXT: v4: L2 = NewObject -, v0 layout=L2 fields=[0]
 # CHECK-NEXT: v5: L1 = NewObject -, v4 layout=L1 fields=[0]
@@ -35,3 +32,4 @@ function f0 name="holderBuiltBehindTheMerge" parameters=[{type=anything}, {type=
 # CHECK: Switch {{*}} cases=[1]
 # CHECK: L0 = NewObject -, {{*}} layout=L0 fields=[0]
 # CHECK: L0 = NewObject -, {{*}}, {{*}}, {{*}} layout=L0 fields=[0, 1, 2]
+}

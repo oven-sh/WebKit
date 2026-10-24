@@ -9,7 +9,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="appendsToArrayOfInt32" parameters=[{type=Array<i32>}, {type=i32}, {type=number}, {type=undefined|number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<i32>, v1: i32, v2: number, v3: undefined|number, v4: string, v5: anything, v6: boolean):
     AppendElement v0, v1
     AppendElement v0, v2
     AppendElement v0, v3
@@ -47,7 +46,6 @@ function f0 name="appendsToArrayOfInt32" parameters=[{type=Array<i32>}, {type=i3
 # R-NEXT: AppendElement v0, {{*}}
 # R-NEXT: AppendElement v0, v5
 function f1 name="appendsToArrayOfNumbers" parameters=[{type=Array<number>}, {type=i32}, {type=number}, {type=undefined|number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<number>, v1: i32, v2: number, v3: undefined|number, v4: string, v5: anything, v6: boolean):
     AppendElement v0, v1
     AppendElement v0, v2
     AppendElement v0, v3
@@ -85,7 +83,6 @@ function f1 name="appendsToArrayOfNumbers" parameters=[{type=Array<number>}, {ty
 # R-NEXT: AppendElement v0, {{*}}
 # R-NEXT: AppendElement v0, v5
 function f2 name="appendsToArrayOfOptionalNumbers" parameters=[{type=Array<undefined|number>}, {type=i32}, {type=number}, {type=undefined|number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<undefined|number>, v1: i32, v2: number, v3: undefined|number, v4: string, v5: anything, v6: boolean):
     AppendElement v0, v1
     AppendElement v0, v2
     AppendElement v0, v3
@@ -123,7 +120,6 @@ function f2 name="appendsToArrayOfOptionalNumbers" parameters=[{type=Array<undef
 # R-NEXT: AppendElement v0, {{*}}
 # R-NEXT: AppendElement v0, v5
 function f3 name="appendsToArrayOfStrings" parameters=[{type=Array<string>}, {type=i32}, {type=number}, {type=undefined|number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<string>, v1: i32, v2: number, v3: undefined|number, v4: string, v5: anything, v6: boolean):
     AppendElement v0, v1
     AppendElement v0, v2
     AppendElement v0, v3
@@ -161,7 +157,6 @@ function f3 name="appendsToArrayOfStrings" parameters=[{type=Array<string>}, {ty
 # R-NEXT: AppendElement v0, {{*}}
 # R-NEXT: AppendElement v0, v5
 function f4 name="appendsToArrayOfAnything" parameters=[{type=Array<anything>}, {type=i32}, {type=number}, {type=undefined|number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything>, v1: i32, v2: number, v3: undefined|number, v4: string, v5: anything, v6: boolean):
     AppendElement v0, v1
     AppendElement v0, v2
     AppendElement v0, v3
@@ -199,7 +194,6 @@ function f4 name="appendsToArrayOfAnything" parameters=[{type=Array<anything>}, 
 # R-NEXT: AppendElement v0, {{*}}
 # R-NEXT: AppendElement v0, v5
 function f5 name="appendsToLiteralOfInt32" parameters=[{type=i32}, {type=number}, {type=undefined|number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: i32, v1: number, v2: undefined|number, v3: string, v4: anything, v5: boolean):
     v6 = NewArray contents=i32
     AppendElement v6, v0
     AppendElement v6, v1
@@ -236,7 +230,6 @@ function f5 name="appendsToLiteralOfInt32" parameters=[{type=i32}, {type=number}
 # S: f5 b1 Fast
 # S: f5 b3 Compact
 function f6 name="appendsToLiteralOfNumbers" parameters=[{type=i32}, {type=number}, {type=undefined|number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: i32, v1: number, v2: undefined|number, v3: string, v4: anything, v5: boolean):
     v6 = NewArray contents=number
     AppendElement v6, v0
     AppendElement v6, v1
@@ -273,7 +266,6 @@ function f6 name="appendsToLiteralOfNumbers" parameters=[{type=i32}, {type=numbe
 # S: f6 b1 Fast
 # S: f6 b3 Compact
 function f7 name="appendsToLiteralOfAnything" parameters=[{type=i32}, {type=number}, {type=undefined|number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: i32, v1: number, v2: undefined|number, v3: string, v4: anything, v5: boolean):
     v6 = NewArray contents=anything
     AppendElement v6, v0
     AppendElement v6, v1
@@ -310,7 +302,6 @@ function f7 name="appendsToLiteralOfAnything" parameters=[{type=i32}, {type=numb
 # S: f7 b1 Fast
 # S: f7 b3 Compact
 function f8 name="appendsHole" parameters=[{type=Array}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array, v1: boolean):
     AppendHole v0
     Jump -> next b1()
   b1():
@@ -329,7 +320,6 @@ function f8 name="appendsHole" parameters=[{type=Array}, {type=boolean}] results
 # S: f8 b1 Fast
 # S: f8 b3 Compact
 function f9 name="appendsElements" parameters=[{type=Array}, {type=Array<anything, pristine[Storage, Names]>}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array, v1: Array<anything, pristine[Storage, Names]>, v2: boolean):
     AppendElements v0, v1
     Jump -> next b1()
   b1():
@@ -348,7 +338,6 @@ function f9 name="appendsElements" parameters=[{type=Array}, {type=Array<anythin
 # S: f9 b1 Fast
 # S: f9 b3 Compact
 function f10 name="appendsElementsUnderGuard" parameters=[{type=Array}, {type=Array}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array, v1: Array, v2: boolean):
     v3 = IsPristine v1 builtinClass=Array aspects=[Storage, Names]
     Branch v3 -> taken b1(| 0), notTaken b2()
   b1(v4):

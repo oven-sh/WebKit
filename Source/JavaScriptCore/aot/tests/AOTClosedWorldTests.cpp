@@ -56,7 +56,6 @@ static constexpr Flags open { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::Loa
 static constexpr ASCIILiteral evaluatorsFromUnknownCode = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="take" [isFreeName]
     v2 = Call v1
@@ -76,7 +75,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 static constexpr ASCIILiteral evaluatorsFromUnknownCodeAndSeenEval = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="take" [isFreeName]
     v2 = Call v1
@@ -101,7 +99,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 static constexpr ASCIILiteral evaluatorUnderUnknownKey = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="holder" [isFreeName]
     v2 = PropGet v0 key="name" [isFreeName]
@@ -114,7 +111,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 static constexpr ASCIILiteral evaluatorUnderUnknownKeyOfGlobalObject = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="name" [isFreeName]
     v2 = ElemGet v0, v1
@@ -126,7 +122,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 static constexpr ASCIILiteral evaluatorComesBackFromUnknownCode = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="keep" [isFreeName]
     v2 = PropGet v0 key="eval" [isFreeName]
@@ -140,7 +135,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 static constexpr ASCIILiteral printsSum = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = PropGet v0 key="one" [isFreeName]
@@ -153,7 +147,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 static constexpr ASCIILiteral callsUnknownFunction = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="sink" [isFreeName]
     v2 = Call v1, -, v0
@@ -164,7 +157,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 static constexpr ASCIILiteral evaluatesUnknownText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="text" [isFreeName]
     v2 = PropGet v0 key="eval" [isFreeName]
@@ -176,7 +168,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 static constexpr ASCIILiteral constructsFunctionFromUnknownText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="text" [isFreeName]
     v2 = Builtin builtin=Function
@@ -189,7 +180,6 @@ static constexpr ASCIILiteral importsUncompiledModule = R"IR(module m0 path="/ma
 module m1 path="/uncompiled.js" displayPath="uncompiled.js" kind=External referrer=m0
 entry module=m0
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 )IR"_s;
@@ -197,7 +187,6 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
 static constexpr ASCIILiteral loadsNativeAddon = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Process
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="module" [isFreeName]
@@ -211,7 +200,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 static constexpr ASCIILiteral installsPlugin = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Bun
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="plugin" [isFreeName]
@@ -225,11 +213,9 @@ static constexpr ASCIILiteral otherModuleIsNeverLoaded =R"IR(module m0 path="/ma
 module m1 path="/other.js" displayPath="other.js" body=f1
 entry module=m0
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f1 name="other" module=m1 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = String string="other ran"
@@ -242,7 +228,6 @@ static constexpr ASCIILiteral evaluatesTextBesideOtherModule = R"IR(module m0 pa
 module m1 path="/other.js" displayPath="other.js" body=f1
 entry module=m0
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="text" [isFreeName]
     v2 = PropGet v0 key="eval" [isFreeName]
@@ -250,7 +235,6 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="other" module=m1 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = String string="other ran"
@@ -263,7 +247,6 @@ static constexpr ASCIILiteral unseenCodeMayCallLoader = R"IR(module m0 path="/ma
 module m1 path="/other.js" displayPath="other.js" body=f1
 entry module=m0
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="text" [isFreeName]
     v2 = PropGet v0 key="eval" [isFreeName]
@@ -277,7 +260,6 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="other" module=m1 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = String string="other ran"
@@ -292,14 +274,12 @@ module m1 path="/other.js" displayPath="other.js" body=f1
 entry module=m0
 entry module=m1
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="name" [isFreeName]
     v2 = RequireDynamic v1 referrer=m0
     Return
 }
 function f1 name="other" module=m1 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = String string="other ran"
@@ -390,12 +370,10 @@ static constexpr ASCIILiteral takesMainModuleBehindFrontEnd = AOT_TAKES_MAIN_MOD
 module m1 path="/other.js" displayPath="other.js" body=f1
 entry module=m0
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = CallDirect function=f2
     Return
 }
 function f1 name="other" module=m1 kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = String string="other ran"
@@ -403,7 +381,6 @@ function f1 name="other" module=m1 kind=Module results=[{type=anything}] {
     Return
 }
 function f2 name="load" module=m0 role=Library results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
     v2 = PropGet v0 key="name" [isFreeName]
@@ -427,7 +404,6 @@ static constexpr ASCIILiteral libraryImportsUnknownName = AOT_LIBRARY_LOADS_BY_N
 static constexpr ASCIILiteral readsGlobalsAfterScripts = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="eval" [isFreeName]
     v2 = PropGet v0 key="text" [isFreeName]

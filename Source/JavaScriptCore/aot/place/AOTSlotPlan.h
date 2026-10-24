@@ -7,7 +7,7 @@
 
 #if ENABLE(AOT)
 
-#include "AOTFormsExpectedOfNames.h"
+#include "AOTFieldTable.h"
 #include "AOTIR.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTVector.h"
@@ -32,7 +32,6 @@ class FlowResults;
 class FrameAllocation;
 class Heat;
 class SlotAgreementMemo;
-struct SlotPlanParts;
 
 using FieldIndex = uint32_t;
 
@@ -192,11 +191,13 @@ struct SlotPlanInputs {
     const EnvironmentReuse& environmentReuse;
 };
 
+class SlotPlan;
+JS_EXPORT_PRIVATE SlotPlan planSlots(const Program&, const SlotPlanInputs&, BuildContext&);
+
 class SlotPlan {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(SlotPlan);
 public:
     JS_EXPORT_PRIVATE SlotPlan();
-    JS_EXPORT_PRIVATE explicit SlotPlan(SlotPlanParts&&);
     JS_EXPORT_PRIVATE SlotPlan(SlotPlan&&);
     JS_EXPORT_PRIVATE SlotPlan& operator=(SlotPlan&&);
     JS_EXPORT_PRIVATE ~SlotPlan();
@@ -227,28 +228,25 @@ public:
     bool hasColumn(PropertyKeyID key) const { return m_keysWithColumn.get(key.index()); }
     const BitVector& keysWithColumn() const { return m_keysWithColumn; }
 
-    const FormsExpectedOfNames& formsExpectedOfNames() const { return m_formsExpectedOfNames; }
-
     unsigned numberOfLayouts() const { return m_layouts.size(); }
     unsigned numberOfVariables() const { return m_variables.size(); }
 
     JS_EXPORT_PRIVATE void dump(PrintStream&, const Program&) const;
 
 private:
+    friend SlotPlan planSlots(const Program&, const SlotPlanInputs&, BuildContext&);
+
     Vector<PlannedLayout> m_layouts;
     Vector<PlannedVariable> m_variables;
     Vector<ClosureForm> m_closureForms;
     Vector<ClassCreationPlan> m_classCreation;
     BitVector m_keysWithColumn;
-    FormsExpectedOfNames m_formsExpectedOfNames;
     PlannedLayout m_unplannedLayout;
     PlacedSlot m_unplannedSlot;
     ClassCreationPlan m_unplannedClass;
     SlotAgreement m_agreementOfNoReceivers;
     std::unique_ptr<SlotAgreementMemo> m_agreements;
 };
-
-JS_EXPORT_PRIVATE SlotPlan planSlots(const Program&, const SlotPlanInputs&, BuildContext&);
 
 // The pass that pairs allocations runs before the plan, which may find that the two objects do not fit one cell.
 inline bool takesCellWithInnerObjects(const SlotPlan& plan, const Value& newObject)

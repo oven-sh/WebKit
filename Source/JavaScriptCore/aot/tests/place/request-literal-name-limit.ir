@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="main" parameters=[{type=object}, {type=anything}] results=[{type=boolean}] {
-  b0(v0: object, v1: anything):
     v2 = TryPutByIds v0, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1 keys=["k0", "k1", "k2", "k3", "k4", "k5", "k6", "k7", "k8", "k9", "k10", "k11", "k12", "k13", "k14", "k15", "k16", "k17", "k18", "k19", "k20", "k21", "k22", "k23", "k24", "k25", "k26", "k27", "k28", "k29", "k30", "k31", "k32"]
     v3 = TryPutByIds v0, v1, v1, v1 keys=["a", "b", "a"]
     v4 = TryPutByIds v0, v1, v1, v1 keys=["a", "0", "b"]

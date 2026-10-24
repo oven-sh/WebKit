@@ -7,12 +7,10 @@ module m0 path="main.js" displayPath="main.js"
 expectedresult x0 type=number validation=[{shape=Primitive{primitive=Number} type=number}]
 expectedresult x1 type=number
 function f0 name="bad" parameters=[{type=anything}, {type=string}] results=[{type=undefined}] {
-  b0(v0: anything, v1: string):
     v2 = Call v0, -, v1 expectedResult=x0
     Return
 }
 function f1 name="good" parameters=[{type=anything}, {type=string}] results=[{type=undefined}] {
-  b0(v0: anything, v1: string):
     v2 = Call v0, -, v1 expectedResult=x1
     v3 = Call v0, -, v1
     Return

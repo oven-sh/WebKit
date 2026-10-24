@@ -10,7 +10,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="unknown" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -21,9 +20,7 @@ function f0 name="unknown" parameters=[{type=anything}] results=[{type=anything}
     Branch v4 -> taken b2(), notTaken b1()
   b2():
     Return v5
-}
 # An array is tested for first, and its copy of the loop knows nothing of strings.
-# CHECK-LABEL: function f0 name="unknown"
 # CHECK: b0(v0: anything):
 # CHECK-NEXT: [[isArray0]]: boolean = TypeTest v0 testedType=Array
 # CHECK-NEXT: Branch [[isArray0]] -> taken [[array0]](| 0), notTaken [[rest0]](| 0)
@@ -64,15 +61,13 @@ function f0 name="unknown" parameters=[{type=anything}] results=[{type=anything}
 # CHECK-NEXT: [[result0]]: anything = Call [[next0]], [[stepped0]]
 # CHECK-NEXT: = RequireObject [[result0]] runtimeError=IteratorResultNotObject
 # The string gets no copy of the loop for itself.
-# ABSENT-LABEL: function f0 name="unknown"
 # ABSENT-COUNT-2: LoopHint
 # ABSENT-NOT: LoopHint
-# TESTS-LABEL: function f0 name="unknown"
 # TESTS-COUNT-1: testedType=string
 # TESTS-NOT: testedType=string
+}
 
 function f1 name="object" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -83,9 +78,7 @@ function f1 name="object" parameters=[{type=object}] results=[{type=anything}] {
     Branch v4 -> taken b2(), notTaken b1()
   b2():
     Return v5
-}
 # No object is a string.
-# CHECK-LABEL: function f1 name="object"
 # CHECK: b0(v0: object):
 # CHECK-NEXT: = TypeTest v0 testedType=Array
 # CHECK: Jump -> next [[header1]]()
@@ -96,14 +89,12 @@ function f1 name="object" parameters=[{type=object}] results=[{type=anything}] {
 # CHECK-NEXT: = CallDirect [[iterable1]] function=[[openIterator]] [isNeverInlined]
 # CHECK: [[iterator1]]: object = ResultAt {{*}}
 # CHECK-NEXT: [[next1]]: anything = ResultAt {{*}} index=1
-# ABSENT-LABEL: function f1 name="object"
 # ABSENT-NOT: GetStringLength
 # ABSENT-NOT: Substring
-# TESTS-LABEL: function f1 name="object"
 # TESTS-NOT: testedType=string
+}
 
 function f2 name="yieldStar" flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     InitialYield
     v3 = IteratorOpen v1
     v4 = Undefined
@@ -133,19 +124,15 @@ function f2 name="yieldStar" flags=[IsGenerator, TakesCallee] parameters=[{type=
     Return v22
   b6(v23):
     Return v23
-}
 # An iteration that sends values, throws into its iterator or returns from it keeps the iterator of a string.
-# CHECK-LABEL: function f2 name="yieldStar"
 # CHECK: = TypeTest v1 testedType=Generator
 # CHECK: function=[[openIterator]] [isNeverInlined]
-# ABSENT-LABEL: function f2 name="yieldStar"
 # ABSENT-NOT: GetStringLength
 # ABSENT-NOT: Substring
-# TESTS-LABEL: function f2 name="yieldStar"
 # TESTS-NOT: testedType=string
+}
 
 function f3 name="stringOrArray" parameters=[{type=string|Array<number>}] results=[{type=anything}] {
-  b0(v0: string|Array<number>):
     v1 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -156,9 +143,7 @@ function f3 name="stringOrArray" parameters=[{type=string|Array<number>}] result
     Branch v4 -> taken b2(), notTaken b1()
   b2():
     Return v5
-}
 # A string that the type names has a form and a copy of the loop of its own. What is left for the protocol is an array whose names have changed.
-# CHECK-LABEL: function f3 name="stringOrArray"
 # CHECK: b0(v0: string|Array<number>):
 # CHECK-NEXT: [[isArray3]]: boolean = TypeTest v0 testedType=Array<number>
 # CHECK-NEXT: Branch [[isArray3]] -> taken [[array3]](| 0), notTaken [[string3]](| 0)
@@ -173,14 +158,12 @@ function f3 name="stringOrArray" parameters=[{type=string|Array<number>}] result
 # CHECK-NEXT: = CallDirect [[iterable3]] function=[[openIterator]] [isNeverInlined]
 # CHECK: [[string3]]([[text3]]: string) frequency=Unlikely:
 # CHECK: = Substring [[text3]],
-# ABSENT-LABEL: function f3 name="stringOrArray"
 # ABSENT-COUNT-3: LoopHint
 # ABSENT-NOT: LoopHint
-# TESTS-LABEL: function f3 name="stringOrArray"
 # TESTS-NOT: testedType=string
+}
 
 function f4 name="forAwait" flags=[IsAsync] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = IteratorOpen v0 iteratorKind=Async
     Jump -> next b1()
   b1():
@@ -194,19 +177,15 @@ function f4 name="forAwait" flags=[IsAsync] parameters=[{type=anything}, {type=a
     Jump -> next b1()
   b3():
     Return v1
-}
 # An async iteration over a string steps the wrapper around the iterator of the string.
-# CHECK-LABEL: function f4 name="forAwait"
 # CHECK: = TypeTest v0 testedType=AsyncGenerator
 # CHECK: key=@@asyncIterator
-# ABSENT-LABEL: function f4 name="forAwait"
 # ABSENT-NOT: GetStringLength
 # ABSENT-NOT: Substring
-# TESTS-LABEL: function f4 name="forAwait"
 # TESTS-NOT: testedType=string
+}
 
 function f5 name="closes" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -232,8 +211,6 @@ function f5 name="closes" parameters=[{type=anything}, {type=anything}] results=
     Rethrow v10
   b7():
     Return v1
-}
-# CHECK-LABEL: function f5 name="closes"
 # CHECK: ({{*}}: int[0, 2147483648]) frequency=Unlikely:
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: = TypeTest [[subject5]] testedType=string
@@ -244,15 +221,13 @@ function f5 name="closes" parameters=[{type=anything}, {type=anything}] results=
 # CHECK-NEXT: = CallDirect [[subject5]] function=[[closeStringOrIteratorAfterThrow]] [isNeverInlined]
 # CHECK: [[subject5]]: string|object = ResultAt
 # CHECK: Rethrow [[exception5]]
-# ABSENT-LABEL: function f5 name="closes"
 # ABSENT-COUNT-2: LoopHint
 # ABSENT-NOT: LoopHint
-# TESTS-LABEL: function f5 name="closes"
 # TESTS-COUNT-1: testedType=string
 # TESTS-NOT: testedType=string
+}
 
 function f6 name="testFailedEarlier" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=string
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -268,22 +243,18 @@ function f6 name="testFailedEarlier" parameters=[{type=anything}] results=[{type
     Branch v5 -> taken b4(), notTaken b3()
   b4():
     Return v6
-}
 # The type of the iterable still admits a string, but control comes to the open only where the program's own test for one has failed.
-# CHECK-LABEL: function f6 name="testFailedEarlier"
 # CHECK: b2():
 # CHECK-NEXT: = TypeTest v0 testedType=Array
 # CHECK: ([[iterable6]]: anything) frequency=Unlikely:
 # CHECK-NEXT: = CallDirect [[iterable6]] function=[[openIterator]] [isNeverInlined]
-# ABSENT-LABEL: function f6 name="testFailedEarlier"
 # ABSENT-NOT: GetStringLength
 # ABSENT-NOT: Substring
-# TESTS-LABEL: function f6 name="testFailedEarlier"
 # TESTS-COUNT-1: testedType=string
 # TESTS-NOT: testedType=string
+}
 
 function f7 name="noClassArm" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=Array
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):
@@ -299,9 +270,7 @@ function f7 name="noClassArm" parameters=[{type=anything}] results=[{type=anythi
     Branch v7 -> taken b4(), notTaken b3()
   b4():
     Return v8
-}
 # Where the protocol is the only form the loop is not copied, and the text as written asks for the string.
-# CHECK-LABEL: function f7 name="noClassArm"
 # CHECK: b2(v3: anything):
 # CHECK-NEXT: [[zero7]]: 0 = Integer
 # CHECK-NEXT: Jump -> next [[open7]]([[zero7]])
@@ -319,15 +288,13 @@ function f7 name="noClassArm" parameters=[{type=anything}] results=[{type=anythi
 # CHECK: [[iteratorStep7]]([[stepped7]]: object):
 # CHECK-NEXT: = Call [[next7]], [[stepped7]]
 # CHECK: = Substring [[walked7]],
-# ABSENT-LABEL: function f7 name="noClassArm"
 # ABSENT-COUNT-1: LoopHint
 # ABSENT-NOT: LoopHint
-# TESTS-LABEL: function f7 name="noClassArm"
 # TESTS-COUNT-2: testedType=string
 # TESTS-NOT: testedType=string
+}
 
 function f8 name="patternReadAtOnce" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = IteratorOpen v0 elementCount=2 [isDestructuring]
     Jump -> next b1()
   b1() handler=b4():

@@ -5,21 +5,17 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="skips" role=Parser parameters=[{type=cursor}] results=[{type=cursor}] creator=Parser{type=anything} {
-  b0(v0: cursor):
     v1 = JSONSkipWhitespace v0
     Return v1
 }
 function f1 name="plain" results=[{type=undefined}] {
-  b0():
     Return
 }
 function f2 name="goodClosure" results=[{type=function}] {
-  b0():
     v0 = NewClosure function=f1
     Return v0
 }
 function f3 name="badClosure" results=[{type=function}] {
-  b0():
     v0 = NewClosure function=f0
     Return v0
 }

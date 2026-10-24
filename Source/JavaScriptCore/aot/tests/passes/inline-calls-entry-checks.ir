@@ -11,11 +11,9 @@ module m0 path="/main.ts" displayPath="main.ts" body=f0
 entry module=m0
 
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f1 name="passesEveryTest" module=m0 parameters=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f4
     Return v1
 }
@@ -23,7 +21,6 @@ function f1 name="passesEveryTest" module=m0 parameters=[{type=number}] results=
 # CHECK-NOT: function=f4
 # CHECK: = CallDirect {{*}} function=f5
 function f2 name="passesNoTestOfALargeFunction" module=m0 parameters=[{type=anything}] results=[{type=number}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f4
     Return v1
 }
@@ -31,7 +28,6 @@ function f2 name="passesNoTestOfALargeFunction" module=m0 parameters=[{type=anyt
 # CHECK-NOT: TypeTest
 # CHECK: = CallDirect v0 function=f4
 function f3 name="passesNoTestOfASmallFunction" module=m0 parameters=[{type=anything}] results=[{type=number}] {
-  b0(v0: anything):
     v1 = CallDirect v0 function=f7
     Return v1
 }
@@ -54,7 +50,6 @@ function f4 name="large" module=m0 role=EntryChecks flags=[IsChecked] length=1 t
 # CHECK: = CallDirect v2 function=f5
 # CHECK: = CallDirect v0 function=f6
 function f5 name="large" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4} {
-  b0(v0: number):
 # REPEAT: i = 0..63
     v%(i+1) = Mul v%(i), v0
 # END REPEAT
@@ -81,7 +76,6 @@ function f7 name="small" module=m0 role=EntryChecks flags=[IsChecked] length=1 t
 # CHECK: = CallDirect v2 function=f8
 # CHECK: = CallDirect v0 function=f9
 function f8 name="small" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f7} {
-  b0(v0: number):
     v1 = Mul v0, v0
     Return v1
 }
@@ -91,7 +85,6 @@ function f9 name="small" module=m0 role=GenericVersion flags=[IsChecked] length=
     Return v1
 }
 function f10 name="large" module=m0 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f4}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} {
-  b0(v0: f4, v1: anything, v2: anything):
     v3 = CallDirect v2 function=f4
     ReturnCall v3 requirement=Allowed
 }
@@ -111,7 +104,6 @@ function f11 name="onlyByValue" module=m0 role=EntryChecks flags=[IsChecked] len
     ReturnCall v4 requirement=Allowed
 }
 function f12 name="onlyByValue" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f11} {
-  b0(v0: number):
     v1 = Mul v0, v0
     Return v1
 }
@@ -121,7 +113,6 @@ function f13 name="onlyByValue" module=m0 role=GenericVersion flags=[IsChecked] 
     Return v1
 }
 function f14 name="onlyByValue" module=m0 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f11}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f11} creator=Entrypoint{target=f11 arguments=Registers} {
-  b0(v0: f11, v1: anything, v2: anything):
     v3 = CallDirect v2 function=f11
     ReturnCall v3 requirement=Allowed
 }

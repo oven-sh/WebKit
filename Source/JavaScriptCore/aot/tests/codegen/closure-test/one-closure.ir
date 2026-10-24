@@ -11,7 +11,6 @@ entry module=m0
 variable g0 name="declared" module=m0 declared={type=function} initialization=Function function=f1
 variable g1 name="declaredAndAllocated" module=m0 declared={type=function} initialization=Function function=f3
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = NewClosure function=f2
     v2 = GetModuleVariable variable=g1
@@ -25,31 +24,25 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return v9
 }
 function f1 name="declared" results=[{type=anything}] {
-  b0():
     Return
 }
 function f2 name="allocated" results=[{type=anything}] {
-  b0():
     Return
 }
 function f3 name="declaredAndAllocated" results=[{type=anything}] {
-  b0():
     Return
 }
 # PLACE: f1 {{*}}hasOnlyTableCell
 # PLACE-NOT: hasOnlyTableCell
 function f4 name="callsDeclared" parameters=[{type=f1 flags=[IsExpected]}] results=[{type=anything}] {
-  b0(v0: f1):
     v1 = Call v0
     Return v1
 }
 function f5 name="callsAllocated" parameters=[{type=f2 flags=[IsExpected]}] results=[{type=anything}] {
-  b0(v0: f2):
     v1 = Call v0
     Return v1
 }
 function f6 name="callsDeclaredAndAllocated" parameters=[{type=f3 flags=[IsExpected]}] results=[{type=anything}] {
-  b0(v0: f3):
     v1 = Call v0
     Return v1
 }

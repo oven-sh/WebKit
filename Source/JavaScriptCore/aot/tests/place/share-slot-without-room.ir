@@ -16,7 +16,6 @@ variable g1 name="holdsY" module=m0 declared={type=anything} initialization=Unde
 variable g2 name="holdsZ" module=m0 declared={type=anything} initialization=Undefined
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToNumber v1

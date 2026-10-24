@@ -11,7 +11,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=undefined|number}}, {key="y" declared={type=undefined|number}}]
 
 function f0 name="storeThroughPossibleAlias" parameters=[{type=L0}, {type=L0}, {type=number}] results=[{type=boolean}] {
-  b0(v0: L0, v1: L0, v2: number):
     v3 = StrictEq v0, v0
     PutSlot v1, -, v2 key="x" receivers=[L0] level=Proven
     v5 = StrictEq v0, v0
@@ -22,7 +21,6 @@ function f0 name="storeThroughPossibleAlias" parameters=[{type=L0}, {type=L0}, {
 # F0-NOT: stretch
 
 function f1 name="storeThatMayAddTheField" parameters=[{type=L0}, {type=L0}, {type=number}] results=[{type=boolean}] {
-  b0(v0: L0, v1: L0, v2: number):
     v3 = StrictEq v0, v0
     PutSlotOrAdd v1, -, v2 key="x" receivers=[L0] level=Proven
     v5 = StrictEq v0, v0
@@ -33,7 +31,6 @@ function f1 name="storeThatMayAddTheField" parameters=[{type=L0}, {type=L0}, {ty
 # F1-NOT: stretch
 
 function f2 name="storeOfNumberKeepsDeclaredType" parameters=[{type=L0}, {type=L0}, {type=number}] results=[{type=boolean}] {
-  b0(v0: L0, v1: L0, v2: number):
     v3 = StrictEq v0, v0
     PutSlot v1, -, v2 key="x" receivers=[L0] level=Proven
     v5 = StrictEq v0, v0
@@ -44,7 +41,6 @@ function f2 name="storeOfNumberKeepsDeclaredType" parameters=[{type=L0}, {type=L
 # F2-NOT: stretch
 
 function f3 name="storeOfUndefinedEndsDeclaredType" parameters=[{type=L0}, {type=L0}, {type=undefined|number}] results=[{type=boolean}] {
-  b0(v0: L0, v1: L0, v2: undefined|number):
     v3 = StrictEq v0, v0
     PutSlot v1, -, v2 key="x" receivers=[L0] level=Proven
     v5 = StrictEq v0, v0
@@ -56,7 +52,6 @@ function f3 name="storeOfUndefinedEndsDeclaredType" parameters=[{type=L0}, {type
 # F3-NOT: stretch
 
 function f4 name="storeByNameEndsIt" parameters=[{type=L0}, {type=object}, {type=number}] results=[{type=boolean}] {
-  b0(v0: L0, v1: object, v2: number):
     v3 = StrictEq v0, v0
     PropSet v1, v2 key="x"
     v5 = StrictEq v0, v0
@@ -68,7 +63,6 @@ function f4 name="storeByNameEndsIt" parameters=[{type=L0}, {type=object}, {type
 # F4-NOT: stretch
 
 function f5 name="storeInLoop" parameters=[{type=L0}, {type=number}, {type=boolean}] results=[{type=boolean}] {
-  b0(v0: L0, v1: number, v2: boolean):
     Jump -> next b1()
   b1():
     LoopHint

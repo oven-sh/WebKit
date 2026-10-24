@@ -14,7 +14,6 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTResultRules.h"
 #include "AOTTypeArena.h"
-#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -42,7 +41,6 @@ static TypeID partInside(const Program& program, TypeArena& types, TypeID narrow
     return part;
 }
 
-// What is expected of the value from here on stands on a cast that changes nothing else.
 static ValueID appendExpectation(IRBuilder& builder, ValueID result, const DeclaredType& declared)
 {
     const Program& program = builder.context().program;
@@ -59,7 +57,6 @@ static ValueID appendExpectation(IRBuilder& builder, ValueID result, const Decla
     return builder.append(WTF::move(cast));
 }
 
-// What is proven of the result says which cast is left to make. How the tail cast was resolved says whether a test may be made, and whether flow has proven that it passes.
 static ValueID appendResolvedTailCast(IRBuilder& builder, ValueID result, const TailCast& cast)
 {
     const AnalysisContext& context = builder.context();
@@ -83,7 +80,6 @@ static ValueID appendResolvedTailCast(IRBuilder& builder, ValueID result, const 
         check.setSite(cast.declared.site);
         return builder.append(WTF::move(check));
     }
-    // Flow has proven the whole type. A test would find only a part of it: none of `Arguments`, for one.
     case CastResolution::Assume: {
         TypeID assumed = typing.typeIDOf(cast.declared);
         if (context.build.validates() && resolution.castType == assumed) {
@@ -119,7 +115,6 @@ BlockID IRBuilder::splitEdge(Edge edge)
     Target original = std::exchange(split, Target { added, { }, { } });
     split.proofs = WTF::move(original.proofs);
 
-    // The parameter of the old target joins what every edge into it passes. This edge alone enters the added block.
     for (uint32_t resultIndex = 0; resultIndex < numberOfResults; ++resultIndex) {
         const Value& result = m_function.at(m_function.at(original.block).parameters[firstResult + resultIndex]);
         Value parameter(Opcode::Parameter);
@@ -138,11 +133,6 @@ BlockID IRBuilder::splitEdge(Edge edge)
     jump.setOrigin(origin);
     didChangeControlFlow(singleElementSpan(edge.from));
     return added;
-}
-
-BlockID IRBuilder::splitBlock(ProgramPoint point)
-{
-    return splitBlock(point.block, singleElementSpan(point.index)).first();
 }
 
 Vector<BlockID> IRBuilder::splitBlock(BlockID block, std::span<const uint32_t> ascendingIndexes)
@@ -248,7 +238,6 @@ void IRBuilder::demoteReturnCall(BlockID block)
     RELEASE_ASSERT(terminator.kind == TerminatorKind::ReturnCall && block != m_block && m_insertions.isEmpty());
 
     ValueID result = terminator.callOperand();
-    // SiteExpansion returns the converted result of a call that it has marked itself.
     if (FlagMask::isDemotedTailCall(m_function.at(result).opcode))
         m_function.edit(result, ValueEdit::Definition).setIsDemotedTailCall(true);
     Vector<TailCast, 2> casts;

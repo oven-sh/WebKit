@@ -7,32 +7,26 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 fields=[{key="x" declared={type=number}}]
 layout L1 fields=[{key="x" declared={type=number}}]
 function f0 name="badNarrowerRange" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     v1 = Upcast v0 castType=i32
     Return
 }
 function f1 name="badOnePartOutside" parameters=[{type=number|string}] results=[{type=undefined}] {
-  b0(v0: number|string):
     v1 = Upcast v0 castType=undefined|number
     Return
 }
 function f2 name="badDisjoint" parameters=[{type=string}] results=[{type=undefined}] {
-  b0(v0: string):
     v1 = Upcast v0 castType=number
     Unreachable
 }
 function f3 name="badSmallerLayoutSet" parameters=[{type=L0|L1}] results=[{type=undefined}] {
-  b0(v0: L0|L1):
     v1 = Upcast v0 castType=L0
     Return
 }
 function f4 name="badObjectToLayout" parameters=[{type=object}] results=[{type=undefined}] {
-  b0(v0: object):
     v1 = Upcast v0 castType=L0
     Return
 }
 function f5 name="good" parameters=[{type=i32}, {type=L0}] results=[{type=undefined}] {
-  b0(v0: i32, v1: L0):
     v2 = Upcast v0 castType=number
     v3 = Upcast v0 castType=i32
     v4 = Upcast v1 castType=L0|L1

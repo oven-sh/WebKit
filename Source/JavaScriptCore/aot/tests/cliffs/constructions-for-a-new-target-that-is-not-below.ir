@@ -18,7 +18,6 @@ layout L2 kind=Instance name="Other" module=m0 constructor=f3 fields=[{key="a" d
 data d0 root=Array{contents=anything} module=m0
 module m0 path="/$bunfs/root/main" displayPath="main.js" body=f0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = FinishClass v1 layout=L0
@@ -46,7 +45,6 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     Return v23
 }
 function f1 name="Made" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
@@ -55,7 +53,6 @@ function f1 name="Made" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasE
     Return v3
 }
 function f2 name="Given" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L1
     v2 = NewObject v1 layout=L1
     v3 = Convert v2 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
@@ -64,7 +61,6 @@ function f2 name="Given" module=m0 kind=BaseConstructor flags=[HasNewTarget, Has
     Return v3
 }
 function f3 name="Other" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L2
     v2 = NewObject v1 layout=L2
     v3 = Convert v2 declared={type=L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType

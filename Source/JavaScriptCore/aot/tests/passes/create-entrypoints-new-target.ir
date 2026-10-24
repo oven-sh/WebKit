@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js"
 variable g0 name="callable" module=m0 declared={type=anything} initialization=Function function=f0
 function f0 name="callable" flags=[HasThis, HasNewTarget] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Return
 }
 # CHECK: function [[construct]] name="callable" module=m0 role=GenericEntrypoint flags=[HasThis, HasNewTarget]{{*}}capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f0 parameter=1} creator=Entrypoint{target=f0 arguments=Registers takesNewTarget=true} {

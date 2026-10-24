@@ -24,7 +24,6 @@ FlowOwnListing exportListingOf(const Program& program, ModuleID id)
         return FlowOwnListing::MayHaveOthers;
     }
 
-    // The loader takes the names from what a CommonJS file exports once that file has run.
     if (module.exportRule != SyntheticExportRule::None)
         return FlowOwnListing::MayHaveOthers;
     bool hasDynamicStarExport = module.requests.containsIf([](const ModuleRequest& request) {

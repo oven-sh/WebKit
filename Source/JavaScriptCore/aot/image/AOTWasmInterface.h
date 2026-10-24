@@ -64,22 +64,27 @@ enum class ImageCodeOperation : uint32_t {
 #undef DECLARE_OPERATION
 };
 
+#define FOR_EACH_WASM_IMAGE_DECLINE_REASON(macro) \
+    macro(UnsupportedCPU) \
+    macro(InvalidModule) \
+    macro(NoFunctions) \
+    macro(HasGCTypes) \
+    macro(CodeTooLarge) \
+    macro(UsesExceptions) \
+    macro(UsesTailCalls) \
+    macro(TestsReferenceTypes) \
+    macro(CallsUnlistedOperation) \
+    macro(NamesTypeOfOtherModule) \
+    macro(SavesVectorRegister) \
+    macro(SavedRegisterOrder) \
+    macro(ProcessAddressInCode) \
+    macro(CodeGeneratorFailed)
+
 enum class ImageDeclineReason : uint8_t {
     None,
-    UnsupportedCPU,
-    InvalidModule,
-    NoFunctions,
-    HasGCTypes,
-    CodeTooLarge,
-    UsesExceptions,
-    UsesTailCalls,
-    TestsReferenceTypes,
-    CallsUnlistedOperation,
-    NamesTypeOfOtherModule,
-    SavesVectorRegister,
-    SavedRegisterOrder,
-    ProcessAddressInCode,
-    CodeGeneratorFailed,
+#define DECLARE_REASON(reason) reason,
+    FOR_EACH_WASM_IMAGE_DECLINE_REASON(DECLARE_REASON)
+#undef DECLARE_REASON
 };
 
 enum class InterpreterFallbackReason : uint8_t {

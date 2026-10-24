@@ -240,18 +240,16 @@ struct CapacityPlanner {
 
     Vector<CapacityPlan, 4> collectPlans()
     {
-        auto isCandidate = [&](const Value& value) {
-            return value.opcode == Opcode::NewArray && value.holes().empty() && !value.capacityOperand()
-                && value.elementsOperands().size() <= std::min(context.limit(LimitID::MaxInlineArrayLiteralLength), context.limit(LimitID::MaxArrayLiteralBatch));
-        };
         Vector<ValueID, 8> candidates;
         bool hasAppend = false;
         for (BlockID block : analyses.cfg().reversePostOrder()) {
             for (ValueID id : function.at(block).values) {
-                if (isCandidate(function.at(id)))
+                const Value& value = function.at(id);
+                if (value.opcode == Opcode::NewArray && value.holes().empty() && !value.capacityOperand()
+                    && value.elementsOperands().size() <= std::min(context.limit(LimitID::MaxInlineArrayLiteralLength), context.limit(LimitID::MaxArrayLiteralBatch)))
                     candidates.append(id);
                 else
-                    hasAppend = hasAppend || appendKindOf(function.at(id));
+                    hasAppend = hasAppend || appendKindOf(value);
             }
         }
         Vector<CapacityPlan, 4> plans;
@@ -305,8 +303,12 @@ struct CapacityPlanner {
                 bool alwaysRuns = chain.get(site.block.index()) && (site.block != point.block || useLists.locationOf(site.value).index >= point.index);
                 if (alwaysRuns ? site.kind == AppendKind::StoreAtIndex : site.kind != AppendKind::Elements)
                     return std::nullopt;
-                if (site.kind == AppendKind::List && (!canMeasureListAppendedBy(function.at(site.value), point) || !result.tryAdd({ CapacityTermKind::Integer, site.value })))
-                    return std::nullopt;
+                if (site.kind == AppendKind::List) {
+                    const Value& append = function.at(site.value);
+                    RELEASE_ASSERT(append.opcode == Opcode::AppendElements);
+                    if (!analyses.dominates(append.sourceOperand(), point) || !holdsAt(append.guardOperand(), point) || !result.tryAdd({ CapacityTermKind::Integer, site.value }))
+                        return std::nullopt;
+                }
                 (alwaysRuns ? result.constant : numberOfConditionalElements) += site.count;
             } else if (!isInOtherCycle && loop && likelyOuterLoopOf(*loop) == loopOfLiteral) {
                 if (site.kind == AppendKind::List)
@@ -333,12 +335,6 @@ struct CapacityPlanner {
                 result.repeatedChecks.append(term);
         });
         return result;
-    }
-
-    bool canMeasureListAppendedBy(const Value& append, ProgramPoint point)
-    {
-        RELEASE_ASSERT(append.opcode == Opcode::AppendElements);
-        return analyses.dominates(append.sourceOperand(), point) && holdsAt(append.guardOperand(), point);
     }
 
     std::optional<AppendKind> appendKindOf(const Value& value) const
@@ -1166,8 +1162,6 @@ static unsigned chooseStorageOfConstructedArrays(FunctionPassContext& context)
     return numberOfChangedAllocations;
 }
 
-static constexpr uint32_t indexOfNotTakenTarget = 1;
-
 static constexpr Effects effectsOfConversion = declaredBoundOf(Opcode::ConvertToDoubleStorage);
 
 static constexpr Effects effectsOnConvertedArray = [] {
@@ -1282,7 +1276,7 @@ static Vector<FailedStorageTest, 4> collectFailedTestsForDoubleStorage(FunctionP
         ValueID copied = findCopiedArrayToConvert(context, array);
         if (copied && !summaryAllowsConversion(context, *summary, functionMaySuspend, copied))
             copied = { };
-        failedTests.append(FailedStorageTest { Edge { block, indexOfNotTakenTarget }, array, test->origin(), copied });
+        failedTests.append(FailedStorageTest { Edge { block, 1 }, array, test->origin(), copied });
     }
     return failedTests;
 }

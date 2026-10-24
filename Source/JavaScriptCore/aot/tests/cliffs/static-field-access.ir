@@ -23,7 +23,6 @@ variable g4 module=m0 declared={type=number flags=[IsExpected]} owner=L0
 variable g5 module=m0 declared={type=string flags=[IsExpected]} owner=L0
 variable g6 module=m0 declared={type=number flags=[IsExpected]} owner=L1
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = NewClosure function=f2
@@ -45,18 +44,15 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v18 = PropGet v17 key="print" [isFreeName]
     v19 = Call v18, -, v14, v16
     Return
-}
-# CHECK-LABEL: function f0 name="main"
 # CHECK: = GetModuleVariable variable=g5
 # CHECK-NOT: key="label"
+}
 function f1 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2
 }
 function f2 name="next" kind=Method results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g2
     v1 = CheckInitialized v0 name="Counter"
     v2 = PropGet v1 key="count"
@@ -65,27 +61,23 @@ function f2 name="next" kind=Method results=[{type=anything}] {
     PropSet v1, v4 key="count"
     v6 = PropGet v1 key="count"
     Return v6
-}
-# CHECK-LABEL: function f2 name="next"
 # CHECK: [[before]]: i32 = GetModuleVariable variable=g4
 # CHECK: PutModuleVariable [[sum]] variable=g4
 # CHECK: = GetModuleVariable variable=g4
 # CHECK-NOT: key="count"
+}
 function f3 name="initializeCounter" kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=function} results=[{type=anything}] {
-  b0(v0: function):
     v1 = Integer integer=0
     PropDefine v0, v1 key="count"
     v3 = String string="c"
     PropDefine v0, v3 key="label"
     v5 = Undefined
     Return v5
-}
-# CHECK-LABEL: function f3 name="initializeCounter"
 # CHECK: PutModuleVariable v1 variable=g4
 # CHECK: PutModuleVariable v3 variable=g5
 # CHECK-NOT: PropDefine
+}
 function f4 name="bump" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g1
     v1 = CheckInitialized v0 name="Counter"
     v2 = PropGet v1 key="next"
@@ -97,27 +89,23 @@ function f4 name="bump" results=[{type=anything}] {
     v8 = BitOr v6, v7
     v9 = BitOr v8, v3
     Return v9
-}
-# CHECK-LABEL: function f4 name="bump"
 # CHECK: = GetModuleVariable variable=g6
 # CHECK: = GetModuleVariable variable=g4
 # CHECK-NOT: PropGet
+}
 function f5 name="Child" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=object}] {
-  b0(v0: function, v1: anything):
     v2 = GetSuperBase v0
     v3 = SuperConstruct v2, v1 layout=L1
     Return v3
 }
 function f6 name="initializeChild" kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=function} results=[{type=anything}] {
-  b0(v0: function):
     v1 = PropGet v0 key="count"
     v2 = Integer integer=1
     v3 = BitOr v1, v2
     PropDefine v0, v3 key="extra"
     v5 = Undefined
     Return v5
-}
-# CHECK-LABEL: function f6 name="initializeChild"
 # CHECK: = GetModuleVariable variable=g4
 # CHECK: PutModuleVariable [[extra]] variable=g6
 # CHECK-NOT: key=
+}

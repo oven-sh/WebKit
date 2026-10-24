@@ -11,7 +11,6 @@ variable g1 name="made" module=m0 declared={type=Array|absent flags=[IsExpected]
 data d0 root=Array{contents=anything} module=m0
 data d1 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}]} module=m0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = ResolveHeritage v0
@@ -36,7 +35,6 @@ function f1 name="Legacy" module=m0 flags=[HasThis] length=1 thisType={type=L0 f
     Return v3
 }
 function f2 name="each" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Integer
     Jump -> next b1(v2)
   b1(v3):
@@ -76,7 +74,6 @@ function f2 name="each" module=m0 length=2 thisType={type=anything} parameters=[
 # CHECK-NOT: IsPristine
 # CHECK-LABEL: function f3 name="BelowLegacy"
 function f3 name="BelowLegacy" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object}] {
-  b0(v0: function, v1: anything, v2: anything):
     v3 = GetSuperBase v0
     v4 = SuperConstruct v3, v1, v2 layout=L1
     v5 = Integer integer=1
@@ -85,7 +82,6 @@ function f3 name="BelowLegacy" module=m0 kind=DerivedConstructor flags=[HasNewTa
     Return v4
 }
 function f4 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetModuleVariable variable=g1
     v2 = CheckInitialized v1 name="made"
     v3 = PropGet v2 key="push"

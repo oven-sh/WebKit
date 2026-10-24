@@ -8,7 +8,6 @@
 module m0 path="main.js" displayPath="main.js" body=f3
 entry module=m0
 function f0 name="each" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = TypeTest v0 testedType=function
     Branch v3 -> taken b1(| 0), notTaken b2()
   b1(v4: function):
@@ -23,7 +22,6 @@ function f0 name="each" parameters=[{type=anything}, {type=anything}, {type=anyt
 }
 
 function f1 name="first" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=Boolean
     v2 = Builtin builtin=MathAbs
     v3 = Builtin builtin=Math
@@ -38,7 +36,6 @@ function f1 name="first" parameters=[{type=anything}] results=[{type=anything}] 
 # CHECK-NEXT: v6{{*}}= CallDirect v3, v0, v0 function=f0
 
 function f2 name="second" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=Boolean
     v2 = CallDirect v1, v0, v0 function=f0
     Return v2
@@ -47,7 +44,6 @@ function f2 name="second" parameters=[{type=anything}] results=[{type=anything}]
 # CHECK: v2{{*}}= CallDirect v1, v0, v0 function=[[forBoolean]]
 
 function f3 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Undefined
     v1 = CallDirect v0 function=f1 [isNeverInlined]
     v2 = CallDirect v0 function=f2 [isNeverInlined]

@@ -12,8 +12,7 @@ function f0 name="mulOfExpectedNumbers" parameters=[{type=number flags=[IsExpect
   b0(v0: anything ~ number, v1: anything ~ number):
     v2 = Mul v0, v1
     Return v2
-}
-# CHECK-LABEL: function f0 name="mulOfExpectedNumbers"
 # CHECK-NEXT: b0(v0: anything ~ number, v1: anything ~ number):
 # CHECK-NEXT: v2:{{*}}= Mul v0, v1
 # CHECK-NEXT: Return v2
+}

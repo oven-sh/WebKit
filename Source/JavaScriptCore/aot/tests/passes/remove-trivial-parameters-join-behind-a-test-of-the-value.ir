@@ -7,7 +7,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="narrowedOnOneEdge" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=undefined|null|string
     Branch v1 -> taken b1(| 0), notTaken b4()
   b1(v2):
@@ -20,17 +19,15 @@ function f0 name="narrowedOnOneEdge" parameters=[{type=anything}] results=[{type
     Return v6
   b4():
     Return v0
-}
-# CHECK-LABEL: function f0 name="narrowedOnOneEdge"
 # CHECK: b1(v2: undefined|null|string):
 # CHECK: Branch v4 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
 # CHECK-NEXT: Jump -> next b3()
 # CHECK-NEXT: b3():
 # CHECK-NEXT: Return v2
+}
 
 function f1 name="chainOfJoins" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=undefined|null|string
     Branch v1 -> taken b1(| 0), notTaken b6()
   b1(v2):
@@ -49,16 +46,14 @@ function f1 name="chainOfJoins" parameters=[{type=anything}] results=[{type=anyt
     Return v10
   b6():
     Return v0
-}
-# CHECK-LABEL: function f1 name="chainOfJoins"
 # CHECK: = StrictEq v2, v3
 # CHECK: = StrictEq v2, v7
 # CHECK-NEXT: Branch v8 -> taken b4(), notTaken b5()
 # CHECK: b5():
 # CHECK-NEXT: Return v2
+}
 
 function f2 name="narrowedTwiceOnBothEdges" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=undefined|number|string
     Branch v1 -> taken b1(| 0), notTaken b6()
   b1(v2):
@@ -75,15 +70,13 @@ function f2 name="narrowedTwiceOnBothEdges" parameters=[{type=anything}] results
     Return v8
   b6():
     Return v0
-}
-# CHECK-LABEL: function f2 name="narrowedTwiceOnBothEdges"
 # CHECK: b2(v4: undefined|string):
 # CHECK: Branch v5 -> taken b3(), notTaken b4()
 # CHECK: b5():
 # CHECK-NEXT: Return v4
+}
 
 function f3 name="carriedAroundALoop" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = TypeTest v0 testedType=undefined|null|string
     Branch v2 -> taken b1(| 0), notTaken b5()
   b1(v3):
@@ -99,15 +92,13 @@ function f3 name="carriedAroundALoop" parameters=[{type=anything}, {type=boolean
     Return v4
   b5():
     Return v0
-}
-# CHECK-LABEL: function f3 name="carriedAroundALoop"
 # CHECK: b2():
 # CHECK: = StrictEq v3, v6
 # CHECK: b4():
 # CHECK-NEXT: Return v3
+}
 
 function f4 name="joinKnowsMoreThanWhatTheEdgesShare" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = TypeTest v0 testedType=undefined|number|string
     Branch v1 -> taken b1(| 0), notTaken b6()
   b1(v2):
@@ -124,15 +115,13 @@ function f4 name="joinKnowsMoreThanWhatTheEdgesShare" parameters=[{type=anything
     Return v8
   b6():
     Return v0
-}
-# CHECK-LABEL: function f4 name="joinKnowsMoreThanWhatTheEdgesShare"
 # CHECK: Jump -> next b5(v4)
 # CHECK: Jump -> next b5(v7)
 # CHECK-NEXT: b5(v8: number|string):
 # CHECK-NEXT: Return v8
+}
 
 function f5 name="joinWithAnotherValue" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = TypeTest v0 testedType=string
     Branch v2 -> taken b1(| 0), notTaken b5()
   b1(v3):
@@ -148,9 +137,8 @@ function f5 name="joinWithAnotherValue" parameters=[{type=anything}, {type=anyth
     Return v9
   b5():
     Return v0
-}
-# CHECK-LABEL: function f5 name="joinWithAnotherValue"
 # CHECK: Branch v7 -> taken b3(| 0), notTaken b4(v5)
 # CHECK: Jump -> next b4(v8)
 # CHECK-NEXT: b4(v9: string):
 # CHECK-NEXT: Return v9
+}

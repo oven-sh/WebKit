@@ -29,7 +29,6 @@ layout L0 fields=[{key="plain" declared={type=anything} flags=[IsRequired]}]
 variable g0 name="held" module=m0 declared={type=anything} flags=[IsImmutable]
 variable g1 name="spare" module=m0 declared={type=anything} flags=[IsImmutable]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClosure function=f2
     v2 = NewClosure function=f3
@@ -45,7 +44,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="make" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     v2 = NewObject -, v1 layout=L0 fields=[0]
     v3 = NewClosure v0 function=f4
@@ -54,18 +52,15 @@ function f1 name="make" parameters=[{type=anything}] results=[{type=anything}] {
     Return v5
 }
 function f2 name="read" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = PropGet v0 key="doubled"
     Return v1
 }
 function f3 name="hand" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     Return v0
 }
 function f4 name="doubled" kind=Getter captures=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=2
     v2 = Mul v0, v1
     Return v2

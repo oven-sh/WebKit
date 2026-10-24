@@ -12,7 +12,6 @@ layout L0 kind=Instance name="Handlers" fields=[{key="a" declared={type=anything
 layout L1 kind=Instance name="ManyHandlers" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}, {key="c" declared={type=anything}}, {key="d" declared={type=anything}}, {key="e" declared={type=anything}}, {key="f" declared={type=anything}}, {key="g" declared={type=anything}}, {key="h" declared={type=anything}}]
 
 function f0 name="initialize" kind=Initializer flags=[HasThis] thisType={type=L0} results=[{type=undefined}] {
-  b0(v0: L0):
     v1 = NewClosure v0 function=f3
     PropDefine v0, v1 key="a"
     v3 = NewClosure v0 function=f3
@@ -26,32 +25,26 @@ function f0 name="initialize" kind=Initializer flags=[HasThis] thisType={type=L0
 }
 
 function f1 name="allocates" results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L0
     v1 = CallDirect v0 function=f0
     Return v0
-}
-# CHECK-LABEL: function f1 name="allocates"
 # CHECK: = NewObject layout=L0
 # CHECK-NOT: CallDirect
 # CHECK: PropDefine {{*}}key="d"
 # CHECK-NOT: CallDirect
+}
 
 function f2 name="receives" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = CallDirect v0 function=f0
     Return v0
-}
-# CHECK-LABEL: function f2 name="receives"
 # CHECK: = CallDirect v0 function=f0
+}
 
 function f3 name="handler" kind=Arrow captures=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     Return
 }
 
 function f4 name="initializeMany" kind=Initializer flags=[HasThis] thisType={type=L1} results=[{type=undefined}] {
-  b0(v0: L1):
     v1 = NewClosure v0 function=f8
     PropDefine v0, v1 key="a"
     v3 = NewClosure v0 function=f8
@@ -73,19 +66,16 @@ function f4 name="initializeMany" kind=Initializer flags=[HasThis] thisType={typ
 }
 
 function f5 name="allocatesMany" results=[{type=anything}] {
-  b0():
     v0 = NewObject layout=L1
     v1 = CallDirect v0 function=f4
     Return v0
-}
-# CHECK-LABEL: function f5 name="allocatesMany"
 # CHECK: = NewObject layout=L1
 # CHECK-NOT: CallDirect
 # CHECK: PropDefine {{*}}key="h"
 # CHECK-NOT: CallDirect
+}
 
 function f6 name="storesClosuresOverAnotherObject" parameters=[{type=L1}, {type=object}] results=[{type=undefined}] {
-  b0(v0: L1, v1: object):
     v2 = NewClosure v1 function=f9
     PropDefine v0, v2 key="a"
     v4 = NewClosure v1 function=f9
@@ -107,20 +97,16 @@ function f6 name="storesClosuresOverAnotherObject" parameters=[{type=L1}, {type=
 }
 
 function f7 name="allocatesForClosuresOverAnotherObject" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = NewObject layout=L1
     v2 = CallDirect v1, v0 function=f6
     Return v1
-}
-# CHECK-LABEL: function f7 name="allocatesForClosuresOverAnotherObject"
 # CHECK: = CallDirect v1, v0 function=f6
+}
 
 function f8 name="handlerOfMany" kind=Arrow captures=[{type=L1}] results=[{type=anything}] {
-  b0(v0: L1):
     Return
 }
 
 function f9 name="handlerOverAnotherObject" kind=Arrow captures=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     Return
 }

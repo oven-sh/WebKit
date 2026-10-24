@@ -22,11 +22,9 @@ variable g4 module=m1 declared={type=anything} owner=L0
 variable g5 module=m1 declared={type=anything} owner=L1
 variable g6 name="use" module=m2 declared={type=function} initialization=Function function=f9 flags=[IsImmutable]
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }
 function f1 name="registry" module=m1 kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f3
     v1 = NewClass v0 layout=L0
     v2 = NewClosure function=f4
@@ -46,28 +44,23 @@ function f1 name="registry" module=m1 kind=Module results=[{type=anything}] {
     Return
 }
 function f2 name="partner" module=m2 kind=Module results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g6
     v1 = Call v0
     Return
 }
 function f3 name="Registry" module=m1 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
     Return v2
 }
 function f4 name="get" module=m1 kind=Method results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g1
     v1 = CheckInitialized v0 name="Registry"
     v2 = PropGet v1 key="instance"
     Return v2
-}
-# CHECK-LABEL: function f4 name="get"
 # CHECK: = GetModuleVariable variable=g4
+}
 function f5 name="initializeRegistry" module=m1 kind=Initializer flags=[HasThis] thisType={type=function} results=[{type=anything}] {
-  b0(v0: function):
     v1 = GetModuleVariable variable=g1
     v2 = CheckInitialized v1 name="Registry"
     v3 = Construct v2
@@ -75,7 +68,6 @@ function f5 name="initializeRegistry" module=m1 kind=Initializer flags=[HasThis]
     Return
 }
 function f6 name="Eager" module=m1 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L1
     v2 = NewObject v1 layout=L1
     v3 = GetModuleVariable variable=g3
@@ -85,16 +77,13 @@ function f6 name="Eager" module=m1 kind=BaseConstructor flags=[HasNewTarget] res
     Return v2
 }
 function f7 name="get" module=m1 kind=Method results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g3
     v1 = CheckInitialized v0 name="Eager"
     v2 = PropGet v1 key="instance"
     Return v2
-}
-# CHECK-LABEL: function f7 name="get"
 # CHECK: = PropGet [[eager]] key="instance"
+}
 function f8 name="initializeEager" module=m1 kind=Initializer flags=[HasThis] thisType={type=function} results=[{type=anything}] {
-  b0(v0: function):
     v1 = GetModuleVariable variable=g3
     v2 = CheckInitialized v1 name="Eager"
     v3 = Construct v2
@@ -102,7 +91,6 @@ function f8 name="initializeEager" module=m1 kind=Initializer flags=[HasThis] th
     Return
 }
 function f9 name="use" module=m2 results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = CheckInitialized v0 name="Registry"
     v2 = PropGet v1 key="instance"
@@ -113,6 +101,5 @@ function f9 name="use" module=m2 results=[{type=anything}] {
     v7 = PropGet v6 key="get"
     v8 = Call v7, v6 calleeKey="get"
     Return v4
-}
-# CHECK-LABEL: function f9 name="use"
 # CHECK: = GetModuleVariable variable=g4
+}

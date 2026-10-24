@@ -48,8 +48,6 @@ private:
     static_assert(std::is_trivially_copyable_v<Step> && sizeof(Step) == 8);
 
     void append(ModuleID, StepKind, bool resolvesNames = false);
-    template<typename ShouldEnterFunctor, typename VisitLeafFunctor, typename DidLeaveFunctor>
-    bool replayPlan(ThrowScope&, const ShouldEnterFunctor&, const VisitLeafFunctor&, const DidLeaveFunctor&) const;
 
     ModuleID m_root;
     std::span<const LinkPlanStepData> m_plan;
@@ -58,26 +56,21 @@ private:
 };
 
 template<typename ShouldEnterFunctor, typename VisitLeafFunctor, typename DidLeaveFunctor>
-ALWAYS_INLINE bool ModuleLinkWalk::replayPlan(ThrowScope& scope, const ShouldEnterFunctor& shouldEnter, const VisitLeafFunctor& visitLeaf, const DidLeaveFunctor& didLeave) const
-{
-    if (!shouldEnter(m_root))
-        return false;
-    for (const LinkPlanStepData& step : m_plan) {
-        if (step.resolvesNames) {
-            didLeave(step.targetModule(), true);
-            continue;
-        }
-        visitLeaf(Leaf::CapturesExports, step.targetModule());
-        RETURN_IF_EXCEPTION(scope, true);
-    }
-    return true;
-}
-
-template<typename ShouldEnterFunctor, typename VisitLeafFunctor, typename DidLeaveFunctor>
 ALWAYS_INLINE bool ModuleLinkWalk::replay(ThrowScope& scope, const ShouldEnterFunctor& shouldEnter, const VisitLeafFunctor& visitLeaf, const DidLeaveFunctor& didLeave) const
 {
-    if (hasPlan())
-        return replayPlan(scope, shouldEnter, visitLeaf, didLeave);
+    if (hasPlan()) {
+        if (!shouldEnter(m_root))
+            return false;
+        for (const LinkPlanStepData& step : m_plan) {
+            if (step.resolvesNames) {
+                didLeave(step.targetModule(), true);
+                continue;
+            }
+            visitLeaf(Leaf::CapturesExports, step.targetModule());
+            RETURN_IF_EXCEPTION(scope, true);
+        }
+        return true;
+    }
 
     std::span<const Step> steps = m_steps.span();
     for (size_t index = 0; index < steps.size(); ++index) {

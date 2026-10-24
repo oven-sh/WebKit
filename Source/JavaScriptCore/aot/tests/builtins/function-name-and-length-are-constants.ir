@@ -10,7 +10,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Call v0
     v2 = PropGet v0 key="length"
@@ -51,15 +50,12 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v37 = PropGet v30 key="name"
     v38 = NewArray v2, v3, v8, v9, v15, v16, v19, v20, v22, v24, v28, v29, v36, v37 contents=anything
     Return v38
-}
-# CHECK-LABEL: function f0 name="main"
 # CHECK: [[addWithoutFlow]]: f1 = NewClosure function=f1
 # CHECK: = PropGet [[addWithoutFlow]] key="length"
 # CHECK-NEXT: = PropGet [[addWithoutFlow]] key="name"
 # CHECK: [[anonymousWithoutFlow]]: f4 = NewClosure function=f4
 # CHECK: = PropGet [[anonymousWithoutFlow]] key="length"
 # CHECK-NEXT: = PropGet [[anonymousWithoutFlow]] key="name"
-# FLOW-LABEL: function f0 name="main"
 # FLOW: [[add]]: f1 = NewClosure function=f1
 # FLOW-NOT: PropGet [[add]]
 # FLOW: 2 = Integer integer=2
@@ -82,21 +78,18 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # FLOW: [[keyed]]: f7 = NewClosure function=f7
 # FLOW: = PropGet [[keyed]] key="length"
 # FLOW: = PropGet [[keyed]] key="name"
+}
 
 function f1 name="add" length=2 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Return v0
 }
 function f2 name="labelled" length=1 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 function f3 name="reparented" length=1 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 function f4 kind=Arrow length=1 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 
@@ -106,14 +99,11 @@ function f5 name="readsOfExpectedFunction" length=1 parameters=[{type=f1 flags=[
     v2 = PropGet v0 key="name"
     v3 = NewArray v1, v2 contents=anything
     Return v3
-}
 # ResolveBuiltins places no test.
-# FLOW-LABEL: function f5 name="readsOfExpectedFunction"
 # FLOW-NOT: TypeTest
 # FLOW: = PropGet {{*}} key="length"
 # FLOW: = PropGet {{*}} key="name"
 # FLOW-NOT: TypeTest
-# PLACED-LABEL: function f5 name="readsOfExpectedFunction"
 # PLACED-NOT: IsPristine
 # PLACED: = TypeTest {{*}} testedType=f1
 # PLACED-NOT: IsPristine
@@ -124,12 +114,11 @@ function f5 name="readsOfExpectedFunction" length=1 parameters=[{type=f1 flags=[
 # PLACED: = PropGet {{*}} key="length"
 # PLACED: = PropGet {{*}} key="name"
 # PLACED-NOT: IsPristine
+}
 
 function f6 name="shortened" length=1 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 function f7 name="keyed" length=1 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }

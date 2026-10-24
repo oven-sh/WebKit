@@ -27,72 +27,27 @@ using Saves = OperationCall::Saves;
 
 static StubSignature tableComparisonSignature(StubRegister subject)
 {
-    StubSignature signature;
-    signature.addOperand(gprOf(subject));
+    StubSignature signature = StubSignature::withGPRResult({ gprOf(subject) });
     signature.immediate = gprOf(stubImmediateRegister);
-    signature.result = StubResult::GPR;
-    signature.firstResult = gprOf(StubRegister::R0);
     return signature;
 }
 
 static StubSignature registerComparisonSignature()
 {
-    StubSignature signature;
-    signature.addOperand(gprOf(comparedSubjectRegister));
-    signature.addOperand(gprOf(comparedTextRegister));
+    StubSignature signature = StubSignature::withoutResult({ gprOf(comparedSubjectRegister), gprOf(comparedTextRegister) });
     signature.result = StubResult::Flags;
     signature.trueCondition = MacroAssembler::Zero;
     return signature;
 }
 
-static StubSignature wordConversionSignature()
-{
-    StubSignature signature;
-    signature.addOperand(gprOf(StubRegister::T11));
-    signature.result = StubResult::GPR;
-    signature.firstResult = gprOf(StubRegister::R0);
-    return signature;
-}
-
-StubSignature signatureOfStringEqualsLiteral(StubKey)
-{
-    return tableComparisonSignature(comparedSubjectRegister);
-}
-
-StubSignature signatureOfValueEqualsLiteral(StubKey)
-{
-    return tableComparisonSignature(comparedSubjectRegister);
-}
-
-StubSignature signatureOfStringEqualsLiteralOfLength(StubKey)
-{
-    return registerComparisonSignature();
-}
-
-StubSignature signatureOfValueEqualsLiteralOfLength(StubKey)
-{
-    return registerComparisonSignature();
-}
-
-StubSignature signatureOfLiteralStringToString(StubKey)
-{
-    return wordConversionSignature();
-}
-
-StubSignature signatureOfToLiteralString(StubKey)
-{
-    return wordConversionSignature();
-}
-
-StubSignature signatureOfShortStringOfValue(StubKey)
-{
-    return wordConversionSignature();
-}
-
-StubSignature signatureOfLooseEqualsLiteral(StubKey)
-{
-    return tableComparisonSignature(StubRegister::R0);
-}
+StubSignature signatureOfStringEqualsLiteral(StubKey) { return tableComparisonSignature(comparedSubjectRegister); }
+StubSignature signatureOfValueEqualsLiteral(StubKey) { return tableComparisonSignature(comparedSubjectRegister); }
+StubSignature signatureOfLooseEqualsLiteral(StubKey) { return tableComparisonSignature(StubRegister::R0); }
+StubSignature signatureOfStringEqualsLiteralOfLength(StubKey) { return registerComparisonSignature(); }
+StubSignature signatureOfValueEqualsLiteralOfLength(StubKey) { return registerComparisonSignature(); }
+StubSignature signatureOfLiteralStringToString(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T11) }); }
+StubSignature signatureOfToLiteralString(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T11) }); }
+StubSignature signatureOfShortStringOfValue(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T11) }); }
 
 void generateStringEqualsLiteral(StubAssembler& jit)
 {
@@ -122,12 +77,12 @@ void generateStringEqualsLiteral(StubAssembler& jit)
     jit.loadPtr(Address(subject, JSString::offsetOfValue()), fiber);
     Jump isRope = jit.branchIfRopeStringImpl(fiber);
     Jump isSameImpl;
+    const GPRReg number = header;
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.stringWords)), number);
+    jit.load32(BaseIndex(number, stringIndex, CCallHelpers::TimesFour), number);
+    hasNoHeader.append(jit.branchTest32(CCallHelpers::NonZero, number, TrustedImm32(ImageString::hasNoHeaderFlag)));
+    jit.and32(TrustedImm32(ImageString::hashMask), number);
     if (jit.options().isPositionIndependent) {
-        const GPRReg number = header;
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.stringWords)), number);
-        jit.load32(BaseIndex(number, stringIndex, CCallHelpers::TimesFour), number);
-        hasNoHeader.append(jit.branchTest32(CCallHelpers::NonZero, number, TrustedImm32(ImageString::hasNoHeaderFlag)));
-        jit.and32(TrustedImm32(ImageString::hashMask), number);
         jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.stringRecords)), length);
         jit.load64(BaseIndex(length, number, CCallHelpers::TimesEight), length);
         hasNoHeader.append(jit.branchTest64(CCallHelpers::Zero, length));
@@ -148,11 +103,7 @@ void generateStringEqualsLiteral(StubAssembler& jit)
         hasNoHeader.append(jit.jump());
     } else {
         // The header of the text is a StringImpl: a string made of the text has that very impl, and most others have another length.
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.stringWords)), header);
-        jit.load32(BaseIndex(header, stringIndex, CCallHelpers::TimesFour), header);
-        hasNoHeader.append(jit.branchTest32(CCallHelpers::NonZero, header, TrustedImm32(ImageString::hasNoHeaderFlag)));
-        jit.and32(TrustedImm32(ImageString::hashMask), header);
-        jit.getEffectiveAddress(BaseIndex(header, header, CCallHelpers::TimesTwo), header);
+        jit.getEffectiveAddress(BaseIndex(number, number, CCallHelpers::TimesTwo), header);
         jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.programIdentifiers)), headers);
         jit.getEffectiveAddress(BaseIndex(headers, header, CCallHelpers::TimesEight), header);
         isSameImpl = jit.branchPtr(CCallHelpers::Equal, fiber, header);
@@ -166,12 +117,10 @@ void generateStringEqualsLiteral(StubAssembler& jit)
     }
 
     isSameImpl.link(&jit);
-    jit.move(TrustedImm32(1), result);
-    jit.returnToCaller();
+    returnResult(jit, TrustedImm32(1));
 
     isNotEqual.link(&jit);
-    jit.move(TrustedImm32(0), result);
-    jit.returnToCaller();
+    returnResult(jit, TrustedImm32(0));
 
     hasNoHeader.link(&jit);
     jit.move(fiber, implArgument);
@@ -318,25 +267,17 @@ void generateLiteralStringToString(StubAssembler& jit)
 
 void findLiteralStringWord(StubAssembler& jit, const LiteralStringProbeRegisters& registers, JumpList& isEmpty, JumpList& isNotLiteral, JumpList& isNotCached)
 {
-    const GPRReg string = registers.string;
-    const GPRReg impl = registers.impl;
-    const GPRReg entry = registers.entry;
+    const auto [string, impl, entry, tables, maxLength] = registers;
     const GPRReg length = entry;
-    const GPRReg tables = registers.tables;
     const GPRReg cache = tables;
     const GPRReg cachedImpl = tables;
-    const GPRReg maxLength = registers.maxLength;
     RELEASE_ASSERT(noOverlap(string, impl, entry, tables, maxLength));
 
     // A string of the image has the answer in its header. (The fiber of a rope is an address outside of the image, or no address.)
     const GPRReg headers = tables;
     const GPRReg sizeOfHeaders = maxLength;
     jit.loadPtr(Address(string, JSString::offsetOfValue()), impl);
-    if (jit.options().isPositionIndependent) {
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(lazyStrings.headers)), headers);
-    } else {
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.programIdentifiers)), headers);
-    }
+    jit.loadPtr(Address(instanceGPR, jit.options().isPositionIndependent ? AOT_INSTANCE_OFFSET(lazyStrings.headers) : AOT_INSTANCE_OFFSET(image.programIdentifiers)), headers);
     jit.load32(Address(headers, OBJECT_OFFSETOF(ImageStringHeader, literalStringWord)), sizeOfHeaders);
     jit.sub64(impl, headers, entry);
     Jump isOutsideOfImage = jit.branch64(CCallHelpers::AboveOrEqual, entry, sizeOfHeaders);
@@ -389,16 +330,13 @@ void generateToLiteralString(StubAssembler& jit)
     returnsOperand.append(jit.branchIfNotCell(value));
     returnsOperand.append(jit.branchTest64(CCallHelpers::Zero, value));
     findLiteralStringWord(jit, { .string = value, .impl = impl, .entry = word, .tables = tables, .maxLength = result }, isEmpty, returnsOperand, isNotCached);
-    jit.move(word, result);
-    jit.returnToCaller();
+    returnResult(jit, word);
 
     isEmpty.link(&jit);
-    jit.move(TrustedImm32(emptyLiteralStringWord), result);
-    jit.returnToCaller();
+    returnResult(jit, TrustedImm32(emptyLiteralStringWord));
 
     returnsOperand.link(&jit);
-    jit.move(value, result);
-    jit.returnToCaller();
+    returnResult(jit, value);
 
     isNotCached.link(&jit);
     callLiteralStringOperationAndReturn(jit, Entry::operationAOTToLiteralString, value);
@@ -450,8 +388,7 @@ void generateShortStringOfValue(StubAssembler& jit)
     jit.returnToCaller();
 
     isEmpty.link(&jit);
-    jit.move(TrustedImm32(0), result);
-    jit.returnToCaller();
+    returnResult(jit, TrustedImm32(0));
 
     isRope.link(&jit);
     jit.load32(Address(value, JSRopeString::offsetOfLength()), length);
@@ -465,8 +402,7 @@ void generateShortStringOfValue(StubAssembler& jit)
     jit.jump().linkTo(hasCharacters, &jit);
 
     notShortString.link(&jit);
-    jit.move(TrustedImm64(-1), result);
-    jit.returnToCaller();
+    returnResult(jit, TrustedImm64(-1));
 
     slowCases.link(&jit);
     callLiteralStringOperationAndReturn(jit, Entry::operationAOTShortStringOfString, value);
@@ -477,7 +413,6 @@ void generateLooseEqualsLiteral(StubAssembler& jit)
     constexpr StubKey target = equalsLiteral(ComparedOperand::String);
     const GPRReg value = jit.operand(0);
     const GPRReg stringIndex = jit.immediate();
-    const GPRReg result = jit.result();
     const GPRReg type = jit.allocateScratch(StubRegister::T10);
     const GPRReg subject = jit.allocateScratch(comparedSubjectRegister);
     ASSERT(signatureOf(target).operands[0] == Reg(subject));
@@ -492,8 +427,7 @@ void generateLooseEqualsLiteral(StubAssembler& jit)
     jit.jumpToStub(target);
 
     isNotEqual.link(&jit);
-    jit.move(TrustedImm32(0), result);
-    jit.returnToCaller();
+    returnResult(jit, TrustedImm32(0));
 
     isObject.link(&jit);
     jit.callOperationAndReturn(Entry::operationAOTCompareEqToString, { .secondArgumentIn = value, .thirdArgumentIn = stringIndex });

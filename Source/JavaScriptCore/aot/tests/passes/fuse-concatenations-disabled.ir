@@ -8,13 +8,11 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="chain" parameters=[{type=string}, {type=string}, {type=string}] results=[{type=string}] {
-  b0(v0: string, v1: string, v2: string):
     v3 = Add v0, v1
     v4 = Add v3, v2
     Return v4
-}
-# CHECK-LABEL: function f0 name="chain"
 # CHECK-NEXT: b0(v0: string, v1: string, v2: string):
 # CHECK-NEXT: v3: string = Add v0, v1
 # CHECK-NEXT: v4: string = Add v3, v2
 # CHECK-NEXT: Return v4
+}

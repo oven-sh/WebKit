@@ -18,18 +18,16 @@ function f0 name="inTheLibrary" module=m1 parameters=[{type=object flags=[IsExpe
   b0(v0: anything ~ object):
     v1 = PropGet v0 key="getSnapshot"
     Return v1
-}
-# CHECK-LABEL: function f0 name="inTheLibrary"
 # CHECK: = TypeTest v0 testedType={{*}}L5
+}
 
 function f1 name="inTheApplication" module=m0 parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ object):
     v1 = PropGet v0 key="getSnapshot"
     Return v1
-}
-# CHECK-LABEL: function f1 name="inTheApplication"
 # CHECK-NOT: L5
 # CHECK: Return
+}
 
 function f2 name="Settings" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
 function f3 name="Theme" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1

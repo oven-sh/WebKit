@@ -13,15 +13,13 @@ function f0 name="over-the-limit" parameters=[{type=L0|L1|L2 flags=[IsExpected]}
   b0(v0: anything ~ L0|L1|L2):
     v1 = PropGet v0 key="x"
     Return v1
-}
-# CHECK-LABEL: function f0 name="over-the-limit"
 # CHECK-NEXT: b0(v0: anything ~ L0|L1|L2):
 # CHECK-NEXT: = PropGet v0 key="x"
+}
 function f1 name="within-the-limit" parameters=[{type=L0|L1 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ L0|L1):
     v1 = PropGet v0 key="x"
     Return v1
-}
-# CHECK-LABEL: function f1 name="within-the-limit"
 # CHECK-NEXT: b0(v0: anything ~ L0|L1):
 # CHECK-NEXT: = PropGet v0 key="x"
+}

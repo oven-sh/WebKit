@@ -19,7 +19,6 @@ layout L3 name="Same" fields=[{key="s" declared={type=anything} flags=[IsRequire
 layout L4 name="SourceForUnknown" fields=[{key="n" declared={type=anything} flags=[IsRequired]}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = Builtin builtin=ObjectAssign

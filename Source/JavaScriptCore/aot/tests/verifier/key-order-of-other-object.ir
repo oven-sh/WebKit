@@ -7,7 +7,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
 layout L1 name="Other" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
 function f0 name="goodOwnAllocation" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = JSONObjectBegin layout=L0
     v3 = JSONObjectKey v2 layout=L0 field=0
@@ -16,7 +15,6 @@ function f0 name="goodOwnAllocation" parameters=[{type=number}] results=[{type=u
     Return
 }
 function f1 name="goodThroughUpcast" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = Upcast v1 castType=object
     v3 = JSONObjectBegin layout=L0
@@ -25,7 +23,6 @@ function f1 name="goodThroughUpcast" parameters=[{type=number}] results=[{type=u
     Return
 }
 function f2 name="goodOrderThroughParameter" parameters=[{type=number}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: number, v1: boolean):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     v3 = JSONObjectBegin layout=L0
     Branch v1 -> taken b1(), notTaken b2(v3)
@@ -38,14 +35,12 @@ function f2 name="goodOrderThroughParameter" parameters=[{type=number}, {type=bo
     Return
 }
 function f3 name="badObjectIsParameter" parameters=[{type=L0}] results=[{type=undefined}] {
-  b0(v0: L0):
     v1 = JSONObjectBegin layout=L0
     v2 = Undefined
     v3 = JSONObjectFinish v1, v0, v2 layout=L0
     Return
 }
 function f4 name="badObjectOfOtherLayout" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L1 fields=[0]
     v2 = JSONObjectBegin layout=L0
     v3 = Undefined
@@ -53,7 +48,6 @@ function f4 name="badObjectOfOtherLayout" parameters=[{type=number}] results=[{t
     Return
 }
 function f5 name="badOrderBegunForOtherLayout" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = JSONObjectBegin layout=L1
     v3 = Undefined
@@ -61,7 +55,6 @@ function f5 name="badOrderBegunForOtherLayout" parameters=[{type=number}] result
     Return
 }
 function f6 name="badKeyOfOtherLayout" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = JSONObjectBegin layout=L0
     v3 = JSONObjectKey v2 layout=L1 field=0
@@ -70,7 +63,6 @@ function f6 name="badKeyOfOtherLayout" parameters=[{type=number}] results=[{type
     Return
 }
 function f7 name="badOtherLayoutOnOnePath" parameters=[{type=number}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: number, v1: boolean):
     v2 = NewObject -, v0 layout=L0 fields=[0]
     v3 = JSONObjectBegin layout=L0
     Branch v1 -> taken b1(), notTaken b2(v3)

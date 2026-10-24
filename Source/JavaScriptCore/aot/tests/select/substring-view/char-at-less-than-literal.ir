@@ -5,50 +5,43 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="char-at-less-than-literal" parameters=[{type=string}, {type=int}] results=[{type=boolean}] {
-  b0(v0: string, v1: int):
     v2 = CallBuiltin v0, v1 overload=StringPrototypeCharAt/0
     v3 = String string="a"
     v4 = Less v2, v3
     Return v4
-}
-# CHECK-LABEL: function f0 name="char-at-less-than-literal"
 # CHECK-NOT: StringPrototypeCharAt
 # CHECK-NOT: StringRangeCharacterOrEmpty
 # CHECK: [[unit0]]: int[-1, 65535] = StringRangeCodeUnitOrMinusOne v0,
 # CHECK-NEXT: [[codeUnit0]]: 97 = Integer integer=97
 # CHECK-NEXT: [[result0]]: boolean = Less [[unit0]], [[codeUnit0]]
 # CHECK-NEXT: Return [[result0]]
+}
 
 function f1 name="char-at-less-or-equal" parameters=[{type=string}, {type=int}] results=[{type=boolean}] {
-  b0(v0: string, v1: int):
     v2 = CallBuiltin v0, v1 overload=StringPrototypeCharAt/0
     v3 = String string="a"
     v4 = LessEq v2, v3
     Return v4
-}
-# CHECK-LABEL: function f1 name="char-at-less-or-equal"
 # CHECK-NOT: StringRangeCharacterOrEmpty
 # CHECK: [[unit1]]: int[-1, 65535] = StringRangeCodeUnitOrMinusOne v0,
 # CHECK-NEXT: [[codeUnit1]]: 97 = Integer integer=97
 # CHECK-NEXT: [[result1]]: boolean = LessEq [[unit1]], [[codeUnit1]]
 # CHECK-NEXT: Return [[result1]]
+}
 
 function f2 name="literal-greater-than-char-at" parameters=[{type=string}, {type=int}] results=[{type=boolean}] {
-  b0(v0: string, v1: int):
     v2 = CallBuiltin v0, v1 overload=StringPrototypeCharAt/0
     v3 = String string="a"
     v4 = Greater v3, v2
     Return v4
-}
-# CHECK-LABEL: function f2 name="literal-greater-than-char-at"
 # CHECK-NOT: StringRangeCharacterOrEmpty
 # CHECK: [[unit2]]: int[-1, 65535] = StringRangeCodeUnitOrMinusOne v0,
 # CHECK-NEXT: [[codeUnit2]]: 97 = Integer integer=97
 # CHECK-NEXT: [[result2]]: boolean = Greater [[codeUnit2]], [[unit2]]
 # CHECK-NEXT: Return [[result2]]
+}
 
 function f3 name="one-character-between-two-literals" parameters=[{type=string}, {type=int}] results=[{type=boolean}] {
-  b0(v0: string, v1: int):
     v2 = CallBuiltin v0, v1 overload=StringPrototypeCharAt/0
     v3 = String string="0"
     v4 = GreaterEq v2, v3
@@ -60,41 +53,35 @@ function f3 name="one-character-between-two-literals" parameters=[{type=string},
   b2():
     v7 = Boolean boolean=false
     Return v7
-}
-# CHECK-LABEL: function f3 name="one-character-between-two-literals"
 # CHECK-NOT: StringRangeCharacterOrEmpty
 # CHECK: v2: int[-1, 65535] = StringRangeCodeUnitOrMinusOne v0,
 # CHECK-NOT: StringRangeCodeUnitOr
 # CHECK: v4: boolean = GreaterEq v2,
 # CHECK-NOT: ToUint32
 # CHECK: v6: boolean = LessEq v2,
+}
 
 function f4 name="element-less-than-literal" parameters=[{type=string}, {type=int}] results=[{type=boolean}] {
-  b0(v0: string, v1: int):
     v2 = ElemGet v0, v1
     v3 = String string="a"
     v4 = Less v2, v3
     Return v4
-}
-# CHECK-LABEL: function f4 name="element-less-than-literal"
 # CHECK: [[unit4]]: int[-1, 65535] = StringRangeCodeUnitOrMinusOne v0,
 # CHECK: [[unsigned4]]: int[0, 4294967295] = ToUint32 [[unit4]]
 # CHECK-NEXT: : boolean = Less [[unsigned4]],
+}
 
 function f5 name="char-at-less-than-two-characters" parameters=[{type=string}, {type=int}] results=[{type=boolean}] {
-  b0(v0: string, v1: int):
     v2 = CallBuiltin v0, v1 overload=StringPrototypeCharAt/0
     v3 = String string="ab"
     v4 = Less v2, v3
     Return v4
-}
-# CHECK-LABEL: function f5 name="char-at-less-than-two-characters"
 # CHECK-NOT: StringRangeCodeUnitOr
 # CHECK: v2: string = StringRangeCharacterOrEmpty v0, -, -, v1
 # CHECK-NOT: StringRangeCodeUnitOr
+}
 
 function f6 name="slice-less-than-literal" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=boolean}] {
-  b0(v0: string, v1: int, v2: int):
     v3 = GetStringLength v0
     v4 = StringRange v3, v1, v2
     v5 = ResultAt v4
@@ -103,8 +90,7 @@ function f6 name="slice-less-than-literal" parameters=[{type=string}, {type=int}
     v8 = String string="a"
     v9 = Less v7, v8
     Return v9
-}
-# CHECK-LABEL: function f6 name="slice-less-than-literal"
 # CHECK-NOT: StringRangeCodeUnitOr
 # CHECK: v7: string = Substring v0, v5, v6
 # CHECK-NOT: StringRangeCodeUnitOr
+}

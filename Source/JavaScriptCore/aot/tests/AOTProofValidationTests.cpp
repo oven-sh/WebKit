@@ -22,7 +22,6 @@ module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibr
 entry module=m0
 layout L0 name="Source" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = FinishObject v1
@@ -35,7 +34,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="a"
     Return v1
 }
@@ -48,7 +46,6 @@ module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibr
 entry module=m0
 layout L0 name="Source" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Math
     v1 = PropGet v0 key="random"
     v2 = Call v1, v0 calleeKey="random"
@@ -70,7 +67,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="a"
     Return v1
 }
@@ -83,7 +79,6 @@ module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibr
 entry module=m0
 layout L0 name="Source" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Math
     v1 = PropGet v0 key="random"
     v2 = Call v1, v0 calleeKey="random"
@@ -98,7 +93,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="a"
     Return v1
 }
@@ -112,7 +106,6 @@ entry module=m0
 layout L0 name="Source" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
 layout L1 name="Modeled" fields=[{key="m" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Math
     v1 = PropGet v0 key="random"
     v2 = Call v1, v0 calleeKey="random"
@@ -127,7 +120,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="a"
     v2 = NewObject -, v1 layout=L1 fields=[0]
     v3 = FinishObject v2
@@ -142,7 +134,6 @@ module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibr
 entry module=m0
 layout L0 name="Source" fields=[{key="toString" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = FinishObject v1
@@ -155,24 +146,20 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="toString"
     v2 = Call v1, v0 calleeKey="toString"
     v3 = NewClosure function=f4
     Return v3
 }
 function f2 name="toString" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f3
     Return v1
 }
 function f3 name="real" results=[{type=anything}] {
-  b0():
     v0 = String string="real"
     Return v0
 }
 function f4 name="modeled" results=[{type=anything}] {
-  b0():
     v0 = String string="modeled"
     Return v0
 }
@@ -183,7 +170,6 @@ runtimefunction id=$toLocaleString function=f1
 static constexpr ASCIILiteral unreachableBlock = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="enters" [isFreeName]
     v2 = ToBoolean v1
@@ -204,7 +190,6 @@ module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibr
 entry module=m0
 layout L0 name="Source" fields=[{key="toString" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = FinishObject v1
@@ -216,13 +201,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="toString"
     v2 = TypeOf v1
     Return v2
 }
 function f2 name="toString" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="print" [isFreeName]
     v3 = String string="ran"
@@ -239,7 +222,6 @@ module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibr
 entry module=m0
 layout L0 name="Holder" fields=[{key="k" declared={type=anything} flags=[IsRequired]}, {key="toString" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="sink" [isFreeName]
@@ -253,7 +235,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="toString"
     v2 = TypeOf v1
     v3 = PropGet v0 key="k"
@@ -261,7 +242,6 @@ function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThi
     Return
 }
 function f2 name="once" results=[{type=anything}] {
-  b0():
     v0 = String string="ran"
     Return v0
 }
@@ -274,7 +254,6 @@ entry module=m0
 layout L0 name="Holder" fields=[{key="k" declared={type=anything} flags=[IsRequired]}, {key="toString" declared={type=anything} flags=[IsRequired]}]
 layout L1 name="Inner" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="unread" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Math
     v1 = PropGet v0 key="random"
     v2 = Call v1, v0 calleeKey="random"
@@ -294,7 +273,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="toString"
     v2 = TypeOf v1
     v3 = PropGet v0 key="k"
@@ -310,7 +288,6 @@ module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibr
 entry module=m0
 layout L0 name="Holder" fields=[{key="k" declared={type=anything} flags=[IsRequired]}, {key="toString" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Math
     v1 = PropGet v0 key="random"
     v2 = Call v1, v0 calleeKey="random"
@@ -334,7 +311,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="toString"
     v2 = TypeOf v1
     v3 = PropGet v0 key="k"
@@ -349,7 +325,6 @@ module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibr
 entry module=m0
 layout L0 name="Source" fields=[{key="toString" declared={type=anything} flags=[IsRequired]}, {key="a" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="mutate" [isFreeName]
     v2 = Builtin builtin=Math
@@ -368,7 +343,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="toString"
     v2 = TypeOf v1
     Return v2
@@ -381,7 +355,6 @@ static constexpr ASCIILiteral guardedShape = R"IR(module m0 path="main.js" displ
 entry module=m0
 layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Double number=1.5
     v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     v2 = FinishObject v1
@@ -407,7 +380,6 @@ module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibr
 entry module=m0
 layout L0 name="Holder" fields=[{key="k" declared={type=anything} flags=[IsRequired]}, {key="toString" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Math
     v1 = PropGet v0 key="random"
     v2 = Call v1, v0 calleeKey="random"
@@ -428,7 +400,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="toString"
     v2 = TypeOf v1
     v3 = PropGet v0 key="k"
@@ -445,7 +416,6 @@ entry module=m0
 layout L0 name="Holder" fields=[{key="k" declared={type=anything} flags=[IsRequired]}, {key="toString" declared={type=anything} flags=[IsRequired]}]
 layout L1 kind=Instance name="Complete" constructor=f2
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = NewClass v0 layout=L1
     v2 = NewClosure function=f3
@@ -470,7 +440,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="toString"
     v2 = TypeOf v1
     v3 = PropGet v0 key="k"
@@ -478,13 +447,11 @@ function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThi
     Return
 }
 function f2 name="Complete" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = GetConstructPrototype v0 layout=L1
     v2 = NewObject v1 layout=L1 fields=[]
     Return v2
 }
 function f3 name="method" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = String string="as defined"
     Return v1
 }
@@ -497,7 +464,6 @@ module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibr
 entry module=m0
 layout L0 name="Holder" fields=[{key="k" declared={type=anything} flags=[IsRequired]}, {key="toString" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="sink" [isFreeName]
@@ -512,7 +478,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="toString"
     v2 = TypeOf v1
     v3 = PropGet v0 key="k"
@@ -520,7 +485,6 @@ function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThi
     Return
 }
 function f2 name="plain" results=[{type=anything}] {
-  b0():
     v0 = String string="as created"
     Return v0
 }
@@ -533,7 +497,6 @@ entry module=m0
 layout L0 name="Source" fields=[{key="toString" declared={type=anything} flags=[IsRequired]}, {key="a" declared={type=anything} flags=[IsRequired]}]
 layout L1 name="Descriptor" fields=[{key="get" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="mutate" [isFreeName]
     v2 = Builtin builtin=Math
@@ -574,13 +537,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="toString"
     v2 = TypeOf v1
     Return v2
 }
 function f2 name="getter" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     Return v0
 }
@@ -594,7 +555,6 @@ entry module=m0
 layout L0 name="Source" fields=[{key="toString" declared={type=anything} flags=[IsRequired]}, {key="a" declared={type=anything} flags=[IsRequired]}]
 layout L1 name="Descriptor" fields=[{key="get" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="mutate" [isFreeName]
     v2 = Builtin builtin=Math
@@ -637,13 +597,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="toString"
     v2 = TypeOf v1
     Return v2
 }
 function f2 name="getter" results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     Return v0
 }
@@ -758,7 +716,6 @@ module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibr
 entry module=m0
 layout L0 name="Holder" fields=[{key="k" declared={type=anything} flags=[IsRequired]}, {key="toString" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=7
     v1 = NewArray v0, v0, v0 contents=anything holes=[]
     v2 = Builtin builtin=GlobalThis
@@ -775,7 +732,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="toString"
     v2 = TypeOf v1
     v3 = PropGet v0 key="k"

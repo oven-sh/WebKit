@@ -1,0 +1,18 @@
+# An array in sparse storage says how long it is and may hold nothing, so the loop of a validator does not run up to such a length: behind the rules of length, an array of more than 65,536 elements whose storage is none of the dense kinds is left to the general validator.
+# FORM: Prepared optimizing
+# RUN: derived-functions Validator:x0.0
+# STATISTIC: ValidatorsCreated = 1
+
+module m0 path="main.js" displayPath="main.js"
+expectedresult x0 type=Array<anything> validation=[{shape=Array{element=1} type=Array<anything> rules=[MinimumLength{length=1}]}, {type=anything}]
+
+# CHECK: function {{*}}expectedResult=x0}
+# CHECK: [[length]]:{{*}}= GetArrayLength [[array]],
+# CHECK: = GreaterEq [[length]],
+# CHECK-NOT: NewArray
+# CHECK: [[most]]: 65536 = Integer integer=65536
+# CHECK-NEXT: [[isLong]]: boolean = Less [[most]], [[length]]
+# CHECK-NEXT: Branch [[isLong]] -> taken [[long]](), notTaken
+# CHECK: [[long]]() frequency=Rare:
+# CHECK-NEXT: [[storage]]:{{*}}= ArrayStorageKind [[array]]
+# CHECK: = StrictEq [[storage]],

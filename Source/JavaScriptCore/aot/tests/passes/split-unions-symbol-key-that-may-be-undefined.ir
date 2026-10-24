@@ -12,11 +12,8 @@ module m1 path="symbols.js" displayPath="symbols.js"
 layout L0 name="Holder" fields=[{key="plain" declared={type=number}}, {key=symbol("state")@m1:100 declared={type=number}}]
 
 function f0 name="read-of-anything" parameters=[{type=anything}, {type=undefined|symbol("state")@m1:100}] results=[{type=anything}] {
-  b0(v0: anything, v1: undefined|symbol("state")@m1:100):
     v2 = ElemGet v0, v1
     Return v2
-}
-# CHECK-LABEL: function f0 name="read-of-anything"
 # CHECK: [[isSymbol]]: boolean = TypeTest v1 testedType=symbol("state")@m1:100
 # CHECK-NEXT: Branch [[isSymbol]] -> taken [[symbolArm]](| 0), notTaken [[rest]](| 0)
 # CHECK: [[symbolArm]]([[symbol]]: symbol("state")@m1:100):
@@ -24,91 +21,72 @@ function f0 name="read-of-anything" parameters=[{type=anything}, {type=undefined
 # CHECK: [[rest]]([[nothing]]: undefined) frequency=Unlikely:
 # CHECK-NEXT: = ElemGet v0, [[nothing]]
 # CHECK-NOT: TypeTest
-# NAMED-LABEL: function f0 name="read-of-anything"
 # NAMED-NOT: ElemGet
 # NAMED: = PropGet v0 key=symbol("state")@m1:100
 # NAMED-NOT: ElemGet
 # NAMED: = PropGet v0 key="undefined"
+}
 
 function f1 name="store" parameters=[{type=L0}, {type=undefined|symbol("state")@m1:100}, {type=number}] results=[{type=undefined}] {
-  b0(v0: L0, v1: undefined|symbol("state")@m1:100, v2: number):
     ElemSet v0, v1, v2 mode=Strict
     Return
-}
-# CHECK-LABEL: function f1 name="store"
 # CHECK: = TypeTest v1 testedType=symbol("state")@m1:100
 # CHECK: ([[storedUnder]]: symbol("state")@m1:100):
 # CHECK-NEXT: ElemSet v0, [[storedUnder]], v2
-# NAMED-LABEL: function f1 name="store"
 # NAMED-NOT: ElemSet
 # NAMED: PropSet v0, v2 key=symbol("state")@m1:100
 # NAMED-NOT: ElemSet
 # NAMED: PropSet v0, v2 key="undefined"
+}
 
 function f2 name="definition" parameters=[{type=object}, {type=undefined|symbol("state")@m1:100}, {type=number}] results=[{type=undefined}] {
-  b0(v0: object, v1: undefined|symbol("state")@m1:100, v2: number):
     ElemDefine v0, v1, v2
     Return
-}
-# CHECK-LABEL: function f2 name="definition"
 # CHECK: = TypeTest v1 testedType=symbol("state")@m1:100
-# NAMED-LABEL: function f2 name="definition"
 # NAMED-NOT: ElemDefine
 # NAMED: PropDefine v0, v2 key=symbol("state")@m1:100
+}
 
 function f3 name="question" parameters=[{type=object}, {type=undefined|symbol("state")@m1:100}] results=[{type=boolean}] {
-  b0(v0: object, v1: undefined|symbol("state")@m1:100):
     v2 = ElemHas v0, v1
     Return v2
-}
-# CHECK-LABEL: function f3 name="question"
 # CHECK: = TypeTest v1 testedType=symbol("state")@m1:100
-# NAMED-LABEL: function f3 name="question"
 # NAMED-NOT: ElemHas
 # NAMED: = PropHas v0 key=symbol("state")@m1:100
+}
 
 function f4 name="key-may-be-null-too" parameters=[{type=anything}, {type=undefined|null|symbol("state")@m1:100}] results=[{type=anything}] {
-  b0(v0: anything, v1: undefined|null|symbol("state")@m1:100):
     v2 = ElemGet v0, v1
     Return v2
-}
-# CHECK-LABEL: function f4 name="key-may-be-null-too"
 # CHECK: = TypeTest v1 testedType=symbol("state")@m1:100
 # CHECK: ([[nullish]]: undefined|null) frequency=Unlikely:
 # CHECK-NEXT: = ElemGet v0, [[nullish]]
+}
 
 function f5 name="the-symbol-alone" parameters=[{type=anything}, {type=symbol("state")@m1:100}] results=[{type=anything}] {
-  b0(v0: anything, v1: symbol("state")@m1:100):
     v2 = ElemGet v0, v1
     Return v2
-}
-# CHECK-LABEL: function f5 name="the-symbol-alone"
 # CHECK-NOT: TypeTest
 # CHECK: = ElemGet v0, v1
+}
 
 function f6 name="one-of-two-symbols" parameters=[{type=anything}, {type=undefined|symbol("other")@m1:200|symbol("state")@m1:100}] results=[{type=anything}] {
-  b0(v0: anything, v1: undefined|symbol("other")@m1:200|symbol("state")@m1:100):
     v2 = ElemGet v0, v1
     Return v2
-}
-# CHECK-LABEL: function f6 name="one-of-two-symbols"
 # CHECK-NOT: TypeTest
 # CHECK: = ElemGet v0, v1
+}
 
 function f7 name="any-symbol" parameters=[{type=anything}, {type=undefined|symbol}] results=[{type=anything}] {
-  b0(v0: anything, v1: undefined|symbol):
     v2 = ElemGet v0, v1
     Return v2
-}
-# CHECK-LABEL: function f7 name="any-symbol"
 # CHECK-NOT: TypeTest
 # CHECK: = ElemGet v0, v1
+}
 
 function f8 name="the-symbol-or-a-string" parameters=[{type=anything}, {type=string|symbol("state")@m1:100}] results=[{type=anything}] {
-  b0(v0: anything, v1: string|symbol("state")@m1:100):
     v2 = ElemGet v0, v1
     Return v2
-}
-# CHECK-LABEL: function f8 name="the-symbol-or-a-string"
 # CHECK-NOT: TypeTest
 # CHECK: = ElemGet v0, v1
+}

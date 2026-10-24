@@ -11,14 +11,12 @@ entry module=m0
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
 layout L0 name="Handlers" fields=[{key="run" declared={type=function} flow={stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = NewObject -, v0 layout=L0 fields=[0]
     PutModuleVariable v1 variable=g0
     Return
 }
 function f1 name="reads" module=m0 parameters=[{type=L0}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: L0, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = GetSlotOrUndefined v0 key="run" receivers=[L0] level=Proven
@@ -29,11 +27,9 @@ function f1 name="reads" module=m0 parameters=[{type=L0}, {type=boolean}] result
     Jump -> next b3(v4)
   b3(v5: anything):
     Return v5
-}
-# CHECK-LABEL: function f1 name="reads"
 # CHECK: v2: function = GetDeferredClosureSlot v0 key="run"
 # CHECK-NEXT: v3: function = Upcast v2 castType=anything
+}
 function f2 name="run" module=m0 kind=Arrow results=[{type=undefined}] {
-  b0():
     Return
 }

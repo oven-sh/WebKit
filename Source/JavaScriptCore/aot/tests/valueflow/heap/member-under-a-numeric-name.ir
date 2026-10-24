@@ -13,7 +13,6 @@ entry module=m0
 variable g0 name="named" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="computed" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Number
     v1 = PropGet v0 key="NaN"
     PutModuleVariable v1 variable=g0

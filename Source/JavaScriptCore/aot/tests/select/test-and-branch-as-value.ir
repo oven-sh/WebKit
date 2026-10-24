@@ -25,13 +25,11 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="lessAsValue" parameters=[{type=number}, {type=number}] results=[{type=boolean}] {
-  b0(v0: number, v1: number):
     v2 = Less v0, v1 form=Numbers
     v3 = LogicalNot v2
     Return v3
 }
 function f1 name="lessInReturnPosition" parameters=[{type=number}, {type=number}] results=[{type=boolean}] {
-  b0(v0: number, v1: number):
     v2 = Less v0, v1 form=Numbers
     Return v2
 }

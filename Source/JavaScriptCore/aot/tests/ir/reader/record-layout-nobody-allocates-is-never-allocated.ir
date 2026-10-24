@@ -24,7 +24,6 @@ layout L8 name="Reply" fields=[{key="items" declared={type=Array<L9>}}]
 layout L9 name="Item" fields=[{key="id" declared={type=number}}]
 layout L10 name="Answer" fields=[{key="id" declared={type=number}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L1 fields=[0]
     v2 = Data data=d0
@@ -34,7 +33,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="test" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L0, v1: anything):
     v2 = TypeTest v1 testedType=L4
     v3 = Convert v1 declared={type=L4 site=w0} illTypedCause=FromLooseType
     Return v2
@@ -42,7 +40,6 @@ function f1 name="test" parameters=[{type=L0}, {type=anything}] results=[{type=a
 function f2 name="Unused" kind=BaseConstructor flags=[HasNewTarget] results=[{type=L5 flags=[IsFromCompiler]}]
 # `load() as Reply`: load may be a built-in that answers `any` and creates what the caller asks for. `answer()`, whose own type says Answer, is none
 function f3 name="convertsResults" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Call v0
     v3 = Convert v2 declared={type=L8 site=w0} illTypedCause=FromLooseType
     v4 = Call v1

@@ -13,7 +13,6 @@ layout L1 kind=Environment name="notSeenByEval" fields=[{key=@"y.0" declared={ty
 evalscope e0 bindings=[{name="x" layout=L0 field=0 operand=0}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = NewObject -, v1 layout=L0 fields=[0] @10
@@ -25,13 +24,12 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v8 = PropGet v0 key="publish" [isFreeName]
     v9 = Call v8, -, v3, v5
     Return
-}
-# CHECK-LABEL: function f0 name="main"
 # CHECK: [[seen]]: env L0 = NewObject -, v1 layout=L0
 # CHECK-NEXT: = NewClosure [[seen]] function=f1
 # CHECK-NEXT: PutModuleVariable v1 variable=g0
 # CHECK-NEXT: = NewClosure function=f2
 # CHECK: = DirectEval v1, v6, -, [[seen]] evalScope=e0
+}
 
 function f1 name="readsSeen" captures=[{type=env L0}] results=[{type=anything}] {
   b0(v0: env L0):
@@ -45,7 +43,6 @@ function f2 name="readsOther" captures=[{type=env L1}] results=[{type=anything}]
   b0(v0: env L1):
     v1 = GetEnvironmentField v0 layout=L1 field=0
     Return v1
-}
-# CHECK-LABEL: function f2 name="readsOther"
 # CHECK-NOT: captures=
 # CHECK: = GetModuleVariable variable=g0
+}

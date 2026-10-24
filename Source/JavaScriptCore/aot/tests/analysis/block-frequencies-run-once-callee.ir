@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="flag" [isFreeName]
     v2 = ToBoolean v1
@@ -30,7 +29,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # FLOW-NEXT: b2 frequency: Normal count: 1.000000
 # FLOW-NOT: frequency
 function f1 name="runsOnce" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v1 = CallDirect function=f2
@@ -49,13 +47,11 @@ function f1 name="runsOnce" parameters=[{type=boolean}] results=[{type=undefined
 # FLOW-NEXT: b2 frequency: Normal count: 1.000000
 # FLOW-NOT: frequency
 function f2 name="runsOnceCallee" results=[{type=undefined}] {
-  b0():
     Return
 }
 # CHECK-LABEL: function f2
 # FLOW-LABEL: function f2
 function f3 name="runsTwice" parameters=[{type=boolean}] results=[{type=undefined}] {
-  b0(v0: boolean):
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v1 = CallDirect function=f4
@@ -74,7 +70,6 @@ function f3 name="runsTwice" parameters=[{type=boolean}] results=[{type=undefine
 # FLOW-NEXT: b2 frequency: Normal count: 1.000000
 # FLOW-NOT: frequency
 function f4 name="runsTwiceCallee" results=[{type=undefined}] {
-  b0():
     Return
 }
 # CHECK-LABEL: function f4

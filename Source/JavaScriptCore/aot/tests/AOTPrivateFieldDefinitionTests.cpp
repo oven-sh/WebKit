@@ -54,7 +54,6 @@ static constexpr ASCIILiteral constructor = R"IR(function f1 name="C" kind=BaseC
     Return v3
 }
 function f2 name="initialize" kind=Initializer flags=[HasThis] thisType={type=L0} parameters=[{type=classtoken}] results=[{type=anything}] {
-  b0(v0: L0, v1: classtoken):
 )IR"_s;
 
 static constexpr ASCIILiteral definitions = R"IR(    PrivateDefine v0, v1, v2 layout=L0 field=1
@@ -70,7 +69,6 @@ static constexpr ASCIILiteral definitionsAfterStore = R"IR(    PrivateDefine v0,
 static constexpr ASCIILiteral methods = R"IR(    Return
 }
 function f3 name="read" kind=Method flags=[HasThis] captures=[{type=classtoken}] thisType={type=L0} results=[{type=anything}] {
-  b0(v0: classtoken, v1: L0):
     v2 = PrivateGet v1, v0 layout=L0 field=1
     v3 = PrivateGet v1, v0 layout=L0 field=2
     v4 = NewObject -, v2, v3 layout=L1 fields=[0, 1]
@@ -78,12 +76,10 @@ function f3 name="read" kind=Method flags=[HasThis] captures=[{type=classtoken}]
     Return v5
 }
 function f4 name="m" kind=Method flags=[HasThis] thisType={type=L0} parameters=[{type=classtoken}] results=[{type=anything}] {
-  b0(v0: L0, v1: classtoken):
 )IR"_s;
 
 static constexpr ASCIILiteral evaluation = R"IR(}
 function f5 name="evaluate" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="show" [isFreeName]
     v2 = NewClassToken layout=L0

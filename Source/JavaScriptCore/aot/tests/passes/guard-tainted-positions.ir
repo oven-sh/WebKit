@@ -20,7 +20,6 @@ variable g3 name="fromResult" module=m0 declared={type=number} initialization=Un
 layout L0 kind=Environment name="scope" fields=[{key="binding" declared={type=number}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="given" [isFreeName]
     v2 = Convert v1 declared={type=number}
@@ -35,55 +34,47 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v11 = CallDirect v1 function=f4
     PutModuleVariable v11 variable=g3
     Return
-}
-# CHECK-LABEL: function f0 name="main"
 # CHECK: v2: number = Check v1 castType=number
 # CHECK-NEXT: PutModuleVariable v2 variable=g0
 # CHECK: [[result]]: anything ~ number = CallDirect v1 function=f4
 # CHECK-NEXT: [[checkedResult]]: number = Check [[result]] castType=number cause=AddedByPass
 # CHECK-NEXT: PutModuleVariable [[checkedResult]] variable=g3
+}
 
 function f1 name="readsVariables" results=[{type=number}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = GetModuleVariable variable=g2
     v2 = Add v0, v1
     Return v2
-}
-# CHECK-LABEL: function f1 name="readsVariables"
 # CHECK: results=[{type=number flags=[IsExpected]}]
 # CHECK: [[read]]: anything{{*}}~ number{{*}} = GetModuleVariable variable=g0
 # CHECK-NEXT: [[checkedRead]]: number = Check [[read]] castType=number cause=AddedByPass
 # CHECK-NEXT: [[other]]: number = GetModuleVariable variable=g2
 # CHECK-NEXT: = Add [[checkedRead]], [[other]]
+}
 
 function f2 name="readsEnvironmentField" kind=Arrow captures=[{type=env L0}] results=[{type=number}] {
   b0(v0: env L0):
     v1 = GetEnvironmentField v0 layout=L0 field=0
     Return v1
-}
-# CHECK-LABEL: function f2 name="readsEnvironmentField"
 # CHECK: results=[{type=number flags=[IsExpected]}]
 # CHECK: [[field]]: anything{{*}}~ number{{*}} = GetEnvironmentField v0 layout=L0
 # CHECK-NEXT: [[checkedField]]: number = Check [[field]] castType=number cause=AddedByPass
 # CHECK-NEXT: Return [[checkedField]]
+}
 
 function f3 name="readsCapture" kind=Arrow captures=[{type=number}] results=[{type=number}] {
-  b0(v0: number):
     Return v0
-}
-# CHECK-LABEL: function f3 name="readsCapture"
 # CHECK: captures=[{type=number flags=[IsExpected]}]
 # CHECK: b0(v0: anything ~ number):
 # CHECK-NEXT: [[checkedCapture]]: number = Check v0 castType=number cause=AddedByPass
 # CHECK-NEXT: Return [[checkedCapture]]
+}
 
 function f4 name="returnsCheckedValue" parameters=[{type=anything}] results=[{type=number}] {
-  b0(v0: anything):
     v1 = Convert v0 declared={type=number}
     Return v1
-}
-# CHECK-LABEL: function f4 name="returnsCheckedValue"
 # CHECK: results=[{type=number flags=[IsExpected]}]
 # CHECK: v1: number = Check v0 castType=number
 # CHECK-NEXT: Return v1
+}

@@ -8,7 +8,6 @@ module m0 path="main.js" displayPath="main.js"
 
 # The tests of a callee as inlining leaves them on the literal of its caller.
 function f0 name="firstElement" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewArray v0, v1 contents=anything
     v3 = Integer integer=0
     v4 = HasArrayStorage v2 arrayStorage=Contiguous
@@ -23,8 +22,6 @@ function f0 name="firstElement" parameters=[{type=anything}, {type=anything}] re
   b3():
     v10 = Call v0, -, v2
     Return v10
-}
-# CHECK-LABEL: function f0 name="firstElement"
 # CHECK-NOT: NewArray
 # CHECK-NOT: HasArrayStorage
 # CHECK-NOT: IsElementPresent
@@ -32,9 +29,9 @@ function f0 name="firstElement" parameters=[{type=anything}, {type=anything}] re
 # CHECK: v9:{{*}}= Upcast v0
 # CHECK-NEXT: Return v9
 # CHECK-NOT: = Call
+}
 
 function f1 name="secondElement" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewArray v0, v1 contents=anything
     v3 = AllGuards v2
     v4 = Integer integer=1
@@ -47,17 +44,15 @@ function f1 name="secondElement" parameters=[{type=anything}, {type=anything}] r
   b2():
     v9 = Call v0, -, v2
     Return v9
-}
-# CHECK-LABEL: function f1 name="secondElement"
 # CHECK-NOT: NewArray
 # CHECK-NOT: IsElementPresent
 # CHECK-NOT: = Call
 # CHECK: v8:{{*}}= Upcast v1
 # CHECK-NEXT: Return v8
 # CHECK-NOT: = Call
+}
 
 function f2 name="pastTheEnd" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewArray v0, v1 contents=anything
     v3 = AllGuards v2
     v4 = Integer integer=2
@@ -70,8 +65,6 @@ function f2 name="pastTheEnd" parameters=[{type=anything}, {type=anything}] resu
   b2():
     v9 = ElemGet v2, v4
     Return v9
-}
-# CHECK-LABEL: function f2 name="pastTheEnd"
 # CHECK-NOT: NewArray
 # CHECK-NOT: IsElementPresent
 # CHECK-NOT: GetArrayElement
@@ -79,9 +72,9 @@ function f2 name="pastTheEnd" parameters=[{type=anything}, {type=anything}] resu
 # CHECK-NEXT: v9:{{*}}= Upcast [[none2]]
 # CHECK-NEXT: Return v9
 # CHECK-NOT: GetArrayElement
+}
 
 function f3 name="hole" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewArray v0, v1 contents=anything holes=[1]
     v3 = AllGuards v2
     v4 = Integer integer=1
@@ -94,8 +87,6 @@ function f3 name="hole" parameters=[{type=anything}, {type=anything}] results=[{
   b2():
     v9 = ElemGet v2, v4
     Return v9
-}
-# CHECK-LABEL: function f3 name="hole"
 # CHECK-NOT: NewArray
 # CHECK-NOT: IsElementPresent
 # CHECK-NOT: GetArrayElement
@@ -103,9 +94,9 @@ function f3 name="hole" parameters=[{type=anything}, {type=anything}] results=[{
 # CHECK-NEXT: v9:{{*}}= Upcast [[none3]]
 # CHECK-NEXT: Return v9
 # CHECK-NOT: GetArrayElement
+}
 
 function f4 name="elementBehindHole" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewArray v0, v1 contents=anything holes=[1]
     v3 = AllGuards v2
     v4 = Integer integer=2
@@ -118,18 +109,16 @@ function f4 name="elementBehindHole" parameters=[{type=anything}, {type=anything
   b2():
     v9 = Call v0, -, v2
     Return v9
-}
-# CHECK-LABEL: function f4 name="elementBehindHole"
 # CHECK-NOT: NewArray
 # CHECK-NOT: IsElementPresent
 # CHECK-NOT: = Call
 # CHECK: v8:{{*}}= Upcast v1
 # CHECK-NEXT: Return v8
 # CHECK-NOT: = Call
+}
 
 # The test looks for no property by name, so the prototypes have no say.
 function f5 name="positionIsNoIndex" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewArray v0, v1 contents=anything
     v3 = AllGuards v2
     v4 = Integer integer=-1
@@ -141,17 +130,15 @@ function f5 name="positionIsNoIndex" parameters=[{type=anything}, {type=anything
     Return v8
   b2():
     Return v1
-}
-# CHECK-LABEL: function f5 name="positionIsNoIndex"
 # CHECK-NOT: NewArray
 # CHECK-NOT: IsElementPresent
 # CHECK-NOT: GetArrayElement
 # CHECK: Return v1
 # CHECK-NOT: GetArrayElement
+}
 
 # The answer is that of the array as it is at the test.
 function f6 name="holeIsFilledBeforeTheTest" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = NewArray v0 contents=anything holes=[1]
     v3 = Integer integer=1
     ElemSet v2, v3, v1 mode=Strict
@@ -166,16 +153,14 @@ function f6 name="holeIsFilledBeforeTheTest" parameters=[{type=anything}, {type=
     Return v10
   b3():
     Return v0
-}
-# CHECK-LABEL: function f6 name="holeIsFilledBeforeTheTest"
 # CHECK-NOT: NewArray
 # CHECK-NOT: ElemSet
 # CHECK-NOT: IsElementPresent
 # CHECK: v10:{{*}}= Upcast v1
 # CHECK-NEXT: Return v10
+}
 
 function f7 name="positionIsNotKnown" parameters=[{type=anything}, {type=anything}, {type=i32}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: i32):
     v3 = NewArray v0, v1 contents=anything
     v4 = AllGuards v3
     v5 = IsElementPresent v3, v2, v4 arrayStorage=Contiguous [keyIsIntegral]
@@ -186,18 +171,16 @@ function f7 name="positionIsNotKnown" parameters=[{type=anything}, {type=anythin
     Return v8
   b2():
     Return v0
-}
-# CHECK-LABEL: function f7 name="positionIsNotKnown"
 # CHECK: v3:{{*}}= NewArray v0, v1 contents=anything
 # CHECK: v5: boolean = IsElementPresent v3, v2, v4 arrayStorage=Contiguous [keyIsIntegral]
 # CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b2()
 # CHECK-NOT: Switch
 # CHECK: v8:{{*}}= GetArrayElement v3, v2, v7 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
 # CHECK-NOT: Switch
+}
 
 # The users of the read were chosen for a NaN. Its type is still the one from before its position was tested, and undefined would fit it.
 function f8 name="holeTakenForNaN" parameters=[{type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
     v2 = NewArray v0, v1 contents=number holes=[1]
     v3 = AssumeType v2 castType=Array<number, proven, Double, pristine[Storage]>
     v4 = Integer integer=1
@@ -209,11 +192,10 @@ function f8 name="holeTakenForNaN" parameters=[{type=number}, {type=number}] res
     Return v8
   b2():
     Return v0
-}
-# CHECK-LABEL: function f8 name="holeTakenForNaN"
 # CHECK-NOT: Undefined
 # CHECK: v2:{{*}}= NewArray v0, v1 contents=number holes=[1]
 # CHECK-NOT: Undefined
 # CHECK: v7:{{*}}= GetArrayElement v3, v4, v6 arrayStorage=Double level=Expected [keyIsIntegral, isInBounds, readsHoleAsNaN]
 # CHECK-NEXT: v8:{{*}}= Sub v7, v0
 # CHECK-NOT: Undefined
+}

@@ -19,6 +19,101 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+void ObjectValues::setField(uint32_t index, ValueID value)
+{
+    if (index >= fields.size())
+        fields.grow(static_cast<size_t>(index) + 1);
+    fields[index] = value;
+}
+
+const ObjectValues* ObjectValueMap::find(VirtualObjectID object) const
+{
+    const Entry* entry = findEntry(m_entries, &Entry::object, object);
+    return entry ? &entry->values : nullptr;
+}
+
+RewriteCursor::RewriteCursor(AllocationSinking& sinking, IRBuilder& builder)
+    : m_sinking(sinking)
+    , m_builder(builder)
+    , m_function(builder.function())
+{
+    m_builder.setHandler(std::nullopt);
+}
+
+void RewriteCursor::beginBlock(BlockID original, std::optional<Target>&& handler, ObjectInterpreter& interpreter)
+{
+    m_originalBlock = original;
+    m_originalHandler = WTF::move(handler);
+    m_frequency = m_function.at(original).frequency;
+    m_handlerArgumentsAreStale = false;
+    m_builder.moveToEndOf(original);
+    if (!m_originalHandler)
+        return;
+
+    if (original == entryBlock) {
+        cut(interpreter);
+        return;
+    }
+    std::optional<Target> target = handlerTargetFor(interpreter);
+    m_function.edit(original, { BlockEdit::Edges, BlockEdit::Arguments }).handler = WTF::move(target);
+}
+
+ValueID RewriteCursor::takeConditionOf(const Terminator& terminator)
+{
+    if (terminator.kind != TerminatorKind::Branch)
+        return ValueID();
+
+    ValueID condition = terminator.conditionOperand();
+    BlockValues& values = m_function.edit(block(), BlockEdit::Values).values;
+    if (!m_sinking.inputs().conditionsOnlyBranchedOn.get(condition.index()) || values.isEmpty() || values.last() != condition)
+        return ValueID();
+    values.removeLast();
+    return condition;
+}
+
+ValueID RewriteCursor::emitSelection(ValueID condition, ValueID whenTrue, ValueID whenFalse, TypeID type)
+{
+    BlockID continuation = addUncoveredBlock();
+    ValueID result = m_builder.addParameter(continuation, type);
+    m_builder.emitBranch(condition, Target { continuation, { whenTrue }, { } }, Target { continuation, { whenFalse }, { } });
+    moveTo(continuation);
+    return result;
+}
+
+void RewriteCursor::willKeepThrowingValue(ObjectInterpreter& interpreter)
+{
+    if (m_originalHandler && m_handlerArgumentsAreStale)
+        cut(interpreter);
+}
+
+void RewriteCursor::cut(ObjectInterpreter& interpreter)
+{
+    BlockID next = addCoveredBlock(interpreter);
+    m_builder.emitJump(next);
+    moveTo(next);
+}
+
+BlockID RewriteCursor::addUncoveredBlock()
+{
+    BlockID block = m_builder.addBlock(m_frequency);
+    m_function.edit(block, BlockEdit::Rest).shape = m_function.at(m_originalBlock).shape;
+    return block;
+}
+
+BlockID RewriteCursor::addCoveredBlock(ObjectInterpreter& interpreter)
+{
+    BlockID block = addUncoveredBlock();
+    std::optional<Target> target = handlerTargetFor(interpreter);
+    m_function.edit(block, { BlockEdit::Edges, BlockEdit::Arguments }).handler = WTF::move(target);
+    return block;
+}
+
+void RewriteCursor::moveTo(BlockID block)
+{
+    m_builder.moveToEndOf(block);
+    m_handlerArgumentsAreStale = !m_function.at(block).handler;
+}
+
 struct HeadParameterRange {
     uint32_t first { 0 };
     uint32_t count { 0 };
@@ -40,7 +135,6 @@ static bool carriesField(const VirtualFamily& family, const ObjectState& state, 
     });
 }
 
-// A read that may find the property missing selects undefined by the tag, so the carried value is only read where the field is stored.
 static TypeID typeOfCarriedField(const AllocationSinking& sinking, VirtualObjectID object, const ObjectState& state, uint32_t fieldIndex, TypeArena& types)
 {
     const VirtualObjectContext& context = sinking.objectContext();
@@ -54,7 +148,6 @@ static TypeID typeOfCarriedField(const AllocationSinking& sinking, VirtualObject
         if (hasStored(shape, fieldIndex))
             type = types.unionOf(type, typeOfField(context, family.descriptionOf(shape), field));
     }
-    // The lists of a family may hold different types. A value goes from head to head as it is, also where a tag has left fewer variants, and is cast where it is read.
     if (type != TypeTable::never && field.kind == VirtualFieldKind::Element) {
         for (const VirtualObjectDescription& description : family.descriptions())
             type = types.unionOf(type, typeOfField(context, description, field));
@@ -120,7 +213,6 @@ void AllocationSinking::rewrite(IRBuilder& builder, const FreshResultShape* shap
     tables.headValues.grow(m_function.blocks.size());
     tables.firstHeadParameter.fill(0, m_function.blocks.size());
     tables.order.append(m_analyses.cfg().reversePostOrder());
-    // No analysis can be made of a function that is half rewritten.
     tables.blocksLeftAsTheyAre.ensureSize(m_function.blocks.size());
     for (BlockID block : tables.order) {
         if (!isReached(block))
@@ -142,13 +234,15 @@ void AllocationSinking::rewrite(IRBuilder& builder, const FreshResultShape* shap
     tables.enteredBlocks.set(entryBlock.index());
     for (BlockID block : tables.order)
         rewriteBlock(block);
-    insertEntryConstants();
+    builder.function().edit(entryBlock, BlockEdit::Values).values.insertVector(0, tables.entryConstants);
     builder.emptyUnreachableBlocks();
     removeBoundParameters(builder);
-    applyReplacements();
+    ValueSubstitution substitution(builder.function());
+    for (auto [read, replacement] : tables.replacedReads)
+        replaceReadWithValue(m_program, builder.function(), substitution, read, replacement);
+    substitution.apply(builder.function(), &m_analyses);
 }
 
-// An entry that checks an argument goes on with what the test hands to its passing side, which is the argument.
 ValueID AllocationSinking::sameValueThroughTests(ValueID id)
 {
     if (m_tables)
@@ -204,7 +298,6 @@ bool AllocationSinking::isLeftAsItIs(BlockID block) const
     const Block& contents = m_function.at(block);
     if (!holdsNothingAtHead(block) || m_inputs.blocksWithCandidates.get(block.index()))
         return false;
-    // The entry is cut in front of what its handler covers.
     if (contents.handler && (block == entryBlock || mayHaveObjectsAtHead(contents.handler->block)))
         return false;
     if (mentionsName(contents.terminator, block) || m_names.names.get(contents.subject ? contents.subject.index() : m_function.values.size()))
@@ -280,7 +373,6 @@ void AllocationSinking::rewriteBlock(BlockID block)
     const SinkingState* head = headOf(block);
     if (!head)
         return;
-    // The states at the heads only grow while they are computed: a block keeps the one it got over an edge that the final states decide the other way.
     bool isFilledByOneEdge = !head->objects.isEmpty() && !m_tables->blocksWithHeadParameters.get(block.index());
     if (isFilledByOneEdge && !m_tables->enteredBlocks.get(block.index()))
         return;
@@ -323,7 +415,10 @@ void AllocationSinking::rewriteBlock(BlockID block)
 
     if (m_inputs.throwingTerminators.get(block.index()))
         m_cursor->willKeepThrowingValue(interpreter);
-    rewriteEdges(interpreter, terminator, edges.span());
+    for (const OutgoingEdge& outgoing : edges) {
+        if (!interpreter.isDeadEdge(terminator, outgoing.edge.targetIndex))
+            rewriteEdge(interpreter, terminator, outgoing);
+    }
     if (foldTerminator(interpreter, terminator))
         m_tables->blocksWithDecidedBranches.append(m_cursor->block());
     for (const Target& target : terminator.targets)
@@ -331,15 +426,8 @@ void AllocationSinking::rewriteBlock(BlockID block)
     interpreter.resolveOperands(terminator);
     if (condition)
         m_cursor->keep(condition);
-    m_cursor->finishBlock(WTF::move(terminator));
-}
-
-void AllocationSinking::rewriteEdges(ObjectInterpreter& interpreter, Terminator& terminator, std::span<const OutgoingEdge> edges)
-{
-    for (const OutgoingEdge& outgoing : edges) {
-        if (!interpreter.isDeadEdge(terminator, outgoing.edge.targetIndex))
-            rewriteEdge(interpreter, terminator, outgoing);
-    }
+    m_cursor->setOrigin(terminator.origin());
+    m_cursor->builder().emitTerminator(WTF::move(terminator));
 }
 
 void AllocationSinking::rewriteEdge(ObjectInterpreter& interpreter, Terminator& terminator, const OutgoingEdge& outgoing)
@@ -544,11 +632,6 @@ ValueID AllocationSinking::entryConstant(Value&& value)
     return id;
 }
 
-void AllocationSinking::insertEntryConstants()
-{
-    m_cursor->builder().function().edit(entryBlock, BlockEdit::Values).values.insertVector(0, m_tables->entryConstants);
-}
-
 void AllocationSinking::removeBoundParameters(IRBuilder& builder)
 {
     for (BlockID block : m_tables->order) {
@@ -563,15 +646,6 @@ void AllocationSinking::removeBoundParameters(IRBuilder& builder)
         }
         builder.removeParameters(block, boundIndexes);
     }
-}
-
-void AllocationSinking::applyReplacements()
-{
-    Function& function = m_cursor->builder().function();
-    ValueSubstitution substitution(function);
-    for (auto [read, replacement] : m_tables->replacedReads)
-        replaceReadWithValue(m_program, function, substitution, read, replacement);
-    substitution.apply(function, &m_analyses);
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -21,57 +21,27 @@ static constexpr uint32_t isForBuiltinBit = 1u << 29;
 static constexpr uint32_t entryParameterMask = isForBuiltinBit - 1;
 static constexpr OptionSet<FunctionCapabilities> capabilitiesVersionsInherit { FunctionCapabilities::IsHiddenInStackTraces };
 
-static uint32_t entryParameterIndex(uint32_t keyParameter)
+static DerivedFunctionKey makeCalleeVersionKey(FunctionID function, uint32_t entryParameter, uint32_t kindBit, bool mayBeNullish, uint32_t callee)
 {
-    return keyParameter & entryParameterMask;
-}
-
-static bool isForAnyFunction(uint32_t keyParameter)
-{
-    return keyParameter & isForAnyFunctionBit;
-}
-
-static bool isForBuiltin(uint32_t keyParameter)
-{
-    return keyParameter & isForBuiltinBit;
-}
-
-static bool argumentMayBeNullish(const DerivedFunctionKey& key)
-{
-    return key.parameter & mayBeNullishBit;
+    RELEASE_ASSERT(entryParameter <= entryParameterMask);
+    return { .role = FunctionRole::CalleeVersion, .target = function, .parameter = entryParameter | kindBit | (mayBeNullish ? mayBeNullishBit : 0), .node = callee };
 }
 
 DerivedFunctionKey calleeVersionKeyForAnyFunction(FunctionID function, uint32_t entryParameter, bool mayBeNullish)
 {
-    RELEASE_ASSERT(entryParameter <= entryParameterMask);
-    return {
-        .role = FunctionRole::CalleeVersion,
-        .target = function,
-        .parameter = entryParameter | isForAnyFunctionBit | (mayBeNullish ? mayBeNullishBit : 0),
-        .node = 0,
-    };
+    return makeCalleeVersionKey(function, entryParameter, isForAnyFunctionBit, mayBeNullish, 0);
 }
 
 DerivedFunctionKey calleeVersionKey(FunctionID function, uint32_t entryParameter, FunctionID callee, bool mayBeNullish)
 {
-    RELEASE_ASSERT(callee && !ProvisionalFunctions::contains(callee) && entryParameter <= entryParameterMask);
-    return {
-        .role = FunctionRole::CalleeVersion,
-        .target = function,
-        .parameter = entryParameter | (mayBeNullish ? mayBeNullishBit : 0),
-        .node = callee.index(),
-    };
+    RELEASE_ASSERT(callee && !ProvisionalFunctions::contains(callee));
+    return makeCalleeVersionKey(function, entryParameter, 0, mayBeNullish, callee.index());
 }
 
 DerivedFunctionKey calleeVersionKeyForBuiltin(FunctionID function, uint32_t entryParameter, BuiltinID callee, bool mayBeNullish)
 {
-    RELEASE_ASSERT(callee && entryParameter <= entryParameterMask);
-    return {
-        .role = FunctionRole::CalleeVersion,
-        .target = function,
-        .parameter = entryParameter | isForBuiltinBit | (mayBeNullish ? mayBeNullishBit : 0),
-        .node = callee.index(),
-    };
+    RELEASE_ASSERT(callee);
+    return makeCalleeVersionKey(function, entryParameter, isForBuiltinBit, mayBeNullish, callee.index());
 }
 
 BuiltinID singleBuiltinFunction(const Program& program, const Type& type)
@@ -103,7 +73,7 @@ bool canHaveCalleeVersion(const Program& program, FunctionID id, uint32_t entryP
     if (entryParameter >= function.numberOfEntryParameters() || function.entryParameterKind(entryParameter) != EntryParameter::Parameter)
         return false;
     for (const Function* version = &function; version->role == FunctionRole::CalleeVersion; version = &program.at(version->derivation.source)) {
-        if (isForAnyFunction(version->derivation.parameter) && entryParameterIndex(version->derivation.parameter) == entryParameter)
+        if ((version->derivation.parameter & isForAnyFunctionBit) && (version->derivation.parameter & entryParameterMask) == entryParameter)
             return false;
     }
     const Type& parameter = program.typeOf(function, function.at(entryBlock).parameters[entryParameter]);
@@ -114,7 +84,8 @@ Function buildCalleeVersion(const DerivedFunctionKey& key, DerivedFunctionInputs
 {
     const Program& program = inputs.program;
     const Function& original = program.at(key.target);
-    uint32_t entryParameter = entryParameterIndex(key.parameter);
+    uint32_t entryParameter = key.parameter & entryParameterMask;
+    bool isForAnyFunction = key.parameter & isForAnyFunctionBit;
     RELEASE_ASSERT(canHaveCalleeVersion(program, key.target, entryParameter));
 
     Function version = original;
@@ -131,10 +102,10 @@ Function buildCalleeVersion(const DerivedFunctionKey& key, DerivedFunctionInputs
     };
 
     Value& parameter = version.edit(version.at(entryBlock).parameters[entryParameter]);
-    Type type = isForAnyFunction(key.parameter) ? Type::function() : isForBuiltin(key.parameter) ? Type::forBuiltin(BuiltinID(key.node)) : Type::forFunction(FunctionID(key.node));
-    if (argumentMayBeNullish(key))
+    Type type = isForAnyFunction ? Type::function() : key.parameter & isForBuiltinBit ? Type::forBuiltin(BuiltinID(key.node)) : Type::forFunction(FunctionID(key.node));
+    if (key.parameter & mayBeNullishBit)
         type = type.withPrimitives(program.at(parameter.type).primitives & Primitive::UndefinedOrNull);
-    if (isForAnyFunction(key.parameter))
+    if (isForAnyFunction)
         type = program.at(parameter.type).intersectWith(type, inputs.types);
     parameter.type = inputs.types.intern(type);
     parameter.setExpected({ });

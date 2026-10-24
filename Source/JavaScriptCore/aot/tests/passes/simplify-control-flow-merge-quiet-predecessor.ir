@@ -10,7 +10,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="predecessorIsEmpty" parameters=[{type=function}] results=[{type=anything}] {
-  b0(v0: function):
     Jump -> next b1()
   b1() handler=b2():
     v1 = Call v0
@@ -18,14 +17,12 @@ function f0 name="predecessorIsEmpty" parameters=[{type=function}] results=[{typ
   b2() role=CatchHandler:
     v2 = CatchValue
     Return v2
-}
-# CHECK-LABEL: function f0 name="predecessorIsEmpty"
 # CHECK: b0(v0: function) handler=b2():
 # CHECK-NEXT: = Call v0
 # CHECK-NEXT: Return v1
+}
 
 function f1 name="predecessorComputesNumbers" parameters=[{type=function}, {type=number}] results=[{type=anything}] {
-  b0(v0: function, v1: number):
     v2 = Negate v1
     Jump -> next b1()
   b1() handler=b2():
@@ -34,15 +31,13 @@ function f1 name="predecessorComputesNumbers" parameters=[{type=function}, {type
   b2() role=CatchHandler:
     v4 = CatchValue
     Return v4
-}
-# CHECK-LABEL: function f1 name="predecessorComputesNumbers"
 # CHECK: b0(v0: function, v1: number) handler=b2():
 # CHECK-NEXT: = Negate v1
 # CHECK-NEXT: = Call v0, -, v2
 # CHECK-NEXT: Return v3
+}
 
 function f2 name="handlerArgumentIsParameterOfPredecessor" parameters=[{type=function}, {type=number}] results=[{type=anything}] {
-  b0(v0: function, v1: number):
     v2 = Negate v1
     Jump -> next b1()
   b1() handler=b2(v1):
@@ -51,15 +46,13 @@ function f2 name="handlerArgumentIsParameterOfPredecessor" parameters=[{type=fun
   b2(v4) role=CatchHandler:
     v5 = CatchValue
     Return v4
-}
-# CHECK-LABEL: function f2 name="handlerArgumentIsParameterOfPredecessor"
 # CHECK: b0(v0: function, v1: number) handler=b2(v1):
 # CHECK-NEXT: = Negate v1
 # CHECK-NEXT: = Call v0, -, v2
 # CHECK-NEXT: Return v3
+}
 
 function f3 name="predecessorCalls" parameters=[{type=function}] results=[{type=anything}] {
-  b0(v0: function):
     v1 = Call v0
     Jump -> next b1()
   b1() handler=b2():
@@ -68,15 +61,13 @@ function f3 name="predecessorCalls" parameters=[{type=function}] results=[{type=
   b2() role=CatchHandler:
     v3 = CatchValue
     Return v3
-}
-# CHECK-LABEL: function f3 name="predecessorCalls"
 # CHECK: b0(v0: function):
 # CHECK-NEXT: = Call v0
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1() handler=b2():
+}
 
 function f4 name="handlerArgumentIsValueOfPredecessor" parameters=[{type=function}, {type=number}] results=[{type=anything}] {
-  b0(v0: function, v1: number):
     v2 = Negate v1
     Jump -> next b1()
   b1() handler=b2(v2):
@@ -85,15 +76,13 @@ function f4 name="handlerArgumentIsValueOfPredecessor" parameters=[{type=functio
   b2(v4) role=CatchHandler:
     v5 = CatchValue
     Return v4
-}
-# CHECK-LABEL: function f4 name="handlerArgumentIsValueOfPredecessor"
 # CHECK: b0(v0: function, v1: number):
 # CHECK-NEXT: = Negate v1
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1() handler=b2(v2):
+}
 
 function f5 name="handlerArgumentIsParameterOfSuccessor" parameters=[{type=function}, {type=number}] results=[{type=anything}] {
-  b0(v0: function, v1: number):
     Jump -> next b1(v1)
   b1(v2) handler=b2(v2):
     v3 = Call v0
@@ -101,14 +90,12 @@ function f5 name="handlerArgumentIsParameterOfSuccessor" parameters=[{type=funct
   b2(v4) role=CatchHandler:
     v5 = CatchValue
     Return v4
-}
-# CHECK-LABEL: function f5 name="handlerArgumentIsParameterOfSuccessor"
 # CHECK: b0(v0: function, v1: number):
 # CHECK-NEXT: Jump -> next b1(v1)
 # CHECK-NEXT: b1(v2: number) handler=b2(v2):
+}
 
 function f6 name="handlerReadsValueOfPredecessor" parameters=[{type=function}, {type=number}] results=[{type=anything}] {
-  b0(v0: function, v1: number):
     v2 = Negate v1
     Jump -> next b1()
   b1() handler=b2():
@@ -117,15 +104,13 @@ function f6 name="handlerReadsValueOfPredecessor" parameters=[{type=function}, {
   b2() role=CatchHandler:
     v4 = CatchValue
     Return v2
-}
-# CHECK-LABEL: function f6 name="handlerReadsValueOfPredecessor"
 # CHECK: b0(v0: function, v1: number):
 # CHECK-NEXT: = Negate v1
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1() handler=b2():
+}
 
 function f7 name="handlerArgumentBecomesValueOfPredecessor" parameters=[{type=function}, {type=number}] results=[{type=anything}] {
-  b0(v0: function, v1: number):
     v2 = Negate v1
     Jump -> next b1(v2)
   b1(v3):
@@ -137,11 +122,10 @@ function f7 name="handlerArgumentBecomesValueOfPredecessor" parameters=[{type=fu
   b3(v6) role=CatchHandler:
     v7 = CatchValue
     Return v6
-}
-# CHECK-LABEL: function f7 name="handlerArgumentBecomesValueOfPredecessor"
 # CHECK: b0(v0: function, v1: number):
 # CHECK-NEXT: = Negate v1
 # CHECK-NEXT: = Negate v2
 # CHECK-NEXT: Jump -> next b2()
 # CHECK: b2() handler=b3(v2):
 # CHECK-NEXT: = Call v0, -, v4
+}

@@ -13,10 +13,11 @@
 #include "AOTEdgeResults.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTResultRules.h"
+#include "AOTSort.h"
 #include "AOTTypeArena.h"
-#include "AOTValueSubstitution.h"
-#include "AOTVector.h"
 #include <algorithm>
+#include <tuple>
+#include <wtf/Insertion.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -50,7 +51,6 @@ static void setOperands(Instruction& instruction, std::initializer_list<ValueID>
     }
 }
 
-// Selection drops what is only expected of a value.
 static bool keepsExpectedTypes(const Program& program)
 {
     return program.form() < IRForm::Selected;
@@ -85,8 +85,10 @@ static ValueID appendEdgeResult(IRBuilder& builder, Edge edge, uint32_t proof)
 }
 
 template<typename Key>
-static Vector<Key> appendCaseTargets(Terminator& terminator, Vector<std::pair<Key, Target>>&& cases, Target&& otherwise)
+static Vector<Key> becomeSwitch(Terminator& terminator, TerminatorKind kind, ValueID subject, Vector<std::pair<Key, Target>>&& cases, Target&& otherwise)
 {
+    terminator.become(kind);
+    terminator.setSubjectOperand(subject);
     Vector<Key> keys;
     keys.reserveInitialCapacity(cases.size());
     terminator.targets.reserveCapacity(cases.size() + 1);
@@ -110,11 +112,6 @@ IRBuilder::IRBuilder(const AnalysisContext& context, Function& function, TypeAre
 IRBuilder::~IRBuilder()
 {
     RELEASE_ASSERT(m_insertions.isEmpty());
-}
-
-void IRBuilder::setHandler(std::optional<Target> handler)
-{
-    m_handler = WTF::move(handler);
 }
 
 void IRBuilder::moveToEndOf(BlockID block)
@@ -179,16 +176,6 @@ uint32_t IRBuilder::numberOfParametersForEdgeResults(BlockID block)
     return largest;
 }
 
-uint32_t IRBuilder::numberOfSharedExplicitParameters(BlockID block)
-{
-    return m_function.at(block).parameters.size() - numberOfParametersForEdgeResults(block);
-}
-
-ValueID IRBuilder::addParameter(BlockID block, TypeID type)
-{
-    return addParameter(block, type, numberOfParametersForEdgeResults(block));
-}
-
 ValueID IRBuilder::addParameter(BlockID block, TypeID type, uint32_t numberOfParametersForEdgeResults)
 {
     Value parameter(Opcode::Parameter);
@@ -201,11 +188,6 @@ ValueID IRBuilder::addParameter(BlockID block, TypeID type, uint32_t numberOfPar
     didAddDetachedValue(id);
     didChangeBlock(block);
     return id;
-}
-
-void IRBuilder::appendArgument(Edge edge, ValueID value)
-{
-    appendArgument(edge, value, numberOfParametersForEdgeResults(targetOf(m_function, edge).block));
 }
 
 void IRBuilder::appendArgument(Edge edge, ValueID value, uint32_t numberOfParametersForEdgeResults)
@@ -368,11 +350,6 @@ ValueID IRBuilder::appendAllGuards(std::span<const ValueID> guards)
     return append(WTF::move(value));
 }
 
-ValueID IRBuilder::appendUndefined()
-{
-    return append(make(Opcode::Undefined));
-}
-
 ValueID IRBuilder::appendBoolean(bool boolean)
 {
     Value value = make(Opcode::Boolean);
@@ -400,7 +377,7 @@ ValueID IRBuilder::insertBefore(ProgramPoint point, Value&& value)
     RELEASE_ASSERT(point.index <= block.values.size());
     prepare(value);
     ValueID id = addValue(WTF::move(value));
-    m_insertions.insert(point, id);
+    m_insertions.append(QueuedInsertion { point, id });
     didAddDetachedValue(id);
     return id;
 }
@@ -411,9 +388,26 @@ void IRBuilder::applyInsertions()
         didChangeValues();
         return;
     }
-    m_insertions.execute(m_function, [&](BlockID block, std::span<const ValueID> values) {
-        didListValues(block, values);
+    AOT::stableSort(m_insertions, [](const QueuedInsertion& a, const QueuedInsertion& b) {
+        return std::tie(a.point.block, a.point.index) < std::tie(b.point.block, b.point.index);
     });
+
+    Vector<WTF::Insertion<ValueID>, 8> blockInsertions;
+    Vector<ValueID, 8> insertedValues;
+    for (size_t next = 0; next < m_insertions.size();) {
+        BlockID id = m_insertions[next].point.block;
+        Block& block = m_function.edit(id);
+        for (; next < m_insertions.size() && m_insertions[next].point.block == id; ++next) {
+            auto [point, value] = m_insertions[next];
+            RELEASE_ASSERT(point.index <= block.values.size());
+            blockInsertions.append(WTF::Insertion<ValueID>(point.index, value));
+            insertedValues.append(value);
+        }
+        WTF::executeInsertions(block.values, blockInsertions);
+        didListValues(id, insertedValues.span());
+        insertedValues.shrink(0);
+    }
+    m_insertions.shrink(0);
 }
 
 void IRBuilder::eraseValues(BlockID id, const BitVector& indexes)
@@ -475,7 +469,6 @@ IRBuilder::BranchBlocks IRBuilder::emitBranch(ValueID condition, BlockFrequency 
     return blocks;
 }
 
-// What stands behind a test need not name what the test found: the body of the one function that the callee may be needs nothing of the callee.
 void IRBuilder::appendValidationOfTestedValue(ValueID test)
 {
     if (!context().build.validates())
@@ -588,30 +581,21 @@ IRBuilder::ProvenBranch IRBuilder::emitBranchWithProof(ValueID test, uint32_t pr
 void IRBuilder::emitSwitch(ValueID subject, Vector<std::pair<int64_t, Target>>&& cases, Target&& otherwise)
 {
     Terminator& terminator = openTerminator();
-    terminator.become(TerminatorKind::Switch);
-    terminator.setSubjectOperand(subject);
-    Vector<int64_t> keys = appendCaseTargets(terminator, WTF::move(cases), WTF::move(otherwise));
-    terminator.setCases(keys.span());
+    terminator.setCases(becomeSwitch(terminator, TerminatorKind::Switch, subject, WTF::move(cases), WTF::move(otherwise)).span());
     closeBlock();
 }
 
 void IRBuilder::emitSwitchString(ValueID subject, Vector<std::pair<StringID, Target>>&& cases, Target&& otherwise)
 {
     Terminator& terminator = openTerminator();
-    terminator.become(TerminatorKind::SwitchString);
-    terminator.setSubjectOperand(subject);
-    Vector<StringID> keys = appendCaseTargets(terminator, WTF::move(cases), WTF::move(otherwise));
-    terminator.setStrings(keys.span());
+    terminator.setStrings(becomeSwitch(terminator, TerminatorKind::SwitchString, subject, WTF::move(cases), WTF::move(otherwise)).span());
     closeBlock();
 }
 
 void IRBuilder::emitSwitchOnShape(ValueID subject, Vector<std::pair<LayoutSetID, Target>>&& cases, Target&& otherwise)
 {
     Terminator& terminator = openTerminator();
-    terminator.become(TerminatorKind::SwitchOnShape);
-    terminator.setSubjectOperand(subject);
-    Vector<LayoutSetID> keys = appendCaseTargets(terminator, WTF::move(cases), WTF::move(otherwise));
-    terminator.setLayoutSets(keys.span());
+    terminator.setLayoutSets(becomeSwitch(terminator, TerminatorKind::SwitchOnShape, subject, WTF::move(cases), WTF::move(otherwise)).span());
     closeBlock();
 }
 
@@ -659,12 +643,6 @@ void IRBuilder::didChangeValues()
 {
     if (m_analyses)
         m_analyses->didChangeValues();
-}
-
-void IRBuilder::didChangeControlFlow()
-{
-    if (m_analyses)
-        m_analyses->didChangeControlFlow();
 }
 
 void IRBuilder::didAddDetachedValue(ValueID value)

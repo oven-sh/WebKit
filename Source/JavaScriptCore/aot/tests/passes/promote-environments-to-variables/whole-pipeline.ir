@@ -15,13 +15,11 @@ entry module=m0
 layout L0 kind=Environment name="once" fields=[{key=@"counter.0" declared={type=anything|absent}}, {key=@"bump.1" declared={type=anything}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Call v0
     Return
 }
 function f1 name="once" results=[{type=anything}] {
-  b0():
     v0 = Absent
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewClosure v1 function=f2
@@ -57,7 +55,6 @@ function f3 name="published" captures=[{type=env L0}, {type=anything}] parameter
     Return v6
 }
 function f4 name="inner" kind=Arrow captures=[{type=anything}, {type=anything}] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = Add v0, v1
     v4 = Add v3, v2
     Return v4

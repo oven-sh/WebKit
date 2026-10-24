@@ -98,15 +98,21 @@ static void printFramePointers(TestCommandContext& context, FunctionID, Function
     auto printValueID = [](PrintStream& out, ValueID value) { dumpID(out, value); };
     printList(out, "allocations"_s, pointers.allocations(), printValueID);
     printList(out, "frame pointers"_s, framePointers.span(), printValueID);
-    printList(out, "environment fields"_s, pointers.environmentFieldsWithPointers(), [](PrintStream& out, const FieldReference& field) {
-        out.print("L", field.layout.index(), ".", field.field);
-    });
-    printList(out, "keys"_s, pointers.keysWithPointers(), [&](PrintStream& out, PropertyKeyID key) {
-        printPropertyKey(out, program, key);
-    });
-    printList(out, "captures"_s, pointers.capturesWithPointers(), [](PrintStream& out, const CaptureReference& capture) {
-        out.print("f", capture.function.index(), ".", capture.capture);
-    });
+    auto printPlaces = [&](ASCIILiteral label, CellPlace::Kind kind) {
+        Vector<CellPlace> places(pointers.placesWithPointers());
+        places.removeAllMatching([&](const CellPlace& place) {
+            return place.kind != kind;
+        });
+        printList(out, label, places.span(), [&](PrintStream& out, const CellPlace& place) {
+            if (kind == CellPlace::Kind::Key)
+                printPropertyKey(out, program, PropertyKeyID(place.owner));
+            else
+                out.print(kind == CellPlace::Kind::Field ? "L" : "f", place.owner, ".", place.index);
+        });
+    };
+    printPlaces("environment fields"_s, CellPlace::Kind::Field);
+    printPlaces("keys"_s, CellPlace::Kind::Key);
+    printPlaces("captures"_s, CellPlace::Kind::Capture);
 
     for (ValueID pointer : framePointers) {
         for (const Use& use : analyses.useLists().usesOf(pointer)) {
@@ -178,8 +184,7 @@ static void printFramePlan(TestCommandContext& context, FunctionID, FunctionAnal
     PrintStream& out = context.out;
     // The heat of a program that nobody has estimated: each function is entered once.
     Heat heat;
-    FramePlanner planner(analyses, heat);
-    FramePlan plan = planner.run();
+    FramePlan plan = planFrame(analyses, heat);
     for (const FrameDecision& decision : plan.decisions) {
         dumpID(out, decision.allocation);
         out.print(": ", nameOf(decision.storage));

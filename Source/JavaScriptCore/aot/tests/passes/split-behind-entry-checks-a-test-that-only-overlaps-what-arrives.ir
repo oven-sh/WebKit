@@ -11,7 +11,6 @@ entry module=m0
 typesite w0 module=m0 position=15 kind=Parameter
 typesite w1 module=m0 position=25 kind=Variable
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = Integer integer=1
     v2 = Call v0, -, v1
@@ -21,7 +20,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="probe" module=m0 position=5 flags=[IsChecked] length=1 parameters=[{type=i32 site=w0}] results=[{type=anything}] {
-  b0(v0: i32):
     Return v0
 }
 # CHECK-LABEL: function f1 name="probe" module=m0 position=5 role=EntryChecks

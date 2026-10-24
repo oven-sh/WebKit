@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="pushOneToInt32" parameters=[{type=Array<i32, pristine[Storage]>}, {type=i32}, {type=number}, {type=undefined|number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<i32, pristine[Storage]>, v1: i32, v2: number, v3: undefined|number, v4: string, v5: anything, v6: boolean):
     v7 = CallInline v0, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
     v8 = CallInline v0, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
     v9 = CallInline v0, v3 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
@@ -33,16 +32,14 @@ function f0 name="pushOneToInt32" parameters=[{type=Array<i32, pristine[Storage]
     Jump -> next b4()
   b4():
     Return
-}
-# R-LABEL: function f0 name="pushOneToInt32"
 # R: v1: i32 @Int32, v2: number @Double, v3: undefined|number @OptionalDouble, v4: string @Cell, v5: anything @JSValue
 # R: = CallInline v0, v1 inlineBuiltin=ArrayPush
 # R-NEXT: = CallInline v0, v2 inlineBuiltin=ArrayPush
 # R-NEXT: = CallInline v0, v3 inlineBuiltin=ArrayPush
 # R-NEXT: = CallInline v0, {{*}} inlineBuiltin=ArrayPush
 # R-NEXT: = CallInline v0, v5 inlineBuiltin=ArrayPush
+}
 function f1 name="pushOneToNumbers" parameters=[{type=Array<number, pristine[Storage]>}, {type=i32}, {type=number}, {type=undefined|number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<number, pristine[Storage]>, v1: i32, v2: number, v3: undefined|number, v4: string, v5: anything, v6: boolean):
     v7 = CallInline v0, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
     v8 = CallInline v0, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
     v9 = CallInline v0, v3 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
@@ -71,16 +68,14 @@ function f1 name="pushOneToNumbers" parameters=[{type=Array<number, pristine[Sto
     Jump -> next b4()
   b4():
     Return
-}
-# R-LABEL: function f1 name="pushOneToNumbers"
 # R: v1: i32 @Int32, v2: number @Double, v3: undefined|number @OptionalDouble, v4: string @Cell, v5: anything @JSValue
 # R: = CallInline v0, v1 inlineBuiltin=ArrayPush
 # R-NEXT: = CallInline v0, v2 inlineBuiltin=ArrayPush
 # R-NEXT: = CallInline v0, v3 inlineBuiltin=ArrayPush
 # R-NEXT: = CallInline v0, {{*}} inlineBuiltin=ArrayPush
 # R-NEXT: = CallInline v0, v5 inlineBuiltin=ArrayPush
+}
 function f2 name="pushOneToAnything" parameters=[{type=Array<anything, pristine[Storage]>}, {type=i32}, {type=number}, {type=undefined|number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: i32, v2: number, v3: undefined|number, v4: string, v5: anything, v6: boolean):
     v7 = CallInline v0, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
     v8 = CallInline v0, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
     v9 = CallInline v0, v3 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
@@ -109,11 +104,10 @@ function f2 name="pushOneToAnything" parameters=[{type=Array<anything, pristine[
     Jump -> next b4()
   b4():
     Return
-}
-# R-LABEL: function f2 name="pushOneToAnything"
 # R: v1: i32 @Int32, v2: number @Double, v3: undefined|number @OptionalDouble, v4: string @Cell, v5: anything @JSValue
 # R: = CallInline v0, v1 inlineBuiltin=ArrayPush
 # R-NEXT: = CallInline v0, v2 inlineBuiltin=ArrayPush
 # R-NEXT: = CallInline v0, v3 inlineBuiltin=ArrayPush
 # R-NEXT: = CallInline v0, {{*}} inlineBuiltin=ArrayPush
 # R-NEXT: = CallInline v0, v5 inlineBuiltin=ArrayPush
+}

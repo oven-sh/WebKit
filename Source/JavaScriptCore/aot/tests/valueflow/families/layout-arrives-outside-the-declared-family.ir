@@ -15,7 +15,6 @@ layout L0 name="Range" fields=[{key="pos" declared={type=anything} flags=[IsRequ
 layout L1 name="Node" fields=[{key="pos" declared={type=anything} flags=[IsRequired]}]
 layout L2 name="Literal" fields=[{key="pos" declared={type=anything} flags=[IsRequired]}, {key="end" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
 function f0 name="main" kind=Module parameters=[] results=[{type=anything}] {
-  b0():
     v0 = Integer integer=1
     v1 = NewObject -, v0 layout=L1 fields=[0]
     v2 = NewObject -, v0, v0 layout=L2 fields=[0, 1]
@@ -31,12 +30,10 @@ function f0 name="main" kind=Module parameters=[] results=[{type=anything}] {
     Return
 }
 function f1 name="take" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = PropGet v0 key="pos"
     Return
 }
 function f2 name="keep" parameters=[{type=L1}] results=[{type=anything}] {
-  b0(v0: L1):
     v1 = PropGet v0 key="pos"
     Return
 }

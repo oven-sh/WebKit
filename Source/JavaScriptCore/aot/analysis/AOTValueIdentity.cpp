@@ -9,10 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
-#include "AOTEffectsDeclared.h"
 #include "AOTThreshold.h"
 #include "AOTUseLists.h"
-#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -31,16 +29,12 @@ static ValueID stripCasts(const Function& function, ValueID value, NOESCAPE cons
 
 ValueID sameObjectThroughCasts(const Function& function, ValueID value)
 {
-    return stripCasts(function, value, [](Opcode opcode) {
-        return isCastOrConversion(opcode);
-    });
+    return stripCasts(function, value, [](Opcode opcode) { return isCastOrConversion(opcode); });
 }
 
 ValueID definitionThroughUpcasts(const Function& function, ValueID value)
 {
-    return stripCasts(function, value, [](Opcode opcode) {
-        return opcode == Opcode::Upcast;
-    });
+    return stripCasts(function, value, [](Opcode opcode) { return opcode == Opcode::Upcast; });
 }
 
 Vector<ValueID, 2> findSingleUseCastChain(const Function& function, const UseLists& useLists, ValueID user)
@@ -79,27 +73,14 @@ std::optional<int64_t> integerConstantThroughCasts(const Program& program, const
     return function.at(*constant).integer();
 }
 
-// A walk reaches the head of a cycle before the values that the cycle passes back to it.
-class ValueIdentities::PassedValues {
-public:
-    PassedValues(std::span<const ValueID> parameters, size_t numberOfEdges, std::span<const ValueID> valuesByEdge, bool isRoot)
-        : m_parameters(parameters)
-        , m_valuesByEdge(valuesByEdge)
-        , m_numberOfEdges(numberOfEdges)
-        , m_isRoot(isRoot)
-    {
-    }
+struct ValueIdentities::PassedValues {
+    ValueID parameterAt(uint32_t parameterIndex) const { return parameters[parameterIndex]; }
+    ValueID valuePassedOn(size_t edgeIndex, uint32_t parameterIndex) const { return valuesByEdge[edgeIndex * parameters.size() + parameterIndex]; }
 
-    bool isRoot() const { return m_isRoot; }
-    size_t numberOfEdges() const { return m_numberOfEdges; }
-    ValueID parameterAt(uint32_t parameterIndex) const { return m_parameters[parameterIndex]; }
-    ValueID valuePassedOn(size_t edgeIndex, uint32_t parameterIndex) const { return m_valuesByEdge[edgeIndex * m_parameters.size() + parameterIndex]; }
-
-private:
-    std::span<const ValueID> m_parameters;
-    std::span<const ValueID> m_valuesByEdge;
-    size_t m_numberOfEdges;
-    bool m_isRoot;
+    std::span<const ValueID> parameters;
+    size_t numberOfEdges;
+    std::span<const ValueID> valuesByEdge;
+    bool isRoot;
 };
 
 namespace {
@@ -223,20 +204,14 @@ private:
     Vector<Chain> m_chainOfFirstValue;
 };
 
-static bool hasParametersOutsideEntryBlock(const Function& function, const CFG& cfg)
-{
-    return std::ranges::any_of(cfg.reversePostOrder().subspan(1), [&](BlockID block) {
-        return !function.at(block).parameters.isEmpty();
-    });
-}
-
 ValueIdentities::ValueIdentities(const Function& function, const CFG& cfg, RepeatedWalks repeatedWalks, const OpcodeSet* opcodesOfValues, Evaluation evaluation)
     : m_function(function)
     , m_cfg(&cfg)
     , m_numberOfValues(function.values.size())
     , m_takesShortcuts(repeatedWalks == RepeatedWalks::StartAtFirstChangedBlock)
 {
-    if (m_takesShortcuts && opcodesOfValues && !opcodesOfValues->intersects(castsAndConversions) && !hasParametersOutsideEntryBlock(function, cfg)) {
+    auto hasParameters = [&](BlockID block) { return !function.at(block).parameters.isEmpty(); };
+    if (m_takesShortcuts && opcodesOfValues && !opcodesOfValues->intersects(castsAndConversions) && std::ranges::none_of(cfg.reversePostOrder().subspan(1), hasParameters)) {
         m_isComplete = true;
         return;
     }
@@ -267,14 +242,19 @@ void ValueIdentities::computeAll()
         m_operandsOfCasts.grow(function.values.size());
     }
     walk(function, cfg, 0);
-    m_convergedOnFirstWalk = !m_firstBlockThatReadUnknownIdentity;
     while (m_firstBlockThatReadUnknownIdentity) {
         std::optional<uint32_t> firstBlockToWalkAgain = expectLessOfParametersThatDoNotHold(function, cfg);
         if (!firstBlockToWalkAgain)
             break;
         if (!m_takesShortcuts)
             firstBlockToWalkAgain = 0;
-        forgetIdentitiesFrom(function, cfg, *firstBlockToWalkAgain);
+        for (BlockID id : cfg.reversePostOrder().subspan(*firstBlockToWalkAgain)) {
+            const Block& block = function.at(id);
+            for (ValueID parameter : block.parameters)
+                m_identities[parameter.index()] = ValueID();
+            for (ValueID value : block.values)
+                m_identities[value.index()] = ValueID();
+        }
         m_didWalk = true;
         walk(function, cfg, *firstBlockToWalkAgain);
     }
@@ -324,18 +304,7 @@ auto ValueIdentities::passedValuesInto(const Function& function, const CFG& cfg,
         if (m_keepsWhatWalksRead)
             m_firstPassedValue[orderIndex] = first;
     }
-    return PassedValues(parameters, edges.size(), m_passedValues.subspan(first, edges.size() * parameters.size()), block == cfg.root());
-}
-
-void ValueIdentities::forgetIdentitiesFrom(const Function& function, const CFG& cfg, uint32_t firstOrderIndex)
-{
-    for (BlockID id : cfg.reversePostOrder().subspan(firstOrderIndex)) {
-        const Block& block = function.at(id);
-        for (ValueID parameter : block.parameters)
-            m_identities[parameter.index()] = ValueID();
-        for (ValueID value : block.values)
-            m_identities[value.index()] = ValueID();
-    }
+    return { parameters, edges.size(), m_passedValues.subspan(first, edges.size() * parameters.size()), block == cfg.root() };
 }
 
 void ValueIdentities::walk(const Function& function, const CFG& cfg, uint32_t firstOrderIndex)
@@ -347,6 +316,11 @@ void ValueIdentities::walk(const Function& function, const CFG& cfg, uint32_t fi
     RELEASE_ASSERT(m_identities.size() == function.values.size());
     ValueID* identities = m_identities.mutableSpan().data();
     const Value* values = function.values.span().data();
+    ValueID* operandsOfCasts = m_operandsOfCasts.mutableSpan().data();
+    auto readOperandOfCast = [&](ValueID value) {
+        const Value& definition = values[value.index()];
+        return isCastOrConversion(definition.opcode) ? definition.operand(0) : ValueID();
+    };
     for (uint32_t orderIndex = firstOrderIndex; orderIndex < order.size(); ++orderIndex) {
         BlockID id = order[orderIndex];
         const Block& block = function.at(id);
@@ -370,7 +344,7 @@ void ValueIdentities::walk(const Function& function, const CFG& cfg, uint32_t fi
                 }
             } else {
                 PassedValues passedValues = passedValuesInto(function, cfg, orderIndex);
-                if (m_takesShortcuts && passedValues.numberOfEdges() == 1) {
+                if (m_takesShortcuts && passedValues.numberOfEdges == 1) {
                     for (uint32_t parameterIndex = 0; parameterIndex < parameters.size(); ++parameterIndex)
                         identities[parameters[parameterIndex].index()] = identityOfParameterWithSingleEdge(passedValues, parameterIndex);
                 } else {
@@ -382,41 +356,22 @@ void ValueIdentities::walk(const Function& function, const CFG& cfg, uint32_t fi
             if (m_didReadUnknownIdentity && !m_firstBlockThatReadUnknownIdentity)
                 m_firstBlockThatReadUnknownIdentity = orderIndex;
         }
-        if (m_keepsWhatWalksRead && m_didWalk) {
-            const ValueID* operandsOfCasts = m_operandsOfCasts.span().data();
+        auto assignIdentities = [&](const auto& operandOfCast) {
             for (ValueID value : block.values) {
-                ValueID operand = operandsOfCasts[value.index()];
+                ValueID operand = operandOfCast(value);
                 ValueID source = operand ? identities[operand.index()] : ValueID();
                 identities[value.index()] = source ? source : value;
             }
-            continue;
-        }
-        if (m_keepsWhatWalksRead) {
-            ValueID* operandsOfCasts = m_operandsOfCasts.mutableSpan().data();
-            for (ValueID value : block.values) {
-                const Value& definition = values[value.index()];
-                ValueID operand = isCastOrConversion(definition.opcode) ? definition.operand(0) : ValueID();
-                operandsOfCasts[value.index()] = operand;
-                ValueID source = operand ? identities[operand.index()] : ValueID();
-                identities[value.index()] = source ? source : value;
-            }
-            continue;
-        }
-        for (ValueID value : block.values) {
-            const Value& definition = values[value.index()];
-            ValueID identity = value;
-            if (isCastOrConversion(definition.opcode)) {
-                if (ValueID operand = definition.operand(0)) {
-                    if (ValueID source = identities[operand.index()])
-                        identity = source;
-                }
-            }
-            identities[value.index()] = identity;
-        }
+        };
+        if (m_keepsWhatWalksRead && m_didWalk)
+            assignIdentities([&](ValueID value) { return operandsOfCasts[value.index()]; });
+        else if (m_keepsWhatWalksRead)
+            assignIdentities([&](ValueID value) { return operandsOfCasts[value.index()] = readOperandOfCast(value); });
+        else
+            assignIdentities(readOperandOfCast);
     }
 }
 
-// Every walk reaches the definition of the passed value first, so the result never has to be revised.
 ValueID ValueIdentities::identityOfParameterWithSingleEdge(const PassedValues& passedValues, uint32_t parameterIndex)
 {
     ValueID parameter = passedValues.parameterAt(parameterIndex);
@@ -432,11 +387,11 @@ ValueID ValueIdentities::identityOfParameterWithSingleEdge(const PassedValues& p
 ValueID ValueIdentities::identityOfParameter(const PassedValues& passedValues, uint32_t parameterIndex, MergingParameters& mergingParameters)
 {
     ValueID parameter = passedValues.parameterAt(parameterIndex);
-    if (passedValues.isRoot())
+    if (passedValues.isRoot)
         return parameter;
     ValueID common;
     bool mergesValues = false;
-    for (size_t edgeIndex = 0; edgeIndex < passedValues.numberOfEdges(); ++edgeIndex) {
+    for (size_t edgeIndex = 0; edgeIndex < passedValues.numberOfEdges; ++edgeIndex) {
         ValueID passed = passedValues.valuePassedOn(edgeIndex, parameterIndex);
         if (!passed)
             return parameter;
@@ -468,7 +423,7 @@ ValueID ValueIdentities::identityOfParameter(const PassedValues& passedValues, u
 
 bool ValueIdentities::receiveSameValues(const PassedValues& passedValues, uint32_t earlierIndex, uint32_t parameterIndex) const
 {
-    for (size_t edgeIndex = 0; edgeIndex < passedValues.numberOfEdges(); ++edgeIndex) {
+    for (size_t edgeIndex = 0; edgeIndex < passedValues.numberOfEdges; ++edgeIndex) {
         ValueID passedToEarlier = m_identities[passedValues.valuePassedOn(edgeIndex, earlierIndex).index()];
         ValueID passed = m_identities[passedValues.valuePassedOn(edgeIndex, parameterIndex).index()];
         bool isSame = passedToEarlier == passed || (passedToEarlier == passedValues.parameterAt(earlierIndex) && passed == passedValues.parameterAt(parameterIndex));
@@ -496,7 +451,7 @@ std::optional<uint32_t> ValueIdentities::expectLessOfParametersThatDoNotHold(con
             if (!passedValues)
                 passedValues = passedValuesInto(function, cfg, orderIndex);
             bool isPassedOneValue = true;
-            for (size_t edgeIndex = 0; edgeIndex < passedValues->numberOfEdges() && isPassedOneValue; ++edgeIndex) {
+            for (size_t edgeIndex = 0; edgeIndex < passedValues->numberOfEdges && isPassedOneValue; ++edgeIndex) {
                 ValueID passed = m_identities[passedValues->valuePassedOn(edgeIndex, parameterIndex).index()];
                 isPassedOneValue = !passed || passed == identity || passed == parameter;
             }
@@ -567,7 +522,6 @@ ValueID ValueIdentities::tryResolve(ValueID id)
     return tryResolve(id, blockingParameter);
 }
 
-// Follows casts and parameters with one incoming edge. On failure, blockingParameter is the merge parameter that ended the chain.
 ValueID ValueIdentities::tryResolve(ValueID id, ValueID& blockingParameter)
 {
     Vector<ValueID, 8> chain;
@@ -611,7 +565,6 @@ ValueID ValueIdentities::tryResolve(ValueID id, ValueID& blockingParameter)
     return identity;
 }
 
-// Answers the parameter itself for a value that is the parameter behind casts and single edges.
 ValueID ValueIdentities::tryResolvePassedValue(ValueID passed, ValueID parameter)
 {
     if (m_walkPositions[passed.index()] == notListed)
@@ -638,7 +591,7 @@ ValueID ValueIdentities::tryResolveMergeParameter(ValueID id, const ListedParame
     Vector<ValueID, 32> passedValueStorage;
     for (Edge edge : edges)
         appendPassedValues(m_function, edge, parameters.size(), true, passedValueStorage);
-    PassedValues passedValues(parameters, edges.size(), passedValueStorage.span(), false);
+    PassedValues passedValues { parameters, edges.size(), passedValueStorage.span(), false };
 
     uint32_t firstWalkPosition = listed.walkPosition - 2 * listed.index;
     bool readsOnlyEarlierValues = std::ranges::all_of(passedValueStorage, [&](ValueID passed) {
@@ -651,7 +604,6 @@ ValueID ValueIdentities::tryResolveMergeParameter(ValueID id, const ListedParame
     return identity;
 }
 
-// Every passed value precedes the block in walk order, so no walk leaves these parameters inconsistent and their expectations are never lowered.
 ValueID ValueIdentities::tryResolveParametersInOrder(const PassedValues& passedValues, std::span<const ValueID> passedValueList, ValueID id)
 {
     for (ValueID passed : passedValueList) {
@@ -661,13 +613,12 @@ ValueID ValueIdentities::tryResolveParametersInOrder(const PassedValues& passedV
     }
     MergingParameters mergingParameters(m_numberOfValues);
     mergingParameters.clear();
-    size_t numberOfParameters = passedValueList.size() / passedValues.numberOfEdges();
+    size_t numberOfParameters = passedValueList.size() / passedValues.numberOfEdges;
     for (uint32_t parameterIndex = 0; parameterIndex < numberOfParameters; ++parameterIndex)
         m_identities[passedValues.parameterAt(parameterIndex).index()] = identityOfParameter(passedValues, parameterIndex, mergingParameters);
     return m_identities[id.index()];
 }
 
-// Relies only on what holds once expectLessOfParametersThatDoNotHold() finds nothing to lower.
 ValueID ValueIdentities::tryResolveLoopParameter(const PassedValues& passedValues, uint32_t parameterIndex, uint32_t walkPosition)
 {
     ValueID parameter = passedValues.parameterAt(parameterIndex);
@@ -675,7 +626,7 @@ ValueID ValueIdentities::tryResolveLoopParameter(const PassedValues& passedValue
     ValueID firstPassedValue;
     bool mergesValues = false;
     bool isPassedOneEarlierValueAndItself = true;
-    for (size_t edgeIndex = 0; edgeIndex < passedValues.numberOfEdges(); ++edgeIndex) {
+    for (size_t edgeIndex = 0; edgeIndex < passedValues.numberOfEdges; ++edgeIndex) {
         ValueID passed = passedValues.valuePassedOn(edgeIndex, parameterIndex);
         if (!passed) {
             m_identities[parameter.index()] = parameter;
@@ -713,13 +664,13 @@ ValueID ValueIdentities::tryResolveLoopParameter(const PassedValues& passedValue
 
 bool ValueIdentities::receiveDifferentValues(const PassedValues& passedValues, uint32_t earlierIndex, uint32_t parameterIndex)
 {
-    if (passedValues.numberOfEdges() > m_remainingOnDemandWork)
+    if (passedValues.numberOfEdges > m_remainingOnDemandWork)
         return false;
-    m_remainingOnDemandWork -= passedValues.numberOfEdges();
+    m_remainingOnDemandWork -= passedValues.numberOfEdges;
 
     ValueID earlier = passedValues.parameterAt(earlierIndex);
     ValueID parameter = passedValues.parameterAt(parameterIndex);
-    for (size_t edgeIndex = 0; edgeIndex < passedValues.numberOfEdges(); ++edgeIndex) {
+    for (size_t edgeIndex = 0; edgeIndex < passedValues.numberOfEdges; ++edgeIndex) {
         ValueID passedToEarlier = passedValues.valuePassedOn(edgeIndex, earlierIndex);
         if (!passedToEarlier)
             return true;
@@ -742,53 +693,6 @@ void ValueIdentities::didEraseValues(std::span<const ValueID> erased)
         if (!m_walkPositions.isEmpty())
             m_walkPositions[id.index()] = notListed;
     }
-}
-
-static bool keepsBlockOrder(const Renumbering& renumbering)
-{
-    BlockID previous;
-    for (BlockID block : renumbering.blocks) {
-        if (!block)
-            continue;
-        if (previous && block < previous)
-            return false;
-        previous = block;
-    }
-    return true;
-}
-
-// After several walks the result may depend on the order of a block's incoming edges, which are sorted by block index.
-bool ValueIdentities::didRenumber(const Renumbering& renumbering)
-{
-    if (renumbering.values.size() != m_numberOfValues)
-        return false;
-    if (!m_convergedOnFirstWalk && !keepsBlockOrder(renumbering))
-        return false;
-
-    unsigned numberOfValues = 0;
-    for (ValueID id : renumbering.values)
-        numberOfValues += !!id;
-    if (m_identities.isEmpty()) {
-        m_numberOfValues = numberOfValues;
-        return true;
-    }
-
-    Vector<ValueID> identities(numberOfValues);
-    for (unsigned index = 0; index < m_numberOfValues; ++index) {
-        ValueID id = renumbering.values[index];
-        if (!id || !m_identities[index])
-            continue;
-        ValueID identity = renumbering.values[m_identities[index].index()];
-        if (!identity)
-            return false;
-        identities[id.index()] = identity;
-    }
-    m_identities = WTF::move(identities);
-    m_numberOfValues = numberOfValues;
-    m_walkPositions.clear();
-    m_listedParameters.clear();
-    m_cfg = nullptr;
-    return true;
 }
 
 bool isRematerializable(const Value& value)

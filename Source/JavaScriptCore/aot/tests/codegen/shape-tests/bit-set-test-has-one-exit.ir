@@ -23,14 +23,12 @@ module m0 path="main.js" displayPath="main.js"
 layout L%(i) name="T%(i)" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
 # END REPEAT
 function f0 name="allocate" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
 # REPEAT: i = 0..69
     v%(i+1) = NewObject -, v0 layout=L%(i) fields=[0]
 # END REPEAT
     Return
 }
 function f1 name="neighbors" parameters=[{type=anything}] results=[{type=undefined}] {
-  b0(v0: anything):
     Jump -> next b1()
   b1():
     LoopHint
@@ -42,7 +40,6 @@ function f1 name="neighbors" parameters=[{type=anything}] results=[{type=undefin
     Return
 }
 function f2 name="immediateBits" parameters=[{type=anything}] results=[{type=int}] {
-  b0(v0: anything):
     v1 = ShapeTest v0 layouts=[L5, L7, L9]
     TestAndBranch v1 -> taken b1(), notTaken b2()
   b1():
@@ -53,7 +50,6 @@ function f2 name="immediateBits" parameters=[{type=anything}] results=[{type=int
     Return v3
 }
 function f3 name="hashedSet" parameters=[{type=anything}] results=[{type=int}] {
-  b0(v0: anything):
     v1 = ShapeTest v0 layouts=[L0, L69]
     TestAndBranch v1 -> taken b1(), notTaken b2()
   b1():
@@ -64,7 +60,6 @@ function f3 name="hashedSet" parameters=[{type=anything}] results=[{type=int}] {
     Return v3
 }
 function f4 name="bitSetOfKnownLayouts" parameters=[{type=L0|L30|L69}] results=[{type=int}] {
-  b0(v0: L0|L30|L69):
     v1 = ShapeTest v0 layouts=[L0, L69]
     TestAndBranch v1 -> taken b1(), notTaken b2()
   b1():
@@ -75,7 +70,6 @@ function f4 name="bitSetOfKnownLayouts" parameters=[{type=L0|L30|L69}] results=[
     Return v3
 }
 function f5 name="bitSetOfThree" parameters=[{type=anything}] results=[{type=int}] {
-  b0(v0: anything):
     v1 = ShapeTest v0 layouts=[L0, L35, L69]
     TestAndBranch v1 -> taken b1(), notTaken b2()
   b1():

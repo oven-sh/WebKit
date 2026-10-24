@@ -12,140 +12,105 @@
 #include "AOTConversionEmitter.h"
 #include "AOTStringEmitter.h"
 #include "AOTStringRangeReadEmitter.h"
-#include "AOTStubsArithmetic.h"
 #include "AOTStubsPrimitiveFastPaths.h"
+#include "AOTStubsPropertyKeys.h"
 #include "AOTTypeTable.h"
 #include "AOTTypeTestPlan.h"
 #include "PureNaN.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static BinaryOperator binaryOperatorFor(ArithmeticOperator op)
+namespace {
+
+struct ArithmeticTraits {
+    BinaryOperator stub;
+    std::optional<RuntimeOperation> onNumberAndValue;
+};
+
+struct UnaryTraits {
+    UnaryOperationForm stub;
+    RuntimeOperation onBigInt;
+};
+
+} // anonymous namespace
+
+static ArithmeticTraits traitsOfOperator(ArithmeticOperator op)
 {
     switch (op) {
     case ArithmeticOperator::Add:
-        return BinaryOperator::Add;
+        return { BinaryOperator::Add, RuntimeOperation::AddNumberAndValueAsNumber };
     case ArithmeticOperator::Sub:
-        return BinaryOperator::Sub;
+        return { BinaryOperator::Sub, RuntimeOperation::SubNumberAndValueAsNumber };
     case ArithmeticOperator::Mul:
-        return BinaryOperator::Mul;
+        return { BinaryOperator::Mul, RuntimeOperation::MulNumberAndValueAsNumber };
     case ArithmeticOperator::Div:
-        return BinaryOperator::Div;
+        return { BinaryOperator::Div, RuntimeOperation::DivNumberAndValueAsNumber };
     case ArithmeticOperator::Mod:
-        return BinaryOperator::Mod;
+        return { BinaryOperator::Mod, std::nullopt };
     case ArithmeticOperator::Pow:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static UnaryOperationForm unaryOperationFormFor(UnaryOperator op)
+static UnaryTraits traitsOfOperator(UnaryOperator op)
 {
     switch (op) {
     case UnaryOperator::Negate:
-        return UnaryOperationForm::Negate;
+        return { UnaryOperationForm::Negate, RuntimeOperation::ValueNegate };
     case UnaryOperator::Increment:
-        return UnaryOperationForm::Increment;
+        return { UnaryOperationForm::Increment, RuntimeOperation::Increment };
     case UnaryOperator::Decrement:
-        return UnaryOperationForm::Decrement;
+        return { UnaryOperationForm::Decrement, RuntimeOperation::Decrement };
     case UnaryOperator::BitNot:
-        return UnaryOperationForm::BitNot;
+        return { UnaryOperationForm::BitNot, RuntimeOperation::ValueBitNot };
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static std::optional<RuntimeOperation> runtimeOperationOnNumberAndValue(ArithmeticOperator op)
-{
-    switch (op) {
-    case ArithmeticOperator::Add:
-        return RuntimeOperation::AddNumberAndValueAsNumber;
-    case ArithmeticOperator::Sub:
-        return RuntimeOperation::SubNumberAndValueAsNumber;
-    case ArithmeticOperator::Mul:
-        return RuntimeOperation::MulNumberAndValueAsNumber;
-    case ArithmeticOperator::Div:
-        return RuntimeOperation::DivNumberAndValueAsNumber;
-    case ArithmeticOperator::Mod:
-    case ArithmeticOperator::Pow:
-        return std::nullopt;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-OperatorEmitter::OperatorEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
-
-#define AOT_DEFINE_ARITHMETIC_CASE(name) \
-    void OperatorEmitter::generate##name(const ValueContext& value) \
-    { \
-        generateArithmetic(value, ArithmeticOperator::name); \
-    }
-AOT_DEFINE_ARITHMETIC_CASE(Add)
-AOT_DEFINE_ARITHMETIC_CASE(Sub)
-AOT_DEFINE_ARITHMETIC_CASE(Mul)
-AOT_DEFINE_ARITHMETIC_CASE(Div)
-AOT_DEFINE_ARITHMETIC_CASE(Mod)
-AOT_DEFINE_ARITHMETIC_CASE(Pow)
-#undef AOT_DEFINE_ARITHMETIC_CASE
-
-#define AOT_DEFINE_UNARY_CASE(name) \
-    void OperatorEmitter::generate##name(const ValueContext& value) \
-    { \
-        generateUnary(value, UnaryOperator::name); \
-    }
-AOT_DEFINE_UNARY_CASE(Negate)
-AOT_DEFINE_UNARY_CASE(Increment)
-AOT_DEFINE_UNARY_CASE(Decrement)
-AOT_DEFINE_UNARY_CASE(BitNot)
-#undef AOT_DEFINE_UNARY_CASE
-
-void OperatorEmitter::failOnUnsupportedForm(const ValueContext& value)
+Operand OperatorEmitter::failWithZero(const ValueContext& value)
 {
     fail(value, InternalErrorKind::OpcodeWithoutCode);
-    define(value, emitter<ConstantEmitter>().zeroOf(value.representation()));
+    return emitter<ConstantEmitter>().zeroOf(value.representation());
 }
 
-void OperatorEmitter::generateArithmetic(const ValueContext& value, ArithmeticOperator op)
+Operand OperatorEmitter::arithmeticResult(const ValueContext& value, ArithmeticOperator op)
 {
+    ValueID left = value->leftOperand();
+    ValueID right = value->rightOperand();
     switch (value->form()) {
-    case OperatorForm::Generic:
-        define(value, arithmeticOnValues(value, op));
-        return;
+    case OperatorForm::Generic: {
+        Boxed x = in<Boxed>(left);
+        Boxed y = in<Boxed>(right);
+        return arithmeticOnBoxedOperands(value, op, x, y);
+    }
     case OperatorForm::Integers:
-        define(value, arithmeticOnIntegers(value, op));
-        return;
+        return arithmeticOnIntegers(value, op);
     case OperatorForm::CheckedIntegers:
-        define(value, arithmeticOnCheckedIntegers(value, op));
-        return;
+        return arithmeticOnCheckedIntegers(value, op);
     case OperatorForm::Numbers: {
-        if (value.representation() == Representation::JSValue) {
-            define(value, sumOfBoxedNumbers(op, get(value->leftOperand()), typeOf(value->leftOperand()), get(value->rightOperand()), typeOf(value->rightOperand())));
-            return;
-        }
-        Number left = op == ArithmeticOperator::Add ? asTermOfSum(value->leftOperand(), value->rightOperand()) : asNumericOperand(value->leftOperand());
-        Number right = op == ArithmeticOperator::Add || op == ArithmeticOperator::Sub ? asTermOfSum(value->rightOperand(), value->leftOperand()) : asNumericOperand(value->rightOperand());
-        define(value, arithmeticOnNumbers(op, left, right));
-        return;
+        if (value.representation() == Representation::JSValue)
+            return sumOfBoxedNumbers(op, get(left), typeOf(left), get(right), typeOf(right));
+        Number x = op == ArithmeticOperator::Add ? asTermOfSum(left, right) : asNumericOperand(left);
+        Number y = op == ArithmeticOperator::Add || op == ArithmeticOperator::Sub ? asTermOfSum(right, left) : asNumericOperand(right);
+        return arithmeticOnNumbers(op, x, y);
     }
     case OperatorForm::NumberAndValue:
-        if (std::optional<RuntimeOperation> operation = runtimeOperationOnNumberAndValue(op)) {
-            define(value, arithmeticOnNumberAndValue(value, op, *operation));
-            return;
-        }
+        if (op != ArithmeticOperator::Pow && traitsOfOperator(op).onNumberAndValue)
+            return arithmeticOnNumberAndValue(value, op);
         break;
-    case OperatorForm::BigInts:
-        define(value, arithmeticOnBigInts(value, op));
-        return;
+    case OperatorForm::BigInts: {
+        Boxed x = boxCell(in<CellPointer>(left));
+        Boxed y = boxCell(in<CellPointer>(right));
+        return unboxCell(arithmeticOnBoxedOperands(value, op, x, y));
+    }
     case OperatorForm::Strings:
     case OperatorForm::StringAndPrimitive:
     case OperatorForm::NullableStrings:
     case OperatorForm::NullableStringAndPrimitive:
-        if (op != ArithmeticOperator::Add)
-            break;
-        define(value, addStrings(value));
-        return;
+        if (op == ArithmeticOperator::Add)
+            return addStrings(value);
+        break;
     case OperatorForm::Unselected:
     case OperatorForm::Bits:
     case OperatorForm::Booleans:
@@ -160,34 +125,24 @@ void OperatorEmitter::generateArithmetic(const ValueContext& value, ArithmeticOp
     case OperatorForm::MayBeStringOrNumber:
         break;
     }
-    failOnUnsupportedForm(value);
+    return failWithZero(value);
+}
+
+LValue OperatorEmitter::callBinaryStub(const ValueContext& value, BinaryOperator op, Boxed left, Boxed right)
+{
+    bool mayBothBeInt32 = typeOf(value->leftOperand()).primitives & Primitive::Integer && typeOf(value->rightOperand()).primitives & Primitive::Integer;
+    bool isAfterInt32Check = !mayBothBeInt32 && hasFormAfterInt32Check(op);
+    return callStub(value, binaryOperation(op, isAfterInt32Check), { left.value(), right.value() }).first;
 }
 
 Boxed OperatorEmitter::arithmeticOnBoxedOperands(const ValueContext& value, ArithmeticOperator op, Boxed left, Boxed right)
 {
     if (op == ArithmeticOperator::Pow)
-        return callOperation<Boxed>(value, runtimeOperationOf(op), { left, right });
-    BinaryOperator binaryOperator = binaryOperatorFor(op);
-    bool mayBothBeInt32 = typeOf(value->leftOperand()).primitives & Primitive::Integer && typeOf(value->rightOperand()).primitives & Primitive::Integer;
-    bool isAfterInt32Check = !mayBothBeInt32 && hasFormAfterInt32Check(binaryOperator);
-    return Boxed(callStub(value, binaryOperation(binaryOperator, isAfterInt32Check), { left.value(), right.value() }).first);
+        return callOperation<Boxed>(value, RuntimeOperation::ValuePow, { left, right });
+    return Boxed(callBinaryStub(value, traitsOfOperator(op).stub, left, right));
 }
 
-Boxed OperatorEmitter::arithmeticOnValues(const ValueContext& value, ArithmeticOperator op)
-{
-    Boxed left = in<Boxed>(value->leftOperand());
-    Boxed right = in<Boxed>(value->rightOperand());
-    return arithmeticOnBoxedOperands(value, op, left, right);
-}
-
-CellPointer OperatorEmitter::arithmeticOnBigInts(const ValueContext& value, ArithmeticOperator op)
-{
-    Boxed left = boxCell(in<CellPointer>(value->leftOperand()));
-    Boxed right = boxCell(in<CellPointer>(value->rightOperand()));
-    return unboxCell(arithmeticOnBoxedOperands(value, op, left, right));
-}
-
-Number OperatorEmitter::arithmeticOnNumberAndValue(const ValueContext& value, ArithmeticOperator op, RuntimeOperation operation)
+Number OperatorEmitter::arithmeticOnNumberAndValue(const ValueContext& value, ArithmeticOperator op)
 {
     bool numberIsOnRight = representationOf(value->leftOperand()) != Representation::Double;
     ValueID numberID = numberIsOnRight ? value->rightOperand() : value->leftOperand();
@@ -196,55 +151,8 @@ Number OperatorEmitter::arithmeticOnNumberAndValue(const ValueContext& value, Ar
     Boxed otherOperand = in<Boxed>(otherID);
     Word32 typeAndNumberSide = word32(static_cast<int32_t>(NumberAndValueBits::encode(TypeTable::number.index(), numberIsOnRight)));
     if (typeOf(otherID).primitives & Primitive::Number)
-        return Number(callStub(value, binaryWithDouble(binaryOperatorFor(op), numberIsOnRight), { numberOperand.value(), otherOperand.value(), typeAndNumberSide.value() }).first);
-    return callOperation<Number>(value, operation, { otherOperand, typeAndNumberSide, numberOperand });
-}
-
-void OperatorEmitter::generateUnary(const ValueContext& value, UnaryOperator op)
-{
-    ValueID operand = value->valueOperand();
-    switch (value->form()) {
-    case OperatorForm::Generic:
-        define(value, Boxed(callStub(value, unaryOperation(unaryOperationFormFor(op)), { in<Boxed>(operand).value() }).first));
-        return;
-    case OperatorForm::Integers:
-        define(value, unaryOnIntegers(value, op));
-        return;
-    case OperatorForm::CheckedIntegers:
-        define(value, unaryOnCheckedIntegers(value, op));
-        return;
-    case OperatorForm::Numbers:
-        if (value.representation() == Representation::JSValue) {
-            RELEASE_ASSERT(op == UnaryOperator::Increment || op == UnaryOperator::Decrement);
-            ArithmeticOperator sum = op == UnaryOperator::Increment ? ArithmeticOperator::Add : ArithmeticOperator::Sub;
-            define(value, sumOfBoxedNumbers(sum, get(operand), typeOf(operand), word32(1), typeOf(operand)));
-            return;
-        }
-        define(value, unaryOnNumbers(op, asNumericOperand(operand)));
-        return;
-    case OperatorForm::BigInts:
-        define(value, unboxCell(callOperation<Boxed>(value, runtimeOperationOf(op), { boxCell(in<CellPointer>(operand)) })));
-        return;
-    case OperatorForm::Unselected:
-    case OperatorForm::NumberAndValue:
-    case OperatorForm::Bits:
-    case OperatorForm::Booleans:
-    case OperatorForm::Strings:
-    case OperatorForm::StringAndValue:
-    case OperatorForm::Int32AndValue:
-    case OperatorForm::StringAndPrimitive:
-    case OperatorForm::NullableStrings:
-    case OperatorForm::NullableStringAndPrimitive:
-    case OperatorForm::String:
-    case OperatorForm::Number:
-    case OperatorForm::NumberByOperation:
-    case OperatorForm::NullableString:
-    case OperatorForm::NullableNumber:
-    case OperatorForm::MayBeString:
-    case OperatorForm::MayBeStringOrNumber:
-        break;
-    }
-    failOnUnsupportedForm(value);
+        return Number(callStub(value, binaryWithDouble(traitsOfOperator(op).stub, numberIsOnRight), { numberOperand.value(), otherOperand.value(), typeAndNumberSide.value() }).first);
+    return callOperation<Number>(value, *traitsOfOperator(op).onNumberAndValue, { otherOperand, typeAndNumberSide, numberOperand });
 }
 
 template<typename Functor>
@@ -269,8 +177,48 @@ Operand OperatorEmitter::withIntegerOperand(const ValueContext& value, const Fun
     case Representation::RawWord:
         break;
     }
-    fail(value, InternalErrorKind::OpcodeWithoutCode);
-    return emitter<ConstantEmitter>().zeroOf(value.representation());
+    return failWithZero(value);
+}
+
+Operand OperatorEmitter::unaryResult(const ValueContext& value, UnaryOperator op)
+{
+    ValueID operand = value->valueOperand();
+    switch (value->form()) {
+    case OperatorForm::Generic:
+        return Boxed(callStub(value, unaryOperation(traitsOfOperator(op).stub), { in<Boxed>(operand).value() }).first);
+    case OperatorForm::Integers:
+        return unaryOnIntegers(value, op);
+    case OperatorForm::CheckedIntegers:
+        return unaryOnCheckedIntegers(value, op);
+    case OperatorForm::Numbers:
+        if (value.representation() == Representation::JSValue) {
+            RELEASE_ASSERT(op == UnaryOperator::Increment || op == UnaryOperator::Decrement);
+            ArithmeticOperator sum = op == UnaryOperator::Increment ? ArithmeticOperator::Add : ArithmeticOperator::Sub;
+            return sumOfBoxedNumbers(sum, get(operand), typeOf(operand), word32(1), typeOf(operand));
+        }
+        return unaryOnNumbers(op, asNumericOperand(operand));
+    case OperatorForm::BigInts:
+        return unboxCell(callOperation<Boxed>(value, traitsOfOperator(op).onBigInt, { boxCell(in<CellPointer>(operand)) }));
+    case OperatorForm::Unselected:
+    case OperatorForm::NumberAndValue:
+    case OperatorForm::Bits:
+    case OperatorForm::Booleans:
+    case OperatorForm::Strings:
+    case OperatorForm::StringAndValue:
+    case OperatorForm::Int32AndValue:
+    case OperatorForm::StringAndPrimitive:
+    case OperatorForm::NullableStrings:
+    case OperatorForm::NullableStringAndPrimitive:
+    case OperatorForm::String:
+    case OperatorForm::Number:
+    case OperatorForm::NumberByOperation:
+    case OperatorForm::NullableString:
+    case OperatorForm::NullableNumber:
+    case OperatorForm::MayBeString:
+    case OperatorForm::MayBeStringOrNumber:
+        break;
+    }
+    return failWithZero(value);
 }
 
 Operand OperatorEmitter::unaryOnIntegers(const ValueContext& value, UnaryOperator op)
@@ -304,8 +252,7 @@ Operand OperatorEmitter::unaryOnCheckedIntegers(const ValueContext& value, Unary
     case UnaryOperator::BitNot:
         break;
     }
-    fail(value, InternalErrorKind::OpcodeWithoutCode);
-    return emitter<ConstantEmitter>().zeroOf(value.representation());
+    return failWithZero(value);
 }
 
 Operand OperatorEmitter::unaryOnNumbers(UnaryOperator op, Number operand)
@@ -334,25 +281,20 @@ Number OperatorEmitter::asNumberLikeOperand(ValueID id)
 }
 
 template<typename Functor>
-void OperatorEmitter::generateConversionToNumber(const ValueContext& value, const Functor& convertValue)
+Operand OperatorEmitter::convertedToNumber(const ValueContext& value, const Functor& convertValue)
 {
     ValueID operand = value->valueOperand();
     switch (value->form()) {
     case OperatorForm::Generic:
-        define(value, convertValue(in<Boxed>(operand)));
-        return;
+        return convertValue(in<Boxed>(operand));
     case OperatorForm::Integers:
-        define(value, get(operand));
-        return;
+        return get(operand);
     case OperatorForm::Numbers:
         if (representationOf(operand) == Representation::Double)
-            define(value, get(operand));
-        else
-            define(value, emitter<ConversionEmitter>().purified(asNumericOperand(operand)));
-        return;
+            return get(operand);
+        return emitter<ConversionEmitter>().purified(asNumericOperand(operand));
     case OperatorForm::NullableNumber:
-        define(value, asNumberLikeOperand(operand));
-        return;
+        return asNumberLikeOperand(operand);
     case OperatorForm::Unselected:
     case OperatorForm::CheckedIntegers:
     case OperatorForm::NumberAndValue:
@@ -373,12 +315,12 @@ void OperatorEmitter::generateConversionToNumber(const ValueContext& value, cons
     case OperatorForm::MayBeStringOrNumber:
         break;
     }
-    failOnUnsupportedForm(value);
+    return failWithZero(value);
 }
 
 void OperatorEmitter::generateToNumber(const ValueContext& value)
 {
-    generateConversionToNumber(value, [&](Boxed operand) -> Operand {
+    define(value, convertedToNumber(value, [&](Boxed operand) -> Operand {
         const Type& type = typeOf(value->valueOperand());
         if (type.primitives & Primitive::AnyString && type.hasOnlyPrimitives(Primitive::AnyString | Primitive::Number | Primitive::Boolean | Primitive::UndefinedOrNull)) {
             return either<Number>(isCell(operand), [&] {
@@ -388,14 +330,14 @@ void OperatorEmitter::generateToNumber(const ValueContext& value)
             });
         }
         return Number(callStub(value, toNumberAsDouble(), { operand.value() }).first);
-    });
+    }));
 }
 
 void OperatorEmitter::generateToNumeric(const ValueContext& value)
 {
-    generateConversionToNumber(value, [&](Boxed operand) -> Operand {
+    define(value, convertedToNumber(value, [&](Boxed operand) -> Operand {
         return Boxed(callStub(value, unaryOperation(UnaryOperationForm::ToNumeric), { operand.value() }).first);
-    });
+    }));
 }
 
 void OperatorEmitter::generateLogicalNot(const ValueContext& value)
@@ -408,38 +350,39 @@ void OperatorEmitter::generateTypeOf(const ValueContext& value)
     define(value, callOperation<CellPointer>(value, RuntimeOperation::TypeOf, { in<Boxed>(value->valueOperand()) }));
 }
 
-template<typename Functor>
-CellPointer OperatorEmitter::objectOrConverted(ValueID operand, const Functor& convertPrimitive)
+// What passes the test is the result as it stands.
+template<typename T, typename Functor>
+T OperatorEmitter::passingOrConverted(Boxed value, const TypeTestPlan& plan, const Functor& convert)
 {
-    Boxed value = in<Boxed>(operand);
-    const TypeTestPlan& plan = typeTestPlanFor(m_function.at(operand).type, Representation::JSValue, TypeTable::object);
     switch (plan.verdict) {
     case TypeTestVerdict::AlwaysPasses:
-        return unboxCell(value);
+        return T(value.value());
     case TypeTestVerdict::NeverPasses:
-        return convertPrimitive(value, CallOptions { });
+        return convert(CallOptions { });
     case TypeTestVerdict::NeedsTest:
         break;
     }
 
-    LBasicBlock isObject = newBlock();
-    LBasicBlock isPrimitive = newBlock();
-    Join<CellPointer> join(m_out);
-    branchOnType(value, plan, { normalEdge(isObject), rareEdge(isPrimitive) });
+    LBasicBlock passes = newBlock();
+    LBasicBlock fails = newBlock();
+    Join<T> join(m_out);
+    branchOnType(value, plan, { normalEdge(passes), rareEdge(fails) });
 
-    m_out.appendTo(isObject);
-    join.add(unboxCell(value));
+    m_out.appendTo(passes);
+    join.add(T(value.value()));
 
-    m_out.appendTo(isPrimitive);
-    join.add(convertPrimitive(value, CallOptions { .isOnRarePath = true }));
+    m_out.appendTo(fails);
+    join.add(convert(CallOptions { .isOnRarePath = true }));
     return join.finish();
 }
 
 void OperatorEmitter::generateToObject(const ValueContext& value)
 {
     StringID message = value->message() ? value->message() : m_program.strings.emptyString();
-    CellPointer object = objectOrConverted(value->valueOperand(), [&](Boxed primitive, const CallOptions& options) {
-        return callOperation<CellPointer>(value, RuntimeOperation::ToObject, { primitive, word32(message.index()) }, options);
+    Boxed operand = in<Boxed>(value->valueOperand());
+    const TypeTestPlan& plan = typeTestPlanFor(m_function.at(value->valueOperand()).type, Representation::JSValue, TypeTable::object);
+    CellPointer object = passingOrConverted<CellPointer>(operand, plan, [&](const CallOptions& options) {
+        return callOperation<CellPointer>(value, RuntimeOperation::ToObject, { operand, word32(message.index()) }, options);
     });
     // The conversion of undefined or null throws, and a value of type never has no representation of an object.
     if (!typeOf(value.id()).isNever())
@@ -448,77 +391,21 @@ void OperatorEmitter::generateToObject(const ValueContext& value)
 
 void OperatorEmitter::generateToThis(const ValueContext& value)
 {
-    define(value, objectOrConverted(value->valueOperand(), [&](Boxed primitive, const CallOptions& options) {
-        return unboxCell(callOperation<Boxed>(value, RuntimeOperation::ToThis, { primitive }, options));
+    Boxed operand = in<Boxed>(value->valueOperand());
+    const TypeTestPlan& plan = typeTestPlanFor(m_function.at(value->valueOperand()).type, Representation::JSValue, TypeTable::object);
+    define(value, passingOrConverted<CellPointer>(operand, plan, [&](const CallOptions& options) {
+        return unboxCell(callOperation<Boxed>(value, RuntimeOperation::ToThis, { operand }, options));
     }));
 }
 
-RuntimeOperation OperatorEmitter::runtimeOperationOf(ArithmeticOperator op)
+void OperatorEmitter::generateToPropertyKey(const ValueContext& value)
 {
-    switch (op) {
-    case ArithmeticOperator::Add:
-        return RuntimeOperation::ValueAdd;
-    case ArithmeticOperator::Sub:
-        return RuntimeOperation::ValueSub;
-    case ArithmeticOperator::Mul:
-        return RuntimeOperation::ValueMul;
-    case ArithmeticOperator::Div:
-        return RuntimeOperation::ValueDiv;
-    case ArithmeticOperator::Mod:
-        return RuntimeOperation::ValueMod;
-    case ArithmeticOperator::Pow:
-        return RuntimeOperation::ValuePow;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-RuntimeOperation OperatorEmitter::runtimeOperationOf(BitwiseOperator op)
-{
-    switch (op) {
-    case BitwiseOperator::And:
-        return RuntimeOperation::ValueBitAnd;
-    case BitwiseOperator::Or:
-        return RuntimeOperation::ValueBitOr;
-    case BitwiseOperator::Xor:
-        return RuntimeOperation::ValueBitXor;
-    case BitwiseOperator::LeftShift:
-        return RuntimeOperation::ValueLShift;
-    case BitwiseOperator::RightShift:
-        return RuntimeOperation::ValueRShift;
-    case BitwiseOperator::UnsignedRightShift:
-        return RuntimeOperation::ValueURShift;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-RuntimeOperation OperatorEmitter::runtimeOperationOf(UnaryOperator op)
-{
-    switch (op) {
-    case UnaryOperator::Negate:
-        return RuntimeOperation::ValueNegate;
-    case UnaryOperator::Increment:
-        return RuntimeOperation::Increment;
-    case UnaryOperator::Decrement:
-        return RuntimeOperation::Decrement;
-    case UnaryOperator::BitNot:
-        return RuntimeOperation::ValueBitNot;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-RuntimeOperation OperatorEmitter::runtimeOperationOf(Relation relation)
-{
-    switch (relation) {
-    case Relation::Less:
-        return RuntimeOperation::CompareLess;
-    case Relation::LessOrEqual:
-        return RuntimeOperation::CompareLessEq;
-    case Relation::Greater:
-        return RuntimeOperation::CompareGreater;
-    case Relation::GreaterOrEqual:
-        return RuntimeOperation::CompareGreaterEq;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    Boxed operand = in<Boxed>(value->valueOperand());
+    TypeID keyType = types().intern(Type::fromPrimitives(Primitive::String | Primitive::Symbol));
+    const TypeTestPlan& plan = typeTestPlanFor(types().intern(typeOf(value->valueOperand())), Representation::JSValue, keyType);
+    define(value, unboxCell(passingOrConverted<Boxed>(operand, plan, [&](const CallOptions&) {
+        return Boxed(callStub(value, AOT::toPropertyKey(), { operand.value() }).first);
+    })));
 }
 
 } } } // namespace JSC::AOT::Typed

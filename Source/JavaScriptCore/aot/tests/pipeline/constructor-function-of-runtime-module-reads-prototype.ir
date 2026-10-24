@@ -15,7 +15,6 @@ entry module=m0
 layout L0 kind=Instance name="OfRuntime" constructor=f2 fields=[{key="x" declared={type=anything}}] flags=[IsConstructorFunction]
 layout L1 kind=Instance name="OfProgram" constructor=f3 fields=[{key="x" declared={type=anything}}] flags=[IsConstructorFunction]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f3
@@ -26,7 +25,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="constructOfRuntime" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f2
     v1 = Construct v0
     v2 = InstanceOf v1, v0
@@ -45,6 +43,5 @@ function f3 name="OfProgram" flags=[HasThis] thisType={type=L1 flags=[IsExpected
     Return
 }
 function f4 name="sqlite" module=m1 kind=Module results=[{type=anything}] {
-  b0():
     Return
 }

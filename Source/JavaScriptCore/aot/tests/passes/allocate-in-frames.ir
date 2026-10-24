@@ -20,7 +20,6 @@ layout L5 kind=Environment name="frameClosureUsedAfterCopy" fields=[{key="x" dec
 layout L6 kind=Environment name="heapClosureCreatedInLoop" fields=[{key="x" declared={type=anything}}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToBoolean v1
@@ -51,47 +50,38 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK-NEXT: L6 may be in a frame
 
 function f1 name="callbackPassedDown" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f20
     v1 = CallDirect v0 function=f17
     Return v1
-}
-# CHECK-LABEL: function f1 name="callbackPassedDown"
 # CHECK: NewClosure {{*}}storage=Frame
+}
 
 function f2 name="callbackWithEnvironment" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = NewClosure v1 function=f21
     v3 = CallDirect v2 function=f17
     Return v3
-}
-# CHECK-LABEL: function f2 name="callbackWithEnvironment"
 # CHECK: NewObject {{*}}storage=Frame
 # CHECK: NewClosure {{*}}storage=Frame
+}
 
 function f3 name="environmentPassedAsCapture" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L1 fields=[0]
     v2 = CallDirect v1 function=f22
     Return v2
-}
-# CHECK-LABEL: function f3 name="environmentPassedAsCapture"
 # CHECK: NewObject {{*}}storage=Frame
+}
 
 function f4 name="closureCapturedByFrameClosure" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f23
     v1 = NewClosure v0 function=f24
     v2 = CallDirect v1 function=f17
     Return v2
-}
-# CHECK-LABEL: function f4 name="closureCapturedByFrameClosure"
 # CHECK: function=f23 {{*}}storage=Frame
 # CHECK: function=f24 {{*}}storage=Frame
+}
 
 function f5 name="materializedLate" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewObject -, v0 layout=L2 fields=[0]
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -101,45 +91,37 @@ function f5 name="materializedLate" parameters=[{type=anything}, {type=boolean}]
   b2():
     v5 = GetEnvironmentField v2 layout=L2 field=0
     Return v5
-}
-# CHECK-LABEL: function f5 name="materializedLate"
 # CHECK: [[lateCell]]:{{*}}= NewObject {{*}}storage=FrameUntilMaterialized
 # CHECK: b1():
 # CHECK: [[heapCopy]]:{{*}}= MaterializeEnvironment [[lateCell]] layout=L2
 # CHECK: NewClosure [[heapCopy]] function=f25
 # CHECK-NOT: storage=Frame
 # CHECK-NOT: MaterializeEnvironment
+}
 
 function f6 name="returned" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f26
     Return v0
-}
-# CHECK-LABEL: function f6 name="returned"
 # CHECK-NOT: storage=Frame
+}
 
 function f7 name="stored" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f27
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="holder" [isFreeName]
     PropSet v2, v0 key="callback" mode=Strict
     Return
-}
-# CHECK-LABEL: function f7 name="stored"
 # CHECK-NOT: storage=Frame
+}
 
 function f8 name="calleeRetains" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f28
     v1 = CallDirect v0 function=f18
     Return v1
-}
-# CHECK-LABEL: function f8 name="calleeRetains"
 # CHECK-NOT: storage=Frame
+}
 
 function f9 name="liveAcrossIterations" parameters=[{type=boolean}] results=[{type=anything}] {
-  b0(v0: boolean):
     v1 = Undefined
     Jump -> next b1(v1)
   b1(v2):
@@ -151,51 +133,41 @@ function f9 name="liveAcrossIterations" parameters=[{type=boolean}] results=[{ty
     Jump -> next b1(v4)
   b3():
     Return v5
-}
-# CHECK-LABEL: function f9 name="liveAcrossIterations"
 # CHECK-NOT: storage=Frame
+}
 
 function f10 name="localClosureOfFunctionLeakedElsewhere" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f30
     v1 = ToBoolean v0
     Return v1
-}
 # The frame is decided per site: f11 leaks another closure of the same function.
-# CHECK-LABEL: function f10 name="localClosureOfFunctionLeakedElsewhere"
 # CHECK: function=f30 {{*}}storage=Frame
+}
 
 function f11 name="sameFunctionLeaksElsewhere" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f30
     v2 = Call v0, -, v0, v0, v1
     Return v2
-}
-# CHECK-LABEL: function f11 name="sameFunctionLeaksElsewhere"
 # CHECK-NOT: storage=Frame
+}
 
 function f12 name="capturedByHeapClosureOnEveryPath" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L3 fields=[0]
     v2 = NewClosure v1 function=f31
     v3 = Call v0, -, v0, v0, v2
     Return v3
-}
-# CHECK-LABEL: function f12 name="capturedByHeapClosureOnEveryPath"
 # CHECK-NOT: storage=Frame
 # CHECK-NOT: MaterializeEnvironment
+}
 
 function f13 name="recordObject" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0 layout=L4 fields=[0]
     v2 = CallDirect v1 function=f19
     Return v2
-}
-# CHECK-LABEL: function f13 name="recordObject"
 # CHECK: NewObject {{*}}storage=Frame
+}
 
 function f14 name="liveAtAwait" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewClosure function=f32
     v2 = Await v0
     v3 = CallDirect v1 function=f17
@@ -204,7 +176,6 @@ function f14 name="liveAtAwait" flags=[IsAsync] parameters=[{type=anything}] res
 # CHECK-LABEL: function f14 name="liveAtAwait"
 
 function f15 name="frameClosureUsedAfterCopy" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewObject -, v0 layout=L5 fields=[0]
     v3 = NewClosure v2 function=f33
     Branch v1 -> taken b1(), notTaken b2()
@@ -215,14 +186,12 @@ function f15 name="frameClosureUsedAfterCopy" parameters=[{type=anything}, {type
   b2():
     v6 = CallDirect v3 function=f17
     Return v6
-}
-# CHECK-LABEL: function f15 name="frameClosureUsedAfterCopy"
 # CHECK-NOT: NewObject {{*}}storage=
 # CHECK: function=f33 {{*}}storage=Frame
 # CHECK-NOT: MaterializeEnvironment
+}
 
 function f16 name="heapClosureCreatedInLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     v2 = NewObject -, v0 layout=L6 fields=[0]
     Jump -> next b1()
   b1():
@@ -235,8 +204,6 @@ function f16 name="heapClosureCreatedInLoop" parameters=[{type=anything}, {type=
   b3():
     v6 = GetEnvironmentField v2 layout=L6 field=0
     Return v6
-}
-# CHECK-LABEL: function f16 name="heapClosureCreatedInLoop"
 # CHECK: [[loopCell]]:{{*}}= NewObject {{*}}storage=FrameUntilMaterialized
 # CHECK: Jump -> next b1([[loopCell]])
 # CHECK: b1([[merged]]:
@@ -244,15 +211,14 @@ function f16 name="heapClosureCreatedInLoop" parameters=[{type=anything}, {type=
 # CHECK: NewClosure [[loopCopy]] function=f35
 # CHECK: Jump -> next b1([[loopCopy]])
 # CHECK: GetEnvironmentField [[merged]]
+}
 
 function f17 name="callsParameter" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0
     Return v1
 }
 
 function f18 name="storesParameter" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="holder" [isFreeName]
     PropSet v2, v0 key="callback" mode=Strict
@@ -260,13 +226,11 @@ function f18 name="storesParameter" parameters=[{type=anything}] results=[{type=
 }
 
 function f19 name="readsOptions" parameters=[{type=L4}] results=[{type=anything}] {
-  b0(v0: L4):
     v1 = PropGet v0 key="x"
     Return v1
 }
 
 function f20 name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 
@@ -283,12 +247,10 @@ function f22 name="callback" kind=Arrow captures=[{type=env L1}] results=[{type=
 }
 
 function f23 name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 
 function f24 name="callback" kind=Arrow captures=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Call v0
     Return v1
 }
@@ -301,7 +263,6 @@ function f25 name="callback" kind=Arrow captures=[{type=env L2}] results=[{type=
 # REPEAT: i = 26..30
 
 function f%(i) name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 # END REPEAT
@@ -313,7 +274,6 @@ function f31 name="callback" kind=Arrow captures=[{type=env L3}] results=[{type=
 }
 
 function f32 name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 # REPEAT: i = 33..35; a = 5 5 6
@@ -326,22 +286,18 @@ function f%(i) name="callback" kind=Arrow captures=[{type=env L%(a)}] results=[{
 # END REPEAT
 
 function f36 name="returnedByCallee" results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f38
     v1 = CallDirect v0 function=f37
     v2 = CallDirect v1 function=f17
     Return v2
-}
-# CHECK-LABEL: function f36 name="returnedByCallee"
 # CHECK-NOT: storage=Frame
+}
 
 function f37 name="returnsParameter" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Return v0
 }
 
 function f38 name="callback" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 # CHECK-LABEL: name="liveAtAwait" module=m0 role=CoroutineBody

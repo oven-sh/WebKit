@@ -9,7 +9,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="constantUsedBehindTheTest" parameters=[{type=number}, {type=number|string}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: number|string, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v3 = Negate v0
@@ -26,16 +25,14 @@ function f0 name="constantUsedBehindTheTest" parameters=[{type=number}, {type=nu
   b5():
     v9 = Mod v4, v5
     Return v9
-}
-# CHECK-LABEL: function f0 name="constantUsedBehindTheTest"
 # CHECK: = Negate v0
 # CHECK-NEXT: Jump -> next b4(v3)
 # CHECK: b4(v7: number):
 # CHECK-NEXT: [[thousand]]: 1000 = Integer integer=1000
 # CHECK-NEXT: = Mod v7, [[thousand]]
+}
 
 function f1 name="computedValueUsedBehindTheTest" parameters=[{type=number}, {type=number|string}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number, v1: number|string, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v3 = Negate v0
@@ -52,14 +49,12 @@ function f1 name="computedValueUsedBehindTheTest" parameters=[{type=number}, {ty
   b5():
     v9 = Mod v4, v5
     Return v9
-}
 # What is computed in the block is computed once
-# CHECK-LABEL: function f1 name="computedValueUsedBehindTheTest"
 # CHECK: = Negate v0
 # CHECK-NEXT: Jump -> next b3(v3)
+}
 
 function f2 name="noEdgeDecidesTheTest" parameters=[{type=number|string}, {type=number|string}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: number|string, v1: number|string, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v0)
@@ -75,9 +70,8 @@ function f2 name="noEdgeDecidesTheTest" parameters=[{type=number|string}, {type=
   b5():
     v8 = Mod v3, v4
     Return v8
-}
 # The constant stays where it is
-# CHECK-LABEL: function f2 name="noEdgeDecidesTheTest"
 # CHECK: b3(v3: number|string):
 # CHECK-NEXT: v4: 1000 = Integer integer=1000
 # CHECK: = Mod v6, v4
+}

@@ -4,7 +4,6 @@
 
 module m0 path="main.ts" displayPath="main.ts"
 function f0 name="report" parameters=[{type=number}, {type=undefined|i32}, {type=anything}, {type=string}, {type=number}] results=[{type=undefined}] {
-  b0(v0: number, v1: undefined|i32, v2: anything, v3: string, v4: number):
     ReportMismatch v0 expectedType=undefined|null|number
     ReportMismatch v1 expectedType=undefined|null|number
     ReportMismatch v2 expectedType=undefined|null|number

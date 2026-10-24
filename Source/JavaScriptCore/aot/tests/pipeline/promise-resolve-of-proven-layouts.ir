@@ -22,7 +22,6 @@ variable g6 name="o" module=m0 declared={type=L3|absent flags=[IsExpected]} flag
 variable g7 name="iterable" module=m0 declared={type=L4|absent flags=[IsExpected]} flags=[IsImmutable]
 module m0 path="main.js" displayPath="main.js" body=f0
 function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
-  b0():
     Jump -> next b1() @0
   b1():
     v0 = NewClosure function=f7 @0
@@ -44,7 +43,6 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     Return v15 @1149
 }
 function f1 name="numberOrThenable" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1() @0
   b1():
     v1 = Builtin builtin=GlobalThis @36
@@ -80,7 +78,6 @@ function f1 name="numberOrThenable" module=m0 flags=[HasExplicitName] length=1 t
     Return v23 @36
 }
 function f2 name="install" module=m0 position=155 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-  b0():
     Jump -> next b1() @155
   b1():
     v0 = GetModuleVariable variable=g6 @176
@@ -91,7 +88,6 @@ function f2 name="install" module=m0 position=155 flags=[HasExplicitName] thisTy
     Return v4 @176
 }
 function f3 name="use" module=m0 position=220 flags=[IsAsync, HasExplicitName] thisType={type=anything} results=[{type=Promise flags=[IsExpected]}] {
-  b0():
     Jump -> next b1() @220
   b1():
     v0 = Builtin builtin=GlobalThis @243
@@ -114,7 +110,6 @@ function f3 name="use" module=m0 position=220 flags=[IsAsync, HasExplicitName] t
     Return v16 @243
 }
 function f4 name="loop" module=m0 position=429 flags=[IsAsync, HasExplicitName] thisType={type=anything} results=[{type=Promise flags=[IsExpected]}] {
-  b0():
     Jump -> next b1() @429
   b1():
     v0 = GetModuleVariable variable=g7 @475
@@ -144,7 +139,6 @@ function f4 name="loop" module=m0 position=429 flags=[IsAsync, HasExplicitName] 
     Rethrow v12 @453
 }
 function f5 name="overwritten" module=m0 position=497 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=Promise<L1> flags=[IsExpected]}] {
-  b0(v0: anything):
     Jump -> next b1() @497
   b1():
     v1 = Undefined @545
@@ -169,7 +163,6 @@ function f5 name="overwritten" module=m0 position=497 flags=[HasExplicitName] le
     Return v16 @692
 }
 function f6 name="storedLate" module=m0 position=697 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=Promise<L2> flags=[IsExpected]}] {
-  b0(v0: anything):
     Jump -> next b1() @697
   b1():
     v1 = Undefined @744
@@ -191,7 +184,6 @@ function f6 name="storedLate" module=m0 position=697 flags=[HasExplicitName] len
     Return v13 @869
 }
 function f7 name="main" module=m0 position=874 flags=[IsAsync, HasExplicitName] thisType={type=anything} results=[{type=Promise flags=[IsExpected]}] {
-  b0():
     Jump -> next b1() @874
   b1():
     v0 = GetModuleVariable variable=g0 @900
@@ -264,7 +256,6 @@ function f7 name="main" module=m0 position=874 flags=[IsAsync, HasExplicitName] 
     Return v57 @1035
 }
 function f8 module=m0 position=304 kind=Method thisType={type=anything} results=[{type=L5 flags=[IsExpected]}] {
-  b0():
     Jump -> next b1() @304
   b1():
     v0 = Absent @304
@@ -281,7 +272,6 @@ function f8 module=m0 position=304 kind=Method thisType={type=anything} results=
     Return v10 @349
 }
 function f9 name="then" module=m0 position=65 kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1() @65
   b1():
     v1 = String string="from thenable" @77
@@ -290,7 +280,6 @@ function f9 name="then" module=m0 position=65 kind=Method flags=[HasExplicitName
     Return v3 @75
 }
 function f10 module=m0 position=105 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1() @105
   b1():
     v1 = Builtin builtin=GlobalThis @112
@@ -300,7 +289,6 @@ function f10 module=m0 position=105 kind=Arrow length=1 thisType={type=anything}
     ReturnCall v4 @112
 }
 function f11 module=m0 position=185 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     Jump -> next b1() @185
   b1():
     v1 = String string="late" @206
@@ -309,7 +297,6 @@ function f11 module=m0 position=185 length=1 thisType={type=anything} parameters
     Return v3 @202
 }
 function f12 module=m0 position=577 length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1() @577
   b1():
     v2 = String string="thenable " @606
@@ -319,7 +306,6 @@ function f12 module=m0 position=577 length=1 captures=[{type=anything}] thisType
     Return v5 @598
 }
 function f13 module=m0 position=808 length=1 captures=[{type=anything}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     Jump -> next b1() @808
   b1():
     v2 = String string="thenable " @837

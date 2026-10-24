@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="knownOperands" results=[{type=number}] {
-  b0():
     v0 = Integer integer=2
     v1 = Integer integer=3
     v2 = Add v0, v1
@@ -16,8 +15,6 @@ function f0 name="knownOperands" results=[{type=number}] {
     v5 = LogicalNot v3
     v6 = ToBoolean v0
     Return v2
-}
-# CHECK-LABEL: function f0 name="knownOperands"
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 2 = Integer integer=2
 # CHECK-NEXT: v1: 3 = Integer integer=3
@@ -28,3 +25,4 @@ function f0 name="knownOperands" results=[{type=number}] {
 # CHECK-NEXT: = ToBoolean v0
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
+}

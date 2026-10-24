@@ -32,7 +32,6 @@ entry module=m0
 variable g0 name="text" module=m0 declared={type=undefined|null|absent|"a"} flags=[IsImmutable]
 variable g1 name="mixed" module=m0 declared={type=undefined|absent|"a"|number} flags=[IsImmutable]
 function f0 name="equalToNullishOrOneText" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Check v0 castType=string
     v2 = GetModuleVariable variable=g0
     v3 = CheckInitialized v2 name="text"
@@ -44,7 +43,6 @@ function f0 name="equalToNullishOrOneText" parameters=[{type=anything}] results=
     Return v6
 }
 function f1 name="equalToATextOrANumber" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Check v0 castType=string
     v2 = GetModuleVariable variable=g1
     v3 = CheckInitialized v2 name="mixed"

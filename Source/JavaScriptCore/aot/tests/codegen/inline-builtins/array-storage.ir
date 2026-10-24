@@ -8,7 +8,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="pushOneToInt32" parameters=[{type=Array<i32, pristine[Storage]>}, {type=i32}, {type=number}, {type=undefined|number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<i32, pristine[Storage]>, v1: i32, v2: number, v3: undefined|number, v4: string, v5: anything, v6: boolean):
     v7 = CallInline v0, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
     v8 = CallInline v0, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
     v9 = CallInline v0, v3 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
@@ -42,7 +41,6 @@ function f0 name="pushOneToInt32" parameters=[{type=Array<i32, pristine[Storage]
 # S: f0 b1 Fast
 # S: f0 b3 Compact
 function f1 name="pushOneToNumbers" parameters=[{type=Array<number, pristine[Storage]>}, {type=i32}, {type=number}, {type=undefined|number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<number, pristine[Storage]>, v1: i32, v2: number, v3: undefined|number, v4: string, v5: anything, v6: boolean):
     v7 = CallInline v0, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
     v8 = CallInline v0, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
     v9 = CallInline v0, v3 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
@@ -76,7 +74,6 @@ function f1 name="pushOneToNumbers" parameters=[{type=Array<number, pristine[Sto
 # S: f1 b1 Fast
 # S: f1 b3 Compact
 function f2 name="pushOneToAnything" parameters=[{type=Array<anything, pristine[Storage]>}, {type=i32}, {type=number}, {type=undefined|number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: i32, v2: number, v3: undefined|number, v4: string, v5: anything, v6: boolean):
     v7 = CallInline v0, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
     v8 = CallInline v0, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
     v9 = CallInline v0, v3 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
@@ -110,7 +107,6 @@ function f2 name="pushOneToAnything" parameters=[{type=Array<anything, pristine[
 # S: f2 b1 Fast
 # S: f2 b3 Compact
 function f3 name="pushTwo" parameters=[{type=Array<anything, pristine[Storage]>}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: anything, v2: boolean):
     TryCallInline v0, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b1(), miss b2()
   b1(v3):
     v4 = NewArray v3 contents=anything
@@ -144,7 +140,6 @@ function f3 name="pushTwo" parameters=[{type=Array<anything, pristine[Storage]>}
 # S: f3 b3 Fast
 # S: f3 b7 Compact
 function f4 name="pushThree" parameters=[{type=Array<anything, pristine[Storage]>}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: anything, v2: boolean):
     TryCallInline v0, v1, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b1(), miss b2()
   b1(v3):
     v4 = NewArray v3 contents=anything
@@ -178,7 +173,6 @@ function f4 name="pushThree" parameters=[{type=Array<anything, pristine[Storage]
 # S: f4 b3 Fast
 # S: f4 b7 Compact
 function f5 name="pushFour" parameters=[{type=Array<anything, pristine[Storage]>}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: anything, v2: boolean):
     TryCallInline v0, v1, v1, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b1(), miss b2()
   b1(v3):
     v4 = NewArray v3 contents=anything
@@ -212,7 +206,6 @@ function f5 name="pushFour" parameters=[{type=Array<anything, pristine[Storage]>
 # S: f5 b3 Fast
 # S: f5 b7 Compact
 function f6 name="pushFive" parameters=[{type=Array<anything, pristine[Storage]>}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: anything, v2: boolean):
     TryCallInline v0, v1, v1, v1, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b1(), miss b2()
   b1(v3):
     v4 = NewArray v3 contents=anything
@@ -246,7 +239,6 @@ function f6 name="pushFive" parameters=[{type=Array<anything, pristine[Storage]>
 # S: f6 b3 Fast
 # S: f6 b7 Compact
 function f7 name="pushSix" parameters=[{type=Array<anything, pristine[Storage]>}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: anything, v2: boolean):
     TryCallInline v0, v1, v1, v1, v1, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b1(), miss b2()
   b1(v3):
     v4 = NewArray v3 contents=anything
@@ -280,7 +272,6 @@ function f7 name="pushSix" parameters=[{type=Array<anything, pristine[Storage]>}
 # S: f7 b3 Fast
 # S: f7 b7 Compact
 function f8 name="pushSeven" parameters=[{type=Array<anything, pristine[Storage]>}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: anything, v2: boolean):
     TryCallInline v0, v1, v1, v1, v1, v1, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b1(), miss b2()
   b1(v3):
     v4 = NewArray v3 contents=anything
@@ -314,7 +305,6 @@ function f8 name="pushSeven" parameters=[{type=Array<anything, pristine[Storage]
 # S: f8 b3 Fast
 # S: f8 b7 Compact
 function f9 name="pushEight" parameters=[{type=Array<anything, pristine[Storage]>}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<anything, pristine[Storage]>, v1: anything, v2: boolean):
     TryCallInline v0, v1, v1, v1, v1, v1, v1, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b1(), miss b2()
   b1(v3):
     v4 = NewArray v3 contents=anything
@@ -348,7 +338,6 @@ function f9 name="pushEight" parameters=[{type=Array<anything, pristine[Storage]
 # S: f9 b3 Fast
 # S: f9 b7 Compact
 function f10 name="pushTwoNumbers" parameters=[{type=Array<number, pristine[Storage]>}, {type=number}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<number, pristine[Storage]>, v1: number, v2: i32, v3: boolean):
     TryCallInline v0, v1, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b1(), miss b2()
   b1(v4):
     v5 = NewArray v4 contents=anything
@@ -382,7 +371,6 @@ function f10 name="pushTwoNumbers" parameters=[{type=Array<number, pristine[Stor
 # S: f10 b3 Fast
 # S: f10 b7 Compact
 function f11 name="pushTwoInt32" parameters=[{type=Array<i32, pristine[Storage]>}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array<i32, pristine[Storage]>, v1: i32, v2: boolean):
     TryCallInline v0, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b1(), miss b2()
   b1(v3):
     v4 = NewArray v3 contents=anything
@@ -416,7 +404,6 @@ function f11 name="pushTwoInt32" parameters=[{type=Array<i32, pristine[Storage]>
 # S: f11 b3 Fast
 # S: f11 b7 Compact
 function f12 name="isArrayOfPrimitive" parameters=[{type=number}, {type=undefined|string}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: number, v1: undefined|string, v2: boolean):
     v3 = CallInline -, v0 inlineBuiltin=ArrayIsArray overload=ArrayIsArray/0
     v4 = CallInline -, v1 inlineBuiltin=ArrayIsArray overload=ArrayIsArray/0
     v5 = NewArray v3, v4 contents=anything
@@ -441,7 +428,6 @@ function f12 name="isArrayOfPrimitive" parameters=[{type=number}, {type=undefine
 # S: f12 b1 Fast
 # S: f12 b3 Compact
 function f13 name="isArrayOfAnything" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: anything, v1: boolean):
     TryCallInline -, v0 inlineBuiltin=ArrayIsArray overload=ArrayIsArray/0 -> done b1(), miss b2()
   b1(v2):
     v3 = NewArray v2 contents=anything
@@ -475,7 +461,6 @@ function f13 name="isArrayOfAnything" parameters=[{type=anything}, {type=boolean
 # S: f13 b3 Fast
 # S: f13 b7 Compact
 function f14 name="isArrayOfObject" parameters=[{type=object}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: object, v1: boolean):
     TryCallInline -, v0 inlineBuiltin=ArrayIsArray overload=ArrayIsArray/0 -> done b1(), miss b2()
   b1(v2):
     v3 = NewArray v2 contents=anything
@@ -509,7 +494,6 @@ function f14 name="isArrayOfObject" parameters=[{type=object}, {type=boolean}] r
 # S: f14 b3 Fast
 # S: f14 b7 Compact
 function f15 name="length" parameters=[{type=Array}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array, v1: boolean):
     v2 = CallInline v0 inlineBuiltin=ArrayLength overload=ArrayPrototypeLength/0
     v3 = NewArray v2 contents=anything
     Jump -> next b1()
@@ -531,7 +515,6 @@ function f15 name="length" parameters=[{type=Array}, {type=boolean}] results=[{t
 # S: f15 b1 Fast
 # S: f15 b3 Compact
 function f16 name="setLength" parameters=[{type=Array}, {type=number}, {type=i32}, {type=int}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array, v1: number, v2: i32, v3: int, v4: boolean):
     v5 = CallInline v0, v1 inlineBuiltin=ArraySetLength overload=ArrayPrototypeLength/1
     v6 = CallInline v0, v2 inlineBuiltin=ArraySetLength overload=ArrayPrototypeLength/1
     v7 = CallInline v0, v3 inlineBuiltin=ArraySetLength overload=ArrayPrototypeLength/1
@@ -556,7 +539,6 @@ function f16 name="setLength" parameters=[{type=Array}, {type=number}, {type=i32
 # S: f16 b1 Fast
 # S: f16 b3 Compact
 function f17 name="setLengthWithMissToNumber" parameters=[{type=Array}, {type=number}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array, v1: number, v2: boolean):
     TryCallInline v0, v1 inlineBuiltin=ArraySetLength overload=ArrayPrototypeLength/1 -> done b1(), miss b2()
   b1(v3):
     Jump -> next b3()
@@ -590,7 +572,6 @@ function f17 name="setLengthWithMissToNumber" parameters=[{type=Array}, {type=nu
 # S: f17 b3 Fast
 # S: f17 b7 Compact
 function f18 name="setLengthWithMissToInt32" parameters=[{type=Array}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Array, v1: i32, v2: boolean):
     TryCallInline v0, v1 inlineBuiltin=ArraySetLength overload=ArrayPrototypeLength/1 -> done b1(), miss b2()
   b1(v3):
     Jump -> next b3()
@@ -624,7 +605,6 @@ function f18 name="setLengthWithMissToInt32" parameters=[{type=Array}, {type=i32
 # S: f18 b3 Fast
 # S: f18 b7 Compact
 function f19 name="withLength" parameters=[{type=number}, {type=i32}, {type=int[0, 100]}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: number, v1: i32, v2: int[0, 100], v3: boolean):
     v4 = CallInline -, v0 inlineBuiltin=ArrayWithLength overload=Array/0
     v5 = CallInline -, v0 inlineBuiltin=ArrayWithLength overload=Array/2
     v6 = CallInline -, v1 inlineBuiltin=ArrayWithLength overload=Array/0
@@ -658,7 +638,6 @@ function f19 name="withLength" parameters=[{type=number}, {type=i32}, {type=int[
 # S: f19 b1 Fast
 # S: f19 b3 Compact
 function f20 name="arrayOf" parameters=[{type=i32}, {type=number}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: i32, v1: number, v2: anything, v3: boolean):
     v4 = Builtin builtin=Array
     v5 = CallInline v4 inlineBuiltin=ArrayOf overload=ArrayOf/0
     v6 = CallInline v4, v0, v0 inlineBuiltin=ArrayOf overload=ArrayOf/0

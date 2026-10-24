@@ -6,7 +6,6 @@ module m0 path="main.ts" displayPath="main.ts"
 layout L0 name="Box" fields=[{key="length" declared={type=number} flags=[IsRequired]}]
 
 function f0 name="everyObjectIsNamed" parameters=[{type=undefined|L0|nolayout}] results=[{type=undefined}] {
-  b0(v0: undefined|L0|nolayout):
     v1 = TypeTest v0 testedType=L0|nolayout
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):
@@ -20,7 +19,6 @@ function f0 name="everyObjectIsNamed" parameters=[{type=undefined|L0|nolayout}] 
 # CHECK: v3: undefined|nolayout
 
 function f1 name="anyObjectIsAskedFor" parameters=[{type=undefined|L0|nolayout}] results=[{type=undefined}] {
-  b0(v0: undefined|L0|nolayout):
     v1 = TypeTest v0 testedType=object
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):

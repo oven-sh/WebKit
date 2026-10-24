@@ -11,7 +11,6 @@ layout L0 name="MayBeFrozen" fields=[{key="a" declared={type=number}}]
 layout L1 name="NeverFrozen" fields=[{key="a" declared={type=number}}] flow={impossibleMutations=[ChangeIntegrity]}
 
 function f0 name="ownKeys" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = CallBuiltin -, v0 overload=ObjectKeys/0
     Return v1
 }
@@ -23,7 +22,6 @@ function f0 name="ownKeys" parameters=[{type=object}] results=[{type=anything}] 
 # CHECK-NEXT: = CallBuiltin -, v0 overload=ObjectKeys/0
 
 function f1 name="ownKeysInCompactBlock" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: object, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v2 = CallBuiltin -, v0 overload=ObjectKeys/0
@@ -42,7 +40,6 @@ function f1 name="ownKeysInCompactBlock" parameters=[{type=object}, {type=boolea
 # CHECK-NOT: CallBuiltin
 
 function f2 name="otherTwoWayBuiltinInCompactBlock" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: object, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v2 = CallBuiltin -, v0 overload=ObjectCreate/0
@@ -57,7 +54,6 @@ function f2 name="otherTwoWayBuiltinInCompactBlock" parameters=[{type=object}, {
 # CHECK: TryCallInline -, v0 inlineBuiltin=ObjectCreate overload=ObjectCreate/0 -> done
 
 function f3 name="ownPropertyDescriptor" parameters=[{type=object}, {type=string}] results=[{type=anything}] {
-  b0(v0: object, v1: string):
     v2 = CallBuiltin -, v0, v1 overload=ObjectGetOwnPropertyDescriptor/0
     Return v2
 }
@@ -67,7 +63,6 @@ function f3 name="ownPropertyDescriptor" parameters=[{type=object}, {type=string
 # CHECK: TryCallInline -, v0, v1 inlineBuiltin=ObjectGetOwnPropertyDescriptor overload=ObjectGetOwnPropertyDescriptor/0 -> done
 
 function f4 name="ownPropertyTests" parameters=[{type=object}, {type=string}] results=[{type=anything}] {
-  b0(v0: object, v1: string):
     v2 = CallBuiltin -, v0, v1 overload=ObjectHasOwn/0
     v3 = CallBuiltin v0, v1 overload=ObjectPrototypePropertyIsEnumerable/0
     v4 = NewArray v2, v3 contents=anything
@@ -82,7 +77,6 @@ function f4 name="ownPropertyTests" parameters=[{type=object}, {type=string}] re
 # CHECK-NEXT: v3: boolean = CallInline v0, v1 inlineBuiltin=ObjectPropertyIsEnumerable overload=ObjectPrototypePropertyIsEnumerable/0
 
 function f5 name="createFromObject" parameters=[{type=object}, {type=null|object}] results=[{type=anything}] {
-  b0(v0: object, v1: null|object):
     v2 = CallBuiltin -, v0 overload=ObjectCreate/0
     v3 = CallBuiltin -, v1 overload=ObjectCreate/0
     v4 = NewArray v2, v3 contents=anything
@@ -98,7 +92,6 @@ function f5 name="createFromObject" parameters=[{type=object}, {type=null|object
 # CHECK-NEXT: = CallBuiltin -, v0 overload=ObjectCreate/0
 
 function f6 name="createFromNullOrWithSecondArgument" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = Null
     v2 = CallBuiltin -, v1 overload=ObjectCreate/0
     v3 = Undefined
@@ -116,7 +109,6 @@ function f6 name="createFromNullOrWithSecondArgument" parameters=[{type=object}]
 # CHECK-NOT: CallInline
 
 function f7 name="operandIsObject" parameters=[{type=object}] results=[{type=anything}] {
-  b0(v0: object):
     v1 = CallBuiltin -, v0 overload=ObjectGetPrototypeOf/0
     v2 = CallBuiltin -, v0 overload=ReflectGetPrototypeOf/0
     v3 = CallBuiltin -, v0 overload=Object/0
@@ -133,7 +125,6 @@ function f7 name="operandIsObject" parameters=[{type=object}] results=[{type=any
 # CHECK-COUNT-4: TryCallInline
 
 function f8 name="freezeLayoutThatMayBeFrozen" parameters=[{type=L0}] results=[{type=anything}] {
-  b0(v0: L0):
     v1 = CallBuiltin -, v0 overload=ObjectFreeze/0
     Return v1
 }
@@ -143,7 +134,6 @@ function f8 name="freezeLayoutThatMayBeFrozen" parameters=[{type=L0}] results=[{
 # CHECK: TryCallInline -, v0 inlineBuiltin=ObjectFreeze overload=ObjectFreeze/0 -> done
 
 function f9 name="freezeWithoutIntegrityBits" parameters=[{type=L1}, {type=object}, {type=Array}, {type=number}] results=[{type=anything}] {
-  b0(v0: L1, v1: object, v2: Array, v3: number):
     v4 = CallBuiltin -, v0 overload=ObjectFreeze/0
     v5 = CallBuiltin -, v1 overload=ObjectFreeze/0
     v6 = CallBuiltin -, v2 overload=ObjectFreeze/0
@@ -162,7 +152,6 @@ function f9 name="freezeWithoutIntegrityBits" parameters=[{type=L1}, {type=objec
 # CHECK-NOT: CallInline
 
 function f10 name="sameValueByBits" parameters=[{type=number}, {type=string}, {type=anything}] results=[{type=anything}] {
-  b0(v0: number, v1: string, v2: anything):
     v3 = CallBuiltin -, v0, v0 overload=ObjectIs/0
     v4 = CallBuiltin -, v0, v1 overload=ObjectIs/0
     v5 = CallBuiltin -, v2, v0 overload=ObjectIs/0
@@ -180,7 +169,6 @@ function f10 name="sameValueByBits" parameters=[{type=number}, {type=string}, {t
 # CHECK-NEXT: v5: boolean = CallInline -, v2, v0 inlineBuiltin=ObjectIs overload=ObjectIs/0
 
 function f11 name="sameValueMayCompareContents" parameters=[{type=string}, {type=bigint}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: bigint, v2: anything):
     v3 = CallBuiltin -, v0, v0 overload=ObjectIs/0
     v4 = CallBuiltin -, v1, v1 overload=ObjectIs/0
     v5 = CallBuiltin -, v2, v2 overload=ObjectIs/0
@@ -198,7 +186,6 @@ function f11 name="sameValueMayCompareContents" parameters=[{type=string}, {type
 # CHECK-NEXT: boolean = CallBuiltin -, v0, v0 overload=ObjectIs/0
 
 function f12 name="returnThis" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=Array
     v1 = CallBuiltin v0 overload=ArraySymbolSpecies/0
     Return v1
@@ -210,7 +197,6 @@ function f12 name="returnThis" results=[{type=anything}] {
 # CHECK: v1: {{*}} = CallInline v0 inlineBuiltin=ReturnThis overload=ArraySymbolSpecies/0
 
 function f13 name="bind" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = CallBuiltin v0, v1, v1, v1, v1 overload=FunctionPrototypeBind/0
     Return v2
 }
@@ -220,7 +206,6 @@ function f13 name="bind" parameters=[{type=function}, {type=anything}] results=[
 # CHECK: TryCallInline v0, v1, v1, v1, v1 inlineBuiltin=FunctionBind overload=FunctionPrototypeBind/0 -> done
 
 function f14 name="bindWithOneMoreArgument" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
-  b0(v0: function, v1: anything):
     v2 = CallBuiltin v0, v1, v1, v1, v1, v1 overload=FunctionPrototypeBind/0
     Return v2
 }
@@ -233,7 +218,6 @@ function f14 name="bindWithOneMoreArgument" parameters=[{type=function}, {type=a
 # CHECK-NOT: CallInline
 
 function f15 name="reflectApply" parameters=[{type=function}, {type=anything}, {type=Array}] results=[{type=anything}] {
-  b0(v0: function, v1: anything, v2: Array):
     v3 = CallBuiltin -, v0, v1, v2 overload=ReflectApply/0
     Return v3
 }
@@ -243,7 +227,6 @@ function f15 name="reflectApply" parameters=[{type=function}, {type=anything}, {
 # CHECK: TryCallInline -, v0, v1, v2 inlineBuiltin=ReflectApply overload=ReflectApply/0 -> done
 
 function f16 name="errorMade" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: anything):
     v2 = CallBuiltin -, v0, v1 overload=Error/1
     Return v2
 }
@@ -253,7 +236,6 @@ function f16 name="errorMade" parameters=[{type=string}, {type=anything}] result
 # CHECK: TryCallInline -, v0, v1 inlineBuiltin=NewError inlineParameters=[{{*}}] overload=Error/1 -> done
 
 function f17 name="errorMadeInFunctionHiddenInStackTraces" flags=[IsHiddenInStackTraces] parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: anything):
     v2 = CallBuiltin -, v0, v1 overload=Error/1
     Return v2
 }
@@ -265,7 +247,6 @@ function f17 name="errorMadeInFunctionHiddenInStackTraces" flags=[IsHiddenInStac
 # CHECK-NOT: CallInline
 
 function f18 name="formatNumbers" parameters=[{type=IntlNumberFormat}, {type=IntlDateTimeFormat}, {type=number}] results=[{type=anything}] {
-  b0(v0: IntlNumberFormat, v1: IntlDateTimeFormat, v2: number):
     v3 = CallBuiltin v0, v2 overload=IntlNumberFormatPrototypeFormat/0
     v4 = CallBuiltin v1, v2 overload=IntlDateTimeFormatPrototypeFormat/0
     v5 = NewArray v3, v4 contents=anything
@@ -279,7 +260,6 @@ function f18 name="formatNumbers" parameters=[{type=IntlNumberFormat}, {type=Int
 # CHECK: TryCallInline v1, v2 inlineBuiltin=FormatDateTime overload=IntlDateTimeFormatPrototypeFormat/0 -> done
 
 function f19 name="dateFieldsNeedCache" parameters=[{type=Date}] results=[{type=anything}] {
-  b0(v0: Date):
     v1 = CallBuiltin v0 overload=DatePrototypeGetFullYear/0
     v2 = CallBuiltin v0 overload=DatePrototypeToISOString/0
     v3 = NewArray v1, v2 contents=anything
@@ -293,7 +273,6 @@ function f19 name="dateFieldsNeedCache" parameters=[{type=Date}] results=[{type=
 # CHECK: TryCallInline v0 inlineBuiltin=DateToISOString overload=DatePrototypeToISOString/0 -> done
 
 function f20 name="dateTimeValue" parameters=[{type=Date}, {type=number}] results=[{type=anything}] {
-  b0(v0: Date, v1: number):
     v2 = CallBuiltin overload=DateNow/0
     v3 = CallBuiltin v0 overload=DatePrototypeGetTime/0
     v4 = CallBuiltin v0 overload=DatePrototypeGetMilliseconds/0
@@ -315,7 +294,6 @@ function f20 name="dateTimeValue" parameters=[{type=Date}, {type=number}] result
 # CHECK-NEXT: v5: number = CallInline v0, v1 inlineBuiltin=DateSetTime overload=DatePrototypeSetTime/0
 
 function f21 name="setPrototypeOfObject" parameters=[{type=object}, {type=null|object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: null|object, v2: anything):
     v3 = CallBuiltin -, v0, v1 overload=ObjectSetPrototypeOf/0
     v4 = CallBuiltin -, v0, v1 overload=ReflectSetPrototypeOf/0
     v5 = CallBuiltin -, v2, v1 overload=ObjectSetPrototypeOf/0
@@ -333,7 +311,6 @@ function f21 name="setPrototypeOfObject" parameters=[{type=object}, {type=null|o
 # CHECK-NEXT: = CallBuiltin -, v0, v1 overload=ObjectSetPrototypeOf/0
 
 function f22 name="setPrototypeOfPrimitive" parameters=[{type=number}, {type=object}] results=[{type=anything}] {
-  b0(v0: number, v1: object):
     v2 = CallBuiltin -, v0, v1 overload=ObjectSetPrototypeOf/0
     Return v2
 }
@@ -345,7 +322,6 @@ function f22 name="setPrototypeOfPrimitive" parameters=[{type=number}, {type=obj
 # CHECK-NOT: CallInline
 
 function f23 name="setPrototypeOfInCompactBlock" parameters=[{type=object}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: object, v1: boolean):
     Branch v1 -> taken b1(), notTaken b2()
   b1() frequency=Rare:
     v2 = CallBuiltin -, v0, v0 overload=ObjectSetPrototypeOf/0

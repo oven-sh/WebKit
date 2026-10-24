@@ -11,7 +11,6 @@ variable g1 name="startsUndefined" module=m0 declared={type=undefined|number} in
 variable g2 name="storedFirst" module=m0 declared={type=number} initialization=Uninitialized
 variable g3 name="namedByNothing" module=m0 declared={type=number} initialization=Uninitialized
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = ToNumber v1
@@ -22,7 +21,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="read" results=[{type=anything}] {
-  b0():
     v0 = GetModuleVariable variable=g0
     v1 = CheckInitialized v0 name="readInDeadZone"
     v2 = GetModuleVariable variable=g1

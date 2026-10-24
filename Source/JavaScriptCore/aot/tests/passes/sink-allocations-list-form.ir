@@ -5,47 +5,39 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="elementsFitTheParameters" parameters=[{type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
     v2 = NewArray v0, v1 contents=number
     v3 = CallBuiltin -, v2 overload=MathMax/0 builtinCallForm=List [needsPristineReceiver]
     Return v3
-}
-# CHECK-LABEL: function f0 name="elementsFitTheParameters"
 # CHECK-NOT: NewArray
 # CHECK: [[max0]]: number = CallBuiltin -, v0, v1 overload=MathMax/0
 # CHECK-NOT: builtinCallForm=List
 # CHECK: v3: number = Upcast [[max0]] castType=number
 # CHECK-NEXT: Return v3
+}
 
 function f1 name="elementsAreConverted" parameters=[{type=anything}, {type=anything}] results=[{type=number}] {
-  b0(v0: anything, v1: anything):
     v2 = NewArray v0, v1 contents=anything
     v3 = CallBuiltin -, v2 overload=MathMax/0 builtinCallForm=List [needsPristineReceiver]
     Return v3
-}
-# CHECK-LABEL: function f1 name="elementsAreConverted"
 # CHECK-NOT: NewArray
 # CHECK: [[callee1]]: builtin(MathMax) = Builtin builtin=MathMax
 # CHECK-NEXT: [[call1]]: anything = Call [[callee1]], -, v0, v1
 # CHECK-NEXT: [[max1]]: number = AssumeType [[call1]] castType=number
 # CHECK-NEXT: v3: number = Upcast [[max1]] castType=number
 # CHECK-NEXT: Return v3
+}
 
 function f2 name="listIsNoLiteral" parameters=[{type=Array<number>}] results=[{type=number}] {
-  b0(v0: Array<number>):
     v1 = CallBuiltin -, v0 overload=MathMax/0 builtinCallForm=List [needsPristineReceiver]
     Return v1
-}
-# CHECK-LABEL: function f2 name="listIsNoLiteral"
 # CHECK: v1: number = CallBuiltin -, v0 overload=MathMax/0 builtinCallForm=List [needsPristineReceiver]
+}
 
 function f3 name="lengthIsNotKnown" parameters=[{type=number}, {type=Array<number, pristine[Storage, Names]>}] results=[{type=number}] {
-  b0(v0: number, v1: Array<number, pristine[Storage, Names]>):
     v2 = NewArray v0 contents=number
     AppendElements v2, v1
     v4 = CallBuiltin -, v2 overload=MathMax/0 builtinCallForm=List [needsPristineReceiver]
     Return v4
-}
-# CHECK-LABEL: function f3 name="lengthIsNotKnown"
 # CHECK: v2: Array{{*}} = NewArray v0 contents=number
 # CHECK: v4: number = CallBuiltin -, v2 overload=MathMax/0 builtinCallForm=List [needsPristineReceiver]
+}

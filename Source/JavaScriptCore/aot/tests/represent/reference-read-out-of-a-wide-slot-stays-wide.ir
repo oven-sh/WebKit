@@ -11,7 +11,6 @@ variable g0 name="first" module=m0 declared={type=anything} initialization=Undef
 variable g1 name="second" module=m0 declared={type=anything} initialization=Undefined
 variable g2 name="third" module=m0 declared={type=anything} initialization=Undefined
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = NewObject -, v1 layout=L0 fields=[0]
@@ -31,12 +30,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v16 = PropGet v0 key="keep" [isFreeName]
     v17 = Call v16, -, v15
     Return
-}
-# CHECK-LABEL: function f0 name="main"
 # CHECK: v13: {{*}} = NewObject {{*}} layout=L1 {{*}} storage=Frame
+}
 
 function f1 name="memberOrVariable" parameters=[{type=L1}, {type=anything}] results=[{type=anything}] {
-  b0(v0: L1, v1: anything):
     v2 = Null
     v3 = StrictEq v1, v2
     Branch v3 -> taken b1(), notTaken b2()
@@ -62,8 +59,7 @@ function f1 name="memberOrVariable" parameters=[{type=L1}, {type=anything}] resu
   b7(v11: L0):
     v12 = PropGet v11 key="x"
     Return v12
-}
-# CHECK-LABEL: function f1 name="memberOrVariable"
 # CHECK: @Cell = GetSlot v0 key="member"
 # CHECK-NOT: = Compress
 # CHECK-NOT: (v11: {{*}} @Cell32)
+}

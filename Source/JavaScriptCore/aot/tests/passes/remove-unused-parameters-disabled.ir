@@ -8,7 +8,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="ignoresSecond" parameters=[{type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
     Return v0
 }
 # CHECK-LABEL: function f0 name="ignoresSecond"{{*}}parameters=[{type=number}, {type=number}] results=[{type=number}]
@@ -16,10 +15,8 @@ function f0 name="ignoresSecond" parameters=[{type=number}, {type=number}] resul
 # CHECK-NEXT: Return v0
 
 function f1 name="caller" parameters=[{type=number}, {type=number}] results=[{type=number}] {
-  b0(v0: number, v1: number):
     v2 = CallDirect v0, v1 function=f0
     Return v2
-}
-# CHECK-LABEL: function f1 name="caller"
 # CHECK: = CallDirect v0, v1 function=f0
 # CHECK-NOT: function f2
+}

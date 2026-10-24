@@ -13,7 +13,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="appendsInLoop" parameters=[{type=string}, {type=number}] results=[{type=string}] {
-  b0(v0: string, v1: number):
     v2 = String string=""
     v3 = Integer integer=0
     Jump -> next b1(v2, v3)
@@ -30,7 +29,6 @@ function f0 name="appendsInLoop" parameters=[{type=string}, {type=number}] resul
     Return v4
 }
 function f1 name="appendsThreeTimes" parameters=[{type=boolean}, {type=string}] results=[{type=string}] {
-  b0(v0: boolean, v1: string):
     v2 = String string="a"
     Branch v0 -> taken b1(), notTaken b2()
   b1():
@@ -44,7 +42,6 @@ function f1 name="appendsThreeTimes" parameters=[{type=boolean}, {type=string}] 
     Return v6
 }
 function f2 name="keepsTwoStatesLive" parameters=[{type=string}, {type=string}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: string, v2: anything):
     v3 = Add v0, v1
     v4 = Add v3, v1
     v5 = Add v4, v1
@@ -53,7 +50,6 @@ function f2 name="keepsTwoStatesLive" parameters=[{type=string}, {type=string}, 
     Return v7
 }
 function f3 name="prependsToState" parameters=[{type=string}, {type=number}] results=[{type=string}] {
-  b0(v0: string, v1: number):
     v2 = String string=""
     v3 = Integer integer=0
     Jump -> next b1(v2, v3)
@@ -70,7 +66,6 @@ function f3 name="prependsToState" parameters=[{type=string}, {type=number}] res
     Return v4
 }
 function f4 name="exceedsWebLimit" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: number, v2: anything):
     v3 = String string=""
     v4 = Integer integer=0
     Jump -> next b1(v3, v3, v3, v4)

@@ -6,7 +6,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Element" fields=[{key="x" declared={type=number}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
 function f0 name="holdsNoObject" parameters=[{type=Array<string, proven, pristine[Storage]>}, {type=Array<undefined|number|string, proven, pristine[Storage, Names]>}, {type=string}] results=[{type=undefined}] {
-  b0(v0: Array<string, proven, pristine[Storage]>, v1: Array<undefined|number|string, proven, pristine[Storage, Names]>, v2: string):
     v3 = CallBuiltin v0, v2 overload=ArrayPrototypeJoin/0
     v4 = CallBuiltin v1, v2 overload=ArrayPrototypeJoin/0
     v5 = CallBuiltin v1 overload=ArrayPrototypeToString/0
@@ -22,7 +21,6 @@ function f0 name="holdsNoObject" parameters=[{type=Array<string, proven, pristin
 # USES: v5 CallBuiltin 0: [Inspects, ReadsContents]
 # USES: v7 CallBuiltin 0: [Inspects, ReadsContents, RetainsContents]
 function f1 name="mayHoldObject" parameters=[{type=Array<string, pristine[Storage]>}, {type=Array<L0, proven, pristine[Storage]>}, {type=Array<string|object, proven, pristine[Storage, Names]>}, {type=Array<string, proven, pristine[Storage]>}, {type=string}] results=[{type=undefined}] {
-  b0(v0: Array<string, pristine[Storage]>, v1: Array<L0, proven, pristine[Storage]>, v2: Array<string|object, proven, pristine[Storage, Names]>, v3: Array<string, proven, pristine[Storage]>, v4: string):
     v5 = CallBuiltin v0, v4 overload=ArrayPrototypeJoin/0
     v6 = CallBuiltin v1, v4 overload=ArrayPrototypeJoin/0
     v7 = CallBuiltin v2 overload=ArrayPrototypeToString/0

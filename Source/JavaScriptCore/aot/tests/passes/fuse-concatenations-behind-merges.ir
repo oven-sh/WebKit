@@ -7,7 +7,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="overTwoEdges" parameters=[{type=number}, {type=number}, {type=number}, {type=boolean}] results=[{type=string}] {
-  b0(v0: number, v1: number, v2: number, v3: boolean):
     Branch v3 -> taken b1(), notTaken b2()
   b1():
     v4 = String string=","
@@ -20,8 +19,6 @@ function f0 name="overTwoEdges" parameters=[{type=number}, {type=number}, {type=
   b3(v8: string):
     v9 = Strcat v8, v2
     Return v9
-}
-# CHECK-LABEL: function f0 name="overTwoEdges"
 # CHECK-NOT: = Add
 # CHECK: b1():
 # CHECK-NEXT: Jump -> next b3(v0)
@@ -31,9 +28,9 @@ function f0 name="overTwoEdges" parameters=[{type=number}, {type=number}, {type=
 # CHECK-NEXT: [[text0]]: "," = String string=","
 # CHECK-NEXT: v9: string = Strcat [[number0]], [[text0]], v2
 # CHECK-NEXT: Return v9
+}
 
 function f1 name="throughTwoMerges" parameters=[{type=number}, {type=number}, {type=number}, {type=boolean}, {type=boolean}] results=[{type=string}] {
-  b0(v0: number, v1: number, v2: number, v3: boolean, v4: boolean):
     Branch v3 -> taken b1(), notTaken b4()
   b1():
     v5 = String string=","
@@ -50,8 +47,6 @@ function f1 name="throughTwoMerges" parameters=[{type=number}, {type=number}, {t
   b5(v10: string):
     v11 = Strcat v10, v2
     Return v11
-}
-# CHECK-LABEL: function f1 name="throughTwoMerges"
 # CHECK-NOT: = Add
 # CHECK: Branch v4 -> taken b2(), notTaken b3(v0)
 # CHECK: Jump -> next b5(v0)
@@ -61,9 +56,9 @@ function f1 name="throughTwoMerges" parameters=[{type=number}, {type=number}, {t
 # CHECK: b5([[number1]]: number):
 # CHECK-NEXT: [[text1]]: "," = String string=","
 # CHECK-NEXT: v11: string = Strcat [[number1]], [[text1]], v2
+}
 
 function f2 name="otherText" parameters=[{type=number}, {type=number}, {type=number}, {type=boolean}] results=[{type=string}] {
-  b0(v0: number, v1: number, v2: number, v3: boolean):
     Branch v3 -> taken b1(), notTaken b2()
   b1():
     v4 = String string=","
@@ -76,14 +71,12 @@ function f2 name="otherText" parameters=[{type=number}, {type=number}, {type=num
   b3(v8: string):
     v9 = Strcat v8, v2
     Return v9
-}
-# CHECK-LABEL: function f2 name="otherText"
 # CHECK: Jump -> next b3(v5)
 # CHECK: Jump -> next b3(v7)
 # CHECK: = Strcat v8, v2
+}
 
 function f3 name="anotherStringOverOneEdge" parameters=[{type=number}, {type=string}, {type=number}, {type=boolean}] results=[{type=string}] {
-  b0(v0: number, v1: string, v2: number, v3: boolean):
     Branch v3 -> taken b1(), notTaken b2()
   b1():
     v4 = String string=","
@@ -94,13 +87,11 @@ function f3 name="anotherStringOverOneEdge" parameters=[{type=number}, {type=str
   b3(v6: string):
     v7 = Strcat v6, v2
     Return v7
-}
-# CHECK-LABEL: function f3 name="anotherStringOverOneEdge"
 # CHECK: Jump -> next b3(v5)
 # CHECK: = Strcat v6, v2
+}
 
 function f4 name="readInFrontOfTheMerge" parameters=[{type=number}, {type=number}, {type=number}, {type=boolean}, {type=function}] results=[{type=string}] {
-  b0(v0: number, v1: number, v2: number, v3: boolean, v4: function):
     Branch v3 -> taken b1(), notTaken b2()
   b1():
     v5 = String string=","
@@ -114,14 +105,12 @@ function f4 name="readInFrontOfTheMerge" parameters=[{type=number}, {type=number
   b3(v10: string):
     v11 = Strcat v10, v2
     Return v11
-}
-# CHECK-LABEL: function f4 name="readInFrontOfTheMerge"
 # CHECK: Jump -> next b3(v6)
 # CHECK: Jump -> next b3(v9)
 # CHECK: = Strcat v10, v2
+}
 
 function f5 name="nothingTakesItIn" parameters=[{type=number}, {type=number}, {type=boolean}] results=[{type=string}] {
-  b0(v0: number, v1: number, v2: boolean):
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v3 = String string=","
@@ -133,14 +122,12 @@ function f5 name="nothingTakesItIn" parameters=[{type=number}, {type=number}, {t
     Jump -> next b3(v6)
   b3(v7: string):
     Return v7
-}
-# CHECK-LABEL: function f5 name="nothingTakesItIn"
 # CHECK: Jump -> next b3(v4)
 # CHECK: Jump -> next b3(v6)
 # CHECK: Return v7
+}
 
 function f6 name="partOfAnyLength" parameters=[{type=string}, {type=string}, {type=number}, {type=boolean}] results=[{type=string}] {
-  b0(v0: string, v1: string, v2: number, v3: boolean):
     Branch v3 -> taken b1(), notTaken b2()
   b1():
     v4 = String string=","
@@ -153,14 +140,12 @@ function f6 name="partOfAnyLength" parameters=[{type=string}, {type=string}, {ty
   b3(v8: string):
     v9 = Strcat v8, v2
     Return v9
-}
-# CHECK-LABEL: function f6 name="partOfAnyLength"
 # CHECK: Jump -> next b3(v5)
 # CHECK: Jump -> next b3(v7)
 # CHECK: = Strcat v8, v2
+}
 
 function f7 name="passedAroundALoop" parameters=[{type=number}, {type=int[0, 1000000]}, {type=function}] results=[{type=undefined}] {
-  b0(v0: number, v1: int[0, 1000000], v2: function):
     v3 = String string=":"
     v4 = Add v0, v3
     v5 = Integer integer=0
@@ -177,9 +162,8 @@ function f7 name="passedAroundALoop" parameters=[{type=number}, {type=int[0, 100
     Jump -> next b1(v6, v14)
   b3():
     Return
-}
-# CHECK-LABEL: function f7 name="passedAroundALoop"
 # CHECK: Jump -> next b1(v5, v0)
 # CHECK: b1(v7: {{*}}, [[number7]]: number):
 # CHECK: = Strcat [[number7]], {{*}}, v10
 # CHECK: Jump -> next b1(v14, [[number7]])
+}

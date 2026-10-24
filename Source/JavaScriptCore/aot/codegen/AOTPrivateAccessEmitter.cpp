@@ -14,50 +14,44 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-PrivateAccessEmitter::PrivateAccessEmitter(CodeGenerator& generator)
-    : OperationEmitter(generator)
-{
-}
-
-Word32 PrivateAccessEmitter::indexInLayoutRecord(const ValueContext& value)
+uint16_t PrivateAccessEmitter::indexInLayoutRecord(const ValueContext& value)
 {
     std::optional<uint16_t> index = m_placement.slot(value->layout(), value->field()).indexInLayoutRecord;
     if (!index)
         fail(value, InternalErrorKind::OpcodeWithoutCode);
-    return word32(index.value_or(0));
+    return index.value_or(0);
 }
 
 void PrivateAccessEmitter::generatePrivateGet(const ValueContext& value)
 {
     Boxed object = in<Boxed>(value->objectOperand());
     CellPointer token = in<CellPointer>(value->tokenOperand());
-    std::optional<uint16_t> index = m_placement.slot(value->layout(), value->field()).indexInLayoutRecord;
-    if (!index)
-        fail(value, InternalErrorKind::OpcodeWithoutCode);
-    define(value, Boxed(callStub(value, privateGet(), { object.value(), token.value() }, { .immediate = index.value_or(0) }).first));
+    define(value, Boxed(callStub(value, privateGet(), { object.value(), token.value() }, { .immediate = indexInLayoutRecord(value) }).first));
+}
+
+void PrivateAccessEmitter::storePrivateField(const ValueContext& value, RuntimeOperation operation)
+{
+    Boxed object = in<Boxed>(value->objectOperand());
+    CellPointer token = in<CellPointer>(value->tokenOperand());
+    Boxed stored = in<Boxed>(value->valueOperand());
+    callVoidOperation(value, operation, { object, token, word32(indexInLayoutRecord(value)), stored });
 }
 
 void PrivateAccessEmitter::generatePrivateSet(const ValueContext& value)
 {
-    Boxed object = in<Boxed>(value->objectOperand());
-    CellPointer token = in<CellPointer>(value->tokenOperand());
-    Boxed stored = in<Boxed>(value->valueOperand());
-    callVoidOperation(value, RuntimeOperation::PrivateSet, { object, token, indexInLayoutRecord(value), stored });
+    storePrivateField(value, RuntimeOperation::PrivateSet);
 }
 
 void PrivateAccessEmitter::generatePrivateDefine(const ValueContext& value)
 {
-    Boxed object = in<Boxed>(value->objectOperand());
-    CellPointer token = in<CellPointer>(value->tokenOperand());
-    Boxed stored = in<Boxed>(value->valueOperand());
-    callVoidOperation(value, RuntimeOperation::PrivateDefine, { object, token, indexInLayoutRecord(value), stored });
+    storePrivateField(value, RuntimeOperation::PrivateDefine);
 }
 
 void PrivateAccessEmitter::generatePrivateHas(const ValueContext& value)
 {
     Boxed object = in<Boxed>(value->objectOperand());
     CellPointer token = in<CellPointer>(value->tokenOperand());
-    Boxed result = callOperation<Boxed>(value, RuntimeOperation::PrivateHas, { object, token, indexInLayoutRecord(value) });
+    Boxed result = callOperation<Boxed>(value, RuntimeOperation::PrivateHas, { object, token, word32(indexInLayoutRecord(value)) });
     defineTest(value, equal(result, boxedConstant(jsBoolean(true))));
 }
 

@@ -8,7 +8,6 @@ variable g0 name="neverStored" declared={type=number} flow={writers=AllKnown sto
 variable g1 name="storedOnce" declared={type=number} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
 
 function f0 name="readInBody" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -19,15 +18,13 @@ function f0 name="readInBody" parameters=[{type=anything}, {type=boolean}] resul
     Jump -> next b1()
   b3():
     Return v0
-}
-# CHECK-LABEL: function f0 name="readInBody"
 # CHECK: b0(
 # CHECK-NEXT: GetModuleVariable variable=g0
 # CHECK: b1():
 # CHECK-NOT: GetModuleVariable
+}
 
 function f1 name="readInInnerBody" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -43,15 +40,13 @@ function f1 name="readInInnerBody" parameters=[{type=anything}, {type=boolean}] 
     Jump -> next b3()
   b5():
     Return v0
-}
-# CHECK-LABEL: function f1 name="readInInnerBody"
 # CHECK: b0(
 # CHECK-NEXT: GetModuleVariable variable=g0
 # CHECK: b1():
 # CHECK-NOT: GetModuleVariable
+}
 
 function f2 name="storedOnceStaysBehindWhateverLetsItRun" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean):
     Jump -> next b1()
   b1():
     LoopHint
@@ -62,15 +57,13 @@ function f2 name="storedOnceStaysBehindWhateverLetsItRun" parameters=[{type=anyt
     Jump -> next b1()
   b3():
     Return v0
-}
-# CHECK-LABEL: function f2 name="storedOnceStaysBehindWhateverLetsItRun"
 # CHECK: b0(
 # CHECK-NEXT: Jump -> next b1()
 # CHECK: b2():
 # CHECK-NEXT: GetModuleVariable variable=g1
+}
 
 function f3 name="closedOnlyByWayBack" parameters=[{type=anything}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
-  b0(v0: anything, v1: boolean, v2: boolean):
     Jump -> next b1()
   b1():
     Jump -> next b2()
@@ -85,12 +78,11 @@ function f3 name="closedOnlyByWayBack" parameters=[{type=anything}, {type=boolea
     Jump -> next b1()
   b5():
     Return v0
-}
 # The read leaves the loop, and is made again behind the call at each way back.
-# CHECK-LABEL: function f3 name="closedOnlyByWayBack"
 # CHECK: b0(
 # CHECK-NEXT: Jump -> next b1()
 # CHECK: b1():
 # CHECK-NEXT: GetModuleVariable variable=g0
 # CHECK: b3():
 # CHECK-NOT: GetModuleVariable
+}

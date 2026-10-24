@@ -9,7 +9,6 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="uint8Array" parameters=[{type=Uint8Array<number, pristine[Names]>}] results=[{type=anything}] {
-  b0(v0: Uint8Array<number, pristine[Names]>):
     v1 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -20,8 +19,6 @@ function f0 name="uint8Array" parameters=[{type=Uint8Array<number, pristine[Name
     Branch v4 -> taken b2(), notTaken b1()
   b2():
     Return v5
-}
-# CHECK-LABEL: function f0 name="uint8Array"
 # CHECK: b0(v0: Uint8Array<number, pristine[Names]>):
 # CHECK-NEXT: RequireAttachedTypedArray v0
 # CHECK-NEXT: [[zero0]]: 0 = Integer
@@ -38,16 +35,15 @@ function f0 name="uint8Array" parameters=[{type=Uint8Array<number, pristine[Name
 # CHECK-NEXT: [[next0]]: {{*}} = Add [[proven0]], [[one0]]
 # CHECK-NEXT: [[no0]]: false = Boolean
 # CHECK-NEXT: Jump -> next {{*}}([[no0]], [[element0]], [[next0]])
-# ABSENT-LABEL: function f0 name="uint8Array"
 # ABSENT-NOT: TypeTest
 # ABSENT-NOT: IsPristine
 # ABSENT-NOT: @@iterator
 # ABSENT-NOT: [isNeverInlined]
 # ABSENT-NOT: ElemGet
 # ABSENT-NOT: key="length"
+}
 
 function f1 name="float64Keys" parameters=[{type=Float64Array<number>}] results=[{type=anything}] {
-  b0(v0: Float64Array<number>):
     v1 = CallBuiltin v0 overload=TypedArrayPrototypeKeys/0
     v2 = IteratorOpen v1
     Jump -> next b1()
@@ -59,9 +55,7 @@ function f1 name="float64Keys" parameters=[{type=Float64Array<number>}] results=
     Branch v5 -> taken b2(), notTaken b1()
   b2():
     Return v6
-}
 # The call of keys validated the view where the iterator was made, so the open validates nothing.
-# CHECK-LABEL: function f1 name="float64Keys"
 # CHECK: b0(v0: Float64Array<number>):
 # CHECK-NEXT: = CallBuiltin v0 overload=TypedArrayPrototypeKeys/0
 # CHECK-NEXT: [[zero1]]: 0 = Integer
@@ -77,14 +71,13 @@ function f1 name="float64Keys" parameters=[{type=Float64Array<number>}] results=
 # CHECK-NEXT: [[next1]]: {{*}} = Add [[proven1]], [[one1]]
 # CHECK-NEXT: [[no1]]: false = Boolean
 # CHECK-NEXT: Jump -> next {{*}}([[no1]], [[proven1]], [[next1]])
-# ABSENT-LABEL: function f1 name="float64Keys"
 # ABSENT-NOT: GetTypedArrayElement
 # ABSENT-NOT: IsPristine
 # ABSENT-NOT: @@iterator
 # ABSENT-NOT: [isNeverInlined]
+}
 
 function f2 name="int32ArrayNotProven" parameters=[{type=Int32Array<number>}] results=[{type=anything}] {
-  b0(v0: Int32Array<number>):
     v1 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -110,7 +103,6 @@ function f2 name="int32ArrayNotProven" parameters=[{type=Int32Array<number>}] re
 # ABSENT-LABEL: function f2 name="int32ArrayNotProven"
 
 function f3 name="dataView" parameters=[{type=DataView}] results=[{type=anything}] {
-  b0(v0: DataView):
     v1 = IteratorOpen v0
     Jump -> next b1()
   b1():
@@ -121,15 +113,13 @@ function f3 name="dataView" parameters=[{type=DataView}] results=[{type=anything
     Branch v4 -> taken b2(), notTaken b1()
   b2():
     Return v5
-}
-# CHECK-LABEL: function f3 name="dataView"
 # CHECK: b0(v0: DataView):
 # CHECK-NEXT: = CallDirect v0 function=[[openIterator]] [isNeverInlined]
-# ABSENT-LABEL: function f3 name="dataView"
 # ABSENT-NOT: RequireAttachedTypedArray
 # ABSENT-NOT: GetTypedArrayLength
 # ABSENT-NOT: GetTypedArrayElement
 # ABSENT-NOT: IsPristine
+}
 
 # LEFT-NOT: IteratorOpen
 # LEFT-NOT: IteratorResume

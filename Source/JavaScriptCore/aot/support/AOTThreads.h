@@ -184,10 +184,10 @@ inline void takePageFaultsInParallel(const ParallelLoops& loops, std::span<uint8
 }
 
 // An empty vector with room for `capacity` elements on pages that are there.
-template<typename T>
-Vector<T> createVectorWithCapacityInParallel(const ParallelLoops& loops, size_t capacity)
+template<typename T, size_t inlineCapacity = 0>
+Vector<T, inlineCapacity> createVectorWithCapacityInParallel(const ParallelLoops& loops, size_t capacity)
 {
-    Vector<T> vector;
+    Vector<T, inlineCapacity> vector;
     vector.reserveInitialCapacity(capacity);
     // AddressSanitizer is told that nobody writes behind the end of a vector.
 #if !ASAN_ENABLED

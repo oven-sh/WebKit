@@ -11,7 +11,6 @@ entry module=m0
 layout L0 kind=Instance name="Base" constructor=f1
 layout L1 kind=Instance name="Derived" base=L0 constructor=f2 flags=[HasHeritage]
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
-  b0():
     v0 = NewClosure function=f1
     v1 = NewClass v0 layout=L0
     v2 = FinishClass v1 layout=L0
@@ -25,14 +24,12 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="Base" module=m0 kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything, v2: anything):
     v3 = GetConstructPrototype v0 layout=L0
     v4 = NewObject v3 layout=L0 fields=[]
     v5 = Call v1, -
     Return v4
 }
 function f2 name="Derived" module=m0 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array}] results=[{type=anything}] {
-  b0(v0: function, v1: anything, v2: Array):
     v3 = Integer integer=1
     v4 = ElemGet v2, v3
     v5 = Integer integer=0
@@ -42,10 +39,8 @@ function f2 name="Derived" module=m0 kind=DerivedConstructor flags=[HasRestParam
     Return v8
 }
 function f3 name="one" module=m0 results=[{type=anything}] {
-  b0():
     Return
 }
 function f4 name="two" module=m0 results=[{type=anything}] {
-  b0():
     Return
 }

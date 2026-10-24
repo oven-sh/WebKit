@@ -7,7 +7,6 @@ module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="late" declared={type=number}}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = CallDirect v1 function=f1
@@ -18,7 +17,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="usesCaches" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = PropGet v0 key="a"
     PropSet v0, v1 key="e"
     v3 = PropGet v0 key="d"
@@ -30,7 +28,6 @@ function f1 name="usesCaches" parameters=[{type=anything}] results=[{type=anythi
     Return v4
 }
 function f2 name="usesNoCache" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = ElemGet v0, v0
     v2 = Integer integer=1
     ElemSet v0, v0, v2
@@ -44,7 +41,6 @@ function f2 name="usesNoCache" parameters=[{type=anything}] results=[{type=anyth
     Return v7
 }
 function f3 name="accessesSlots" parameters=[{type=number}] results=[{type=anything}] {
-  b0(v0: number):
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = FinishObject v1
     v3 = PropGet v2 key="x"

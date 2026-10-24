@@ -21,8 +21,6 @@ function f0 name="entriesNamedInAllGuards" parameters=[{type=object}, {type=int[
   b2():
     v7 = ElemGet v2, v1 [keyIsIntegral]
     Return v7
-}
-# CHECK-LABEL: function f0 name="entriesNamedInAllGuards"
 # CHECK: v5: guard = AllGuards [[new0]], v4
 # CHECK-NEXT: = GetArrayElement v2, v1, v5
 # CHECK: [[done0]](v2: Array<Array>, [[new0]]: guard):
@@ -33,6 +31,7 @@ function f0 name="entriesNamedInAllGuards" parameters=[{type=object}, {type=int[
 # CHECK: [[pairs0]]: Array<Array> = NewArray {{*}} contents=Array
 # CHECK-NEXT: [[pairsGuard0]]: guard = AllGuards [[pairs0]]
 # CHECK-NEXT: Jump -> next [[done0]]([[pairs0]], [[pairsGuard0]])
+}
 
 function f1 name="valuesNamedTwice" parameters=[{type=object}, {type=int[0, 1]}] results=[{type=anything}] {
   b0(v0: object ~ L0, v1: int[0, 1]):
@@ -49,8 +48,6 @@ function f1 name="valuesNamedTwice" parameters=[{type=object}, {type=int[0, 1]}]
   b2():
     v10 = ElemGet v2, v1 [keyIsIntegral]
     Return v10
-}
-# CHECK-LABEL: function f1 name="valuesNamedTwice"
 # CHECK: v5: guard = AllGuards [[new1]], v4
 # CHECK: v7: guard = AllGuards v4, [[new1]]
 # CHECK: [[done1]](v2: Array, [[new1]]: guard):
@@ -60,12 +57,12 @@ function f1 name="valuesNamedTwice" parameters=[{type=object}, {type=int[0, 1]}]
 # CHECK: [[values1]]: Array = NewArray {{*}}
 # CHECK-NEXT: [[valuesGuard1]]: guard = AllGuards [[values1]]
 # CHECK-NEXT: Jump -> next [[done1]]([[values1]], [[valuesGuard1]])
+}
 
 function f2 name="notNamed" parameters=[{type=object}] results=[{type=anything}] {
   b0(v0: object ~ L0):
     v1 = CallBuiltin -, v0 overload=ObjectEntries/0
     Return v1
-}
-# CHECK-LABEL: function f2 name="notNamed"
 # CHECK: [[done2]](v1: Array<Array>):
 # CHECK-NEXT: Return v1
+}

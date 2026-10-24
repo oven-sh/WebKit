@@ -7,10 +7,10 @@
 
 #if ENABLE(AOT)
 
-#include "AOTArrivalCounts.h"
 #include "AOTArrivalSiteNumbers.h"
 #include "AOTPropertyAccessReceivers.h"
 #include "AOTRealmTestSupport.h"
+#include "AOTRuntimeCounters.h"
 #include "AOTShellProgramTestSupport.h"
 #include "AOTVector.h"
 #include "JSCInlines.h"
@@ -25,7 +25,6 @@ entry module=m0
 layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
 layout L1 name="Size" fields=[{key="w" declared={type=anything} flags=[IsRequired]}, {key="h" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = NewClosure function=f1
@@ -35,13 +34,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="makePoint" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     v2 = FinishObject v1
     Return v2
 }
 function f2 name="makeSize" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
     v2 = FinishObject v1
     Return v2

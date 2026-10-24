@@ -9,14 +9,12 @@ layout L0 name="Rule" fields=[{key="limit" declared={type=number} flags=[IsRequi
 layout L1 name="Made" fields=[{key="limit" declared={type=number} flags=[IsRequired]}]
 
 function f0 name="run" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Check v0 castType=L0 cause=MayFail
     v3 = Check v1 castType=L0 cause=MayFail
     v4 = PropGet v2 key="limit" receivers=[L0, L1]
     v5 = PropGet v3 key="limit" receivers=[L1, ..]
     v6 = Less v5, v4
     Return v6
-}
-# CHECK-LABEL: function f0 name="run"
 # CHECK: = PropGet v2 key="limit" receivers=[L0, L1, ..]
 # CHECK: = PropGet v3 key="limit" receivers=[L1, ..]
+}

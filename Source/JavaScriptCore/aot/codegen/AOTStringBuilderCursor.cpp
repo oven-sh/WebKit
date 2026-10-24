@@ -22,17 +22,16 @@ static constexpr uint32_t exceedsEveryReservation = std::numeric_limits<uint32_t
 
 static_assert(exceedsEveryReservation > maxStringBuilderReservation);
 
-namespace {
+static size_t bytesReservedForJSONKey(size_t escapedLength)
+{
+    return WTF::roundUpToMultipleOf<8>(escapedLength + maxJSONKeyPunctuationLength);
+}
 
-struct InlineJSONKey {
-    CursorBytes escapedName;
-    uint32_t reservedBytes;
-};
-
-} // anonymous namespace
-
+// Nothing for a name that is not written at the cursor.
 static std::optional<CursorBytes> escapedJSONKey(const Program& program, StringID name)
 {
+    if (!name)
+        return std::nullopt;
     Vector<char16_t> decodedName;
     StringView text = program.strings.viewOf(name, decodedName);
     if (text.length() > maxStringBuilderReservation)
@@ -41,34 +40,22 @@ static std::optional<CursorBytes> escapedJSONKey(const Program& program, StringI
     Vector<Latin1Character, 256> buffer(6 * text.length() + 32);
     std::span<Latin1Character> output = buffer.mutableSpan();
     bool isLatin1 = text.is8Bit() ? WTF::appendEscapedJSONStringContent(output, text.span8()) : WTF::appendEscapedJSONStringContent(output, text.span16());
-    if (!isLatin1)
+    size_t escapedLength = buffer.size() - output.size();
+    if (!isLatin1 || bytesReservedForJSONKey(escapedLength) > maxStringBuilderReservation)
         return std::nullopt;
-    return CursorBytes(buffer.span().first(buffer.size() - output.size()));
-}
-
-static std::optional<InlineJSONKey> computeInlineJSONKey(const Program& program, StringID name)
-{
-    if (!name)
-        return std::nullopt;
-    std::optional<CursorBytes> escapedName = escapedJSONKey(program, name);
-    if (!escapedName)
-        return std::nullopt;
-    size_t reservedBytes = WTF::roundUpToMultipleOf<8>(escapedName->size() + maxJSONKeyPunctuationLength);
-    if (reservedBytes > maxStringBuilderReservation)
-        return std::nullopt;
-    return InlineJSONKey { WTF::move(*escapedName), static_cast<uint32_t>(reservedBytes) };
+    return CursorBytes(buffer.span().first(escapedLength));
 }
 
 bool canWriteJSONKeyAtCursor(const Program& program, StringID key)
 {
-    return computeInlineJSONKey(program, key).has_value();
+    return escapedJSONKey(program, key).has_value();
 }
 
 CursorBytes bytesOfJSONKey(const Program& program, const Value& appendKey)
 {
     RELEASE_ASSERT(appendKey.opcode == Opcode::JSONAppendKey && !(appendKey.opensObject() && appendKey.followsMember()));
-    std::optional<InlineJSONKey> key = computeInlineJSONKey(program, appendKey.string());
-    RELEASE_ASSERT(key);
+    std::optional<CursorBytes> escapedName = escapedJSONKey(program, appendKey.string());
+    RELEASE_ASSERT(escapedName);
 
     CursorBytes bytes;
     if (appendKey.opensObject())
@@ -76,7 +63,7 @@ CursorBytes bytesOfJSONKey(const Program& program, const Value& appendKey)
     else if (appendKey.followsMember())
         bytes.append(',');
     bytes.append('"');
-    bytes.appendVector(key->escapedName);
+    bytes.appendVector(*escapedName);
     bytes.append("\":"_s.span8());
     return bytes;
 }
@@ -113,8 +100,8 @@ uint32_t bytesTakenFromReservation(const Program& program, const Value& cursorRo
     case Opcode::JSONAppendString:
         return 0;
     case Opcode::JSONAppendKey: {
-        std::optional<InlineJSONKey> key = computeInlineJSONKey(program, cursorRow.string());
-        return key ? key->reservedBytes : exceedsEveryReservation;
+        std::optional<CursorBytes> escapedName = escapedJSONKey(program, cursorRow.string());
+        return escapedName ? static_cast<uint32_t>(bytesReservedForJSONKey(escapedName->size())) : exceedsEveryReservation;
     }
     case Opcode::JSONAppendToken:
         return jsonTokenBytes;

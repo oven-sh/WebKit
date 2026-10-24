@@ -8,19 +8,16 @@
 module m0 path="main.js" displayPath="main.js"
 
 function f0 name="spreadOut" parameters=[{type=string|Array<string, proven, pristine[Storage, Names, Dense]>|Generator<anything, pristine[Storage, Names]>|Set<undefined|string, proven, pristine[Storage, Names]>|String}] results=[{type=anything}] {
-  b0(v0: string|Array<string, proven, pristine[Storage, Names, Dense]>|Generator<anything, pristine[Storage, Names]>|Set<undefined|string, proven, pristine[Storage, Names]>|String):
     v1 = NewArray contents=anything
     AppendSpread v1, v0
     Return v1
-}
-# CHECK-LABEL: function f0 name="spreadOut"
 # CHECK: b0([[letters]]:
 # CHECK: = TypeTest [[letters]] testedType=Array
 # CHECK: = IsPristine
 # CHECK: Jump -> next {{*}}([[letters]])
+}
 
 function f1 name="each" parameters=[{type=string|Array<string, proven, pristine[Storage, Names, Dense]>|Generator<anything, pristine[Storage, Names]>|Set<undefined|string, proven, pristine[Storage, Names]>|String}] results=[{type=anything}] {
-  b0(v0: string|Array<string, proven, pristine[Storage, Names, Dense]>|Generator<anything, pristine[Storage, Names]>|Set<undefined|string, proven, pristine[Storage, Names]>|String):
     v1 = NewArray contents=anything
     v2 = IteratorOpen v0
     Jump -> next b1()
@@ -35,6 +32,5 @@ function f1 name="each" parameters=[{type=string|Array<string, proven, pristine[
   b3():
     AppendElement v1, v6
     Jump -> next b1()
-}
-# CHECK-LABEL: function f1 name="each"
 # CHECK-NOT: IteratorOpen v0
+}

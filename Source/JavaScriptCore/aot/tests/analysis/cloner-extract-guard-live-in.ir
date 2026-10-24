@@ -7,7 +7,6 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled}}] flow={members=[L0]}
 function f0 name="guardLiveIn" parameters=[{type=boolean}, {type=object}] results=[{type=anything}] {
-  b0(v0: boolean, v1: object):
     v2 = ShapeTest v1 layouts=[L0]
     Branch v2 -> taken b1(| 0), notTaken b5()
   b1(v3):

@@ -47,20 +47,6 @@ constexpr bool holdsCells(Representation representation)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-inline bool isNumberOrUndefined(const Type& type)
-{
-    return type.primitives & Primitive::Number && type.hasOnlyPrimitives(Primitive::Number | Primitive::Undefined);
-}
-
-inline bool areNumbers(std::span<const Type> types)
-{
-    for (auto& type : types) {
-        if (!type.isNumber())
-            return false;
-    }
-    return true;
-}
-
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

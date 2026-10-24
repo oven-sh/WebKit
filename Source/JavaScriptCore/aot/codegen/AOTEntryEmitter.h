@@ -16,7 +16,7 @@ struct ArgumentLocation;
 
 class EntryEmitter final : public OperationEmitter {
 public:
-    explicit EntryEmitter(CodeGenerator&);
+    explicit EntryEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generateEntry();
 

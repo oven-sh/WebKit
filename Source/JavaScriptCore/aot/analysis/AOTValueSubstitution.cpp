@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTAnalysisContext.h"
 #include "AOTBuildContext.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
@@ -18,7 +17,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Whoever is typed from the one is typed alike from the other.
 static bool hasTypesOf(const Function& function, ValueID replaced, ValueID replacement)
 {
     const Value& from = function.at(replaced);
@@ -53,7 +51,6 @@ void replaceUse(Function& function, const Use& use, ValueID replacement)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// An allocation is the guard of its own shape, and a cast of it is not.
 static bool acceptsCast(OperandKind kind)
 {
     return kind != OperandKind::Guard && !mustBeDefinition(kind);
@@ -93,25 +90,15 @@ void becomeUndefined(Function& function, ValueID id)
     value.setExpected(TypeID());
 }
 
-ValueSubstitution::ValueSubstitution(const Function& function)
-    : m_numberOfValues(function.values.size())
-{
-}
-
-void ValueSubstitution::ensureSize(size_t size)
-{
-    size_t oldSize = m_replacements.size();
-    if (size <= oldSize)
-        return;
-    m_replacements.grow(size);
-    for (size_t i = oldSize; i < size; ++i)
-        m_replacements[i] = ValueID(i);
-}
-
 void ValueSubstitution::replace(ValueID from, ValueID to)
 {
     RELEASE_ASSERT(from && to);
-    ensureSize(std::max(m_numberOfValues, static_cast<size_t>(std::max(from, to).index()) + 1));
+    size_t oldSize = m_replacements.size();
+    if (size_t size = std::max(m_numberOfValues, static_cast<size_t>(std::max(from, to).index()) + 1); size > oldSize) {
+        m_replacements.grow(size);
+        for (size_t index = oldSize; index < size; ++index)
+            m_replacements[index] = ValueID(index);
+    }
     RELEASE_ASSERT(m_replacements[from.index()] == from);
     ValueID end = resolve(to);
     RELEASE_ASSERT(end != from);

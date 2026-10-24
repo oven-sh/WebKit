@@ -5,12 +5,10 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="returns-cursor" parameters=[{type=stringbuilder}] results=[{type=buildercursor}] {
-  b0(v0: stringbuilder):
     v1 = StringBuilderReserve v0 size=8
     Return v1
 }
 function f1 name="returns-nothing" parameters=[{type=stringbuilder}] results=[{type=undefined}] {
-  b0(v0: stringbuilder):
     v1 = StringBuilderReserve v0 size=8
     StringBuilderCommit v0, v1
     Return

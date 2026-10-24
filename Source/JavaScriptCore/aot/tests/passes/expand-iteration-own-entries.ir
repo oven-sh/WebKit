@@ -7,7 +7,6 @@ module m0 path="main.js" displayPath="main.js"
 variable g0 name="kept" declared={type=anything} initialization=Undefined
 
 function f0 name="theLoopAloneHasTheList" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
     v2 = CallBuiltin -, v0 overload=ObjectEntries/0
     v3 = IteratorOpen v2
     Jump -> next b1()
@@ -22,8 +21,6 @@ function f0 name="theLoopAloneHasTheList" parameters=[{type=object}, {type=anyth
     Jump -> next b1()
   b3():
     Return
-}
-# CHECK-LABEL: function f0 name="theLoopAloneHasTheList"
 # CHECK-NOT: ObjectEntries
 # CHECK-NOT: AssumeType
 # CHECK: [[list0]]: Array = CallBuiltin -, v0 overload=CompilerHelpersOwnEntriesFlat/0
@@ -36,9 +33,9 @@ function f0 name="theLoopAloneHasTheList" parameters=[{type=object}, {type=anyth
 # CHECK-NEXT: [[value0]]: {{*}} = ElemGet [[list0]], [[behind0]] [keyIsIntegral]
 # CHECK: = NewArray [[key0]], [[value0]]
 # CHECK-NOT: IteratorResume
+}
 
 function f1 name="throughACastThatTestsNothing" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
     v2 = CallBuiltin -, v0 overload=ObjectEntries/0
     v3 = AssumeType v2 castType=Array<object>
     v4 = IteratorOpen v3
@@ -54,8 +51,6 @@ function f1 name="throughACastThatTestsNothing" parameters=[{type=object}, {type
     Jump -> next b1()
   b3():
     Return
-}
-# CHECK-LABEL: function f1 name="throughACastThatTestsNothing"
 # CHECK-NOT: ObjectEntries
 # CHECK-NOT: AssumeType
 # CHECK: [[list1]]: Array = CallBuiltin -, v0 overload=CompilerHelpersOwnEntriesFlat/0
@@ -68,10 +63,10 @@ function f1 name="throughACastThatTestsNothing" parameters=[{type=object}, {type
 # CHECK-NEXT: [[value1]]: {{*}} = ElemGet [[list1]], [[behind1]] [keyIsIntegral]
 # CHECK: = NewArray [[key1]], [[value1]]
 # CHECK-NOT: IteratorResume
+}
 
 # Nobody has resolved the call yet: its callee is the function itself
 function f2 name="theCallIsNotResolved" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Builtin builtin=Object
     v3 = Builtin builtin=ObjectEntries
     v4 = Call v3, v2, v0 calleeName="entries"
@@ -88,8 +83,6 @@ function f2 name="theCallIsNotResolved" parameters=[{type=anything}, {type=anyth
     Jump -> next b1()
   b3():
     Return
-}
-# CHECK-LABEL: function f2 name="theCallIsNotResolved"
 # CHECK-NOT: = Call v3
 # CHECK-NOT: AssumeType
 # CHECK: [[list2]]: Array = CallBuiltin -, v0 overload=CompilerHelpersOwnEntriesFlat/0
@@ -102,9 +95,9 @@ function f2 name="theCallIsNotResolved" parameters=[{type=anything}, {type=anyth
 # CHECK-NEXT: [[value2]]: {{*}} = ElemGet [[list2]], [[behind2]] [keyIsIntegral]
 # CHECK: = NewArray [[key2]], [[value2]]
 # CHECK-NOT: IteratorResume
+}
 
 function f3 name="anOperandNobodyKnows" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = Builtin builtin=Object
     v3 = CallBuiltin v2, v0 overload=ObjectEntries/0 builtinCallForm=AnyReceiver
     v4 = IteratorOpen v3
@@ -120,8 +113,6 @@ function f3 name="anOperandNobodyKnows" parameters=[{type=anything}, {type=anyth
     Jump -> next b1()
   b3():
     Return
-}
-# CHECK-LABEL: function f3 name="anOperandNobodyKnows"
 # CHECK-NOT: overload=ObjectEntries
 # CHECK-NOT: AssumeType
 # CHECK: [[list3]]: Array = CallBuiltin -, v0 overload=CompilerHelpersOwnEntriesFlat/0
@@ -134,9 +125,9 @@ function f3 name="anOperandNobodyKnows" parameters=[{type=anything}, {type=anyth
 # CHECK-NEXT: [[value3]]: {{*}} = ElemGet [[list3]], [[behind3]] [keyIsIntegral]
 # CHECK: = NewArray [[key3]], [[value3]]
 # CHECK-NOT: IteratorResume
+}
 
 function f4 name="theListIsKept" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
     v2 = CallBuiltin -, v0 overload=ObjectEntries/0
     PutModuleVariable v2 variable=g0
     v4 = IteratorOpen v2
@@ -152,14 +143,12 @@ function f4 name="theListIsKept" parameters=[{type=object}, {type=anything}] res
     Jump -> next b1()
   b3():
     Return
-}
-# CHECK-LABEL: function f4 name="theListIsKept"
 # CHECK-NOT: CompilerHelpersOwnEntriesFlat
 # CHECK: overload=ObjectEntries/0
 # CHECK-NOT: CompilerHelpersOwnEntriesFlat
+}
 
 function f5 name="aStoreBetweenTheCallAndTheLoop" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
     v2 = CallBuiltin -, v0 overload=ObjectEntries/0
     PropSet v0, v1 key="late"
     v4 = IteratorOpen v2
@@ -175,14 +164,12 @@ function f5 name="aStoreBetweenTheCallAndTheLoop" parameters=[{type=object}, {ty
     Jump -> next b1()
   b3():
     Return
-}
-# CHECK-LABEL: function f5 name="aStoreBetweenTheCallAndTheLoop"
 # CHECK-NOT: CompilerHelpersOwnEntriesFlat
 # CHECK: overload=ObjectEntries/0
 # CHECK-NOT: CompilerHelpersOwnEntriesFlat
+}
 
 function f6 name="aReadBetweenTheCallAndTheLoop" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
     v2 = CallBuiltin -, v0 overload=ObjectEntries/0
     v3 = GetModuleVariable variable=g0
     v4 = IteratorOpen v2
@@ -198,14 +185,12 @@ function f6 name="aReadBetweenTheCallAndTheLoop" parameters=[{type=object}, {typ
     Jump -> next b1()
   b3():
     Return
-}
-# CHECK-LABEL: function f6 name="aReadBetweenTheCallAndTheLoop"
 # CHECK-NOT: CompilerHelpersOwnEntriesFlat
 # CHECK: overload=ObjectEntries/0
 # CHECK-NOT: CompilerHelpersOwnEntriesFlat
+}
 
 function f7 name="anotherNumberOfOperands" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
     v2 = Builtin builtin=Object
     v3 = CallBuiltin v2, v0, v1 overload=ObjectEntries/0 builtinCallForm=AnyReceiver
     v4 = IteratorOpen v3
@@ -221,14 +206,12 @@ function f7 name="anotherNumberOfOperands" parameters=[{type=object}, {type=anyt
     Jump -> next b1()
   b3():
     Return
-}
-# CHECK-LABEL: function f7 name="anotherNumberOfOperands"
 # CHECK-NOT: CompilerHelpersOwnEntriesFlat
 # CHECK: overload=ObjectEntries/0
 # CHECK-NOT: CompilerHelpersOwnEntriesFlat
+}
 
 function f8 name="theValuesAlone" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
     v2 = CallBuiltin -, v0 overload=ObjectValues/0
     v3 = IteratorOpen v2
     Jump -> next b1()
@@ -243,22 +226,19 @@ function f8 name="theValuesAlone" parameters=[{type=object}, {type=anything}] re
     Jump -> next b1()
   b3():
     Return
-}
-# CHECK-LABEL: function f8 name="theValuesAlone"
 # CHECK-NOT: CompilerHelpersOwnEntriesFlat
 # CHECK: overload=ObjectValues/0
 # CHECK-NOT: CompilerHelpersOwnEntriesFlat
+}
 
 function f9 name="aPatternTakesTheListApart" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
-  b0(v0: object, v1: anything):
     v2 = CallBuiltin -, v0 overload=ObjectEntries/0
     v3 = IteratorOpen v2 elementCount=1 [isDestructuring]
     v4 = IteratorResume v3 stepIndex=0
     v5 = ResultAt v4 index=1
     IteratorClose v3
     Return v5
-}
-# CHECK-LABEL: function f9 name="aPatternTakesTheListApart"
 # CHECK-NOT: CompilerHelpersOwnEntriesFlat
 # CHECK: overload=ObjectEntries/0
 # CHECK-NOT: CompilerHelpersOwnEntriesFlat
+}

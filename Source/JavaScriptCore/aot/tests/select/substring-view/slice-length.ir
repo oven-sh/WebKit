@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="slice-length" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=int}] {
-  b0(v0: string, v1: int, v2: int):
     v3 = GetStringLength v0
     v4 = StringRange v3, v1, v2
     v5 = ResultAt v4
@@ -13,17 +12,15 @@ function f0 name="slice-length" parameters=[{type=string}, {type=int}, {type=int
     v7 = Substring v0, v5, v6
     v8 = GetStringLength v7
     Return v8
-}
-# CHECK-LABEL: function f0 name="slice-length"
 # CHECK-NOT: = Substring
 # CHECK: v6: {{*}} = ResultAt v4 index=1
 # CHECK-NEXT: [[difference0]]: int[-2147483647, 2147483647] = Sub v6, v5
 # CHECK-NEXT: [[mask0]]: 2147483647 = Integer integer=2147483647
 # CHECK-NEXT: [[length0]]: int[0, 2147483647] = BitAnd [[difference0]], [[mask0]]
 # CHECK-NEXT: Return [[length0]]
+}
 
 function f1 name="slice-length-getter" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=int}] {
-  b0(v0: string, v1: int, v2: int):
     v3 = GetStringLength v0
     v4 = StringRange v3, v1, v2
     v5 = ResultAt v4
@@ -31,8 +28,6 @@ function f1 name="slice-length-getter" parameters=[{type=string}, {type=int}, {t
     v7 = Substring v0, v5, v6
     v8 = CallBuiltin v7 overload=StringPrototypeLength/0
     Return v8
-}
-# CHECK-LABEL: function f1 name="slice-length-getter"
 # CHECK-NOT: = Substring
 # CHECK-NOT: StringPrototypeLength
 # CHECK: v6: {{*}} = ResultAt v4 index=1
@@ -40,16 +35,15 @@ function f1 name="slice-length-getter" parameters=[{type=string}, {type=int}, {t
 # CHECK-NEXT: [[mask1]]: 2147483647 = Integer integer=2147483647
 # CHECK-NEXT: [[length1]]: int[0, 2147483647] = BitAnd [[difference1]], [[mask1]]
 # CHECK-NEXT: Return [[length1]]
+}
 
 function f2 name="length-returned-as-a-length" parameters=[{type=string}, {type=int[0, 2147483647]}, {type=int[0, 2147483647]}] results=[{type=int[0, 2147483647]}] {
-  b0(v0: string, v1: int[0, 2147483647], v2: int[0, 2147483647]):
     v3 = Substring v0, v1, v2
     v4 = GetStringLength v3
     Return v4
-}
-# CHECK-LABEL: function f2 name="length-returned-as-a-length"
 # CHECK-NOT: = Substring
 # CHECK: [[difference2]]: int[-2147483647, 2147483647] = Sub v2, v1
 # CHECK-NEXT: [[mask2]]: 2147483647 = Integer integer=2147483647
 # CHECK-NEXT: [[length2]]: int[0, 2147483647] = BitAnd [[difference2]], [[mask2]]
 # CHECK-NEXT: Return [[length2]]
+}

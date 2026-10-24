@@ -15,14 +15,7 @@ class ObjectBuiltinEmitter final : public BuiltinFamilyEmitter {
 public:
     explicit ObjectBuiltinEmitter(CodeGenerator&);
 
-    void generateObjectCreate(const InlineCall&);
-    void generateGetPrototypeOf(const InlineCall&);
-    void generateSetPrototypeOf(const InlineCall&);
-    void generateCallObjectConstructor(const InlineCall&);
-    void generateObjectFreeze(const InlineCall&);
-    void generateObjectPrototypeToString(const InlineCall&);
-    void generateObjectIs(const InlineCall&);
-    void generateReturnThis(const InlineCall&);
+    FOR_EACH_AOT_INLINE_BUILTIN_IN_OBJECT_BUILTIN(AOT_DECLARE_INLINE_BUILTIN_GENERATOR)
 
     CellPointer allocateEmptyObject(InlineAllocation, std::optional<Integer> header, LBasicBlock slowPath);
 

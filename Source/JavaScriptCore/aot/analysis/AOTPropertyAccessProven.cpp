@@ -13,7 +13,6 @@
 #include "AOTFlowObjectOperations.h"
 #include "AOTPropertyAccessCache.h"
 #include "AOTPropertyAccessElements.h"
-#include "AOTPropertyAccessInternal.h"
 #include "AOTResultRules.h"
 #include "AOTValueIdentity.h"
 
@@ -23,24 +22,52 @@ namespace {
 
 enum class ProofState : uint8_t { Unknown, Proven };
 
-enum class ObjectStep : uint8_t { OwnKeys, OwnValues, PrototypeChain };
+enum class Ancestry : uint8_t { Unknown, BuiltinsOnly, Classes };
 
 } // anonymous namespace
 
 static constexpr uint64_t maxMembersPerStep = defaultLimitValue(LimitID::MaxAccessPlanMembers, hostArchitecture());
 
-static ReceiverCandidates candidatesOfProvenType(const Program& program, const Type& layouts)
+static Ancestry ancestryOf(LayoutKind kind)
 {
-    return candidatesOf(program, layouts, nullptr, { });
+    switch (kind) {
+    case LayoutKind::Record:
+    case LayoutKind::Container:
+    case LayoutKind::BuiltinResult:
+        return Ancestry::BuiltinsOnly;
+    case LayoutKind::Instance:
+        return Ancestry::Classes;
+    case LayoutKind::Environment:
+    case LayoutKind::Closure:
+    case LayoutKind::CoroutineFrame:
+    case LayoutKind::ModuleNamespace:
+        return Ancestry::Unknown;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Nothing where the type admits an object that has none of the layouts, or more layouts than one step looks at.
+static bool isLookup(Access access) { return access == Access::Read || access == Access::Has; }
+
 static std::optional<LayoutList> provenLayoutsOf(const Program& program, const Type& layouts)
 {
-    ReceiverCandidates candidates = candidatesOfProvenType(program, layouts);
+    ReceiverCandidates candidates = candidatesOf(program, layouts, nullptr, { });
     if (!candidates.isProven() || candidates.hasOtherParts || candidates.proven.size() > maxMembersPerStep)
         return std::nullopt;
     return WTF::move(candidates.proven);
+}
+
+static bool isNullishOrOfLayoutsThat(const Program& program, const Type& receiver, NOESCAPE const Invocable<bool(LayoutID)> auto& passes)
+{
+    if (!isClosedUnion(receiver))
+        return false;
+    for (const UnionPart& part : unionPartsOf(receiver)) {
+        if (part.kind == UnionPartKind::Nullish || part.kind == UnionPartKind::Absent)
+            continue;
+        std::optional<LayoutList> layouts = part.kind == UnionPartKind::Layouts ? provenLayoutsOf(program, part.type) : std::nullopt;
+        if (!layouts || !std::ranges::all_of(*layouts, passes))
+            return false;
+    }
+    return true;
 }
 
 static ProofState addArm(const PropertyAccessPlan& plan, Access access, ProvenAccess& result)
@@ -57,7 +84,6 @@ static ProofState addArm(const PropertyAccessPlan& plan, Access access, ProvenAc
         return ProofState::Proven;
     case AccessForm::Variable:
         insertInUniquedSortedVector(result.operations, plan.operation);
-        // A read of a binding in its temporal dead zone throws: ResolveAccesses emits CheckInitialized after such a read.
         if (access == Access::Read)
             insertInUniquedSortedVector(result.operations, Opcode::CheckInitialized);
         return ProofState::Proven;
@@ -86,60 +112,43 @@ static ProofState addArm(const PropertyAccessPlan& plan, Access access, ProvenAc
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static ProofState addMethodArm(const MemberArm& arm, ProvenAccess& result)
+static bool addMemberArm(const PropertyAccessContext& context, const PropertyAccessQuery& query, const MemberArm& arm, ProvenAccess& result)
 {
+    if (arm.answer.kind != MemberKind::Method || query.access != Access::Read)
+        return addArm(planMemberArm(context, query, arm), query.access, result) == ProofState::Proven;
     if (!arm.answer.needsNoTest())
-        return ProofState::Unknown;
+        return false;
     insertInUniquedSortedVector(result.methods, arm.answer.method);
-    return ProofState::Proven;
+    return true;
 }
 
-static ProofState addMemberArm(const PropertyAccessContext& context, const PropertyAccessQuery& query, const MemberArm& arm, ProvenAccess& result)
-{
-    if (arm.answer.kind == MemberKind::Method && query.access == Access::Read)
-        return addMethodArm(arm, result);
-    return addArm(planMemberArm(context, query, arm), query.access, result);
-}
-
-static ProofState addProvenArms(const PropertyAccessContext& context, const PropertyAccessQuery& query, ProvenAccess& result)
+static bool addProvenArms(const PropertyAccessContext& context, const PropertyAccessQuery& query, ProvenAccess& result)
 {
     const ReceiverCandidates& receivers = query.receivers;
     RELEASE_ASSERT(receivers.predicted.isEmpty() && !receivers.mayBeNullish);
     if (!receivers.isProven() || receivers.hasOtherParts || receivers.proven.size() > query.maxMembers)
-        return ProofState::Unknown;
+        return false;
     if (receivers.proven.isEmpty())
-        return ProofState::Proven;
+        return true;
 
     PropertyAccessPlan plan = planPropertyAccess(context, query);
     if (plan.isResolved())
-        return addArm(plan, query.access, result);
+        return addArm(plan, query.access, result) == ProofState::Proven;
     if (plan.partition.arms.isEmpty() || !plan.partition.rest.isEmpty())
-        return ProofState::Unknown;
-
-    for (const MemberArm& arm : plan.partition.arms) {
-        if (addMemberArm(context, query, arm, result) == ProofState::Unknown)
-            return ProofState::Unknown;
-    }
-    return ProofState::Proven;
+        return false;
+    return std::ranges::all_of(plan.partition.arms, [&](const MemberArm& arm) {
+        return addMemberArm(context, query, arm, result);
+    });
 }
 
-static bool isLookup(Access);
-
-// What NewObject makes is an ordinary object, and stays one whoever gets hold of it: no trap and no setter stands in front of a definition.
-static bool definesPropertyOfObjectMadeHere(const Function& function, const Value& access)
+static bool definesPropertyOfOrdinaryObject(const Program& program, const Function& function, const Value& access)
 {
     if (access.opcode != Opcode::PropDefine)
         return false;
-    return function.at(sameObjectThroughCasts(function, access.objectOperand())).opcode == Opcode::NewObject;
-}
-
-// The same holds of a value whose type is proven to be records alone: a NewObject somewhere has made it. A join of two allocations is such a value, and a parameter.
-static bool isRecordWhoeverMadeIt(const Program& program, const Function& function, ValueID object)
-{
-    const Type& type = program.typeOf(function, object);
-    if (!type.hasOnlyLayouts(program))
-        return false;
-    return std::ranges::all_of(program.at(type.layouts).members, [&](LayoutID layout) {
+    if (function.at(sameObjectThroughCasts(function, access.objectOperand())).opcode == Opcode::NewObject)
+        return true;
+    const Type& type = program.typeOf(function, access.objectOperand());
+    return type.hasOnlyLayouts(program) && std::ranges::all_of(program.at(type.layouts).members, [&](LayoutID layout) {
         return program.at(layout).kind == LayoutKind::Record;
     });
 }
@@ -155,15 +164,9 @@ static ProvenAccess computeProvenNamedAccessOf(const Program& program, const Fun
     query->usesOnlyPlansWithoutTests = true;
 
     ProvenAccess result;
-    if (addProvenArms({ program, nullptr }, *query, result) == ProofState::Unknown) {
-        if (definesPropertyOfObjectMadeHere(function, access) || (access.opcode == Opcode::PropDefine && isRecordWhoeverMadeIt(program, function, access.objectOperand()))) {
-            ProvenAccess definition;
-            definition.isComplete = true;
-            definition.definesOwnProperty = true;
-            definition.key = query->key;
-            return definition;
-        }
-        // What holds for a lookup under any key holds under this one. Were it otherwise, a pass that finds out the key of a lookup would widen its effects.
+    if (!addProvenArms({ program, nullptr }, *query, result)) {
+        if (definesPropertyOfOrdinaryObject(program, function, access))
+            return { .isComplete = true, .definesOwnProperty = true, .key = query->key };
         if (query->start != MemberStart::Instance || query->isPrivate || !isLookup(query->access))
             return ProvenAccess::unknown();
         return provenLookupUnderAnyKey(program, program.typeOf(function, access.operand(*receiverOf(access.opcode))));
@@ -176,7 +179,6 @@ static ProvenAccess computeProvenNamedAccessOf(const Program& program, const Fun
     return result;
 }
 
-// No key for an access that propertyAccessQueryOf() refuses at once, nor where an id is one that an arena gave out: the cache holds ids of the program only.
 static std::optional<PropertyAccessCache::ProvenAccessKey> findKeyOfNamedAccess(const Program& program, const Function& function, const Value& access)
 {
     Opcode opcode = access.opcode;
@@ -195,7 +197,6 @@ static std::optional<PropertyAccessCache::ProvenAccessKey> findKeyOfNamedAccess(
     if (TypeTable::isProvisional(key.key) || TypeTable::isProvisional(key.receiver) || TypeTable::isProvisional(key.stored))
         return std::nullopt;
 
-    // The three questions about the allocation of the receiver, with one walk through the casts. Few receivers are made where they are used.
     ValueID object = sameObjectThroughCasts(function, receiver);
     const Value& allocation = function.at(object);
     if (allocation.opcode != Opcode::NewObject)
@@ -219,25 +220,15 @@ static uint32_t hashOf(const PropertyAccessCache::ProvenAccessKey& key)
 static const ProvenAccess& provenNamedAccessOf(const Program& program, const Function& function, const Value& access, ProvenAccess& storage LIFETIME_BOUND)
 {
     PropertyAccessCache* cache = program.propertyAccessCache();
-    if (!cache)
-        return storage = computeProvenNamedAccessOf(program, function, access);
-    std::optional<PropertyAccessCache::ProvenAccessKey> key = findKeyOfNamedAccess(program, function, access);
+    std::optional<PropertyAccessCache::ProvenAccessKey> key = cache ? findKeyOfNamedAccess(program, function, access) : std::nullopt;
     if (!key)
         return storage = computeProvenNamedAccessOf(program, function, access);
 
     const ProvenAccess& kept = findOrCompute(cache->provenAccesses, *key, hashOf(*key), [&] {
         return PropertyAccessCache::ProvenNamedAccess { *key, computeProvenNamedAccessOf(program, function, access) };
-    }).access;
+    }).value;
     RELEASE_ASSERT(!cache->checksAnswers || kept == computeProvenNamedAccessOf(program, function, access, PredictedReceivers::Listed));
     return kept;
-}
-
-static ProvenAccess provenOperation(Opcode operation)
-{
-    ProvenAccess result;
-    result.isComplete = true;
-    result.operations.append(operation);
-    return result;
 }
 
 static PropertyKeyID findConstantKey(const Program& program, const ConstantKey& constantKey)
@@ -264,11 +255,10 @@ static Value createNamedAccess(const Value& elementAccess, Opcode namedOperation
     return named;
 }
 
-static ProvenAccess provenLookupByKeyOf(const Program&, const Function&, const Value& access);
-
 const ProvenAccess& provenAccessOf(const Program& program, const Function& function, const Value& access, ProvenAccess& storage)
 {
-    if (!elementAccessOf(access.opcode))
+    std::optional<Access> elementAccess = elementAccessOf(access.opcode);
+    if (!elementAccess)
         return provenNamedAccessOf(program, function, access, storage);
 
     std::optional<ElementAccessPlan> plan = planElementAccessOf(program, function, access);
@@ -276,26 +266,25 @@ const ProvenAccess& provenAccessOf(const Program& program, const Function& funct
         return storage = ProvenAccess::unknown();
 
     switch (plan->form) {
-    case ElementAccessForm::NamedKey: {
-        PropertyKeyID key = findConstantKey(program, plan->constantKey);
-        if (!key)
-            return storage = provenLookupByKeyOf(program, function, access);
-        return provenNamedAccessOf(program, function, createNamedAccess(access, plan->operation, key), storage);
-    }
+    case ElementAccessForm::NamedKey:
+        if (PropertyKeyID key = findConstantKey(program, plan->constantKey))
+            return provenNamedAccessOf(program, function, createNamedAccess(access, plan->operation, key), storage);
+        break;
     case ElementAccessForm::Array:
     case ElementAccessForm::TypedArray:
         if (!plan->needsNoTest())
             return storage = ProvenAccess::unknown();
-        return storage = provenOperation(plan->operation);
+        return storage = { .isComplete = true, .operations = { plan->operation } };
     case ElementAccessForm::String:
-        return storage = provenOperation(Opcode::StringRangeCharacterOrUndefined);
+        return storage = { .isComplete = true, .operations = { Opcode::StringRangeCharacterOrUndefined } };
     case ElementAccessForm::ByKey:
     case ElementAccessForm::ArgumentsElement:
-        return storage = provenLookupByKeyOf(program, function, access);
     case ElementAccessForm::Split:
-        return storage = provenLookupByKeyOf(program, function, access);
+        break;
     }
-    RELEASE_ASSERT_NOT_REACHED();
+    if (!isLookup(*elementAccess))
+        return storage = ProvenAccess::unknown();
+    return storage = provenLookupUnderAnyKey(program, program.typeOf(function, access.objectOperand()));
 }
 
 ProvenAccess provenAccessOf(const Program& program, const Function& function, const Value& access)
@@ -318,74 +307,58 @@ static PropertyAccessQuery createReadQuery(MemberStart start, PropertyKeyID key,
     return query;
 }
 
-static ProofState addReadOfLayouts(const PropertyAccessContext& context, PropertyKeyID key, const Type& layouts, ProvenAccess& result)
-{
-    return addProvenArms(context, createReadQuery(MemberStart::Instance, key, candidatesOfProvenType(context.program, layouts)), result);
-}
-
-static ProofState addReadOfFunctions(const PropertyAccessContext& context, PropertyKeyID key, const Type& functions, ProvenAccess& result)
+static bool addReadOfFunctions(const PropertyAccessContext& context, PropertyKeyID key, const Type& functions, ProvenAccess& result)
 {
     bool readsPrototypeProperty = key == context.program.keyOf(BuiltinNames::prototype);
     for (FunctionID function : functions.functions) {
-        // Nothing can delete a prototype property that exists from creation or turn it into an accessor, so the read ends at the function and runs no code.
         if (readsPrototypeProperty && hasPrototypeProperty(context.program, context.program.at(function))) {
             result.mayFindPrototypeProperty = true;
             continue;
         }
         LayoutID classLayout = classOfClassObject(context.program, Type::forFunction(function));
         if (!classLayout)
-            return ProofState::Unknown;
+            return false;
         ReceiverCandidates classObject { .proof = ReceiverProof::Type, .level = KnowledgeLevel::Proven, .proven = { classLayout } };
-        if (addProvenArms(context, createReadQuery(MemberStart::ClassObject, key, WTF::move(classObject)), result) == ProofState::Unknown)
-            return ProofState::Unknown;
+        if (!addProvenArms(context, createReadQuery(MemberStart::ClassObject, key, WTF::move(classObject)), result))
+            return false;
     }
-    return ProofState::Proven;
+    return true;
 }
 
-static ProofState addBuiltinChainAnswer(const PropertyAccessContext& context, PropertyKeyID key, MemberAnswer&& answer, ProvenAccess& result)
+static bool addBuiltinChainAnswer(const PropertyAccessContext& context, PropertyKeyID key, MemberAnswer&& answer, ProvenAccess& result)
 {
     return addMemberArm(context, createReadQuery(MemberStart::Instance, key, { }), { WTF::move(answer), { } }, result);
 }
 
-static ProofState addReadOfBuiltins(const PropertyAccessContext& context, PropertyKeyID key, const Type& builtins, ProvenAccess& result)
-{
-    for (BuiltinID builtin : builtins.builtins) {
-        if (addBuiltinChainAnswer(context, key, findBuiltinObjectMember(context, builtin, key, Access::Read), result) == ProofState::Unknown)
-            return ProofState::Unknown;
-    }
-    return ProofState::Proven;
-}
-
-static ProofState addReadOfBuiltinInstances(const PropertyAccessContext& context, PropertyKeyID key, const Type& instances, ProvenAccess& result)
+static bool addReadOfBuiltinInstances(const PropertyAccessContext& context, PropertyKeyID key, const Type& instances, ProvenAccess& result)
 {
     const BuiltinTable& table = context.program.builtins();
     for (const ClassPart& part : instances.classes) {
         if (!part.provenPristine.contains(PristineAspects::Names))
-            return ProofState::Unknown;
+            return false;
         MemberAnswer answer = findBuiltinInstanceMember(context, part.builtinClass, key, Access::Read);
         if (answer.kind == MemberKind::Builtin && table.at(answer.builtin).flags.contains(BuiltinFlag::IsOwnPropertyOfInstances))
-            return ProofState::Unknown;
-        if (addBuiltinChainAnswer(context, key, WTF::move(answer), result) == ProofState::Unknown)
-            return ProofState::Unknown;
+            return false;
+        if (!addBuiltinChainAnswer(context, key, WTF::move(answer), result))
+            return false;
     }
-    return ProofState::Proven;
+    return true;
 }
 
-static ProofState addReadOfPrimitives(const PropertyAccessContext& context, PropertyKeyID key, BuiltinClassID wrapperClass, ProvenAccess& result)
+static bool addReadOfPrimitives(const PropertyAccessContext& context, PropertyKeyID key, BuiltinClassID wrapperClass, ProvenAccess& result)
 {
     MemberAnswer answer = findBuiltinInstanceMember(context, wrapperClass, key, Access::Read);
-    // A locked member of a wrapper prototype is the engine's, and the entry that looks it up declares what happens.
     if (answer.kind == MemberKind::Builtin && answer.needsNoTest())
-        return ProofState::Proven;
+        return true;
     return addBuiltinChainAnswer(context, key, WTF::move(answer), result);
 }
 
-static ProofState addReadOfPart(const PropertyAccessContext& context, PropertyKeyID key, const UnionPart& part, ProvenAccess& result)
+static bool addReadOfPart(const PropertyAccessContext& context, PropertyKeyID key, const UnionPart& part, ProvenAccess& result)
 {
     switch (part.kind) {
     case UnionPartKind::Nullish:
     case UnionPartKind::Absent:
-        return ProofState::Proven;
+        return true;
     case UnionPartKind::Boolean:
         return addReadOfPrimitives(context, key, BuiltinClasses::Boolean, result);
     case UnionPartKind::Number:
@@ -397,22 +370,55 @@ static ProofState addReadOfPart(const PropertyAccessContext& context, PropertyKe
     case UnionPartKind::BigInt:
         return addReadOfPrimitives(context, key, BuiltinClasses::BigInt, result);
     case UnionPartKind::Layouts:
-        return addReadOfLayouts(context, key, part.type, result);
+        return addProvenArms(context, createReadQuery(MemberStart::Instance, key, candidatesOf(context.program, part.type, nullptr, { })), result);
     case UnionPartKind::BuiltinClass:
         return addReadOfBuiltinInstances(context, key, part.type, result);
     case UnionPartKind::Functions:
         return addReadOfFunctions(context, key, part.type, result);
     case UnionPartKind::Builtins:
-        return addReadOfBuiltins(context, key, part.type, result);
+        for (BuiltinID builtin : part.type.builtins) {
+            if (!addBuiltinChainAnswer(context, key, findBuiltinObjectMember(context, builtin, key, Access::Read), result))
+                return false;
+        }
+        return true;
     case UnionPartKind::OtherObjects:
-        return ProofState::Unknown;
+        return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static ProofState checkPrototypeChain(const Program&, LayoutID);
+static bool hasProvenClassChain(const Program& program, LayoutID instanceLayout)
+{
+    MemberConditions conditions;
+    LayoutID current = instanceLayout;
+    for (size_t steps = 0; steps <= program.layouts.size(); ++steps) {
+        NextHolder next = nextHolderOf(program, current, ClassSide::Prototype, conditions);
+        if (!conditions.isEmpty())
+            return false;
 
-// A tuple is an array.
+        switch (next.step) {
+        case ChainStep::Unknown:
+            return false;
+        case ChainStep::CompiledClass:
+            current = next.layout;
+            break;
+        case ChainStep::BuiltinClass:
+            return program.builtins().hasLockedPrototypeChain(next.builtinClass);
+        case ChainStep::NoBase:
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool hasProvenPrototypeChain(const Program& program, LayoutID layout)
+{
+    if (!receiverStateOf(program, layout).cannot(ObjectMutation::ChangePrototype))
+        return false;
+    Ancestry ancestry = ancestryOf(program.at(layout).kind);
+    return ancestry == Ancestry::BuiltinsOnly || (ancestry == Ancestry::Classes && hasProvenClassChain(program, layout));
+}
+
 static bool inheritsFromObjectPrototypeAlone(const Program& program, const Layout& layout)
 {
     if (layout.kind == LayoutKind::BuiltinResult)
@@ -420,37 +426,23 @@ static bool inheritsFromObjectPrototypeAlone(const Program& program, const Layou
     return layout.kind == LayoutKind::Record;
 }
 
-// No operation of the program names the key, so no layout has a field or an accessor under it.
 static ProvenAccess provenReadOfUnnamedKey(const Program& program, const Type& receiver, BuiltinName name)
 {
     const BuiltinTable& table = program.builtins();
     BuiltinID inherited = table.findOwnMember(Builtins::ObjectPrototype, name);
-    if ((inherited && table.at(inherited).kind != BuiltinKind::Method) || !isClosedUnion(receiver))
+    if (inherited && table.at(inherited).kind != BuiltinKind::Method)
         return ProvenAccess::unknown();
 
-    for (const UnionPart& part : unionPartsOf(receiver)) {
-        if (part.kind == UnionPartKind::Nullish || part.kind == UnionPartKind::Absent)
-            continue;
-        if (part.kind != UnionPartKind::Layouts)
-            return ProvenAccess::unknown();
-        std::optional<LayoutList> layouts = provenLayoutsOf(program, part.type);
-        if (!layouts)
-            return ProvenAccess::unknown();
-        for (LayoutID layout : *layouts) {
-            bool isProven = inheritsFromObjectPrototypeAlone(program, program.at(layout))
-                && receiverStateOf(program, layout).cannot(ObjectMutation::AddProperty)
-                && checkPrototypeChain(program, layout) == ProofState::Proven;
-            if (!isProven)
-                return ProvenAccess::unknown();
-        }
-    }
-    ProvenAccess result;
-    result.isComplete = true;
+    bool isProven = isNullishOrOfLayoutsThat(program, receiver, [&](LayoutID layout) {
+        return inheritsFromObjectPrototypeAlone(program, program.at(layout))
+            && receiverStateOf(program, layout).cannot(ObjectMutation::AddProperty)
+            && hasProvenPrototypeChain(program, layout);
+    });
+    if (!isProven)
+        return ProvenAccess::unknown();
     if (inherited)
-        result.builtins.append(inherited);
-    else
-        result.mayFindNothing = true;
-    return result;
+        return { .isComplete = true, .builtins = { inherited } };
+    return { .isComplete = true, .mayFindNothing = true };
 }
 
 ProvenAccess provenReadOf(const Program& program, const Type& receiver, BuiltinName name)
@@ -464,7 +456,7 @@ ProvenAccess provenReadOf(const Program& program, const Type& receiver, BuiltinN
     PropertyAccessContext context { program, nullptr };
     ProvenAccess result;
     for (const UnionPart& part : unionPartsOf(receiver)) {
-        if (addReadOfPart(context, key, part, result) == ProofState::Unknown)
+        if (!addReadOfPart(context, key, part, result))
             return ProvenAccess::unknown();
     }
     result.isComplete = true;
@@ -472,15 +464,44 @@ ProvenAccess provenReadOf(const Program& program, const Type& receiver, BuiltinN
     return result;
 }
 
-static std::optional<ObjectStep> objectStepOf(Protocol protocol)
+static bool addOwnValues(const Program& program, LayoutID layout, ProvenAccess& result)
 {
-    switch (protocol) {
+    ReceiverState state = receiverStateOf(program, layout);
+    if (state.cannot(ObjectMutation::RedefineProperty) && state.cannot(ObjectMutation::AddProperty))
+        return true;
+
+    const LayoutFlow& flow = program.at(layout).flow;
+    if (!flow.ownAccessorsAreComplete)
+        return false;
+    for (const ClassMember& accessor : flow.ownAccessors) {
+        if (accessor.kind == MethodKind::Getter)
+            insertInUniquedSortedVector(result.accessors, accessor.function);
+    }
+    return true;
+}
+
+ProvenAccess provenLookupUnderAnyKey(const Program& program, const Type& receiver)
+{
+    bool isProven = isNullishOrOfLayoutsThat(program, receiver, [&](LayoutID layout) {
+        if (ancestryOf(program.at(layout).kind) != Ancestry::BuiltinsOnly)
+            return false;
+        ProvenAccess ownValues;
+        return addOwnValues(program, layout, ownValues) && ownValues.accessors.isEmpty() && hasProvenPrototypeChain(program, layout);
+    });
+    if (!isProven)
+        return ProvenAccess::unknown();
+    return { .isComplete = true, .isLookupByKey = true };
+}
+
+static bool addStepOnLayout(const Program& program, LayoutID layout, Protocol keylessProtocol, ProvenAccess& result)
+{
+    switch (keylessProtocol) {
     case Protocol::OwnKeys:
-        return ObjectStep::OwnKeys;
+        return true;
     case Protocol::OwnValues:
-        return ObjectStep::OwnValues;
+        return addOwnValues(program, layout, result);
     case Protocol::PrototypeChain:
-        return ObjectStep::PrototypeChain;
+        return hasProvenPrototypeChain(program, layout);
     case Protocol::ToPrimitive:
     case Protocol::Thenable:
     case Protocol::Iterate:
@@ -489,284 +510,83 @@ static std::optional<ObjectStep> objectStepOf(Protocol protocol)
     case Protocol::HasInstance:
     case Protocol::Named:
     case Protocol::CallsNamed:
-        return std::nullopt;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static ProofState addOwnValues(const Program& program, LayoutID layout, ProvenAccess& result)
-{
-    ReceiverState state = receiverStateOf(program, layout);
-    if (state.cannot(ObjectMutation::RedefineProperty) && state.cannot(ObjectMutation::AddProperty))
-        return ProofState::Proven;
-
-    const LayoutFlow& flow = program.at(layout).flow;
-    if (!flow.ownAccessorsAreComplete)
-        return ProofState::Unknown;
-    for (const ClassMember& accessor : flow.ownAccessors) {
-        if (accessor.kind == MethodKind::Getter)
-            insertInUniquedSortedVector(result.accessors, accessor.function);
-    }
-    return ProofState::Proven;
-}
-
-static ProofState checkClassChain(const Program& program, LayoutID instanceLayout)
-{
-    MemberConditions conditions;
-    LayoutID current = instanceLayout;
-    for (size_t steps = 0; steps <= program.layouts.size(); ++steps) {
-        NextHolder next = nextHolderOf(program, current, ClassSide::Prototype, conditions);
-        if (!conditions.isEmpty())
-            return ProofState::Unknown;
-
-        switch (next.step) {
-        case ChainStep::Unknown:
-            return ProofState::Unknown;
-        case ChainStep::CompiledClass:
-            current = next.layout;
-            break;
-        case ChainStep::BuiltinClass:
-            // A locked object rejects a new prototype, so a chain of locked objects never gains a proxy.
-            return program.builtins().hasLockedPrototypeChain(next.builtinClass) ? ProofState::Proven : ProofState::Unknown;
-        case ChainStep::NoBase:
-            return ProofState::Proven;
-        }
-    }
-    return ProofState::Unknown;
-}
-
-static ProofState checkPrototypeChain(const Program& program, LayoutID layout)
-{
-    if (!receiverStateOf(program, layout).cannot(ObjectMutation::ChangePrototype))
-        return ProofState::Unknown;
-
-    switch (program.at(layout).kind) {
-    case LayoutKind::Record:
-    case LayoutKind::Container:
-    case LayoutKind::BuiltinResult:
-        return ProofState::Proven;
-    case LayoutKind::Instance:
-        return checkClassChain(program, layout);
-    case LayoutKind::Environment:
-    case LayoutKind::Closure:
-    case LayoutKind::CoroutineFrame:
-    case LayoutKind::ModuleNamespace:
-        return ProofState::Unknown;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static ProofState addStepOnLayout(const Program& program, LayoutID layout, ObjectStep step, ProvenAccess& result)
-{
-    switch (step) {
-    case ObjectStep::OwnKeys:
-        return ProofState::Proven;
-    case ObjectStep::OwnValues:
-        return addOwnValues(program, layout, result);
-    case ObjectStep::PrototypeChain:
-        return checkPrototypeChain(program, layout);
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static ProofState addStepOnLayouts(const Program& program, const Type& receivers, ObjectStep step, ProvenAccess& result)
-{
-    std::optional<LayoutList> layouts = provenLayoutsOf(program, receivers);
-    if (!layouts)
-        return ProofState::Unknown;
-
-    for (LayoutID layout : *layouts) {
-        if (addStepOnLayout(program, layout, step, result) == ProofState::Unknown)
-            return ProofState::Unknown;
-    }
-    return ProofState::Proven;
-}
-
-// A class may define an accessor, and the key may name it.
-static bool inheritsFromBuiltinsOnly(LayoutKind kind)
-{
-    switch (kind) {
-    case LayoutKind::Record:
-    case LayoutKind::Container:
-    case LayoutKind::BuiltinResult:
-        return true;
-    case LayoutKind::Instance:
-    case LayoutKind::Environment:
-    case LayoutKind::Closure:
-    case LayoutKind::CoroutineFrame:
-    case LayoutKind::ModuleNamespace:
         return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static ProofState checkLookupByKeyOnLayouts(const Program& program, const Type& receivers)
-{
-    std::optional<LayoutList> layouts = provenLayoutsOf(program, receivers);
-    if (!layouts)
-        return ProofState::Unknown;
-
-    for (LayoutID layout : *layouts) {
-        if (!inheritsFromBuiltinsOnly(program.at(layout).kind))
-            return ProofState::Unknown;
-        ProvenAccess ownValues;
-        if (addOwnValues(program, layout, ownValues) == ProofState::Unknown || !ownValues.accessors.isEmpty())
-            return ProofState::Unknown;
-        if (checkPrototypeChain(program, layout) == ProofState::Unknown)
-            return ProofState::Unknown;
-    }
-    return ProofState::Proven;
-}
-
-static ProofState checkLookupByKeyOnPart(const Program& program, const UnionPart& part)
-{
-    switch (part.kind) {
-    case UnionPartKind::Nullish:
-    case UnionPartKind::Absent:
-        return ProofState::Proven;
-    case UnionPartKind::Layouts:
-        return checkLookupByKeyOnLayouts(program, part.type);
-    case UnionPartKind::OtherObjects:
-    case UnionPartKind::Boolean:
-    case UnionPartKind::Number:
-    case UnionPartKind::String:
-    case UnionPartKind::Symbol:
-    case UnionPartKind::BigInt:
-    case UnionPartKind::BuiltinClass:
-    case UnionPartKind::Functions:
-    case UnionPartKind::Builtins:
-        return ProofState::Unknown;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static bool isLookup(Access access)
-{
-    switch (access) {
-    case Access::Read:
-    case Access::Has:
-        return true;
-    case Access::None:
-    case Access::Store:
-    case Access::Define:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static ProvenAccess provenLookupByKeyOf(const Program& program, const Function& function, const Value& access)
-{
-    if (!isLookup(*elementAccessOf(access.opcode)))
-        return ProvenAccess::unknown();
-    return provenLookupUnderAnyKey(program, program.typeOf(function, access.objectOperand()));
-}
-
-ProvenAccess provenLookupUnderAnyKey(const Program& program, const Type& receiver)
-{
-    if (!isClosedUnion(receiver))
-        return ProvenAccess::unknown();
-
-    for (const UnionPart& part : unionPartsOf(receiver)) {
-        if (checkLookupByKeyOnPart(program, part) == ProofState::Unknown)
-            return ProvenAccess::unknown();
-    }
-    ProvenAccess result;
-    result.isComplete = true;
-    result.isLookupByKey = true;
-    return result;
-}
-
-static ProofState addStepOnPart(const Program& program, const UnionPart& part, ObjectStep step, ProvenAccess& result)
-{
-    switch (part.kind) {
-    case UnionPartKind::Nullish:
-    case UnionPartKind::Boolean:
-    case UnionPartKind::Number:
-    case UnionPartKind::String:
-    case UnionPartKind::Symbol:
-    case UnionPartKind::BigInt:
-    case UnionPartKind::Absent:
-        return ProofState::Proven;
-    case UnionPartKind::Layouts:
-        return addStepOnLayouts(program, part.type, step, result);
-    case UnionPartKind::BuiltinClass:
-    case UnionPartKind::Functions:
-    case UnionPartKind::Builtins:
-    case UnionPartKind::OtherObjects:
-        return ProofState::Unknown;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
 ProvenAccess provenStepOf(const Program& program, const Type& receiver, Protocol keylessProtocol)
 {
-    std::optional<ObjectStep> step = objectStepOf(keylessProtocol);
-    if (!step || !isClosedUnion(receiver))
+    bool isStepOnObject = keylessProtocol == Protocol::OwnKeys || keylessProtocol == Protocol::OwnValues || keylessProtocol == Protocol::PrototypeChain;
+    if (!isStepOnObject || !isClosedUnion(receiver))
         return ProvenAccess::unknown();
 
     ProvenAccess result;
     for (const UnionPart& part : unionPartsOf(receiver)) {
-        if (addStepOnPart(program, part, *step, result) == ProofState::Unknown)
+        switch (part.kind) {
+        case UnionPartKind::Nullish:
+        case UnionPartKind::Boolean:
+        case UnionPartKind::Number:
+        case UnionPartKind::String:
+        case UnionPartKind::Symbol:
+        case UnionPartKind::BigInt:
+        case UnionPartKind::Absent:
+            continue;
+        case UnionPartKind::Layouts: {
+            std::optional<LayoutList> layouts = provenLayoutsOf(program, part.type);
+            bool isProven = layouts && std::ranges::all_of(*layouts, [&](LayoutID layout) {
+                return addStepOnLayout(program, layout, keylessProtocol, result);
+            });
+            if (isProven)
+                continue;
             return ProvenAccess::unknown();
+        }
+        case UnionPartKind::BuiltinClass:
+        case UnionPartKind::Functions:
+        case UnionPartKind::Builtins:
+        case UnionPartKind::OtherObjects:
+            return ProvenAccess::unknown();
+        }
+        RELEASE_ASSERT_NOT_REACHED();
     }
     result.isComplete = true;
     return result;
 }
 
-static ProofState addTypesOfFields(const Program& program, LayoutID id, SortedSet<TypeID, 8>& types)
-{
-    const Layout& layout = program.at(id);
-    for (uint32_t index = 0; index < layout.fields.size(); ++index) {
-        const Field& field = layout.fields[index];
-        // A hidden field is no property: only compiled code reads it.
-        if (field.flags.contains(FieldFlags::IsHidden))
-            continue;
-        // The declared type bounds the slot. It bounds the property where no store and no definition moves the field out of the slot.
-        if (!field.declared.type || field.declared.flags.contains(PositionFlags::IsExpected) || fieldTypeStateOf(program, { id, index }) != FieldTypeState::Proven)
-            return ProofState::Unknown;
-        types.add(field.declared.type);
-    }
-    return ProofState::Proven;
-}
-
-static ProofState addTypesOfOwnValues(const Program& program, LayoutID instanceLayout, SortedSet<TypeID, 8>& types)
+static bool addTypesOfOwnValues(const Program& program, LayoutID instanceLayout, SortedSet<TypeID, 8>& types)
 {
     ReceiverState state = receiverStateOf(program, instanceLayout);
     if (!state.cannot(ObjectMutation::AddProperty) || !state.cannot(ObjectMutation::RedefineProperty))
-        return ProofState::Unknown;
+        return false;
 
     LayoutID current = instanceLayout;
     for (size_t steps = 0; steps <= program.layouts.size(); ++steps) {
-        if (addTypesOfFields(program, current, types) == ProofState::Unknown)
-            return ProofState::Unknown;
-
         const Layout& layout = program.at(current);
-        switch (layout.kind) {
-        case LayoutKind::Record:
-        case LayoutKind::Container:
-        case LayoutKind::BuiltinResult:
-            return ProofState::Proven;
-        case LayoutKind::Instance:
-            break;
-        case LayoutKind::Environment:
-        case LayoutKind::Closure:
-        case LayoutKind::CoroutineFrame:
-        case LayoutKind::ModuleNamespace:
-            return ProofState::Unknown;
+        for (uint32_t index = 0; index < layout.fields.size(); ++index) {
+            const Field& field = layout.fields[index];
+            if (field.flags.contains(FieldFlags::IsHidden))
+                continue;
+            if (!field.declared.type || field.declared.flags.contains(PositionFlags::IsExpected) || fieldTypeStateOf(program, { current, index }) != FieldTypeState::Proven)
+                return false;
+            types.add(field.declared.type);
         }
+
+        Ancestry ancestry = ancestryOf(layout.kind);
+        if (ancestry != Ancestry::Classes)
+            return ancestry == Ancestry::BuiltinsOnly;
 
         switch (layout.flow.baseState) {
         case BaseState::None:
-            return ProofState::Proven;
+            return true;
         case BaseState::Layout:
             current = layout.flow.base;
             break;
         case BaseState::Unknown:
         case BaseState::BuiltinClass:
-            return ProofState::Unknown;
+            return false;
         }
     }
-    return ProofState::Unknown;
+    return false;
 }
 
 std::optional<SortedSet<TypeID, 8>> provenOwnValueTypesOf(const Program& program, const Type& receivers)
@@ -777,7 +597,7 @@ std::optional<SortedSet<TypeID, 8>> provenOwnValueTypesOf(const Program& program
 
     SortedSet<TypeID, 8> types;
     for (LayoutID layout : *layouts) {
-        if (addTypesOfOwnValues(program, layout, types) == ProofState::Unknown)
+        if (!addTypesOfOwnValues(program, layout, types))
             return std::nullopt;
     }
     return types;

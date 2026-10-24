@@ -6,7 +6,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="caller" parameters=[{type=anything}, {type=number}] results=[{type=anything}, {type=number}] {
-  b0(v0: anything, v1: number):
     v2 = CallDirect v0, v1 function=f1
     v3 = ResultAt v2 index=0
     v4 = TypeTest v3 testedType=object
@@ -20,7 +19,6 @@ function f0 name="caller" parameters=[{type=anything}, {type=number}] results=[{
     Return v2
 }
 function f1 name="pair" parameters=[{type=anything}, {type=number}] results=[{type=anything}, {type=number}] {
-  b0(v0: anything, v1: number):
     v2 = Results v0, v1
     Return v2
 }

@@ -27,14 +27,13 @@
 #include "AOTPlacement.h"
 #include "AOTRegExpRequests.h"
 #include "AOTReuseEnvironments.h"
-#include "AOTSiteCachePlacement.h"
 #include "AOTSlotPlan.h"
 #include "AOTSummarizeForInlining.h"
 #include "AOTVector.h"
 #include "AOTVerifier.h"
 #include <span>
+#include <utility>
 #include <wtf/BitVector.h>
-#include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
 
 namespace JSC { namespace AOT {
@@ -75,12 +74,6 @@ void RegExpRequests::dump(PrintStream& out, const Typed::Program& program) const
 
 namespace Typed {
 
-static bool acceptsForm(PassID id, IRForm form)
-{
-    const PassDescriptor& descriptor = descriptorOf(id);
-    return descriptor.firstForm <= form && form <= descriptor.lastForm;
-}
-
 // IR text has no PlacedTableSizes, which the verifier needs in form Placed.
 static bool canVerify(IRForm form, const VerifierInputs& inputs)
 {
@@ -104,7 +97,7 @@ static void computeResults(Pipeline& pipeline, OptionSet<ProgramResult> needed, 
         computedResults.add(result);
 
         PassID producer = producerOf(result);
-        if (!acceptsForm(producer, pipeline.program().form()) || descriptorOf(producer).produces) {
+        if (!descriptorOf(producer).accepts(pipeline.program().form()) || descriptorOf(producer).produces) {
             pipeline.runner().didCompute(result);
             continue;
         }
@@ -121,129 +114,102 @@ void computeResultsForTesting(Pipeline& pipeline, OptionSet<ProgramResult> neede
 
 namespace {
 
-struct TestedPass {
-    PassID id;
-    const Program& program;
-    const OptimizationInputs& inputs;
-    const PassRunner& runner;
-};
-
-class SerialCopyLoop {
-    WTF_MAKE_NONCOPYABLE(SerialCopyLoop);
-public:
+struct SerialCopyLoop {
     explicit SerialCopyLoop(Pipeline& pipeline)
-        : m_pipeline(pipeline)
-        , m_program(pipeline.program())
-        , m_numberOfFunctions(m_program.functions.size())
-        , m_phases(m_program, m_numberOfFunctions)
-        , m_derived(*pipeline.output().derivedFunctions, m_program, pipeline.flow(), m_phases)
-        , m_copies(m_numberOfFunctions)
+        : pipeline(pipeline)
+        , program(pipeline.program())
+        , numberOfFunctions(program.functions.size())
+        , phases(program, numberOfFunctions)
+        , derived(*pipeline.output().derivedFunctions, program, pipeline.flow(), phases)
+        , copies(numberOfFunctions)
     {
     }
 
-    unsigned numberOfFunctions() const { return m_numberOfFunctions; }
-    InterningPhases& phases() { return m_phases; }
+    void reach(FunctionID id)
+    {
+        if (ProvisionalFunctions::contains(id) && reachedOrdinals.add(ProvisionalFunctions::ordinalOf(id)))
+            worklist.append(id);
+    }
 
-    void reach(FunctionID);
-    void setCopy(FunctionID, std::unique_ptr<Function>);
-    void discard() { m_phases.discard(); }
-    void commit();
+    void reachReferencesOf(const Function& function)
+    {
+        forEachFunctionReference(std::as_const(program), function, [&](FunctionID target, FunctionReferenceKind) {
+            reach(target);
+        });
+    }
 
-private:
-    const Program& program() const { return m_program; }
-    void reachReferencesOf(const Function&);
-    void buildReachedFunctions();
+    void setCopy(FunctionID id, std::unique_ptr<Function> copy)
+    {
+        reachReferencesOf(*copy);
+        copies[id.index()] = WTF::move(copy);
+    }
 
-    Pipeline& m_pipeline;
-    Program& m_program;
-    const unsigned m_numberOfFunctions;
-    InterningPhases m_phases;
-    DerivedFunctionPhase m_derived;
-    Vector<std::unique_ptr<Function>> m_copies;
-    BitVector m_reachedOrdinals;
-    Vector<FunctionID> m_worklist;
+    void commit()
+    {
+        while (!worklist.isEmpty()) {
+            FunctionID id = worklist.takeLast();
+            auto function = makeUniqueWithoutFastMallocCheck<Function>(std::as_const(program).at(id));
+            reachReferencesOf(*function);
+            derived.setOptimizedBody(id, WTF::move(function));
+        }
+
+        DerivedFunctionCommit committed = derived.commit(reachedOrdinals);
+        Vector<unsigned> taskOrder(numberOfFunctions, [](size_t task) {
+            return static_cast<unsigned>(task);
+        });
+        taskOrder.appendVector(committed.tasks);
+        BodyRemaps remaps = phases.finish(taskOrder.span(), WTF::move(committed.remap));
+
+        ProgramEditor editor(program);
+        for (size_t position = 0; position < committed.functions.size(); ++position) {
+            Function& function = *committed.functions[position];
+            applyRemaps(remaps, function);
+            FunctionID id = editor.addFunction(WTF::move(function));
+            RELEASE_ASSERT(id.index() == committed.firstID.index() + position);
+        }
+        for (unsigned index = 0; index < numberOfFunctions; ++index) {
+            if (!copies[index])
+                continue;
+            applyRemaps(remaps, *copies[index]);
+            editor.replaceFunction(FunctionID(index), WTF::move(*copies[index]));
+        }
+
+        pipeline.analyses().invalidate(resultsAboutBodies);
+        pipeline.runner().build().resolveFunctionToDump(program);
+    }
+
+    Pipeline& pipeline;
+    Program& program;
+    const unsigned numberOfFunctions;
+    InterningPhases phases;
+    DerivedFunctionPhase derived;
+    Vector<std::unique_ptr<Function>> copies;
+    BitVector reachedOrdinals;
+    Vector<FunctionID> worklist;
 };
-
-void SerialCopyLoop::reach(FunctionID id)
-{
-    if (ProvisionalFunctions::contains(id) && m_reachedOrdinals.add(ProvisionalFunctions::ordinalOf(id)))
-        m_worklist.append(id);
-}
-
-void SerialCopyLoop::reachReferencesOf(const Function& function)
-{
-    forEachFunctionReference(program(), function, [&](FunctionID target, FunctionReferenceKind) {
-        reach(target);
-    });
-}
-
-void SerialCopyLoop::setCopy(FunctionID id, std::unique_ptr<Function> copy)
-{
-    reachReferencesOf(*copy);
-    m_copies[id.index()] = WTF::move(copy);
-}
-
-void SerialCopyLoop::buildReachedFunctions()
-{
-    while (!m_worklist.isEmpty()) {
-        FunctionID id = m_worklist.takeLast();
-        auto function = makeUniqueWithoutFastMallocCheck<Function>(program().at(id));
-        reachReferencesOf(*function);
-        m_derived.setOptimizedBody(id, WTF::move(function));
-    }
-}
-
-void SerialCopyLoop::commit()
-{
-    buildReachedFunctions();
-
-    DerivedFunctionCommit committed = m_derived.commit(m_reachedOrdinals);
-    Vector<unsigned> taskOrder(m_numberOfFunctions, [](size_t task) {
-        return static_cast<unsigned>(task);
-    });
-    taskOrder.appendVector(committed.tasks);
-    BodyRemaps remaps = m_phases.finish(taskOrder.span(), WTF::move(committed.remap));
-
-    ProgramEditor editor(m_program);
-    for (size_t position = 0; position < committed.functions.size(); ++position) {
-        Function& function = *committed.functions[position];
-        applyRemaps(remaps, function);
-        FunctionID id = editor.addFunction(WTF::move(function));
-        RELEASE_ASSERT(id.index() == committed.firstID.index() + position);
-    }
-    for (unsigned index = 0; index < m_numberOfFunctions; ++index) {
-        if (!m_copies[index])
-            continue;
-        applyRemaps(remaps, *m_copies[index]);
-        editor.replaceFunction(FunctionID(index), WTF::move(*m_copies[index]));
-    }
-
-    m_pipeline.analyses().invalidate(resultsAboutBodies);
-    m_pipeline.runner().build().resolveFunctionToDump(m_program);
-}
 
 } // anonymous namespace
 
-static PassOutcome runOnFunction(const TestedPass& pass, FunctionID id, Function& function, TaskArenas& arenas)
+static PassOutcome runOnFunction(Pipeline& pipeline, PassID pass, const OptimizationInputs& inputs, FunctionID id, Function& function, TaskArenas& arenas)
 {
-    BuildContext& build = pass.runner.build();
-    FunctionAnalyses analyses(AnalysisContext { build, pass.program, &pass.inputs.flow, &pass.inputs.effects, id }, function);
-    FunctionPassContext context { pass.program, pass.inputs, id, function, analyses, arenas.types, arenas.strings, build };
-    return pass.runner.runFunctionPass(pass.id, context);
+    BuildContext& build = pipeline.runner().build();
+    const Program& program = pipeline.program();
+    FunctionAnalyses analyses(AnalysisContext { build, program, &inputs.flow, &inputs.effects, id }, function);
+    FunctionPassContext context { program, inputs, id, function, analyses, arenas.types, arenas.strings, build };
+    return pipeline.runner().runFunctionPass(pass, context);
 }
 
 static PassOutcome runFunctionPassInPlace(Pipeline& pipeline, PassID id)
 {
     Program& program = pipeline.program();
     OptimizationInputs inputs = pipeline.inputsFor(id);
-    TestedPass pass { id, program, inputs, pipeline.runner() };
 
     TaskArenas arenas(program);
     PassOutcome outcome = PassOutcome::Unchanged;
     for (unsigned index = 0; index < program.functions.size(); ++index) {
         Function& function = program.functions[index];
         if (function.hasBody())
-            outcome |= runOnFunction(pass, FunctionID(index), function, arenas);
+            outcome |= runOnFunction(pipeline, id, inputs, FunctionID(index), function, arenas);
     }
     pipeline.runner().didFinishFunctionLoop();
 
@@ -254,19 +220,17 @@ static PassOutcome runFunctionPassInPlace(Pipeline& pipeline, PassID id)
 
 static PassOutcome runFunctionPassOnCopies(Pipeline& pipeline, PassID id)
 {
-    const Program& program = pipeline.program();
     OptimizationInputs inputs = pipeline.inputsFor(id);
-    TestedPass pass { id, program, inputs, pipeline.runner() };
 
     SerialCopyLoop loop(pipeline);
     PassOutcome outcome = PassOutcome::Unchanged;
-    for (unsigned index = 0; index < loop.numberOfFunctions(); ++index) {
-        const Function& source = program.functions[index];
+    for (unsigned index = 0; index < loop.numberOfFunctions; ++index) {
+        const Function& source = loop.program.functions[index];
         if (!source.hasBody())
             continue;
         auto copy = makeUniqueWithoutFastMallocCheck<Function>(source);
-        TaskArenas arenas(loop.phases(), index);
-        if (runOnFunction(pass, FunctionID(index), *copy, arenas) == PassOutcome::Unchanged)
+        TaskArenas arenas(loop.phases, index);
+        if (runOnFunction(pipeline, id, inputs, FunctionID(index), *copy, arenas) == PassOutcome::Unchanged)
             continue;
         outcome = PassOutcome::Changed;
         loop.setCopy(FunctionID(index), WTF::move(copy));
@@ -274,7 +238,7 @@ static PassOutcome runFunctionPassOnCopies(Pipeline& pipeline, PassID id)
     pipeline.runner().didFinishFunctionLoop();
 
     if (pipeline.runner().build().diagnostics().hasErrors()) {
-        loop.discard();
+        loop.phases.discard();
         return PassOutcome::Unchanged;
     }
     loop.commit();
@@ -330,15 +294,7 @@ void commitRequestedFunctionsForTesting(Pipeline& pipeline, std::span<const Deri
 
 std::unique_ptr<PipelineOutput> runPipelineUntil(PassID last, std::unique_ptr<Program> program, BuildContext& build)
 {
-    build.resolveFunctionToDump(*program);
-    PassRunner runner(build, last);
-    auto output = runPasses(WTF::move(program), runner);
-    if (build.diagnostics().hasErrors()) {
-        output->waitForRegExps();
-        build.diagnostics().finish(output->program.get());
-        return nullptr;
-    }
-    return output;
+    return runPipeline(WTF::move(program), build, [](const PipelineOutput&) { }, last);
 }
 
 static void dumpNode(IRPrinter& printer, const DataNode& node)
@@ -415,7 +371,7 @@ void Pipeline::dumpResultOf(PassID id, PrintStream& out) const
     // A run of all stages that was stopped after a pass has handed these two to the output, and a stopped runner computes nothing again.
     case PassID::ComputeEffectSummaries:
         if (m_build.isEnabled(PassID::ComputeEffectSummaries, FunctionID()))
-            Typed::computeEffectSummaries(m_program, flow(), m_build).dump(out, m_program);
+            computeEffectSummaries(m_program, flow(), m_build).dump(out, m_program);
         else
             (m_runner.isStopped() ? *output.effects : m_analyses.effects(flow())).dump(out, m_program);
         return;
@@ -502,7 +458,7 @@ bool canRunPassForTesting(PassID id, IRForm form)
         return false;
     if (id == PassID::VerifyProgram && !canVerify(form, { }))
         return false;
-    return acceptsForm(id, form);
+    return descriptorOf(id).accepts(form);
 }
 
 PassOutcome runPassForTesting(Pipeline& pipeline, PassID id, PrintStream& results)

@@ -5,7 +5,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="sumOfCodes" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
-  b0(v0: string, v1: number):
     v2 = Integer integer=0
     v3 = Integer integer=1
     Jump -> next b1(v2, v2)
@@ -21,14 +20,12 @@ function f0 name="sumOfCodes" parameters=[{type=string}, {type=number}] results=
     Jump -> next b1(v11, v10)
   b3():
     Return v5
-}
-# CHECK-LABEL: function f0 name="sumOfCodes"
 # CHECK: b1(v4: int|whole, v5: number):
 # CHECK: v9: number = CallBuiltin v0, v4 overload=StringPrototypeCharCodeAt/0
 # CHECK-NEXT: v10: number = Add v5, v9
+}
 
 function f1 name="sumOfCodesAndUnknownResults" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: number, v2: anything):
     v3 = Integer integer=0
     v4 = Integer integer=1
     Jump -> next b1(v3, v3)
@@ -46,15 +43,13 @@ function f1 name="sumOfCodesAndUnknownResults" parameters=[{type=string}, {type=
     Jump -> next b1(v14, v13)
   b3():
     Return v6
-}
-# CHECK-LABEL: function f1 name="sumOfCodesAndUnknownResults"
 # CHECK: b1(v5: int|whole, v6: number|string|bigint):
 # CHECK: = CallBuiltin v0, v5 overload=StringPrototypeCharCodeAt/0
 # CHECK-NEXT: v11: number|string|bigint = Add v6, v10
 # CHECK: v13: number|string|bigint = Add v11, v12
+}
 
 function f2 name="sumStartsFromUnknownValue" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=anything}] {
-  b0(v0: string, v1: number, v2: anything):
     v3 = Integer integer=0
     v4 = Integer integer=1
     Jump -> next b1(v3, v2)
@@ -70,8 +65,7 @@ function f2 name="sumStartsFromUnknownValue" parameters=[{type=string}, {type=nu
     Jump -> next b1(v12, v11)
   b3():
     Return v6
-}
-# CHECK-LABEL: function f2 name="sumStartsFromUnknownValue"
 # CHECK: b1(v5: int|whole, v6: anything):
 # CHECK: = CallBuiltin v0, v5 overload=StringPrototypeCharCodeAt/0
 # CHECK-NEXT: v11: number|string|bigint = Add v6, v10
+}

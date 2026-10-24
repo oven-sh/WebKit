@@ -3,50 +3,6 @@
 # RUN: place guards
 # RUN(TABLES): tables layouts
 
-module m0 path="/main.js" displayPath="main.js" body=f0
-entry module=m0
-layout L0 kind=Instance name="Widget" module=m0 constructor=f1
-variable g0 name="Widget" module=m0 declared={type=anything} initialization=Undefined
-function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="publish" [isFreeName]
-    v2 = NewClosure function=f1
-    v3 = NewClass v2 layout=L0
-    v4 = NewClosure function=f3
-    DefineMethod v3, v4 layout=L0 key="m00"
-# REPEAT: i = 1..69
-    v%(i*2+4) = NewClosure function=f%(i+3)
-    DefineMethod v3, v%(i*2+4) layout=L0 index=%(i) key="m%(i:2)"
-# END REPEAT
-    v144 = FinishClass v3 layout=L0
-    PutModuleVariable v144 variable=g0
-    v146 = NewClosure function=f2
-    v147 = Call v1, -, v144, v146
-    Return
-}
-function f1 name="Widget" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
-  b0(v0: anything):
-    v1 = GetConstructPrototype v0 layout=L0
-    v2 = NewObject v1 layout=L0
-    Return v2
-}
-function f2 name="use" results=[{type=anything}] {
-  b0():
-    v0 = GetModuleVariable variable=g0
-    v1 = Construct v0, -
-# REPEAT: i = 0..69
-    v%(i*2+2) = PropGet v1 key="m%(i:2)"
-    v%(i*2+3) = Call v%(i*2+2), v1 calleeKey="m%(i:2)"
-# END REPEAT
-    Return
-}
-# REPEAT: i = 0..69
-function f%(i+3) name="m%(i:2)" kind=Method flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
-    Return
-}
-# END REPEAT
 # CHECK: guard 63 L0 Prototype Member "m63" bit=63 word@8
 # CHECK-NEXT: guard 64 L0 Prototype Member "m64" bit=64 word@16
 # CHECK: guard 127 L0 Prototype NotHidden "m57" bit=127 word@16
@@ -59,3 +15,4 @@ function f%(i+3) name="m%(i:2)" kind=Method flags=[HasThis] results=[{type=anyth
 # TABLES: class index=L0 {{*}} guardWords=[8 0]
 # TABLES: guard name="m64" kind=Member side=Prototype bit=64
 # TABLES: guard name="m58" kind=NotHidden side=Prototype bit=128
+# PROGRAM-OF: guard-bits-beyond-the-limit.ir

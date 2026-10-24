@@ -4,7 +4,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="resultStaysLocal" parameters=[{type=object}, {type=object}] results=[{type=undefined}] {
-  b0(v0: object, v1: object):
     TryCallInline -, v0 inlineBuiltin=OwnPropertyKeys inlineParameters=[0] overload=ObjectKeys/0 -> done b1(), miss b4()
   b1(v2):
     v3 = IsPristine v2 builtinClass=Array aspects=[Storage]
@@ -23,7 +22,6 @@ function f0 name="resultStaysLocal" parameters=[{type=object}, {type=object}] re
 # CHECK-NEXT: b2:1 available: [v4]
 
 function f1 name="resultIsStored" parameters=[{type=object}, {type=object}] results=[{type=undefined}] {
-  b0(v0: object, v1: object):
     TryCallInline -, v0 inlineBuiltin=OwnPropertyKeys inlineParameters=[0] overload=ObjectKeys/0 -> done b1(), miss b4()
   b1(v2):
     v3 = IsPristine v2 builtinClass=Array aspects=[Storage]
@@ -42,7 +40,6 @@ function f1 name="resultIsStored" parameters=[{type=object}, {type=object}] resu
 # CHECK-NEXT: b2:1 available: []
 
 function f2 name="callTakesAnotherArray" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
-  b0(v0: anything, v1: string):
     v2 = NewArray v0 contents=anything
     v3 = NewArray v0 contents=anything
     v4 = IsPristine v2 builtinClass=Array aspects=[Storage]
@@ -62,7 +59,6 @@ function f2 name="callTakesAnotherArray" parameters=[{type=anything}, {type=stri
 # CHECK: b2:0 available: [v2 v5]
 
 function f3 name="callTakesGuardedArray" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
-  b0(v0: anything, v1: string):
     v2 = NewArray v0 contents=anything
     v3 = NewArray v0 contents=anything
     v4 = IsPristine v2 builtinClass=Array aspects=[Storage]

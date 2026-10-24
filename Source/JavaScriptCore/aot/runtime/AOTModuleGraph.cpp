@@ -27,25 +27,17 @@ enum class ModuleProperty : uint8_t {
     HasEvaluationWork = 1 << 3,
 };
 
-struct ComponentSummary {
-    OptionSet<ModuleProperty> reachedProperties;
-    uint32_t numberOfModules { 0 };
-};
+// A link follows every request. An evaluation follows the imports: what a module requires runs inside its body.
+enum class FollowedRequests : uint8_t { All, Imports };
 
-struct RequestTargets {
-    std::span<const ModuleRequestData> requests;
-
-    size_t size() const { return requests.size(); }
-    uint32_t operator[](size_t index) const { return requests[index].target(); }
-};
-
-struct ImportTargets {
+struct FollowedTargets {
     std::span<const ModuleRequestData> requests;
     uint32_t importer;
+    FollowedRequests followed;
 
     size_t size() const { return requests.size(); }
-    // A require() leads nowhere.
-    uint32_t operator[](size_t index) const { return requests[index].isRequire ? importer : requests[index].target(); }
+    // A request that is not followed leads nowhere.
+    uint32_t operator[](size_t index) const { return followed == FollowedRequests::Imports && requests[index].isRequire ? importer : requests[index].target(); }
 };
 
 struct ModuleGraph {
@@ -72,31 +64,14 @@ struct ModuleGraph {
         return record.firstSyntheticExport != nextRecord.firstSyntheticExport || record.firstRequiredName != nextRecord.firstRequiredName;
     }
 
-    bool hasRequire() const
-    {
-        return std::ranges::any_of(requests, [](const ModuleRequestData& request) {
-            return !!request.isRequire;
-        });
-    }
-
-    // A component has a higher number than every component it requests. A link follows every request.
-    Typed::StronglyConnectedComponents computeComponents() const
+    // A component has a higher number than every component it requests.
+    Typed::StronglyConnectedComponents computeComponents(FollowedRequests followed) const
     {
         return Typed::computeStronglyConnectedComponents(size(), [&](unsigned module) {
-            return RequestTargets { requestsOf(module) };
-        });
-    }
-
-    // An evaluation follows the imports: what a module requires runs inside its body.
-    Typed::StronglyConnectedComponents computeComponentsOfImports() const
-    {
-        return Typed::computeStronglyConnectedComponents(size(), [&](unsigned module) {
-            return ImportTargets { requestsOf(module), module };
+            return FollowedTargets { requestsOf(module), module, followed };
         });
     }
 };
-
-enum class FollowedRequests : uint8_t { All, Imports };
 
 enum class RoleInWalk : uint8_t {
     NeverVisited,
@@ -135,35 +110,22 @@ static bool isFollowed(const ModuleRequestData& request, FollowedRequests follow
     return followed == FollowedRequests::All || !request.isRequire;
 }
 
-static Vector<ComponentSummary> summarizeComponents(const ModuleGraph& graph, const Typed::StronglyConnectedComponents& components, FollowedRequests followed)
+static Vector<OptionSet<ModuleProperty>> propertiesReachedFromComponents(const ModuleGraph& graph, const Typed::StronglyConnectedComponents& components, FollowedRequests followed)
 {
     const Vector<uint32_t>& componentOf = components.componentOf;
-    Vector<ComponentSummary> summaries(components.numberOfComponents);
+    Vector<OptionSet<ModuleProperty>> reached(components.numberOfComponents);
     for (uint32_t module : components.members) {
-        ComponentSummary& summary = summaries[componentOf[module]];
-        ++summary.numberOfModules;
-        summary.reachedProperties.add(ownPropertiesOf(graph, module));
+        OptionSet<ModuleProperty>& properties = reached[componentOf[module]];
+        properties.add(ownPropertiesOf(graph, module));
         for (const ModuleRequestData& request : graph.requestsOf(module)) {
             if (!isFollowed(request, followed))
                 continue;
-            summary.reachedProperties.add(summaries[componentOf[request.target()]].reachedProperties);
+            properties.add(reached[componentOf[request.target()]]);
             if (request.isDeferred)
-                summary.reachedProperties.add(ModuleProperty::HasEvaluationWork);
+                properties.add(ModuleProperty::HasEvaluationWork);
         }
     }
-    return summaries;
-}
-
-static void addComponentFlags(ModuleData& module, const ComponentSummary& component)
-{
-    if (!component.reachedProperties.contains(ModuleProperty::IsAsynchronous))
-        module.add(ModuleData::Flag::IsSynchronous);
-    if (component.reachedProperties.contains(ModuleProperty::IsUncompiledCode))
-        module.add(ModuleData::Flag::ReachesUncompiledCode);
-    if (component.reachedProperties.contains(ModuleProperty::HasEvaluationWork))
-        module.add(ModuleData::Flag::NeedsEvaluation);
-    if (module.hasExportTable() && !module.hasTopLevelAwait() && component.numberOfModules == 1)
-        module.add(ModuleData::Flag::IsSimple);
+    return reached;
 }
 
 void computeModuleFlags(std::span<ModuleData> modulesAndEndRecord, std::span<const ModuleRequestData> requests)
@@ -179,23 +141,24 @@ void computeModuleFlags(std::span<ModuleData> modulesAndEndRecord, std::span<con
         }
     }
 
-    auto addNeedsLink = [&](const Typed::StronglyConnectedComponents& components, const Vector<ComponentSummary>& summaries) {
-        for (unsigned module = 0; module < graph.size(); ++module) {
-            if (summaries[components.componentOf[module]].reachedProperties.contains(ModuleProperty::HasLinkWork))
-                graph[module].add(ModuleData::Flag::NeedsLink);
-        }
-    };
-
-    Typed::StronglyConnectedComponents componentsOfImports = graph.computeComponentsOfImports();
-    Vector<ComponentSummary> reachedByImports = summarizeComponents(graph, componentsOfImports, FollowedRequests::Imports);
-    for (unsigned module = 0; module < graph.size(); ++module)
-        addComponentFlags(graph[module], reachedByImports[componentsOfImports.componentOf[module]]);
-    if (!graph.hasRequire()) {
-        addNeedsLink(componentsOfImports, reachedByImports);
-        return;
+    Typed::StronglyConnectedComponents componentsOfImports = graph.computeComponents(FollowedRequests::Imports);
+    Vector<OptionSet<ModuleProperty>> reachedByImports = propertiesReachedFromComponents(graph, componentsOfImports, FollowedRequests::Imports);
+    Typed::StronglyConnectedComponents components = graph.computeComponents(FollowedRequests::All);
+    Vector<OptionSet<ModuleProperty>> reachedByRequests = propertiesReachedFromComponents(graph, components, FollowedRequests::All);
+    for (unsigned index = 0; index < graph.size(); ++index) {
+        ModuleData& module = graph[index];
+        uint32_t componentOfImports = componentsOfImports.componentOf[index];
+        if (!reachedByImports[componentOfImports].contains(ModuleProperty::IsAsynchronous))
+            module.add(ModuleData::Flag::IsSynchronous);
+        if (reachedByImports[componentOfImports].contains(ModuleProperty::IsUncompiledCode))
+            module.add(ModuleData::Flag::ReachesUncompiledCode);
+        if (reachedByImports[componentOfImports].contains(ModuleProperty::HasEvaluationWork))
+            module.add(ModuleData::Flag::NeedsEvaluation);
+        if (module.hasExportTable() && !module.hasTopLevelAwait() && componentsOfImports.membersOf(componentOfImports).size() == 1)
+            module.add(ModuleData::Flag::IsSimple);
+        if (reachedByRequests[components.componentOf[index]].contains(ModuleProperty::HasLinkWork))
+            module.add(ModuleData::Flag::NeedsLink);
     }
-    Typed::StronglyConnectedComponents components = graph.computeComponents();
-    addNeedsLink(components, summarizeComponents(graph, components, FollowedRequests::All));
 }
 
 // An uncompiled module can import back a module that the table shows no cycle for, and its link asks which modules are on the path.
@@ -302,8 +265,8 @@ ContractedModuleRequests contractModuleRequests(std::span<ModuleData> modulesAnd
 {
     RELEASE_ASSERT(!modulesAndEndRecord.empty());
     ModuleGraph graph { modulesAndEndRecord, requests };
-    Typed::StronglyConnectedComponents components = graph.computeComponents();
-    Typed::StronglyConnectedComponents componentsOfImports = graph.computeComponentsOfImports();
+    Typed::StronglyConnectedComponents components = graph.computeComponents(FollowedRequests::All);
+    Typed::StronglyConnectedComponents componentsOfImports = graph.computeComponents(FollowedRequests::Imports);
 
     ContractedModuleRequests result;
     result.linkRequests = contractRequests(graph, components.members.span(), FollowedRequests::All, maxContractedRequests, &ModuleData::firstLinkRequest, result.modulesOverLimit, [&](unsigned module) {
@@ -317,7 +280,7 @@ ContractedModuleRequests contractModuleRequests(std::span<ModuleData> modulesAnd
 
 enum class PlannedRoot : uint8_t { EntryPoint, OtherModule };
 
-static Vector<LinkPlanStepData> planLink(ModuleGraph& graph, std::span<const ModuleRequestData> requests, ModuleID entryPoint, PlannedRoot plannedRoot)
+static Vector<LinkPlanStepData> planLink(const ModuleGraph& graph, ModuleID entryPoint, PlannedRoot plannedRoot)
 {
     struct Frame {
         uint32_t module;
@@ -353,7 +316,7 @@ static Vector<LinkPlanStepData> planLink(ModuleGraph& graph, std::span<const Mod
     while (!path.isEmpty()) {
         Frame& frame = path.last();
         if (frame.nextRequest != frame.endOfRequests) {
-            uint32_t target = requests[frame.nextRequest++].target();
+            uint32_t target = graph.requests[frame.nextRequest++].target();
             if (!seen.quickSet(target))
                 visit(target);
             continue;
@@ -368,8 +331,7 @@ static Vector<LinkPlanStepData> planLink(ModuleGraph& graph, std::span<const Mod
 Vector<LinkPlanStepData> planLinkOfEntryPoint(std::span<ModuleData> modulesAndEndRecord, std::span<const ModuleRequestData> requests, ModuleID entryPoint)
 {
     RELEASE_ASSERT(!modulesAndEndRecord.empty());
-    ModuleGraph graph { modulesAndEndRecord, requests };
-    return planLink(graph, requests, entryPoint, PlannedRoot::EntryPoint);
+    return planLink(ModuleGraph { modulesAndEndRecord, requests }, entryPoint, PlannedRoot::EntryPoint);
 }
 
 LinkPlansOfRoots planLinksOfRoots(std::span<ModuleData> modulesAndEndRecord, std::span<const ModuleRequestData> requests, std::span<const ModuleImportSite> unsortedImportSites, std::optional<ModuleID> plannedEntryPoint)
@@ -383,7 +345,7 @@ LinkPlansOfRoots planLinksOfRoots(std::span<ModuleData> modulesAndEndRecord, std
 
     RELEASE_ASSERT(!modulesAndEndRecord.empty());
     ModuleGraph graph { modulesAndEndRecord, requests };
-    Typed::StronglyConnectedComponents components = graph.computeComponents();
+    Typed::StronglyConnectedComponents components = graph.computeComponents(FollowedRequests::All);
     const Vector<uint32_t>& componentOf = components.componentOf;
 
     Vector<Cycle> largestCycleReachedFrom(components.numberOfComponents);
@@ -426,7 +388,7 @@ LinkPlansOfRoots planLinksOfRoots(std::span<ModuleData> modulesAndEndRecord, std
         });
         if (isNamedOnlyInsideCycle)
             continue;
-        Vector<LinkPlanStepData> plan = planLink(graph, requests, ModuleID(index), PlannedRoot::OtherModule);
+        Vector<LinkPlanStepData> plan = planLink(graph, ModuleID(index), PlannedRoot::OtherModule);
         if (plan.isEmpty() || plans.steps.size() + plan.size() > maxNumberOfSteps)
             continue;
         plans.roots.append(LinkPlanRootData { index, static_cast<uint32_t>(plans.steps.size()), std::ranges::min(components.membersOf(cycle.component)) });

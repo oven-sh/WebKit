@@ -26,7 +26,6 @@ namespace JSC { namespace AOT {
 static constexpr ASCIILiteral stepsOfCollections = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = PropGet v0 key="Map" [isFreeName]
@@ -151,7 +150,6 @@ entry module=m0
 layout L0 name="Point" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
 layout L1 name="Holder" fields=[]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = Integer integer=5
@@ -178,7 +176,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="describe" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="print" [isFreeName]
     v3 = ToBoolean v0
@@ -200,7 +197,6 @@ function f1 name="describe" parameters=[{type=anything}] results=[{type=anything
     Return
 }
 function f2 name="a" flags=[HasThis] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Integer integer=1
     Return v1
 }
@@ -209,7 +205,6 @@ function f2 name="a" flags=[HasThis] results=[{type=anything}] {
 static constexpr ASCIILiteral countsAndCapability = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = PropGet v0 key="Uint8Array" [isFreeName]
@@ -246,7 +241,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="settled" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="print" [isFreeName]
     v3 = String string="resolved with"
@@ -259,7 +253,6 @@ static constexpr ASCIILiteral linkTimeConstants = R"IR(module m0 path="main.js" 
 entry module=m0
 layout L0 name="Item" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = Builtin builtin=LinkTimeConstantToIntegerOrInfinity
@@ -350,7 +343,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="fulfilled" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="print" [isFreeName]
     v3 = String string="fulfilled with"
@@ -359,7 +351,6 @@ function f1 name="fulfilled" parameters=[{type=anything}] results=[{type=anythin
     Return
 }
 function f2 name="rejected" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="print" [isFreeName]
     v3 = String string="rejected with"
@@ -372,7 +363,6 @@ function f2 name="rejected" parameters=[{type=anything}] results=[{type=anything
 static constexpr ASCIILiteral settlementRecords = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="Promise" [isFreeName]
     v2 = PropGet v1 key="resolve"
@@ -390,7 +380,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="settled" parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Builtin builtin=GlobalThis
     v2 = PropGet v1 key="print" [isFreeName]
     v3 = Integer integer=0
@@ -415,7 +404,6 @@ entry module=m0
 runtimefunction id=69 function=f1
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Uninitialized
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = String string="array"
@@ -446,7 +434,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=69 results=[{type=anything}] {
-  b0(v0: anything):
     v1 = Check v0 castType=object
     v2 = GetInternalField v1
     v3 = Check v2 castType=i32
@@ -481,7 +468,6 @@ function f1 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeF
     Return v23
 }
 function f2 name="readKept" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = GetModuleVariable variable=g0
@@ -499,7 +485,6 @@ entry module=m0
 runtimefunction id=70 function=f2
 variable g0 name="kept" module=m0 declared={type=anything} initialization=Uninitialized
 function f0 name="main" kind=Module results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = String string="generator"
@@ -527,7 +512,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="g" flags=[IsGenerator, TakesCallee] results=[{type=anything}] {
-  b0(v0: function):
     InitialYield
     v2 = String string="first"
     v3 = Yield v2
@@ -537,7 +521,6 @@ function f1 name="g" flags=[IsGenerator, TakesCallee] results=[{type=anything}] 
     Return v6
 }
 function f2 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=70 parameters=[{type=anything}] results=[{type=anything}] {
-  b0(v0: anything, v1: anything):
     v2 = StepGenerator v0, v1 check=IsGenerator
     v3 = ResultAt v2
     v4 = ResultAt v2 index=1
@@ -556,7 +539,6 @@ function f2 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeF
     Return v12
 }
 function f3 name="readKept" results=[{type=anything}] {
-  b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
     v2 = GetModuleVariable variable=g0

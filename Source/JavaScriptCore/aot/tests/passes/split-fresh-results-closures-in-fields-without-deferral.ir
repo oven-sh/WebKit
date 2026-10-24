@@ -10,7 +10,6 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Counter" fields=[{key="start" declared={type=number}}, {key="get" declared={type=anything}}]
 
 function f0 name="listsArrow" parameters=[{type=number}] results=[{type=L0}] {
-  b0(v0: number):
     v1 = NewClosure function=f1
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
     Return v2
@@ -20,13 +19,11 @@ function f0 name="listsArrow" parameters=[{type=number}] results=[{type=L0}] {
 # CHECK: = NewObject
 
 function f1 name="overNothing" kind=Arrow results=[{type=anything}] {
-  b0():
     Return
 }
 
 # Whoever calls them needs no object
 function f2 name="dropsTheResults" parameters=[{type=number}] results=[{type=undefined}] {
-  b0(v0: number):
     v1 = CallDirect v0 function=f0
     v2 = Undefined
     Return v2

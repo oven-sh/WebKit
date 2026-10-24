@@ -23,65 +23,54 @@ data d7 root=Array{contents=Array<number> elements=[Array{contents=number elemen
 data d8 root=Array{contents=string elements=[String{value="f"}, String{value="g"}]} module=m0
 
 function f0 name="mapOfFortyPairs" results=[{type=Map<string, number>}] {
-  b0():
     v0 = Data data=d0
     v1 = CallBuiltin -, v0 overload=Map/2 builtinCallForm=Whole
     Return v1
-}
-# CHECK-LABEL: function f0 name="mapOfFortyPairs"
 # CHECK-NEXT: b0():
 # CHECK-NEXT: [[map]]:{{*}}= NewMapFromData data=d0
 # CHECK-NEXT: Return [[map]]
+}
 
 function f1 name="setOfRecord" results=[{type=Set<string>}] {
-  b0():
     v0 = Data data=d1
     v1 = CallBuiltin -, v0 overload=Set/2 builtinCallForm=Whole
     Return v1
-}
-# CHECK-LABEL: function f1 name="setOfRecord"
 # CHECK-NEXT: b0():
 # CHECK-NEXT: [[set]]:{{*}}= NewSetFromData data=d1
 # CHECK-NEXT: Return [[set]]
+}
 
 function f2 name="recordThroughUpcast" results=[{type=Set<string>}] {
-  b0():
     v0 = Data data=d2
     v1 = Upcast v0 castType=anything
     v2 = CallBuiltin -, v1 overload=Set/2 builtinCallForm=Whole
     Return v2
-}
-# CHECK-LABEL: function f2 name="recordThroughUpcast"
 # CHECK-NEXT: b0():
 # CHECK-NEXT: [[cast]]:{{*}}= NewSetFromData data=d2
 # CHECK-NEXT: Return [[cast]]
+}
 
 function f3 name="entryOfThreeValues" results=[{type=Map<string, number>}] {
-  b0():
     v0 = Data data=d3
     v1 = CallBuiltin -, v0 overload=Map/2 builtinCallForm=Whole
     Return v1
-}
-# CHECK-LABEL: function f3 name="entryOfThreeValues"
 # CHECK-NOT: FromData
 # CHECK: = Data data=d3
 # CHECK-NEXT: = CallBuiltin -, v0 overload=Map/2
 # CHECK-NOT: FromData
+}
 
 function f4 name="entryIsNoArray" results=[{type=Map<string, number>}] {
-  b0():
     v0 = Data data=d4
     v1 = CallBuiltin -, v0 overload=Map/2 builtinCallForm=Whole
     Return v1
-}
-# CHECK-LABEL: function f4 name="entryIsNoArray"
 # CHECK-NOT: FromData
 # CHECK: = Data data=d4
 # CHECK-NEXT: = CallBuiltin -, v0 overload=Map/2
 # CHECK-NOT: FromData
+}
 
 function f5 name="stringsCreatedInFrontOfTheLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: anything, v1: boolean):
     v2 = Data data=d5
     Jump -> next b1()
   b1():
@@ -91,24 +80,20 @@ function f5 name="stringsCreatedInFrontOfTheLoop" parameters=[{type=anything}, {
     Branch v1 -> taken b1(), notTaken b2()
   b2():
     Return
-}
-# CHECK-LABEL: function f5 name="stringsCreatedInFrontOfTheLoop"
 # CHECK-NOT: = Data
 # CHECK: LoopHint
 # CHECK-NEXT: = NewSetFromData data=d5
+}
 
 function f6 name="arraysCreatedWithTheSet" results=[{type=Set<Array<number>>}] {
-  b0():
     v0 = Data data=d6
     v1 = CallBuiltin -, v0 overload=Set/2 builtinCallForm=Whole
     Return v1
-}
-# CHECK-LABEL: function f6 name="arraysCreatedWithTheSet"
 # CHECK-NOT: = Data
 # CHECK: = NewSetFromData data=d6
+}
 
 function f7 name="arraysSharedByTheSetsOfTheLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: anything, v1: boolean):
     v2 = Data data=d7
     Jump -> next b1()
   b1():
@@ -118,23 +103,20 @@ function f7 name="arraysSharedByTheSetsOfTheLoop" parameters=[{type=anything}, {
     Branch v1 -> taken b1(), notTaken b2()
   b2():
     Return
-}
-# CHECK-LABEL: function f7 name="arraysSharedByTheSetsOfTheLoop"
 # CHECK-NOT: FromData
 # CHECK: v2:{{*}}= Data data=d7
 # CHECK: = CallBuiltin -, v2 overload=Set/2
 # CHECK-NOT: FromData
+}
 
 function f8 name="recordThroughProofOfFlow" results=[{type=Set<string>}] {
-  b0():
     v0 = Data data=d8
     v1 = AssumeType v0 castType=Array<string, proven, pristine[Storage, Names]>
     v2 = CallBuiltin -, v1 overload=Set/2 builtinCallForm=Whole
     Return v2
-}
-# CHECK-LABEL: function f8 name="recordThroughProofOfFlow"
 # CHECK-NOT: = Data
 # CHECK-NOT: AssumeType
 # CHECK: = NewSetFromData data=d8
 # CHECK: data d8
 # CHECK-NOT: data d9
+}

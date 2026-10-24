@@ -16,7 +16,6 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="lists" parameters=[{type=boolean}, {type=number}] results=[{type=number}] {
-  b0(v0: boolean, v1: number):
     v2 = Add v1, v1
     Branch v0 -> taken b1(), notTaken b2()
   b1():
@@ -80,7 +79,6 @@ function f0 name="lists" parameters=[{type=boolean}, {type=number}] results=[{ty
 # EXPAND: v8 location: b5 parameter 0
 # EXPAND: v8 uses: [v9(0) b5.terminator(0)]
 function f1 name="handler" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
-  b0(v0: anything, v1: number):
     Jump -> next b1()
   b1() handler=b2(v1):
     v2 = Call v0, -, v1
