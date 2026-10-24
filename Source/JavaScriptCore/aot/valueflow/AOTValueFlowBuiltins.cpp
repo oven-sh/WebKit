@@ -1760,17 +1760,18 @@ private:
             case BuiltinTypePartKind::InstanceOfReceiverClass:
             case BuiltinTypePartKind::TypedArrayOfReceiverElementType:
             case BuiltinTypePartKind::Layout:
+                // `module.children` answers the same list at every read, so one object stands for the lists of all module objects.
+                if (holdsModuleObjects(part)) {
+                    ValueFlowObjectID list = m_universe.resultOf(m_builtin, 0);
+                    allocate(part, list, type.freshness);
+                    value = maker.unite(value, maker.of(list));
+                    break;
+                }
                 if (type.freshness == BuiltinFreshness::No || !fresh || isCalledInWaysNobodyFollows(part)) {
                     // Of a class without a prototype object the table says nothing.
                     bool mayBeBuffer = part.kind == BuiltinTypePartKind::Instance
                         && (!m_builtins.at(part.builtinClass).prototype || std::ranges::contains(m_tables.classesAtOrBelow(part.builtinClass), BuiltinClassID(BuiltinClasses::Buffer)));
                     value = maker.unite(value, mayBeBuffer ? undescribedObject() : maker.intersect(undescribedValueThatIsNoBuffer(m_context), m_universe.objects()));
-                    // The unknown object stands only for what has escaped. So the module objects in the list that `module.children` answers are in unknown hands.
-                    if (holdsModuleObjects(part)) {
-                        objects.shrink(0);
-                        appendModuleObjectsAnsweredBy(m_context, m_builtins.canonicalID(m_builtin), objects);
-                        m_context.add(ValueFlowProgramNodes::escaped(), ClimbingSet(maker.of(objects.span())));
-                    }
                     if (part.kind == BuiltinTypePartKind::Instance)
                         noteConstructorsAboveUnknownInstance(part);
                     break;

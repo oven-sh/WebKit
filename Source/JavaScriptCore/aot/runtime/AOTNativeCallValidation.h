@@ -73,6 +73,7 @@ private:
 
 // For tests of the table of built-ins. Where BUN_AOT_CHECKED_NATIVE_CALLS names a file, a line for each entry whose calls were checked is appended to it, at exit and in front of the crash of a failed validation:
 // the entry, then how many of its calls returned, threw, changed an operand, and came with what the compiler believed about the call, separated by tabs.
+// A hardened build does not read the variable and writes no such file.
 void writeCheckedNativeCalls();
 
 JSC_DECLARE_HOST_FUNCTION(callNativeFunctionUnderValidation);

@@ -4,7 +4,7 @@
 # RUN: pass FuseGeneratorLoops
 # RUN(DECLINES): pass FuseGeneratorLoops
 # STATISTIC: GeneratorLoopsFused = 2
-# LOSS: MaxOnlyCallSiteBytes x1 f10
+# LOSS: MaxFusedGeneratorBytes x1 f10
 # LOSS: MaxInlinedCallerBytes x1 f11
 # LOSS: MaxInlineDepth x1 f12
 # CHECK: outcome: Changed
@@ -19,7 +19,7 @@
 # DECLINES-NEXT: decline GeneratorLoopNotFused f7 v2 None [0] reason=MayEscapeBeforeStep
 # DECLINES-NEXT: decline GeneratorLoopNotFused f8 v2 None [0] reason=MayEscapeBeforeStep
 # DECLINES-NEXT: decline GeneratorLoopNotFused f9 v2 None [0] reason=BodyIsBoundToFrame
-# DECLINES-NEXT: decline GeneratorLoopNotFused f10 v2 MaxOnlyCallSiteBytes [0] reason=BodyIsTooLarge
+# DECLINES-NEXT: decline GeneratorLoopNotFused f10 v2 MaxFusedGeneratorBytes [0] reason=BodyIsTooLarge
 # DECLINES-NEXT: decline GeneratorLoopNotFused f11 v62 MaxInlinedCallerBytes [0] reason=CallerIsTooLarge
 # DECLINES-NEXT: decline GeneratorLoopNotFused f12 v2 MaxInlineDepth [0] reason=InlineDepth
 # DECLINES-NEXT: decline GeneratorLoopNotFused f13 v6 None [0] reason=MayEscapeBeforeStep

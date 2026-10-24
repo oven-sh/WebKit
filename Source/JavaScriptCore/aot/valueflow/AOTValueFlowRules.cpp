@@ -297,10 +297,10 @@ static void letUnseenCodeCreateRecords(ValueFlowRuleContext& context, ClimbingSe
         const Layout& layout = program.at(id);
         if (layout.kind != LayoutKind::Record || layout.constructor || layout.base || layout.flags.containsAny(flagsOfOtherLayouts) || layout.fields.isEmpty())
             return;
-        bool acceptsEveryValue = std::ranges::all_of(layout.fields, [&](const Field& field) {
-            return field.key && program.at(field.declared.type).isAnything();
+        bool everyFieldHasName = std::ranges::all_of(layout.fields, [](const Field& field) {
+            return !!field.key;
         });
-        if (acceptsEveryValue)
+        if (everyFieldHasName)
             records.append(universe.instanceOf(id));
     });
     if (records.isEmpty())

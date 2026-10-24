@@ -228,11 +228,16 @@ static void branchIfNameHasPrefix(StubAssembler& jit, GPRReg function, GPRReg ki
     hasPrefix.append(jit.branchTest32(CCallHelpers::Zero, kind, TrustedImm32(test.callableKindMask)));
 }
 
-static void loadSlimClosureFunction(StubAssembler& jit, GPRReg value, GPRReg function, JumpList& isNotSlimClosure)
+static void loadClosureFunction(StubAssembler& jit, GPRReg value, GPRReg function, JumpList& isNotClosure)
 {
-    isNotSlimClosure.append(jit.branchIfNotCell(value));
-    isNotSlimClosure.append(jit.branch8(CCallHelpers::NotEqual, Address(value, JSCell::typeInfoTypeOffset()), TrustedImm32(SlimClosureType)));
+    isNotClosure.append(jit.branchIfNotCell(value));
+    Jump isSlim = jit.branch8(CCallHelpers::Equal, Address(value, JSCell::typeInfoTypeOffset()), TrustedImm32(SlimClosureType));
+    isNotClosure.append(jit.branch8(CCallHelpers::NotEqual, Address(value, JSCell::typeInfoTypeOffset()), TrustedImm32(CompiledClosureType)));
+    jit.load64(Address(value, offsetOfClosureEntry), function);
+    Jump hasWord = jit.jump();
+    isSlim.link(&jit);
     jit.load64(Address(value, offsetOfSlimClosureWord), function);
+    hasWord.link(&jit);
     extractBits(jit, function, ClosureWord::functionShift, ClosureWord::numberOfFunctionBits, function);
 }
 
@@ -243,7 +248,7 @@ void readClosureLengthAndReturn(StubAssembler& jit, GPRReg closure, JumpList& mi
     const GPRReg scratch = jit.reuseScratch(StubRegister::T14);
     RELEASE_ASSERT(noOverlap(closure, index, tables, scratch));
 
-    loadSlimClosureFunction(jit, closure, index, miss);
+    loadClosureFunction(jit, closure, index, miss);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), tables);
     jit.sub32(Address(tables, OBJECT_OFFSETOF(ProgramTables, closureFunctions) + OBJECT_OFFSETOF(ClosureFunctionRangeData, first)), index);
     miss.append(jit.branch32(CCallHelpers::AboveOrEqual, index, programTableCount(tables, ProgramTableIndex::functionLengths)));
@@ -278,7 +283,7 @@ void readClosureNameAndReturn(StubAssembler& jit, GPRReg closure, JumpList& miss
         miss.append(jit.jump());
         return;
     }
-    loadSlimClosureFunction(jit, closure, function, miss);
+    loadClosureFunction(jit, closure, function, miss);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), tables);
     branchIfNameHasPrefix(jit, function, scratch, miss);
     // ProgramTables::nameOfFunction(): functionSources begins at the first form of another function, and the groups of names end there.

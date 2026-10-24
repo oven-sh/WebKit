@@ -555,7 +555,7 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
 
     bool isTooDeep = false;
     if (canInlineWholeBody) {
-        if (iteratesGeneratorOfCaller(context, value, summary) && !context.exceeds(LimitID::MaxOnlyCallSiteBytes, cost, call))
+        if (iteratesGeneratorOfCaller(context, value, summary) && !context.exceeds(LimitID::MaxFusedGeneratorBytes, cost, call))
             addBenefit(InlineBenefit::SunkAllocation, cost);
         // A factory is mostly called by value, so heat says little of the `new` inside it. A small constructor goes where its object is wanted, whatever the heat.
         if (cost <= InlineModel::constructorBytes && makesOrFillsNewObject(program.at(value.function())))
@@ -676,8 +676,6 @@ StatisticID statisticFor(InlineBenefit benefit)
         return StatisticID::InlineBenefitKnownReceiver;
     case InlineBenefit::SunkAllocation:
         return StatisticID::InlineBenefitSunkAllocation;
-    case InlineBenefit::OnlyCallSite:
-        return StatisticID::InlineBenefitOnlyCallSite;
     case InlineBenefit::Wrapper:
         return StatisticID::InlineBenefitWrapper;
     }

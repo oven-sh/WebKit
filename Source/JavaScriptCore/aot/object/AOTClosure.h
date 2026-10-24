@@ -62,6 +62,8 @@ public:
     State& state() const;
     const LayoutData* classData() const;
     bool isLazyClassObject() const;
+    // Nothing was ever stored in, defined on or deleted from a closure that has the Structure it was made with, so its name and its length are those of its function.
+    bool hasStructureOfNewClosure(VM&) const;
     bool hasOrdinaryDefineOwnProperty(VM&, PropertyName) const;
     // A built-in function that the library writes in JavaScript is a closure like those of the program.
     static bool isNameThatBuiltinFunctionsRefuse(VM&, UniquedStringImpl*);

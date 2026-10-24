@@ -449,8 +449,17 @@ MemberAnswer findPrototypeMember(const PropertyAccessContext& context, const Mem
         const Layout& layout = program.at(current);
         if (layout.kind != LayoutKind::Instance || !layout.constructor)
             return MemberAnswer::unknown(UnprovenCause::NonLayoutObject);
-        if (isConstructorKey)
-            return MemberAnswer::unknown(UnprovenCause::Unknown);
+        if (isConstructorKey) {
+            // The one class object is what the prototype object of a class that is evaluated once holds under the name.
+            bool holdsOneClassObject = layout.classFlow.constructorProperty == MemberMutability::Fixed && layout.classFlow.evaluations == ExecutionCount::AtMostOnce && program.at(layout.constructor).captures.isEmpty();
+            if (query.access != Access::Read || !holdsOneClassObject)
+                return MemberAnswer::unknown(UnprovenCause::Unknown);
+            DeclaredMember member;
+            member.method = layout.constructor;
+            setDeclaredMember(walked, member, current);
+            setLevel(walked);
+            return walked;
+        }
 
         DeclaredMember member = findDeclaredMember(layout.classFlow, ClassSide::Prototype, key);
         // A store to an object that inherits a writable data property creates a property of the object, as it does where no holder has the name. While the property is there it hides whatever is above it.

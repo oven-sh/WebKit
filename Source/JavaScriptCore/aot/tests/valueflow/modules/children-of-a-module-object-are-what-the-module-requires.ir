@@ -1,19 +1,19 @@
 # main.cjs: require("./child.cjs"); module.children[i].exports()        child.cjs: require("./grandchild.cjs")        other.cjs, a second entry point: require("./apart.cjs")
-# The module objects hang together as the requests of the build say. `children` answers the module objects of what a module requires whose own module object somebody has got hold of:
-# that of child.cjs, and through it that of grandchild.cjs. The list itself is an object nobody knows, so the two are in unknown hands, and with them what the two files export.
-# In a program that names such a way the module object of every entry point is found from the global scope, under process.mainModule, by whoever reads globals by a name that the build does not see.
-# So that of other.cjs is in unknown hands too, and through it that of apart.cjs
+# The module objects hang together as the requests of the build say. `children` answers a list of the module objects of what a module requires whose own module object somebody has got hold of:
+# that of child.cjs, and through it that of grandchild.cjs. The list is followed like any other value, so the call has what the two files export among its callees. A list may also hold the module object
+# of a file outside the image, whose exports nobody knows: the call hands that callee its receiver, and with the receiver what the two files export.
+# Nobody has got hold of the module object of other.cjs, so what apart.cjs exports stays in the program.
 # RUN: valueflow-solve calls
-# CHECK: f0 v7 -> unknown
+# CHECK: f0 v7 -> unknown f2 f4
 # RUN(WHY): valueflow-why escaped=f2 escaped=f4 escaped=f7
 # WHY: escaped=f2
 # WHY-NEXT: n0 escaped
 # WHY: escaped=f4
 # WHY-NEXT: n0 escaped
 # WHY: escaped=f7
-# WHY-NEXT: n0 escaped
+# WHY-NEXT: not held
 # RUN(APPLY): valueflow-apply
-# APPLY-NOT: name="exports" {{*}}writers=AllKnown
+# APPLY: variable g4 name="exports" {{*}}writers=AllKnown
 
 variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined

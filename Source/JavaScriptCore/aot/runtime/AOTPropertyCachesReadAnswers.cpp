@@ -253,7 +253,7 @@ static std::optional<PropertyAnswer> classifyCompiledClosureRead(const FinishedR
 {
     const ReadQuery& query = read.query;
     VM& vm = read.vm;
-    if (query.structureBefore->typeInfo().type() == SlimClosureType) {
+    if (query.structureBefore->typeInfo().type() == SlimClosureType || (isCompiledClosure(read.cellOrNull) && uncheckedDowncast<Closure>(read.cellOrNull)->hasStructureOfNewClosure(vm))) {
         if (query.uid == vm.propertyNames->length.impl())
             return ownAnswer(PropertyAnswerKind::ClosureLength);
         if (query.uid == vm.propertyNames->name.impl())

@@ -1,5 +1,4 @@
 # A variable of a module that is stored at most once, and by every store in the program with one primitive constant, gets the type of that constant; a dead zone stays in the type
-# TODO: known-layouts: the pass narrows the three variables and still answers Unchanged: the runner calls a program pass Changed only where a function changed
 # FORM: Prepared
 # RUN: pass NarrowConstantVariables
 # CHECK: outcome: Changed

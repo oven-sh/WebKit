@@ -290,7 +290,7 @@ static GeneratorFusionDeclineReason findSizeObstacle(const CandidateSearch& sear
 {
     FunctionPassContext& pass = search.pass;
     uint64_t bodyBytes = codeBytesOf(pass.program, body);
-    if (pass.exceeds(LimitID::MaxOnlyCallSiteBytes, bodyBytes, generator))
+    if (pass.exceeds(LimitID::MaxFusedGeneratorBytes, bodyBytes, generator))
         return GeneratorFusionDeclineReason::BodyIsTooLarge;
     if (pass.exceeds(LimitID::MaxInlinedCallerBytes, search.inlinedBytes + bodyBytes, generator))
         return GeneratorFusionDeclineReason::CallerIsTooLarge;
@@ -371,7 +371,7 @@ static LimitID limitOf(GeneratorFusionDeclineReason obstacle)
 {
     switch (obstacle) {
     case GeneratorFusionDeclineReason::BodyIsTooLarge:
-        return LimitID::MaxOnlyCallSiteBytes;
+        return LimitID::MaxFusedGeneratorBytes;
     case GeneratorFusionDeclineReason::CallerIsTooLarge:
         return LimitID::MaxInlinedCallerBytes;
     case GeneratorFusionDeclineReason::InlineDepth:

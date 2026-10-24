@@ -11,6 +11,7 @@
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
 #include "AOTEffectsOfOperands.h"
+#include "AOTFlowSiteData.h"
 #include "AOTForwardDataflow.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTLayout.h"
@@ -2335,12 +2336,30 @@ static void addBirthsOfLiterals(const ValueFlowResultInputs& inputs, const FlowR
     Vector<KeysByLayout> keysOfWorker(inputs.loops().width());
     forEachIndexInParallel(inputs.loops(), program.functions.size(), [&](unsigned index, unsigned worker) {
         FunctionID id(index);
-        if (!inputs.bodies().holdsAnyOf(id, notedOperations({ ValueFlowNotedOperation::NewObject, ValueFlowNotedOperation::PieceOutsideSlots })))
+        if (!inputs.bodies().holdsAnyOf(id, notedOperations({ ValueFlowNotedOperation::NewObject, ValueFlowNotedOperation::Data, ValueFlowNotedOperation::PieceOutsideSlots })))
             return;
         if (!inputs.isReached(id) && !isUnsolvedCode(inputs, tables, id))
             return;
         const Function& function = program.functions[index];
         for (const Value& value : function.values) {
+            // A literal of constants is a literal. The members behind a name that is no field are defined after the allocation.
+            if (value.opcode == Opcode::Data) {
+                forEachDataNodeInPreorder(program.at(value.data()).root, [&](uint32_t, const DataNode& node) {
+                    const DataNode::Object* object = node.tryAs<DataNode::Object>();
+                    if (!object || !object->layout || program.at(object->layout).kind != LayoutKind::Record || program.at(object->layout).isDerived())
+                        return;
+                    Vector<PropertyKeyID> keys;
+                    for (const DataMember& member : object->members) {
+                        if (program.at(object->layout).findField(member.key))
+                            keys.append(member.key);
+                        else if (program.nameClassOf(member.key) != NameClass::Index)
+                            break;
+                    }
+                    AOT::sort(keys);
+                    keepCommonKeys(keysOfWorker[worker], object->layout, WTF::move(keys));
+                });
+                continue;
+            }
             // An accessor, and whatever a key that is computed or a spread brings, may lie outside the slots, and the cell of an object with anything outside its slots is marked for good.
             if (value.opcode == Opcode::DefineGetter || value.opcode == Opcode::DefineSetter || value.opcode == Opcode::ElemDefine || value.opcode == Opcode::CopyDataProperties) {
                 const Value& object = function.at(value.operand(0));

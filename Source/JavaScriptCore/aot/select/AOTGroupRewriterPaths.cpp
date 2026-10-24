@@ -244,6 +244,33 @@ void GroupRewriter::beginArms()
     expandRoot();
 }
 
+void GroupRewriter::beginArms(ValueID follower, bool followerIsOnlyReturned)
+{
+    beginArms();
+    RELEASE_ASSERT(m_duplicatedTerminator && m_duplicatedTerminator->isConditionalBranch());
+    BlockID head = builder().currentBlock();
+    BlockID block = m_duplicatedTerminator->taken().block;
+    const Block& entered = function().at(block);
+    uint32_t index = static_cast<uint32_t>(entered.values.find(follower));
+    RELEASE_ASSERT(index < entered.values.size() && entered.parameters.size() == 1 && entered.handler == m_expansion->handler);
+
+    std::optional<Terminator> duplicatedTerminator;
+    if (followerIsOnlyReturned)
+        duplicatedTerminator = entered.terminator;
+    BlockFrequency frequency = entered.frequency;
+    ValueID handedOver = entered.parameters[0];
+    Vector<ValueID, 2> earlierValues(entered.values.span().first(index));
+    Vector<Value, 3> originals;
+    for (ValueID id : entered.values.span().first(index + 1))
+        originals.append(function().at(id));
+    analyses().didChangeBlock(block);
+    m_follower = Follower { follower, block, frequency, handedOver, WTF::move(earlierValues), WTF::move(originals), builder().beginExpansion(ProgramPoint { block, index }), WTF::move(duplicatedTerminator) };
+    function().edit(block, BlockEdit::Values).values.shrink(0);
+
+    builder().setOrigin(m_originals.last().origin());
+    builder().moveToEndOf(head);
+}
+
 BlockID GroupRewriter::addArm(BlockFrequency frequency)
 {
     RELEASE_ASSERT(m_expansion);
@@ -268,6 +295,61 @@ void GroupRewriter::endArm(std::optional<ValueID> result)
     builder().setOrigin(terminator.origin());
     builder().emitTerminator(WTF::move(terminator));
     builder().setOrigin(armOrigin);
+}
+
+void GroupRewriter::endArmInFrontOfFollower(ValueID result)
+{
+    RELEASE_ASSERT(m_follower);
+    Terminator branch = *m_duplicatedTerminator;
+    branch.setOperand(0, result);
+    RELEASE_ASSERT(branch.taken().arguments.isEmpty() && branch.taken().proofs.size() == 1);
+    uint32_t proof = branch.taken().proofs[0];
+
+    BlockID from = builder().currentBlock();
+    BlockID entered = addArm(m_follower->frequency);
+    branch.taken() = Target { entered, { }, { } };
+    builder().setOrigin(branch.origin());
+    builder().emitTerminator(WTF::move(branch));
+
+    builder().setOrigin(m_follower->originals.last().origin());
+    m_handedOverInArm = builder().addEdgeResult(Edge { from, 0 }, proof);
+    builder().moveToEndOf(entered);
+}
+
+ValueID GroupRewriter::appendFollower()
+{
+    RELEASE_ASSERT(m_follower && m_handedOverInArm);
+    Vector<ValueID, 3> copies;
+    for (const Value& saved : m_follower->originals) {
+        Value copy = saved;
+        copy.forEachOperand([&](ValueID& operand, uint32_t) {
+            if (operand == m_follower->handedOver)
+                operand = m_handedOverInArm;
+            else if (size_t earlier = m_follower->earlierValues.find(operand); earlier != notFound)
+                operand = copies[earlier];
+        });
+        builder().setOrigin(copy.origin());
+        copies.append(builder().append(WTF::move(copy)));
+    }
+    m_session.m_unclaimedValues.append(copies.span().first(copies.size() - 1));
+    m_copiesOfEarlierValues.append(copies.span().first(copies.size() - 1));
+    m_session.m_slowPathValues.append(copies.last());
+    return copies.last();
+}
+
+void GroupRewriter::endFollower(std::optional<ValueID> result)
+{
+    RELEASE_ASSERT(m_follower);
+    if (m_follower->duplicatedTerminator) {
+        Terminator terminator = *m_follower->duplicatedTerminator;
+        terminator.setOperand(0, *result);
+        builder().setOrigin(terminator.origin());
+        builder().emitTerminator(WTF::move(terminator));
+    } else if (result)
+        builder().endExpansion(m_follower->expansion, *result);
+    else
+        builder().endExpansion(m_follower->expansion, std::span<const ValueID> { });
+    builder().setOrigin(m_originals.last().origin());
 }
 
 } } } // namespace JSC::AOT::Typed

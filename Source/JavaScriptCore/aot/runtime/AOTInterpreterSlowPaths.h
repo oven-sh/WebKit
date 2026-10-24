@@ -9,6 +9,7 @@
 
 #include "AOTClosureWord.h"
 #include "AOTInstance.h"
+#include "AOTObjectBuilder.h"
 #include "AOTPropertyCachesWords.h"
 #include "AOTRuntimeType.h"
 #include "AOTSlotRepresentation.h"
@@ -112,6 +113,13 @@ void didGetById(JSGlobalObject*, JSObject* base, Structure* structureBefore, con
 struct ObjectLiteralPlan {
     static constexpr unsigned maxNumberOfValues = 16;
     static constexpr uintptr_t allocatorTag = 1;
+    static constexpr uintptr_t slowPathTag = 2;
+    static constexpr uintptr_t notPlannedYet = allocatorTag | slowPathTag;
+    static constexpr uint8_t acceptsInt32 = 1 << 0;
+    static constexpr uint8_t acceptsDouble = 1 << 1;
+    static constexpr uint8_t acceptsString = 1 << 2;
+    static constexpr uint8_t acceptsObject = 1 << 3;
+    static constexpr uint8_t acceptsBoolean = 1 << 4;
 
     static constexpr ptrdiff_t offsetOfAllocator() { return OBJECT_OFFSETOF(ObjectLiteralPlan, allocator); }
     static constexpr ptrdiff_t offsetOfCellHeader() { return OBJECT_OFFSETOF(ObjectLiteralPlan, cellHeader); }
@@ -120,6 +128,10 @@ struct ObjectLiteralPlan {
     static constexpr ptrdiff_t offsetOfNumberOfClearedWords() { return OBJECT_OFFSETOF(ObjectLiteralPlan, numberOfClearedWords); }
     static constexpr ptrdiff_t offsetOfOffsetOfClearedWords() { return OBJECT_OFFSETOF(ObjectLiteralPlan, offsetOfClearedWords); }
     static constexpr ptrdiff_t offsetOfValueOffsets() { return OBJECT_OFFSETOF(ObjectLiteralPlan, valueOffsets); }
+    static constexpr ptrdiff_t offsetOfAcceptedValues() { return OBJECT_OFFSETOF(ObjectLiteralPlan, acceptedValues); }
+    static constexpr ptrdiff_t offsetOfAcceptedStructureIDs() { return OBJECT_OFFSETOF(ObjectLiteralPlan, acceptedStructureIDs); }
+    static constexpr ptrdiff_t offsetOfInitialWords() { return OBJECT_OFFSETOF(ObjectLiteralPlan, initialWords); }
+    static constexpr ptrdiff_t offsetOfNumberOfInitialWords() { return OBJECT_OFFSETOF(ObjectLiteralPlan, numberOfInitialWords); }
 
     static const ObjectLiteralPlan* of(ObjectAllocationProfile&);
     // Every word is written but those of the values.
@@ -134,13 +146,27 @@ struct ObjectLiteralPlan {
     uint32_t numberOfClearedWords { 0 };
     uint32_t offsetOfClearedWords { 2 * sizeof(uint64_t) };
     uint16_t valueOffsets[maxNumberOfValues] { };
+
+    // Of a record some of whose fields do not accept every value. An object with a value that does not fit its field is made by the other plan.
+    const ObjectLiteralPlan* planForOrdinaryObject { nullptr };
+    const ObjectBuilderPlan* recordBuilder { nullptr };
+    Structure* structureOfRecord { nullptr };
+    const uint32_t* acceptedStructureIDs { nullptr };
+    // Every word behind the header, with every slot empty: an object that is given up half way holds nothing.
+    const uint64_t* initialWords { nullptr };
+    uint32_t numberOfInitialWords { 0 };
+    uint8_t acceptedValues[maxNumberOfValues] { };
 };
 
 class ObjectLiteralPlans {
     WTF_MAKE_TZONE_ALLOCATED(ObjectLiteralPlans);
     WTF_MAKE_NONCOPYABLE(ObjectLiteralPlans);
 public:
-    ObjectLiteralPlans() = default;
+    explicit ObjectLiteralPlans(State&);
+
+    void clear();
+    // Null where some value does not fit its field.
+    static JSObject* tryBuildRecord(VM&, const ObjectLiteralPlan&, const EncodedJSValue* values);
 
     const ObjectLiteralPlan* findOrCreate(Instance&, Structure* emptyStructure, std::span<UniquedStringImpl* const> names, bool mayBeRecord);
     // An object got its first property outside its cell. If a plan made it, the objects that the plan makes from now on have room for two more properties in their cells.
@@ -150,14 +176,22 @@ private:
     static constexpr size_t maxNumberOfPlans = 256;
     static constexpr unsigned maxPropertiesAddedInCell = 8;
 
-    static std::unique_ptr<ObjectLiteralPlan> createPlanForRecord(Instance&, std::span<UniquedStringImpl* const> names);
+    static std::unique_ptr<ObjectLiteralPlan> createPlanForRecord(Instance&, std::span<UniquedStringImpl* const> names, std::unique_ptr<ObjectBuilderPlan>& builderThatTestsValues);
+    static std::unique_ptr<ObjectLiteralPlan> createPlanThatTestsValues(Instance&, const ObjectBuilderPlan&, const ObjectLiteralPlan& planForOrdinaryObject, Vector<uint64_t>& initialWords);
+    static void fillPlanFromBuilder(Instance&, const ObjectBuilderPlan&, ObjectLiteralPlan&);
+    static bool storesValuesUnchanged(const ObjectBuilderPlan&, bool testsValues);
 
     struct Entry {
+        const ObjectLiteralPlan* planForSites() const { return planThatTestsValues ? planThatTestsValues.get() : plan.get(); }
+
         Structure* emptyStructure;
         Structure* structureOfFinalObject;
         bool mayBeRecord;
         Vector<RefPtr<UniquedStringImpl>, 4> names;
         std::unique_ptr<ObjectLiteralPlan> plan;
+        std::unique_ptr<ObjectBuilderPlan> recordBuilder;
+        std::unique_ptr<ObjectLiteralPlan> planThatTestsValues;
+        Vector<uint64_t> initialWordsOfRecord;
     };
 
     Vector<Entry> m_entries;

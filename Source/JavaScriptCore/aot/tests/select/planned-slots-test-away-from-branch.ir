@@ -27,7 +27,7 @@ function f0 name="store-between-test-and-branch" parameters=[{type=L0|L1}, {type
 # CHECK: [[textBehindStore]]: boolean = IsSlotFilled {{*}} key="value" receivers=[L0] level=Proven
 # CHECK-NEXT: TestAndBranch [[textBehindStore]] -> taken [[filledBehindStore]](| 0), notTaken
 # CHECK: [[countBehindStore]]: boolean = IsSlotFilled {{*}} key="value" receivers=[L1] level=Proven
-# CHECK-NEXT: TestAndBranch [[countBehindStore]] -> taken [[filledBehindStore]](| 0), notTaken
+# CHECK-NEXT: TestAndBranch [[countBehindStore]] -> taken [[filledCountBehindStore]](| 0), notTaken
 # CHECK-NOT: IsSlotFilled
 # CHECK-NOT: receivers=[L0, L1]
 
@@ -51,7 +51,7 @@ function f1 name="branch-in-later-block" parameters=[{type=L0|L1}, {type=boolean
 # CHECK: [[textLater]]: boolean = IsSlotFilled {{*}} key="value" receivers=[L0] level=Proven
 # CHECK-NEXT: TestAndBranch [[textLater]] -> taken [[filledLater]](| 0), notTaken
 # CHECK: [[countLater]]: boolean = IsSlotFilled {{*}} key="value" receivers=[L1] level=Proven
-# CHECK-NEXT: TestAndBranch [[countLater]] -> taken [[filledLater]](| 0), notTaken
+# CHECK-NEXT: TestAndBranch [[countLater]] -> taken [[filledCountLater]](| 0), notTaken
 # CHECK-NOT: IsSlotFilled
 # CHECK-NOT: receivers=[L0, L1]
 

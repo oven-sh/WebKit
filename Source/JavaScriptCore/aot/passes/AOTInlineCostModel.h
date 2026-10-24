@@ -34,8 +34,7 @@ enum class InlineBenefit : uint8_t {
     KnownCalleeArgument = 1 << 2,
     KnownReceiver = 1 << 3,
     SunkAllocation = 1 << 4,
-    OnlyCallSite = 1 << 5,
-    Wrapper = 1 << 6,
+    Wrapper = 1 << 5,
 };
 
 struct InlineVerdict {

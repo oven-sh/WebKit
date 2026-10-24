@@ -1081,7 +1081,8 @@ void HeapRule::readMembers(ClimbingSet objects, ClimbingSet start, const HeapKey
         if (members.hasNativeBinding)
             add(result, unknownValue(ValueFlowUnknownSource::UndescribedNativeResult));
         m_context.sets().forEachMember(members.accessors, [&](ValueFlowObjectID accessor) {
-            if (!isFoundByNameAlone(m_builtins.canonicalID(m_universe.builtinOf(accessor))))
+            BuiltinID member = m_builtins.canonicalID(m_universe.builtinOf(accessor));
+            if (!isFoundByNameAlone(member) || (member == Builtins::ProcessMainModule && namesWaysToModuleObjects(m_program)))
                 getters.append(accessor);
         });
     });

@@ -230,6 +230,9 @@ ValueFlowBirthsOfUnknownObject::ValueFlowBirthsOfUnknownObject(const ValueFlowRe
             ++firstSuccessor[from + 1];
             return;
         }
+        // The witness is of the source that the report names for the node.
+        if (solver.unknownSourceOf(ValueFlowEdge { ValueFlowNodeID(from), ValueFlowNodeID(to) }) != solver.unknownSourceOf(ValueFlowNodeID(to)))
+            return;
         ValueFlowStatementID logger = solver.statementThatLogged({ ValueFlowNodeID(from), ValueFlowNodeID(to) });
         Witness witness = logger ? witnessOfStatement(inputs.program, solver.statementAt(logger)) : noWitness;
         if (m_birthOfNode[to] == none) {

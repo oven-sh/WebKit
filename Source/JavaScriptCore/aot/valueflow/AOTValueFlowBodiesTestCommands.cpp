@@ -357,6 +357,8 @@ private:
             m_out.print(" - "_s);
             m_printer.print(type);
         }
+        for (auto [builtin, module] : mask.outsideBuiltinsOfModules)
+            m_out.print(" - builtin "_s, builtin.index(), " of m"_s, module.index());
     }
 
     PrintStream& m_out;

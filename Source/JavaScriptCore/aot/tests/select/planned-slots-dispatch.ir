@@ -3,7 +3,7 @@
 # OPTIONS: references=narrow testing=NoLayoutIsMadeSeldom
 # RUN: pass Select
 # RUN(PLACE): pass Select NumberAndEncode PlaceSiteCaches CheckPlacement
-# STATISTIC: PlannedSlotsGroups = 5
+# STATISTIC: PlannedSlotsGroups = 7
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Text" fields=[{key="value" declared={type=undefined|string}}, {key="pad" declared={type=number}}] flow={members=[L0]}
@@ -43,7 +43,7 @@ function f1 name="store" parameters=[{type=L0|L1}] results=[{type=anything}] {
 # CHECK-NEXT: Jump -> next [[afterOfStore]]()
 # CHECK-NOT: receivers=[L0, L1]
 
-# A branch passes the proofs of the test it names, so each arm ends in a copy of the branch.
+# A branch passes the proofs of the test it names, so each arm ends in a copy of the branch. The read of the slot that the test has found filled stands in the arm of the test: one access has one dispatch.
 function f2 name="test" parameters=[{type=L0|L1}] results=[{type=anything}] {
   b0(v0: L0|L1):
     v1 = IsSlotFilled v0 key="value" receivers=[L0, L1] level=Proven
@@ -60,17 +60,17 @@ function f2 name="test" parameters=[{type=L0|L1}] results=[{type=anything}] {
 # CHECK-NEXT: TestAndBranch [[isTextOfTest]] -> taken [[textsOfTest]](| 0), notTaken [[countsOfTest]](| 0)
 # CHECK-NEXT: [[textsOfTest]]([[textObjectOfTest]]: L0):
 # CHECK-NEXT: [[hasTextOfTest]]: boolean = IsSlotFilled [[textObjectOfTest]] key="value" receivers=[L0] level=Proven
-# CHECK-NEXT: TestAndBranch [[hasTextOfTest]] -> taken [[filledOfTest]](| 0), notTaken [[emptyOfTest]]()
+# CHECK-NEXT: TestAndBranch [[hasTextOfTest]] -> taken [[filledTexts]](| 0), notTaken [[emptyOfTest]]()
+# CHECK-NEXT: [[filledTexts]]([[isFilledText]]: guard):
+# CHECK-NEXT: = GetSlot [[textObjectOfTest]], [[isFilledText]] key="value" receivers=[L0] level=Proven
+# CHECK-NEXT: Return
 # CHECK-NEXT: [[countsOfTest]]([[countObjectOfTest]]: L1):
 # CHECK-NEXT: [[hasCountOfTest]]: boolean = IsSlotFilled [[countObjectOfTest]] key="value" receivers=[L1] level=Proven
-# CHECK-NEXT: TestAndBranch [[hasCountOfTest]] -> taken [[filledOfTest]](| 0), notTaken [[emptyOfTest]]()
-# CHECK-NEXT: [[filledOfTest]]([[isFilledOfTest]]: guard):
-# CHECK-NEXT: [[isFilledText]]: boolean = TypeTest v0 testedType=L0
-# CHECK-NEXT: TestAndBranch [[isFilledText]] -> taken [[filledTexts]](| 0), notTaken [[filledCounts]](| 0)
-# CHECK-NEXT: [[filledTexts]]([[filledText]]: L0):
-# CHECK-NEXT: = GetSlot [[filledText]], [[isFilledOfTest]] key="value" receivers=[L0] level=Proven
-# CHECK: [[filledCounts]]([[filledCount]]: L1):
-# CHECK-NEXT: = GetSlot [[filledCount]], [[isFilledOfTest]] key="value" receivers=[L1] level=Proven
+# CHECK-NEXT: TestAndBranch [[hasCountOfTest]] -> taken [[filledCounts]](| 0), notTaken [[emptyOfTest]]()
+# CHECK-NEXT: [[filledCounts]]([[isFilledCount]]: guard):
+# CHECK-NEXT: = GetSlot [[countObjectOfTest]], [[isFilledCount]] key="value" receivers=[L1] level=Proven
+# CHECK-NEXT: Return
+# CHECK-NOT: TypeTest
 # CHECK-NOT: receivers=[L0, L1]
 
 function f3 name="test-as-value" parameters=[{type=L0|L1}] results=[{type=anything}] {
@@ -97,6 +97,77 @@ function f4 name="one-location" parameters=[{type=L0|L2}] results=[{type=anythin
 # CHECK-NEXT: b0(v0: L0|L2):
 # CHECK-NEXT: v1: undefined|string = GetSlotOrUndefined v0 key="value" receivers=[L0, L2] level=Proven
 # CHECK-NEXT: Return v1
+
+# What comes behind the read is not copied: the arms meet there.
+function f5 name="test-and-go-on" parameters=[{type=L0|L1}] results=[{type=anything}] {
+  b0(v0: L0|L1):
+    v1 = IsSlotFilled v0 key="value" receivers=[L0, L1] level=Proven
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = GetSlot v0, v2 key="value" receivers=[L0, L1] level=Proven
+    v4 = TypeOf v3
+    Return v4
+  b2():
+    Return
+}
+# CHECK-LABEL: function f5 name="test-and-go-on"
+# CHECK: TypeTest v0 testedType=L0
+# CHECK-NOT: TypeTest
+# CHECK: [[textOfGoOn]]: {{*}} = GetSlot {{*}} receivers=[L0] level=Proven
+# CHECK-NEXT: Jump -> next [[afterOfGoOn]]([[textOfGoOn]])
+# CHECK-NOT: TypeTest
+# CHECK: [[countOfGoOn]]: {{*}} = GetSlot {{*}} receivers=[L1] level=Proven
+# CHECK-NEXT: Jump -> next [[afterOfGoOn]]([[countOfGoOn]])
+# CHECK-NOT: TypeTest
+# CHECK: = TypeOf
+# CHECK-NOT: TypeOf
+
+# A store takes what it stores, and the guards it needs, into the arm with it.
+function f6 name="test-and-store" parameters=[{type=L0|L1}] results=[{type=anything}] {
+  b0(v0: L0|L1):
+    v1 = IsSlotFilled v0 key="value" receivers=[L0, L1] level=Proven
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = AllGuards v2
+    v4 = Undefined
+    PutSlot v0, v3, v4 key="value" receivers=[L0, L1] level=Proven
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f6 name="test-and-store"
+# CHECK: TypeTest v0 testedType=L0
+# CHECK-NOT: TypeTest
+# CHECK: PutSlot {{*}} key="value" receivers=[L0] level=Proven
+# CHECK-NOT: TypeTest
+# CHECK: PutSlot {{*}} key="value" receivers=[L1] level=Proven
+# CHECK-NOT: TypeTest
+# CHECK-NOT: receivers=[L0, L1]
+
+# The value is tested in front of the slot, so that the test of the slot and the store have one dispatch.
+function f7 name="test-slot-and-value-and-store" parameters=[{type=L0|L1}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0|L1, v1: anything):
+    v2 = IsSlotFilled v0 key="value" receivers=[L0, L1] level=Proven
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = TypeTest v1 testedType=undefined
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    PutSlot v0, v3, v5 key="value" receivers=[L0, L1] level=Proven
+    Return
+  b3():
+    Return
+}
+# CHECK-LABEL: function f7 name="test-slot-and-value-and-store"
+# CHECK-NEXT: b0(v0: L0|L1, v1: anything):
+# CHECK-NEXT: = TypeTest v1 testedType=undefined
+# CHECK: TypeTest v0 testedType=L0
+# CHECK-NOT: TypeTest
+# CHECK: PutSlot {{*}} key="value" receivers=[L0] level=Proven
+# CHECK-NOT: TypeTest
+# CHECK: PutSlot {{*}} key="value" receivers=[L1] level=Proven
+# CHECK-NOT: TypeTest
+# CHECK-NOT: receivers=[L0, L1]
 
 # PLACE: access 0 "value" {L0 L2} read EveryMember
 # PLACE-NEXT: access 1 "value" {L0} read EveryMember

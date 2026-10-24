@@ -93,9 +93,14 @@ public:
     void emitTwoWay(Terminator&&);
 
     void beginArms();
+    // The follower stands in the block that only the taken edge of the branch on the root enters, and nobody else uses what stands in front of it there. Each arm gets a copy of that edge and, behind it, copies of those values and of the follower.
+    void beginArms(ValueID follower, bool followerIsOnlyReturned);
     BlockID addArm(BlockFrequency);
     ValueID appendOriginals();
     void endArm(std::optional<ValueID> result);
+    void endArmInFrontOfFollower(ValueID result);
+    ValueID appendFollower();
+    void endFollower(std::optional<ValueID> result);
 
     ValueID copyRootToEndOf(BlockID);
 
@@ -104,6 +109,17 @@ private:
         ValueID member;
         ValueID producer;
         uint32_t index { 0 };
+    };
+
+    struct Follower {
+        ValueID id;
+        BlockID block;
+        BlockFrequency frequency;
+        ValueID handedOver;
+        Vector<ValueID, 2> earlierValues;
+        Vector<Value, 3> originals;
+        IRBuilder::Expansion expansion;
+        std::optional<Terminator> duplicatedTerminator;
     };
 
     RewriteSession::GroupState& state() { return m_session.m_groups[m_groupIndex]; }
@@ -139,6 +155,9 @@ private:
     bool m_didFinish { false };
     std::optional<IRBuilder::Expansion> m_expansion;
     std::optional<Terminator> m_duplicatedTerminator;
+    std::optional<Follower> m_follower;
+    ValueID m_handedOverInArm;
+    Vector<ValueID, 4> m_copiesOfEarlierValues;
 };
 
 void changeBranchKind(Terminator&, TerminatorKind);

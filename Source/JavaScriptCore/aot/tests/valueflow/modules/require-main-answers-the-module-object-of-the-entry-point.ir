@@ -1,14 +1,14 @@
 # main.cjs: module.exports = exportedByMain; require("./helper.cjs")        helper.cjs: module.exports = exportedByHelper; require.main.exports()
-# `require.main` answers the module object of an entry point, and no other: the call has one callee. In a program that names such a way that object is also found from the global scope,
-# under process.mainModule, by whoever reads globals by a name that the build does not see: machine code that the program has loaded, a read under a key nobody knows. So it is in unknown hands,
-# with what main.cjs exports, and through `children` so is the module object of helper.cjs
+# `require.main` answers the module object of an entry point, and no other: the call has one callee. The object is followed like any other value: nobody else holds it, so what the two files export stays in the program.
 # RUN: valueflow-solve calls
-# CHECK: f2 v5 -> {{*}}f1
-# CHECK-NOT: f2 v5 -> {{*}}f3
-# RUN(WHY): valueflow-why escaped=f1
-# WHY: n0 escaped
+# CHECK: f2 v5 -> f1
+# RUN(WHY): valueflow-why escaped=f1 escaped=f3
+# WHY: escaped=f1
+# WHY-NEXT: not held
+# WHY: escaped=f3
+# WHY-NEXT: not held
 # RUN(APPLY): valueflow-apply
-# APPLY-NOT: name="exports" {{*}}writers=AllKnown
+# APPLY: variable g1 name="exports" {{*}}writers=AllKnown
 
 variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
 variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined

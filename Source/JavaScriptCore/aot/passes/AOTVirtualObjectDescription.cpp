@@ -37,7 +37,7 @@ static DescribedObject supported(const VirtualObjectDescription& description)
 
 static bool onlyReadsAndCreatesStrings(const Effects& effects)
 {
-    return !effects.mayRunOtherCode() && effects.writes.containsOnly(stringRangeHeaps) && effects.reads.containsOnly(stringRangeHeaps);
+    return !effects.mayRunOtherCode() && !effects.mayThrowByRule() && effects.writes.containsOnly(stringRangeHeaps) && effects.reads.containsOnly(stringRangeHeaps);
 }
 
 static bool canBeDeferred(const EffectsOnEdges& effects, VirtualObjectKind kind)

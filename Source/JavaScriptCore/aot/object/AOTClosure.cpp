@@ -207,6 +207,12 @@ bool Closure::isLazyClassObject() const
     return classLayout->createsClassObjectOnMutation && (classLayout->createsPrototypeBeforeClassObject || state().objects->classes.classPrototypeIfExists(*classLayout));
 }
 
+bool Closure::hasStructureOfNewClosure(VM& vm) const
+{
+    unsigned index = kind().closureStructure;
+    return index != classObjectClosureStructure && structure() == state().objects->closures.closureStructure(vm, index);
+}
+
 static NEVER_INLINE void createClassObject(Closure* classObject)
 {
     State& state = classObject->state();

@@ -14,33 +14,40 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// What is expected of a position is a guess.
+// What is expected of a position is a guess. That a location holds nothing until its first store is none, so the mark of a dead zone stays.
 class LongExpectations {
 public:
-    LongExpectations(const Program& program, const ParallelLoops& loops)
-        : m_listsTooMany(program.types.size())
+    LongExpectations(Program& program, const ParallelLoops& loops)
+        : m_lists(program.types.size())
     {
         constexpr size_t mostLayouts = 16;
         constexpr size_t typesPerTask = 1024;
         std::atomic<bool> hasAny { false };
-        forEachIndexInParallel(loops, static_cast<unsigned>((m_listsTooMany.size() + typesPerTask - 1) / typesPerTask), [&](unsigned task) {
-            for (size_t index = task * typesPerTask, end = std::min(m_listsTooMany.size(), index + typesPerTask); index < end; ++index) {
+        std::atomic<bool> hasAnyWithDeadZone { false };
+        forEachIndexInParallel(loops, static_cast<unsigned>((m_lists.size() + typesPerTask - 1) / typesPerTask), [&](unsigned task) {
+            for (size_t index = task * typesPerTask, end = std::min(m_lists.size(), index + typesPerTask); index < end; ++index) {
                 const Type& type = program.at(TypeID(static_cast<uint32_t>(index)));
-                m_listsTooMany[index] = type.layouts && membersOf(program, type).size() > mostLayouts;
-                if (m_listsTooMany[index])
+                bool listsTooMany = type.layouts && membersOf(program, type).size() > mostLayouts;
+                bool hasDeadZone = type.primitives & Primitive::Absent;
+                m_lists[index] = !listsTooMany ? List::Short : hasDeadZone ? List::LongWithDeadZone : List::Long;
+                if (listsTooMany)
                     hasAny.store(true, std::memory_order_relaxed);
+                if (listsTooMany && hasDeadZone)
+                    hasAnyWithDeadZone.store(true, std::memory_order_relaxed);
             }
         });
         m_hasAny = hasAny.load(std::memory_order_relaxed);
+        if (hasAnyWithDeadZone.load(std::memory_order_relaxed))
+            m_anythingWithDeadZone = program.types.intern(Type::anything().withPrimitives(Primitive::Absent));
     }
 
     bool hasAny() const { return m_hasAny; }
 
     bool forget(DeclaredType& declared) const
     {
-        if (!declared.flags.contains(PositionFlags::IsExpected) || !declared.type || !m_listsTooMany[declared.type.index()])
+        if (!declared.flags.contains(PositionFlags::IsExpected) || !declared.type || m_lists[declared.type.index()] == List::Short)
             return false;
-        declared.type = TypeTable::anything;
+        declared.type = m_lists[declared.type.index()] == List::LongWithDeadZone ? m_anythingWithDeadZone : TypeTable::anything;
         declared.flags.remove(PositionFlags::IsExpected);
         return true;
     }
@@ -66,7 +73,10 @@ public:
     }
 
 private:
-    Vector<uint8_t> m_listsTooMany;
+    enum class List : uint8_t { Short, Long, LongWithDeadZone };
+
+    Vector<List> m_lists;
+    TypeID m_anythingWithDeadZone;
     bool m_hasAny { false };
 };
 

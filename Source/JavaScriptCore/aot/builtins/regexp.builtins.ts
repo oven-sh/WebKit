@@ -252,7 +252,7 @@ const splitAtString = (limit: b.TableType) =>
     args: { separator: b.string, limit },
     returns: newArrayOf(b.string).dense,
     capability: "heap",
-    throws: true,
+    throws: b.propagated,
     uses: { separator: characters },
     implementation: b.inline("StringSplit", { parameters: ["String"] }),
   }) satisfies b.FunctionField;

@@ -48,6 +48,7 @@ static bool mayRunCodeThroughOperand(const BuiltinParameter& parameter, JSValue 
     return operand.isObject() && parameter.conversion != BuiltinConversion::None;
 }
 
+#if !defined(BUN_HARDENED)
 namespace {
 
 class CheckedNativeCalls {
@@ -120,11 +121,14 @@ private:
 };
 
 } // anonymous namespace
+#endif
 
 void writeCheckedNativeCalls()
 {
+#if !defined(BUN_HARDENED)
     if (CheckedNativeCalls* calls = CheckedNativeCalls::ifAskedFor())
         calls->write();
+#endif
 }
 
 class NativeCallValidationScope::Checker {
@@ -892,8 +896,10 @@ bool NativeCallValidationScope::Checker::finish(JSValue result)
     bool countsAsCode = didRunCode || m_declaration.overloads.isEmpty();
     if (m_outer && !countsAsCode && (m_didCallFunctionThatWrites || !declaredWrites().isEmpty()))
         m_outer->m_didCallFunctionThatWrites = true;
+#if !defined(BUN_HARDENED)
     if (CheckedNativeCalls* calls = CheckedNativeCalls::ifAskedFor(); calls && m_declaration.source != NativeCallDeclarationSource::NotInTable)
         calls->add(describeCallee(), m_vm.exceptionForInspection(), m_didChangeOperand, m_expectation.isKnown);
+#endif
     return countsAsCode;
 }
 

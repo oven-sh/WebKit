@@ -237,6 +237,25 @@ static std::optional<TestedAccess> planForReceiversThatClaimNoAbsence(TestSiteRe
     return tested;
 }
 
+// The layouts of the receiver are proven and find the name in several places, and cold code gets no arm for each place. The largest group is tested for, as it is where nothing is proven.
+static std::optional<TestedAccess> planForLargestGroupOfProvenReceivers(TestSiteReporter& reporter, const Value& access, PropertyAccessQuery& query)
+{
+    const ReceiverCandidates& receivers = query.receivers;
+    if (query.start != MemberStart::Instance || !receivers.isProven() || receivers.hasOtherParts || receivers.proven.size() < 2)
+        return std::nullopt;
+    if (!isCold(heatClassOf(reporter.context(), reporter.point().block)))
+        return std::nullopt;
+    if (planWithoutCalls(reporter.context(), query).form != AccessForm::Split)
+        return std::nullopt;
+
+    ReceiverCandidates expected;
+    expected.level = KnowledgeLevel::Expected;
+    expected.predicted = receivers.proven;
+    expected.mayBeNullish = receivers.mayBeNullish;
+    query.receivers = WTF::move(expected);
+    return planAccessUnderTests(reporter, access, query, ReceiversOfQuery::Chosen);
+}
+
 // `const context = { cwd, depth }; context.file = () => load(context);`: two steps, so that the function can name the object. The literal stands in this function and does not list the field.
 static bool storesFieldThatAllocationLeftOut(TestSiteReporter& reporter, const Value& store, PropertyKeyID key)
 {
@@ -348,6 +367,8 @@ void reportPropertyAccessTests(TestSiteReporter& reporter)
         query->mayTestSlotFirst = mayTestSlotFirst(reporter.context(), *query);
         query->storesWhatWasMadeOfField = query->access == Access::Store && storesWhatWasMadeOfField(reporter.program(), reporter.function(), access, query->key);
         std::optional<TestedAccess> tested = planAccessUnderTests(reporter, access, *query);
+        if (!tested)
+            tested = planForLargestGroupOfProvenReceivers(reporter, access, *query);
         if (tested && claimsAbsenceOfNameOnInstalledPrototype(reporter, tested->plan, query->key)) {
             PropertyAccessPlan refused = WTF::move(tested->plan);
             tested = planForReceiversThatClaimNoAbsence(reporter, access, *query, refused);

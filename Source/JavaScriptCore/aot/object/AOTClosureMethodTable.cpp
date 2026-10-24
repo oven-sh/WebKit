@@ -98,8 +98,15 @@ bool Closure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject,
     }
     if (propertyName == vm.propertyNames->prototype)
         return closure->ensurePrototypeProperty(vm) && JSObject::getOwnPropertySlot(object, globalObject, propertyName, slot);
-    if ((propertyName == vm.propertyNames->hasInstanceSymbol || propertyName == vm.propertyNames->length || propertyName == vm.propertyNames->name) && isBoundClosure(*closure)) [[unlikely]]
+    bool isLength = propertyName == vm.propertyNames->length;
+    bool isName = propertyName == vm.propertyNames->name;
+    if ((propertyName == vm.propertyNames->hasInstanceSymbol || isLength || isName) && isBoundClosure(*closure)) [[unlikely]]
         closure->adoptBoundFunctionStructure(vm);
+    else if ((isLength || isName) && closure->hasStructureOfNewClosure(vm)) {
+        JSValue value = isLength ? jsNumber(functionLengthOf(closure->function())) : JSValue(initialNamePropertyString(vm, closure->state(), closure->function()));
+        slot.setValue(closure, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum, value);
+        return true;
+    }
     return Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
 }
 

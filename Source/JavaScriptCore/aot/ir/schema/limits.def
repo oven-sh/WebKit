@@ -95,7 +95,7 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     MaxInlineHeadBytes(Optimize, CodeSize, NotOptimized, 48, 48, "the size of an inlined fast-path prefix")
     MaxSelectedHeadOperations(Select, CodeSize, NotOptimized, 24, 24, "operations of a function copied in front of a hot call of it")
     MaxSelectedHeadBlocks(Select, CodeSize, NotOptimized, 8, 8, "blocks of a function copied in front of a hot call of it")
-    MaxOnlyCallSiteBytes(Optimize, CodeSize, NotOptimized, 1600, 1600, "the size of a function inlined into its only call site")
+    MaxFusedGeneratorBytes(Optimize, CodeSize, NotOptimized, 1600, 1600, "the size of a generator whose body is merged into the loop that iterates it")
     InlineBudgetColdBytes(Optimize, CodeSize, NotOptimized, 0, 0, "inlining budget at a cold call site")
     InlineBudgetWarmBytes(Optimize, CodeSize, NotOptimized, 80, 80, "inlining budget at a warm call site")
     InlineBudgetHotBytes(Optimize, CodeSize, NotOptimized, 320, 320, "inlining budget at a hot call site")

@@ -929,6 +929,9 @@ void appendModuleObjectsAnsweredBy(ValueFlowRuleContext& context, BuiltinID entr
     bool answersMainModule = entry == Builtins::ModuleRequireMain || entry == Builtins::ProcessMainModule;
     if (!answersMainModule)
         objects.append(context.universe().objectOf(Builtins::ModuleObject));
+    // In a program that names no way the host answers undefined on the module object of a module of the image.
+    if (!namesWaysToModuleObjects(context.program()))
+        return;
     auto answer = [&](ValueFlowHostNode answers) {
         context.connect(nodes.ofHost(answers), nodes.ofHost(ValueFlowHostNode::ModuleObjectsHandedOut));
         context.forEachMember(context.valueOf(nodes.ofHost(answers)), [&](ValueFlowObjectID object) {
@@ -972,6 +975,8 @@ static void exposeMembersOf(ValueFlowRuleContext& context, ValueFlowObjectID hol
                 waysBetweenModuleObjectsAnswered.append(builtins.canonicalID(member));
                 Vector<ValueFlowObjectID, 32> answers;
                 appendModuleObjectsAnsweredBy(context, builtins.canonicalID(member), answers);
+                if (builtins.canonicalID(member) == Builtins::ModuleObjectChildren)
+                    answers.append(universe.resultOf(member, 0));
                 context.add(ValueFlowProgramNodes::escaped(), ClimbingSet(context.maker().of(answers.span())));
             }
             continue;
@@ -1044,9 +1049,12 @@ static void exposeModuleObjects(ValueFlowRuleContext& context)
     }
 }
 
-// process.mainModule starts in the global scope, so whoever reads globals by a name that the build does not see finds there what the program finds, the module object of an entry point.
+// Whoever holds `process` without the analysis following it finds under `mainModule` what the program finds there, the module object of an entry point.
 static void exposeModuleObjectsOfEntryPoints(ValueFlowRuleContext& context)
 {
+    ClimbingSet process = only(context, context.universe().objectOf(context.program().builtins().at(Builtins::ProcessMainModule).holder));
+    if (!isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeRuns) && !context.holdsAnyOf(process, ValueFlowProgramNodes::escaped()) && !context.holdsAnyOf(process, ValueFlowProgramNodes::lost()))
+        return;
     for (const Entry& entryPoint : context.program().entries) {
         if (ValueFlowObjectID moduleObject = moduleObjectOfEvaluatedModule(context, entryPoint.module)) {
             handOut(context, moduleObject);

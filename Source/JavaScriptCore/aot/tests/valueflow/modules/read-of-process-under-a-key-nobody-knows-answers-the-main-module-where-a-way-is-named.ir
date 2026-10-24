@@ -1,0 +1,39 @@
+# main.cjs: require("./child.cjs"); !module.parent; process[globalThis.name].children[0].exports()        child.cjs: module.exports = exportedByChild
+# In a program that names a way between module objects the host answers `process.mainModule` under whatever key. A read of `process` under a key nobody knows may be that read: it answers the module object
+# of the entry point, and that is followed to what the required file exports.
+# RUN: valueflow-solve calls
+# CHECK: f0 v13 -> {{*}}f2
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError, NamesWayToModuleObjects] requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/app/child.cjs" displayPath="child.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f1 exportsVariable=g1
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    RecordRequire module=m1 referrer=m0
+    v2 = ModuleBuiltin builtin=ModuleObject module=m0
+    v3 = PropGet v2 key="parent"
+    v4 = ToBoolean v3
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="name" [isFreeName]
+    v7 = Builtin builtin=Process
+    v8 = ElemGet v7, v6
+    v9 = PropGet v8 key="children"
+    v10 = Integer integer=0
+    v11 = ElemGet v9, v10
+    v12 = PropGet v11 key="exports"
+    v13 = Call v12, v11
+    Return
+}
+function f1 name="child" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g1
+    Return
+}
+function f2 name="exportedByChild" module=m1 results=[{type=anything}] {
+  b0():
+    Return
+}

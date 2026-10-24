@@ -520,8 +520,10 @@ struct ValueFlowBody {
         ValueFlowMaskKind kind { ValueFlowMaskKind::Checked };
         // `outside` also drops instancesOfRootClasses(). The rule that reads the mask asks mayHaveOtherLayoutThanItsClass().
         bool trustsInstancesOfRootClasses { false };
+        // The objects that a module has of its own, each of which a comparison has turned away.
+        Vector<std::pair<BuiltinID, ModuleID>, 0> outsideBuiltinsOfModules { };
 
-        bool admitsEverything() const { return inside.isEmpty() && outside.isEmpty(); }
+        bool admitsEverything() const { return inside.isEmpty() && outside.isEmpty() && outsideBuiltinsOfModules.isEmpty(); }
         friend bool operator==(const Mask&, const Mask&) = default;
     };
 

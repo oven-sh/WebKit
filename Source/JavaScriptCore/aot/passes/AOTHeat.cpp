@@ -693,12 +693,34 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
     return heat;
 }
 
+// The tests of the parameters stand in front of the body, and each gives a share to its failure. What passes them is what the function was entered for.
+static double frequencyBehindEntryTests(FunctionAnalyses& analyses)
+{
+    const Function& function = analyses.function();
+    const CompactList<ValueID>& parameters = function.at(entryBlock).parameters;
+    BlockID block = entryBlock;
+    for (size_t tests = 0; tests < parameters.size(); ++tests) {
+        const Terminator& terminator = function.at(block).terminator;
+        if (terminator.kind != TerminatorKind::Branch)
+            break;
+        const Value& test = function.at(terminator.conditionOperand());
+        if (test.opcode != Opcode::TypeTest || !parameters.contains(test.operand(0)))
+            break;
+        if (function.at(terminator.taken().block).frequency != BlockFrequency::Normal || function.at(terminator.notTaken().block).frequency == BlockFrequency::Normal)
+            break;
+        block = terminator.taken().block;
+    }
+    return analyses.blockFrequencies().frequencyOf(block);
+}
+
 HeatClass heatClassOf(const Heat& heat, FunctionAnalyses& analyses, BlockID block)
 {
     const AnalysisContext& context = analyses.context();
     double activations = heat.activationsOf(context.program, context.id);
     bool isColdEverywhere = heat.classOf(context.program, context.id, activations, roundingOfFrequencySums) == HeatClass::Cold && runsNoBlockMoreOftenThanEntry(analyses.cfg());
     HeatClass heatClass = isColdEverywhere ? HeatClass::Cold : heat.classOf(context.program, context.id, activations, analyses.blockFrequencies().frequencyOf(block));
+    if (heatClass == HeatClass::Cold && !isColdEverywhere)
+        heatClass = heat.classOf(context.program, context.id, activations, analyses.blockFrequencies().frequencyOf(block) / frequencyBehindEntryTests(analyses));
     switch (context.build.recordedOptions().heat()) {
     case HeatOverride::EverythingIsHot:
     case HeatOverride::EverythingIsCold:

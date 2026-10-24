@@ -3479,6 +3479,10 @@ void ValueFlowSolver::findUnknownSources(NOESCAPE const ScopedLambda<void()>& wh
     constexpr size_t stepsAheadForSources = 4;
     constexpr uint32_t mostSourcesAskedFor = 8;
     // Of the sources that are nearest to a node it takes the lowest: the numbers of the nodes follow the order of the solve, and the answer must not.
+    // That native code may answer too is said of every read out of an object nobody knows, so that source is named where no other is as near.
+    auto rankOf = [](uint8_t source) {
+        return source == 1 + static_cast<uint8_t>(ValueFlowUnknownSource::UndescribedNativeResult) ? std::numeric_limits<uint8_t>::max() : source;
+    };
     BitVector isInNextLevel(numberOfNodes);
     auto reach = [&](uint32_t from, uint32_t to) {
         uint8_t& source = m_unknownSourceOfNode[to];
@@ -3486,8 +3490,8 @@ void ValueFlowSolver::findUnknownSources(NOESCAPE const ScopedLambda<void()>& wh
             source = m_unknownSourceOfNode[from];
             isInNextLevel.quickSet(to);
             found.append(to);
-        } else if (isInNextLevel.quickGet(to))
-            source = std::min(source, m_unknownSourceOfNode[from]);
+        } else if (isInNextLevel.quickGet(to) && rankOf(m_unknownSourceOfNode[from]) < rankOf(source))
+            source = m_unknownSourceOfNode[from];
     };
     auto walk = [&] {
         for (size_t next = 0; next < numberOfConstantsFound; ++next) {

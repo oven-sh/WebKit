@@ -271,7 +271,8 @@ PassOutcome PassRunner::updateAnalyses(PassID id, const ProgramEditor& editor, P
     const PassDescriptor& descriptor = descriptorOf(id);
     if (editor.changedFunctions().isEmpty()) {
         analyses.invalidate({ }, editor, descriptor.editedFunctions, descriptor.effectsAddedByEdits);
-        return PassOutcome::Unchanged;
+        bool changedRecords = !editor.changedLayouts().isEmpty() || !editor.changedFields().isEmpty() || !editor.changedVariables().isEmpty();
+        return changedRecords ? PassOutcome::Changed : PassOutcome::Unchanged;
     }
     analyses.invalidate(descriptor.invalidatedResults, editor, descriptor.editedFunctions, descriptor.effectsAddedByEdits);
     return PassOutcome::Changed;

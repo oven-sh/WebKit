@@ -1402,6 +1402,10 @@ private:
             ValueSetID inside = mask.trustsInstancesOfRootClasses ? universe.membersInsideUnlessNewTargetDiffers(maker, m_program, type) : universe.membersSurelyInside(maker, m_program, type);
             linked.set = maker.intersect(linked.set, ValueSets::complement(inside));
         }
+        for (auto [builtin, module] : mask.outsideBuiltinsOfModules) {
+            if (ValueFlowObjectID object = universe.objectOf(builtin, module))
+                linked.set = maker.intersect(linked.set, ValueSets::complement(maker.of(object)));
+        }
         if (linked.familyObjects)
             linked.familyObjects = maker.intersect(linked.familyObjects, linked.set);
         return linked;

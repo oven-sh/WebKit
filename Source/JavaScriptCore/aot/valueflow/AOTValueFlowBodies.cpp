@@ -436,6 +436,8 @@ private:
         add(hasher, 0x5eed);
         for (TypeID type : mask.outside)
             add(hasher, type);
+        for (auto [builtin, module] : mask.outsideBuiltinsOfModules)
+            add(hasher, builtin.index(), module.index());
         return m_masks.intern(WTF::move(mask), hasher.hash());
     }
 
@@ -449,6 +451,7 @@ private:
 
     // Only a test turns something away.
     uint32_t maskOutside(TypeID type) { return internMask({ { }, { type }, ValueFlowMaskKind::Checked }); }
+    uint32_t maskOutside(BuiltinID builtin, ModuleID module) { return internMask({ { }, { }, ValueFlowMaskKind::Checked, false, { { builtin, module } } }); }
     uint32_t maskOutsideUnlessNewTargetDiffers(TypeID type) { return internMask({ { }, { type }, ValueFlowMaskKind::Checked, true }); }
 
     uint32_t maskOfTruthinessTest(EdgeSide side)
@@ -481,7 +484,12 @@ private:
             return all;
         };
         bool trustsInstancesOfRootClasses = m_body.masks[first].trustsInstancesOfRootClasses || m_body.masks[second].trustsInstancesOfRootClasses;
-        return internMask({ unite(m_body.masks[first].inside, m_body.masks[second].inside), unite(m_body.masks[first].outside, m_body.masks[second].outside), m_body.masks[first].kind, trustsInstancesOfRootClasses });
+        auto outsideBuiltinsOfModules = m_body.masks[first].outsideBuiltinsOfModules;
+        for (auto object : m_body.masks[second].outsideBuiltinsOfModules) {
+            if (!outsideBuiltinsOfModules.contains(object))
+                outsideBuiltinsOfModules.append(object);
+        }
+        return internMask({ unite(m_body.masks[first].inside, m_body.masks[second].inside), unite(m_body.masks[first].outside, m_body.masks[second].outside), m_body.masks[first].kind, trustsInstancesOfRootClasses, WTF::move(outsideBuiltinsOfModules) });
     }
 
     // The mask of a value that an operation or a branch lets through from one type to another: none where the type it comes from says as much.
@@ -732,6 +740,9 @@ private:
                     ValueID other = test.operand(result.operandIndex ? 0 : 1);
                     if (!isBehindCheck(other) && typeOf(other).isSingleValue())
                         mask = intersectMasks(mask, maskOutside(m_function.at(other).type));
+                    // A module has one object of each of these.
+                    else if (const Value& compared = m_function.at(other); compared.opcode == Opcode::ModuleBuiltin && isObjectKind(m_program.builtins().at(m_program.builtins().canonicalID(compared.builtin())).kind))
+                        mask = intersectMasks(mask, maskOutside(m_program.builtins().canonicalID(compared.builtin()), compared.module()));
                 } else if (restsOnCheck && test.opcode == Opcode::ToBoolean)
                     mask = maskOfTruthinessTest(result.side);
             }

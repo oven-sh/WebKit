@@ -174,6 +174,8 @@ void GroupRewriter::finishCreatedValues()
     Vector<ValueID>& narrowedValues = m_session.m_context.m_narrowedValues;
     if (m_expansion && function().at(m_group.root).opcode == Opcode::Parameter)
         narrowedValues.append(m_group.root);
+    if (m_follower && function().at(m_follower->id).opcode == Opcode::Parameter)
+        narrowedValues.append(m_follower->id);
 
     for (uint32_t index = m_firstCreatedValue; index < function().values.size(); ++index) {
         ValueID id(index);
@@ -203,7 +205,7 @@ void GroupRewriter::checkCreatedEntries()
     for (uint32_t index = m_firstCreatedValue; index < numberOfValues; ++index) {
         ValueID id(index);
         const Value& value = function().at(id);
-        if (value.opcode == Opcode::Parameter || isOnSlowPath.quickGet(index - m_firstCreatedValue))
+        if (value.opcode == Opcode::Parameter || isOnSlowPath.quickGet(index - m_firstCreatedValue) || m_copiesOfEarlierValues.contains(id))
             continue;
         checkReplacement(effects, function(), ReplacementSite { functionID, rootBlock(), id }, value, replaced, diagnostics);
     }
@@ -219,6 +221,8 @@ void GroupRewriter::didChangeOwnBlocks()
     if (!useLists)
         return;
     useLists->didChangeBlock(state().block);
+    if (m_follower)
+        useLists->didChangeBlock(m_follower->block);
     for (size_t index = m_firstCreatedBlock; index < function().blocks.size(); ++index)
         useLists->didChangeBlock(BlockID(index));
 }
@@ -233,6 +237,10 @@ void GroupRewriter::finish()
         function().edit(m_expansion->continuation, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator { };
         analyses().didChangeControlFlow(singleElementSpan(m_expansion->continuation));
         m_session.m_needsCompaction = true;
+    }
+    if (m_follower && m_follower->duplicatedTerminator) {
+        function().edit(m_follower->expansion.continuation, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator { };
+        analyses().didChangeControlFlow(singleElementSpan(m_follower->expansion.continuation));
     }
 
     if (isRootListed())

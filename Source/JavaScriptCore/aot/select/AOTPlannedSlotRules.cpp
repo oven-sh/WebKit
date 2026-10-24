@@ -34,12 +34,15 @@ struct PlannedSlotMatch {
     SelectionGroup group;
     Vector<LayoutSetID, 4> arms;
     bool typeListsReceivers { false };
+    ValueID follower;
+    bool followerIsOnlyReturned { false };
 };
 
 struct Arm {
     LayoutSetID receivers;
     ValueID object;
-    ValueID guard;
+    ValueID caseGuard;
+    ValueID previousGuard;
 };
 
 struct RepeatedTest {
@@ -181,6 +184,90 @@ static void repeatInFrontOfBranches(GroupRewriter& rewriter, const RepeatedTest&
         rewriter.eraseRoot();
 }
 
+// A store asks whether the slot is filled, then whether the value fits, and both go the same way when the answer is no. Asked the other way round, the test of the slot stands right in front of the store.
+static void testStoredValuesFirst(SelectionContext& context)
+{
+    const Program& program = context.program();
+    Function& function = context.pass().function;
+    FunctionAnalyses& analyses = context.analyses();
+    bool didChange = false;
+    for (ValueID id : context.candidates(Opcode::IsSlotFilled)) {
+        const Value& test = function.at(id);
+        if (context.slots().agreementOf(program, test.key(), test.receivers()).groups.size() < 2 || !context.isOnlyBranchedOn(id))
+            continue;
+
+        BlockID first = analyses.useLists().blockOf(id);
+        const Block& slotIsTested = function.at(first);
+        BlockID second = slotIsTested.terminator.taken().block;
+        const Block& valueIsTested = function.at(second);
+        if (slotIsTested.values.last() != id || valueIsTested.values.size() != 1 || valueIsTested.terminator.kind != TerminatorKind::Branch || valueIsTested.handler != slotIsTested.handler)
+            continue;
+        ValueID fits = valueIsTested.values.first();
+        BlockID third = valueIsTested.terminator.taken().block;
+        if (function.at(fits).opcode != Opcode::TypeTest || !context.isOnlyBranchedOn(fits) || slotIsTested.terminator.notTaken() != valueIsTested.terminator.notTaken())
+            continue;
+        if (analyses.cfg().incomingEdges(second).size() != 1 || analyses.cfg().incomingEdges(third).size() != 1)
+            continue;
+        if (!slotIsTested.terminator.taken().arguments.isEmpty() || !valueIsTested.terminator.taken().arguments.isEmpty() || !slotIsTested.terminator.notTaken().proofs.isEmpty())
+            continue;
+
+        Block& front = function.edit(first);
+        Block& middle = function.edit(second);
+        Block& behind = function.edit(third);
+        std::swap(front.values.last(), middle.values.last());
+        front.terminator.setConditionOperand(fits);
+        middle.terminator.setConditionOperand(id);
+        std::swap(front.terminator.taken().proofs, middle.terminator.taken().proofs);
+        std::swap(middle.parameters, behind.parameters);
+        didChange = true;
+        analyses.didChangeControlFlow();
+    }
+    if (didChange)
+        analyses.didChangeValues();
+}
+
+// An access to the slot that a test has just found filled. The arm that knows where the slot lies for the test knows it for the access.
+static ValueID findFollower(SelectionContext& context, ValueID id, const SlotAgreement& agreement)
+{
+    const Function& function = context.function();
+    FunctionAnalyses& analyses = context.analyses();
+    const Value& test = function.at(id);
+    if (provesOf(test.opcode) == Proof::None || !context.isOnlyBranchedOn(id))
+        return { };
+
+    const Block& from = function.at(analyses.useLists().blockOf(id));
+    const Target& taken = from.terminator.taken();
+    const Block& entered = function.at(taken.block);
+    if (!taken.arguments.isEmpty() || taken.proofs.size() != 1 || entered.values.isEmpty() || entered.handler != from.handler)
+        return { };
+    if (analyses.cfg().incomingEdges(taken.block).size() != 1)
+        return { };
+
+    size_t index = entered.values.findIf([&](ValueID earlier) {
+        Opcode opcode = function.at(earlier).opcode;
+        return opcode != Opcode::AllGuards && resultRuleOf(opcode) != ResultRule::Constant;
+    });
+    if (index == notFound)
+        return { };
+    ValueID follower = entered.values[index];
+    const Value& access = function.at(follower);
+    if (!isSlotOperation(access.opcode) || provesOf(access.opcode) != Proof::None || numberOfResultsOf(context.program(), function, access))
+        return { };
+    if (access.objectOperand() != test.objectOperand() || access.key() != test.key() || access.receivers() != test.receivers())
+        return { };
+
+    auto isUsedOnlyUpToFollower = [&](ValueID id) {
+        return std::ranges::all_of(analyses.useLists().usesOf(id), [&](const Use& use) {
+            return use.kind == Use::Kind::Operand && use.block == taken.block && entered.values.find(use.user) <= index;
+        });
+    };
+    if (!isUsedOnlyUpToFollower(entered.parameters[0]) || !std::ranges::all_of(entered.values.span().first(index), isUsedOnlyUpToFollower))
+        return { };
+    if (findsOffsetByShape(access.opcode, agreement) || !typeListsReceivers(context, access) || !typeListsReceivers(context, test))
+        return { };
+    return follower;
+}
+
 static void collectMatches(SelectionContext& context, Opcode opcode, ArmsOfAgreements& armsOfAgreements, Vector<PlannedSlotMatch>& matches)
 {
     const Program& program = context.program();
@@ -197,34 +284,60 @@ static void collectMatches(SelectionContext& context, Opcode opcode, ArmsOfAgree
         SelectionGroup group = groupOfOne(id);
         group.hasSlowPath = true;
         group.endsEveryArmInCopyOfRoot = true;
-        if (context.tryClaim(SelectionRuleID::PlannedSlots, group) != ClaimResult::Claimed)
+        ValueID follower = findFollower(context, id, agreement);
+        if (follower && context.tryClaimAll(SelectionRuleID::PlannedSlots, std::array { group, groupOfOne(follower) }) != ClaimResult::Claimed)
+            follower = { };
+        if (!follower && context.tryClaim(SelectionRuleID::PlannedSlots, group) != ClaimResult::Claimed)
             continue;
         const Vector<LayoutSetID, 4>& arms = armsOfAgreements.ensure(&agreement, [&] {
             return createArms(context, agreement);
         }).iterator->value;
-        matches.append(PlannedSlotMatch { WTF::move(group), arms, typeListsReceivers(context, access) });
+        matches.append(PlannedSlotMatch { WTF::move(group), arms, typeListsReceivers(context, access), follower, follower && context.isOnlyReturned(follower) });
     }
 }
 
 static ValueID appendArmGuard(IRBuilder& builder, ValueID caseGuard, ValueID previousGuard)
 {
-    if (!previousGuard)
-        return caseGuard;
+    if (!caseGuard || !previousGuard)
+        return caseGuard ? caseGuard : previousGuard;
     const ValueID guards[] { caseGuard, previousGuard };
     return builder.appendAllGuards(guards);
 }
 
-static void endArmInCopy(GroupRewriter& rewriter, const Arm& arm)
+static std::optional<ValueID> narrowToArm(IRBuilder& builder, ValueID copy, const Arm& arm, ValueID guard)
 {
-    IRBuilder& builder = rewriter.builder();
     Function& function = builder.function();
-    ValueID copy = rewriter.appendOriginals();
     Value& access = function.edit(copy);
     access.setObjectOperand(arm.object);
-    access.setGuardOperand(arm.guard);
+    access.setGuardOperand(guard);
     access.setReceivers(arm.receivers);
     access.type = resultTypeOf(builder.context().program, function, access, builder.types());
-    rewriter.endArm(resultRuleOf(access.opcode) != ResultRule::None ? std::optional(copy) : std::nullopt);
+    return resultRuleOf(access.opcode) != ResultRule::None ? std::optional(copy) : std::nullopt;
+}
+
+static void endArmInCopy(GroupRewriter& rewriter, const PlannedSlotMatch& match, const Arm& arm)
+{
+    IRBuilder& builder = rewriter.builder();
+    ValueID guard = appendArmGuard(builder, arm.caseGuard, arm.previousGuard);
+    std::optional<ValueID> result = narrowToArm(builder, rewriter.appendOriginals(), arm, guard);
+    if (!match.follower) {
+        rewriter.endArm(result);
+        return;
+    }
+
+    rewriter.endArmInFrontOfFollower(*result);
+    ValueID follower = rewriter.appendFollower();
+    guard = builder.function().at(follower).guardOperand();
+    RELEASE_ASSERT(!arm.caseGuard);
+    rewriter.endFollower(narrowToArm(builder, follower, arm, guard));
+}
+
+static void beginArms(GroupRewriter& rewriter, const PlannedSlotMatch& match)
+{
+    if (match.follower)
+        rewriter.beginArms(match.follower, match.followerIsOnlyReturned);
+    else
+        rewriter.beginArms();
 }
 
 // A failed test takes the layouts of its arm out of the type of the object. What has failed every test has the layouts of the last arm, so no arm is left for other objects.
@@ -235,16 +348,16 @@ static void dispatchOnType(GroupRewriter& rewriter, const PlannedSlotMatch& matc
     ValueID guard = original.guardOperand();
     BlockFrequency frequency = rewriter.function().at(rewriter.rootBlock()).frequency;
 
-    rewriter.beginArms();
+    beginArms(rewriter, match);
     IRBuilder& builder = rewriter.builder();
     for (LayoutSetID arm : match.arms.span().first(match.arms.size() - 1)) {
         ValueID test = builder.appendTypeTest(object, Type::forLayoutSet(arm));
         IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, OperandIndex::TypeTest::value, frequency, frequency);
-        endArmInCopy(rewriter, { arm, branch.provenOnTaken, guard });
+        endArmInCopy(rewriter, match, { arm, branch.provenOnTaken, { }, guard });
         builder.moveToEndOf(branch.notTaken);
         object = branch.provenOnNotTaken;
     }
-    endArmInCopy(rewriter, { match.arms.last(), object, guard });
+    endArmInCopy(rewriter, match, { match.arms.last(), object, { }, guard });
 }
 
 // A guard proves the layouts of the receiver, and only the case of a switch gives a guard for fewer of them: every arm is a case.
@@ -255,7 +368,7 @@ static void dispatchOnShape(GroupRewriter& rewriter, const PlannedSlotMatch& mat
     ValueID previousGuard = original.guardOperand();
     BlockFrequency frequency = rewriter.function().at(rewriter.rootBlock()).frequency;
 
-    rewriter.beginArms();
+    beginArms(rewriter, match);
     IRBuilder& builder = rewriter.builder();
     BlockID head = builder.currentBlock();
 
@@ -276,7 +389,7 @@ static void dispatchOnShape(GroupRewriter& rewriter, const PlannedSlotMatch& mat
 
     for (uint32_t index = 0; index < blocks.size(); ++index) {
         builder.moveToEndOf(blocks[index]);
-        endArmInCopy(rewriter, { match.arms[index], object, appendArmGuard(builder, caseGuards[index], previousGuard) });
+        endArmInCopy(rewriter, match, { match.arms[index], object, caseGuards[index], previousGuard });
     }
 
     builder.moveToEndOf(unreachable);
@@ -293,10 +406,16 @@ void selectPlannedSlots(SelectionContext& context)
         repeatInFrontOfBranches(rewriter, test);
     });
 
+    testStoredValuesFirst(context);
+
     Vector<PlannedSlotMatch> matches;
     ArmsOfAgreements armsOfAgreements;
-    for (Opcode opcode : slotOperations)
-        collectMatches(context, opcode, armsOfAgreements, matches);
+    for (bool isTest : { true, false }) {
+        for (Opcode opcode : slotOperations) {
+            if ((provesOf(opcode) != Proof::None) == isTest)
+                collectMatches(context, opcode, armsOfAgreements, matches);
+        }
+    }
 
     context.rewriteGroups(SelectionRuleID::PlannedSlots, matches, [](GroupRewriter& rewriter, const PlannedSlotMatch& match) {
         if (match.typeListsReceivers)

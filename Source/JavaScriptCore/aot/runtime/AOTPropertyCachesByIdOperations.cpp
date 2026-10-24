@@ -91,9 +91,9 @@ static void createPrototypeMembersOnChain(JSObject* receiver)
 }
 
 // The stub found the slot and left all the same: the name has a prefix, or it was read before. Whatever this closure answers, the slot stays as it is for the others.
-static bool hasSlotForEverySlimClosure(const NamedAccess& access, JSCell* base)
+static bool hasSlotForEveryClosure(const NamedAccess& access, JSCell* base)
 {
-    if (base->type() != SlimClosureType)
+    if (base->type() != SlimClosureType && base->type() != CompiledClosureType)
         return false;
     std::optional<Slot> slot = access.caches.tables().find(base->structureID(), { access.ident.impl(), access.number }, SlotAccess::Read);
     return slot && (slot->kind == Slot::Kind::ClosureName || slot->kind == Slot::Kind::ClosureLength);
@@ -111,7 +111,7 @@ JSValue getAndCache(const NamedAccess& access, JSValue base)
         access.caches.countMiss("read"_s, shouldFile, base, uid);
     // Nothing is filed about an object whose stars are pending: what it has is not made yet.
     Object* compiledBase = compiledObjectOrNull(base);
-    if (!shouldFile || (base.isCell() && hasSlotForEverySlimClosure(access, base.asCell())) || (compiledBase && hasPendingStars(*compiledBase))) {
+    if (!shouldFile || (base.isCell() && hasSlotForEveryClosure(access, base.asCell())) || (compiledBase && hasPendingStars(*compiledBase))) {
         JSValue result = getWithoutCaches(access.instance, base, ident);
         RETURN_IF_EXCEPTION(scope, { });
 #if !CPU(X86_64)
