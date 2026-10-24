@@ -16,6 +16,7 @@ llint_slow_path_get_by_val                   # the base is alive and keeps its S
 JSC::AOT::Modules::createTableOfExports      # the realm's own Structure, which the global object visits
 JSC::AOT::createAccessorPair                 # the same
 operationAOTDirectEval                       # the same: createAccessorPair() inlined
+operationAOTDefineOwnProperty                # the same: createDescriptorLiteral() inlined, with the realm's Structure of plain objects or of objects without a prototype
 JSC::AOT::tryAssignCollectedProperties       # the same
 ZN3JSC3AOT12_GLOBAL__N_115ClassDefinition3runENS_7JSValueES3_    # ClassDefinition::finish(): the class object and the prototype are alive and keep their Structures
 operationAOTResolvePromiseOrReturnResult     # the realm's own Structure of promises, which the global object visits
