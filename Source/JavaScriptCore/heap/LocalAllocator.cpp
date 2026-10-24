@@ -294,6 +294,8 @@ void* LocalAllocator::tryAllocateIn(MarkedBlock::Handle* block, size_t cellSize)
     
     // It's possible to stumble on a completely full block. Marking tries to retire these, but
     // that algorithm is racy and may forget to do it sometimes.
+    // Sweeping to a free list discards the newlyAllocated bits, so the allocated bit has to
+    // record that every cell in this block is live.
     if (m_freeList.allocationWillFail()) {
         ASSERT(block->isFreeListed());
         block->didConsumeFreeList();

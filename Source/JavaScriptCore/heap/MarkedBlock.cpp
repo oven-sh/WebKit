@@ -121,17 +121,6 @@ MarkedBlock::Header::Header(VM& vm, Handle& handle)
 
 MarkedBlock::Header::~Header() = default;
 
-void MarkedBlock::Handle::unsweepWithNoNewlyAllocated()
-{
-    RELEASE_ASSERT(m_isFreeListed);
-    m_isFreeListed = false;
-    Locker bitLocker { m_directory->bitvectorLock().mutate() };
-    m_directory->assertInUse(index());
-    ASSERT(!m_directory->isEmpty(index()));
-    ASSERT(!m_directory->isCanAllocate(index()));
-    m_directory->didFinishUsingBlock(bitLocker, this);
-}
-
 template<typename Word>
 static void fillWithEachNthBit(std::span<Word> words, size_t n, size_t start)
 {

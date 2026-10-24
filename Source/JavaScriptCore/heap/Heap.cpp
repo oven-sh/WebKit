@@ -1488,7 +1488,7 @@ static bool exchangeCanAllocate(MarkedBlock::Handle& handle, bool value)
 }
 
 // The live cells of a block that no allocator is in the middle of (no valid newlyAllocated bits): all of them if the block
-// was filled up since the last collection, otherwise the marked ones. This is MarkedBlock::Handle::isLive() outside of
+// is allocated, otherwise the marked ones. This is MarkedBlock::Handle::isLive() outside of
 // marking, decided once per block instead of once per cell.
 template<typename Func>
 static void forEachLiveCellOfSettledBlock(MarkedBlock::Handle& handle, const Func& func)

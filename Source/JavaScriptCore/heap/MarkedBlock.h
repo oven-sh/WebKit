@@ -170,8 +170,6 @@ public:
         template<typename DestroyFunc>
         void finishSweepKnowingHeapCellType(FreeList*, NOESCAPE const DestroyFunc&);
         
-        void unsweepWithNoNewlyAllocated();
-        
         inline void shrink();
         // Return interior OS pages that hold no live cell to the OS (after a sweep-only sweep); re-commit them
         // before the block is handed to an allocator or freed. No-op when an OS page is not smaller than a block.
