@@ -59,6 +59,8 @@ public:
     {
         dataLogLnIf(AirFixObviousSpillsInternal::verbose, "Code before fixObviousSpills:\n", m_code);
         computeAliases();
+        if (m_code.hasBeenCancelled())
+            return;
         fixCode();
     }
 
@@ -83,6 +85,8 @@ private:
 
         unsigned cursor = 0;
         while ((cursor = shouldVisit.findBit(cursor, true)) < numInOrder) {
+            if (m_code.hasBeenCancelled())
+                return;
             shouldVisit.quickClear(cursor);
             BasicBlock* block = reversePostOrder[cursor];
             ASSERT(notBottom.quickGet(block->index()));

@@ -136,6 +136,9 @@ public:
         }
 
         for (Value* value : m_procedure.values()) {
+            // Validation is diagnostic only, so a cancelled compile leaves it at once.
+            if (m_procedure.hasBeenCancelled()) [[unlikely]]
+                return;
             for (Value* child : value->children())
                 VALIDATE(child->type() != Void, ("At ", *value, "->", *child));
             switch (value->opcode()) {
@@ -998,6 +1001,8 @@ public:
             VALIDATE(variable->type() != Void, ("At ", *variable));
 
         for (BasicBlock* block : m_procedure) {
+            if (m_procedure.hasBeenCancelled()) [[unlikely]]
+                return;
             // We expect the predecessor list to be de-duplicated.
             UncheckedKeyHashSet<BasicBlock*> predecessors;
             for (BasicBlock* predecessor : block->predecessors())
@@ -1167,6 +1172,8 @@ private:
 
 void validate(Procedure& procedure, UTF8CStringView dumpBefore)
 {
+    if (procedure.hasBeenCancelled()) [[unlikely]]
+        return;
     Validater validater(procedure, dumpBefore);
     validater.run();
 }

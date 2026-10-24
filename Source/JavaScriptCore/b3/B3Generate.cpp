@@ -58,6 +58,8 @@ void prepareForGeneration(Procedure& procedure)
 {
     CompilerTimingScope timingScope("Total B3+Air"_s, "prepareForGeneration"_s);
     generateToAir(procedure);
+    if (procedure.hasBeenCancelled())
+        return;
     Air::prepareForGeneration(procedure.code());
 }
 
@@ -74,6 +76,11 @@ void generateToAir(Procedure& procedure)
         dataLog(tierName, "Initial B3:\n");
         dataLog(procedure);
     }
+    // A cancelled Procedure (see Procedure::hasBeenCancelled()) is abandoned at the next check. Each
+    // phase leaves the IR valid, so the checks sit between phases and the IR is never half-transformed.
+    if (procedure.hasBeenCancelled())
+        return;
+
     // We don't require the incoming IR to have predecessors computed.
     procedure.resetReachability();
 
@@ -88,9 +95,13 @@ void generateToAir(Procedure& procedure)
         if (Options::useB3SpecializeSelect())
             specializeSelect(procedure);
         reduceStrength(procedure, ReduceStrengthPass::Initial);
+        if (procedure.hasBeenCancelled())
+            return;
         if (Options::useB3HoistLoopInvariantValues())
             hoistLoopInvariantValues(procedure);
         eliminateCommonSubexpressions(procedure);
+        if (procedure.hasBeenCancelled())
+            return;
         eliminateDeadCode(procedure);
 
         // Wasm has br_table instruction, so intent of the switch is already represented
@@ -104,6 +115,8 @@ void generateToAir(Procedure& procedure)
         if (Options::useB3TailDup())
             duplicateTails(procedure);
         fixSSA(procedure);
+        if (procedure.hasBeenCancelled())
+            return;
         foldPathConstants(procedure);
         if (procedure.usesWasmGCStructAllocations() && Options::useB3EliminateWasmGCAllocations())
             eliminateWasmGCAllocations(procedure);
@@ -116,12 +129,17 @@ void generateToAir(Procedure& procedure)
     } else
         fixSSA(procedure);
 
+    if (procedure.hasBeenCancelled())
+        return;
+
     // This puts the IR in quirks mode.
     lowerMacros(procedure);
 
     if (procedure.optLevel() >= 2) {
         optimizeAssociativeExpressionTrees(procedure);
         reduceStrength(procedure, ReduceStrengthPass::Final);
+        if (procedure.hasBeenCancelled())
+            return;
 
         // FIXME: Add more optimizations here.
         // https://bugs.webkit.org/show_bug.cgi?id=150507
@@ -132,6 +150,8 @@ void generateToAir(Procedure& procedure)
     moveConstants(procedure);
     legalizeMemoryOffsets(procedure);
     eliminateDeadCode(procedure);
+    if (procedure.hasBeenCancelled())
+        return;
     if (Options::useB3CanonicalizePrePostIncrements() && procedure.optLevel() >= 2)
         canonicalizePrePostIncrements(procedure);
 
@@ -149,6 +169,8 @@ void generateToAir(Procedure& procedure)
     }
 
     lowerToAir(procedure);
+    if (procedure.hasBeenCancelled())
+        return;
     if (shouldDumpIR(procedure, B3Mode))
         procedure.setShouldDumpIR();
     procedure.freeUnneededB3ValuesAfterLowering();

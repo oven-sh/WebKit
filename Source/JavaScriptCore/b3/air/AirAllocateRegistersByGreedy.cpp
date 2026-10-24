@@ -951,20 +951,28 @@ public:
             IndexSet<Tmp::AbsolutelyIndexed<GP>> cannotSpillInPlaceGP;
             IndexSet<Tmp::AbsolutelyIndexed<FP>> cannotSpillInPlaceFP;
             buildLiveRanges(cannotSpillInPlaceGP, cannotSpillInPlaceFP);
+            if (m_code.hasBeenCancelled())
+                return;
             initSpillCosts<GP>(cannotSpillInPlaceGP);
             if (hasFPTmps)
                 initSpillCosts<FP>(cannotSpillInPlaceFP);
         }
         coalesceWithPinnedRegisters();
         coalesceTmps<GP>();
+        if (m_code.hasBeenCancelled())
+            return;
         if (hasFPTmps)
             coalesceTmps<FP>();
+        if (m_code.hasBeenCancelled())
+            return;
 
         dataLogLnIf(verbose() || shouldDumpFunction(), "Greedy register allocator: function ", m_code.proc().name(), " state before allocate registers:\n", *this, "IR:\n", m_code);
 
         allocateRegisters<GP>();
         if (hasFPTmps)
             allocateRegisters<FP>();
+        if (m_code.hasBeenCancelled())
+            return;
 
         insertFixupCode();
 
@@ -1322,6 +1330,8 @@ private:
         };
 
         TmpLiveness<bank> liveness(m_code);
+        if (m_code.hasBeenCancelled())
+            return;
         for (BasicBlock* block : m_code) {
             typename TmpLiveness<bank>::LocalCalc localCalc(liveness, block);
             for (unsigned instIndex = block->size(); instIndex--;) {
@@ -1341,6 +1351,8 @@ private:
     {
         CompilerTimingScope timingScope("Air"_s, "GreedyRegAlloc::buildLiveRanges"_s);
         UnifiedTmpLiveness liveness(m_code);
+        if (m_code.hasBeenCancelled())
+            return;
         TmpMap<Point> activeEnds(m_code);
 #if ASSERT_ENABLED
         UnifiedTmpLiveness::LiveAtHead assertOnlyLiveAtHead = liveness.liveAtHead();
@@ -1483,6 +1495,8 @@ private:
             BasicBlock* block = m_code[blockIndex];
             if (!block)
                 continue;
+            if (m_code.hasBeenCancelled())
+                return;
 
             Point positionOfHead = this->positionOfHead(block);
             Point positionOfTail = this->positionOfTail(block);
@@ -2008,6 +2022,8 @@ private:
         TmpGroupMap<bank> tmpToGroup(Tmp::indexEnd(m_code, bank), noGroup);
 
         buildCoalescingGroups<bank>(groups, tmpToGroup);
+        if (m_code.hasBeenCancelled())
+            return;
         validateCoalescing<bank>(groups, tmpToGroup);
         createGroupRepresentatives<bank>(groups);
         rewriteCoalescedTmps<bank>(groups, tmpToGroup);
@@ -2123,6 +2139,8 @@ private:
         };
 
         TmpLiveness<bank> liveness(m_code);
+        if (m_code.hasBeenCancelled())
+            return;
         for (BasicBlock* block : m_code) {
             typename TmpLiveness<bank>::LocalCalc localCalc(liveness, block);
             for (unsigned instIndex = block->size(); instIndex--;) {
@@ -2346,6 +2364,8 @@ private:
 
         do {
             while (!m_queue.isEmpty()) {
+                if (m_code.hasBeenCancelled())
+                    return;
                 auto entry = m_queue.dequeue();
                 Tmp tmp = entry.tmp();
                 ASSERT(tmp && tmp.bank() == bank);

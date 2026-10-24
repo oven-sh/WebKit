@@ -744,10 +744,13 @@ public:
 
                 // Every block an unreachable block dominates is unreachable too, and the whole region is
                 // deleted right after the walk, so only the Upsilons feeding Phis elsewhere matter.
-                if (m_blockState == BlockState::Unreachable)
-                    removeUpsilonsFromUnreachableBlock();
-                else
-                    reduceBlockStrength();
+                // A cancelled compile skips the reductions and lets the walk finish its bookkeeping.
+                if (!m_proc.hasBeenCancelled()) [[likely]] {
+                    if (m_blockState == BlockState::Unreachable)
+                        removeUpsilonsFromUnreachableBlock();
+                    else
+                        reduceBlockStrength();
+                }
 
                 if (m_trackWasmGCAccesses)
                     endWasmGCBlock(block);

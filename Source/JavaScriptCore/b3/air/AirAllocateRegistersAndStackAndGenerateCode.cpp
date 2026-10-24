@@ -400,6 +400,8 @@ void GenerateAndAllocateRegisters::prepareForGeneration()
 #endif
 
     m_liveness = makeUniqueWithoutFastMallocCheck<UnifiedTmpLiveness>(m_code);
+    if (m_code.hasBeenCancelled())
+        return;
 
     {
         buildLiveRanges(*m_liveness);
@@ -506,6 +508,8 @@ void GenerateAndAllocateRegisters::prepareForGeneration()
     {
         // Verify that lowerStackArgs didn't change Tmp liveness at the boundaries for the Tmps and Registers we model.
         UnifiedTmpLiveness liveness(m_code);
+        if (m_code.hasBeenCancelled())
+            return;
         for (BasicBlock* block : m_code) {
             auto assertLivenessAreEqual = [&] (auto a, auto b) {
                 UncheckedKeyHashSet<Tmp> livenessA;

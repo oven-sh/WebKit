@@ -60,7 +60,12 @@ bool eliminateDeadCodeImpl(Procedure& proc)
         }
     }
     for (;;) {
+        // Nothing is mutated before the fixpoint ends, so a cancelled compile can stop here.
+        if (proc.hasBeenCancelled())
+            return false;
         while (Value* value = worklist.pop()) {
+            if (proc.hasBeenCancelled())
+                return false;
             for (Value* child : value->children())
                 worklist.push(child);
         }
@@ -82,6 +87,10 @@ bool eliminateDeadCodeImpl(Procedure& proc)
     IndexSet<Variable*> liveVariables;
     
     for (BasicBlock* block : proc) {
+        // Each block is swept whole, so the IR stays valid. The variables are left alone: the ones
+        // the unswept blocks still use are not in liveVariables yet.
+        if (proc.hasBeenCancelled())
+            return changed;
         size_t sourceIndex = 0;
         size_t targetIndex = 0;
         while (sourceIndex < block->size()) {

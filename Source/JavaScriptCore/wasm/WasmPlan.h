@@ -32,6 +32,7 @@
 #include "WasmJS.h"
 #include "WasmModuleInformation.h"
 #include "WasmOMGIRGenerator.h"
+#include <atomic>
 #include <optional>
 #include <wtf/Bag.h>
 #include <wtf/CrossThreadCopier.h>
@@ -71,6 +72,12 @@ public:
     CompilationError error() const { return m_error; }
 
     [[nodiscard]] bool failed() const { return !m_errorMessage.isNull(); }
+    // Set once the plan fails or is cancelled (every VM that waited for it is gone). Readable from
+    // the compiling thread without the lock. The compile polls it between phases and inside its long
+    // fixpoints so a cancelled tier-up stops soon after, instead of running to the end for a result
+    // nobody can install.
+    bool hasBeenCancelled() const { return m_cancelled.load(std::memory_order_relaxed); }
+    const std::atomic<bool>* cancellationFlag() const { return &m_cancelled; }
     virtual bool hasWork() const = 0;
     virtual void work() = 0;
     virtual bool multiThreaded() const = 0;
@@ -102,6 +109,7 @@ protected:
     Vector<std::pair<VM*, CompletionTask>, 1> m_completionTasks WTF_GUARDED_BY_LOCK(m_lock);
 
     String m_errorMessage;
+    std::atomic<bool> m_cancelled { false };
     std::optional<FunctionCodeIndex> m_errorFunctionIndex;
     CompilationError m_error { CompilationError::Default };
 };
