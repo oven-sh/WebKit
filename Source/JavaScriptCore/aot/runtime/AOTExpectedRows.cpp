@@ -18,6 +18,7 @@
 #include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "CustomGetterSetter.h"
+#include "DeferTermination.h"
 #include "ErrorInstance.h"
 #include "JSCInlines.h"
 #include "JSMapInlines.h"
@@ -215,6 +216,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetPreparedPlans, EncodedJSValue, 
     DeferGCForAWhile deferGC(vm);
     JSCell*& kept = instance->realm.preparedPlans;
     if (!kept) [[unlikely]] {
+        DeferTerminationForAWhile deferTermination(vm);
         JSMap* map = JSMap::create(vm, globalObject->mapStructure());
         // A plan and a rule are JSON, which neither name is.
         map->set(globalObject, jsNontrivialString(vm, "deferReport"_s), JSFunction::create(vm, globalObject, 3, "deferReport"_s, deferReport, ImplementationVisibility::Private));
