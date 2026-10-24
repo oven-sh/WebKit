@@ -52,16 +52,16 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(DateConstructor, InternalFunction);
 JSObject* constructDate(JSGlobalObject*, JSValue newTarget, const ArgList&);
 JSValue dateNowImpl(JSGlobalObject*);
 
-// MakeDay takes a year or a month count of at most 12 * 2^53 in magnitude. Up to there floor(month / 12) is an
-// exact Number, so the 64-bit integer arithmetic below is MakeDay's. NaN fails the comparison too.
+// MakeDay takes a year or a month count of at most 12 * 2^53 in magnitude. Up to there the floor of the real quotient
+// month / 12 is an exact Number, so the 64-bit integer arithmetic below is MakeDay's. NaN fails the comparison too.
 constexpr static inline bool isYearOrMonthForMakeDay(double value)
 {
     return std::abs(value) <= 12 * (maxSafeInteger() + 1);
 }
 
 // https://tc39.es/ecma262/#sec-makeday steps 5 to 7, for a year and a month count that pass isYearOrMonthForMakeDay():
-// year becomes year + floor(month / 12), month becomes month modulo 12. The split is exact in 64-bit integers. In a
-// double, month / 12 rounds beyond 2^53. Returns false when the year does not fit an int32_t.
+// year becomes year + floor(month / 12), month becomes month modulo 12. 64-bit integers give the floor of the real
+// quotient. A double quotient has no fraction from 2^52. Returns false when the year does not fit an int32_t.
 constexpr static inline bool normalizeYearAndMonthForMakeDay(int64_t& year, int64_t& month)
 {
     if (month < 0 || month > 11) {

@@ -140,6 +140,12 @@ shouldBe(new Date(0).setUTCFullYear(2000 - 2 ** 53, 12 * 2 ** 53, 1), 9466848000
 shouldBe(Date.UTC(2000 - 2 ** 53, 12 * 2 ** 53, 1), 946684800000);
 shouldBe(new Date(0).setUTCFullYear(2000 + 2 ** 53, -12 * 2 ** 53, 1), 946684800000);
 shouldBe(Date.UTC(2000 + 2 ** 53, -12 * 2 ** 53, 1), 946684800000);
+// floor(month / 12) is the floor of the real quotient. A double quotient has no fraction from 2^52: for these month
+// counts it is the next integer, and the date would be 2001-09-01.
+shouldBe(new Date(0).setUTCFullYear(2000 - 2 ** 52, 12 * 2 ** 52 + 8, 1), 967766400000); // 2000-09-01
+shouldBe(Date.UTC(2000 - 2 ** 52, 12 * 2 ** 52 + 8, 1), 967766400000);
+shouldBe(new Date(0).setUTCFullYear(2002 + 2 ** 52, -12 * 2 ** 52 - 16, 1), 967766400000);
+shouldBe(Date.UTC(2002 + 2 ** 52, -12 * 2 ** 52 - 16, 1), 967766400000);
 // Beyond 12 * 2^53 ECMA-262 still defines a date: MakeDay rounds floor(month / 12) to a Number there (2000-05-01
 // and 1998-09-01 for these). NaN is JSC's limit, not the specification's.
 shouldBeNaN(new Date(0).setUTCFullYear(2000 - 2 ** 53, 12 * 2 ** 53 + 16, 1));
