@@ -1,0 +1,112 @@
+# `stream._read === ownRead`: the constructor stores `_read` only where its options name one, and the class has a method of that name. An object whose slot is empty has the method of its class:
+# behind the tests under which that holds the function goes on in its typed code with the closure of the method, and only an object that fails one of them leaves for the copy
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot
+# RUN: pipeline PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Stream" constructor=f1 fields=[{key="count" declared={type=anything}}, {key="_read" declared={type=anything}}]
+layout L1 kind=Instance name="Socket" constructor=f4 fields=[{key="count" declared={type=anything}}, {key="_read" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="_read"
+    v4 = FinishClass v1 layout=L0
+    v5 = Undefined
+    v6 = Construct v4, v4, v5
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="register" [isFreeName]
+    v9 = NewClosure function=f3
+    v10 = Call v8, -, v6, v9
+    v11 = Construct v4, v4, v10
+    v12 = NewClosure function=f4
+    v13 = NewClass v12 layout=L1
+    v14 = NewClosure function=f5
+    DefineMethod v13, v14 layout=L1 key="_read"
+    v16 = FinishClass v13 layout=L1
+    v17 = Construct v16, v16, v5
+    v18 = Construct v16, v16, v10
+    v19 = NewClosure function=f6
+    v20 = Call v8, -, v11, v17, v18, v19
+    Return v20
+}
+function f1 name="Stream" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Integer integer=0
+    PropSet v3, v4 key="count" mode=Strict
+    v6 = ToBoolean v1
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v3, v1 key="_read" mode=Strict
+    Jump -> next b2()
+  b2():
+    Return v3
+}
+function f2 name="_read" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+
+function f3 name="readOf" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="_read"
+    v2 = PropGet v0 key="count"
+    v3 = NewArray contents=anything
+    AppendElement v3, v1
+    AppendElement v3, v2
+    Return v3
+}
+# CHECK-LABEL: name="readOf"
+# CHECK: [[value]]: anything = GetSlot {{*}} key="_read"
+# CHECK-NEXT: Jump -> next [[behind]]([[value]])
+# CHECK: [[filled]]: boolean = IsSlotFilled [[object]] key="_read"
+# CHECK-NEXT: Branch [[filled]] -> taken [[read]](| 0), notTaken [[empty]]()
+# CHECK: [[empty]]():
+# CHECK-NEXT: = HasNoFieldOutsideSlot [[object]]
+# CHECK: = AreMembersUnchanged conditions=[{kind=MemberNotHidden layout=L0 key="_read"}]
+# CHECK: [[method]]: f2 = NewClosure function=f2 [isHeldByClosureTable]
+# CHECK-NEXT: Jump -> next [[behind]]([[method]])
+
+function f4 name="Socket" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    v4 = Integer integer=0
+    PropSet v3, v4 key="count" mode=Strict
+    v6 = ToBoolean v1
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v3, v1 key="_read" mode=Strict
+    Jump -> next b2()
+  b2():
+    Return v3
+}
+function f5 name="_read" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+
+# Two classes, each with its own method: a test of the layout stands in front of the first, and the second is for what is left.
+function f6 name="readOfEither" parameters=[{type=L0|L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|L1):
+    v1 = PropGet v0 key="_read"
+    v2 = PropGet v0 key="count"
+    v3 = NewArray contents=anything
+    AppendElement v3, v1
+    AppendElement v3, v2
+    Return v3
+}
+# CHECK-LABEL: name="readOfEither"
+# CHECK: [[filled2]]: boolean = IsSlotFilled [[object2]] key="_read"
+# CHECK-NEXT: Branch [[filled2]] -> taken [[read2]](| 0), notTaken [[empty2]]()
+# CHECK: [[empty2]]():
+# CHECK-NEXT: [[isStream]]: boolean = TypeTest [[object2]] testedType=L0
+# CHECK-NEXT: Branch [[isStream]] -> taken [[stream]](), notTaken [[socket]]()
+# CHECK: : f2 = NewClosure function=f2 [isHeldByClosureTable]
+# CHECK: : f5 = NewClosure function=f5 [isHeldByClosureTable]

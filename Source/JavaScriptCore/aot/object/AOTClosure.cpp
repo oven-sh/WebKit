@@ -121,7 +121,9 @@ JSC_DEFINE_HOST_FUNCTION(callClassConstructor, (JSGlobalObject* globalObject, Ca
 
 CallData Closure::getCallData(JSCell* cell)
 {
-    if (!uncheckedDowncast<Closure>(cell)->kind().isConstructor)
+    // The word of the closure says it as well as the record of its function, and lies in the cell.
+    ASSERT(uncheckedDowncast<Closure>(cell)->kind().isConstructor == !!(uncheckedDowncast<Closure>(cell)->entry() >> ClosureWord::isNotCallableBit));
+    if (!(uncheckedDowncast<Closure>(cell)->entry() >> ClosureWord::isNotCallableBit))
         return CallData::forCompiledCode(closureEntrypoint().taggedPtr(), cell->structure()->realm());
     CallData callData;
     callData.type = CallData::Type::Native;

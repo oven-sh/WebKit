@@ -98,9 +98,7 @@
 #include "ObjectConstructor.h"
 #include <wtf/UnalignedAccess.h>
 #endif
-#if ENABLE(AOT)
 #include "AOTBuiltinTable.h"
-#endif
 #include <bmalloc/BPlatform.h>
 #include <unicode/uversion.h>
 #include <wtf/ApproximateTime.h>

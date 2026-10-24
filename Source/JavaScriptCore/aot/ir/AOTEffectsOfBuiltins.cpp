@@ -51,7 +51,6 @@ Effects ownEffectsOf(const BuiltinOverload& overload)
 static void describeRuntimeFunction(const Program& program, RuntimeFunctionID id, EffectDescription& description)
 {
     const RuntimeFunctionEntry* entry = findRuntimeFunction(program, id);
-    // A function that flow never enters has lost its body and is not compiled. Whatever runs under its name is code the program does not hold.
     if (!entry || !entry->function || !program.at(entry->function).hasBody()) {
         description.addUnknownCode();
         return;
@@ -65,7 +64,6 @@ static constexpr Effects readsOfReachableObjects = [] {
     return effects;
 }();
 
-// A helper of the compiler that reaches built-ins only through intrinsics and locked members runs what its operands bring and nothing else.
 static bool isHelperDescribedByEntry(const Program& program, const BuiltinOverload& overload)
 {
     return overload.flags.contains(BuiltinOverloadFlag::RunsOnlyOperandCode) && program.builtins().at(overload.builtin).holder == Builtins::CompilerHelpers;
@@ -122,7 +120,6 @@ static OperandBehavior behaviorOfArgument(const BuiltinOverload& overload, unsig
     return declaredBehaviorOf(overload, BuiltinOperand::argument(index));
 }
 
-// An operand that is not passed is undefined. A receiver that is not named may be anything.
 static bool mayFailOnOperands(const Program& program, const BuiltinOverload& overload, const Type* receiver, std::span<const TypeID> arguments)
 {
     if (overload.receiver && mayFailOnOperand(program, *overload.receiver, receiver ? *receiver : program.at(TypeTable::anything)))
@@ -138,7 +135,6 @@ static bool mayFailOnOperands(const Program& program, const BuiltinOverload& ove
     });
 }
 
-// A rope is made flat for whoever reads its characters, whatever the capability of the entry says.
 static void describeConversion(const BuiltinParameter& parameter, const Type& operand, EffectDescription& description)
 {
     if (!readsCharactersOfString(parameter.conversion) || !(operand.primitives & Primitive::String))
@@ -346,7 +342,6 @@ static bool createsValidatedResult(const Program& program, BuiltinOverloadID ove
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// SelectTypedResults has to replace such a call.
 void describeTypedResult(const Program& program, BuiltinOverloadID overload, ExpectedResultID expectedResult, EffectDescription& description)
 {
     if (!createsValidatedResult(program, overload, expectedResult))
@@ -372,13 +367,11 @@ static void describeInline(const Program& program, const Function& function, con
     const Type* receiver = receiverTypeOf(program, types);
     if (hasEffectsOfOverload(builtin)) {
         describeOverload(program, call.overload, call.form, receiver, types.arguments.span(), description);
-        // Inline code enters no function. The call on its miss edge does.
         description.slowPathFunctions.clear();
         return;
     }
 
     const BuiltinOverload& overload = program.builtins().at(call.overload);
-    // Inline code is the entry in another form: it throws for no reason that the entry has not.
     Effects bound = declaredBoundOf(builtin);
     if (bound.mayThrow && overload.onlyPropagatesErrors())
         bound.mayThrow = ThrowEffect::onlyForLackOfMemory();

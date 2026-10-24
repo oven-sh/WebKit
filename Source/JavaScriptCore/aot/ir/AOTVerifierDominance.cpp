@@ -65,7 +65,6 @@ void FunctionVerifier::verifyUsesOf(ValueID definition)
     if (uses.empty())
         return;
 
-    // What FunctionAnalyses::dominates() asks about the definition is the same for all its uses.
     const CFG& cfg = analyses().cfg();
     ValueLocation location = useLists.locationOf(definition);
     auto dominates = [&](ProgramPoint point) {
@@ -95,7 +94,6 @@ void FunctionVerifier::verifyUsesOf(ValueID definition)
             fail(InternalErrorKind::UseNotDominated, use.block, reportedValue, definition.index());
             return;
         }
-        // Only a listed value dominates a use, and the structure step has checked the opcode of every listed value.
         if (!definitionHasResult) {
             fail(InternalErrorKind::OperandTypeMismatch, use.block, reportedValue, definition.index());
             return;
@@ -144,7 +142,6 @@ void FunctionVerifier::verifyLoopMarks()
             markedBlocks.quickSet(block.index());
     }
 
-    // Edges into a marked block stay: a block without successors is on no cycle.
     StronglyConnectedComponents components = computeStronglyConnectedComponents(cfg.numNodes(), [&](unsigned blockIndex) -> std::span<const BlockID> {
         if (markedBlocks.quickGet(blockIndex))
             return { };

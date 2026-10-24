@@ -194,24 +194,7 @@ list(APPEND JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
 # Written by aot-source-lists.ts: every .cpp under aot/tests/ but AOTShell.cpp, every AOT*TestCommands.cpp, and what else is there for tests alone: the runs of
 # single passes, the dumps that only test commands print. Linked into testaot only, with JavaScriptCore_AOT_SCHEMA_GENERATED_TEST_SOURCES.
 set(JavaScriptCore_AOT_TEST_SOURCES
-    aot/analysis/AOTAnalysisTestCommands.cpp
-    aot/analysis/AOTFunctionAnalysesTestCommands.cpp
-    aot/analysis/AOTGuardTestCommands.cpp
-    aot/analysis/AOTPropertyAccessTestCommands.cpp
-    aot/codegen/AOTCodeGeneratorTestCommands.cpp
-    aot/codegen/AOTCollectorTestCommands.cpp
-    aot/codegen/AOTGeneratedCodeTestCommands.cpp
-    aot/codegen/AOTValidationTestCommands.cpp
-    aot/passes/AOTPassTestCommands.cpp
-    aot/passes/AOTPlaceTypeTestsTestCommands.cpp
-    aot/pipeline/AOTPipelineTesting.cpp
-    aot/select/AOTSelectionFormTestCommands.cpp
-    aot/select/AOTSelectionGroupTestCommands.cpp
-    aot/select/AOTSelectionTestCommands.cpp
-    aot/support/AOTDiagnosticTestCommands.cpp
-    aot/support/AOTSupportTestCommands.cpp
-    aot/support/AOTThreadTestCommands.cpp
-    aot/support/AOTTypeArenaTestCommands.cpp
+    aot/tests/AOTAnalysisTestCommands.cpp
     aot/tests/AOTArrayTests.cpp
     aot/tests/AOTArrivalCountTests.cpp
     aot/tests/AOTAssignmentPlanTests.cpp
@@ -235,7 +218,9 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTClassMemberOrderTests.cpp
     aot/tests/AOTClassWithoutInstanceTestTests.cpp
     aot/tests/AOTClosedWorldTests.cpp
+    aot/tests/AOTCodeGeneratorTestCommands.cpp
     aot/tests/AOTCodeUnitTests.cpp
+    aot/tests/AOTCollectorTestCommands.cpp
     aot/tests/AOTCollectorTests.cpp
     aot/tests/AOTCompactStorageTests.cpp
     aot/tests/AOTCompactTableTests.cpp
@@ -246,6 +231,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTCoroutineJobTests.cpp
     aot/tests/AOTDataBuilderTests.cpp
     aot/tests/AOTDeferredClosureProgramTests.cpp
+    aot/tests/AOTDiagnosticTestCommands.cpp
     aot/tests/AOTDictionaryAccessByNameProgramTests.cpp
     aot/tests/AOTDictionaryExtraPropertiesTests.cpp
     aot/tests/AOTDriverTests.cpp
@@ -256,13 +242,20 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTFFIStubTests.cpp
     aot/tests/AOTFalseTypeProgramTests.cpp
     aot/tests/AOTFieldMoveTests.cpp
+    aot/tests/AOTFlowApplyTestCommands.cpp
+    aot/tests/AOTFlowReportTestCommands.cpp
+    aot/tests/AOTFlowResultsDump.cpp
     aot/tests/AOTFlowResultsTests.cpp
+    aot/tests/AOTFlowTestCommands.cpp
     aot/tests/AOTFlowWorkLimitProgramTests.cpp
     aot/tests/AOTForInExpansionProgramTests.cpp
     aot/tests/AOTFrameAllocationTestCommands.cpp
     aot/tests/AOTFrameCellProgramTests.cpp
+    aot/tests/AOTFunctionAnalysesTestCommands.cpp
+    aot/tests/AOTGeneratedCodeTestCommands.cpp
     aot/tests/AOTGlobalBindingProgramTests.cpp
     aot/tests/AOTGlobalProxyReadProgramTests.cpp
+    aot/tests/AOTGuardTestCommands.cpp
     aot/tests/AOTHashedSlotTableTests.cpp
     aot/tests/AOTHeapCageTests.cpp
     aot/tests/AOTHeapRememberedSlotTests.cpp
@@ -328,7 +321,10 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTOperationScopeTests.cpp
     aot/tests/AOTOptionWordTests.cpp
     aot/tests/AOTParsedOptionalMemberTests.cpp
+    aot/tests/AOTPassTestCommands.cpp
     aot/tests/AOTPipelineTestCommands.cpp
+    aot/tests/AOTPipelineTesting.cpp
+    aot/tests/AOTPlaceTypeTestsTestCommands.cpp
     aot/tests/AOTPlacementDump.cpp
     aot/tests/AOTPlacementTestCommands.cpp
     aot/tests/AOTPrivateAccessorProgramTests.cpp
@@ -343,6 +339,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTProgramSubcommands.cpp
     aot/tests/AOTProgramTableTestCommands.cpp
     aot/tests/AOTProofValidationTests.cpp
+    aot/tests/AOTPropertyAccessTestCommands.cpp
     aot/tests/AOTPropertyAttributeTests.cpp
     aot/tests/AOTPropertyLookupTableCollectionTests.cpp
     aot/tests/AOTPropertyLookupTableTests.cpp
@@ -368,6 +365,9 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTRuntimeReporterTests.cpp
     aot/tests/AOTRuntimeTypeTests.cpp
     aot/tests/AOTSavedFrameTests.cpp
+    aot/tests/AOTSelectionFormTestCommands.cpp
+    aot/tests/AOTSelectionGroupTestCommands.cpp
+    aot/tests/AOTSelectionTestCommands.cpp
     aot/tests/AOTSharingModeAndNamespaceTests.cpp
     aot/tests/AOTSiteCacheFillTests.cpp
     aot/tests/AOTSlimClosureTests.cpp
@@ -399,6 +399,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTStubTests.cpp
     aot/tests/AOTStubValueTests.cpp
     aot/tests/AOTStubVectorGrowthTests.cpp
+    aot/tests/AOTSupportTestCommands.cpp
     aot/tests/AOTSupportTests.cpp
     aot/tests/AOTTableInImageTests.cpp
     aot/tests/AOTTableWriterTests.cpp
@@ -409,12 +410,21 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTTestRunner.cpp
     aot/tests/AOTThisAllocationProgramTests.cpp
     aot/tests/AOTThisAllocationTests.cpp
+    aot/tests/AOTThreadTestCommands.cpp
+    aot/tests/AOTTypeArenaTestCommands.cpp
     aot/tests/AOTTypeArenaTests.cpp
     aot/tests/AOTTypeErrorMessageTests.cpp
     aot/tests/AOTTypeTestCommands.cpp
     aot/tests/AOTTypedResultProgramTests.cpp
     aot/tests/AOTUnwindingTests.cpp
     aot/tests/AOTValidatedValueTests.cpp
+    aot/tests/AOTValidationTestCommands.cpp
+    aot/tests/AOTValueFlowBodiesTestCommands.cpp
+    aot/tests/AOTValueFlowFamiliesTestCommands.cpp
+    aot/tests/AOTValueFlowResultsTestCommands.cpp
+    aot/tests/AOTValueFlowSolveTestCommands.cpp
+    aot/tests/AOTValueFlowTestCommands.cpp
+    aot/tests/AOTValueFlowWhyTestCommands.cpp
     aot/tests/AOTVerifierTests.cpp
     aot/tests/AOTWaiterOrderProgramTests.cpp
     aot/tests/AOTWebAssemblyImageTests.cpp
@@ -434,16 +444,6 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/unit/ResultNodeTests.cpp
     aot/tests/unit/ValidationPlanTextTests.cpp
     aot/tests/valueflow/AOTValueFlowCoreTests.cpp
-    aot/valueflow/AOTFlowApplyTestCommands.cpp
-    aot/valueflow/AOTFlowReportTestCommands.cpp
-    aot/valueflow/AOTFlowResultsDump.cpp
-    aot/valueflow/AOTFlowTestCommands.cpp
-    aot/valueflow/AOTValueFlowBodiesTestCommands.cpp
-    aot/valueflow/AOTValueFlowFamiliesTestCommands.cpp
-    aot/valueflow/AOTValueFlowResultsTestCommands.cpp
-    aot/valueflow/AOTValueFlowSolveTestCommands.cpp
-    aot/valueflow/AOTValueFlowTestCommands.cpp
-    aot/valueflow/AOTValueFlowWhyTestCommands.cpp
 )
 
 # Linked into every program but testaot, where AOTRemovableFeatureTests.cpp defines the same symbols.

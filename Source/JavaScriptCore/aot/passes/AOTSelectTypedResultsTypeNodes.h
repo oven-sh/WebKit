@@ -8,7 +8,6 @@
 #if ENABLE(AOT)
 
 #include "AOTSelectTypedResultsNodes.h"
-#include "AOTVector.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -19,10 +18,8 @@ struct TypeAlternative {
     TypeID contents;
 };
 
-TypeID expectationOf(const DeclaredType&);
+inline TypeID expectationOf(const DeclaredType& declared) { return declared.type; }
 Vector<TypeAlternative, 4> alternativesOf(const Program&, TypeID);
-Vector<LayoutID, 4> headLayoutsOf(const Program&, const Type&);
-ResultNode describeTypeNode(const Program&, TypeID, uint32_t part);
 
 } } } // namespace JSC::AOT::Typed
 

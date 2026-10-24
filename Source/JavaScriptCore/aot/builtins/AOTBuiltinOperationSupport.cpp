@@ -41,7 +41,6 @@ static JSValue callInEngineOn(Instance* instance, BuiltinID function, JSValue re
         list.append(second);
     if (third)
         list.append(third);
-    // Where the stack has no room for the call, what it answers is not empty.
     JSValue result = call(globalObject, callee, callData, receiver, list);
     RETURN_IF_EXCEPTION(scope, { });
     return result;

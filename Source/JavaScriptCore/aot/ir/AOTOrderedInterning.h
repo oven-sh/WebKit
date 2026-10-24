@@ -16,7 +16,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Interns a batch of canonical records on all threads.
 template<typename Record, typename RecordID, typename Table>
 class OrderedInterning {
     WTF_MAKE_NONCOPYABLE(OrderedInterning);
@@ -34,9 +33,7 @@ public:
 
     void setHash(size_t position, uint32_t hash) { m_hashes[position] = hash; }
 
-    // After classify(): the id of an equal record that the table had before the batch, if any.
     RecordID existingID(size_t position) const { return m_ids[position]; }
-    // After classify(), without an existingID(): the same number for equal records, and a position of the batch.
     uint32_t equivalenceClass(size_t position) const { return m_classes[position]; }
 
     void classifyAll()
@@ -94,7 +91,6 @@ public:
         });
     }
 
-    // Call once, after every position has been classified. Afterwards idAt() is final for every position.
     void assignIDs()
     {
         RELEASE_ASSERT(!m_hasAssignedIDs);
@@ -139,11 +135,9 @@ public:
     }
 
     RecordID idAt(size_t position) const { return m_ids[position]; }
-    // After assignIDs(): whether commit() moves this record into the table.
     bool isNew(size_t position) const { return m_ids[position].index() >= m_firstNewID && isFirstInClass(position); }
     Vector<RecordID> takeIDs() { return WTF::move(m_ids); }
 
-    // Moves the new records into the table. Their hashes must be those of the records as they are now.
     void commit()
     {
         RELEASE_ASSERT(m_hasAssignedIDs);
@@ -234,7 +228,6 @@ private:
     bool m_hasAssignedIDs { false };
 };
 
-// The records must be canonical.
 template<typename Record, typename RecordID>
 Vector<RecordID> internAllInOrder(TypeTable& types, const ParallelLoops& loops, std::span<Record> records)
 {

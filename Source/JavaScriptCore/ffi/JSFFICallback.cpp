@@ -40,9 +40,7 @@
 #include <wtf/RawPointer.h>
 #include <wtf/text/MakeString.h>
 
-#if ENABLE(AOT)
 #include "AOTRuntimeCounters.h"
-#endif
 
 namespace JSC {
 

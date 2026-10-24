@@ -1001,6 +1001,8 @@ static void (*thunkBesideCompiledCode(Intrinsic intrinsic))()
     switch (intrinsic) {
     case CharCodeAtIntrinsic:
         return llint_aot_char_code_at_thunk;
+    case StringPrototypeIndexOfIntrinsic:
+        return llint_aot_string_index_of_thunk;
     case BoundFunctionCallIntrinsic:
         return llint_aot_bound_function_call_thunk;
     case GlobalIsNaNIntrinsic:

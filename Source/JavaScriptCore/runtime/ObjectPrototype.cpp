@@ -33,9 +33,7 @@
 #include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #endif
 
-#if ENABLE(AOT)
 #include "AOTPropertyWalk.h"
-#endif
 
 namespace JSC {
 

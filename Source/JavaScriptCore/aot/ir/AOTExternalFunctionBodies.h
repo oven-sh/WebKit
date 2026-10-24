@@ -33,7 +33,6 @@ enum class RemappedIDKind : uint32_t {
 };
 constexpr size_t numberOfRemappedIDKinds = 12;
 
-// Indexed by unit-local id. An entry is the program id plus one, or zero if the linker dropped the item.
 struct IDRemapTable {
     const uint32_t* entries;
     size_t size;
@@ -49,7 +48,6 @@ struct ExternalFunctionBody {
     uint32_t unitIndex;
 };
 
-// The code of each function lies outside the program's bytes. Code and record of a function hold the ids of its unit, but for the record's function types.
 struct ExternalFunctionBodies {
     const ExternalFunctionBody* bodies;
     size_t bodyCount;

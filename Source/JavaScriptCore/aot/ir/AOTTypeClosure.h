@@ -12,7 +12,6 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 bool includesData(const Program&, const Type&, const DataNode&);
-// The run time stores the members of constant data without a test.
 void expectFieldsFilledWithOtherData(Program&, BuildContext&);
 
 } } } // namespace JSC::AOT::Typed

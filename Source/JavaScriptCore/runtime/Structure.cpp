@@ -40,12 +40,10 @@
 #include <wtf/NeverDestroyed.h>
 #include <wtf/RefPtr.h>
 
-#if ENABLE(AOT)
 #include "AOTAllocationCounts.h"
 #include "AOTCompiledStructure.h"
 #include "AOTPropertyWalk.h"
 #include "AOTRuntimeHooks.h"
-#endif
 
 #define DUMP_STRUCTURE_ID_STATISTICS 0
 

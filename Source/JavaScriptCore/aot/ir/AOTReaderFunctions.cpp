@@ -42,7 +42,6 @@ Failure BodyDecoder::run()
     }
 
     m_function.editAllBlocks().grow(m_wire.blockCount);
-    // A value is constructed with its opcode when its turn comes: the ids go up by one.
     m_function.editAllValues().reserveInitialCapacity(m_wire.valueCount + m_numberOfChecks);
     for (uint32_t index = 0; index < m_wire.blockCount && !hasFailed(); ++index)
         decodeBlock(BlockID(index));
@@ -59,7 +58,6 @@ void BodyDecoder::fail(InternalErrorKind kind)
     if (hasFailed())
         return;
     m_failure = InternalError { .kind = kind, .function = m_id, .block = m_block, .value = m_value, .count = m_id.index() };
-    // No word is left, so whatever still runs reads zeros and empty lists.
     m_offset = m_code.size();
 }
 
@@ -132,7 +130,6 @@ ValueID BodyDecoder::valueID(uint32_t word)
     return { };
 }
 
-// The parameters of the entry come first, so the number of such a value is its place among them.
 void BodyDecoder::setParametersCheckedAtEntry(std::span<const unsigned> checkedParameters)
 {
     if (checkedParameters.empty())
@@ -258,7 +255,6 @@ void BodyDecoder::decodeValue(Block& block)
     block.values.append(id);
 }
 
-// A family begins at its allocations.
 void BodyDecoder::checkConvertedAllocation(const Value& conversion)
 {
     ValueID operand = conversion.valueOperand();
@@ -331,7 +327,6 @@ Vector<Failure> Reader::readFunctions()
     RELEASE_ASSERT(!m_externalBodies || m_externalBodies->bodyCount == m_sections.functions.size());
     size_t numberOfFunctions = m_sections.functions.size();
     Vector<Failure> failures((numberOfFunctions + functionsPerChunk - 1) / functionsPerChunk);
-    // What the threads see is united and sorted, so it does not matter which thread reads which function.
     Vector<Program::BodiesAsRead> seenByWorkers(m_build.parallelLoops().width());
     forEachIndexInParallel(m_build.parallelLoops(), static_cast<unsigned>(failures.size()), [&](unsigned chunk, unsigned worker) {
         size_t end = std::min(numberOfFunctions, (static_cast<size_t>(chunk) + 1) * functionsPerChunk);
@@ -350,7 +345,6 @@ Vector<Failure> Reader::readFunctions()
             }
             if (m_layoutUses)
                 m_layoutUses->collect(function, worker);
-            // The layouts that a long expectation names count as named.
             if (m_preparesFunctionsForTyping && m_longExpectations->hasAny())
                 m_longExpectations->forgetInBodyOf(function);
         }
@@ -368,7 +362,6 @@ Vector<Failure> Reader::readFunctions()
     return failures;
 }
 
-// The linker leaves the record as the file's lowering made it. It adds the function types, which no file knows, with their program ids.
 static void readRecordWithIDsOfUnit(RecordChecker& checker, const Wire::Function& wire, const UnitIDRemap& remap, FunctionRecord& record)
 {
     Wire::Function withoutFunctionTypes = wire;
@@ -422,7 +415,6 @@ Failure Reader::readFunction(uint32_t index, Function& function, SeenInBody& see
         seen.directCallees = decoder.takeDirectCallees();
     }
     if (seen.namesObjectCreate && !checkedParameters.isEmpty()) {
-        // The pass adds the checks, behind the values that are added first, so that each value gets the number it has always got.
         checkedParameters.clear();
         function.editAllBlocks().clear();
         function.editAllValues().clear();

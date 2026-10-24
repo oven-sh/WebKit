@@ -29,6 +29,7 @@ struct TypedResultTarget {
 
 TypedResultForm typedResultFormOf(const Program&, const Value& call);
 ValueID typedResultSourceOf(const Program&, const Value& call);
+std::optional<uint32_t> indexOfAwaitedOperand(const Value&);
 
 class HeadLayoutsOfFamilies {
     WTF_MAKE_NONCOPYABLE(HeadLayoutsOfFamilies);
@@ -43,9 +44,7 @@ private:
 };
 
 TypeID findTypeOfTypedResultTarget(const Program&, const Function&, const UseLists&, ValueID call);
-TypedResultTarget findTypedResultTarget(const Program&, const Function&, const UseLists&, ValueID call, size_t maxNumberOfLayouts = std::numeric_limits<size_t>::max(), const HeadLayoutsOfFamilies* = nullptr);
-
-Vector<LayoutID, 4> layoutsReachedBy(const Program&, TypeID, size_t maxNumberOfLayouts = std::numeric_limits<size_t>::max(), const HeadLayoutsOfFamilies* = nullptr);
+TypedResultTarget findTypedResultTarget(const Program&, const Function&, const UseLists&, ValueID call, size_t maxNumberOfLayouts, const HeadLayoutsOfFamilies*);
 void forEachLayoutReachedBy(const Program&, TypeID, const HeadLayoutsOfFamilies*, const ScopedLambda<IterationStatus(LayoutID)>&);
 
 } } } // namespace JSC::AOT::Typed

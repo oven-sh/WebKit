@@ -53,7 +53,6 @@ static bool isOnlyReturned(std::span<const Use> uses)
     });
 }
 
-// An expected type is set where it says more than the type does.
 static bool hasExpectedTypeInsideType(const Program& program, const Value& value)
 {
     TypeID expectedID = value.expected();
@@ -148,7 +147,6 @@ void FunctionVerifier::verifyTypes()
             return;
 
         verifyOperands(blockID, block.terminator);
-        // A join takes in what the code behind a never value hands on, so until that code is cut the returned value may be typed wider than the result.
         if (!hasFailed() && block.terminator.kind == TerminatorKind::Return && !mayHaveCodeAfterNever)
             verifyReturn(blockID, block.terminator);
         if (!hasFailed() && !mayHaveCodeAfterNever)
@@ -163,7 +161,6 @@ void FunctionVerifier::verifyOwnType(BlockID block, ValueID id, const Value& val
     const Type& stored = typeOf(id);
     Type computed = computeResultType(typing(), value);
     computed.canonicalize();
-    // A pass is verified before what its arena has interned is merged, and another arena gives the same list of layouts another id.
     bool isAsStored = computed == stored || computed == typing().types.adopt(stored);
     if ((!isAsStored && (!isOptimizing() || !computed.isSubsetOf(stored, m_program))) || !hasExpectedTypeInsideType(m_program, value)) {
         fail(InternalErrorKind::TypeOutOfDate, block, id);
@@ -317,7 +314,6 @@ void FunctionVerifier::verifyRequiredTypes(BlockID block, ValueID id, const Valu
     value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
         if (hasFailed() || value.operandKind(operandIndex) != OperandKind::Declared)
             return;
-        // Nothing passes a check for `never`: what stands behind it runs in the generic version alone, and its result keeps the type of the source.
         const Value& definition = m_function.at(operand);
         if (definition.opcode == Opcode::Check && context.types.at(definition.castType()).isNever())
             return;
@@ -350,7 +346,6 @@ void FunctionVerifier::verifyReturn(BlockID block, const Terminator& terminator)
     ValueID returned = terminator.valueOperand();
     std::optional<uint32_t> numberOfReturnedResults = returned ? numberOfResultsOf(m_program, m_function, m_function.at(returned)) : std::nullopt;
 
-    // The type of an expected result bounds nothing that is returned.
     TypingContext context = typing();
     bool returnsInnerValue = m_function.isUnsplitCoroutine();
     if (!returnsInnerValue && m_function.results.size() != 1) {
@@ -423,7 +418,6 @@ static LayoutID findLayoutFilledOutsideFieldTypes(const Program& program, const 
     return found;
 }
 
-// The slot of a field holds values of the field's type, and the run time stores the members of constant data without a test.
 void ProgramVerifier::verifyDataTypes()
 {
     Vector<InternalError> errors = collectInParallel<InternalError>(m_build.parallelLoops(), m_program.data.size(), [&](unsigned index, Vector<InternalError>& found) {

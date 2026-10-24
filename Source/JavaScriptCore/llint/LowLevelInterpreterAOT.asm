@@ -1281,13 +1281,23 @@ aotOp(op_new_promise, OpNewPromise, macro (size, get, dispatch, metadata, return
     jumpToOrdinaryHandler(size, op_new_promise)
 end)
 
-# JSValue::toThisSlowCase(): strict code takes a primitive as it is.
+# JSValue::toThisSlowCase(): strict code takes a primitive as it is, sloppy code the global `this` for undefined and null.
 aotOp(op_to_this, OpToThis, macro (size, get, dispatch, metadata, return)
-    get(m_srcDst, t0)
-    loadq [cfr, t0, 8], t0
+    get(m_srcDst, t1)
+    loadq [cfr, t1, 8], t0
     btqz t0, notCellMask, .ordinary
-    getu(size, OpToThis, m_ecmaMode, t0)
-    bineq t0, constexpr ECMAMode::StrictMode, .ordinary
+    getu(size, OpToThis, m_ecmaMode, t2)
+    bineq t2, constexpr ECMAMode::StrictMode, .sloppy
+    dispatch()
+
+    # Sloppy code called without a receiver.
+.sloppy:
+    andq ~TagUndefined, t0
+    bqneq t0, ValueNull, .ordinary
+    loadp CodeBlock[cfr], t0
+    loadp CodeBlock::m_globalObject[t0], t0
+    loadp JSGlobalObject::m_globalThis[t0], t0
+    storeq t0, [cfr, t1, 8]
     dispatch()
 
 .ordinary:
@@ -2059,6 +2069,56 @@ _llint_aot_char_code_at_thunk:
     jmp .hasCharacters
 
 .hostFunction:
+    jmp _llint_native_call_trampoline
+
+# The same for String.prototype.indexOf: one character of one byte looked for in a whole string of such characters, from the start or from an int32 that is not negative: text that is made at run time to
+# take a URL apart asks for this. Everything else is the host function's.
+global _llint_aot_string_index_of_thunk
+_llint_aot_string_index_of_thunk:
+    loadi CalleeFrameAtEntry + ArgumentCountIncludingThis + LowWordOffset[sp], t0
+    bib t0, 2, .indexOfIsHostFunctions
+    loadq CalleeFrameAtEntry + ThisArgumentOffset[sp], t3
+    loadq CalleeFrameAtEntry + FirstArgumentOffset[sp], t2
+    move constexpr JSValue::NotCellMask, t1
+    btqnz t3, t1, .indexOfIsHostFunctions
+    btqnz t2, t1, .indexOfIsHostFunctions
+    bbneq JSCell::m_type[t3], StringType, .indexOfIsHostFunctions
+    bbneq JSCell::m_type[t2], StringType, .indexOfIsHostFunctions
+    loadp JSString::m_fiber[t3], t3
+    btpnz t3, isRopeInPointer, .indexOfIsHostFunctions
+    loadp JSString::m_fiber[t2], t2
+    btpnz t2, isRopeInPointer, .indexOfIsHostFunctions
+    bineq StringImpl::m_length[t2], 1, .indexOfIsHostFunctions
+    btiz StringImpl::m_hashAndFlags[t2], HashFlags8BitBuffer, .indexOfIsHostFunctions
+    btiz StringImpl::m_hashAndFlags[t3], HashFlags8BitBuffer, .indexOfIsHostFunctions
+    move 0, t1
+    bib t0, 3, .indexOfHasStart
+    loadq CalleeFrameAtEntry + FirstArgumentOffset + 8[sp], t1
+    move constexpr JSValue::NumberTag, t5
+    bqb t1, t5, .indexOfIsHostFunctions
+    bilt t1, 0, .indexOfIsHostFunctions
+    zxi2q t1, t1
+.indexOfHasStart:
+    loadp StringImpl::m_data8[t2], t2
+    loadb [t2], t2
+    loadi StringImpl::m_length[t3], t0
+    loadp StringImpl::m_data8[t3], t3
+.indexOfNextCharacter:
+    biaeq t1, t0, .indexOfFindsNothing
+    loadb [t3, t1], t5
+    bieq t5, t2, .indexOfFindsCharacter
+    addi 1, t1
+    jmp .indexOfNextCharacter
+
+.indexOfFindsNothing:
+    move 0xffffffff, t1
+.indexOfFindsCharacter:
+    move constexpr JSValue::NumberTag, t5
+    move t1, r0
+    orq t5, r0
+    ret
+
+.indexOfIsHostFunctions:
     jmp _llint_native_call_trampoline
 
 # What a call enters in place of llint_native_call_trampoline where the callee is a bound function: VM::getBoundFunction(). No stack trace lists the frame of a bound function, so the target of one

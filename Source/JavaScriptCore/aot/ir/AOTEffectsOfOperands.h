@@ -20,10 +20,8 @@ namespace JSC { namespace AOT { namespace Typed {
 struct EffectDescription;
 struct Type;
 
-// To the program a lookup of `prototype` is a read. See prototypePropertyMayEndGuards().
 Effects effectsOfCreatingPrototypeProperty(const Program&, const Type& functions);
 
-// The effect rule of an operation covers what its own stores and deletes run.
 enum class OperandDeclarer : uint8_t { Operation, Builtin };
 
 struct OperandBehavior {
@@ -36,9 +34,7 @@ struct OperandBehavior {
     OperandDeclarer declarer { OperandDeclarer::Builtin };
     NamedMembers namedMemberUse { NamedMembers::AreOnlyRead };
     bool resultOfCallEscapes { false };
-    // Native code tests that a value is an object before it reads a member of it, by name or to iterate over it.
     bool membersAreOfObjectsOnly { false };
-    // Native code tests that a value it means to call is callable and keeps it. It converts a function to a primitive only where it has read it under one of namedMembers.
     bool functionsAreConvertedUnderNamesOnly { false };
     std::span<const BuiltinName> convertedMembers { };
 };
@@ -97,17 +93,13 @@ inline constexpr Effects listReadEffects = [] {
 OperandBehavior declaredBehaviorOf(Opcode, uint32_t operandIndex);
 OperandBehavior declaredBehaviorOf(TerminatorKind, uint32_t operandIndex);
 OperandBehavior declaredBehaviorOf(const BuiltinOverload&, BuiltinOperand);
-// Of an overload that only propagates errors: an operation of the entry on the operand may throw though no code of the operand runs.
 bool mayFailOnOperand(const Program&, const BuiltinParameter&, const Type& operand);
-// The records of the entry say all that it does. A model stands in for records that leave code unnamed.
 bool isDescribedByModel(const BuiltinOverload&);
-// Every name that an operand may be searched for though the operation has no such key: what the protocols read, and what the operations and the built-ins list for their operands.
 Vector<BuiltinName> namesReadFromOperands(const BuiltinTable&);
 
 void addOperandCode(const EffectContext&, const Type& operand, const OperandBehavior&, EffectsOnEdges&);
 void describeOverload(const Program&, BuiltinOverloadID, BuiltinCallForm, const Type* receiver, std::span<const TypeID> arguments, EffectDescription&);
 
-// AllButPassesToUserCode: what decides that one use and no other is not looked at, and the summary says nothing about it. Every other use, and where the operand is retained, is as in the whole summary.
 enum class UsesAskedFor : uint8_t { All, AllButPassesToUserCode };
 
 OperandSummary summarizeOperand(const EffectContext&, const Function&, const Value& user, uint32_t operandIndex, UsesAskedFor = UsesAskedFor::All);
@@ -124,7 +116,6 @@ OperandSummary joinOf(const OperandSummary&, const OperandSummary&);
 BuiltinOperand builtinOperandAt(const Value& builtinCall, uint32_t operandIndex);
 std::optional<uint32_t> entryParameterOf(const Function& callee, const Value& call, uint32_t operandIndex);
 std::optional<uint32_t> findOperandPassedFor(const Function& callee, const Value& call, uint32_t entryParameter);
-// The callee parameter, and `new.target` where a construction names none.
 Vector<uint32_t, 2> entryParametersOfCalledValue(const Function& callee, const Value& call);
 
 template<typename Entry>
@@ -140,14 +131,11 @@ bool mayRunOperandCode(Entry entry)
 
 bool mayBeReference(const Type&);
 
-// An unaliased result is referenced from nowhere else, yet has properties or a structure that nothing declares.
 enum class ResultFreshness : uint8_t { Unknown, Unaliased, Fresh };
 
 ResultFreshness freshnessOf(const EffectContext&, const Function&, const Value&);
 ResultFreshness freshnessOf(const EffectContext&, const Function&, const Value&, NOESCAPE const ScopedLambda<EffectsOnEdges()>& effectsOfValue);
-// Of the result that the terminator itself passes along an edge.
 ResultFreshness freshnessOf(const EffectContext&, const Function&, const Terminator&);
-// False where freshnessOf() answers Unknown for every value of the opcode and for every terminator of the kind.
 bool resultMayBeFresh(Opcode);
 constexpr bool resultMayBeFresh(TerminatorKind kind) { return effectRuleOf(kind) == EffectRule::Inline; }
 

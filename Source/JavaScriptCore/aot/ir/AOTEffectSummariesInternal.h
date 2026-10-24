@@ -67,7 +67,6 @@ struct BodySummary {
     friend bool operator==(const BodySummary&, const BodySummary&) = default;
 };
 
-// A BodySummary whose masks are IDs of a table and whose lists share one allocation.
 class StoredBodySummary {
     WTF_MAKE_NONCOPYABLE(StoredBodySummary);
 public:
@@ -76,7 +75,6 @@ public:
     StoredBodySummary& operator=(StoredBodySummary&&) = default;
     StoredBodySummary(InternedLocationMasks&, FunctionID, const BodySummary&);
 
-    // The dependencies whose sources are nodes of one function.
     class DependencyGroup {
     public:
         DependencyGroup(std::span<const uint32_t> words, bool isWide)
@@ -113,7 +111,6 @@ public:
     std::span<const StoredParameterSummary> parameters() const LIFETIME_BOUND { return { m_lists.get(), m_numberOfParameters }; }
     std::span<StoredParameterSummary> mutableParameters() LIFETIME_BOUND { return { m_lists.get(), m_numberOfParameters }; }
 
-    // Unknown code has no function and comes first. The functions ascend.
     void forEachGroupOfDependencies(NOESCAPE const Invocable<void(FunctionID source, const DependencyGroup&)> auto& functor) const
     {
         std::span<const uint32_t> words = wordsOfDependencies();
@@ -126,7 +123,6 @@ public:
         }
     }
 
-    // The functions that the sources of the dependencies name: ascending, each once, without the function itself.
     void forEachFunctionInDependencies(FunctionID function, NOESCAPE const Invocable<void(FunctionID)> auto& functor) const
     {
         forEachGroupOfDependencies([&](FunctionID source, const DependencyGroup&) {
@@ -143,7 +139,6 @@ private:
 
     CompactEffects m_onReturn;
     CompactEffects m_onThrow;
-    // The parameters, then the words of the dependencies.
     MallocPtr<StoredParameterSummary> m_lists;
     uint32_t m_numberOfParameters : 30 { 0 };
     uint32_t m_hasWitness : 1 { 0 };
@@ -160,33 +155,23 @@ struct StoredAddedEffects {
     CompactEffects effects;
 };
 
-// What is kept from one computation of the summaries to the next: what each body does by itself, and the solution.
 class BodySummaries {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(BodySummaries);
     WTF_MAKE_NONCOPYABLE(BodySummaries);
 public:
     BodySummaries() = default;
 
-    // SayNoLess: what the records of the functions say of them to a caller holds as before, or more does.
     enum class Records : uint8_t { MaySayLess, SayNoLess };
-    // OnlySetStorage: all that the edits wrote is where the cells that the functions allocate lie, which neither a summary nor the table of borrowed parameters reads.
     enum class Edits : uint8_t { Any, OnlySetStorage };
     void didChange(std::span<const FunctionID>, Records = Records::MaySayLess, Edits = Edits::Any);
-    // The functions do no more than before. What is kept of them stays, as an upper bound.
     void didLower(std::span<const FunctionID>);
-    // The same of functions that the table of borrowed parameters still reads: it looks at them again.
     void didChangeDoingNoMore(std::span<const FunctionID>, Edits = Edits::Any);
-    // The functions got operations that do this, somewhere, to any object they are handed.
     void didAddEffects(std::span<const AddedEffects>);
-    // What is kept of the body also came from the records of layouts that the body does not name: those that the fields of an operand hold, and so on.
     bool followsFieldsOfOperands(FunctionID id) const { return id.index() < m_bodies.size() && m_bodies[id.index()].followsFieldsOfOperands(); }
-    // False where all that is kept of the function is out of date already, so that to report it as changed once more, in whichever way, changes nothing.
     bool keepsSomethingOf(FunctionID id) const { return id.index() < m_isChanged.size() && !(m_isChanged[id.index()] && m_isChangedForTable[id.index()] && m_recordSays[id.index()] == RecordSays::MaybeLess); }
 
-    // Whether no function was added or reported as changed since the summaries were brought up to date. Then the table and the seed are what a computation from nothing gives.
     bool describesFunctionsAsTheyAre(size_t numberOfFunctions) const { return m_bodies.size() == numberOfFunctions && !m_isChangedForTable.contains(1) && !m_isChangedForTableIfLowered.contains(1); }
     const BorrowedParameters& borrowedParameters() const LIFETIME_BOUND { return m_borrowed; }
-    // The table of the functions as they are now, from the bodies that were reported as changed or made since the summaries were brought up to date, and what is kept of the others.
     BorrowedParameters computeBorrowedParametersOfChangedBodies(const Program&, BuildContext&);
     const EffectSummaries& seed() const LIFETIME_BOUND { return m_seed; }
 
@@ -207,9 +192,7 @@ private:
     Vector<StoredBodySummary> m_bodies;
     Vector<CompactList<FunctionID>> m_functionsOfClosuresMade;
     Vector<uint8_t> m_isChanged;
-    // Those, and the functions that have changed and do no more than before.
     Vector<uint8_t> m_isChangedForTable;
-    // The functions that edits which only set storage have kept out of the two lists above. One joins its list if it was lowered since it was summarized, or since it was scanned for the table.
     Vector<uint8_t> m_isChangedIfLowered;
     Vector<uint8_t> m_isChangedForTableIfLowered;
     enum class RecordSays : uint8_t { WhatItSaid, NoLess, MaybeLess };
@@ -220,14 +203,12 @@ private:
     Vector<uint64_t> m_stampsOfRecords;
     Vector<uint64_t> m_stampsOfEntries;
     BorrowingBodies m_borrowingBodies;
-    // Empty unless computeBorrowedParametersOfChangedBodies() has looked at the changed bodies since the summaries were brought up to date.
     Vector<uint8_t> m_wasTouchedSinceLatestTable;
     Vector<uint64_t> m_stampsOfRecordsAtLatestTable;
     BorrowedParameters m_borrowed;
     Vector<uint64_t> m_parametersWhoseContentsAreCalled;
     EffectSummaries m_seed { Ref { m_masks }, EffectSummaries::Contents::SayNothingOfBodies };
 
-    // The solution. A node has what it takes in other than through unknown code, and remembers whether it takes in unknown code.
     bool m_isSolved { false };
     Vector<uint8_t> m_isEnteredByUnknownCode;
     Vector<uint32_t> m_firstNode;
@@ -235,11 +216,9 @@ private:
     uint32_t m_numberOfNodes { 0 };
     Vector<CompactEffects> m_effects;
     Vector<uint8_t> m_takesInUnknownCode;
-    // The functions whose dependencies name a function: as of the latest listUsers(), and those that came since. A function that no longer names it may stay listed.
     Vector<uint32_t> m_firstUser;
     Vector<FunctionID> m_users;
     UncheckedKeyHashMap<uint32_t, Vector<FunctionID>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_usersAddedSince;
-    // What the functions of a chunk that unknown code may enter do.
     Vector<Effects> m_effectsEnteredInChunk;
     Vector<uint8_t> m_takesInUnknownCodeInChunk;
     Effects m_unknownCode { Effects::unknownCode() };
@@ -253,16 +232,12 @@ struct ExitReachability {
     BitVector reachesThrow;
 };
 
-// What the role of a function says it does, whatever its body looks like. False for a role that says nothing.
 bool describeByRole(const Program&, const Function&, EffectDescription&);
-// The rows of a serializer or a parser say more than the built-in they stand for: they name no operand types, and they write what the function has just allocated.
 constexpr bool isSummarizedByRole(FunctionRole role) { return role == FunctionRole::Serializer || role == FunctionRole::Parser || role == FunctionRole::ValidatingParser; }
 
-// What the seed takes from the types of the parameters.
 uint64_t parametersWhoseContentsAreCalled(const Program&, FunctionID, const BorrowedParameters&);
 
 ExitReachability computeExitReachability(const Function&);
-// The collector is told the body where the summarizer walks it, which it does not do for every function.
 BodySummary summarizeBodyLocally(const EffectContext&, FunctionID, FunctionAnalyses&, BodyReferenceCollector* = nullptr);
 FunctionSummary createFunctionSummary(Effects onReturn, Effects onThrow, Vector<ParameterSummary>&&, UnknownCodeWitness);
 
@@ -275,10 +250,8 @@ public:
     EffectSummarizer(const Program&, const FlowResults&, BuildContext&, BodySummaries&, Witnesses);
 
     void setIsOnlyCheck() { m_isOnlyCheck = true; }
-    // What the bodies that are summarized name goes there, so that the next call graph need not read them.
     void giveReferencesTo(BodyReferences* references) { m_references = references; }
     void update(EffectSummaries&);
-    // The two steps of update(). Behind the first, BodySummaries::seed() and borrowedParameters() are those of the program as it is, and the second leaves them alone.
     void bringSeedUpToDate(EffectSummaries&);
     void finishUpdate(EffectSummaries&);
 
@@ -336,17 +309,12 @@ private:
     BodyReferences* m_references { nullptr };
     unsigned m_numberOfFunctionsBefore { 0 };
     Vector<uint8_t> m_recordLooksDifferent;
-    // The record looks different in a way that may take something away from what whoever names the function has read in it.
     Vector<uint8_t> m_recordLooksDifferentToCallers;
     Vector<uint8_t> m_hasNewSeed;
-    // Ascending. Their bodies do something else than before, or unknown code may enter them now and could not before, or the other way around.
     Vector<uint32_t> m_changedFunctions;
-    // Ascending. The functions whose isEnteredByUnknownCode flipped.
     Vector<uint32_t> m_entryFlippedFunctions;
-    // Ascending. The changed functions whose nodes were renumbered, so their previous solution is gone.
     Vector<uint32_t> m_renumberedFunctions;
 
-    // An ID of the table for each ID that the table had when the memo was reset. Whoever computes an entry computes the same.
     class MemoByMasks {
     public:
         void reset(size_t size);

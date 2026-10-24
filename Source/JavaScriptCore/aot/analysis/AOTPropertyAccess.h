@@ -131,6 +131,21 @@ enum class OptionKind : uint8_t {
 };
 std::optional<TestsOfEmptySlot> testsThatOptionLeftOutReadsAsUndefined(const PropertyAccessContext&, std::span<const LayoutID> receivers, PropertyKeyID, OptionSet<OptionKind>);
 
+// `stream._read`, where a constructor stores what its options name and the class has a method of that name: the object whose slot is empty has the method of its class.
+struct MethodAboveEmptySlot {
+    LayoutList layouts;
+    FunctionID method;
+    ProofSet proofs;
+    MemberConditions conditions;
+};
+struct MethodsAboveEmptySlot {
+    // One for each method.
+    Vector<MethodAboveEmptySlot, 2> methods;
+    // No other receiver comes with an empty slot.
+    bool areAllReceivers { true };
+};
+MethodsAboveEmptySlot findMethodsAboveEmptySlot(const PropertyAccessContext&, std::span<const LayoutID> receivers, PropertyKeyID);
+
 struct LazyFieldCreation {
     Opcode operation;
     ProofSet proofs;

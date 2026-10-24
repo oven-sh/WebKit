@@ -118,7 +118,6 @@ struct BuiltinTarget {
     friend constexpr bool operator==(BuiltinTarget, BuiltinTarget) = default;
 };
 
-// An executable is a copy of the Bun that builds it, so what a build is for is what the compiler itself runs on.
 constexpr BuiltinTarget targetOfThisBuild()
 {
 #if OS(ANDROID)
@@ -204,7 +203,6 @@ enum class BuiltinConversion : uint8_t {
     Dictionary,
 };
 
-// A rope is made flat for whoever reads its characters, which allocates.
 inline bool readsCharactersOfString(BuiltinConversion conversion)
 {
     switch (conversion) {
@@ -322,7 +320,6 @@ enum class BuiltinCallbackTimes : uint8_t {
     PerEvent,
 };
 
-// Later is one call after the built-in has returned, PerEvent any number of them: once per request, message or event.
 constexpr bool isCalledAfterReturn(BuiltinCallbackTimes times)
 {
     return times == BuiltinCallbackTimes::Later || times == BuiltinCallbackTimes::PerEvent;
@@ -336,7 +333,6 @@ enum class BuiltinCallbackResultUse : uint8_t {
     Stored,
 };
 
-// What native code does, between the calls and behind the last, to objects that it comes upon only because the function put them where it looks.
 enum class BuiltinCallbackAftermath : uint8_t {
     WritesIntoWhatItFinds,
     TouchesOnlyWhatRowNames,
@@ -359,9 +355,7 @@ enum class BuiltinPropertyActionKind : uint8_t {
     ReadsSetter,
     TestsByKey,
     DescribesOwnProperties,
-    // The object is a map of descriptors of what the call makes and returns.
     DescribesResult,
-    // Each own property of the value is defined on the object as it stands there, an accessor as an accessor.
     DefinesFrom,
 };
 
@@ -383,7 +377,6 @@ enum class BuiltinRangeRule : uint8_t {
 enum class BuiltinImplementationKind : uint8_t {
     Generic,
     HostCall,
-    // The compiler has a compiled function that a pass may call directly. What a CallBuiltin enters is `callee`.
     Compiled,
     Inline,
     Number,
@@ -397,7 +390,6 @@ enum class BuiltinCallee : uint8_t {
     Function,
     HostFunction,
     InternalFunction,
-    // The native function behind a getter of a static table. It has no function object until somebody asks for a descriptor of the property, so it is entered by its address.
     CustomGetter,
 };
 
@@ -408,7 +400,6 @@ enum class BuiltinInstanceTest : uint8_t {
     SharingModeEquals,
 };
 
-// How compiled code tests that an instance has gained no property and kept its prototype. Mark: start-up marks the Structure of new instances.
 enum class BuiltinPristineTest : uint8_t {
     Mark,
     ClosureAsCreated,
@@ -444,14 +435,10 @@ enum class BuiltinHostReadContext : uint8_t {
 };
 
 enum class BuiltinHostReadUse : uint8_t {
-    // Native code looks at it and lets go of it.
     Inspected,
     Called,
-    // It is an argument of a call of a built-in that native code makes.
     PassedTo,
-    // It lies in a native cell from then on. The entries and records that name the cell say what becomes of it.
     Kept,
-    // From then on an entry holds it: it is the function object of a function, what a property holds.
     IsValueOf,
 };
 
@@ -468,7 +455,6 @@ struct BuiltinSlotContents {
     BuiltinTypeID type { };
 };
 
-// What the records of the table refer to stands in one array for each kind of record. A stretch of such an array is its first record and its length: four bytes where a span has sixteen.
 enum class BuiltinRecordPool : uint8_t { Names, Parameters, Transfers, Callbacks, HandlerCalls, PropertyActions, ResultProperties, SlotContents, TypeParts, TypeLiterals, DispatchBranches, MemberClasses };
 
 template<BuiltinRecordPool> struct BuiltinRecordsOfPool;
@@ -535,7 +521,6 @@ struct BuiltinTypePart {
     BuiltinSlotID slot { };
     BuiltinRecordStretch<BuiltinSlotContents, BuiltinRecordPool::SlotContents> contents { };
     bool isSettled { false };
-    // Of an Instance: of the class that is named. Without it the value may be of any class below that one.
     bool isOfClassItself { false };
 };
 
@@ -560,15 +545,11 @@ struct BuiltinPlace {
     std::optional<BuiltinOperand> operand { };
     BuiltinSlotID slot { };
     uint16_t fieldIndex { 0 };
-    // ResultField that a record stores into: the field holds what the records of the overload store there and nothing else, whatever the type of the field allows.
     bool holdsOnlyWhatIsStored { false };
     BuiltinTypeID newValueType { };
     bool isSettled { false };
-    // Member: the names that are read one after the other, starting at the operand. An absent name stands for every own value.
     std::span<const BuiltinName> memberPath { };
-    // The steps of all the paths of the table are numbered in one sequence.
     uint16_t firstMemberStep { 0 };
-    // NativeCell: memory of native code that JavaScript reaches only through the entries that name the cell.
     BuiltinName nativeCell { };
 };
 
@@ -587,7 +568,6 @@ struct BuiltinCallback {
     BuiltinOperand callee;
     BuiltinCallbackTimes times { BuiltinCallbackTimes::Later };
     bool constructs { false };
-    // Without a place the constructed function is its own new.target.
     BuiltinPlace newTarget { };
     BuiltinPlace thisValue { };
     std::span<const BuiltinPlace> arguments { };
@@ -597,7 +577,6 @@ struct BuiltinCallback {
     BuiltinCallbackAftermath afterwards { BuiltinCallbackAftermath::WritesIntoWhatItFinds };
 };
 
-// A function that is not itself an operand: a member of an options object, or what an earlier call left in a native cell.
 struct BuiltinHandlerCall {
     BuiltinPlace callee { };
     BuiltinCallbackTimes times { BuiltinCallbackTimes::PerEvent };
@@ -621,14 +600,12 @@ struct BuiltinParameter {
     BuiltinTypeID accepted { };
     BuiltinTypeID converted { };
     BuiltinTypeID refused { };
-    // Of an overload that only propagates errors: inside this type the entry raises no error about the operand.
     BuiltinTypeID admitted { };
     OperandUses uses { OperandUses::all() };
     OptionSet<BuiltinOperandRole> roles { };
     Protocols protocols { Protocols::all() };
     BuiltinNameStretch namedMembers { };
     BuiltinNameStretch calledMembers { };
-    // With FunctionsAreConvertedUnderNamesOnly: the names of namedMembers that the entry itself lists. The others end the path to a handler.
     BuiltinNameStretch convertedMembers { };
 };
 
@@ -647,7 +624,6 @@ struct BuiltinResult {
     std::optional<BuiltinOperand> iteratedOperand { };
     IterationKind iterationKind { IterationKind::Values };
     std::optional<BuiltinOperand> prototypeSource { };
-    // Every own property that the new object has and an instance fresh from the constructor of its class has not.
     BuiltinRecordStretch<BuiltinResultProperty, BuiltinRecordPool::ResultProperties> properties { };
 };
 
@@ -666,13 +642,11 @@ struct BuiltinFlow {
 
 using RealmStructureID = BuiltinTableID<struct RealmStructureIDTag, uint8_t>;
 
-// A Structure that a realm reaches: the one that a getter of JSGlobalObject answers, after one transition for each name, which adds the name.
 struct BuiltinRealmStructure {
     Structure* (*findInitialStructure)(JSGlobalObject*) { nullptr };
     std::span<const BuiltinName> names { };
 };
 
-// An instance with this Structure holds the property at a known place: the offset counts the properties that the constructor defines ahead of it. Any other instance is read by name.
 struct BuiltinOwnSlot {
     RealmStructureID structure { };
     uint8_t offset { 0 };
@@ -689,7 +663,6 @@ struct BuiltinImplementation {
     BuiltinOwnSlot ownSlot { };
 };
 
-// A CallBuiltin that stays one enters the function object of the realm. False: that object is compiled code too, so no native frame lies between the caller and a callback.
 inline bool entersNativeCode(const BuiltinImplementation& implementation) { return implementation.callee != BuiltinCallee::Function; }
 
 struct BuiltinCode {
@@ -713,28 +686,23 @@ struct BuiltinOverload {
     BuiltinCode code { };
 
     constexpr bool throws() const { return flags.contains(BuiltinOverloadFlag::Throws); }
-    // With operands that it admits the entry has no step of its own that throws.
     constexpr bool onlyPropagatesErrors() const { return flags.contains(BuiltinOverloadFlag::OnlyPropagatesErrors); }
     constexpr bool isUndeclared() const { return flags.contains(BuiltinOverloadFlag::IsUndeclared); }
-    // Nothing proves the type of the result: native code may hand back any value. The type is what is expected, and compiled code tests the value where it arrives.
     constexpr bool resultIsDeclaredOnly() const { return flags.contains(BuiltinOverloadFlag::ResultIsDeclaredOnly); }
     constexpr bool hasTypedResult() const { return result.typedResultForm != TypedResultForm::None; }
 
-    // The function of the library that a call is: its body says what the call does, and the call may enter it directly.
     constexpr RuntimeFunctionID libraryFunction() const
     {
         bool isCallOfLibraryFunction = code.implementation.kind == BuiltinImplementationKind::Compiled && !hasTypedResult();
         return isCallOfLibraryFunction ? code.implementation.function : RuntimeFunctionID();
     }
 
-    // The function of the library that takes the calls no other code was made for. It is what the entry's own function object runs, and the records bound what it does.
     constexpr RuntimeFunctionID slowPathFunction() const
     {
         return libraryFunction() ? RuntimeFunctionID() : code.implementation.function;
     }
 };
 
-// The form in which the executable holds an overload.
 struct BuiltinPackedOverload {
     BuiltinID builtin { };
     BuiltinCallMode mode { BuiltinCallMode::Call };
@@ -815,7 +783,6 @@ struct Builtin {
     uint16_t memberCount { 0 };
     BuiltinOverloadID firstOverload { };
     uint16_t overloadCount { 0 };
-    // Of a native binding: some text of the library names it, and the host evaluates it by a number of its own: BuiltinBindings::hostNumberOf().
     bool isNamedByText { false };
 };
 
@@ -830,7 +797,6 @@ struct BuiltinSlot {
     BuiltinTypeID holds { };
 };
 
-// Where the program has stored a function under `member` on `holder`, or above it, native code calls that function to make the property, with the instance among the operands, and puts there what it answers.
 struct BuiltinPropertyMaker {
     BuiltinName name;
     BuiltinID holder { };
@@ -851,17 +817,12 @@ struct BuiltinClass {
     bool isNeverPristine { false };
     BuiltinPristineTest pristineTest { BuiltinPristineTest::Mark };
     bool hasClosureInstances { false };
-    // Native code makes no instance of the class but the entries that inherit from its prototype object. An object nobody knows is an instance only where it is one of those entries.
     bool instancesAreEntries { false };
-    // The constructor puts the characters of a string on an instance, each an own read-only property under its index.
     bool definesCharactersOnNewInstances { false };
-    // Every own property that the constructor, or the engine later on its own, puts on an instance, beside those of the classes above. Ascending.
     bool listsNamesDefinedOnNewInstances { false };
     std::span<const BuiltinName> namesDefinedOnNewInstances { };
-    // What native code puts under some of those names: primitives. A name that is not here may hold anything. Ascending by name.
     std::span<const BuiltinResultProperty> typesOfNamesDefinedOnNewInstances { };
     std::span<const BuiltinPropertyMaker> makersOfNamesDefinedOnNewInstances { };
-    // The constructor reads `prototype` from new.target and nothing else, and it calls nothing that it finds on the new object, whatever code of its operands it runs.
     bool constructorOnlyReadsPrototypeOfNewTarget { false };
     std::span<const BuiltinSlotID> slots { };
     std::optional<AbstractHeap> stateHeap { };
@@ -879,21 +840,16 @@ struct BuiltinLayout {
     std::span<const BuiltinLayoutField> fields { };
 };
 
-// About the text of an operand, about a property of an operand, about the build, about the overload that takes the call, or about the stores of the program.
 struct BuiltinCondition {
     BuiltinOperand operand { BuiltinOperand::receiver() };
     std::span<const BuiltinName> isOneOf { };
     std::span<const BuiltinName> startsWith { };
-    // With a text: and the receivers of the call list the object of this entry. A receiver nobody knows is not taken for it.
     BuiltinID calledOn { };
-    // The operand may be an object that has a property of this name, its own or inherited. It holds for an object nobody knows.
     BuiltinName hasProperty { };
     bool buildAdmitsRuntimeCode { false };
     bool callRunsOtherCode { false };
-    // The row speaks of a store into the object that the built-in answers: one that the table does not describe, or one of the host with keepsStringsOfStoredValues.
     bool objectNobodyKnowsIsWritten { false };
 
-    // The first of the texts that it lists. None where it is not about the text of an operand.
     BuiltinName firstText() const { return !isOneOf.empty() ? isOneOf.front() : !startsWith.empty() ? startsWith.front() : BuiltinName(); }
 };
 
@@ -912,34 +868,25 @@ struct BuiltinUnseenCode {
 
 struct BuiltinHostCall;
 
-// One thing that native code does with a value that it got hold of by itself: an export that it read from a module of the library, the object of a function of the library, what a call of its own answered.
 struct BuiltinHostUse {
     BuiltinHostReadUse use { BuiltinHostReadUse::Inspected };
-    // The names that native code reads one after the other, starting at the value, an element under its index. It uses what it finds at the end.
     std::span<const BuiltinName> memberPath { };
-    // PassedTo: the built-in that is called. IsValueOf: the entry that holds the value.
     BuiltinID builtin { };
     uint8_t argumentIndex { 0 };
     BuiltinName nativeCell { };
-    // Called. Without one nothing says what is passed, and anybody may get what the call answers.
     const BuiltinHostCall* call { nullptr };
 };
 
 struct BuiltinHostUses {
-    // False: nothing says what native code does with the value, so anybody may get it.
     bool areListed { false };
-    // Empty: native code drops the value.
     std::span<const BuiltinHostUse> list { };
 };
 
-// A call that native code makes where no call of a built-in is under way. Its places are None, NewValue, NativeCell and NativeMemory: there is no operand to name.
 struct BuiltinHostCall {
     BuiltinCallbackTimes times { BuiltinCallbackTimes::Once };
     BuiltinPlace thisValue { };
-    // False: native code passes what the annotations of the callee's own parameters say.
     bool listsArguments { false };
     std::span<const BuiltinPlace> arguments { };
-    // What may follow the listed arguments, any number of times.
     BuiltinPlace otherArguments { };
     BuiltinHostUses result { };
 };
@@ -949,7 +896,6 @@ struct BuiltinModuleLoad {
     RuntimeModuleID module { };
     bool readsEveryExport { true };
     std::span<const BuiltinName> exports { };
-    // One for each of the exports, in their order.
     std::span<const BuiltinHostUses> usesOfExports { };
     const BuiltinCondition* condition { nullptr };
 };
@@ -958,45 +904,33 @@ struct BuiltinCalledFunction {
     BuiltinID builtin { };
     RuntimeFunctionID function { };
     const BuiltinCondition* condition { nullptr };
-    // What native code does with the object of the function. Where nothing is listed it calls the function with what the annotations of the parameters say, and anybody may get what that answers.
     BuiltinHostUses uses { };
 };
 
 struct BuiltinHostObjectField {
-    // None: every name and every index that native code may define besides those that other records give.
     BuiltinName name { };
     BuiltinPlace value { };
 };
 
-// Nothing says what native code puts there by itself: whoever reads the field may find anything beside what code of the library has stored.
 struct BuiltinHostObjectInternalField {
     uint8_t index { 0 };
-    // What native code does with what code of the library stores there.
     BuiltinHostUses uses { };
 };
 
-// An object that native code makes by itself and hands to code of the library or of the program. It lies in the native cell, and whoever passes it names the cell. One record stands for all the objects that native code makes there.
 struct BuiltinHostObject {
     BuiltinName nativeCell { };
-    // The entry of a function that native code makes, whose Call overloads say what a call of the object does. None: it is no function.
     BuiltinID function { };
-    // None: null.
     BuiltinID prototype { };
-    // The own properties that native code defines. A name has one record for each thing that may be put there.
     std::span<const BuiltinHostObjectField> fields { };
-    // Empty: the object has no internal field.
     std::span<const BuiltinHostObjectInternalField> internalFields { };
-    // Of whatever is stored or defined under any key the object keeps a string, which code that the stored value names may make.
     bool keepsStringsOfStoredValues { false };
 };
 
-// What native code passes to a member that it finds under the name on an operand and calls (Protocol::CallsNamed). The receiver is the object that has the member, and the protocol says what becomes of the answer.
 struct BuiltinNamedMemberCall {
     BuiltinName name { };
     std::span<const BuiltinPlace> arguments { };
 };
 
-// Classes of the host, in the table or not, have a native method under the name (namesOfHostMethodsCallingStartupLoads), and a call of one calls what lies in the cell.
 struct BuiltinHostMethodCall {
     BuiltinName name { };
     BuiltinName nativeCell { };
@@ -1010,7 +944,6 @@ struct BuiltinForms {
     std::optional<InlineBuiltin> appendForm { };
     BuiltinID jsonTextForm { };
     std::optional<BuiltinOperand> jsonTextArgument { };
-    // The function that does the same where the argument is an object literal that nobody else sees and that has no member but the names.
     BuiltinID literalPartsForm { };
     std::optional<BuiltinOperand> literalPartsArgument { };
     std::array<BuiltinName, maxLiteralPartNames> literalPartNames { };
@@ -1027,16 +960,13 @@ struct BuiltinNumberConstant {
     double value { 0 };
 };
 
-// What the entry holds on the targets that the record lists. An entry has one record for each text.
 struct BuiltinStringConstant {
     BuiltinID builtin { };
     OptionSet<BuiltinPlatform> platforms { };
     OptionSet<BuiltinArchitecture> architectures { };
-    // A name of the table, so every program has the text among its strings.
     BuiltinName text { };
 };
 
-// The part of an overload that the run time reads, at the position of the overload. The overloads themselves leave an executable together with the compiler.
 struct BuiltinOverloadSummary {
     BuiltinID builtin { };
     BuiltinCallMode mode { BuiltinCallMode::Call };
@@ -1069,27 +999,18 @@ struct BuiltinClosedKeys {
     std::span<const BuiltinName> openNames { };
 };
 
-// Native code that was not handed the object looks up these names on it and no other, and it stores to none. Ascending.
 struct BuiltinNamesReadByNativeCode {
     BuiltinID holder { };
     std::span<const BuiltinName> names { };
-    // Those of them whose value native code only tests, for being true or for being callable: it neither keeps nor calls it. A getter on the way runs all the same.
     std::span<const BuiltinName> namesOnlyInspected { };
 };
 
-// What code of the engine asks about an entry, and few entries have. The table lists the entries of each mark, so the engine names none of them.
 enum class BuiltinMark : uint8_t {
-    // A flag of the command line or an option of the engine puts it on the global object or on process.
     IsAddedByOption,
-    // The realm of a run may lack it: an option of the engine takes it away, or a host that is built without some of its parts. So nothing is decided at the build that hangs on its being there.
     MayBeAbsent,
-    // Compiles text: a script or a function in the global scope of this realm, or code in a realm of its own, which has of this one what it is handed.
     EvaluatesTextInGlobalScope,
-    // Who reads it has a loader of modules in hand.
     HoldsLoader,
-    // Replaces a member of its first operand by a function of its own.
     IsSpy,
-    // Whoever goes over the enumerable properties of its holder passes it by: Object.keys, values, entries and assign, a spread, JSON.stringify.
     IsNotEnumerable,
 };
 
@@ -1098,7 +1019,6 @@ struct BuiltinMarkedEntry {
     BuiltinID builtin { };
 };
 
-// A call of `callee` loads machine code that nobody has seen. A report names `named`, which is what a program writes.
 struct BuiltinLoaderOfMachineCode {
     BuiltinID callee { };
     BuiltinID named { };
@@ -1128,7 +1048,6 @@ struct BuiltinHostRead {
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
-// Texts one behind the other, each with a zero behind it, and the place where each starts.
 template<size_t numberOfTexts, size_t numberOfCharacters>
 struct BuiltinTextStorage {
     constexpr size_t size() const { return numberOfTexts; }
@@ -1234,7 +1153,6 @@ struct BuiltinTableData {
 
 extern const BuiltinTableData builtinTableData;
 
-// The arrays that leave an executable together with the compiler. Their readers name them: see keptByThisReader() in AOTBuiltinTable.cpp.
 struct BuiltinClassTokenStorage;
 extern const BuiltinPackedOverload builtinTableOverloads[];
 extern const BuiltinDispatch builtinTableDispatches[];
@@ -1305,7 +1223,6 @@ public:
 
     std::span<const BuiltinOverload> overloadsOf(BuiltinID) const;
     BuiltinTableIDRange<BuiltinOverloadID> overloadIDsOf(BuiltinID) const;
-    // One for each overload, in the order of overloadsOf(). Code that stays in an executable without the compiler asks here.
     std::span<const BuiltinOverloadSummary> overloadSummariesOf(BuiltinID) const;
     const BuiltinOverloadSummary& summaryOf(BuiltinOverloadID) const;
     std::optional<BuiltinDispatchTarget> dispatchOf(BuiltinID, BuiltinCallMode) const;
@@ -1316,16 +1233,11 @@ public:
     BuiltinID findOwnMember(BuiltinID holder, BuiltinName) const;
     BuiltinMemberLookup findMember(BuiltinID holder, BuiltinName) const;
     BuiltinMemberLookup findForInstance(BuiltinClassID, BuiltinName) const;
-    // A value of a class may be an instance of a class below it and passes the tests of both. Whether the prototype object of such a class has a member of its own under the name.
     bool isRedefinedBelow(BuiltinClassID, BuiltinName) const;
     BuiltinID findOwnPropertyOfInstances(BuiltinClassID, BuiltinName) const;
-    // Whether a new instance has no own property but the ones the table marks. An unaliased result has own properties that the table does not declare.
     bool listsOwnPropertiesOfNewInstances(BuiltinClassID) const;
-    // Whether an instance that only the constructor and the engine have touched may have an own property that the class does not declare. An empty name stands for a key the table has no name for.
     bool mayDefineOnNewInstances(BuiltinClassID, BuiltinName) const;
-    // None: the class that lists the name does not say what native code puts there.
     BuiltinTypeID typeOfNameDefinedOnNewInstances(BuiltinClassID declaringClass, BuiltinName) const;
-    // Whether the class or one above it has the column. No slot stands for these properties.
     bool definesCharactersOnNewInstances(BuiltinClassID) const;
     std::span<const BuiltinClassID> classesWithInstanceMember(BuiltinName) const;
 
@@ -1343,25 +1255,17 @@ public:
     BuiltinID namespaceOf(RuntimeModuleID id) const { return at(id).namespaceObject; }
     bool existsOn(BuiltinID id, BuiltinPlatform platform) const { return at(id).platforms.contains(platform); }
     bool isLocationOfLockedObject(BuiltinID) const;
-    // A function of the engine whose object in the realm is a host function.
     JS_EXPORT_PRIVATE bool isHostFunctionOfEngine(BuiltinID) const;
-    // Such a function, or one that the library writes in JavaScript: its closure takes none of the four names and no other prototype either (Closure::refusesOwnProperty, Closure::setPrototype).
     JS_EXPORT_PRIVATE bool isFunctionOfEngine(BuiltinID) const;
     bool hasLockedPrototypeLink(BuiltinID holder) const { return at(holder).flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::HasLockedMembers }) || isFunctionOfEngine(holder) || closesOnlyNamesOfCalls(holder); }
-    // A constructor of the engine without a lock of its own. It takes none of the four names and no other prototype, like a function of the engine, and whatever else a program puts on it.
     bool closesOnlyNamesOfCalls(BuiltinID holder) const { return at(holder).kind == BuiltinKind::Constructor && !at(holder).flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::HasLockedMembers }) && !closedKeysOf(holder).empty(); }
-    // An element that an instance lacks is looked for in its prototype objects. Nothing relies on what a constructor or a namespace object lacks under an index, so whoever likes adds one.
     bool closesIndexKeys(BuiltinID holder) const { return at(holder).flags.contains(BuiltinFlag::IsLockedObject) || (at(holder).flags.contains(BuiltinFlag::HasLockedMembers) && at(holder).kind == BuiltinKind::Prototype); }
-    // Every object from the prototype object of the class up to null keeps its prototype link.
     JS_EXPORT_PRIVATE bool hasLockedPrototypeChain(BuiltinClassID) const;
-    // Start-up marks the Structure that the realm gives a new instance (forEachInstanceStructure), and from then on a cell that gets another prototype or a name that shadows a member loses the mark.
     JS_EXPORT_PRIVATE bool mayHavePristineInstances(BuiltinClassID) const;
     std::span<const BuiltinName> closedKeysOf(BuiltinID holder) const;
     std::span<const BuiltinName> openNamesOf(BuiltinID holder) const;
     bool isClosedKey(BuiltinID holder, BuiltinName) const;
-    // The names that no function of the engine has of its own.
     JS_EXPORT_PRIVATE bool isClosedOnHostFunctions(BuiltinName) const;
-    // Null: nothing says what native code looks up on the object, so it finds whatever a program puts there.
     const BuiltinNamesReadByNativeCode* namesReadByNativeCode(BuiltinID holder) const;
 
     std::span<const BuiltinFeatureUse> featureUsesOf(BuiltinID) const;
@@ -1374,25 +1278,18 @@ public:
     std::span<const BuiltinBoxedCall> boxedCalls() const { return m_data.attachments.boxedCalls; }
 
     std::span<const BuiltinID> lockedObjects() const { return m_data.runtime.lockedObjects; }
-    // Ascending.
     std::span<const BuiltinMarkedEntry> marked(BuiltinMark) const;
     bool has(BuiltinMark, BuiltinID) const;
     std::span<const BuiltinLoaderOfMachineCode> loadersOfMachineCode() const { return m_data.runtime.loadersOfMachineCode; }
     std::span<const BuiltinID> lockedMembers() const { return m_data.runtime.lockedMembers; }
     std::span<const RuntimeFunctionData> runtimeFunctions() const { return m_data.runtime.functions; }
     std::span<const RuntimeModuleID> startupModules() const { return m_data.runtime.startupModules; }
-    // What native code reads from each start-up module. These records name no built-in.
     std::span<const BuiltinModuleLoad> startupLoads() const { return m_data.attachments.startupLoads; }
-    // Native code calls these only where it hands on what it reads from the start-up modules.
     std::span<const RuntimeFunctionID> functionsCalledWithStartupLoads() const { return m_data.runtime.functionsCalledWithStartupLoads; }
-    // The same functions in the same order, each with what native code does with its object. These records name no built-in.
     std::span<const BuiltinCalledFunction> startupCalledFunctions() const;
-    // The position of a record in the list tells its object from the others.
     std::span<const BuiltinHostObject> hostObjects() const;
-    // Null: nothing says what native code passes.
     const BuiltinNamedMemberCall* callOfMemberNamed(BuiltinName) const;
     std::span<const BuiltinHostMethodCall> hostMethodCalls() const;
-    // Classes of the host, in the table or not, have a native method under each of these names that calls what native code reads from the start-up modules.
     std::span<const BuiltinName> namesOfHostMethodsCallingStartupLoads() const { return m_data.runtime.namesOfHostMethodsCallingStartupLoads; }
     std::span<const RuntimeFunctionID> moduleLoaderFunctions() const { return m_data.runtime.moduleLoaderFunctions; }
     std::span<const BuiltinHostRead> hostReads() const { return m_data.runtime.hostReads; }
@@ -1410,7 +1307,6 @@ public:
     JS_EXPORT_PRIVATE String textOf(BuiltinID) const;
     Identifier identifierOf(VM&, BuiltinName) const;
     std::optional<double> numberOf(BuiltinID) const;
-    // The text that the target decides: what the entry holds in the executable that this build makes.
     std::optional<StringView> stringOf(BuiltinID) const;
     BuiltinName nameOfString(BuiltinID stringConstant) const { return nameOfString(stringConstant, targetOfThisBuild()); }
     BuiltinName nameOfString(BuiltinID stringConstant, BuiltinTarget) const;

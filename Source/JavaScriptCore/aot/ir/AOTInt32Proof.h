@@ -28,11 +28,9 @@ enum class BoundsKind : uint8_t {
     Unknown,
     None,
     Integers,
-    // Finite and never -0. The range holds the whole numbers around them.
     Reals,
 };
 
-// The numbers a value can be. Unlike a type it bounds fractions, so it follows a quotient to where the quotient is rounded or compared.
 struct NumberBounds {
     static NumberBounds unknown(Int32ProofFailure failure) { return { .failure = failure }; }
     static NumberBounds integers(Range range) { return { .kind = BoundsKind::Integers, .range = range }; }
@@ -52,13 +50,10 @@ struct NumberBounds {
 NumberBounds boundsOfType(const Type&);
 NumberBounds narrowToType(const NumberBounds&, const Type&);
 
-// A position that a value enters. At the other sites a value is read, from a position that has a promise of its own.
 bool isEnteredAt(TypeSiteKind);
 TypeSiteKind siteKindOf(const Program&, const DeclaredType&);
-// `e as int32` in a dependency is its author's word for e: no proof is demanded, and the position that e enters next tests it like any other conversion.
 bool isAssertionOfDependency(const Program&, const DeclaredType&);
 
-// Works on the expected types of a function whose int32 promises are still requests. Each flow is judged alone: what has entered another promise is an int32.
 struct Int32ProofInputs {
     const Program& program;
     const Function& function;
@@ -72,7 +67,6 @@ public:
     explicit Int32Prover(const Int32ProofInputs&);
 
     NumberBounds boundsOf(ValueID);
-    // Whether the last answer took a value for any int32 because it entered a promise without a proof.
     bool reliesOnUnprovenFlow() const { return m_reliesOnUnprovenFlow; }
 
 private:

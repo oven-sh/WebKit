@@ -26,10 +26,8 @@
 #include "config.h"
 #include "JSFunction.h"
 
-#if ENABLE(AOT)
 #include "AOTCompiledCallee.h"
 #include "AOTBuiltinModules.h"
-#endif
 #include "AsyncGeneratorPrototype.h"
 #include "BuiltinExecutables.h"
 #include "BuiltinNames.h"

@@ -58,7 +58,6 @@ private:
     bool m_isAsOverload { false };
 };
 
-// Their rows say `throws` for the lack of memory alone.
 inline constexpr OpcodeSet opcodesThrowingOnlyForLackOfMemory {
     Opcode::Data, Opcode::NewSetFromData, Opcode::NewMapFromData, Opcode::LoopHint,
     Opcode::GetStringCodeUnit, Opcode::Substring, Opcode::SubstringOrUndefined, Opcode::FlattenString, Opcode::StringOrder, Opcode::StringOrderToCharacter,
@@ -109,7 +108,6 @@ constexpr Effects declaredBoundOf(Entry entry)
         return builder.effects();
 }
 
-// Whether a row says what the named set says and nothing else. The row may know more about the kind of error.
 constexpr bool isBoundOf(NamedEffectSet set, const Effects& bound)
 {
     Effects named = declaredBoundOf(set);

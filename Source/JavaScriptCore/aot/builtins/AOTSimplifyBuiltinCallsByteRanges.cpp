@@ -30,7 +30,6 @@ struct UseOfRange {
     ProgramPoint point;
 };
 
-// `view.subarray(begin)` and every value that may be what it answers.
 struct RangeOfBytes {
     ValueSite call;
     Vector<ValueID, 4> parameters;
@@ -61,7 +60,6 @@ static bool isInstanceOf(FunctionPassContext& context, ValueID value, BuiltinCla
     return context.program.typeOf(context.function, value).isSubsetOf(Type::builtinClass(builtinClass), context.program);
 }
 
-// The overload for a receiver that gives a view of its own class whatever the program has done: it runs no code of the program.
 static bool makesRangeOfBytes(FunctionPassContext& context, const Value& value)
 {
     const Program& program = context.program;
@@ -129,7 +127,6 @@ static std::optional<RangeOfBytes> findValuesAndUses(FunctionPassContext& contex
     return range;
 }
 
-// Whoever sees the range gets one made for him, so nobody may see it twice: behind a use, no way leads to anything that holds the range but through the call, which makes the next one.
 static bool isSeenOnceOnEveryWay(FunctionPassContext& context, const RangeOfBytes& range)
 {
     const CFG& cfg = context.analyses.cfg();
@@ -156,7 +153,6 @@ static bool isSeenOnceOnEveryWay(FunctionPassContext& context, const RangeOfByte
 
     Vector<BlockID, 8> blocksOfUses;
     auto isAloneInItsBlock = [&](const UseOfRange& use) {
-        // The call's own block holds the range behind the call, and a way back into the block makes the next one.
         if (blocksOfUses.contains(use.point.block))
             return false;
         blocksOfUses.append(use.point.block);
@@ -168,7 +164,6 @@ static bool isSeenOnceOnEveryWay(FunctionPassContext& context, const RangeOfByte
     if (!std::ranges::all_of(range.encodings, isLastToSeeIt) || !std::ranges::all_of(range.otherUses, isLastToSeeIt))
         return false;
 
-    // A block that uses it hands it to nobody.
     const Function& function = context.function;
     auto holdsRange = [&](ValueID value) {
         return value == range.call.value || range.parameters.contains(value) || range.casts.contains(value);
@@ -209,7 +204,6 @@ static BuiltinCallStamps stampsOf(const Value& call)
     return { call.expectedResult(), call.accessSite(), call.allocationSite() };
 }
 
-// `target = view.subarray(written); counts = encoder.encodeInto(text, target)`: a view is made for every piece of text that is written, and is dead behind the call.
 unsigned leaveRangesOfBytesUnmade(FunctionPassContext& context, const BuiltinCallSites& calls)
 {
     Function& function = context.function;

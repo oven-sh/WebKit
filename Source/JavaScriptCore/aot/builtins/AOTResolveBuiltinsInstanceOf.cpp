@@ -21,14 +21,12 @@ static bool findsOrdinaryHasInstance(const BuiltinLookupContext& context, Builti
 {
     const Program& program = context.program;
     const BuiltinTable& table = program.builtins();
-    // File answers the operator by native code of its own, which no property shows (JSDOMFile::customHasInstance): its prototype property holds Blob.prototype, and a Blob is no File.
     if (constructor == table.canonicalID(Builtins::File))
         return false;
     BuiltinMemberAnswer hasInstance = findMemberFrom(context, constructor, program.keyOf(table.nameOf(WellKnownSymbol::HasInstance)));
     return hasInstance.isConstant() && hasInstance.member == table.canonicalID(Builtins::FunctionPrototypeSymbolHasInstance);
 }
 
-// The class whose prototype object the test looks for: the constructor finds the ordinary Symbol.hasInstance, and its prototype property holds that object for good.
 static BuiltinClassID builtinClassTestedThrough(const BuiltinLookupContext& context, BuiltinID constructor)
 {
     const Program& program = context.program;
@@ -98,7 +96,6 @@ static InstanceOfAnswer answerForClassPart(const BuiltinLookupContext& context, 
     return findInPrototypeChain(context, part.builtinClass, soughtPrototype);
 }
 
-// What an object literal makes has Object.prototype above it, which inherits from nothing for good.
 static InstanceOfAnswer answerForLayouts(const BuiltinLookupContext& context, LayoutSetID layouts, BuiltinID soughtPrototype)
 {
     const Program& program = context.program;
@@ -196,7 +193,6 @@ Vector<BuiltinInstanceOfSite> planBuiltinInstanceOfSites(FunctionPassContext& co
         if (!isProvenConstructor && !isWorthTestingConstructor(context, site, constructor))
             return;
         if (readsPrototype) {
-            // The arm of what is no object keeps the whole operation, and is marked so.
             if (context.analyses.blockFrequencies().classOf(site.block) == BlockFrequency::Rare)
                 return;
             sites.append(BuiltinInstanceOfSite { site, { }, InstanceOfAnswer::Unknown, isProvenConstructor ? BuiltinID() : constructor, false, true });
@@ -221,12 +217,10 @@ static void becomeAnswer(FunctionPassContext& context, ValueID id, bool answer)
     value.setExpected(TypeID());
 }
 
-// Both lookups on the constructor are answered, so what is left of the operation is the walk up the chain of the value.
 static void finishArmWithWalk(SiteExpansion& expansion, BuiltinClassID builtinClass, ValueID subject)
 {
     FunctionPassContext& context = expansion.context();
     const BuiltinTable& table = context.program.builtins();
-    // What a test has left of the value may be known where the whole was not.
     InstanceOfAnswer answer = instanceOfAnswerFor({ context.program, context.inputs.flow }, context.program.typeOf(context.function, subject), builtinClass);
     if (answer != InstanceOfAnswer::Unknown) {
         expansion.finishArm(expansion.builder().appendBoolean(answer == InstanceOfAnswer::Yes));
@@ -260,7 +254,6 @@ static void finishArmsWithClassTests(SiteExpansion& expansion, const BuiltinInst
     finishArmWithWalk(expansion, site.builtinClass, subject);
 }
 
-// The first lookup on the constructor is answered. The second is a read of its property, and what is no object there is for the whole operation to refuse.
 static void finishArmsWithPrototypeRead(SiteExpansion& expansion)
 {
     FunctionPassContext& context = expansion.context();

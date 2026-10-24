@@ -185,7 +185,6 @@ static NumberBounds boundsOfQuotient(const NumberBounds& dividend, const NumberB
     return NumberBounds::reals(quotients);
 }
 
-// The operators that keep what is known about fractions. Nothing for the others: what they give follows from the types of their operands.
 static std::optional<NumberBounds> boundsOfRealOperator(Opcode opcode, std::span<const NumberBounds> operands)
 {
     Range first = operands[0].range;
@@ -239,7 +238,6 @@ static Range withoutEndpoint(Range range, Range removed)
     return range;
 }
 
-// The integers of the range for which `integer <comparison> other` gives the outcome, with a finite number between the bounds as the other side.
 static Range narrowByComparison(Range range, Opcode comparison, bool outcome, Range other)
 {
     switch (comparison) {
@@ -306,7 +304,6 @@ NumberBounds Int32Prover::find(ValueID id)
     m_openDepths[id.index()] = 0;
     --m_depth;
 
-    // What was found while a value further out was open assumes nothing about that value. It holds, and a question asked from elsewhere may find more.
     bool dependsOnOpenValue = m_outermostOpenDepthReached < depth;
     if (!dependsOnOpenValue) {
         m_outermostOpenDepthReached = noDepth;
@@ -363,7 +360,6 @@ NumberBounds Int32Prover::computeParameter(ValueID id)
 NumberBounds Int32Prover::computeIncoming(ValueID parameter, Edge edge, uint32_t parameterIndex)
 {
     const Function& function = m_inputs.function;
-    // This runs before the verifier has checked the edges.
     const Target& target = targetOf(function, edge);
     if (parameterIndex < target.arguments.size())
         return find(target.arguments[parameterIndex]);
@@ -387,7 +383,6 @@ NumberBounds Int32Prover::computeIncoming(ValueID parameter, Edge edge, uint32_t
 NumberBounds Int32Prover::computeNarrowedOperand(ValueID parameter, const EdgeResult& result)
 {
     NumberBounds subject = find(result.subject);
-    // Which kinds of value pass a test is the answer of the types.
     const Type& passed = typeOf(parameter);
     subject.mayBeNullish = subject.mayBeNullish && passed.primitives & nullishOrAbsentPrimitives;
     if (subject.isBounded() && !(passed.primitives & Primitive::Number))
@@ -421,10 +416,8 @@ NumberBounds Int32Prover::computePromise(const Value& request)
     NumberBounds entering = find(request.valueOperand());
     bool dependsOnOpenValue = m_outermostOpenDepthReached != noDepth;
     m_outermostOpenDepthReached = std::min(m_outermostOpenDepthReached, reachedBefore);
-    // `e as int32` is no position: it proves nothing about e.
     if (site == TypeSiteKind::Assertion || entering.isInt32OrNullish())
         return entering;
-    // Around a loop the answer is cut short, which says nothing about the flow.
     m_reliesOnUnprovenFlow = m_reliesOnUnprovenFlow || !dependsOnOpenValue;
     return NumberBounds::integers(Range::int32());
 }
@@ -432,7 +425,6 @@ NumberBounds Int32Prover::computePromise(const Value& request)
 NumberBounds Int32Prover::computeCast(ValueID id, const Value& cast)
 {
     NumberBounds operand = find(cast.operand(0));
-    // The type of the cast lies inside the type it names, and says what is expected of the value from here on.
     if (Value::opcodesWithCastType.contains(cast.opcode))
         return narrowToType(operand, typeOf(id));
     operand.mayBeNullish = operand.mayBeNullish && typeOf(id).primitives & nullishOrAbsentPrimitives;
@@ -548,14 +540,12 @@ TypeID Int32Prover::typeIDOfOperand(ValueID operand, const NumberBounds& bounds)
 
 static NumberBounds boundsOfRoundedNumber(const BuiltinOverload& overload, Range range)
 {
-    // Rounding down gives -0 for -0 only. Every other rounding also gives it for some fraction above -1.
     bool roundsDown = overload.code.implementation.inlineBuiltin == InlineBuiltin::MathFloor;
     if (!roundsDown && range.minimum < 0 && range.maximum >= 0)
         return NumberBounds::unknown(Int32ProofFailure::AnyNumber);
     return NumberBounds::integers(range);
 }
 
-// The table's rule for a range holds for fractions too: the bounds of the operands bound the result.
 std::optional<NumberBounds> Int32Prover::computeByRangeRule(BuiltinID builtin, Operands arguments)
 {
     const BuiltinOverload* called = nullptr;

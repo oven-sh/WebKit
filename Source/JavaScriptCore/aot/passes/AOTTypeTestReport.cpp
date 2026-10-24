@@ -11,31 +11,13 @@
 #include "AOTBodyIndex.h"
 #include "AOTDiagnostics.h"
 #include "AOTThreads.h"
-#include "AOTVector.h"
 #include <algorithm>
 #include <tuple>
 #include <wtf/SaturatingArithmetic.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static bool isTypeTest(Opcode opcode)
-{
-    if (opcode == Opcode::Check || std::ranges::contains(replacedOperationsOf(opcode), Opcode::Check))
-        return true;
-    return opcode == Opcode::TypeTest || familyOf(opcode) == OperationFamily::Guard;
-}
-
-static OpcodeSet computeTypeTestOpcodes()
-{
-    OpcodeSet typeTestOpcodes;
-    for (Opcode opcode : allMembersOf<Opcode>) {
-        if (isTypeTest(opcode))
-            typeTestOpcodes.add(opcode);
-    }
-    return typeTestOpcodes;
-}
-
-static void appendRecord(const Program& program, FunctionID id, const Instruction& test, Vector<Wire::TypeTestRecord>& records)
+static void appendTypeTestRecord(const Program& program, FunctionID id, const Instruction& test, Vector<Wire::TypeTestRecord>& records)
 {
     const Function& function = program.at(id);
     Origin origin = test.origin();
@@ -52,55 +34,49 @@ static void appendRecord(const Program& program, FunctionID id, const Instructio
     });
 }
 
-static void appendRecordsOf(const Program& program, FunctionID id, const OpcodeSet& typeTestOpcodes, Vector<Wire::TypeTestRecord>& records)
-{
-    forEachListedValue(program, id, typeTestOpcodes, [&](BlockID, uint32_t, ValueID, const Value& value) {
-        appendRecord(program, id, value, records);
-    });
-    if (!mayEndBlockWith(program, id, { TerminatorKind::SwitchOnShape }))
-        return;
-    for (const Block& block : program.at(id).blocks) {
-        if (block.terminator.kind == TerminatorKind::SwitchOnShape)
-            appendRecord(program, id, block.terminator, records);
-    }
-}
-
-static auto orderKey(const Wire::TypeTestRecord& record)
-{
-    return std::tuple { record.location.module, record.location.position, record.function };
-}
-
-static void foldCopies(Vector<Wire::TypeTestRecord>& sortedRecords)
-{
-    size_t recordCount = 0;
-    for (Wire::TypeTestRecord record : sortedRecords) {
-        if (recordCount && sortedRecords[recordCount - 1].location == record.location) {
-            uint32_t& copies = sortedRecords[recordCount - 1].copies;
-            copies = saturatingSum<uint32_t>(copies, record.copies);
-            continue;
-        }
-        sortedRecords[recordCount++] = record;
-    }
-    sortedRecords.shrink(recordCount);
-}
-
 Vector<Wire::TypeTestRecord> collectTypeTestRecords(const Program& program)
 {
-    ParallelLoops serialLoops(1);
-    return collectTypeTestRecords(program, serialLoops);
+    return collectTypeTestRecords(program, ParallelLoops(1));
 }
 
 Vector<Wire::TypeTestRecord> collectTypeTestRecords(const Program& program, const ParallelLoops& loops)
 {
-    OpcodeSet typeTestOpcodes = computeTypeTestOpcodes();
+    OpcodeSet typeTestOpcodes;
+    for (Opcode opcode : allMembersOf<Opcode>) {
+        if (opcode == Opcode::Check || std::ranges::contains(replacedOperationsOf(opcode), Opcode::Check) || opcode == Opcode::TypeTest || familyOf(opcode) == OperationFamily::Guard)
+            typeTestOpcodes.add(opcode);
+    }
+
     Vector<Wire::TypeTestRecord> records = collectInParallel<Wire::TypeTestRecord>(loops, program.functions.size(), [&](unsigned index, Vector<Wire::TypeTestRecord>& found) {
-        appendRecordsOf(program, FunctionID(index), typeTestOpcodes, found);
+        FunctionID id(index);
+        forEachListedValue(program, id, typeTestOpcodes, [&](BlockID, uint32_t, ValueID, const Value& value) {
+            appendTypeTestRecord(program, id, value, found);
+        });
+        if (!mayEndBlockWith(program, id, { TerminatorKind::SwitchOnShape }))
+            return;
+        for (const Block& block : program.at(id).blocks) {
+            if (block.terminator.kind == TerminatorKind::SwitchOnShape)
+                appendTypeTestRecord(program, id, block.terminator, found);
+        }
     });
 
-    parallelSort(loops, records.mutableSpan(), [](const Wire::TypeTestRecord& a, const Wire::TypeTestRecord& b) {
+    auto orderKey = [](const Wire::TypeTestRecord& record) {
+        return std::tuple { record.location.module, record.location.position, record.function };
+    };
+    parallelSort(loops, records.mutableSpan(), [&](const Wire::TypeTestRecord& a, const Wire::TypeTestRecord& b) {
         return orderKey(a) < orderKey(b);
     });
-    foldCopies(records);
+
+    size_t recordCount = 0;
+    for (Wire::TypeTestRecord record : records) {
+        if (recordCount && records[recordCount - 1].location == record.location) {
+            uint32_t& copies = records[recordCount - 1].copies;
+            copies = saturatingSum<uint32_t>(copies, record.copies);
+            continue;
+        }
+        records[recordCount++] = record;
+    }
+    records.shrink(recordCount);
     return records;
 }
 

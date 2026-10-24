@@ -105,7 +105,6 @@ Wire::SourceLocation Function::locationOf(Origin origin) const
     if (!origin.inlineFrame)
         return locationInModule(module, origin.position);
 
-    // Diagnostics ask for locations in functions that failed verification, so a malformed frame list gives no location.
     if (origin.inlineFrame >= inlineFrames.size())
         return noSourceLocation;
     if (ModuleID calleeModule = inlineFrames[origin.inlineFrame].module)
@@ -329,7 +328,6 @@ static Vector<BlockID> sortIntoReversePostOrder(Function& function)
     });
 }
 
-// An empty list moves no block.
 static Vector<BlockID> movedFirstAndThen(Vector<BlockID>&& first, Vector<BlockID>&& then)
 {
     if (first.isEmpty())
@@ -395,9 +393,7 @@ bool compactFunction(Function& function, Renumbering* renumbering)
     if (!function.hasBody())
         return false;
 
-    // Other numbers for the same values.
     bool valuesAreTypedAsDefined = function.valuesAreTypedAsDefined();
-    // By induction a block with an earlier predecessor is reachable, so a valid order has no unreachable block.
     bool wasOrdered = hasEarlierPredecessors(function);
     Vector<BlockID> movedBlocks;
     if (!wasOrdered) {
@@ -482,7 +478,6 @@ size_t numberOfForeignIDs(const Function& constFunction, const TypeArena& types)
 
 void adoptIDs(Function& function, TypeArena& types)
 {
-    // Other names for the same types.
     bool valuesAreTypedAsDefined = function.valuesAreTypedAsDefined();
     ForeignIDAdopter adopter { types };
     forEachReference(static_cast<FunctionRecord&>(function), adopter);
@@ -508,7 +503,6 @@ void remapIDs(Function& function, const TypeRemap& types, const StringRemap& str
     forEachReference(static_cast<FunctionRecord&>(function), rewriter);
     for (Value& value : function.editAllValues()) {
         types.apply(value.type);
-        // Two arenas give one type two provisional ids. An expected type is set where it says more than the type does, and here the two may turn out to be one.
         TypeID expected = types(value.expectedForTyping());
         value.setExpected(expected == value.type ? TypeID() : expected);
         forEachReference(value, rewriter);

@@ -81,7 +81,6 @@ static void applyEdits(FunctionPassContext& context, RequestEdits& edits)
     context.analyses.didChangeControlFlow();
 }
 
-// Every flow into an int32 promise is judged while the requests are in place, so CheckInt32Promises resolves those.
 static bool isResolvedByTypeValues(const Value& value)
 {
     return value.opcode == Opcode::Convert && !value.declared().flags.contains(PositionFlags::IsInt32Promise);
@@ -152,11 +151,9 @@ PassOutcome typeValues(FunctionPassContext& context)
         typeValuesFromNever(inputs);
     resolveRequests(context);
     resolveTailCasts(context);
-    // A request that has become a cast where it stood has the one operand that it had, and is the same value as that operand only from now on. The casts of a tail call are no operands.
     static_assert(OperandIndex::Convert::value == OperandIndex::Upcast::value && OperandIndex::Convert::value == OperandIndex::Check::value);
     context.analyses.invalidate(valueAnalyses - AnalysisSet { FunctionAnalysis::UseLists, FunctionAnalysis::Liveness });
     finishTypedValues(inputs);
-    // The analyses were told of every edit when it was made.
     context.keptAnalyses = allAnalyses;
     return PassOutcome::Changed;
 }

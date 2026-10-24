@@ -81,7 +81,6 @@ static Vector<TypeID, 2> contentsOfInstancePart(const BuiltinTable& table, const
     return contents;
 }
 
-// A promise resolved with a promise takes over its state, so what it is fulfilled with is what awaiting the value gives.
 static bool holdsResolvedValue(const BuiltinSlot& slot)
 {
     return slot.owner == BuiltinClasses::Promise && slot.contentsSlot == ContentsSlot::Value;
@@ -168,7 +167,6 @@ static Type closedTypeOf(const Program& program, BuiltinTypeID id, TypeArena* co
 Type typeOfBuiltinLayout(const TypingContext& context, BuiltinLayoutID id)
 {
     const BuiltinLayout& layout = context.program.builtins().at(id);
-    // The built-in's own code makes the record, as an ordinary object: no test for the shape of the layout would pass.
     if (!layout.isTuple)
         return Type::object();
 
@@ -529,11 +527,9 @@ TypeFit FitWalk::fitOfBuiltin(BuiltinID builtin) const
     });
     bool takesFunctions = has(BuiltinTypeFlag::HasAnyFunction);
     bool isCovered = has(BuiltinTypeFlag::HasAnyObject) || isNamed || (takesFunctions && isCallableBuiltin(m_table, builtin));
-    // Function.prototype is callable, and its entry is a prototype.
     return fitOfAtom(isCovered, takesFunctions || hasInstancePart());
 }
 
-// Plain data is objects and arrays that hold each other and primitives, without an accessor. No type says that of what an object holds, so no object is proven to be plain data.
 TypeFit FitWalk::fitOfLayout(LayoutID layout) const
 {
     bool mayBePlainData = has(BuiltinTypeFlag::HasPlainData);
@@ -550,7 +546,6 @@ TypeFit FitWalk::fitOfLayout(LayoutID layout) const
     case BuiltinBaseState::None:
         return fitOfAtom(false, mayBePlainData);
     case BuiltinBaseState::Found: {
-        // An object of a compiled class inherits from the prototype of that class first, so it is never pristine.
         auto mayAdmit = [&](const BuiltinTypePart& part) {
             return part.pristine.isEmpty() || !m_table.isSameOrSubclassOf(base.builtinClass, part.builtinClass);
         };
@@ -592,7 +587,6 @@ TypeFit FitWalk::fitOfClassPart(const ClassPart& part)
 
     bool mayBeFunction = takesFunctions && isFunctionClass(m_table, builtinClass);
     bool mayBePlainData = has(BuiltinTypeFlag::HasPlainData) && (m_table.isSameOrSubclassOf(BuiltinClasses::Array, builtinClass) || m_table.isSameOrSubclassOf(BuiltinClasses::Object, builtinClass));
-    // A built-in object may be an instance of any class, and a tuple layout is an Array.
     bool mayBeListedObject = hasPart(BuiltinTypePartKind::Builtin) || hasPart(BuiltinTypePartKind::Layout);
     return fitOfAtom(false, mayBeFunction || mayBePlainData || mayBeListedObject || hasInstancePartIf([&](const BuiltinTypePart& tested) {
         return m_table.isSameOrSubclassOf(tested.builtinClass, builtinClass);

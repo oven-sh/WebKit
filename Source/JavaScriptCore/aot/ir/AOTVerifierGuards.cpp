@@ -32,7 +32,6 @@ void FunctionVerifier::verifyGuards()
             if (reliesOf(value.opcode).isEmpty())
                 continue;
 
-            // Finding what an operation needs from its guards compares sets of layouts, so it is done once per operation.
             ProofSet neededFromGuard = proofsNeededFromGuard(m_program, m_function, value);
             if (neededFromGuard.isEmpty())
                 continue;
@@ -49,7 +48,6 @@ void FunctionVerifier::verifyGuards()
                 if (!cursor)
                     cursor.emplace(analyses().guards(), block);
                 cursor->advanceTo(index);
-                // An available guard has a fact for each needed proof that proves it for this operation, so there is nothing left to look for.
                 GuardState state = cursor->stateOf(guard, value);
                 if (state == GuardState::Available)
                     continue;

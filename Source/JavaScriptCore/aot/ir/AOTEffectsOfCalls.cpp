@@ -52,7 +52,6 @@ static bool throwsBeforeEntry(const Function& callee, BuiltinCallMode mode)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// As many words as the list or the caller's own arguments have go onto the stack before the callee is entered, and they may not fit.
 static constexpr OpcodeSet callsThatCopyArgumentsOfAnyNumber { Opcode::CallList, Opcode::ConstructList, Opcode::SuperConstructList, Opcode::CallForwardVarargs, Opcode::ConstructSuperForwardVarargs };
 
 static bool namesEveryCallee(const Type& callee)
@@ -118,7 +117,6 @@ CalleeList calleesThatBoundEffectsOf(const Program& program, const Value& call)
     return calleesOfCall(program, call);
 }
 
-// A call by value reaches the body through the entrypoint of the callee, which refuses a call of the wrong kind and collects the rest arguments.
 static void describeEntrypoint(const Function& callee, BuiltinCallMode mode, EffectDescription& description)
 {
     if (throwsBeforeEntry(callee, mode))
@@ -138,7 +136,6 @@ static void describeReadOfConstructPrototype(const Program& program, const Type&
     describeOperandCode(program, newTarget, declaredBehaviorOf(Opcode::GetConstructPrototype, OperandIndex::GetConstructPrototype::newTarget), description);
 }
 
-// What a construction does before it enters the callee is in no summary either.
 static void describeCreationOfThis(const Program& program, FunctionID callee, const EnteringOperands& operands, EffectDescription& description)
 {
     if (!takesThisFromConstruction(program.at(callee)))
@@ -158,7 +155,6 @@ void describeCallees(const Program& program, const CalleeList& callees, BuiltinC
     }
     for (BuiltinID callee : callees.builtins)
         describeCallOf(program, callee, mode, description);
-    // A native constructor that is its own new.target allocates under the prototype its realm keeps. It reads the prototype of any other new.target.
     if (constructs && operands.newTarget && !callees.builtins.isEmpty())
         describeReadOfConstructPrototype(program, program.at(operands.newTarget), description);
     if (!callees.isComplete)
@@ -224,7 +220,6 @@ static void describeCalleesOfCall(const Program& program, const Function& functi
     describeCallees(program, callees, mode, operands, description);
 }
 
-// A callback whose callers are all known is no part of unknown code. The call that hands it to a built-in is one of those callers.
 static void describeOperandsGivenToBuiltins(const Program& program, const Function& function, const Value& call, const CalleeList& callees, BuiltinCallMode mode, EffectDescription& description)
 {
     if (callees.builtins.isEmpty())

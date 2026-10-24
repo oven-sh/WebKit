@@ -48,7 +48,6 @@ struct DescriptionsOfSource {
     Vector<ValueID, 2> descriptions;
     Vector<Value, 2> firstHalves;
     Vector<ErasedValue, 4> casts;
-    // Where several blocks describe the source and the block of the definition merges what they answer. One edge for each description.
     ValueID mergingParameter;
     Vector<Edge, 2> edges;
 };
@@ -64,7 +63,6 @@ struct CallWithLiteralParts {
     ValueID literal;
     ValueID literalOperand;
     BuiltinOverloadID form;
-    // None stands for undefined.
     Vector<ValueID, 4> arguments;
 };
 
@@ -89,7 +87,6 @@ static bool keepsEffectsOf(FunctionPassContext& context, const Value& original, 
     return effectsOf(effectContext, context.function, rewritten).isSubsetOf(replaced.effects());
 }
 
-// An intersection may keep a part of one side that the subset test does not find in the other, and an expected type lies inside the type.
 static TypeID narrowExpectedType(const Program& program, TypeArena& types, TypeID expected, TypeID type)
 {
     if (!expected)
@@ -248,7 +245,6 @@ static std::optional<Value> simplifyGeneratorStep(FunctionPassContext& context, 
     return simplified;
 }
 
-// An instance of a class of the program below a built-in class is made by the constructor of that class: `class Stack extends Array` makes arrays, and their type lists the layout of Stack.
 static bool mayBeMadeByBuiltinConstructor(const Program& program, LayoutID layout)
 {
     for (size_t steps = 0; steps < program.layouts.size(); ++steps) {
@@ -271,7 +267,6 @@ static bool mayBeMadeByBuiltinConstructor(const Program& program, const Type& ty
     });
 }
 
-// Array.prototype is an array too, and no instance of the class: it has no room for elements, so nothing that reads the storage of an array may take it for one.
 static Type typeOfArraysAmong(FunctionPassContext& context, const Type& operand)
 {
     Type arrays = Type::builtinClass(BuiltinClasses::Array);
@@ -280,7 +275,6 @@ static Type typeOfArraysAmong(FunctionPassContext& context, const Type& operand)
     return arrays;
 }
 
-// `$isMap(x)`, `$isPromise(x)`, `$isTypedArrayView(x)` in the library ask for the kind of a cell.
 static std::optional<Value> simplifyTestOfCellKind(FunctionPassContext& context, const Value& test)
 {
     const BuiltinTable& table = context.program.builtins();
@@ -348,7 +342,6 @@ struct BuiltinOwnPropertyTest {
 
 } // anonymous namespace
 
-// Object.hasOwn(object, "name") and object.hasOwnProperty("name")
 static std::optional<BuiltinOwnPropertyTest> findOwnPropertyTest(FunctionPassContext& context, const Value& value)
 {
     const Program& program = context.program;
@@ -394,7 +387,6 @@ static std::optional<Value> simplifyOwnPropertyTest(FunctionPassContext& context
     return test;
 }
 
-// An object, undefined or null: the conversion that the call begins with throws for the two and is nothing for an object. It stands in front of the test as an operation of its own.
 static unsigned simplifyOwnPropertyTestsOfWhatMayBeMissing(FunctionPassContext& context, const BuiltinCallSites& calls)
 {
     const Program& program = context.program;
@@ -424,7 +416,6 @@ static unsigned simplifyOwnPropertyTestsOfWhatMayBeMissing(FunctionPassContext& 
 
 unsigned simplifyOwnPropertyTests(FunctionPassContext& context, const BuiltinCallSites& calls)
 {
-    // The first leaves each call where it stands, as another operation.
     unsigned rewrites = rewriteBuiltinCalls(context, calls, [&](const Value& value) {
         return simplifyOwnPropertyTest(context, value);
     });
@@ -455,7 +446,6 @@ static KnownBoolean evaluateNumberTest(BuiltinID builtin, const Type& operand)
     return KnownBoolean::Unknown;
 }
 
-// Error.isError and ArrayBuffer.isView ask what kind of cell an object is, and look through no Proxy.
 static KnownBoolean evaluateQuestionAboutClass(const Program& program, BuiltinID builtin, const Type& operand)
 {
     const BuiltinTable& table = program.builtins();
@@ -482,7 +472,6 @@ static KnownBoolean evaluateQuestionAboutClass(const Program& program, BuiltinID
     bool hasOthers = operand.primitives || operand.layouts || operand.anyFunction || !operand.functions.isEmpty() || !operand.builtins.isEmpty();
     bool hasSome = false;
     for (const ClassPart& part : operand.classes) {
-        // A class of the host below one of the engine's is what that is. Of any other the host alone knows.
         if (isOfKind(part.builtinClass))
             hasSome = true;
         else if (table.at(part.builtinClass).origin == BuiltinOrigin::Engine)
@@ -495,7 +484,6 @@ static KnownBoolean evaluateQuestionAboutClass(const Program& program, BuiltinID
     return hasSome ? KnownBoolean::True : KnownBoolean::False;
 }
 
-// `$inheritsReadableStream(x)` in the library asks whether a cell is of one class of the host.
 static bool isOfNoClassOfHost(const Program& program, const Type& operand)
 {
     if (operand.anyObject || operand.anyFunction || !operand.builtins.isEmpty())
@@ -537,7 +525,6 @@ static std::optional<Value> simplifyPrimitiveCall(FunctionPassContext& context, 
     const Type& operand = context.program.typeOf(context.function, arguments[0]);
     if (returnsOperandUnchanged(overload->builtin, operand))
         return makeIdentityCast(context.function, arguments[0]);
-    // A question about the type, which the operations behind it go by too. Not of a Proxy, which is what its target is, and not of an object that nobody knows: that may be a Proxy, or of a class below Array.
     if (overload->builtin == Builtins::ArrayIsArray && !operand.anyObject && !operand.findClassPart(BuiltinClasses::Proxy) && !mayBeMadeByBuiltinConstructor(context.program, operand)) {
         return makeTypeTest(arguments[0], context.types.intern(typeOfArraysAmong(context, operand)));
     }
@@ -554,13 +541,11 @@ static std::optional<Value> simplifyPrimitiveCall(FunctionPassContext& context, 
         return makeBooleanConstant(true);
     }
 
-    // Where the type does not say it, the kind of the cell does, and that is what a test for the class looks at.
     if (mayBeMadeByBuiltinConstructor(context.program, operand))
         return std::nullopt;
     if (overload->builtin == Builtins::ErrorIsError)
         return makeTypeTest(arguments[0], context.types.intern(Type::builtinClass(BuiltinClasses::Error)));
     if (overload->builtin == Builtins::ArrayBufferIsView) {
-        // No cell is of the class that all typed arrays share, so no test finds it: the classes of the engine below it are listed.
         const BuiltinTable& table = context.program.builtins();
         Type views = Type::builtinClass(BuiltinClasses::DataView);
         for (uint32_t index = 0; index < table.classCount(); ++index) {
@@ -595,7 +580,6 @@ static ValueID findTruncatedNumber(FunctionPassContext& context, ValueID operand
     return number;
 }
 
-// ToInt32 drops the fraction itself and takes NaN, the infinities and both zeros to 0, as it does with what a truncation makes of them.
 static std::optional<Value> simplifyInt32Conversion(FunctionPassContext& context, const Value& conversion)
 {
     std::optional<Value> simplified;
@@ -617,7 +601,6 @@ unsigned simplifyInt32Conversions(FunctionPassContext& context)
     });
 }
 
-// Also a call whose operands nobody has proven to be what an overload takes: the function itself converts and refuses them.
 static bool isCallOf(const Program& program, const Value& value, BuiltinID function, size_t numberOfArguments)
 {
     if (value.opcode != Opcode::CallBuiltin || (value.builtinCallForm() != BuiltinCallForm::Whole && value.builtinCallForm() != BuiltinCallForm::AnyReceiver))
@@ -626,7 +609,6 @@ static bool isCallOf(const Program& program, const Value& value, BuiltinID funct
     return overload.mode == BuiltinCallMode::Call && program.builtins().canonicalID(overload.builtin) == function && value.argumentsOperands().size() == numberOfArguments;
 }
 
-// An ordinary source is read by the definition, behind this value, so the value changes nothing.
 static bool maySwapWithAnyCall(const EffectContext& effectContext, const Function& function, const Value& value)
 {
     Effects effects = effectsOf(effectContext, function, value).onAnyEdge();
@@ -643,7 +625,6 @@ static bool maySwapWithAnyCall(const EffectContext& effectContext, const Functio
     return true;
 }
 
-// The value behind the casts without a test that stand between it and its one user, which is an operand of `user` or an argument of an edge.
 static ValueID findSingleUseValue(FunctionPassContext& context, ValueID last, std::optional<ValueID> user, Vector<ErasedValue, 4>& casts)
 {
     const Function& function = context.function;
@@ -667,7 +648,6 @@ static bool isDeadEnd(const Block& block)
     return block.values.isEmpty() && block.terminator.kind == TerminatorKind::Unreachable;
 }
 
-// From behind the call to the edge, control has one way to go, nothing joins it, and nothing on the way sees or changes anything.
 static bool reachesEdgeUnseen(FunctionPassContext& context, const EffectContext& effectContext, ValueID call, Edge edge)
 {
     AOT_THRESHOLD(unsigned, maxBlocksOnTheWay, 8);
@@ -704,7 +684,6 @@ static bool reachesEdgeUnseen(FunctionPassContext& context, const EffectContext&
     return false;
 }
 
-// A test in front of the two calls may have copied what follows it, and the copies may join between the calls.
 static bool findDescriptionsBeforeMerge(FunctionPassContext& context, const EffectContext& effectContext, const ValueSite& site, ValueID parameter, DescriptionsOfSource& result)
 {
     const Function& function = context.function;
@@ -769,7 +748,6 @@ static std::optional<Value> makeCallOfHelper(FunctionPassContext& context, Built
     return std::nullopt;
 }
 
-// Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)), where the descriptors go nowhere else.
 static std::optional<DefinitionByDescriptors> matchDefinitionByDescriptors(FunctionPassContext& context, const ValueSite& site)
 {
     const Program& program = context.program;
@@ -796,7 +774,6 @@ static std::optional<DefinitionByDescriptors> matchDefinitionByDescriptors(Funct
         found->firstHalves.append(WTF::move(*half));
     }
 
-    // What the first half answers is an object, whichever.
     ValueID described = found->descriptions.first();
     std::optional<Value> secondHalf = makeCallOfHelper(context, Builtins::CompilerHelpersDefinePropertiesFrom, definition, { definition.argumentsOperands()[0], described, described });
     if (!secondHalf || !keepsTypeOf(context, site.value, *secondHalf) || !effectsOf(effectContext, function, *secondHalf).isSubsetOf(replaced.effects()))
@@ -804,7 +781,6 @@ static std::optional<DefinitionByDescriptors> matchDefinitionByDescriptors(Funct
     return DefinitionByDescriptors { site, WTF::move(*secondHalf), WTF::move(*found) };
 }
 
-// Each call stays where it stands, so whoever sees where an error comes from, or catches it, sees what it saw.
 static unsigned fuseDefinitionsByDescriptors(FunctionPassContext& context, const BuiltinCallSites& calls)
 {
     Function& function = context.function;
@@ -896,7 +872,6 @@ static ValueID findObjectHandedOn(const Function& function, ValueID operand)
     return link;
 }
 
-// Whether each use of the value, or of what hands it on, is the literal of one of the calls.
 static bool isSeenOnlyAsLiteralOf(FunctionPassContext& context, std::span<const CallWithLiteralParts> calls, ValueID value)
 {
     const Function& function = context.function;
@@ -962,7 +937,6 @@ static BuiltinOverloadID findFormTakingParts(FunctionPassContext& context, const
     return { };
 }
 
-// new Response(body, { status, headers }). Who else has the literal is the caller's question.
 static std::optional<CallWithLiteralParts> matchCallWithLiteralParts(FunctionPassContext& context, const ValueSite& site)
 {
     const Program& program = context.program;
@@ -1002,7 +976,6 @@ static std::optional<CallWithLiteralParts> matchCallWithLiteralParts(FunctionPas
     return match;
 }
 
-// Native code reads each member of such a literal by name, the absent ones too.
 static unsigned takeLiteralArgumentsApart(FunctionPassContext& context, const BuiltinCallSites& calls)
 {
     Function& function = context.function;

@@ -27,9 +27,7 @@
 #include "JSObjectInlines.h"
 #include <wtf/Assertions.h>
 
-#if ENABLE(AOT)
 #include "AOTMembersLeftOut.h"
-#endif
 
 namespace JSC {
 

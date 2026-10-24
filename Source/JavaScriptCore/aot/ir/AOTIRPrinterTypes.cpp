@@ -62,7 +62,6 @@ static std::span<const uint8_t> bytesOf(const StringTable& strings, StringID id)
     return isInTable(strings, id) ? strings[id] : std::span<const uint8_t>();
 }
 
-// A parser numbers strings and keys by first appearance, so the order of their ids does not survive a round trip. The order of the bytes does.
 static bool isPrintedBefore(const StringTable& strings, StringID a, StringID b)
 {
     return compareSpans(bytesOf(strings, a), bytesOf(strings, b)) < 0;
@@ -92,7 +91,6 @@ static bool isBuiltinOrNamespaceLayout(const Program& program, LayoutID id)
     return kind == LayoutKind::BuiltinResult || kind == LayoutKind::ModuleNamespace;
 }
 
-// A parser places the layouts of built-ins and namespaces after every layout of the text, including those a pass appended after them.
 static void visitInPrintedOrder(const Program& program, std::span<const LayoutID> layouts, NOESCAPE const Invocable<void(LayoutID)> auto& functor)
 {
     for (bool visitsBuiltinAndNamespaceLayouts : { false, true }) {
@@ -123,7 +121,6 @@ void IRPrinter::printQuoted(std::span<const uint8_t> bytes)
         uint8_t byte = bytes.front();
         size_t length = 1;
         if (!needsEscape(byte)) {
-            // PrintStream takes the length of a span as an int.
             length = std::min<size_t>(std::ranges::find_if(bytes, needsEscape) - bytes.begin(), INT_MAX);
             m_out.print(byteCast<char>(bytes.first(length)));
         } else if (byte == '"')

@@ -23,15 +23,12 @@ ArrayStorage arrayStorageHolding(const Type& elements)
 {
     if (elements.hasObjects() || !elements.isJavaScriptValue())
         return ArrayStorage::Contiguous;
-
     uint16_t primitives = elements.primitives & ~(Primitive::UndefinedOrNull | Primitive::Absent);
     if (!primitives)
         return ArrayStorage::Other;
     if (primitives == Primitive::Integer && elements.integers.isSubsetOf(Range::int32()))
         return ArrayStorage::Int32;
-    if (!(primitives & ~Primitive::Number))
-        return ArrayStorage::Double;
-    return ArrayStorage::Contiguous;
+    return primitives & ~Primitive::Number ? ArrayStorage::Contiguous : ArrayStorage::Double;
 }
 
 ArrayStorage arrayStorageDeclaredBy(const Program& program, const ClassPart& array)
@@ -90,9 +87,7 @@ ArrayStorage arrayStorageOfData(const Program& program, const DataNode::Array& a
     // The readers of an array that is declared to hold numbers test for Double storage, also where every constant is a whole number.
     if (areInt32 && arrayStorageHolding(program.at(array.contents)) != ArrayStorage::Double)
         return ArrayStorage::Int32;
-    if (areDoublesOrHoles)
-        return ArrayStorage::Double;
-    return ArrayStorage::Contiguous;
+    return areDoublesOrHoles ? ArrayStorage::Double : ArrayStorage::Contiguous;
 }
 
 bool isStorageOfArray(const DataNode::Array& array)
@@ -117,47 +112,27 @@ bool isStorageOfArray(const DataNode::Array& array)
 
 std::optional<ArrayStorage> arrayStorageOfNewHoles(const Value& allocation)
 {
-    switch (allocation.opcode) {
-    case Opcode::NewDoubleArray:
+    if (allocation.opcode == Opcode::NewDoubleArray)
         return ArrayStorage::Double;
-    case Opcode::NewArrayLike:
-    case Opcode::NewArrayWithCapacity:
-        return allocation.arrayStorage() == ArrayStorage::Other ? ArrayStorage::Contiguous : allocation.arrayStorage();
-    case Opcode::NewContiguousArray:
-    case Opcode::ArraySpeciesCreate:
+    if (allocation.opcode == Opcode::NewArrayLike || allocation.opcode == Opcode::NewArrayWithCapacity)
+        return kindAtAllocation(allocation.arrayStorage());
+    if (allocation.opcode == Opcode::NewContiguousArray || allocation.opcode == Opcode::ArraySpeciesCreate)
         return ArrayStorage::Contiguous;
-    default:
-        return std::nullopt;
-    }
+    return std::nullopt;
 }
 
 bool canStoreWithoutConversion(ArrayStorage kind, const Type& stored)
 {
-    switch (kind) {
-    case ArrayStorage::Int32:
-        return stored.isInt32();
-    case ArrayStorage::Double:
+    if (kind == ArrayStorage::Double)
         return stored.isNumber() && !stored.mayBeNaN();
-    case ArrayStorage::Contiguous:
-        return true;
-    case ArrayStorage::Other:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    return kind == ArrayStorage::Contiguous || (kind == ArrayStorage::Int32 && stored.isInt32());
 }
 
 Type typeOfElementRead(ArrayStorage kind)
 {
-    switch (kind) {
-    case ArrayStorage::Int32:
+    if (kind == ArrayStorage::Int32)
         return Type::integer(Range::int32()).withPrimitives(Primitive::Undefined);
-    case ArrayStorage::Double:
-        return Type::fromPrimitives(Primitive::Number | Primitive::Undefined);
-    case ArrayStorage::Contiguous:
-    case ArrayStorage::Other:
-        return Type::anything();
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    return kind == ArrayStorage::Double ? Type::fromPrimitives(Primitive::Number | Primitive::Undefined) : Type::anything();
 }
 
 } } } // namespace JSC::AOT::Typed

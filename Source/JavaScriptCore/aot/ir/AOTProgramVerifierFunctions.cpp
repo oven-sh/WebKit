@@ -28,7 +28,6 @@ constexpr OptionSet<FunctionCapabilities> capabilitiesAddedByPasses {
     FunctionCapabilities::IsHiddenInStackTraces,
 };
 
-// SplitBehindEntryChecks runs on the program as read and leaves the tests under the id of the function it splits: the one role of a function as read that no front end sends.
 bool isSentByFrontEnd(FunctionRole role)
 {
     return static_cast<unsigned>(role) < numberOfWireEnumerators<FunctionRole>;
@@ -78,7 +77,6 @@ bool hasValidConstructedClass(const Program& program, FunctionID id, const Funct
     const Layout& constructedClass = program.at(function.constructedClass);
     if (constructedClass.kind != LayoutKind::Instance)
         return false;
-    // The copy of a class that is defined inside a copied function has a layout of its own.
     if (constructedClass.constructor == id)
         return true;
     FunctionID source = function.derivation.source;
@@ -148,7 +146,6 @@ bool isValidCoroutineRecord(const Program& program, FunctionID id, const Creator
         return false;
     if (id != record.ramp && id != record.body)
         return false;
-    // An async function that never suspends has no frame to save: its ramp calls the worker and settles the promise itself.
     if (record.worker && (record.worker != record.body || record.entryWithoutPromise || record.promiseParameter || record.kind != CoroutineKind::AsyncFunction))
         return false;
 

@@ -98,7 +98,6 @@ struct Range {
 
 constexpr int64_t widenedMaximum(int64_t maximum)
 {
-    // The largest length is 2 ** 53 - 1: a counter below a length can still take a step from there.
     for (int64_t landmark : { int64_t { 0 }, int64_t { INT32_MAX }, int64_t { UINT32_MAX }, maxTypedArrayLength, maxExactInteger - 1, maxExactInteger }) {
         if (maximum <= landmark)
             return landmark;

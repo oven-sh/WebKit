@@ -24,7 +24,6 @@ static Type uniteInternalValues(const Type& a, const Type& b)
     const Type& other = usesFirst ? b : a;
     result.primitives |= other.primitives;
     bool isSameValue = a.opaque == b.opaque && a.environment == b.environment;
-    // No type includes both values: canonicalize() answers anything for an internal value mixed with objects.
     if (!isSameValue && !other.hasOnlyPrimitives(Primitive::Absent))
         result.anyObject = true;
     result.canonicalize();
@@ -107,7 +106,6 @@ Type Type::unionWith(const Type& other, TypeArena& arena) const
     return result;
 }
 
-// A test splits a family that the program declares, and the join behind the test puts the two sides together again.
 static bool liesInsideDeclaredFamily(const WideningContext& context, const Type& type)
 {
     const Program& program = context.program;
@@ -131,7 +129,6 @@ static bool liesInsideDeclaredFamily(const WideningContext& context, const Type&
     return false;
 }
 
-// A union that is as long as its longer operand is that operand: the join has built nothing, however long the list is.
 static bool widenGrownLists(Type& type, const Type& first, const Type& second, const WideningContext& context)
 {
     auto exceeds = [&](LimitID limit, const Invocable<size_t(const Type&)> auto& sizeIn) {

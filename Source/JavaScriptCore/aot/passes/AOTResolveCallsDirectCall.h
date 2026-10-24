@@ -45,15 +45,11 @@ struct DirectCallRequest {
 
 ValueID appendDirectCall(IRBuilder&, const DirectCallRequest&);
 Value makeDirectCall(const ValueInsertion&, const DirectCallRequest&);
-// A validating build tests the callee of a call that its type alone made direct.
-void appendCalleeValidation(IRBuilder&, ValueID callee);
 
 Vector<ValueID, 8> appendCaptures(IRBuilder&, FunctionID, ValueID closure);
-Vector<ValueID, 8> insertCaptures(const ValueInsertion&, FunctionID, ValueID closure);
 void emitReturnOfCall(IRBuilder&, ValueID result);
 TailCallRequirement tailCallRequirementOf(const Function& body);
 
-bool canPassRestArguments(const Program&, const Function& callee);
 bool mayBeCalledDirectly(const Program&, FunctionID callee);
 bool canCallWithoutClosure(const Program&, FunctionID callee);
 bool canConstructDirectly(const Program&, FunctionID constructor);

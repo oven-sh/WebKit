@@ -55,12 +55,10 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
-#if ENABLE(AOT)
 #include "AOTCompiledFrame.h"
 #include "AOTFunctionDescription.h"
 #include "AOTImage.h"
 #include "AOTStackTrace.h"
-#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 

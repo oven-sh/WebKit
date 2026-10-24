@@ -48,7 +48,6 @@ struct Layout : LayoutRecord {
     bool has(LayoutFlags flag) const { return flags.contains(flag); }
     bool isEnvironment() const { return isEnvironmentKind(kind); }
     bool isDerived() const { return has(LayoutFlags::IsDerived); }
-    // Placement may move a field that is created late into the Extension, which only a store that may allocate can create.
     bool mayKeepFieldsOutOfLine() const { return fields.size() > maxFieldsAlwaysInline; }
 
     std::optional<uint32_t> findField(PropertyKeyID) const;
@@ -69,9 +68,7 @@ private:
     }
     void addToIndex(uint32_t field);
 
-    // Open addressing: a power of two of places, at most half of them taken. A free place has no key.
     Vector<IndexedField> m_fieldsByKey;
-    // One bit for each key, by its hash: most layouts that are asked for a name do not have it.
     uint64_t m_keysByHash { 0 };
     uint32_t m_indexedFieldCount { 0 };
 };
@@ -114,58 +111,38 @@ enum class BaseChain : uint8_t { Proven, Predicted };
 const Field& fieldAt(const Program&, FieldReference);
 FieldReference declarationOf(const Program&, FieldReference);
 const FieldFlow& flowOf(const Program&, FieldReference);
-// What flow has proven of the field in every object of the layout for the whole life of the object.
 bool isNeverRedefined(const Program&, FieldReference);
 bool isNeverDeleted(const Program&, FieldReference);
-// No store takes the property out of the slot. That undefined and null are never stored is more, and only FieldStability::IsNeverStoredWithOtherType says it.
 bool isNeverMovedOutByStore(const Program&, FieldReference);
-// The type of the field is only expected: nothing tests a store against it, and there is no value that the slot would turn away. A slot that defers a closure holds objects alone.
 bool slotTakesEveryValue(const Program&, const Field&);
-// An empty slot says that the object has no such property.
 bool staysInSlot(const Program&, FieldReference);
 bool staysFilled(const Program&, FieldReference);
 bool isFilledAtBirth(const Program&, FieldReference);
 bool keepsStateOfBirth(const Program&, FieldReference);
-// With something that may be another value than undefined and null.
 bool isFilledWithValueAtBirth(const Program&, FieldReference);
 bool hasFieldsFilledAtBirth(const Program&, LayoutID);
-// Flow proves that nothing fills the field: no store reaches it in an object of a layout that holds it. A declared method that nothing overwrites stays on the prototype.
 bool isNeverStored(const Program&, FieldReference);
 std::optional<FieldReference> findField(const Program&, LayoutID, PropertyKeyID, BaseChain);
-// The class whose prototype object the prototype object of this class is expected to inherit from.
 LayoutID expectedBaseOf(const Layout&);
-// The class that the heritage of a class is expected to name: the instances hold its fields, its constructor allocates them, and the class object inherits from its class object.
 LayoutID predictedHeritageOf(const Layout&);
-// The built-in class at the end of the proven chain of bases. Its constructor makes the instances, so they are objects of that class and have no slots.
 BuiltinClassID builtinBaseClassOf(const Program&, LayoutID);
-// A built-in or unknown base class allocates the instances itself, and they have no slots.
 bool hasOnlyCompiledBases(const Program&, LayoutID);
-// Whether the run time knows the only class object.
 bool isEvaluatedOnce(const Program&, const Layout&);
-// No operation defines the class of a constructor function. The first construction does, where the function is created once; the guards of any other constructor function are never set.
 bool guardsAreNeverSet(const Program&, const Layout&);
-// A function gets its prototype property at the first lookup of `prototype` or at its first construction.
 bool prototypePropertyMayEndGuards(const Program&, FunctionID);
-// The function object of such a constructor function is the cell of the closure table, whoever needs it first: NewClosure, an allocation site of its instances or a class below it.
 bool hasSingletonClosure(const Program&, FunctionID);
-// No new object: the cell of the closure table for the function, which the table fills where it is empty.
 bool namesClosureOfTable(const Program&, const Value& closure);
 
-// A derived layout is a declared layout plus the names that the objects of some allocation classes get beside its fields.
 Layout createDerivedLayout(const Program&, LayoutID base);
 LayoutID declaredLayoutOf(const Program&, LayoutID);
 
-// The object types that the program declares for the objects of the layout: what their class implements, and the `this` of their constructor function. Each entry holds the layouts below one of them.
 Vector<LayoutSetID, 2> declaredFamiliesOf(const Program&, LayoutID);
-// A type is a view: where nothing allocates it, it stands in no set of layouts, not even in its own, so the families do not hold the names that the types have.
 Vector<Vector<LayoutID>> declaredViewsOf(const Program&, const BitVector& declaredLayouts);
 
-// Leaves the tables of the program that go by class and by name to the caller: they leave out the layouts that are never allocated.
 void initializeLayouts(Program&, BuildContext&);
 void initializeAddedLayout(Program&, LayoutID);
 void appendInheritedFields(Program&, LayoutID);
 
-// For a program as read.
 void markUnallocatedLayouts(Program&, BuildContext&);
 
 } } } // namespace JSC::AOT::Typed

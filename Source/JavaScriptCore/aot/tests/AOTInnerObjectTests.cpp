@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCollectionTestSupport.h"
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTObject.h"
@@ -167,7 +168,7 @@ static NEVER_INLINE uintptr_t hide(JSCell* cell)
 
 static NEVER_INLINE bool isMarked(VM& vm, uintptr_t hidden)
 {
-    return vm.heap.isMarked(std::bit_cast<JSCell*>(~hidden));
+    return hasSurvivedCollection(vm, std::bit_cast<JSCell*>(~hidden));
 }
 
 static NEVER_INLINE bool hasHeader(uintptr_t hidden)

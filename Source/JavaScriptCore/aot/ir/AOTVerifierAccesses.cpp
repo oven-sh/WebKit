@@ -85,7 +85,6 @@ void FunctionVerifier::verifySlotOperation(BlockID block, ValueID id, const Valu
             m_errors.last().layout = slot.memberWithoutField;
             return slot;
         }
-        // While a function is optimized, RemoveUnreadFields has not weakened the record of a field that an operation still names.
         if (slot.memberWithRemovedField && !isOptimizing()) {
             fail(InternalErrorKind::SlotAccessNotPlaced, block, id);
             m_errors.last().layout = slot.memberWithRemovedField;
@@ -117,7 +116,6 @@ void FunctionVerifier::verifySlotOperation(BlockID block, ValueID id, const Valu
         return;
     }
 
-    // Selection's dispatch on shape copies the read into arms, and the members of one arm may all have an ordinary slot.
     bool makesClosure = value.opcode == Opcode::GetDeferredClosureSlot || value.opcode == Opcode::GetDeferredClosureSlotOrUndefined;
     if (makesClosure && m_form < IRForm::Selected && !slot.mayHoldDeferredClosure)
         fail(InternalErrorKind::InvalidGuard, block, id);
@@ -138,7 +136,6 @@ void FunctionVerifier::verifyElementOperation(BlockID block, ValueID id, const V
             return;
         }
     }
-    // The length of a view is read in one way whatever its elements are, so that row may leave the type out.
     bool mayLeaveTypeOut = value.opcode == Opcode::GetTypedArrayLength && value.typedArrayType() == NotTypedArray;
     if (Value::opcodesWithTypedArrayType.contains(value.opcode) && !isTypedView(value.typedArrayType()) && !mayLeaveTypeOut) {
         fail(InternalErrorKind::PayloadOutOfRange, block, id);
@@ -148,7 +145,6 @@ void FunctionVerifier::verifyElementOperation(BlockID block, ValueID id, const V
         fail(InternalErrorKind::PayloadOutOfRange, block, id);
         return;
     }
-    // An access inside the length has code for a named storage and an integer, and its store has no path that converts the storage.
     if (Value::opcodesWithIsInBounds.contains(value.opcode) && value.isInBounds()) {
         if (!hasArrayStorageForm(value.arrayStorage())) {
             fail(InternalErrorKind::PayloadOutOfRange, block, id);
@@ -163,19 +159,16 @@ void FunctionVerifier::verifyElementOperation(BlockID block, ValueID id, const V
             return;
         }
     }
-    // The test looks for a hole as a named storage marks it.
     if (value.opcode == Opcode::IsElementPresent && !hasArrayStorageForm(value.arrayStorage())) {
         fail(InternalErrorKind::PayloadOutOfRange, block, id);
         return;
     }
-    // A present element answers without the prototypes only in a named storage: no other kind rules out an accessor under an index.
     if (Value::opcodesWithIsPresent.contains(value.opcode) && value.isPresent()) {
         if (value.isInBounds() || !hasArrayStorageForm(value.arrayStorage())) {
             fail(InternalErrorKind::PayloadOutOfRange, block, id);
             return;
         }
     }
-    // Only the hole of Double storage is a NaN, and only a position inside the length holds an element or a hole.
     if (Value::opcodesWithReadsHoleAsNaN.contains(value.opcode) && value.readsHoleAsNaN()) {
         if (!value.isInBounds() || value.arrayStorage() != ArrayStorage::Double) {
             fail(InternalErrorKind::PayloadOutOfRange, block, id);
@@ -187,10 +180,8 @@ void FunctionVerifier::verifyElementOperation(BlockID block, ValueID id, const V
         return;
     ValueID arrayID = analyses().sameObjectThroughCasts(value.arrayOperand());
     const Value& array = m_function.at(arrayID);
-    // A parameter of a block inside the function names either of several arrays, and the store tests the storage of the one that it finds.
     if (array.opcode == Opcode::Parameter && analyses().useLists().blockOf(arrayID) != entryBlock)
         return;
-    // In cold code the allocation may stand in a body of its own.
     if (array.opcode == Opcode::CallDirect && m_program.at(array.function()).role == FunctionRole::OutlinedBody)
         return;
     bool isUnderConstruction = array.opcode == Opcode::NewArrayLike || array.opcode == Opcode::NewArrayWithCapacity;

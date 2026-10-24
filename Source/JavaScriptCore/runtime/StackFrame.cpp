@@ -33,10 +33,8 @@
 #include "JSFunctionInlines.h"
 #include <wtf/text/MakeString.h>
 
-#if ENABLE(AOT)
 #include "AOTFunctionDescription.h"
 #include "AOTStackTrace.h"
-#endif
 
 namespace JSC {
 

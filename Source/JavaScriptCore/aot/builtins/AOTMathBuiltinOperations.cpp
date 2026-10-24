@@ -118,7 +118,6 @@ extern "C" double AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTStringToNumber16
     return jsToNumber(StringView { unsafeMakeSpan(characters, length) });
 }
 
-// `Number(value)` where no test stands in front of the call: the tests are here, and no frame of a host function is made.
 JSC_DEFINE_JIT_OPERATION(operationAOTNumberOfAnyValue, EncodedJSValue, (Instance* instance, EncodedJSValue encodedValue))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNumberOfAnyValue);

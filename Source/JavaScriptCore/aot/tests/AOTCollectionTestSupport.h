@@ -10,6 +10,7 @@
 #include "AOTNativeTest.h"
 #include "AOTVMState.h"
 #include "Heap.h"
+#include "MarkedBlockInlines.h"
 #include "VM.h"
 #include <wtf/SetForScope.h>
 
@@ -21,6 +22,14 @@ inline void collectWithCollectorHooks(VM& vm, CollectionScope scope)
     SetForScope hasCompiledCode(vm.aotState().hasCompiledCode, true);
     vm.heap.collectSync(scope);
     AOT_TEST_CHECK(vm.heap.lastCollectionScope() == scope);
+}
+
+// A collection gives back a block in which nothing is left alive, and nothing of such a block can be read.
+inline bool hasSurvivedCollection(VM& vm, JSCell* cell)
+{
+    if (!cell->isPreciseAllocation() && !vm.heap.objectSpace().blocks().set().contains(MarkedBlock::blockFor(cell)))
+        return false;
+    return vm.heap.isMarked(cell);
 }
 
 } // namespace JSC::AOT

@@ -89,7 +89,6 @@ MemoryAccess memoryAccessOf(const Function&, const Value& value)
 {
     if (effectRuleOf(value.opcode) != EffectRule::Declared)
         return { };
-    // The slot of an accessor holds two functions. What stands for the value of the location is the getter: whoever has read it has not read the setter.
     if (value.opcode == Opcode::GetSlotSetter)
         return { };
 
@@ -184,7 +183,6 @@ static LocationStability stabilityOfObjectField(const Program& program, const Va
     const FamilyMember& member = program.familyTables().memberOf(access.receivers(), key);
     if (member.withoutField && !program.at(member.withoutField).members.isEmpty())
         return LocationStability::Unknown;
-    // The flow of a field is kept where the field is declared.
     if (member.hasOneDeclaration)
         return stabilityOfField(program, member.declaration);
 
@@ -210,7 +208,6 @@ LocationStability stabilityOf(const Program& program, const Value& access, const
     case AbstractHeap::EnvironmentFields: {
         FieldReference reference { location.environmentLayout(), location.environmentFieldIndex() };
         const LocationFlow& flow = flowOf(program, reference).location;
-        // The flag promises at most one store after the creation.
         if (fieldAt(program, reference).flags.contains(FieldFlags::IsImmutable) && flow.initialization == InitializationState::StoredBeforeEveryRead)
             return LocationStability::ChangedByOwnStores;
         return stabilityOfFlow(flow, CreationStore::Counted);

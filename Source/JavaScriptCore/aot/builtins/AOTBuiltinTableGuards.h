@@ -71,7 +71,6 @@ ALWAYS_INLINE constexpr auto registeredEntryPoint()
     return entryPoint;
 }
 
-// The parameter's type picks the entry point out of the overloads that share its name.
 template<HostFunctionEntryPoint entryPoint, SymbolText text>
 ALWAYS_INLINE constexpr HostFunctionEntryPoint registeredHostFunction()
 {

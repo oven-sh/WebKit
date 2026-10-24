@@ -29,10 +29,8 @@
 #include "ProxyObject.h"
 #include "VMInlines.h"
 
-#if ENABLE(AOT)
 #include "AOTCompiledCallee.h"
 #include "AOTRuntimeHooks.h"
-#endif
 
 namespace JSC {
 

@@ -29,9 +29,7 @@
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
 
-#if ENABLE(AOT)
 #include "AOTCompiledCallee.h"
-#endif
 
 namespace JSC {
 

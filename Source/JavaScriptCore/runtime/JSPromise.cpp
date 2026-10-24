@@ -26,9 +26,7 @@
 #include "config.h"
 #include "JSPromise.h"
 
-#if ENABLE(AOT)
 #include "AOTPropertyWalk.h"
-#endif
 
 #include "BuiltinNames.h"
 #include "DeferredWorkTimer.h"

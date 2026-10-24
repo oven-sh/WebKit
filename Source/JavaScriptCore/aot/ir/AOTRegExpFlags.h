@@ -44,7 +44,6 @@ inline OptionSet<Yarr::Flags> toYarrFlags(OptionSet<RegExpFlags> flags)
     return result;
 }
 
-// Under g and y a match reads and stores lastIndex. The record of a literal serves it with and without d, so only the object says whether a result has indices.
 inline constexpr OptionSet<RegExpFlags> flagsOfMatchesUsingObject { RegExpFlags::Global, RegExpFlags::Sticky, RegExpFlags::HasIndices };
 
 } } } // namespace JSC::AOT::Typed

@@ -208,7 +208,6 @@ static Type withMembersWithoutLayout(const TypingContext& context, Type&& type)
     return WTF::move(type);
 }
 
-// No test tells the object of a built-in without a cell in the realm from other objects, so it fails a test that names it.
 static Type narrowByFailedTest(const TypingContext& context, const Type& source, const Type& tested)
 {
     const BuiltinTable& builtins = context.program.builtins();
@@ -218,7 +217,6 @@ static Type narrowByFailedTest(const TypingContext& context, const Type& source,
     bool mayHaveNoLayout = mayBeMemberWithoutLayout(context, source);
     if (!mayHaveNoLayout && std::ranges::none_of(tested.builtins, isUntestable))
         return source.without(tested, context.types);
-    // Where every object passes, the test asks only whether the value is an object.
     if (source.withOnlyObjects().isSubsetOf(tested, context.program))
         return source.without(tested, context.types);
 
@@ -348,7 +346,6 @@ static Type narrowByComparison(const TypingContext& context, const Value& compar
 {
     RELEASE_ASSERT(operandIndex < 2);
     const Type& other = context.typeOf(comparison.operand(operandIndex ? 0 : 1));
-    // Nothing reaches the comparison. Returning the source would make the answer shrink once the other operand gets a type.
     if (other.isNever())
         return Type::never();
 
@@ -378,7 +375,6 @@ Type narrowTypeByTest(const TypingContext& context, const Type& source, const Va
     RELEASE_ASSERT(provesForever(proof));
     switch (proof) {
     case Proof::TestedType:
-        // A test names a type, or only the layouts it lets through.
         if (Value::opcodesWithTestedType.contains(test.opcode))
             return narrowByTest(context, source, context.types.at(test.testedType()), side);
         return narrowByTest(context, source, Type::forLayoutSet(test.layouts()), side);
@@ -453,7 +449,6 @@ Type narrowTypeByCase(const TypingContext& context, const Type& source, const Te
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A range has no gaps, so only the cases at its ends come off.
 static Type withoutIntegerCases(const Type& source, PayloadListView<int64_t> cases)
 {
     Vector<int64_t, 16> ascendingCases;

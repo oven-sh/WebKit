@@ -26,7 +26,6 @@
 #include "AOTRemovableFeature.h"
 #include "BuiltinNames.h"
 #include "CachedCall.h"
-#include "ExceptionHelpers.h"
 #include "ExecutableBaseInlines.h"
 #include "FrameTracers.h"
 #include "IntegrityInlines.h"
@@ -692,7 +691,7 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncReplaceAll, (JSGlobalObject* globalObjec
         RegExpObject* regExpObject = dynamicDowncast<RegExpObject>(searchValue);
         if (regExpObject && regExpObject->isSymbolReplaceFastAndNonObservable(globalObject)) [[likely]] {
             if (!regExpObject->regExp()->global()) [[unlikely]]
-                return throwVMTypeError(globalObject, scope, ReplaceAllNonGlobalRegExpError);
+                return throwVMTypeError(globalObject, scope, "String.prototype.replaceAll argument must not be a non-global regular expression"_s);
             JSString* string = thisValue.toString(globalObject);
             RETURN_IF_EXCEPTION(scope, { });
             if (regExpObject->isSymbolReplaceFastAndNonObservable(globalObject)) [[likely]]
@@ -710,7 +709,7 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncReplaceAll, (JSGlobalObject* globalObjec
             String flags = flagsValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, { });
             if (!flags.contains('g')) [[unlikely]]
-                return throwVMTypeError(globalObject, scope, ReplaceAllNonGlobalRegExpError);
+                return throwVMTypeError(globalObject, scope, "String.prototype.replaceAll argument must not be a non-global regular expression"_s);
         }
 
         JSObject* searchObject = asObject(searchValue);

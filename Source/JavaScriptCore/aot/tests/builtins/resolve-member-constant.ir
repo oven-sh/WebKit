@@ -95,14 +95,14 @@ function f7 name="constantUnderHandler" results=[{type=anything}] {
 # CHECK: v1: builtin(StringPrototypeSlice) = Builtin builtin=StringPrototypeSlice
 # CHECK-NEXT: Jump -> next b1()
 
-function f8 name="accessorOfLockedHolder" results=[{type=anything}] {
+function f8 name="accessorReadOnItsHolderWhichIsNoInstance" results=[{type=anything}] {
   b0():
     v0 = Builtin builtin=RegExpPrototype
     v1 = PropGet v0 key="global"
     Return v1
 }
-# CHECK-LABEL: function f8 name="accessorOfLockedHolder"
-# CHECK: v1: {{*}} = CallBuiltin v0 overload=RegExpPrototypeGlobal/{{*}} builtinCallForm=AnyReceiver
+# CHECK-LABEL: function f8 name="accessorReadOnItsHolderWhichIsNoInstance"
+# CHECK: v1: {{*}} = PropGet v0 key="global"
 
 function f9 name="memberNeverWritten" results=[{type=anything}] {
   b0():

@@ -153,7 +153,6 @@ static bool reportsNothing(const Program& program, const Function& function, con
 
 static constexpr OpcodeSet checkedCasts { Opcode::Check, Opcode::AssumeType };
 
-// Validating builds exist to test the types that positions declare, so a type read from a position never makes a validation redundant.
 static bool typeDependsOnPosition(const Program& program, const Function& function, ValueID id, const Type& validated)
 {
     while (id) {
@@ -218,7 +217,6 @@ static bool resolvesNoRope(const Program& program, const Function& function, con
     return isBoundOf(NamedEffectSet::ResolvesRopes, declared) && readsOnlyFlatStrings(program, function, value);
 }
 
-// The namespace object is made from the tables of the image where they name every export: nothing is linked and nothing runs for it, whether the operation stands behind an import or behind a `require`.
 static bool createsNamespaceFromTables(const Program& program, const Value& value)
 {
     if (value.opcode != Opcode::ModuleNamespace || value.phase() != ImportPhase::Evaluation)
@@ -228,7 +226,6 @@ static bool createsNamespaceFromTables(const Program& program, const Value& valu
         && std::ranges::none_of(module.requests, &ModuleRequest::isDynamicStarExport);
 }
 
-// The operation throws what the getter or the trap throws that its read of the property runs, and for a proxy that was revoked.
 static bool readsPrototypePropertyWithoutRunningCode(const Program& program, const Function& function, const Value& value)
 {
     if (value.opcode != Opcode::GetConstructPrototype)
@@ -266,7 +263,6 @@ static Effects refinedEffectsOf(const Program& program, const Function& function
     return effects;
 }
 
-// The operation writes a part of the value that JSON.stringify was called with, where the serializer that took the place of the call has no plan for the part.
 static void describePartOfStringify(const Program& program, const Function& function, const Value& value, EffectDescription& description)
 {
     describeOverload(program, program.builtins().overloadIDsOf(Builtins::JSONStringify).at(0), program.typeOf(function, value.valueOperand()), description);
@@ -402,7 +398,6 @@ EffectDescription describeCodeRunBy(const Program& program, const Function& func
 EffectsOnEdges resolveEffects(const EffectContext& context, const EffectDescription& description)
 {
     EffectsOnEdges result = description.own;
-    // A function that flow never enters has lost its body, and nobody has summarized it: a method that is handed to a built-in which constructs its operand, and throws. Whatever runs under its name is code that the program does not hold.
     bool namesFunctionWithoutBody = false;
     for (FunctionID function : description.functions) {
         if (context.program.at(function).hasBody())
@@ -410,7 +405,6 @@ EffectsOnEdges resolveEffects(const EffectContext& context, const EffectDescript
         else
             namesFunctionWithoutBody = true;
     }
-    // While a frame is suspended its callers run on, and what they store into their own allocations is in no summary.
     static_assert(Effects::unknownCode().mayThrow);
     if (description.own.normal.maySuspend)
         result.normal.merge(Effects::unknownCode());

@@ -25,7 +25,6 @@ public:
         m_hash ^= m_hash >> 29;
     }
 
-    // See SecondWordHasher.
     void addNonIDWords(uint32_t first, uint32_t second = 0) { add(first, second); }
 
     void add(ValueID id) { add(id.index()); }
@@ -67,7 +66,6 @@ private:
     uint64_t m_hash { 0x243f6a8885a308d3ull };
 };
 
-// A second hash of the words of a key, which does not follow from the first.
 class SecondWordHasher {
 public:
     void add(uint32_t first, uint32_t second = 0)
@@ -126,14 +124,11 @@ private:
     static_assert(!(TypeID().index() + 1));
 
     uint64_t m_hash { 0x13198a2e03707344ull };
-    // The null id becomes zero, and every other word with the highest bit keeps it.
     uint32_t m_wordsPlusOne { 0 };
 };
 
-// What `compute` answers to a question whose key holds all that the answer follows from but the program.
 TypeID sharedOrComputedType(const TypingContext& context, std::optional<SharedAnswers> answers, uint64_t hash, NOESCAPE const auto& addWords, NOESCAPE const Invocable<TypeID()> auto& compute)
 {
-    // What a caller knows about the positions beyond their types, only that caller knows.
     if (!answers || context.knownPositions || !context.types.table().sharedMemo(*answers))
         return compute();
     SecondWordHasher secondHasher;
@@ -141,7 +136,6 @@ TypeID sharedOrComputedType(const TypingContext& context, std::optional<SharedAn
     return context.types.sharedAnswer(*answers, secondHasher.sharedKey(hash), compute);
 }
 
-// First the memo of the function is asked, then the one that all functions share.
 TypeID rememberedType(const TypingContext& context, std::optional<SharedAnswers> answers, NOESCAPE const auto& addWords, NOESCAPE const Invocable<TypeID()> auto& compute)
 {
     WordHasher hasher;

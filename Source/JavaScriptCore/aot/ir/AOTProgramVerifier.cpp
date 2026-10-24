@@ -178,7 +178,6 @@ std::optional<InternalError> findTypeError(const Program& program, TypeID id, Re
     return std::nullopt;
 }
 
-// An int32 promise is about the numbers of a type, which may be one part of a union. The build proves it of every value that enters, and nothing is proven of what enters an expected position.
 bool isValidPosition(const Program& program, const DeclaredType& declared)
 {
     if (!declared.type)
@@ -267,7 +266,6 @@ bool hasValidKey(const Program& program, const Layout& layout, uint32_t index, b
         return mayBeUnnamed || field.flags.contains(FieldFlags::IsHidden);
     if (layout.findField(field.key) != index)
         return false;
-    // An export may be named "0".
     return layout.kind == LayoutKind::ModuleNamespace || !program.isIndexLike(field.key);
 }
 
@@ -312,7 +310,6 @@ static bool isSortedByName(const Vector<ClassMember>& members)
     });
 }
 
-// A name that may hold something else than a function is listed without one, and nothing is known about what it holds.
 static bool hasValidClassMembers(const ClassFlow& classFlow)
 {
     bool namesWithoutFunctionAreUnknown = std::ranges::all_of(classFlow.namedMembers, [](const ClassMember& member) {
@@ -372,7 +369,6 @@ std::optional<LayoutID> findCyclicLayoutChain(const Program& program, const Step
 
 } // anonymous namespace
 
-// The body of a module runs at most once, so a variable may be born with the only closure of a function: a declaration that the front end hoists, or what a pass finds.
 bool hoistsFunctionsIntoVariables(ModuleKind kind)
 {
     switch (kind) {
@@ -566,7 +562,6 @@ void ProgramVerifier::verifyLayouts()
     if (hasFailed())
         return;
 
-    // Two classes that extend each other throw when they are evaluated, so `base` may form a cycle. What flow proves does not.
     std::optional<LayoutID> cyclicLayout = findCyclicLayoutChain(m_program, [](const Layout& layout) { return layout.flow.base; });
     if (cyclicLayout)
         fail({ .kind = InternalErrorKind::InvalidLayout, .layout = *cyclicLayout });

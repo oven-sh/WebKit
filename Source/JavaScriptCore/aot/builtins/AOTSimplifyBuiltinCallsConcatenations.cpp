@@ -60,7 +60,6 @@ static std::optional<ConcatenatedPart> separatorOf(FunctionPassContext& context,
     return std::nullopt;
 }
 
-// The text is made at the build where the separator is a constant too.
 static std::optional<Concatenation> matchJoinOfConstants(FunctionPassContext& context, const ValueSite& site, std::span<const KnownValue> constants, std::span<const ValueID> arguments)
 {
     KnownValue separator = arguments.empty() ? KnownValue::undefined() : knownValueOf(context.program, context.function, arguments[0]);
@@ -131,7 +130,6 @@ static std::optional<Concatenation> matchJoinOfLiteral(FunctionPassContext& cont
     return concatenation;
 }
 
-// A template object and its `raw` array are frozen, so they hold the strings of the site even where the object has escaped.
 static std::optional<Concatenation> matchRawTemplate(FunctionPassContext& context, const ValueSite& site)
 {
     const Function& function = context.function;

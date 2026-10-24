@@ -27,7 +27,6 @@ TypeID TypingContext::typeIDOf(const DeclaredType& declared) const
     return level == TypeLevel::Expected ? declared.type : program.provenTypeOf(declared);
 }
 
-// Where the slot has a type of its own, that is what is proven of the field, and the type of the field is what is expected of it.
 static const Type& typeOfField(const TypingContext& context, const Field& field)
 {
     if (context.level == TypeLevel::Proven && field.slotType && !field.declared.flags.contains(PositionFlags::IsExpected))
@@ -46,11 +45,9 @@ FieldTypeState fieldTypeStateOf(const Program& program, FieldReference reference
     return hasProvenType(flowOf(program, reference)) ? FieldTypeState::Proven : FieldTypeState::Unknown;
 }
 
-// What a read by name finds.
 static std::optional<Type> tryTypeOfField(const TypingContext& context, FieldReference reference)
 {
     const Field& field = fieldAt(context.program, reference);
-    // What the getter returns is expected to have the type of the field, and nothing proves it.
     if (field.form.contains(FieldForm::IsAccessor)) {
         if (context.level == TypeLevel::Proven)
             return std::nullopt;
@@ -75,14 +72,12 @@ std::optional<Type> tryTypeOfFieldRead(const TypingContext& context, std::span<c
     Type result = Type::never();
     bool isMissingInEveryReceiver = true;
     for (LayoutID receiver : receivers) {
-        // A family keeps the layouts of the object types that nothing allocates.
         if (context.program.at(receiver).flow.allocation == AllocationState::NeverAllocated)
             continue;
         std::optional<FieldReference> field = findField(context.program, receiver, key, chain);
         if (!field) {
             if (isProof)
                 return std::nullopt;
-            // A family holds every layout that leaves out an optional field, and a missing field reads undefined.
             result = result.withPrimitives(Primitive::Undefined);
             continue;
         }
@@ -119,7 +114,6 @@ std::optional<Type> tryTypeOfSlotContents(const TypingContext& context, std::spa
     return result;
 }
 
-// A GetterSetter holds a function in either half. Which function the setter is, nobody has tested.
 std::optional<Type> tryTypeOfSetterInSlot(const TypingContext& context, std::span<const LayoutID> receivers, PropertyKeyID key)
 {
     if (context.level == TypeLevel::Proven)
@@ -139,13 +133,11 @@ std::optional<Type> tryTypeOfSetterInSlot(const TypingContext& context, LayoutSe
     return tryTypeOfSetterInSlot(context, context.types.at(receivers).members.span(), key);
 }
 
-// What a read finds that looks for a deferred closure: the closure, made by now, or whatever else the program has stored.
 std::optional<Type> tryTypeOfDeferringSlotContents(const TypingContext& context, std::span<const LayoutID> receivers, PropertyKeyID key)
 {
     return tryTypeOfSlotContents(context, receivers, key);
 }
 
-// Every writer checks a value against the field of the cell it stores into, so a store without a test needs a value that every receiver accepts.
 static std::optional<Type> tryTypeAcceptedBySlots(const TypingContext& context, std::span<const LayoutID> receivers, PropertyKeyID key)
 {
     std::optional<Type> accepted;
@@ -306,7 +298,6 @@ static bool hasOnlyIndexedClasses(const BuiltinTable& builtins, const Type& cont
     });
 }
 
-// `ALPHABET[bits & 63]`: the string is one of a few known texts, and the position lies inside each of them. Only ASCII texts are asked: they have as many characters as bytes.
 static bool isPositionInsideEveryText(const TypingContext& context, const Type& string, const Type& position)
 {
     if ((string.primitives & Primitive::AnyString) != Primitive::LiteralString || !position.isInteger() || position.integers.minimum < 0)
@@ -327,7 +318,6 @@ std::optional<Type> tryTypeOfElementRead(const TypingContext& context, const Typ
         return Type::fromPrimitives(Primitive::String);
     if (container.isAnyStringOrNullish())
         return Type::fromPrimitives(Primitive::String | Primitive::Undefined);
-    // The Element contents of a Set or a generator are not its indexed properties.
     if (!hasOnlyIndexedClasses(context.program.builtins(), container))
         return std::nullopt;
 
@@ -402,7 +392,6 @@ static TypeID requiredTypeOfField(const TypingContext& positions, LayoutID layou
     return positions.typeIDOf(fields[field].declared);
 }
 
-// The operation keeps a value that does not fit the field's type outside the slot. Only the brand holds what is no JavaScript value: the class token.
 static TypeID requiredTypeOfPrivateDefinition(const TypingContext& positions, LayoutID layout, uint32_t field)
 {
     const Vector<Field>& fields = positions.program.at(layout).fields;
@@ -467,7 +456,6 @@ static bool isReturned(const Function& function, const Value& results)
 static TypeID requiredTypeOfReturnedResult(const TypingContext& positions, const Value& results, uint32_t resultIndex)
 {
     const Function& function = positions.function;
-    // A function with one result returns a plain value: a Results value in its body came from an inlined callee.
     if (function.results.size() == 1 || function.isUnsplitCoroutine() || resultIndex >= function.results.size())
         return { };
     if (!isReturned(function, results))
@@ -501,7 +489,6 @@ const OpcodeSet& opcodesWithRequiredOperandTypes()
     return opcodes;
 }
 
-// What enters a position has to be proven to lie in what a read of the position is proven to give.
 TypeID requiredTypeOfOperand(const TypingContext& context, const Value& user, uint32_t operandIndex)
 {
     TypingContext positions = context.atLevel(TypeLevel::Proven);

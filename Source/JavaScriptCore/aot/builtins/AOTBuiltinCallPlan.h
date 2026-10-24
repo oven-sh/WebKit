@@ -21,10 +21,8 @@ struct OperandRequirement {
     PristineRequirement pristine;
 };
 
-// The receiver comes first, then the arguments in order.
 bool precedes(BuiltinOperand, BuiltinOperand);
 
-// The verifier rejects a TypeTest of a type with class proofs. The result of the test has them again, from the type of its operand.
 Type withoutClassProofs(const Type&);
 
 enum class BuiltinMatchState : uint8_t { Unknown, NeedsTests, Proven };
@@ -52,7 +50,6 @@ Type typeConvertedWithoutUserCode(const TypingContext&, const Type& operand, Bui
 
 enum class OperandStepKind : uint8_t { Pass, PassUndefined, Convert, RequireObjectCoercible };
 
-// Consecutive steps may name one operand: each works on the result of the one before. Pass is the only step of its operand.
 struct OperandStep {
     BuiltinOperand operand;
     OperandStepKind kind { OperandStepKind::Pass };

@@ -162,7 +162,6 @@ public:
 
     void add(const Program& program, const MemoryLocation& location) { add(location.heap(), Typed::maskOf(program, location)); }
 
-    // Without a program, a layout set counts as all of ShapeWords.
     void add(const MemoryLocation&);
 
     constexpr bool merge(const LocationMasks& other)

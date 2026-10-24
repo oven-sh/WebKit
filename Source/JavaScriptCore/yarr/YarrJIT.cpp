@@ -94,13 +94,7 @@ static constexpr GPRReg areCanonicallyEquivalentCanonicalModeArgReg = X86Registe
 static_assert(areCanonicallyEquivalentCharArgReg == GPRInfo::returnValueGPR);
 #endif
 #endif
-#else
-#if ENABLE(YARR_JIT_BACKREFERENCES_FOR_16BIT_EXPRS)
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAreCanonicallyEquivalent, bool, (unsigned, unsigned, CanonicalMode));
-#endif
-#endif
 
-#if !defined(YARR_FOR_IMAGE)
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BoyerMooreBitmap);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BoyerMooreFastCandidates);
@@ -111,6 +105,10 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(YarrCodeBlock);
 JSC_ANNOTATE_JIT_OPERATION_RETURN(vmEntryToYarrJITAfter);
 #endif
 #else
+#if ENABLE(YARR_JIT_BACKREFERENCES_FOR_16BIT_EXPRS)
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAreCanonicallyEquivalent, bool, (unsigned, unsigned, CanonicalMode));
+#endif
+
 namespace {
 #endif
 
@@ -690,14 +688,12 @@ public:
     }
 };
 WTF_MAKE_TZONE_ALLOCATED_IMPL(MaskedAlternativeInfo);
-#if !defined(YARR_FOR_IMAGE)
 
+#if !defined(YARR_FOR_IMAGE)
 static constexpr MacroAssembler::TrustedImm32 surrogateTagMask = MacroAssembler::TrustedImm32(0xfc00fc00);
 static constexpr MacroAssembler::TrustedImm32 surrogatePairTags = MacroAssembler::TrustedImm32(0xdc00d800);
 static constexpr MacroAssembler::TrustedImm32 surrogateTagShiftedRight11 = MacroAssembler::TrustedImm32(0xd800 >> 11);
-#endif
 
-#if !defined(YARR_FOR_IMAGE)
 // Options::verifyRegExpJITReads(): precede a load from the subject with a probe that checks the
 // effective address range [address, address + bytes) against [input, input + length * unit) and
 // crashes when it strays. The input and length registers are never written by generated code, so
@@ -1307,31 +1303,15 @@ class YarrGenerator final : public YarrJITInfo {
 
 #if !defined(YARR_FOR_IMAGE)
     void LEGACY_NODELETE optimizeAlternative(PatternAlternative* alternative)
-#else
-    Vector<unsigned, 16> termOrderOf(const PatternAlternative& alternative) const
-#endif
     {
-#if !defined(YARR_FOR_IMAGE)
         if (!alternative->m_terms.size())
             return;
-#else
-        Vector<unsigned, 16> order(alternative.m_terms.size(), [](size_t index) {
-            return static_cast<unsigned>(index);
-        });
-#endif
 
-#if !defined(YARR_FOR_IMAGE)
         for (unsigned i = 0; i < alternative->m_terms.size() - 1; ++i) {
             PatternTerm& term = alternative->m_terms[i];
             PatternTerm& nextTerm = alternative->m_terms[i + 1];
-#else
-        for (unsigned i = 0; i + 1 < order.size(); ++i) {
-            const PatternTerm& term = alternative.m_terms[order[i]];
-            const PatternTerm& nextTerm = alternative.m_terms[order[i + 1]];
-#endif
 
             // We can move BMP only character classes after fixed character terms.
-#if !defined(YARR_FOR_IMAGE)
             // When not decoding surrogate pairs (Char8 mode), only swap if the character class
             // has no non-BMP characters and is not inverted. Otherwise the swapped pattern could
             // be passed to byteCodeCompilePattern (on JIT allocation failure) and then executed
@@ -1339,6 +1319,17 @@ class YarrGenerator final : public YarrJITInfo {
             // surrogate pairs. An inverted class like [^a] has BMP-only class data but can match
             // non-BMP characters (variable width in UTF-16), so it must not be swapped either.
 #else
+    Vector<unsigned, 16> termOrderOf(const PatternAlternative& alternative) const
+    {
+        Vector<unsigned, 16> order(alternative.m_terms.size(), [](size_t index) {
+            return static_cast<unsigned>(index);
+        });
+
+        for (unsigned i = 0; i + 1 < order.size(); ++i) {
+            const PatternTerm& term = alternative.m_terms[order[i]];
+            const PatternTerm& nextTerm = alternative.m_terms[order[i + 1]];
+
+            // We can move BMP only character classes after fixed character terms.
             // An inverted class like [^a] has BMP-only class data but can match
             // non-BMP characters (variable width in UTF-16), so it must not be moved.
 #endif
@@ -1353,12 +1344,11 @@ class YarrGenerator final : public YarrJITInfo {
                 alternative->m_terms[i] = nextTerm;
                 alternative->m_terms[i + 1] = termCopy;
             }
+        }
 #else
                 && (nextTerm.quantityType == QuantifierType::FixedCount))
                 std::swap(order[i], order[i + 1]);
-#endif
         }
-#if defined(YARR_FOR_IMAGE)
         return order;
 #endif
     }
@@ -1842,15 +1832,14 @@ class YarrGenerator final : public YarrJITInfo {
 #if !defined(YARR_FOR_IMAGE)
                 MacroAssembler::ExtendedAddress tableEntry(character, reinterpret_cast<intptr_t>(charClass->m_table));
                 matchTargets.appendFailed(m_jit.branchTest8(charClass->m_tableInverted ? MacroAssembler::NonZero : MacroAssembler::Zero, tableEntry));
-#else
-                matchTargets.appendFailed(m_addressing.branchTestBuiltInClassTable(charClass->m_tableInverted ? MacroAssembler::NonZero : MacroAssembler::Zero, character, charClass->m_table));
-#endif
                 return;
             }
-#if !defined(YARR_FOR_IMAGE)
             MacroAssembler::ExtendedAddress tableEntry(character, reinterpret_cast<intptr_t>(charClass->m_table));
             matchTargets.appendSucceeded(m_jit.branchTest8(charClass->m_tableInverted ? MacroAssembler::Zero : MacroAssembler::NonZero, tableEntry));
 #else
+                matchTargets.appendFailed(m_addressing.branchTestBuiltInClassTable(charClass->m_tableInverted ? MacroAssembler::NonZero : MacroAssembler::Zero, character, charClass->m_table));
+                return;
+            }
             matchTargets.appendSucceeded(m_addressing.branchTestBuiltInClassTable(charClass->m_tableInverted ? MacroAssembler::Zero : MacroAssembler::NonZero, character, charClass->m_table));
 #endif
             return;
@@ -2584,9 +2573,7 @@ class YarrGenerator final : public YarrJITInfo {
         // A term compares the code point that begins (forward) or ends (backward)
         // at its position; the direction picks the decode. Astral literals never
         // reach here in a backward frame (they compare units directly).
-#if !defined(YARR_FOR_IMAGE)
-        readCharacterForDirection(negativeCharacterOffset, character);
-#else
+#if defined(YARR_FOR_IMAGE)
 #if CPU(X86_64)
         if (m_charSize == CharSize::Char8 && isLatin1(ch) && !(ignoreCase && isASCIIAlpha(ch))) {
             MacroAssembler::BaseIndex address = negativeOffsetIndexedAddress(negativeCharacterOffset, character);
@@ -2597,8 +2584,8 @@ class YarrGenerator final : public YarrJITInfo {
         if (m_decodeSurrogatePairs && U_IS_BMP(ch) && !U16_IS_SURROGATE(ch))
             readCodeUnit(negativeCharacterOffset, character);
         else
-            readCharacterForDirection(negativeCharacterOffset, character);
 #endif
+        readCharacterForDirection(negativeCharacterOffset, character);
 
         // For case-insesitive compares, non-ascii characters that have different
         // upper & lower case representations are converted to a character class.
@@ -2640,13 +2627,11 @@ class YarrGenerator final : public YarrJITInfo {
 
 #if !defined(YARR_FOR_IMAGE)
     MacroAssembler::DataLabelPtr storeToFrameWithPatch(unsigned frameLocation)
-#else
-    ReturnAddressSite storeToFrameWithPatch(unsigned frameLocation)
-#endif
     {
-#if !defined(YARR_FOR_IMAGE)
         return m_jit.storePtrWithPatch(MacroAssembler::TrustedImmPtr(nullptr), frameAddress().withOffset(frameLocation * sizeof(void*)));
 #else
+    ReturnAddressSite storeToFrameWithPatch(unsigned frameLocation)
+    {
         return m_addressing.storeReturnAddress(frameAddress().withOffset(frameLocation * sizeof(void*)));
 #endif
     }
@@ -3056,15 +3041,6 @@ class YarrGenerator final : public YarrJITInfo {
         std::array<uint64_t, 2> asciiMembers { };
         bool matchesAllNonASCII { false };
         std::optional<size_t> settledTermOp;
-    };
-
-    // Set on the BodyAlternativeBegin op of the repeated alternatives.
-    struct BodyBeginPrefilters {
-        BoyerMooreInfo* boyerMoore { nullptr };
-        MaskedAlternativeInfo* maskedAlternatives { nullptr };
-        // Shared UTF-16 lead surrogate across all repeated alternatives' first character.
-        std::optional<char16_t> sharedLead;
-        std::optional<StartPositionSearch> startPositionSearch;
 #endif
     };
 
@@ -3072,13 +3048,6 @@ class YarrGenerator final : public YarrJITInfo {
     // Set on the ParentheticalAssertionEnd op of a lookahead that leaves the index after its match (see tryConsumeInRepeatedLookahead).
     struct LookaheadConsumption {
         MacroAssembler::JumpList claimFailures;
-    };
-
-    template<typename Info>
-    struct DispatchedAlternative {
-        Info* info { nullptr };
-        // Position of this Begin/Next op's alternative among the dispatched alternatives.
-        unsigned alternativeIndex { 0 };
     };
 
     // Input claimed when an op runs (see computeClaimsSinceMatchStart and findAlternativesNeverTriedAgain).
@@ -3167,40 +3136,29 @@ class YarrGenerator final : public YarrJITInfo {
         ReturnAddressSite m_returnAddress;
 #endif
 
-#if !defined(YARR_FOR_IMAGE)
         BoyerMooreInfo* m_bmInfo { nullptr };
         MaskedAlternativeInfo* m_maskedAltInfo { nullptr };
-#else
-        BodyBeginPrefilters m_prefilters;
+#if defined(YARR_FOR_IMAGE)
+        std::optional<StartPositionSearch> m_startPositionSearch;
 #endif
 
         // Set on the alternative Begin/Next/End ops of a nested disjunction whose
         // alternatives are dispatched on their first character (see DispatchInfo).
-#if !defined(YARR_FOR_IMAGE)
         struct DispatchInfo* m_dispatch { nullptr };
         // Position of this Begin/Next op's alternative within the dispatched
         // disjunction.
         unsigned m_dispatchAlternativeIndex { 0 };
-#else
-        DispatchedAlternative<DispatchInfo> m_dispatch;
-#endif
 
         // Set on the repeated body's Begin/Next/End ops when the body alternation
         // is dispatched on its first character (see BodyDispatchInfo).
-#if !defined(YARR_FOR_IMAGE)
         struct BodyDispatchInfo* m_bodyDispatch { nullptr };
         // Position of this Begin/Next op's alternative among the repeated body
         // alternatives.
         unsigned m_bodyDispatchAlternativeIndex { 0 };
-#else
-        DispatchedAlternative<BodyDispatchInfo> m_bodyDispatch;
-#endif
 
-#if !defined(YARR_FOR_IMAGE)
         // Shared UTF-16 lead surrogate across all repeated alternatives' first character.
         std::optional<char16_t> m_bodyAltSharedLead;
 
-#endif
         // For quantified parentheses (FixedCount/Greedy/NonGreedy): label for the
         // content's backtrack entry. BEGIN.bt jumps here to re-drive an iteration's
         // content (within-iteration / inter-iteration backtracking).
@@ -3222,11 +3180,7 @@ class YarrGenerator final : public YarrJITInfo {
     // These references to control flow take the form of:
     //  - A jump list of jumps, to be linked to code that will backtrack them
     //    further.
-#if !defined(YARR_FOR_IMAGE)
     //  - A set of DataLabelPtr values, to be populated with values to be
-#else
-    //  - A set of ReturnAddressSite values, to be populated with values to be
-#endif
     //    treated effectively as return addresses backtracking into complex
     //    subpatterns.
     //  - A flag indicating that the current sequence of generated code up to
@@ -3245,11 +3199,10 @@ class YarrGenerator final : public YarrJITInfo {
             MacroAssembler::Label m_backtrackLocation;
         };
 
-#endif
     public:
-#if !defined(YARR_FOR_IMAGE)
         typedef Vector<ReturnAddressRecord, 4> BacktrackRecords;
 #else
+    public:
         typedef Vector<ReturnAddressRecord> BacktrackRecords;
 #endif
 
@@ -3282,14 +3235,10 @@ class YarrGenerator final : public YarrJITInfo {
 #if !defined(YARR_FOR_IMAGE)
         void addReturnAddressRecord(const MacroAssembler::DataLabelPtr& dataLabel, MacroAssembler::Label target)
 #else
-        void addReturnAddressRecord(const ReturnAddressSite& site, MacroAssembler::Label target)
+        void addReturnAddressRecord(const ReturnAddressSite& dataLabel, MacroAssembler::Label target)
 #endif
         {
-#if !defined(YARR_FOR_IMAGE)
             m_backtrackRecords.append(ReturnAddressRecord(dataLabel, target));
-#else
-            m_backtrackRecords.append(ReturnAddressRecord { site, target });
-#endif
         }
         void LEGACY_NODELETE fallthrough()
         {
@@ -3306,11 +3255,7 @@ class YarrGenerator final : public YarrJITInfo {
             if (m_pendingReturns.size()) {
                 MacroAssembler::Label here(generator.m_jit);
                 for (unsigned i = 0; i < m_pendingReturns.size(); ++i)
-#if !defined(YARR_FOR_IMAGE)
                     m_backtrackRecords.append(ReturnAddressRecord(m_pendingReturns[i], here));
-#else
-                    m_backtrackRecords.append(ReturnAddressRecord { m_pendingReturns[i], here });
-#endif
                 m_pendingReturns.clear();
             }
             m_laterFailures.link(generator.m_jit);
@@ -3332,11 +3277,7 @@ class YarrGenerator final : public YarrJITInfo {
         {
             if (m_pendingReturns.size()) {
                 for (unsigned i = 0; i < m_pendingReturns.size(); ++i)
-#if !defined(YARR_FOR_IMAGE)
                     m_backtrackRecords.append(ReturnAddressRecord(m_pendingReturns[i], label));
-#else
-                    m_backtrackRecords.append(ReturnAddressRecord { m_pendingReturns[i], label });
-#endif
                 m_pendingReturns.clear();
             }
             if (m_pendingFallthrough)
@@ -3350,11 +3291,7 @@ class YarrGenerator final : public YarrJITInfo {
             if (m_pendingReturns.size()) {
                 MacroAssembler::Label here(assembler);
                 for (unsigned i = 0; i < m_pendingReturns.size(); ++i)
-#if !defined(YARR_FOR_IMAGE)
                     m_backtrackRecords.append(ReturnAddressRecord(m_pendingReturns[i], here));
-#else
-                    m_backtrackRecords.append(ReturnAddressRecord { m_pendingReturns[i], here });
-#endif
                 m_pendingReturns.clear();
                 m_pendingFallthrough = true;
             }
@@ -4458,14 +4395,13 @@ class YarrGenerator final : public YarrJITInfo {
 
             ASSERT(numCharsToCheck == 1 || numCharsToCheck == 2 || numCharsToCheck == 4 || numCharsToCheck == 8);
 
-#if defined(YARR_FOR_IMAGE)
-            bool isNarrowed = m_charSize == CharSize::Char16 && numCharsToCheck == 8;
-            uint64_t charMask = m_charSize == CharSize::Char8 || isNarrowed ? 0xff : 0xffff;
-#endif
-            auto calcShiftAmount = [&] (unsigned positionInLoad) {
 #if !defined(YARR_FOR_IMAGE)
+            auto calcShiftAmount = [&] (unsigned positionInLoad) {
                 return (m_charSize == CharSize::Char8 ? 8 : 16) * positionInLoad;
 #else
+            bool isNarrowed = m_charSize == CharSize::Char16 && numCharsToCheck == 8;
+            uint64_t charMask = m_charSize == CharSize::Char8 || isNarrowed ? 0xff : 0xffff;
+            auto calcShiftAmount = [&] (unsigned positionInLoad) {
                 return (m_charSize == CharSize::Char8 || isNarrowed ? 8 : 16) * positionInLoad;
 #endif
             };
@@ -4569,6 +4505,14 @@ class YarrGenerator final : public YarrJITInfo {
                     verifySubjectRead(negativeOffsetIndexedAddress(offset, character), 8, __LINE__);
 #if !defined(YARR_FOR_IMAGE)
                     m_jit.load64(negativeOffsetIndexedAddress(offset, character), character);
+                    if (ignoredCharsMask)
+                        m_jit.and64(MacroAssembler::TrustedImm64(~ignoredCharsMask), character);
+                    if (caseMask)
+                        m_jit.or64(MacroAssembler::TrustedImm64(caseMask), character);
+                    if (!matchTargets.hasSucceedTarget())
+                        defaultMatchTargets.appendFailed(m_jit.branch64(MacroAssembler::NotEqual, character, MacroAssembler::TrustedImm64(characters | caseMask)));
+                    else
+                        matchTargets.appendSucceeded(m_jit.branch64(MacroAssembler::Equal, character, MacroAssembler::TrustedImm64(characters | caseMask)));
 #else
 #if CPU(X86_64)
                     if (!caseMask && !ignoredCharsMask) {
@@ -4581,29 +4525,13 @@ class YarrGenerator final : public YarrJITInfo {
                     }
 #endif
                     load64FromSubject(negativeOffsetIndexedAddress(offset, character), character);
-#endif
                     if (ignoredCharsMask)
-#if !defined(YARR_FOR_IMAGE)
-                        m_jit.and64(MacroAssembler::TrustedImm64(~ignoredCharsMask), character);
-#else
                         and64WithConstant(~ignoredCharsMask, character);
-#endif
                     if (caseMask)
-#if !defined(YARR_FOR_IMAGE)
-                        m_jit.or64(MacroAssembler::TrustedImm64(caseMask), character);
-#else
                         or64WithConstant(caseMask, character);
-#endif
                     if (!matchTargets.hasSucceedTarget())
-#if !defined(YARR_FOR_IMAGE)
-                        defaultMatchTargets.appendFailed(m_jit.branch64(MacroAssembler::NotEqual, character, MacroAssembler::TrustedImm64(characters | caseMask)));
-#else
                         defaultMatchTargets.appendFailed(branch64WithConstant(MacroAssembler::NotEqual, character, characters | caseMask));
-#endif
                     else
-#if !defined(YARR_FOR_IMAGE)
-                        matchTargets.appendSucceeded(m_jit.branch64(MacroAssembler::Equal, character, MacroAssembler::TrustedImm64(characters | caseMask)));
-#else
                         matchTargets.appendSucceeded(branch64WithConstant(MacroAssembler::Equal, character, characters | caseMask));
 #endif
                 };
@@ -4671,6 +4599,14 @@ class YarrGenerator final : public YarrJITInfo {
                     verifySubjectRead(negativeOffsetIndexedAddress(offset, character), 8, __LINE__);
 #if !defined(YARR_FOR_IMAGE)
                     m_jit.load64(negativeOffsetIndexedAddress(offset, character), character);
+                    if (ignoredCharsMask)
+                        m_jit.and64(MacroAssembler::TrustedImm64(~ignoredCharsMask), character);
+                    if (caseMask)
+                        m_jit.or64(MacroAssembler::TrustedImm64(caseMask), character);
+                    if (!matchTargets.hasSucceedTarget())
+                        defaultMatchTargets.appendFailed(m_jit.branch64(MacroAssembler::NotEqual, character, MacroAssembler::TrustedImm64(characters | caseMask)));
+                    else
+                        matchTargets.appendSucceeded(m_jit.branch64(MacroAssembler::Equal, character, MacroAssembler::TrustedImm64(characters | caseMask)));
 #else
 #if CPU(X86_64)
                     if (!caseMask && !ignoredCharsMask) {
@@ -4683,29 +4619,13 @@ class YarrGenerator final : public YarrJITInfo {
                     }
 #endif
                     load64FromSubject(negativeOffsetIndexedAddress(offset, character), character);
-#endif
                     if (ignoredCharsMask)
-#if !defined(YARR_FOR_IMAGE)
-                        m_jit.and64(MacroAssembler::TrustedImm64(~ignoredCharsMask), character);
-#else
                         and64WithConstant(~ignoredCharsMask, character);
-#endif
                     if (caseMask)
-#if !defined(YARR_FOR_IMAGE)
-                        m_jit.or64(MacroAssembler::TrustedImm64(caseMask), character);
-#else
                         or64WithConstant(caseMask, character);
-#endif
                     if (!matchTargets.hasSucceedTarget())
-#if !defined(YARR_FOR_IMAGE)
-                        defaultMatchTargets.appendFailed(m_jit.branch64(MacroAssembler::NotEqual, character, MacroAssembler::TrustedImm64(characters | caseMask)));
-#else
                         defaultMatchTargets.appendFailed(branch64WithConstant(MacroAssembler::NotEqual, character, characters | caseMask));
-#endif
                     else
-#if !defined(YARR_FOR_IMAGE)
-                        matchTargets.appendSucceeded(m_jit.branch64(MacroAssembler::Equal, character, MacroAssembler::TrustedImm64(characters | caseMask)));
-#else
                         matchTargets.appendSucceeded(branch64WithConstant(MacroAssembler::Equal, character, characters | caseMask));
 #endif
                 };
@@ -5072,12 +4992,10 @@ class YarrGenerator final : public YarrJITInfo {
         bool checksInputInRoutine = tableForMatchingByRoutine(*term) && (term->invert() || !term->characterClass->hasSharedLeadSurrogate());
 #endif
         if (m_decodeSurrogatePairs) {
-#if !defined(YARR_FOR_IMAGE)
-            op.m_jumps.append(jumpIfNoAvailableInput());
-#else
+#if defined(YARR_FOR_IMAGE)
             if (!checksInputInRoutine)
-                op.m_jumps.append(jumpIfNoAvailableInput());
 #endif
+            op.m_jumps.append(jumpIfNoAvailableInput());
             storeToFrame(m_regs.index, term->frameLocation + BackTrackInfoCharacterClass::beginIndex());
         }
 
@@ -5120,16 +5038,14 @@ class YarrGenerator final : public YarrJITInfo {
 
 #if !defined(YARR_FOR_IMAGE)
         readCharacter(op.m_checkedOffset - term->inputPosition, character);
+
+        matchCharacterClassTermInner(term, op.m_jumps, character, scratch);
 #else
         bool mayConsumeUncheckedSecondUnit = !term->characterClass->hasOneCharacterSize() || term->invert();
         if (readAndMatchCharacterClassTerm(term, op.m_checkedOffset - term->inputPosition, m_regs.index, op.m_jumps, character, scratch, mayConsumeUncheckedSecondUnit ? SurrogatePairAdvance::ClaimsSecondUnit : SurrogatePairAdvance::ByCaller, checksInputInRoutine ? InputCheck::FailsIfIndexIsAboveLength : InputCheck::DoneByCaller))
             return;
 #endif
 
-#if !defined(YARR_FOR_IMAGE)
-        matchCharacterClassTermInner(term, op.m_jumps, character, scratch);
-
-#endif
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
         if (m_decodeSurrogatePairs && (!term->characterClass->hasOneCharacterSize() || term->invert())) {
             MacroAssembler::Jump isBMPChar = m_jit.branch32(MacroAssembler::LessThan, character, MacroAssembler::TrustedImm32(0x10000));
@@ -5247,6 +5163,10 @@ class YarrGenerator final : public YarrJITInfo {
 
 #if !defined(YARR_FOR_IMAGE)
         readCharacter(baseOffset, character, countRegister);
+
+        MacroAssembler::Label nonBMPLoop(&m_jit);
+
+        matchCharacterClassTermInner(term, op.m_jumps, character, scratch);
 #else
         MacroAssembler::Label nonBMPLoop;
         if (nonBMPOnly) {
@@ -5257,12 +5177,6 @@ class YarrGenerator final : public YarrJITInfo {
             readAndMatchCharacterClassTerm(term, baseOffset, countRegister, op.m_jumps, character, scratch);
 #endif
 
-#if !defined(YARR_FOR_IMAGE)
-        MacroAssembler::Label nonBMPLoop(&m_jit);
-
-        matchCharacterClassTermInner(term, op.m_jumps, character, scratch);
-
-#endif
         if (m_direction == Backward)
             m_jit.sub32(MacroAssembler::TrustedImm32(1), countRegister);
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
@@ -5312,16 +5226,9 @@ class YarrGenerator final : public YarrJITInfo {
         backtrackTermDefault(opIndex);
     }
 
-#if !defined(YARR_FOR_IMAGE)
-    void generateCharacterClassGreedy(size_t opIndex)
-#else
+#if defined(YARR_FOR_IMAGE)
     void restoreIndexFromMatchStart(const YarrOp& op)
-#endif
     {
-#if !defined(YARR_FOR_IMAGE)
-        YarrOp& op = m_ops[opIndex];
-        PatternTerm* term = op.m_term;
-#else
         if (!op.m_claims.restoresIndexFromMatchStart)
             return;
         m_backtrackingState.link(*this, op);
@@ -5330,14 +5237,7 @@ class YarrGenerator final : public YarrJITInfo {
             m_jit.add32(MacroAssembler::Imm32(op.m_claims.byAlternative), m_regs.index);
         m_backtrackingState.fallthrough();
     }
-#endif
 
-#if !defined(YARR_FOR_IMAGE)
-        const MacroAssembler::RegisterID character = m_regs.regT0;
-        const MacroAssembler::RegisterID countRegister = m_regs.regT1;
-        const MacroAssembler::RegisterID scratch = m_regs.regT2;
-        m_usesT2 = true;
-#else
     bool isOnceGroupBoundary(size_t i) const
     {
         const YarrOp& op = m_ops[i];
@@ -5347,7 +5247,7 @@ class YarrGenerator final : public YarrJITInfo {
             return op.m_direction == Forward && op.m_term->quantityType == QuantifierType::FixedCount && op.m_term->parentheses.disjunction->m_alternatives.size() == 1;
         case YarrOpCode::SimpleNestedAlternativeBegin:
         case YarrOpCode::SimpleNestedAlternativeEnd:
-            return op.m_direction == Forward && !op.m_dispatch.info && op.m_term->type == PatternTerm::Type::ParenthesesSubpattern && op.m_term->quantityType == QuantifierType::FixedCount && op.m_term->quantityMaxCount == 1 && op.m_term->parentheses.disjunction->m_alternatives.size() == 1;
+            return op.m_direction == Forward && !op.m_dispatch && op.m_term->type == PatternTerm::Type::ParenthesesSubpattern && op.m_term->quantityType == QuantifierType::FixedCount && op.m_term->quantityMaxCount == 1 && op.m_term->parentheses.disjunction->m_alternatives.size() == 1;
         case YarrOpCode::BodyAlternativeBegin:
         case YarrOpCode::BodyAlternativeNext:
         case YarrOpCode::BodyAlternativeEnd:
@@ -5372,46 +5272,7 @@ class YarrGenerator final : public YarrJITInfo {
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
-#endif
 
-#if !defined(YARR_FOR_IMAGE)
-        if (m_decodeSurrogatePairs && (!term->characterClass->hasOneCharacterSize() || term->invert()))
-            storeToFrame(m_regs.index, term->frameLocation + BackTrackInfoCharacterClass::beginIndex());
-        m_jit.move(MacroAssembler::TrustedImm32(0), countRegister);
-
-#if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
-        // Forward-only: the shared-lead fast path reads the pair from its first unit.
-        if (m_decodeSurrogatePairs && !term->invert() && m_direction == Forward) {
-            if (auto sharedLead = term->characterClass->hasSharedLeadSurrogate()) {
-                ASSERT(term->isFixedWidthCharacterClass());
-                CharacterClass trailsOnlyClass;
-                buildTrailsOnlyClass(*term->characterClass, trailsOnlyClass);
-
-                MacroAssembler::JumpList sharedFailures;
-                MacroAssembler::Label sharedLoop(&m_jit);
-
-                // Need at least 2 code units remaining: index + 2 <= length.
-                m_jit.add32(MacroAssembler::TrustedImm32(2), m_regs.index, scratch);
-                sharedFailures.append(m_jit.branch32(MacroAssembler::Above, scratch, m_regs.length));
-
-                readSurrogatePairAndMatchTrailForSharedLead(op.m_checkedOffset - term->inputPosition, character, scratch, m_regs.index, sharedLead.value(), &trailsOnlyClass, sharedFailures);
-
-                m_jit.add32(MacroAssembler::TrustedImm32(2), m_regs.index);
-                m_jit.add32(MacroAssembler::TrustedImm32(1), countRegister);
-
-                if (term->quantityMaxCount == quantifyInfinite)
-                    m_jit.jump(sharedLoop);
-                else
-                    m_jit.branch32(MacroAssembler::NotEqual, countRegister, MacroAssembler::Imm32(term->quantityMaxCount)).linkTo(sharedLoop, &m_jit);
-
-                sharedFailures.link(&m_jit);
-                defineReentryLabel(op);
-                storeToFrame(countRegister, term->frameLocation + BackTrackInfoCharacterClass::matchAmountIndex());
-                return;
-            }
-        }
-#endif
-#else
     bool preservesClaim(size_t i) const
     {
         if (isOnceGroupBoundary(i))
@@ -5508,7 +5369,7 @@ class YarrGenerator final : public YarrJITInfo {
 
     static bool isDispatchNeverReentered(const YarrOp& op)
     {
-        return op.m_dispatch.info && op.m_dispatch.info->isNeverReentered;
+        return op.m_dispatch && op.m_dispatch->isNeverReentered;
     }
 
     void clearOwnCapture(const PatternTerm& term)
@@ -5623,6 +5484,7 @@ class YarrGenerator final : public YarrJITInfo {
         return true;
     }
 
+#endif
     void generateCharacterClassGreedy(size_t opIndex)
     {
         YarrOp& op = m_ops[opIndex];
@@ -5632,6 +5494,7 @@ class YarrGenerator final : public YarrJITInfo {
         const MacroAssembler::RegisterID countRegister = m_regs.regT1;
         const MacroAssembler::RegisterID scratch = m_regs.regT2;
         m_usesT2 = true;
+#if defined(YARR_FOR_IMAGE)
 
         bool savesStartIndex = savesStartIndexInsteadOfCount(op);
         if (needsNoMatchCount(op) || savesStartIndex) {
@@ -5662,6 +5525,7 @@ class YarrGenerator final : public YarrJITInfo {
             defineReentryLabel(op);
             return;
         }
+#endif
 
         if (m_decodeSurrogatePairs && (!term->characterClass->hasOneCharacterSize() || term->invert()))
             storeToFrame(m_regs.index, term->frameLocation + BackTrackInfoCharacterClass::beginIndex());
@@ -5699,18 +5563,15 @@ class YarrGenerator final : public YarrJITInfo {
             }
         }
 #endif
-#endif
 
         MacroAssembler::JumpList failures;
         MacroAssembler::JumpList failuresDecrementIndex;
         MacroAssembler::Label loop(&m_jit);
-#if !defined(YARR_FOR_IMAGE)
-        failures.append(atEndOfInput());
-#else
+#if defined(YARR_FOR_IMAGE)
         bool checksInputInRoutine = tableForMatchingByRoutine(*term);
         if (!checksInputInRoutine)
-            failures.append(atEndOfInput());
 #endif
+        failures.append(atEndOfInput());
 
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
         if (m_direction == Backward && m_decodeSurrogatePairs) {
@@ -5736,14 +5597,12 @@ class YarrGenerator final : public YarrJITInfo {
         {
 #if !defined(YARR_FOR_IMAGE)
             readCharacter(op.m_checkedOffset - term->inputPosition, character);
+
+            matchCharacterClassTermInner(term, failures, character, scratch);
 #else
             bool hasClaimedSecondUnit = readAndMatchCharacterClassTerm(term, op.m_checkedOffset - term->inputPosition, m_regs.index, failures, character, scratch, SurrogatePairAdvance::ClaimsSecondUnitBeforeCallerAdvances, checksInputInRoutine ? InputCheck::FailsIfIndexIsLength : InputCheck::DoneByCaller);
 #endif
 
-#if !defined(YARR_FOR_IMAGE)
-            matchCharacterClassTermInner(term, failures, character, scratch);
-
-#endif
             if (m_direction == Backward)
                 m_jit.sub32(MacroAssembler::TrustedImm32(1), m_regs.index);
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
@@ -5843,13 +5702,11 @@ class YarrGenerator final : public YarrJITInfo {
             if (m_direction == Backward)
 #if !defined(YARR_FOR_IMAGE)
                 m_jit.load32WithUnalignedHalfWords(negativeOffsetIndexedAddress(op.m_checkedOffset - term->inputPosition + 1, character), character);
-#else
-                load32FromSubject(negativeOffsetIndexedAddress(op.m_checkedOffset - term->inputPosition + 1, character), character);
-#endif
             else
-#if !defined(YARR_FOR_IMAGE)
                 m_jit.load32WithUnalignedHalfWords(negativeOffsetIndexedAddress(op.m_checkedOffset - term->inputPosition + 2, character), character);
 #else
+                load32FromSubject(negativeOffsetIndexedAddress(op.m_checkedOffset - term->inputPosition + 1, character), character);
+            else
                 load32FromSubject(negativeOffsetIndexedAddress(op.m_checkedOffset - term->inputPosition + 2, character), character);
 #endif
             m_jit.and32(surrogateTagMask, character);
@@ -5907,13 +5764,11 @@ class YarrGenerator final : public YarrJITInfo {
 
         loadFromFrame(term->frameLocation + BackTrackInfoCharacterClass::matchAmountIndex(), countRegister);
 
-#if !defined(YARR_FOR_IMAGE)
-        nonGreedyFailures.append(atEndOfInput());
-#else
+#if defined(YARR_FOR_IMAGE)
         bool checksInputInRoutine = tableForMatchingByRoutine(*term);
         if (!checksInputInRoutine)
-            nonGreedyFailures.append(atEndOfInput());
 #endif
+        nonGreedyFailures.append(atEndOfInput());
         nonGreedyFailures.append(m_jit.branch32(MacroAssembler::Equal, countRegister, MacroAssembler::Imm32(term->quantityMaxCount)));
 
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
@@ -5937,14 +5792,12 @@ class YarrGenerator final : public YarrJITInfo {
         {
 #if !defined(YARR_FOR_IMAGE)
             readCharacter(op.m_checkedOffset - term->inputPosition, character);
+
+            matchCharacterClassTermInner(term, nonGreedyFailures, character, scratch);
 #else
             bool hasClaimedSecondUnit = readAndMatchCharacterClassTerm(term, op.m_checkedOffset - term->inputPosition, m_regs.index, nonGreedyFailures, character, scratch, SurrogatePairAdvance::ClaimsSecondUnitBeforeCallerAdvances, checksInputInRoutine ? InputCheck::FailsIfIndexIsLength : InputCheck::DoneByCaller);
 #endif
 
-#if !defined(YARR_FOR_IMAGE)
-            matchCharacterClassTermInner(term, nonGreedyFailures, character, scratch);
-
-#endif
             if (m_direction == Backward)
                 m_jit.sub32(MacroAssembler::TrustedImm32(1), m_regs.index);
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
@@ -6400,18 +6253,10 @@ class YarrGenerator final : public YarrJITInfo {
 #endif
 #if CPU(ARM64) || CPU(X86_64)
                 // Try multi-pattern SIMD search first if available (more selective for alternation patterns)
-#if !defined(YARR_FOR_IMAGE)
                 if (op.m_maskedAltInfo) {
-#else
-                if (op.m_prefilters.maskedAlternatives) {
-#endif
                     MacroAssembler::JumpList matched;
                     dataLogLnIf(Options::verboseRegExpCompilation(), "Using multi-pattern SIMD search");
-#if !defined(YARR_FOR_IMAGE)
                     auto simdResult = generateMultiPatternSIMDSearch(*op.m_maskedAltInfo, op.m_checkedOffset, matched);
-#else
-                    auto simdResult = generateMultiPatternSIMDSearch(*op.m_prefilters.maskedAlternatives, op.m_checkedOffset, matched);
-#endif
 
                     // If SIMD search was generated, use backtrack entry as reentry point.
                     // The backtrack entry re-computes the SIMD threshold which gets clobbered
@@ -6448,14 +6293,11 @@ class YarrGenerator final : public YarrJITInfo {
 #endif
 
                 // Emit fast skip path with stride if we have BoyerMooreInfo.
-#if !defined(YARR_FOR_IMAGE)
                 if (op.m_bmInfo) {
                     auto range = op.m_bmInfo->findWorthwhileCharacterSequenceForLookahead(m_sampler, canUseVectorScan());
-#else
-                if (op.m_prefilters.boyerMoore) {
-                    auto range = op.m_prefilters.boyerMoore->findWorthwhileCharacterSequenceForLookahead(m_sampler, canUseVectorScan());
+#if defined(YARR_FOR_IMAGE)
 #if CPU(X86_64) || CPU(ARM64)
-                    if (range && rarityOfStops(*op.m_prefilters.boyerMoore, *range) < leastRarityOfStartWorthSearchingFor)
+                    if (range && rarityOfStops(*op.m_bmInfo, *range) < leastRarityOfStartWorthSearchingFor)
                         range = std::nullopt;
 #endif
 #endif
@@ -6463,11 +6305,7 @@ class YarrGenerator final : public YarrJITInfo {
                         auto [beginIndex, endIndex] = *range;
                         ASSERT(endIndex <= alternative->m_minimumSize);
 
-#if !defined(YARR_FOR_IMAGE)
                         auto [map, charactersFastPath] = op.m_bmInfo->createCandidateBitmap(beginIndex, endIndex);
-#else
-                        auto [map, charactersFastPath] = op.m_prefilters.boyerMoore->createCandidateBitmap(beginIndex, endIndex);
-#endif
                         unsigned mapCount = map.count();
                         // If candiate characters are <= 2, checking each is better than using vector.
                         MacroAssembler::JumpList matched;
@@ -6512,7 +6350,7 @@ class YarrGenerator final : public YarrJITInfo {
                         }
 #if defined(YARR_FOR_IMAGE)
 
-                        if (strideLength == 1 && op.m_prefilters.startPositionSearch) {
+                        if (strideLength == 1 && op.m_startPositionSearch) {
                             generateStartPositionSearch(op, matched);
                             finishSearch(matched);
                             return;
@@ -6554,16 +6392,14 @@ class YarrGenerator final : public YarrJITInfo {
                     } else
                         dataLogLnIf(Options::verboseRegExpCompilation(), "BM search candidates were not efficient enough. Not using BM search");
 #if defined(YARR_FOR_IMAGE)
-                    if (range || !op.m_prefilters.startPositionSearch)
+                    if (range || !op.m_startPositionSearch)
 #endif
                     return;
                 }
 
-#if !defined(YARR_FOR_IMAGE)
-                if (op.m_bodyAltSharedLead) {
-#else
+#if defined(YARR_FOR_IMAGE)
 #if CPU(ARM64) || CPU(X86_64)
-                if (op.m_prefilters.startPositionSearch) {
+                if (op.m_startPositionSearch) {
                     MacroAssembler::JumpList matched;
                     generateStartPositionSearch(op, matched);
                     finishSearch(matched);
@@ -6571,18 +6407,14 @@ class YarrGenerator final : public YarrJITInfo {
                 }
 #endif
 
-                if (op.m_prefilters.sharedLead) {
 #endif
+                if (op.m_bodyAltSharedLead) {
                     // Shared-lead per-position prefilter for /u patterns whose alternatives all
                     // start with non-BMP character classes sharing the same UTF-16 lead surrogate.
                     // We scan input one UTF-16 unit at a time, falling through to per-alt dispatch
                     // only when the lead matches. Mismatch advances index by 1 and retries.
                     ASSERT(m_decodeSurrogatePairs);
-#if !defined(YARR_FOR_IMAGE)
                     char16_t sharedLeadSurrogate = op.m_bodyAltSharedLead.value();
-#else
-                    char16_t sharedLeadSurrogate = op.m_prefilters.sharedLead.value();
-#endif
 
                     // We are intentionally not using tryReadUnicodeChar here as we decomposed a non-BMP character into lead and trail surrogates
                     // and searching for a shared lead surrogate.
@@ -6670,23 +6502,16 @@ class YarrGenerator final : public YarrJITInfo {
                     } else if (priorAlternative->m_minimumSize > alternative->m_minimumSize)
                         m_jit.sub32(MacroAssembler::Imm32(priorAlternative->m_minimumSize - alternative->m_minimumSize), m_regs.index);
                     // The claim is now this alternative's; a dispatched entry lands here.
-#if !defined(YARR_FOR_IMAGE)
                     if (op.m_bodyDispatch)
                         bindBodyDispatchEntry(*op.m_bodyDispatch, op.m_bodyDispatchAlternativeIndex);
-#else
-                    if (op.m_bodyDispatch.info)
-                        bindBodyDispatchEntry(*op.m_bodyDispatch.info, op.m_bodyDispatch.alternativeIndex);
-#endif
                 } else if (op.m_nextOp == notFound) {
                     // This is the reentry point for the End of 'once through' alternatives,
                     // jumped to when the last alternative fails to match.
                     defineReentryLabel(op);
-#if !defined(YARR_FOR_IMAGE)
-                    m_jit.sub32(MacroAssembler::Imm32(priorAlternative->m_minimumSize), m_regs.index);
-#else
+#if defined(YARR_FOR_IMAGE)
                     if (priorAlternative->m_minimumSize)
-                        m_jit.sub32(MacroAssembler::Imm32(priorAlternative->m_minimumSize), m_regs.index);
 #endif
+                    m_jit.sub32(MacroAssembler::Imm32(priorAlternative->m_minimumSize), m_regs.index);
                 }
                 break;
             }
@@ -6706,11 +6531,7 @@ class YarrGenerator final : public YarrJITInfo {
             // set of jumps.
             //
             // In the non-simple forms, successful alternative matches must store a
-#if !defined(YARR_FOR_IMAGE)
             // 'return address' using a DataLabelPtr, used to store the address to jump
-#else
-            // 'return address' using a ReturnAddressSite, used to store the address to jump
-#endif
             // to when backtracking, to get to the code for the appropriate alternative.
             case YarrOpCode::SimpleNestedAlternativeBegin:
             case YarrOpCode::StringListAlternativeBegin:
@@ -6728,17 +6549,9 @@ class YarrGenerator final : public YarrJITInfo {
                 // First-character dispatch: read the character once and route to
                 // the applicable chain, then fall into alternative 0's entry (which
                 // is now a labelled chain target rather than a fallthrough).
-#if !defined(YARR_FOR_IMAGE)
                 if (op.m_dispatch) {
-#else
-                if (op.m_dispatch.info) {
-#endif
                     generateDispatch(op);
-#if !defined(YARR_FOR_IMAGE)
                     bindDispatchEntry(*op.m_dispatch, op.m_dispatchAlternativeIndex);
-#else
-                    bindDispatchEntry(*op.m_dispatch.info, op.m_dispatch.alternativeIndex);
-#endif
                 }
 
                 // Calculate how much input we need to check for, and if non-zero check.
@@ -6812,13 +6625,8 @@ class YarrGenerator final : public YarrJITInfo {
 
                 // This is the entry point for the next alternative.
                 defineReentryLabel(op);
-#if !defined(YARR_FOR_IMAGE)
                 if (op.m_dispatch)
                     bindDispatchEntry(*op.m_dispatch, op.m_dispatchAlternativeIndex);
-#else
-                if (op.m_dispatch.info)
-                    bindDispatchEntry(*op.m_dispatch.info, op.m_dispatch.alternativeIndex);
-#endif
 
                 // Calculate how much input we need to check for, and if non-zero check.
                 op.m_checkAdjust = alternative->m_minimumSize;
@@ -6952,7 +6760,7 @@ class YarrGenerator final : public YarrJITInfo {
                 if (isOnceGroupNeverReentered(op)) {
                     if (term->quantityType != QuantifierType::FixedCount && !term->parentheses.disjunction->m_minimumSize)
                         storeToFrame(m_regs.index, parenthesesFrameLocation + BackTrackInfoParenthesesOnce::beginIndex());
-                    else if (!m_ops[opIndex + 1].m_dispatch.info && (term->quantityType == QuantifierType::Greedy || !everyAlternativeHasMinimumSize(*term->parentheses.disjunction)))
+                    else if (!m_ops[opIndex + 1].m_dispatch && (term->quantityType == QuantifierType::Greedy || !everyAlternativeHasMinimumSize(*term->parentheses.disjunction)))
                         saveIndexReachedAt(op, parenthesesFrameLocation + BackTrackInfoParenthesesOnce::beginIndex());
                 } else if (term->quantityType == QuantifierType::Greedy)
 #endif
@@ -7040,12 +6848,10 @@ class YarrGenerator final : public YarrJITInfo {
 
                 // Store the start index of the current match; we need to reject zero
                 // length matches.
-#if !defined(YARR_FOR_IMAGE)
-                storeToFrame(m_regs.index, term->frameLocation + BackTrackInfoParenthesesTerminal::beginIndex());
-#else
+#if defined(YARR_FOR_IMAGE)
                 if (!term->parentheses.disjunction->m_minimumSize || (term->capture() && shouldRecordSubpatterns()))
-                    storeToFrame(m_regs.index, term->frameLocation + BackTrackInfoParenthesesTerminal::beginIndex());
 #endif
+                storeToFrame(m_regs.index, term->frameLocation + BackTrackInfoParenthesesTerminal::beginIndex());
                 break;
             }
             case YarrOpCode::ParenthesesSubpatternTerminalEnd: {
@@ -7063,6 +6869,9 @@ class YarrGenerator final : public YarrJITInfo {
                 // handle nested expressions that can match without consuming characters
                 if (!term->parentheses.disjunction->m_minimumSize)
                     m_abortExecution.append(m_jit.branch32(MacroAssembler::Equal, m_regs.index, frameAddress().withOffset((term->frameLocation + BackTrackInfoParenthesesTerminal::beginIndex()) * sizeof(void*))));
+
+                // We know that the match is non-zero, we can accept it and
+                // loop back up to the head of the subpattern.
 #else
                 if (term->capture() && shouldRecordSubpatterns()) {
                     unsigned inputOffset = op.m_checkedOffset - term->inputPosition;
@@ -7072,12 +6881,7 @@ class YarrGenerator final : public YarrJITInfo {
                     setSubpatternStart(m_regs.regT0, term->parentheses.subpatternId);
                     emitCaptureEnd(term, op.m_checkedOffset, m_regs.regT0);
                 }
-#endif
 
-#if !defined(YARR_FOR_IMAGE)
-                // We know that the match is non-zero, we can accept it and
-                // loop back up to the head of the subpattern.
-#else
                 // The iteration consumed input, or it is the one empty iteration that a minimum of
                 // one accepts. Loop back up to the head of the subpattern.
 #endif
@@ -7370,17 +7174,9 @@ class YarrGenerator final : public YarrJITInfo {
             // several points; all of them converge here, index at the first
             // alternative's claimed frontier, before alternative 0's terms. Route
             // on the match-start character now so every path is dispatched.
-#if !defined(YARR_FOR_IMAGE)
             if (op.m_op == YarrOpCode::BodyAlternativeBegin && op.m_bodyDispatch) {
-#else
-            if (op.m_op == YarrOpCode::BodyAlternativeBegin && op.m_bodyDispatch.info) {
-#endif
                 generateBodyDispatch(op);
-#if !defined(YARR_FOR_IMAGE)
                 bindBodyDispatchEntry(*op.m_bodyDispatch, 0);
-#else
-                bindBodyDispatchEntry(*op.m_bodyDispatch.info, 0);
-#endif
             }
 
             ++opIndex;
@@ -7439,11 +7235,7 @@ class YarrGenerator final : public YarrJITInfo {
                 // Is this the last alternative? If not, then if we backtrack to this point we just
                 // need to jump to try to match the next alternative.
                 if (m_ops[op.m_nextOp].m_op != YarrOpCode::BodyAlternativeEnd) {
-#if !defined(YARR_FOR_IMAGE)
                     if (op.m_bodyDispatch) {
-#else
-                    if (op.m_bodyDispatch.info) {
-#endif
                         // Under body dispatch this alternative was the sole candidate for
                         // the character at the match start (first-character sets are
                         // pairwise disjoint), so no later alternative can match here:
@@ -7454,11 +7246,7 @@ class YarrGenerator final : public YarrJITInfo {
                         YarrOp* beginOp = &op;
                         while (beginOp->m_op != YarrOpCode::BodyAlternativeBegin)
                             beginOp = &m_ops[beginOp->m_previousOp];
-#if !defined(YARR_FOR_IMAGE)
                         emitBodyDispatchAdvance(*op.m_bodyDispatch, *beginOp, alternative->m_minimumSize);
-#else
-                        emitBodyDispatchAdvance(*op.m_bodyDispatch.info, *beginOp, alternative->m_minimumSize);
-#endif
                         break;
                     }
                     m_backtrackingState.linkTo(m_ops[op.m_nextOp].m_reentry, &m_jit);
@@ -7572,11 +7360,7 @@ class YarrGenerator final : public YarrJITInfo {
                 // Either way, we have just failed the input check for the first alternative.
                 MacroAssembler::Label firstInputCheckFailed(&m_jit);
 
-#if !defined(YARR_FOR_IMAGE)
                 if (BodyDispatchInfo* bodyDispatch = beginOp->m_bodyDispatch) {
-#else
-                if (BodyDispatchInfo* bodyDispatch = beginOp->m_bodyDispatch.info) {
-#endif
                     // Dispatched body: the Begin's input-check failures and the
                     // search-advance stubs that lack input for the next position all
                     // arrive here with the index at the first alternative's claim
@@ -7642,7 +7426,7 @@ class YarrGenerator final : public YarrJITInfo {
 
                 bool needsToUpdateMatchStart = !m_pattern.m_body->m_hasFixedSize;
 #if defined(YARR_FOR_IMAGE)
-                bool noLaterStartHasEnoughInput = alternative->m_minimumSize == m_pattern.m_body->m_minimumSize && !beginOp->m_bodyDispatch.info;
+                bool noLaterStartHasEnoughInput = alternative->m_minimumSize == m_pattern.m_body->m_minimumSize && !beginOp->m_bodyDispatch;
                 if (noLaterStartHasEnoughInput)
                     needsToUpdateMatchStart = false;
 #endif
@@ -7681,29 +7465,20 @@ class YarrGenerator final : public YarrJITInfo {
                         if (delta)
                             m_jit.sub32(MacroAssembler::Imm32(delta), m_regs.index);
                     }
-#if !defined(YARR_FOR_IMAGE)
-                    MacroAssembler::Jump matchFailed = jumpIfNoAvailableInput();
-#else
+#if defined(YARR_FOR_IMAGE)
                     if (!needsToUpdateMatchStart && beginOp->m_alternative->m_minimumSize == m_pattern.m_body->m_minimumSize)
                         checkInput().linkTo(beginOp->m_reentry, &m_jit);
                     else {
-                        MacroAssembler::Jump matchFailed = jumpIfNoAvailableInput();
 #endif
+                    MacroAssembler::Jump matchFailed = jumpIfNoAvailableInput();
 
-#if !defined(YARR_FOR_IMAGE)
                     if (needsToUpdateMatchStart) {
                         if (!m_pattern.m_body->m_minimumSize)
                             setMatchStart(m_regs.index);
                         else {
                             m_jit.sub32(m_regs.index, MacroAssembler::Imm32(m_pattern.m_body->m_minimumSize), m_regs.regT0);
                             setMatchStart(m_regs.regT0);
-#else
-                        if (needsToUpdateMatchStart) {
-                            if (!m_pattern.m_body->m_minimumSize)
-                                setMatchStart(m_regs.index);
-                            else {
-                                m_jit.sub32(m_regs.index, MacroAssembler::Imm32(m_pattern.m_body->m_minimumSize), m_regs.regT0);
-                                setMatchStart(m_regs.regT0);
+#if defined(YARR_FOR_IMAGE)
                             }
 #endif
                         }
@@ -7711,7 +7486,6 @@ class YarrGenerator final : public YarrJITInfo {
                     }
 #endif
 
-#if !defined(YARR_FOR_IMAGE)
                     // Calculate how much more input the first alternative requires than the minimum
                     // for the body as a whole. If no more is needed then we dont need an additional
                     // input check here - jump straight back up to the start of the first alternative.
@@ -7725,30 +7499,11 @@ class YarrGenerator final : public YarrJITInfo {
                         checkInput().linkTo(beginOp->m_reentry, &m_jit);
                         m_jit.jump(firstInputCheckFailed);
                     }
-#else
-                        // Calculate how much more input the first alternative requires than the minimum
-                        // for the body as a whole. If no more is needed then we dont need an additional
-                        // input check here - jump straight back up to the start of the first alternative.
-                        if (beginOp->m_alternative->m_minimumSize == m_pattern.m_body->m_minimumSize)
-                            m_jit.jump(beginOp->m_reentry);
-                        else {
-                            if (beginOp->m_alternative->m_minimumSize > m_pattern.m_body->m_minimumSize)
-                                m_jit.add32(MacroAssembler::Imm32(beginOp->m_alternative->m_minimumSize - m_pattern.m_body->m_minimumSize), m_regs.index);
-                            else
-                                m_jit.sub32(MacroAssembler::Imm32(m_pattern.m_body->m_minimumSize - beginOp->m_alternative->m_minimumSize), m_regs.index);
-                            checkInput().linkTo(beginOp->m_reentry, &m_jit);
-                            m_jit.jump(firstInputCheckFailed);
-                        }
-#endif
 
-#if !defined(YARR_FOR_IMAGE)
                     // We jump to here if we iterate to the point that there is insufficient input to
                     // run any matches, and need to return a failure state from JIT code.
                     matchFailed.link(&m_jit);
-#else
-                        // We jump to here if we iterate to the point that there is insufficient input to
-                        // run any matches, and need to return a failure state from JIT code.
-                        matchFailed.link(&m_jit);
+#if defined(YARR_FOR_IMAGE)
                     }
 #endif
                 }
@@ -7796,24 +7551,18 @@ class YarrGenerator final : public YarrJITInfo {
                 // falling to a fixed successor. Failures that mean "no alternative can
                 // match here" (empty routes, exhausted chains) join the group's
                 // failure flow at the Begin op, where the index is at the group frame.
-#if !defined(YARR_FOR_IMAGE)
                 if (op.m_dispatch) {
-#else
-                if (op.m_dispatch.info) {
-#endif
                     if (!m_backtrackingState.isEmpty()) {
                         m_backtrackingState.link(*this, op);
                         // Give back the input this alternative claimed on entry.
                         if (op.m_checkAdjust)
                             m_jit.sub32(MacroAssembler::Imm32(op.m_checkAdjust), m_regs.index);
-#if !defined(YARR_FOR_IMAGE)
-                        loadFromFrameAndJump(op.m_dispatch->frameLocation + BackTrackInfoParenthesesOnce::chainResumeIndex());
-#else
-                        if (op.m_dispatch.info->isLastInEveryChain[op.m_dispatch.alternativeIndex])
-                            op.m_dispatch.info->groupFailJumps.append(m_jit.jump());
+#if defined(YARR_FOR_IMAGE)
+                        if (op.m_dispatch->isLastInEveryChain[op.m_dispatchAlternativeIndex])
+                            op.m_dispatch->groupFailJumps.append(m_jit.jump());
                         else
-                            loadFromFrameAndJump(op.m_dispatch.info->frameLocation + BackTrackInfoParenthesesOnce::chainResumeIndex());
 #endif
+                        loadFromFrameAndJump(op.m_dispatch->frameLocation + BackTrackInfoParenthesesOnce::chainResumeIndex());
                     }
                     if (isBegin) {
                         // Group-level failures gathered by the dispatch (empty routes,
@@ -7821,11 +7570,7 @@ class YarrGenerator final : public YarrJITInfo {
                         // the group frame. (Under dispatch nothing plants jumps on the
                         // End: Next backtracks jump through chainResume, and dispatch
                         // requires a FixedCount group, so no zero-length-match check.)
-#if !defined(YARR_FOR_IMAGE)
                         m_backtrackingState.append(op.m_dispatch->groupFailJumps);
-#else
-                        m_backtrackingState.append(op.m_dispatch.info->groupFailJumps);
-#endif
                     }
                     // For non-simple alternatives, link the alternative's 'return
                     // address' so we backtrack back out into it correctly.
@@ -7863,7 +7608,17 @@ class YarrGenerator final : public YarrJITInfo {
                     if (!m_backtrackingState.isEmpty()) {
                         // Handle the cases where we need to link the backtracks here.
                         m_backtrackingState.link(*this, op);
-#if !defined(YARR_FOR_IMAGE)
+#if defined(YARR_FOR_IMAGE)
+                        if (!isLastAlternative && nextOp.m_claims.reentryAfterClaim.isSet()) {
+                            unsigned claimed = op.m_checkAdjust.value();
+                            unsigned claimedByNext = nextOp.m_checkAdjust.value();
+                            if (claimedByNext > claimed)
+                                m_jit.add32(MacroAssembler::Imm32(claimedByNext - claimed), m_regs.index);
+                            else if (claimedByNext < claimed)
+                                m_jit.sub32(MacroAssembler::Imm32(claimed - claimedByNext), m_regs.index);
+                            m_jit.jump(nextOp.m_claims.reentryAfterClaim);
+                        } else {
+#endif
                         // Give back the input this alternative claimed on entry.
                         if (op.m_direction == Backward)
                             m_jit.add32(MacroAssembler::Imm32(op.m_checkAdjust), m_regs.index);
@@ -7875,35 +7630,10 @@ class YarrGenerator final : public YarrJITInfo {
                         } else if (!isBegin) {
                             // The last of more than one alternatives must jump back to the beginning.
                             nextOp.m_jumps.append(m_jit.jump());
-#else
-                        if (!isLastAlternative && nextOp.m_claims.reentryAfterClaim.isSet()) {
-                            unsigned claimed = op.m_checkAdjust.value();
-                            unsigned claimedByNext = nextOp.m_checkAdjust.value();
-                            if (claimedByNext > claimed)
-                                m_jit.add32(MacroAssembler::Imm32(claimedByNext - claimed), m_regs.index);
-                            else if (claimedByNext < claimed)
-                                m_jit.sub32(MacroAssembler::Imm32(claimed - claimedByNext), m_regs.index);
-                            m_jit.jump(nextOp.m_claims.reentryAfterClaim);
-#endif
                         } else {
-#if !defined(YARR_FOR_IMAGE)
                             // A single alternative on its own can fall through.
                             m_backtrackingState.fallthrough();
-#else
-                            // Give back the input this alternative claimed on entry.
-                            if (op.m_direction == Backward)
-                                m_jit.add32(MacroAssembler::Imm32(op.m_checkAdjust), m_regs.index);
-                            else
-                                m_jit.sub32(MacroAssembler::Imm32(op.m_checkAdjust), m_regs.index);
-                            if (!isLastAlternative) {
-                                // An alternative that is not the last should jump to its successor.
-                                m_jit.jump(nextOp.m_reentry);
-                            } else if (!isBegin) {
-                                // The last of more than one alternatives must jump back to the beginning.
-                                nextOp.m_jumps.append(m_jit.jump());
-                            } else {
-                                // A single alternative on its own can fall through.
-                                m_backtrackingState.fallthrough();
+#if defined(YARR_FOR_IMAGE)
                             }
 #endif
                         }
@@ -7968,11 +7698,7 @@ class YarrGenerator final : public YarrJITInfo {
                     unsigned parenthesesFrameLocation = term->frameLocation;
                     loadFromFrameAndJump(parenthesesFrameLocation + BackTrackInfoParentheses::returnAddressIndex());
 
-#if !defined(YARR_FOR_IMAGE)
                     // Link the DataLabelPtr associated with the end of the last alternative to this point.
-#else
-                    // Link the ReturnAddressSite associated with the end of the last alternative to this point.
-#endif
                     m_backtrackingState.append(op.m_returnAddress);
                 }
                 op.m_contentBacktrackEntryLabel = m_jit.label();
@@ -8023,12 +7749,10 @@ class YarrGenerator final : public YarrJITInfo {
                     if (term->quantityType == QuantifierType::Greedy) {
                         // Clear the flag in the stackframe indicating we ran through the subpattern.
                         unsigned parenthesesFrameLocation = term->frameLocation;
-#if !defined(YARR_FOR_IMAGE)
-                        storeToFrame(MacroAssembler::TrustedImm32(-1), parenthesesFrameLocation + BackTrackInfoParenthesesOnce::beginIndex());
-#else
+#if defined(YARR_FOR_IMAGE)
                         if (!isOnceGroupNeverReentered(op))
-                            storeToFrame(MacroAssembler::TrustedImm32(-1), parenthesesFrameLocation + BackTrackInfoParenthesesOnce::beginIndex());
 #endif
+                        storeToFrame(MacroAssembler::TrustedImm32(-1), parenthesesFrameLocation + BackTrackInfoParenthesesOnce::beginIndex());
 
                         // Clear out any nested captures.
                         if (shouldRecordSubpatterns() && term->containsAnyCaptures()) {
@@ -8359,16 +8083,14 @@ class YarrGenerator final : public YarrJITInfo {
                     // the frontier moved right in a forward frame, left (down) in a
                     // mirrored one. Without the direction split a leftward-consuming
                     // lazy group stops re-entering as soon as its frontier has moved.
-#if !defined(YARR_FOR_IMAGE)
-                    m_jit.branch32(op.m_direction == Backward ? MacroAssembler::Below : MacroAssembler::Above, m_regs.index, beginTemporary).linkTo(beginOp.m_reentry, &m_jit);
-#else
+#if defined(YARR_FOR_IMAGE)
                     // A body that can be empty is tried again regardless: a mandatory iteration may have
                     // been empty, and an optional empty iteration fails at the end of its alternative.
                     if (!term->parentheses.disjunction->m_minimumSize)
                         m_jit.jump(beginOp.m_reentry);
                     else
-                        m_jit.branch32(op.m_direction == Backward ? MacroAssembler::Below : MacroAssembler::Above, m_regs.index, beginTemporary).linkTo(beginOp.m_reentry, &m_jit);
 #endif
+                    m_jit.branch32(op.m_direction == Backward ? MacroAssembler::Below : MacroAssembler::Above, m_regs.index, beginTemporary).linkTo(beginOp.m_reentry, &m_jit);
 
                     exceededMatchLimit.link(&m_jit);
                     break;
@@ -8622,15 +8344,13 @@ class YarrGenerator final : public YarrJITInfo {
         // alternatives (its ops are the ParenthesesSubpatternOnce + Nested* set).
 #if !defined(YARR_FOR_IMAGE)
         // The sets must be computed before opCompileAlternative reorders terms.
-#endif
         DispatchInfo* dispatch = nullptr;
-#if !defined(YARR_FOR_IMAGE)
         if (parenthesesBeginOpCode == YarrOpCode::ParenthesesSubpatternOnceBegin && alternativeBeginOpCode == YarrOpCode::NestedAlternativeBegin && Options::useRegExpAlternationDispatch())
-#else
-        if (parenthesesBeginOpCode == YarrOpCode::ParenthesesSubpatternOnceBegin && alternativeBeginOpCode == YarrOpCode::NestedAlternativeBegin && m_policy.usesAlternationDispatch)
-#endif
             dispatch = tryPrepareDispatch(term, checkedOffset);
-#if defined(YARR_FOR_IMAGE)
+#else
+        DispatchInfo* dispatch = nullptr;
+        if (parenthesesBeginOpCode == YarrOpCode::ParenthesesSubpatternOnceBegin && alternativeBeginOpCode == YarrOpCode::NestedAlternativeBegin && m_policy.usesAlternationDispatch)
+            dispatch = tryPrepareDispatch(term, checkedOffset);
         if (!dispatch && parenthesesBeginOpCode == YarrOpCode::ParenthesesSubpatternOnceBegin && alternativeBeginOpCode == YarrOpCode::NestedAlternativeBegin && term->possessive()) {
             alternativeBeginOpCode = YarrOpCode::SimpleNestedAlternativeBegin;
             alternativeNextOpCode = YarrOpCode::SimpleNestedAlternativeNext;
@@ -8653,11 +8373,7 @@ class YarrGenerator final : public YarrJITInfo {
         appendOp(alternativeBeginOpCode);
         m_ops.last().m_previousOp = notFound;
         m_ops.last().m_term = term;
-#if !defined(YARR_FOR_IMAGE)
         m_ops.last().m_dispatch = dispatch;
-#else
-        m_ops.last().m_dispatch.info = dispatch;
-#endif
         PatternDisjunction* disjunction = term->parentheses.disjunction;
         auto& alternatives = disjunction->m_alternatives;
         // Under first-character dispatch, an alternative that the chains compare inline (see
@@ -8674,11 +8390,7 @@ class YarrGenerator final : public YarrJITInfo {
             if (emittedInline(i) && !(everyAlternativeInline && !i))
                 continue;
             size_t lastOpIndex = m_ops.size() - 1;
-#if !defined(YARR_FOR_IMAGE)
             m_ops[lastOpIndex].m_dispatchAlternativeIndex = i;
-#else
-            m_ops[lastOpIndex].m_dispatch.alternativeIndex = i;
-#endif
 
             PatternAlternative* nestedAlternative = alternatives[i].get();
             {
@@ -8721,11 +8433,7 @@ class YarrGenerator final : public YarrJITInfo {
             lastOp.m_nextOp = thisOpIndex;
             thisOp.m_previousOp = lastOpIndex;
             thisOp.m_term = term;
-#if !defined(YARR_FOR_IMAGE)
             thisOp.m_dispatch = dispatch;
-#else
-            thisOp.m_dispatch.info = dispatch;
-#endif
         }
         YarrOp& lastOp = m_ops.last();
         ASSERT(lastOp.m_op == alternativeNextOpCode);
@@ -9048,9 +8756,7 @@ class YarrGenerator final : public YarrJITInfo {
                 // A repeated lookahead precedes its reference inside the same forward body, so it was copied first.
                 if (term.m_repeatedLookahead)
                     term.m_repeatedLookahead = copiedLookaheads.get(term.m_repeatedLookahead);
-#endif
                 break;
-#if defined(YARR_FOR_IMAGE)
             case PatternTerm::Type::AssertionBOL:
             case PatternTerm::Type::AssertionEOL:
             case PatternTerm::Type::AssertionWordBoundary:
@@ -9059,8 +8765,8 @@ class YarrGenerator final : public YarrJITInfo {
             case PatternTerm::Type::NumberedForwardReference:
             case PatternTerm::Type::NamedForwardReference:
             case PatternTerm::Type::DotStarEnclosure:
-                break;
 #endif
+                break;
             }
             copy->m_terms.append(term);
 #if defined(YARR_FOR_IMAGE)
@@ -9237,16 +8943,14 @@ class YarrGenerator final : public YarrJITInfo {
 
 #if !defined(YARR_FOR_IMAGE)
         optimizeAlternative(alternative);
+
+        for (unsigned i = 0; i < alternative->m_terms.size(); ++i) {
+            PatternTerm* term = &alternative->m_terms[i];
 #else
         for (unsigned index : termOrderOf(*alternative)) {
             PatternTerm* term = &alternative->m_terms[index];
 #endif
 
-#if !defined(YARR_FOR_IMAGE)
-        for (unsigned i = 0; i < alternative->m_terms.size(); ++i) {
-            PatternTerm* term = &alternative->m_terms[i];
-
-#endif
             switch (term->type) {
             case PatternTerm::Type::ParenthesesSubpattern:
                 opCompileParenthesesSubpattern(checkedOffset, term);
@@ -9355,13 +9059,8 @@ class YarrGenerator final : public YarrJITInfo {
         size_t repeatLoop = m_ops.size();
         appendOp(YarrOp(YarrOpCode::BodyAlternativeBegin));
         m_ops.last().m_previousOp = notFound;
-#if !defined(YARR_FOR_IMAGE)
         m_ops.last().m_bodyDispatch = bodyDispatch;
         m_ops.last().m_bodyDispatchAlternativeIndex = 0;
-#else
-        m_ops.last().m_bodyDispatch.info = bodyDispatch;
-        m_ops.last().m_bodyDispatch.alternativeIndex = 0;
-#endif
 
         if (disjunction->m_minimumSize && !m_pattern.sticky()) {
             // Collect BoyerMooreInfo if it is possible and profitable. BoyerMooreInfo will be used to emit fast skip path with large stride
@@ -9371,11 +9070,7 @@ class YarrGenerator final : public YarrJITInfo {
             auto bmInfo = BoyerMooreInfo::create(m_charSize, std::min<unsigned>(disjunction->m_minimumSize, BoyerMooreInfo::maxLength));
             if (collectBoyerMooreInfo(disjunction, currentAlternativeIndex, bmInfo.get())) {
                 dataLogLnIf(YarrJITInternal::verbose, bmInfo.get());
-#if !defined(YARR_FOR_IMAGE)
                 m_ops.last().m_bmInfo = bmInfo.ptr();
-#else
-                m_ops.last().m_prefilters.boyerMoore = bmInfo.ptr();
-#endif
                 m_bmInfos.append(WTF::move(bmInfo));
                 m_usesT2 = true;
                 if (m_sampleString)
@@ -9390,11 +9085,7 @@ class YarrGenerator final : public YarrJITInfo {
                 if (auto maskedInfo = MaskedAlternativeInfo::create(*disjunction, m_pattern.ignoreCase(), m_charSize)) {
                     dataLogLnIf(Options::verboseRegExpCompilation(), "Found multi-pattern SIMD candidate: ", alternatives.size(), " alternatives, minLen=", maskedInfo->minPatternLength);
                     auto info = makeUniqueRef<MaskedAlternativeInfo>(*maskedInfo);
-#if !defined(YARR_FOR_IMAGE)
                     m_ops.last().m_maskedAltInfo = info.ptr();
-#else
-                    m_ops.last().m_prefilters.maskedAlternatives = info.ptr();
-#endif
                     m_maskedAltInfos.append(WTF::move(info));
                 }
             }
@@ -9404,11 +9095,7 @@ class YarrGenerator final : public YarrJITInfo {
             // all share the same UTF-16 lead surrogate, then any candidate match position must
             // have that lead at the first character. We hoist a single load+compare above the
             // per-alt dispatch and skip positions that cannot match any alternative.
-#if !defined(YARR_FOR_IMAGE)
             if (m_decodeSurrogatePairs && !m_ops.last().m_maskedAltInfo) {
-#else
-            if (m_decodeSurrogatePairs && !m_ops.last().m_prefilters.maskedAlternatives) {
-#endif
                 std::optional<char16_t> sharedLead;
                 for (size_t i = currentAlternativeIndex; i < alternatives.size(); ++i) {
 #if !defined(YARR_FOR_IMAGE)
@@ -9430,11 +9117,7 @@ class YarrGenerator final : public YarrJITInfo {
                 }
                 if (sharedLead) {
                     dataLogLnIf(Options::verboseRegExpCompilation(), "Found shared-lead body-alt prefilter: U+", hex(sharedLead.value()));
-#if !defined(YARR_FOR_IMAGE)
                     m_ops.last().m_bodyAltSharedLead = sharedLead;
-#else
-                    m_ops.last().m_prefilters.sharedLead = sharedLead;
-#endif
                 }
             }
         }
@@ -9461,13 +9144,8 @@ class YarrGenerator final : public YarrJITInfo {
             // End op keeps the pointer (with an index past the last alternative)
             // so the last alternative's failure flow can absorb the tree's
             // no-alternative leaves.
-#if !defined(YARR_FOR_IMAGE)
             thisOp.m_bodyDispatch = bodyDispatch;
             thisOp.m_bodyDispatchAlternativeIndex = (currentAlternativeIndex - firstRepeatedAlternative) + 1;
-#else
-            thisOp.m_bodyDispatch.info = bodyDispatch;
-            thisOp.m_bodyDispatch.alternativeIndex = (currentAlternativeIndex - firstRepeatedAlternative) + 1;
-#endif
 
             ++currentAlternativeIndex;
         } while (currentAlternativeIndex < alternatives.size());
@@ -9479,7 +9157,7 @@ class YarrGenerator final : public YarrJITInfo {
         lastOp.m_checkedOffset = 0;
 #if defined(YARR_FOR_IMAGE)
 #if CPU(X86_64) || CPU(ARM64)
-        m_ops[repeatLoop].m_prefilters.startPositionSearch = planStartPositionSearch(*disjunction, firstRepeatedAlternative, repeatLoop);
+        m_ops[repeatLoop].m_startPositionSearch = planStartPositionSearch(*disjunction, firstRepeatedAlternative, repeatLoop);
 #endif
 #endif
     }
@@ -9490,37 +9168,20 @@ class YarrGenerator final : public YarrJITInfo {
     // UTF-16 lead surrogate. Recurses through single-alternative groups so that capture groups
     // and non-capturing groups are transparent.
     std::optional<char16_t> findFirstTermSharedLead(PatternAlternative* alt)
-#else
-    std::optional<char16_t> findSharedLeadSurrogate(const PatternAlternative& alternative) const
-#endif
     {
-#if !defined(YARR_FOR_IMAGE)
         if (alt->m_terms.isEmpty())
-#else
-        const CharacterSet* firstCharacters = tryGetFirstCharacters(alternative);
-        if (!firstCharacters || firstCharacters->ranges.isEmpty())
-#endif
             return std::nullopt;
-#if !defined(YARR_FOR_IMAGE)
 
         PatternTerm& firstTerm = alt->m_terms[0];
         switch (firstTerm.type) {
         case PatternTerm::Type::PatternCharacter: {
             if (!firstTerm.quantityMinCount)
-#else
-        char16_t lead = static_cast<char16_t>(U16_LEAD(firstCharacters->ranges[0].first));
-        for (auto [begin, end] : firstCharacters->ranges) {
-            if (U_IS_BMP(begin) || U16_LEAD(begin) != lead || U16_LEAD(end) != lead)
-#endif
                 return std::nullopt;
-#if !defined(YARR_FOR_IMAGE)
             char32_t cp = firstTerm.patternCharacter;
             if (U_IS_BMP(cp))
                 return std::nullopt;
             return static_cast<char16_t>(U16_LEAD(cp));
-#endif
         }
-#if !defined(YARR_FOR_IMAGE)
 
         case PatternTerm::Type::CharacterClass: {
             if (firstTerm.invert())
@@ -9625,6 +9286,16 @@ class YarrGenerator final : public YarrJITInfo {
         }
         RELEASE_ASSERT_NOT_REACHED();
 #else
+    std::optional<char16_t> findSharedLeadSurrogate(const PatternAlternative& alternative) const
+    {
+        const CharacterSet* firstCharacters = tryGetFirstCharacters(alternative);
+        if (!firstCharacters || firstCharacters->ranges.isEmpty())
+            return std::nullopt;
+        char16_t lead = static_cast<char16_t>(U16_LEAD(firstCharacters->ranges[0].first));
+        for (auto [begin, end] : firstCharacters->ranges) {
+            if (U_IS_BMP(begin) || U16_LEAD(begin) != lead || U16_LEAD(end) != lead)
+                return std::nullopt;
+        }
         return lead;
 #endif
     }
@@ -9786,11 +9457,7 @@ class YarrGenerator final : public YarrJITInfo {
     // instead of walking the remaining alternatives.
     void generateBodyDispatch(YarrOp& beginOp)
     {
-#if !defined(YARR_FOR_IMAGE)
         BodyDispatchInfo& info = *beginOp.m_bodyDispatch;
-#else
-        BodyDispatchInfo& info = *beginOp.m_bodyDispatch.info;
-#endif
         const MacroAssembler::RegisterID character = m_regs.regT0;
         unsigned firstMinimumSize = beginOp.m_alternative->m_minimumSize;
 
@@ -10016,14 +9683,12 @@ class YarrGenerator final : public YarrJITInfo {
             case 64:
 #if !defined(YARR_FOR_IMAGE)
                 m_jit.load64(address, character);
-#else
-                load64FromSubject(address, character);
-#endif
                 if (caseMask)
-#if !defined(YARR_FOR_IMAGE)
                     m_jit.or64(MacroAssembler::TrustedImm64(caseMask), character);
                 mismatch.append(m_jit.branch64(MacroAssembler::NotEqual, character, MacroAssembler::TrustedImm64(characters)));
 #else
+                load64FromSubject(address, character);
+                if (caseMask)
                     or64WithConstant(caseMask, character);
                 mismatch.append(branch64WithConstant(MacroAssembler::NotEqual, character, characters));
 #endif
@@ -10039,7 +9704,10 @@ class YarrGenerator final : public YarrJITInfo {
             i += width;
         }
 
-#if defined(YARR_FOR_IMAGE)
+#if !defined(YARR_FOR_IMAGE)
+        // Full match: record where to unwind to, then skip to the group's End.
+        MacroAssembler::DataLabelPtr returnAddress = storeToFrameWithPatch(info.frameLocation + BackTrackInfoParenthesesOnce::returnAddressIndex());
+#else
         if (info.isNeverReentered) {
             m_ops[info.endOpIndex].m_jumps.append(m_jit.jump());
             mismatch.link(&m_jit);
@@ -10048,11 +9716,7 @@ class YarrGenerator final : public YarrJITInfo {
             return;
         }
 
-#endif
         // Full match: record where to unwind to, then skip to the group's End.
-#if !defined(YARR_FOR_IMAGE)
-        MacroAssembler::DataLabelPtr returnAddress = storeToFrameWithPatch(info.frameLocation + BackTrackInfoParenthesesOnce::returnAddressIndex());
-#else
         ReturnAddressSite returnAddress = storeToFrameWithPatch(info.frameLocation + BackTrackInfoParenthesesOnce::returnAddressIndex());
 #endif
         m_ops[info.endOpIndex].m_jumps.append(m_jit.jump());
@@ -10099,16 +9763,13 @@ class YarrGenerator final : public YarrJITInfo {
             if (isInlineLiteralAlternative(alternative))
 #if !defined(YARR_FOR_IMAGE)
                 emitInlineLiteralAlternative(info, alternative, toNextElement);
+            else {
 #else
                 emitInlineLiteralAlternative(info, alternative);
-#endif
             else {
-#if !defined(YARR_FOR_IMAGE)
-                pendingStores.append(storeToFrameWithPatch(info.frameLocation + BackTrackInfoParenthesesOnce::chainResumeIndex()));
-#else
                 if (!info.isLastInEveryChain[index])
-                    pendingStores.append(storeToFrameWithPatch(info.frameLocation + BackTrackInfoParenthesesOnce::chainResumeIndex()));
 #endif
+                pendingStores.append(storeToFrameWithPatch(info.frameLocation + BackTrackInfoParenthesesOnce::chainResumeIndex()));
                 emitJumpToDispatchEntry(info, index);
             }
         }
@@ -10159,11 +9820,7 @@ class YarrGenerator final : public YarrJITInfo {
 
     void generateDispatch(YarrOp& op)
     {
-#if !defined(YARR_FOR_IMAGE)
         DispatchInfo& info = *op.m_dispatch;
-#else
-        DispatchInfo& info = *op.m_dispatch.info;
-#endif
         const MacroAssembler::RegisterID character = m_regs.regT0;
 
         JIT_COMMENT(m_jit, "first-character dispatch");
@@ -10248,22 +9905,17 @@ class YarrGenerator final : public YarrJITInfo {
         Vector<FirstCharacterSet, 8> sets; // per alternative; only needed to build the routing
         unsigned anyCount = 0;
         for (auto& alternative : alternatives) {
-#if !defined(YARR_FOR_IMAGE)
             FirstCharacterSet set = computeFirstCharacterSet(*alternative);
-#else
-            FirstCharacterSet set = firstCharacterSetOf(*alternative);
-#endif
             set.normalize();
 #if !defined(YARR_FOR_IMAGE)
             if (set.any)
+                ++anyCount;
 #else
             if (set.any) {
                 // This alternative is in every chain, so dispatch does not settle its first character.
                 if (!alternative->m_terms.isEmpty() && isSettledByDispatch(alternative->m_terms[0]))
                     return nullptr;
-#endif
                 ++anyCount;
-#if defined(YARR_FOR_IMAGE)
             }
 #endif
             sets.append(WTF::move(set));
@@ -10424,11 +10076,7 @@ class YarrGenerator final : public YarrJITInfo {
     {
         dataLogLn("First-character sets for ", disjunction.m_alternatives.size(), " alternatives:");
         for (size_t i = 0; i < disjunction.m_alternatives.size(); ++i) {
-#if !defined(YARR_FOR_IMAGE)
             FirstCharacterSet set = computeFirstCharacterSet(*disjunction.m_alternatives[i]);
-#else
-            FirstCharacterSet set = firstCharacterSetOf(*disjunction.m_alternatives[i]);
-#endif
             dataLog("  alt ", i, ": ");
             if (set.any)
                 dataLog("ANY");
@@ -10453,23 +10101,19 @@ class YarrGenerator final : public YarrJITInfo {
         }
     }
 
-#if !defined(YARR_FOR_IMAGE)
-    FirstCharacterSet computeFirstCharacterSet(const PatternAlternative& alternative)
-#else
+#if defined(YARR_FOR_IMAGE)
     // Null unless every match of the alternative begins by consuming a character of a known set.
     const CharacterSet* tryGetFirstCharacters(const PatternAlternative& alternative) const
-#endif
     {
-#if defined(YARR_FOR_IMAGE)
         if (alternative.m_firstSet == CharacterSetID::Unknown || !alternative.m_minimumSize)
             return nullptr;
         const CharacterSet& firstSet = m_pattern.m_firstFollowSets.set(alternative.m_firstSet);
         return firstSet.includesEndOfInput ? nullptr : &firstSet;
     }
 
-    FirstCharacterSet firstCharacterSetOf(const PatternAlternative& alternative)
-    {
 #endif
+    FirstCharacterSet computeFirstCharacterSet(const PatternAlternative& alternative)
+    {
         FirstCharacterSet set;
 #if !defined(YARR_FOR_IMAGE)
         if (!isSafeToRecurse()) [[unlikely]] {
@@ -10548,11 +10192,7 @@ class YarrGenerator final : public YarrJITInfo {
         Vector<FirstCharacterSet, 8> sets;
         unsigned wideCount = 0;
         for (size_t i = firstRepeated; i < alternatives.size(); ++i) {
-#if !defined(YARR_FOR_IMAGE)
             FirstCharacterSet set = computeFirstCharacterSet(*alternatives[i]);
-#else
-            FirstCharacterSet set = firstCharacterSetOf(*alternatives[i]);
-#endif
             // An `any` set overlaps every other alternative: no sole candidate.
             if (set.any)
                 return nullptr;
@@ -10807,12 +10447,9 @@ class YarrGenerator final : public YarrJITInfo {
         auto pointer = heapMap->storage();
         m_bmMaps.append(WTF::move(heapMap));
         return pointer;
-#if !defined(YARR_FOR_IMAGE)
     }
 
-#else
-    }
-
+#if defined(YARR_FOR_IMAGE)
 #if CPU(X86_64) || CPU(ARM64)
     static_assert(sizeof(BoyerMooreBitmap::Map::WordType) == sizeof(uint64_t) && BoyerMooreBitmap::Map::size() == 128);
 
@@ -10863,7 +10500,7 @@ class YarrGenerator final : public YarrJITInfo {
         const YarrOp& beginOp = m_ops[beginOpIndex];
         if (m_direction != Forward || m_pattern.sticky() || m_executionMode == ExecutionMode::InlineTest)
             return std::nullopt;
-        if (!body.m_minimumSize || beginOp.m_bodyDispatch.info || beginOp.m_prefilters.maskedAlternatives)
+        if (!body.m_minimumSize || beginOp.m_bodyDispatch || beginOp.m_maskedAltInfo)
             return std::nullopt;
 
         constexpr char32_t firstNonASCII = BoyerMooreBitmap::mapSize;
@@ -10929,7 +10566,7 @@ class YarrGenerator final : public YarrJITInfo {
     // A candidate with enough input for the first alternative jumps to matched. Otherwise falls through with index > length.
     void generateStartPositionSearch(YarrOp& beginOp, MacroAssembler::JumpList& matched)
     {
-        const StartPositionSearch& search = *beginOp.m_prefilters.startPositionSearch;
+        const StartPositionSearch& search = *beginOp.m_startPositionSearch;
         SharedRoutine::FindFirstOfClass routine = startPositionSearchRoutine(search);
         auto [low, high] = search.asciiMembers;
         unsigned claimed = beginOp.m_checkedOffset.value();
@@ -10971,14 +10608,13 @@ class YarrGenerator final : public YarrJITInfo {
         for (auto& op : m_ops) {
             if (op.m_op != YarrOpCode::BodyAlternativeBegin || op.m_alternative->onceThrough())
                 continue;
-            auto& prefilters = op.m_prefilters;
-            if (prefilters.maskedAlternatives || prefilters.sharedLead)
+            if (op.m_maskedAltInfo || op.m_bodyAltSharedLead)
                 return true;
-            if (prefilters.boyerMoore) {
-                if (auto range = prefilters.boyerMoore->findWorthwhileCharacterSequenceForLookahead(m_sampler, canUseVectorScan()))
-                    return rarityOfStops(*prefilters.boyerMoore, *range) >= leastRarityWorthSearchingFor;
+            if (op.m_bmInfo) {
+                if (auto range = op.m_bmInfo->findWorthwhileCharacterSequenceForLookahead(m_sampler, canUseVectorScan()))
+                    return rarityOfStops(*op.m_bmInfo, *range) >= leastRarityWorthSearchingFor;
             }
-            return prefilters.startPositionSearch && rarityOfUnits(prefilters.startPositionSearch->asciiMembers, prefilters.startPositionSearch->matchesAllNonASCII) >= leastRarityWorthSearchingFor;
+            return op.m_startPositionSearch && rarityOfUnits(op.m_startPositionSearch->asciiMembers, op.m_startPositionSearch->matchesAllNonASCII) >= leastRarityWorthSearchingFor;
         }
         return false;
     }
@@ -11740,25 +11376,8 @@ class YarrGenerator final : public YarrJITInfo {
 #endif
         // vectorTemp1 = 0x0F repeated (low nibble mask)
         FPRReg lowNibbleMaskFPR = m_regs.vectorTemp1;
-#if !defined(YARR_FOR_IMAGE)
-        v128_t lowNibbleMask;
-        lowNibbleMask.u64x2[0] = 0x0f0f0f0f'0f0f0f0fULL;
-        lowNibbleMask.u64x2[1] = 0x0f0f0f0f'0f0f0f0fULL;
-        m_jit.move128ToVector(lowNibbleMask, lowNibbleMaskFPR);
-
-        // vectorTemp2 = hi-nibble lookup (1 << (hi_nibble & 7) for each position 0-15)
-        // Used to convert high nibble (0-7) into a bitmask (0x01, 0x02, 0x04, ..., 0x80)
-        // The pattern is repeated twice so that positions 8-15 map to the same values as 0-7.
-        // This implicitly performs & 0x7 on the high nibble, which is needed because
-        // characters > 127 can have high nibbles in the range 8-15.
-#endif
+#if defined(YARR_FOR_IMAGE)
         FPRReg highNibbleLookupFPR = m_regs.vectorTemp2;
-#if !defined(YARR_FOR_IMAGE)
-        v128_t hiNibbleLookup;
-        hiNibbleLookup.u64x2[0] = 0x80402010'08040201ULL;
-        hiNibbleLookup.u64x2[1] = 0x80402010'08040201ULL;
-        m_jit.move128ToVector(hiNibbleLookup, highNibbleLookupFPR);
-#else
         if (comparesWithCandidates) {
             auto moveRepeated = [&](char32_t character, FPRReg destination) {
                 v128_t repeated;
@@ -11770,26 +11389,29 @@ class YarrGenerator final : public YarrJITInfo {
                 moveRepeated(charactersFastPath.at(1), m_regs.vectorTemp1);
         } else {
             m_jit.move128ToVector(fromBitmap(bitmap), nibbleTableFPR);
-#endif
 
+#endif
+        v128_t lowNibbleMask;
+        lowNibbleMask.u64x2[0] = 0x0f0f0f0f'0f0f0f0fULL;
+        lowNibbleMask.u64x2[1] = 0x0f0f0f0f'0f0f0f0fULL;
+        m_jit.move128ToVector(lowNibbleMask, lowNibbleMaskFPR);
+
+        // vectorTemp2 = hi-nibble lookup (1 << (hi_nibble & 7) for each position 0-15)
+        // Used to convert high nibble (0-7) into a bitmask (0x01, 0x02, 0x04, ..., 0x80)
+        // The pattern is repeated twice so that positions 8-15 map to the same values as 0-7.
+        // This implicitly performs & 0x7 on the high nibble, which is needed because
+        // characters > 127 can have high nibbles in the range 8-15.
+#if !defined(YARR_FOR_IMAGE)
+        FPRReg highNibbleLookupFPR = m_regs.vectorTemp2;
+#endif
+        v128_t hiNibbleLookup;
+        hiNibbleLookup.u64x2[0] = 0x80402010'08040201ULL;
+        hiNibbleLookup.u64x2[1] = 0x80402010'08040201ULL;
+        m_jit.move128ToVector(hiNibbleLookup, highNibbleLookupFPR);
 #if defined(YARR_FOR_IMAGE)
-            v128_t lowNibbleMask;
-            lowNibbleMask.u64x2[0] = 0x0f0f0f0f'0f0f0f0fULL;
-            lowNibbleMask.u64x2[1] = 0x0f0f0f0f'0f0f0f0fULL;
-            m_jit.move128ToVector(lowNibbleMask, lowNibbleMaskFPR);
-
-            // vectorTemp2 = hi-nibble lookup (1 << (hi_nibble & 7) for each position 0-15)
-            // Used to convert high nibble (0-7) into a bitmask (0x01, 0x02, 0x04, ..., 0x80)
-            // The pattern is repeated twice so that positions 8-15 map to the same values as 0-7.
-            // This implicitly performs & 0x7 on the high nibble, which is needed because
-            // characters > 127 can have high nibbles in the range 8-15.
-            v128_t hiNibbleLookup;
-            hiNibbleLookup.u64x2[0] = 0x80402010'08040201ULL;
-            hiNibbleLookup.u64x2[1] = 0x80402010'08040201ULL;
-            m_jit.move128ToVector(hiNibbleLookup, highNibbleLookupFPR);
         }
-
 #endif
+
         // ==================== SIMD LOOP ====================
         MacroAssembler::JumpList scalarLoop;
 
@@ -11816,10 +11438,7 @@ class YarrGenerator final : public YarrJITInfo {
         verifySubjectRead(MacroAssembler::BaseIndex(m_regs.input, m_regs.index, MacroAssembler::TimesOne, baseOffset), 16, __LINE__);
         m_jit.loadVector(MacroAssembler::BaseIndex(m_regs.input, m_regs.index, MacroAssembler::TimesOne, baseOffset), m_regs.vectorInput0);
 
-#if !defined(YARR_FOR_IMAGE)
-        // Step 1: Extract low nibbles (input & 0x0F) -> vectorScratch0
-        m_jit.vectorAnd(SIMDInfo { SIMDLane::v128, SIMDSignMode::None }, m_regs.vectorInput0, lowNibbleMaskFPR, m_regs.vectorScratch0);
-#else
+#if defined(YARR_FOR_IMAGE)
         if (comparesWithCandidates) {
             m_jit.compareIntegerVector(MacroAssembler::Equal, SIMDInfo { SIMDLane::i8x16, SIMDSignMode::None }, m_regs.vectorInput0, m_regs.vectorTemp0, m_regs.vectorScratch0);
             if (charactersFastPath.size() > 1) {
@@ -11827,33 +11446,18 @@ class YarrGenerator final : public YarrJITInfo {
                 m_jit.vectorOr(SIMDInfo { SIMDLane::v128, SIMDSignMode::None }, m_regs.vectorScratch0, m_regs.vectorScratch1, m_regs.vectorScratch0);
             }
         } else {
-            // Step 1: Extract low nibbles (input & 0x0F) -> vectorScratch0
-            m_jit.vectorAnd(SIMDInfo { SIMDLane::v128, SIMDSignMode::None }, m_regs.vectorInput0, lowNibbleMaskFPR, m_regs.vectorScratch0);
 #endif
+        // Step 1: Extract low nibbles (input & 0x0F) -> vectorScratch0
+        m_jit.vectorAnd(SIMDInfo { SIMDLane::v128, SIMDSignMode::None }, m_regs.vectorInput0, lowNibbleMaskFPR, m_regs.vectorScratch0);
 
-#if !defined(YARR_FOR_IMAGE)
         // Step 2: Extract high nibbles ((input >> 4) & 0x0F) -> vectorScratch1
-#else
-            // Step 2: Extract high nibbles ((input >> 4) & 0x0F) -> vectorScratch1
-#endif
 #if CPU(ARM64)
-#if !defined(YARR_FOR_IMAGE)
         // Use byte-wise shift (USHR)
         m_jit.vectorUshrInt8(m_regs.vectorInput0, 4, m_regs.vectorScratch1);
-#else
-            // Use byte-wise shift (USHR)
-            m_jit.vectorUshrInt8(m_regs.vectorInput0, 4, m_regs.vectorScratch1);
-#endif
 #elif CPU(X86_64)
-#if !defined(YARR_FOR_IMAGE)
         // Use word-wise shift (VPSRLW). This shifts 16-bit lanes, but since we
         // immediately AND with 0x0F, the cross-byte contamination is masked out.
         m_jit.vectorUshr8(SIMDInfo { SIMDLane::i16x8, SIMDSignMode::Unsigned }, m_regs.vectorInput0, MacroAssembler::TrustedImm32(4), m_regs.vectorScratch1);
-#else
-            // Use word-wise shift (VPSRLW). This shifts 16-bit lanes, but since we
-            // immediately AND with 0x0F, the cross-byte contamination is masked out.
-            m_jit.vectorUshr8(SIMDInfo { SIMDLane::i16x8, SIMDSignMode::Unsigned }, m_regs.vectorInput0, MacroAssembler::TrustedImm32(4), m_regs.vectorScratch1);
-#endif
 #endif
 #if !defined(YARR_FOR_IMAGE)
         m_jit.vectorAnd(SIMDInfo { SIMDLane::v128, SIMDSignMode::None }, m_regs.vectorScratch1, lowNibbleMaskFPR, m_regs.vectorScratch1);
@@ -11863,32 +11467,22 @@ class YarrGenerator final : public YarrJITInfo {
 #endif
 #endif
 
-#if !defined(YARR_FOR_IMAGE)
         // Step 3: TBL/PSHUFB lookup row = nibble_table[lo] -> vectorScratch2
         m_jit.vectorSwizzle(nibbleTableFPR, m_regs.vectorScratch0, m_regs.vectorScratch2);
-#else
-            // Step 3: TBL/PSHUFB lookup row = nibble_table[lo] -> vectorScratch2
-            m_jit.vectorSwizzle(nibbleTableFPR, m_regs.vectorScratch0, m_regs.vectorScratch2);
-#endif
 
-#if !defined(YARR_FOR_IMAGE)
         // Step 4: TBL/PSHUFB lookup mask = hi_lookup[hi] -> vectorScratch3
         m_jit.vectorSwizzle(highNibbleLookupFPR, m_regs.vectorScratch1, m_regs.vectorScratch3);
-#else
-            // Step 4: TBL/PSHUFB lookup mask = hi_lookup[hi] -> vectorScratch3
-            m_jit.vectorSwizzle(highNibbleLookupFPR, m_regs.vectorScratch1, m_regs.vectorScratch3);
+#if defined(YARR_FOR_IMAGE)
         }
 #endif
 
         // Step 5: Test if character is in bitmap for each lane
 #if CPU(ARM64)
         // CMTST - test if (row & mask) != 0 for each lane -> vectorScratch0
-#if !defined(YARR_FOR_IMAGE)
-        m_jit.vectorTest(SIMDInfo { SIMDLane::i8x16, SIMDSignMode::Unsigned }, m_regs.vectorScratch2, m_regs.vectorScratch3, m_regs.vectorScratch0);
-#else
+#if defined(YARR_FOR_IMAGE)
         if (!comparesWithCandidates)
-            m_jit.vectorTest(SIMDInfo { SIMDLane::i8x16, SIMDSignMode::Unsigned }, m_regs.vectorScratch2, m_regs.vectorScratch3, m_regs.vectorScratch0);
 #endif
+        m_jit.vectorTest(SIMDInfo { SIMDLane::i8x16, SIMDSignMode::Unsigned }, m_regs.vectorScratch2, m_regs.vectorScratch3, m_regs.vectorScratch0);
 
         // Step 6: Narrow the 128-bit result to 64 bits using SHRN
         // SHRN treats the input as 8 16-bit elements and narrows to 8 8-bit elements.
@@ -12037,12 +11631,10 @@ class YarrGenerator final : public YarrJITInfo {
     void generateEnter()
     {
 #if CPU(X86_64) || CPU(RISCV64)
-#if !defined(YARR_FOR_IMAGE)
-        m_jit.emitFunctionPrologue();
-#else
+#if defined(YARR_FOR_IMAGE)
         if (!hasNoFrame())
-            m_jit.emitFunctionPrologue();
 #endif
+        m_jit.emitFunctionPrologue();
 #elif CPU(ARM64)
         // JITCage code is doing prologue and epilogue in thunk.
         if (!Options::useJITCage()) {
@@ -12144,19 +11736,16 @@ class YarrGenerator final : public YarrJITInfo {
         m_jit.load32(MacroAssembler::Address(endIndex, sizeof(int)), endIndex);
     }
 
-#if defined(YARR_FOR_IMAGE)
-    WTF_MAKE_TZONE_ALLOCATED_TEMPLATE(YarrGenerator);
-#endif
+#if !defined(YARR_FOR_IMAGE)
 public:
-#if !defined(YARR_FOR_IMAGE)
     YarrGenerator(CCallHelpers& jit, VM* vm, YarrCodeBlock* codeBlock, const YarrJITRegs& regs, YarrPattern& pattern, StringView patternString, CharSize charSize, ExecutionMode executionMode, std::optional<StringView> sampleString)
-#else
-    YarrGenerator(CCallHelpers& jit, const GeneratorSettings& settings, YarrCodeBlock* codeBlock, const YarrJITRegs& regs, const YarrPattern& pattern, StringView patternString, CharSize charSize, ExecutionMode executionMode, std::optional<StringView> sampleString)
-#endif
         : m_jit(jit)
-#if !defined(YARR_FOR_IMAGE)
         , m_vm(vm)
 #else
+    WTF_MAKE_TZONE_ALLOCATED_TEMPLATE(YarrGenerator);
+public:
+    YarrGenerator(CCallHelpers& jit, const GeneratorSettings& settings, YarrCodeBlock* codeBlock, const YarrJITRegs& regs, const YarrPattern& pattern, StringView patternString, CharSize charSize, ExecutionMode executionMode, std::optional<StringView> sampleString)
+        : m_jit(jit)
         , m_addressing(settings.addressing)
         , m_policy(settings.policy)
         , m_sizePolicy(settings.policy.sizePolicy)
@@ -12190,13 +11779,11 @@ public:
 
 #if !defined(YARR_FOR_IMAGE)
     YarrGenerator(CCallHelpers& jit, VM* vm, YarrBoyerMooreData* yarrBMData, const YarrJITRegs& regs, YarrPattern& pattern, StringView patternString, CharSize charSize, ExecutionMode executionMode)
-#else
-    YarrGenerator(CCallHelpers& jit, const GeneratorSettings& settings, YarrBoyerMooreData* yarrBMData, const YarrJITRegs& regs, const YarrPattern& pattern, StringView patternString, CharSize charSize, ExecutionMode executionMode)
-#endif
         : m_jit(jit)
-#if !defined(YARR_FOR_IMAGE)
         , m_vm(vm)
 #else
+    YarrGenerator(CCallHelpers& jit, const GeneratorSettings& settings, YarrBoyerMooreData* yarrBMData, const YarrJITRegs& regs, const YarrPattern& pattern, StringView patternString, CharSize charSize, ExecutionMode executionMode)
+        : m_jit(jit)
         , m_addressing(settings.addressing)
         , m_policy(settings.policy)
         , m_sizePolicy(settings.policy.sizePolicy)
@@ -12308,9 +11895,7 @@ public:
     // True only if each alternative has a term that must match at least once and matches nothing but characters above U+00FF.
     // A character that is compared without regard to case may stand for one of Latin-1: U+0178 for U+00FF, U+212A for k.
     static bool needsCharacterAboveLatin1(const PatternDisjunction& disjunction, unsigned depth)
-#endif
     {
-#if defined(YARR_FOR_IMAGE)
         constexpr unsigned maxDepth = 8;
         if (depth > maxDepth || disjunction.m_alternatives.isEmpty())
             return false;
@@ -12336,8 +11921,8 @@ public:
     }
 
     bool generateCode()
-    {
 #endif
+    {
         MacroAssembler::Label startOfMainCode;
 
 #if !ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
@@ -12403,17 +11988,16 @@ public:
         // We need to compile before generating code since we set flags based on compilation that
         // are used during generation.
         opCompileBody(m_pattern.m_body);
-#if defined(YARR_FOR_IMAGE)
-        if (m_failureReason)
-            return false;
-#endif
-
 #if !defined(YARR_FOR_IMAGE)
+
         if (m_failureReason) {
             codeBlock.setFallBackWithFailureReason(*m_failureReason);
             return;
         }
 #else
+        if (m_failureReason)
+            return false;
+
         computeClaimsSinceMatchStart();
         findAlternativesNeverTriedAgain();
 #if CPU(X86_64) || CPU(ARM64)
@@ -12535,12 +12119,7 @@ public:
             codeBlock.setFallBackWithFailureReason(*m_failureReason);
             return;
         }
-#else
-        if (m_failureReason)
-            return false;
-#endif
 
-#if !defined(YARR_FOR_IMAGE)
         ptrdiff_t codeSize = MacroAssembler::differenceBetween(startOfMainCode, m_jit.label());
         bool canInline = ([&] -> bool {
             if (m_executionMode == ExecutionMode::IncludeSubpatterns)
@@ -12570,6 +12149,9 @@ public:
         }());
 
 #else
+        if (m_failureReason)
+            return false;
+
         m_codeSize = MacroAssembler::differenceBetween(startOfMainCode, m_jit.label());
 #endif
         generateJITFailReturn();
@@ -12622,12 +12204,8 @@ public:
         }
         if (m_failureReason)
             codeBlock.setFallBackWithFailureReason(*m_failureReason);
-#else
-        return true;
-#endif
     }
 
-#if !defined(YARR_FOR_IMAGE)
 #if ENABLE(YARR_JIT_REGEXP_TEST_INLINE)
     void compileInline(YarrBoyerMooreData& boyerMooreData, unsigned reservedFrameSizeInBytes)
     {
@@ -12711,6 +12289,9 @@ public:
     }
 #endif
 #else
+        return true;
+    }
+
     std::optional<JITFailureReason> failureReason() const { return m_failureReason; }
     FrameMode frameMode() const { return m_frameMode; }
     bool hasUnusedFrame() const { return m_frameMode == FrameMode::Allocated && m_callFrameSizeInBytes && !m_didUseFrame; }
@@ -13096,19 +12677,7 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> tryReadUnicodeCharSlowThunkGenerato
     return FINALIZE_THUNK(patchBuffer, JITThunkPtrTag, "Yarr tryReadUnicodeChar"_s, "YARR tryReadUnicodeChar thunk");
 }
 #endif
-#else
-WTF_MAKE_TZONE_ALLOCATED_TEMPLATE_IMPL(template<class YarrJITRegs>, YarrGenerator<YarrJITRegs>);
 
-} // namespace
-
-struct CodeGenerationAttempt {
-    WTF_MAKE_STRUCT_TZONE_ALLOCATED(CodeGenerationAttempt);
-    WTF_MAKE_NONCOPYABLE(CodeGenerationAttempt);
-
-    CodeGenerationAttempt() = default;
-#endif
-
-#if !defined(YARR_FOR_IMAGE)
 #if ENABLE(YARR_JIT_BACKREFERENCES_FOR_16BIT_EXPRS)
 #if ENABLE(JIT)
 static MacroAssemblerCodeRef<JITThunkPtrTag> areCanonicallyEquivalentThunkGenerator(VM&)
@@ -13199,55 +12768,9 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAreCanonicallyEquivalent, bool, (unsi
     return areCanonicallyEquivalent(static_cast<char32_t>(a), static_cast<char32_t>(b), canonicalMode);
 }
 #endif
-#else
-    CCallHelpers jit;
-    StackCheck stackCheck;
-    std::unique_ptr<CodeAddressing> addressing;
-    YarrJITDefaultRegisters registers;
-    // Refers to the members above, so it is destroyed first.
-    std::unique_ptr<YarrGenerator<YarrJITDefaultRegisters>> generator;
-};
 
-WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(CodeGenerationAttempt);
-
-static std::unique_ptr<CodeGenerationAttempt> generateAttempt(const CodeGenerationRequest& request, FrameMode frameMode)
-{
-    auto attempt = makeUnique<CodeGenerationAttempt>();
-    attempt->addressing = request.createCodeAddressing(attempt->jit);
-    GeneratorSettings settings { *attempt->addressing, request.policy, frameMode, attempt->stackCheck };
-    attempt->generator = makeUnique<YarrGenerator<YarrJITDefaultRegisters>>(attempt->jit, settings, request.codeBlock, attempt->registers, request.pattern, request.patternString, request.charSize, request.executionMode, request.sampleString);
-    bool didGenerate = attempt->generator->generateCode();
-    ASSERT_UNUSED(didGenerate, didGenerate == !attempt->generator->failureReason());
-    return attempt;
-}
-
-GeneratedCode::GeneratedCode(std::unique_ptr<CodeGenerationAttempt> attempt)
-    : m_attempt(WTF::move(attempt))
-{
-}
-
-GeneratedCode::GeneratedCode(GeneratedCode&&) = default;
-
-GeneratedCode::~GeneratedCode() = default;
-
-CCallHelpers& GeneratedCode::jit()
-{
-    return m_attempt->jit;
-}
-
-CodeAddressing& GeneratedCode::addressing()
-{
-    return *m_attempt->addressing;
-}
-#endif
-
-#if !defined(YARR_FOR_IMAGE)
 static void dumpCompileFailure(JITFailureReason failure)
-#else
-bool GeneratedCode::hasElidedFrame() const
-#endif
 {
-#if !defined(YARR_FOR_IMAGE)
     switch (failure) {
     case JITFailureReason::DecodeSurrogatePair:
         dataLog("Can't JIT a pattern decoding surrogate pairs\n");
@@ -13289,18 +12812,10 @@ bool GeneratedCode::hasElidedFrame() const
         dataLog("Can't JIT because the code needs a table or a routine that this build cannot provide\n");
         break;
     }
-#else
-    return m_attempt->generator->frameMode() == FrameMode::Omitted;
-#endif
 }
 
-#if !defined(YARR_FOR_IMAGE)
 void jitCompile(YarrPattern& pattern, StringView patternString, CharSize charSize, std::optional<StringView> sampleString, VM* vm, YarrCodeBlock& codeBlock, ExecutionMode mode)
-#else
-unsigned GeneratedCode::classTableLimitHits() const
-#endif
 {
-#if !defined(YARR_FOR_IMAGE)
     CCallHelpers masm;
 
     ASSERT(mode == ExecutionMode::MatchOnly || mode == ExecutionMode::IncludeSubpatterns);
@@ -13315,12 +12830,8 @@ unsigned GeneratedCode::classTableLimitHits() const
             dumpCompileFailure(*failureReason);
         }
     }
-#else
-    return m_attempt->generator->classTableLimitHits();
-#endif
 }
 
-#if !defined(YARR_FOR_IMAGE)
 #if ENABLE(YARR_JIT_REGEXP_TEST_INLINE)
 #if !(CPU(ARM64) || CPU(X86_64) || CPU(RISCV64))
 #error "No support for inlined JIT'ing of RegExp.test for this CPU / OS combination."
@@ -13344,7 +12855,74 @@ void jitCompileInlinedTest(StackCheck* m_compilationThreadStackChecker, StringVi
     yarrGenerator.compileInline(boyerMooreData, reservedFrameSizeInBytes);
 }
 #endif
+
+void YarrCodeBlock::dumpSimpleName(PrintStream& out) const
+{
+    if (m_regExp)
+        RegExp::dumpToStream(m_regExp, out);
+    else
+        out.print("unspecified");
 #else
+WTF_MAKE_TZONE_ALLOCATED_TEMPLATE_IMPL(template<class YarrJITRegs>, YarrGenerator<YarrJITRegs>);
+
+} // namespace
+
+struct CodeGenerationAttempt {
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(CodeGenerationAttempt);
+    WTF_MAKE_NONCOPYABLE(CodeGenerationAttempt);
+
+    CodeGenerationAttempt() = default;
+
+    CCallHelpers jit;
+    StackCheck stackCheck;
+    std::unique_ptr<CodeAddressing> addressing;
+    YarrJITDefaultRegisters registers;
+    // Refers to the members above, so it is destroyed first.
+    std::unique_ptr<YarrGenerator<YarrJITDefaultRegisters>> generator;
+};
+
+WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(CodeGenerationAttempt);
+
+static std::unique_ptr<CodeGenerationAttempt> generateAttempt(const CodeGenerationRequest& request, FrameMode frameMode)
+{
+    auto attempt = makeUnique<CodeGenerationAttempt>();
+    attempt->addressing = request.createCodeAddressing(attempt->jit);
+    GeneratorSettings settings { *attempt->addressing, request.policy, frameMode, attempt->stackCheck };
+    attempt->generator = makeUnique<YarrGenerator<YarrJITDefaultRegisters>>(attempt->jit, settings, request.codeBlock, attempt->registers, request.pattern, request.patternString, request.charSize, request.executionMode, request.sampleString);
+    bool didGenerate = attempt->generator->generateCode();
+    ASSERT_UNUSED(didGenerate, didGenerate == !attempt->generator->failureReason());
+    return attempt;
+}
+
+GeneratedCode::GeneratedCode(std::unique_ptr<CodeGenerationAttempt> attempt)
+    : m_attempt(WTF::move(attempt))
+{
+}
+
+GeneratedCode::GeneratedCode(GeneratedCode&&) = default;
+
+GeneratedCode::~GeneratedCode() = default;
+
+CCallHelpers& GeneratedCode::jit()
+{
+    return m_attempt->jit;
+}
+
+CodeAddressing& GeneratedCode::addressing()
+{
+    return *m_attempt->addressing;
+}
+
+bool GeneratedCode::hasElidedFrame() const
+{
+    return m_attempt->generator->frameMode() == FrameMode::Omitted;
+}
+
+unsigned GeneratedCode::classTableLimitHits() const
+{
+    return m_attempt->generator->classTableLimitHits();
+}
+
 std::expected<GeneratedCode, JITFailureReason> generateCode(const CodeGenerationRequest& request)
 {
     if (request.pattern.m_containsLookbehinds && !request.policy.compilesLookbehinds)
@@ -13364,19 +12942,9 @@ std::expected<GeneratedCode, JITFailureReason> generateCode(const CodeGeneration
     if (second->generator->failureReason() || second->generator->didUseFrame())
         return GeneratedCode { WTF::move(first) };
     return GeneratedCode { WTF::move(second) };
-}
 #endif
-
-#if !defined(YARR_FOR_IMAGE)
-void YarrCodeBlock::dumpSimpleName(PrintStream& out) const
-{
-    if (m_regExp)
-        RegExp::dumpToStream(m_regExp, out);
-    else
-        out.print("unspecified");
 }
 
-#endif
 }}
 
 #endif

@@ -60,12 +60,10 @@
 #include <wtf/Assertions.h>
 #include <wtf/text/MakeString.h>
 
-#if ENABLE(AOT)
 #include "AOTCompiledCallee.h"
 #include "AOTMembersLeftOut.h"
 #include "AOTPropertyWalk.h"
 #include "AOTRuntimeHooks.h"
-#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 

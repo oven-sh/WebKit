@@ -23,7 +23,6 @@ struct BuiltinCalleeAnswer {
     BuiltinID callee;
     TypeID testedCalleeType;
     TypeID testedReceiverType;
-    // The callee has no cell to compare the value with: the native code of the value is compared with that of the callee.
     bool testsCodeOfCallee { false };
 };
 
@@ -58,7 +57,6 @@ static BuiltinCalleeAnswer answerWithTestedCallee(const BuiltinUseInputs& inputs
     return { callee, inputs.types.intern(testedCallee), testedReceiverType };
 }
 
-// A data property whose declared type names one built-in and nothing else is expected to hold that built-in.
 static BuiltinID builtinHeldBy(const BuiltinTable& table, BuiltinID member)
 {
     if (table.at(member).kind != BuiltinKind::DataProperty)
@@ -140,7 +138,6 @@ static BuiltinCalleeAnswer findMethodCallee(const BuiltinUseInputs& inputs, cons
     return answerWithTestedCallee(inputs, call, found.member, testedReceiverType);
 }
 
-// Whatever else the callee may be is a primitive, as the `undefined` of a `var` that is read early: the call of it throws.
 static BuiltinCalleeAnswer findOnlyObjectAmongCallees(const BuiltinUseInputs& inputs, const Value& call)
 {
     BuiltinID callee = singleBuiltinOf(inputs.program.typeOf(inputs.function, call.calleeOperand()).withOnlyObjects());
@@ -175,7 +172,6 @@ static BuiltinCalleeAnswer findCallee(const BuiltinUseInputs& inputs, const Valu
     return answer;
 }
 
-// Among the callees that flow has seen at the call, the first whose native code compiled code calls by itself. The set lists what can be called: whatever else the value may be makes the call throw.
 static BuiltinCalleeAnswer findCalleeSeenWithDirectFunction(const BuiltinUseInputs& inputs, const Value& call)
 {
     if (!Value::opcodesWithCallees.contains(call.opcode) || !call.callees())
@@ -218,18 +214,15 @@ static BuiltinCalleeAnswer findCalleeByTypes(const BuiltinUseInputs& inputs, con
     if (BuiltinCalleeAnswer onlyObject = findOnlyObjectAmongCallees(inputs, call); onlyObject.callee)
         return onlyObject;
     BuiltinCalleeAnswer method = findMethodCallee(inputs, call);
-    // The type of the receiver is a proof and the callee is only expected: the member that the class holds under the name is the better expectation.
     bool isMemberOfProvenReceiver = method.callee && !method.testedReceiverType;
     if (isMemberOfProvenReceiver)
         return method;
     BuiltinCalleeAnswer expected = findExpectedCallee(inputs, call);
-    // Where both name one function, the test of the receiver is the one that makes the read of the method a constant.
     if (expected.callee && expected.callee != method.callee)
         return expected;
     return method;
 }
 
-// Every other answer of findCalleeByTypes() comes with a test of the callee.
 bool mayFindProvenCallee(const BuiltinUseInputs& inputs, const Value& call)
 {
     if (singleBuiltinOf(inputs.program.typeOf(inputs.function, call.calleeOperand())))
@@ -322,7 +315,6 @@ BuiltinUsePlan planCallOfBuiltin(const BuiltinUseInputs& inputs, ValueID use, Pr
     return plan;
 }
 
-// Flow links at the call what it saw arrive there as the parent, and only that is expected. Function.prototype, the parent of a class without one, constructs nothing.
 static BuiltinID findExpectedParent(const Program& program, const Value& call)
 {
     if (!call.callees())
@@ -343,7 +335,6 @@ static BuiltinID findExpectedParent(const Program& program, const Value& call)
     return expected;
 }
 
-// `super(..)` in a class below a built-in constructs the built-in for the class that `new` named, which only a constructor of the library can be told.
 BuiltinUsePlan planSuperCallOfBuiltin(const BuiltinUseInputs& inputs, ValueID use, ProgramPoint point)
 {
     const Program& program = inputs.program;
@@ -459,7 +450,6 @@ ValueID findOnlySpreadIntoListOf(const BuiltinUseInputs& inputs, ValueID call)
     if (allocation.opcode != Opcode::NewArray || !allocation.elementsOperands().empty() || !allocation.holes().empty() || allocation.capacityOperand())
         return { };
 
-    // Each link serves the link in front of it, which for the first one is the call, and one of them the spread.
     ValueID spread;
     ValueID listUser = call;
     for (ValueID link : chain) {

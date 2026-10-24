@@ -29,10 +29,8 @@
 #include "CodeBlock.h"
 #include "ErrorInstanceInlines.h"
 #include "JSCInlines.h"
-#if ENABLE(AOT)
 #include "AOTCompiledFrame.h"
 #include "AOTFunctionDescription.h"
-#endif
 
 namespace JSC {
 

@@ -23,7 +23,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// What a value is typed by where it names another function. A loop in which several threads replace functions may type nothing that names one of them.
 static const Function& recordOf(const Program& program, FunctionID function)
 {
     RELEASE_ASSERT(!program.isBeingReplaced(function));
@@ -52,7 +51,6 @@ static Type typeOfKeyConstant(const TypingContext& context, PropertyKeyID id)
 static Type typeOfBuiltinEntry(const TypingContext& context, BuiltinID builtin)
 {
     const BuiltinTable& builtins = context.program.builtins();
-    // What the body of a compiled module makes has the type that the body gives it.
     if (compiledModuleWithObject(context.program, builtins.canonicalID(builtin)))
         return Type::object();
     if (builtins.at(builtin).kind != BuiltinKind::DataProperty)
@@ -122,7 +120,6 @@ Type typeOfData(const TypingContext& context, const DataNode& node)
     case DataNode::Kind::Array:
         return Type::builtinClass(BuiltinClasses::Array, singleElementSpan(node.as<DataNode::Array>().contents));
     case DataNode::Kind::Object:
-        // Without a layout it is what NewDictionary makes.
         if (!node.as<DataNode::Object>().layout)
             return Type::object();
         return typeOfAllocatedLayout(context, node.as<DataNode::Object>().layout);
@@ -144,7 +141,6 @@ bool mayAllocateOtherLayout(const Program& program, const Value& allocation)
     return program.prototypeMaySelectOtherClass(allocation.layout());
 }
 
-// What `super(..)` gives is what the parent's constructor returns, and that may be any object: a proxy around `this`, an instance it keeps.
 Type typeOfDeclaredLayout(const TypingContext& context, LayoutID layout)
 {
     if (context.level == TypeLevel::Proven)
@@ -183,7 +179,6 @@ static Type typeOfEntryParts(const TypingContext& context, const DataNode::Array
         const DataNode* part = findEntryPart(entry, slot);
         if (!part)
             return Type::anything();
-        // Unproven contents declare what may be stored later, so a string literal counts as any string.
         result = result.unionWith(typeOfData(context, *part).withLiteralStringsWidened(), context.types);
     }
     return result;
@@ -219,7 +214,6 @@ static bool canLookUpField(const TypingContext& context, const Type& receiver)
 {
     switch (context.level) {
     case TypeLevel::Proven:
-        // Undefined and null are members of every type of objects, and a read of either throws.
         return receiver.hasOnlyLayouts(context.program);
     case TypeLevel::Expected:
         return !!receiver.layouts;
@@ -229,7 +223,6 @@ static bool canLookUpField(const TypingContext& context, const Type& receiver)
 
 static std::optional<Type> tryTypeOfNamedRead(const TypingContext& context, const Type& receiver, PropertyKeyID key)
 {
-    // A read of undefined or of null throws. Without this the read would be typed wider on the side of a test where the object has gone from the type of its receiver than in front of the test.
     if (receiver.hasOnlyPrimitives(Primitive::UndefinedOrNull))
         return Type::never();
     if (!canLookUpField(context, receiver))
@@ -243,7 +236,6 @@ static Type typeOfSlotRead(const Value& read, std::optional<Type>&& contents)
         return Type::anything();
     if (read.opcode == Opcode::GetSlotOrUndefined || read.opcode == Opcode::GetDeferredClosureSlotOrUndefined)
         return contents->withPrimitives(Primitive::Undefined);
-    // The guard of such a read found neither the marker for undefined nor the one for null in the slot.
     if ((read.opcode == Opcode::GetSlot || read.opcode == Opcode::GetDeferredClosureSlot) && read.holdsDeclaredType())
         return contents->withoutNullish();
     return WTF::move(*contents);
@@ -272,13 +264,11 @@ static Type typeOfSlotRead(const TypingContext& context, const Value& read)
 
 static std::optional<Type> tryTypeOfAwait(const TypingContext& context, const Type& awaited)
 {
-    // Whether awaiting an object runs user code holds for a stretch, and an await names no guard.
     if (context.level == TypeLevel::Proven && awaited.hasObjects())
         return std::nullopt;
     return tryTypeOfAwaited(context, awaited);
 }
 
-// A position inside the length of an array without holes holds an element, and a read that takes a hole for NaN finds a number in either.
 static bool findsElement(const Value& read, const Type& array)
 {
     if (read.opcode != Opcode::GetArrayElement)
@@ -303,7 +293,6 @@ static std::optional<Type> tryTypeOfArrayElementRead(const TypingContext& contex
     if (!mayFindNothing)
         stored = stored.withoutPrimitives(Primitive::Undefined);
     Type result = element ? element->intersectWith(stored, context.types) : WTF::move(stored);
-    // The read gives NaN for a hole, whatever the contents of the array prove.
     if (read.readsHoleAsNaN())
         result = result.withPrimitives(Primitive::WholeNumber);
     return result;
@@ -318,7 +307,6 @@ static ContentsSlot defaultContentsSlotOf(const BuiltinTable& builtins, const Ty
     return ContentsSlot::Element;
 }
 
-// Only built-ins that leave the object as created get a shared literal, so nothing but its prototype chain could change what they find.
 static Type typeOfSharedRegExpLiteral(const TypingContext& context, const Value& literal)
 {
     Type type = Type::regExpLiteral(literal.pattern(), literal.regExpFlags());
@@ -327,7 +315,6 @@ static Type typeOfSharedRegExpLiteral(const TypingContext& context, const Value&
     return type;
 }
 
-// `e as int32` is no position. It says nothing about which number e is: what the result is stored into is judged by e.
 static bool isAssertedInt32(const Program& program, const DeclaredType& declared)
 {
     return declared.flags.contains(PositionFlags::IsInt32Promise) && declared.site && program.at(declared.site).kind == TypeSiteKind::Assertion;
@@ -350,7 +337,6 @@ static bool hasProofs(const ClassPart& part)
     return part.contentsAreProven || !part.provenPristine.isEmpty() || part.arrayStorage != ArrayStorage::Other;
 }
 
-// A test finds no instance of a class without an instance test and no built-in without a cell in the realm. Such a value fails the check, and the generic version goes on with it.
 static TypeID testablePartOf(const TypingContext& context, TypeID target)
 {
     const Type& type = context.types.at(target);
@@ -380,7 +366,6 @@ static TypeID testablePartOf(const TypingContext& context, TypeID target)
     return context.types.intern(testable.withoutClassProofs());
 }
 
-// A check that never passes leaves for the generic version, which is a copy of what stands behind the check. So that code stays, typed as behind a check that passed.
 static Type typeOfCheck(const TypingContext& context, const Type& source, TypeID castType)
 {
     const Type& target = context.types.at(castType);
@@ -399,11 +384,9 @@ ConvertResolution resolveConvert(const TypingContext& context, const Type& prove
     const Type& target = context.types.at(targetID);
     if (!proven.isSubsetOf(target, context.program))
         return { CastResolution::Check, testablePartOf(context, targetID) };
-    // isSubsetOf() does not compare what a type only declares: contents that are not proven.
     Type cast = proven.castTo(target, context.types);
     if (cast == proven)
         return { };
-    // The functions that are listed beside any function say what to expect of the value. What its own type lists comes from nearer to where the value was made.
     if (proven.anyFunction && !proven.functions.isEmpty()) {
         cast.functions = proven.functions;
         if (cast == proven)
@@ -420,7 +403,6 @@ Type typeOfConvert(const TypingContext& context, const Type& source, const Type&
             return source;
         const Type& expected = types.at(declared.type);
         Type narrowed = source.castTo(expected, types);
-        // Of two expectations that exclude each other the one nearer to the use stands.
         return narrowed.isNever() ? proven.castTo(expected, types) : narrowed;
     }
 
@@ -464,7 +446,6 @@ Type ResultRules::sameAs(const Value& value, uint32_t operandIndex)
 
 Type ResultRules::allocation(const Value& value, LayoutID layout)
 {
-    // The run time answers with an ordinary object where the source does not fit the layout.
     if (value.opcode == Opcode::CloneAs && context.level == TypeLevel::Proven)
         return Type::object();
     if (!mayAllocateOtherLayout(context.program, value))
@@ -511,7 +492,6 @@ Type ResultRules::declared(const Value& value, LayoutID layout, uint32_t field)
     const Vector<Field>& fields = context.program.at(layout).fields;
     if (field >= fields.size())
         return Type::anything();
-    // Only a definition stores a brand, and it stores the declared type: a read that does not throw gives that on any receiver.
     if (!receiverOf(value.opcode) || fields[field].flags.contains(FieldFlags::IsBrand))
         return context.typeOf(fields[field].declared);
     return provenOrUnknown(tryTypeOfNamedRead(context, receiverTypeOf(context, value), fields[field].key));
@@ -524,7 +504,6 @@ Type ResultRules::declared(const Value& value, PropertyKeyID key)
     return provenOrUnknown(tryTypeOfNamedRead(context, receiverTypeOf(context, value), key));
 }
 
-// Whether the function still has a body of its own does not count: its entrypoint may hold the only copy, and what it declares bounds what a call returns either way.
 static bool returnsDeclaredResultWhenCalledByValue(const Function& function)
 {
     if (!canBeCalledByValueOf(function.role) || function.isUnsplitCoroutine() || function.results.size() != 1)
@@ -554,7 +533,6 @@ Type ResultRules::declared(const Value& value, FunctionID function, uint32_t res
     uint32_t index = readsCapture ? value.index() : resultIndex;
     if (index >= positions.size())
         return Type::anything();
-    // The header of a function that is derived while functions are optimized was typed in the arena of the thread that asked for it first.
     return context.types.adopt(context.typeOf(positions[index]));
 }
 
@@ -601,7 +579,6 @@ Type ResultRules::declaredContents(const Value& value, uint32_t operandIndex, st
         return provenOrUnknown(tryTypeOfArrayElementRead(context, value, container));
     ContentsSlot readSlot = slot ? *slot : defaultContentsSlotOf(context.program.builtins(), container);
     std::optional<Type> contents = tryTypeOfContentsRead(context, container, readSlot);
-    // The step that finds no entry answers undefined, and its results stand in front of the test for an entry.
     if (contents && (value.opcode == Opcode::MapNext || value.opcode == Opcode::SetNext))
         contents = contents->withPrimitives(Primitive::Undefined);
     return provenOrUnknown(WTF::move(contents));
@@ -639,17 +616,14 @@ FunctionID onlyCalleeOf(const Program& program, const Type& callee)
     return returnsDeclaredResultWhenCalledByValue(recordOf(program, only)) ? only : FunctionID();
 }
 
-// Whichever way a function is entered, what it returns has passed the conversions in front of its returns.
 Type ResultRules::unknown(const Value& value)
 {
     static_assert(OperandIndex::Call::callee == OperandIndex::CallResolved::callee);
-    // A construction answers what the callee answers: compiled code an object, as the language has it, a function of the host whatever it likes (`new CString(pointer)` of bun:ffi: a string).
     if (value.opcode == Opcode::Construct || value.opcode == Opcode::ConstructList)
         return context.level == TypeLevel::Expected ? Type::object() : Type::anything();
     if (value.opcode != Opcode::Call && value.opcode != Opcode::CallResolved)
         return Type::anything();
     const Type& callee = context.typeOf(value.operand(OperandIndex::Call::callee));
-    // What is no object cannot be called: the call throws.
     if (!callee.hasObjects() && callee.isJavaScriptValue())
         return Type::never();
     if (FunctionID only = onlyCalleeOf(context.program, callee))
@@ -751,7 +725,6 @@ struct ResultRulesWithoutType {
 
     enum class Key : uint32_t { Opcode = UINT32_MAX - 15, Constant, Closure, Layout, NamedRead, SlotRead, CastToType, CastOfOperand };
 
-    // `addWords` adds what the answer follows from, beside the opcode, to the hasher it is given.
     TypeID rememberedResult(Key key, SharedAnswers answers, const Value& value, NOESCAPE const auto& addWords)
     {
         if (!context.memo)
@@ -775,7 +748,6 @@ struct ResultRulesWithoutType {
             return context.types.adopt(id);
         if (TypeID known = context.memo->idsInArena.find(id.index()))
             return known;
-        // The record may hold that arena's id of a list of layouts, and the rule that answers with a type adopts that too.
         TypeID result = context.types.adopt(id);
         context.memo->idsInArena.add(id.index(), result);
         return result;
@@ -792,7 +764,6 @@ struct ResultRulesWithoutType {
         const Type& callee = context.typeOf(value.operand(OperandIndex::Call::callee));
         if (!callee.hasObjects() && callee.isJavaScriptValue())
             return TypeTable::never;
-        // Only a callee that is one function says more.
         FunctionID only = onlyCalleeOf(context.program, callee);
         return only ? declared(value, only, 0) : TypeTable::anything;
     }
@@ -948,7 +919,6 @@ struct ResultRulesWithoutType {
     TypeID declaredResult(auto&&...) { return { }; }
 };
 
-// Who may share what a rule answers, by what the rule reads beside the value and the types of its operands.
 struct AnswerSharingRules {
     using Result = std::optional<SharedAnswers>;
 
@@ -1009,13 +979,11 @@ struct RulesThatReadNarrowedRecords {
 
 const OpcodeSet& opcodesTypedFromNarrowedRecords()
 {
-    // Which rule an operation has follows from its opcode alone.
     static const OpcodeSet opcodes = [] {
         OpcodeSet result;
         RulesThatReadNarrowedRecords rules;
         for (unsigned index = 0; index < numberOfEnumerators<Opcode>; ++index) {
             Value value(static_cast<Opcode>(index));
-            // Only the parameters of the entry block are typed from the signature, and a parameter does not say where it stands.
             if (value.opcode == Opcode::Parameter)
                 continue;
             if (applyResultRule(rules, value, 0, ResultSide::Proven) || applyResultRule(rules, value, 0, ResultSide::Unproven))

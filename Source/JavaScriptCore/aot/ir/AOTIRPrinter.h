@@ -19,10 +19,6 @@
 #include <wtf/PrintStream.h>
 #include <wtf/text/ASCIILiteral.h>
 
-// Only tests print IR, and dumpAOTIR in a build with assertions. Without assertions the sources that print are empty in the library, so that no Bun ships
-// them, and tests/AOTIRPrinterForTestaot.cpp and AOTIRPrinterTypesForTestaot.cpp include them, so that testaot prints in every build. tools/JSDollarVMShell.cpp
-// does the same with $vm for jsc.
-
 namespace JSC { namespace AOT { namespace Typed {
 
 enum class PrintedFields : uint8_t { All, WireOnly };

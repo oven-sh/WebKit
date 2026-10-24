@@ -29,9 +29,7 @@ struct BuiltinMemberName {
 
 BuiltinMemberName builtinMemberNameOf(const Program&, PropertyKeyID);
 
-// The member that the holder has of its own under the key. An engine private name finds the member that it is the private alias of.
 BuiltinID findOwnMember(const Program&, BuiltinID holder, PropertyKeyID);
-// Of what the host keeps under engine private names the table lists the private aliases alone, so it never says that a holder has nothing under such a key.
 bool listsEveryMemberUnder(const Program&, BuiltinID holder, PropertyKeyID);
 
 enum class BuiltinReceiverKind : uint8_t { Unknown, BuiltinObject, Instance, Primitive };
@@ -47,7 +45,6 @@ struct BuiltinReceiver {
 BuiltinReceiver builtinReceiverOf(const Program&, const Type&);
 BuiltinClassID primitiveClassOf(uint16_t primitives);
 Type typeOfInstances(const BuiltinTable&, BuiltinClassID, const Type& receiver);
-// The type a receiver is tested for to count as an instance of the class. Nothing where no test finds the instances.
 std::optional<Type> testedTypeOfInstances(const Program&, BuiltinClassID, const Type& receiver);
 
 enum class LocationProof : uint8_t { Unknown, Constant };
@@ -61,12 +58,9 @@ struct BuiltinMemberAnswer {
     bool isConstant() const { return isFound() && proof == LocationProof::Constant; }
 };
 
-// A key that the holder never gains: any key for an object that is locked or not extensible. For another object with locked members, an index-like key and the keys that the table closes.
 bool isClosedKey(const Program&, BuiltinID holder, PropertyKeyID);
-// What a lookup of the key finds on the holder never changes: a member that start-up locks, a private alias, or a closed key.
 bool isLockedLocation(const Program&, BuiltinID holder, PropertyKeyID);
 
-// The three questions above about one key and many holders.
 class MembersUnderKey {
 public:
     MembersUnderKey(const Program&, PropertyKeyID);
@@ -75,7 +69,6 @@ public:
     bool isClosedKey(BuiltinID holder) const;
     bool isLockedLocation(BuiltinID holder) const;
 
-    // A holder that has the name of neither key among its members, its closed keys and its open names answers the same for two keys of one class.
     static constexpr unsigned numberOfClasses = 256;
     unsigned classOfKey() const;
 
@@ -93,7 +86,6 @@ LocationProof absenceProofOf(const BuiltinLookupContext&, BuiltinID holder, Prop
 BuiltinMemberAnswer findMemberFrom(const BuiltinLookupContext&, BuiltinID holder, PropertyKeyID);
 BuiltinMemberAnswer findMemberOfInstances(const BuiltinLookupContext&, BuiltinClassID, PropertyKeyID);
 
-// ByName: the lookup is made at run time, each time. Constant: it finds the member, always. Absent: it finds nothing, ever. Bound: a record of the name remembers where the lookup ended.
 enum class FreeNameAnswerKind : uint8_t { ByName, Constant, Absent, Bound };
 
 struct FreeNameAnswer {
@@ -101,7 +93,6 @@ struct FreeNameAnswer {
     BuiltinID member;
 };
 
-// What `name` and `globalThis.name` find.
 FreeNameAnswer freeNameAnswerOf(const BuiltinLookupContext&, PropertyKeyID, bool seesScriptBindings);
 
 struct MemberOfClasses {
@@ -110,14 +101,12 @@ struct MemberOfClasses {
 };
 
 Vector<MemberOfClasses, 4> methodsNamed(const BuiltinTable&, BuiltinName);
-// The same, found once for a name while a ProgramCaches stands.
 Vector<MemberOfClasses, 4> methodsNamed(const Program&, BuiltinName);
 
 BuiltinID singleBuiltinOf(const Type&);
 BuiltinID singleBuiltinCalleeOf(const Program&, const Function&, const Value& call);
 
 std::optional<Value> tryMakeBuiltinConstant(const BuiltinTable&, BuiltinID member);
-// Also a member that holds a text.
 std::optional<Value> tryMakeBuiltinConstant(const Program&, BuiltinID member);
 
 } } } // namespace JSC::AOT::Typed

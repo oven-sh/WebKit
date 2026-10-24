@@ -42,7 +42,6 @@ static bool isPromise(const DeclaredType& declared)
     return declared.flags.contains(PositionFlags::IsInt32Promise);
 }
 
-// A promise is about numbers: `int32 | Box` holds any Box. Whether a value of another kind may enter the position is for the conversion to test.
 static bool hasOnlyInt32sAmongNumbers(const Type& type)
 {
     return !(type.primitives & Primitive::Double) && type.integers.isSubsetOf(Range::int32());
@@ -73,7 +72,6 @@ static void reportUnprovenFlow(FunctionPassContext& context, const Flow& flow, c
 {
     bool isSingleInteger = bounds.kind == BoundsKind::Integers && bounds.range.isSingleValue();
     UserDiagnosticKind kind = flow.isConstant || isSingleInteger ? UserDiagnosticKind::ConstantNotInt32 : UserDiagnosticKind::UnprovenInt32;
-    // Who builds the program cannot mend such a file. The build goes on: the flow is tested like any other conversion.
     if (flow.position.flags.contains(PositionFlags::IsDeclaredByDependency))
         kind = UserDiagnosticKind::Int32OfDependencyNotProven;
     UserDiagnostic diagnostic {
@@ -94,7 +92,6 @@ static void reportUnprovenFlow(FunctionPassContext& context, const Flow& flow, c
     context.build.diagnostics().add(diagnostic);
 }
 
-// The types are asked first.
 enum class Judge : uint8_t {
     FlowsThatTypesDoNotProve,
     FlowsThatTypesProve,
@@ -103,7 +100,6 @@ enum class Judge : uint8_t {
 static bool judgeRequests(FunctionPassContext& context, Int32Prover& prover, Judge judge)
 {
     const Function& function = context.function;
-    // What is only expected of a value is no proof.
     TypingContext typing { context.program, function, context.types };
     bool hasReported = false;
     for (const Block& block : function.blocks) {
@@ -117,12 +113,10 @@ static bool judgeRequests(FunctionPassContext& context, Int32Prover& prover, Jud
             if (isAssertionOfDependency(context.program, declared))
                 continue;
             ValueID value = request.valueOperand();
-            // A list of arguments stands for its elements, of which nothing is known. It is no value of the position.
             const Type& known = typing.typeOf(value);
             bool isProvenByTypes = hasOnlyInt32sAmongNumbers(known) && (known.isNever() || known.overlaps(typing.typeOf(declared), context.program));
             if (!isEnteredAt(siteKindOf(context.program, declared)) || isProvenByTypes != (judge == Judge::FlowsThatTypesProve))
                 continue;
-            // What is expected of an `any` comes from how it is used, and this flow is one of the uses.
             bool isFromLooseType = request.illTypedCause() == IllTypedCause::FromLooseType;
             NumberBounds bounds = isFromLooseType && !isProvenByTypes ? boundsOfType(known) : prover.boundsOf(value);
             if (bounds.isInt32OrNullish() || (isProvenByTypes && !prover.reliesOnUnprovenFlow()))
@@ -186,7 +180,6 @@ static bool hasPromises(const Function& function)
     return false;
 }
 
-// The proof is what the build demands of the program. What the compiled code relies on is the types: a flow that they do not prove is tested like any other conversion.
 static RequestCounts resolveInt32Requests(FunctionPassContext& context)
 {
     Function& function = context.function;
@@ -233,7 +226,6 @@ PassOutcome checkInt32Promises(FunctionPassContext& context)
     if (!context.function.hasBody() || !hasPromises(context.function))
         return PassOutcome::Unchanged;
 
-    // A proof may rely on what has entered another promise, so every flow is judged while the requests are in place.
     Int32Prover prover({ context.program, context.function, context.analyses, context.types, context.build });
     bool hasReported = judgeRequests(context, prover, Judge::FlowsThatTypesDoNotProve);
     hasReported = judgeTailCasts(context, prover) || hasReported;
@@ -248,7 +240,6 @@ PassOutcome checkInt32Promises(FunctionPassContext& context)
     if (counts.isEmpty())
         return PassOutcome::Unchanged;
     finishTypedValues(TypePropagationInputs { context.program, context.id, context.function, context.analyses, context.types, context.build, &context.typingMemo });
-    // The analyses were told of every edit when it was made.
     context.keptAnalyses = allAnalyses;
     return PassOutcome::Changed;
 }

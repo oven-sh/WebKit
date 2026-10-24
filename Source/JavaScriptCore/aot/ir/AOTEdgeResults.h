@@ -35,7 +35,6 @@ struct EdgeResult {
 
 enum class TargetResults : uint8_t { None, Proofs, DeclaredResults };
 
-// Null when a terminator of this kind with this many targets has no such target.
 const TargetInfo* infoOfTarget(TerminatorKind, uint32_t targetIndex, uint32_t numberOfTargets);
 TargetResults targetResultsOf(TerminatorKind, uint32_t targetIndex, uint32_t numberOfTargets);
 
@@ -49,13 +48,11 @@ ValueID operandNarrowedOnEdge(const Function&, EdgeResultPosition);
 
 Type computeTypeOnEdge(const TypingContext&, EdgeResultPosition);
 TypeID typeOnEdge(const Program&, const Function&, EdgeResultPosition, TypeArena&);
-// Null where nothing narrower than the type on the edge is expected.
 TypeID expectedTypeOnEdge(const Program&, const Function&, EdgeResultPosition, TypeID provenType, TypeArena&);
 
 Type narrowOperandByTest(const TypingContext&, const Value& test, uint32_t operandIndex, EdgeSide);
 Type narrowSubjectByCase(const TypingContext&, const Terminator&, uint32_t caseIndex);
 
-// What is left of a type that holds the tested value once the value has passed along the edge.
 Type narrowTypeByTest(const TypingContext&, const Type& source, const Value& test, uint32_t operandIndex, EdgeSide);
 Type narrowTypeByCase(const TypingContext&, const Type& source, const Terminator&, uint32_t caseIndex);
 Type narrowTypeByOtherwise(const Type& source, const Terminator&);

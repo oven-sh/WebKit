@@ -26,10 +26,8 @@
 #include "config.h"
 #include "JSBoundFunction.h"
 
-#if ENABLE(AOT)
 #include "AOTAllocationCounts.h"
 #include "AOTCompiledCallee.h"
-#endif
 #include "DeferTermination.h"
 #include "ExecutableBaseInlines.h"
 #include "FunctionPrototype.h"

@@ -216,7 +216,6 @@ static bool keepsPropertiesInFields(const Program& program, LayoutID id)
     case LayoutKind::Instance:
     case LayoutKind::Container:
         return !builtinBaseClassOf(program, id);
-    // The reader asks before the verifier has refused a layout of this kind that names no entry of the table.
     case LayoutKind::BuiltinResult:
         return layout.builtinLayout && !program.builtins().at(layout.builtinLayout).isTuple;
     case LayoutKind::Environment:
@@ -245,7 +244,6 @@ void Program::indexNames()
 
 void Program::indexNames(const ParallelLoops& loops)
 {
-    // The reader and the text parser ask before the verifier has refused a field whose origin does not resolve. No name can be looked up through one.
     std::atomic<bool> hasResolvableOrigins { true };
     forEachIndexInParallel(loops, layouts.size(), [&](unsigned index) {
         bool areResolvable = std::ranges::all_of(layouts[index].fields, [&](const Field& field) {
@@ -268,11 +266,9 @@ void Program::indexNames(const ParallelLoops& loops)
 
     Vector<Holder> holders = collectInParallel<Holder>(loops, layouts.size(), [&](unsigned index, Vector<Holder>& found) {
         LayoutID id(index);
-        // The names of a map say nothing of who reads such a name elsewhere.
         if (at(id).flow.allocation == AllocationState::NeverAllocated || at(id).has(LayoutFlags::IsWrittenUnderDictionaryType) || !keepsPropertiesInFields(*this, id))
             return;
 
-        // Expected bases may form a cycle.
         size_t firstOfLayout = found.size();
         Vector<LayoutID, 8> visitedClasses;
         bool inheritsFields = true;
@@ -501,7 +497,6 @@ static bool isCalledByHostWhenRegistered(RuntimeFunctionRole role)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The host can name a function of the library only as a module body or through `runtimeFunctions`.
 static bool isFoundByHostThroughRegistration(FunctionRole role)
 {
     return role == FunctionRole::Library || role == FunctionRole::Model;
@@ -582,7 +577,6 @@ const RuntimeFunctionEntry* findRuntimeFunction(const Program& program, RuntimeF
     return entry != program.runtimeFunctions.end() && entry->id == id ? &*entry : nullptr;
 }
 
-// A pass that replaces a function in place gives it another role.
 bool isLibraryCode(const Program& program, const Function& function)
 {
     if (function.role == FunctionRole::Library || function.role == FunctionRole::StubBody || function.enclosingRuntimeFunction)
@@ -830,7 +824,6 @@ DataID ProgramEditor::addData(Data&& data)
     return id;
 }
 
-// Most passes mark a few records of hundreds of thousands, and each is asked several times what it marked: eight entries without a mark are passed over at a time.
 static void forEachMarked(std::span<const uint8_t> marks, NOESCAPE const Invocable<void(size_t index, uint8_t mark)> auto& functor)
 {
     size_t index = 0;

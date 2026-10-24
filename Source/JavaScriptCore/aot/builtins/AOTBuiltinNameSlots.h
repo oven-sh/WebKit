@@ -16,7 +16,6 @@
 
 namespace JSC { namespace AOT {
 
-// A hash table from a string to its position in a list of names, which the C++ compiler fills: it is read-only data, and finding a name takes the hash that the string has already.
 constexpr size_t numberOfSlotsForNames(size_t numberOfNames)
 {
     return std::bit_ceil(numberOfNames + numberOfNames / 2 + 1);
@@ -32,7 +31,6 @@ constexpr uint32_t hashBitsOfNameSlot(unsigned hash)
 
 constexpr uint32_t positionBitsOfNameSlot = 0xffff;
 
-// Each run of names is hashed in a constant expression of its own, which keeps every evaluation below the compiler's limit of steps.
 constexpr size_t numberOfNamesHashedAtOnce = 256;
 
 template<const auto& names, size_t run>

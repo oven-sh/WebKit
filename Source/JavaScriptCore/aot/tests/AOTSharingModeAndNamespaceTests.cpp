@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTCollectionTestSupport.h"
 #include "AOTCompile.h"
 #include "AOTCompileOptionWords.h"
 #include "AOTIRParser.h"
@@ -244,7 +245,7 @@ static NEVER_INLINE unsigned numberOfMarkedCells(VM& vm, const HiddenCells& hidd
 {
     unsigned marked = 0;
     for (unsigned i = 0; i < count; ++i)
-        marked += vm.heap.isMarked(std::bit_cast<JSCell*>(~hidden[i]));
+        marked += hasSurvivedCollection(vm, std::bit_cast<JSCell*>(~hidden[i]));
     return marked;
 }
 

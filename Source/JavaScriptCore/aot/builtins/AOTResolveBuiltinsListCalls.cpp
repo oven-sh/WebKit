@@ -52,7 +52,6 @@ static bool canMoveToCall(FunctionAnalyses& analyses, const Function& function, 
     if (!std::ranges::all_of(chain.span().first(chain.size() - 1), hasNoEffects))
         return false;
 
-    // The list is empty and nothing sees it before the spread, so only the spread has to commute with what follows it.
     uint32_t firstIndexAfterSpread = useLists.locationOf(spread).index + 1;
     return std::ranges::all_of(function.at(call.block).values.subspan(firstIndexAfterSpread, call.index - firstIndexAfterSpread), hasNoEffects);
 }
@@ -76,7 +75,6 @@ static bool canPlaceTests(FunctionPassContext& context, std::span<const UseRequi
     });
 }
 
-// A CallBuiltin is no tail call. A list call that reads another array is the same call, so it stays the tail call it was.
 static BuiltinUsePlan planBuiltinCallee(const BuiltinUseInputs& inputs, const ValueSite& site, ValueID array, ProgramPoint point)
 {
     if (inputs.function.at(site.value).opcode != Opcode::CallList)

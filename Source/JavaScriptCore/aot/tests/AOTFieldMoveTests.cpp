@@ -9,6 +9,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTChildProcess.h"
+#include "AOTCollectionTestSupport.h"
 #include "AOTCompile.h"
 #include "AOTCompileOptionWords.h"
 #include "AOTFieldMovePlanCache.h"
@@ -582,7 +583,7 @@ static void checkPlansDieWithTheirStructures(LoadedProgram& program)
         vm.heap.collectSync(CollectionScope::Full);
         unsigned numberOfDeadStructures = 0;
         for (unsigned index = 0; index < structures.size(); ++index) {
-            bool isLive = vm.heap.isMarked(structures[index]);
+            bool isLive = hasSurvivedCollection(vm, structures[index]);
             numberOfDeadStructures += !isLive;
             AOT_TEST_CHECK(!!cache.find(keyWithWords(index, isSource ? structures[index] : nullptr)) == isLive);
         }

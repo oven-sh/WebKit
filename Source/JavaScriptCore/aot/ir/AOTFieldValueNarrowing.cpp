@@ -23,7 +23,6 @@ static LayoutSetID allocatedMembersExcluding(const TypingContext& context, Layou
     if (!excluded && allocatedMembers.size() == familySet.members.size())
         return family;
 
-    // `excluded` comes from a shared cache and can be most of a large family, so it is read in place instead of adopted into this arena.
     std::span<const LayoutID> excludedMembers;
     if (excluded)
         excludedMembers = context.types.at(excluded).members.span();
@@ -47,13 +46,11 @@ Type narrowHolderByFieldValue(const TypingContext& context, const Type& holder, 
     if (read.isNever())
         return Type::never();
 
-    // The read would have thrown on undefined or null.
     Type result = holder.withoutNullish();
     if (!result.layouts)
         return result;
 
     LayoutSetID family = std::exchange(result.layouts, membersThatCanHold(context, result.layouts, key, read));
-    // The code behind a Check that never passes is still the source of the generic version, so it must not be cut as unreachable.
     if (result.isNever())
         result.layouts = family;
     return result;

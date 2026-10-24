@@ -27,9 +27,7 @@
 #include "StackManager.h"
 
 #include "StackManagerInlines.h"
-#if ENABLE(AOT)
 #include "AOTRuntimeHooks.h"
-#endif
 
 namespace JSC {
 

@@ -32,7 +32,6 @@ enum class LocationState : uint8_t { Unknown, NeedsTest, Constant };
 
 } // anonymous namespace
 
-// An expected type may list other objects beside the instances of a class. An operation that is about one class finds that class among them.
 static BuiltinReceiver expectedReceiverOf(const Program& program, const Type& expected, BuiltinClassID expectedClass)
 {
     if (BuiltinReceiver receiver = builtinReceiverOf(program, expected))
@@ -48,7 +47,6 @@ std::optional<Type> testedTypeOfExpectedInstances(const Program& program, TypeAr
         return testedTypeOfInstances(program, builtinClass, expected);
     if (FunctionID function = expected.singleFunction())
         return Type::forFunction(function);
-    // The test lets through the built-in functions that the receiver may be. Each of them has members of its own, so behind the test the receiver would still be no instance like any other.
     if (builtinReceiverOf(program, present.castTo(Type::function(), types)).builtinClass != BuiltinClasses::Function)
         return std::nullopt;
     return Type::function();
@@ -99,7 +97,6 @@ static std::optional<MemberSite> findMember(const BuiltinUseInputs& inputs, Valu
     return site;
 }
 
-// False only where builtinReceiverOf() knows nothing of the type without undefined and null.
 static bool mayBeKnownReceiver(const Type& type)
 {
     if (!type.isJavaScriptValue())
@@ -110,7 +107,6 @@ static bool mayBeKnownReceiver(const Type& type)
     return !primitives && !type.anyObject && !type.layouts;
 }
 
-// A receiver that is only expected to be something is tested. What is left for a receiver of which nothing is known is planInheritedMember().
 bool mayFindProvenAccess(const BuiltinUseInputs& inputs, const Value& access)
 {
     const Program& program = inputs.program;
@@ -126,7 +122,6 @@ bool mayFindProvenAccess(const BuiltinUseInputs& inputs, const Value& access)
     return mayBeKnownReceiver(receiverType) || receiverType.hasOnlyLayouts(program);
 }
 
-// What the receiver is where the test of the site has passed.
 static const Type& receiverTypeAt(const BuiltinUseInputs& inputs, const MemberSite& site)
 {
     if (site.testedReceiverType)
@@ -134,7 +129,6 @@ static const Type& receiverTypeAt(const BuiltinUseInputs& inputs, const MemberSi
     return inputs.program.typeOf(inputs.function, site.receiver);
 }
 
-// No function is ever pristine. Flow says of the closures of a function whether one of them gets the key as a property of its own or another prototype.
 static bool isClosureAsCreated(const BuiltinUseInputs& inputs, const MemberSite& site)
 {
     if (site.start.builtinClass != BuiltinClasses::Function)
@@ -143,18 +137,15 @@ static bool isClosureAsCreated(const BuiltinUseInputs& inputs, const MemberSite&
     if (receiver.anyFunction || !receiver.classes.isEmpty() || receiver.functions.isEmpty())
         return false;
     return std::ranges::all_of(receiver.functions, [&](FunctionID function) {
-        // A class object is created with the static members of its definition, below the class object of its base.
         LayoutID constructedClass = inputs.program.at(function).constructedClass;
         if (constructedClass && !inputs.program.at(constructedClass).has(LayoutFlags::IsConstructorFunction))
             return false;
-        // The closure of a coroutine inherits from the prototype of its own kind of function.
         if (inputs.program.at(function).hasAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator }))
             return false;
         return inputs.flow.areClosuresAsCreated(function, singleElementSpan(site.key)) || inputs.flow.closuresInheritFromFunctionPrototype(function, site.key);
     });
 }
 
-// The read by name finds the member, and the test of what it has found costs less than a test of the closure that fails every time.
 static bool isClosureChangedByProgram(const BuiltinUseInputs& inputs, const MemberSite& site)
 {
     if (site.start.builtinClass != BuiltinClasses::Function)
@@ -213,7 +204,6 @@ static bool passesOnlyHoldersThatNeverGainKey(const BuiltinLookupContext& lookup
     BuiltinID holder = firstHolder;
     while (holder) {
         holder = table.canonicalID(holder);
-        // One function object under two names lies at two locations. The test names the original's, which says nothing of the other.
         if (BuiltinID found = findOwnMember(lookup.program, holder, key))
             return found == member;
         if (absenceProofOf(lookup, holder, key) != LocationProof::Constant)
@@ -233,7 +223,6 @@ static bool hasPassedTestOfLocation(const BuiltinUseInputs& inputs, BuiltinID me
     });
 }
 
-// The host makes the value at the first read, and after that only a write replaces it.
 static bool isComputedOnceByHost(const Builtin& member)
 {
     return member.kind == BuiltinKind::DataProperty
@@ -243,7 +232,6 @@ static bool isComputedOnceByHost(const Builtin& member)
         && !member.flags.contains(BuiltinFlag::IsOwnPropertyOfInstances);
 }
 
-// The engine reports the object that the host has made, and the watch compares the location with that.
 static bool isObjectMadeByHost(const BuiltinTable& table, BuiltinID id)
 {
     if (!isComputedOnceByHost(table.at(id)))
@@ -256,7 +244,6 @@ static bool isObjectMadeByHost(const BuiltinTable& table, BuiltinID id)
     });
 }
 
-// BuiltinLocationWatch arms no other location, so the test of another one fails every time it runs.
 static bool canBeWatchedAtRunTime(const BuiltinTable& table, BuiltinID id)
 {
     const Builtin& member = table.at(id);
@@ -271,7 +258,6 @@ static bool canBeWatchedAtRunTime(const BuiltinTable& table, BuiltinID id)
     case BuiltinKind::Method:
         return true;
     case BuiltinKind::Accessor:
-        // What the holder has is compared with the cells of the two functions. A getter of native code has no function, and only native code makes such a property.
         return BuiltinCellKey::getter(id).hasCell(table) || BuiltinCellKey::setter(id).hasCell(table) || std::ranges::any_of(table.overloadsOf(id), [](const BuiltinOverload& overload) {
             return overload.code.implementation.callee == BuiltinCallee::CustomGetter;
         });
@@ -285,7 +271,6 @@ static bool canBeWatchedAtRunTime(const BuiltinTable& table, BuiltinID id)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// Where flow has lost sight of a holder, a member that only a write replaces is tested at run time.
 static LocationState locationStateOf(const BuiltinUseInputs& inputs, const MemberSite& site)
 {
     if (site.answer.isConstant())
@@ -385,7 +370,7 @@ static BuiltinUsePlan planMemberAccess(const BuiltinUseInputs& inputs, ValueID u
         return { };
     if (mayCallAccessorFunction(table, plan) && !hasAccessorFunction(table, member, mode))
         return { };
-    if (plan.kind == BuiltinUseKind::UnmatchedCall && program.typeOf(inputs.function, known.operands.receiver).mayBeUndefinedOrNull())
+    if (plan.kind == BuiltinUseKind::UnmatchedCall)
         return { };
     plan.nullishCheck = nullishCheckFor(program, isStore ? NullishAccess::Write : NullishAccess::Read, builtinMemberNameOf(program, access.key()).name);
     return plan;
@@ -401,7 +386,6 @@ static std::optional<Value> tryMakeOwnPropertyOfClosures(const BuiltinUseInputs&
     case FunctionKind::Arrow:
     case FunctionKind::Method:
         break;
-    // The name of an accessor function begins with "get " or "set ", and a class may define either name as a static member.
     case FunctionKind::Getter:
     case FunctionKind::Setter:
     case FunctionKind::BaseConstructor:
@@ -418,7 +402,6 @@ static std::optional<Value> tryMakeOwnPropertyOfClosures(const BuiltinUseInputs&
         length.setInteger(function.length);
         return length;
     }
-    // A function without a name of its own may be given one where it is evaluated, and an image that hides the names of functions answers the empty string.
     if (member != table.canonicalID(Builtins::FunctionPrototypeName) || !function.name || !inputs.keepsFunctionNames)
         return std::nullopt;
     Value name = IRBuilder::make(Opcode::String);
@@ -426,7 +409,6 @@ static std::optional<Value> tryMakeOwnPropertyOfClosures(const BuiltinUseInputs&
     return name;
 }
 
-// The closures of a function are created with the length and the name of its definition.
 static BuiltinUsePlan planReadOfClosureProperty(const BuiltinUseInputs& inputs, const MemberSite& site, ValueID use)
 {
     if (site.start.kind != BuiltinReceiverKind::Instance || site.start.builtinClass != BuiltinClasses::Function)
@@ -460,7 +442,6 @@ static BuiltinOverloadID findOverload(const BuiltinTable& table, BuiltinID membe
     return { };
 }
 
-// The instance keeps what the first read gave in a cell of its own. The overload says what type the value has.
 static BuiltinUsePlan planHostValueRead(const BuiltinUseInputs& inputs, const MemberSite& site)
 {
     const Program& program = inputs.program;
@@ -487,11 +468,9 @@ static BuiltinUsePlan planFoundMemberAccess(const BuiltinUseInputs& inputs, cons
     LocationState location = isOwnProperty ? LocationState::Constant : locationStateOf(inputs, site);
     if (location == LocationState::Unknown)
         return { };
-    // A store to a data property is itself a write to the location.
     if (location == LocationState::NeedsTest && !isRead && member.kind != BuiltinKind::Accessor)
         return { };
 
-    // A cell that is filled once holds the value for good. The test of a location that the host fills passes only while the location holds what the host has made.
     bool readsHostValue = isRead && isComputedOnceByHost(member);
     BuiltinUsePlan plan = readsHostValue ? planHostValueRead(inputs, site) : planMemberAccess(inputs, use, site.answer.member, mode, point);
     if (!plan)
@@ -500,8 +479,6 @@ static BuiltinUsePlan planFoundMemberAccess(const BuiltinUseInputs& inputs, cons
     bool isPossible = addLocationRequirement(inputs, site, location, plan);
     addReceiverRequirements(inputs, site, point, plan, isPossible);
     if (!isPossible)
-        return { };
-    if (plan.kind == BuiltinUseKind::UnmatchedCall && !plan.requirements.isEmpty())
         return { };
     return plan;
 }
@@ -530,7 +507,6 @@ static BuiltinUsePlan planConstantRead(const BuiltinUseInputs& inputs, const Mem
     return plan;
 }
 
-// An array that finds Array under `constructor` gets a new array: the Symbol.species of Array answers its receiver.
 BuiltinUsePlan planArraySpeciesCreate(const BuiltinUseInputs& inputs, ValueID use, ProgramPoint point)
 {
     const Program& program = inputs.program;
@@ -580,7 +556,6 @@ static BuiltinUsePlan planInheritedMember(const BuiltinUseInputs& inputs, ValueI
     return planMemberAccess(inputs, use, table.canonicalID(answer.builtin), mode, point);
 }
 
-// A free name that nothing is bound to throws, and the message has the name. `typeof` of it and a read of the global object answer undefined.
 static BuiltinUsePlan planReadOfAbsentGlobal(const Value& read)
 {
     if (read.isFreeName() && !read.isForTypeOf())
@@ -615,7 +590,6 @@ BuiltinUsePlan planBuiltinRead(const BuiltinUseInputs& inputs, ValueID use, Prog
     if (!site)
         return planInheritedMember(inputs, use, point, BuiltinCallMode::Get);
 
-    // Behind its test a receiver that is expected to be the global object is the global object, and the read is planned again there.
     bool readsGlobalBehindTest = site->testedReceiverType && site->start.kind == BuiltinReceiverKind::BuiltinObject
         && table.canonicalID(site->start.object) == table.canonicalID(Builtins::GlobalThis);
     if (readsGlobalBehindTest && freeNameAnswerOf(inputs.lookup(), read.key(), read.isFreeName()).kind != FreeNameAnswerKind::Constant)

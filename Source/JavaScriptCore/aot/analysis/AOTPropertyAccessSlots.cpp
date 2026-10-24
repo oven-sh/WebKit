@@ -320,6 +320,49 @@ std::optional<TestsOfEmptySlot> testsThatOptionLeftOutReadsAsUndefined(const Pro
     return tests;
 }
 
+MethodsAboveEmptySlot findMethodsAboveEmptySlot(const PropertyAccessContext& context, std::span<const LayoutID> receivers, PropertyKeyID key)
+{
+    const Program& program = context.program;
+    MethodsAboveEmptySlot found;
+    Vector<MemberArm, 2> arms;
+    bool cannotMoveOut = true;
+    for (LayoutID layout : receivers) {
+        FieldArmState state = computeStateOfFieldArm(program, singleElementSpan(layout), key, false);
+        if (state.isAlwaysFilled && state.form.isEmpty() && !state.hasDeferredMember)
+            continue;
+        MemberAnswer answer;
+        if (state.form.isEmpty() && !state.hasDeferredMember)
+            answer = findMemberOnPrototypes(context, { MemberStart::Instance, layout, key, Access::Read, false });
+        if (answer.kind != MemberKind::Method) {
+            found.areAllReceivers = false;
+            continue;
+        }
+        cannotMoveOut &= state.cannotMoveOut;
+        size_t index = arms.findIf([&](const MemberArm& arm) {
+            return belongToOneArm(arm.answer, answer);
+        });
+        if (index != notFound)
+            mergeIntoArm(arms[index], layout, answer);
+        else
+            arms.append(MemberArm { WTF::move(answer), LayoutList { layout } });
+    }
+
+    for (const MemberArm& arm : arms) {
+        PropertyAccessQuery query;
+        query.key = key;
+        query.receivers = ReceiverCandidates::underGuard(arm.layouts.span());
+        PropertyAccessPlan plan = planMemberArm(context, query, arm);
+        if (plan.form != AccessForm::Method || plan.capturesReceiver) {
+            found.areAllReceivers = false;
+            continue;
+        }
+        found.methods.append(MethodAboveEmptySlot { arm.layouts, plan.member.method, plan.requiredProofs, WTF::move(plan.conditions) });
+        if (!cannotMoveOut)
+            found.methods.last().proofs.add(Proof::NoFieldOutsideSlot);
+    }
+    return found;
+}
+
 static Opcode creatingStoreFor(const FieldArmState& state)
 {
     return state.receivers.keys == KeyEnumeration::NeverEnumerated && !state.mayLieOutOfLine ? Opcode::PutSlot : Opcode::PutSlotOrAdd;

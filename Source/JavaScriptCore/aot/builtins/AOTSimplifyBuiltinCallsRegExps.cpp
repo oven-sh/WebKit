@@ -37,7 +37,6 @@ static bool isNeverGlobal(const Type& regExp)
     });
 }
 
-// s.match(r) is r.exec(s) where r is not global.
 static std::optional<Value> makeExecOfMatch(FunctionPassContext& context, const Value& call)
 {
     const Program& program = context.program;

@@ -69,7 +69,6 @@ Number MathBuiltinEmitter::extremumOfElements(Extremum kind, CellPointer array, 
         branch(below(index, length), { normalEdge(element), normalEdge(done) });
         m_out.appendTo(element);
         Operand raw = elements.loadRawElement(form, storage, index);
-        // A hole among boxed elements is no number either.
         if (form.element == Representation::JSValue)
             branchUnless(isNumber(raw.as<Boxed>()), otherwise);
         else if (!foldPropagatesHoles)

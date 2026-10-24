@@ -35,7 +35,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewBigInt64, JSCell*, (Instance* instance, 
     OPERATION_RETURN(scope, result);
 }
 
-// `Buffer.byteLength(value, encoding)` where no test stands in front of the call. Only a string names an encoding: a string beside anything else counts UTF-8, which is counted here.
 JSC_DEFINE_JIT_OPERATION(operationAOTByteLengthOfAnyValue, EncodedJSValue, (Instance* instance, EncodedJSValue encodedValue, EncodedJSValue encodedEncoding))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTByteLengthOfAnyValue);
@@ -52,7 +51,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTByteLengthOfAnyValue, EncodedJSValue, (Inst
 
 enum class BytesAreRead : uint8_t { AsUTF8, AsASCII, AsLatin1 };
 
-// The names as programs write them. Another spelling, another encoding and what is no string are for the host function.
 static std::optional<BytesAreRead> wayToRead(JSValue encoding)
 {
     if (encoding.isUndefined())
@@ -69,7 +67,6 @@ static std::optional<BytesAreRead> wayToRead(JSValue encoding)
     return std::nullopt;
 }
 
-// `buffer.toString(encoding, start, end)`, the function known.
 JSC_DEFINE_JIT_OPERATION(operationAOTTextOfBytes, EncodedJSValue, (Instance* instance, EncodedJSValue encodedReceiver, EncodedJSValue encodedEncoding, EncodedJSValue encodedStart, EncodedJSValue encodedEnd))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTTextOfBytes);
@@ -92,7 +89,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTextOfBytes, EncodedJSValue, (Instance* ins
                 if (bytes.size() <= String::MaxLength) [[likely]]
                     OPERATION_RETURN(scope, JSValue::encode(jsNontrivialString(vm, String(bytes))));
             } else if (*way == BytesAreRead::AsUTF8 && bytes.size() <= String::MaxLength) {
-                // Well-formed UTF-8 has one reading. What stands for a malformed sequence is the host's to say.
                 if (String text = String::fromUTF8(byteCast<char8_t>(bytes)); !text.isNull())
                     OPERATION_RETURN(scope, JSValue::encode(jsString(vm, WTF::move(text))));
             }

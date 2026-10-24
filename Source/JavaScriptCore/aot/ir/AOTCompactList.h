@@ -26,7 +26,6 @@ struct CompactListHeader {
 };
 inline constexpr CompactListHeader emptyCompactListHeader { 0, 0 };
 
-// A single 4-byte element is stored inline, so moving a one-element list invalidates spans into it.
 template<typename T>
 class CompactList {
     static_assert(std::is_trivially_copyable_v<T> && alignof(T) <= 8);

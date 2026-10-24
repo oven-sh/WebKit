@@ -350,11 +350,9 @@
 #include <wtf/SystemTracing.h>
 #include <wtf/text/MakeString.h>
 
-#if ENABLE(AOT)
 #include "AOTCompiledFrame.h"
 #include "AOTFunctionDescription.h"
 #include "AOTRuntimeHooks.h"
-#endif
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JSGlobalObjectDebuggable.h"

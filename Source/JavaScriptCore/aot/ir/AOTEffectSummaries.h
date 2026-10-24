@@ -69,7 +69,6 @@ struct AddedEffects {
     Effects effects;
 };
 
-// Two IDs of an InternedLocationMasks table and the flags of an Effects.
 class CompactEffects {
 public:
     static constexpr unsigned idBits = 26;
@@ -106,7 +105,6 @@ private:
     uint64_t m_bits { 0 };
 };
 
-// Every distinct LocationMasks once. Threads may intern and read at the same time. Which masks get which ID is a race, so IDs may only be compared for equality.
 class InternedLocationMasks final : public ThreadSafeRefCounted<InternedLocationMasks> {
     WTF_MAKE_TZONE_ALLOCATED(InternedLocationMasks);
     WTF_MAKE_NONCOPYABLE(InternedLocationMasks);
@@ -234,7 +232,6 @@ public:
     uint32_t numberOfParameters() const { return m_summary ? m_summary->parameters.size() : m_parameters.size(); }
     EffectsOnEdges elsewhere() const;
     OperandMemory throughParameters() const;
-    // Of a parameter that the function does not have, nothing is known.
     OperandSummary operand(uint32_t entryParameter) const;
     OperandMemory memory(uint32_t entryParameter) const;
     EffectsOnEdges onCall() const;
@@ -271,7 +268,6 @@ public:
     FunctionSummaryView of(FunctionID) const LIFETIME_BOUND;
     const Effects& unknownCode() const LIFETIME_BOUND { return m_unknownCode; }
     unsigned size() const { return m_known ? 0 : m_parameterRanges.size(); }
-    // They say something of no function, but for those that a pass has laid on top: every other call is unknown code.
     bool isEmpty() const { return m_known ? m_known->isEmpty() : m_parameterRanges.isEmpty(); }
     bool contains(FunctionID) const;
 
@@ -282,20 +278,15 @@ private:
     friend class EffectSummarizer;
     friend EffectSummaries createSummariesFromFlow(const Program&, const FlowResults&, const BorrowedParameters&, BuildContext&);
 
-    // SayNothingOfBodies: every function does what an unknown function does, and only the operand summaries of the parameters differ.
     enum class Contents : uint8_t { SayNothingOfBodies, Any };
     EffectSummaries(Ref<InternedLocationMasks>&&, Contents);
 
     bool stores(FunctionID id) const { return id && id.index() >= m_firstStored && id.index() - m_firstStored < m_parameterRanges.size(); }
     void store(std::span<const FunctionSummary>);
     void clear();
-    // With the loops all threads take the page faults of what is added.
     void grow(unsigned size, const ParallelLoops* = nullptr);
-    // Not while another thread calls set().
     void setNumberOfParameters(unsigned index, uint32_t numberOfParameters);
-    // Room for that many more, on pages that are there, for whoever calls setNumberOfParameters() for many functions.
     void reserveParameters(const ParallelLoops& loops, size_t numberOfMoreParameters) { reserveCapacityInParallel(loops, m_parameters, m_parameters.size() + numberOfMoreParameters); }
-    // setNumberOfParameters() for every function, in ascending order.
     void setParameterCounts(NOESCAPE const Invocable<uint32_t(unsigned index)> auto& parameterCount, const ParallelLoops* loops = nullptr)
     {
         size_t totalParameters = m_parameters.size();
@@ -312,7 +303,6 @@ private:
             reserveCapacityInParallel(*loops, m_parameters, totalParameters);
         m_parameters.grow(totalParameters);
     }
-    // Threads may set different functions at the same time.
     void set(unsigned index, const FunctionSummary&);
     void set(unsigned index, const StoredFunctionEffects&, UnknownCodeWitness);
     std::span<StoredParameterSummary> parametersOf(unsigned index) LIFETIME_BOUND { return m_parameters.mutableSpan().subspan(m_parameterRanges[index].first, m_parameterRanges[index].size); }
@@ -320,7 +310,6 @@ private:
     RefPtr<InternedLocationMasks> m_masks;
     Contents m_contents { Contents::Any };
     StoredFunctionEffects m_effectsOfUnknownFunction;
-    // Empty where the summaries say nothing of bodies.
     Vector<StoredFunctionEffects> m_effects;
     Vector<StoredParameterRange> m_parameterRanges;
     Vector<StoredParameterSummary> m_parameters;
@@ -331,7 +320,6 @@ private:
     unsigned m_firstStored { 0 };
 };
 
-// The summary of a function that is called.
 class CalleeSummary {
 public:
     CalleeSummary(const EffectContext&, FunctionID);
@@ -350,19 +338,14 @@ private:
     std::optional<FunctionSummary> m_summaryByRole;
 };
 
-// What is known before a body is summarized: nothing of what a function does elsewhere, and of a parameter what the table says where the function borrows it, else what flow says.
 EffectSummaries createSummariesFromFlow(const Program&, const FlowResults&, BuildContext&);
 EffectSummaries createSummariesFromFlow(const Program&, const FlowResults&, const BorrowedParameters&, BuildContext&);
 EffectSummaries computeEffectSummaries(const Program&, const FlowResults&, BuildContext&);
-// Brings the summaries up to date with the program.
 void updateEffectSummaries(const Program&, const FlowResults&, BuildContext&, BodySummaries& kept, EffectSummaries&, BodyReferences* = nullptr);
 FunctionSummary summarizeBody(const EffectContext&, FunctionID, FunctionAnalyses&);
 
-// Differs, but for a collision, where what callers read of the record of the function differs.
 uint64_t stampOfRecord(const Function&);
-// The same of what describeEffects() reads of the record of a function that an operation may run.
 uint64_t stampOfRecordForCallers(const Function&);
-// The same of what says which operand of a call is which entry parameter, what the parameters hold and whether there is a body: what a dependency on the function means.
 uint64_t stampOfEntry(const Function&);
 
 struct BaseObject {
@@ -378,7 +361,6 @@ OperandSummary summarizeEntryParameter(FunctionAnalyses&, uint32_t entryParamete
 OperandSummary publishedParameterSummary(const FlowResults&, FunctionID, uint32_t entryParameter);
 CallerState callerStateOf(const FlowResults&, FunctionID);
 bool runsAtMostOnce(const FlowResults&, FunctionID);
-// The callbacks, handlers, accessors and protocol methods that flow linked.
 BitVector functionsCalledIndirectly(const FlowResults&, size_t numberOfFunctions);
 
 } } } // namespace JSC::AOT::Typed

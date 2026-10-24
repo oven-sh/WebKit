@@ -76,12 +76,10 @@ public:
 
     unsigned addTasks(unsigned count);
 
-    // With loops, a large merge runs on all threads. The ids are the same either way.
     TypeRemap finish(const StringRemap&, const ParallelLoops* = nullptr);
     TypeRemap finish(std::span<const unsigned> taskOrder, const FunctionRemap&, const StringRemap&, const ParallelLoops* = nullptr);
     void discard();
 
-    // Provisional ids stay valid only while this number stays the same.
     static uint64_t currentPhaseSerialNumber(const TypeTable&);
 
 private:
@@ -147,7 +145,6 @@ private:
     const uint64_t m_serialNumber { nextSerialNumber() };
     StoragePool<Storage, TypeTable::maxStorages> m_storages;
     Lock m_firstUsesGrowthLock;
-    // A phase has a task per function, and most use nothing new.
     ConcurrentVector<std::unique_ptr<FirstUses>, 1024> m_firstUses;
     bool m_isOpen { true };
     bool m_isOpenPhaseOfTable { true };
@@ -216,13 +213,11 @@ public:
     CalleeSetID intern(CalleeSet&&);
     PropertyKeyID intern(const PropertyKey&);
 
-    // Re-interns a record that another arena created. An id from a cache shared between threads must be adopted before it is stored in the IR or compared with another id.
     Type adopt(const Type& fromOtherArena);
     TypeID adopt(TypeID fromOtherArena);
     LayoutSetID adopt(LayoutSetID fromOtherArena);
     CalleeSetID adopt(CalleeSetID fromOtherArena);
     template<typename Tag> bool owns(ID<Tag> id) const { return !TypeTable::isProvisional(id) || hasLeasedStorage(TypeTable::storageNumberOf(id)); }
-    // False as long as the task has handed out no id that the phase replaces when it ends: TypeRemap::isIdentityFor() will say the same of the task.
     bool hasUsedProvisionalRecords() const { return m_firstUses; }
     PropertyKeyID adopt(PropertyKeyID fromOtherArena);
 
@@ -249,7 +244,6 @@ public:
     LayoutSetID differenceOf(LayoutSetID, LayoutSetID);
     bool isSubsetOf(LayoutSetID, LayoutSetID);
 
-    // None where one of the ids is known to this arena alone.
     static std::optional<SharedTypeMemo::Key> sharedKeyOf(SharedTypeMemo::Relation relation, TypeID first, TypeID second)
     {
         if (TypeTable::isProvisional(first) || TypeTable::isProvisional(second))
@@ -257,7 +251,6 @@ public:
         return SharedTypeMemo::keyOf(relation, first, second);
     }
 
-    // What `compute` answers.
     TypeID sharedAnswer(SharedAnswers answers, std::optional<SharedTypeMemo::Key> key, NOESCAPE const Invocable<TypeID()> auto& compute)
     {
         SharedTypeMemo* shared = key ? m_table.sharedMemo(answers) : nullptr;
@@ -277,9 +270,7 @@ public:
         return answer;
     }
 
-    // The answers that are being computed stay with this arena, because there is more to computing them than they show: something was reported, or a memo of the caller's stood in for work that may have left records here.
     void markCurrentAnswersUnshareable() { ++m_unshareableEventCount; }
-    // It stands still while this arena gives nothing of its own to what is computed, as for sharedAnswer().
     uint64_t unshareableEventCount() const { return m_unshareableEventCount; }
 
 private:

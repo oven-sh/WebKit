@@ -23,7 +23,6 @@ static std::optional<BuiltinDispatchTarget> dispatchRootOf(const OverloadQuery& 
     return table.dispatchOf(table.canonicalID(query.builtin), query.mode);
 }
 
-// A node on a rest parameter takes a branch when every argument passed from there on lies in the tested type.
 static Vector<BuiltinOperand, 4> positionsTestedBy(const BuiltinDispatchNode& node, const BuiltinOperandTypes& operands)
 {
     Vector<BuiltinOperand, 4> positions;
@@ -40,7 +39,6 @@ static Vector<BuiltinOperand, 4> positionsTestedBy(const BuiltinDispatchNode& no
     return positions;
 }
 
-// An operand of the tested class that is not proven pristine may as well take a later branch.
 static TypeFit provenFitOf(const OverloadQuery& query, const BuiltinDispatchNode& node, BuiltinTypeID tested)
 {
     TypeFit fitOfEveryPosition = TypeFit::Inside;
@@ -59,7 +57,6 @@ static TypeFit provenFitOf(const OverloadQuery& query, const BuiltinDispatchNode
     return fitOfEveryPosition;
 }
 
-// What a test can find of the expected type, inside the type narrowed so far. An object keeps its shape, so a test finds a layout for good.
 static TypeID expectedWithin(const OverloadQuery& query, BuiltinOperand operand, TypeID current)
 {
     TypeID expected = query.expected.at(operand);
@@ -197,7 +194,6 @@ void OverloadWalk::collectOverloadsBehind(BuiltinDispatchTarget target, Vector<B
         collectOverloadsBehind(branch.target, overloads);
 }
 
-// A special case is a faster form of a later overload, which is right for its operands too.
 bool OverloadWalk::canPassBy(const BuiltinDispatchNode& node, const BuiltinDispatchBranch& branch) const
 {
     const BuiltinDispatchBranch& last = node.branches.back();
@@ -264,7 +260,6 @@ OperandDecision OverloadWalk::decideOperand(BuiltinOperand operand, BuiltinTypeI
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A table type without an exact IR type (a class with subclasses, plain data) leaves only the expected type itself to test.
 TypeID OverloadWalk::chooseNarrowedType(const Type& widest, TypeID expected, BuiltinTypeID tested, TypeFit decision) const
 {
     const TypingContext& context = m_query.context;

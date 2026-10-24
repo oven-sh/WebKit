@@ -89,7 +89,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTArrayGrow, size_t, (Instance* inst
     return true;
 }
 
-// Most pieces are a few characters long, and a call costs more than they do.
 template<typename CharacterType, typename SourceCharacterType>
 static ALWAYS_INLINE CharacterType* appendCharacters(CharacterType* destination, std::span<const SourceCharacterType> characters)
 {
@@ -122,7 +121,6 @@ static ALWAYS_INLINE CharacterType* appendString(CharacterType* destination, JSS
     }
 }
 
-// Every element is a string, and there are two at least. Null: no memory.
 template<typename CharacterType>
 static RefPtr<StringImpl> joinStrings(const WriteBarrier<Unknown>* elements, unsigned count, StringView between, unsigned joinedLength)
 {
@@ -155,12 +153,10 @@ static RefPtr<StringImpl> joinStrings(const WriteBarrier<Unknown>* elements, uns
     return joined;
 }
 
-// Null without an exception: the array has another storage, or an element that is neither a string nor a number. Nothing but own elements is read, so whatever else the array is does not matter.
 static JSString* tryJoin(JSGlobalObject* globalObject, JSArray* array, JSString* separatorOrNull)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // The elements are read through a pointer into the butterfly while ropes are allocated, and the caller may hold the array no longer.
     EnsureStillAliveScope arrayScope(array);
     JSString* between = separatorOrNull ? separatorOrNull : vm.smallStrings.singleCharacterString(',');
     auto view = between->view(globalObject);
@@ -204,7 +200,6 @@ static JSString* tryJoin(JSGlobalObject* globalObject, JSArray* array, JSString*
             if (!builder.hasOverflowed())
                 RELEASE_AND_RETURN(scope, builder.release());
         }
-        // The lengths and the widths are known by now: one buffer, one walk. The joiner says what is wrong with a text that is too long.
         if (uint64_t joinedLength = units + static_cast<uint64_t>(view->length()) * (length - 1); areAllStrings && joinedLength && joinedLength <= JSString::MaxLength) {
             RefPtr<StringImpl> joined = areAll8Bit ? joinStrings<Latin1Character>(elements, length, view, joinedLength) : joinStrings<char16_t>(elements, length, view, joinedLength);
             if (joined) [[likely]]
@@ -223,7 +218,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayJoin, JSCell*, (Instance* instance, JS
     OPERATION_RETURN(scope, tryJoin(globalObject, cellArgument<JSArray>(cell, Entry::operationAOTArrayJoin), separator ? cellArgument<JSString>(separator, Entry::operationAOTArrayJoin) : nullptr));
 }
 
-// Where no test stands in front of the call, the test is here: a join costs the same memory wherever it stands.
 JSC_DEFINE_JIT_OPERATION(operationAOTArrayJoinOfAnyReceiver, EncodedJSValue, (Instance* instance, EncodedJSValue encodedReceiver, EncodedJSValue encodedSeparator, JSCell* function))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTArrayJoinOfAnyReceiver);
@@ -257,7 +251,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTArrayIndexOfInt32, size_t, (Instan
     return found ? found - data : static_cast<size_t>(-1);
 }
 
-// `list.indexOf(text, from)` and `list.includes(text, from)`, which the code in line leaves to the general form: a string equals every string with its characters.
 JSC_DEFINE_JIT_OPERATION(operationAOTArraySearchOfAnyValue, EncodedJSValue, (Instance* instance, EncodedJSValue encodedReceiver, EncodedJSValue encodedSearched, EncodedJSValue encodedFromIndex, uint32_t answersIndex))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTArraySearchOfAnyValue);

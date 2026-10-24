@@ -20,7 +20,6 @@ namespace Typed {
 
 class FunctionAnalyses;
 
-// MayPass: start-up marks the Structure of new instances, whose prototypes are locked, and a change of an instance clears the mark.
 enum class PristineTest : uint8_t { NeverPasses, MayPass, ClosureAsCreated, InstanceStructure };
 
 PristineTest pristineTestOf(const BuiltinTable&, BuiltinClassID);
@@ -29,7 +28,6 @@ BuiltinClassID classBelowWithTestedStructure(const BuiltinTable&, BuiltinClassID
 PristineAspects aspectThatFindsMember(const BuiltinTable&, BuiltinClassID receiverClass, BuiltinID member);
 bool canOnlyBeProvenPristine(const BuiltinTable&, BuiltinClassID);
 
-// Nothing in an object says that it stays as created, or that it has no holes. Only flow proves these.
 inline constexpr PristineAspectSet aspectsWithoutTest { PristineAspects::AsCreated, PristineAspects::Dense };
 
 enum class PristineProof : uint8_t { Unknown, Proven };
@@ -39,7 +37,6 @@ struct PristineQuery {
     const Function& function;
     FunctionAnalyses* analyses { nullptr };
     std::span<const Value> passedTests { };
-    // Set where an answer follows from more than the type of the value: from where the point lies.
     bool* asksAboutPlace { nullptr };
 };
 

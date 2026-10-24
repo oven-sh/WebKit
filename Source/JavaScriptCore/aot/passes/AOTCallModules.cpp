@@ -219,6 +219,15 @@ static bool keepsError(const Module& module)
     return module.kind != ModuleKind::CommonJs || module.flags.contains(ModuleFlags::KeepsError);
 }
 
+// The body of a face evaluates its file, whether the run time lists the names of the file behind that or the body copies them itself.
+static bool isFaceOfCommonJSFile(const Program& program, const Module& module)
+{
+    if (module.kind != ModuleKind::SourceText || module.requests.isEmpty() || module.requests[0].kind != ModuleRequestKind::Require)
+        return false;
+    const Module& file = program.at(module.requests[0].target);
+    return file.kind == ModuleKind::CommonJs && file.displayPath == module.displayPath;
+}
+
 static Vector<ModuleList> collectImports(const Vector<Module>& modules)
 {
     return Vector<ModuleList>(modules.size(), [&](size_t index) {
@@ -878,6 +887,16 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
         }
         isStart.quickSet(target);
     }
+    // What a required module imports is evaluated with it.
+    Vector<uint32_t, 16> reachedByRequire;
+    for (size_t index : isAskedOfLoader)
+        reachedByRequire.append(index);
+    while (!reachedByRequire.isEmpty()) {
+        for (uint32_t target : plan.imports[reachedByRequire.takeLast()]) {
+            if (modules[target].kind == ModuleKind::SourceText && !isAskedOfLoader.quickSet(target))
+                reachedByRequire.append(target);
+        }
+    }
     // `bun run` runs a CommonJS file that is imported while it links the importer, which has not begun by then: a `require` of the importer in that file evaluates the importer there and then, once.
     auto importsCommonJSBeforeItBegins = [&](size_t index) {
         return isAskedOfLoader.quickGet(index) && modules[index].kind == ModuleKind::SourceText;
@@ -886,7 +905,7 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
         if (!importsCommonJSBeforeItBegins(index))
             continue;
         for (uint32_t target : plan.imports[index]) {
-            if (modules[target].kind == ModuleKind::CommonJs)
+            if (modules[target].kind == ModuleKind::CommonJs || isFaceOfCommonJSFile(program, modules[target]))
                 isStart.quickSet(target);
         }
     }
@@ -968,7 +987,7 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
             continue;
         auto firstOther = std::ranges::find_if(plan.steps[index], [&](FunctionID callee) {
             size_t called = moduleWithBody[callee.index()].index();
-            bool runsCommonJS = modules[called].kind == ModuleKind::CommonJs || commonJsModuleCapturedBy(program, modules[called]);
+            bool runsCommonJS = modules[called].kind == ModuleKind::CommonJs || isFaceOfCommonJSFile(program, modules[called]);
             return !runsCommonJS || plan.hasNoState.quickGet(called);
         });
         starts.last().numberOfStepsBeforeItBegins = firstOther - plan.steps[index].begin();

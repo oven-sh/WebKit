@@ -81,7 +81,6 @@ static SortedSet<T> intersectLists(const SortedSet<T>& a, bool includesAllOfA, c
     return result;
 }
 
-// A function object is an instance of Function. Of an entry that the table does not call a function, a binding or the value of a property, nothing is known.
 static bool mayBeInstanceOf(const BuiltinTable& builtins, BuiltinID builtin, BuiltinClassID builtinClass)
 {
     if (!isCallableBuiltin(builtins, builtin) || isFunctionClass(builtins, builtinClass))
@@ -89,7 +88,6 @@ static bool mayBeInstanceOf(const BuiltinTable& builtins, BuiltinID builtin, Bui
     return relate(builtins, BuiltinClasses::Function, builtinClass) == ClassRelation::Unknown;
 }
 
-// The built-ins of the first type that the second type does not name, and may hold under a class.
 static bool holdsBuiltinListedUnder(const BuiltinTable& builtins, const Type& a, const Type& b, BuiltinClassID builtinClass)
 {
     return std::ranges::any_of(a.builtins, [&](BuiltinID builtin) {
@@ -97,7 +95,6 @@ static bool holdsBuiltinListedUnder(const BuiltinTable& builtins, const Type& a,
     });
 }
 
-// Where one type names a built-in and the other the function it is a closure of, or a class it may be an instance of, the result names the object as the second type does.
 static void intersectBuiltins(Type& result, const Type& a, const Type& b, const TypeTable& types)
 {
     const BuiltinTable& builtins = types.builtins();
@@ -182,11 +179,9 @@ static void intersectClasses(Type& result, const Type& a, const Type& b, TypeAre
 {
     const BuiltinTable& builtins = arena.builtins();
     const RegExpLiteralSet anyRegExp { };
-    // A listed function of the other type is in the result itself, and its closures need no class part.
     auto overlapsAnyFunction = [&](const ClassPart& part, const Type& type) {
         return !(a.anyFunction && b.anyFunction) && type.anyFunction && isFunctionClass(builtins, part.builtinClass);
     };
-    // An object may be in the two types through parts of two classes.
     auto isListedUnder = [&](const ClassPart& part, const Type& other) {
         return std::ranges::any_of(other.classes, [&](const ClassPart& otherPart) {
             return otherPart.builtinClass != part.builtinClass
@@ -202,7 +197,6 @@ static void intersectClasses(Type& result, const Type& a, const Type& b, TypeAre
     for (const ClassPart& part : a.classes) {
         const ClassPart* partner = b.findClassPart(part.builtinClass);
         bool includesPart = overlapsAnyFunction(part, b);
-        // What the part proves does not cover an instance that is in a through another part and is listed under this class.
         bool includesPartner = partner && (overlapsAnyFunction(*partner, a) || isListedUnder(part, a) || holdsBuiltinListedUnder(builtins, a, b, part.builtinClass));
         if (!partner && !includesPart && !extendsClassOf(part, b))
             continue;
@@ -220,7 +214,6 @@ static void intersectClasses(Type& result, const Type& a, const Type& b, TypeAre
             result.classes.append(part);
             continue;
         }
-        // With includesPart, an instance may be in b as a function, so partner's proofs do not cover it.
         result.classes.append(intersectParts(includesPartner ? withoutProofs(part) : part, includesPart ? withoutProofs(*partner) : *partner, arena, declared));
     }
     for (const ClassPart& part : b.classes) {
@@ -241,7 +234,6 @@ static Type objectsWithoutLayoutOf(const Type& type)
     return objects;
 }
 
-// A set does not say which objects its members without a layout are, so each object without a layout that the other type lists may be one of them.
 static void intersectMembersWithoutLayout(Type& result, const Type& a, const Type& b, TypeArena& arena)
 {
     bool areInFirst = hasMembersWithoutLayout(arena.table(), a);
@@ -258,7 +250,6 @@ static void intersectListedObjects(Type& result, const Type& a, const Type& b, T
     const BuiltinTable& builtins = arena.builtins();
     result.anyFunction = a.anyFunction && b.anyFunction;
     result.functions = intersectLists(a.functions, mayContainAnyCallable(builtins, b), b.functions, mayContainAnyCallable(builtins, a));
-    // Beside any function a list says what to expect, and a cast says it anew: behind the failed test for a function that function is expected no more.
     if (result.anyFunction && declared == DeclaredParts::FromSecond)
         result.functions = b.functions;
     intersectBuiltins(result, a, b, arena.table());
@@ -266,7 +257,6 @@ static void intersectListedObjects(Type& result, const Type& a, const Type& b, T
     result.layouts = arena.intersectionOf(a.layouts, b.layouts);
 }
 
-// What a cast gives lies inside the cast type.
 static void castToFamilyWithUnlistedMembers(Type& result, const Type& source, const Type& family, TypeArena& arena)
 {
     if (hasMembersWithoutLayout(arena.table(), source)) {

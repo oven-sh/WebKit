@@ -26,7 +26,6 @@ void appendTaggedLayouts(Program& program, std::span<const TaggedFamily> familie
     }
 }
 
-// Two declaring types with one tag may write different types for a name. The field holds what either of them admits, and is checked only if both are.
 static void admitDeclaredType(TypeArena& types, DeclaredType& present, const DeclaredType& declared)
 {
     present.type = types.unionOf(present.type, declared.type);
@@ -65,7 +64,6 @@ static void appendFieldsOf(Program& program, TypeArena& types, LayoutID member, 
     }
 }
 
-// The fields of the maker come first and keep their positions, so an allocation of the maker lists its initial values for every member alike.
 void appendFieldsOfTaggedLayouts(Program& program, std::span<const TaggedFamily> families)
 {
     TypeArena types(program.types);

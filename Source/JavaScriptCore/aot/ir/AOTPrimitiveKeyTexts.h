@@ -17,7 +17,6 @@ struct PrimitiveKeyText {
     ASCIILiteral text;
 };
 
-// The primitives of which ToPropertyKey makes one text each.
 inline constexpr PrimitiveKeyText primitiveKeyTexts[] = {
     { Primitive::Undefined, "undefined"_s },
     { Primitive::Null, "null"_s },

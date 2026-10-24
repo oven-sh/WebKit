@@ -25,9 +25,7 @@
 #include "JSCJSValueInlines.h"
 #include "JSObject.h"
 
-#if ENABLE(AOT)
 #include "AOTMembersLeftOut.h"
-#endif
 
 namespace JSC {
 

@@ -28,7 +28,6 @@ void RuntimeIntrinsicEmitter::generateRequireBuiltinModule(const ValueContext& v
 
 void RuntimeIntrinsicEmitter::generateNativeBinding(const ValueContext& value)
 {
-    // Without a host nothing runs what is generated here.
     defineAs(value, callOperation<Boxed>(value, RuntimeOperation::NativeBinding, { word32(BuiltinBindings::hostNumberOf(value->builtin()).value_or(0)) }), typeOf(value.id()));
 }
 

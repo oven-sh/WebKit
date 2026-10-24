@@ -128,7 +128,6 @@ static bool comesFrom(const Function& function, ValueID value, ValueID source)
     return value == source;
 }
 
-// A second walk of an iterator goes on where the first one ended. A second walk of the array that stands in for it would begin anew.
 static bool isWalkedOnce(FunctionPassContext& context, ValueID iterator, UnbuiltObject& object)
 {
     const UseLists& useLists = context.analyses.useLists();
@@ -383,7 +382,6 @@ static void expandRead(FunctionPassContext& context, IRBuilder& builder, const U
 
     builder.moveToEndOf(isUnbuilt.taken);
     if (read.member == Builtins::URLSearchParamsPrototypeSize) {
-        // Unsigned: the type of the word does not say that it is not negative here.
         builder.endExpansion(expansion, builder.append(Opcode::URShift, { parts.packed, builder.appendInteger(PlainURL::shiftOfPairCount) }));
         return;
     }

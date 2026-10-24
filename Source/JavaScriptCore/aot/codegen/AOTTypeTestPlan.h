@@ -36,28 +36,18 @@ struct CellTest {
     ModuleID module { };
 
     static CellTest isObject() { return { .kind = CellTestKind::IsObject }; }
-    static CellTest isCallable() { return { .kind = CellTestKind::IsCallable }; }
-    static CellTest cellTypeIs(JSTypeRange range) { return { .kind = CellTestKind::CellTypeIs, .cellTypes = range }; }
-    static CellTest shapeIn(LayoutSetID layouts) { return { .kind = CellTestKind::ShapeIn, .layouts = layouts }; }
-    static CellTest inheritsClassInfo(BuiltinClassID builtinClass) { return { .kind = CellTestKind::InheritsClassInfo, .builtinClass = builtinClass }; }
-    static CellTest isPristine(BuiltinClassID builtinClass) { return { .kind = CellTestKind::IsPristine, .builtinClass = builtinClass }; }
-    static CellTest isBuiltinCell(BuiltinID builtin) { return { .kind = CellTestKind::IsBuiltinCell, .builtin = builtin }; }
-    static CellTest isClosureOf(FunctionID function) { return { .kind = CellTestKind::IsClosureOf, .function = function }; }
-    static CellTest isSymbol(PropertyKeyID symbol) { return { .kind = CellTestKind::IsSymbol, .symbol = symbol }; }
-    static CellTest sharingModeIs(ArrayBufferSharingMode sharingMode) { return { .kind = CellTestKind::SharingModeIs, .sharingMode = sharingMode }; }
-    static CellTest isNamespaceOf(ModuleID module) { return { .kind = CellTestKind::IsNamespaceOf, .module = module }; }
 };
 
 struct TypeTestPlan {
     TypeTestVerdict verdict { TypeTestVerdict::NeedsTest };
-    TypeID from;
-    TypeID to;
+    TypeID from { };
+    TypeID to { };
     Representation representation { Representation::JSValue };
     uint16_t passingPrimitives { 0 };
     uint16_t failingPrimitives { 0 };
-    std::optional<Range> integers;
-    Vector<StringID, 4> stringLiterals;
-    Vector<CellTest, 4> cellTests;
+    std::optional<Range> integers { };
+    Vector<StringID, 4> stringLiterals { };
+    Vector<CellTest, 4> cellTests { };
     ObjectsVerdict objects { ObjectsVerdict::NeedTest };
 
     uint16_t occurringPrimitives() const { return passingPrimitives | failingPrimitives; }

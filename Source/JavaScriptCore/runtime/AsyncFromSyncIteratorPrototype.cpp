@@ -29,7 +29,6 @@
 
 #if ENABLE(AOT)
 #include "AOTAsyncResumption.h"
-#include "ExceptionHelpers.h"
 #include "JSMicrotask.h"
 #endif
 #include "AsyncContextSwapScope.h"
@@ -107,7 +106,7 @@ static bool callSyncIteratorMethodAndExtract(JSGlobalObject* globalObject, JSVal
     RETURN_IF_EXCEPTION(scope, { });
 
     if (!result.isObject()) [[unlikely]] {
-        throwTypeError(globalObject, scope, IteratorResultNotObjectError);
+        throwTypeError(globalObject, scope, "Iterator result interface is not an object."_s);
         return { };
     }
 
@@ -251,7 +250,7 @@ JSC_DEFINE_HOST_FUNCTION(asyncFromSyncIteratorPrototypeFuncThrow, (JSGlobalObjec
                 RELEASE_AND_RETURN(scope, JSValue::encode(promise->rejectWithCaughtException(vm, scope)));
 
             if (!returnResult.isObject()) [[unlikely]] {
-                throwTypeError(globalObject, scope, IteratorResultNotObjectError);
+                throwTypeError(globalObject, scope, "Iterator result interface is not an object."_s);
                 RELEASE_AND_RETURN(scope, JSValue::encode(promise->rejectWithCaughtException(vm, scope)));
             }
         }

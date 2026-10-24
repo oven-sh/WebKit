@@ -34,7 +34,6 @@ bool includesData(const Program& program, const Type& type, const DataNode& node
     case DataNode::Kind::BigInt:
         return type.primitives & Primitive::BigInt;
     case DataNode::Kind::Array:
-        // An array is an object without a layout. What is proven about its contents and its storage is flow's to answer for: the slot holds any array.
         return type.anyObject || type.findClassPart(BuiltinClasses::Array) || hasMembersWithoutLayout(program, type);
     case DataNode::Kind::Object: {
         LayoutID layout = node.as<DataNode::Object>().layout;

@@ -35,7 +35,6 @@ struct LastPiece {
 
 } // anonymous namespace
 
-// split takes its matches from the left, each after the end of the one before: "a:::b" split at "::" ends in ":b".
 static bool canOverlapItself(StringView separator)
 {
     unsigned length = separator.length();
@@ -83,7 +82,6 @@ static bool readsLengthOf(FunctionPassContext& context, const Value& read, Value
     }
 }
 
-// a.at(-1) and a.pop(), where nothing else uses a.
 static std::optional<ValueID> findArrayReadByCall(FunctionPassContext& context, const ValueSite& site)
 {
     const Value& call = context.function.at(site.value);
@@ -100,7 +98,6 @@ static std::optional<ValueID> findArrayReadByCall(FunctionPassContext& context, 
     return findSingleUseDefinitionUsedOnce(context, call.receiverOperand(), site.value);
 }
 
-// a[a.length - 1], where nothing else uses a, the length or the index.
 static std::optional<ValueID> findArrayReadAtLastIndex(FunctionPassContext& context, const ValueSite& site)
 {
     const Function& function = context.function;
@@ -128,7 +125,6 @@ static std::optional<LastPiece> matchLastPiece(FunctionPassContext& context, con
         array = findArrayReadAtLastIndex(context, site);
     if (!array)
         return std::nullopt;
-    // A pop inside a loop with its split outside takes another element on every run.
     if (!context.analyses.blockCycles().isInEveryCycleOf(context.analyses.useLists().blockOf(*array), site.block))
         return std::nullopt;
     std::optional<SplitString> splitString = splitStringOf(context, context.function.at(*array));
@@ -154,7 +150,6 @@ static ValueID insertStartOfLastPiece(FunctionPassContext& context, IRBuilder& b
     if (separatorLength == 1)
         return afterSeparator;
 
-    // Without a separator the piece starts at 0: the sign of -1 fills a word, whose complement masks the sum away.
     ValueID signs = insert(IRBuilder::make(Opcode::RShift, { found, insert(makeInteger(31)) }));
     return insert(IRBuilder::make(Opcode::BitAnd, { afterSeparator, insert(IRBuilder::make(Opcode::BitNot, { signs })) }));
 }
@@ -181,7 +176,6 @@ static void emitReverseSearch(FunctionPassContext& context, IRBuilder& builder, 
     checkRewrite(context, piece.read, replaced);
 }
 
-// The walk cuts nothing on its way: it remembers where the substring it has reached begins.
 static void emitWalkToLastPiece(FunctionPassContext& context, IRBuilder& builder, const SplitString& splitString, ProgramPoint read)
 {
     IRBuilder::Expansion cut = builder.beginExpansion(read);
@@ -220,7 +214,6 @@ static void emitForwardWalks(FunctionPassContext& context, IRBuilder& builder, s
 unsigned simplifyLastPiecesOfSplits(FunctionPassContext& context, const BuiltinCallSites& calls)
 {
     Function& function = context.function;
-    // The read may be an operation of any kind. What it reads is the result of a call.
     bool hasSplit = std::ranges::any_of(calls, [&](const ValueSite& site) {
         return !!splitStringOf(context, function.at(site.value));
     });

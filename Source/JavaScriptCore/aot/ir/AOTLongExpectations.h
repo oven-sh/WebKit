@@ -15,7 +15,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// What is expected of a position is a guess. That a location holds nothing until its first store is none, so the mark of a dead zone stays.
 class LongExpectations {
 public:
     LongExpectations(const Program& program, const ParallelLoops& loops)

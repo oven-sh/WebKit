@@ -72,7 +72,6 @@ public:
             common |= m_words[i] & other.m_words[i];
         return common;
     }
-    // In ascending order.
     template<typename Functor>
     constexpr void forEach(const Functor& functor) const
     {

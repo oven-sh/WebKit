@@ -433,7 +433,6 @@ bool describeByRole(const Program& program, const Function& function, EffectDesc
         LayoutID layout = function.creator.as<CreatorRecord::Serializer>().layout;
         if (!layout)
             return false;
-        // Its body tests for this layout and does nothing to an object of another one, of the same declared type or not.
         ScratchTypeArena scratch(program.types);
         describeOverload(program, table.overloadIDsOf(Builtins::JSONStringify).at(0), Type::forLayout(layout, scratch), description);
         for (Opcode row : { Opcode::JSONHasStackSpace, Opcode::StringBuilderReserve, Opcode::StringBuilderCommit, Opcode::StringBuilderCheckpoint, Opcode::StringBuilderRollBack, Opcode::StringBuilderAppend, Opcode::JSONAppendString })
@@ -453,7 +452,6 @@ bool describeByRole(const Program& program, const Function& function, EffectDesc
     case FunctionRole::BoundFunction:
         description.addFunction(function.creator.as<CreatorRecord::BoundFunction>().target);
         return true;
-    // Until its body is summarized: the body of the constructor, on an object that the caller has made.
     case FunctionRole::AllocatedThisVersion:
         description.addFunction(function.derivation.source);
         return true;
@@ -483,7 +481,6 @@ bool describeByRole(const Program& program, const Function& function, EffectDesc
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A built-in reads whatever its operand reaches, and the table need not say so: nothing moves a store across a call of it.
 static FunctionSummary summarizeByRole(const EffectContext& context, const Function& function, const EffectDescription& description)
 {
     EffectsOnEdges effects = resolveEffects(context, description);
@@ -492,7 +489,6 @@ static FunctionSummary summarizeByRole(const EffectContext& context, const Funct
         effects.handler.reads.merge(LocationMasks { perObjectHeaps });
 
     ParameterSummary parameter;
-    // What the constructor does to the object it makes is no effect of the constructor.
     if (function.role != FunctionRole::AllocatedThisVersion)
         parameter.memory.writes = effects.onAnyEdge().writes.restrictedTo(perObjectHeaps);
     Vector<ParameterSummary> parameters(function.numberOfEntryParameters(), [&](size_t) {
@@ -563,7 +559,6 @@ void EffectSummaries::dump(PrintStream& out, const Program& program) const
     }
 }
 
-// An opaque value may refer to a function, a built-in class may have instances that are called, and the table has its own rule for environments.
 static bool isNeverCalled(const Type& type)
 {
     return type.isJavaScriptValue() && !type.mayBeFunction() && type.classes.isEmpty();
@@ -593,7 +588,6 @@ EffectSummaries createSummariesFromFlow(const Program& program, const FlowResult
     return createSummariesFromFlow(program, flow, computeBorrowedParameters(program, build), build);
 }
 
-// Flow names each use, also of what is read through the parameter, as the program was when flow looked at it.
 static OperandSummary withoutUsesThatTableExcludes(OperandUses usesByFlow, const BorrowedParameters& borrowedParameters, FunctionID id, uint32_t borrowedParameter)
 {
     OperandUses uses = usesByFlow - OperandUses { OperandUse::Retains, OperandUse::Returns, OperandUse::PassesToUserCode };
@@ -604,7 +598,6 @@ static OperandSummary withoutUsesThatTableExcludes(OperandUses usesByFlow, const
     return { uses, RetainedIn::UnknownMemory, 0 };
 }
 
-// The table has one answer for a call of a parameter and a call of what is read through it.
 FunctionSummary createSummaryFromFlow(const Program& program, const FlowResults& flow, const BorrowedParameters& borrowedParameters, BuildContext& build, FunctionID id)
 {
     bool asksTable = build.isEnabled(FlowResultKind::OperandSummaries, id.index());

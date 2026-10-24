@@ -122,7 +122,6 @@ FunctionID findFunctionAsReadOfProvisional(const Program& program, const Functio
 
 Vector<InternalError> FunctionVerifier::takeErrors()
 {
-    // A provisional id means nothing to a reader of the diagnostics, and neither do the blocks and values of that body.
     if (ProvisionalFunctions::contains(m_id)) {
         FunctionID functionAsRead = findFunctionAsReadOfProvisional(m_program, m_function);
         for (InternalError& error : m_errors) {
@@ -365,7 +364,6 @@ void FunctionVerifier::verifyBlockOrder()
     }
 }
 
-// Typing runs before dominance is verified and follows operands, so it needs a body without cycles of operands.
 void FunctionVerifier::verifyDefinitionsPrecedeUses()
 {
     BitVector isDefined(m_function.values.size());
@@ -404,7 +402,6 @@ void FunctionVerifier::verifyEntries()
                 verifyEntry(*this, block, id, value, value.opcode);
                 if (!hasFailed())
                     verifyFields(*this, block, id, value);
-                // The result rule of a call in a form with several results asserts that the overload has that form.
                 if (!hasFailed() && value.opcode == Opcode::CallBuiltin && !overloadHasForm(m_program.builtins(), value.overload(), value.builtinCallForm()))
                     fail(InternalErrorKind::InvalidBuiltinCall, block, id);
                 if (!hasFailed() && !m_inputs.lacksEngineFields && Value::opcodesWithReadOrigin.contains(value.opcode) && !isValidInlineFrame(value.readOrigin().inlineFrame))

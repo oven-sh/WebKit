@@ -100,7 +100,7 @@ Vector<Structure*> findDeadStructures(VM& vm, const Vector<Structure*>& structur
 {
     Vector<Structure*> deadStructures;
     for (Structure* structure : structures) {
-        if (!vm.heap.isMarked(structure))
+        if (!hasSurvivedCollection(vm, structure))
             deadStructures.append(structure);
     }
     return deadStructures;
@@ -426,8 +426,8 @@ void edenSweepLooksOnlyAtWhatWasWritten()
     std::optional<unsigned> rewrittenOwner;
     for (unsigned i = 0; i < numberOfCandidates; ++i) {
         AOT_TEST_CHECK(findAddition(fixture, owners.structures[i].get(), Level::Front));
-        numberOfDeadTargetsInHashedTable += !vm.heap.isMarked(targets[i]) && findAddition(fixture, owners.structures[i].get(), Level::HashedTable);
-        if (!vm.heap.isMarked(targets[i]) && !rewrittenOwner)
+        numberOfDeadTargetsInHashedTable += !hasSurvivedCollection(vm, targets[i]) && findAddition(fixture, owners.structures[i].get(), Level::HashedTable);
+        if (!hasSurvivedCollection(vm, targets[i]) && !rewrittenOwner)
             rewrittenOwner = i;
     }
     AOT_TEST_CHECK(numberOfDeadTargetsInHashedTable && rewrittenOwner);

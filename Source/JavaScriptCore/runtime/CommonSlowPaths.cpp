@@ -35,7 +35,6 @@
 #include "DirectArguments.h"
 #include "ErrorHandlingScope.h"
 #include "ExceptionFuzz.h"
-#include "ExceptionHelpers.h"
 #include "FrameTracers.h"
 #include "IteratorOperations.h"
 #include "JSArrayIterator.h"
@@ -318,7 +317,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_check_tdz)
     BEGIN();
     auto bytecode = pc->as<OpCheckTdz>();
     if (bytecode.m_targetVirtualRegister == codeBlock->thisRegister())  {
-        THROW(createReferenceError(globalObject, SuperNotCalledError));
+        THROW(createReferenceError(globalObject, "'super()' must be called in derived constructor before accessing |this| or returning non-object."_s));
     } else {
         auto [block, index] = getBytecodeIndex(codeBlock->vm(), callFrame);
         auto info = block->expressionInfoForBytecodeIndex(index);
@@ -753,7 +752,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_typeof_is_function)
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_throw_static_error_from_instanceof)
 {
     BEGIN();
-    THROW(createTypeError(globalObject, InstanceofRightHandSideNotObjectError));
+    THROW(createTypeError(globalObject, "Right hand side of instanceof is not an object"_s));
 }
 
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_instanceof_custom_from_instanceof)

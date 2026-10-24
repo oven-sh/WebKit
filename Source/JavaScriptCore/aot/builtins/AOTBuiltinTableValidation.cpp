@@ -168,7 +168,6 @@ static CellLookup findCell(const RealmComparison& comparison, BuiltinCellKey key
     return found;
 }
 
-// No property path reaches a hidden root or a module namespace, and findInRealm() locates a host's only through the binding of its class.
 static bool isUnreachableHostRoot(const Builtin& builtin, BuiltinLookupFailure failure)
 {
     return !builtin.holder && builtin.origin == BuiltinOrigin::Host && failure == BuiltinLookupFailure::IsMissing;
@@ -229,7 +228,6 @@ static void checkValue(RealmComparison& comparison, BuiltinID id)
         return;
     auto found = findValueInHolder(comparison.realm, comparison.objectOf(builtin.holder), table.identifierOf(comparison.vm(), builtin.name));
     if (!found) {
-        // What changes on its own may not be there yet: the host puts some members on an object of the realm when a module is loaded.
         if (found.error() != BuiltinLookupFailure::IsMissing || builtin.mutability != BuiltinMutability::ChangesOnItsOwn)
             comparison.report(id, describe(found.error()));
         return;
@@ -352,7 +350,6 @@ static void checkInheritance(RealmComparison& comparison)
 {
     forEachFoundObject(comparison, [&](BuiltinID id, JSObject* object) {
         auto& builtin = comparison.table.at(id);
-        // An embedder's global object may have prototypes of its own above Object.prototype.
         if (builtin.flags.contains(BuiltinFlag::IsGlobalObject))
             return;
         if (!hasDeclaredPrototype(comparison, builtin, object))
@@ -360,7 +357,6 @@ static void checkInheritance(RealmComparison& comparison)
     });
 }
 
-// A type names a constant object by its canonical id, and takes two ids for two objects.
 static void checkObjectIdentities(RealmComparison& comparison)
 {
     auto& table = comparison.table;
@@ -383,7 +379,6 @@ static String describeMemberStep(const Identifier& key)
     return makeString('.', key.string());
 }
 
-// The compiler takes a name of any other class, and every symbol, to be absent from Object.prototype.
 static bool isOnObjectPrototype(const Identifier& key)
 {
     if (key.isSymbol())
@@ -429,7 +424,6 @@ static void checkClosedHolders(RealmComparison& comparison)
 {
     forEachFoundObject(comparison, [&](BuiltinID holder, JSObject* object) {
         auto& builtin = comparison.table.at(holder);
-        // Whoever makes a realm without the host puts properties of its own on the global object.
         bool isClosedGlobalObject = builtin.flags.contains(BuiltinFlag::IsGlobalObject) && BuiltinBindings::provides(BuiltinOrigin::Host);
         bool isClosed = holder == Builtins::ObjectPrototype || builtin.flags.contains(BuiltinFlag::ListsAllMembers) || isClosedGlobalObject;
         if (isClosed && !builtin.sameObjectAs)
@@ -437,7 +431,6 @@ static void checkClosedHolders(RealmComparison& comparison)
     });
 }
 
-// The flow analysis takes no object of the table for a promise, and none but a prototype object for a thenable.
 static void checkThatNothingSettlesLater(RealmComparison& comparison)
 {
     VM& vm = comparison.vm();

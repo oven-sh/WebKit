@@ -26,10 +26,8 @@
 #include "config.h"
 #include "JSPromiseConstructor.h"
 
-#if ENABLE(AOT)
 #include "AOTBuiltinModules.h"
 #include "AOTSavedFrame.h"
-#endif
 #include "AggregateError.h"
 #include "BuiltinNames.h"
 #include "CachedCall.h"

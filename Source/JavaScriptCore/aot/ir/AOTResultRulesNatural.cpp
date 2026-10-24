@@ -145,7 +145,6 @@ static std::optional<Type> bitwiseResultType(Opcode opcode, Range a, Range b)
         bool mayBeNegative = a.minimum < 0 || b.minimum < 0;
         if (mayBeNegative && opcode == Opcode::BitXor)
             return Type::integer(Range::int32());
-        // A bit that is set beside the sign makes a number larger, so x | y is no smaller than x and no smaller than y where they have one sign, and no smaller than the negative one where they differ.
         if (a.maximum < 0 || b.maximum < 0)
             return Type::integer({ std::min(a.minimum, b.minimum), -1 });
         return Type::integer({ mayBeNegative ? std::min(a.minimum, b.minimum) : 0, (int64_t { 1 } << std::bit_width(static_cast<uint64_t>(std::max(a.maximum, b.maximum)))) - 1 });
@@ -167,7 +166,6 @@ static std::optional<Type> bitwiseResultType(Opcode opcode, Range a, Range b)
     }
 }
 
-// One operand bounds the result, whatever number the other one is converted from.
 static std::optional<Type> bitwiseResultBoundedByOneOperand(Opcode opcode, OperandTypes operands)
 {
     switch (opcode) {
@@ -251,7 +249,6 @@ static std::optional<Type> numberResultOf(Opcode opcode, OperandTypes operands)
         return type->isInteger();
     });
     if (areAllIntegers) {
-        // Without an answer the rules for wider operands decide, so that a narrower operand never gives a wider result.
         if (std::optional<Type> result = integerResultOf(opcode, operands))
             return result;
     }
@@ -305,7 +302,6 @@ static bool mayBeZero(const Type& type)
 
 static Type strictEqualityResultType(const TypingContext& context, const Type& left, const Type& right, const Type& upperBound)
 {
-    // 0 === -0 holds, and a type keeps the two zeros in different parts.
     bool mayBeEqual = left.overlaps(right, context.program) || (mayBeZero(left) && mayBeZero(right));
     if (!mayBeEqual)
         return Type::fromPrimitives(Primitive::False);
@@ -375,7 +371,6 @@ static Type refineConversion(Opcode opcode, const Type& operand, const Type& upp
             return Type::fromPrimitives(Primitive::True);
         return upperBound;
     case Opcode::ToObject:
-        // undefined and null throw, so they add nothing. The types of a loop rise from never and do not come down: the answer for null alone has to lie inside the answer for null and an object.
         return operand.primitives & ~Primitive::UndefinedOrNull ? upperBound : operand.withOnlyObjects();
     case Opcode::ToThis:
         return operand.isObject() ? operand : upperBound;

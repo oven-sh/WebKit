@@ -45,13 +45,11 @@ public:
     const BuiltinCallQuery& query() const LIFETIME_BOUND { return m_query; }
 
 private:
-    // The front end hands every reference type over with undefined and null beside it: a field or a variable that is declared a string is `undefined|null|string`.
     void expectArgumentsToBePresent(bool isCalledOnlyDirectly)
     {
         TypeArena& types = m_typing.types;
         for (size_t index = 0; index < m_expected.arguments.size(); ++index) {
             const Type& expected = types.at(m_expected.arguments[index]);
-            // `undefined|T` alone is what the program has written: an optional parameter. `null|T` likewise.
             bool isAsFrontEndHandsOver = !expected.anyObject && (expected.primitives & Primitive::UndefinedOrNull) == Primitive::UndefinedOrNull;
             if (isCalledOnlyDirectly ? m_expected.arguments[index] != m_proven.arguments[index] : !isAsFrontEndHandsOver)
                 continue;
@@ -61,7 +59,6 @@ private:
         }
     }
 
-    // The same as for a receiver, below: `Object.values(list[i])`, where the element may lie past the end. No overload accepts or converts undefined or null there, so the call throws for them.
     void expectArgumentsRefusedWhenAbsentToBePresent(const BuiltinTable& table, BuiltinID callee, BuiltinCallMode mode)
     {
         TypeArena& types = m_typing.types;
@@ -89,7 +86,6 @@ private:
         }
     }
 
-    // `Object.create(base)`, where base may be anything, or an object or undefined.
     void expectArgumentsToBeWhatEveryOverloadTakes(const BuiltinTable& table, BuiltinID callee, BuiltinCallMode mode)
     {
         TypeArena& types = m_typing.types;
@@ -111,14 +107,12 @@ private:
             });
             if (!allTakeTheSame || !hasCodeInLine || !taken || fitOf(m_typing, m_expected.arguments[index], taken).fit != TypeFit::Unknown)
                 continue;
-            // All that they take, not the part of it that is expected: the code in line asks for no more, and the wider test is the cheaper one and fails less.
             Type expected = types.at(m_proven.arguments[index]).intersectWith(typeOfBuiltinType({ m_typing }, taken), types);
             if (!expected.isNever())
                 m_expected.arguments[index] = types.intern(WTF::move(expected));
         }
     }
 
-    // A method that accepts neither undefined nor null as its receiver throws for them.
     void expectReceiverToBePresent(const BuiltinTable& table, BuiltinID callee)
     {
         TypeArena& types = m_typing.types;
@@ -197,7 +191,6 @@ BuiltinUsePlan planBuiltinUse(const BuiltinUseInputs& inputs, ValueID use, Progr
     if (!plan || resultFitOf(inputs, use, plan) == ResultFit::Within)
         return plan;
 
-    // A function of the library that takes whatever arrives declares less about its result than the table says of its entry.
     if (plan.kind != BuiltinUseKind::LibraryCall)
         return { };
     plan.assumedResult = inputs.function.at(use).type;
@@ -298,7 +291,6 @@ bool prependRequirement(TypeArena& types, BuiltinUsePlan& plan, UseRequirement r
     return isPossible;
 }
 
-// A value that is validated against nothing is the value, which is what the function of the library behind the entry returns. No pass expands such a call.
 static RuntimeFunctionID libraryFunctionOf(const Program& program, const BuiltinOverload& overload, ExpectedResultID expected)
 {
     bool validatesResult = expected && !program.at(expected).validation.isEmpty();
@@ -307,7 +299,6 @@ static RuntimeFunctionID libraryFunctionOf(const Program& program, const Builtin
     return overload.libraryFunction();
 }
 
-// A call that a built-in only forwards becomes the forwarded call, which ResolveCalls makes of the CallBuiltin.
 static FunctionID findLibraryFunction(const Program& program, const BuiltinOverload& overload, ExpectedResultID expected)
 {
     if (forwardsCall(overload))
@@ -324,7 +315,6 @@ static FunctionID findLibraryFunction(const Program& program, const BuiltinOverl
     return entry->function;
 }
 
-// The operation goes on calling or reading whatever the property holds: the entry may have no function object of its own.
 static bool staysGenericOperation(const BuiltinOverload& overload)
 {
     return overload.code.implementation.kind == BuiltinImplementationKind::Generic && !overload.hasTypedResult();
@@ -345,7 +335,6 @@ bool hasDirectFunction(const BuiltinTable& table, BuiltinID callee)
 BuiltinUsePlan planKnownBuiltinCall(const BuiltinUseInputs& inputs, const KnownBuiltinCall& known, ProgramPoint point)
 {
     const BuiltinTable& table = inputs.program.builtins();
-    // A CallBuiltin names no module.
     if (isCalledOnlyDirectly(table, known.callee) && !hasDirectFunction(table, known.callee))
         return { };
     CallQueryStorage storage(inputs, known.callee, known.mode, known.operands, known.nullishReceiver);
@@ -596,7 +585,6 @@ static void becomePlannedCall(Value& value, const BuiltinUsePlan& plan, const Bu
     value.setIsDemotedTailCall(isDemotedTailCall);
 }
 
-// `new C(..)` constructs for C itself.
 static ValueID insertNewTarget(const BuiltinUseRewrite& rewrite, const BuiltinUsePlan& plan, Origin origin)
 {
     FunctionPassContext& context = rewrite.context;
@@ -642,7 +630,6 @@ void applyBuiltinUse(const BuiltinUseRewrite& rewrite, const BuiltinUsePlan& pla
 
     Origin origin = function.at(rewrite.use).origin();
     bool isPropertyAccess = accessOf(function.at(rewrite.use).opcode) != Access::None;
-    // ScopedLambda hands its arguments to the functor as lvalues.
     auto insertWithOrigin = [&](auto&& inserted) {
         ValueID id = rewrite.insert(WTF::move(inserted));
         function.edit(id, ValueEdit::Definition).setOrigin(origin);

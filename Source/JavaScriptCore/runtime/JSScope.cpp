@@ -26,9 +26,7 @@
 #include "config.h"
 #include "JSScope.h"
 
-#if ENABLE(AOT)
 #include "AOTModuleRecord.h"
-#endif
 #include "AbstractModuleRecord.h"
 #include "DeferTermination.h"
 #include "JSCInlines.h"

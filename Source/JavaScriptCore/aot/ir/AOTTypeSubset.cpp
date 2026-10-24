@@ -32,7 +32,6 @@ ClassRelation relate(const BuiltinTable& builtins, BuiltinClassID first, Builtin
         return a.sharingMode == b.sharingMode ? ClassRelation::Unknown : ClassRelation::Disjoint;
     if (builtins.isSameOrSubclassOf(first, second) || builtins.isSameOrSubclassOf(second, first))
         return ClassRelation::Unknown;
-    // Every cell of its type is an instance of a class that is tested by cell type.
     if (a.instanceTest != b.instanceTest && haveSameCellType)
         return ClassRelation::Unknown;
     return ClassRelation::Disjoint;
@@ -116,7 +115,6 @@ static bool putsValueInto(const BuiltinTable& builtins, const BuiltinHostUses& u
     });
 }
 
-// process.nextTick is what a function of the library answers to native code. The table does not say which function of the library that is.
 static bool holdsValueFromLibrary(const BuiltinTable& builtins, BuiltinID entry)
 {
     bool isExport = std::ranges::any_of(builtins.moduleLoadsOf(entry), [&](const BuiltinModuleLoad& load) {
@@ -129,7 +127,6 @@ static bool holdsValueFromLibrary(const BuiltinTable& builtins, BuiltinID entry)
     });
 }
 
-// The engine, the host and the library make the built-in objects, so none is a closure of a function of the application.
 bool mayBeClosureOf(const TypeTable& types, BuiltinID builtin, FunctionID function, const RuntimeFunctionData* recordOfFunction)
 {
     const Program* program = types.program();
@@ -220,7 +217,6 @@ static bool areCallablesSubset(const Type& a, const Type& b, const BuiltinTable&
     });
 }
 
-// A Buffer is a Uint8Array. Both are told by one cell type, so the test for the class that is extended takes every instance of the class that extends it.
 static const ClassPart* findPartHolding(const Type& type, BuiltinClassID builtinClass, const BuiltinTable& builtins)
 {
     if (const ClassPart* part = type.findClassPart(builtinClass))

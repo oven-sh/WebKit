@@ -38,9 +38,7 @@
 #include "StructureChain.h"
 #include "StructureInlines.h"
 #include "StructureRareDataInlines.h"
-#if ENABLE(AOT)
 #include "AOTPropertyWalk.h"
-#endif
 #include <wtf/TZoneMalloc.h>
 #include <wtf/TZoneMallocInlines.h>
 

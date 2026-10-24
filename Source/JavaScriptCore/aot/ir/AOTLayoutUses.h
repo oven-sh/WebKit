@@ -35,10 +35,8 @@ struct LayoutUses {
     BitVector typesOfConvertedResults;
 };
 
-// Collects the layouts that function bodies name, one function at a time, so that whoever has a body in cache can collect from it.
 class LayoutUseCollector {
 public:
-    // The types and the type sites of the program must have been read.
     LayoutUseCollector(const Program&, size_t numberOfLayouts, unsigned numberOfWorkers);
 
     void collect(const Function&, unsigned worker);

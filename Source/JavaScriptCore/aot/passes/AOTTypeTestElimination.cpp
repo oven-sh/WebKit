@@ -13,95 +13,58 @@
 #include "AOTEliminateGuards.h"
 #include "AOTInlineBuiltinForms.h"
 #include "AOTPropertyAccessReceivers.h"
-#include "AOTResultRules.h"
 #include "AOTRuleSupport.h"
 #include "AOTSSARepair.h"
 #include "AOTSort.h"
 #include "AOTValueSubstitution.h"
 #include "AOTVector.h"
 #include <algorithm>
-#include <bit>
 #include <utility>
-#include <wtf/Hasher.h>
+#include <wtf/BitSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-struct TestedBranch {
-    BlockID block;
-    uint32_t index { 0 };
-    ValueID test;
-    TestConditionID condition;
-};
-
-enum class ProofOrigin : uint8_t { Unknown, Test, SwitchCase, Allocation };
-
-struct BranchVerdicts {
-    BitVector redundant;
-    BitVector unreachable;
-};
-
-enum class TestUse : uint8_t { FoldedBranch, Boolean, Other };
-
-struct FoldedBranch {
-    uint32_t branch { 0 };
-    ValueID replacementGuard;
-    Vector<Use, 2> booleanUses;
-    bool hasOtherUse { false };
-};
-
-struct FoldingInputs {
-    FunctionPassContext& context;
-    const TestConditions& conditions;
-    std::span<const TestedBranch> branches;
-    std::span<const ExistingProof> proofs;
-    const BitVector& redundant;
-};
-
-class BranchFolder {
-    WTF_MAKE_NONCOPYABLE(BranchFolder);
-public:
-    explicit BranchFolder(const FoldingInputs&);
-
-    void run();
-
-private:
-    const TestedBranch& branchOf(const FoldedBranch& folded) const LIFETIME_BOUND { return m_inputs.branches[folded.branch]; }
-
-    void adoptProofs();
-    void collectUsesOfTests();
-    TestUse classify(const Use&, const TestedBranch&) const;
-    void defineProofs();
-    void chooseReplacementGuards();
-    void replaceBooleanUses();
-    void fold(const FoldedBranch&);
-    void eraseUnusedTests();
-    void repairProofs();
-
-    FoldingInputs m_inputs;
-    Function& m_function;
-    FunctionAnalyses& m_analyses;
-    IRBuilder m_builder;
-    Vector<FoldedBranch, 4> m_foldedBranches;
-    BitVector m_foldedBlocks;
-    BitVector m_conditionsInPlay;
-    Vector<Vector<ValueID, 2>> m_provingValues;
-    Vector<Vector<ValueID, 2>> m_definitions;
-};
-
 // Where the conditions of branches hold: the answers of TestCoverage over TestEvents for requirements that only ask, without a budget, with slow paths that come back.
 class ConditionCoverage {
     WTF_MAKE_NONCOPYABLE(ConditionCoverage);
 public:
-    ConditionCoverage(FunctionAnalyses&, const TestConditions&, std::span<const TestRequirement>, std::span<const ExistingProof>);
+    ConditionCoverage(FunctionAnalyses& analyses, const TestConditions& conditions, std::span<const TestRequirement> requirements, std::span<const ExistingProof> proofs)
+        : m_analyses(analyses)
+        , m_conditions(conditions)
+        , m_requirements(requirements)
+    {
+        RELEASE_ASSERT(conditions.size() <= Row::size());
+        collectProofs(proofs);
+        findWhereConditionsMatter();
+    }
 
-    void solve(const BitVector* blocksWithIgnoredFailingEdge);
-    RequirementCoverage of(uint32_t requirement);
+    void solve(const BitVector* blocksWithIgnoredFailingEdge)
+    {
+        m_blocksWithIgnoredFailingEdge = blocksWithIgnoredFailingEdge;
+        m_didSolveFromProofs = solveFromProofs();
+        if (!m_didSolveFromProofs)
+            solveEveryBlock();
+    }
+
+    RequirementCoverage of(uint32_t requirement)
+    {
+        ProgramPoint point = m_requirements[requirement].point;
+        if (m_didSolveFromProofs ? isDead(point.block) : !m_isReached.get(point.block.index()))
+            return RequirementCoverage::Unknown;
+        Row row;
+        if (!m_didSolveFromProofs || wasVisited(point.block))
+            row = m_heads[point.block.index()];
+        carryThrough(point.block, row, point.index);
+        return row.get(m_requirements[requirement].condition.index()) ? RequirementCoverage::Covered : RequirementCoverage::NeedsTest;
+    }
 
 private:
-    using Word = uint64_t;
-    using Row = Vector<Word, 4>;
+    // A bit for each condition. A build can only lower the limit.
+    using Row = WTF::BitSet<256>;
+    static_assert(defaultLimitValue(LimitID::MaxTestedTypesPerFunction, Architecture::ARM64) <= Row::size());
+    static_assert(defaultLimitValue(LimitID::MaxTestedTypesPerFunction, Architecture::X86_64) <= Row::size());
 
     // In the order in which they act where they have one index. A requirement stands between Barrier and Suspension.
     enum class ItemKind : uint8_t { ParameterProof, Barrier, Suspension, Ending, ValueProof };
@@ -115,25 +78,31 @@ private:
     struct ItemsOfBlock {
         uint32_t first { UINT32_MAX };
         uint32_t end { 0 };
-
-        bool areCollected() const { return first != UINT32_MAX; }
     };
 
-    struct PointProof {
+    // The conditions that the writer was asked about, and those among them that it may end.
+    struct Ending {
+        Row asked;
+        Row ended;
+    };
+
+    struct PlacedProof {
         BlockID block;
-        bool isParameter { false };
-        uint32_t index { 0 };
-        uint32_t proof { 0 };
-    };
-
-    struct EdgeProof {
-        Edge edge;
+        // On an edge the index of its target. In a block zero for a parameter, and for a value one more than its index.
+        uint32_t place { 0 };
         uint32_t condition { 0 };
     };
 
-    struct WrittenByWriter {
-        ValueID writer;
-        GuardWriter::WrittenDependencies written;
+    struct PlacedProofs {
+        Vector<PlacedProof, 8> sorted;
+        BitVector blocks;
+
+        std::span<const PlacedProof> in(BlockID block) const
+        {
+            if (!blocks.quickGet(block.index()))
+                return { };
+            return recordsWith(sorted.span(), block.index(), [](const PlacedProof& proof) { return proof.block.index(); });
+        }
     };
 
     // Each number says something of the solve that it names.
@@ -144,1368 +113,941 @@ private:
         uint32_t numberOfDeadEdges { 0 };
     };
 
-    static bool isEmpty(std::span<const Word> row) { return std::ranges::all_of(row, [](Word word) { return !word; }); }
-    static void set(std::span<Word> row, uint32_t condition) { row[condition / 64] |= Word { 1 } << condition % 64; }
-    static bool get(std::span<const Word> row, uint32_t condition) { return row[condition / 64] >> condition % 64 & 1; }
-    static void clearAll(std::span<Word> row) { std::ranges::fill(row, 0); }
-    static void forEachCondition(std::span<const Word> row, NOESCAPE const Invocable<void(uint32_t)> auto& functor)
-    {
-        for (uint32_t wordIndex = 0; wordIndex < row.size(); ++wordIndex) {
-            for (Word word = row[wordIndex]; word; word &= word - 1)
-                functor(64 * wordIndex + std::countr_zero(word));
-        }
-    }
+    static constexpr uint32_t failingTargetIndex = 1;
 
-    std::span<Word> headOf(BlockID block) { return m_heads.mutableSpan().subspan(size_t { block.index() } * m_numberOfWords, m_numberOfWords); }
-    std::span<Word> tailOf(BlockID block) { return m_tails.mutableSpan().subspan(size_t { block.index() } * m_numberOfWords, m_numberOfWords); }
     bool wasVisited(BlockID block) const { return m_states[block.index()].solveThatVisited == m_solve; }
     bool isDead(BlockID block) const { return m_states[block.index()].solveThatFoundDead == m_solve; }
     bool isLeftOut(Edge edge) const { return m_blocksWithIgnoredFailingEdge && !edge.isHandlerEdge() && edge.targetIndex == failingTargetIndex && m_blocksWithIgnoredFailingEdge->get(edge.from.index()); }
-    std::span<Word> askedOf(uint32_t ending) { return m_endings.mutableSpan().subspan(size_t { 2 } * ending * m_numberOfWords, m_numberOfWords); }
-    std::span<Word> endedOf(uint32_t ending) { return m_endings.mutableSpan().subspan((size_t { 2 } * ending + 1) * m_numberOfWords, m_numberOfWords); }
-
-    void collectProofs(std::span<const ExistingProof>);
-    void findWhereConditionsMatter();
-    void dropConditionsThatNoLongerMatter(std::span<Word> row, uint32_t position) const;
-    bool isBarrier(BlockID, ValueID producer);
-    void collectItemsOf(BlockID);
-    void appendEnding(uint32_t index);
-    void prepareToAskWriters();
-    void askWriter(BlockID, const Item&, std::span<const Word> conditions);
-    // Up to the place of a requirement with that index.
-    void carryThrough(BlockID, std::span<Word> row, uint32_t endIndex);
-    std::span<const EdgeProof> proofsOnEdgesFrom(BlockID) const;
-
-    bool solveFromProofs();
-    bool findDeadBlocks();
-    void didFindDeadEdgeInto(BlockID target, Vector<BlockID, 16>& deadBlocks, Vector<BlockID, 16>& blocksWithDeadEdges);
     void markAsPending(BlockID block) { m_isPending.quickSet(m_cfg.reversePostOrderIndex(block)); }
-    void meetAtHeadOf(BlockID, uint32_t position, std::span<Word> head);
-    bool visitFromProofs(BlockID, uint32_t position);
 
-    void solveEveryBlock();
-    bool visit(BlockID, uint32_t position);
-    bool meetAtHead(BlockID target, std::span<const Word> row, uint32_t fromPosition);
+    void collectProofs(std::span<const ExistingProof> proofs)
+    {
+        auto add = [&](PlacedProofs& list, BlockID block, uint32_t place, TestConditionID condition) {
+            if (!m_cfg.isReachable(block))
+                return;
+            list.sorted.append(PlacedProof { block, place, condition.index() });
+            list.blocks.quickSet(block.index());
+        };
+        for (const ExistingProof& proof : proofs) {
+            if (isOnEdge(proof.source)) {
+                add(m_edgeProofs, proof.edge.from, proof.edge.targetIndex, proof.condition);
+                continue;
+            }
+            ValueLocation location = m_analyses.useLists().locationOf(proof.value);
+            if (location.placement != ValuePlacement::Detached)
+                add(m_pointProofs, location.block, location.placement == ValuePlacement::Parameter ? 0 : location.index + 1, proof.condition);
+        }
+        for (PlacedProofs* list : { &m_edgeProofs, &m_pointProofs })
+            AOT::stableSort(list->sorted, { }, [](const PlacedProof& proof) { return std::pair { proof.block.index(), proof.place }; });
+    }
+
+    // Nobody asks for a condition behind its last requirement.
+    void findWhereConditionsMatter()
+    {
+        m_lastRequirement.fill(0, m_conditions.size());
+        for (const TestRequirement& requirement : m_requirements) {
+            if (!m_cfg.isReachable(requirement.point.block))
+                continue;
+            uint32_t& last = m_lastRequirement[requirement.condition.index()];
+            last = std::max(last, m_cfg.reversePostOrderIndex(requirement.point.block));
+        }
+        if (!m_cfg.hasCycle())
+            return;
+
+        std::span<const BlockID> order = m_cfg.reversePostOrder();
+        m_firstPositionReachedFrom = Vector<uint32_t>(order.size(), [](size_t position) {
+            return static_cast<uint32_t>(position);
+        });
+        for (uint32_t position = 0; position < order.size(); ++position) {
+            for (BlockID successor : m_cfg.successors(order[position]))
+                m_firstPositionReachedFrom[position] = std::min(m_firstPositionReachedFrom[position], m_cfg.reversePostOrderIndex(successor));
+        }
+        uint32_t firstTarget = UINT32_MAX;
+        for (uint32_t position = order.size(); position--;) {
+            firstTarget = std::min(firstTarget, m_firstPositionReachedFrom[position]);
+            m_firstPositionReachedFrom[position] = std::min(firstTarget, position);
+        }
+        for (uint32_t position = 0; position < order.size(); ++position)
+            m_firstPositionReachedFrom[position] = m_firstPositionReachedFrom[m_firstPositionReachedFrom[position]];
+    }
+
+    // As TestEvents has it where no requirement places a test.
+    bool isBarrier(BlockID block, ValueID producer)
+    {
+        return readsAsDefinition(m_analyses.program(), m_function, m_function.at(producer)) && std::ranges::any_of(m_analyses.useLists().usesOf(producer), [&](const Use& use) {
+            return use.block != block || (use.kind != Use::Kind::Operand && use.kind != Use::Kind::TerminatorOperand);
+        });
+    }
+
+    void collectItemsOf(BlockID id)
+    {
+        const Block& block = m_function.at(id);
+        const OpcodeSet& opcodesThatMayEnd = opcodesThatMayEndProofs();
+        bool checksScreens = m_analyses.context().build.options().verifiesAfterEveryPass;
+        uint32_t first = m_items.size();
+
+        std::span<const PlacedProof> proofs = m_pointProofs.in(id);
+        auto appendProofsAt = [&](uint32_t place, uint32_t index, ItemKind kind) {
+            for (; !proofs.empty() && proofs.front().place == place; proofs = proofs.subspan(1))
+                m_items.append(Item { index, kind, proofs.front().condition });
+        };
+        auto appendWhatEndsProofs = [&](uint32_t index, const Effects& effects) {
+            if (effects.maySuspend)
+                m_items.append(Item { index, ItemKind::Suspension, 0 });
+            else if (effects.writes.containsAny(m_conditions.heapsDependedOn())) {
+                m_items.append(Item { index, ItemKind::Ending, static_cast<uint32_t>(m_endings.size()) });
+                m_endings.append(Ending { });
+            }
+        };
+
+        appendProofsAt(0, 0, ItemKind::ParameterProof);
+        for (uint32_t index = 0; index < block.values.size(); ++index) {
+            ValueID value = block.values[index];
+            if (isBarrier(id, value))
+                m_items.append(Item { index, ItemKind::Barrier, 0 });
+            if (opcodesThatMayEnd.contains(m_function.at(value).opcode))
+                appendWhatEndsProofs(index, m_analyses.effectsOf(value).normal);
+            else if (checksScreens) [[unlikely]] {
+                const Effects& effects = m_analyses.effectsOf(value).normal;
+                RELEASE_ASSERT(!effects.maySuspend && effects.writes.isEmpty());
+            }
+            appendProofsAt(index + 1, index, ItemKind::ValueProof);
+        }
+        RELEASE_ASSERT(proofs.empty());
+        appendWhatEndsProofs(block.values.size(), m_analyses.effectsOfTerminator(id).normal);
+        m_itemsOfBlocks[id.index()] = { first, static_cast<uint32_t>(m_items.size()) };
+    }
+
+    void askWriter(BlockID block, const Item& item, const Row& conditions)
+    {
+        if (!m_groups)
+            m_groups.emplace(m_analyses, m_conditions);
+        Vector<uint32_t, 16> stretchConditions;
+        conditions.forEachSetBit([&](size_t index) {
+            if (m_conditions.stretchConditions().get(index))
+                stretchConditions.append(index);
+        });
+        const BlockValues& values = m_function.at(block).values;
+        BitVector ended = item.index == values.size()
+            ? m_groups->findConditionsEndedByTerminator(m_analyses.effectsOfTerminator(block).normal, stretchConditions.span())
+            : m_groups->findConditionsEndedBy(values[item.index], m_analyses.effectsOf(values[item.index]), stretchConditions.span());
+        m_endings[item.payload].asked.merge(conditions);
+        for (size_t index : ended)
+            m_endings[item.payload].ended.set(index);
+    }
+
+    // Up to the place of a requirement with that index.
+    void carryThrough(BlockID block, Row& row, uint32_t endIndex)
+    {
+        if (row.isEmpty() && !m_pointProofs.blocks.quickGet(block.index()))
+            return;
+        if (m_itemsOfBlocks[block.index()].first == UINT32_MAX)
+            collectItemsOf(block);
+
+        ItemsOfBlock range = m_itemsOfBlocks[block.index()];
+        for (uint32_t itemIndex = range.first; itemIndex < range.end; ++itemIndex) {
+            Item item = m_items[itemIndex];
+            if (item.index > endIndex || (item.index == endIndex && item.kind > ItemKind::Barrier))
+                return;
+            switch (item.kind) {
+            case ItemKind::ParameterProof:
+            case ItemKind::ValueProof:
+                row.set(item.payload);
+                break;
+            case ItemKind::Barrier:
+            case ItemKind::Suspension:
+                row.clearAll();
+                break;
+            case ItemKind::Ending: {
+                Row unasked = row;
+                unasked.exclude(m_endings[item.payload].asked);
+                if (!unasked.isEmpty())
+                    askWriter(block, item, unasked);
+                row.exclude(m_endings[item.payload].ended);
+                break;
+            }
+            }
+        }
+    }
+
+    // From the head of a block to its end.
+    void carryThroughWholeBlock(BlockID block, uint32_t position, Row& row)
+    {
+        uint32_t firstPositionReached = m_firstPositionReachedFrom.isEmpty() ? position : m_firstPositionReachedFrom[position];
+        row.forEachSetBit([&](size_t condition) {
+            if (m_lastRequirement[condition] < firstPositionReached)
+                row.clear(condition);
+        });
+        carryThrough(block, row, UINT32_MAX);
+    }
+
+    // Nothing holds in a handler. Elsewhere what held at the end of the source does, and what the edge proves.
+    Row rowOn(Edge edge, const Row& atEndOfSource) const
+    {
+        if (edge.isHandlerEdge())
+            return { };
+        Row row = atEndOfSource;
+        for (const PlacedProof& proof : m_edgeProofs.in(edge.from)) {
+            if (proof.place == edge.targetIndex)
+                row.set(proof.condition);
+        }
+        return row;
+    }
+
+    // The blocks that nothing leads to once the failing edges are left out: those with dead edges alone.
+    bool findDeadBlocks()
+    {
+        if (!m_blocksWithIgnoredFailingEdge)
+            return true;
+
+        Vector<BlockID, 16> deadBlocks;
+        Vector<BlockID, 16> blocksWithDeadEdges;
+        auto didFindDeadEdgeInto = [&](BlockID target) {
+            StateOfBlock& state = m_states[target.index()];
+            if (std::exchange(state.solveThatCountedDeadEdges, m_solve) != m_solve) {
+                state.numberOfDeadEdges = 0;
+                blocksWithDeadEdges.append(target);
+            }
+            if (++state.numberOfDeadEdges < m_cfg.incomingEdges(target).size() || target == m_cfg.root())
+                return;
+            state.solveThatFoundDead = m_solve;
+            deadBlocks.append(target);
+        };
+        for (size_t index : *m_blocksWithIgnoredFailingEdge)
+            didFindDeadEdgeInto(m_function.at(BlockID(index)).terminator.targets[failingTargetIndex].block);
+        while (!deadBlocks.isEmpty()) {
+            forEachOutgoingEdge(m_function, deadBlocks.takeLast(), [&](Edge edge, const Target& target) {
+                if (!isLeftOut(edge))
+                    didFindDeadEdgeInto(target.block);
+            });
+        }
+
+        return std::ranges::all_of(blocksWithDeadEdges, [&](BlockID block) {
+            if (isDead(block) || block == m_cfg.root())
+                return true;
+            uint32_t position = m_cfg.reversePostOrderIndex(block);
+            return std::ranges::any_of(m_cfg.incomingEdges(block), [&](Edge edge) {
+                return !isLeftOut(edge) && !isDead(edge.from) && m_cfg.reversePostOrderIndex(edge.from) < position;
+            });
+        });
+    }
+
+    // A block that was not visited has an empty row at its end. In the first sweep a block that comes later may still be visited, so an edge back from it is left out until the sweep is over.
+    Row meetAtHeadOf(BlockID block, uint32_t position)
+    {
+        Row head;
+        if (block == m_cfg.root())
+            return head;
+
+        bool isFirstEdge = true;
+        bool waitsForEdgeBack = false;
+        for (Edge edge : m_cfg.incomingEdges(block)) {
+            if (isLeftOut(edge) || isDead(edge.from))
+                continue;
+            bool wasSourceVisited = wasVisited(edge.from);
+            if (!wasSourceVisited && m_isFirstSweep && m_cfg.reversePostOrderIndex(edge.from) >= position) {
+                waitsForEdgeBack = true;
+                continue;
+            }
+            Row row = rowOn(edge, wasSourceVisited ? m_tails[edge.from.index()] : Row());
+            if (std::exchange(isFirstEdge, false))
+                head = row;
+            else
+                head.filter(row);
+        }
+        if (waitsForEdgeBack)
+            m_blocksThatWaitForEdgesBack.append(block);
+        if (isFirstEdge && waitsForEdgeBack) {
+            for (uint32_t condition = 0; condition < m_conditions.size(); ++condition)
+                head.set(condition);
+        }
+        return head;
+    }
+
+    // False where a block is first visited behind the first sweep with a row that is not empty: blocks behind it took its row for empty.
+    bool visitFromProofs(BlockID id, uint32_t position)
+    {
+        Row row = meetAtHeadOf(id, position);
+        bool isFirstVisit = !wasVisited(id);
+        if (isFirstVisit && !m_isFirstSweep && !row.isEmpty())
+            return false;
+        if (!isFirstVisit && row == m_heads[id.index()])
+            return true;
+        m_states[id.index()].solveThatVisited = m_solve;
+        m_heads[id.index()] = row;
+
+        carryThroughWholeBlock(id, position, row);
+        if (!isFirstVisit && row == m_tails[id.index()])
+            return true;
+        m_tails[id.index()] = row;
+
+        std::span<const PlacedProof> proofs = m_edgeProofs.in(id);
+        forEachOutgoingEdge(m_function, id, [&](Edge edge, const Target& target) {
+            if (isLeftOut(edge))
+                return;
+            bool bringsConditions = !edge.isHandlerEdge() && (!row.isEmpty() || std::ranges::contains(proofs, edge.targetIndex, &PlacedProof::place));
+            if (bringsConditions || wasVisited(target.block))
+                markAsPending(target.block);
+        });
+        return true;
+    }
+
+    bool solveFromProofs()
+    {
+        ++m_solve;
+        m_isPending.clearAll();
+        m_blocksThatWaitForEdgesBack.shrink(0);
+        if (!findDeadBlocks())
+            return false;
+        m_heads.grow(m_function.blocks.size());
+        m_tails.grow(m_function.blocks.size());
+
+        for (const PlacedProof& proof : m_edgeProofs.sorted) {
+            if (!isDead(proof.block) && !isLeftOut(Edge { proof.block, proof.place }))
+                markAsPending(m_function.at(proof.block).terminator.targets[proof.place].block);
+        }
+        for (const PlacedProof& proof : m_pointProofs.sorted) {
+            if (!isDead(proof.block))
+                markAsPending(proof.block);
+        }
+
+        std::span<const BlockID> order = m_cfg.reversePostOrder();
+        m_isFirstSweep = true;
+        while (!m_isPending.isEmpty()) {
+            for (size_t position = m_isPending.findBit(0, true); position < order.size(); position = m_isPending.findBit(position + 1, true)) {
+                m_isPending.quickClear(position);
+                if (!visitFromProofs(order[position], position))
+                    return false;
+            }
+            if (std::exchange(m_isFirstSweep, false)) {
+                for (BlockID block : m_blocksThatWaitForEdgesBack)
+                    markAsPending(block);
+            }
+        }
+        return true;
+    }
+
+    bool meetAtHead(BlockID target, const Row& row, uint32_t fromPosition)
+    {
+        Row& head = m_heads[target.index()];
+        if (m_isReached.quickSet(target.index()) && row.subsumes(head))
+            return false;
+        head.filter(row);
+        uint32_t targetPosition = m_cfg.reversePostOrderIndex(target);
+        m_isPending.quickSet(targetPosition);
+        return targetPosition <= fromPosition;
+    }
+
+    // The head of a block that is not reached yet holds every condition.
+    void solveEveryBlock()
+    {
+        Row allConditions;
+        allConditions.setAll();
+        m_heads.fill(allConditions, m_function.blocks.size());
+        m_heads[m_cfg.root().index()].clearAll();
+        m_isPending.clearAll();
+        m_isReached.ensureSize(m_function.blocks.size());
+        m_isReached.clearAll();
+        m_isReached.quickSet(m_cfg.root().index());
+        m_isPending.quickSet(m_cfg.reversePostOrderIndex(m_cfg.root()));
+        std::span<const BlockID> order = m_cfg.reversePostOrder();
+        for (bool shouldRepeat = true; shouldRepeat;) {
+            shouldRepeat = false;
+            for (uint32_t position = 0; position < order.size(); ++position) {
+                if (!m_isPending.quickClear(position))
+                    continue;
+                Row row = m_heads[order[position].index()];
+                carryThroughWholeBlock(order[position], position, row);
+                forEachOutgoingEdge(m_function, order[position], [&](Edge edge, const Target& target) {
+                    if (!isLeftOut(edge))
+                        shouldRepeat |= meetAtHead(target.block, rowOn(edge, row), position);
+                });
+            }
+        }
+    }
 
     FunctionAnalyses& m_analyses;
-    const Function& m_function;
-    const CFG& m_cfg;
     const TestConditions& m_conditions;
     std::span<const TestRequirement> m_requirements;
-    std::span<const ExistingProof> m_proofs;
-    const uint32_t m_numberOfWords;
-    const bool m_checksScreens;
+    const Function& m_function { m_analyses.function() };
+    const CFG& m_cfg { m_analyses.cfg() };
 
-    Vector<EdgeProof, 8> m_edgeProofs;
-    BitVector m_blocksWithEdgeProofs;
-    Vector<PointProof, 4> m_pointProofs;
-    BitVector m_blocksWithPointProofs;
+    PlacedProofs m_edgeProofs { { }, BitVector(m_function.blocks.size()) };
+    PlacedProofs m_pointProofs { { }, BitVector(m_function.blocks.size()) };
     Vector<uint32_t, 16> m_lastRequirement;
     // By position in the reverse postorder: a position that no block that the block may reach stands in front of. Empty where nothing leads back.
     Vector<uint32_t> m_firstPositionReachedFrom;
 
     Vector<Item> m_items;
-    Vector<ItemsOfBlock> m_itemsOfBlocks;
-    // For each ending two rows: the conditions that the writer was asked about, and those among them that it may end.
-    Vector<Word> m_endings;
-    uint32_t m_numberOfEndings { 0 };
-    bool m_isPreparedToAskWriters { false };
-    Vector<std::optional<GuardDependencies>> m_guardDependencies;
-    Vector<uint32_t> m_dependencyGroups;
-    BitVector m_subjectsFromOutside;
-    Vector<WrittenByWriter> m_writtenOfDependencyGroups;
-
-    static constexpr uint32_t failingTargetIndex = 1;
+    Vector<ItemsOfBlock> m_itemsOfBlocks = Vector<ItemsOfBlock>(m_function.blocks.size());
+    Vector<Ending> m_endings;
+    std::optional<ConditionGroups> m_groups;
 
     const BitVector* m_blocksWithIgnoredFailingEdge { nullptr };
-    Vector<Word> m_heads;
-    BitVector m_isPending;
+    Vector<Row> m_heads;
+    BitVector m_isPending { m_cfg.reversePostOrder().size() };
     // Of a solve from the proofs.
     uint32_t m_solve { 0 };
     bool m_didSolveFromProofs { false };
     bool m_isFirstSweep { false };
-    Vector<StateOfBlock> m_states;
-    Vector<Word> m_tails;
+    Vector<StateOfBlock> m_states = Vector<StateOfBlock>(m_function.blocks.size());
+    Vector<Row> m_tails;
     Vector<BlockID, 8> m_blocksThatWaitForEdgesBack;
     // Of a solve of every block.
     BitVector m_isReached;
 };
 
-class GuardEliminator {
-    WTF_MAKE_NONCOPYABLE(GuardEliminator);
-public:
-    explicit GuardEliminator(FunctionPassContext&);
-
-    PassOutcome run();
-
-private:
-    void collectBranches();
-    bool addBranch(BlockID, ValueID test);
-    bool mayFindRedundantBranch() const;
-    bool mayBeProvenElsewhere(TestConditionID, const Vector<uint32_t>& numberOfBranches) const;
-    void takeBranchesThatMayBeRedundantFrom(const GuardEliminator&);
-
-    void findProofs(ProofsHeldByGuards);
-    bool findsNoRedundantBranchWithoutGuards();
-    ProofOrigin originOf(const ExistingProof&);
-    Vector<ProofSet> findProofsReliedOn(const BitVector& conditions);
-    bool canReplaceTests(const ExistingProof& allocationProof, ProofSet reliedOn) const;
-
-    BitVector findRedundantBranches();
-    BranchVerdicts findCoveredBranches(ConditionCoverage&);
-    BranchVerdicts solveAndClassifyBranches(ConditionCoverage&, const BitVector* assumed, const BitVector& branches) const;
-    BitVector findMixedConditions(const BranchVerdicts&) const;
-
-    PassOutcome simplifyGuardLists();
-    Vector<ValueID, 4> flattenedGuardsOf(ValueID list) const;
-    bool eraseUnusedGuardLists();
-
-    FunctionPassContext& m_context;
-    Function& m_function;
-    FunctionAnalyses& m_analyses;
-    TestConditions m_conditions;
-    Vector<TestedBranch> m_branches;
-    // One for each branch, at the index of the branch.
-    Vector<TestRequirement> m_requirements;
-    Vector<ValueID, 4> m_otherTests;
-    BitVector m_conditionsWithOtherTests;
-    bool m_hasSwitchOnShape { false };
-    Vector<ExistingProof> m_proofsFromTests;
-    Vector<ExistingProof> m_otherProofs;
-    Vector<ExistingProof> m_proofs;
-    uint64_t m_numberOfRounds { 0 };
-    bool m_didReachRoundLimit { false };
+struct BranchVerdicts {
+    BitVector redundant;
+    BitVector unreachable;
 };
 
-ConditionCoverage::ConditionCoverage(FunctionAnalyses& analyses, const TestConditions& conditions, std::span<const TestRequirement> requirements, std::span<const ExistingProof> proofs)
-    : m_analyses(analyses)
-    , m_function(analyses.function())
-    , m_cfg(analyses.cfg())
-    , m_conditions(conditions)
-    , m_requirements(requirements)
-    , m_proofs(proofs)
-    , m_numberOfWords((conditions.size() + 63) / 64)
-    , m_checksScreens(analyses.context().build.options().verifiesAfterEveryPass)
-    , m_blocksWithEdgeProofs(m_function.blocks.size())
-    , m_blocksWithPointProofs(m_function.blocks.size())
-    , m_itemsOfBlocks(m_function.blocks.size())
-    , m_isPending(m_cfg.reversePostOrder().size())
-    , m_states(m_function.blocks.size())
-{
-    collectProofs(proofs);
-    findWhereConditionsMatter();
-}
+// The branches on tests that prove something for a stretch, and what else proves the conditions of those tests.
+struct RedundantBranchSearch {
+    FunctionPassContext& context;
+    Function& function { context.function };
+    FunctionAnalyses& analyses { context.analyses };
+    TestConditions conditions { context.analyses };
+    // One for each branch: where its test stands, and what that asks.
+    Vector<TestRequirement> branches { };
+    Vector<ValueID, 4> otherTests { };
+    BitVector conditionsWithOtherTests { };
+    bool hasSwitchOnShape { false };
+    Vector<ExistingProof> proofsFromTests { };
+    Vector<ExistingProof> otherProofs { };
+    Vector<ExistingProof> proofs { };
 
-void ConditionCoverage::collectProofs(std::span<const ExistingProof> proofs)
-{
-    for (uint32_t index = 0; index < proofs.size(); ++index) {
-        const ExistingProof& proof = proofs[index];
-        switch (proof.source) {
-        case ProofSource::TakenEdge:
-        case ProofSource::SwitchCase:
-            if (!m_cfg.isReachable(proof.edge.from))
+    bool addBranch(BlockID block, ValueID test)
+    {
+        const Terminator& terminator = function.at(block).terminator;
+        if (terminator.kind != TerminatorKind::Branch || terminator.taken().block == terminator.notTaken().block)
+            return false;
+
+        // A test stands near the branch on it.
+        size_t index = function.at(block).values.reverseFind(test);
+        if (index == notFound)
+            return false;
+
+        const Value& value = function.at(test);
+        Effects bound = declaredBoundOf(value.opcode);
+        if (!bound.writes.isEmpty() || bound.mayExitSideways() || bound.mayCollect)
+            return false;
+
+        if (!conditions.find(value) && conditions.size() >= context.limit(LimitID::MaxTestedTypesPerFunction)) {
+            context.gaveUp(LimitID::MaxTestedTypesPerFunction, test);
+            return false;
+        }
+        branches.append(TestRequirement { 0, 0, conditions.add(value), { block, static_cast<uint32_t>(index) }, RequirementKind::AsksOnly });
+        return true;
+    }
+
+    void addOtherTests(std::span<const ValueID> tests)
+    {
+        for (ValueID test : tests) {
+            if (std::optional<TestConditionID> condition = conditions.find(function.at(test)))
+                conditionsWithOtherTests.set(condition->index());
+        }
+    }
+
+    void collectBranches()
+    {
+        for (BlockID block : analyses.cfg().reversePostOrder()) {
+            const Terminator& terminator = function.at(block).terminator;
+            hasSwitchOnShape |= terminator.kind == TerminatorKind::SwitchOnShape;
+            if (!terminator.isConditionalBranch())
                 continue;
-            m_edgeProofs.append(EdgeProof { proof.edge, proof.condition.index() });
-            m_blocksWithEdgeProofs.quickSet(proof.edge.from.index());
-            continue;
-        case ProofSource::GuardValue:
-        case ProofSource::Allocation:
-            break;
+            ValueID test = terminator.conditionOperand();
+            if (testsThatProveForStretch.contains(function.at(test).opcode) && !addBranch(block, test))
+                otherTests.append(test);
         }
-        ValueLocation location = m_analyses.useLists().locationOf(proof.value);
-        if (location.placement == ValuePlacement::Detached || !m_cfg.isReachable(location.block))
-            continue;
-        m_pointProofs.append(PointProof { location.block, location.placement == ValuePlacement::Parameter, location.placement == ValuePlacement::Parameter ? 0 : location.index, index });
-        m_blocksWithPointProofs.quickSet(location.block.index());
-    }
-    AOT::stableSort(m_edgeProofs, { }, [](const EdgeProof& proof) {
-        return proof.edge.from.index();
-    });
-    AOT::stableSort(m_pointProofs, { }, [](const PointProof& proof) {
-        return std::tuple { proof.block.index(), !proof.isParameter, proof.index };
-    });
-}
-
-// Nobody asks for a condition behind its last requirement.
-void ConditionCoverage::findWhereConditionsMatter()
-{
-    m_lastRequirement.fill(0, m_conditions.size());
-    for (const TestRequirement& requirement : m_requirements) {
-        if (!m_cfg.isReachable(requirement.point.block))
-            continue;
-        uint32_t& last = m_lastRequirement[requirement.condition.index()];
-        last = std::max(last, m_cfg.reversePostOrderIndex(requirement.point.block));
-    }
-    if (!m_cfg.hasCycle())
-        return;
-
-    std::span<const BlockID> order = m_cfg.reversePostOrder();
-    m_firstPositionReachedFrom = Vector<uint32_t>(order.size(), [](size_t position) {
-        return static_cast<uint32_t>(position);
-    });
-    for (uint32_t position = 0; position < order.size(); ++position) {
-        for (BlockID successor : m_cfg.successors(order[position]))
-            m_firstPositionReachedFrom[position] = std::min(m_firstPositionReachedFrom[position], m_cfg.reversePostOrderIndex(successor));
-    }
-    uint32_t firstTarget = UINT32_MAX;
-    for (uint32_t position = order.size(); position--;) {
-        firstTarget = std::min(firstTarget, m_firstPositionReachedFrom[position]);
-        m_firstPositionReachedFrom[position] = std::min(firstTarget, position);
-    }
-    for (uint32_t position = 0; position < order.size(); ++position)
-        m_firstPositionReachedFrom[position] = m_firstPositionReachedFrom[m_firstPositionReachedFrom[position]];
-}
-
-void ConditionCoverage::dropConditionsThatNoLongerMatter(std::span<Word> row, uint32_t position) const
-{
-    uint32_t firstPositionReached = m_firstPositionReachedFrom.isEmpty() ? position : m_firstPositionReachedFrom[position];
-    forEachCondition(row, [&](uint32_t condition) {
-        if (m_lastRequirement[condition] < firstPositionReached)
-            row[condition / 64] &= ~(Word { 1 } << condition % 64);
-    });
-}
-
-// As TestEvents::findResultReads() has it where no requirement places a test.
-bool ConditionCoverage::isBarrier(BlockID block, ValueID producer)
-{
-    const Program& program = m_analyses.program();
-    const Value& value = m_function.at(producer);
-    if (!numberOfResultsOf(program, m_function, value)) {
-        std::optional<OpaqueKind> opaque = value.type ? program.at(value.type).opaque : std::nullopt;
-        if (!opaque || !mustBeDefinition(operandKindOf(*opaque)))
-            return false;
-    }
-    return std::ranges::any_of(m_analyses.useLists().usesOf(producer), [&](const Use& use) {
-        return use.block != block || (use.kind != Use::Kind::Operand && use.kind != Use::Kind::TerminatorOperand);
-    });
-}
-
-void ConditionCoverage::appendEnding(uint32_t index)
-{
-    m_items.append(Item { index, ItemKind::Ending, m_numberOfEndings++ });
-    m_endings.grow(m_endings.size() + 2 * m_numberOfWords);
-    std::ranges::fill(m_endings.mutableSpan().last(2 * m_numberOfWords), 0);
-}
-
-void ConditionCoverage::collectItemsOf(BlockID id)
-{
-    const Block& block = m_function.at(id);
-    const OpcodeSet& opcodesThatMayEnd = opcodesThatMayEndProofs();
-    AbstractHeapSet heapsDependedOn = m_conditions.heapsDependedOn();
-    uint32_t numberOfValues = block.values.size();
-    uint32_t first = m_items.size();
-
-    std::span<const PointProof> proofs;
-    if (m_blocksWithPointProofs.quickGet(id.index())) {
-        auto range = std::ranges::equal_range(m_pointProofs.span(), id.index(), { }, [](const PointProof& proof) {
-            return proof.block.index();
-        });
-        proofs = { range.begin(), range.end() };
-    }
-    for (; !proofs.empty() && proofs.front().isParameter; proofs = proofs.subspan(1))
-        m_items.append(Item { 0, ItemKind::ParameterProof, proofs.front().proof });
-
-    for (uint32_t index = 0; index < numberOfValues; ++index) {
-        ValueID value = block.values[index];
-        if (isBarrier(id, value))
-            m_items.append(Item { index, ItemKind::Barrier, 0 });
-
-        if (opcodesThatMayEnd.contains(m_function.at(value).opcode)) {
-            const Effects& effects = m_analyses.effectsOf(value).normal;
-            if (effects.maySuspend)
-                m_items.append(Item { index, ItemKind::Suspension, 0 });
-            else if (effects.writes.containsAny(heapsDependedOn))
-                appendEnding(index);
-        } else if (m_checksScreens) [[unlikely]] {
-            const Effects& effects = m_analyses.effectsOf(value).normal;
-            RELEASE_ASSERT(!effects.maySuspend && effects.writes.isEmpty());
-        }
-
-        for (; !proofs.empty() && proofs.front().index == index; proofs = proofs.subspan(1))
-            m_items.append(Item { index, ItemKind::ValueProof, proofs.front().proof });
-    }
-    RELEASE_ASSERT(proofs.empty());
-
-    const Effects& effectsOfTerminator = m_analyses.effectsOfTerminator(id).normal;
-    if (effectsOfTerminator.maySuspend)
-        m_items.append(Item { numberOfValues, ItemKind::Suspension, 0 });
-    else if (effectsOfTerminator.writes.containsAny(heapsDependedOn))
-        appendEnding(numberOfValues);
-
-    m_itemsOfBlocks[id.index()] = { first, static_cast<uint32_t>(m_items.size()) };
-}
-
-// Conditions of one group differ in their subjects alone, as in TestEvents::groupConditionsByDependencies().
-void ConditionCoverage::prepareToAskWriters()
-{
-    if (std::exchange(m_isPreparedToAskWriters, true))
-        return;
-
-    m_guardDependencies.grow(m_conditions.size());
-    for (size_t index : m_conditions.stretchConditions())
-        m_guardDependencies[index] = dependenciesOfGuardOf(m_analyses, m_conditions.at(TestConditionID(index)).test);
-
-    auto hashOf = [](const TestCondition& condition, const GuardDependencies& dependencies) {
-        Hasher hasher;
-        add(hasher, condition.proof);
-        add(hasher, dependencies.slotState);
-        for (const Vector<MemoryLocation, 2>* locations : { &condition.dependsOn, &dependencies.locations }) {
-            add(hasher, locations->size());
-            for (const MemoryLocation& location : *locations) {
-                add(hasher, location.heap());
-                add(hasher, location.isEntireHeap());
-                if (location.isEntireHeap())
-                    continue;
-                add(hasher, location.firstIndex());
-                add(hasher, location.secondIndex());
-            }
-        }
-        return hasher.hash();
-    };
-
-    HashedIndex index;
-    Vector<uint32_t, 16> firstConditions;
-    m_dependencyGroups.fill(0, m_conditions.size());
-    m_subjectsFromOutside.ensureSize(m_conditions.size());
-    for (size_t conditionIndex : m_conditions.stretchConditions()) {
-        const TestCondition& condition = m_conditions.at(TestConditionID(conditionIndex));
-        const GuardDependencies& dependencies = *m_guardDependencies[conditionIndex];
-        uint32_t hash = hashOf(condition, dependencies);
-        std::optional<uint32_t> group = index.find(hash, [&](uint32_t position) {
-            const TestCondition& other = m_conditions.at(TestConditionID(firstConditions[position]));
-            const GuardDependencies& otherDependencies = *m_guardDependencies[firstConditions[position]];
-            return other.proof == condition.proof && other.dependsOn == condition.dependsOn && otherDependencies.locations == dependencies.locations && otherDependencies.slotState == dependencies.slotState;
-        });
-        if (!group) {
-            group = firstConditions.size();
-            firstConditions.append(conditionIndex);
-            index.add(hash, *group);
-        }
-        m_dependencyGroups[conditionIndex] = *group;
-        if (dependencies.subject && comesFromOutside(m_analyses, dependencies.subject))
-            m_subjectsFromOutside.quickSet(conditionIndex);
-    }
-    m_writtenOfDependencyGroups.grow(firstConditions.size());
-}
-
-void ConditionCoverage::askWriter(BlockID block, const Item& item, std::span<const Word> conditions)
-{
-    prepareToAskWriters();
-    std::span<Word> asked = askedOf(item.payload);
-    std::span<Word> ended = endedOf(item.payload);
-    const BlockValues& values = m_function.at(block).values;
-    if (item.index == values.size()) {
-        const Effects& effects = m_analyses.effectsOfTerminator(block).normal;
-        forEachCondition(conditions, [&](uint32_t index) {
-            set(asked, index);
-            if (m_conditions.stretchConditions().get(index) && endingOfTerminator(m_analyses, m_conditions.at(TestConditionID(index)), effects) == ProofEnding::MayEnd)
-                set(ended, index);
-        });
-        return;
+        addOtherTests(otherTests.span());
     }
 
-    ValueID writer = values[item.index];
-    const EffectsOnEdges& effects = m_analyses.effectsOf(writer);
-    EndingsAtWriter endings(m_analyses, writer, effects);
-    // What a group was found to have written is held by the writer of the last question, and that of an earlier question about this writer went with its EndingsAtWriter.
-    for (WrittenByWriter& group : m_writtenOfDependencyGroups)
-        group.writer = ValueID();
-    forEachCondition(conditions, [&](uint32_t index) {
-        set(asked, index);
-        if (!m_conditions.stretchConditions().get(index))
-            return;
-        const GuardDependencies& dependencies = *m_guardDependencies[index];
-        WrittenByWriter& group = m_writtenOfDependencyGroups[m_dependencyGroups[index]];
-        if (group.writer != writer) {
-            group.writer = writer;
-            group.written = { };
-            if (effects.normal.writes.overlaps(dependencies.masks))
-                group.written = endings.writtenOf(m_conditions.at(TestConditionID(index)), dependencies);
-        }
-        if (endings.endingOf(dependencies.subject, m_subjectsFromOutside.quickGet(index), group.written) == ProofEnding::MayEnd)
-            set(ended, index);
-    });
-}
-
-void ConditionCoverage::carryThrough(BlockID block, std::span<Word> row, uint32_t endIndex)
-{
-    if (isEmpty(row) && !m_blocksWithPointProofs.quickGet(block.index()))
-        return;
-    if (!m_itemsOfBlocks[block.index()].areCollected())
-        collectItemsOf(block);
-
-    ItemsOfBlock range = m_itemsOfBlocks[block.index()];
-    Row unasked(FillWith { }, m_numberOfWords, Word { 0 });
-    for (uint32_t itemIndex = range.first; itemIndex < range.end; ++itemIndex) {
-        Item item = m_items[itemIndex];
-        if (item.index > endIndex || (item.index == endIndex && item.kind > ItemKind::Barrier))
-            return;
-        switch (item.kind) {
-        case ItemKind::ParameterProof:
-        case ItemKind::ValueProof:
-            set(row, m_proofs[item.payload].condition.index());
-            break;
-        case ItemKind::Barrier:
-        case ItemKind::Suspension:
-            clearAll(row);
-            break;
-        case ItemKind::Ending: {
-            Word anyUnasked = 0;
-            std::span<const Word> asked = askedOf(item.payload);
-            for (uint32_t word = 0; word < m_numberOfWords; ++word)
-                anyUnasked |= unasked[word] = row[word] & ~asked[word];
-            if (anyUnasked)
-                askWriter(block, item, unasked.span());
-            std::span<const Word> ended = endedOf(item.payload);
-            for (uint32_t word = 0; word < m_numberOfWords; ++word)
-                row[word] &= ~ended[word];
-            break;
-        }
-        }
-    }
-}
-
-bool ConditionCoverage::meetAtHead(BlockID target, std::span<const Word> row, uint32_t fromPosition)
-{
-    std::span<Word> head = headOf(target);
-    if (!m_isReached.quickSet(target.index()))
-        std::ranges::copy(row, head.begin());
-    else {
-        Word dropped = 0;
-        for (uint32_t word = 0; word < m_numberOfWords; ++word) {
-            dropped |= head[word] & ~row[word];
-            head[word] &= row[word];
-        }
-        if (!dropped)
-            return false;
-    }
-    uint32_t targetPosition = m_cfg.reversePostOrderIndex(target);
-    m_isPending.quickSet(targetPosition);
-    return targetPosition <= fromPosition;
-}
-
-std::span<const ConditionCoverage::EdgeProof> ConditionCoverage::proofsOnEdgesFrom(BlockID block) const
-{
-    if (!m_blocksWithEdgeProofs.quickGet(block.index()))
-        return { };
-    auto range = std::ranges::equal_range(m_edgeProofs.span(), block.index(), { }, [](const EdgeProof& proof) {
-        return proof.edge.from.index();
-    });
-    return { range.begin(), range.end() };
-}
-
-bool ConditionCoverage::visit(BlockID id, uint32_t position)
-{
-    const Block& block = m_function.at(id);
-    Row row(std::span<const Word>(headOf(id)));
-    dropConditionsThatNoLongerMatter(row.mutableSpan(), position);
-    carryThrough(id, row.mutableSpan(), UINT32_MAX);
-
-    std::span<const EdgeProof> proofs = proofsOnEdgesFrom(id);
-
-    bool shouldRepeat = false;
-    uint32_t numberOfTargets = block.terminator.targets.size();
-    for (uint32_t targetIndex = 0; targetIndex < numberOfTargets; ++targetIndex) {
-        const Target& target = block.terminator.targets[targetIndex];
-        if (isLeftOut(Edge { id, targetIndex }))
-            continue;
-        if (proofs.empty()) {
-            shouldRepeat |= meetAtHead(target.block, row.span(), position);
-            continue;
-        }
-        Row rowOnEdge = row;
-        for (const EdgeProof& proof : proofs) {
-            if (proof.edge.targetIndex == targetIndex)
-                set(rowOnEdge.mutableSpan(), proof.condition);
-        }
-        shouldRepeat |= meetAtHead(target.block, rowOnEdge.span(), position);
-    }
-    if (block.handler) {
-        clearAll(row.mutableSpan());
-        shouldRepeat |= meetAtHead(block.handler->block, row.span(), position);
-    }
-    return shouldRepeat;
-}
-
-void ConditionCoverage::didFindDeadEdgeInto(BlockID target, Vector<BlockID, 16>& deadBlocks, Vector<BlockID, 16>& blocksWithDeadEdges)
-{
-    StateOfBlock& state = m_states[target.index()];
-    if (state.solveThatCountedDeadEdges != m_solve) {
-        state.solveThatCountedDeadEdges = m_solve;
-        state.numberOfDeadEdges = 0;
-        blocksWithDeadEdges.append(target);
-    }
-    if (++state.numberOfDeadEdges < m_cfg.incomingEdges(target).size() || target == m_cfg.root())
-        return;
-    state.solveThatFoundDead = m_solve;
-    deadBlocks.append(target);
-}
-
-// The blocks that nothing leads to once the failing edges are left out: those with dead edges alone.
-bool ConditionCoverage::findDeadBlocks()
-{
-    if (!m_blocksWithIgnoredFailingEdge)
-        return true;
-
-    Vector<BlockID, 16> deadBlocks;
-    Vector<BlockID, 16> blocksWithDeadEdges;
-    for (size_t index : *m_blocksWithIgnoredFailingEdge)
-        didFindDeadEdgeInto(m_function.at(BlockID(index)).terminator.targets[failingTargetIndex].block, deadBlocks, blocksWithDeadEdges);
-    while (!deadBlocks.isEmpty()) {
-        BlockID block = deadBlocks.takeLast();
-        forEachOutgoingEdge(m_function, block, [&](Edge edge, const Target& target) {
-            if (!isLeftOut(edge))
-                didFindDeadEdgeInto(target.block, deadBlocks, blocksWithDeadEdges);
-        });
-    }
-
-    for (BlockID block : blocksWithDeadEdges) {
-        if (isDead(block) || block == m_cfg.root())
-            continue;
-        uint32_t position = m_cfg.reversePostOrderIndex(block);
-        bool isEnteredForward = std::ranges::any_of(m_cfg.incomingEdges(block), [&](Edge edge) {
-            return !isLeftOut(edge) && !isDead(edge.from) && m_cfg.reversePostOrderIndex(edge.from) < position;
-        });
-        if (!isEnteredForward)
-            return false;
-    }
-    return true;
-}
-
-// A block that was not visited has an empty row at its end. In the first sweep a block that comes later may still be visited, so an edge back from it is left out until the sweep is over.
-void ConditionCoverage::meetAtHeadOf(BlockID block, uint32_t position, std::span<Word> head)
-{
-    clearAll(head);
-    if (block == m_cfg.root())
-        return;
-
-    bool isFirstEdge = true;
-    bool waitsForEdgeBack = false;
-    for (Edge edge : m_cfg.incomingEdges(block)) {
-        if (isLeftOut(edge) || isDead(edge.from))
-            continue;
-        bool wasSourceVisited = wasVisited(edge.from);
-        if (!wasSourceVisited && m_isFirstSweep && m_cfg.reversePostOrderIndex(edge.from) >= position) {
-            waitsForEdgeBack = true;
-            continue;
-        }
-
-        Row row(FillWith { }, m_numberOfWords, Word { 0 });
-        if (!edge.isHandlerEdge()) {
-            if (wasSourceVisited)
-                std::ranges::copy(tailOf(edge.from), row.begin());
-            for (const EdgeProof& proof : proofsOnEdgesFrom(edge.from)) {
-                if (proof.edge.targetIndex == edge.targetIndex)
-                    set(row.mutableSpan(), proof.condition);
-            }
-        }
-        for (uint32_t word = 0; word < m_numberOfWords; ++word)
-            head[word] = isFirstEdge ? row[word] : head[word] & row[word];
-        isFirstEdge = false;
-    }
-    if (waitsForEdgeBack)
-        m_blocksThatWaitForEdgesBack.append(block);
-    if (isFirstEdge && waitsForEdgeBack) {
-        for (uint32_t condition = 0; condition < m_conditions.size(); ++condition)
-            set(head, condition);
-    }
-}
-
-// False where a block is first visited behind the first sweep with a row that is not empty: blocks behind it took its row for empty.
-bool ConditionCoverage::visitFromProofs(BlockID id, uint32_t position)
-{
-    const Block& block = m_function.at(id);
-    Row row(FillWith { }, m_numberOfWords, Word { 0 });
-    meetAtHeadOf(id, position, row.mutableSpan());
-
-    bool isFirstVisit = !wasVisited(id);
-    if (isFirstVisit && !m_isFirstSweep && !isEmpty(row.span()))
-        return false;
-    if (!isFirstVisit && std::ranges::equal(row, headOf(id)))
-        return true;
-    m_states[id.index()].solveThatVisited = m_solve;
-    std::ranges::copy(row, headOf(id).begin());
-
-    dropConditionsThatNoLongerMatter(row.mutableSpan(), position);
-    carryThrough(id, row.mutableSpan(), UINT32_MAX);
-    if (!isFirstVisit && std::ranges::equal(row, tailOf(id)))
-        return true;
-    std::ranges::copy(row, tailOf(id).begin());
-
-    bool bringsConditions = !isEmpty(row.span());
-    std::span<const EdgeProof> proofs = proofsOnEdgesFrom(id);
-    forEachOutgoingEdge(m_function, id, [&](Edge edge, const Target& target) {
-        if (isLeftOut(edge))
-            return;
-        bool bringsConditionsOnEdge = !edge.isHandlerEdge() && (bringsConditions || std::ranges::any_of(proofs, [&](const EdgeProof& proof) {
-            return proof.edge.targetIndex == edge.targetIndex;
-        }));
-        if (bringsConditionsOnEdge || wasVisited(target.block))
-            markAsPending(target.block);
-    });
-    UNUSED_PARAM(block);
-    return true;
-}
-
-bool ConditionCoverage::solveFromProofs()
-{
-    ++m_solve;
-    m_isPending.clearAll();
-    m_blocksThatWaitForEdgesBack.shrink(0);
-    if (!findDeadBlocks())
-        return false;
-    if (m_tails.isEmpty()) {
-        m_heads.grow(m_function.blocks.size() * size_t { m_numberOfWords });
-        m_tails.grow(m_function.blocks.size() * size_t { m_numberOfWords });
-    }
-
-    for (const EdgeProof& proof : m_edgeProofs) {
-        if (!isDead(proof.edge.from) && !isLeftOut(proof.edge))
-            markAsPending(targetOf(m_function, proof.edge).block);
-    }
-    for (const PointProof& proof : m_pointProofs) {
-        if (!isDead(proof.block))
-            markAsPending(proof.block);
-    }
-
-    std::span<const BlockID> order = m_cfg.reversePostOrder();
-    m_isFirstSweep = true;
-    while (!m_isPending.isEmpty()) {
-        for (size_t position = m_isPending.findBit(0, true); position < order.size(); position = m_isPending.findBit(position + 1, true)) {
-            m_isPending.quickClear(position);
-            if (!visitFromProofs(order[position], position))
+    // The one branch on a condition that nothing else proves is not redundant: on the way to its first turn nothing has proven the condition.
+    void takeBranchesThatMayBeRedundantFrom(const RedundantBranchSearch& all)
+    {
+        Vector<uint32_t, 16> numberOfBranches(FillWith { }, all.conditions.size(), 0u);
+        for (const TestRequirement& branch : all.branches)
+            ++numberOfBranches[branch.condition.index()];
+        auto mayBeProvenElsewhere = [&](TestConditionID id) {
+            if (numberOfBranches[id.index()] > 1 || all.conditionsWithOtherTests.get(id.index()))
+                return true;
+            const TestCondition& condition = all.conditions.at(id);
+            if (!all.conditions.stretchConditions().get(id.index()))
                 return false;
+            if (all.hasSwitchOnShape && condition.proof == Proof::Shape)
+                return true;
+            return condition.subject && !proofsOfAllocation(context.program, function, function.at(condition.subject)).isEmpty();
+        };
+
+        hasSwitchOnShape = all.hasSwitchOnShape;
+        for (const TestRequirement& branch : all.branches) {
+            if (mayBeProvenElsewhere(branch.condition))
+                addBranch(branch.point.block, function.at(branch.point.block).terminator.conditionOperand());
         }
-        if (std::exchange(m_isFirstSweep, false)) {
-            for (BlockID block : m_blocksThatWaitForEdgesBack)
-                markAsPending(block);
-        }
+        addOtherTests(all.otherTests.span());
     }
-    return true;
-}
 
-void ConditionCoverage::solve(const BitVector* blocksWithIgnoredFailingEdge)
-{
-    m_blocksWithIgnoredFailingEdge = blocksWithIgnoredFailingEdge;
-    m_didSolveFromProofs = solveFromProofs();
-    if (!m_didSolveFromProofs)
-        solveEveryBlock();
-}
-
-void ConditionCoverage::solveEveryBlock()
-{
-    m_heads.fill(0, m_function.blocks.size() * size_t { m_numberOfWords });
-    m_isPending.clearAll();
-    m_isReached.ensureSize(m_function.blocks.size());
-    m_isReached.clearAll();
-    m_isReached.quickSet(m_cfg.root().index());
-    m_isPending.quickSet(m_cfg.reversePostOrderIndex(m_cfg.root()));
-    std::span<const BlockID> order = m_cfg.reversePostOrder();
-    for (bool shouldRepeat = true; shouldRepeat;) {
-        shouldRepeat = false;
-        for (uint32_t position = 0; position < order.size(); ++position) {
-            if (m_isPending.quickClear(position))
-                shouldRepeat |= visit(order[position], position);
-        }
-    }
-}
-
-RequirementCoverage ConditionCoverage::of(uint32_t requirement)
-{
-    ProgramPoint point = m_requirements[requirement].point;
-    if (m_didSolveFromProofs ? isDead(point.block) : !m_isReached.get(point.block.index()))
-        return RequirementCoverage::Unknown;
-    Row row(FillWith { }, m_numberOfWords, Word { 0 });
-    if (!m_didSolveFromProofs || wasVisited(point.block))
-        std::ranges::copy(headOf(point.block), row.begin());
-    carryThrough(point.block, row.mutableSpan(), point.index);
-    return get(row.span(), m_requirements[requirement].condition.index()) ? RequirementCoverage::Covered : RequirementCoverage::NeedsTest;
-}
-
-BranchFolder::BranchFolder(const FoldingInputs& inputs)
-    : m_inputs(inputs)
-    , m_function(inputs.context.function)
-    , m_analyses(inputs.context.analyses)
-    , m_builder(inputs.context.analyses.context(), inputs.context.function, inputs.context.types, &inputs.context.analyses)
-    , m_provingValues(inputs.conditions.size())
-    , m_definitions(inputs.conditions.size())
-{
-    for (size_t index : inputs.redundant) {
-        const TestedBranch& branch = inputs.branches[index];
-        m_foldedBranches.append(FoldedBranch { static_cast<uint32_t>(index), { }, { }, false });
-        m_foldedBlocks.set(branch.block.index());
-        m_conditionsInPlay.set(branch.condition.index());
-    }
-}
-
-void BranchFolder::run()
-{
-    adoptProofs();
-    collectUsesOfTests();
-    defineProofs();
-    chooseReplacementGuards();
-    replaceBooleanUses();
-    m_builder.applyInsertions();
-    // The builder knows the values that it has put in, not the uses that were handed to them.
-    m_analyses.didChangeValues();
-
-    for (const FoldedBranch& folded : m_foldedBranches)
-        fold(folded);
-    // The builder sees the jump that it emits, not the branch that was taken away for it.
-    m_analyses.didChangeControlFlow();
-    eraseUnusedTests();
-    m_builder.emptyUnreachableBlocks();
-    repairProofs();
-}
-
-void BranchFolder::adoptProofs()
-{
-    for (const ExistingProof& proof : m_inputs.proofs) {
-        if (!m_conditionsInPlay.get(proof.condition.index()))
-            continue;
-
-        ValueID value = proof.value;
+    // Nothing for a guard that may not stand for the tests of the condition.
+    std::optional<ProofSource> originOf(const ExistingProof& proof)
+    {
         switch (proof.source) {
         case ProofSource::TakenEdge:
-            if (m_foldedBlocks.get(proof.edge.from.index()))
-                continue;
-            [[fallthrough]];
         case ProofSource::SwitchCase:
-            value = ensureEdgeResult(m_builder, m_analyses, proof.edge, testedOperandIndex);
-            break;
-        case ProofSource::GuardValue:
         case ProofSource::Allocation:
+            return proof.source;
+        case ProofSource::GuardValue:
             break;
         }
-        m_provingValues[proof.condition.index()].appendIfNotContains(value);
+
+        // A user needs everything its guard proves about what it relies on to hold, so a guard that proves more than the folded test did cannot replace it.
+        const GuardFacts& proven = analyses.guardFacts(proof.value);
+        const GuardOrigin* origin = proven.facts.size() == 1 ? proven.facts.first().singleOrigin() : nullptr;
+        if (!origin)
+            return std::nullopt;
+
+        switch (origin->source) {
+        case GuardSource::Test:
+            return ProofSource::TakenEdge;
+        case GuardSource::SwitchCase:
+            return ProofSource::SwitchCase;
+        case GuardSource::Allocation:
+            return std::nullopt;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
     }
+
+    Vector<ProofSet> findProofsReliedOn()
+    {
+        Vector<ProofSet> reliedOn(conditions.size());
+        auto addUser = [&](const auto& user, ProofSet proofsOfUser) {
+            if (proofsOfUser.isEmpty())
+                return;
+            user.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                if (user.operandKind(operandIndex) != OperandKind::Guard)
+                    return;
+                for (const GuardFact& fact : analyses.guardFacts(operand).facts) {
+                    for (const GuardOrigin& origin : fact.origins) {
+                        if (origin.source != GuardSource::Test)
+                            continue;
+                        if (std::optional<TestConditionID> condition = conditions.find(function.at(origin.test)))
+                            reliedOn[condition->index()] |= proofsOfUser;
+                    }
+                }
+            });
+        };
+        for (BlockID block : analyses.cfg().reversePostOrder()) {
+            for (ValueID id : function.at(block).values)
+                addUser(function.at(id), proofsNeededFromGuard(context.program, function, function.at(id)));
+            addUser(function.at(block).terminator, reliesOf(function.at(block).terminator.kind));
+        }
+        return reliedOn;
+    }
+
+    bool canReplaceTests(const ExistingProof& allocationProof, ProofSet reliedOn) const
+    {
+        const TestCondition& condition = conditions.at(allocationProof.condition);
+        const Value& allocation = function.at(allocationProof.value);
+        // Select gives such a call an inline way and a slow one, and the parameter that joins the two proves nothing. So a call that is named as a guard keeps the slow way alone.
+        if (!reliedOn.isEmpty() && allocation.opcode == Opcode::CallBuiltin && inlineImplementationOf(context.program, allocation) && overloadOf(context.program, allocation).code.implementation.otherwise)
+            return false;
+
+        AbstractHeapSet heapsDependedOn;
+        for (const MemoryLocation& location : condition.dependsOn)
+            heapsDependedOn.add(location.heap());
+
+        // Whoever names the allocation gets all it proves, and each of those proofs has to last as long as a passed test does.
+        reliedOn.add(condition.proof);
+        ProofSet proven = proofsOfAllocation(context.program, function, allocation);
+        return std::ranges::all_of(allMembersOf<Proof>, [&](Proof proof) {
+            if (!reliedOn.contains(proof) || !proven.contains(proof))
+                return true;
+            return std::ranges::all_of(locationsBehindAllocationProof(proof), [&](const MemoryLocation& location) {
+                return heapsDependedOn.contains(location.heap());
+            });
+        });
+    }
+
+    void findProofs(ProofsHeldByGuards heldByGuards)
+    {
+        Vector<ExistingProof> found = findExistingProofs(context, conditions, heldByGuards);
+
+        BitVector conditionsProvenByAllocation;
+        Vector<ProofSet> reliedOn;
+        for (const ExistingProof& proof : found) {
+            if (proof.source != ProofSource::Allocation)
+                continue;
+            if (reliedOn.isEmpty())
+                reliedOn = findProofsReliedOn();
+            if (canReplaceTests(proof, reliedOn[proof.condition.index()]))
+                conditionsProvenByAllocation.set(proof.condition.index());
+        }
+
+        for (const ExistingProof& proof : found) {
+            bool isProvenByAllocation = conditionsProvenByAllocation.get(proof.condition.index());
+            std::optional<ProofSource> origin = originOf(proof);
+            if (!origin)
+                continue;
+            switch (*origin) {
+            case ProofSource::TakenEdge:
+                proofsFromTests.append(proof);
+                break;
+            case ProofSource::SwitchCase:
+                if (!isProvenByAllocation)
+                    otherProofs.append(proof);
+                break;
+            case ProofSource::Allocation:
+                if (isProvenByAllocation)
+                    otherProofs.append(proof);
+                break;
+            case ProofSource::GuardValue:
+                RELEASE_ASSERT_NOT_REACHED();
+            }
+        }
+    }
+
+    // The failing edges of the branches that are assumed to be redundant are left out.
+    BranchVerdicts solveAndClassify(ConditionCoverage& coverage, const BitVector& askedBranches, bool areAssumedRedundant) const
+    {
+        if (askedBranches.isEmpty())
+            return { };
+
+        BitVector blocksOfAssumedBranches(function.blocks.size());
+        for (size_t index : askedBranches)
+            blocksOfAssumedBranches.quickSet(branches[index].point.block.index());
+        const BitVector* blocksWithIgnoredFailingEdge = areAssumedRedundant ? &blocksOfAssumedBranches : nullptr;
+        coverage.solve(blocksWithIgnoredFailingEdge);
+
+        if (context.build.options().verifiesAfterEveryPass) [[unlikely]] {
+            TestEvents events(TestEventInputs { analyses, conditions, { }, branches.span(), proofs.span(), { }, false });
+            TestCoverage coverageOfEveryBlock(TestCoverageInputs { events, GapBudget::unlimited(), blocksWithIgnoredFailingEdge });
+            for (size_t index : askedBranches)
+                RELEASE_ASSERT(coverage.of(static_cast<uint32_t>(index)) == coverageOfEveryBlock.of(static_cast<uint32_t>(index)));
+        }
+
+        BranchVerdicts verdicts;
+        for (size_t index : askedBranches) {
+            switch (coverage.of(static_cast<uint32_t>(index))) {
+            case RequirementCoverage::Unknown:
+                verdicts.unreachable.set(index);
+                break;
+            case RequirementCoverage::NeedsTest:
+                break;
+            case RequirementCoverage::Covered:
+                verdicts.redundant.set(index);
+                break;
+            }
+        }
+        return verdicts;
+    }
+
+    // GuardAvailability does not merge what a test proved with what a switch case or an allocation proved, so one of those stands for the tests of a condition only where no such test remains.
+    BitVector findMixedConditions(const BranchVerdicts& verdicts) const
+    {
+        BitVector mixedConditions;
+        if (otherProofs.isEmpty())
+            return mixedConditions;
+
+        BitVector conditionsInPlay;
+        BitVector conditionsStillTested = conditionsWithOtherTests;
+        for (size_t index = 0; index < branches.size(); ++index) {
+            size_t condition = branches[index].condition.index();
+            if (verdicts.redundant.get(index))
+                conditionsInPlay.set(condition);
+            else if (!verdicts.unreachable.get(index))
+                conditionsStillTested.set(condition);
+        }
+
+        for (const ExistingProof& proof : otherProofs)
+            mixedConditions.set(proof.condition.index());
+        mixedConditions.filter(conditionsInPlay);
+        mixedConditions.filter(conditionsStillTested);
+        return mixedConditions;
+    }
+
+    // Nothing where the rounds run out in a search without the guards, which only says whether the other search is worth making.
+    std::optional<BitVector> findRedundantBranches(ProofsHeldByGuards heldByGuards)
+    {
+        findProofs(heldByGuards);
+        BitVector allBranches(branches.size());
+        for (size_t index = 0; index < branches.size(); ++index)
+            allBranches.quickSet(index);
+
+        uint64_t numberOfRoundsLeft = context.limit(LimitID::MaxGuardEliminationRounds);
+        bool didReachRoundLimit = false;
+        for (;;) {
+            proofs = proofsFromTests;
+            proofs.appendVector(otherProofs);
+            ConditionCoverage coverage(analyses, conditions, branches.span(), proofs.span());
+
+            BranchVerdicts verdicts;
+            for (BitVector assumed = allBranches;;) {
+                if (!numberOfRoundsLeft) {
+                    if (heldByGuards == ProofsHeldByGuards::AreLeftOut)
+                        return std::nullopt;
+                    if (!std::exchange(didReachRoundLimit, true))
+                        context.gaveUp(LimitID::MaxGuardEliminationRounds);
+                    verdicts = solveAndClassify(coverage, allBranches, false);
+                    break;
+                }
+                --numberOfRoundsLeft;
+                verdicts = solveAndClassify(coverage, assumed, true);
+                BitVector stillAssumed = verdicts.redundant;
+                stillAssumed.merge(verdicts.unreachable);
+                if (stillAssumed == assumed)
+                    break;
+                assumed = WTF::move(stillAssumed);
+            }
+
+            BitVector mixedConditions = findMixedConditions(verdicts);
+            if (mixedConditions.isEmpty())
+                return WTF::move(verdicts.redundant);
+            otherProofs.removeAllMatching([&](const ExistingProof& proof) {
+                return didReachRoundLimit || mixedConditions.get(proof.condition.index());
+            });
+        }
+    }
+};
+
+} // anonymous namespace
+
+// The branch becomes a jump over its taken edge. What that edge proved is handed over as arguments.
+static void replaceBranchWithJumpToTaken(IRBuilder& builder, Function& function, BlockID block, NOESCAPE const Invocable<ValueID()> auto& guardInPlaceOfProofs)
+{
+    Terminator& terminator = function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
+    Target taken = terminator.taken();
+    builder.setOrigin(terminator.origin());
+    terminator = Terminator { };
+    builder.moveToEndOf(block);
+    if (!taken.proofs.isEmpty()) {
+        ValueID guard = guardInPlaceOfProofs();
+        for (size_t result = 0; result < taken.proofs.size(); ++result)
+            taken.arguments.append(guard);
+    }
+    builder.emitJump(taken.block, WTF::move(taken.arguments));
 }
 
-TestUse BranchFolder::classify(const Use& use, const TestedBranch& branch) const
+static void eraseTest(IRBuilder& builder, const Function& function, BlockID block, ValueID test)
+{
+    size_t index = function.at(block).values.find(test);
+    RELEASE_ASSERT(index != notFound);
+    BitVector indexes;
+    indexes.set(index);
+    builder.eraseValues(block, indexes);
+}
+
+static bool isReadAsBoolean(const Function& function, const Use& use)
 {
     switch (use.kind) {
     case Use::Kind::TerminatorOperand:
-        if (use.block == branch.block)
-            return TestUse::FoldedBranch;
-        return m_function.at(use.block).terminator.isConditionalBranch() ? TestUse::Other : TestUse::Boolean;
+        return !function.at(use.block).terminator.isConditionalBranch();
     case Use::Kind::Operand:
-        return m_function.at(use.user).operandKind(use.operandIndex) == OperandKind::Guard ? TestUse::Other : TestUse::Boolean;
+        return function.at(use.user).operandKind(use.operandIndex) != OperandKind::Guard;
     case Use::Kind::EdgeArgument:
     case Use::Kind::HandlerArgument:
-        return TestUse::Boolean;
+        return true;
     case Use::Kind::BlockSubject:
-        return TestUse::Other;
+        return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void BranchFolder::collectUsesOfTests()
+static void foldRedundantBranches(FunctionPassContext& context, const RedundantBranchSearch& search, const BitVector& redundant)
 {
-    const UseLists& useLists = m_analyses.useLists();
-    for (FoldedBranch& folded : m_foldedBranches) {
-        const TestedBranch& branch = branchOf(folded);
-        for (const Use& use : useLists.usesOf(branch.test)) {
-            switch (classify(use, branch)) {
-            case TestUse::FoldedBranch:
-                break;
-            case TestUse::Boolean:
-                folded.booleanUses.append(use);
-                break;
-            case TestUse::Other:
-                folded.hasOtherUse = true;
-                break;
-            }
-        }
-    }
-}
-
-void BranchFolder::defineProofs()
-{
-    struct PendingDefinition {
+    struct FoldedBranch {
+        ProgramPoint pointOfTest;
+        ValueID test;
         size_t condition { 0 };
-        ValueID value;
-        ProgramPoint pointAfter;
+        Vector<Use, 2> booleanUses { };
+        bool hasOtherUse { false };
     };
 
-    Vector<PendingDefinition, 8> pendingDefinitions;
-    const UseLists& useLists = m_analyses.useLists();
-    for (size_t condition : m_conditionsInPlay) {
-        for (ValueID value : m_provingValues[condition])
-            pendingDefinitions.append(PendingDefinition { condition, value, useLists.pointAfter(value) });
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    IRBuilder builder(analyses.context(), function, context.types, &analyses);
+    Vector<FoldedBranch, 4> foldedBranches;
+    BitVector foldedBlocks;
+    BitVector conditionsInPlay;
+    for (size_t index : redundant) {
+        const TestRequirement& branch = search.branches[index];
+        foldedBranches.append(FoldedBranch { branch.point, function.at(branch.point.block).terminator.conditionOperand(), branch.condition.index() });
+        foldedBlocks.set(branch.point.block.index());
+        conditionsInPlay.set(branch.condition.index());
+    }
+
+    Vector<Vector<ValueID, 2>> provingValues(search.conditions.size());
+    for (const ExistingProof& proof : search.proofs) {
+        if (!conditionsInPlay.get(proof.condition.index()) || (proof.source == ProofSource::TakenEdge && foldedBlocks.get(proof.edge.from.index())))
+            continue;
+        provingValues[proof.condition.index()].appendIfNotContains(isOnEdge(proof.source) ? ensureEdgeResult(builder, analyses, proof.edge, testedOperandIndex) : proof.value);
+    }
+
+    const UseLists& useLists = analyses.useLists();
+    for (FoldedBranch& folded : foldedBranches) {
+        for (const Use& use : useLists.usesOf(folded.test)) {
+            if (use.kind == Use::Kind::TerminatorOperand && use.block == folded.pointOfTest.block)
+                continue;
+            if (isReadAsBoolean(function, use))
+                folded.booleanUses.append(use);
+            else
+                folded.hasOtherUse = true;
+        }
     }
 
     // SSARepair redirects every use of a definition, and a proving value has uses of its own: an allocation is also the object.
-    for (const PendingDefinition& pending : pendingDefinitions) {
-        m_builder.setOrigin(m_function.at(pending.value).origin());
-        m_definitions[pending.condition].append(m_builder.insertBefore(pending.pointAfter, IRBuilder::make(Opcode::AllGuards, { pending.value })));
+    Vector<std::tuple<size_t, ValueID, ProgramPoint>, 8> pendingDefinitions;
+    for (size_t condition : conditionsInPlay) {
+        for (ValueID value : provingValues[condition])
+            pendingDefinitions.append({ condition, value, useLists.pointAfter(value) });
     }
-}
-
-void BranchFolder::chooseReplacementGuards()
-{
-    for (FoldedBranch& folded : m_foldedBranches) {
-        const TestedBranch& branch = branchOf(folded);
-        if (m_function.at(branch.block).terminator.taken().proofs.isEmpty())
-            continue;
-
-        const Vector<ValueID, 2>& definitions = m_definitions[branch.condition.index()];
-        RELEASE_ASSERT(!definitions.isEmpty());
-        folded.replacementGuard = definitions.first();
+    Vector<Vector<ValueID, 2>> definitions(search.conditions.size());
+    for (auto [condition, value, pointAfter] : pendingDefinitions) {
+        builder.setOrigin(function.at(value).origin());
+        definitions[condition].append(builder.insertBefore(pointAfter, IRBuilder::make(Opcode::AllGuards, { value })));
     }
-}
 
-void BranchFolder::replaceBooleanUses()
-{
-    bool keepsTests = m_inputs.context.build.validates();
-    for (FoldedBranch& folded : m_foldedBranches) {
+    bool keepsTests = context.build.validates();
+    for (FoldedBranch& folded : foldedBranches) {
         if (folded.booleanUses.isEmpty() && !keepsTests)
             continue;
-
-        const TestedBranch& branch = branchOf(folded);
         Value boolean = IRBuilder::make(Opcode::Boolean);
         boolean.setBoolean(true);
-        m_builder.setOrigin(m_function.at(branch.test).origin());
-        ValueID constant = m_builder.insertBefore({ branch.block, branch.index }, WTF::move(boolean));
+        builder.setOrigin(function.at(folded.test).origin());
+        ValueID constant = builder.insertBefore(folded.pointOfTest, WTF::move(boolean));
         for (const Use& use : folded.booleanUses)
-            replaceUse(m_function, use, constant);
+            replaceUse(function, use, constant);
         if (!keepsTests)
             continue;
         // In a validating build the test is made all the same, and its answer is compared with the one that an earlier test stands for.
-        m_builder.insertBefore(pointBeforeTerminatorOf(m_function, branch.block), IRBuilder::make(Opcode::ValidateSameValue, { branch.test, constant }));
+        builder.insertBefore(pointBeforeTerminatorOf(function, folded.pointOfTest.block), IRBuilder::make(Opcode::ValidateSameValue, { folded.test, constant }));
         folded.hasOtherUse = true;
     }
-}
+    builder.applyInsertions();
+    // The builder knows the values that it has put in, not the uses that were handed to them.
+    analyses.didChangeValues();
 
-void BranchFolder::fold(const FoldedBranch& folded)
-{
-    BlockID block = branchOf(folded).block;
-    Terminator& terminator = m_function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
-    Target taken = terminator.taken();
-    Arguments arguments = WTF::move(taken.arguments);
-    for (size_t result = 0; result < taken.proofs.size(); ++result)
-        arguments.append(folded.replacementGuard);
-
-    m_builder.setOrigin(terminator.origin());
-    terminator = Terminator { };
-    m_builder.moveToEndOf(block);
-    m_builder.emitJump(taken.block, WTF::move(arguments));
-}
-
-void BranchFolder::eraseUnusedTests()
-{
-    for (const FoldedBranch& folded : m_foldedBranches) {
-        if (folded.hasOtherUse)
-            continue;
-
-        const TestedBranch& branch = branchOf(folded);
-        size_t index = m_function.at(branch.block).values.find(branch.test);
-        RELEASE_ASSERT(index != notFound);
-        BitVector indexes;
-        indexes.set(index);
-        m_builder.eraseValues(branch.block, indexes);
+    for (const FoldedBranch& folded : foldedBranches) {
+        replaceBranchWithJumpToTaken(builder, function, folded.pointOfTest.block, [&] {
+            RELEASE_ASSERT(!definitions[folded.condition].isEmpty());
+            return definitions[folded.condition].first();
+        });
     }
-}
+    // The builder sees the jump that it emits, not the branch that was taken away for it.
+    analyses.didChangeControlFlow();
+    for (const FoldedBranch& folded : foldedBranches) {
+        if (!folded.hasOtherUse)
+            eraseTest(builder, function, folded.pointOfTest.block, folded.test);
+    }
+    builder.emptyUnreachableBlocks();
 
-void BranchFolder::repairProofs()
-{
-    SSARepair repair(m_builder, m_analyses);
-    for (size_t condition : m_conditionsInPlay) {
-        std::span<const ValueID> definitions = m_definitions[condition].span();
-        if (definitions.size() < 2)
+    SSARepair repair(builder, analyses);
+    for (size_t condition : conditionsInPlay) {
+        if (definitions[condition].size() < 2)
             continue;
-        SSARepair::Variable variable = repair.addVariable(definitions.front());
-        for (ValueID definition : definitions.subspan(1))
+        SSARepair::Variable variable = repair.addVariable(definitions[condition].first());
+        for (ValueID definition : definitions[condition].span().subspan(1))
             repair.addDefinition(variable, definition);
     }
     repair.run();
 }
 
-GuardEliminator::GuardEliminator(FunctionPassContext& context)
-    : m_context(context)
-    , m_function(context.function)
-    , m_analyses(context.analyses)
-    , m_conditions(context.analyses)
+static PassOutcome eliminateRedundantBranches(FunctionPassContext& context)
 {
+    RedundantBranchSearch search { context };
+    search.collectBranches();
+    if (search.branches.isEmpty())
+        return PassOutcome::Unchanged;
+
+    // Nearly every function has no redundant branch.
+    RedundantBranchSearch firstSearch { context };
+    firstSearch.takeBranchesThatMayBeRedundantFrom(search);
+    if (firstSearch.branches.isEmpty())
+        return PassOutcome::Unchanged;
+    if (std::optional<BitVector> found = firstSearch.findRedundantBranches(ProofsHeldByGuards::AreLeftOut); found && found->isEmpty())
+        return PassOutcome::Unchanged;
+
+    BitVector redundant = *search.findRedundantBranches(ProofsHeldByGuards::AreListed);
+    if (redundant.isEmpty())
+        return PassOutcome::Unchanged;
+    foldRedundantBranches(context, search, redundant);
+    context.build.statistics().count(StatisticID::GuardsEliminated, redundant.bitCount());
+    return PassOutcome::Changed;
 }
 
-PassOutcome GuardEliminator::run()
+static PassOutcome simplifyGuardLists(FunctionPassContext& context)
 {
-    PassOutcome outcome = PassOutcome::Unchanged;
-    collectBranches();
-    if (mayFindRedundantBranch()) {
-        BitVector redundant = findRedundantBranches();
-        if (!redundant.isEmpty()) {
-            BranchFolder(FoldingInputs { m_context, m_conditions, m_branches.span(), m_proofs.span(), redundant }).run();
-            m_context.build.statistics().count(StatisticID::GuardsEliminated, redundant.bitCount());
-            outcome = PassOutcome::Changed;
-        }
-    }
-    outcome |= simplifyGuardLists();
-    return outcome;
-}
-
-void GuardEliminator::collectBranches()
-{
-    Vector<ValueID, 4>& otherTests = m_otherTests;
-    for (BlockID block : m_analyses.cfg().reversePostOrder()) {
-        const Terminator& terminator = m_function.at(block).terminator;
-        m_hasSwitchOnShape |= terminator.kind == TerminatorKind::SwitchOnShape;
-        if (!terminator.isConditionalBranch())
-            continue;
-
-        ValueID test = terminator.conditionOperand();
-        if (!testsThatProveForStretch.contains(m_function.at(test).opcode))
-            continue;
-        if (!addBranch(block, test))
-            otherTests.append(test);
-    }
-
-    for (ValueID test : otherTests) {
-        if (std::optional<TestConditionID> condition = m_conditions.find(m_function.at(test)))
-            m_conditionsWithOtherTests.set(condition->index());
-    }
-}
-
-bool GuardEliminator::addBranch(BlockID block, ValueID test)
-{
-    const Terminator& terminator = m_function.at(block).terminator;
-    if (terminator.kind != TerminatorKind::Branch || terminator.taken().block == terminator.notTaken().block)
-        return false;
-
-    // A test stands near the branch on it.
-    size_t indexOfTest = m_function.at(block).values.reverseFind(test);
-    if (indexOfTest == notFound)
-        return false;
-
-    const Value& value = m_function.at(test);
-    Effects bound = declaredBoundOf(value.opcode);
-    if (!bound.writes.isEmpty() || bound.mayExitSideways() || bound.mayCollect)
-        return false;
-
-    if (!m_conditions.find(value) && m_conditions.size() >= m_context.limit(LimitID::MaxTestedTypesPerFunction)) {
-        m_context.gaveUp(LimitID::MaxTestedTypesPerFunction, test);
-        return false;
-    }
-
-    TestConditionID condition = m_conditions.add(value);
-    uint32_t index = static_cast<uint32_t>(indexOfTest);
-    m_requirements.append(TestRequirement { 0, 0, condition, { block, index }, RequirementKind::AsksOnly });
-    m_branches.append(TestedBranch { block, index, test, condition });
-    return true;
-}
-
-bool GuardEliminator::mayFindRedundantBranch() const
-{
-    if (m_branches.isEmpty())
-        return false;
-    if (m_requirements.size() > m_conditions.size() || !m_conditionsWithOtherTests.isEmpty())
-        return true;
-
-    for (size_t index : m_conditions.stretchConditions()) {
-        const TestCondition& condition = m_conditions.at(TestConditionID(index));
-        if (m_hasSwitchOnShape && condition.proof == Proof::Shape)
-            return true;
-        if (condition.subject && !proofsOfAllocation(m_context.program, m_function, m_function.at(condition.subject)).isEmpty())
-            return true;
-    }
-    return false;
-}
-
-// mayFindRedundantBranch(), for one condition.
-bool GuardEliminator::mayBeProvenElsewhere(TestConditionID id, const Vector<uint32_t>& numberOfBranches) const
-{
-    if (numberOfBranches[id.index()] > 1 || m_conditionsWithOtherTests.get(id.index()))
-        return true;
-    const TestCondition& condition = m_conditions.at(id);
-    if (!m_conditions.stretchConditions().get(id.index()))
-        return false;
-    if (m_hasSwitchOnShape && condition.proof == Proof::Shape)
-        return true;
-    return condition.subject && !proofsOfAllocation(m_context.program, m_function, m_function.at(condition.subject)).isEmpty();
-}
-
-// The one branch on a condition that nothing else proves is not redundant: on the way to its first turn nothing has proven the condition.
-void GuardEliminator::takeBranchesThatMayBeRedundantFrom(const GuardEliminator& all)
-{
-    Vector<uint32_t> numberOfBranches(FillWith { }, all.m_conditions.size(), 0u);
-    for (const TestedBranch& branch : all.m_branches)
-        ++numberOfBranches[branch.condition.index()];
-
-    m_hasSwitchOnShape = all.m_hasSwitchOnShape;
-    for (const TestedBranch& branch : all.m_branches) {
-        if (all.mayBeProvenElsewhere(branch.condition, numberOfBranches))
-            addBranch(branch.block, branch.test);
-    }
-    for (ValueID test : all.m_otherTests) {
-        if (std::optional<TestConditionID> condition = m_conditions.find(m_function.at(test)))
-            m_conditionsWithOtherTests.set(condition->index());
-    }
-}
-
-ProofOrigin GuardEliminator::originOf(const ExistingProof& proof)
-{
-    switch (proof.source) {
-    case ProofSource::TakenEdge:
-        return ProofOrigin::Test;
-    case ProofSource::SwitchCase:
-        return ProofOrigin::SwitchCase;
-    case ProofSource::Allocation:
-        return ProofOrigin::Allocation;
-    case ProofSource::GuardValue:
-        break;
-    }
-
-    // A user needs everything its guard proves about what it relies on to hold, so a guard that proves more than the folded test did cannot replace it.
-    const GuardFacts& proven = m_analyses.guardFacts(proof.value);
-    const GuardOrigin* origin = proven.facts.size() == 1 ? proven.facts.first().singleOrigin() : nullptr;
-    if (!origin)
-        return ProofOrigin::Unknown;
-
-    switch (origin->source) {
-    case GuardSource::Test:
-        return ProofOrigin::Test;
-    case GuardSource::SwitchCase:
-        return ProofOrigin::SwitchCase;
-    case GuardSource::Allocation:
-        return ProofOrigin::Unknown;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-Vector<ProofSet> GuardEliminator::findProofsReliedOn(const BitVector& conditions)
-{
-    Vector<ProofSet> reliedOn(m_conditions.size());
-    auto addUser = [&](const auto& user, ProofSet proofs) {
-        if (proofs.isEmpty())
-            return;
-        user.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-            if (user.operandKind(operandIndex) != OperandKind::Guard)
-                return;
-            for (const GuardFact& fact : m_analyses.guardFacts(operand).facts) {
-                for (const GuardOrigin& origin : fact.origins) {
-                    if (origin.source != GuardSource::Test)
-                        continue;
-                    std::optional<TestConditionID> condition = m_conditions.find(m_function.at(origin.test));
-                    if (condition && conditions.get(condition->index()))
-                        reliedOn[condition->index()] |= proofs;
-                }
-            }
-        });
-    };
-
-    for (BlockID block : m_analyses.cfg().reversePostOrder()) {
-        const Block& contents = m_function.at(block);
-        for (ValueID id : contents.values) {
-            const Value& value = m_function.at(id);
-            addUser(value, proofsNeededFromGuard(m_context.program, m_function, value));
-        }
-        addUser(contents.terminator, reliesOf(contents.terminator.kind));
-    }
-    return reliedOn;
-}
-
-bool GuardEliminator::canReplaceTests(const ExistingProof& allocationProof, ProofSet reliedOn) const
-{
-    const TestCondition& condition = m_conditions.at(allocationProof.condition);
-    const Value& allocation = m_function.at(allocationProof.value);
-    // Select gives such a call an inline way and a slow one, and the parameter that joins the two proves nothing. So a call that is named as a guard keeps the slow way alone.
-    if (!reliedOn.isEmpty() && allocation.opcode == Opcode::CallBuiltin && inlineImplementationOf(m_context.program, allocation) && overloadOf(m_context.program, allocation).code.implementation.otherwise)
-        return false;
-
-    AbstractHeapSet heapsDependedOn;
-    for (const MemoryLocation& location : condition.dependsOn)
-        heapsDependedOn.add(location.heap());
-
-    // Whoever names the allocation gets all it proves, and each of those proofs has to last as long as a passed test does.
-    reliedOn.add(condition.proof);
-    ProofSet proven = proofsOfAllocation(m_context.program, m_function, allocation);
-    return std::ranges::all_of(allMembersOf<Proof>, [&](Proof proof) {
-        if (!reliedOn.contains(proof) || !proven.contains(proof))
-            return true;
-        return std::ranges::all_of(locationsBehindAllocationProof(proof), [&](const MemoryLocation& location) {
-            return heapsDependedOn.contains(location.heap());
-        });
-    });
-}
-
-void GuardEliminator::findProofs(ProofsHeldByGuards heldByGuards)
-{
-    m_proofsFromTests.shrink(0);
-    m_otherProofs.shrink(0);
-    Vector<ExistingProof> proofs = findExistingProofs(m_context, m_conditions, heldByGuards);
-
-    BitVector conditionsOnAllocations;
-    for (const ExistingProof& proof : proofs) {
-        if (proof.source == ProofSource::Allocation)
-            conditionsOnAllocations.set(proof.condition.index());
-    }
-
-    BitVector conditionsProvenByAllocation;
-    if (!conditionsOnAllocations.isEmpty()) {
-        Vector<ProofSet> reliedOn = findProofsReliedOn(conditionsOnAllocations);
-        for (const ExistingProof& proof : proofs) {
-            if (proof.source == ProofSource::Allocation && canReplaceTests(proof, reliedOn[proof.condition.index()]))
-                conditionsProvenByAllocation.set(proof.condition.index());
-        }
-    }
-
-    for (const ExistingProof& proof : proofs) {
-        bool isProvenByAllocation = conditionsProvenByAllocation.get(proof.condition.index());
-        switch (originOf(proof)) {
-        case ProofOrigin::Unknown:
-            break;
-        case ProofOrigin::Test:
-            m_proofsFromTests.append(proof);
-            break;
-        case ProofOrigin::SwitchCase:
-            if (!isProvenByAllocation)
-                m_otherProofs.append(proof);
-            break;
-        case ProofOrigin::Allocation:
-            if (isProvenByAllocation)
-                m_otherProofs.append(proof);
-            break;
-        }
-    }
-}
-
-// Nearly every function has no redundant branch.
-bool GuardEliminator::findsNoRedundantBranchWithoutGuards()
-{
-    findProofs(ProofsHeldByGuards::AreLeftOut);
-    uint64_t maxNumberOfRounds = m_context.limit(LimitID::MaxGuardEliminationRounds);
-    uint64_t numberOfRounds = 0;
-    for (;;) {
-        m_proofs = m_proofsFromTests;
-        m_proofs.appendVector(m_otherProofs);
-        ConditionCoverage coverage(m_analyses, m_conditions, m_requirements.span(), m_proofs.span());
-
-        BitVector assumed(m_branches.size());
-        for (size_t index = 0; index < m_branches.size(); ++index)
-            assumed.quickSet(index);
-        BranchVerdicts verdicts;
-        for (;;) {
-            if (numberOfRounds++ >= maxNumberOfRounds)
-                return false;
-            verdicts = solveAndClassifyBranches(coverage, &assumed, assumed);
-            BitVector stillAssumed = verdicts.redundant;
-            stillAssumed.merge(verdicts.unreachable);
-            if (stillAssumed == assumed)
-                break;
-            assumed = WTF::move(stillAssumed);
-        }
-        BitVector mixedConditions = findMixedConditions(verdicts);
-        if (mixedConditions.isEmpty())
-            return verdicts.redundant.isEmpty();
-        m_otherProofs.removeAllMatching([&](const ExistingProof& proof) {
-            return mixedConditions.get(proof.condition.index());
-        });
-    }
-}
-
-BitVector GuardEliminator::findRedundantBranches()
-{
-    {
-        GuardEliminator firstSearch(m_context);
-        firstSearch.takeBranchesThatMayBeRedundantFrom(*this);
-        if (firstSearch.m_branches.isEmpty() || firstSearch.findsNoRedundantBranchWithoutGuards())
-            return { };
-    }
-    findProofs(ProofsHeldByGuards::AreListed);
-    for (;;) {
-        m_proofs = m_proofsFromTests;
-        m_proofs.appendVector(m_otherProofs);
-
-        ConditionCoverage coverage(m_analyses, m_conditions, m_requirements.span(), m_proofs.span());
-        BranchVerdicts verdicts = findCoveredBranches(coverage);
-        BitVector mixedConditions = findMixedConditions(verdicts);
-        if (mixedConditions.isEmpty())
-            return WTF::move(verdicts.redundant);
-
-        m_otherProofs.removeAllMatching([&](const ExistingProof& proof) {
-            return m_didReachRoundLimit || mixedConditions.get(proof.condition.index());
-        });
-    }
-}
-
-BranchVerdicts GuardEliminator::findCoveredBranches(ConditionCoverage& coverage)
-{
-    BitVector assumed(m_branches.size());
-    for (size_t index = 0; index < m_branches.size(); ++index)
-        assumed.quickSet(index);
-
-    uint64_t maxNumberOfRounds = m_context.limit(LimitID::MaxGuardEliminationRounds);
-    while (m_numberOfRounds < maxNumberOfRounds) {
-        ++m_numberOfRounds;
-
-        BranchVerdicts verdicts = solveAndClassifyBranches(coverage, &assumed, assumed);
-        BitVector stillAssumed = verdicts.redundant;
-        stillAssumed.merge(verdicts.unreachable);
-        if (stillAssumed == assumed)
-            return verdicts;
-        assumed = WTF::move(stillAssumed);
-    }
-
-    if (!std::exchange(m_didReachRoundLimit, true))
-        m_context.gaveUp(LimitID::MaxGuardEliminationRounds);
-
-    BitVector allBranches(m_branches.size());
-    for (size_t index = 0; index < m_branches.size(); ++index)
-        allBranches.quickSet(index);
-    return solveAndClassifyBranches(coverage, nullptr, allBranches);
-}
-
-// The failing edges of the branches that are assumed to be redundant are left out.
-BranchVerdicts GuardEliminator::solveAndClassifyBranches(ConditionCoverage& coverage, const BitVector* assumed, const BitVector& branches) const
-{
-    if (branches.isEmpty())
-        return { };
-
-    BitVector blocksWithIgnoredFailingEdge(m_function.blocks.size());
-    if (assumed) {
-        for (size_t index : *assumed)
-            blocksWithIgnoredFailingEdge.quickSet(m_branches[index].block.index());
-    }
-    coverage.solve(assumed ? &blocksWithIgnoredFailingEdge : nullptr);
-
-    if (m_context.build.options().verifiesAfterEveryPass) [[unlikely]] {
-        TestEvents events(TestEventInputs { m_analyses, m_conditions, { }, m_requirements.span(), m_proofs.span(), { }, false });
-        TestCoverage coverageOfEveryBlock(TestCoverageInputs { events, GapBudget::unlimited(), assumed ? &blocksWithIgnoredFailingEdge : nullptr });
-        for (size_t index : branches)
-            RELEASE_ASSERT(coverage.of(static_cast<uint32_t>(index)) == coverageOfEveryBlock.of(static_cast<uint32_t>(index)));
-    }
-
-    BranchVerdicts verdicts;
-    for (size_t index : branches) {
-        switch (coverage.of(static_cast<uint32_t>(index))) {
-        case RequirementCoverage::Unknown:
-            verdicts.unreachable.set(index);
-            break;
-        case RequirementCoverage::NeedsTest:
-            break;
-        case RequirementCoverage::Covered:
-            verdicts.redundant.set(index);
-            break;
-        }
-    }
-    return verdicts;
-}
-
-// GuardAvailability does not merge what a test proved with what a switch case or an allocation proved, so one of those stands for the tests of a condition only where no such test remains.
-BitVector GuardEliminator::findMixedConditions(const BranchVerdicts& verdicts) const
-{
-    BitVector mixedConditions;
-    if (m_otherProofs.isEmpty())
-        return mixedConditions;
-
-    BitVector conditionsInPlay;
-    BitVector conditionsStillTested = m_conditionsWithOtherTests;
-    for (size_t index = 0; index < m_branches.size(); ++index) {
-        size_t condition = m_branches[index].condition.index();
-        if (verdicts.redundant.get(index))
-            conditionsInPlay.set(condition);
-        else if (!verdicts.unreachable.get(index))
-            conditionsStillTested.set(condition);
-    }
-
-    for (const ExistingProof& proof : m_otherProofs)
-        mixedConditions.set(proof.condition.index());
-    mixedConditions.filter(conditionsInPlay);
-    mixedConditions.filter(conditionsStillTested);
-    return mixedConditions;
-}
-
-Vector<ValueID, 4> GuardEliminator::flattenedGuardsOf(ValueID list) const
-{
-    Vector<ValueID, 4> guards;
-    for (ValueID operand : m_function.at(list).guardsOperands()) {
-        const Value& guard = m_function.at(operand);
-        if (guard.opcode != Opcode::AllGuards) {
-            guards.appendIfNotContains(operand);
-            continue;
-        }
-        for (ValueID nested : guard.guardsOperands())
-            guards.appendIfNotContains(nested);
-    }
-    return guards;
-}
-
-PassOutcome GuardEliminator::simplifyGuardLists()
-{
-    if (!m_analyses.opcodesOfValues().contains(Opcode::AllGuards))
+    Function& function = context.function;
+    if (!context.analyses.opcodesOfValues().contains(Opcode::AllGuards))
         return PassOutcome::Unchanged;
 
     Vector<ValueID, 8> lists;
-    for (BlockID block : m_analyses.cfg().reversePostOrder()) {
-        for (ValueID value : m_function.at(block).values) {
-            if (m_function.at(value).opcode == Opcode::AllGuards)
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        for (ValueID value : function.at(block).values) {
+            if (function.at(value).opcode == Opcode::AllGuards)
                 lists.append(value);
         }
     }
     if (lists.isEmpty())
         return PassOutcome::Unchanged;
 
-    auto isOperandUse = [](const Use& use) {
-        return use.kind == Use::Kind::Operand || use.kind == Use::Kind::TerminatorOperand;
-    };
-
-    const UseLists& useLists = m_analyses.useLists();
-    ValueSubstitution substitution(m_function);
+    const UseLists& useListsBefore = context.analyses.useLists();
+    ValueSubstitution substitution(function);
     bool didChange = false;
     for (ValueID list : lists) {
-        Vector<ValueID, 4> guards = flattenedGuardsOf(list);
-        if (!std::ranges::equal(guards, m_function.at(list).guardsOperands())) {
-            m_function.edit(list, ValueEdit::Definition).setGuardsOperands(guards.span());
+        Vector<ValueID, 4> guards;
+        for (ValueID operand : function.at(list).guardsOperands()) {
+            if (function.at(operand).opcode != Opcode::AllGuards) {
+                guards.appendIfNotContains(operand);
+                continue;
+            }
+            for (ValueID nested : function.at(operand).guardsOperands())
+                guards.appendIfNotContains(nested);
+        }
+        if (!std::ranges::equal(guards, function.at(list).guardsOperands())) {
+            function.edit(list, ValueEdit::Definition).setGuardsOperands(guards.span());
             didChange = true;
         }
         if (guards.size() != 1)
             continue;
 
         // An allocation may stand where an operand of kind Guard is wanted, not as an argument for a parameter of type guard.
-        if (isGuardValue(m_function, guards.first()) || std::ranges::all_of(useLists.usesOf(list), isOperandUse)) {
+        bool canStandForList = isGuardValue(function, guards.first()) || std::ranges::all_of(useListsBefore.usesOf(list), [](const Use& use) {
+            return use.kind == Use::Kind::Operand || use.kind == Use::Kind::TerminatorOperand;
+        });
+        if (canStandForList) {
             substitution.replace(list, guards.first());
             didChange = true;
         }
     }
 
     if (didChange)
-        m_analyses.didChangeValues();
-    substitution.apply(m_function, &m_analyses);
-    didChange |= eraseUnusedGuardLists();
-    return didChange ? PassOutcome::Changed : PassOutcome::Unchanged;
-}
+        context.analyses.didChangeValues();
+    substitution.apply(function, &context.analyses);
 
-bool GuardEliminator::eraseUnusedGuardLists()
-{
     Vector<std::pair<BlockID, BitVector>, 4> unusedLists;
-    const UseLists& useLists = m_analyses.useLists();
-    for (BlockID block : m_analyses.cfg().reversePostOrder()) {
-        const BlockValues& values = m_function.at(block).values;
-        BitVector indexes;
-        for (uint32_t index = 0; index < values.size(); ++index) {
-            if (m_function.at(values[index]).opcode == Opcode::AllGuards && !useLists.useCount(values[index]))
-                indexes.set(index);
-        }
-        if (!indexes.isEmpty())
-            unusedLists.append({ block, WTF::move(indexes) });
+    const UseLists& useLists = context.analyses.useLists();
+    for (ValueID list : lists) {
+        if (useLists.useCount(list))
+            continue;
+        ValueLocation location = useLists.locationOf(list);
+        if (unusedLists.isEmpty() || unusedLists.last().first != location.block)
+            unusedLists.append({ location.block, BitVector() });
+        unusedLists.last().second.set(location.index);
     }
-    if (unusedLists.isEmpty())
-        return false;
-
-    IRBuilder builder(m_analyses.context(), m_function, m_context.types, &m_analyses);
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
     for (const auto& [block, indexes] : unusedLists)
         builder.eraseValues(block, indexes);
-    return true;
+    return didChange || !unusedLists.isEmpty() ? PassOutcome::Changed : PassOutcome::Unchanged;
 }
 
-} // anonymous namespace
-
-static Vector<BlockID, 4> findInstanceTestsOfTypedObjects(FunctionPassContext& context)
+static PassOutcome foldInstanceTestsOfTypedObjects(FunctionPassContext& context)
 {
-    const Function& function = context.function;
+    if (context.build.validates() || !context.analyses.opcodesOfValues().contains(Opcode::BelongsToInstance))
+        return PassOutcome::Unchanged;
+
+    Function& function = context.function;
     const ValueIdentities& identities = context.analyses.identities();
     const UseLists& useLists = context.analyses.useLists();
-
     Vector<BlockID, 4> blocks;
     for (BlockID block : context.analyses.cfg().reversePostOrder()) {
         const Terminator& terminator = function.at(block).terminator;
@@ -1520,38 +1062,16 @@ static Vector<BlockID, 4> findInstanceTestsOfTypedObjects(FunctionPassContext& c
         if (!mayJoinTestedValues && receiverCandidates(context.program, function, object).proof == ReceiverProof::Type)
             blocks.append(block);
     }
-    return blocks;
-}
-
-static PassOutcome foldInstanceTestsOfTypedObjects(FunctionPassContext& context)
-{
-    if (context.build.validates() || !context.analyses.opcodesOfValues().contains(Opcode::BelongsToInstance))
-        return PassOutcome::Unchanged;
-    Vector<BlockID, 4> blocks = findInstanceTestsOfTypedObjects(context);
     if (blocks.isEmpty())
         return PassOutcome::Unchanged;
 
-    Function& function = context.function;
     IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
     for (BlockID block : blocks) {
-        Terminator& terminator = function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
-        ValueID test = terminator.conditionOperand();
-        Target taken = terminator.taken();
-        Arguments arguments = WTF::move(taken.arguments);
-
-        builder.setOrigin(terminator.origin());
-        terminator = Terminator { };
-        builder.moveToEndOf(block);
-        if (!taken.proofs.isEmpty()) {
-            ValueID noProof = builder.append(Opcode::AllGuards, { });
-            for (size_t result = 0; result < taken.proofs.size(); ++result)
-                arguments.append(noProof);
-        }
-        builder.emitJump(taken.block, WTF::move(arguments));
-
-        BitVector indexes;
-        indexes.set(function.at(block).values.find(test));
-        builder.eraseValues(block, indexes);
+        ValueID test = function.at(block).terminator.conditionOperand();
+        replaceBranchWithJumpToTaken(builder, function, block, [&] {
+            return builder.append(Opcode::AllGuards, { });
+        });
+        eraseTest(builder, function, block, test);
     }
     // The builder sees the jumps that it emits, not the branches that were taken away for them.
     context.analyses.didChangeControlFlow();
@@ -1563,7 +1083,8 @@ static PassOutcome foldInstanceTestsOfTypedObjects(FunctionPassContext& context)
 PassOutcome eliminateGuards(FunctionPassContext& context)
 {
     PassOutcome outcome = foldInstanceTestsOfTypedObjects(context);
-    outcome |= GuardEliminator(context).run();
+    outcome |= eliminateRedundantBranches(context);
+    outcome |= simplifyGuardLists(context);
     // The analyses were told of every edit, so whatever they hold was made behind the last one.
     if (outcome == PassOutcome::Changed)
         context.keptAnalyses = allAnalyses;

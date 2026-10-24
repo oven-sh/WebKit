@@ -28,7 +28,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Inline words: operands from the front, payload from the back. Variadic operands and payload lists are always out of line.
 class Instruction {
 public:
     static constexpr uint32_t noPosition = UINT32_MAX;
@@ -77,7 +76,6 @@ private:
     static constexpr uint32_t maxNumberOfPayloadWords = (1 << 28) - 1;
     static constexpr uint32_t outOfLineHeaderSize = 2;
 
-    // Storage: operand capacity, number of operands, payload, operands.
     struct OutOfLineWords {
         uint32_t* storage;
         uint32_t numberOfPayloadWords;
@@ -89,15 +87,12 @@ private:
         uint32_t* operands() const { return payload() + numberOfPayloadWords; }
     };
 
-    // Out of line: the storage pointer, then numberOfPayloadWords << 4 | numberOfNamedOperands.
     std::array<uint32_t, numberOfInlineWords> m_words;
 public:
     uint32_t position { noPosition };
-    // Matches LimitID::InlineFramesPerFunction.
     uint32_t inlineFrame : 24 { 0 };
     uint32_t flags : 8 { 0 };
 private:
-    // Both counts are zero when the words are out of line.
     uint8_t m_numberOfInlinePayloadWords : 2 { 0 };
     uint8_t m_hasOutOfLineWords : 1 { false };
     uint8_t : 2;
@@ -506,7 +501,6 @@ public:
     void setExpected(TypeID expected) { m_expected = expected; }
     TypeID expectedOrType() const { return m_expected && !isExpectedNever() ? m_expected : type; }
 
-    // No value is expected here: the failing side of a test that is expected to pass, and what is computed from it.
     bool isExpectedNever() const { return !m_expected.index(); }
     TypeID expectedForTyping() const { return m_expected; }
     TypeID expectedOrTypeForTyping() const { return m_expected ? m_expected : type; }

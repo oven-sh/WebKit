@@ -34,18 +34,6 @@ struct CalleeCandidates {
 CalleeCandidates calleeCandidates(const Program&, const Function&, ValueID callee);
 // A value of the type may be a function that the type does not list.
 bool admitsUnlistedFunctions(const Program&, const Type&);
-// Where neither the type of the callee nor its expected type lists a function, the callee is expected to be one of the functions that flow saw arrive at the operation.
-CalleeCandidates calleeCandidatesOf(const Program&, const Function&, const Value& operation, ValueID callee);
-
-struct OnlyCallee {
-    ValueID value;
-    FunctionID function;
-};
-
-// Where calleeCandidates() proves one function and admits nothing else, not even undefined: that function, and the value whose type says it.
-std::optional<OnlyCallee> findOnlyCallee(const Program&, const Function&, ValueID callee);
-
-ValueID findClosureCreation(const Function&, ValueID closure, FunctionID);
 
 } } } // namespace JSC::AOT::Typed
 

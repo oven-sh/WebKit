@@ -44,7 +44,6 @@ struct OperandClasses {
         hasString |= type.isAnyString();
     }
 
-    // `text + 1`, String(1): the texts of primitives are joined. A number added to a BigInt is an error of the language.
     bool onlyMakesText(Opcode opcode) const
     {
         return haveAllTextByThemselves && (opcode == Opcode::ToString || (opcode == Opcode::Add && hasString));
@@ -69,7 +68,6 @@ static void describeOperatorOn(const Program& program, Opcode opcode, const Type
         return;
 
     Effects own = declared;
-    // `a === b` converts nothing: all that it does to two texts is to flatten them.
     bool onlyComparesTexts = provesOf(opcode) == Proof::Equality && !classes.hasProtocol;
     if (own.mayThrow && (classes.onlyMakesText(opcode) || onlyComparesTexts))
         own.mayThrow = ThrowEffect::onlyForLackOfMemory();

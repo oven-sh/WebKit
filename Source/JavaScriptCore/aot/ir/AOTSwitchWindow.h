@@ -15,7 +15,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The cases of a switch over integers that lie within 64 values of each other and lead to few places: one test of the range and one test of a bit for each place.
 struct SwitchWindow {
     static constexpr int64_t numberOfValues = 64;
     AOT_CLASS_THRESHOLD(unsigned, minCases, 4);

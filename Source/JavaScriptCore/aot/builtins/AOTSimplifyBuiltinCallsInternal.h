@@ -45,7 +45,6 @@ unsigned simplifyConcatenationsOfLiterals(FunctionPassContext&);
 bool keepsTypeOf(FunctionPassContext&, ValueID original, const Value& rewritten);
 void replaceKeepingType(FunctionPassContext&, ValueID original, Value&& rewritten);
 std::optional<ValueID> findSingleUseDefinition(FunctionPassContext&, ValueID operand, ValueID user);
-// What the list at the operand holds, where that is primitive constants for good: a list that a variable of a module holds and nothing ever changes, or such a literal in the function itself.
 std::optional<Vector<KnownValue, 8>> findConstantsOfListFor(FunctionPassContext&, ValueID operand, ValueID user);
 Value makeConstant(KnownValue);
 

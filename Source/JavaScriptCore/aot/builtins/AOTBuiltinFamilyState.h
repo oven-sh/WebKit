@@ -24,7 +24,6 @@ class JSONRuntime;
 struct Instance;
 struct State;
 
-// What an unmapped arguments object looks like once callee and @@iterator are in place, as long as the realm starts such objects from the same Structure.
 struct UnmappedArgumentsShape {
     Structure* initialStructure { nullptr };
     Structure* structure { nullptr };

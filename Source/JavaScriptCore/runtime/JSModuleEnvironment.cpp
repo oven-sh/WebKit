@@ -29,9 +29,7 @@
 #include "config.h"
 #include "JSModuleEnvironment.h"
 
-#if ENABLE(AOT)
 #include "AOTModuleRecord.h"
-#endif
 #include "AbstractModuleRecord.h"
 #include "JSCInlines.h"
 #include "JSLexicalEnvironmentInlines.h"

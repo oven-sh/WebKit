@@ -121,9 +121,6 @@ static_assert(std::forward_iterator<BuiltinTableIDRange<BuiltinID>::Iterator>);
 
 template<typename ID> struct NamedIDsOf;
 
-// What code of the engine names, as in Builtins::ArrayPrototypePush: a position in the engine's own list of names. The table says which of its entries that is.
-// So the numbers of the table may change without the code that names an entry being compiled again.
-// A list at namespace scope holds these, which are constant expressions, and converts each where it is read: the ids are data of another object file.
 template<typename ID>
 class NamedTableID {
 public:
@@ -220,7 +217,6 @@ namespace AOT {
     macro(BuiltinClassID, builtinTableNamedClasses, numberOfNamedBuiltinClasses) \
     macro(BuiltinLayoutID, builtinTableNamedLayouts, numberOfNamedBuiltinLayouts)
 
-// The name of the namespace says which list the engine was compiled with, so a table that was compiled for another list does not link.
 #define AOT_DECLARE_LIST_OF_NAMED_IDS(ID, array, count) \
     inline namespace AOT_NAMESPACE_OF_ENGINE_LIST { extern const ID array[count]; } \
     template<> struct NamedIDsOf<ID> { \
@@ -229,7 +225,6 @@ namespace AOT {
 FOR_EACH_AOT_LIST_OF_NAMED_IDS(AOT_DECLARE_LIST_OF_NAMED_IDS)
 #undef AOT_DECLARE_LIST_OF_NAMED_IDS
 
-// An instance keeps one byte for each built-in. How many the table has is known where the table is compiled, which checks it against this.
 inline constexpr unsigned maxNumberOfBuiltins = 16384;
 
 } // namespace AOT

@@ -38,7 +38,6 @@ struct TypePropagationInputs {
     FunctionAnalyses& analyses;
     TypeArena& types;
     BuildContext& build;
-    // Of the caller that types one function several times while the program stays as it is, with one arena.
     TypingMemo* memo { nullptr };
     const KnownPositionTypes* knownPositions { nullptr };
 };
@@ -48,7 +47,6 @@ struct TypePropagationOutcome {
     uint32_t changedExpectedTypes { 0 };
     uint32_t cutBlocks { 0 };
     uint32_t replacedUpcasts { 0 };
-    // Code stands behind a value that never completes, and stays there until the function has its generic version.
     bool waitsToCutCode { false };
     bool didLookForCodeToCut { false };
 
@@ -69,7 +67,6 @@ struct TypePropagationOutcome {
     }
 };
 
-// A ResultAt and what a terminator says about an edge are typed from the operands of the value they name.
 inline constexpr OpcodeSet opcodesWithIndirectUsers = []() consteval {
     OpcodeSet opcodes = opcodesThatMayHaveSeveralResults;
     for (unsigned index = 0; index < numberOfEnumerators<Opcode>; ++index) {
@@ -86,29 +83,22 @@ public:
     ~TypePropagation();
 
     void typeAllValues();
-    // Where every other value is typed as the rules type it, nothing is typed behind a value that keeps its types.
     void typeDependentsOf(std::span<const ValueID> changedValues, bool everyOtherValueIsAsTyped);
-    // A value that was edited is computed again, and so is what is typed from a value whose types have come out different. What is computed to the same types ends there.
     void typePendingValues(PendingTyping&);
     void tellWhatIsTyped();
 
     void restartAllValues();
     void restartDependentsOf(std::span<const ValueID>);
-    // For a caller that asks about the listed values alone, which hold whatever one of them is typed from and is to be typed anew: they start over, and nothing else is typed from here on.
     void restartListedValues(std::span<const ValueID>);
 
-    // What the rules give for one value at the proven level, from the types that the values have which it is typed from. Nothing is stored.
     TypeID provenTypeByRule(ValueID id) { return computeValue(typingContext(TypeLevel::Proven), id); }
     TypeID provenTypeOfParameterByRule(ValueID id, BlockID block, uint32_t index) { return computeParameter(typingContext(TypeLevel::Proven), id, block, index); }
-    // Whatever the value is typed from, beside the records of the program. One may come more than once.
     void forEachSourceOf(ValueID id, NOESCAPE const Invocable<void(ValueID)> auto& functor) const { forEachSourceOf(m_inputs.function.at(id), functor); }
     void forEachSourceOfParameter(BlockID, uint32_t index, NOESCAPE const Invocable<void(ValueID)> auto&) const;
 
     void solveTypes() { solve(TypeLevel::Proven); }
-    // Expected types come from the positions that are only expected to hold their type: entry parameters, fields, variables, captures, results.
     void solveExpectedTypes();
     TypePropagationOutcome finish();
-    // Leaves the ids as they are. A cut removes edges, and the parameters they led to were joined over them: those are to be typed again.
     TypePropagationOutcome finishWithoutCompacting(Vector<ValueID>& parametersBehindRemovedEdges);
 
 private:
@@ -151,7 +141,6 @@ private:
     void willTypeValues();
     void willRestartValues();
     void rememberState(ValueID);
-    // The log hears of a remembered value when all is typed, and only where its types are no longer those that were remembered.
     bool isRemembered(ValueID id) const { return !m_rememberedValues.isEmpty() && m_isRemembered.quickGet(id.index()); }
     ALWAYS_INLINE Value& editTypeOf(ValueID id)
     {
@@ -223,7 +212,6 @@ private:
     bool m_dropsExpectedTypesAtOnce { false };
 
     BitVector m_didEnqueueParametersOf;
-    // Of the parameters that were put into the list with their block. Nothing is written for any other value.
     Vector<PlaceOfParameter> m_placesOfParameters;
     Vector<uint32_t> m_componentOfValue;
     BitVector m_isSearchedCycle;
@@ -264,30 +252,22 @@ inline TypePropagationOutcome typeValuesFromNever(const TypePropagationInputs& i
 inline TypePropagationOutcome narrowValueTypes(const TypePropagationInputs& inputs, std::span<const ValueID> changedValues) { return typeUntilNothingIsCut(inputs, TypedFirst::DependentsOfChangedValues, changedValues); }
 inline TypePropagationOutcome narrowValueTypesBehindChanges(const TypePropagationInputs& inputs, std::span<const ValueID> changedValues) { return typeUntilNothingIsCut(inputs, TypedFirst::DependentsOfChangedValues, changedValues, true); }
 
-// For a caller that may still widen what the function reads: the code behind a value of type never stays. finishTypedValues() cuts it.
 bool hasTypedValues(const Function&);
 void typeValuesWithoutCutting(const TypePropagationInputs&);
 inline TypePropagationOutcome finishTypedValues(const TypePropagationInputs& inputs) { return typeUntilNothingIsCut(inputs, TypedFirst::Nothing); }
 
-// What is typed behind a Check holds where the Check has passed.
 bool waitsForGenericVersion(const Program&, const Function&);
 
-// Which values of a function have still to be typed again: what the log of changes has named since types were last propagated, less what somebody has typed since.
 class PendingTyping {
 public:
-    // Nothing is known of the function, or the log has forgotten: every value has to be typed.
     bool isEverythingPending(const ChangeLog& log) const { return m_isEverythingPending || log.hasForgottenSince(m_seen); }
-    // Whoever types every value of such a function looks again whether the code can go. So it does not count as typed when it leaves the schedule.
     bool waitsToCutCode() const { return m_waitsToCutCode; }
     void setWaitsToCutCode(bool waits) { m_waitsToCutCode = waits; }
     bool isEmpty(const ChangeLog& log) const { return !isEverythingPending(log) && !log.hasChangesSince(m_seen) && m_values.isEmpty() && m_blocks.isEmpty() && !m_valuesTypedFromRecordsArePending; }
 
     void didTypeEverything(const ChangeLog& log) { didTypeEverythingBefore(log.end()); }
-    // A function that says so enters a schedule typed, but for what is typed from its signature, from a variable or from the record of another function.
     void didEnterScheduleTyped(const ChangeLog&);
-    // compactFunction(), for whoever keeps track of what is pending.
     bool compact(Function&, Renumbering* = nullptr);
-    // For a copy of the function as it is now, which has a log of its own.
     PendingTyping forCopyWith(const ChangeLog& logOfCopy, const ChangeLog&) const;
 
     void takeEntries(const ChangeLog&);
@@ -308,7 +288,6 @@ private:
 
 TypePropagationOutcome typeChangedValues(const TypePropagationInputs&);
 
-// Turns a typed Convert into what resolveConvert() answers for it, with the types it has. False: nothing is left of it, and its uses are to read its operand.
 bool becomeResolved(Function&, ValueID convert, const ConvertResolution&);
 
 } } } // namespace JSC::AOT::Typed

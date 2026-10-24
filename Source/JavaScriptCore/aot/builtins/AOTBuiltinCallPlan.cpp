@@ -138,7 +138,6 @@ Type typeConvertedWithoutUserCode(const TypingContext& context, const Type& oper
     return runsUserCode(context.program, operand, protocols) ? converted.withoutObjects() : converted;
 }
 
-// The built-in repeats an integer conversion on a number it is passed, and the second time changes nothing.
 static bool isUnchangedByConversion(const Type& type, BuiltinConversion conversion)
 {
     switch (conversion) {
@@ -168,7 +167,6 @@ static bool isUnchangedByConversion(const Type& type, BuiltinConversion conversi
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The IR has no form for these two conversions. A number that is passed where an index or a length is expected is one nearly always.
 static bool isExpectedToBeAccepted(const Type& type, BuiltinConversion conversion)
 {
     switch (conversion) {
@@ -444,7 +442,6 @@ OperandOutcome CallPlanner::requireAcceptedType(PlannedOperand& operand)
     if (!expected || fitIn(expected, accepted) != TypeFit::Inside)
         return giveUp();
 
-    // An operand that stands for a missing one is passed as it is. Behind a test that lets it through, no inline form knows whether the operand is there.
     narrowed = narrowed.withoutPrimitives(Primitive::UndefinedOrNull & ~types().at(expected).primitives);
     bool holdsExpectedType = types().at(expected).isSubsetOf(narrowed, m_context.program);
     if (require(operand, holdsExpectedType ? types().intern(narrowed) : expected) == OperandOutcome::GaveUp)
@@ -520,7 +517,6 @@ static bool failsByValue(BuiltinConversion conversion)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The built-in refuses a negative index before it converts what follows the index, so code of what follows stays in the built-in. A value that is stored behind an index is a number nearly always, and the conversion of one runs no code.
 bool CallPlanner::followsOperandRefusedByValue(BuiltinOperand position) const
 {
     return std::ranges::any_of(m_overload->parameters, [&](const BuiltinParameter& parameter) {

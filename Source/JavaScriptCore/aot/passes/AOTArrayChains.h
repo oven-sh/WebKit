@@ -92,15 +92,8 @@ constexpr bool endTakesCallback(ChainEndKind end)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-constexpr bool endTakesThisArgument(ChainEndKind end)
-{
-    return endTakesCallback(end) && end != ChainEndKind::Reduce;
-}
-
-constexpr bool endTakesOperand(const ChainShape& shape)
-{
-    return shape.end == ChainEndKind::Join || (shape.end == ChainEndKind::Reduce && shape.hasInitialValue);
-}
+constexpr bool endTakesThisArgument(ChainEndKind end) { return endTakesCallback(end) && end != ChainEndKind::Reduce; }
+constexpr bool endTakesOperand(const ChainShape& shape) { return shape.end == ChainEndKind::Join || (shape.end == ChainEndKind::Reduce && shape.hasInitialValue); }
 
 struct ArrayMethodCall {
     const ChainMethod* method { nullptr };
@@ -141,8 +134,6 @@ struct ArrayChain {
 Vector<ArrayChain> findArrayChains(FunctionPassContext&, const BitVector* callsTakenAlone = nullptr);
 PassOutcome fuseArrayMethodsTakenAlone(FunctionPassContext&, const BitVector& calls);
 ArrayChainDeclineReason checkInterleaving(FunctionPassContext&, const ArrayChain&);
-void rewriteArrayChain(FunctionPassContext&, IRBuilder&, const ArrayChain&);
-
 FunctionID findChainTraversal(const Program&);
 
 static_assert(ChainShape::decode(ChainShape { { ChainLinkKind::Filter, ChainLinkKind::Map, ChainLinkKind::None }, ChainEndKind::Reduce, true }.encode()).numberOfLinks() == 2);

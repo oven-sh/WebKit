@@ -41,7 +41,6 @@ using Typed::OwnKeysKind;
 
 namespace {
 
-// FlatEntries: the keys and values of Entries one behind the other in one list, for a loop that takes each pair apart at once.
 enum class OwnPropertyList : uint8_t { Values, Entries, FlatEntries };
 
 } // anonymous namespace
@@ -218,7 +217,6 @@ static JSArray* tryCreateList(JSGlobalObject* globalObject, OwnPropertyList list
     return tryCreateEntriesArray(globalObject, keys, valueAt);
 }
 
-// Answers where every enumerable property with a string key is a value that lies in its slot or among the extra properties. Reading one runs no code of the program.
 static JSArray* tryListOwnProperties(JSGlobalObject* globalObject, const Object& compiled, OwnPropertyList list)
 {
     constexpr uint16_t flagsBarringListing = fieldIsNotEnumerable | fieldIsAccessor;
@@ -237,7 +235,6 @@ static JSArray* tryListOwnProperties(JSGlobalObject* globalObject, const Object&
         return tryCreateList(globalObject, list, static_cast<unsigned>(fields->size()), listsKeys ? compiled.keys(vm) : nullptr, valueAt);
     }
 
-    // The list and its keys are forgotten at the next collection.
     DeferGC deferGC(vm);
     const Vector<PropertyListEntry>* properties = compiled.fieldsAndExtraPropertiesInKeyOrder(vm);
     if (!properties)
@@ -252,13 +249,11 @@ static JSArray* tryListOwnProperties(JSGlobalObject* globalObject, const Object&
     return tryCreateList(globalObject, list, static_cast<unsigned>(properties->size()), listsKeys ? compiled.keysWithExtraProperties(vm) : nullptr, valueAt);
 }
 
-// No code of the program runs while the engine lists such an object, so nothing sees whether the built-in function has a frame.
 static bool isListedWithoutRunningCode(JSObject* object)
 {
     return !object->hasNonReifiedStaticProperties() && object->structure()->canPerformFastPropertyEnumerationCommon() && !object->canHaveExistingOwnIndexedProperties();
 }
 
-// As the engine lists such an object for Object.entries: the values lie at their offsets, and a Structure that has listed its keys before has the strings.
 static JSArray* tryListFlatEntriesOfOrdinaryObject(JSGlobalObject* globalObject, JSObject* object)
 {
     VM& vm = globalObject->vm();
@@ -306,7 +301,6 @@ static JSValue listOwnProperties(Instance* instance, JSValue value, OwnPropertyL
     if (list != OwnPropertyList::FlatEntries)
         return listed;
 
-    // The engine has listed the pairs as the language says. Nobody else has them, and they are arrays as they were made.
     JSArray* pairs = uncheckedDowncast<JSArray>(listed);
     auto memberAt = [&](unsigned index, unsigned member) {
         return uncheckedDowncast<JSArray>(pairs->getDirectIndex(globalObject, index))->getDirectIndex(globalObject, member);
@@ -324,7 +318,6 @@ static JSValue listOwnProperties(Instance* instance, JSValue value, OwnPropertyL
     return entries;
 }
 
-// `Object.prototype.toString.call(value)`.
 JSC_DEFINE_JIT_OPERATION(operationAOTObjectToStringOfAnyValue, EncodedJSValue, (Instance* instance, EncodedJSValue encodedValue))
 {
     JSValue value = JSValue::decode(encodedValue);
@@ -335,7 +328,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTObjectToStringOfAnyValue, EncodedJSValue, (
         return { JSValue::encode(texts.objectNumberString()), nullptr };
     if (value.isBoolean())
         return { JSValue::encode(texts.objectBooleanString()), nullptr };
-    // The error for a proxy that has been revoked names the function whose frame is on top: nothing is answered, and the function is called.
     if (value.isCell() && value.asCell()->type() == ProxyObjectType) [[unlikely]]
         return { encodedJSValue(), nullptr };
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTObjectToStringOfAnyValue);
@@ -371,7 +363,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPropertyIsEnumerable, size_t, (Instance* in
     OPERATION_RETURN(scope, isOwn && descriptor.enumerable());
 }
 
-// `{ __proto__: value }` passes by a value that is neither an object nor null. Object.create refuses it.
 JSC_DEFINE_JIT_OPERATION(operationAOTSetLiteralPrototype, void, (Instance* instance, JSCell* cell, EncodedJSValue encodedPrototype, uint32_t refusesOtherValues))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTSetLiteralPrototype);
@@ -506,13 +497,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetOwnPropertyFields, void, (Instance* inst
     OPERATION_RETURN(scope);
 }
 
-// Neither a trap nor a property that is made when it is asked for: listing, describing and defining own properties runs no code and depends on nothing but the object.
 static bool hasOrdinaryOwnProperties(JSObject* object)
 {
     return object->type() == FinalObjectType || object->inherits<Object>();
 }
 
-// A descriptor object inherits from it, and whoever turns the object back into a descriptor asks for each of these names along the chain.
 static bool mayChangeDescriptors(VM& vm, JSObject* objectPrototype)
 {
     const CommonIdentifiers& names = *vm.propertyNames;
@@ -525,7 +514,6 @@ static bool mayChangeDescriptors(VM& vm, JSObject* objectPrototype)
 
 namespace {
 
-// The own properties of an object of ours, read off its slots in the order of its keys.
 struct PropertiesInSlots {
     void append(UniquedStringImpl* name, JSValue valueOrAccessor, unsigned attributesOfProperty)
     {
@@ -557,7 +545,6 @@ static bool tryReadBySlots(VM& vm, JSObject* cell, PropertiesInSlots& properties
         return result == PropertyWalk::Result::Completed;
     }
 
-    // Nothing but fields, accessors among them. No list of them is made or kept: most sources are seen once.
     State& state = source->state();
     RuntimeLayoutTable& layouts = state.objects->layouts;
     std::span<const FieldData> fields = layout.fields();
@@ -578,7 +565,6 @@ static bool tryReadBySlots(VM& vm, JSObject* cell, PropertiesInSlots& properties
 
 namespace {
 
-// Defines one property after the other on the target.
 class PropertyDefiner {
 public:
     PropertyDefiner(VM& vm, JSGlobalObject* globalObject, JSObject* target)
@@ -593,7 +579,6 @@ public:
 
     Object* compiledTargetThatRefusesNothing() const { return m_compiledTarget; }
 
-    // May leave an exception.
     void define(PropertyName name, const PropertyDescriptor& descriptor)
     {
         if (m_compiledTarget && tryDefineWithoutValidation(name, descriptor))
@@ -660,7 +645,6 @@ extern "C" JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__ownEntriesFlat(JS
     return JSC::JSValue::encode(JSC::AOT::listOwnProperties(JSC::AOT::Instance::of(globalObject), JSC::JSValue::decode(encodedObject), JSC::AOT::OwnPropertyList::FlatEntries));
 }
 
-// Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)) where the call alone has the descriptors, in two halves, each where its call stood.
 extern "C" JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__describeUnlessOrdinary(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedSource)
 {
     using namespace JSC;
@@ -675,13 +659,11 @@ extern "C" JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__describeUnlessOrd
     return JSValue::encode(InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), descriptors, jsUndefined()));
 }
 
-// The language describes every property before it defines the first.
 extern "C" JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__definePropertiesFrom(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedTarget, JSC::EncodedJSValue encodedDescribed, JSC::EncodedJSValue)
 {
     using namespace JSC;
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // Compiled code takes whatever is not empty for the answer.
     if (!JSValue::decode(encodedTarget).isObject()) {
         throwTypeError(globalObject, scope, DefinePropertyOnNonObjectError);
         return { };
@@ -701,7 +683,6 @@ extern "C" JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__definePropertiesF
 
     AOT::PropertiesInSlots properties;
     if (AOT::tryReadBySlots(vm, source, properties)) {
-        // Each is a field that takes its value: the order of the keys is looked up once, and those who watch the object hear of it once.
         AOT::Object* compiledTarget = definer.compiledTargetThatRefusesNothing();
         if (compiledTarget && properties.arePlain && !compiledTarget->hasFlagsInOrderWord() && compiledTarget->tryDefineFields(vm, properties.names.span(), { properties.valuesOrAccessors.data(), properties.valuesOrAccessors.size() }))
             return JSValue::encode(target);

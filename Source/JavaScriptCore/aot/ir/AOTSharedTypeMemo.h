@@ -21,12 +21,10 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// What an answer follows from, beside the ids in its key.
 enum class SharedAnswers : uint8_t { AboutTypes, AboutProgram };
 
 inline constexpr size_t numberOfSharedAnswerKinds = 2;
 
-// Types that follow from ids that the table holds for good, shared by all threads.
 class SharedTypeMemo {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(SharedTypeMemo);
     WTF_MAKE_NONCOPYABLE(SharedTypeMemo);
@@ -45,19 +43,16 @@ public:
         unsigned fullShards { 0 };
     };
 
-    // The two ids are the whole key. They differ: a relation of a type to itself needs no memo.
     static constexpr Key keyOf(Relation relation, TypeID first, TypeID second)
     {
         return { static_cast<uint64_t>(first.index()) << 32 | second.index(), static_cast<uint32_t>(relation) };
     }
 
-    // For a key of any length: two hashes of it, neither of which follows from the other.
     static constexpr Key keyOf(uint64_t firstHash, uint64_t secondHash)
     {
         return { firstHash ? firstHash : 1, static_cast<uint32_t>(secondHash >> 32) | hashedKeyBit };
     }
 
-    // 256 MB in all shards, and a third of that in the tables they have grown out of.
     AOT_CLASS_THRESHOLD(size_t, defaultMaxSlotsInShard, 1 << 18);
 
     SharedTypeMemo(bool verifiesAnswers, bool countsLookups, size_t maxSlotsInShard = defaultMaxSlotsInShard)
@@ -67,7 +62,6 @@ public:
     {
     }
 
-    // Whoever finds an answer computes it all the same and compares.
     bool verifiesAnswers() const { return m_verifiesAnswers; }
 
     TypeID find(Key key) const
@@ -88,7 +82,6 @@ public:
         m_shards[shardIndexOf(position)].add(key, position, type, m_maxSlotsInShard);
     }
 
-    // For a caller that knows that no other thread adds.
     Counts counts()
     {
         Counts total;
@@ -109,7 +102,6 @@ private:
     static constexpr uint32_t hashedKeyBit = 1u << 31;
     static constexpr uint32_t provisionalBit = 1u << 31;
 
-    // Free while `first` is zero. Whoever reads a `first` that is not zero finds the other word filled.
     struct Slot {
         std::atomic<uint64_t> first { 0 };
         std::atomic<uint64_t> secondAndType { 0 };
@@ -195,7 +187,6 @@ private:
         std::atomic<bool> isFull { false };
         mutable std::atomic<uint64_t> found { 0 };
         mutable std::atomic<uint64_t> notFound { 0 };
-        // A lookup on another thread may still be probing an earlier table.
         Vector<std::unique_ptr<Table>> tables WTF_GUARDED_BY_LOCK(lock);
         size_t size WTF_GUARDED_BY_LOCK(lock) { 0 };
     };
@@ -206,7 +197,6 @@ private:
         return mixed ^ mixed >> 32;
     }
 
-    // A table takes its slot from the low bits.
     static constexpr unsigned shardIndexOf(uint64_t position) { return static_cast<unsigned>(position >> (64 - shardBits)); }
 
     const bool m_verifiesAnswers;

@@ -36,7 +36,6 @@ void Layout::indexFields()
         addToIndex(i);
 }
 
-// The first field with a key is the one that is found.
 void Layout::addToIndex(uint32_t field)
 {
     PropertyKeyID key = fields[field].key;
@@ -405,7 +404,6 @@ private:
 
 } // anonymous namespace
 
-// The result of a call, awaited or not, about whose layouts no conversion on the way has said anything.
 bool LayoutUsesOfBody::isResultOfCall(ValueID id) const
 {
     while (true) {
@@ -413,14 +411,12 @@ bool LayoutUsesOfBody::isResultOfCall(ValueID id) const
         if (Value::opcodesWithExpectedResult.contains(value.opcode))
             return true;
         bool isSameValue = value.opcode == Opcode::Await || (value.opcode == Opcode::Convert && !namesLayouts(value.declared()));
-        // A definition has a smaller id than its uses. Nothing has checked that yet.
         if (!isSameValue || value.valueOperand().index() >= id.index())
             return false;
         id = value.valueOperand();
     }
 }
 
-// A callee whose own type names the layouts of its result is no built-in that creates what its caller asks for: such a built-in answers `any`.
 void LayoutUsesOfBody::addConversionOfResult(const DeclaredType& declared)
 {
     bool isResultTypeOfCallee = declared.site && m_program.at(declared.site).kind == TypeSiteKind::CallResult;
@@ -460,7 +456,6 @@ void LayoutUsesOfBody::collect()
     }
 }
 
-// The types that name a layout, themselves or in the contents of a class. A type is interned after the contents of its classes.
 static unsigned findTypesWithLayouts(const Program& program, BitVector& result, unsigned firstType)
 {
     unsigned numberOfTypes = program.types.size();
@@ -508,7 +503,6 @@ void LayoutUseCollector::collect(const Data& data, unsigned worker)
     });
 }
 
-// What each thread finds is united, so the result does not depend on which thread looked at which function.
 LayoutUses LayoutUseCollector::takeUses()
 {
     LayoutUses uses(m_numberOfLayouts, m_typesWithLayouts.size());
@@ -522,7 +516,6 @@ LayoutUses LayoutUseCollector::takeUses()
     return uses;
 }
 
-// A built-in that creates a typed result creates the records that the type names, and in their fields and in the contents of arrays what the types of those name.
 static void nameLayoutsOfConvertedResults(const Program& program, const BitVector& typesWithLayouts, LayoutUses& uses)
 {
     BitVector visitedTypes(program.types.size());

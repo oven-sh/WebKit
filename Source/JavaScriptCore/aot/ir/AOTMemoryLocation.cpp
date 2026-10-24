@@ -33,7 +33,6 @@ static uint64_t maskOfLayouts(const LayoutSet& layouts)
     if (!layouts.isComplete || layouts.hasMembersWithoutLayout)
         return LocationMasks::entireHeap;
 
-    // A family of hundreds of layouts sets nearly every bit, and the mask is asked for at each access. No answer takes more steps than the mask has bits.
     constexpr size_t numberOfBits = 64;
     if (layouts.members.size() > numberOfBits)
         return LocationMasks::entireHeap;

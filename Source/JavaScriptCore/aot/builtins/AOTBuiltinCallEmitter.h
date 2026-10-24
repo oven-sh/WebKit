@@ -33,7 +33,6 @@ public:
 
     Boxed callBuiltinFunction(const OperationContext&, BuiltinOverloadID, std::optional<Boxed> receiver, std::span<const Boxed> arguments);
     CellPointer builtinCell(const OperationContext&, BuiltinCellKey);
-    // What the host made at the first read of the member. The instance keeps it in a word of its own, which is empty until then.
     Boxed builtinValue(const OperationContext&, BuiltinCellKey);
 
 private:

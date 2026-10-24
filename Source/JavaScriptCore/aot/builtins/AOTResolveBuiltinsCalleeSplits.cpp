@@ -44,7 +44,6 @@ static bool avoidsHostCall(const Program& program, const BuiltinOverload& overlo
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The table calls them host calls. The code for the call enters an operation that answers the usual operands itself.
 static bool hasOperationInFrontOfHostCall(BuiltinID method)
 {
     return method == Builtins::TextEncoderPrototypeEncode || method == Builtins::TextEncoderPrototypeEncodeInto || method == Builtins::TypedArrayPrototypeSubarray;
@@ -60,7 +59,6 @@ static bool isWorthAnArm(const Program& program, BuiltinID method)
     });
 }
 
-// The call that such a method passes on is a tail call by the language, so the arm of the method stays one.
 static bool passesCallOn(const BuiltinTable& table, BuiltinID method)
 {
     return std::ranges::any_of(table.overloadsOf(method), [](const BuiltinOverload& overload) {
@@ -73,7 +71,6 @@ static bool knowsNothingAbout(const Function& function, const Type& type, ValueI
     return type.anyObject && !function.at(id).expected();
 }
 
-// A method that is not among what the callee is expected to be gets no arm.
 static bool isExpectedToBe(FunctionPassContext& context, ValueID callee, BuiltinID method)
 {
     TypeID expected = context.function.at(callee).expected();
@@ -94,7 +91,6 @@ static TypeID calleeTypeOf(TypeArena& types, const MemberOfClasses& method)
     return types.intern(Type::forBuiltin(method.member));
 }
 
-// What planCalleeSplit() asks first, of the call and of the type of its callee alone.
 static bool mayHaveCalleeSplit(const Program& program, const Function& function, const Value& call)
 {
     if (!call.calleeKey() || !call.thisValueOperand())
@@ -128,7 +124,6 @@ static std::optional<CalleeSplit> planCalleeSplit(FunctionPassContext& context, 
         return std::nullopt;
     if (hasCalleesToDispatchOver(program, call))
         return std::nullopt;
-    // Which function the receiver is expected to be does not say what it inherits.
     const Type& receiverType = program.typeOf(function, receiver);
     bool knowsReceiver = !knowsNothingAbout(function, receiverType, receiver);
     if (!receiverType.anyObject && !tailCallRequirementOf(function, site.block, site.value))
@@ -138,18 +133,15 @@ static std::optional<CalleeSplit> planCalleeSplit(FunctionPassContext& context, 
 
     Vector<MemberOfClasses, 4> methods = methodsNamed(program, name.name);
     methods.removeAllMatching([&](const MemberOfClasses& method) {
-        // What is expected of the receiver leads to such a method only where its prototype is locked. The function that was read says it anyway.
         bool isFoundByCalleeAlone = !hasToStayTailCall && receiverType.anyObject && hasOperationInFrontOfHostCall(method.member);
         if ((hasToStayTailCall || knowsReceiver) && !passesCallOn(table, method.member) && !isFoundByCalleeAlone)
             return true;
-        // The arm of such a tail call is the call that the method passes on, whatever the method itself is made of.
         if (!hasToStayTailCall && !isWorthAnArm(program, method.member))
             return true;
         return !isExpectedToBe(context, callee, method.member);
     });
     if (methods.isEmpty())
         return std::nullopt;
-    // Asked last of what has no effect of its own: few calls come this far, and the frequencies of a whole function are made for the first that does.
     if (context.analyses.blockFrequencies().classOf(site.block) != BlockFrequency::Normal)
         return std::nullopt;
 
@@ -181,7 +173,6 @@ Vector<CalleeSplit> planCalleeSplits(FunctionPassContext& context)
     return splits;
 }
 
-// Whoever finds the method under the name of the call is as a rule an instance of a class that has it.
 static std::optional<Type> testedReceiverTypeOf(const Program& program, TypeArena& types, const MemberOfClasses& method)
 {
     Type tested = Type::never();
@@ -228,7 +219,6 @@ static void emitCalleeSplit(SiteExpansion& expansion, const CalleeSplit& split)
                 return;
             }
 
-            // A passed test defines a value of the tested type, and the overloads of the method are matched against that.
             BlockID failedUnasked = builder.beginPrediction();
             ValueID test = builder.appendTypeTest(receiver, *testedReceiver);
             IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, testedOperandIndex, expansion.frequency(), BlockFrequency::Unlikely);

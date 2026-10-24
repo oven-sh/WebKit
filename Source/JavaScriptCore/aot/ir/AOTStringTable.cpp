@@ -60,7 +60,6 @@ std::strong_ordering compareProgramStrings(std::span<const uint8_t> first, std::
     auto [firstByte, secondByte] = std::ranges::mismatch(first, second);
     if (firstByte == first.end() || secondByte == second.end())
         return first.size() <=> second.size();
-    // WTF-8 order is UTF-16 code unit order below U+D000.
     if (*firstByte < surrogateLeadByte && *secondByte < surrogateLeadByte)
         return *firstByte <=> *secondByte;
     auto firstUnits = decodeProgramString(first);

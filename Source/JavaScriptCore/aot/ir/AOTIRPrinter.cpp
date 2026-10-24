@@ -66,7 +66,6 @@ static bool isBuiltinOrNamespaceLayout(const Layout& layout)
     return layout.kind == LayoutKind::BuiltinResult || layout.kind == LayoutKind::ModuleNamespace;
 }
 
-// The reader of a program as read makes these again from the other layouts, so their lines are comments. The parser takes a number past its own lines for one of them.
 static bool isDerivedAgainByReader(const Program& program, const Layout& layout)
 {
     return program.form() == IRForm::AsRead && layout.isDerived();
@@ -589,7 +588,6 @@ void IRPrinter::print(std::span<const uint8_t> bytes)
             bytes = bytes.subspan(1);
             continue;
         }
-        // PrintStream takes the length of a span as an int.
         size_t plainLength = std::min<size_t>(std::ranges::find_if(bytes, needsEscape) - bytes.begin(), INT_MAX);
         m_out.print(byteCast<char>(bytes.first(plainLength)));
         bytes = bytes.subspan(plainLength);

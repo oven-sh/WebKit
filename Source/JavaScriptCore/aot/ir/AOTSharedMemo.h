@@ -23,7 +23,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// Answers shared by all threads while the tables they are computed from do not change.
 template<typename Entry>
 class SharedMemo {
     WTF_MAKE_NONCOPYABLE(SharedMemo);
@@ -35,7 +34,6 @@ public:
         return m_shards[shardIndexOf(hash)].find(hash, isWanted);
     }
 
-    // Gives the entry that is there if another thread was faster.
     const Entry& add(uint32_t hash, Entry&& entry, NOESCAPE const Invocable<bool(const Entry&)> auto& isWanted) LIFETIME_BOUND
     {
         return m_shards[shardIndexOf(hash)].add(hash, WTF::move(entry), isWanted);
@@ -122,12 +120,10 @@ private:
 
         Lock lock;
         std::atomic<Table*> table { nullptr };
-        // A lookup on another thread may still be probing an earlier table.
         Vector<std::unique_ptr<Table>> tables WTF_GUARDED_BY_LOCK(lock);
         SegmentedVector<Node, 16> nodes WTF_GUARDED_BY_LOCK(lock);
     };
 
-    // A table takes its slot from the low bits.
     static constexpr unsigned shardIndexOf(uint32_t hash) { return hash >> (32 - shardBits); }
 
     std::array<Shard, 1u << shardBits> m_shards;
@@ -141,7 +137,6 @@ inline uint32_t hashOfLayouts(std::span<const LayoutID> layouts)
     return static_cast<uint32_t>(hash >> 32);
 }
 
-// A number for a list of layouts, to go into the key of an entry.
 class SharedLayoutLists {
     WTF_MAKE_NONCOPYABLE(SharedLayoutLists);
 public:
@@ -161,13 +156,11 @@ public:
         return m_lists.add(hash, List { Vector<LayoutID>(layouts), id }, isWanted).id;
     }
 
-    // For the members of the set.
     ListID idOf(const TypeTable& types, LayoutSetID set)
     {
         if (!TypeTable::isProvisional(set))
             return set.index();
 
-        // Arenas give the same members different provisional ids, and the next phase gives the same id to other members.
         uint64_t phase = TypeInterningPhase::currentPhaseSerialNumber(types);
         uint32_t hash = set.hash();
         auto isWanted = [&](const ProvisionalSet& known) {

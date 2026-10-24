@@ -20,40 +20,26 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 enum class ValueEdit : uint8_t {
-    // The function has one value more.
     Added = 1 << 0,
-    // Opcode, operands, payload, flags, origin.
     Definition = 1 << 1,
-    // Type, expected type, representation.
     Type = 1 << 2,
-    // Beside Definition, a promise: nothing but operands has changed, and each has the types of the one it replaces.
     OperandsOfSameTypes = 1 << 3,
-    // Beside Added, a promise: the value has the types that its rule gives.
     TypedByRule = 1 << 4,
 };
 
 enum class BlockEdit : uint16_t {
-    // As for a value. Its targets have no entry either.
     Added = 1 << 0,
-    // Which values the block lists, and in which order.
     Values = 1 << 1,
     Parameters = 1 << 2,
-    // Kind, operands and payload of the terminator.
     Terminator = 1 << 3,
-    // How many targets there are, which block a target or the handler names, whether there is a handler.
     Edges = 1 << 4,
-    // Arguments and proofs along an edge.
     Arguments = 1 << 5,
-    // Subject, role, frequency, shape.
     Rest = 1 << 6,
-    // A block that named this one as a target or as its handler was handed out for an edit of its edges: this one may have lost that edge.
     Incoming = 1 << 7,
-    // Beside Terminator, Arguments and Rest, a promise: nothing but operands of the terminator, arguments and the subject has changed, as for ValueEdit::OperandsOfSameTypes.
     OperandsOfSameTypes = 1 << 8,
 };
 
 inline constexpr OptionSet<ValueEdit> anyValueEdit { ValueEdit::Definition, ValueEdit::Type };
-// An entry with a promise takes in no edit without it.
 inline constexpr OptionSet<ValueEdit> promisesOfValueEdits { ValueEdit::OperandsOfSameTypes, ValueEdit::TypedByRule };
 inline constexpr OptionSet<BlockEdit> promisesOfBlockEdits { BlockEdit::OperandsOfSameTypes };
 inline constexpr OptionSet<BlockEdit> anyBlockEdit { BlockEdit::Values, BlockEdit::Parameters, BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments, BlockEdit::Rest };
@@ -61,7 +47,6 @@ inline constexpr OptionSet<BlockEdit> anyBlockEdit { BlockEdit::Values, BlockEdi
 struct ValueChange {
     ValueID value;
     OptionSet<ValueEdit> edits;
-    // As they were when the reference was handed out. Of several entries for one value, the first behind a cursor says what held at the cursor.
     TypeID typeBefore;
     TypeID expectedBefore;
 };
@@ -71,14 +56,12 @@ struct BlockChange {
     OptionSet<BlockEdit> edits;
 };
 
-// What has been edited in one function, in the order of the edits.
 class ChangeLog {
     WTF_MAKE_NONCOPYABLE(ChangeLog);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ChangeLog);
 public:
     ChangeLog() = default;
 
-    // A cursor that nobody has set has seen nothing: hasForgottenSince() holds for it.
     class Cursor {
     public:
         Cursor() = default;
@@ -103,14 +86,12 @@ public:
         return { m_generation, static_cast<uint32_t>(m_values.size()), static_cast<uint32_t>(m_blocks.size()) };
     }
 
-    // An entry says that a reference for writing was handed out, not that the writing is over. Between two runs of passes no such reference is left, and the runner says so.
     void settle()
     {
         m_numberOfSettledValues = m_values.size();
         m_numberOfSettledBlocks = m_blocks.size();
     }
 
-    // The entries behind the cursor are gone: blocks and values were renumbered, the body was replaced, or there were more edits than a walk of the function costs.
     bool hasForgottenSince(const Cursor& cursor) const { return cursor.m_generation != m_generation; }
     bool hasChangesSince(const Cursor& cursor) const { return hasForgottenSince(cursor) || cursor.m_values != m_values.size() || cursor.m_blocks != m_blocks.size(); }
     size_t numberOfEntriesSince(const Cursor& cursor) const
@@ -119,7 +100,6 @@ public:
         return m_values.size() - cursor.m_values + m_blocks.size() - cursor.m_blocks;
     }
 
-    // Good until the next edit of the function. One value or block may come several times.
     std::span<const ValueChange> valuesSince(const Cursor& cursor) const LIFETIME_BOUND
     {
         RELEASE_ASSERT(!hasForgottenSince(cursor));
@@ -227,7 +207,6 @@ private:
         m_blocks.append(BlockChange { block, edits });
     }
 
-    // An entry that a reader may have seen takes no further edit: the next edit of the same value is an entry of its own.
     void didShowEntries() const
     {
         m_numberOfShownValues = m_values.size();

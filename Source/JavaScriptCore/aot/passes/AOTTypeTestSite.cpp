@@ -9,15 +9,124 @@
 #if ENABLE(AOT)
 
 #include "AOTBlockCycles.h"
+#include "AOTBlockFrequencies.h"
+#include "AOTCFG.h"
+#include "AOTEffectsDeclared.h"
+#include "AOTGenericCopy.h"
 #include "AOTHeat.h"
+#include "AOTNaturalLoops.h"
 #include "AOTThreshold.h"
-#include "AOTTypeTestConditions.h"
 #include "AOTValueIdentity.h"
-#include "AOTVector.h"
 #include <algorithm>
-#include <array>
+#include <utility>
+#include <wtf/HashMap.h>
+#include <wtf/Hasher.h>
 
 namespace JSC { namespace AOT { namespace Typed {
+
+TestPlaceability placeabilityOf(FunctionAnalyses& analyses, const Value& test)
+{
+    if (provesOf(test.opcode) == Proof::None)
+        return TestPlaceability::Unknown;
+
+    Effects bound = declaredBoundOf(test.opcode);
+    if (!bound.writes.isEmpty() || bound.mayExitSideways() || bound.mayCollect)
+        return TestPlaceability::Unknown;
+
+    std::optional<unsigned> guard = OperandPosition::guard(test.opcode);
+    size_t numberOfValues = analyses.function().values.size();
+    for (uint32_t operandIndex = 0; operandIndex < test.numberOfOperands(); ++operandIndex) {
+        ValueID operand = test.operand(operandIndex);
+        bool isAsExpected = operandIndex == guard ? !operand : operand && operand.index() < numberOfValues;
+        if (!isAsExpected)
+            return TestPlaceability::Unknown;
+    }
+    return TestPlaceability::CanBePlaced;
+}
+
+TestConditions::TestConditions(FunctionAnalyses& analyses)
+    : m_identities(analyses.identities())
+{
+}
+
+static uint32_t hashOfCanonicalTest(const Value& test)
+{
+    Hasher hasher;
+    add(hasher, static_cast<uint32_t>(test.opcode));
+    test.addPayloadTo(hasher);
+    add(hasher, test.numberOfOperands());
+    for (uint32_t operandIndex = 0; operandIndex < test.numberOfOperands(); ++operandIndex)
+        add(hasher, test.operand(operandIndex).index());
+    return hasher.hash();
+}
+
+TestConditionID TestConditions::add(const Value& test)
+{
+    Value canonical = canonicalize(test);
+    uint32_t hash = hashOfCanonicalTest(canonical);
+    if (std::optional<TestConditionID> existing = findCanonical(canonical, hash))
+        return *existing;
+
+    Proof proof = provesOf(canonical.opcode);
+    RELEASE_ASSERT(proof != Proof::None);
+    ValueID subject = canonical.numberOfOperands() ? canonical.operand(testedOperandIndex) : ValueID();
+    uint32_t index = static_cast<uint32_t>(m_conditions.size());
+
+    TestCondition condition { WTF::move(canonical), proof, subject, { } };
+    if (condition.lastsForStretch()) {
+        condition.dependsOn = locationsReadBy(condition.test);
+        for (const MemoryLocation& location : condition.dependsOn)
+            m_heapsDependedOn.add(location.heap());
+        m_stretchConditions.set(index);
+    }
+
+    m_conditions.append(WTF::move(condition));
+    m_index.add(hash, index);
+    return TestConditionID(index);
+}
+
+std::optional<TestConditionID> TestConditions::find(const Value& test) const
+{
+    Value canonical = canonicalize(test);
+    return findCanonical(canonical, hashOfCanonicalTest(canonical));
+}
+
+Value TestConditions::canonicalize(const Value& test) const
+{
+    Value canonical = test;
+    std::optional<unsigned> guard = OperandPosition::guard(test.opcode);
+    for (uint32_t operandIndex = 0; operandIndex < canonical.numberOfOperands(); ++operandIndex) {
+        if (operandIndex == guard)
+            canonical.setOperand(operandIndex, ValueID());
+        else if (ValueID operand = canonical.operand(operandIndex))
+            canonical.setOperand(operandIndex, m_identities.identityOf(operand));
+    }
+    canonical.type = TypeID();
+    canonical.setExpected(TypeID());
+    canonical.representation = Representation::Unchosen;
+    canonical.setOrigin({ Instruction::noPosition, 0 });
+    return canonical;
+}
+
+std::optional<TestConditionID> TestConditions::findCanonical(const Value& test, uint32_t hash) const
+{
+    std::optional<uint32_t> position = m_index.find(hash, [&](uint32_t candidate) {
+        const Value& other = m_conditions[candidate].test;
+        if (other.opcode != test.opcode || !other.hasSamePayloadAs(test) || other.numberOfOperands() != test.numberOfOperands())
+            return false;
+        for (uint32_t operandIndex = 0; operandIndex < test.numberOfOperands(); ++operandIndex) {
+            if (other.operand(operandIndex) != test.operand(operandIndex))
+                return false;
+        }
+        return true;
+    });
+    return position ? std::optional(TestConditionID(*position)) : std::nullopt;
+}
+
+AllocationProof allocationProofOf(const Program& program, const Function& function, const Value& allocation, const TestCondition& condition)
+{
+    return allocationProves(program, function, allocation, condition.test) ? AllocationProof::Proves : AllocationProof::Unknown;
+}
 
 static_assert(OperandIndex::TypeTest::value == testedOperandIndex);
 static_assert(OperandIndex::ShapeTest::object == testedOperandIndex);
@@ -31,18 +140,11 @@ TestSiteReporter::TestSiteReporter(FunctionPassContext& context)
     , m_isClaimed(context.function.values.size())
     , m_awaitsExpansion(context.function.values.size())
 {
-    findUsesAwaitingExpansion();
-}
-
-static bool isUnexpanded(const Value& value)
-{
-    return removedByOf(value.opcode) == PassID::ExpandIteration;
-}
-
-// A test stays where it was placed, and an operation that ExpandIteration has yet to expand, later in the same round, is unknown code: in a cycle with one, no proof for a stretch lasts a turn.
-void TestSiteReporter::findUsesAwaitingExpansion()
-{
-    const Function& function = this->function();
+    // A test stays where it was placed, and an operation that ExpandIteration has yet to expand, later in the same round, is unknown code: in a cycle with one, no proof for a stretch lasts a turn.
+    auto isUnexpanded = [](const Value& value) {
+        return removedByOf(value.opcode) == PassID::ExpandIteration;
+    };
+    const Function& function = context.function;
     if (!function.values.containsIf(isUnexpanded))
         return;
 
@@ -90,6 +192,13 @@ std::optional<Type> TestSiteReporter::expectedPartOf(ValueID operand, uint16_t d
     return expected;
 }
 
+const FailedConditions& TestSiteReporter::failedConditions() const
+{
+    if (!m_failedConditions)
+        m_failedConditions.emplace(analyses());
+    return *m_failedConditions;
+}
+
 EarlierTest TestSiteReporter::findEarlierTest(const Value& test) const
 {
     if (analyses().findEarlierTest(test, m_point.block) == EarlierTest::Failed) {
@@ -98,11 +207,7 @@ EarlierTest TestSiteReporter::findEarlierTest(const Value& test) const
     }
 
     // Every failing edge of a chain of tests enters one generic copy, so no single failed edge dominates the copy.
-    if (function().at(m_point.block).frequency == BlockFrequency::Normal)
-        return EarlierTest::Unknown;
-    if (!m_failedConditions)
-        m_failedConditions.emplace(analyses());
-    if (!m_failedConditions->mayHaveFailed(test, m_point.block))
+    if (function().at(m_point.block).frequency == BlockFrequency::Normal || !failedConditions().mayHaveFailed(test, m_point.block))
         return EarlierTest::Unknown;
     m_hasFailedEarlierTest = true;
     return EarlierTest::Failed;
@@ -144,11 +249,6 @@ std::optional<PlannedAccess> TestSiteReporter::takePlanOfUse(bool isOnlyCalled)
     return WTF::move(m_plannedAccesses[position]);
 }
 
-bool TestSiteReporter::canPlace(const Value& test) const
-{
-    return placeabilityOf(analyses(), test) == TestPlaceability::CanBePlaced;
-}
-
 // The tests of a site are made in order.
 bool TestSiteReporter::hasFailedTest(std::span<const Value> tests) const
 {
@@ -166,40 +266,24 @@ bool TestSiteReporter::hasFailedTest(std::span<const Value> tests) const
     return false;
 }
 
-bool TestSiteReporter::isAboutSubjectOfFailedTest(std::span<const Value> tests) const
-{
-    if (!m_failedConditions)
-        m_failedConditions.emplace(analyses());
-    return std::ranges::any_of(tests, [&](const Value& test) {
-        return test.numberOfOperands() && m_failedConditions->mayHaveFailedTestOf(analyses().identityOf(test.operand(testedOperandIndex)), m_point.block);
-    });
-}
-
-// `handle.flags`, `handle.end()`, where the handle is an object of the host or a record that stands in for one: no test of layouts lets the object of the host pass, and it is as expected as the record.
-bool TestSiteReporter::refusesObjectsThatAreExpected(std::span<const Value> tests) const
-{
-    return std::ranges::any_of(tests, [&](const Value& test) {
-        if (test.opcode != Opcode::TypeTest)
-            return false;
-        const Type& tested = types().at(test.testedType());
-        return tested.layouts && tested.classes.isEmpty() && !program().expectedOrTypeOf(function(), test.operand(testedOperandIndex)).classes.isEmpty();
-    });
-}
-
-// `compilerOptions.strict`: a record type of dozens of fields, every one of them optional, describes a bag of options.
 AOT_THRESHOLD(size_t, minFieldsOfBagOfOptions, 24);
 
-bool TestSiteReporter::asksForBagOfOptions(std::span<const Value> tests) const
+static bool asksForMoreThanLayoutsTell(const TestSiteReporter& reporter, const Value& test)
 {
-    return std::ranges::any_of(tests, [&](const Value& test) {
-        if (test.opcode != Opcode::TypeTest)
-            return false;
-        const Type& tested = types().at(test.testedType());
-        return tested.layouts && std::ranges::all_of(program().at(tested.layouts).members, [&](LayoutID id) {
-            const Layout& layout = program().at(id);
-            return layout.kind == LayoutKind::Record && layout.fields.size() >= minFieldsOfBagOfOptions && std::ranges::none_of(layout.fields, [](const Field& field) {
-                return field.flags.containsAny({ FieldFlags::IsRequired, FieldFlags::IsRequiredUntilDeleted });
-            });
+    if (test.opcode != Opcode::TypeTest)
+        return false;
+    const Program& program = reporter.program();
+    const Type& tested = reporter.types().at(test.testedType());
+    if (!tested.layouts)
+        return false;
+    // `handle.flags`, `handle.end()`, where the handle is an object of the host or a record that stands in for one: no test of layouts lets the object of the host pass, and it is as expected as the record.
+    if (tested.classes.isEmpty() && !program.expectedOrTypeOf(reporter.function(), test.operand(testedOperandIndex)).classes.isEmpty())
+        return true;
+    // `compilerOptions.strict`: a record type of dozens of fields, every one of them optional, describes a bag of options.
+    return std::ranges::all_of(program.at(tested.layouts).members, [&](LayoutID id) {
+        const Layout& layout = program.at(id);
+        return layout.kind == LayoutKind::Record && layout.fields.size() >= minFieldsOfBagOfOptions && std::ranges::none_of(layout.fields, [](const Field& field) {
+            return field.flags.containsAny({ FieldFlags::IsRequired, FieldFlags::IsRequiredUntilDeleted });
         });
     });
 }
@@ -208,14 +292,20 @@ void TestSiteReporter::report(std::span<const Value> tests, const Effects& effec
 {
     RELEASE_ASSERT(m_use && !m_didReport && !tests.empty());
     for (const Value& test : tests)
-        RELEASE_ASSERT(canPlace(test));
-    if (refusesObjectsThatAreExpected(tests) || asksForBagOfOptions(tests))
+        RELEASE_ASSERT(placeabilityOf(analyses(), test) == TestPlaceability::CanBePlaced);
+    if (std::ranges::any_of(tests, [&](const Value& test) { return asksForMoreThanLayoutsTell(*this, test); }))
         return;
 
     // A block that is marked is a slow path: a generic copy, the arm behind a failed test. A block that only the estimate of a branch calls unlikely is typed code like the rest, and the estimate may be wrong.
     bool isInTypedCode = function().at(m_point.block).frequency == BlockFrequency::Normal;
-    if (!isInTypedCode && !m_hasFailedEarlierTest && !isAboutSubjectOfFailedTest(tests))
-        return;
+    if (!isInTypedCode && !m_hasFailedEarlierTest) {
+        const FailedConditions& failed = failedConditions();
+        bool isAboutSubjectOfFailedTest = std::ranges::any_of(tests, [&](const Value& test) {
+            return test.numberOfOperands() && failed.mayHaveFailedTestOf(analyses().identityOf(test.operand(testedOperandIndex)), m_point.block);
+        });
+        if (!isAboutSubjectOfFailedTest)
+            return;
+    }
     if (hasFailedTest(tests))
         return;
 
@@ -244,17 +334,143 @@ ValueID TestSiteRewriter::insertBeforeUse(Value&& value)
 
 std::span<const TestSiteRule> testSiteRules()
 {
-    static constexpr std::array<TestSiteRule, numberOfTestSiteRules> rules { {
+    static constexpr TestSiteRule rules[] {
 #define AOT_DEFINE_TEST_SITE_RULE(id, report, rewrite) { TestSiteRuleID::id, #id ""_s, report, rewrite },
         FOR_EACH_AOT_TEST_SITE_RULE(AOT_DEFINE_TEST_SITE_RULE)
 #undef AOT_DEFINE_TEST_SITE_RULE
-    } };
+    };
     return rules;
 }
 
 const TestSiteRule& ruleOf(TestSiteRuleID id)
 {
     return testSiteRules()[static_cast<unsigned>(id)];
+}
+
+using SubjectAndType = std::pair<ValueID, TypeID>;
+
+static bool canBeDecidedEarlier(TestSiteReporter& reporter, const Value& test)
+{
+    if (test.opcode != Opcode::TypeTest)
+        return false;
+    const Type& type = reporter.typeOf(test.valueOperand());
+    const Type& tested = reporter.types().at(test.testedType());
+    return type.overlaps(tested, reporter.program()) && !type.isSubsetOf(tested, reporter.program())
+        && placeabilityOf(reporter.analyses(), makeTypeTest(test.valueOperand(), test.testedType())) == TestPlaceability::CanBePlaced;
+}
+
+static SubjectAndType subjectAndTypeOf(TestSiteReporter& reporter, const Value& test)
+{
+    return { reporter.analyses().identityOf(test.valueOperand()), test.testedType() };
+}
+
+static const NaturalLoop* findLoopAround(TestSiteReporter& reporter, BlockID block)
+{
+    if (!reporter.analyses().cfg().hasCycle())
+        return nullptr;
+    const NaturalLoops& loops = reporter.analyses().naturalLoops();
+    const NaturalLoop* loop = loops.innerMostLoopOf(block);
+    while (loop && isClosedOnlyByWaysBack(reporter.analyses(), *loop))
+        loop = loops.innerMostOuterLoop(*loop);
+    return loop;
+}
+
+static bool isDefinedOutsideLoop(TestSiteReporter& reporter, ValueID value, const NaturalLoop& loop)
+{
+    ValueLocation location = reporter.analyses().useLists().locationOf(value);
+    return location.placement != ValuePlacement::Detached && !reporter.analyses().naturalLoops().belongsTo(location.block, loop);
+}
+
+// What stands behind the passing edge of the test does not run in the copy, where the test has failed.
+static bool holdsAccessOrCallWhereTestFails(TestSiteReporter& reporter, const NaturalLoop& loop)
+{
+    const Function& function = reporter.function();
+    FunctionAnalyses& analyses = reporter.analyses();
+    const Terminator& terminator = function.at(reporter.point().block).terminator;
+    BlockID wherePassed;
+    if (terminator.isConditionalBranch() && terminator.conditionOperand() == reporter.use() && analyses.hasSingleIncomingEdge(terminator.taken().block))
+        wherePassed = terminator.taken().block;
+
+    for (unsigned index = 0; index < loop.size(); ++index) {
+        if (wherePassed && analyses.dominators().dominates(wherePassed, loop.at(index)))
+            continue;
+        const Block& block = function.at(loop.at(index));
+        if (accessClassOf(block.terminator.kind) != AccessClass::None)
+            return true;
+        for (ValueID value : block.values) {
+            if (accessClassOf(function.at(value).opcode) != AccessClass::None)
+                return true;
+        }
+    }
+    return false;
+}
+
+enum class RarerSide : uint8_t { Neither, WherePassed, WhereFailed };
+
+static RarerSide rarerSideOf(TestSiteReporter& reporter)
+{
+    const Terminator& terminator = reporter.function().at(reporter.point().block).terminator;
+    if (!terminator.isConditionalBranch() || terminator.conditionOperand() != reporter.use())
+        return RarerSide::Neither;
+    BlockFrequency whenPassed = reporter.function().at(terminator.taken().block).frequency;
+    BlockFrequency whenFailed = reporter.function().at(terminator.notTaken().block).frequency;
+    if (isRarerThan(whenPassed, whenFailed))
+        return RarerSide::WherePassed;
+    return isRarerThan(whenFailed, whenPassed) ? RarerSide::WhereFailed : RarerSide::Neither;
+}
+
+static std::optional<Value> testInFrontOf(TestSiteReporter& reporter, const Value& test, RarerSide rarerSide)
+{
+    if (rarerSide != RarerSide::WherePassed)
+        return makeTypeTest(test.valueOperand(), test.testedType());
+    Type rest = reporter.typeOf(test.valueOperand()).without(reporter.types().at(test.testedType()), reporter.types()).withoutClassProofs().withUntestableBuiltinsWidened();
+    if (rest.overlaps(reporter.types().at(test.testedType()), reporter.program()))
+        return std::nullopt;
+    Value testForRest = makeTypeTest(test.valueOperand(), reporter.types().intern(WTF::move(rest)));
+    if (placeabilityOf(reporter.analyses(), testForRest) != TestPlaceability::CanBePlaced)
+        return std::nullopt;
+    return testForRest;
+}
+
+// Behind a test that failed stands the copy of the failed tests, where nothing else is tested either.
+static bool isSurpriseWhereItFails(TestSiteReporter& reporter, const Value& testInFront)
+{
+    Type expected = reporter.types().at(reporter.function().at(testInFront.valueOperand()).expectedOrType()).withoutClassProofs();
+    return expected.isSubsetOf(reporter.types().at(testInFront.testedType()), reporter.program());
+}
+
+// A pass that splits a value by its type tests it at each use.
+void reportRepeatedTests(TestSiteReporter& reporter)
+{
+    HashMap<SubjectAndType, unsigned> numberOfTests;
+    BitVector canBeDecided;
+    reporter.forEachCandidate([&](const Value& test) {
+        if (!canBeDecidedEarlier(reporter, test))
+            return;
+        canBeDecided.set(reporter.use().index());
+        ++numberOfTests.add(subjectAndTypeOf(reporter, test), 0).iterator->value;
+    });
+    if (canBeDecided.isEmpty())
+        return;
+
+    reporter.forEachCandidate([&](const Value& test) {
+        if (!canBeDecided.get(reporter.use().index()))
+            return;
+        SubjectAndType tested = subjectAndTypeOf(reporter, test);
+        const NaturalLoop* loop = findLoopAround(reporter, reporter.point().block);
+        bool isInvariantInLoop = loop && isDefinedOutsideLoop(reporter, tested.first, *loop);
+        if (numberOfTests.get(tested) < 2 && !isInvariantInLoop)
+            return;
+        RarerSide rarerSide = rarerSideOf(reporter);
+        std::optional<Value> testInFront = testInFrontOf(reporter, test, rarerSide);
+        bool losesNothingInCopy = isInvariantInLoop && !holdsAccessOrCallWhereTestFails(reporter, *loop);
+        if (testInFront && (losesNothingInCopy || rarerSide != RarerSide::Neither || isSurpriseWhereItFails(reporter, *testInFront)))
+            reporter.report({ *testInFront }, Effects::none());
+    });
+}
+
+void rewriteRepeatedTest(TestSiteRewriter&)
+{
 }
 
 } } } // namespace JSC::AOT::Typed

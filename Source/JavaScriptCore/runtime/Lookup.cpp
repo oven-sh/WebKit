@@ -25,10 +25,8 @@
 #include "JSCInlines.h"
 #include <wtf/text/MakeString.h>
 
-#if ENABLE(AOT)
 #include "AOTMembersLeftOut.h"
 #include "AOTRuntimeHooks.h"
-#endif
 
 namespace JSC {
 

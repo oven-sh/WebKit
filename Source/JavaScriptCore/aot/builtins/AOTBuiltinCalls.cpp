@@ -152,7 +152,6 @@ bool distinguishesOmittedFromUndefined(const BuiltinTable& table, const BuiltinP
     return primitives.contains(BuiltinPrimitive::NotPassed) && !primitives.contains(BuiltinPrimitive::Undefined);
 }
 
-// An operand that is passed as it is lies in the accepted type, a converted one in the converted type.
 static bool liesInParameter(const TypingContext& context, const BuiltinOverload& overload, BuiltinOperand position, ValueID value)
 {
     const BuiltinParameter* parameter = context.program.builtins().parameterFor(overload, position);
@@ -205,7 +204,6 @@ bool isCallThatRequiredPassRemoves(const Program& program, const Value& call)
         return false;
     if (call.builtinCallForm() != BuiltinCallForm::Whole)
         return true;
-    // Which of its own helpers a host enters directly is known where there is a host.
     if (!BuiltinBindings::hasHost() && table.at(call.overload()).code.implementation.kind == BuiltinImplementationKind::HostCall)
         return false;
     return !BuiltinBindings::directFunctionNumberOf(call.overload(), call.argumentsOperands().size());

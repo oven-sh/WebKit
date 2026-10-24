@@ -37,7 +37,6 @@ using Failure = std::optional<InternalError>;
 
 template<typename External> bool isValidExternal(uint32_t word, const BuiltinTable&);
 
-// A field whose type lists nothing but integers, or nothing but strings, besides undefined and null.
 class TellingFields {
 public:
     TellingFields(const ParallelLoops&, const Wire::Sections& checkedSections);
@@ -45,7 +44,6 @@ public:
     bool tellApart(uint32_t layout, uint32_t otherLayout) const;
     bool excludes(uint32_t layout, uint32_t key, const LayoutTag&) const;
 
-    // Whether the layout declares nothing for the key but literals, no more of them than given, of each of which the functor holds.
     bool declaresOnlyLiterals(uint32_t layout, uint32_t key, size_t maxLiterals, NOESCAPE const Invocable<bool(const LayoutTag&)> auto& isAdmitted) const
     {
         for (const Field& field : fieldsOf(layout)) {
@@ -98,9 +96,7 @@ public:
     void setTypeCompletion(TypeCompletion&& completion) { m_completeType = WTF::move(completion); }
     void setVerifierInputs(const VerifierInputs& inputs) { m_verifierInputs = inputs; }
     void setExternalFunctionBodies(const ExternalFunctionBodies* bodies) { m_externalBodies = bodies; }
-    // For a program that goes on into the pipeline: what the first steps of the read stage do to each function is done where its body is decoded.
     void setPreparesFunctionsForTyping() { m_preparesFunctionsForTyping = true; }
-    // For a tool that prints what arrived: a type lists the layouts and the functions that it names, not the set of each.
     void keepLayoutsAsWritten() { m_keepsLayoutsAsWritten = true; }
     bool run();
 
@@ -114,7 +110,6 @@ public:
     std::span<const TypeID> typesAsRead() const { return m_types.span(); }
 
 private:
-    // What the threads make of a type. One thread interns the rest, in the order of the types: the contents of the classes, a set of layouts that is the family of no layout, the type.
     struct TypeAsRead {
         Type type;
         std::optional<LayoutSet> layoutsToIntern;
@@ -161,7 +156,6 @@ private:
     template<typename WireRecord, typename Record, size_t inlineCapacity>
     bool readListInParallel(std::span<const WireRecord>, Vector<Record, inlineCapacity>&);
     static Vector<Failure> readInChunks(const ParallelLoops&, size_t recordCount, size_t recordsPerChunk, NOESCAPE const Invocable<Failure(uint32_t)> auto& readRecord);
-    // One thread constructs the records. All threads take the page faults first.
     template<typename Record, size_t inlineCapacity>
     static void growFromEmpty(const ParallelLoops&, Vector<Record, inlineCapacity>&, size_t size);
 
@@ -189,7 +183,6 @@ private:
     std::optional<LayoutUseCollector> m_layoutUses;
     bool m_preparesFunctionsForTyping { false };
     std::optional<LongExpectations> m_longExpectations;
-    // AllocateTaggedLayouts looks at them as they were read.
     BitVector m_constructorsOfTaggedFamilies;
 };
 
@@ -215,7 +208,6 @@ public:
 
     template<typename IDType> IDType id(uint32_t word);
     template<typename IDType> IDType optionalID(uint32_t word);
-    // What id() answers for a valid word. It reports nothing.
     template<typename IDType> uint32_t checkedID(uint32_t word, bool& isValid) const;
     template<typename External> External external(uint32_t word);
     template<typename External> External optionalExternalID(uint32_t word);
@@ -252,9 +244,7 @@ class BodyDecoder {
 public:
     BodyDecoder(const Reader&, FunctionID, const Wire::Body&, std::span<const uint32_t> code, Function&, const UnitIDRemap* = nullptr);
 
-    // A use of one of these entry parameters is decoded as a use of the value that follows the last one on the wire, plus the position in the list.
     void setParametersCheckedAtEntry(std::span<const unsigned>);
-    // giveLayoutsToCreatedObjects() adds values to such a function, in front of the checks at its entry.
     bool namesObjectCreate() const { return m_namesObjectCreate; }
     Vector<FunctionID, 4> takeDirectCallees() { return WTF::move(m_directCallees); }
 
@@ -270,7 +260,6 @@ public:
     ValueID nextOptionalOperand();
     void decodeVariadicOperands(Instruction&);
 
-    // The next words of a program as read, if there are that many. After a failure no word is left.
     const uint32_t* peekWords(uint32_t count) const { return form() == IRForm::AsRead && hasWords(count) ? m_code.subspan(m_offset).data() : nullptr; }
     void skipWords(uint32_t count) { m_offset += count; }
     ValueID checkedOperand(uint32_t word, bool& isValid) const
@@ -359,7 +348,6 @@ void Reader::growFromEmpty(const ParallelLoops& loops, Vector<Record, inlineCapa
     RELEASE_ASSERT(records.isEmpty());
     if (records.capacity() < size)
         records.reserveInitialCapacity(size);
-    // AddressSanitizer is told that nobody writes behind the end of a vector.
 #if !ASAN_ENABLED
     std::span<uint8_t> bytes = unsafeMakeSpan(reinterpret_cast<uint8_t*>(records.mutableSpan().data()), size * sizeof(Record));
     forEachIndexInParallel(loops, static_cast<unsigned>((bytes.size() + bytesPerTask - 1) / bytesPerTask), [&](unsigned task) {
@@ -454,7 +442,6 @@ uint32_t RecordChecker::checkedID(uint32_t word, bool& isValid) const
             isValid = false;
             return 0;
         }
-        // Zero stands for a record that the link dropped. It becomes a number that no list reaches.
         word = table.entries[word] - 1;
     }
     if constexpr (std::is_same_v<IDType, TypeID>) {

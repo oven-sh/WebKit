@@ -48,7 +48,6 @@ public:
 
     void add(uint32_t hash, uint32_t position);
 
-    // Between reserve() and didAddConcurrently(), any number of threads may call addConcurrently() and find().
     void reserve(const ParallelLoops&, size_t numberOfAdditions);
     void addConcurrently(uint32_t hash, uint32_t position);
     void didAddConcurrently(size_t numberOfAdditions) { m_size += static_cast<unsigned>(numberOfAdditions); }
@@ -60,7 +59,6 @@ public:
     }
 
 private:
-    // Zero for a free slot.
     struct alignas(8) Slot {
         uint32_t hash;
         uint32_t positionPlusOne;
@@ -134,7 +132,6 @@ public:
     static constexpr TypeID absent { 12u };
     static constexpr TypeID guard { 13u };
     static constexpr TypeID length { 14u };
-    // `anything` is every value of the language. A location with a dead zone, and a slot that may be empty, holds this.
     static constexpr TypeID anythingOrAbsent { 15u };
     static constexpr TypeID valuesOf(TypeID held) { return held == anythingOrAbsent ? anything : held; }
 
@@ -160,11 +157,9 @@ public:
     unsigned numberOfLayoutSets() const { return m_layoutSets.size(); }
     unsigned numberOfCalleeSets() const { return m_calleeSets.size(); }
     unsigned numberOfPropertyKeys() const { return m_propertyKeys.size(); }
-    // Flow makes keys of texts that calls pass. No operation of the program spells such a key: that it is a key at all is something an analysis found.
     void didInternKeysThatOperationsSpell() { m_numberOfKeysThatOperationsSpell = m_propertyKeys.size(); }
     bool isSpelledByOperations(PropertyKeyID key) const { return key.index() < m_numberOfKeysThatOperationsSpell; }
 
-    // What a read of the position is proven to give. Nothing checks what enters a position that is only expected to hold its type, and a location with a dead zone holds `absent` whatever else it holds.
     TypeID provenTypeOf(const DeclaredType&) const;
 
     std::optional<TypeID> find(const Type& canonical) const;
@@ -200,14 +195,12 @@ public:
 
     bool hasOpenPhase() const { return m_openPhase; }
 
-    // Null outside a loop whose threads share what they compute from ids that the table holds for good (ProgramCaches).
     SharedTypeMemo* sharedMemo(SharedAnswers answers) const { return m_sharedMemos[static_cast<size_t>(answers)].load(std::memory_order_acquire); }
     void setSharedMemos(SharedTypeMemo* aboutTypes, SharedTypeMemo* aboutProgram) const
     {
         m_sharedMemos[static_cast<size_t>(SharedAnswers::AboutTypes)].store(aboutTypes, std::memory_order_release);
         m_sharedMemos[static_cast<size_t>(SharedAnswers::AboutProgram)].store(aboutProgram, std::memory_order_release);
     }
-    // Answers about types hold from one such loop to the next. Between two loops they lie here.
     std::unique_ptr<SharedTypeMemo> takeSavedSharedMemo() const { return std::exchange(m_savedSharedMemo, nullptr); }
     void saveSharedMemo(std::unique_ptr<SharedTypeMemo>&& aboutTypes) const { m_savedSharedMemo = WTF::move(aboutTypes); }
 
@@ -238,7 +231,6 @@ private:
     RecordsThatNeverMove<PropertyKey, PropertyKeyID> m_propertyKeys;
     unsigned m_numberOfKeysThatOperationsSpell { UINT_MAX };
     mutable TypeInterningPhase* m_openPhase { nullptr };
-    // For the scratch arenas that are made while no phase is open, on whatever thread.
     mutable std::atomic<TypeInterningPhase*> m_phaseOfScratchArenas { nullptr };
     mutable std::atomic<unsigned> m_numberOfArenasInPhaseOfScratchArenas { 0 };
     mutable Lock m_phaseOfScratchArenasLock;

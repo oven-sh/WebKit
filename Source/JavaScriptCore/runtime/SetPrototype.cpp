@@ -27,7 +27,6 @@
 #include "SetPrototype.h"
 
 #include "CachedCallInlines.h"
-#include "ExceptionHelpers.h"
 #include "InterpreterInlines.h"
 #include "BuiltinNames.h"
 #include "GetterSetter.h"
@@ -557,7 +556,7 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncDifference, (JSGlobalObject* globalObject, 
         }
 
         if (!nextResult.isObject()) [[unlikely]]
-            return throwVMTypeError(globalObject, scope, IteratorResultNotObjectError);
+            return throwVMTypeError(globalObject, scope, "Iterator result interface is not an object."_s);
 
         JSValue doneValue = nextResult.get(globalObject, vm.propertyNames->done);
         RETURN_IF_EXCEPTION(scope, { });
@@ -675,7 +674,7 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncSymmetricDifference, (JSGlobalObject* globa
         }
 
         if (!nextResult.isObject()) [[unlikely]]
-            return throwVMTypeError(globalObject, scope, IteratorResultNotObjectError);
+            return throwVMTypeError(globalObject, scope, "Iterator result interface is not an object."_s);
 
         JSValue doneValue = nextResult.get(globalObject, vm.propertyNames->done);
         RETURN_IF_EXCEPTION(scope, { });
@@ -868,7 +867,7 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncIsSupersetOf, (JSGlobalObject* globalObject
         }
 
         if (!nextResult.isObject()) [[unlikely]]
-            return throwVMTypeError(globalObject, scope, IteratorResultNotObjectError);
+            return throwVMTypeError(globalObject, scope, "Iterator result interface is not an object."_s);
 
         JSValue doneValue = nextResult.get(globalObject, vm.propertyNames->done);
         RETURN_IF_EXCEPTION(scope, { });
@@ -1024,7 +1023,7 @@ JSC_DEFINE_HOST_FUNCTION(setProtoFuncIsDisjointFrom, (JSGlobalObject* globalObje
         }
 
         if (!nextResult.isObject()) [[unlikely]]
-            return throwVMTypeError(globalObject, scope, IteratorResultNotObjectError);
+            return throwVMTypeError(globalObject, scope, "Iterator result interface is not an object."_s);
 
         JSValue doneValue = nextResult.get(globalObject, vm.propertyNames->done);
         RETURN_IF_EXCEPTION(scope, { });

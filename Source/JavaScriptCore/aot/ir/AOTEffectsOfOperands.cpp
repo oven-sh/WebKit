@@ -203,7 +203,6 @@ static void describeCalledValue(const Program& program, const Type& callee, Effe
     describeCallees(program, callees, BuiltinCallMode::Call, description);
     if (callees.builtins.isEmpty())
         return;
-    // Native code that constructs what it is handed passes it as new.target as well.
     EnteringOperands operands;
     operands.newTarget = TypeID();
     describeCallees(program, callees, BuiltinCallMode::Construct, operands, description);
@@ -237,7 +236,6 @@ static bool isFreeOfSettersAndTraps(const Type& operand)
     });
 }
 
-// An array makes a number of what is stored as its length, and a typed array of what is stored under an index.
 static bool convertsStoredValues(const BuiltinTable& table, BuiltinClassID builtinClass)
 {
     return table.isSameOrSubclassOf(builtinClass, BuiltinClasses::Array)
@@ -245,7 +243,6 @@ static bool convertsStoredValues(const BuiltinTable& table, BuiltinClassID built
         || table.at(builtinClass).origin == BuiltinOrigin::Host;
 }
 
-// The constructor of a built-in base class makes the objects of the classes below it, and a tuple is an array.
 static bool mayConvertStoredValues(const Program& program, LayoutID id)
 {
     const BuiltinTable& table = program.builtins();
@@ -282,7 +279,6 @@ static bool mayConvertStoredValues(const Program& program, LayoutID id)
     return true;
 }
 
-// A closure of the program keeps whatever is stored on it or defined on it.
 static bool mayConvertStoredValues(const Program& program, const Type& operand)
 {
     if (operand.anyObject || operand.anyFunction || !operand.builtins.isEmpty() || hasMembersWithoutLayout(program, operand))
@@ -296,7 +292,6 @@ static bool mayConvertStoredValues(const Program& program, const Type& operand)
     });
 }
 
-// The program made them and no exotic class stands behind them: no proxy, no array, no typed array, nothing of the host.
 static bool hasOnlyOrdinaryObjectsOfProgram(const Program& program, const Type& operand)
 {
     if (operand.anyObject || operand.anyFunction || !operand.classes.isEmpty() || !operand.functions.isEmpty() || !operand.builtins.isEmpty() || hasMembersWithoutLayout(program, operand))
@@ -308,7 +303,6 @@ static bool hasOnlyOrdinaryObjectsOfProgram(const Program& program, const Type& 
 
 static constexpr uint64_t maxReachableTypes = defaultLimitValue(LimitID::MaxAccessPlanMembers, hostArchitecture());
 
-// No object is reached twice on one way down. The types tell: an object that may hold an object of its own type may close a cycle.
 static bool isTreeOfData(const Program& program, const Type& type, uint16_t admittedPrimitives, Vector<const Type*, 8>& typesAbove)
 {
     if (type.primitives & ~admittedPrimitives)
@@ -329,7 +323,6 @@ static bool isTreeOfData(const Program& program, const Type& type, uint16_t admi
     return holdsTrees;
 }
 
-// An admitted type names primitives, the numbers among them all or the integers of a range, and beside them no object or plain data.
 static bool isAdmitted(const Program& program, BuiltinTypeID admittedID, const Type& operand)
 {
     const BuiltinType& admitted = program.builtins().at(admittedID);
@@ -351,19 +344,15 @@ static bool mayRefuseChanges(const Program& program, const Type& operand, Operan
 {
     if (!hasOnlyOrdinaryObjectsOfProgram(program, operand))
         return true;
-    // An ordinary object lets itself be frozen, whatever state it is in.
     if (changes.containsOnly({ OperandUse::ChangesIntegrity }))
         return false;
-    // A frozen object refuses a store, a read-only property refuses one under its name, and the setter of __proto__ refuses a cycle.
     ReceiverState state = receiverStateOf(program, operand.layouts);
     return !state.cannot(ObjectMutation::ChangeIntegrity) || !state.cannot(ObjectMutation::RedefineProperty) || !state.cannot(ObjectMutation::ChangePrototype);
 }
 
 bool mayFailOnOperand(const Program& program, const BuiltinParameter& parameter, const Type& operand)
 {
-    // The entry calls what it finds under a name. An operand that lacks the name, or holds something else there, makes it throw.
     constexpr Protocols protocolsNeedingMembers { Protocol::Iterate, Protocol::CallsNamed, Protocol::Species, Protocol::HasInstance };
-    // An object without valueOf and toString has no primitive. A symbol has neither a string nor a number, and a BigInt has no number.
     constexpr uint16_t primitivesWithStringAndNumber = Primitive::UndefinedOrNull | Primitive::Boolean | Primitive::Number | Primitive::AnyString;
     constexpr OperandUses changingUses {
         OperandUse::WritesContents,
@@ -377,7 +366,6 @@ bool mayFailOnOperand(const Program& program, const BuiltinParameter& parameter,
         OperandUse::ChangesPrototype,
     };
 
-    // The row says for which operands the entry raises nothing. Without its word the protocols tell.
     if (parameter.admitted) {
         if (!isAdmitted(program, parameter.admitted, operand))
             return true;
@@ -399,12 +387,10 @@ static CalleeList membersRunBy(const Program& program, const Type& operand, cons
     return membersRunBy(program, operand, behavior.protocols, behavior.namedMembers, behavior.calledMembers, behavior.namedMemberUse);
 }
 
-// Answers false where the type of something that the operand holds is not proven.
 static bool forEachProvenContents(const Program& program, const Type& operand, NOESCAPE const Invocable<void(const Type&)> auto& functor)
 {
     const BuiltinTable& table = program.builtins();
     return hasOnlyInstances(operand, [&](const ClassPart& part) {
-        // A RegExp holds lastIndex and nothing else, and one that stays as created holds a number there.
         if (part.builtinClass == BuiltinClasses::RegExp && part.provenPristine.contains(PristineAspects::AsCreated)) {
             functor(program.at(TypeTable::number));
             return true;
@@ -441,7 +427,6 @@ static constexpr OperandUses usesOfReaders {
     OperandUse::AppliesToContents,
 };
 
-// An entry declares the heaps of its operands. Native code also reads the objects that it finds in them.
 static constexpr Effects readsOfObjectsOperandsReach = [] {
     constexpr AbstractHeapSet heapsOnlyCompiledCodeReads = compiledCodeHeaps | AbstractHeapSet { AbstractHeap::StringBuilderContents };
     Effects effects = Effects::none();
@@ -449,7 +434,6 @@ static constexpr Effects readsOfObjectsOperandsReach = [] {
     return effects;
 }();
 
-// A type of the table that says what an instance holds decides nothing here.
 static bool admitsEveryObject(const BuiltinTable& table, BuiltinTypeID testedID, const Type& objects)
 {
     if (!testedID || table.at(testedID).isAnything())
@@ -468,7 +452,6 @@ static bool admitsEveryObject(const BuiltinTable& table, BuiltinTypeID testedID,
     });
 }
 
-// A branch that takes every receiver ends the list. Nobody lists the arguments, so a test of an argument excludes nothing.
 static void forEachOverloadCalledOn(const BuiltinTable& table, const Type& receivers, BuiltinDispatchTarget target, NOESCAPE const Invocable<void(BuiltinOverloadID)> auto& functor)
 {
     if (target.isOverload()) {
@@ -486,7 +469,6 @@ static void forEachOverloadCalledOn(const BuiltinTable& table, const Type& recei
 
 namespace {
 
-// Runs the protocols of an operand on a value, on what the value holds, and so on. Whatever is not proven on the way is unknown code.
 class ReachableValueWalk {
 public:
     ReachableValueWalk(const Program& program, const OperandBehavior& behavior, MembersBeingDescribed& membersBeingDescribed, EffectDescription& description)
@@ -520,7 +502,6 @@ private:
 
 void ReachableValueWalk::run(const Type& start)
 {
-    // What any other protocol reads goes on to code that runs later, or is an object that no field lists.
     constexpr Protocols followedProtocols {
         Protocol::OwnKeys,
         Protocol::OwnValues,
@@ -567,7 +548,6 @@ void ReachableValueWalk::visit(const UnionPart& part)
     case UnionPartKind::String:
     case UnionPartKind::Symbol:
     case UnionPartKind::BigInt:
-        // A lookup on a primitive names no function of the program.
         if (!m_description.callsUnknownCode)
             runProtocolsOn(part.type, m_behavior.membersAreOfObjectsOnly ? m_behavior.protocols - memberProtocols : m_behavior.protocols);
         return;
@@ -578,7 +558,6 @@ void ReachableValueWalk::visit(const UnionPart& part)
         visitInstances(part.type);
         return;
     case UnionPartKind::Functions:
-        // A protocol may call what a field holds. Unknown code leaves out a function whose callers are all known.
         describeCalledValue(m_program, part.type, m_description);
         m_description.addUnknownCode();
         return;
@@ -610,7 +589,6 @@ void ReachableValueWalk::visitInstances(const Type& instances)
     constexpr Protocols stepsOnProperties { Protocol::OwnKeys, Protocol::OwnValues, Protocol::PrototypeChain };
 
     m_description.addOwn(readsOfObjectsOperandsReach);
-    // An instance that is pristine in both aspects has the properties its class gives it and no other, none of them an accessor, and inherits from built-in objects alone.
     if (!isFreeOfSettersAndTraps(instances)) {
         m_description.addUnknownCode();
         return;
@@ -631,20 +609,17 @@ void ReachableValueWalk::runProtocolsOn(const Type& receivers, Protocols protoco
     CalleeList membersWithKeptResults = membersRunBy(m_program, receivers, protocols & protocolsKeepingResults, { }, m_behavior.calledMembers, m_behavior.namedMemberUse);
     describeCallees(m_program, membersWithKeptResults, BuiltinCallMode::Call, m_description);
 
-    // The walk comes to what a member holds, so the conversion of it is not counted with the read.
     CalleeList members = membersRunBy(m_program, receivers, protocols - protocolsKeepingResults, m_behavior.namedMembers, { }, NamedMembers::AreOnlyInspected);
     for (BuiltinID member : members.builtins)
         describeCallOn(receivers, member);
     members.builtins.clear();
     describeCallees(m_program, members, BuiltinCallMode::Call, m_description);
 
-    // What a member with a kept result returns is reachable as well, and so is what any function of the program returns.
     bool returnsNothingReachable = membersWithKeptResults.runsNothing() && members.functions.isEmpty();
     if (!returnsNothingReachable || (protocols.contains(Protocol::Named) && !findsNamedMembersInFields(receivers)))
         m_description.addUnknownCode();
 }
 
-// A member that is found on a prototype is an object that no field lists.
 bool ReachableValueWalk::findsNamedMembersInFields(const Type& receivers) const
 {
     return std::ranges::all_of(m_behavior.namedMembers, [&](BuiltinName name) {
@@ -691,7 +666,6 @@ void ReachableValueWalk::describeOverloadOn(const Type& receivers, BuiltinOverlo
         m_description.addThrow();
 }
 
-// The walk runs its protocols on the receiver and on all that the receiver reaches.
 bool ReachableValueWalk::covers(const OperandBehavior& behavior) const
 {
     constexpr Protocols protocolsWithLists { Protocol::Named, Protocol::CallsNamed };
@@ -702,7 +676,6 @@ bool ReachableValueWalk::covers(const OperandBehavior& behavior) const
 
 static void describeCodeOfReachableValues(const Program& program, const Type& operand, const OperandBehavior& behavior, MembersBeingDescribed& membersBeingDescribed, EffectDescription& description)
 {
-    // A use that writes, defines or calls applies to every reachable object as well.
     bool hasProvenObjects = operand.layouts || !operand.classes.isEmpty();
     if (!hasProvenObjects || !behavior.uses.containsOnly(usesOfReaders)) {
         description.addUnknownCode();
@@ -711,7 +684,6 @@ static void describeCodeOfReachableValues(const Program& program, const Type& op
     ReachableValueWalk(program, behavior, membersBeingDescribed, description).run(operand);
 }
 
-// The protocols also run on every object reachable from an object that the operand holds.
 static void describeCodeOfContents(const Program& program, const Type& operand, const OperandBehavior& behavior, MembersBeingDescribed& membersBeingDescribed, EffectDescription& description)
 {
     ReachableValueWalk walk(program, behavior, membersBeingDescribed, description);
@@ -751,7 +723,6 @@ static void describeOperandCode(const Program& program, const Type& operand, con
 
     bool hasObjects = operand.hasObjects();
     if (!behavior.protocols.isEmpty()) {
-        // Some protocols look a member up on the prototype of a primitive's wrapper.
         if (hasObjects && behavior.uses.contains(OperandUse::AppliesTransitively))
             describeCodeOfReachableValues(program, operand, behavior, membersBeingDescribed, description);
         else if (behavior.uses.contains(OperandUse::AppliesToContents))
@@ -766,13 +737,11 @@ static void describeOperandCode(const Program& program, const Type& operand, con
         return;
     if (behavior.declarer == OperandDeclarer::Builtin && behavior.uses.containsAny(usesRunningSettersAndTraps) && !isFreeOfSettersAndTraps(operand))
         description.addUnknownCode();
-    // The uses name neither the key nor the stored operand, so the conversion is code that nobody lists.
     if (behavior.declarer == OperandDeclarer::Builtin && behavior.uses.containsAny(usesStoringValues) && !description.callsUnknownCode && mayConvertStoredValues(program, operand))
         description.addUnknownCode();
     if (!behavior.uses.containsAny(callingUses))
         return;
     describeCalledValue(program, operand, description);
-    // Native code converts, reads or serializes what the callback returned, which runs the code of an object.
     if (behavior.resultOfCallEscapes && mayReturnObject(program, operand))
         description.addUnknownCode();
 }
@@ -835,7 +804,6 @@ static OperandSummary summarizeDeclaredOperand(const Program& program, const Typ
     return summary;
 }
 
-// The method that HasInstance runs on one operand takes the other operands of the entry as its arguments.
 static bool isArgumentOfHasInstanceMethod(const Program& program, const Function& function, const Value& user, uint32_t operandIndex)
 {
     bool runsHasInstance = false;
@@ -937,7 +905,6 @@ static OperandSummary summarizeCallOperand(const EffectContext& context, const T
 
     CalleeList callees = calleesOfCall(context.program, call);
     bool isCalledValue = behavior.uses.containsAny(callingUses);
-    // Only a function that takes its callee gets hold of the closure it is entered through.
     if (isCalledValue && call.opcode == Opcode::Call && !callees.isComplete)
         return summarizeDeclaredUses(behavior);
     if (!callees.isComplete || !callees.builtins.isEmpty() || maySuspend(call.opcode))
@@ -986,7 +953,6 @@ BuiltinOperand builtinOperandAt(const Value& builtinCall, uint32_t operandIndex)
 template<typename Carrier>
 static OperandSummary summarizeOperandOfOverload(const Program&, const Type&, const Carrier& call, const BuiltinOverload&, BuiltinOperand, UsesAskedFor);
 
-// The function runs with a receiver that no overload was matched against, so it may behave as any of them.
 template<typename Carrier>
 static OperandSummary summarizeArgumentOfAnyOverload(const Program& program, const Type& type, const Carrier& call, const BuiltinOverload& named, BuiltinOperand operand, UsesAskedFor askedFor)
 {
@@ -1255,7 +1221,6 @@ static bool computeWhetherResultMayBeFresh(Opcode opcode)
     }
     if (answersWithDeclaredResult(opcode))
         return true;
-    // A site answers with the same object at every evaluation, and an earlier one may have published it.
     if (boundToOf(opcode) == BoundTo::Site)
         return false;
 
@@ -1304,11 +1269,9 @@ ResultFreshness freshnessOf(const EffectContext& context, const Function& functi
         break;
     }
 
-    // An operation selected for a call of an overload answers with what the overload declares, as the call did.
     if (answersWithDeclaredResult(value.opcode))
         return freshnessOfDeclaredResult(context.program, function, value.overload(), ValueID());
 
-    // The closure table holds this closure, and an instance that was allocated without it inherits a property that names it.
     if (value.opcode == Opcode::NewClosure && namesClosureOfTable(context.program, value))
         return ResultFreshness::Unknown;
 

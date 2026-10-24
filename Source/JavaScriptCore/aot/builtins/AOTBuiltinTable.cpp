@@ -31,14 +31,12 @@
 
 namespace JSC { namespace AOT {
 
-// builtinTableData lists every array of the table and stays in every executable. For an array that is recorded here the link does not count that as a use.
 template<auto array>
 static ALWAYS_INLINE void letArrayLeaveWithCompiler()
 {
     recordRemovableTableEntry<builtinTableData, RemovableFeature::ImageCompiler, RemovedFeatureStub::Abort, array>();
 }
 
-// Whoever reads an element of such an array names the array in its own code, so the array stays in an executable for as long as one of its readers does.
 template<typename T>
 static ALWAYS_INLINE std::span<const T> keptByThisReader(std::span<const T> listed, const T* array)
 {
@@ -147,7 +145,6 @@ static NEVER_INLINE const BuiltinOverload* unpackOverloads(std::span<const Built
     return overloads;
 }
 
-// There is one table, so there is one list.
 static ALWAYS_INLINE std::span<const BuiltinOverload> unpacked(std::span<const BuiltinPackedOverload> packedOverloads)
 {
     ASSERT(packedOverloads.data() == builtinTableOverloads);
@@ -272,7 +269,6 @@ BuiltinID BuiltinTable::findOwnMember(BuiltinID holder, BuiltinName name) const
         return { };
     auto members = m_data.builtins.subspan(object.firstMember.index(), object.memberCount);
     std::optional<size_t> position = findPosition(members, &Builtin::name, name);
-    // A module's namespace binds `default` to the object. The object has no such property.
     if (!position || members[*position].flags.contains(BuiltinFlag::IsDefaultExport))
         return { };
     if (!members[*position].platforms.contains(targetOfThisBuild().platform))
@@ -519,7 +515,6 @@ bool BuiltinTable::isHostFunctionOfEngine(BuiltinID id) const
     const Builtin& entry = at(id);
     if (entry.origin != BuiltinOrigin::Engine || (entry.kind != BuiltinKind::Function && entry.kind != BuiltinKind::Method))
         return false;
-    // An overload that is code in line alone enters nothing. What the library implements says so in some overload.
     std::span<const BuiltinOverloadSummary> overloads = overloadSummariesOf(id);
     return !overloads.empty() && std::ranges::all_of(overloads, [](const BuiltinOverloadSummary& overload) {
         return overload.mode == BuiltinCallMode::Call && (overload.callee == BuiltinCallee::HostFunction || overload.callee == BuiltinCallee::None);
@@ -927,7 +922,6 @@ static void appendPlainToken(StringBuilder& token, StringView text)
     token.append(written);
 }
 
-// assignTokens() in src/codegen/builtins/number.ts of Bun's tree, which names the constants of AOTBuiltinIDs.h.
 String BuiltinTable::tokenOf(BuiltinID id) const
 {
     StringBuilder token;

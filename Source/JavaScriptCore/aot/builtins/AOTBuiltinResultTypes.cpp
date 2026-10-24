@@ -118,7 +118,6 @@ static bool hasNeverOperand(const BuiltinOperandTypes& operands)
     return operands.receiver == TypeTable::never || operands.arguments.contains(TypeTable::never);
 }
 
-// A call ends in an overload with its operands inside the strict parameters. A conversion may change the kind of an operand.
 static BuiltinOperandTypes operandTypesWithin(const TypingContext& context, BuiltinOverloadID id, const BuiltinOperandTypes& operands)
 {
     const BuiltinTable& table = context.program.builtins();

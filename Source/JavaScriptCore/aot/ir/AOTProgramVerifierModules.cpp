@@ -103,7 +103,6 @@ static bool hasValidInterop(const Program& program, const Module& module)
     case ModuleKind::Data:
         return module.exportRule == SyntheticExportRule::None && module.requireResult != RequireResult::ModuleExports;
     case ModuleKind::CommonJs:
-        // The body of a file of the program stores the names that somebody reads, so the loader has no rule to fill them by.
         if (module.flags.contains(ModuleFlags::IsLibrary))
             return isCommonJsRule(module.exportRule);
         return (module.exportRule == SyntheticExportRule::None || isCommonJsRule(module.exportRule)) && module.syntheticExports.isEmpty();
@@ -143,7 +142,6 @@ static bool hasDuplicateRequests(const Vector<ModuleRequest>& requests)
     return std::ranges::adjacent_find(keys) != keys.end();
 }
 
-// An import has run its target to the end before the importer starts. A `require` stands in the code of the requirer: it is never deferred and brings no names.
 static bool isValidRequest(const ModuleRequest& request)
 {
     switch (request.kind) {
@@ -180,7 +178,6 @@ static std::optional<InternalErrorKind> findNameOrderError(const Program& progra
     return std::nullopt;
 }
 
-// Bun's own code in the form of a file of the program. The role of the body says whose code it is, and a module without a body has only the flag to say so.
 static bool hasValidBundlerHelperFlag(const Program& program, const Module& module)
 {
     bool isBundlerHelper = module.flags.contains(ModuleFlags::IsBundlerHelper);
@@ -215,7 +212,6 @@ static std::optional<InternalErrorKind> findModuleError(const Program& program, 
     bool hasValidRuntimeModule = module.runtimeModule
         ? rules.hasRuntimeModule && program.builtins().contains(module.runtimeModule)
         : !rules.hasRuntimeModule || isLibrary;
-    // The referrer of a CommonJS module is the file that evaluates the text it was made of.
     bool hasValidLinks = (!!module.referrer == rules.hasReferrer || (module.referrer && module.kind == ModuleKind::CommonJs))
         && (!module.data || rules.canHaveData)
         && !!module.namespaceLayout == (module.kind == ModuleKind::SourceText);
@@ -285,7 +281,6 @@ bool ProgramVerifier::hasValidBody(const Module& module) const
 
 namespace {
 
-// The numbers are part of the message.
 enum class EvaluationRule : uint32_t {
     TargetIsFileThatEndsAtOnce = 1,
     ReferrerRequestsTarget,
@@ -308,7 +303,6 @@ void FunctionVerifier::verifyModuleEvaluation(BlockID block, ValueID id, const V
     if (!isFileOfProgram(target) || target.flags.contains(ModuleFlags::HasTopLevelAwait))
         return failRule(EvaluationRule::TargetIsFileThatEndsAtOnce);
 
-    // Where a bare site stands is what the front end promises. The pass that turns the sites into calls looks again: one that another pass has moved counts as late there.
     bool isBare = value.opcode == Opcode::EvaluateModule && value.isBare() && form() == IRForm::AsRead && !isOptimizing();
     m_moduleEvaluations.append(ModuleEvaluationSite { value.referrer(), value.module(), block, id, isBare });
     if (!isBare)
@@ -323,7 +317,6 @@ void FunctionVerifier::verifyModuleEvaluation(BlockID block, ValueID id, const V
         failRule(EvaluationRule::BareSiteRunsOnce);
 }
 
-// The pass that turns the sites into calls walks them in the order of the text and lets the second site of a module do nothing.
 void FunctionVerifier::verifyBareEvaluations()
 {
     if (hasFailed())
@@ -381,7 +374,6 @@ static void forEachNamedModule(const Module& module, const Functor& functor)
         functor(required.module);
 }
 
-// An export table holds resolved bindings, so a name can lead past the targets of the module's own requests.
 static Vector<uint32_t> findUnreachedNames(const Vector<Module>& modules)
 {
     Vector<ModuleID> allNamedModules;
@@ -413,7 +405,6 @@ static Vector<uint32_t> findUnreachedNames(const Vector<Module>& modules)
     Vector<BitVector> reachedNames(components.numberOfComponents);
     for (size_t rank = 0; rank < namedModules.size(); ++rank)
         reachedNames[componentOf[namedModules[rank].index()]].set(rank);
-    // A component has a higher number than every component it requests.
     for (uint32_t index : modulesByComponent) {
         uint32_t component = componentOf[index];
         for (auto& request : modules[index].requests) {
@@ -523,7 +514,6 @@ static bool canHaveExtraKeys(LayoutKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// An object without a layout is what NewDictionary makes. The optimizer writes such records behind the passes that ask every object of a record for its layout.
 static bool hasValidMembers(const Program& program, const DataNode::Object& object, bool mayLackLayout, Vector<PropertyKeyID, 16>& keys)
 {
     if (object.layout ? !hasObjectKind(program, object.layout) : !mayLackLayout)
@@ -601,7 +591,6 @@ static bool hasValidPrivateHolder(const Program& program, const EvalBinding& bin
     const Layout& layout = program.at(binding.layout);
     if (!binding.field || *binding.field >= layout.fields.size())
         return false;
-    // A static private field of a class inside a function is stored in an environment.
     if (layout.kind == LayoutKind::Environment)
         return binding.kind == EvalBindingKind::PrivateName;
     return layout.kind == LayoutKind::Instance && layout.fields[*binding.field].flags.contains(FieldFlags::IsPrivate);

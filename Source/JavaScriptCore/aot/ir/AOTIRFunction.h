@@ -26,7 +26,6 @@ enum class ConstructorForm : uint8_t { NotConstructor, Base, Derived };
 
 struct Function;
 
-// The blocks or the values of a function, for reading. Whoever writes goes through Function::edit() and its neighbors.
 template<typename T, size_t minCapacity>
 class BodyTable {
 public:
@@ -59,7 +58,6 @@ private:
     Storage m_storage;
 };
 
-// A copy of a function has no log. A function that is given another body keeps its log, which forgets.
 class ChangeLogOfFunction {
 public:
     ChangeLogOfFunction() = default;
@@ -95,7 +93,6 @@ public:
 
     ChangeLog* log { nullptr };
     uint32_t numberOfEdits { 0 };
-    // Set by whoever has typed the values, cleared by every edit, with a log or without. A copy does not have it; a body that is moved takes it along.
     bool valuesAreTypedAsDefined { false };
 };
 
@@ -117,7 +114,6 @@ struct Function : FunctionRecord {
     const Value& at(ValueID id) const { ASSERT(id.index() < values.size()); return values.span().data()[id.index()]; }
     const Block& at(BlockID id) const { ASSERT(id.index() < blocks.size()); return blocks.span().data()[id.index()]; }
 
-    // The only ways to write to a body.
     Value& edit(ValueID id, OptionSet<ValueEdit> edits = anyValueEdit)
     {
         ASSERT(id.index() < values.size());
@@ -139,7 +135,6 @@ struct Function : FunctionRecord {
         }
         return block;
     }
-    // For whoever writes a value many times over and knows in the end whether it has changed: it says so with didEdit(), before anybody reads the log or asks an analysis.
     Value& editAndReportLater(ValueID id)
     {
         ASSERT(id.index() < values.size());
@@ -170,7 +165,6 @@ struct Function : FunctionRecord {
         blocks.m_storage.append(WTF::move(block));
         return id;
     }
-    // All of them may change, and their number. The log forgets.
     Blocks::Storage& editAllBlocks() LIFETIME_BOUND
     {
         m_changes.didEditEverything();
@@ -196,7 +190,6 @@ struct Function : FunctionRecord {
         m_changes.didEditEverything();
         blocks = WTF::move(others);
     }
-    // For whoever changes nothing that a reader of the body can see: the room that a list takes.
     Blocks::Storage& storageOfBlocks() LIFETIME_BOUND { return blocks.m_storage; }
     Values::Storage& storageOfValues() LIFETIME_BOUND { return values.m_storage; }
 
@@ -211,7 +204,6 @@ struct Function : FunctionRecord {
         RELEASE_ASSERT(m_changes.log == &log);
         m_changes.log = nullptr;
     }
-    // Rises with every edit, with a log or without.
     uint32_t numberOfEdits() const { return m_changes.numberOfEdits; }
     bool valuesAreTypedAsDefined() const { return m_changes.valuesAreTypedAsDefined; }
     void setValuesAreTypedAsDefined() { m_changes.valuesAreTypedAsDefined = true; }
@@ -220,7 +212,6 @@ struct Function : FunctionRecord {
 
     bool isModuleBody() const;
     bool isUnsplitCoroutine() const;
-    // A call goes on in the generic version of a function once a test at the entrance has failed. A coroutine's ramp and body have roles of their own.
     bool runsOnlyBehindFailedTest() const { return role == FunctionRole::GenericVersion || has(FunctionFlags::IsSplitOffGenericVersion); }
     ConstructorForm constructorForm() const;
 
@@ -257,17 +248,14 @@ private:
 
 OptionSet<FunctionCapabilities> initialCapabilitiesOf(const Function&);
 
-// Where compactFunction() has put what it kept, by the former index. What it removed has no new number.
 struct Renumbering {
     BlockID newIDOf(BlockID block) const { return blocks.isEmpty() ? block : blocks[block.index()]; }
     ValueID newIDOf(ValueID value) const { return values[value.index()]; }
 
-    // Empty where no block moved.
     Vector<BlockID> blocks;
     Vector<ValueID> values;
 };
 
-// Answers whether a block or a value moved.
 bool compactFunction(Function&, Renumbering* = nullptr);
 bool needsCompaction(const Function&);
 void remapIDs(Function&, const TypeRemap&, const StringRemap&, const FunctionRemap&);

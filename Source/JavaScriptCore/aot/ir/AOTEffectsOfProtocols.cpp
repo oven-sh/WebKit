@@ -81,7 +81,6 @@ enum class FoundValue : uint8_t { IsOnlyRead, IsConverted, IsCalled };
 
 } // anonymous namespace
 
-// A function, a host object or an ordinary object that was converted to the type of the family.
 static bool mayBeMemberWithoutLayout(const Program& program, const Type& type)
 {
     return type.layouts && program.at(type.layouts).hasMembersWithoutLayout;
@@ -103,10 +102,8 @@ static bool mayReadFromField(const Program& program, const Type& operand, Proper
         return true;
     return std::ranges::any_of(membersOf(program, operand), [&](LayoutID member) {
         std::optional<FieldReference> field = findField(program, member, key, BaseChain::Proven);
-        // A namespace answers with the binding of an export, which is no field.
         if (!field)
             return program.at(member).kind == LayoutKind::ModuleNamespace;
-        // Nothing checks what enters an expected position, so its type says nothing about what the slot holds.
         const DeclaredType& declared = fieldAt(program, *field).declared;
         return !declared.type || declared.flags.contains(PositionFlags::IsExpected) || predicate(program.at(slotTypeOf(program, fieldAt(program, *field))));
     });
@@ -163,7 +160,6 @@ static bool mayBeBoundFunction(const Program& program, const Type& receivers)
     });
 }
 
-// With a function that is not bound the ordinary method reads `prototype`, which is a key of the protocol, and walks up from the tested value, which the entry that runs the protocol declares for that operand.
 static void addHasInstanceMethod(const Program& program, const Type& receivers, ProvenAccess&& read, CalleeList& result)
 {
     const BuiltinTable& table = program.builtins();
@@ -188,7 +184,6 @@ static void addTwoStepRead(const ProvenAccess& read, CalleeList& result)
 
 static constexpr uint16_t objectCoerciblePrimitives = Primitive::Defined & ~(Primitive::UndefinedOrNull | Primitive::Absent);
 
-// The primitives on which the protocol looks a member up, which starts at the prototype of the wrapper class.
 static constexpr uint16_t primitiveReceiversOf(Protocol protocol)
 {
     switch (protocol) {
@@ -231,7 +226,6 @@ static FoundValue valueFoundByNamed(Protocols protocols, NamedMembers namedMembe
 CalleeList membersRunBy(const Program& program, const Type& operand, Protocols protocols, std::span<const BuiltinName> namedMembers, std::span<const BuiltinName> calledMembers, NamedMembers namedMemberUse)
 {
     CalleeList result = CalleeList::none();
-    // "Every protocol" is written with every bit of the word set.
     if (!declaredProtocols.containsAll(protocols))
         result.isComplete = false;
     protocols = protocols & declaredProtocols;

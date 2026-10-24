@@ -17,7 +17,6 @@ struct Function;
 struct Terminator;
 struct Value;
 
-// Whether an operation may throw, and whether it may throw an error that the language prescribes for its operands.
 class ThrowEffect {
 public:
     constexpr ThrowEffect(bool mayThrow = true)
@@ -50,7 +49,6 @@ public:
         return result;
     }
 
-    // Whether one thing does no more than another is a question of edges, order and memory. Which kind of error it is decides only whether an unused value goes away.
     constexpr bool isSubsetOf(ThrowEffect other) const { return !m_mayThrow || other.m_mayThrow; }
     constexpr bool saysNoMoreThan(ThrowEffect other) const { return isSubsetOf(other) && (!m_mayThrowByRule || other.m_mayThrowByRule); }
 
@@ -81,9 +79,7 @@ struct Effects {
     }
 
     constexpr bool isPure() const { return *this == none(); }
-    // Resolving a rope changes how a string is stored, moving a table how a collection is stored, and neither the result of any operation.
     constexpr bool isRemovableWhenUnused() const { return writes.containsOnly(heapsWhoseWritesNobodySees) && !mayThrowByRule() && !mayBeTerminated && !mayRunOtherCode(); }
-    // Nobody can tell where it ran, or how often. What may run out of memory goes away with its unused result, and stays where it stands while it is used.
     constexpr bool isUnobservable() const { return isRemovableWhenUnused() && !mayThrow; }
     constexpr bool mayThrowByRule() const { return mayThrow.byRule(); }
     constexpr bool alwaysCompletes() const { return !mayBeTerminated && !mayRunOtherCode(); }

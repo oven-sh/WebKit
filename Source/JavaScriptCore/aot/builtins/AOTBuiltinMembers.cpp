@@ -179,12 +179,10 @@ bool MembersUnderKey::isLockedLocation(BuiltinID holder) const
     BuiltinID member = findOwnMember(holder);
     if (!member)
         return isClosedKey(holder);
-    // Only library code can spell an engine private name, and it stores under none that is an alias.
     if (m_kind == PropertyKeyKind::EnginePrivateName)
         return true;
     if (m_table.at(member).mutability == BuiltinMutability::AlwaysLocked || m_table.isLocationOfLockedObject(member))
         return true;
-    // What changes is the property of an instance. Start-up locks the one of the holder with the other members.
     return m_table.at(member).flags.contains(BuiltinFlag::IsOwnPropertyOfInstances) && m_table.at(holder).flags.contains(BuiltinFlag::HasLockedMembers);
 }
 
@@ -281,13 +279,11 @@ BuiltinMemberAnswer findMemberOfInstances(const BuiltinLookupContext& context, B
     bool isOwnProperty = found.member && table.at(found.member).flags.contains(BuiltinFlag::IsOwnPropertyOfInstances);
     if (isOwnProperty && !name.isPrivateAlias)
         return { BuiltinMemberLookup::Outcome::Found, table.canonicalID(found.member), LocationProof::Constant };
-    // The instance answers first, and it may be a typed array.
     if (keyLookupOf(context.program, key) != KeyLookup::Ordinary)
         return { found.outcome, found.member ? table.canonicalID(found.member) : BuiltinID(), LocationProof::Unknown };
     return answerFor(context, table.canonicalID(prototype), key, found, name);
 }
 
-// Only a script adds a let, const or class binding to the realm: what eval and Function declare stays their own.
 static bool canBeShadowedByScript(const BuiltinLookupContext& context, PropertyKeyID key)
 {
     if (isLockedLocation(context.program, Builtins::GlobalThis, key))
@@ -397,7 +393,6 @@ std::optional<Value> tryMakeBuiltinConstant(const Program& program, BuiltinID me
     std::optional<StringView> text = table.stringOf(member);
     if (!text)
         return std::nullopt;
-    // A pass adds no string to the program. The names of the table are in it from the start.
     StringID string = program.strings.find(encodeProgramString(*text).span());
     if (!string)
         return std::nullopt;

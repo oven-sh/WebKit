@@ -110,7 +110,6 @@ static constexpr Effects effectsOfReadAtArrayIndex = [] {
     return effects;
 }();
 
-// It replaces one element. The length, the kind and the storage stay as they are, and nothing is allocated.
 static constexpr Effects effectsOfStoreInsideLength = [] {
     Effects effects = Effects::none();
     effects.reads.add(AbstractHeap::ArrayStorage);
@@ -125,7 +124,6 @@ static constexpr Effects effectsOfLookupByKey = [] {
     return effects;
 }();
 
-// ResolveAccesses leaves such a lookup on the arm where the slot of a field holds no value of the field's type. It does no more than the read in whose place it stands.
 std::optional<Effects> effectsOfLookupFromBase(const Program& program, const Function& function, const Value& value)
 {
     if (value.opcode != Opcode::SuperGet || !value.key())
@@ -142,7 +140,6 @@ static_assert(effectsOfLookupByNumberName.isSubsetOf(declaredBoundOf(Opcode::Get
 static_assert(effectsOfLookupByNumberName.isSubsetOf(declaredBoundOf(Opcode::HasArrayElement)));
 static_assert(declaredBoundOf(Opcode::PutArrayElement).writes.contains(AbstractHeap::NamedProperties));
 
-// DefinesProperty of the schema, which is all that the row of DefineGetter says.
 static constexpr Effects effectsOfDefinition = declaredBoundOf(Opcode::DefineGetter);
 static_assert(!effectsOfDefinition.mayRunOtherCode());
 
@@ -154,7 +151,6 @@ static bool takesAnyNumberAsArrayPosition(Opcode operation)
 
 void refineElementEffects(Opcode operation, const Type& position, ElementPosition where, Effects& effects)
 {
-    // -1 and 1.5 name properties of an array: the rows declare the string that such an access makes of the name, and the lookup or the store under it.
     if (!takesAnyNumberAsArrayPosition(operation) || (where == ElementPosition::Anywhere && !isArrayIndex(position)))
         return;
 
@@ -249,7 +245,6 @@ void describeAccess(const Program& program, const Function& function, const Valu
         return;
     }
 
-    // An access that is still one by name when code is generated goes through a cache, and a miss allocates what it files.
     if (declared.mayCollect) {
         Effects collects = Effects::none();
         collects.mayCollect = true;
@@ -270,7 +265,6 @@ void describeAccess(const Program& program, const Function& function, const Valu
         description.addOwn(effectsOfDefinition);
     describeAccessors(program, value, proven.accessors.span(), description);
     if (!proven.methods.isEmpty() || !proven.builtins.isEmpty() || proven.mayFindNothing) {
-        // A row that looks at own properties only declares no read of the prototype links.
         Effects walk = effectsOfChainWalk(program, proven.key);
         description.addOwn(declared.mayCallUnknownCode ? walk : walk.intersectedWith(declared));
     }

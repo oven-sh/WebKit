@@ -61,10 +61,8 @@ bool Reader::readNamesAndFamilies()
 
 bool Reader::readListsLayoutsAndFunctions()
 {
-    // Whoever collects the layouts that a body names asks for the kinds of type sites.
     if (!readListInParallel(m_sections.typeSites, m_program.typeSites))
         return false;
-    // In a later form the text says which layouts are allocated.
     if (m_form == IRForm::AsRead)
         m_layoutUses.emplace(m_program, numberOfRecords<LayoutID>(), m_build.parallelLoops().width());
     if (m_preparesFunctionsForTyping) {
@@ -285,7 +283,6 @@ void RecordChecker::requireAscendingStrings(StringID previous, StringID next)
     requireAscending(compareProgramStrings(strings[previous], strings[next]));
 }
 
-// The build proves an int32 promise, and nothing is proven about a position that nothing checks.
 void RecordChecker::didRead(DeclaredType& declared)
 {
     require(!declared.flags.containsAll({ PositionFlags::IsExpected, PositionFlags::IsInt32Promise }), InternalErrorKind::InvalidDeclaredType);
@@ -315,7 +312,6 @@ static std::unique_ptr<Program> readProgram(std::span<const uint8_t> bytes, cons
     program->borrowBuffer(bytes);
     Reader reader(*program, IRForm::AsRead, build);
     reader.setExternalFunctionBodies(externalBodies);
-    // Whoever looks at the program as it was read, or between the first steps of the read stage, sees those steps one by one.
     const auto& options = build.options();
     bool isLookedAtAsRead = build.validates() || options.verifiesProgram || options.isVerifyOnly() || options.logging.dumpedPass || options.logging.dumps(IRForm::AsRead);
     if (purpose == ReadFor::Pipeline && !isLookedAtAsRead)

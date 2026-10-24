@@ -24,9 +24,7 @@
 #include "config.h"
 #include "ArrayConstructor.h"
 
-#if ENABLE(AOT)
 #include "AOTCompactTable.h"
-#endif
 
 #include "ArrayPrototype.h"
 #include "ArrayPrototypeInlines.h"

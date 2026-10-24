@@ -39,6 +39,7 @@ extern "C" {
     EncodedJSValue SYSV_ABI NOT_TAIL_CALLED vmEntryToJavaScript(void*, VM*, ProtoCallFrame*);
 #if ENABLE(AOT) && !ENABLE(C_LOOP)
     void llint_aot_char_code_at_thunk();
+    void llint_aot_string_index_of_thunk();
     void llint_aot_bound_function_call_thunk();
     void llint_aot_is_nan_thunk();
     void llint_aot_is_finite_thunk();

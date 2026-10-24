@@ -715,7 +715,6 @@ static JSObject* describeFeatureUser(const TableDescription& description, const 
     const BuiltinTable& table = description.table;
     JSArray* uses = describeList(description, summarizeFeatureUses(table.featureUsesOf(id)), describeFeatureUse);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    // The table holds no C++ names: only Bun's generators look an entry up by one, and they read builtin-uses.json.
     JSArray* nativeSymbols = constructEmptyArray(description.realm, nullptr);
     RETURN_IF_EXCEPTION(scope, nullptr);
 

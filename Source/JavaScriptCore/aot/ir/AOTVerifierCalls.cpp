@@ -95,7 +95,6 @@ static bool isSoleCapture(const TypingContext& context, const Function& callee, 
     return captured && callee.captures.size() == 1 && context.typeOf(captured).isSubsetOf(context.typeOf(callee.captures[0]), context.program);
 }
 
-// The object that the store names is what the closure captures, so a closure over an environment comes into its field with an allocation only.
 static bool isStoredIntoDeferringFields(const TypingContext& context, const Value& store, uint32_t operandIndex, FunctionID closureFunction)
 {
     const Program& program = context.program;
@@ -228,7 +227,6 @@ void FunctionVerifier::verifyDirectCall(BlockID block, ValueID id, const Value& 
             fail(InternalErrorKind::InvalidCreatorRecord, block, id);
             return;
         }
-        // A pair of a layout and a selector that does not exist may lie over the entry of another pair.
         if (arguments.empty() || !asksOnlyForRowsOf(m_program, typeOf(arguments[0]), value.receivers()))
             fail(InternalErrorKind::OperandTypeMismatch, block, id);
         return;
@@ -355,7 +353,6 @@ void FunctionVerifier::verifyBuiltinOperation(BlockID block, ValueID id, const V
         return;
     }
     if (value.opcode == Opcode::NativeBinding) {
-        // The host evaluates a binding by its number. What native code hands over by itself has none: no text names it.
         const Builtin& entry = m_program.builtins().at(value.builtin());
         if (entry.kind != BuiltinKind::NativeBinding || !entry.isNamedByText)
             fail(InternalErrorKind::InvalidBuiltinCall, block, id);

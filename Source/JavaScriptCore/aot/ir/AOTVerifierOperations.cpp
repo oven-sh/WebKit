@@ -160,7 +160,6 @@ static bool hasPayloadOutOfRange(const Program& program, const Value& value)
 {
     if (value.opcode == Opcode::IntegerBound)
         return !relationalOperators.contains(value.comparison());
-    // The code of this row answers false for every number, boolean and BigInt without converting the text.
     if (value.opcode == Opcode::ValueLooselyEqualsLiteral)
         return !std::isnan(jsToNumber(program.strings.toWTFString(value.literal())));
     return false;
@@ -193,7 +192,6 @@ void FunctionVerifier::verifyOperations()
     runSubsystemCheckers();
 }
 
-// A match under g, y or d uses the object.
 static bool asksForWhatNoCodeAnswers(const Value& value)
 {
     if (value.opcode == Opcode::IsPristine)
@@ -333,7 +331,6 @@ void FunctionVerifier::verifyCast(BlockID block, ValueID id, const Value& value)
     case Opcode::TypeTest: {
         bool isCheck = value.opcode == Opcode::Check;
         const Type& tested = m_program.at(isCheck ? value.castType() : value.testedType());
-        // A TypeTest that names a built-in without a cell in the realm does not find its object, and the other edge keeps it. A Check would leave the typed code with a value of its own type.
         if (hasClassProofs(tested) || (isCheck && hasUntestableBuiltins(tested)))
             fail(InternalErrorKind::PayloadOutOfRange, block, id);
         return;
@@ -460,7 +457,6 @@ void FunctionVerifier::verifyReturnCall(BlockID block, const Terminator& termina
         return;
     }
 
-    // The type of an expected position bounds nothing that enters it.
     TypingContext context = typing();
     Type returned = typeOf(call);
     for (TailCast cast : terminator.casts()) {

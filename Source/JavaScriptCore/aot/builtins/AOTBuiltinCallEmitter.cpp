@@ -122,7 +122,6 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
             defineResult(callDirectFunction(value, *number));
             return;
         }
-        // What a request asks once, in code that is too cold for the code in line: the road through the frame of a host function is long, and the answer for a string is short.
         BuiltinID builtin = m_builtins.canonicalID(overload.builtin);
         if (builtin == Builtins::Number && overload.mode == BuiltinCallMode::Call && arguments.size() == 1) {
             defineResult(callOperation<Boxed>(value, RuntimeOperation::NumberOfAnyValue, { boxedOperand(value, arguments[0]) }));
@@ -137,7 +136,6 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
                 defineResult(convert());
                 return;
             }
-            // A string is its own answer, as it is for a conversion in a template.
             const TypeTestPlan& isString = typeTestPlanFor(m_function.at(arguments[0]).type, representationOf(arguments[0]), TypeTable::string);
             defineResult(either<Boxed>(hasType(get(arguments[0]), isString), [&] {
                 return operand;
@@ -153,7 +151,6 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
         auto argumentOrUndefined = [&](size_t index) {
             return index < boxedArguments.size() ? boxedArguments[index] : undefined();
         };
-        // An operation that answers for the usual operands stands in front of the door. For the rest it hands back the empty value: a call from inside it would cost more than the door.
         auto answerOrCallFunction = [&](RuntimeOperation operation, std::initializer_list<Operand> operands) {
             Boxed answer = callOperation<Boxed>(value, operation, operands);
             defineResult(either<Boxed>(isNotEmpty(answer), [&] {
@@ -166,10 +163,8 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
         if (std::optional<URICoding> coding = uriCodingOf(builtin); coding && isCall && arguments.size() == 1)
             return answerOrCallFunction(RuntimeOperation::CodeURIOfAnyValue, { boxedArguments[0], word32(static_cast<uint32_t>(*coding)) });
         bool searchesArray = builtin == Builtins::ArrayPrototypeIndexOf || builtin == Builtins::ArrayPrototypeIncludes;
-        // Without a start the stub in front of the host function searches.
         if (searchesArray && isCall && receiver && arguments.size() == 2 && typeOf(arguments[0]).primitives & Primitive::AnyString)
             return answerOrCallFunction(RuntimeOperation::ArraySearchOfAnyValue, { *boxedReceiver, boxedArguments[0], boxedArguments[1], word32(builtin == Builtins::ArrayPrototypeIndexOf) });
-        // The operation reads five encodings. One that is written at the call and is none of them goes to the door at once.
         auto isEncodingForTheHost = [&](ValueID encoding) {
             const Value* definition = &m_function.at(encoding);
             while (isCast(definition->opcode))
@@ -186,7 +181,6 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
             return answerOrCallFunction(RuntimeOperation::EncodeTextToBytes, { boxedArguments[0] });
         if (builtin == Builtins::TextEncoderPrototypeEncodeInto && isCalledOnEncoder && arguments.size() == 2)
             return answerOrCallFunction(RuntimeOperation::EncodeTextIntoBytes, { boxedArguments[0], boxedArguments[1] });
-        // The first below answers for two views of one kind, the second for bytes alone. What is known to be something else goes to the door at once.
         auto mayBeBytes = [&](ValueID id) {
             const Type& type = typeOf(id);
             return type.overlaps(Type::builtinClass(BuiltinClasses::Uint8Array), m_program) || type.overlaps(Type::builtinClass(BuiltinClasses::Buffer), m_program);
@@ -226,7 +220,6 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
         defineResult(callOperation<Boxed>(value, RuntimeOperation::Apply, { boxCell(calleeOf(value, overload)), undefined(), boxedOperand(value, arguments[0]) }));
         return;
     case BuiltinCallForm::AnyReceiver:
-        // The engine's own join copies what the inline form leaves as a rope. Array.prototype.toString has the same inline form for a pristine array. Of any other receiver it calls `join`, whatever that is.
         if (m_builtins.canonicalID(overload.builtin) == Builtins::ArrayPrototypeJoin && overload.code.implementation.kind == BuiltinImplementationKind::Inline && overload.code.implementation.inlineBuiltin == InlineBuiltin::ArrayJoin && overload.mode == BuiltinCallMode::Call && receiver && arguments.size() <= 1) {
             Boxed separator = arguments.empty() ? undefined() : boxedOperand(value, arguments[0]);
             defineResult(callOperation<Boxed>(value, RuntimeOperation::ArrayJoinOfAnyReceiver, { boxedOperand(value, receiver), separator, calleeOf(value, overload) }));
@@ -310,7 +303,6 @@ Boxed BuiltinCallEmitter::loadProperty(CellPointer object, PropertyOffset offset
     return property;
 }
 
-// An instance that has the Structure its constructor left it with holds the property at a known place.
 Boxed BuiltinCallEmitter::readOwnSlot(const ValueContext& value, const BuiltinOverload& overload)
 {
     RELEASE_ASSERT(overload.mode == BuiltinCallMode::Get);
@@ -328,7 +320,6 @@ Boxed BuiltinCallEmitter::readOwnSlot(const ValueContext& value, const BuiltinOv
     return either<Boxed>(equal(loadStructureID(object), structureID), [&] {
         return loadProperty(object, propertyOffsetOfOwnSlot(m_builtins.at(builtinClass).type, slot.offset));
     }, [&] {
-        // No cell has the number zero, which is what the word holds until somebody has looked for the Structure.
         LBasicBlock isNotLookedFor = newBlock();
         LBasicBlock isLookedFor = newBlock();
         m_out.branch(isZero(structureID).value(), rareEdge(isNotLookedFor), normalEdge(isLookedFor));
@@ -340,7 +331,6 @@ Boxed BuiltinCallEmitter::readOwnSlot(const ValueContext& value, const BuiltinOv
     });
 }
 
-// The getter has no function object, and its native function takes the receiver for an instance of its class without a test.
 Boxed BuiltinCallEmitter::callCustomGetter(const OperationContext& context, BuiltinOverloadID id, Boxed receiver, bool receiverIsMatched)
 {
     const BuiltinOverload& overload = m_builtins.at(id);
@@ -441,7 +431,6 @@ Boxed BuiltinCallEmitter::callDirectFunction(const ValueContext& value, uint32_t
             operands.append(loadImmutablePointer(AOT_INSTANCE_OFFSET(globalObject)).value());
             break;
         case BuiltinDirectValue::NativeObjectOfReceiver:
-            // Native code may take the object away from its wrapper, and no heap of the IR stands for that word.
             operands.append(m_out.loadPtr(m_out.address(m_heaps.root, cellOperand(value->receiverOperand()).value(), binding.offsetOfNativeObject)));
             break;
         case BuiltinDirectValue::Receiver:
@@ -485,7 +474,6 @@ Boxed BuiltinCallEmitter::callDirectFunction(const ValueContext& value, uint32_t
         }
     }
     build().statistics().count(StatisticID::NativeFunctionsCalledDirectly);
-    // The function may get no more than what the receiver wraps, which lives as long as the receiver.
     LValue keptAlive = binding.takesReceiver() ? boxedOperand(value, value->receiverOperand()).value() : nullptr;
     std::optional<RuntimeCallEmitter::HostFrameOfDirectCall> hostFrame;
     if (takesFrame)
@@ -534,7 +522,6 @@ void BuiltinCallEmitter::generateSharedRegExpLiteral(const ValueContext& value)
     }));
 }
 
-// The byte is part of what the test reads of the named properties: whatever may write a property of a built-in object may change it.
 void BuiltinCallEmitter::generateIsBuiltinLocationUnchanged(const ValueContext& value)
 {
     BuiltinID member = value->member();
@@ -545,7 +532,6 @@ void BuiltinCallEmitter::generateIsBuiltinLocationUnchanged(const ValueContext& 
         Word32 state(m_out.load8ZeroExt32(instanceField(heap, InstanceLayout::offsetOfBuiltinLocationStates + member.index())));
         branch(equal(state, word32(static_cast<int32_t>(WatchedLocationState::Unchanged))), { targets.taken, rareEdge(isNotKnownUnchanged) });
 
-        // Read through the address of the table: a byte that two blocks looked at would go through a register, and the usual way compares it where it lies.
         m_out.appendTo(isNotKnownUnchanged);
         Pointer states = loadImmutablePointer(AOT_INSTANCE_OFFSET(builtins.locationStates));
         branch(isZero(Word32(m_out.load8ZeroExt32(m_out.address(heap, states.value(), member.index())))), { rareEdge(isNotArmed), targets.notTaken });
@@ -555,7 +541,6 @@ void BuiltinCallEmitter::generateIsBuiltinLocationUnchanged(const ValueContext& 
     });
 }
 
-// The host makes a function object for whoever asks, so one built-in has many. All of them have the Structure of the realm's host functions and one native code.
 void BuiltinCallEmitter::generateIsFunctionOfBuiltin(const ValueContext& value)
 {
     build().statistics().count(StatisticID::NativeFunctionTestsEmitted);

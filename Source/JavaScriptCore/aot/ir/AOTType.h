@@ -80,7 +80,6 @@ struct Type {
     SortedSet<StringID> stringLiterals;
     SortedSet<PropertyKeyID> symbolLiterals;
     ClassParts classes;
-    // Beside anyFunction: the functions that the program is seen to convert to the type. They say what to expect of a value, and nothing about what it cannot be.
     SortedSet<FunctionID> functions;
     SortedSet<BuiltinID> builtins;
     SortedSet<RegExpLiteralInType> regExpLiteralSet;
@@ -127,12 +126,10 @@ struct Type {
     bool mayBeNaN() const { return primitives & Primitive::WholeNumber; }
     bool hasLiteralStrings() const { return primitives & Primitive::LiteralString; }
     bool isInt32() const { return isInteger() && integers.isSubsetOf(Range::int32()); }
-    // What an int32 promise admits. A location with a dead zone also holds `absent`.
     bool isInt32OrNullish() const { return hasOnlyPrimitives(Primitive::Integer | Primitive::UndefinedOrNull | Primitive::Absent) && integers.isSubsetOf(Range::int32()); }
     bool isNumberLike() const { return hasOnlyPrimitives(Primitive::NumberLike); }
     bool mayBeFunction() const { return anyFunction || anyObject || !functions.isEmpty() || !builtins.isEmpty(); }
     bool hasOnlyKnownCallees() const { return !anyFunction && !anyObject && classes.isEmpty(); }
-    // Every object here has one of the listed layouts. The set says whether it lists every object, so the answer takes the table.
     bool hasOnlyLayouts(const Program&) const;
     bool hasOnlyLayouts(const TypeTable&) const;
     bool isSingleValue() const;
@@ -152,9 +149,7 @@ struct Type {
     Type withOnlyObjects() const;
     Type withLiteralStringsWidened() const;
     Type withContentsProven(bool) const;
-    // import.meta, module, exports and require are one object per module, and a CommonJS module gets new ones each time it runs.
     Type withUntestableBuiltinsWidened() const;
-    // The type a Check or a TypeTest may name: a test can find a layout, and nothing that is proven about an instance of a class.
     Type withoutClassProofs() const;
 
     void canonicalize();
@@ -180,7 +175,6 @@ Wire::Primitives toWire(uint16_t primitives);
 std::span<const LayoutID> membersOf(const Program&, const Type&);
 std::span<const LayoutID> membersOf(const TypeTable&, const Type&);
 
-// The program converts objects without a layout to the type: functions, instances of built-in and host classes, ordinary objects.
 bool hasMembersWithoutLayout(const Program&, const Type&);
 bool hasMembersWithoutLayout(const TypeTable&, const Type&);
 

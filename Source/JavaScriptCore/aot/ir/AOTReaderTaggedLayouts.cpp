@@ -81,7 +81,6 @@ private:
 
 } // anonymous namespace
 
-// Turns the number of entries of each index into the place of its first entry. One more place follows the last.
 static void sumUp(Vector<uint32_t>& counts)
 {
     uint32_t sum = 0;
@@ -147,7 +146,6 @@ bool TellingFields::haveNothingInCommon(const Field& a, const Field& b)
     });
 }
 
-// An object has the fields of its bases too. The bases of a program that has not been checked may form a ring.
 bool TellingFields::tellApart(uint32_t layout, uint32_t otherLayout) const
 {
     size_t remainingBases = m_bases.size();
@@ -182,7 +180,6 @@ std::span<const Wire::Field> TaggedLayoutPlanner::fieldsOf(const Wire::Layout& l
     return fields.subspan(layout.fields.start, layout.fields.count);
 }
 
-// A constructor function, or a class without heritage: its constructor allocates the objects.
 bool TaggedLayoutPlanner::isMaker(const Wire::Layout& layout) const
 {
     return static_cast<LayoutKind>(layout.kind) == LayoutKind::Instance
@@ -191,7 +188,6 @@ bool TaggedLayoutPlanner::isMaker(const Wire::Layout& layout) const
         && layout.supertypes.count;
 }
 
-// AllocateTaggedLayouts leaves the constructor of such a class as it is.
 std::optional<uint32_t> TaggedLayoutPlanner::typeNamedByRecordOf(size_t function, uint32_t type) const
 {
     if (!m_externalBodies)
@@ -213,7 +209,6 @@ Vector<uint8_t> TaggedLayoutPlanner::findClassesWithInitializer() const
     Vector<uint8_t> classes(FillWith { }, m_layouts.size(), static_cast<uint8_t>(0));
     std::span<const uint32_t> words = m_sections.words;
     std::span<const Wire::Function> functions = m_sections.functions;
-    // Whichever thread finds a class writes the same.
     forEachIndexInParallel(m_loops, static_cast<unsigned>((functions.size() + functionsPerTask - 1) / functionsPerTask), [&](unsigned task) {
         for (size_t index = task * functionsPerTask, end = std::min(functions.size(), index + functionsPerTask); index < end; ++index) {
             const Wire::Function& function = functions[index];
@@ -239,7 +234,6 @@ bool TaggedLayoutPlanner::isDeclaredType(const Wire::Layout& layout) const
     return static_cast<LayoutKind>(layout.kind) == LayoutKind::Record && layout.constructor == Wire::none;
 }
 
-// undefined and null are members of every type that holds a reference, so also of the type of one string.
 std::optional<LayoutTag> TaggedLayoutPlanner::literalOf(const Wire::Type& type) const
 {
     constexpr uint32_t nullish = static_cast<uint32_t>(Wire::Primitives::Undefined) | static_cast<uint32_t>(Wire::Primitives::Null);
@@ -278,7 +272,6 @@ std::optional<LayoutTag> TaggedLayoutPlanner::tagOf(uint32_t type, uint32_t key)
     return std::nullopt;
 }
 
-// Few declared types write a literal for a field, and every maker asks about all the types below its own.
 void TaggedLayoutPlanner::collectLiteralFields()
 {
     m_firstLiteralField.reserveInitialCapacity(m_layouts.size() + 1);
@@ -299,7 +292,6 @@ void TaggedLayoutPlanner::collectLiteralFields()
     sumUp(m_firstLiteralField);
 }
 
-// Ascending. The families are closed over the conversions of the program, so those of the maker's supertypes hold every type whose objects the program takes for one of them.
 Vector<uint32_t> TaggedLayoutPlanner::collectTypesWithLiterals(const Wire::Layout& maker) const
 {
     Vector<uint32_t> types;
@@ -314,7 +306,6 @@ Vector<uint32_t> TaggedLayoutPlanner::collectTypesWithLiterals(const Wire::Layou
     return types;
 }
 
-// The field of the maker for which the types write the most literals, the first of several. One literal tells no two objects apart.
 uint32_t TaggedLayoutPlanner::chooseTagKey(const Wire::Layout& maker, std::span<const uint32_t> types) const
 {
     Vector<LiteralField, 32> literals;
@@ -341,7 +332,6 @@ uint32_t TaggedLayoutPlanner::chooseTagKey(const Wire::Layout& maker, std::span<
     return bestKey;
 }
 
-// What appendFieldsOfTaggedLayouts() takes from the declaring types. Ascending.
 Vector<uint32_t> TaggedLayoutPlanner::collectDeclaredNames(const TaggedLayout& member) const
 {
     Vector<uint32_t> names;
@@ -411,7 +401,6 @@ void TaggedLayoutPlanner::planFamily(uint32_t makerIndex)
     m_families.append(WTF::move(family));
 }
 
-// A maker gives an object the layout of its tag wherever there is one.
 bool TaggedLayoutPlanner::makesTaggedObjectsOf(uint32_t type, std::span<const Addition* const> addedBelowMember, uint32_t member) const
 {
     if (addedBelowMember.empty() || member == type || !isMaker(m_layouts[member]))
@@ -423,7 +412,6 @@ bool TaggedLayoutPlanner::makesTaggedObjectsOf(uint32_t type, std::span<const Ad
     });
 }
 
-// A tagged layout is below its maker and its declaring types, and so below everything that one of them is below, but for a type that writes other literals for the tag.
 void TaggedLayoutPlanner::applyAdditions()
 {
     Vector<Vector<const Addition*, 2>> addedBelow(m_layouts.size());
@@ -469,7 +457,6 @@ Vector<TaggedFamily> TaggedLayoutPlanner::plan()
     return WTF::move(m_families);
 }
 
-// The families come in the order of their makers.
 void Reader::planTaggedLayouts(Vector<Vector<LayoutID>>& members, const TellingFields& tellingFields)
 {
     if (m_form != IRForm::AsRead)

@@ -59,7 +59,6 @@ CellPointer ObjectBuiltinEmitter::createObjectWithPrototype(const InlineCall& ca
     return join.finish();
 }
 
-// Every object without a prototype starts with one Structure of the realm, which the allocation has in its header.
 CellPointer ObjectBuiltinEmitter::createObjectWithoutPrototype(const InlineCall& call)
 {
     LBasicBlock slowPath = newBlock();
@@ -97,7 +96,6 @@ void ObjectBuiltinEmitter::generateGetPrototypeOf(const InlineCall& call)
     finish(call, prototype);
 }
 
-// A transition is recorded for a compiled object that is on no chain, so what is left of the built-in is the test of extensibility and the store.
 void ObjectBuiltinEmitter::generateSetPrototypeOf(const InlineCall& call)
 {
     ValueID argument = call.argument(0);

@@ -35,7 +35,6 @@ struct CodeUnitRead {
     bool isInside { false };
 };
 
-// The position is the one of the call, as narrowed as the tests in front of the block have proven it.
 struct BlockWithCall {
     BlockID block;
     ValueID position;
@@ -57,14 +56,12 @@ static std::optional<CodeUnitRead> codeUnitReadOf(FunctionPassContext& context, 
     std::span<const ValueID> arguments = call.argumentsOperands();
     if (!string || arguments.size() != 1 || !program.typeOf(context.function, string).isAnyString())
         return std::nullopt;
-    // A number that is never an integer always takes the call.
     const Type& position = program.typeOf(context.function, arguments[0]);
     if (!position.isNumber() || !(position.primitives & Primitive::Integer))
         return std::nullopt;
     return CodeUnitRead { .site = site, .string = string, .position = arguments[0], .readsCodePoint = builtin == Builtins::StringPrototypeCodePointAt };
 }
 
-// Inside the string the answer is an integer, outside it is NaN or undefined.
 static void expandIntoTwoPaths(SiteExpansion& expansion, const CodeUnitRead& read)
 {
     IRBuilder& builder = expansion.builder();
@@ -75,7 +72,6 @@ static void expandIntoTwoPaths(SiteExpansion& expansion, const CodeUnitRead& rea
     auto typeOf = [&](ValueID id) -> const Type& {
         return expansion.context().program.typeOf(expansion.function(), id);
     };
-    // A position that lies outside every string has the type never on the path inside, and nothing is computed from a value that cannot exist.
     auto mayBeInside = [&](ValueID position) {
         return expansion.function().at(position).type != TypeTable::never;
     };
@@ -89,7 +85,6 @@ static void expandIntoTwoPaths(SiteExpansion& expansion, const CodeUnitRead& rea
         blocksWithCall.append(BlockWithCall { branch.notTaken, branch.provenOnNotTaken });
         position = branch.provenOnTaken;
     }
-    // Read as an unsigned number a negative int32 lies above every length, so the one test against the length sends it outside too.
     if (!read.isInside && typeOf(position).integers.minimum < 0 && typeOf(position).integers.maximum >= 0 && typeOf(position).integers.isSubsetOf(Range::int32()))
         position = expansion.append(IRBuilder::make(Opcode::URShift, { position, builder.appendInteger(0) }));
     else if (!read.isInside && typeOf(position).integers.minimum < 0) {
@@ -108,7 +103,6 @@ static void expandIntoTwoPaths(SiteExpansion& expansion, const CodeUnitRead& rea
     if (mayBeInside(position)) {
         ValueID unit = expansion.append(IRBuilder::make(Opcode::GetStringCodeUnit, { read.string, position }));
         if (read.readsCodePoint) {
-            // Nearly every unit lies below the surrogates: one comparison says so. Only the others are asked which kind they are.
             ValueID isBelowSurrogates = expansion.append(IRBuilder::make(Opcode::Less, { unit, builder.appendInteger(leadSurrogateKind) }));
             IRBuilder::BranchBlocks below = builder.emitBranch(isBelowSurrogates, frequency, frequencyOutside);
             builder.moveToEndOf(below.taken);
@@ -129,7 +123,6 @@ static void expandIntoTwoPaths(SiteExpansion& expansion, const CodeUnitRead& rea
         builder.moveToEndOf(block);
         expansion.finishArm(read.readsCodePoint ? builder.appendUndefined() : builder.appendDouble(PNaN));
     }
-    // A copy of the call is not expanded again: only a call in a block of normal frequency is.
     for (const BlockWithCall& withCall : blocksWithCall) {
         builder.moveToEndOf(withCall.block);
         expansion.finishArm(expansion.appendOriginal({ .operandIndex = OperandIndex::CallBuiltin::arguments, .operand = withCall.position, .isNarrowedValue = true }));
@@ -158,7 +151,6 @@ unsigned simplifyStringReads(FunctionPassContext& context, const BuiltinCallSite
         if (!read)
             continue;
         read->isInside = context.program.typeOf(context.function, read->position).isInteger() && positions.isInside(read->string, read->position, site.block);
-        // Inside the string a code unit is the whole answer. A code point may take the unit behind it too.
         if (read->isInside && !read->readsCodePoint)
             rewrite(site.value, IRBuilder::make(Opcode::GetStringCodeUnit, { read->string, read->position }));
         else if (context.function.at(site.block).frequency == BlockFrequency::Normal)
@@ -173,7 +165,6 @@ unsigned simplifyStringReads(FunctionPassContext& context, const BuiltinCallSite
     if (!readsWithTwoPaths.isEmpty()) {
         IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
         SiteExpansion expansion(context, builder);
-        // An expansion moves what follows its site into another block.
         for (const CodeUnitRead& read : readsWithTwoPaths | std::views::reverse)
             expandIntoTwoPaths(expansion, read);
     }

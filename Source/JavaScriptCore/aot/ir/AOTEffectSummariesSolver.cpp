@@ -26,7 +26,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The host enters the body of the one entry module before any other code of the program can make a call, or once the modules that it imports have returned. It runs once, so no call enters it.
 static bool isBodyThatOnlyStartOfProgramEnters(const Program& program, const FlowResults& flow, FunctionID id)
 {
     return program.entries.size() == 1 && program.at(program.entries[0].module).body == id && runsAtMostOnce(flow, id);
@@ -37,7 +36,6 @@ static bool mayBeEnteredByUnknownCode(const Program& program, const FlowResults&
     bool mayBeResumed = body.onReturn().maySuspend();
     if (mayBeResumed)
         return true;
-    // The host is no caller that flow knows.
     if (callerStateOf(flow, id) == CallerState::AllKnown || isBodyThatOnlyStartOfProgramEnters(program, flow, id))
         return false;
     return function.mayBeCalledByHost() || !function.hasOnlyDirectCallers();
@@ -244,7 +242,6 @@ void EffectSummarizer::finishUpdate(EffectSummaries& summaries)
         dataLogLn("AOT effect summaries: ", m_program.functions.size(), " functions | ", m_kept.m_numberOfNodes, " nodes | ", m_kept.m_masks->size(), " distinct location masks");
     if (!m_build.options().verifiesAfterEveryPass || m_isOnlyCheck || !m_numberOfFunctionsBefore)
         return;
-    // The analysis of a body says less of operations that Select has lowered.
     if (!m_kept.m_hasUpperBounds)
         checkAgainstSummariesFromNothing(summaries);
     else if (m_program.form() == IRForm::Prepared)
@@ -326,7 +323,6 @@ uint64_t stampOfEntry(const Function& function)
     return stamp.value();
 }
 
-// What is kept for the summaries stays as it is, so the next update finds the same changes, looks at the same bodies again and sees which words of the table are new.
 BorrowedParameters BodySummaries::computeBorrowedParametersOfChangedBodies(const Program& program, BuildContext& build)
 {
     unsigned numberOfFunctions = program.functions.size();
@@ -346,13 +342,11 @@ BorrowedParameters BodySummaries::computeBorrowedParametersOfChangedBodies(const
     return table;
 }
 
-// stampsOfRecords has the stamp of every function as it is now. recordLooksDifferent goes by function, ends where the summarized functions end, and compares with the records as they were when the summaries were brought up to date.
 BorrowedParameters BodySummaries::computeBorrowedParametersFromLatestTable(const Program& program, BuildContext& build, std::span<const uint64_t> stampsOfRecords, std::span<const uint8_t> recordLooksDifferent)
 {
     if (m_stampsOfRecordsAtLatestTable.isEmpty())
         return computeBorrowedParameters(program, build, m_borrowingBodies, m_isChangedForTable.span(), recordLooksDifferent);
 
-    // The latest table has also looked at the functions that were made since the summaries were brought up to date.
     unsigned numberOfKeptBodies = m_stampsOfRecordsAtLatestTable.size();
     unsigned numberOfSummarizedFunctions = m_isChangedForTable.size();
     RELEASE_ASSERT(numberOfSummarizedFunctions <= numberOfKeptBodies && numberOfKeptBodies <= stampsOfRecords.size() && m_wasTouchedSinceLatestTable.size() == numberOfKeptBodies);
@@ -387,7 +381,6 @@ void EffectSummarizer::findRecordsThatLookDifferent()
     });
 }
 
-// A body is summarized against the seed.
 void EffectSummarizer::updateSeed(BorrowedParameters&& borrowed)
 {
     const ParallelLoops& loops = m_build.parallelLoops();
@@ -556,7 +549,6 @@ void EffectSummarizer::summarizeBodies()
         });
     }
 
-    // Past this size solveAll() runs and rebuilds the user lists.
     const bool updatesUserLists = m_kept.m_isSolved && static_cast<size_t>(std::ranges::count(doesSomethingElse, 1)) <= maxIncrementalSolveSize();
     CountsByReason numberOfBodiesSummarizedAsBefore { };
     for (uint32_t position = 0; position < functionsToSummarize.size(); ++position) {
@@ -683,7 +675,6 @@ Effects EffectSummarizer::effectsOfUnknownCodeAlone() const
     Effects unknown = Effects::unknownCode();
     unknown.writes.remove(compiledCodeHeaps);
     for (unsigned index = 0; index < m_program.variables.size(); ++index) {
-        // A store that names the class object and a key is among the known writers of a static field. While no pass has made a store to the variable of it, it is code that nobody knows.
         const Variable& variable = m_program.variables[index];
         bool isStoredThroughClassObject = variable.owner && variable.flow.storeNaming != StoreNaming::EveryStoreNamesLocation;
         if (variable.flow.writers != WriterState::AllKnown || isStoredThroughClassObject)
@@ -728,7 +719,6 @@ void EffectSummarizer::uniteEffectsEnteredInChunk(unsigned chunk)
     m_kept.m_takesInUnknownCodeInChunk[chunk] = takesInUnknownCode;
 }
 
-// Unknown code takes in every node of the functions that it may enter. One of them that takes in unknown code makes a cycle of calls, which may overflow the stack.
 bool EffectSummarizer::updateEffectsOfUnknownCode()
 {
     Effects unknownCode = effectsOfUnknownCodeAlone();
@@ -746,7 +736,6 @@ uint32_t EffectSummarizer::MemoByMasks::get(uint32_t id, NOESCAPE const Invocabl
 {
     if (id >= m_resultsPlusOne.size())
         return compute();
-    // Whoever takes the ID from here looks the masks up, which another thread may have interned a moment ago.
     std::atomic<uint32_t>& slot = m_resultsPlusOne[id];
     if (uint32_t resultPlusOne = slot.load(std::memory_order_acquire))
         return resultPlusOne - 1;
@@ -786,7 +775,6 @@ CompactEffects EffectSummarizer::compactSolvedEffectsOf(uint32_t node)
     return CompactEffects(reads, writes, effects.flags() | m_compactUnknownCode.flags());
 }
 
-// Does what createFunctionSummary() does.
 void EffectSummarizer::assemble(EffectSummaries& summaries, FunctionID id)
 {
     constexpr uint8_t flagsOfBothEdges = CompactEffects::MayThrow | CompactEffects::MayThrowByRule | CompactEffects::MayCollect | CompactEffects::MayBeTerminated;
@@ -858,7 +846,6 @@ void EffectSummarizer::forEachUser(uint32_t index, NOESCAPE const Invocable<void
     }
 }
 
-// Skips the edges that createNodes() and solveFunctions() skip: from a function that unknown code may enter to a node that depends on unknown code.
 void EffectSummarizer::forEachSourceFunction(FunctionID user, NOESCAPE const Invocable<void(FunctionID)> auto& functor) const
 {
     Vector<uint32_t, 16> unknownCodeTargets;
@@ -882,7 +869,6 @@ void EffectSummarizer::forEachSourceFunction(FunctionID user, NOESCAPE const Inv
     });
 }
 
-// May return true for a stale entry of the user lists.
 bool EffectSummarizer::hasEdgeFrom(FunctionID user, FunctionID function) const
 {
     if (!m_kept.m_isEnteredByUnknownCode[function.index()])
@@ -906,7 +892,6 @@ static constexpr uint8_t settled = 0;
 static constexpr uint8_t affected = 1;
 static constexpr uint8_t pending = 2;
 
-// Parallel BFS. The order within a frontier depends on thread timing; the set of marked functions does not.
 Vector<uint8_t> EffectSummarizer::markTransitiveUsers(std::span<const uint32_t> functions) const
 {
     const ParallelLoops& loops = m_build.parallelLoops();
@@ -929,7 +914,6 @@ Vector<uint8_t> EffectSummarizer::markTransitiveUsers(std::span<const uint32_t> 
     return states;
 }
 
-// Returns the functions plus their affected transitive sources, sorted, and marks those pending.
 std::optional<Vector<uint32_t>> EffectSummarizer::addAffectedSources(std::span<const uint32_t> functions, Vector<uint8_t>& states, size_t limit) const
 {
     Vector<uint32_t> found(functions);
@@ -986,7 +970,6 @@ static void forEachPosition(const ParallelLoops& loops, size_t count, const Invo
 
 static constexpr uint32_t isNotSolvedAnew = UINT32_MAX;
 
-// Solves the nodes of the functions from the current solution of all other nodes.
 Vector<uint32_t> EffectSummarizer::solveFunctions(std::span<const uint32_t> functions, Vector<uint32_t>& firstPositionOf)
 {
     const ParallelLoops& loops = m_build.parallelLoops();
@@ -1060,7 +1043,6 @@ Vector<uint32_t> EffectSummarizer::solveFunctions(std::span<const uint32_t> func
         return sources.subspan(firstSource[position], firstSource[position + 1] - firstSource[position]);
     };
 
-    // The search for components follows the sources, so it numbers the component of a source before the components that take it in.
     StronglyConnectedComponents components = computeStronglyConnectedComponents(count, sourcesAt);
     for (uint32_t component = 0; component < components.numberOfComponents; ++component) {
         Effects united = Effects::none();
@@ -1109,7 +1091,6 @@ Vector<uint32_t> EffectSummarizer::solveFunctions(std::span<const uint32_t> func
     return functionsWithChangedEffects;
 }
 
-// Change propagation with a cutoff: a function is solved again if its body summary changed or the solution of one of its sources changed.
 bool EffectSummarizer::solveAgain(EffectSummaries& summaries)
 {
     AOT_THRESHOLD(unsigned, maxSearches, 3);
@@ -1123,7 +1104,6 @@ bool EffectSummarizer::solveAgain(EffectSummaries& summaries)
     if (m_changedFunctions.size() > maxIncrementalSolveSize())
         return false;
 
-    // Flipping isEnteredByUnknownCode adds or removes the edges to the users.
     Vector<uint32_t> pendingFunctions = m_changedFunctions;
     for (uint32_t index : m_entryFlippedFunctions) {
         forEachUser(index, [&](FunctionID user) {
@@ -1140,13 +1120,11 @@ bool EffectSummarizer::solveAgain(EffectSummaries& summaries)
     Vector<uint32_t> functions;
     Vector<uint8_t> states;
     unsigned numberOfSearches = 0;
-    // Stale states still mark every unsolved transitive user of a pending function, and possibly more.
     bool statesAreStale = false;
     auto recomputeStates = [&] {
         states = markTransitiveUsers(pendingFunctions.span());
         for (uint32_t index : pendingFunctions)
             states[index] = pending;
-        // Reached only through stale entries of the user lists.
         for (uint32_t index : functions)
             states[index] = settled;
         statesAreStale = false;
@@ -1270,7 +1248,6 @@ void EffectSummarizer::solveAll(EffectSummaries& summaries, PhaseTimes& times)
     if (m_witnessesWanted == Witnesses::Omitted)
         propagateEffects(times);
     else {
-        // The two ask nothing of each other.
         runTasksInParallel(loops, {
             [&] {
                 propagateEffects(times);
@@ -1299,7 +1276,6 @@ void EffectSummarizer::solveAll(EffectSummaries& summaries, PhaseTimes& times)
     times.didFinish("assemble"_s);
 }
 
-// The sources of a node are the nodes whose effects it takes in.
 void EffectSummarizer::createNodes()
 {
     const ParallelLoops& loops = m_build.parallelLoops();
@@ -1427,19 +1403,16 @@ void EffectSummarizer::takeInSources(uint32_t node)
     m_kept.m_takesInUnknownCode[node] = takesInUnknownCode;
 }
 
-// In each round the nodes whose sources were all resolved in earlier rounds.
 Vector<uint32_t> EffectSummarizer::resolveNodesBelowCycles()
 {
     AOT_THRESHOLD(size_t, fewestNodesWorthARound, 2048);
     constexpr uint32_t nodesInShare = 4096;
     const ParallelLoops& loops = m_build.parallelLoops();
 
-    // A source that is resolved stays so: a round goes on looking where the round before it stopped.
     struct UnresolvedNode {
         uint32_t node;
         uint32_t firstSourceToLookAt;
     };
-    // The nodes of a stretch of numbers that are left, in their order. Whichever thread takes the share in a round thins the list out where it lies: between two rounds nothing is gathered on one thread.
     struct Share {
         Vector<UnresolvedNode> unresolved;
         Vector<uint32_t> resolvedInThisRound;
@@ -1499,7 +1472,6 @@ Vector<uint32_t> EffectSummarizer::resolveNodesBelowCycles()
     return unresolved;
 }
 
-// A cycle of calls may overflow the stack.
 void EffectSummarizer::resolveNodesInAndAboveCycles(std::span<const uint32_t> nodes)
 {
     const ParallelLoops& loops = m_build.parallelLoops();
@@ -1534,7 +1506,6 @@ void EffectSummarizer::resolveNodesInAndAboveCycles(std::span<const uint32_t> no
         return sources.subspan(firstSource[position], firstSource[position + 1] - firstSource[position]);
     };
 
-    // The search for components follows the sources, so it numbers the component of a source before the components that take it in.
     StronglyConnectedComponents components = computeStronglyConnectedComponents(count, sourcesAt);
     for (uint32_t component = 0; component < components.numberOfComponents; ++component) {
         Effects united = Effects::none();
@@ -1560,7 +1531,6 @@ void EffectSummarizer::resolveNodesInAndAboveCycles(std::span<const uint32_t> no
     }
 }
 
-// Unknown code takes in most of a program and most of a program takes it in: with it nearly every node lies in one cycle, which only one thread can find.
 void EffectSummarizer::propagateEffects(PhaseTimes& times)
 {
     const ParallelLoops& loops = m_build.parallelLoops();
@@ -1662,7 +1632,6 @@ void EffectSummarizer::propagateWitnesses()
     }
 }
 
-// Threads fill each list in any order, so the lists are sorted afterwards.
 void EffectSummarizer::listUsers()
 {
     const ParallelLoops& loops = m_build.parallelLoops();

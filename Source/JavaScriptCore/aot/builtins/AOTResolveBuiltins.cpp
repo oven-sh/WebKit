@@ -21,7 +21,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr OpcodeSet resolvedCallsByValue { Opcode::Call, Opcode::Construct, Opcode::SuperConstruct };
 
-// leaveURLsUnbuilt() looks for a Construct or a CallBuiltin, and some of the steps for a Call beside something else.
 static_assert(operationsResolvedToBuiltins.contains(Opcode::Construct) && operationsResolvedToBuiltins.contains(Opcode::CallBuiltin) && operationsResolvedToBuiltins.contains(Opcode::Call));
 
 std::optional<TailCallRequirement> tailCallRequirementOf(const Function& function, BlockID block, ValueID call)
@@ -32,7 +31,6 @@ std::optional<TailCallRequirement> tailCallRequirementOf(const Function& functio
     return terminator.requirement();
 }
 
-// The code that makes or validates a typed result runs in this frame, after the call or in its place.
 static bool endsInThisFrame(const Program& program, const Value& call, const BuiltinUsePlan& plan)
 {
     if (plan.call.overload && program.builtins().at(plan.call.overload).hasTypedResult())
@@ -85,7 +83,6 @@ BuiltinUseInputs BuiltinResolver::inputs() const
     return { m_context.program, m_function, m_context.types, m_context.inputs.flow, m_context.analyses.effectContext(), &m_context.analyses, { }, !m_context.build.options().obfuscates() };
 }
 
-// All that planBuiltinUse() takes from a use that is no tail call, until it asks about the place of the use.
 static SiteContent contentOf(const BuiltinUseInputs& inputs, const Value& use)
 {
     const Function& function = inputs.function;
@@ -174,7 +171,6 @@ Vector<BuiltinSite> BuiltinResolver::collectSites()
         if (tailCall == TailCallRequirement::Required && !endsInThisFrame(m_context.program, value, plan) && !returnsToItsCaller(m_context.program, plan) && !staysTailCall(plan, tailCall))
             continue;
 
-        // Rule BuiltinUse rewrites a tested use while insertions are queued, when a tail call can no longer be demoted.
         bool needsDemotionBeforeTests = plan && tailCall;
         if (plan.isProven() || needsDemotionBeforeTests)
             sites.append(BuiltinSite { site.point(), site.value, WTF::move(plan) });
@@ -198,7 +194,6 @@ void BuiltinResolver::demoteTailCalls(std::span<const BuiltinSite> sites)
 void BuiltinResolver::apply(const BuiltinSite& site)
 {
     m_builder.setOrigin(m_function.at(site.id).origin());
-    // ScopedLambda hands its arguments to the functor as lvalues.
     auto insertBeforeSite = [&](auto&& value) {
         return m_builder.insertBefore(site.point, WTF::move(value));
     };
@@ -292,7 +287,6 @@ static Value makeIteratorResultObject(const Program& program, const Value& intri
     return object;
 }
 
-// Placement plans the cells of a layout from the NewObject operations that name it.
 static bool allocateIteratorResultsAsObjects(FunctionPassContext& context)
 {
     const Function& function = context.function;
@@ -335,7 +329,6 @@ static std::optional<BuiltinOperand> builtinOperandOf(const Function& function, 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A library function that implements a built-in takes every call of it.
 static bool expectOperandTypesOfFirstOverload(FunctionPassContext& context)
 {
     const Program& program = context.program;
@@ -365,7 +358,6 @@ static bool expectOperandTypesOfFirstOverload(FunctionPassContext& context)
     if (changed.isEmpty())
         return false;
 
-    // Whether a validation has anything left to test depends on what is declared of the parameters, whether or not the type of a value follows.
     context.analyses.didChangeTypes();
     narrowValueTypes(TypePropagationInputs { program, context.id, function, context.analyses, context.types, context.build, &context.typingMemo }, changed.span());
     return true;
@@ -427,7 +419,6 @@ static PassOutcome runSteps(FunctionPassContext& context)
 PassOutcome resolveBuiltins(FunctionPassContext& context)
 {
     PassOutcome outcome = runSteps(context);
-    // Each step tells the analyses of its edits as it makes them. Effects go anyway: FoldConstants asks for them between its own folds, and an answer cached here would change what it folds.
     if (outcome == PassOutcome::Changed)
         context.keptAnalyses = allAnalyses - FunctionAnalysis::Effects;
     return outcome;

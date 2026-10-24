@@ -11031,6 +11031,13 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 if (status.numVariants() != 1
                     || status[0].kind() != PutByVariant::Replace
                     || status[0].structure().size() != 1) {
+#if USE(BUN_JSC_ADDITIONS)
+                    // A store by id adds a property that is gone. This store throws a ReferenceError then.
+                    if (uid && getPutInfo.resolveMode() == ThrowIfNotFound) {
+                        addToGraph(PutDynamicVar, OpInfo(makeDynamicVarOpInfo(identifierNumber, getPutInfo.operand())), OpInfo(getPutInfo.ecmaMode()), get(bytecode.m_scope), get(bytecode.m_value));
+                        break;
+                    }
+#endif
                     addToGraph(PutById, OpInfo(CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_inlineStackTop->m_profiledBlock, uid)), OpInfo(bytecode.m_getPutInfo.ecmaMode()), get(bytecode.m_scope), get(bytecode.m_value));
                     break;
                 }

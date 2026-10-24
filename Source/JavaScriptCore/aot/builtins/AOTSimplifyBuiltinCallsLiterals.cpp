@@ -31,8 +31,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// A method of arrays that is called on a list which the program writes out for that call alone.
-
 namespace {
 
 struct LiteralMethodCall {
@@ -41,7 +39,6 @@ struct LiteralMethodCall {
     Vector<ValueID, 4> arguments;
 };
 
-// The elements are values of the function, or constants that no operation of it makes yet.
 struct SearchOfLiteral {
     ValueID call;
     ValueID searched;
@@ -74,7 +71,6 @@ static BuiltinID findMethodImplementedBy(const Program& program, FunctionID libr
     return { };
 }
 
-// A parameter that the call leaves out is passed as undefined.
 static std::optional<LiteralMethodCall> findCallOfLibraryFunction(const Program& program, const Function& function, const Value& call, std::span<const NamedBuiltin> methods)
 {
     BuiltinID method = findMethodImplementedBy(program, call.function(), methods);
@@ -90,7 +86,6 @@ static std::optional<LiteralMethodCall> findCallOfLibraryFunction(const Program&
     return LiteralMethodCall { method, operands[*thisParameter], WTF::move(arguments) };
 }
 
-// A call that ResolveBuiltins has matched with an overload or with the function of the library behind one, or has left as it is because the operands fit several overloads.
 static std::optional<LiteralMethodCall> findMethodCall(const Program& program, const Function& function, const Value& value, std::span<const NamedBuiltin> methods)
 {
     const BuiltinTable& builtins = program.builtins();
@@ -155,7 +150,6 @@ static void demoteIfReturned(IRBuilder& builder, ProgramPoint call)
         builder.demoteReturnCall(call.block);
 }
 
-// The elements of an array literal without holes that only `user` uses, as this operand.
 static std::optional<std::span<const ValueID>> findElementsOfLiteralFor(FunctionPassContext& context, ValueID operand, ValueID user)
 {
     std::optional<ValueID> definition = findSingleUseDefinition(context, operand, user);
@@ -173,7 +167,6 @@ static bool isUsedBy(FunctionPassContext& context, ValueID operand, ValueID user
     return definition == literal && context.analyses.useLists().singleUse(literal);
 }
 
-// A whole list, or a literal of constants that `user` alone has: nobody else can have completed or changed that one.
 std::optional<Vector<KnownValue, 8>> findConstantsOfListFor(FunctionPassContext& context, ValueID operand, ValueID user)
 {
     const Program& program = context.program;
@@ -206,7 +199,6 @@ std::optional<Vector<KnownValue, 8>> findConstantsOfListFor(FunctionPassContext&
     return constants;
 }
 
-// includes finds NaN, which is equal to nothing.
 static bool isFoundByStrictEquality(const Program& program, const Function& function, ValueID searched, std::span<const ValueID> elements)
 {
     if (!program.typeOf(function, searched).mayBeNaN())
@@ -265,7 +257,6 @@ static void emitComparisons(IRBuilder& builder, const SearchOfLiteral& search, P
     builder.endExpansion(cut, answer(std::nullopt));
 }
 
-// [a, b].includes(x), [a, b].indexOf(x)
 unsigned simplifySearchesOfLiterals(FunctionPassContext& context)
 {
     Function& function = context.function;
@@ -277,7 +268,6 @@ unsigned simplifySearchesOfLiterals(FunctionPassContext& context)
     if (searches.isEmpty())
         return 0;
 
-    // The last first: what stands in front of a cut stays where it is.
     AOT::sort(searches, std::ranges::greater { }, [](const auto& search) {
         return std::pair { search.first.block, search.first.index };
     });
@@ -297,7 +287,6 @@ static bool isConstructionOfCollection(const Program& program, const Value& call
     return overload.mode == BuiltinCallMode::Construct && builtins.canonicalID(overload.builtin) == builtins.at(BuiltinClasses::Set).constructor;
 }
 
-// [...LIST, x] appends each constant, and new Set(LIST) is made of a literal of its own, which EmbedConstantCollections takes.
 unsigned takeConstantListsApart(FunctionPassContext& context)
 {
     Function& function = context.function;
@@ -314,7 +303,6 @@ unsigned takeConstantListsApart(FunctionPassContext& context)
         else if (isConstructionOfCollection(context.program, value))
             list = value.argumentsOperands()[0];
         std::optional<Vector<KnownValue, 8>> constants = list ? findConstantsOfListFor(context, list, site.value) : std::nullopt;
-        // A literal that the construction alone has is what this would make of it.
         if (!constants || constants->isEmpty() || (value.opcode != Opcode::AppendSpread && isUsedBy(context, list, site.value, sameObjectThroughCasts(function, list))))
             return;
         if (!context.exceeds(LimitID::MaxArrayLiteralBatch, constants->size(), site.value))
@@ -352,7 +340,6 @@ unsigned takeConstantListsApart(FunctionPassContext& context)
     return static_cast<unsigned>(uses.size());
 }
 
-// What is no object is appended as it is. An object may be a list, or say of itself that it is spread.
 static std::optional<ConcatenationOfLiterals> matchConcatenationOfLiterals(FunctionPassContext& context, const ValueSite& site)
 {
     const Program& program = context.program;
@@ -392,7 +379,6 @@ static AllocationSiteID allocationSiteOf(const Value& call)
     return call.opcode == Opcode::CallBuiltin ? call.allocationSite() : AllocationSiteID();
 }
 
-// [a].concat([b], c)
 unsigned simplifyConcatenationsOfLiterals(FunctionPassContext& context)
 {
     Function& function = context.function;
@@ -423,7 +409,6 @@ unsigned simplifyConcatenationsOfLiterals(FunctionPassContext& context)
     return rewrites;
 }
 
-// The separator is never empty.
 static Vector<StringID, 8> splitText(FunctionPassContext& context, StringID text, StringID separator)
 {
     Vector<char16_t> textBuffer;
@@ -441,7 +426,6 @@ static Vector<StringID, 8> splitText(FunctionPassContext& context, StringID text
     return pieces;
 }
 
-// "a,b".split(",")
 unsigned simplifySplitsOfConstants(FunctionPassContext& context, const BuiltinCallSites& calls)
 {
     const Program& program = context.program;

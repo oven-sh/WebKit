@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTCollectionTestSupport.h"
 #include "AOTCompile.h"
 #include "AOTCompileOptionWords.h"
 #include "AOTCoroutineTable.h"
@@ -431,7 +432,7 @@ static void checkWordsAfterCollection(LoadedProgram& program, HandMadeFrame& fra
 
     unsigned numberOfDeadCells = 0;
     for (uint32_t location : frame.candidateLocations) {
-        bool isDead = !vm.heap.isMarked(std::bit_cast<JSCell*>(frame.wordAt(location)));
+        bool isDead = !hasSurvivedCollection(vm, std::bit_cast<JSCell*>(frame.wordAt(location)));
         numberOfDeadCells += isDead;
         AOT_TEST_CHECK(saved.wordAt(location) == (isDead ? SavedFrame::poisonedWord : frame.wordAt(location)));
     }
@@ -524,7 +525,7 @@ static void checkFrameOnTheStackIsLeftAlone(LoadedProgram& program)
     for (uint32_t location = 1; location <= frame.numberOfWords; ++location) {
         AOT_TEST_CHECK(saved->wordAt(location) == frame.wordAt(location));
         if (frame.candidateLocations.contains(location) || listedInFrame.contains(location))
-            numberOfDeadCells += !vm.heap.isMarked(std::bit_cast<JSCell*>(frame.wordAt(location)));
+            numberOfDeadCells += !hasSurvivedCollection(vm, std::bit_cast<JSCell*>(frame.wordAt(location)));
     }
     AOT_TEST_CHECK(numberOfDeadCells);
 }

@@ -256,7 +256,6 @@ bool isSubsetOf(const LayoutSet& a, const LayoutSet& b)
         return false;
     if (a.members.size() > b.members.size())
         return false;
-    // A few members are looked up one by one: a walk along the longer list costs more.
     if (a.members.size() * 16 < b.members.size()) {
         return std::ranges::all_of(a.members, [&](LayoutID member) {
             return std::ranges::binary_search(b.members, member);

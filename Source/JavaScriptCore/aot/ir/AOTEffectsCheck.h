@@ -44,9 +44,7 @@ void checkReplacement(const EffectContext&, const Function&, const ReplacementSi
 void checkReplacement(const EffectContext&, const Function&, const ReplacementSite&, const Terminator& replacement, const ReplacedEffects&, Diagnostics&);
 
 void checkDeclaredEffects(Diagnostics&);
-// The analyses are those that the summaries were solved over: of the body against createSummariesFromFlow().
 void checkSummaryCoversBody(const EffectContext&, FunctionID, FunctionAnalyses&, Diagnostics&);
-// A call by value claims the summary of its callee and what the entrypoint does around the call of the callee: it reads the captures and the arguments and collects the rest arguments.
 void checkCallByValueCoversEntrypoint(const Program&, FunctionID target, const Function& entrypoint, Diagnostics&);
 
 } } } // namespace JSC::AOT::Typed

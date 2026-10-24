@@ -14,7 +14,6 @@
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
-#include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -43,7 +42,7 @@ public:
     bool isProofWanted(uint32_t existingProof) const { return m_wantedProofs.get(existingProof); }
 
     bool isInStretch(ValueID value) const { return m_valuesInStretch.get(value.index()); }
-    bool isInStretchAtHead(BlockID block) const { return m_headsInStretch.get(block.index()); }
+    bool isInStretchAtHead(BlockID block) const { return !m_wantedAtHead[block.index()].isEmpty(); }
 
     // In front of the tests that stand at the point.
     bool isAnyProofWantedAt(ProgramPoint);
@@ -55,17 +54,14 @@ public:
     std::span<const Edge> edgesIntoGenericCopy() const LIFETIME_BOUND { return m_edgesIntoGenericCopy.span(); }
 
 private:
-    enum class Recording : uint8_t { Off, On };
-
-    BitVector wantedAtTail(BlockID, Recording);
-    BitVector wantedOn(Edge, Recording);
-    void applyHoistedTestsBackward(Edge, BitVector& wanted, Recording);
-    void walkBackward(BlockID, BitVector& wanted, Recording);
-    void applyEventBackward(BlockID, const TestEvent&, BitVector& wanted, Recording);
-    void markValues(BlockID, uint32_t begin, uint32_t end);
+    BitVector wantedAtTail(BlockID);
+    void walkBackward(BlockID, BitVector& wanted);
+    void applyEventBackward(BlockID, const TestEvent&, BitVector& wanted);
 
     const TestEvents& m_events;
     const TestCoverage& m_coverage;
+    // While the answers are written down: behind the solve, in one more walk.
+    bool m_isRecording { false };
     Vector<BitVector> m_wantedAtHead;
     Vector<BitVector> m_wantedAtTail;
     BlockID m_blockOfEventFlags;
@@ -73,8 +69,6 @@ private:
     BitVector m_wantedHoistedTests;
     BitVector m_wantedProofs;
     BitVector m_valuesInStretch;
-    BitVector m_headsInStretch;
-    BitVector m_terminatorsInStretch;
     Vector<Edge, 4> m_edgesIntoGenericCopy;
 };
 
@@ -83,53 +77,50 @@ class TestStretches {
 public:
     TestStretches(const TestEvents&, const TestCoverage&, const WantedProofs&);
 
-    std::span<const Stretch> stretches() const LIFETIME_BOUND { return m_stretches.span(); }
     std::span<const StretchRange> ranges() const LIFETIME_BOUND { return m_ranges.span(); }
 
-    unsigned stretchAt(ProgramPoint) const;
-    unsigned stretchAtHeadOf(BlockID) const;
+    unsigned stretchAt(ProgramPoint point) const
+    {
+        const StretchRange* range = findLastRangeThatBeginsBefore(point.block, point.index + 1);
+        RELEASE_ASSERT(range && point.index < range->end);
+        return range->stretch;
+    }
+    unsigned stretchAtHeadOf(BlockID block) const { return m_ranges[firstRangeOf(block)].stretch; }
 
     // Whether the values on both sides of the point belong to one range.
-    bool isInsideRange(ProgramPoint) const;
+    bool isInsideRange(ProgramPoint point) const
+    {
+        const StretchRange* range = findLastRangeThatBeginsBefore(point.block, point.index);
+        return range && point.index < range->end;
+    }
 
     Vector<Stretch> takeStretches() { return WTF::move(m_stretches); }
     Vector<StretchRange> takeRanges() { return WTF::move(m_ranges); }
 
 private:
-    bool startsNewCopy(ProgramPoint) const;
-    bool isCopyEnteredAtHeadOf(BlockID) const;
-    unsigned firstRangeOf(BlockID) const;
-    void forEachNextRange(unsigned range, NOESCAPE const Invocable<void(unsigned)> auto& functor) const;
+    unsigned firstRangeOf(BlockID block) const
+    {
+        std::optional<unsigned> first = m_firstRangeOf[block.index()];
+        RELEASE_ASSERT(first && !m_ranges[*first].begin);
+        return *first;
+    }
 
-    void markTestPoints();
-    void findRangesIn(BlockID);
-    void appendRange(BlockID, uint32_t begin, uint32_t end);
-    void joinRanges();
-    void markClonedRanges();
-    void measureStretches();
+    const StretchRange* findLastRangeThatBeginsBefore(BlockID block, uint32_t index) const
+    {
+        std::optional<unsigned> first = m_firstRangeOf[block.index()];
+        if (!first)
+            return nullptr;
+        std::span<const StretchRange> candidates = m_ranges.subspan(*first);
+        auto firstLaterRange = std::ranges::partition_point(candidates, [&](const StretchRange& range) {
+            return range.block == block && range.begin < index;
+        });
+        return firstLaterRange != candidates.begin() ? &*(firstLaterRange - 1) : nullptr;
+    }
 
-    const TestEvents& m_events;
-    const TestCoverage& m_coverage;
-    const WantedProofs& m_wanted;
-    BitVector m_hasTestInFront;
-    BitVector m_isPlannedUse;
-    BitVector m_blocksWhereCopyIsEntered;
     Vector<StretchRange> m_ranges;
     Vector<std::optional<unsigned>> m_firstRangeOf;
     Vector<Stretch> m_stretches;
 };
-
-inline bool TestStretches::isInsideRange(ProgramPoint point) const
-{
-    std::optional<unsigned> first = m_firstRangeOf[point.block.index()];
-    if (!first)
-        return false;
-    std::span<const StretchRange> candidates = m_ranges.subspan(*first);
-    auto firstLaterRange = std::ranges::partition_point(candidates, [&](const StretchRange& range) {
-        return range.block == point.block && range.begin < point.index;
-    });
-    return firstLaterRange != candidates.begin() && point.index < (firstLaterRange - 1)->end;
-}
 
 } } } // namespace JSC::AOT::Typed
 

@@ -13,77 +13,39 @@
 #include "AOTRegExpSummary.h"
 #include "AOTStringArena.h"
 #include "AOTValidationPlanText.h"
-#include "AOTVector.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static bool hasSubject(ResultShape shape, RuleSubject subject)
-{
-    switch (shape) {
-    case ResultShape::Number:
-    case ResultShape::NumberLiteral:
-        return subject == RuleSubject::Number;
-    case ResultShape::String:
-    case ResultShape::StringLiteral:
-        return subject == RuleSubject::Length || subject == RuleSubject::Text;
-    case ResultShape::Array:
-    case ResultShape::Tuple:
-        return subject == RuleSubject::Length;
-    case ResultShape::Unknown:
-    case ResultShape::Never:
-    case ResultShape::Undefined:
-    case ResultShape::Null:
-    case ResultShape::AnyObject:
-    case ResultShape::Boolean:
-    case ResultShape::BigInt:
-    case ResultShape::BooleanLiteral:
-    case ResultShape::Dictionary:
-    case ResultShape::Object:
-    case ResultShape::Union:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static bool hasExpression(TextFormat format)
+static std::pair<ASCIILiteral, ASCIILiteral> nameAndExpressionOf(TextFormat format)
 {
     switch (format) {
     case TextFormat::Email:
+        return { "email"_s, R"(^(?!\.)(?!.*\.\.)([A-Za-z0-9_'+\-\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\-]*\.)+[A-Za-z]{2,}$)"_s };
     case TextFormat::Uuid:
+        return { "uuid"_s, R"(^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$)"_s };
     case TextFormat::Ipv4:
+        return { "ipv4"_s, R"(^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$)"_s };
     case TextFormat::Ipv6:
+        return { "ipv6"_s, R"(^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})$)"_s };
     case TextFormat::Date:
+        return { "date"_s, R"(^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))$)"_s };
     case TextFormat::DateTime:
-        return true;
+        return { "date-time"_s, R"(^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?Z$)"_s };
     case TextFormat::Url:
-        return false;
+        return { "url"_s, ""_s };
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static StringView expressionOf(const Program& program, const ValidationRule& rule, Vector<char16_t>& bufferForNonASCII)
+ASCIILiteral formatName(TextFormat format)
 {
-    if (const auto* pattern = rule.tryAs<ValidationRule::Pattern>())
-        return program.strings.viewOf(pattern->source, bufferForNonASCII);
-    return formatExpression(rule.as<ValidationRule::Format>().format);
+    return nameAndExpressionOf(format).first;
 }
 
-static ValueID appendNumber(IRBuilder& builder, double number)
+ASCIILiteral formatExpression(TextFormat format)
 {
-    if (isTrackedInteger(number))
-        return builder.appendInteger(static_cast<int64_t>(number));
-    return builder.appendDouble(number);
-}
-
-static ValueID appendMatchedBuiltinCall(Emission& emission, BuiltinID builtin, BuiltinCallMode mode, ValueID receiver, std::span<const ValueID> arguments)
-{
-    TypingContext typing { emission.program(), emission.builder().function(), emission.inputs().types };
-    BuiltinOperandTypes operands = operandTypesOf(typing, receiver, arguments);
-    OverloadMatch match = matchOverload({ typing, builtin, mode, operands, operands });
-    RELEASE_ASSERT(match.state == BuiltinMatchState::Proven && match.requirements.isEmpty());
-
-    return emission.builder().append(makeBuiltinCall(match.overload, BuiltinCallForm::Whole, { receiver, Vector<ValueID, 4>(arguments) }, { }));
+    return nameAndExpressionOf(format).second;
 }
 
 RuleSubject subjectOf(const ValidationRule& rule)
@@ -120,8 +82,17 @@ static bool isText(ResultShape shape)
 
 bool appliesTo(const ValidationRule& rule, ResultShape shape)
 {
-    RuleSubject subject = subjectOf(rule);
-    return subject == RuleSubject::Nothing || hasSubject(shape, subject);
+    switch (subjectOf(rule)) {
+    case RuleSubject::Number:
+        return shape == ResultShape::Number || shape == ResultShape::NumberLiteral;
+    case RuleSubject::Length:
+        return isText(shape) || shape == ResultShape::Array || shape == ResultShape::Tuple;
+    case RuleSubject::Text:
+        return isText(shape);
+    case RuleSubject::Nothing:
+        return true;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 bool hasIntegerRule(const ResultNode& node)
@@ -131,51 +102,27 @@ bool hasIntegerRule(const ResultNode& node)
     });
 }
 
-ASCIILiteral formatName(TextFormat format)
+static bool hasExpression(TextFormat format)
 {
     switch (format) {
     case TextFormat::Email:
-        return "email"_s;
     case TextFormat::Uuid:
-        return "uuid"_s;
     case TextFormat::Ipv4:
-        return "ipv4"_s;
     case TextFormat::Ipv6:
-        return "ipv6"_s;
     case TextFormat::Date:
-        return "date"_s;
     case TextFormat::DateTime:
-        return "date-time"_s;
+        return true;
     case TextFormat::Url:
-        return "url"_s;
+        return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-ASCIILiteral formatExpression(TextFormat format)
+static StringView expressionOf(const Program& program, const ValidationRule& rule, Vector<char16_t>& bufferForNonASCII)
 {
-    switch (format) {
-    case TextFormat::Email:
-        return R"(^(?!\.)(?!.*\.\.)([A-Za-z0-9_'+\-\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\-]*\.)+[A-Za-z]{2,}$)"_s;
-    case TextFormat::Uuid:
-        return R"(^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$)"_s;
-    case TextFormat::Ipv4:
-        return R"(^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$)"_s;
-    case TextFormat::Ipv6:
-        return R"(^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})$)"_s;
-    case TextFormat::Date:
-        return R"(^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))$)"_s;
-    case TextFormat::DateTime:
-        return R"(^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?Z$)"_s;
-    case TextFormat::Url:
-        return ""_s;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-ValidationRuleEmitter::ValidationRuleEmitter(Emission& emission)
-    : m_emission(emission)
-{
+    if (const auto* pattern = rule.tryAs<ValidationRule::Pattern>())
+        return program.strings.viewOf(pattern->source, bufferForNonASCII);
+    return formatExpression(rule.as<ValidationRule::Format>().format);
 }
 
 RuleCode ValidationRuleEmitter::codeFor(const ValidationRule& rule, ResultShape shape)
@@ -197,8 +144,11 @@ RuleCode ValidationRuleEmitter::codeFor(const ValidationRule& rule, ResultShape 
     case ValidationRule::Kind::MaximumLength:
         return isText(shape) ? RuleCode::CountedCharacters : RuleCode::Inline;
     case ValidationRule::Kind::Pattern: {
+        const EmissionInputs& inputs = m_emission.inputs();
         Vector<char16_t> bufferForNonASCII;
-        return isValidExpression(expressionOf(m_emission.program(), rule, bufferForNonASCII)) ? RuleCode::RegularExpression : RuleCode::ByHelper;
+        StringView source = expressionOf(inputs.program, rule, bufferForNonASCII);
+        const RegExpSummary& summary = inputs.build.regExpSummaries().summaryOf(inputs.strings.intern(source), { }, source);
+        return summary.isValid() && summary.metadata == RegExpMetadata::Known ? RuleCode::RegularExpression : RuleCode::ByHelper;
     }
     case ValidationRule::Kind::Format:
         return hasExpression(rule.as<ValidationRule::Format>().format) ? RuleCode::RegularExpression : RuleCode::ByHelper;
@@ -214,17 +164,151 @@ RuleCode ValidationRuleEmitter::codeFor(const ValidationRule& rule, ResultShape 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static ValueID appendNumber(IRBuilder& builder, double number)
+{
+    if (isTrackedInteger(number))
+        return builder.appendInteger(static_cast<int64_t>(number));
+    return builder.appendDouble(number);
+}
+
+static ValueID appendMatchedBuiltinCall(Emission& emission, BuiltinID builtin, BuiltinCallMode mode, ValueID receiver, std::span<const ValueID> arguments)
+{
+    TypingContext typing { emission.program(), emission.builder().function(), emission.inputs().types };
+    BuiltinOperandTypes operands = operandTypesOf(typing, receiver, arguments);
+    OverloadMatch match = matchOverload({ typing, builtin, mode, operands, operands });
+    RELEASE_ASSERT(match.state == BuiltinMatchState::Proven && match.requirements.isEmpty());
+
+    return emission.builder().append(makeBuiltinCall(match.overload, BuiltinCallForm::Whole, { receiver, Vector<ValueID, 4>(arguments) }, { }));
+}
+
+static ValueID appendNumberTest(IRBuilder& builder, const ValidationRule& rule, ValueID number)
+{
+    auto appendWithOperand = [&](Opcode opcode, double operand) {
+        return builder.append(opcode, { number, appendNumber(builder, operand) });
+    };
+    switch (rule.kind()) {
+    case ValidationRule::Kind::Integer:
+        return builder.appendTypeTest(number, Type::fromPrimitives(Primitive::NumberWithoutFraction));
+    case ValidationRule::Kind::Minimum:
+        return appendWithOperand(Opcode::GreaterEq, rule.as<ValidationRule::Minimum>().bound);
+    case ValidationRule::Kind::Maximum:
+        return appendWithOperand(Opcode::LessEq, rule.as<ValidationRule::Maximum>().bound);
+    case ValidationRule::Kind::ExclusiveMinimum:
+        return appendWithOperand(Opcode::Greater, rule.as<ValidationRule::ExclusiveMinimum>().bound);
+    case ValidationRule::Kind::ExclusiveMaximum:
+        return appendWithOperand(Opcode::Less, rule.as<ValidationRule::ExclusiveMaximum>().bound);
+    case ValidationRule::Kind::MultipleOf:
+        return builder.append(Opcode::StrictEq, { appendWithOperand(Opcode::Mod, rule.as<ValidationRule::MultipleOf>().divisor), builder.appendInteger(0) });
+    case ValidationRule::Kind::MinimumLength:
+    case ValidationRule::Kind::MaximumLength:
+    case ValidationRule::Kind::Pattern:
+    case ValidationRule::Kind::Format:
+    case ValidationRule::Kind::Template:
+    case ValidationRule::Kind::Message:
+    case ValidationRule::Kind::DefaultNull:
+    case ValidationRule::Kind::DefaultBoolean:
+    case ValidationRule::Kind::DefaultNumber:
+    case ValidationRule::Kind::DefaultString:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static ValueID appendLength(Emission& emission, ResultShape shape, ValueID value)
+{
+    if (isText(shape))
+        return emission.builder().append(Opcode::GetStringLength, { value });
+    RELEASE_ASSERT(shape == ResultShape::Array || shape == ResultShape::Tuple);
+    return appendMatchedBuiltinCall(emission, Builtins::ArrayPrototypeLength, BuiltinCallMode::Get, value, { });
+}
+
+static ValueID appendLengthTest(IRBuilder& builder, const ValidationRule& rule, ValueID length)
+{
+    if (const auto* minimum = rule.tryAs<ValidationRule::MinimumLength>())
+        return builder.append(Opcode::GreaterEq, { length, builder.appendInteger(minimum->length) });
+    return builder.append(Opcode::LessEq, { length, builder.appendInteger(rule.as<ValidationRule::MaximumLength>().length) });
+}
+
+// The length of a string is counted in code points. It has at most as many of them as UTF-16 units, and at least half as many: only between the two are they counted.
+static void emitCharacterCountRule(Emission& emission, const ValidationRule& rule, ValueID string, BlockID rejected)
+{
+    IRBuilder& builder = emission.builder();
+    ValueID units = builder.append(Opcode::GetStringLength, { string });
+    ValueID unitsDecide = appendLengthTest(builder, rule, units);
+    BlockFrequency whenCounted = BlockFrequency::Rare;
+    if (const auto* minimum = rule.tryAs<ValidationRule::MinimumLength>()) {
+        emission.emitJumpUnless(unitsDecide, rejected);
+        unitsDecide = builder.append(Opcode::GreaterEq, { units, builder.appendInteger(2 * static_cast<int64_t>(minimum->length) - 1) });
+        whenCounted = BlockFrequency::Normal;
+    }
+
+    BlockID after = builder.addBlock();
+    IRBuilder::BranchBlocks blocks = builder.emitBranch(unitsDecide, BlockFrequency::Normal, whenCounted);
+    builder.moveToEndOf(blocks.taken);
+    builder.emitJump(after);
+
+    builder.moveToEndOf(blocks.notTaken);
+    ValueID characters = emission.appendHelperCall(Builtins::CompilerHelpersCountCodePoints, { string });
+    emission.emitJumpUnless(appendLengthTest(builder, rule, characters), rejected);
+    builder.emitJump(after);
+
+    builder.moveToEndOf(after);
+}
+
+static ValueID appendExpressionTest(Emission& emission, StringView source, ValueID string)
+{
+    IRBuilder& builder = emission.builder();
+    Value literal = IRBuilder::make(Opcode::SharedRegExpLiteral);
+    literal.setPattern(emission.inputs().strings.intern(source));
+    literal.setRegExpFlags({ });
+    ValueID regExp = builder.append(WTF::move(literal));
+    // Placement keys the cell of a literal by (function, position), and every other value of a derived function has the same position.
+    builder.function().edit(regExp, ValueEdit::Definition).setOrigin({ regExp.index(), builder.origin().inlineFrame });
+    // What test matches is the last match that RegExp.$1 and its like tell of.
+    if (emission.inputs().flow.mayReadLegacyRegExpStatics())
+        return builder.append(Opcode::MatchesUnrecorded, { regExp, string });
+    return appendMatchedBuiltinCall(emission, Builtins::RegExpPrototypeTest, BuiltinCallMode::Call, regExp, singleElementSpan(string));
+}
+
 void ValidationRuleEmitter::emitRules(const ResultNode& node, ValueID value, BlockID rejected)
 {
-    for (const ValidationRule& rule : node.rules)
-        emitRule(rule, node, value, rejected);
+    IRBuilder& builder = m_emission.builder();
+    for (const ValidationRule& rule : node.rules) {
+        Vector<char16_t> bufferForNonASCII;
+        ValueID test;
+        switch (codeFor(rule, node.shape)) {
+        case RuleCode::Nothing:
+            continue;
+        case RuleCode::CountedCharacters:
+            emitCharacterCountRule(m_emission, rule, value, rejected);
+            continue;
+        case RuleCode::ByHelper: {
+            StringID text = validationRuleText(m_emission.program(), m_emission.inputs().strings, rule);
+            test = m_emission.appendHelperCall(Builtins::CompilerHelpersHoldsRule, { value, m_emission.appendString(text), builder.append(Opcode::GetPreparedPlans, { }) });
+            break;
+        }
+        case RuleCode::Inline:
+            if (subjectOf(rule) == RuleSubject::Length) {
+                test = appendLengthTest(builder, rule, appendLength(m_emission, node.shape, value));
+                break;
+            }
+            if (rule.is<ValidationRule::Integer>())
+                emitRequireFinite(value, rejected);
+            test = appendNumberTest(builder, rule, value);
+            break;
+        case RuleCode::RegularExpression:
+            test = appendExpressionTest(m_emission, expressionOf(m_emission.program(), rule, bufferForNonASCII), value);
+            break;
+        }
+        m_emission.emitJumpUnless(test, rejected);
+    }
 }
 
 void ValidationRuleEmitter::emitLengthRules(const ResultNode& node, ValueID length, BlockID rejected)
 {
     for (const ValidationRule& rule : node.rules) {
         if (subjectOf(rule) == RuleSubject::Length)
-            m_emission.emitJumpUnless(appendLengthTest(rule, length), rejected);
+            m_emission.emitJumpUnless(appendLengthTest(m_emission.builder(), rule, length), rejected);
     }
 }
 
@@ -251,162 +335,6 @@ ValueID ValidationRuleEmitter::appendLiteral(const ResultLiteral& literal)
         return m_emission.appendString(literal.string);
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-ValueID ValidationRuleEmitter::appendLength(const ResultNode& node, ValueID value)
-{
-    switch (node.shape) {
-    case ResultShape::String:
-    case ResultShape::StringLiteral:
-        return m_emission.builder().append(Opcode::GetStringLength, { value });
-    case ResultShape::Array:
-    case ResultShape::Tuple:
-        return appendMatchedBuiltinCall(m_emission, Builtins::ArrayPrototypeLength, BuiltinCallMode::Get, value, { });
-    case ResultShape::Unknown:
-    case ResultShape::Never:
-    case ResultShape::Undefined:
-    case ResultShape::Null:
-    case ResultShape::AnyObject:
-    case ResultShape::Number:
-    case ResultShape::Boolean:
-    case ResultShape::BigInt:
-    case ResultShape::BooleanLiteral:
-    case ResultShape::NumberLiteral:
-    case ResultShape::Dictionary:
-    case ResultShape::Object:
-    case ResultShape::Union:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-void ValidationRuleEmitter::emitRule(const ValidationRule& rule, const ResultNode& node, ValueID value, BlockID rejected)
-{
-    Vector<char16_t> bufferForNonASCII;
-    ValueID test;
-    switch (codeFor(rule, node.shape)) {
-    case RuleCode::Nothing:
-        return;
-    case RuleCode::ByHelper:
-        test = appendTestByHelper(rule, value);
-        break;
-    case RuleCode::Inline:
-        if (subjectOf(rule) == RuleSubject::Length) {
-            test = appendLengthTest(rule, appendLength(node, value));
-            break;
-        }
-        if (rule.is<ValidationRule::Integer>())
-            emitRequireFinite(value, rejected);
-        test = appendNumberTest(rule, value);
-        break;
-    case RuleCode::CountedCharacters:
-        emitCharacterCountRule(rule, value, rejected);
-        return;
-    case RuleCode::RegularExpression:
-        test = appendExpressionTest(expressionOf(m_emission.program(), rule, bufferForNonASCII), value);
-        break;
-    }
-    m_emission.emitJumpUnless(test, rejected);
-}
-
-ValueID ValidationRuleEmitter::appendNumberTest(const ValidationRule& rule, ValueID number)
-{
-    IRBuilder& builder = m_emission.builder();
-    switch (rule.kind()) {
-    case ValidationRule::Kind::Integer:
-        return builder.appendTypeTest(number, Type::fromPrimitives(Primitive::NumberWithoutFraction));
-    case ValidationRule::Kind::Minimum:
-        return builder.append(Opcode::GreaterEq, { number, appendNumber(builder, rule.as<ValidationRule::Minimum>().bound) });
-    case ValidationRule::Kind::Maximum:
-        return builder.append(Opcode::LessEq, { number, appendNumber(builder, rule.as<ValidationRule::Maximum>().bound) });
-    case ValidationRule::Kind::ExclusiveMinimum:
-        return builder.append(Opcode::Greater, { number, appendNumber(builder, rule.as<ValidationRule::ExclusiveMinimum>().bound) });
-    case ValidationRule::Kind::ExclusiveMaximum:
-        return builder.append(Opcode::Less, { number, appendNumber(builder, rule.as<ValidationRule::ExclusiveMaximum>().bound) });
-    case ValidationRule::Kind::MultipleOf:
-        return appendIsMultipleOf(number, rule.as<ValidationRule::MultipleOf>().divisor);
-    case ValidationRule::Kind::MinimumLength:
-    case ValidationRule::Kind::MaximumLength:
-    case ValidationRule::Kind::Pattern:
-    case ValidationRule::Kind::Format:
-    case ValidationRule::Kind::Template:
-    case ValidationRule::Kind::Message:
-    case ValidationRule::Kind::DefaultNull:
-    case ValidationRule::Kind::DefaultBoolean:
-    case ValidationRule::Kind::DefaultNumber:
-    case ValidationRule::Kind::DefaultString:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-ValueID ValidationRuleEmitter::appendIsMultipleOf(ValueID number, double divisor)
-{
-    IRBuilder& builder = m_emission.builder();
-    ValueID remainder = builder.append(Opcode::Mod, { number, appendNumber(builder, divisor) });
-    return builder.append(Opcode::StrictEq, { remainder, builder.appendInteger(0) });
-}
-
-ValueID ValidationRuleEmitter::appendLengthTest(const ValidationRule& rule, ValueID length)
-{
-    IRBuilder& builder = m_emission.builder();
-    if (const auto* minimum = rule.tryAs<ValidationRule::MinimumLength>())
-        return builder.append(Opcode::GreaterEq, { length, builder.appendInteger(minimum->length) });
-    return builder.append(Opcode::LessEq, { length, builder.appendInteger(rule.as<ValidationRule::MaximumLength>().length) });
-}
-
-// The length of a string is counted in code points. It has at most as many of them as UTF-16 units, and at least half as many: only between the two are they counted.
-void ValidationRuleEmitter::emitCharacterCountRule(const ValidationRule& rule, ValueID string, BlockID rejected)
-{
-    IRBuilder& builder = m_emission.builder();
-    ValueID units = builder.append(Opcode::GetStringLength, { string });
-    ValueID unitsDecide = appendLengthTest(rule, units);
-    BlockFrequency whenCounted = BlockFrequency::Rare;
-    if (const auto* minimum = rule.tryAs<ValidationRule::MinimumLength>()) {
-        m_emission.emitJumpUnless(unitsDecide, rejected);
-        unitsDecide = builder.append(Opcode::GreaterEq, { units, builder.appendInteger(2 * static_cast<int64_t>(minimum->length) - 1) });
-        whenCounted = BlockFrequency::Normal;
-    }
-
-    BlockID after = builder.addBlock();
-    IRBuilder::BranchBlocks blocks = builder.emitBranch(unitsDecide, BlockFrequency::Normal, whenCounted);
-    builder.moveToEndOf(blocks.taken);
-    builder.emitJump(after);
-
-    builder.moveToEndOf(blocks.notTaken);
-    ValueID characters = m_emission.appendHelperCall(Builtins::CompilerHelpersCountCodePoints, { string });
-    m_emission.emitJumpUnless(appendLengthTest(rule, characters), rejected);
-    builder.emitJump(after);
-
-    builder.moveToEndOf(after);
-}
-
-ValueID ValidationRuleEmitter::appendExpressionTest(StringView source, ValueID string)
-{
-    IRBuilder& builder = m_emission.builder();
-    Value literal = IRBuilder::make(Opcode::SharedRegExpLiteral);
-    literal.setPattern(m_emission.inputs().strings.intern(source));
-    literal.setRegExpFlags({ });
-    ValueID regExp = builder.append(WTF::move(literal));
-    // Placement keys the cell of a literal by (function, position), and every other value of a derived function has the same position.
-    builder.function().edit(regExp, ValueEdit::Definition).setOrigin({ regExp.index(), builder.origin().inlineFrame });
-    // What test matches is the last match that RegExp.$1 and its like tell of.
-    if (m_emission.inputs().flow.mayReadLegacyRegExpStatics())
-        return builder.append(Opcode::MatchesUnrecorded, { regExp, string });
-    return appendMatchedBuiltinCall(m_emission, Builtins::RegExpPrototypeTest, BuiltinCallMode::Call, regExp, singleElementSpan(string));
-}
-
-ValueID ValidationRuleEmitter::appendTestByHelper(const ValidationRule& rule, ValueID value)
-{
-    StringID text = validationRuleText(m_emission.program(), m_emission.inputs().strings, rule);
-    return m_emission.appendHelperCall(Builtins::CompilerHelpersHoldsRule, { value, m_emission.appendString(text), m_emission.builder().append(Opcode::GetPreparedPlans, { }) });
-}
-
-bool ValidationRuleEmitter::isValidExpression(StringView source)
-{
-    const EmissionInputs& inputs = m_emission.inputs();
-    const RegExpSummary& summary = inputs.build.regExpSummaries().summaryOf(inputs.strings.intern(source), { }, source);
-    return summary.isValid() && summary.metadata == RegExpMetadata::Known;
 }
 
 } } } // namespace JSC::AOT::Typed

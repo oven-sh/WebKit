@@ -74,7 +74,6 @@ std::optional<BuiltinCellKey> BuiltinCellKey::decode(uint32_t bits, const Builti
     return std::nullopt;
 }
 
-// Only compiled code calls the members of these holders, and no realm has an object for the holders themselves.
 static bool groupsFunctionsOfCompiledCode(BuiltinID id)
 {
     return id == Builtins::CompilerHelpers || id == Builtins::JSONText || id == Builtins::PrivateGlobals;
@@ -131,7 +130,6 @@ bool BuiltinCellKey::hasCell(const BuiltinTable& table) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The function that Object.getOwnPropertyDescriptor() returns. A custom accessor has none until a descriptor is created.
 static Lookup findAccessorFunction(JSGlobalObject* realm, const Identifier& key, const PropertySlot& slot, PropertyKind kind)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(realm->vm());
@@ -330,7 +328,6 @@ void forEachCreatedClassOfGlobal(JSGlobalObject* realm, const ScopedLambda<void(
     });
 }
 
-// The program may have put something else under the name before anybody read it. The class answers what the realm creates.
 static JSObject* findConstructorOfLazyClass(JSGlobalObject* realm, const Identifier& name)
 {
     JSObject* constructor = nullptr;
@@ -455,7 +452,6 @@ static ObjectLookup findHiddenRootOfClass(JSGlobalObject* realm, BuiltinID id)
 
 static ObjectLookup findHolderObject(JSGlobalObject*, BuiltinID);
 
-// No name leads from the global object to the two tables of the loader: each module reads them from a require function of its own.
 static ObjectLookup findTableOfLoader(JSGlobalObject* realm, JSObject* (*ModuleHost::*table)(JSGlobalObject*))
 {
     const ModuleHost* host = realm->globalObjectMethodTable()->moduleHost;
@@ -485,7 +481,6 @@ static ObjectLookup findHiddenRoot(JSGlobalObject* realm, BuiltinID id)
     return asObject(prototype);
 }
 
-// The global object has it under the private name that goes with the name.
 static Lookup findPrivateGlobal(JSGlobalObject* realm, const Identifier& name, PropertyKind kind)
 {
     PrivateSymbolImpl* privateName = realm->vm().propertyNames->builtinNames().lookUpPrivateName(name);
@@ -521,14 +516,12 @@ static JSFunction* createLibraryFunction(JSGlobalObject* realm, BuiltinID id)
     return nullptr;
 }
 
-// The constructor of a host class need not have a property "prototype". The binding of the class leads to the object all the same.
 static JSObject* findPrototypeWithoutProperty(JSGlobalObject* realm, BuiltinID id)
 {
     auto& table = BuiltinTable::singleton();
     return findClassPrototype(table, id) == id ? findHiddenPrototype(realm, table.at(id).instanceClass) : nullptr;
 }
 
-// A function that only compiled code calls is a member of a holder that no object stands for.
 static Lookup findOrCreateMember(JSGlobalObject* realm, BuiltinID id)
 {
     Lookup found = findDeclaredProperty(realm, id, PropertyKind::Data);
@@ -623,7 +616,6 @@ static CellLookup checkFound(const BuiltinTable& table, BuiltinCellKey key, JSVa
         if (isOverloadOfKey(key.kind(), overload.mode) && !hasExpectedCallee(overload.callee, value))
             return makeUnexpected(BuiltinLookupFailure::HasOtherCallee);
     }
-    // Compiled code takes a native function to have been born with the Structure of the host functions of its realm, for what that Structure refuses.
     if (key.kind() == BuiltinCellKey::Kind::Object && table.isHostFunctionOfEngine(id)) {
         Structure* structure = value.asCell()->structure();
         if (structure->globalObject()->hostFunctionStructure()->mayHaveImmutableProperties() && !structure->mayHaveImmutableProperties())
@@ -657,7 +649,6 @@ std::expected<JSCell*, BuiltinLookupFailure> findInRealm(JSGlobalObject* realm, 
         return makeUnexpected(BuiltinLookupFailure::IsPerModule);
     PropertyKind kind = propertyKindOf(key.kind());
     if (kind == PropertyKind::Data && id == Builtins::GlobalThis) {
-        // A realm gets its globalThis behind its built-ins.
         if (JSObject* globalThis = realm->globalThis())
             return static_cast<JSCell*>(globalThis);
         return makeUnexpected(BuiltinLookupFailure::IsMissing);
@@ -675,7 +666,6 @@ std::expected<JSCell*, BuiltinLookupFailure> findInHolder(JSGlobalObject* realm,
     BuiltinID id = key.builtin();
     if (!table.contains(id))
         return makeUnexpected(BuiltinLookupFailure::IsMissing);
-    // The host keeps what every module object, require function and import.meta has in common on their prototypes.
     auto& find = table.at(id).scope == BuiltinScope::Module ? findPropertyOnPrototypeChain : findOwnProperty;
     Lookup found = find(realm, holder, table.identifierOf(realm->vm(), table.at(id).name), propertyKindOf(key.kind()));
     if (!found)
@@ -724,7 +714,6 @@ std::expected<JSCell*, BuiltinLookupFailure> makeMemberOfStaticTable(JSGlobalObj
             return makeUnexpected(BuiltinLookupFailure::IsMissing);
         return checkFound(table, key, made);
     }
-    // The getter of any other entry is handed the object that it is read from.
     if (!(attributes & (PropertyAttribute::Builtin | PropertyAttribute::Function | PropertyAttribute::Accessor)))
         return makeUnexpected(BuiltinLookupFailure::IsMissing);
 
@@ -780,7 +769,6 @@ JSObject* findExistingObject(JSObject* holder, UniquedStringImpl* key)
     return isValidOffset(offset) ? objectAt(holder, offset) : nullptr;
 }
 
-// Also runs at the end of a collection, on the collector's thread: it creates no atom, no cell and no property table.
 class ExistingBuiltins {
 public:
     explicit ExistingBuiltins(JSGlobalObject* realm)
@@ -844,7 +832,6 @@ void ExistingBuiltins::readTextMembers(BuiltinID holder, JSObject* object)
     object->structure()->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) {
         BuiltinName name = m_table.textNameOf(entry.key());
         BuiltinID member = name ? m_table.findOwnMember(holder, name) : BuiltinID();
-        // The property globalThis may hold a proxy of the global object.
         if (member && member != holder)
             m_objects[member.index()] = objectAt(object, entry.offset());
         return true;
@@ -907,13 +894,11 @@ private:
         BuiltinID member = table.findOwnMember(m_holder, name);
         if (!member)
             return false;
-        // The global object is its own member `globalThis`, which no list of members holds.
         if (member == m_holder || std::ranges::binary_search(table.lockedMembers(), member))
             return true;
         const Builtin& entry = table.at(member);
         if (entry.flags.contains(BuiltinFlag::IsOwnPropertyOfInstances) && table.at(m_holder).flags.contains(BuiltinFlag::HasLockedMembers))
             return true;
-        // The global object of a realm without the host has none of the host's members, and whoever made the realm defines properties of its own under their names.
         if (m_holder == Builtins::GlobalThis && !BuiltinBindings::provides(entry.origin))
             return false;
         return std::ranges::binary_search(m_constantMembers, member.index());

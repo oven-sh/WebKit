@@ -15,16 +15,15 @@ class RepresentationEmitter final : public OperationEmitter {
 public:
     explicit RepresentationEmitter(CodeGenerator&);
 
-    void generateBox(const ValueContext&);
-    void generateUnbox(const ValueContext&);
-    void generateIntegerToNumber(const ValueContext&);
-    void generateNumberToInteger(const ValueContext&);
-    void generateWidenInteger(const ValueContext&);
-    void generateNarrowInteger(const ValueContext&);
-    void generateDecode(const ValueContext&);
-    void generateCompress(const ValueContext&);
+    void generateBox(const ValueContext& value) { generate(value); }
+    void generateUnbox(const ValueContext& value) { generate(value); }
+    void generateIntegerToNumber(const ValueContext& value) { generate(value); }
+    void generateNumberToInteger(const ValueContext& value) { generate(value); }
+    void generateWidenInteger(const ValueContext& value) { generate(value); }
+    void generateNarrowInteger(const ValueContext& value) { generate(value); }
+    void generateDecode(const ValueContext& value) { generate(value); }
+    void generateCompress(const ValueContext& value) { generate(value); }
 
-    // One step of a conversion that is no operation of the function: the context is that of the operation that takes the result. The source has no id where an earlier step has made it.
     Operand convert(const OperationContext&, Opcode conversion, ValueID sourceID, Operand source, const Type&, Representation to);
 
 private:

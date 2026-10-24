@@ -54,7 +54,6 @@ struct BuiltinOperandTypes {
 BuiltinOperandTypes operandTypesOf(const TypingContext&, const BuiltinCall&);
 BuiltinOperandTypes operandTypesOf(const TypingContext&, ValueID receiver, std::span<const ValueID> arguments);
 
-// A part is a field of the layout or an element of the prefix.
 struct BuiltinResultIndexes {
     std::optional<uint32_t> presence;
     std::optional<uint32_t> length;
@@ -79,7 +78,6 @@ struct BuiltinResultQuery {
 };
 
 Type resultTypeOfBuiltinCall(const TypingContext&, const BuiltinResultQuery&, uint32_t resultIndex);
-// What a use of the built-in gives when nothing has chosen an overload: the union over the overloads that operands of these types can reach.
 Type resultTypeOfReachableOverloads(const TypingContext&, BuiltinID, BuiltinCallMode, const BuiltinOperandTypes&);
 Type resultTypeOfOverload(const TypingContext&, const Value& call, BuiltinOverloadID, uint32_t resultIndex);
 Type resultTypeOfOverload(const TypingContext&, const Terminator& call, BuiltinOverloadID, uint32_t resultIndex);
@@ -88,12 +86,10 @@ std::optional<uint32_t> numberOfResultsOfOverload(const Program&, const Value& c
 Type typeOfBuiltinLayoutField(const Program&, const BuiltinLayoutField&, TypeArena&);
 Type parameterTypeOfOverload(const Program&, BuiltinOverloadID, BuiltinOperand);
 
-// The overload is the one for a call without this argument, and undefined in its place would select another.
 bool distinguishesOmittedFromUndefined(const BuiltinTable&, const BuiltinParameter&);
 
 bool overloadHasForm(const BuiltinTable&, BuiltinOverloadID, BuiltinCallForm);
 
-// A call whose result is validated, and a call of what is in no realm: a helper of the compiler, a function of bun:bundle. There is no code for either, so one that is left stops the build.
 bool isCallThatRequiredPassRemoves(const Program&, const Value& call);
 
 bool overloadTakesOperands(const TypingContext&, const Value& call);

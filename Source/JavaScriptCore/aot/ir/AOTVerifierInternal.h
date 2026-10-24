@@ -53,7 +53,6 @@ struct SlotInReceiversEntry {
     SlotInReceivers slot;
 };
 
-// What follows from a set of receivers and a key is found once for all the functions of a program that is verified whole.
 using SlotsInReceivers = SharedMemo<SlotInReceiversEntry>;
 
 class FunctionVerifier {

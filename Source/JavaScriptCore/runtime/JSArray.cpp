@@ -38,9 +38,7 @@
 #include "VMInlines.h"
 #include <wtf/Assertions.h>
 
-#if ENABLE(AOT)
 #include "AOTRuntimeValidation.h"
-#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 

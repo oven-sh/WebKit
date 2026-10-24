@@ -29,7 +29,6 @@ static uint64_t shapeOf(const Function& function, const Value& value)
     return hasher.hash();
 }
 
-// Every part that a test can leave of the type, and what is left without it.
 static Vector<Type, 32> narrowerTypesOf(const Program& program, const Type& type, TypeArena& types)
 {
     Vector<Type, 32> narrower;
@@ -51,7 +50,6 @@ static Vector<Type, 32> narrowerTypesOf(const Program& program, const Type& type
     add(type.intersectWith(Type::integer(Range::one(0)), types));
     add(type.intersectWith(Type::builtinClass(BuiltinClasses::Array), types));
     if (type.layouts) {
-        // A family keeps the layouts that nothing allocates. No object has one of them, no test is made for them alone, and the rules leave them out.
         auto isAllocated = [&](LayoutID member) {
             return program.at(member).flow.allocation != AllocationState::NeverAllocated;
         };
@@ -75,7 +73,6 @@ static Vector<Type, 32> narrowerTypesOf(const Program& program, const Type& type
     return narrower;
 }
 
-// The code behind a check that never passes is the source of the generic version, so it stays, typed as behind a check that passed: where nothing is left of the operand these answer with more.
 static constexpr OpcodeSet opcodesThatKeepCodeBehindFailedCheck { Opcode::Check, Opcode::Convert, Opcode::NarrowByField };
 
 namespace {
@@ -107,7 +104,6 @@ private:
     TypeArena& m_types;
 };
 
-// Type::isSubsetOf() takes a class for a part of the class it extends only where one test tells both. What a built-in declares to return is often the class that is extended, TypedArray for one.
 bool ResultRuleCheck::isInside(const Type& narrow, const Type& wide) const
 {
     if (narrow.isSubsetOf(wide, m_program))

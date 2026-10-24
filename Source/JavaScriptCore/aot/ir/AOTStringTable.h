@@ -33,7 +33,6 @@ Vector<char16_t> decodeProgramString(std::span<const uint8_t>);
 Vector<uint8_t> encodeProgramString(std::span<const char16_t>);
 Vector<uint8_t> encodeProgramString(StringView);
 bool isCanonicalProgramString(std::span<const uint8_t>);
-// The order of the UTF-16 code units.
 std::strong_ordering compareProgramStrings(std::span<const uint8_t>, std::span<const uint8_t>);
 
 struct StringAsRead {
@@ -56,7 +55,6 @@ public:
 
     StringTable() = default;
 
-    // What the front end says of a string: that it is canonical, the class of the name, the built-in name. To work it out again costs six times the rest of the table.
     enum class WhatIsSaidOfStrings : bool { IsBelieved, IsChecked };
     InitializationResult initialize(const BuiltinTable&, const ParallelLoops&, Vector<StringAsRead>&&, WhatIsSaidOfStrings = WhatIsSaidOfStrings::IsChecked);
 

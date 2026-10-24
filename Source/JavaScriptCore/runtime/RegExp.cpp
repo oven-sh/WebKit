@@ -37,11 +37,9 @@
 #include <wtf/DataLog.h>
 #include <wtf/text/MakeString.h>
 
-#if ENABLE(AOT)
 #include "AOTRegExpInProcessLoader.h"
 #include "AOTRegExpRecords.h"
 #include "AOTRuntimeCounters.h"
-#endif
 
 namespace JSC {
 

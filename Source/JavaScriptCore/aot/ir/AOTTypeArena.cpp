@@ -209,7 +209,6 @@ struct TypeInterningPhase::Merge {
     size_t numberOfProvisionalRecords { 0 };
 };
 
-// Gives every record the id that Merge::commitTask() gives it.
 struct TypeInterningPhase::ParallelMerge {
     static constexpr uint32_t notCommitted = UINT32_MAX;
     static constexpr size_t recordsPerTask = 256;
@@ -344,7 +343,6 @@ struct TypeInterningPhase::ParallelMerge {
 
     enum class Kind : uint8_t { PropertyKey, LayoutSet, CalleeSet, Type };
 
-    // A task lists a record that an earlier task has listed too, and committing it again does nothing.
     bool findCommitOrder(std::span<const unsigned> taskOrder)
     {
         constexpr size_t tasksPerChunk = 256;
@@ -384,7 +382,6 @@ struct TypeInterningPhase::ParallelMerge {
         });
         auto note = [&](Kind kind, auto& order, auto id, uint64_t place) {
             std::atomic<uint64_t>& first = firstPlaces[firstRecordOfKind[static_cast<size_t>(kind)] + order.firstInStorage[TypeTable::storageNumberOf(id)] + TypeTable::positionOf(id)];
-            // The id goes along, so that whoever sorts the places need not look for it.
             uint64_t value = place << 34 | static_cast<uint64_t>(kind) << 32 | id.index();
             uint64_t previous = first.load(std::memory_order_relaxed);
             while (value < previous && !first.compare_exchange_weak(previous, value, std::memory_order_relaxed)) { }
@@ -467,7 +464,6 @@ struct TypeInterningPhase::ParallelMerge {
         publish(order, finalIDs);
     }
 
-    // Leaves the provisional ids of the contents alone.
     bool rewriteAllButContents(Type& type)
     {
         bool hasChanged = rewriteValues(type.stringLiterals, [&](StringID literal) {
@@ -642,7 +638,6 @@ uint64_t TypeInterningPhase::currentPhaseSerialNumber(const TypeTable& table)
 {
     if (const TypeInterningPhase* phase = table.phaseOfProvisionalIDs())
         return phase->m_serialNumber;
-    // Creates the scratch phase now, so the number does not change when another thread makes the first scratch arena.
     TypeInterningPhase& phase = table.attachScratchArena();
     table.detachScratchArena(phase);
     return phase.m_serialNumber;
@@ -700,7 +695,6 @@ const TypeInterningPhase* TypeTable::phaseOfProvisionalIDs() const
     return m_openPhase ? m_openPhase : m_phaseOfScratchArenas.load(std::memory_order_acquire);
 }
 
-// Many loops ask questions about functions on all threads while no phase is open, and far below some question needs a type that the table may not have.
 TypeInterningPhase& TypeTable::attachScratchArena() const
 {
     if (m_openPhase)
@@ -1098,7 +1092,6 @@ LayoutSetID TypeArena::computeResult(LayoutSetOperation operation, LayoutSetID a
     case LayoutSetOperation::Difference:
         members.grow(first.members.size());
         members.shrink(std::ranges::set_difference(first.members, second.members, members.begin()).out - members.begin());
-        // The flag on the second set does not say which values without a layout it holds, so none can be removed.
         hasMembersWithoutLayout = first.hasMembersWithoutLayout;
         break;
     }

@@ -27,7 +27,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-// One list behind the other. A body of a few blocks asks for no memory.
 struct PredecessorLists {
     std::span<const unsigned> of(unsigned block) const { return blocks.span().subspan(first[block], first[block + 1] - first[block]); }
 
@@ -45,7 +44,6 @@ static bool rowMayThrow(Entry entry, const Effects& bound)
 
 namespace {
 
-// What holds for every operation with an opcode and for every terminator of a kind.
 struct FactsOfRows {
     OpcodeSet opcodesThatMayThrow;
     OpcodeSet opcodesThatMaySuspend;
@@ -176,7 +174,6 @@ static std::optional<uint32_t> mappedEntryParameter(const Function& callee, cons
     return call.variadicOperandIndex(operandIndex);
 }
 
-// The row declares no effect, and neither the row nor an operand runs code: the description of such an operation is empty, whatever its operands are.
 static bool hasEmptyDescription(Opcode opcode)
 {
     static const OpcodeSet opcodes = [] {
@@ -236,7 +233,6 @@ public:
             addDependency(SummaryNode::onThrow(m_id), SummaryNode::onReturn(m_id));
         for (unsigned index = 0; index < m_function.blocks.size(); ++index) {
             BlockID block(index);
-            // What throws allocates what it throws, whatever its effects say.
             if (const std::optional<Target>& handler = m_function.at(block).handler)
                 m_gatheredForExits[exitsOf(handler->block)].mayCollect = true;
             for (ValueID id : m_function.at(block).values)
@@ -244,7 +240,6 @@ public:
             summarizeTerminator(block);
         }
         handOverToExits();
-        // The caller of such a body gets a rejected promise back where the body throws.
         if (m_function.role == FunctionRole::CoroutineBody && m_function.creator.as<CreatorRecord::Coroutine>().kind == CoroutineKind::AsyncFunction) {
             if (m_summary.onReturn.mayThrow || m_summary.onThrow.mayThrow || !m_summary.dependencies.isEmpty())
                 m_summary.onReturn.merge(declaredBoundOf(Opcode::RejectPromise));
@@ -256,7 +251,6 @@ public:
     }
 
 private:
-    // A reference that the body stores is read out again by whatever runs until the body returns: the closures over a scope that holds it, a callee that is handed the object it lies in.
     bool mayBeReadOutOfMemory(uint32_t entryParameter)
     {
         ValueID parameter = m_function.at(entryBlock).parameters[entryParameter];
@@ -271,7 +265,6 @@ private:
         });
     }
 
-    // Which exits take an effect depends on which of them its block reaches: four cases, and a fifth for what is thrown out of a block without a handler.
     void addToExits(BlockID block, const Effects& normal, const Effects& handler)
     {
         m_gatheredForExits[exitsOf(block)].merge(normal);
@@ -434,7 +427,6 @@ private:
         });
     }
 
-    // The exits hold memory reached other than through an entry parameter, so a caller that alone holds an object it passes looks only at the memory of the parameter.
     void addMemoryOfOperands(const auto& entry, const EffectDescription& description)
     {
         bool writesObjects = description.own.normal.writes.containsAny(perObjectHeaps) || description.own.handler.writes.containsAny(perObjectHeaps);
@@ -459,7 +451,6 @@ private:
         });
     }
 
-    // The callee reaches such an argument through its arguments object or its rest parameter.
     void addArgumentWithoutParameter(ValueID argument, FunctionID callee)
     {
         forEachEntryParameterOf(argument, [&](uint32_t entryParameter) {
@@ -468,7 +459,6 @@ private:
         });
     }
 
-    // A construction reads the prototype of new.target before it enters a callee, which may run a getter or a trap.
     static bool runsOnlyCallees(const EffectDescription& description, const CalleeList& callees)
     {
         if (description.callsUnknownCode)
@@ -556,10 +546,8 @@ private:
         m_summary.followsFieldsOfOperands |= description.followsFieldsOfOperands;
         if (m_references)
             m_references->read(value, description);
-        // A check stands for the generic version of the function, which AddGenericVersion makes of it.
         if (value.opcode == Opcode::Check && !program.typeOf(m_function, value.valueOperand()).isSubsetOf(program.at(value.castType()), program))
             description.callsUnknownCode = true;
-        // Each function that a value may run is some dependencies of this body.
         AOT_THRESHOLD(size_t, mostFunctionsFollowed, 64);
         if (description.functions.size() > mostFunctionsFollowed) {
             description.functions.clear();

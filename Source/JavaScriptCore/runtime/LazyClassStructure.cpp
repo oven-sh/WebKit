@@ -29,9 +29,7 @@
 #include "JSCInlines.h"
 #include "LazyPropertyInlines.h"
 
-#if ENABLE(AOT)
 #include "AOTRuntimeHooks.h"
-#endif
 
 namespace JSC {
 

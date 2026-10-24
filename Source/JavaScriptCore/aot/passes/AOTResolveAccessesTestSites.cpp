@@ -438,7 +438,7 @@ static std::optional<ValueSite> findAccessBehindSlotTest(FunctionPassContext& co
             return std::nullopt;
         if (value.opcode == Opcode::PutSlot && isDefinedInBlockBefore(block, index, value.valueOperand()))
             return std::nullopt;
-        if (value.opcode == Opcode::GetSlot && (value.holdsDeclaredType() || !(context.program.typeOf(function, id).primitives & Primitive::Undefined)))
+        if (value.opcode == Opcode::GetSlot && value.holdsDeclaredType())
             return std::nullopt;
         return ValueSite { filled, index, id };
     }
@@ -467,7 +467,18 @@ static Vector<AccessBehindSlotTest> findAccessesBehindSlotTests(FunctionPassCont
     return sites;
 }
 
-static std::optional<PropertyAccessPlan> planEmptySlotCase(FunctionPassContext& context, const Value& slotTest, bool isStore, bool functionStoresField)
+namespace {
+
+struct EmptySlotCases {
+    // More than one where the receivers have several methods of the name: each plan lists the receivers that have its method.
+    Vector<PropertyAccessPlan, 1> plans;
+    // The last plan is for all that the others leave.
+    bool lastTakesRest { true };
+};
+
+} // anonymous namespace
+
+static EmptySlotCases planEmptySlotCases(FunctionPassContext& context, const Value& slotTest, const Type& typeOfRead, bool isStore, bool functionStoresField)
 {
     PropertyAccessContext accessContext { context.program, &context.inputs.flow };
     std::span<const LayoutID> receivers = context.program.at(slotTest.receivers()).members;
@@ -476,31 +487,54 @@ static std::optional<PropertyAccessPlan> planEmptySlotCase(FunctionPassContext& 
     if (isStore) {
         std::optional<LazyFieldCreation> creation = handlesLazyFields ? planLazyFieldCreation(accessContext, receivers, slotTest.key()) : std::nullopt;
         if (!creation)
-            return std::nullopt;
+            return { };
         plan.operation = creation->operation;
         plan.storedValueFits = true;
         plan.requiredProofs = creation->proofs;
         plan.conditions = WTF::move(creation->conditions);
-        return plan;
+        return { { WTF::move(plan) }, true };
     }
     OptionSet<OptionKind> kinds;
     if (readsOptionsLeftOutAsUndefined(context))
         kinds.add(OptionKind::RecordOption);
     if (handlesLazyFields && functionStoresField)
         kinds.add(OptionKind::LazilyInitializedField);
-    std::optional<TestsOfEmptySlot> needed = kinds.isEmpty() ? std::nullopt : testsThatOptionLeftOutReadsAsUndefined(accessContext, receivers, slotTest.key(), kinds);
-    if (!needed)
-        return std::nullopt;
-    plan.requiredProofs = needed->proofs;
-    plan.conditions = WTF::move(needed->conditions);
-    return plan;
+    bool admitsUndefined = !!(typeOfRead.primitives & Primitive::Undefined);
+    std::optional<TestsOfEmptySlot> needed = kinds.isEmpty() || !admitsUndefined ? std::nullopt : testsThatOptionLeftOutReadsAsUndefined(accessContext, receivers, slotTest.key(), kinds);
+    if (needed) {
+        plan.requiredProofs = needed->proofs;
+        plan.conditions = WTF::move(needed->conditions);
+        return { { WTF::move(plan) }, true };
+    }
+    MethodsAboveEmptySlot above = findMethodsAboveEmptySlot(accessContext, receivers, slotTest.key());
+    EmptySlotCases cases { { }, above.areAllReceivers };
+    // The classes of the module in which the read is written come first.
+    ModuleID module = context.function.module;
+    std::ranges::stable_partition(above.methods, [&](const MethodAboveEmptySlot& method) {
+        return std::ranges::any_of(method.layouts, [&](LayoutID layout) {
+            return context.program.at(layout).module == module;
+        });
+    });
+    for (MethodAboveEmptySlot& method : above.methods) {
+        if (cases.plans.size() == context.limit(LimitID::MaxDispatchCases) || !Type::forFunction(method.method).isSubsetOf(typeOfRead, context.program)) {
+            cases.lastTakesRest = false;
+            continue;
+        }
+        PropertyAccessPlan planOfMethod;
+        planOfMethod.form = AccessForm::Method;
+        planOfMethod.member.method = method.method;
+        planOfMethod.receivers = WTF::move(method.layouts);
+        planOfMethod.requiredProofs = method.proofs;
+        planOfMethod.conditions = WTF::move(method.conditions);
+        cases.plans.append(WTF::move(planOfMethod));
+    }
+    return cases;
 }
 
-static void addEmptySlotCase(FunctionPassContext& context, IRBuilder& builder, SiteExpansion& expansion, const AccessBehindSlotTest& site, const Value& slotTest, const PropertyAccessPlan& plan, bool isStore)
+static void addEmptySlotCase(FunctionPassContext& context, IRBuilder& builder, SiteExpansion& expansion, const AccessBehindSlotTest& site, const Value& slotTest, const EmptySlotCases& cases, bool isStore)
 {
+    std::span<const PropertyAccessPlan> plans = cases.plans.span();
     Function& function = context.function;
-    AccessTests tests = createAccessTests(context, plan, { slotTest.objectOperand(), { }, { slotTest.key(), slotTest.receivers(), slotTest.level(), { } } });
-
     BlockFrequency frequency = function.at(site.test).frequency;
     Target leaves = function.at(site.test).terminator.notTaken();
     expansion.begin(site.access);
@@ -514,34 +548,55 @@ static void addEmptySlotCase(FunctionPassContext& context, IRBuilder& builder, S
     BlockID empty = builder.addBlock(frequency);
     builder.moveToEndOf(empty);
     builder.setOrigin(slotTest.origin());
-    Vector<ValueID, 4> guards;
-    if (slotTest.guardOperand())
-        guards.append(slotTest.guardOperand());
-    for (Value& test : tests.tests) {
-        if (slotTest.guardOperand() && OperandPosition::guard(test.opcode))
-            test.setGuardOperand(slotTest.guardOperand());
-        ValueID passed = builder.append(WTF::move(test));
-        if (isStore) {
-            IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(passed, 0, frequency, frequency, { { }, Target(leaves) });
-            guards.append(branch.provenOnTaken);
-            builder.moveToEndOf(branch.taken);
-            continue;
+    for (const PropertyAccessPlan& plan : plans) {
+        BlockID others;
+        bool isLast = &plan == &plans.back();
+        if (!isLast || !cases.lastTakesRest) {
+            ValueID hasMethod = builder.append(makeTypeTest(slotTest.objectOperand(), context.types.intern(Type::forLayouts(plan.receivers.span(), context.types))));
+            BlockID mine = builder.addBlock(frequency);
+            if (!isLast)
+                others = builder.addBlock(frequency);
+            builder.emitBranch(hasMethod, Target { mine, { }, { } }, isLast ? Target(leaves) : Target { others, { }, { } });
+            builder.moveToEndOf(mine);
         }
-        BlockID next = builder.addBlock(frequency);
-        builder.emitBranch(passed, Target { next, { }, { } }, Target(leaves));
-        builder.moveToEndOf(next);
+        AccessTests tests = createAccessTests(context, plan, { slotTest.objectOperand(), { }, { slotTest.key(), slotTest.receivers(), slotTest.level(), { } } });
+        Vector<ValueID, 4> guards;
+        if (slotTest.guardOperand())
+            guards.append(slotTest.guardOperand());
+        for (Value& test : tests.tests) {
+            if (slotTest.guardOperand() && OperandPosition::guard(test.opcode))
+                test.setGuardOperand(slotTest.guardOperand());
+            ValueID passed = builder.append(WTF::move(test));
+            if (isStore) {
+                IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(passed, 0, frequency, frequency, { { }, Target(leaves) });
+                guards.append(branch.provenOnTaken);
+                builder.moveToEndOf(branch.taken);
+                continue;
+            }
+            BlockID next = builder.addBlock(frequency);
+            builder.emitBranch(passed, Target { next, { }, { } }, Target(leaves));
+            builder.moveToEndOf(next);
+        }
+        if (isStore) {
+            Value store(plan.operation);
+            store.setObjectOperand(original.objectOperand());
+            if (!guards.isEmpty())
+                store.setGuardOperand(guards.size() == 1 ? guards[0] : builder.appendAllGuards(guards.span()));
+            store.setValueOperand(original.valueOperand());
+            setSlotStamp(store, { original.key(), original.receivers(), original.level(), original.accessSite() });
+            builder.append(WTF::move(store));
+            expansion.finishArmWithoutResult();
+        } else if (plan.form == AccessForm::Method) {
+            // Whoever compares it with another read of the member finds the same closure.
+            Value closure = IRBuilder::make(Opcode::NewClosure);
+            closure.setFunction(plan.member.method);
+            closure.setIsHeldByClosureTable(true);
+            expansion.finishArm(expansion.append(WTF::move(closure)));
+        } else
+            expansion.finishArm(expansion.append(IRBuilder::make(Opcode::Undefined)));
+        if (others)
+            builder.moveToEndOf(others);
     }
-    if (isStore) {
-        Value store(plan.operation);
-        store.setObjectOperand(original.objectOperand());
-        if (!guards.isEmpty())
-            store.setGuardOperand(guards.size() == 1 ? guards[0] : builder.appendAllGuards(guards.span()));
-        store.setValueOperand(original.valueOperand());
-        setSlotStamp(store, { original.key(), original.receivers(), original.level(), original.accessSite() });
-        builder.append(WTF::move(store));
-        expansion.finishArmWithoutResult();
-    } else
-        expansion.finishArm(expansion.append(IRBuilder::make(Opcode::Undefined)));
     expansion.end();
     builder.redirectEdge(Edge { site.test, 1 }, Target { empty, { }, { } });
 }
@@ -567,10 +622,10 @@ PassOutcome addEmptySlotCases(FunctionPassContext& context)
     for (const AccessBehindSlotTest& site : sites | std::views::reverse) {
         Value slotTest = function.at(function.at(site.test).values.last());
         bool isStore = function.at(site.access.value).opcode == Opcode::PutSlot;
-        std::optional<PropertyAccessPlan> plan = planEmptySlotCase(context, slotTest, isStore, storedKeys.contains(slotTest.key().index() + 1));
-        if (!plan)
+        EmptySlotCases cases = planEmptySlotCases(context, slotTest, context.program.typeOf(function, site.access.value), isStore, storedKeys.contains(slotTest.key().index() + 1));
+        if (cases.plans.isEmpty())
             continue;
-        addEmptySlotCase(context, builder, expansion, site, slotTest, *plan, isStore);
+        addEmptySlotCase(context, builder, expansion, site, slotTest, cases, isStore);
         outcome = PassOutcome::Changed;
     }
     return outcome;

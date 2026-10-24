@@ -63,7 +63,6 @@ static std::optional<uint32_t> indexOfCalledOperand(const Program& program, cons
     return call.numberOfOperands() - call.argumentsOperands().size() + called->argumentIndex();
 }
 
-// `call` and Reflect.apply throw an error of their own for a callee that is no function, so they pass the call on for a proven function only.
 Vector<CalledOperandTest> planTestsOfCalledOperands(FunctionPassContext& context)
 {
     const Program& program = context.program;
@@ -114,7 +113,6 @@ void emitTestsOfCalledOperands(FunctionPassContext& context, std::span<const Cal
     }
 }
 
-// A CallBuiltin is no tail call, so a call that has to stay one would go on calling the function object of the built-in.
 Vector<ForwardedTailCall> planForwardedTailCalls(FunctionPassContext& context)
 {
     const Function& function = context.function;
@@ -158,7 +156,6 @@ void rewriteForwardedTailCalls(FunctionPassContext& context, std::span<const For
 
 static constexpr size_t maxArgumentsPassedOnByCount = 4;
 
-// apply reads the length and the elements of its list, and hands the object itself to nobody.
 static bool isListOfApply(const Program& program, const Function& function, const Use& use)
 {
     const Value& call = function.at(use.user);
@@ -169,7 +166,6 @@ static bool isListOfApply(const Program& program, const Function& function, cons
     return numberOfArguments > indexOfListAmongArguments && use.operandIndex == call.numberOfOperands() - numberOfArguments + indexOfListAmongArguments;
 }
 
-// The blocks from whose end the block can be entered: itself among them only if it lies in a cycle.
 static BitVector blocksThatLeadTo(const CFG& cfg, BlockID block)
 {
     BitVector leading(cfg.numNodes());
@@ -183,7 +179,6 @@ static BitVector blocksThatLeadTo(const CFG& cfg, BlockID block)
     return leading;
 }
 
-// On every way to the call nothing but reads of the object and lists made from it have taken it, so no element and no length of it was changed.
 static bool holdsWhatWasPassed(FunctionPassContext& context, ValueID arguments, const ValueSite& call)
 {
     const Function& function = context.function;
@@ -227,7 +222,6 @@ Vector<CallOfOwnArguments> planCallsOfOwnArguments(FunctionPassContext& context)
         std::optional<ForwardedCallPlan> plan = planForwardedCall(context.program, function, call);
         if (!plan || !plan->list || function.at(plan->list).opcode != Opcode::CreateUnmappedArguments)
             return;
-        // Without parameters the hidden rest list is every argument, and SinkAllocations passes it on as it is.
         size_t numberOfParameters = function.at(plan->list).parametersOperands().size();
         if (!numberOfParameters || numberOfParameters > maxArgumentsPassedOnByCount)
             return;
@@ -238,7 +232,6 @@ Vector<CallOfOwnArguments> planCallsOfOwnArguments(FunctionPassContext& context)
     return calls;
 }
 
-// Nothing but calls of apply takes the object, so nobody misses it where none of them needs it.
 static bool isTakenByApplyAlone(FunctionPassContext& context, ValueID arguments)
 {
     if (context.analyses.useLists().useCount(context.function.at(arguments).restOperand()) != 1)
@@ -248,7 +241,6 @@ static bool isTakenByApplyAlone(FunctionPassContext& context, ValueID arguments)
     });
 }
 
-// Where no more arguments were passed than there are parameters, they all have names, and the call takes them without the object and without a list of them.
 static void passOnOwnArgumentsByCount(SiteExpansion& expansion, const CallOfOwnArguments& call, bool isTakenByApplyAlone)
 {
     IRBuilder& builder = expansion.builder();
@@ -289,7 +281,6 @@ static void passOnOwnArgumentsByCount(SiteExpansion& expansion, const CallOfOwnA
         Value appendElements = IRBuilder::make(Opcode::AppendElements, { list, rest });
         appendElements.setGuardOperand(branch.provenOnTaken);
         builder.append(WTF::move(appendElements));
-        // It stays a call of apply, so a tail call stays one. What resolves the call finds a list that is an array.
         ValueID passedOn = expansion.appendOriginal();
         Value& apply = function.edit(passedOn);
         for (uint32_t index = 0; index < apply.numberOfOperands(); ++index) {

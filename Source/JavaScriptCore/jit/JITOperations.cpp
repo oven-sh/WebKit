@@ -41,7 +41,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "Debugger.h"
 #include "EnsureStillAliveHere.h"
 #include "ExceptionFuzz.h"
-#include "ExceptionHelpers.h"
 #include "FrameTracers.h"
 #include "GetterSetter.h"
 #include "ICStats.h"
@@ -287,7 +286,7 @@ JSC_DEFINE_JIT_OPERATION(operationThrowIteratorResultIsNotObject, void, (JSGloba
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    throwTypeError(globalObject, scope, IteratorResultNotObjectError);
+    throwTypeError(globalObject, scope, "Iterator result interface is not an object."_s);
     OPERATION_RETURN(scope);
 }
 

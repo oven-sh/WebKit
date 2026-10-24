@@ -48,9 +48,7 @@
 #include "JSBigInt.h"
 #include "JSCJSValueBigInt.h"
 
-#if ENABLE(AOT)
 #include "AOTCellFormat.h"
-#endif
 #include "BigIntObject.h"
 #include "JSCJSValueInlines.h"
 #include "JSObjectInlines.h"

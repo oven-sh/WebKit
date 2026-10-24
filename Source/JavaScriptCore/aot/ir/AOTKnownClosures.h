@@ -11,7 +11,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The value an operation hands on unchanged: the operand of a cast, of a request, of the operations that finish a literal or a class.
 ValueID sameValueOperandOf(const Value&);
 ValueID definitionThroughSameValues(const Function&, ValueID);
 

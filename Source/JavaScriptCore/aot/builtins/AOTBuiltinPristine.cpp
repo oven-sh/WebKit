@@ -13,7 +13,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-// The aspects that a test answers and a guard keeps. Only a type says that an object stays as created.
 static constexpr PristineAspectSet guardedAspects { PristineAspects::Storage, PristineAspects::Names };
 
 std::optional<Receiver> receiverWithTestedStructure(BuiltinClassID builtinClass)
