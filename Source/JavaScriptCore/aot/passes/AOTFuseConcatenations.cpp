@@ -570,6 +570,14 @@ Vector<MergedString, 4> ConcatenationFuser::findMergedStrings()
         const Block& block = m_function.at(string.block);
         if (block.role != BlockRole::Ordinary || isEnteredFromDeadBlock.quickGet(string.block.index()))
             return false;
+        // What a block makes is there behind its end: neither at its head, where its handler is handed its arguments, nor in the handler.
+        if (block.handler) {
+            const Dominators& dominators = m_context.analyses.dominators();
+            for (const Use& use : uses.usesOf(string.parameter)) {
+                if (use.block == string.block ? use.kind == Use::Kind::HandlerArgument : !dominators.terminatorDominates(string.block, use.block))
+                    return false;
+            }
+        }
         for (Edge edge : cfg.incomingEdges(string.block)) {
             const Target& target = targetOf(m_function, edge);
             if (edge.isHandlerEdge() || string.parameterIndex >= target.arguments.size())

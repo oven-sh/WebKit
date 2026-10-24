@@ -646,7 +646,12 @@ void rewriteTestedPropertyAccess(TestSiteRewriter& rewriter)
     AccessOperands operands = operandsOfNamedAccess(access);
     operands.guard = rewriter.guard();
 
-    PropertyAccessPlan plan = planBehindTests(context, *query, testsWithoutStoredValueTest(rewriter, operands.stored));
+    std::span<const Value> receiverTests = testsWithoutStoredValueTest(rewriter, operands.stored);
+    // The receiver is by now what passed its test, and no cast leads from there to the allocation. The test still names what the report asked about.
+    if (!receiverTests.empty() && receiverTests[0].opcode == Opcode::TypeTest)
+        query->isListedByAllocation = isAllocationListing(program, rewriter.function(), receiverTests[0].operand(testedOperandIndex), query->key);
+
+    PropertyAccessPlan plan = planBehindTests(context, *query, receiverTests);
     RELEASE_ASSERT(plan.isResolved());
     RELEASE_ASSERT(plan.receiverTest == ReceiverTest::None);
     ASSERT(testsCoverPlan(rewriter.tests(), plan, query->key));
