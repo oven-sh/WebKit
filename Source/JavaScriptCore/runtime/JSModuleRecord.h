@@ -108,6 +108,9 @@ public:
     Resolution resolveImportWithSlot(JSGlobalObject*, const Identifier& localName, unsigned& importSlot);
     JSModuleEnvironment* fillImportSlot(JSGlobalObject*, unsigned index);
     std::optional<ModuleProgramExecutable::ImportedBindings> importedBindings(JSGlobalObject*);
+#if USE(BUN_JSC_ADDITIONS)
+    String liveImports(JSGlobalObject*); // See ModuleProgramExecutable::liveImports().
+#endif
     // Whether every import binding of this record is at the same place for `executable`'s code as for the record it
     // was linked for (its linker): the same slot, and the same variable of a module with the same source (or, for an
     // exporter that is not a source text module, at the same offset).

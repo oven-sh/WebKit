@@ -231,11 +231,19 @@ void WebAssemblyModuleRecord::initializeImports(JSGlobalObject* globalObject, JS
 
             AbstractModuleRecord* importedRecord = resolution.moduleRecord;
 #if USE(BUN_JSC_ADDITIONS)
-            // The snapshot below reads the binding's slot directly, so a lazy export has to be filled in first.
-            SyntheticModuleRecord::materializeLazyExport(globalObject, importedRecord, resolution.localName);
+            bool isLiveExport = resolution.isLiveExport(vm);
+            if (isLiveExport) [[unlikely]] {
+                // As in JSModuleEnvironment::getOwnPropertySlot().
+                value = importedModule == importedRecord ? importedRecord->getLiveExport(globalObject, resolution.localName) : importedRecord->getReexportedLiveExport(globalObject, resolution.localName);
+            } else {
+                // The snapshot below reads the binding's slot directly, so a lazy export has to be filled in first.
+                SyntheticModuleRecord::materializeLazyExport(globalObject, importedRecord, resolution.localName);
+            }
             RETURN_IF_EXCEPTION(scope, void());
-#endif
+            JSModuleEnvironment* importedEnvironment = isLiveExport ? nullptr : importedRecord->moduleEnvironmentMayBeNull();
+#else
             JSModuleEnvironment* importedEnvironment = importedRecord->moduleEnvironmentMayBeNull();
+#endif
             // It means that target module is not linked yet. In wasm loading, we allow this since we do not solve cyclic resolution as if JS's bindings.
             // At that time, error occurs since |value| is an empty, and later |value| becomes an undefined.
             // https://github.com/WebAssembly/esm-integration/tree/master/proposals/esm-integration#js---wasm-cycle-where-js-is-higher-in-the-module-graph
