@@ -7356,7 +7356,11 @@ Node* ByteCodeParser::load(
     
     UniquedStringImpl* uid = m_graph.identifiers()[identifierNumber];
     
-    if (JSObject* knownBase = unwrapped->dynamicCastConstant<JSObject*>()) {
+    // A PutByVariant is here for its setter. Whether a put reaches a setter depends on the receiver's Structure::hasImmutableProperties(),
+    // and a condition on uid goes on holding when JSObject::makePropertiesImmutable() changes that: the structure check stays.
+    constexpr bool conditionCanReplaceStructureCheck = !std::is_same_v<VariantType, PutByVariant>;
+
+    if (JSObject* knownBase = unwrapped->dynamicCastConstant<JSObject*>(); knownBase && conditionCanReplaceStructureCheck) {
         // Try to optimize away the structure check. Note that it's not worth doing anything about this
         // if the base's structure is watched.
         Structure* structure = unwrapped->constant()->structure();
