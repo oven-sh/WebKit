@@ -52,8 +52,20 @@ VMPropertyCaches::VMPropertyCaches(VM& vm)
     , m_front(vm, *vm.aotState().caches, m_customAccessors)
     , m_hashedTable(vm, *vm.aotState().caches, m_customAccessors)
 {
-    // A filter names Structures by their numbers, and the number of one that has ended goes to another.
-    vm.aotState().caches->addClearedEachCollection("absence filters"_s, asWritableBytes(std::span { m_absenceFilters }));
+    vm.aotState().caches->add(CacheKind::WeakByKey, "absence filters"_s, *this);
+}
+
+// A filter names its Structure by its number, and the number of one that has ended goes to another.
+size_t VMPropertyCaches::removeDeadEntries(VM& vm, CollectionScope)
+{
+    size_t numberRemoved = 0;
+    for (AbsenceFilter& filter : m_absenceFilters) {
+        if (!filter.structureID || vm.heap.isMarked(std::bit_cast<StructureID>(filter.structureID).decode()))
+            continue;
+        filter = { };
+        ++numberRemoved;
+    }
+    return numberRemoved;
 }
 
 VMPropertyCaches::~VMPropertyCaches()

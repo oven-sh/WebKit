@@ -143,6 +143,10 @@ static MemberAnswer findFromClassObject(const PropertyAccessContext& context, co
             return walked;
         }
 
+        // The run time expects Function.prototype above a constructor function. Where the program itself puts something else there, the guard of the link never holds.
+        if (layout.has(LayoutFlags::IsConstructorFunction) && classFlow.staticLink != MemberMutability::Fixed && context.flow && context.flow->closuresAreRelinkedByProgram(layout.constructor))
+            return MemberAnswer::unknown(UnprovenCause::PrototypeChanged);
+
         NextHolder next = nextHolderOf(program, current, ClassSide::Static, walked.conditions);
         switch (next.step) {
         case ChainStep::Unknown:

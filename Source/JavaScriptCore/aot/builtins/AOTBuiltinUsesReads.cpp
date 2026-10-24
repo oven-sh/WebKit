@@ -154,6 +154,19 @@ static bool isClosureAsCreated(const BuiltinUseInputs& inputs, const MemberSite&
     });
 }
 
+// The read by name finds the member, and the test of what it has found costs less than a test of the closure that fails every time.
+static bool isClosureChangedByProgram(const BuiltinUseInputs& inputs, const MemberSite& site)
+{
+    if (site.start.builtinClass != BuiltinClasses::Function)
+        return false;
+    const Type& receiver = receiverTypeAt(inputs, site);
+    if (receiver.anyFunction || !receiver.classes.isEmpty() || receiver.functions.isEmpty())
+        return false;
+    return std::ranges::all_of(receiver.functions, [&](FunctionID function) {
+        return inputs.flow.closuresAreChangedByProgram(function);
+    });
+}
+
 static void addReceiverRequirements(const BuiltinUseInputs& inputs, const MemberSite& site, ProgramPoint point, BuiltinUsePlan& plan, bool& isPossible)
 {
     const BuiltinTable& table = inputs.program.builtins();
@@ -167,7 +180,7 @@ static void addReceiverRequirements(const BuiltinUseInputs& inputs, const Member
     if (isInherited && !isClosureAsCreated(inputs, site)) {
         PristineRequirement names { site.start.builtinClass, aspectThatFindsMember(table, site.start.builtinClass, site.answer.member) };
         if (pristineProofOf(inputs.pristine(), site.receiver, names, point) != PristineProof::Proven) {
-            if (pristineTestOf(table, names.builtinClass) == PristineTest::NeverPasses) {
+            if (pristineTestOf(table, names.builtinClass) == PristineTest::NeverPasses || isClosureChangedByProgram(inputs, site)) {
                 isPossible = false;
                 return;
             }

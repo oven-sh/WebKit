@@ -1302,6 +1302,13 @@ static void testAbsenceFilterNamesWhatStopsStores(LoadedProgram& program)
     above->putDirect(vm, label, jsNumber(1));
     AOT_TEST_CHECK(validFilterOf(below) == ofBelow && ofBelow->letsStoresPass(*number) && !tables.wasChangedOnSomeChain(*number));
 
+    // A filter lasts as long as its Structure: nothing files it anew for a store that the tables answer.
+    for (CollectionScope scope : { CollectionScope::Eden, CollectionScope::Full }) {
+        vm.heap.collectSync(scope);
+        ensureStillAliveHere(below);
+        AOT_TEST_CHECK(validFilterOf(below) == ofBelow && ofBelow->letsStoresPass(*number));
+    }
+
     // What the lowest object has itself is nothing to a store that has found that the object lacks the name.
     JSObject* owner = constructEmptyObject(realm);
     owner->putDirect(vm, label, jsNumber(1), static_cast<unsigned>(PropertyAttribute::ReadOnly));

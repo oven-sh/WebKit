@@ -236,7 +236,7 @@ function f24 name="catchesHelper" parameters=[{type=anything}] results=[{type=an
     v2 = CatchValue
     Return v2
 }
-# CHECK: f24: barrier=None bytes=[[b26]]{{*}} handlers=[b0]
+# CHECK: f24: barrier=None bytes=[[b26]]
 
 function f25 name="endsInTailCall" parameters=[{type=number}] results=[{type=number}] {
   b0(v0: number):

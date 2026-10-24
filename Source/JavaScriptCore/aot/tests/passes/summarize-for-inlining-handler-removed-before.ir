@@ -24,7 +24,6 @@ function f1 name="tryAroundTest" parameters=[{type=anything}] results=[{type=any
     Return v2
 }
 # CHECK: f1: barrier=None
-# CHECK-NOT: handlers=
 
 function f2 name="tryAroundCall" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything) handler=b2():
@@ -36,7 +35,7 @@ function f2 name="tryAroundCall" parameters=[{type=anything}] results=[{type=any
     v2 = CatchValue
     Return v2
 }
-# CHECK: f2: barrier=None {{*}} handlers=[b0]
+# CHECK: f2: barrier=None
 
 # CHECK-LABEL: function f1 name="tryAroundTest"
 # CHECK-NOT: handler=

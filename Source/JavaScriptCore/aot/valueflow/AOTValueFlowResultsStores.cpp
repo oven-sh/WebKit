@@ -1023,6 +1023,8 @@ void StoresByLayout::noteWritesInto(ValueSetMaker& maker, LayoutID layout, const
         bool isFilledByAllocation = field && fieldAt(m_inputs.program, *field).flags.contains(FieldFlags::IsRequired);
         note(maker, stores, name, writes.value, isFilledByAllocation, false);
         noteNumbers(stores, name, writes.numbers);
+        if (name.kind == ValueFlowNameKind::Property)
+            stores.underKey.add(name.payload, StoredUnderKey { }).iterator->value.isGivenValueByOperation = true;
         return;
     }
     if (writes.familyOfReceiver != UINT32_MAX && !admits(m_inputs.program.at(LayoutSetID(writes.familyOfReceiver)).members.span(), layout))

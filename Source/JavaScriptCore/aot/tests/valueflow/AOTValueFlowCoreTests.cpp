@@ -1504,11 +1504,56 @@ static void whatAShorterWayOfARuleLeavesOutIsFound()
     }
 }
 
+static std::atomic<unsigned> runsOfStatementThatAsksLast;
+
+static void whatIsAskedLastIsAnsweredWhenNothingElseIsDue()
+{
+    static constexpr uint32_t numberOfObjects = 12;
+    ValueFlowStatement statements[2];
+    statements[0].function = statements[1].function = FunctionID(0u);
+    statements[0].result = ValueFlowNodeID(0u);
+    statements[1].result = ValueFlowNodeID(1u);
+    ValueFlowBodyRange ranges[2];
+    ranges[1].statement = ranges[1].statementLeavingBody = 2;
+
+    ValueFlowSolverInput input;
+    input.numberOfNodes = 2;
+    input.statements = statements;
+    input.ranges = ranges;
+
+    // The first statement gives its node one more member a round. The second takes all that the node holds.
+    ValueFlowRule rule = [](const ValueFlowStatement& statement, ValueFlowRuleContext& context) {
+        ValueFlowNodeID growing(0u);
+        if (statement.result == growing) {
+            uint32_t held = 0;
+            context.forEachMember(context.valueOf(growing), [&](ValueFlowObjectID) {
+                ++held;
+            });
+            if (held < numberOfObjects)
+                context.add(growing, context.maker().of(ValueFlowObjectID(held)));
+            return;
+        }
+        ++runsOfStatementThatAsksLast;
+        context.add(statement.result, context.valueWithinAskedLast(ClimbingSet(context.maker().ofRange(ValueFlowObjectID(0u), ValueFlowObjectID(numberOfObjects))), growing));
+    };
+    for (unsigned numberOfThreads : { 1u, 4u }) {
+        ParallelLoops loops(numberOfThreads);
+        ValueSets sets(numberOfObjects);
+        runsOfStatementThatAsksLast = 0;
+        ValueFlowSolver solver(input, sets, rule, loops, ValueFlowSolver::Rounds::DueWithoutCheck);
+        AOT_TEST_CHECK(solver.solve());
+        AOT_TEST_CHECK(sets.size(solver.valueOf(statements[0].result)) == numberOfObjects);
+        AOT_TEST_CHECK(solver.valueOf(statements[1].result) == solver.valueOf(statements[0].result));
+        AOT_TEST_CHECK(solver.rounds().size() > numberOfObjects);
+        AOT_TEST_CHECK(runsOfStatementThatAsksLast == 2);
+    }
+}
+
 #define FOR_EACH_AOT_VALUE_FLOW_CORE_TEST(v) \
     v(valueSetsAgreeWithPlainSets) v(valueSetsOfFewAndOfManyBlocksAgreeWithPlainSets) v(valueSetsOfSeveralGroupsOfBlocksAgreeWithPlainSets) v(valueSetsOfBothFormsAgreeWithPlainSets) v(valueSetsAreTheSameFromEveryThread) v(sampleOfBlocksDependsOnTheMembersAlone) v(valueFlowGraphFindsTheLeastSolution) v(workOfTheGraphDoesNotHangOnTheOrderOfTheEdges) \
     v(masksTreatPlaceholdersByTheirKind) v(nodesThatPlaceholdersCoverAreRetired) v(theCallerMayConnectWhatLeadsIntoRetiredNodes) v(whatACoveredNodeHoldsIsNotSentToItAgain) \
     v(valueFlowGraphSolvesLongChainsAndWideLevelsOnThreads) v(valueFlowRoundsAgreeWithAnAnalysisObjectByObject) v(whatATurnMakesAndReachesRunsInThatTurn) \
-    v(valueFlowSolveStopsAtTheLimitOnLoggedEdges) v(valueFlowSolverFindsObjectsOutsideDeclaredTypes) v(whatAShorterWayOfARuleLeavesOutIsFound)
+    v(valueFlowSolveStopsAtTheLimitOnLoggedEdges) v(valueFlowSolverFindsObjectsOutsideDeclaredTypes) v(whatAShorterWayOfARuleLeavesOutIsFound) v(whatIsAskedLastIsAnsweredWhenNothingElseIsDue)
 
 std::span<const NativeTest> valueFlowCoreTests()
 {

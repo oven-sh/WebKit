@@ -277,8 +277,6 @@ private:
     {
         for (BlockID id : m_analyses.cfg().reversePostOrder()) {
             const Block& block = m_function.at(id);
-            if (block.handler && m_function.at(block.handler->block).role != BlockRole::IterationCleanup)
-                summary.blocksWithHandlers.set(id.index());
             if (hasOperationBoundToFrame(m_function, block))
                 summary.blocksBoundToFrame.set(id.index());
             if (block.terminator.kind == TerminatorKind::Return && !block.terminator.valueOperand())
@@ -801,7 +799,6 @@ void InliningSummaries::dump(PrintStream& out, const Program& program) const
         if (summary.neverReturns)
             out.print(" neverReturns");
         dumpIndices(out, " boundToFrame=["_s, "b"_s, summary.blocksBoundToFrame);
-        dumpIndices(out, " handlers=["_s, "b"_s, summary.blocksWithHandlers);
         if (summary.hasBareReturn)
             out.print(" bareReturn");
         if (summary.isWrapper)

@@ -24,6 +24,8 @@ struct FlowPositionUpdate {
     TypeID type;
     // Whatever arrives lies inside the type of the position.
     bool isProven { false };
+    // Of a position that is not proven: the type is all that arrives, and holds objects that were not expected of the position.
+    bool replacesExpectation { false };
     // Of a position that something arrives at and that is not proven: what took the proof away, and where.
     UnprovenCause cause { UnprovenCause::Unknown };
     Witness witness { noWitness };

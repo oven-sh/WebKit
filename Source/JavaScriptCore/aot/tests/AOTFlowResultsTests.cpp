@@ -293,9 +293,37 @@ static void flowResultsFindChangedClosures()
     }
 }
 
+static bool closuresInheritFromFunctionPrototype(const TestProgram& test, Vector<AllocationClass>&& classes, FunctionID function, PropertyKeyID key)
+{
+    FlowResultTables tables = createTables(test);
+    tables.sites.allocationClasses.appendVector(WTF::move(classes));
+    return FlowResults(WTF::move(tables)).closuresInheritFromFunctionPrototype(function, key);
+}
+
+static void flowResultsFindClosuresBelowFunctions()
+{
+    constexpr PropertyKeyID readKey { 2u };
+    constexpr PropertyKeyID otherKey { 3u };
+    auto closuresBelowFunctions = [](Vector<PropertyKeyID>&& namesOnTheWay) {
+        AllocationClass closures = createClosureClass(functionRunOnce, { ObjectMutation::ReachUnknownJavaScript }, WTF::move(namesOnTheWay), true);
+        closures.inheritsFromListedFunctions = true;
+        return closures;
+    };
+
+    TestProgram test;
+    addFunctions(test);
+    AOT_TEST_CHECK(!FlowResults().closuresInheritFromFunctionPrototype(functionRunOnce, readKey));
+    AOT_TEST_CHECK(!closuresInheritFromFunctionPrototype(test, { }, functionRunOnce, readKey));
+    AOT_TEST_CHECK(closuresInheritFromFunctionPrototype(test, { closuresBelowFunctions({ }) }, functionRunOnce, readKey));
+    AOT_TEST_CHECK(closuresInheritFromFunctionPrototype(test, { closuresBelowFunctions({ otherKey }) }, functionRunOnce, readKey));
+    AOT_TEST_CHECK(!closuresInheritFromFunctionPrototype(test, { closuresBelowFunctions({ readKey, otherKey }) }, functionRunOnce, readKey));
+    AOT_TEST_CHECK(!closuresInheritFromFunctionPrototype(test, { closuresBelowFunctions({ }) }, unreachedFunction, readKey));
+    AOT_TEST_CHECK(!closuresInheritFromFunctionPrototype(test, { closuresBelowFunctions({ }), createClosureClass(functionRunOnce, { ObjectMutation::ReachUnknownJavaScript }, { }, true) }, functionRunOnce, readKey));
+}
+
 #define FOR_EACH_AOT_FLOW_RESULTS_TEST(v) \
     v(flowResultsWithoutResultsAnswerUnknown) v(flowResultsAnswerFromTheirTables) v(flowResultsKeepAnswersWhenMoved) \
-    v(flowResultsFollowRemovedEntryParameters) v(flowResultsFindChangedClosures)
+    v(flowResultsFollowRemovedEntryParameters) v(flowResultsFindChangedClosures) v(flowResultsFindClosuresBelowFunctions)
 
 std::span<const NativeTest> flowResultsTests()
 {

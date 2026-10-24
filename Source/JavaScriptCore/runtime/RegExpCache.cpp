@@ -83,6 +83,9 @@ RegExp* RegExpCache::lookupOrCreate(VM& vm, const String& patternString, OptionS
 #if ENABLE(AOT)
 void RegExpCache::keepParsedPattern(RegExp* regExp)
 {
+    if (regExp->pattern().length() > maxStrongCacheablePatternLength)
+        return;
+
     if (!m_parsedPatterns) {
         auto patterns = makeUniqueWithoutFastMallocCheck<ParsedPatterns>();
         patterns->fill(nullptr);

@@ -360,6 +360,28 @@ bool FlowResults::closuresInheritFromFunctionPrototype(FunctionID closureFunctio
     });
 }
 
+bool FlowResults::closuresMeetOneOf(FunctionID closureFunction, OptionSet<ObjectMutation> mutations) const
+{
+    const Vector<AllocationClass>& classes = m_tables.sites.allocationClasses;
+    auto closureClasses = std::ranges::equal_range(m_closureClassesByFunction, closureFunction, { }, [&](AllocationClassID id) {
+        return classes[id.index()].closureFunction;
+    });
+    return !closureClasses.empty() && std::ranges::all_of(closureClasses, [&](AllocationClassID id) {
+        const AllocationClass& closures = classes[id.index()];
+        return closures.impossibleMutations.contains(ObjectMutation::ReachUnknownJavaScript) && !closures.impossibleMutations.containsAll(mutations);
+    });
+}
+
+bool FlowResults::closuresAreChangedByProgram(FunctionID closureFunction) const
+{
+    return closuresMeetOneOf(closureFunction, { ObjectMutation::AddProperty, ObjectMutation::RedefineProperty, ObjectMutation::ChangePrototype, ObjectMutation::StoreAfterCreation });
+}
+
+bool FlowResults::closuresAreRelinkedByProgram(FunctionID closureFunction) const
+{
+    return closuresMeetOneOf(closureFunction, { ObjectMutation::ChangePrototype });
+}
+
 const FlowSiteLoss& FlowResults::lossOf(AccessSiteID id) const
 {
     return recordAt(m_tables.sites.accessSiteLosses, id, m_unknown.loss);

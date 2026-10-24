@@ -454,6 +454,8 @@ private:
     Vector<ValueFlowEdge> m_edgesOfSolve;
     Vector<Vector<uint32_t>> m_indicesBySource;
     Vector<Vector<ValueFlowEdge>> m_edgesByTarget;
+    // By part: the edges into covered nodes that send nothing.
+    Vector<Vector<ValueFlowEdge>> m_edgesOnlyToLink;
 
     Vector<std::unique_ptr<Shard>> m_shards;
     std::array<Vector<Message>, 2> m_messages;

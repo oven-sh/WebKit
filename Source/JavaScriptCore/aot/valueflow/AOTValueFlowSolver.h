@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBackgroundTask.h"
 #include "AOTValueFlowGraph.h"
 #include "AOTValueFlowLog.h"
 #include "AOTValueFlowRuleContext.h"
@@ -217,6 +218,9 @@ public:
     // Both answer what the bit was.
     bool set(size_t index) { return WTF::atomicExchangeOr(&m_words[index >> 5], 1u << (index & 31), std::memory_order_relaxed) >> (index & 31) & 1; }
     bool clear(size_t index) { return WTF::atomicExchangeAnd(&m_words[index >> 5], ~(1u << (index & 31)), std::memory_order_relaxed) >> (index & 31) & 1; }
+    // For two bits of which one thread writes the first and reads the second while another does the reverse.
+    bool setInOrder(size_t index) { return WTF::atomicExchangeOr(&m_words[index >> 5], 1u << (index & 31), std::memory_order_seq_cst) >> (index & 31) & 1; }
+    bool clearInOrder(size_t index) { return WTF::atomicExchangeAnd(&m_words[index >> 5], ~(1u << (index & 31)), std::memory_order_seq_cst) >> (index & 31) & 1; }
     void clearAll() { zeroSpan(m_words.mutableSpan()); }
 
 private:
@@ -304,7 +308,7 @@ public:
     std::span<const std::unique_ptr<ValueSetMaker>> makersIdleAfterSolve() const LIFETIME_BOUND { return m_makers.span(); }
     // As the graph holds it: beside a placeholder it may or may not list what the placeholder covers.
     ValueSetID valueOf(ValueFlowNodeID node) const { return m_graph.valueOf(node); }
-    bool isReached(FunctionID function) const { return m_isReached.quickGet(function.index()); }
+    bool isReached(FunctionID function) const { return m_isReached.get(function.index()); }
     OptionSet<BuiltinUse> usesOf(BuiltinID) const;
     // After the solve. What was done through the untracked object counts as done to every object that the analysis has stopped following.
     OptionSet<ObjectMutation> marksOf(ValueFlowObjectID) const;
@@ -601,7 +605,8 @@ private:
     void makeStatementsDue(uint32_t first, uint32_t end);
     void makeEveryStatementDue();
     bool reach(uint32_t body, ValueFlowReachWitness);
-    void takeReachedFunctions();
+    void reachFunctionsFoundBy(Thread&);
+    void makeDueInRunningLoop(Thread&, ValueFlowStatementID);
     void countRunsAndEdges();
     void rememberWhoLoggedTheEdges();
     bool runRules();
@@ -626,6 +631,8 @@ private:
     void takeWhatRulesHaveMade();
     static ValueFlowStatement statementMadeWith(const MadeNodes&);
     void runStatementsMadeBy(Thread&);
+    void runStatementsWokenBy(Thread&);
+    bool isRecordAtRest(uint32_t madeNodes) const { return madeNodes < m_numberOfUsers.size() && !m_numberOfUsers[madeNodes]; }
     uint64_t contentOf(const ValueFlowNodeKey&) const;
     // Behind the last round: the numbers that the threads still hold become nodes that hold nothing, so that every number stands for something.
     void fillNumbersThatNobodyGave();
@@ -642,6 +649,8 @@ private:
     void insert(const NodeToLink&, bool isRead, NodesOfName&);
     void linkNode(const NodeToLink&, bool isRead, Linked&);
     void insertNode(const NodeToLink&, bool isRead);
+    void insertNodesOfShards(const ListWithRoomToFill<NodeToLink>&, bool isRead);
+    void finishInsertionOfNodesThatRead();
     void removeNodesAtRestFrom(Vector<NodeOfSet>&);
     void linkInChunks(bool isRead, unsigned numberOfOtherTasks, NOESCAPE const ScopedLambda<void(unsigned task, unsigned worker)>& otherTask);
     void noteReaders(unsigned shard, ValueSetMaker&);
@@ -668,7 +677,7 @@ private:
     void letGoOf(Vector<uint32_t>&& listsOfUses);
     void makeReadersDue(std::span<const ValueFlowNodeID> moved);
     struct WatchShard;
-    void watch(WatchShard&, ValueFlowNodeID, ValueSetID within, ValueFlowStatementID);
+    void watch(WatchShard&, ValueFlowNodeID, ValueSetID within, ValueFlowStatementID, bool isAskedLast);
     void chainByMember(WatchShard&, uint32_t watchedNode, uint32_t watch);
     void chainSetsWatchedForCover();
     struct NewMemberOfWatchedNode {
@@ -838,7 +847,7 @@ private:
     };
     StepTimes m_stepTimes;
 
-    BitVector m_isReached;
+    ValueFlowSharedBits m_isReached;
     // Whoever runs a statement notes it here, in m_isDue and in m_hasRunInTurn.
     ValueFlowSharedBits m_hasStatementOfBodyRun;
     uint64_t m_numberOfTurn { 0 };
@@ -871,6 +880,10 @@ private:
     Vector<ValueFlowStatementID> m_dueStatementsThatWait;
     ValueFlowSharedBits m_hasRunInTurn;
     Vector<ValueFlowStatementID> m_dueInNextTurn;
+    // Made due by watches of valueWithinAskedLast() alone.
+    mutable ValueFlowSharedBits m_isDueLast;
+    mutable Lock m_lockOfDueLast;
+    mutable Vector<ValueFlowStatementID> m_dueLast;
 
     ListWithRoomToFill<uint32_t> m_firstReaderOfNode;
     ListWithRoomToFill<ValueSetID> m_seenByReadersOfNode;
@@ -896,6 +909,7 @@ private:
     struct Watch {
         ValueSetID within;
         uint32_t firstReader { UINT32_MAX };
+        uint32_t firstReaderAskingLast { UINT32_MAX };
         uint32_t watchedNode { 0 };
     };
     struct WatchedNode {
@@ -1049,6 +1063,10 @@ private:
     };
     ListWithRoomToFill<NodeToLink> m_readToLink;
     ListWithRoomToFill<NodeToLink> m_writtenToLink;
+    // Nobody looks into the tables of the nodes that read before the next round links what writes: they are filled beside the rest of the round.
+    ListWithRoomToFill<NodeToLink> m_readToInsert;
+    std::array<Vector<uint32_t>, numberOfLinkShards> m_nodesToInsertOfShards;
+    RefPtr<BackgroundTask> m_insertionOfNodesThatRead;
 
     Vector<ValueFlowEdge> m_edgesOfRound;
 

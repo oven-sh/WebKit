@@ -161,6 +161,8 @@ public:
     ValueFlowPositionResult resultAt(const DeclaredType&, ValueSetID, DeadZone = DeadZone::MayBeObserved);
     // The same for the set of the node. Counts the position.
     FlowPositionUpdate updateFor(const DeclaredType&, ValueFlowNodeID, DeadZone = DeadZone::MayBeObserved, const ValueFlowNumbers* = nullptr);
+    // Of a position that nobody wrote a type for: layouts are expected of it by the names it is asked for, and other objects arrive. Where all that arrives is known, that is what to expect.
+    void takeWhatArrives(const DeclaredType&, ValueFlowNodeID, FlowPositionUpdate&);
 
     // The layouts of the objects that arrive. None unless the set is complete: no placeholder is left in it, and every object has one of the layouts.
     std::optional<LayoutSet> receiversAt(const Type& family, ValueSetID);

@@ -1,4 +1,4 @@
-# A try puts the blocks it covers among the blocks with handlers, and reading the caught value binds no block to the frame
+# Reading the caught value binds no block to the frame
 # FORM: AsRead
 # RUN: pipeline SummarizeForInlining
 
@@ -29,8 +29,6 @@ function f1 name="catchesValue" parameters=[{type=anything}] results=[{type=anyt
 }
 # CHECK: f1: barrier=None
 # CHECK-NOT: boundToFrame
-# CHECK: handlers=[b1]
-# CHECK-NOT: boundToFrame
 
 function f2 name="catchesExceptionAndValue" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
@@ -49,8 +47,6 @@ function f2 name="catchesExceptionAndValue" parameters=[{type=anything}] results
 }
 # CHECK: f2: barrier=None
 # CHECK-NOT: boundToFrame
-# CHECK: handlers=[b1]
-# CHECK-NOT: boundToFrame
 
 function f3 name="callsWithoutTry" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
@@ -63,5 +59,4 @@ function f3 name="callsWithoutTry" parameters=[{type=anything}] results=[{type=a
     Return v0
 }
 # CHECK: f3: barrier=None
-# CHECK-NOT: handlers=
 # CHECK: f5:

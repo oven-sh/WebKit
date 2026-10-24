@@ -283,6 +283,9 @@ public:
     bool areClosuresAsCreated(FunctionID closureFunction, std::span<const PropertyKeyID> ownKeys) const;
     // A lookup of the key that starts at a closure of the function comes to Function.prototype.
     bool closuresInheritFromFunctionPrototype(FunctionID closureFunction, PropertyKeyID) const;
+    // The program itself stores into the closures of the function, defines something on them or puts them below another object: a test that they are as created fails from then on.
+    bool closuresAreChangedByProgram(FunctionID closureFunction) const;
+    bool closuresAreRelinkedByProgram(FunctionID closureFunction) const;
     const FlowSiteLoss& lossOf(AccessSiteID) const LIFETIME_BOUND;
     bool seesOnlyFinishedObjects(AccessSiteID) const;
     // Such a call enters the target, and its callee is no closure of the target.
@@ -312,6 +315,7 @@ public:
     void dump(PrintStream&, const Program&) const;
 
 private:
+    bool closuresMeetOneOf(FunctionID closureFunction, OptionSet<ObjectMutation>) const;
     friend struct FlowApplyAccess;
 
     struct UnknownRecords {

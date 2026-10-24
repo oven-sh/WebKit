@@ -106,6 +106,8 @@ public:
     bool isReached(FunctionID);
     // What the node holds of the members of `within`, without the normal form. The statement is due again only when that part has moved, however much else arrives at the node.
     ClimbingSet valueWithin(ClimbingSet within, ValueFlowNodeID);
+    // The same, for a part that moves often and seldom changes what the rule says: a statement that nothing else makes due runs again when the rest of the solve has come to rest.
+    ClimbingSet valueWithinAskedLast(ClimbingSet within, ValueFlowNodeID);
     // Whether valueWithin() would answer something. Once it does it does for good: the statement is due again when the first member of the set arrives at the node, and whatever arrives later passes it by.
     bool holdsAnyOf(ClimbingSet within, ValueFlowNodeID);
     // The members of the set that the node does not hold yet.

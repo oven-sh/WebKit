@@ -78,6 +78,7 @@ public:
     void dropChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl* uidOrNull) final;
     bool hasChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl* uidOrNull) const final;
 
+    size_t removeDeadEntries(VM&, CollectionScope);
     void validate(VM&) const;
 
     // An object of some chain that is changed first and reports behind that. A collection may end in between. No compiled code runs there, so validation leaves alone what the report is about to drop.

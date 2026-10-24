@@ -12,8 +12,6 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 inline constexpr OpcodeSet hoistableReadOpcodes { Opcode::GetModuleVariable, Opcode::GetEncodedModuleVariable, Opcode::GetEnvironmentField };
-// Whether a value is truthy never changes.
-inline constexpr OpcodeSet hoistableOpcodes { Opcode::GetModuleVariable, Opcode::GetEncodedModuleVariable, Opcode::GetEnvironmentField, Opcode::ToBoolean };
 
 } } } // namespace JSC::AOT::Typed
 

@@ -93,7 +93,6 @@ struct InliningSummary {
     BitVector headBlocks;
     BitVector noReturnBlocks;
     BitVector blocksBoundToFrame;
-    BitVector blocksWithHandlers;
     BitVector calledParameters;
     BitVector parametersCalledInCycles;
     BitVector iteratedParameters;

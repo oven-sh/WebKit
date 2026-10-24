@@ -1579,8 +1579,12 @@ static void narrowEntryParameters(const ValueFlowResultInputs& inputs, FunctionI
     for (uint32_t index = 0; index < parameters.size(); ++index) {
         if (callers != CallerState::AllKnown && function.entryParameterKind(index) != EntryParameter::Capture)
             continue;
-        if (const DeclaredType* declared = function.declaredEntryParameter(index))
-            parameters[index] = positions.updateFor(*declared, inputs.bodies().nodes().entryParameter(id, index), DeadZone::MayBeObserved, numbers.ofEntryParameter(id, index));
+        const DeclaredType* declared = function.declaredEntryParameter(index);
+        if (!declared)
+            continue;
+        ValueFlowNodeID node = inputs.bodies().nodes().entryParameter(id, index);
+        parameters[index] = positions.updateFor(*declared, node, DeadZone::MayBeObserved, numbers.ofEntryParameter(id, index));
+        positions.takeWhatArrives(*declared, node, parameters[index]);
     }
     if (!std::ranges::all_of(parameters, &FlowPositionUpdate::isEmpty))
         update.entryParameters = WTF::move(parameters);
@@ -1754,7 +1758,7 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
         // An entry parameter has the type of its position, so a proof that says no more than that type puts no cast into the body. In a validating build the cast brings the test of that type.
         size_t parameter = function.at(entryBlock).parameters.find(value);
         const Vector<FlowPositionUpdate>& parameters = application.signatures[id.index()].entryParameters;
-        bool isSaidByPosition = parameter != notFound && parameter < parameters.size() && parameters[parameter].type && types.at(parameters[parameter].type).isSubsetOf(*narrowed, program);
+        bool isSaidByPosition = parameter != notFound && parameter < parameters.size() && parameters[parameter].type && !parameters[parameter].replacesExpectation && types.at(parameters[parameter].type).isSubsetOf(*narrowed, program);
         if (!isSaidByPosition || inputs.build.validates())
             update.proofs.append(FlowValueProof { value, types.intern(*narrowed) });
     };

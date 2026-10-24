@@ -26,6 +26,11 @@ static void applyEntryParameterUpdates(Function& function, std::span<const FlowP
         if (DeclaredType* declared = function.declaredEntryParameter(index))
             applyPosition(*declared, updates[index]);
     }
+    // What a value was expected to be is met with what it is expected to be now, and nothing but the positions has spoken so far.
+    if (function.hasBody() && std::ranges::any_of(updates, &FlowPositionUpdate::replacesExpectation)) {
+        for (Value& value : function.editAllValues())
+            value.setExpected({ });
+    }
 }
 
 static void applyResultUpdates(Function& function, std::span<const FlowPositionUpdate> updates)

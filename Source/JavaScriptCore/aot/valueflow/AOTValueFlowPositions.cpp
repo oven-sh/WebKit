@@ -985,6 +985,20 @@ FlowPositionUpdate ValueFlowPositions::updateFor(const DeclaredType& declared, V
     return update;
 }
 
+void ValueFlowPositions::takeWhatArrives(const DeclaredType& declared, ValueFlowNodeID node, FlowPositionUpdate& update)
+{
+    const Type& expected = m_inputs.program.at(declared.type);
+    if (update.isProven || declared.site || !declared.flags.contains(PositionFlags::IsExpected) || !expected.layouts)
+        return;
+    DeclaredType anything { .type = TypeTable::anything };
+    anything.flags.add(PositionFlags::IsExpected);
+    ValueFlowPositionResult arriving = resultAt(anything, m_inputs.solver().valueOf(node));
+    if (arriving.proof != ValueFlowProof::Proven || !arriving.narrowed || arriving.narrowed->primitives & ~expected.primitives)
+        return;
+    update.type = m_types.intern(*arriving.narrowed);
+    update.replacesExpectation = true;
+}
+
 std::optional<LayoutSet> ValueFlowPositions::receiversAt(const Type& family, ValueSetID set)
 {
     const Program& program = m_inputs.program;

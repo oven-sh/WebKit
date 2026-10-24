@@ -437,6 +437,15 @@ ClimbingSet ValueFlowRuleContext::valueWithin(ClimbingSet within, ValueFlowNodeI
     return restrict(ClimbingValues(m_solver.graph().values()).at(node), within.m_set);
 }
 
+ClimbingSet ValueFlowRuleContext::valueWithinAskedLast(ClimbingSet within, ValueFlowNodeID node)
+{
+    size_t numberWatched = m_log.partsWatched.size();
+    ClimbingSet value = valueWithin(within, node);
+    if (m_log.partsWatched.size() != numberWatched)
+        m_log.partsWatchedLast.append(numberWatched);
+    return value;
+}
+
 bool ValueFlowRuleContext::holdsAnyOf(ClimbingSet within, ValueFlowNodeID named)
 {
     if (within.m_set == ValueSets::nothing)
@@ -531,6 +540,8 @@ ALWAYS_INLINE void ValueFlowRuleContext::logMadeNodesAskedFor(const ValueFlowNod
     if (key.set == ValueSets::nothing && (key.kind == ValueFlowMadeNodeKind::Written || key.kind == ValueFlowMadeNodeKind::CallGroup))
         return;
     m_log.madeNodesAskedFor.append(madeNodes);
+    if ((key.kind == ValueFlowMadeNodeKind::Lookup || key.kind == ValueFlowMadeNodeKind::CallGroup) && m_solver.isRecordAtRest(madeNodes)) [[unlikely]]
+        m_log.askedForAtRest.append(madeNodes);
 }
 
 ValueFlowNodeID ValueFlowRuleContext::nodeFor(const ValueFlowNodeKey& key)

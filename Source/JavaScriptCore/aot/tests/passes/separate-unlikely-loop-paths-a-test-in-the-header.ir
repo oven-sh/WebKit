@@ -1,0 +1,118 @@
+# The header of a loop tests a value that goes around. The loop hands over what passes, and only the way back out of a rare path may hand over something else: it makes the test, what fails there goes where the header's test fails to, and every edge into the loop passes
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SeparateUnlikelyLoopPaths
+# STATISTIC: TestsMovedFromHeadersToWaysBack = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="follow" parameters=[{type=Int32Array}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Int32Array, v1: i32):
+    Jump -> next b1(v1)
+  b1(v2):
+    Jump -> next b2(v2)
+  b2(v3):
+    LoopHint
+    v5 = TypeTest v3 testedType=i32
+    Branch v5 -> taken b3(| 0), notTaken b7()
+  b3(v6):
+    v7 = IsInsideView v0, v6 typedArrayType=6 [keyIsIntegral]
+    Branch v7 -> taken b4(| 0), notTaken b7()
+  b4(v8):
+    v9 = GetTypedArrayElement v0, v6, v8 typedArrayType=6 level=Proven [keyIsIntegral, isInsideView]
+    v10 = StrictEq v9, v6
+    Branch v10 -> taken b5(), notTaken b6()
+  b5():
+    Return v6
+  b6():
+    Jump -> next b2(v9)
+  b7() frequency=Rare:
+    v11 = PropGet v0 key="undefined"
+    v12 = TypeTest v11 testedType=number
+    Branch v12 -> taken b8(| 0), notTaken b9()
+  b8(v13) frequency=Rare:
+    Jump -> next b1(v13)
+  b9() frequency=Rare:
+    Return v3
+}
+# CHECK-LABEL: function f0 name="follow"
+# CHECK: b1(v2: number ~ i32):
+# CHECK: Branch v5 -> taken b3(| 0), notTaken [[whenFailed]](v3)
+# CHECK: [[whenFailed]]([[carried]]: number ~ i32) frequency=Rare:
+# CHECK: b8(v13: number) frequency=Rare:
+# CHECK-NEXT: Jump -> next [[tests]]()
+# CHECK: Return [[carried]]
+# CHECK: LoopHint
+# CHECK: Jump -> next [[whenFailed]]({{*}})
+# CHECK: [[tests]]() frequency=Rare:
+# CHECK-NEXT: [[test]]: boolean = TypeTest v13 testedType=i32
+# CHECK-NEXT: Branch [[test]] -> taken [[whenPassed]](| 0), notTaken
+# CHECK: [[whenPassed]]([[integer]]: i32) frequency=Rare:
+# CHECK-NEXT: Jump -> next b1([[integer]])
+
+# The loop itself hands over a number: the test stays where it is
+function f1 name="handsOnNumbers" parameters=[{type=Float64Array}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Float64Array, v1: i32):
+    Jump -> next b1(v1)
+  b1(v2):
+    Jump -> next b2(v2)
+  b2(v3):
+    LoopHint
+    v5 = TypeTest v3 testedType=i32
+    Branch v5 -> taken b3(| 0), notTaken b7()
+  b3(v6):
+    v7 = IsInsideView v0, v6 typedArrayType=10 [keyIsIntegral]
+    Branch v7 -> taken b4(| 0), notTaken b7()
+  b4(v8):
+    v9 = GetTypedArrayElement v0, v6, v8 typedArrayType=10 level=Proven [keyIsIntegral, isInsideView]
+    v10 = StrictEq v9, v6
+    Branch v10 -> taken b5(), notTaken b6()
+  b5():
+    Return v6
+  b6():
+    Jump -> next b2(v9)
+  b7() frequency=Rare:
+    v11 = PropGet v0 key="undefined"
+    v12 = TypeTest v11 testedType=number
+    Branch v12 -> taken b8(| 0), notTaken b9()
+  b8(v13) frequency=Rare:
+    Jump -> next b1(v13)
+  b9() frequency=Rare:
+    Return v3
+}
+# CHECK-LABEL: function f1 name="handsOnNumbers"
+# CHECK: b8(v13: number) frequency=Rare:
+# CHECK-NEXT: Jump -> next b1(v13)
+
+# So does whoever enters the function
+function f2 name="givenNumber" parameters=[{type=Int32Array}, {type=number}] results=[{type=anything}] {
+  b0(v0: Int32Array, v1: number):
+    Jump -> next b1(v1)
+  b1(v2):
+    Jump -> next b2(v2)
+  b2(v3):
+    LoopHint
+    v5 = TypeTest v3 testedType=i32
+    Branch v5 -> taken b3(| 0), notTaken b7()
+  b3(v6):
+    v7 = IsInsideView v0, v6 typedArrayType=6 [keyIsIntegral]
+    Branch v7 -> taken b4(| 0), notTaken b7()
+  b4(v8):
+    v9 = GetTypedArrayElement v0, v6, v8 typedArrayType=6 level=Proven [keyIsIntegral, isInsideView]
+    v10 = StrictEq v9, v6
+    Branch v10 -> taken b5(), notTaken b6()
+  b5():
+    Return v6
+  b6():
+    Jump -> next b2(v9)
+  b7() frequency=Rare:
+    v11 = PropGet v0 key="undefined"
+    v12 = TypeTest v11 testedType=number
+    Branch v12 -> taken b8(| 0), notTaken b9()
+  b8(v13) frequency=Rare:
+    Jump -> next b1(v13)
+  b9() frequency=Rare:
+    Return v3
+}
+# CHECK-LABEL: function f2 name="givenNumber"
+# CHECK: b8(v13: number) frequency=Rare:
+# CHECK-NEXT: Jump -> next b1(v13)

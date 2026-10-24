@@ -769,7 +769,7 @@ void HeapRule::collectChain()
     if (mayBeUnknownObject(above)) {
         ValueSetID objectsOfProgram = m_context.maker().intersect(m_universe.knownObjects(), ValueSets::complement(m_universe.builtinObjects()));
         if (ValueFlowNodeID links = readWhereWritten(m_context.restrict(known(start), ValueSets::complement(m_tables.holdersWithLockedPrototypeLink())), prototypeLinkName))
-            connect(m_context.masked(m_context.lookup(m_context.valueWithin(ClimbingSet(objectsOfProgram), links), prototypeLinkName), m_universe.holdersOfLibraryExports()), m_statement.result);
+            connect(m_context.masked(m_context.lookup(m_context.valueWithinAskedLast(ClimbingSet(objectsOfProgram), links), prototypeLinkName), m_universe.holdersOfLibraryExports()), m_statement.result);
     }
     // A copy takes the own properties of its source: what lies above the source stays behind.
     above = m_context.unite(above, withSourcesOfCopies(m_context, known(valueOfNodeIfAny(readWhereWritten(known(start), copiedFromName)))));

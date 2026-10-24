@@ -1,6 +1,6 @@
 # A function that no optimized body refers to loses its body, and one that a closure names keeps it
 # OPTIONS: heat=EverythingIsHot
-# RUN: pipeline
+# RUN: pipeline RemoveUnusedParameters
 # LOSS: MaxOptimizationRounds x0
 # STATISTIC: UnreachableFunctionsRemoved = 1
 

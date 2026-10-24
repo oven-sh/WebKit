@@ -246,6 +246,7 @@ public:
         madeNodesAskedFor.shrink(0);
         valuesShown.shrink(0);
         partsWatched.shrink(0);
+        partsWatchedLast.shrink(0);
         nodesAskedWhetherEmpty.shrink(0);
     }
 
@@ -258,6 +259,8 @@ public:
     NumbersToGive nodesOfCallGroupsToGive;
     Vector<uint32_t> madeWhereAskedFor;
     Vector<uint32_t> madeWithStatementToRun;
+    // Records with a statement, or with parts, that nobody asked for when this thread did.
+    Vector<uint32_t> askedForAtRest;
     uint32_t numberOfRunsWhereMade { 0 };
     Vector<uint32_t> recordsOfRunsWhereMade;
     // For each entry of `reached`: the statement that reached the function, and what it counts as where a choice among statements shows.
@@ -286,6 +289,8 @@ public:
     Vector<ValueFlowNodeSet> valuesShown;
     // What valueWithin() was asked: the statement runs again once the node holds more of the set.
     Vector<ValueFlowNodeSet> partsWatched;
+    // Where in that list the questions of valueWithinAskedLast() stand.
+    Vector<uint32_t> partsWatchedLast;
     // What holdsAnything() has found empty: the statement runs again once the node holds something.
     Vector<ValueFlowNodeID> nodesAskedWhetherEmpty;
 

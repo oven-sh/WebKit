@@ -780,14 +780,46 @@ void ValueFlowGraph::takeEdgesIntoLists(Team& team, std::span<const ValueFlowEdg
         m_hasLeftMessagesWithShards = true;
         size_t edgesPerPart = (edges.size() + numberOfParts - 1) / numberOfParts;
         m_edgesByTarget.grow(numberOfParts * numberOfShards);
+        // A covered node gets tens of thousands of edges a round and has one shard. Whether an edge brings it anything is looked at here, on all threads.
+        m_edgesOnlyToLink.grow(numberOfParts);
         team.run(numberOfParts, [&](unsigned part, unsigned) {
             size_t first = std::min(edges.size(), part * edgesPerPart);
-            for (ValueFlowEdge edge : edges.subspan(first, std::min(edgesPerPart, edges.size() - first)))
+            std::span<const ValueFlowEdge> edgesOfPart = edges.subspan(first, std::min(edgesPerPart, edges.size() - first));
+            for (size_t index = 0; index < edgesOfPart.size(); ++index) {
+                if (index + distance < edgesOfPart.size() && (m_gates[edgesOfPart[index + distance].to.index()].flags & IsCoveredNode))
+                    __builtin_prefetch(&m_rows[edgesOfPart[index + distance].from.index()]);
+                ValueFlowEdge edge = edgesOfPart[index];
+                if (m_gates[edge.to.index()].flags & IsCoveredNode) {
+                    const Row& row = m_rows[edge.from.index()];
+                    if ((!row.low && !row.set) || (m_gates[edge.to.index()].flags & IgnoresArrivals) || didCoveredNodeHoldAllOf(edge.to.index(), row.low, row.set)) {
+                        if (!isConstant(edge.from.index()))
+                            m_edgesOnlyToLink[part].append(edge);
+                        continue;
+                    }
+                }
                 m_edgesByTarget[part * numberOfShards + shardOf(edge.to.index())].append(edge);
+            }
         });
         team.run(numberOfShards, [&](unsigned number, unsigned) {
             Shard& shard = *m_shards[number];
             size_t numberOfMessages = 0;
+            for (const Covering& covering : m_coverings) {
+                if (shardOf(covering.covered) != number)
+                    continue;
+                willUse(covering.covered);
+                Links& predecessors = m_predecessors[covering.covered];
+                for (const Vector<ValueFlowEdge>& onlyToLink : m_edgesOnlyToLink) {
+                    for (ValueFlowEdge edge : onlyToLink) {
+                        if (edge.to.index() != covering.covered)
+                            continue;
+                        if (predecessors.count == mostPredecessorsScanned)
+                            willHaveManyPredecessors(shard, covering.covered);
+                        if (predecessors.count == predecessors.older)
+                            shard.nodesWithRecentPredecessors.append(covering.covered);
+                        addLink(shard.blocksOfPredecessors, predecessors, edge.from.index());
+                    }
+                }
+            }
             for (unsigned part = 0; part < numberOfParts; ++part) {
                 Vector<ValueFlowEdge>& byTarget = m_edgesByTarget[part * numberOfShards + number];
                 for (size_t index = 0; index < byTarget.size(); ++index) {
@@ -801,6 +833,8 @@ void ValueFlowGraph::takeEdgesIntoLists(Team& team, std::span<const ValueFlowEdg
             }
             m_numberOfMessagesWithShards.fetch_add(numberOfMessages, std::memory_order_relaxed);
         });
+        for (Vector<ValueFlowEdge>& onlyToLink : m_edgesOnlyToLink)
+            onlyToLink.shrink(0);
     }
     if (m_numberOfRecentEdges * 2 > m_numberOfOlderEdges)
         countRecentEdgesAsOlder();
@@ -1244,10 +1278,6 @@ void ValueFlowGraph::giveBackLargeBuffers()
             vector.clear();
     };
     AOT_THRESHOLD(size_t, mostKeptInOneList, 1 << 16);
-    giveBack(m_edgesOfSolve, mostKeptInOneList);
-    if (m_edgesNotInLists.isEmpty())
-        giveBack(m_edgesNotInLists, mostKeptInOneList);
-    giveBack(m_isNewEdge, mostKeptInOneList);
     giveBack(m_found, mostKeptInOneList);
     giveBack(m_arrivals.nodes, mostKeptInOneList);
     giveBack(m_arrivals.list, mostKeptInOneList);
@@ -1262,6 +1292,8 @@ void ValueFlowGraph::giveBackLargeBuffers()
     for (Vector<uint32_t>& indices : m_indicesBySource)
         giveBack(indices, 1 << 8);
     for (Vector<ValueFlowEdge>& edges : m_edgesByTarget)
+        giveBack(edges, 1 << 8);
+    for (Vector<ValueFlowEdge>& edges : m_edgesOnlyToLink)
         giveBack(edges, 1 << 8);
     for (const std::unique_ptr<Shard>& shard : m_shards) {
         giveBack(shard->arrivals.nodes, 1 << 12);

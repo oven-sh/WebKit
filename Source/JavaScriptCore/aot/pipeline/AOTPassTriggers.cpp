@@ -110,7 +110,7 @@ static constexpr PassTriggers rowOf(PassID id)
     case PassID::RemoveRedundantHandlers:
         return PassTriggers::anyOf({ }).orTraits(BodyTrait::Handlers);
     case PassID::HoistLoopInvariantReads:
-        return PassTriggers::bothOf(PassTriggers::anyOf({ }).orOpcodes(hoistableOpcodes), PassTriggers::anyOf({ }).orTraits(BodyTrait::SeveralBlocks));
+        return PassTriggers::bothOf(PassTriggers::anyOf({ }).orOpcodes(hoistableReadOpcodes), PassTriggers::anyOf({ }).orTraits(BodyTrait::SeveralBlocks));
     case PassID::SimplifyBuiltinCalls:
         return PassTriggers::bothOf(
             PassTriggers::anyOf({ Opcode::CallBuiltin }).orOpcodes(simplifiedIntrinsics).orOpcodes(constantListSourceOpcodes),
