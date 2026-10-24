@@ -9477,6 +9477,10 @@ public:
 
     void compile(YarrCodeBlock& codeBlock)
     {
+        // RegExp::compile() and compileMatchOnly() keep these patterns away: an input count here is a signed
+        // 32-bit immediate, and an alternative that cannotMatch() has no terms.
+        ASSERT(!m_pattern.containsUnsignedLengthPattern());
+
         MacroAssembler::Label startOfMainCode;
 
 #if !ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
@@ -9700,6 +9704,7 @@ public:
 #if ENABLE(YARR_JIT_REGEXP_TEST_INLINE)
     void compileInline(YarrBoyerMooreData& boyerMooreData, unsigned reservedFrameSizeInBytes)
     {
+        ASSERT(!m_pattern.containsUnsignedLengthPattern());
         RELEASE_ASSERT(!m_pattern.m_containsBackreferences);
         RELEASE_ASSERT(m_callFrameSizeInBytes <= reservedFrameSizeInBytes);
 

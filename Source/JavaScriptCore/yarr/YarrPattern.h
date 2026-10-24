@@ -562,6 +562,13 @@ public:
         return m_direction;
     }
 
+    // True once YarrPatternConstructor::setupDisjunctionOffsets() found that the alternative needs more
+    // input than a string can hold. It has no terms to compile: a backend makes it fail.
+    bool cannotMatch() const
+    {
+        return m_minimumSize == UINT_MAX && m_terms.isEmpty();
+    }
+
     void dump(PrintStream&, YarrPattern*, unsigned);
 
     PatternTermList m_terms;

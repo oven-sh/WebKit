@@ -228,7 +228,9 @@ shouldBe('"this is b\ba test".match(/is b\\cha test/u)[0].length', '11');
 // Check that invalid unicode patterns throw exceptions
 shouldBe('new RegExp("\\\\/", "u").source', '"\\\\/"');
 shouldThrow('r = new RegExp("\\\\u{110000}", "u")', '"SyntaxError: Invalid regular expression: invalid Unicode code point \\\\u{} escape"');
-shouldThrow('r = new RegExp("\u{10405}{2147483648}", "u")', '"SyntaxError: Invalid regular expression: pattern exceeds string length limits"');
+// Bun: a pattern that needs more input than a string can hold compiles and never matches, as in V8. Upstream expects
+// shouldThrow('r = new RegExp(...)', '"SyntaxError: Invalid regular expression: pattern exceeds string length limits"').
+shouldBe('new RegExp("\u{10405}{2147483648}", "u").test("\u{10405}")', 'false');
 shouldThrow('/{/u', '"SyntaxError: Invalid regular expression: incomplete {} quantifier for Unicode pattern"');
 shouldThrow('/[a-\\d]/u', '"SyntaxError: Invalid regular expression: invalid range in character class for Unicode pattern"');
 shouldThrow('/]/u', '"SyntaxError: Invalid regular expression: unmatched ] or } bracket for Unicode pattern"');
