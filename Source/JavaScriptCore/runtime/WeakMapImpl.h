@@ -85,6 +85,10 @@ public:
     ALWAYS_INLINE void setValue(VM&, JSCell*, JSValue) { }
 
     ALWAYS_INLINE JSCell* key() const { return m_data.key.get(); }
+#if USE(BUN_JSC_ADDITIONS)
+    // The key without validation: it can be the deleted sentinel, or change under the reader.
+    ALWAYS_INLINE JSCell* unvalidatedKey() const { return m_data.key.unvalidatedGet(); }
+#endif
 
     template<WeakMapBucketSameAsDataKeyValue T = Data>
     ALWAYS_INLINE JSValue value() const
@@ -357,6 +361,51 @@ public:
 
     template<typename Visitor> static void visitOutputConstraints(JSCell*, Visitor&);
     void reconcileWeakReferencesAtGCEnd(VM&, CollectionScope);
+
+#if USE(BUN_JSC_ADDITIONS)
+    // Calls functor(key, value) for each entry whose key the current collection has not marked.
+    // The collector calls this with the world stopped, so the table cannot change under it.
+    template<typename T = WeakMapBucketType, typename Functor>
+        requires std::same_as<T, WeakMapBucket<WeakMapBucketDataKeyValue>>
+    void forEachEntryWithUnmarkedKey(Heap& heap, const Functor& functor)
+    {
+        auto* buffer = this->buffer();
+        for (uint32_t index = 0; index < m_capacity; ++index) {
+            auto* bucket = buffer + index;
+            if (bucket->isEmpty() || bucket->isDeleted())
+                continue;
+            if (heap.isMarked(bucket->key()))
+                continue;
+            functor(bucket->key(), bucket->value());
+        }
+    }
+
+    // Visits the value of each entry whose key is marked, like visitOutputConstraints, and
+    // returns true if an entry whose key is not marked remains. A marking thread calls this
+    // while the mutator may run: the cell lock keeps rehash() from replacing the buffer, and
+    // each key is read once and without validation, since the mutator may delete the entry
+    // meanwhile.
+    template<typename Visitor, typename T = WeakMapBucketType>
+        requires std::same_as<T, WeakMapBucket<WeakMapBucketDataKeyValue>>
+    bool visitValuesOfMarkedKeys(Visitor& visitor)
+    {
+        Locker locker { cellLock() };
+        bool hasUnmarkedKey = false;
+        auto* buffer = this->buffer();
+        for (uint32_t index = 0; index < m_capacity; ++index) {
+            auto* bucket = buffer + index;
+            JSCell* key = bucket->unvalidatedKey();
+            if (!key || key == WeakMapBucketType::deletedKey())
+                continue;
+            if (!visitor.isMarked(key)) {
+                hasUnmarkedKey = true;
+                continue;
+            }
+            bucket->visitAggregate(visitor);
+        }
+        return hasUnmarkedKey;
+    }
+#endif
 
 private:
     template<typename Visitor>

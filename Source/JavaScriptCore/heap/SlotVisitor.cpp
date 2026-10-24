@@ -36,10 +36,12 @@
 #include "JSArray.h"
 #include "JSCellInlines.h"
 #include "JSString.h"
+#include "JSWeakMap.h"
 #include "MarkingConstraintSolver.h"
 #include "SlotVisitorInlines.h"
 #include "StopIfNecessaryTimer.h"
 #include "VM.h"
+#include "WeakMapImplInlines.h"
 #include <wtf/ListDump.h>
 #include <wtf/Lock.h>
 #include <wtf/Scope.h>
@@ -418,6 +420,11 @@ ALWAYS_INLINE void SlotVisitor::visitChildren(const JSCell* cell)
         break;
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_collector.m_ephemeronLinearMode) [[unlikely]]
+        visitPendingEphemerons(cell);
+#endif
+
     if (m_isAnalyzingHeap) [[unlikely]] {
         if (m_isFirstVisit) {
             if (HeapAnalyzer* analyzer = cell->vm().activeHeapAnalyzer())
@@ -425,6 +432,97 @@ ALWAYS_INLINE void SlotVisitor::visitChildren(const JSCell* cell)
         }
     }
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// Collector::buildPendingEphemeronsIfNeeded explains the table. Nothing writes it while the
+// visitors run, and the lookup builds no HashTable iterator, so this takes no lock.
+NEVER_INLINE void SlotVisitor::visitPendingEphemerons(const JSCell* cell)
+{
+    uint32_t index = m_collector.m_pendingEphemeronHeads.inlineGet(const_cast<JSCell*>(cell));
+    while (index) {
+        const Collector::PendingEphemeron& entry = m_collector.m_pendingEphemerons[index - 1];
+        appendUnbarriered(entry.value);
+        index = entry.next;
+    }
+}
+
+void SlotVisitor::visitWeakMapInLinearMode(JSWeakMap* weakMap)
+{
+    SetRootMarkReasonScope rootScope(*this, RootMarkReason::Output);
+    if (!m_isFirstVisit) {
+        // A write barrier greyed the map again: it has entries the table does not list. A walk
+        // here would cost the whole table per set(), so the collector lists them next round.
+        if (m_weakMapsToEnrol.isEmpty() || m_weakMapsToEnrol.last() != weakMap)
+            m_weakMapsToEnrol.append(weakMap);
+        return;
+    }
+    if (weakMap->visitValuesOfMarkedKeys(*this))
+        m_lateWeakMaps.append(weakMap);
+}
+
+// Walks the late maps once more. When this visitor's stacks ran dry and the shared stacks are
+// empty, the keys it led to are marked, unless another visitor holds them. When marking reaches
+// termination, every reachable key is marked. A map that still has an unmarked key after the
+// termination pass goes to m_weakMapsToEnrol, and the collector lists its entries before the
+// next round: the table covers what a later pass would, and a map whose keys are dead is not
+// walked again and again. Returns true if a walk appended a cell.
+bool SlotVisitor::revisitLateWeakMaps(LateWeakMapPass pass)
+{
+    SetRootMarkReasonScope rootScope(*this, RootMarkReason::Output);
+    size_t visitCountBefore = m_visitCount;
+    Vector<JSWeakMap*> lateWeakMaps = std::exchange(m_lateWeakMaps, { });
+    if (pass == LateWeakMapPass::Termination) {
+        lateWeakMaps.appendVector(m_lateWeakMapsRevisited);
+        m_lateWeakMapsRevisited.clear();
+        // The visitor that finds termination holds m_markingMutex and no helper is active: each
+        // helper is in the locked block or waits for the mutex, so its lists cannot change. Take
+        // theirs too, so that a map parked on a helper that went idle early does not wait for the
+        // next round. The collector's own visitor may be in a drain, and the mutator's visitor
+        // changes its lists outside the count of active markers: those keep their lists.
+        for (auto& helper : collector().m_parallelSlotVisitors) {
+            if (helper.get() == this)
+                continue;
+            lateWeakMaps.appendVector(helper->m_lateWeakMaps);
+            lateWeakMaps.appendVector(helper->m_lateWeakMapsRevisited);
+            helper->m_lateWeakMaps.clear();
+            helper->m_lateWeakMapsRevisited.clear();
+        }
+    }
+    Vector<JSWeakMap*>& leftovers = pass == LateWeakMapPass::Termination ? m_weakMapsToEnrol : m_lateWeakMaps;
+    for (JSWeakMap* weakMap : lateWeakMaps) {
+        if (weakMap->visitValuesOfMarkedKeys(*this))
+            leftovers.append(weakMap);
+    }
+    return m_visitCount != visitCountBefore;
+}
+
+// The stacks of this visitor ran dry. If the shared stacks hold cells, the keys of the late maps
+// may well be among them: leave the maps for a later pass. If another marker is at work, it may
+// be visiting those keys right now: poll for a moment, since the termination pass that would
+// otherwise resolve them costs a hand-off between the threads per chain link. The maps that
+// still have an unmarked key then wait for the termination pass.
+bool SlotVisitor::revisitLateWeakMapsWhenStacksRanDry()
+{
+    // size() reads two counters, which is safe without m_markingMutex; isEmpty() follows the
+    // head segment, which another thread may be removing.
+    if (collector().m_sharedCollectorMarkStack->size() || collector().m_sharedMutatorMarkStack->size())
+        return false;
+    constexpr Seconds pollDuration = 50_us;
+    MonotonicTime deadline = MonotonicTime::now() + pollDuration;
+    bool didAppend = false;
+    for (;;) {
+        if (revisitLateWeakMaps(LateWeakMapPass::StacksRanDry)) {
+            didAppend = true;
+            break;
+        }
+        if (collector().m_numberOfActiveParallelMarkers.load(std::memory_order_relaxed) <= 1 || MonotonicTime::now() >= deadline)
+            break;
+    }
+    m_lateWeakMapsRevisited.appendVector(m_lateWeakMaps);
+    m_lateWeakMaps.clear();
+    return didAppend;
+}
+#endif
 
 void SlotVisitor::visitAsConstraint(const JSCell* cell)
 {
@@ -518,8 +616,13 @@ NEVER_INLINE void SlotVisitor::drain(MonotonicTime timeout)
                 return IterationStatus::Done;
             });
         propagateExternalMemoryVisitedIfNecessary();
-        if (status == IterationStatus::Continue)
+        if (status == IterationStatus::Continue) {
+#if USE(BUN_JSC_ADDITIONS)
+            if (!m_lateWeakMaps.isEmpty() && revisitLateWeakMapsWhenStacksRanDry()) [[unlikely]]
+                continue;
+#endif
             break;
+        }
 
         donateKnownParallel();
     }
@@ -581,6 +684,10 @@ size_t SlotVisitor::performIncrementOfDraining(size_t bytesRequested)
         donateKnownParallel();
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (!m_lateWeakMaps.isEmpty()) [[unlikely]]
+        revisitLateWeakMapsWhenStacksRanDry();
+#endif
     donateAll();
 
     return bytesVisited();
@@ -631,6 +738,10 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
                         return SharedDrainResult::TimedOut;
 
                     if (didReachTermination(locker)) {
+#if USE(BUN_JSC_ADDITIONS)
+                        if ((!m_lateWeakMaps.isEmpty() || !m_lateWeakMapsRevisited.isEmpty()) && revisitLateWeakMaps(LateWeakMapPass::Termination)) [[unlikely]]
+                            break;
+#endif
                         // No marker needs waking here. There is no work which can be processed in the helpers.
                         return SharedDrainResult::Done;
                     }
@@ -646,6 +757,11 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
                 if (hasElapsed(timeout))
                     return SharedDrainResult::TimedOut;
                 
+#if USE(BUN_JSC_ADDITIONS)
+                // With work from a late WeakMap, hasWork() holds again and the wait below ends at once.
+                if (didReachTermination(locker) && (!m_lateWeakMaps.isEmpty() || !m_lateWeakMapsRevisited.isEmpty()) && revisitLateWeakMaps(LateWeakMapPass::Termination)) [[unlikely]] {
+                } else
+#endif
                 if (didReachTermination(locker)) {
                     // This is necessary to wake up MainDrain side.
                     collector().m_markingConditionVariable.notifyAll();
