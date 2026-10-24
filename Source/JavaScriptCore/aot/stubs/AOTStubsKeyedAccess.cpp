@@ -547,6 +547,8 @@ void generateInByValCached(StubAssembler& jit)
 
     keyIsCell.link(&jit);
     needsOperation.append(jit.branchIfNotCell(base));
+    // A read of a string, a symbol or a bigint fills a place too, and `in` throws for those.
+    needsOperation.append(jit.branchIfNotObject(base));
 #if CPU(X86_64)
     JumpList hasNoPlace;
     Jump placeIsOfNoValue = findKeyedValuePlace(jit, SlotAccess::Read, registers, header, hasNoPlace);
@@ -559,9 +561,6 @@ void generateInByValCached(StubAssembler& jit)
     jit.returnToCaller();
 
     hasNoPlace.link(&jit);
-#endif
-    needsOperation.append(jit.branchIfNotObject(base));
-#if CPU(X86_64)
     constexpr StructureIDOfBase structureIDOfBase = StructureIDOfBase::IsLoaded;
     JumpList isInNoTable;
 #else
