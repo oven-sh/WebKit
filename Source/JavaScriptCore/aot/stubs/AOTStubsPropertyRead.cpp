@@ -105,14 +105,39 @@ static void returnAnswer(StubAssembler& jit, ObjectLookupQuestion question, bool
 // object has no lookup of its own, and structure is its Structure: what the Structure's property table lists is all that the object has under a name.
 void findInPropertyTable(StubAssembler& jit, const ObjectLookupRegisters& r, JumpList& isAbsentHere, JumpList& isUnknown, EmptyWordsOfPropertyTable* emptyWords)
 {
-    AOT_THRESHOLD(unsigned, maxProbesForName, 4);
-    // A name that the table lacks is looked for until a word is empty: in a table that is half full one search in sixteen goes beyond four words.
-    AOT_THRESHOLD(unsigned, maxProbesForEmptyWord, 8);
-    const unsigned maxProbes = emptyWords ? maxProbesForEmptyWord : maxProbesForName;
+    // In a table that is half full one search in sixteen for a name that it lacks goes beyond four words. A loop looks at the words behind them.
+    AOT_THRESHOLD(unsigned, numberOfWordsBeforeLoop, 4);
     constexpr unsigned typeShift = 48;
     static_assert(sizeof(Structure::SeenProperties) == sizeof(uint64_t) && sizeof(CompactPropertyTableEntry) == sizeof(uint64_t) && PropertyTable::EmptyEntryIndex == 0);
     const GPRReg entry = r.structure;
     RELEASE_ASSERT(noOverlap(r.receiver, r.name, r.uid, r.object, r.structure, r.size, r.vector, r.index));
+
+    // In the loop size is one less, the mask, and index has the number of the word in its upper half and how many words have been passed in its lower half. At least half of the words of an index are empty, so the loop ends.
+    const GPRReg mask = r.size;
+    const GPRReg position = r.index;
+    auto beginLoop = [&] {
+        jit.sub32(TrustedImm32(1), mask);
+        jit.lshift64(TrustedImm32(32), position);
+        jit.add64(TrustedImm32(numberOfWordsBeforeLoop - 1), position);
+        Label nextWord = jit.label();
+        jit.add64(TrustedImm32(1), position);
+        jit.lshift64(position, TrustedImm32(32), entry);
+        jit.add64(entry, position);
+        jit.urshift64(position, TrustedImm32(32), entry);
+        jit.and32(mask, entry);
+        return nextWord;
+    };
+    auto leaveLoopAtEmptyWord = [&](Jump isEmpty, JumpList EmptyWordsOfPropertyTable::* words) {
+        if (!emptyWords) {
+            isAbsentHere.append(isEmpty);
+            return;
+        }
+        isEmpty.link(&jit);
+        jit.urshift64(TrustedImm32(32), position);
+        jit.and32(mask, position);
+        jit.add32(TrustedImm32(1), mask);
+        (emptyWords->*words).append(jit.jump());
+    };
 
     // The Structure keeps the union of the bits of the names that it has seen, whether or not its table is there.
     if (!emptyWords) {
@@ -135,7 +160,7 @@ void findInPropertyTable(StubAssembler& jit, const ObjectLookupRegisters& r, Jum
 
     // PropertyTable::findImpl(). The address in vector is one too high, by the flag. The entries lie behind the index, and their numbers begin at one.
     JumpList isFound;
-    for (unsigned probe = 0; probe < maxProbes; ++probe) {
+    for (unsigned probe = 0; probe < numberOfWordsBeforeLoop; ++probe) {
         if (probe)
             jit.add32(TrustedImm32(probe), r.index);
         jit.add32(TrustedImm32(-1), r.size, entry);
@@ -149,7 +174,18 @@ void findInPropertyTable(StubAssembler& jit, const ObjectLookupRegisters& r, Jum
         jit.rotateRight64(TrustedImm32(typeShift), entry);
         isFound.append(jit.branch64(CCallHelpers::BelowOrEqual, entry, TrustedImm32(UINT16_MAX)));
     }
-    isUnknown.append(jit.jump());
+    {
+        Label nextWord = beginLoop();
+        jit.load8(BaseIndex(r.vector, entry, CCallHelpers::TimesOne, -1), entry);
+        Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, entry);
+        jit.getEffectiveAddress(BaseIndex(r.vector, entry, CCallHelpers::TimesEight, -static_cast<int32_t>(sizeof(CompactPropertyTableEntry))), entry);
+        jit.load64(BaseIndex(entry, mask, CCallHelpers::TimesOne), entry);
+        jit.xor64(r.uid, entry);
+        jit.rotateRight64(TrustedImm32(typeShift), entry);
+        isFound.append(jit.branch64(CCallHelpers::BelowOrEqual, entry, TrustedImm32(UINT16_MAX)));
+        jit.jump().linkTo(nextWord, &jit);
+        leaveLoopAtEmptyWord(isEmpty, &EmptyWordsOfPropertyTable::inCompactIndex);
+    }
 
     // A table with room for 255 names or more: the index has words of 32 bits, and an entry has the name, the offset and the attributes each by itself.
     isWide.link(&jit);
@@ -166,7 +202,7 @@ void findInPropertyTable(StubAssembler& jit, const ObjectLookupRegisters& r, Jum
         RELEASE_ASSERT(offsetOfSample == sample.offset() && attributesOfSample == sample.attributes());
     }
     JumpList isFoundInWideEntry;
-    for (unsigned probe = 0; probe < maxProbes; ++probe) {
+    for (unsigned probe = 0; probe < numberOfWordsBeforeLoop; ++probe) {
         if (probe)
             jit.add32(TrustedImm32(probe), r.index);
         jit.add32(TrustedImm32(-1), r.size, entry);
@@ -178,7 +214,17 @@ void findInPropertyTable(StubAssembler& jit, const ObjectLookupRegisters& r, Jum
         jit.addPtr(r.vector, entry);
         isFoundInWideEntry.append(jit.branchPtr(CCallHelpers::Equal, Address(entry), r.uid));
     }
-    isUnknown.append(jit.jump());
+    {
+        Label nextWord = beginLoop();
+        jit.load32(BaseIndex(r.vector, entry, CCallHelpers::TimesFour), entry);
+        Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, entry);
+        jit.lshift64(TrustedImm32(WTF::fastLog2(static_cast<unsigned>(sizeof(PropertyTableEntry)))), entry);
+        jit.getEffectiveAddress(BaseIndex(entry, mask, CCallHelpers::TimesFour, static_cast<int32_t>(sizeof(uint32_t)) - static_cast<int32_t>(sizeof(PropertyTableEntry))), entry);
+        jit.addPtr(r.vector, entry);
+        isFoundInWideEntry.append(jit.branchPtr(CCallHelpers::Equal, Address(entry), r.uid));
+        jit.jump().linkTo(nextWord, &jit);
+        leaveLoopAtEmptyWord(isEmpty, &EmptyWordsOfPropertyTable::inWideIndex);
+    }
 
     isFoundInWideEntry.link(&jit);
     jit.load32(Address(entry, offsetOfOffsetInWideEntry), r.index);

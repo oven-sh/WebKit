@@ -735,7 +735,7 @@ static Vector<FeatureUseRecord> collectFeatureUses(const ValueFlowResultInputs& 
         return std::tuple(use.feature, use.builtin);
     };
     const BuiltinTable& builtins = inputs.program.builtins();
-    bool refusesEvaluatedText = inputs.solver().input().refusesEvaluatedText;
+    bool refusesEvaluatedText = inputs.solver().input().refusedCode.evaluatedText;
     ValueSetID namedByStatements = inputs.solver().valueOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::BuiltinsThatStatementsName));
     auto isNamedByStatement = [&](BuiltinID builtin) {
         return inputs.sets().contains(namedByStatements, inputs.universe().objectOf(builtin));
@@ -779,6 +779,8 @@ static Vector<UnseenCodeRecord> collectUnseenCode(const ValueFlowResultInputs& i
     });
     if (unseenCodeRuns && !std::ranges::any_of(records, admitsUnknownJavaScript, &UnseenCodeRecord::cause))
         records.append(UnseenCodeRecord { .cause = UnseenCodeCause::RunsUnseenCode });
+    if (filesOfProgramAreLoadedByName(inputs.solution) && !inputs.solver().input().refusedCode.codeOutsideImage && !std::ranges::any_of(records, loadsCodeOutsideImage, &UnseenCodeRecord::cause))
+        records.append(UnseenCodeRecord { .cause = UnseenCodeCause::LoadsCodeByName });
     if (modulesAreNamedAtRunTime && !std::ranges::any_of(records, loadsModulesByName, &UnseenCodeRecord::cause))
         records.append(UnseenCodeRecord { .cause = UnseenCodeCause::LoadsModuleByName });
     if (!inputs.build.isEnabledForProgram(FlowResultKind::ReachedFunctions))
@@ -803,7 +805,7 @@ static bool isCallOfProgramUnderComputedName(const Program& program, const Witne
     return function.at(definitionThroughSameValues(function, call.operand(positionOfName))).opcode != Opcode::String;
 }
 
-// A function and a copy of it hold the same load, and the program's author wrote it once.
+// Only where the run time refuses what such a load may find. A function and a copy of it hold the same load, and the program's author wrote it once.
 static void warnAboutLoadsUnderComputedNames(const Program& program, BuildContext& build, std::span<const UnseenCodeRecord> records)
 {
     Vector<SourceLocation> reportedLocations;

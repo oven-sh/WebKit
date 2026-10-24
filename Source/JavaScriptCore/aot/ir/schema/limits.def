@@ -102,6 +102,7 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     InlineBudgetColdBytes(Optimize, CodeSize, NotOptimized, 0, 0, 0, "inlining budget at a cold call site")
     InlineBudgetWarmBytes(Optimize, CodeSize, NotOptimized, 80, 80, 0, "inlining budget at a warm call site")
     InlineBudgetHotBytes(Optimize, CodeSize, NotOptimized, 320, 320, 0, "inlining budget at a hot call site")
+    InlineBudgetOnlyCallBytes(Optimize, CodeSize, NotOptimized, 576, 576, 0, "inlining budget at the only call site of a function, in a loop of its caller")
     MaxHotCodeValues(Optimize, CodeSize, NotOptimized, 1048576, 1048576, 0, "operations treated as hot, program-wide")
     MaxWarmCodeValues(Optimize, CodeSize, NotOptimized, 1048576, 1048576, 0, "operations treated as warm or hot, program-wide")
     InlineSunkAllocationBytes(Optimize, CodeSize, NotOptimized, 160, 160, 0, "inlining credit for an allocation it removes")

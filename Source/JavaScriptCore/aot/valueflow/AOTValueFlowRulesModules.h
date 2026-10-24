@@ -78,7 +78,7 @@ void handChildrenToWhatReplacesTheirList(ValueFlowRuleContext&, ValueSetID child
 bool isFoundByNameAlone(BuiltinID canonicalMember);
 
 // What a call of the built-in by the program lets in. Nothing for a built-in that runs no code but its own and its operands', and nothing for an evaluator of the engine in a build that excludes evaluated text.
-std::optional<UnseenCodeCause> eventOfCalling(const BuiltinTable&, BuiltinID, bool refusesEvaluatedText);
+std::optional<UnseenCodeCause> eventOfCalling(const BuiltinTable&, BuiltinID, RefusedCode);
 
 // Native code calls the function with operands nobody knows and keeps what it answers.
 void enterFromNativeCode(ValueFlowRuleContext&, FunctionID);
@@ -105,6 +105,7 @@ bool mayCallWhateverHasEscaped(ValueFlowRuleContext&);
 // The unknown value lies under every name, in every slot and above each of the objects, and they have every mark.
 void letAnythingHappenTo(ValueFlowRuleContext&, ClimbingSet objects);
 // Some load names its module at run time: an entry point may be the one, a module of the library that reached code names by a constant, or a native module.
+// So may a file that the build has not seen, unless the build excludes such code: it runs, with a loader of its own, and what it exports is the answer.
 void letModulesBeLoadedByName(ValueFlowRuleContext&, ValueFlowHostNode answers);
 // Whether such a name may find the module, should it be in the image: no file of the program but an entry point, and nothing that the bundler imports on its own.
 bool mayAnswerToName(const Program&, ModuleID);

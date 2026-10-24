@@ -202,7 +202,7 @@ static void printTimeline(PrintStream& out, ValueFlowSolution& solution)
     constexpr ValueFlowHostNode flags[] {
         ValueFlowHostNode::UnseenCodeRuns, ValueFlowHostNode::UnknownCodeWrites, ValueFlowHostNode::HostChoosesOperands, ValueFlowHostNode::ModulesAreRequiredByName,
         ValueFlowHostNode::ModulesAreImportedByName, ValueFlowHostNode::LibraryModulesAreRequiredByName, ValueFlowHostNode::ObjectNobodyKnowsIsWritten,
-        ValueFlowHostNode::UnseenCodeChangesRealm, ValueFlowHostNode::ValueNobodyKnowsIsCalled, ValueFlowHostNode::UnseenCodeHasLoader,
+        ValueFlowHostNode::UnseenCodeChangesRealm, ValueFlowHostNode::ValueNobodyKnowsIsCalled, ValueFlowHostNode::UnseenCodeHasLoader, ValueFlowHostNode::CodeOutsideImageIsLoaded,
     };
     const ValueFlowSolver& solver = solution.solver();
     const ValueFlowProgramNodes& nodes = solution.bodies().nodes();

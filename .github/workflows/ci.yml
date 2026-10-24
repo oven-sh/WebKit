@@ -472,16 +472,16 @@ jobs:
           esac
           # --quick on the small runners: see lanes.mjs.
           if [ "$QUICK" = true ]; then platform+=(--quick); fi
-          for program in testair testb3; do [ -x "$root/bin/$program" ] || platform+=("--no-$program"); done
+          for program in testair testb3 testmasm; do [ -x "$root/bin/$program" ] || platform+=("--no-$program"); done
           # A lane built with ENABLE_AOT=0 ships no testaot (`programs` in lanes.mjs).
           [ -x "$root/bin/testaot" ] || platform+=(--without-aot)
-          # --root: <root>/bin/jsc. Of the C++ test programs a lane has testaot, and testair and testb3 where lanes.mjs
+          # --root: <root>/bin/jsc. Of the C++ test programs a lane has testaot, and testair, testb3 and testmasm where lanes.mjs
           # says so (testPrograms); the others are not built, hence the --no-test*.
           # --memory-limited: what upstream's Linux bots pass; skips the tests marked as needing a lot of memory.
           # --no-fail-fast: run everything, report every failure.
           perl Tools/Scripts/run-javascriptcore-tests \
             --no-build --root="$root" --release --jsc-only ${platform[@]+"${platform[@]}"} \
-            --no-testmasm --no-testdfg --no-testapi --no-testwasmdebugger --no-testlibjsctools \
+            --no-testdfg --no-testapi --no-testwasmdebugger --no-testlibjsctools \
             --no-fail-fast --memory-limited \
             --json-output="$results" 2>&1 | tee "$RUNNER_TEMP/jsc-tests.log" | awk '
               # The full output (a line per test run, plus what each test prints) is jsc-tests.log in the artifact; it

@@ -505,9 +505,12 @@ static bool isAmongMostEnteredFunctions(const FunctionPassContext& context, Func
     return context.inputs.heat.percentileOf(context.program, function) >= InlineModel::percentileOfMostEnteredFunctions;
 }
 
-static uint32_t budgetAt(const FunctionPassContext& context, const Value& call, HeatClass heat, unsigned depth)
+static uint32_t budgetAt(const FunctionPassContext& context, const Value& call, HeatClass heat, unsigned depth, bool isRepeatedByCaller)
 {
     uint32_t budget = inlineBudgetBytes(context, heat, depth);
+    // What a call costs, a loop around it pays at every turn, and what the loop knows of the arguments stops at the call. Of a function with one call site there is one copy at most.
+    if (isRepeatedByCaller && hasSingleCallSite(context, call.function(), call.inlineFrame, heat))
+        return std::max(budget, clampTo<uint32_t>(context.limit(LimitID::InlineBudgetOnlyCallBytes) >> std::min(depth, 31u)));
     if (isHot(heat) || isCold(heat) || !isAmongMostEnteredFunctions(context, call.function()))
         return budget;
     return std::max(budget, inlineBudgetBytes(context, HeatClass::Hot, depth) / 4 * 3);
@@ -548,6 +551,10 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
     if (!canInlineWholeBody && !summary.canInlineHead())
         return { .decision = InlineDecision::Barrier };
 
+    // A function that runs once is compiled as one. A loop runs more often wherever it stands, so a body with a loop stays a function of its own, which is compiled for what its loop does.
+    if (summary.hasCycle && !value.isAlwaysInlined() && context.inputs.heat.of(program, context.id) == HeatClass::RunsOnce)
+        return { .decision = InlineDecision::CostExceedsBenefit };
+
     HeatClass heat = heatClassOf(context, block);
     // However often the caller runs, this part of it is not expected to.
     if (caller.at(block).frequency != BlockFrequency::Normal && !isCold(heat))
@@ -561,12 +568,14 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
     bool isRepeatedByCaller = isHot(heat) && context.analyses.isInCycle(block);
     uint32_t foldedBytes = computeFoldedBytes(context, call, summary, isRepeatedByCaller ? DecidedTests::Go : DecidedTests::AreCharged);
     uint32_t removedBytes = saturatingSum<uint32_t>(foldedBytes, estimatedCodeBytes(program, caller, value));
-    uint32_t cost = summary.codeBytes > removedBytes ? summary.codeBytes - removedBytes : 0;
+    // In a loop of the caller what counts is what the loop runs.
+    uint32_t bodyBytes = isRepeatedByCaller ? std::min(summary.codeBytes, summary.likelyCodeBytes) : summary.codeBytes;
+    uint32_t cost = bodyBytes > removedBytes ? bodyBytes - removedBytes : 0;
 
     unsigned depth = depthOfCopies(context, value.inlineFrame, heat);
     // The budget halves with each level and is small where code runs seldom. A bet that did neither let a body in at every level, and what a caller knew of one object cost it many times its size.
     Bets bets = isCold(heat) || depth >= InlineModel::depthWithoutBets ? Bets::None : Bets::OnSpeed;
-    uint32_t budget = wouldCopySharedBodyIntoEntrypoint(context, value, heat) ? 0 : budgetAt(context, value, heat, depth);
+    uint32_t budget = wouldCopySharedBodyIntoEntrypoint(context, value, heat) ? 0 : budgetAt(context, value, heat, depth, isRepeatedByCaller);
     InlineVerdict verdict { .costBytes = cost, .budgetBytes = budget };
 
     auto addBenefit = [&](InlineBenefit benefit, uint64_t bytes) {

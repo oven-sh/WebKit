@@ -67,6 +67,13 @@ struct RecordedSwitches {
     friend bool operator==(const RecordedSwitches&, const RecordedSwitches&) = default;
 };
 
+// A hardened run time loads no code but that of the image, whatever the image was built to allow.
+#if defined(BUN_HARDENED)
+constexpr bool runsOnlyCodeOfImage = true;
+#else
+constexpr bool runsOnlyCodeOfImage = false;
+#endif
+
 constexpr ImageForm imageFormOfThisRuntime()
 {
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
@@ -109,8 +116,6 @@ struct RecordedOptions {
     bool usesExpectedTypes() const { return !has(TestingSwitch::IgnoreExpectedTypes); }
     HeatOverride heat() const { return static_cast<HeatOverride>(heatOverride); }
     AdmittedCode admitted() const { return static_cast<AdmittedCode>(admittedCode); }
-    // The end of every message about code that is not in the executable. No message spells the flag itself.
-    ASCIILiteral adviceToKeepFunctionSource() const { return omitsFunctionSource ? " Or rebuild without --no-compile-function-source."_s : ""_s; }
     JS_EXPORT_PRIVATE std::optional<DroppedGuard> droppedGuard() const;
 
     JS_EXPORT_PRIVATE bool isEnabled(FlowResultKind, uint32_t subject) const;
@@ -182,6 +187,7 @@ struct CompileOptions {
     // Code comes in at any place and at any time, so nothing holds for the program as a whole.
     bool admitsUnseenCode() const { return recorded.admitted() != AdmittedCode { }; }
     bool excludesEvaluatedText() const { return hasFlag(excludedCode, ExcludedCode::EvaluatedText); }
+    bool excludesCodeOutsideImage() const { return runsOnlyCodeOfImage || hasFlag(excludedCode, ExcludedCode::CodeOutsideImage); }
     bool obfuscates() const { return hasFlag(output, OutputOptions::Obfuscate); }
     bool writesCodeSizeMap() const { return !logging.mapFilePath.isNull(); }
 

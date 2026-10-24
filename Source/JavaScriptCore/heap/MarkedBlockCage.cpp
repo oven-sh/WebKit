@@ -251,9 +251,41 @@ bool MarkedBlockCage::releaseReserve()
     size_t numberOfChunksKept = m_reserve.size() / lastReserveDivisor;
     if (m_hasReleasedReserve || m_reserve.size() == numberOfChunksKept)
         return false;
+    m_numberOfChunksReleased = m_reserve.size() - numberOfChunksKept;
     while (m_reserve.size() > numberOfChunksKept)
         m_range->free(m_reserve.takeLast());
     m_hasReleasedReserve = true;
+    return true;
+}
+
+bool MarkedBlockCage::tryKeepReleasedReserveAgain()
+{
+    if (!m_hasReleasedReserve || !m_numberOfChunksReleased || m_exhaustedHeap != ExhaustedHeap::Cells)
+        return false;
+    size_t numberOfChunksKept = m_reserve.size();
+    while (m_reserve.size() < numberOfChunksKept + m_numberOfChunksReleased) {
+        void* chunk = m_range->tryAllocateAligned(MarkedBlock::blockSize, reserveChunkSize);
+        if (!chunk) {
+            while (m_reserve.size() > numberOfChunksKept)
+                m_range->free(m_reserve.takeLast());
+            return false;
+        }
+        m_reserve.append(chunk);
+    }
+    m_numberOfChunksReleased = 0;
+    m_hasReleasedReserve = false;
+    return true;
+}
+
+bool MarkedBlockCage::tryTakeBackOutOfMemoryError(VM& vm)
+{
+    if (!m_owesCollection || vm.heap.isDeferred())
+        return false;
+    m_owesCollection = false;
+    vm.heap.collectNow(Sync, CollectionScope::Full);
+    if (!vm.traps().needsOutOfMemoryError() || !tryKeepReleasedReserveAgain())
+        return false;
+    vm.traps().setNeedsOutOfMemoryError(false);
     return true;
 }
 
@@ -263,6 +295,7 @@ bool MarkedBlockCage::releaseLastReserve()
         return false;
     for (void* chunk : std::exchange(m_reserve, { }))
         m_range->free(chunk);
+    m_numberOfChunksReleased = 0;
     m_hasReleasedReserve = true;
     return true;
 }

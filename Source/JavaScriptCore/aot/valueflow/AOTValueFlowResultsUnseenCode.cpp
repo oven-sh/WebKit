@@ -122,7 +122,7 @@ static void appendRecordsOfApplicationsWithoutOperation(const ValueFlowSolution&
     size_t first = records.size();
     solution.sets().forEachMember(applied, [&](ValueFlowObjectID object) {
         BuiltinID builtin = builtins.canonicalID(solution.bodies().universe().builtinOf(object));
-        std::optional<UnseenCodeCause> cause = eventOfCalling(builtins, builtin, solution.solver().input().refusesEvaluatedText);
+        std::optional<UnseenCodeCause> cause = eventOfCalling(builtins, builtin, solution.solver().input().refusedCode);
         if (!cause && builtins.unseenCodeOf(builtin))
             cause = UnseenCodeCause::RunsUnseenCode;
         if (cause && !isListed.quickSet(builtin.index()))
@@ -137,7 +137,7 @@ static ValueSetID functionsWhoseCallIsEvent(const ValueFlowSolution& solution, V
     const ValueFlowUniverse& universe = solution.bodies().universe();
     Vector<ValueFlowObjectID, 32> objects;
     solution.sets().forEachMember(universe.builtinFunctions(), [&](ValueFlowObjectID object) {
-        if (eventOfCalling(builtins, builtins.canonicalID(universe.builtinOf(object)), solution.solver().input().refusesEvaluatedText))
+        if (eventOfCalling(builtins, builtins.canonicalID(universe.builtinOf(object)), solution.solver().input().refusedCode))
             objects.append(object);
     });
     return maker.of(objects.span());
@@ -192,13 +192,13 @@ Vector<UnseenCodeRecord> unseenCodeRecordsOf(ValueFlowSolution& solution)
 
             switch (statement.opcode) {
             case Opcode::DirectEval:
-                if (isSeenCode && !solution.solver().input().refusesEvaluatedText)
+                if (isSeenCode && !solution.solver().input().refusedCode.evaluatedText)
                     add(UnseenCodeCause::EvaluatesText, { }, statement.site);
                 continue;
             case Opcode::ImportDynamic:
             case Opcode::RequireDynamic:
                 if (isWrittenInProgram(function))
-                    add(UnseenCodeCause::LoadsModuleByName, { }, statement.site);
+                    add(solution.solver().input().refusedCode.codeOutsideImage ? UnseenCodeCause::LoadsModuleByName : UnseenCodeCause::LoadsCodeByName, { }, statement.site);
                 continue;
             case Opcode::ModuleNamespace:
             case Opcode::ImportModule:
@@ -234,7 +234,7 @@ Vector<UnseenCodeRecord> unseenCodeRecordsOf(ValueFlowSolution& solution)
                 if (isFiled)
                     return;
                 isFiled = true;
-                add(*eventOfCalling(builtins, builtin, solution.solver().input().refusesEvaluatedText), builtin, statement.site);
+                add(*eventOfCalling(builtins, builtin, solution.solver().input().refusedCode), builtin, statement.site);
             });
         }
     });

@@ -140,7 +140,7 @@ const platforms = [
       amd64: { on: "linux-x64-gh", variants: ["lto", "lto-aot", "lto-hardened-aot"] },
       arm64: { on: "linux-arm64-gh", variants: ["lto", "lto-aot"] },
     },
-    testPrograms: ["testb3", "testair", "TestWTF"],
+    testPrograms: ["testb3", "testair", "testmasm", "TestWTF"],
     bunTests: arch => (arch === "arm64" ? ["lto"] : ["lto", "asan"]),
     image: () => "linux-glibc",
     args: (arch, v) => ({

@@ -71,8 +71,8 @@ function f2 name="sumOfUnknownResults" parameters=[{type=string}, {type=number}]
     Return v7
 }
 # CHECK-LABEL: function f2 name="sumOfUnknownResults"
-# CHECK: b1(v6: int|whole, v7: number|string|bigint):
+# CHECK: b2(v8: int[0, 2147483647], v9: number|string|bigint):
 # CHECK-NEXT: LoopHint
-# CHECK: : number|string|bigint = Add v7, {{*}}form=Generic
+# CHECK: : number|string|bigint = Add v9, {{*}}form=Generic
 # REPRESENTED-LABEL: function f2 name="sumOfUnknownResults"
-# REPRESENTED: b1(v6: int|whole @Double, v7: number|string|bigint @JSValue):
+# REPRESENTED: b2(v8: int[0, 2147483647] @Int32, v9: number|string|bigint @JSValue):

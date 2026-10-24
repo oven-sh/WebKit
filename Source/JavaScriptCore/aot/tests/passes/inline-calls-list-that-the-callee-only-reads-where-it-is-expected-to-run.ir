@@ -115,3 +115,11 @@ function f6 name="theListIsTheProgramsOwn" parameters=[{type=number}, {type=anyt
 }
 # CHECK-LABEL: function f6 name="theListIsTheProgramsOwn"
 # CHECK: = CallDirect {{*}} function=f5
+
+# The one call of a function in a loop has a budget of its own, so each of these two has a second call.
+function f7 name="callsThemAgain" parameters=[{type=anything}, {type=Array<number>}] results=[{type=anything}] {
+  b0(v0: anything, v1: Array<number>):
+    v2 = CallDirect v0, v1 function=f3
+    v3 = CallDirect v2, v1 function=f5
+    Return v3
+}

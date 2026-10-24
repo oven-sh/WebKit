@@ -13,7 +13,7 @@ enum UnprovenCause (family: UnprovenCauseFamily) {
     Untracked(UnprovenType) LayoutOutsideFamily(UnprovenType)
 }
 enum CheckCause { Unknown UnknownObject UnknownCallee UnprovenContents MayFail LimitReached ResultDisabled AddedByPass }
-enum UnseenCodeCause { Unknown EvaluatesText ImportsUncompiledModule LoadsModuleByName RunsUnseenCode OptionAdmitsCode LimitReached FlowResultDisabled RunsMachineCode }
+enum UnseenCodeCause { Unknown EvaluatesText ImportsUncompiledModule LoadsModuleByName RunsUnseenCode OptionAdmitsCode LimitReached FlowResultDisabled RunsMachineCode LoadsCodeByName }
 flags BuiltinUse { Tested Read Called Constructed Written Escaped }
 enum FeatureUseKind { Named Unnamed }
 enum LocaleUseKind { Unknown HostDefault Constant }
@@ -133,7 +133,7 @@ enum Sabotage {
 }
 flags Instrumentation { CountBranches CountArrivals }
 flags AdmittedCode { Inspector }
-flags ExcludedCode { EvaluatedText FunctionSource }
+flags ExcludedCode { EvaluatedText FunctionSource CodeOutsideImage }
 flags OutputOptions { Obfuscate }
 record SwitchRange abi { firstID: UInt32 count: UInt32 }
 record DroppedGuardWords abi { opcode: UInt32 ordinal: UInt32 }

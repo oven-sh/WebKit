@@ -75,9 +75,9 @@ JSObject* createModuleInOtherRealmError(JSGlobalObject*, StringView path);
 JSObject* createLoaderChangeRefusedError(JSGlobalObject*, LoaderChange, StringView changed);
 JSObject* createModuleMissingAtBuildError(JSGlobalObject*, const String& specifier, const String& importer, ASCIILiteral code);
 JSObject* createSuperCallInDirectEvalError(JSGlobalObject*);
-String functionNotCompiledMessage(const String& functionName, ASCIILiteral adviceToKeepFunctionSource);
-String functionNotCompiledMessage(const String& path, unsigned line, ASCIILiteral adviceToKeepFunctionSource);
-String functionNotCompiledMessage(ASCIILiteral adviceToKeepFunctionSource);
+String functionNotCompiledMessage(const String& functionName);
+String functionNotCompiledMessage(const String& path, unsigned line);
+String functionNotCompiledMessage();
 // `Array.prototype.push`, `Array.prototype[Symbol(Symbol.iterator)]`, and of the global object the name alone.
 String memberOfLockedBuiltin(BuiltinID holder, UniquedStringImpl* key);
 String assignmentToLockedBuiltinMessage(const String& property);

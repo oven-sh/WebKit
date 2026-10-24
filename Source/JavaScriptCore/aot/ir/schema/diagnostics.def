@@ -11,7 +11,7 @@ enum UserDiagnosticKind (severity: DiagnosticSeverity, stage: Stage, code: UInt3
     LockedBuiltinWriteAlwaysRuns(Error, AnalyzeFlow, 100014, "this assignment always throws: built-in objects are read-only in a compiled executable")
     LockedBuiltinWriteMayRun(Warning, AnalyzeFlow, 100014, "this assignment throws if it runs: built-in objects are read-only in a compiled executable")
     LockedBuiltinWriteIsIgnored(Warning, AnalyzeFlow, 100014, "this assignment has no effect: built-in objects are read-only in a compiled executable")
-    CodeOutsideImageIsRefused(Warning, AnalyzeFlow, 100064, "this import path isn't a constant. If it resolves to code that isn't in the executable, the import throws at run time (data files still load). Add the file as an entry point, or mark it --external")
+    CodeOutsideImageIsRefused(Warning, AnalyzeFlow, 100064, "this import path isn't a constant. If it resolves to code that isn't in the executable, the import throws at run time (data files still load). Add the file as an entry point")
     ModuleNamedAtRunTimeIsRefused(Warning, AnalyzeFlow, 100064, "this call loads a module, and its name isn't a constant. If it names code or a built-in module that isn't in the executable, the call throws at run time. Import the module by its name to keep it")
     FrameTooLarge(Error, GenerateCode, 100057, "{function} needs a stack frame of {count} bytes, over the limit: {limit}")
     TooManyShapes(Error, NumberAndEncode, 100057, "the program has too many object shapes: {limit}, needed {count}")

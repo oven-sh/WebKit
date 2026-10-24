@@ -2676,7 +2676,7 @@ void applyBuiltinFoundThroughUnknownObject(BuiltinID builtin, const ValueFlowSta
 
 bool raisesEventWhenCalled(const BuiltinTable& builtins, BuiltinID builtin)
 {
-    return eventOfCalling(builtins, builtins.canonicalID(builtin), false).has_value();
+    return eventOfCalling(builtins, builtins.canonicalID(builtin), { }).has_value();
 }
 
 // `f.bind(thisValue)` binds no argument. What a call makes is an object of that call alone, so the operation says it: a call that passes one argument at the most and spreads no list.

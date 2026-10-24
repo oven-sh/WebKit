@@ -238,6 +238,8 @@ if (DEVELOPER_MODE OR ENABLE_BUN_TEST_PROGRAMS)
     set(testair_FRAMEWORKS ${jsc_FRAMEWORKS})
 
     if (USE_EXTERNAL_MIMALLOC)
+        list(APPEND testmasm_SOURCES ExternalMimallocShims.cpp)
+        list(APPEND testmasm_LIBRARIES $<TARGET_OBJECTS:mimalloc-obj>)
         list(APPEND testb3_SOURCES ExternalMimallocShims.cpp)
         list(APPEND testb3_LIBRARIES $<TARGET_OBJECTS:mimalloc-obj>)
         list(APPEND testair_SOURCES ExternalMimallocShims.cpp)

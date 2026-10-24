@@ -12,6 +12,14 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+// What the build excludes and the run time therefore refuses, whoever asks for it.
+struct RefusedCode {
+    // eval, Function and its relatives are refused every text, so a call of one throws and runs nothing.
+    bool evaluatedText { false };
+    // A load finds the modules of the image and data. A file with code that is not in the image is refused.
+    bool codeOutsideImage { false };
+};
+
 constexpr bool admitsUnknownJavaScript(UnseenCodeCause cause)
 {
     switch (cause) {
@@ -19,6 +27,7 @@ constexpr bool admitsUnknownJavaScript(UnseenCodeCause cause)
     case UnseenCodeCause::ImportsUncompiledModule:
     case UnseenCodeCause::RunsUnseenCode:
     case UnseenCodeCause::OptionAdmitsCode:
+    case UnseenCodeCause::LoadsCodeByName:
         return true;
     case UnseenCodeCause::Unknown:
     case UnseenCodeCause::LoadsModuleByName:
@@ -42,10 +51,16 @@ constexpr bool opensWholeProgram(UnseenCodeCause cause)
     return cause == UnseenCodeCause::OptionAdmitsCode;
 }
 
+// A name that the build does not know may be the path of a file that the build has not seen. The run time loads the file and interprets it.
+constexpr bool loadsCodeOutsideImage(UnseenCodeCause cause)
+{
+    return cause == UnseenCodeCause::LoadsCodeByName;
+}
+
 // A module that stays outside the image is unseen code with a loader of its own. It names the modules of the library, and gets the one instance that the image holds. The run time refuses it the files of the image.
 constexpr bool requiresLibraryModules(UnseenCodeCause cause)
 {
-    return cause == UnseenCodeCause::ImportsUncompiledModule;
+    return cause == UnseenCodeCause::ImportsUncompiledModule || cause == UnseenCodeCause::LoadsCodeByName;
 }
 
 // The text of a function or a module of the library requires modules of the library too.
@@ -56,7 +71,7 @@ constexpr bool admitsLibraryText(UnseenCodeCause cause)
 
 constexpr bool loadsModulesByName(UnseenCodeCause cause)
 {
-    return cause == UnseenCodeCause::LoadsModuleByName || opensWholeProgram(cause);
+    return cause == UnseenCodeCause::LoadsModuleByName || loadsCodeOutsideImage(cause) || opensWholeProgram(cause);
 }
 
 } } } // namespace JSC::AOT::Typed

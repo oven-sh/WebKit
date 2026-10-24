@@ -607,9 +607,9 @@ bool ValueFlowRuleContext::leavesOutSomeUnknownSource() const
     return !m_solver.m_input.unknownSourcesLeftOut.isEmpty();
 }
 
-bool ValueFlowRuleContext::refusesEvaluatedText() const
+RefusedCode ValueFlowRuleContext::refusedCode() const
 {
-    return m_solver.m_input.refusesEvaluatedText;
+    return m_solver.m_input.refusedCode;
 }
 
 bool ValueFlowRuleContext::isGuardedByRemovedFeature(BuiltinID builtin) const

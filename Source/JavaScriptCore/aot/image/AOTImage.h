@@ -126,6 +126,7 @@ public:
     bool admitsUnknownJavaScript() const { return header().admitsUnknownJavaScript(); }
     bool loadsModulesByName() const { return header().loadsModulesByName(); }
     bool admitsLibraryText() const { return header().admitsLibraryText(); }
+    bool loadsCodeOutsideImage() const { return header().loadsCodeOutsideImage(); }
     bool showsWaysBetweenModuleObjects() const { return header().showsWaysBetweenModuleObjects(); }
 
     JS_EXPORT_PRIVATE CodeLocation locate(const void* pc) const;

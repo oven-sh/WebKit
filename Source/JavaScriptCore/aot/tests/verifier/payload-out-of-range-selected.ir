@@ -59,3 +59,17 @@ function f7 name="goodComparisons" parameters=[{type=number}] results=[{type=und
     v4 = IntegerBound v0 comparison=GreaterEq
     Return
 }
+function f8 name="goodThroughBlockParameter" parameters=[{type=boolean}, {type=int[0, 100]}, {type=number}] results=[{type=undefined}] {
+  b0(v0: boolean, v1: int[0, 100], v2: number):
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewArrayWithCapacity v1 arrayStorage=Double
+    Jump -> next b3(v3)
+  b2():
+    v4 = NewArrayWithCapacity v1 arrayStorage=Double
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = Integer integer=0
+    v7 = TryPutByValDirect v5, v6, v2 arrayStorage=Double
+    Return
+}

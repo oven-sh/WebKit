@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayStorageForms.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTHeat.h"
 #include "AOTResolveCallsCallees.h"
@@ -122,12 +123,25 @@ void ArrayChainFinder::tryChain(BlockID block, const ArrayMethodCall& last)
     m_chains.append(WTF::move(chain));
 }
 
-// The traversal knows how long the array can get, and it is shorter than the text of the built-in.
+// The traversal knows how long the array of a filter or of a flatMap can get, and gives the array of a map storage for the numbers that the callback returns.
 bool ArrayChainFinder::paysAlone(const ArrayMethodCall& call) const
 {
     if (!m_callsTakenAlone || !m_callsTakenAlone->get(call.call.index()))
         return false;
-    return call.method->role == ChainMethodRole::End ? call.method->end == ChainEndKind::FlatMap : call.method->link == ChainLinkKind::Filter;
+    if (call.method->role == ChainMethodRole::End)
+        return call.method->end == ChainEndKind::FlatMap;
+    switch (call.method->link) {
+    case ChainLinkKind::None:
+        return false;
+    case ChainLinkKind::Filter:
+        return true;
+    case ChainLinkKind::Map:
+        break;
+    }
+    FunctionID callee = call.arguments.isEmpty() ? FunctionID() : calleeOf(call.arguments[0]);
+    if (!callee || m_context.program.at(callee).results.size() != 1)
+        return false;
+    return arrayStorageAtAllocation(m_context.program.at(m_context.program.at(callee).results[0].type)) != ArrayStorage::Contiguous;
 }
 
 bool ArrayChainFinder::takeEnd(ArrayChain& chain, const ArrayMethodCall& last)

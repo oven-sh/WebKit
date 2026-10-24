@@ -2,6 +2,8 @@
 # What the bundler imports for the constructs that it lowers is Bun's own code in the form of a file of the program.
 # A name that is put together at run time may spell "bun:wrap", and plain Bun answers it. So the helper that a module of the program imports is listed by its path and is among the answers of such a load,
 # and what it exports is among the callees. The helper that nobody imports is not listed: the load neither evaluates nor answers it, and it stays unreached. An entry point of the program is answered
+# The build excludes code outside the image, as a hardened Bun does: the run time refuses a file with code that is not in the image.
+# OPTIONS: exclude=CodeOutsideImage
 # RUN: valueflow-solve calls
 # CHECK: f0 v1 -> f2
 # CHECK-NEXT: f0 v6 ->

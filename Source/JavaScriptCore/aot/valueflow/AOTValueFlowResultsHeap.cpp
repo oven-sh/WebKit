@@ -829,8 +829,58 @@ static ValueSetID builtinFunctionsOfProtocolsThatProgramHasStored(const ValueFlo
     return maker.intersect(found, inputs.universe().builtinFunctionsOfProtocols());
 }
 
+// `value instanceof object` applies the function of the table that it finds under Symbol.hasInstance to the two, without a group: testAgainstConstructor().
+static void forEachBuiltinAppliedByTest(const ValueFlowResultInputs& inputs, const ValueFlowHeapView& heap, ValueSetMaker& maker, ValueSetID amongFunctions, const ValueFlowBuiltinApplicationFunctor& functor)
+{
+    const ValueFlowUniverse& universe = inputs.universe();
+    PropertyKeyID key = inputs.program.keyOf(BuiltinNames::hasInstanceSymbol);
+    auto methodsFoundOn = [&](ValueSetID holders) {
+        // What a getter answers is not followed here.
+        if (heap.writtenUnder(maker, holders, ValueFlowName::getter(key)) != ValueSets::nothing)
+            return amongFunctions;
+        ValueSetID stored = maker.unite(heap.writtenUnder(maker, holders, ValueFlowName::of(ValueFlowNameKind::UnknownKey)), heap.writtenUnder(maker, holders, ValueFlowName::property(key)));
+        return maker.intersect(stored, amongFunctions);
+    };
+    if (methodsFoundOn(universe.objects()) == ValueSets::nothing)
+        return;
+
+    ValueFlowBuiltinApplication byTest;
+    byTest.kind = ValueFlowCallKind::CallByNativeCode;
+    byTest.arguments.append(ValueSets::nothing);
+    Vector<std::pair<ValueSetID, ValueSetID>, 16> methodsOfConstructors;
+    std::span<const ValueFlowBodyRange> ranges = inputs.bodies().ranges();
+    std::span<const ValueFlowStatement> statements = inputs.bodies().statements();
+    for (uint32_t function = 0; function < inputs.program.functions.size(); ++function) {
+        if (!inputs.isReached(FunctionID(function)))
+            continue;
+        for (uint32_t index = ranges[function].statement; index < ranges[function + 1].statement; ++index) {
+            if (statements[index].kind != ValueFlowStatementKind::Operation || statements[index].opcode != Opcode::InstanceOf)
+                continue;
+            std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(statements[index]);
+            ValueSetID constructors = valueSeenByRulesAt(inputs, maker, operands[1]);
+            size_t known = methodsOfConstructors.findIf([&](const auto& entry) {
+                return entry.first == constructors;
+            });
+            if (known == notFound) {
+                known = methodsOfConstructors.size();
+                methodsOfConstructors.append({ constructors, methodsFoundOn(heap.chainOf(maker, heap.expand(maker, constructors))) });
+            }
+            ValueSetID methods = methodsOfConstructors[known].second;
+            if (methods == ValueSets::nothing)
+                continue;
+            byTest.thisValue = constructors;
+            byTest.arguments[0] = valueSeenByRulesAt(inputs, maker, operands[0]);
+            inputs.sets().forEachMember(methods, [&](ValueFlowObjectID callee) {
+                byTest.builtin = universe.builtinOf(callee);
+                functor(byTest);
+            });
+        }
+    }
+}
+
 static void forEachBuiltinAppliedByProtocol(const ValueFlowResultInputs& inputs, const ValueFlowHeapView& heap, ValueSetMaker& maker, ValueSetID amongFunctions, const ValueFlowBuiltinApplicationFunctor& functor)
 {
+    forEachBuiltinAppliedByTest(inputs, heap, maker, amongFunctions, functor);
     ValueFlowBuiltinApplication byProtocol;
     byProtocol.kind = ValueFlowCallKind::CallByNativeCode;
     byProtocol.thisValue = ValueSets::anything;

@@ -1,6 +1,6 @@
 # Namespaces, static and dynamic imports, requires and resolutions, import.meta, the require function and the module object, and an import that failed to resolve pass the back-end checks in compact code
 # RUN: compile
-# OPTIONS: heat=everything-is-cold validate check=validate-back-end only-passes=EstimateHeat
+# OPTIONS: heat=everything-is-cold validate check=validate-back-end only-passes=EstimateHeat exclude=CodeOutsideImage
 # DIAGNOSTIC: CodeOutsideImageIsRefused 4
 # CHECK: image not empty
 

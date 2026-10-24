@@ -247,6 +247,8 @@ public:
             return summary;
 
         summary.codeBytes = computeBlockBytes();
+        summary.hasCycle = m_analyses.cfg().hasCycle();
+        summary.likelyCodeBytes = computeLikelyBytes();
         summary.isWrapper = isWrapperCreatedByEngine(m_function);
         if (isCold(heat))
             return summary;
@@ -302,6 +304,39 @@ private:
             codeBytes = saturatingSum<uint32_t>(codeBytes, bytes);
         }
         return codeBytes;
+    }
+
+    bool isLikely(BlockID id) const
+    {
+        return m_function.at(id).frequency == BlockFrequency::Normal;
+    }
+
+    // Where a type is written the test of it stands in the body already. Where none is written the same test is placed behind the copy.
+    uint32_t bytesOfTestOfWrittenType(const Block& block) const
+    {
+        const Terminator& terminator = block.terminator;
+        if (!terminator.isConditionalBranch() || block.values.isEmpty() || terminator.conditionOperand() != block.values.last())
+            return 0;
+        const Value& test = m_function.at(block.values.last());
+        if (test.opcode != Opcode::TypeTest || !isLikely(terminator.taken().block) || isLikely(terminator.notTaken().block))
+            return 0;
+        return estimatedCodeBytes(m_program, m_function, test) + estimatedCodeBytes(terminator);
+    }
+
+    uint32_t computeLikelyBytes()
+    {
+        if (!isLikely(entryBlock) || !m_function.has(FunctionFlags::IsChecked))
+            return std::numeric_limits<uint32_t>::max();
+        uint32_t likelyBytes = 0;
+        uint32_t otherBytes = 0;
+        for (BlockID id : m_analyses.cfg().reversePostOrder()) {
+            if (isLikely(id))
+                likelyBytes = saturatingSum<uint32_t>(likelyBytes, m_blockBytes[id.index()] - bytesOfTestOfWrittenType(m_function.at(id)));
+            else
+                otherBytes = saturatingSum<uint32_t>(otherBytes, m_blockBytes[id.index()]);
+        }
+        // The copies for values that fail a test are about what the function is without its types.
+        return std::max(likelyBytes, otherBytes);
     }
 
     std::optional<uint32_t> entryParameterBehind(ValueID value) const

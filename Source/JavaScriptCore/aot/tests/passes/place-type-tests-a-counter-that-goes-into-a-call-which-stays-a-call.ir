@@ -1,0 +1,191 @@
+# An int32 stays in its register around a call and takes one instruction to become a value of any type; a number that may be a double is spilled around the call and costs a handful to become one.
+# So a counter that goes into a call which stays a call is wanted as an int32, and the number that bounds it is tested in front of the loop.
+# Where the call is copied in, what the copy does with the counter decides: added to a number, it is wanted as a number.
+# RUN: pipeline Select
+# OPTIONS: check=VerifyEachPass
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="count" [isFreeName]
+    v2 = ToNumber v1
+    v3 = CallDirect v2 function=f1
+    v4 = CallDirect v2 function=f2
+    v5 = PropGet v0 key="sink" [isFreeName]
+    v6 = Call v5, -, v3, v4
+    Return
+}
+function f1 name="handsTheCounterToALargeFunction" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Integer integer=0
+    Jump -> next b1(v1, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = Less v2, v0
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = CallDirect v2 function=f3
+    v7 = Add v3, v6
+    v8 = Increment v2
+    Jump -> next b1(v8, v7)
+  b3():
+    Return v3
+}
+# CHECK-LABEL: function f1 name="handsTheCounterToALargeFunction"
+# CHECK: = TypeTest v0 testedType=i32
+# CHECK: LoopHint
+# CHECK-NEXT: = Less {{*}}form=Integers
+# CHECK: = CallDirect {{*}}function=f3
+
+function f2 name="handsTheCounterToASmallFunction" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = Integer integer=0
+    Jump -> next b1(v1, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = Less v2, v0
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = CallDirect v2, v3 function=f4
+    v7 = Increment v2
+    Jump -> next b1(v7, v6)
+  b3():
+    Return v3
+}
+# CHECK-LABEL: function f2 name="handsTheCounterToASmallFunction"
+# CHECK-NOT: TypeTest
+# CHECK: = Less {{*}}form=Numbers
+# CHECK-NOT: TypeTest
+
+function f3 name="large" parameters=[{type=anything}] results=[{type=number}] {
+  b0(v0: anything):
+    v1 = ToNumber v0
+    v2 = Mul v1, v1
+    v3 = Mul v2, v1
+    v4 = Mul v3, v1
+    v5 = Mul v4, v1
+    v6 = Mul v5, v1
+    v7 = Mul v6, v1
+    v8 = Mul v7, v1
+    v9 = Mul v8, v1
+    v10 = Mul v9, v1
+    v11 = Mul v10, v1
+    v12 = Mul v11, v1
+    v13 = Mul v12, v1
+    v14 = Mul v13, v1
+    v15 = Mul v14, v1
+    v16 = Mul v15, v1
+    v17 = Mul v16, v1
+    v18 = Mul v17, v1
+    v19 = Mul v18, v1
+    v20 = Mul v19, v1
+    v21 = Mul v20, v1
+    v22 = Mul v21, v1
+    v23 = Mul v22, v1
+    v24 = Mul v23, v1
+    v25 = Mul v24, v1
+    v26 = Mul v25, v1
+    v27 = Mul v26, v1
+    v28 = Mul v27, v1
+    v29 = Mul v28, v1
+    v30 = Mul v29, v1
+    v31 = Mul v30, v1
+    v32 = Mul v31, v1
+    v33 = Mul v32, v1
+    v34 = Mul v33, v1
+    v35 = Mul v34, v1
+    v36 = Mul v35, v1
+    v37 = Mul v36, v1
+    v38 = Mul v37, v1
+    v39 = Mul v38, v1
+    v40 = Mul v39, v1
+    v41 = Mul v40, v1
+    v42 = Mul v41, v1
+    v43 = Mul v42, v1
+    v44 = Mul v43, v1
+    v45 = Mul v44, v1
+    v46 = Mul v45, v1
+    v47 = Mul v46, v1
+    v48 = Mul v47, v1
+    v49 = Mul v48, v1
+    v50 = Mul v49, v1
+    v51 = Mul v50, v1
+    v52 = Mul v51, v1
+    v53 = Mul v52, v1
+    v54 = Mul v53, v1
+    v55 = Mul v54, v1
+    v56 = Mul v55, v1
+    v57 = Mul v56, v1
+    v58 = Mul v57, v1
+    v59 = Mul v58, v1
+    v60 = Mul v59, v1
+    v61 = Mul v60, v1
+    v62 = Mul v61, v1
+    v63 = Mul v62, v1
+    v64 = Mul v63, v1
+    v65 = Mul v64, v1
+    v66 = Mul v65, v1
+    v67 = Mul v66, v1
+    v68 = Mul v67, v1
+    v69 = Mul v68, v1
+    v70 = Mul v69, v1
+    v71 = Mul v70, v1
+    v72 = Mul v71, v1
+    v73 = Mul v72, v1
+    v74 = Mul v73, v1
+    v75 = Mul v74, v1
+    v76 = Mul v75, v1
+    v77 = Mul v76, v1
+    v78 = Mul v77, v1
+    v79 = Mul v78, v1
+    v80 = Mul v79, v1
+    v81 = Mul v80, v1
+    v82 = Mul v81, v1
+    v83 = Mul v82, v1
+    v84 = Mul v83, v1
+    v85 = Mul v84, v1
+    v86 = Mul v85, v1
+    v87 = Mul v86, v1
+    v88 = Mul v87, v1
+    v89 = Mul v88, v1
+    v90 = Mul v89, v1
+    v91 = Mul v90, v1
+    v92 = Mul v91, v1
+    v93 = Mul v92, v1
+    v94 = Mul v93, v1
+    v95 = Mul v94, v1
+    v96 = Mul v95, v1
+    v97 = Mul v96, v1
+    v98 = Mul v97, v1
+    v99 = Mul v98, v1
+    v100 = Mul v99, v1
+    v101 = Mul v100, v1
+    v102 = Mul v101, v1
+    v103 = Mul v102, v1
+    v104 = Mul v103, v1
+    v105 = Mul v104, v1
+    v106 = Mul v105, v1
+    v107 = Mul v106, v1
+    v108 = Mul v107, v1
+    v109 = Mul v108, v1
+    v110 = Mul v109, v1
+    v111 = Mul v110, v1
+    v112 = Mul v111, v1
+    v113 = Mul v112, v1
+    v114 = Mul v113, v1
+    v115 = Mul v114, v1
+    v116 = Mul v115, v1
+    v117 = Mul v116, v1
+    v118 = Mul v117, v1
+    v119 = Mul v118, v1
+    v120 = Mul v119, v1
+    v121 = Mul v120, v1
+    Return v121
+}
+function f4 name="small" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+  b0(v0: number, v1: number):
+    v2 = Add v1, v0
+    Return v2
+}

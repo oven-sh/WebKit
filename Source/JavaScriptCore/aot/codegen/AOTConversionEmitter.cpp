@@ -368,6 +368,12 @@ Operand ConversionEmitter::inRepresentation(const OperationContext& context, Ope
         return produced;
     if (produced.is<Boxed>() && wanted != Representation::RawWord)
         return unbox(produced.as<Boxed>(), producedType, wanted);
+    // A slot that holds integers or nothing is read where the type says no more than that a number comes.
+    if (numberRepresentations.contains(wanted) && producedType.isNumber()) {
+        produced = withoutMarkers(produced);
+        if (produced.representation == wanted)
+            return produced;
+    }
 
     bool isNumber = numberRepresentations.contains(produced.representation);
     auto producedInteger = [&] {

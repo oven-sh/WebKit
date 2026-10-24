@@ -334,6 +334,36 @@ static void testTextsThatAreNoAtomsAreNames()
     CHECK_OUTPUT(STATEMENTS_ASKING_BY_TEXTS, OUTPUT_OF_TEXTS);
 }
 
+// A search goes from word to word of the index of a table until it meets the name or an empty word. These tables are as full as a table gets, and their names lie all over the memory that the names asked for lie in.
+#define STATEMENTS_ASKING_FULL_TABLES R"JS(
+globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey) => {
+    const keeper = { };
+    const pool = [];
+    for (let k = 0; k < 6000; k++) keeper[pool[k] = "n" + (10000 + k)] = k;
+    for (const [howMany, stride] of [[127, 31], [1023, 5]]) {
+        const listed = [];
+        const lacking = [];
+        for (let k = 0; listed.length < howMany; k++) (k % 3 || lacking.length == 64 ? listed : lacking).push(pool[k * stride]);
+        const full = fresh();
+        for (let k = 0; k < howMany; k++) full[listed[k]] = k;
+        printAnswers(howMany + 1 + " names", {
+            "read": verdict(n => readByKey(fresh(full), listed[n]) === n, howMany),
+            "read of nothing": verdict(n => readByKey(fresh(full), lacking[n]) === undefined, lacking.length),
+            "in": verdict(n => hasByKey(fresh(full), lacking[n]) === false, lacking.length),
+            "hasOwn": verdict(n => hasOwnByKey(full, lacking[n]) === false, lacking.length),
+        });
+    }
+};
+)JS"
+
+#define LINE_OF_FULL_TABLE(howMany, answer) howMany " names: read " answer " | read of nothing " answer " | in " answer " | hasOwn " answer "\n"
+#define OUTPUT_OF_FULL_TABLES(objects, operations, fewOperations) LINE_OF_FULL_TABLE("128", objects) LINE_OF_FULL_TABLE("1024", objects)
+
+static void testFullTablesAnswer()
+{
+    CHECK_OUTPUT(STATEMENTS_ASKING_FULL_TABLES, OUTPUT_OF_FULL_TABLES);
+}
+
 #define STATEMENTS_ASKING_BY_SYMBOLS R"JS(
 globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey, storeByKey) => {
     const symbol = Symbol("shared");
@@ -805,6 +835,7 @@ std::span<const NativeTest> lookupBehindTablesProgramTests()
     static constexpr NativeTest tests[] = {
         { "lookup-behind-tables/programs/ordinary-objects-answer"_s, testOrdinaryObjectsAnswer },
         { "lookup-behind-tables/programs/texts-that-are-no-atoms-are-names"_s, testTextsThatAreNoAtomsAreNames },
+        { "lookup-behind-tables/programs/full-tables-answer"_s, testFullTablesAnswer },
         { "lookup-behind-tables/programs/symbols-are-names"_s, testSymbolsAreNames },
         { "lookup-behind-tables/programs/stores-replace-own-values"_s, testStoresReplaceOwnValues },
         { "lookup-behind-tables/programs/stores-add-to-dictionaries"_s, testStoresAddToDictionaries },

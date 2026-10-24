@@ -1,6 +1,8 @@
 # import "./inner.js"; eval(text); require(name)   built with two entry points, main.js and other.js
 # The program loads by a name nobody knows, so the run time finds the entry points by name, for evaluated text too: what an entry point exports is called by a caller without types.
 # What it keeps to itself stays unreached. So does what inner.js exports, a file that is in the image because main.js names it by a constant, and a file that nothing names is not evaluated: the run time refuses both
+# The build excludes code outside the image, as a hardened Bun does: the run time refuses a file with code that is not in the image.
+# OPTIONS: exclude=CodeOutsideImage
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f1
 # CHECK-NOT: unreached f2

@@ -118,9 +118,8 @@ bool refusesCodeOutsideImage(JSGlobalObject* realm)
 {
     if (Modules* modules = modulesOf(realm))
         return modules->refusesCodeOutsideImage();
-    // The build folds what loads code at run time out of the host's modules unless it admits the inspector or names an external module.
     const Image* image = Image::current();
-    return image && !hasFlag(image->header().options.admitted(), AdmittedCode::Inspector);
+    return image && !hasFlag(image->header().options.admitted(), AdmittedCode::Inspector) && !image->loadsCodeOutsideImage();
 }
 
 static void throwLoadByNameRefused(JSGlobalObject* realm, StringView name, LoadByName form)

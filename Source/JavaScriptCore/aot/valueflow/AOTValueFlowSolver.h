@@ -73,8 +73,7 @@ struct ValueFlowSolverInput {
     uint32_t mostRounds { UINT32_MAX };
     // For tests that ask what a program would be like if the table described more: a rule that names one of these sources gets the primitives alone, and its edges keep the name of the source.
     EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut;
-    // The build excludes evaluated text: the run time refuses eval, Function and its relatives every text, so a call of one throws and runs nothing.
-    bool refusesEvaluatedText { false };
+    RefusedCode refusedCode;
     // CompileOptions::removedFeatures.
     std::array<uint64_t, 8> removedFeatures { };
     // The functions whose calls the rules tell apart. Null where there are none.

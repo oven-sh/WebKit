@@ -160,6 +160,8 @@ private:
 
     bool tryPeelPendingGuards();
     FirstIterationValue stagePeeledCopy(Value*, HoistStep::Kind, PeelingAttempt&) const;
+    std::optional<int64_t> evaluateOnFirstIteration(Value*, UncheckedKeyHashMap<Value*, int64_t>& known) const;
+    bool passesOnFirstIteration(const PendingGuard&) const;
 
     Procedure& m_proc;
     NaturalLoops& m_loops;

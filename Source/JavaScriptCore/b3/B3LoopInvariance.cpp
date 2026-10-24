@@ -543,6 +543,115 @@ LoopInvariance::FirstIterationValue LoopInvariance::stagePeeledCopy(Value* value
     return result;
 }
 
+static std::optional<int64_t> foldIntegers(Opcode opcode, Type typeOfOperands, int64_t left, int64_t right)
+{
+    bool is32 = typeOfOperands == Int32;
+    uint64_t unsignedLeft = is32 ? static_cast<uint32_t>(left) : static_cast<uint64_t>(left);
+    uint64_t unsignedRight = is32 ? static_cast<uint32_t>(right) : static_cast<uint64_t>(right);
+    unsigned shift = right & (is32 ? 31 : 63);
+    auto wrap = [&](uint64_t bits) -> int64_t {
+        return is32 ? static_cast<int32_t>(bits) : static_cast<int64_t>(bits);
+    };
+    switch (opcode) {
+    case Add:
+        return wrap(unsignedLeft + unsignedRight);
+    case Sub:
+        return wrap(unsignedLeft - unsignedRight);
+    case Mul:
+        return wrap(unsignedLeft * unsignedRight);
+    case BitAnd:
+        return wrap(unsignedLeft & unsignedRight);
+    case BitOr:
+        return wrap(unsignedLeft | unsignedRight);
+    case BitXor:
+        return wrap(unsignedLeft ^ unsignedRight);
+    case Shl:
+        return wrap(unsignedLeft << shift);
+    case SShr:
+        return left >> shift;
+    case ZShr:
+        return wrap(unsignedLeft >> shift);
+    case Equal:
+        return left == right;
+    case NotEqual:
+        return left != right;
+    case LessThan:
+        return left < right;
+    case GreaterThan:
+        return left > right;
+    case LessEqual:
+        return left <= right;
+    case GreaterEqual:
+        return left >= right;
+    case Above:
+        return unsignedLeft > unsignedRight;
+    case Below:
+        return unsignedLeft < unsignedRight;
+    case AboveEqual:
+        return unsignedLeft >= unsignedRight;
+    case BelowEqual:
+        return unsignedLeft <= unsignedRight;
+    default:
+        return std::nullopt;
+    }
+}
+
+std::optional<int64_t> LoopInvariance::evaluateOnFirstIteration(Value* value, UncheckedKeyHashMap<Value*, int64_t>& known) const
+{
+    if (value->hasInt())
+        return value->asInt();
+    if (auto found = known.find(value); found != known.end())
+        return found->value;
+
+    std::optional<int64_t> result;
+    if (value->opcode() == Phi) {
+        Value* entering = value->owner == m_region.header ? findEnteringValue(value) : nullptr;
+        if (entering && entering->hasInt())
+            result = entering->asInt();
+    } else if (value->numChildren() == 1 && value->child(0)->type().isInt()) {
+        std::optional<int64_t> operand = evaluateOnFirstIteration(value->child(0), known);
+        if (!operand)
+            return std::nullopt;
+        switch (value->opcode()) {
+        case Identity:
+            result = operand;
+            break;
+        case ZExt32:
+            result = static_cast<uint32_t>(*operand);
+            break;
+        case SExt32:
+        case Trunc:
+            result = static_cast<int32_t>(*operand);
+            break;
+        default:
+            break;
+        }
+    } else if (value->numChildren() == 2 && value->child(0)->type().isInt() && value->child(1)->type().isInt()) {
+        std::optional<int64_t> left = evaluateOnFirstIteration(value->child(0), known);
+        std::optional<int64_t> right = left ? evaluateOnFirstIteration(value->child(1), known) : std::nullopt;
+        if (!right)
+            return std::nullopt;
+        result = foldIntegers(value->opcode(), value->child(0)->type(), *left, *right);
+    }
+    if (result)
+        known.add(value, *result);
+    return result;
+}
+
+bool LoopInvariance::passesOnFirstIteration(const PendingGuard& pending) const
+{
+    Value* guard = pending.guard;
+    if (guard->opcode() != Branch && guard->opcode() != Check)
+        return false;
+    UncheckedKeyHashMap<Value*, int64_t> known;
+    std::optional<int64_t> condition = evaluateOnFirstIteration(guard->child(0), known);
+    if (!condition)
+        return false;
+    if (guard->opcode() == Check)
+        return !*condition;
+    return pending.likelySuccessor == guard->owner->successorBlock(*condition ? 0 : 1);
+}
+
 bool LoopInvariance::tryPeelPendingGuards()
 {
     if (m_peelingFailed)
@@ -552,10 +661,13 @@ bool LoopInvariance::tryPeelPendingGuards()
     for (const PendingGuard& guard : m_pendingGuards) {
         attempt.numberOfVisitedValues = 0;
         HoistStep::Kind kind = guard.guard->opcode() == Check ? HoistStep::Kind::PeeledCheck : HoistStep::Kind::PeeledGuard;
-        if (stagePeeledCopy(guard.guard, kind, attempt) != FirstIterationValue::NotConstant) {
-            m_peelingFailed = true;
-            return false;
-        }
+        FirstIterationValue onFirstIteration = stagePeeledCopy(guard.guard, kind, attempt);
+        if (onFirstIteration == FirstIterationValue::NotConstant)
+            continue;
+        if (onFirstIteration == FirstIterationValue::Constant && passesOnFirstIteration(guard))
+            continue;
+        m_peelingFailed = true;
+        return false;
     }
     for (const HoistStep& step : attempt.steps)
         m_plan.numberOfPeeledValues += emitsInstructions(step.value);

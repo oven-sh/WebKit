@@ -95,9 +95,10 @@ static bool isConstructedByProgram(ValueFlowRuleContext& context, ValueFlowObjec
 }
 
 // A package that stays outside the image is interpreted, and so is every module of the library that it loads and that the image does not hold. Such code calls whatever a module of the library exports.
-static bool holdsCodeOutsideImage(const Program& program)
+// So does a file that a load finds under a name nobody knows.
+static bool mayCodeOutsideImageRun(ValueFlowRuleContext& context)
 {
-    return std::ranges::any_of(program.modules, [](const Module& module) {
+    return isRaised(context, ValueFlowHostNode::CodeOutsideImageIsLoaded) || std::ranges::any_of(context.program().modules, [](const Module& module) {
         return module.kind == ModuleKind::External && module.externalKind == ExternalKind::UncompiledCode;
     });
 }
@@ -110,7 +111,7 @@ static void followWhatHasArrived(ValueFlowRuleContext& context, ClimbingSet arri
 
     // The object on which the exports of a module of the library hang is kept and not searched, however it came here: what hangs on it is held and not called. The rules of the host follow what is held.
     ClimbingSet holdersOfExports = context.restrict(arrived, universe.holdersOfLibraryExports());
-    if (holdsSomething(context, holdersOfExports) && !holdsCodeOutsideImage(context.program())) {
+    if (holdsSomething(context, holdersOfExports) && !mayCodeOutsideImageRun(context)) {
         context.add(context.nodes().ofHost(ValueFlowHostNode::HeldByNativeCode), holdersOfExports);
         context.add(context.nodes().ofHost(ValueFlowHostNode::HoldersOfExportsInEscapedObjects), holdersOfExports);
         arrived = context.restrict(arrived, ValueSets::complement(universe.holdersOfLibraryExports()));
@@ -323,6 +324,9 @@ void runEscape(const ValueFlowStatement&, ValueFlowRuleContext& context)
     ClimbingSet arrived = context.newSince(escapedNode);
     bool writesSinceLastRun = isRaisedSinceLastRun(context, ValueFlowHostNode::UnknownCodeWrites);
     bool unseenCodeRunsSinceLastRun = isRaisedSinceLastRun(context, ValueFlowHostNode::UnseenCodeRuns);
+    // The holders of exports that have come here so far were kept and not searched.
+    if (isRaisedSinceLastRun(context, ValueFlowHostNode::CodeOutsideImageIsLoaded))
+        arrived = context.unite(arrived, context.restrict(escaped, universe.holdersOfLibraryExports()));
 
     if (holdsSomething(context, arrived))
         followWhatHasArrived(context, arrived);

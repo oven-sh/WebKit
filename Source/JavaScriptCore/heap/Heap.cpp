@@ -2903,8 +2903,16 @@ StoredCellLog& Heap::storedCellLog()
 
 bool Heap::tryCollectForExhaustedCage(GCDeferralContext* deferralContext)
 {
-    if (!MarkedBlockCage::isRequired() || deferralContext || isDeferred())
+    if (!MarkedBlockCage::isRequired())
         return false;
+    if (deferralContext || isDeferred()) {
+        cage().didFindNoRoomWhereNothingCollects();
+        if (deferralContext)
+            deferralContext->m_shouldGC = true;
+        else
+            m_didDeferGCWork = true;
+        return false;
+    }
     collectNow(Sync, CollectionScope::Full);
     return true;
 }
@@ -3003,6 +3011,11 @@ void Heap::collectIfNecessaryOrDefer(GCDeferralContext* deferralContext)
     }
     if (!Options::useGC()) [[unlikely]]
         return;
+
+    if (MarkedBlockCage::isRequired() && !deferralContext && !isDeferred() && cage().owesCollection()) [[unlikely]] {
+        cage().tryTakeBackOutOfMemoryError(vm());
+        return;
+    }
     
     if (mayNeedToStop()) {
         if (deferralContext)

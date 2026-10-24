@@ -2,6 +2,8 @@
 # A computed require() is a switch over the spellings that the build has resolved. The arm of a spelling gets what that module exports and nothing else, also beside a load under a name nobody knows:
 # what the variable of the module holds, which begins as undefined.
 # The arm of every other value gets what an entry point of the program exports and nothing of first.cjs or second.cjs, which would call the operand, the object of any native module, and what the loader makes of a file outside the image: data, so no callee nobody knows
+# The build excludes code outside the image, as a hardened Bun does: the run time refuses a file with code that is not in the image.
+# OPTIONS: exclude=CodeOutsideImage
 # RUN: valueflow-why values=f0:v4 values=f0:v7
 # CHECK: values=f0:v4
 # CHECK: operand 0 {{*}} 2 members: primitive0 f3

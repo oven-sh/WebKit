@@ -26,6 +26,7 @@ static constexpr Flags runsText { ImageFlag::AdmitsUnknownJavaScript, ImageFlag:
 // A module that stays outside the image has require and every module of the library. It sees no module object of the program and replaces no answer of the loader.
 static constexpr Flags runsModuleFromOutside { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText };
 static constexpr Flags findsModulesByName { ImageFlag::LoadsModulesByName };
+static constexpr Flags loadsCodeFromOutside { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::LoadsCodeOutsideImage };
 static constexpr Flags showsWaysBetweenModuleObjects { ImageFlag::ShowsWaysBetweenModuleObjects };
 static constexpr Flags open { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText };
 
@@ -523,13 +524,16 @@ static void testOptionThatAdmitsCodeOpensTheProgram()
 
 static void testLoadByUnknownNameOnlyExposesModules()
 {
-    AOT_TEST_CHECK(flagsOf(otherModuleIsLoadedByUnknownName) == findsModulesByName);
+    AOT_TEST_CHECK(flagsOf(otherModuleIsLoadedByUnknownName, { "exclude=CodeOutsideImage"_s }) == findsModulesByName);
+    // The name may be the path of a file that the build has not seen.
+    AOT_TEST_CHECK(flagsOf(otherModuleIsLoadedByUnknownName) == (runsOnlyCodeOfImage ? findsModulesByName : loadsCodeFromOutside));
     AOT_TEST_CHECK(flagsOf(otherModuleIsLoadedByUnknownName, { "admit=Inspector"_s }) == open);
 }
 
 static void testLoaderCalledAsValueLoadsByName()
 {
-    AOT_TEST_CHECK(flagsOf(callsRequireAsValueUnderKnownName) == findsModulesByName);
+    AOT_TEST_CHECK(flagsOf(callsRequireAsValueUnderKnownName, { "exclude=CodeOutsideImage"_s }) == findsModulesByName);
+    AOT_TEST_CHECK(flagsOf(callsRequireAsValueUnderKnownName) == (runsOnlyCodeOfImage ? findsModulesByName : loadsCodeFromOutside));
     checkShellOutput(callsRequireAsValueUnderKnownName, "other ran\n"_s, ""_s);
 }
 

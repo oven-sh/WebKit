@@ -592,6 +592,8 @@ OptionSet<ImageFlag> flagsForUnseenCode(const Typed::PipelineOutput& pipeline)
             flags.add(ImageFlag::LoadsModulesByName);
         if (Typed::admitsLibraryText(record.cause))
             flags.add(ImageFlag::AdmitsLibraryText);
+        if (Typed::loadsCodeOutsideImage(record.cause))
+            flags.add(ImageFlag::LoadsCodeOutsideImage);
     }
     return flags;
 }

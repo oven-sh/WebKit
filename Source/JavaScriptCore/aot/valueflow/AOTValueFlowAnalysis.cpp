@@ -467,7 +467,7 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
         .isAskedHowValuesCame = waysOfValues == WaysOfValues::AreAskedFor,
         .mostRounds = mostRounds,
         .unknownSourcesLeftOut = unknownSourcesLeftOut,
-        .refusesEvaluatedText = build.options().excludesEvaluatedText(),
+        .refusedCode = { .evaluatedText = build.options().excludesEvaluatedText(), .codeOutsideImage = build.options().excludesCodeOutsideImage() },
         .removedFeatures = build.options().removedFeatures,
     };
     PhaseTimes times(build, PassID::AnalyzeFlow);

@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinIDTypes.h"
+#include "AOTFlowUnseenCode.h"
 #include "AOTValueFlow.h"
 #include "AOTValueSets.h"
 #include <optional>
@@ -218,7 +219,8 @@ public:
     void noteUnknownSource(ValueFlowUnknownSource source) { m_unknownSource = source; }
     bool leavesOut(ValueFlowUnknownSource) const;
     bool leavesOutSomeUnknownSource() const;
-    bool refusesEvaluatedText() const;
+    RefusedCode refusedCode() const;
+    bool refusesEvaluatedText() const { return refusedCode().evaluatedText; }
     bool isGuardedByRemovedFeature(BuiltinID) const;
 
     // What the mask of the operand lets through of the value, for whoever has the value of the operand's node from somewhere else: the solution after the solve.

@@ -11,6 +11,8 @@
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinTypes.h"
 #include "AOTInductionVariables.h"
+#include "AOTInlineCopy.h"
+#include "AOTInlineCostModel.h"
 #include "AOTNaturalLoops.h"
 #include "AOTOperatorForms.h"
 #include "AOTPropertyAccessElements.h"
@@ -284,7 +286,24 @@ static bool testsOnlyBoundedCounter(TestSiteReporter& reporter, const Value& val
     });
 }
 
-// Whether a likely turn of the loop does something with the counter that an integer is better for: an operator gets a better form, or the counter finds an element or goes into a built-in function. Whatever else takes it, a number that it is added to or a variable of numbers, takes it as a number for nothing. What a function of the program does with it shows once the call is inlined.
+// What a function of the program does with an argument shows once the call is inlined.
+static bool staysCall(TestSiteReporter& reporter, BlockID block, ValueID call)
+{
+    FunctionPassContext& context = reporter.context();
+    const Value& value = reporter.function().at(call);
+    if (value.isNeverInlined() || value.isAfterInlinedHead())
+        return true;
+    const InliningSummaries& inlining = context.inputs.inlining;
+    if (!inlining.contains(value.function()))
+        return false;
+    const InliningSummary& summary = inlining.of(reporter.program(), value.function());
+    if (canInline(context, summary, call) != InlineDecision::Unknown)
+        return true;
+    InlineDecision decision = computeInlineVerdict(context, summary, block, call).decision;
+    return decision != InlineDecision::Inline && decision != InlineDecision::InlineHead;
+}
+
+// Whether a likely turn of the loop does something with the counter that an integer is better for: an operator gets a better form, or the counter finds an element or goes into a built-in function, or into a call: an integer stays in its register around the call and takes one instruction to become a value of any type. Whatever else takes it, a number that it is added to or a variable of numbers, takes it as a number for nothing.
 static bool isWantedAsInteger(TestSiteReporter& reporter, const OperatorSite& site, const NaturalLoop& loop, const InductionVariable& counter)
 {
     const Function& function = reporter.function();
@@ -311,6 +330,8 @@ static bool isWantedAsInteger(TestSiteReporter& reporter, const OperatorSite& si
             }
             OperandKind kind = user.operandKind(use.operandIndex);
             if (kind == OperandKind::Number || kind == OperandKind::Integer || user.opcode == Opcode::TypeTest || user.opcode == Opcode::CallBuiltin)
+                return true;
+            if (user.opcode == Opcode::Call || (user.opcode == Opcode::CallDirect && staysCall(reporter, use.block, use.user)))
                 return true;
             if (operationsOnElements.contains(user.opcode) && use.operandIndex == positionOperandIndex)
                 return true;

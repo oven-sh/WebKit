@@ -82,10 +82,10 @@ double Heat::activationsOf(const Program& program, FunctionID id) const
 {
     constexpr double activationsWhereEverythingIsHot = 1e12;
 
-    if (m_classOfEverything)
-        return isHot(*m_classOfEverything) ? activationsWhereEverythingIsHot : 0;
     if (runsOnlyBehindFailedTest(program, id))
         return 0;
+    if (m_classOfEverything)
+        return isHot(*m_classOfEverything) ? activationsWhereEverythingIsHot : 0;
     const Entry& entry = m_entries.of(program, id);
     if (entry.heatClass != HeatClass::Unknown || isOfVeryLargeProgram())
         return entry.activations;
@@ -130,10 +130,10 @@ double Heat::allocationsOf(LayoutID layout) const
 
 HeatClass Heat::of(const Program& program, FunctionID id) const
 {
-    if (m_classOfEverything)
-        return *m_classOfEverything;
     if (runsOnlyBehindFailedTest(program, id))
         return HeatClass::Cold;
+    if (m_classOfEverything)
+        return *m_classOfEverything;
     return m_entries.of(program, id).heatClass;
 }
 
@@ -149,9 +149,11 @@ ASCIILiteral Heat::classNameOf(const Program& program, FunctionID id) const
 
 bool Heat::hasWarmCode(const Program& program, FunctionID id) const
 {
+    if (runsOnlyBehindFailedTest(program, id))
+        return false;
     if (m_classOfEverything)
         return !isCold(*m_classOfEverything);
-    return !runsOnlyBehindFailedTest(program, id) && m_entries.of(program, id).hasWarmCode;
+    return m_entries.of(program, id).hasWarmCode;
 }
 
 uint8_t Heat::percentileOf(const Program& program, FunctionID id) const

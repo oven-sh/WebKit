@@ -178,14 +178,13 @@ static EntryArguments addEntryArguments(IRBuilder& builder, const Function& targ
 static String messageOfEntryThatNothingEnters(const AnalysisContext& context, const Function& target)
 {
     const StringTable& strings = context.program.strings;
-    ASCIILiteral advice = context.build.recordedOptions().adviceToKeepFunctionSource();
     // An obfuscated executable says nothing about its sources.
     bool mayNameSources = !context.build.options().obfuscates();
     if (mayNameSources && target.name && target.name != strings.emptyString())
-        return functionNotCompiledMessage(strings.toWTFString(target.name), advice);
+        return functionNotCompiledMessage(strings.toWTFString(target.name));
     if (mayNameSources && target.module)
-        return functionNotCompiledMessage(strings.toWTFString(context.program.pathForLineColumns(target.module)), context.program.lineColumnFor(target.module, target.position).line, advice);
-    return functionNotCompiledMessage(advice);
+        return functionNotCompiledMessage(strings.toWTFString(context.program.pathForLineColumns(target.module)), context.program.lineColumnFor(target.module, target.position).line);
+    return functionNotCompiledMessage();
 }
 
 // No call that flow follows comes here.

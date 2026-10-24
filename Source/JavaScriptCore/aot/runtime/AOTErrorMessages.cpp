@@ -466,11 +466,6 @@ String describe(const ProgramTables& tables, const RuntimeType& type, Typed::Typ
     return ProgramStrings::text(tables, StringID(data->text));
 }
 
-static ASCIILiteral adviceToKeepFunctionSource()
-{
-    return Image::current()->header().options.adviceToKeepFunctionSource();
-}
-
 static thread_local const String* quotedSource;
 
 StringView quotedSourceOfFailedExpression()
@@ -572,7 +567,7 @@ JSObject* createBuiltinWithoutPathError(JSGlobalObject* globalObject)
 
 static JSObject* createNotCompiledError(JSGlobalObject* globalObject, const String& message)
 {
-    return createError(globalObject, withAOTErrorNote(makeString(message, adviceToKeepFunctionSource())));
+    return createError(globalObject, withAOTErrorNote(message));
 }
 
 JSObject* createBuiltinNotCompiledError(JSGlobalObject* globalObject, const String& builtin)
@@ -606,7 +601,7 @@ static JSObject* createLoadByNameRefusedErrorWithoutCode(JSGlobalObject* globalO
     // A module of Bun's is no file that could be another entry point. The call went through a value that the compiler did not follow to the loader.
     if (name.startsWith("node:"_s) || name.startsWith("bun:"_s))
         return createError(globalObject, withAOTErrorNote(makeString("Cannot load '"_s, name, "': this executable can't load a module from a dynamic path. The compiler couldn't tell at build time that this call reaches a module loader. Call require(), import() or process.getBuiltinModule() directly."_s)));
-    return createError(globalObject, withAOTErrorNote(makeString("Cannot load '"_s, name, "': this executable can't load a module from a dynamic path. Pass the file to bun compile as another entry point."_s, adviceToKeepFunctionSource())));
+    return createError(globalObject, withAOTErrorNote(makeString("Cannot load '"_s, name, "': this executable can't load a module from a dynamic path. Pass the file to bun compile as another entry point."_s)));
 }
 
 JSObject* createLoadByNameRefusedError(JSGlobalObject* globalObject, StringView name, ASCIILiteral code)
@@ -658,39 +653,29 @@ JSObject* createSuperCallInDirectEvalError(JSGlobalObject* globalObject)
     return createTypeError(globalObject, withAOTErrorNote("super() cannot be called from direct eval in a compiled executable"_s));
 }
 
-static String functionNotCompiledMessage(const String& description, ASCIILiteral advice, int)
+static String messageOfFunctionNotCompiled(const String& description)
 {
-    return withAOTErrorNote(makeString(description, " was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code."_s, advice));
+    return withAOTErrorNote(makeString(description, " was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code."_s));
 }
 
-String functionNotCompiledMessage(const String& functionName, ASCIILiteral advice)
+String functionNotCompiledMessage(const String& functionName)
 {
-    return functionNotCompiledMessage(makeString('\'', functionName, '\''), advice, 0);
+    return messageOfFunctionNotCompiled(makeString('\'', functionName, '\''));
 }
 
-String functionNotCompiledMessage(const String& path, unsigned line, ASCIILiteral advice)
+String functionNotCompiledMessage(const String& path, unsigned line)
 {
-    return functionNotCompiledMessage(makeString("The function at "_s, path, ':', line), advice, 0);
+    return messageOfFunctionNotCompiled(makeString("The function at "_s, path, ':', line));
 }
 
-String functionNotCompiledMessage(ASCIILiteral advice)
+String functionNotCompiledMessage()
 {
-    return functionNotCompiledMessage("This function"_s, advice, 0);
+    return messageOfFunctionNotCompiled("This function"_s);
 }
 
 ASCIILiteral evaluationRefusedMessage()
 {
-    static constexpr ASCIILiteral message = "Code generation from strings disallowed for this context: the compiler couldn't tell at build time that this call reaches eval() or the Function constructor. Call eval() or new Function() directly."_s;
-    const Image* image = Image::current();
-    if (!image || !image->header().options.omitsFunctionSource)
-        return message;
-
-    static LazyNeverDestroyed<ASCIICString> messageWithAdvice;
-    static std::once_flag once;
-    std::call_once(once, [&] {
-        messageWithAdvice.construct(makeString(message, image->header().options.adviceToKeepFunctionSource()).ascii());
-    });
-    return ASCIILiteral::fromLiteralUnsafe(messageWithAdvice->data());
+    return "Code generation from strings disallowed for this context: the compiler couldn't tell at build time that this call reaches eval() or the Function constructor. Call eval() or new Function() directly."_s;
 }
 
 String memberOfLockedBuiltin(BuiltinID holder, UniquedStringImpl* key)

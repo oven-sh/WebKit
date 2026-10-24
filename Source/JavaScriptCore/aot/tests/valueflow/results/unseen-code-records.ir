@@ -1,6 +1,8 @@
 # Each reached operation that lets in code the build has not seen, or that names a module at run time, leaves a record. The records are in a fixed order: by cause, then by built-in, with the operations that apply no built-in last,
 # then by function and by value. An operation in a function that nothing reaches leaves none, and no record names a cause that did not occur.
 # A load under a name that is put together at run time lets in no code. The build warns about it once for each such operation of the program
+# The build excludes code outside the image, as a hardened Bun does: the run time refuses a file with code that is not in the image.
+# OPTIONS: exclude=CodeOutsideImage
 # DIAGNOSTIC: CodeOutsideImageIsRefused 1
 # RUN: valueflow-results
 # CHECK: unseen-code EvaluatesText f0:v3 Function

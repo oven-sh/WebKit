@@ -304,79 +304,181 @@ static BitVector findAllocationsReadAsDoubles(FunctionPassContext& context)
     return allocations;
 }
 
+namespace {
+
+// One value may name either of several arrays under construction: a loop that is there twice makes the array twice and goes on in one place. A store through that value finds one kind of storage in all of them.
+class ConstructedArrays {
+public:
+    explicit ConstructedArrays(FunctionPassContext& context)
+        : m_context(context)
+    {
+        const Function& function = context.function;
+        for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+            for (ValueID id : function.at(block).values) {
+                if (!constructionAllocations.contains(function.at(id).opcode))
+                    continue;
+                m_ordinals.add(id, m_allocations.size());
+                m_leaders.append(m_allocations.size());
+                m_allocations.append(id);
+            }
+        }
+    }
+
+    std::span<const ValueID> allocations() const LIFETIME_BOUND { return m_allocations.span(); }
+    unsigned leaderOf(ValueID allocation) const { return leaderOf(m_ordinals.get(allocation)); }
+
+    std::optional<unsigned> groupNamedBy(ValueID operand)
+    {
+        const Function& function = m_context.function;
+        ValueID array = m_context.analyses.sameObjectThroughCasts(operand);
+        if (auto entry = m_ordinals.find(array); entry != m_ordinals.end())
+            return leaderOf(entry->value);
+        if (function.at(array).opcode != Opcode::Parameter)
+            return std::nullopt;
+
+        const EscapeAnalysis& escape = m_context.analyses.escape();
+        if (escape.gaveUp())
+            return std::nullopt;
+        PointsToSet named = escape.pointsTo(array);
+        if (named.mayBeUntracked || named.objects.isEmpty())
+            return std::nullopt;
+        for (ObjectID object : named.objects) {
+            if (escape.at(object).kind != ObjectKind::Allocation || !m_ordinals.contains(escape.at(object).definition))
+                return std::nullopt;
+        }
+        std::optional<unsigned> group;
+        for (ObjectID object : named.objects) {
+            unsigned leader = leaderOf(escape.at(object).definition);
+            if (group)
+                m_leaders[std::max(*group, leader)] = std::min(*group, leader);
+            group = group ? std::min(*group, leader) : leader;
+        }
+        return group;
+    }
+
+private:
+    unsigned leaderOf(unsigned ordinal) const
+    {
+        while (m_leaders[ordinal] != ordinal)
+            ordinal = m_leaders[ordinal];
+        return ordinal;
+    }
+
+    FunctionPassContext& m_context;
+    Vector<ValueID, 2> m_allocations;
+    Vector<unsigned, 2> m_leaders;
+    HashMap<ValueID, unsigned> m_ordinals;
+};
+
+} // anonymous namespace
+
 unsigned chooseStorageOfConstructedArrays(FunctionPassContext& context)
 {
     struct Uses {
         Vector<ValueID, 2> directStores;
+        Vector<ValueID, 2> directStoresOutsideRareCode;
         Vector<ValueID, 2> testedStores;
         Vector<ValueID, 2> tests;
         bool hasOtherUseOfStorage { false };
+        bool hasChosenStorage { false };
+        ArrayStorage chosen { ArrayStorage::Other };
     };
 
     Function& function = context.function;
-    Vector<ValueID, 2> allocations;
-    HashMap<ValueID, Uses> usesByAllocation;
+    if (!context.analyses.opcodesOfValues().intersects(constructionAllocations))
+        return 0;
+
+    ConstructedArrays arrays(context);
+    struct UseOfArray {
+        ValueID value;
+        unsigned group;
+        bool isInRareCode;
+    };
+    Vector<UseOfArray, 8> usesOfArrays;
     for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        bool isInRareCode = function.at(block).frequency == BlockFrequency::Rare;
         for (ValueID id : function.at(block).values) {
             const Value& value = function.at(id);
-            if (constructionAllocations.contains(value.opcode)) {
-                allocations.append(id);
-                continue;
-            }
             bool isTestedUse = value.opcode == Opcode::PutArrayElement || value.opcode == Opcode::HasArrayStorage || namesStorageOfArray(value.opcode);
             if (value.opcode != Opcode::TryPutByValDirect && !isTestedUse)
                 continue;
-            ValueID array = context.analyses.sameObjectThroughCasts(value.arrayOperand());
-            if (!constructionAllocations.contains(function.at(array).opcode))
-                continue;
-            Uses& uses = usesByAllocation.add(array, Uses { }).iterator->value;
-            if (value.opcode == Opcode::TryPutByValDirect)
-                uses.directStores.append(id);
-            else if (value.opcode != Opcode::PutArrayElement && value.arrayStorage() == ArrayStorage::Double)
-                continue;
-            else if (namesStorageOfArray(value.opcode) || value.arrayStorage() != ArrayStorage::Contiguous)
-                uses.hasOtherUseOfStorage = true;
-            else if (value.opcode == Opcode::PutArrayElement)
-                uses.testedStores.append(id);
-            else
-                uses.tests.append(id);
+            if (std::optional<unsigned> group = arrays.groupNamedBy(value.arrayOperand()))
+                usesOfArrays.append({ id, *group, isInRareCode });
         }
     }
 
-    std::optional<BitVector> readAsDoubles;
-    unsigned numberOfChangedAllocations = 0;
-    for (ValueID allocation : allocations) {
-        auto entry = usesByAllocation.find(allocation);
-        if (entry == usesByAllocation.end() || function.at(allocation).arrayStorage() != ArrayStorage::Other)
+    // Two groups may have become one behind a use of either.
+    std::span<const ValueID> allocations = arrays.allocations();
+    Vector<Uses, 2> usesByGroup(allocations.size());
+    for (auto [id, group, isInRareCode] : usesOfArrays) {
+        const Value& value = function.at(id);
+        Uses& uses = usesByGroup[arrays.leaderOf(allocations[group])];
+        if (value.opcode == Opcode::TryPutByValDirect) {
+            uses.directStores.append(id);
+            if (!isInRareCode)
+                uses.directStoresOutsideRareCode.append(id);
+        } else if (value.opcode != Opcode::PutArrayElement && value.arrayStorage() == ArrayStorage::Double)
             continue;
-        Uses& uses = entry->value;
+        else if (namesStorageOfArray(value.opcode) || value.arrayStorage() != ArrayStorage::Contiguous)
+            uses.hasOtherUseOfStorage = true;
+        else if (value.opcode == Opcode::PutArrayElement)
+            uses.testedStores.append(id);
+        else
+            uses.tests.append(id);
+    }
+    for (ValueID allocation : allocations) {
+        if (function.at(allocation).arrayStorage() != ArrayStorage::Other)
+            usesByGroup[arrays.leaderOf(allocation)].hasChosenStorage = true;
+    }
+
+    std::optional<BitVector> readAsDoubles;
+    auto isReadAsDoubles = [&](unsigned group) {
+        if (!readAsDoubles)
+            readAsDoubles = findAllocationsReadAsDoubles(context);
+        return std::ranges::any_of(allocations, [&](ValueID allocation) {
+            return arrays.leaderOf(allocation) == group && readAsDoubles->quickGet(allocation.index());
+        });
+    };
+
+    for (unsigned group = 0; group < usesByGroup.size(); ++group) {
+        Uses& uses = usesByGroup[group];
+        if (uses.hasChosenStorage)
+            continue;
         if (uses.directStores.isEmpty()) {
             if (uses.testedStores.isEmpty() || uses.hasOtherUseOfStorage)
                 continue;
             bool holdsDoubles = std::ranges::all_of(uses.testedStores, [&](ValueID store) {
                 return canStoreWithoutConversion(ArrayStorage::Double, context.types.at(function.at(function.at(store).valueOperand()).type));
             });
-            if (!holdsDoubles)
+            if (!holdsDoubles || !isReadAsDoubles(group))
                 continue;
-            if (!readAsDoubles)
-                readAsDoubles = findAllocationsReadAsDoubles(context);
-            if (!readAsDoubles->quickGet(allocation.index()))
-                continue;
-            function.edit(allocation, ValueEdit::Definition).setArrayStorage(ArrayStorage::Double);
+            uses.chosen = ArrayStorage::Double;
             for (ValueID store : uses.testedStores)
                 function.edit(store, ValueEdit::Definition).setArrayStorage(ArrayStorage::Double);
             for (ValueID test : uses.tests)
                 function.edit(test, ValueEdit::Definition).setArrayStorage(ArrayStorage::Double);
-            ++numberOfChangedAllocations;
             continue;
         }
-        ArrayStorage kind = storageHolding(context, function.at(allocation), uses.directStores.span());
+        // A direct store tests what it is given, so what rare code stores need not fit.
+        const Vector<ValueID, 2>& decidingStores = uses.directStoresOutsideRareCode.isEmpty() ? uses.directStores : uses.directStoresOutsideRareCode;
+        ArrayStorage kind = storageHolding(context, function.at(allocations[group]), decidingStores.span());
+        // A reader that tests for doubles would convert each fresh array of integers and read it by the generic path.
+        if (kind == ArrayStorage::Int32 && isReadAsDoubles(group))
+            kind = ArrayStorage::Double;
         if (kind == ArrayStorage::Contiguous)
             continue;
 
-        function.edit(allocation, ValueEdit::Definition).setArrayStorage(kind);
+        uses.chosen = kind;
         for (ValueID store : uses.directStores)
             function.edit(store, ValueEdit::Definition).setArrayStorage(kind);
+    }
+
+    unsigned numberOfChangedAllocations = 0;
+    for (ValueID allocation : allocations) {
+        ArrayStorage chosen = usesByGroup[arrays.leaderOf(allocation)].chosen;
+        if (chosen == ArrayStorage::Other)
+            continue;
+        function.edit(allocation, ValueEdit::Definition).setArrayStorage(chosen);
         ++numberOfChangedAllocations;
     }
     return numberOfChangedAllocations;
@@ -443,6 +545,20 @@ static bool asksForStorageOf(const Function& function, BlockID block, ValueID ar
     return test.opcode == Opcode::HasArrayStorage && test.arrayOperand() == array;
 }
 
+// The array has double storage there, and what stands behind the failing edge of a second test may rely on the first: a conversion on that edge would end its proof, and with it go all the conversions of the function.
+static bool standsBehindPassedTest(FunctionPassContext& context, BlockID block, ValueID array)
+{
+    const Function& function = context.function;
+    std::span<const BlockID> predecessors = context.analyses.cfg().predecessors(block);
+    if (predecessors.size() != 1)
+        return false;
+    const Terminator& terminator = function.at(predecessors.front()).terminator;
+    if (!terminator.isConditionalBranch() || terminator.taken().block != block || terminator.notTaken().block == block)
+        return false;
+    const Value& test = function.at(terminator.conditionOperand());
+    return test.opcode == Opcode::HasArrayStorage && test.arrayStorage() == ArrayStorage::Double && test.arrayOperand() == array;
+}
+
 // A copy has the storage of the array that it is made from. Once that one is converted, the copies to come pass the test.
 static ValueID findCopiedArrayToConvert(FunctionPassContext& context, ValueID array)
 {
@@ -481,7 +597,7 @@ static Vector<FailedStorageTest, 4> collectFailedTestsForDoubleStorage(FunctionP
         if (test.opcode != Opcode::HasArrayStorage || test.arrayStorage() != ArrayStorage::Double)
             continue;
         ValueID array = test.arrayOperand();
-        if (convertsAtHead(function, block, array) || convertsAtHead(function, terminator.notTaken().block, array) || asksForStorageOf(function, terminator.notTaken().block, array) || !summaryAllowsConversion(context, *summary, functionMaySuspend, array))
+        if (convertsAtHead(function, block, array) || convertsAtHead(function, terminator.notTaken().block, array) || asksForStorageOf(function, terminator.notTaken().block, array) || standsBehindPassedTest(context, block, array) || !summaryAllowsConversion(context, *summary, functionMaySuspend, array))
             continue;
         ValueID copied = findCopiedArrayToConvert(context, array);
         if (copied && !summaryAllowsConversion(context, *summary, functionMaySuspend, copied))

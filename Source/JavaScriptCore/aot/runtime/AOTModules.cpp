@@ -162,7 +162,7 @@ Modules::Modules(State& state)
     : m_state(state)
     , m_instance(state.instance)
     , m_table(state.tables)
-    , m_admitsCodeOutsideImage(hasFlag(state.instance.options().admitted(), AdmittedCode::Inspector))
+    , m_admitsCodeOutsideImage(hasFlag(state.instance.options().admitted(), AdmittedCode::Inspector) || state.instance.vm->aotState().image->loadsCodeOutsideImage())
     , m_admitsInspector(hasFlag(state.instance.options().admitted(), AdmittedCode::Inspector))
     , m_loadsModulesByName(state.instance.vm->aotState().image->loadsModulesByName())
 {

@@ -241,6 +241,13 @@ void letModulesBeLoadedByName(ValueFlowRuleContext& context, ValueFlowHostNode a
 {
     RELEASE_ASSERT(answers == ValueFlowHostNode::RequiredValuesLoadedByName || answers == ValueFlowHostNode::NamespacesLoadedByName);
     raise(context, answers == ValueFlowHostNode::RequiredValuesLoadedByName ? ValueFlowHostNode::ModulesAreRequiredByName : ValueFlowHostNode::ModulesAreImportedByName);
+    if (context.refusedCode().codeOutsideImage)
+        return;
+    raise(context, ValueFlowHostNode::CodeOutsideImageIsLoaded);
+    letUnseenCodeRun(context, UnseenCodeReach::Loader);
+    // It has the loader, so it gets at every module of the library that the image holds.
+    context.add(ValueFlowProgramNodes::escaped(), context.universe().holdersOfLibraryExports());
+    context.add(context.nodes().ofHost(answers), unknownValue(context, ValueFlowUnknownSource::UnseenCode));
 }
 
 static void enterRuntimeFunction(ValueFlowRuleContext& context, RuntimeFunctionID id, NativeCaller caller)
@@ -727,13 +734,19 @@ void runHostRoots(const ValueFlowStatement&, ValueFlowRuleContext& context)
     }
 }
 
-std::optional<UnseenCodeCause> eventOfCalling(const BuiltinTable& builtins, BuiltinID builtin, bool refusesEvaluatedText)
+// process.getBuiltinModule() answers a module of the library or undefined, whatever name it is given. It runs no file of the program and nothing from outside the image.
+static bool loadsOnlyLibraryModules(BuiltinID loader)
+{
+    return loader == Builtins::ProcessGetBuiltinModule;
+}
+
+std::optional<UnseenCodeCause> eventOfCalling(const BuiltinTable& builtins, BuiltinID builtin, RefusedCode refused)
 {
     const Builtin& entry = builtins.at(builtin);
     if (entry.flags.contains(BuiltinFlag::LoadsModuleByName))
-        return UnseenCodeCause::LoadsModuleByName;
+        return refused.codeOutsideImage || loadsOnlyLibraryModules(builtin) ? UnseenCodeCause::LoadsModuleByName : UnseenCodeCause::LoadsCodeByName;
     if (entry.flags.contains(BuiltinFlag::EvaluatesText))
-        return refusesEvaluatedText ? std::nullopt : std::optional(UnseenCodeCause::EvaluatesText);
+        return refused.evaluatedText ? std::nullopt : std::optional(UnseenCodeCause::EvaluatesText);
     const BuiltinUnseenCode* unseenCode = builtins.unseenCodeOf(builtin);
     if (unseenCode && unseenCode->condition && unseenCode->condition->hasProperty)
         return std::nullopt;
@@ -825,12 +838,6 @@ static void forEachModuleLoadableByName(ValueFlowRuleContext& context, NOESCAPE 
     }
 }
 
-// process.getBuiltinModule() answers a module of the library or undefined, whatever name it is given. It runs no file of the program and nothing from outside the image.
-static bool loadsOnlyLibraryModules(BuiltinID loader)
-{
-    return loader == Builtins::ProcessGetBuiltinModule;
-}
-
 static void requireLibraryModulesByName(ValueFlowRuleContext& context, ValueFlowNodeID result)
 {
     raise(context, ValueFlowHostNode::LibraryModulesAreRequiredByName);
@@ -866,7 +873,7 @@ static UnseenCodeReach reachOfCodeBehind(const BuiltinTable& builtins, BuiltinID
 // `result` takes what the call answers: none where nobody reads it.
 static void raiseEvent(ValueFlowRuleContext& context, BuiltinID builtin, UnseenCodeCause cause, ValueFlowNodeID result)
 {
-    if (cause != UnseenCodeCause::LoadsModuleByName) {
+    if (!loadsModulesByName(cause)) {
         letUnseenCodeRun(context, reachOfCodeBehind(context.program().builtins(), builtin));
         return;
     }
@@ -889,7 +896,7 @@ void applyEventsOfCall(const ValueFlowStatement& statement, ValueFlowRuleContext
 
     context.forEachMember(context.restrict(callees, universe.builtinFunctions()), [&](ValueFlowObjectID callee) {
         BuiltinID builtin = builtins.canonicalID(universe.builtinOf(callee));
-        std::optional<UnseenCodeCause> cause = eventOfCalling(builtins, builtin, context.refusesEvaluatedText());
+        std::optional<UnseenCodeCause> cause = eventOfCalling(builtins, builtin, context.refusedCode());
         if (!cause && someCallPassesPropertyThatRunsUnseenCode(context, builtin))
             cause = UnseenCodeCause::RunsUnseenCode;
         bool loadsMachineCode = std::ranges::contains(builtins.loadersOfMachineCode(), builtin, &BuiltinLoaderOfMachineCode::callee);
@@ -1102,7 +1109,7 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
         BuiltinID builtin = universe.builtinOf(object);
         if (!builtin)
             return;
-        callsLoaderThatHasEscaped |= callsWhateverHasEscaped && eventOfCalling(builtins, builtins.canonicalID(builtin), context.refusesEvaluatedText()) == UnseenCodeCause::LoadsModuleByName;
+        callsLoaderThatHasEscaped |= callsWhateverHasEscaped && builtins.at(builtins.canonicalID(builtin)).flags.contains(BuiltinFlag::LoadsModuleByName);
         bool isOfLanguage = builtins.at(builtin).origin != BuiltinOrigin::Host;
         if (!isOfLanguage && callsWhateverHasEscaped && context.contains(takenFromHolders, object))
             calledFunctionsOfHost.append(object);

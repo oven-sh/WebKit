@@ -185,7 +185,11 @@ void FunctionVerifier::verifyElementOperation(BlockID block, ValueID id, const V
 
     if (value.opcode != Opcode::TryPutByValDirect || m_form < IRForm::Selected || value.arrayStorage() == ArrayStorage::Other)
         return;
-    const Value& array = m_function.at(analyses().sameObjectThroughCasts(value.arrayOperand()));
+    ValueID arrayID = analyses().sameObjectThroughCasts(value.arrayOperand());
+    const Value& array = m_function.at(arrayID);
+    // A parameter of a block inside the function names either of several arrays, and the store tests the storage of the one that it finds.
+    if (array.opcode == Opcode::Parameter && analyses().useLists().blockOf(arrayID) != entryBlock)
+        return;
     bool isUnderConstruction = array.opcode == Opcode::NewArrayLike || array.opcode == Opcode::NewArrayWithCapacity;
     if (!isUnderConstruction || array.arrayStorage() != value.arrayStorage())
         fail(InternalErrorKind::PayloadOutOfRange, block, id);

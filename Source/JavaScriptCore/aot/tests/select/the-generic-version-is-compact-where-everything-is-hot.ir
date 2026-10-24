@@ -1,0 +1,45 @@
+# The generic version of a function runs only behind a failed test at its entrance, which is expected of no call. It is cold and has the compact shape whatever class the option gives to everything,
+# so that a build in which everything is hot says what hot code costs and not what a second hot copy of every typed function costs
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: code-shapes
+# CHECK: f3 b0 Fast
+# CHECK: f4 b0 Compact heat=0.00
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    Return
+}
+function f1 name="callsByName" module=m0 parameters=[{type=anything}] results=[{type=string}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f2 [isNeverInlined]
+    Return v1
+}
+function f2 name="shared" module=m0 role=EntryChecks flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=string flags=[IsExpected]}] results=[{type=string}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] creator=EntryChecks{body=f3 fallback=f4} {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: string):
+    v3 = CallDirect v2 function=f3 [isNeverInlined]
+    ReturnCall v3 requirement=Allowed
+  b2() frequency=Unlikely:
+    v4 = CallDirect v0 function=f4 [isNeverInlined]
+    ReturnCall v4 requirement=Allowed
+}
+function f3 name="shared" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2} {
+  b0(v0: string):
+    Return v0
+}
+function f4 name="shared" module=m0 role=GenericVersion flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=string flags=[IsExpected]}] results=[{type=string}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2} creator=Version{provenVersion=f3} {
+  b0(v0: anything):
+    v1 = ToString v0
+    Return v1
+}
+function f5 name="shared" module=m0 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f2}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers} {
+  b0(v0: f2, v1: anything, v2: anything):
+    v3 = CallDirect v2 function=f2
+    ReturnCall v3 requirement=Allowed
+}

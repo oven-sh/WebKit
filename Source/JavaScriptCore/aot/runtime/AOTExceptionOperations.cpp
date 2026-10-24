@@ -177,7 +177,7 @@ JSObject* createRuntimeError(JSGlobalObject* globalObject, Typed::RuntimeErrorKi
             return createTypeError(globalObject, makeString('\'', name->string(), "' was left out of the executable, because nothing seemed to refer to it. This is a bug in Bun."_s));
         return createTypeError(globalObject, "This function was left out of the executable, because nothing seemed to refer to it. This is a bug in Bun."_s);
     case Typed::RuntimeErrorKind::FunctionNotCompiled:
-        return createError(globalObject, name && !name->isEmpty() ? functionNotCompiledMessage(name->string(), ""_s) : functionNotCompiledMessage(""_s));
+        return createError(globalObject, name && !name->isEmpty() ? functionNotCompiledMessage(name->string()) : functionNotCompiledMessage());
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

@@ -68,6 +68,10 @@ public:
     void keepReserveOnceHalfFull();
     bool releaseReserve();
     bool releaseLastReserve();
+    // The range was full where no collection may run. The collection runs where collections are allowed again. If it makes room for all of the reserve that releaseReserve() gave out, no error is owed any more.
+    void didFindNoRoomWhereNothingCollects() { m_owesCollection = true; }
+    bool owesCollection() const { return m_owesCollection; }
+    JS_EXPORT_PRIVATE bool tryTakeBackOutOfMemoryError(VM&);
     JS_EXPORT_PRIVATE void didThrowOutOfMemoryError();
     size_t reserveSize() const;
 
@@ -97,12 +101,15 @@ public:
 
 private:
     void didAllocate(const void*, size_t);
+    bool tryKeepReleasedReserveAgain();
 
     ReservedRangeHeap* m_range { nullptr };
     uintptr_t m_base { 0 };
     size_t m_size { 0 };
     bool m_sharesRange { false };
     bool m_hasReleasedReserve { false };
+    bool m_owesCollection { false };
+    size_t m_numberOfChunksReleased { 0 };
     ExhaustedHeap m_exhaustedHeap { ExhaustedHeap::Cells };
     unsigned m_numberOfBarrenCollections { 0 };
     uint64_t m_bytesAllocatedWhenLastFull { 0 };

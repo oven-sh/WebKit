@@ -33,7 +33,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAllocateSlow, JSCell*, (Instance* 
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTAllocateSlow);
     if (AllocationCounts::isEnabled()) [[unlikely]]
         AllocationCounts::willAllocate(*instance, allocation);
-    if (vm.traps().needsOutOfMemoryError()) [[unlikely]] {
+    if (vm.traps().needsOutOfMemoryError() && !vm.heap.cage().tryTakeBackOutOfMemoryError(vm)) [[unlikely]] {
         if (CallFrame* frameThatReturns = findReturnIntoFunctionWithoutHandlers(vm, std::bit_cast<CallFrame*>(frameRecord))) {
             JSCell* cell = instance->state->objects->structures.allocate(vm, allocation);
             throwOutOfMemoryErrorAtReturnOf(*instance, frameThatReturns);

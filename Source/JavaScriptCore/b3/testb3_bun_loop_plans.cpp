@@ -274,6 +274,26 @@ static void testVersionLoopsSkipsConstantPeeledGuard()
     CHECK_EQ(runLoopWithVaryingGuard(*code, 1, memory, nullptr), 0);
 }
 
+static void testVersionLoopsPeelsConstantGuardThatPasses()
+{
+    LoopProcedure procedure;
+    auto& [proc, graph, state, loop] = procedure;
+    buildLoopWithVaryingGuard(graph, loop, [&](BasicBlock* block) {
+        Value* lowBit = graph.make(block, BitAnd, graph.get(block, loop.index), graph.int64(block, 1));
+        return graph.make(block, Equal, lowBit, graph.int64(block, 0));
+    }, false);
+
+    CHECK(versionLoopsAndValidate(proc));
+    checkAccessCountInEachLoop(proc, firstHeap, { 0, 1 });
+    checkAccessCountInEachLoop(proc, secondHeap, { 0, 1 });
+    auto code = compileProc(proc);
+    FlaggedMemory memory;
+    int64_t object[2] = { 0, 5 };
+    CHECK_EQ(runLoopWithVaryingGuard(*code, 10, memory, object), 25);
+    CHECK_EQ(runLoopWithVaryingGuard(*code, 1, memory, object), 5);
+    CHECK_EQ(runLoopWithVaryingGuard(*code, 0, memory, nullptr), 0);
+}
+
 static void testVersionLoopsSharesEqualPureValues()
 {
     enum class Operation : uint8_t { Product, PureFunction };
@@ -862,6 +882,7 @@ void addBunLoopPlanTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testVersionLoopsExcursionLimit());
     RUN(testVersionLoopsHoistsLoadAfterPeeledGuard());
     RUN(testVersionLoopsSkipsConstantPeeledGuard());
+    RUN(testVersionLoopsPeelsConstantGuardThatPasses());
     RUN(testVersionLoopsSharesEqualPureValues());
     RUN(testVersionLoopsPollIsNoGuard());
     RUN(testVersionLoopsHoistsCheck());
