@@ -63,8 +63,6 @@ public:
     void finishCallPatchpoint(const OperationContext&, B3::PatchpointValue*, uint32_t site, const CallPatchpointRequest&);
     enum class CellConversions : uint8_t { AsEffectsSay, None, WhateverEffectsSay };
     void applyEffects(B3::PatchpointValue*, const Effects&, ArgumentBufferAccess, bool accessesCollectorState = false, CellConversions = CellConversions::AsEffectsSay);
-    // Once the patchpoint has its operands.
-    void keepBehindBirthOfFrameCells(B3::PatchpointValue*);
     Effects effectsOfCall(const OperationContext&, const Effects& effectsOfCallee) const;
 
     RegisterSet registersClobberedByCalls() const;

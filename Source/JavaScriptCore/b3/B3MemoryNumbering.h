@@ -8,6 +8,7 @@
 #if ENABLE(B3_JIT)
 
 #include "B3HeapSet.h"
+#include "B3MovedLoadCheck.h"
 #include "B3Limits.h"
 #include "B3MemoryValue.h"
 #include "B3ValueKey.h"
@@ -132,6 +133,7 @@ private:
     Result replaceIfRedundant(Value*);
     Result replacePureCallIfRedundant(Value* current, PatchpointValue*);
     void validateReplacedLoads();
+    void checkReplacedLoadsAtRunTime();
     bool isUnchangedSince(const ReplacedLoad&, const IndexSet<BasicBlock*>& reachable, Value*& clobber);
 
     Procedure& m_proc;
@@ -147,6 +149,15 @@ private:
     LayeredHashMap<unsigned, unsigned, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_heapEpochs;
     const bool m_validates;
     Vector<ReplacedLoad> m_replacedLoads;
+
+    struct LoadToCheck {
+        MovedLoad moved;
+        Value* load;
+        BasicBlock* block;
+        Value* address;
+        Value* replacement;
+    };
+    Vector<LoadToCheck> m_loadsToCheck;
 };
 
 } } // namespace JSC::B3

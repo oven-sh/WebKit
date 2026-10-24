@@ -40,6 +40,8 @@ struct ValueFlowContainerFacts {
     Vector<TypeID, 2> contents;
     bool contentsAreProven { false };
     ArrayStorage arrayStorage { ArrayStorage::Other };
+    // Other where what the array holds says the same.
+    ArrayStorage arrayStorageToldToCreator { ArrayStorage::Other };
     OptionSet<PristineAspects> pristine;
 };
 

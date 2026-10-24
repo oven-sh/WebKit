@@ -18,8 +18,6 @@ namespace JSC { namespace AOT { namespace Typed {
     v(GetSlot) \
     v(GetSlotOrUndefined) \
     v(GetSlotGetter) \
-    v(GetFlattenedSlot) \
-    v(GetFlattenedSlotOrUndefined) \
     v(GetDeferredClosureSlot) \
     v(GetDeferredClosureSlotOrUndefined) \
     v(IsSlotFilled) \

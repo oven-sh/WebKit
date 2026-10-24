@@ -143,8 +143,6 @@ bool HintEmitter::endsWithinLengthOfData(BlockID block)
 
 void HintEmitter::generateLoopHint(const ValueContext& value)
 {
-    if (generator().validates())
-        emitter<BarrierEmitter>().validateBeforeCollection(value);
     if (!endsWithinLengthOfData(value.block()))
         emitPoll(value);
 }

@@ -2,7 +2,7 @@
 # The type of a field says what its slot holds. Every writer tests a value against the field of the object it stores into, so a read of the slot has the type of the field as a proven type and tests nothing.
 # The lie: a writer that nobody listed. `storeInSlotWithoutTest` of the shell hands the value to the slot as one that was proven at build time, and the slot of `content` holds a Stone.
 # A validating build finds it twice over. The read tests its result against the type of the field and ends the process.
-# And every collection looks at the slots of every compiled object that is alive, so the Stone is found where no compiled code ever reads the field again: the failure names the field, and no function and no value.
+# And every collection looks at the slots of every compiled object that is alive, so the Stone is found where no compiled code ever reads the field again: the failure names the field, the kind of its slot and the allocations that make such an object, and no function and no value.
 # Beside them, in the same build: an ordinary store of the Stone is tested, so the property leaves its slot, the read finds it by name and the program prints what plain JavaScript prints. And with the Coin left alone both checks pass
 # FORM: AsRead
 # RUN: run-in-shell globalThis.register = (valueIn, box, stone) => { storeInSlotWithoutTest(box, "content", stone); print("stored"); print(valueIn(box)); };
@@ -15,7 +15,8 @@
 # CHECK: crashed with
 # COLLECTION: stored
 # COLLECTION-NOT: collected
-# COLLECTION: (content) of layout {{*}} holds a value outside its type
+# COLLECTION: (content) of layout {{*}}, a slot of the kind JSValue at {{*}}, holds a value outside its type
+# COLLECTION-NEXT: AOT: the object has shape {{*}} and order word {{*}}; the allocations of that shape: {{*}}
 # COLLECTION: AOT validation: HeapSlotType f- v-
 # COLLECTION: crashed with
 # TESTED-NOT: AOT validation

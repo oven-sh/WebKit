@@ -8,7 +8,9 @@
 #if ENABLE(B3_JIT)
 
 #include "AirPolicy.h"
+#include "B3HeapRange.h"
 #include "B3Limits.h"
+#include "B3Origin.h"
 #include "CPUFeatureSet.h"
 #include "Reg.h"
 #include <wtf/EnumTraits.h>
@@ -17,7 +19,11 @@
 #include <wtf/Vector.h>
 #include <wtf/text/ASCIILiteral.h>
 
-namespace JSC { namespace B3 {
+namespace JSC {
+
+class CCallHelpers;
+
+namespace B3 {
 
 class Procedure;
 class RelocationLowering;
@@ -31,6 +37,10 @@ enum class ValidationLevel : uint8_t {
 struct ValidationPolicy {
     ValidationLevel level { ValidationLevel::FromOptions };
     bool checksKnownPropertiesAtRunTime { false };
+    bool checksMovedLoadsAtRunTime { false };
+    // The collector's threads, and writes that no operation's result depends on.
+    RefPtr<SharedTask<bool(const HeapRange&)>> isWrittenBehindTheBackOfCode;
+    RefPtr<SharedTask<void(CCallHelpers&, Origin)>> reportMovedLoadThatDiffers;
 };
 
 enum class RedundancyElimination : uint8_t {

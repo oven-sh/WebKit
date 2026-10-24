@@ -20,6 +20,7 @@
 #include "B3Const32Value.h"
 #include "B3Const64Value.h"
 #include "B3Generate.h"
+#include "B3HoistLoopInvariantValues.h"
 #include "B3IntRange.h"
 #include "B3MemoryValue.h"
 #include "B3PatchpointValue.h"
@@ -515,6 +516,83 @@ static void testMaterializeInPipeline()
     AOT_TEST_CHECK(isOrigin(violations[0].suspension, suspensionOrigin));
 
     AOT_TEST_CHECK(findViolationsInPipeline(Materializes::Yes).isEmpty());
+}
+
+namespace {
+
+enum class KnownBy : bool { AddressOfSlot, Birth };
+
+struct CellFilledInLoop {
+    B3::BasicBlock* loop;
+    B3::MemoryValue* load;
+    B3::PatchpointValue* reader;
+};
+
+} // anonymous namespace
+
+static CellFilledInLoop appendCellFilledInLoop(B3::Procedure& proc, KnownBy knownBy)
+{
+    B3::Origin origin = originOf(otherOrigin);
+    B3::BasicBlock* root = proc.addBlock();
+    B3::BasicBlock* loop = proc.addBlock();
+    B3::BasicBlock* done = proc.addBlock();
+    appendJump(proc, root, loop);
+
+    B3::Value* address = appendSlotBase(proc, loop, proc.addStackSlot(8), firstAddressOrigin);
+    if (knownBy == KnownBy::Birth) {
+        B3::PatchpointValue* birth = loop->appendNew<B3::PatchpointValue>(proc, B3::pointerType(), origin);
+        birth->append(address, B3::ValueRep::SomeRegister);
+        birth->effects = B3::Effects::none();
+        birth->effects.writes = B3::HeapRange(1, 2);
+        address = birth;
+    }
+    appendStore(proc, loop, address);
+    B3::MemoryValue* load = loop->appendNew<B3::MemoryValue>(proc, B3::Load, B3::Int64, origin, address);
+    load->setReadsMutability(B3::Mutability::Immutable);
+    B3::PatchpointValue* reader = loop->appendNew<B3::PatchpointValue>(proc, B3::Int64, origin);
+    reader->append(address, B3::ValueRep::SomeRegister);
+    reader->effects = B3::Effects::none();
+    reader->setGenerator([](CCallHelpers&, const B3::StackmapGenerationParams&) { });
+    B3::Value* sum = loop->appendNew<B3::Value>(proc, B3::Add, origin, load, reader);
+    loop->appendNew<B3::MemoryValue>(proc, B3::Store, origin, sum, loop->appendNew<B3::ArgumentRegValue>(proc, origin, GPRInfo::argumentGPR1));
+    appendBranch(proc, loop, loop, done);
+    appendReturn(proc, done);
+    proc.resetReachability();
+    return { loop, load, reader };
+}
+
+static void testReadersOfFrameCellStayBehindItsBirth()
+{
+    for (KnownBy knownBy : { KnownBy::AddressOfSlot, KnownBy::Birth }) {
+        B3::Policy policy;
+        policy.loops.hoistsImmutableLoadsPastWrites = true;
+        B3::Procedure proc(policy);
+        CellFilledInLoop cell = appendCellFilledInLoop(proc, knownBy);
+
+        B3::hoistLoopInvariantValues(proc);
+
+        bool staysInLoop = knownBy == KnownBy::Birth;
+        AOT_TEST_CHECK(cell.loop->values().contains(cell.load) == staysInLoop);
+        AOT_TEST_CHECK(cell.loop->values().contains(cell.reader) == staysInLoop);
+    }
+}
+
+static void testBirthsOfFrameCellsAreDissolved()
+{
+    B3::Procedure proc;
+    CellFilledInLoop cell = appendCellFilledInLoop(proc, KnownBy::Birth);
+
+    bool hasBirths = false;
+    B3::ClientPhase phase = dissolveBirthsOfFrameCells(hasBirths, true);
+    AOT_TEST_CHECK(phase.point == B3::ClientPhase::Point::AfterOptimization);
+    AOT_TEST_CHECK(!phase.run->run(proc));
+    AOT_TEST_CHECK(cell.load->lastChild()->opcode() == B3::Patchpoint);
+
+    hasBirths = true;
+    AOT_TEST_CHECK(phase.run->run(proc));
+    AOT_TEST_CHECK(cell.load->lastChild()->opcode() == B3::SlotBase);
+    AOT_TEST_CHECK(cell.reader->child(0) == cell.load->lastChild());
+    B3::validate(proc);
 }
 
 namespace {
@@ -1115,6 +1193,8 @@ std::span<const NativeTest> backEndPhaseTests()
         { "materialize-splits-shared-frame-pointer"_s, testMaterializeSplitsSharedFramePointer },
         { "materialize-runs-after-optimization"_s, testPhaseRunsAfterOptimization },
         { "materialize-in-pipeline"_s, testMaterializeInPipeline },
+        { "readers-of-frame-cell-stay-behind-its-birth"_s, testReadersOfFrameCellStayBehindItsBirth },
+        { "births-of-frame-cells-are-dissolved"_s, testBirthsOfFrameCellsAreDissolved },
         { "merge-implied-branches"_s, testMergeImpliedBranches },
         { "merge-implied-branches-of-negated-test"_s, testMergeImpliedBranchesOfNegatedTest },
         { "merge-needs-second-test-to-fail"_s, testMergeNeedsSecondTestToFail },

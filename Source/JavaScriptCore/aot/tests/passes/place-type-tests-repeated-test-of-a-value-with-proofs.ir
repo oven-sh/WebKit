@@ -1,4 +1,4 @@
-# A test in a loop of a value that is defined outside is placed on the entry of the loop, where it narrows the value as it is defined. The old test keeps its operand, so what a cast on the way to it has added, such as what flow proved about the class, goes on to the operations behind it; it folds as a test that an equal test dominates
+# A test in a loop of a value that is defined outside is placed on the entry of the loop, where it narrows the value as it is defined. The old test takes the narrowed value with what a cast on the way to it has added, such as what flow proved about the class, so that goes on to the operations behind it, and the old test folds by the type of its operand
 # FORM: Prepared optimizing
 # RUN: pass PlaceTypeTests
 # RUN(SIMPLE): pass PlaceTypeTests FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions SimplifyControlFlow SimplifyCasts RetypeValues EliminateDeadCode CompactBlocks
@@ -24,7 +24,8 @@ function f0 name="castAddsProofs" parameters=[{type=anything}, {type=boolean}] r
 # CHECK-LABEL: function f0 name="castAddsProofs"
 # CHECK: LoopHint
 # CHECK-NEXT: v3: Array<number, proven, pristine[Storage, Names]> = AssumeType {{*}} castType=undefined|Array<number, proven, pristine[Storage, Names]>
-# CHECK: v4: true = TypeTest v3 testedType=Array
+# CHECK-NEXT: [[narrowed0]]: Array<number, proven, pristine[Storage, Names]> = AssumeType {{*}} castType=Array<number, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v4: true = TypeTest [[narrowed0]] testedType=Array
 # CHECK: (v5: Array<number, proven, pristine[Storage, Names]>):
 # CHECK: = GetArrayElement v5, v6{{*}} level=Proven
 # CHECK: = TypeTest v0 testedType=Array
@@ -114,4 +115,5 @@ function f3 name="castAddsNothing" parameters=[{type=anything}, {type=boolean}] 
 # CHECK: LoopHint
 # CHECK-NEXT: v3: true = TypeTest [[narrowed3]] testedType=Array
 # CHECK: = TypeTest v0 testedType=Array
-# CHECK: ([[narrowed3]]: Array):
+# CHECK: ({{*}}: Array):
+# CHECK-NEXT: Jump -> next b1(

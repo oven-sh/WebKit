@@ -499,8 +499,6 @@ void FreshResultSplitter::run()
     build().statistics().count(StatisticID::FreshResultsSplit, m_numberOfSplits);
     expandCallSites();
     times.didFinish("expandCallSites"_s);
-    cloneWorkersByReadResults();
-    times.didFinish("cloneWorkersByReadResults"_s);
 }
 
 void splitFreshResults(ProgramEditor& editor, const OptimizationInputs& inputs, const PassRunner& runner)

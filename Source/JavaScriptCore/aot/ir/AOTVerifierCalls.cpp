@@ -140,7 +140,6 @@ static bool isValueOfDeferringField(const TypingContext& context, const UseLists
         return false;
     switch (location.deferral) {
     case ClosureDeferral::Unknown:
-    case ClosureDeferral::FlattenedObject:
         return false;
     case ClosureDeferral::CapturesNothing:
         return callee.captures.isEmpty();

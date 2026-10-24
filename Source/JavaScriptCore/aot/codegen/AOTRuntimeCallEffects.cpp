@@ -33,46 +33,6 @@ bool RuntimeCallEmitter::mayConvertCells(const Effects& effects)
     return AOTHeaps::mayConvertCells(effects) && !build().recordedOptions().has(TestingSwitch::NoCallConvertsCells);
 }
 
-static bool mayBeAddressInFrame(const B3::Value* value, unsigned depth)
-{
-    switch (value->opcode()) {
-    case B3::SlotBase:
-        return true;
-    case B3::Add:
-    case B3::Sub:
-    case B3::BitAnd:
-    case B3::BitOr:
-    case B3::ZExt32:
-    case B3::Trunc:
-    case B3::Identity:
-    case B3::Opaque:
-        break;
-    default:
-        return false;
-    }
-    if (!depth)
-        return true;
-    for (const B3::Value* child : value->children()) {
-        if (mayBeAddressInFrame(child, depth - 1))
-            return true;
-    }
-    return false;
-}
-
-// What a cell is never changes, so no effect speaks of the words that say it, and a function that only asks what it was given has no effects at all.
-void RuntimeCallEmitter::keepBehindBirthOfFrameCells(B3::PatchpointValue* patchpoint)
-{
-    AOT_THRESHOLD(unsigned, maxDepth, 3);
-    if (patchpoint->effects.exitsSideways)
-        return;
-    for (const B3::Value* child : patchpoint->children()) {
-        if (mayBeAddressInFrame(child, maxDepth)) {
-            m_heaps.decoratePatchpointRead(&m_heaps.root, patchpoint);
-            return;
-        }
-    }
-}
-
 void RuntimeCallEmitter::applyEffects(B3::PatchpointValue* patchpoint, const Effects& effects, ArgumentBufferAccess access, bool accessesCollectorState, CellConversions conversions)
 {
     RELEASE_ASSERT(!generator().isInitializingCell() || (!effects.mayCollect && !effects.mayThrow));

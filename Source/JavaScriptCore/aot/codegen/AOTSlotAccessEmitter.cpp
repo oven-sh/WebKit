@@ -290,12 +290,12 @@ Operand SlotAccessEmitter::readSlot(const ValueContext& value, CellPointer cell,
 
 void SlotAccessEmitter::generateGetSlot(const ValueContext& value)
 {
-    define(value, readSlot(value, cellWithSlotsOf(value->objectOperand()), fieldAccessOf(value), false));
+    define(value, readSlot(value, in<CellPointer>(value->objectOperand()), fieldAccessOf(value), false));
 }
 
 void SlotAccessEmitter::generateGetSlotOrUndefined(const ValueContext& value)
 {
-    define(value, readSlot(value, cellWithSlotsOf(value->objectOperand()), fieldAccessOf(value), true));
+    define(value, readSlot(value, in<CellPointer>(value->objectOperand()), fieldAccessOf(value), true));
 }
 
 // Nothing writes the words of a GetterSetter once it is made, so what its getter is depends on the slot alone.
@@ -317,130 +317,6 @@ void SlotAccessEmitter::generateGetSlotGetter(const ValueContext& value)
         : unboxCell(held.as<Boxed>());
     CellPointer getter(m_out.loadPtr(m_out.address(m_heaps.at(m_program, location), accessor.value(), GetterSetter::offsetOfGetter())));
     define(value, inResultRepresentation(value, getter));
-}
-
-void SlotAccessEmitter::generateGetFlattenedSlot(const ValueContext& value)
-{
-    readBorrowingSlot(value, false);
-}
-
-void SlotAccessEmitter::generateGetFlattenedSlotOrUndefined(const ValueContext& value)
-{
-    readBorrowingSlot(value, true);
-}
-
-// While the object is not made, the outer object answers for its state, and its slots lie in the room of the outer object.
-void SlotAccessEmitter::readBorrowingSlot(const ValueContext& value, bool readsEmptySlotAsUndefined)
-{
-    static_assert(!uncreatedDeferredClosure);
-    const FieldAccess& access = fieldAccessOf(value);
-    const Vector<LayoutID>& receivers = m_program.at(access.receivers).members;
-    const PlacedFlattenedObject* flattened = nullptr;
-    if (access.slot.defersFlattenedObject && access.coverage == FieldAccess::Coverage::EveryMember && receivers.size() == 1)
-        flattened = m_placement.layout(receivers[0]).flattenedObjectIn(*m_program.at(receivers[0]).findField(access.key));
-    if (!flattened) {
-        define(value, failRead(value, InternalErrorKind::SlotAccessNotPlaced));
-        return;
-    }
-
-    // The run time makes the object wherever it reads the field, which the operations that call it do not declare as a write. They allocate, so B3 sees them write something.
-    CellPointer outer = in<CellPointer>(value->objectOperand());
-    NarrowReference word(m_out.load32(m_out.address(m_heaps.root, outer.value(), access.slot.offset)));
-    Condition isFlattened = isZero(Word32(word.value()));
-    bool givesAddress = value.representation() == Representation::Cell;
-
-    // A branch, not a select: the addresses of the accesses behind it then do not wait for the load, and the arm for an object that was made lies out of the way and comes back.
-    LBasicBlock isMade = newBlock();
-    LBasicBlock done = newBlock();
-    ValueFromBlock room = m_out.anchor(offsetBy(asPointer(outer), flattened->distance).value());
-    ValueFromBlock outerObject = m_out.anchor(givesAddress ? outer.value() : compress(outer).value());
-    m_out.branch(isFlattened.value(), normalEdge(done), rareEdge(isMade));
-
-    m_out.appendTo(isMade);
-    CellPointer made = decode(word);
-    ValueFromBlock slotsOfMadeObject = m_out.anchor(made.value());
-    LValue held = word.value();
-    if (readsEmptySlotAsUndefined && !givesAddress)
-        held = m_out.select(equal(Word32(word.value()), word32(absentDeferredClosure)).value(), m_out.constInt32(undefinedCell32), held);
-    ValueFromBlock madeObject = m_out.anchor(givesAddress ? made.value() : held);
-    m_out.jump(done);
-
-    m_out.appendTo(done);
-    m_cellsWithSlotsOfBorrowedObjects.set(value.id().index() + 1, m_out.phi(B3::Int64, room, slotsOfMadeObject));
-    if (value.representation() == Representation::Void) {
-        define(value, { });
-        return;
-    }
-    if (givesAddress) {
-        define(value, CellPointer(m_out.phi(B3::Int64, outerObject, madeObject)));
-        return;
-    }
-    define(value, decodeWordOfDeferringSlot(value, NarrowReference(m_out.phi(B3::Int32, outerObject, madeObject))));
-}
-
-CellPointer SlotAccessEmitter::cellWithSlotsOf(ValueID object)
-{
-    for (ValueID id = object;;) {
-        const Value& definition = m_function.at(id);
-        if (definition.opcode == Opcode::ReadAgain) {
-            id = definition.againOperand();
-            continue;
-        }
-        if (definition.opcode == Opcode::GetFlattenedSlot || definition.opcode == Opcode::GetFlattenedSlotOrUndefined)
-            return CellPointer(m_cellsWithSlotsOfBorrowedObjects.get(id.index() + 1));
-        if (definition.opcode == Opcode::Parameter) {
-            if (LValue slots = generator().slotsOfBorrowedParameter(id))
-                return CellPointer(slots);
-        }
-        if (!handsOnBorrowedInnerObject(definition.opcode))
-            return in<CellPointer>(object);
-        id = definition.operand(0);
-    }
-}
-
-LValue SlotAccessEmitter::addressHeldBy(Operand operand)
-{
-    if (operand.is<CellPointer>())
-        return operand.as<CellPointer>().value();
-    if (operand.is<NarrowReference>())
-        return decode(operand.as<NarrowReference>()).value();
-    return operand.as<Boxed>().value();
-}
-
-LValue SlotAccessEmitter::addressOfSlotsOf(ValueID id)
-{
-    return generator().mayBeBorrowedInnerObject(id) ? cellWithSlotsOf(id).value() : addressHeldBy(get(id));
-}
-
-void SlotAccessEmitter::makeBorrowedObject(const ValueContext& value)
-{
-    ValueID borrowed = value->valueOperand();
-    Operand held = get(borrowed);
-    Pointer cell(addressHeldBy(held));
-    Pointer slots(cellWithSlotsOf(borrowed).value());
-    ConversionEmitter& conversions = emitter<ConversionEmitter>();
-    define(value, eitherOperand(equal(cell, slots), value.representation(), [&] {
-        return conversions.inRepresentation(value, held, typeOf(borrowed), value.representation());
-    }, [&] {
-        Word32 distance(m_out.castToInt32(m_out.sub(slots.value(), cell.value())));
-        CellPointer made = callOperation<CellPointer>(value, RuntimeOperation::MakeFlattenedObjectAt, { CellPointer(cell.value()), distance }, { .isOnRarePath = true });
-        return conversions.inRepresentation(value, made, Type::object(), value.representation());
-    }));
-}
-
-void SlotAccessEmitter::storeFlattenedObject(const ValueContext& value, CellPointer outerObject, LayoutID outerLayout, uint32_t field, ValueID held, bool roomIsZero)
-{
-    const PlacedFlattenedObject* flattened = m_placement.layout(outerLayout).flattenedObjectIn(field);
-    ValueID allocationID = definitionThroughUpcasts(m_function, held);
-    const Value& allocation = m_function.at(allocationID);
-    if (!flattened || allocation.opcode != Opcode::NewObject || allocation.layout() != flattened->layout) {
-        fail(value, InternalErrorKind::SlotAccessNotPlaced);
-        return;
-    }
-    auto storeSlots = [&] {
-        emitter<AllocationEmitter>().storeSlotsOfFlattenedObject(value, outerObject, *flattened, allocation, roomIsZero);
-    };
-    generator().generateWithOperandsOf(allocationID, ScopedLambda<void()>(storeSlots));
 }
 
 void SlotAccessEmitter::generateGetDeferredClosureSlot(const ValueContext& value)
@@ -560,35 +436,22 @@ Operand SlotAccessEmitter::decodeWordOfDeferringSlot(const ValueContext& value, 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void SlotAccessEmitter::writeSlot(const ValueContext& value, CellPointer cell, CellPointer cellWithSlots, const FieldAccess& access, ValueID stored)
+void SlotAccessEmitter::writeSlot(const ValueContext& value, CellPointer cell, const FieldAccess& access, ValueID stored)
 {
     SlotEmitter& slots = emitter<SlotEmitter>();
     MemoryLocation location = MemoryLocation::objectField(access.key, access.receivers);
-    // The next read of the slot makes the closure, or the object.
+    // The next read of the slot makes the closure.
     if (access.slot.representation == SlotRepresentation::DeferredClosure && isDeferredClosure(m_function, stored)) {
-        if (access.slot.defersFlattenedObject) {
-            LayoutID outerLayout = m_program.at(access.receivers).members[0];
-            CodeGenerator::InitializationScope scope(generator());
-            storeFlattenedObject(value, cell, outerLayout, *m_program.at(outerLayout).findField(access.key), stored, false);
-        }
-        m_out.store32(m_out.constInt32(uncreatedDeferredClosure), slots.addressOf(cellWithSlots, access.slot, location));
-        if (access.slot.defersFlattenedObject && !build().recordedOptions().isSabotaged(Sabotage::NoBarrierBehindFreshStoreIntoRoom))
-            emitter<BarrierEmitter>().barrier(value, cell);
+        m_out.store32(m_out.constInt32(uncreatedDeferredClosure), slots.addressOf(cell, access.slot, location));
         return;
     }
     Operand operand = get(stored);
     const Type& storedType = typeOf(stored);
-    if (access.slot.representation == SlotRepresentation::DeferredClosure) {
-        m_out.store32(operand.as<NarrowReference>().value(), slots.addressOf(cellWithSlots, access.slot, location));
-        if (access.slot.defersFlattenedObject && !build().recordedOptions().isSabotaged(Sabotage::StoreLeavesRoomAsItIs)) {
-            LayoutID outerLayout = m_program.at(access.receivers).members[0];
-            CodeGenerator::InitializationScope scope(generator());
-            emitter<AllocationEmitter>().clearReferencesInRoom(cell, outerLayout, *m_program.at(outerLayout).findField(access.key));
-        }
-    } else
-        slots.storeSlot(baseOfSlot(cellWithSlots, access), access.slot, location, operand, extensionWordOf(access), storedType);
-    if (cell.value() == cellWithSlots.value() || !build().recordedOptions().isSabotaged(Sabotage::NoBarrierForStoreThroughBorrowedObject))
-        barrierAfterStore(value, cell, operand, storedType);
+    if (access.slot.representation == SlotRepresentation::DeferredClosure)
+        m_out.store32(operand.as<NarrowReference>().value(), slots.addressOf(cell, access.slot, location));
+    else
+        slots.storeSlot(baseOfSlot(cell, access), access.slot, location, operand, extensionWordOf(access), storedType);
+    barrierAfterStore(value, cell, operand, storedType);
 }
 
 void SlotAccessEmitter::markCellIfMarkerReplacesRawValue(CellPointer cell, const FieldAccess& access, ValueID stored)
@@ -623,7 +486,7 @@ void SlotAccessEmitter::generatePutSlot(const ValueContext& value)
         }
         slots.ensureExtensionHoldsWithoutCollecting(value, cell, access.extensionWord, granuleBitOf(access.slot.offset));
     }
-    writeSlot(value, cell, cellWithSlotsOf(value->objectOperand()), access, stored);
+    writeSlot(value, cell, access, stored);
 }
 
 void SlotAccessEmitter::generatePutSlotOrAdd(const ValueContext& value)
@@ -646,7 +509,7 @@ void SlotAccessEmitter::generatePutSlotOrAdd(const ValueContext& value)
     std::optional<StateOfNewObject> newObject = stateOfNewObjectBefore(value, value->objectOperand());
     auto store = [&] {
         if (needsStorage)
-            writeSlot(value, cell, cell, access, stored);
+            writeSlot(value, cell, access, stored);
         else if (!newObject || newObject->mayHaveExtension)
             slots.storeIfExtensionHolds(baseOfSlot(cell, access), access.slot, location, get(stored), access.extensionWord);
     };

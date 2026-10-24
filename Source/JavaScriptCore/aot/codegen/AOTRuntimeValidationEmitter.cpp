@@ -31,7 +31,7 @@ RuntimeValidationEmitter::RuntimeValidationEmitter(CodeGenerator& generator)
 void RuntimeValidationEmitter::validateParameters(BlockID, const Block& block)
 {
     for (ValueID parameter : block.parameters) {
-        if (hasRegister(representationOf(parameter)) && !generator().slotsOfBorrowedParameter(parameter))
+        if (hasRegister(representationOf(parameter)))
             checkValue(parameter, get(parameter));
     }
 }
@@ -46,7 +46,7 @@ void RuntimeValidationEmitter::validateOperandsOf(const OperationContext& contex
         }
         if (operand != ownedValue && generator().mayBeUnspecified(operand) && user.operandUses(operandIndex).contains(OperandUse::Inspects))
             checkIsSpecified(operand);
-        if (operand == ownedValue || generator().mayBeUnspecified(operand) || isDeferredClosure(m_function, operand) || generator().mayBeBorrowedInnerObject(operand))
+        if (operand == ownedValue || generator().mayBeUnspecified(operand) || isDeferredClosure(m_function, operand))
             return;
         // The bits of a value are those it was made with, and they were looked at there. What its type says about the heap may have changed since.
         const Type& type = typeOf(operand);
@@ -182,8 +182,7 @@ void RuntimeValidationEmitter::checkIsNoFrameArray(const OperationContext& conte
 void RuntimeValidationEmitter::validateResult(const ValueContext& value)
 {
     Operand result = get(value.id());
-    if (!generator().mayBeBorrowedInnerObject(value.id()))
-        checkValue(value.id(), result);
+    checkValue(value.id(), result);
     value->forEachOperand([&](ValueID operand, uint32_t operandIndex) {
         const OperandInfo& info = operandInfoOf(value.opcode(), operandIndex);
         if (!info.uses.contains(OperandUse::Retains) || info.retainedIn != RetainedIn::Result)
@@ -192,7 +191,6 @@ void RuntimeValidationEmitter::validateResult(const ValueContext& value)
             return;
         checkIsNotFrameCell(value, get(operand), result);
     });
-    emitter<BarrierEmitter>().validateAfterStore(value);
 }
 
 // The collector changes the state of a cell, and it and the compiler threads of the engine take the lock in the indexing byte, while the program runs.

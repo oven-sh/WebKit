@@ -85,7 +85,7 @@ private:
     const Program& m_program;
     PassRunner& m_runner;
     DerivedFunctions& m_derivedFunctions;
-    const std::unique_ptr<BodyIndex> m_bodyIndex;
+    std::unique_ptr<BodyIndex> m_bodyIndex;
     bool m_bodiesAreGivenOutWithoutEditor { false };
     mutable std::unique_ptr<CallGraph> m_callGraph;
     mutable std::unique_ptr<BodyReferences> m_bodyReferences;

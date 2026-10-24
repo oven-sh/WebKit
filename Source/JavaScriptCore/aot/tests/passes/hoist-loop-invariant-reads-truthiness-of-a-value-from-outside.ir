@@ -1,0 +1,43 @@
+# Whether a value is truthy never changes, and the test has no effects: the test of a value from outside the loop is made once, in front of the loop. What the loop defines is tested in the loop.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass HoistLoopInvariantReads
+# STATISTIC: HoistLoopInvariantReadsChanges = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="valueFromOutside" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b4()
+  b2():
+    v3 = ToBoolean v0
+    Branch v3 -> taken b1(), notTaken b3()
+  b3():
+    Jump -> next b1()
+  b4():
+    Return v0
+}
+# CHECK-LABEL: function f0 name="valueFromOutside"
+# CHECK: b0(
+# CHECK-NEXT: v3: boolean = ToBoolean v0
+# CHECK: b2():
+# CHECK-NEXT: Branch v3 -> taken b1(), notTaken b3()
+
+function f1 name="valueOfTheLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Jump -> next b1(v0)
+  b1(v2):
+    LoopHint
+    v4 = ToBoolean v2
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Undefined
+    Jump -> next b1(v5)
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f1 name="valueOfTheLoop"
+# CHECK: b1(v2
+# CHECK: = ToBoolean v2

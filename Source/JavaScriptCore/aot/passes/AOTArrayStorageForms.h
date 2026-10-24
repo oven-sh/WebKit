@@ -11,7 +11,6 @@
 #include "AOTSchemaRecords.h"
 #include "IndexingType.h"
 #include "PureNaN.h"
-#include "TypedArrayType.h"
 #include <array>
 #include <optional>
 
@@ -97,29 +96,6 @@ std::optional<ArrayStorage> arrayStorageOfNewHoles(const Value& allocation);
 bool canStoreWithoutConversion(ArrayStorage, const Type& stored);
 
 Type typeOfElementRead(ArrayStorage);
-
-struct NarrowStorageForm {
-    TypedArrayType storage;
-    int64_t minimum;
-    int64_t maximum;
-};
-
-inline constexpr std::array<NarrowStorageForm, 5> narrowStorageForms { {
-    { TypeUint8, 0, 255 },
-    { TypeInt8, -128, 127 },
-    { TypeUint16, 0, 65535 },
-    { TypeInt16, -32768, 32767 },
-    { TypeInt32, -2147483648ll, 2147483647ll },
-} };
-
-enum class NarrowElementKind : uint8_t { Boolean, Integer };
-
-struct NarrowStorageChoice {
-    NarrowElementKind elements { NarrowElementKind::Integer };
-    TypedArrayType storage { NotTypedArray };
-};
-
-std::optional<NarrowStorageChoice> narrowStorageHolding(const Type& elements);
 
 static_assert(arrayStorageOf(ArrayWithInt32) == ArrayStorage::Int32 && arrayStorageOf(CopyOnWriteArrayWithDouble) == ArrayStorage::Double);
 static_assert(arrayStorageOf(ArrayWithContiguous) == ArrayStorage::Contiguous && arrayStorageOf(ArrayWithArrayStorage) == ArrayStorage::Other);

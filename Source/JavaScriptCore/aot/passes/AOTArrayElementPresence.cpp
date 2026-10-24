@@ -20,7 +20,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr unsigned maxValuesFollowed = 8;
 
-// SinkAllocations and NarrowStorage take such an array apart by its accesses, which stay as they are. The result of `x.map(f)` is an allocation too, and its reads get the test.
+// SinkAllocations takes such an array apart by its accesses, which stay as they are. The result of `x.map(f)` is an allocation too, and its reads get the test.
 static constexpr OpcodeSet localArrayAllocations {
     Opcode::NewArray, Opcode::NewArrayLike, Opcode::NewArrayWithCapacity, Opcode::NewContiguousArray, Opcode::NewDoubleArray, Opcode::CreateRest,
 };

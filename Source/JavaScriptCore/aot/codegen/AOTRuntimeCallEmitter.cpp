@@ -653,8 +653,6 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     bool hasSite = effects.mayExitSideways() || options.capturesStackTrace;
     RELEASE_ASSERT(context || (!hasSite && !effects.mayCollect));
     RELEASE_ASSERT(!generator().isInitializingCell() || (!effects.mayCollect && !effects.mayThrow));
-    if (effects.mayCollect)
-        emitter<BarrierEmitter>().validateBeforeCollection(*context);
 
     RuntimeValidationEmitter::OperandCells cellsBeforeCall;
     if (generator().validates() && context && request.end == CallEnd::Returns && !mayConvertCells(effects) && !options.runsCodeOfHost)
@@ -694,8 +692,6 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     Effects effectsSinceThrow = effects;
     effectsSinceThrow.mayCollect |= options.followsThrow;
     applyEffects(patchpoint, effectsSinceThrow, request.argumentBufferAccess, options.accessesCollectorState, options.runsCodeOfHost ? CellConversions::WhateverEffectsSay : CellConversions::AsEffectsSay);
-    if (!options.pureFunction)
-        keepBehindBirthOfFrameCells(patchpoint);
     if (options.pureFunction) {
         RELEASE_ASSERT(!effects.mayExitSideways() && !effects.mayCollect && request.argumentBufferAccess == ArgumentBufferAccess::None && !options.accessesCollectorState);
         applyPureFunction(patchpoint, *options.pureFunction);
@@ -805,9 +801,6 @@ StubCallResult RuntimeCallEmitter::callStubForTwoReads(const OperationContext& c
 B3::PatchpointValue* RuntimeCallEmitter::createCallPatchpoint(const OperationContext& context, const CallPatchpointRequest& request)
 {
     Effects effects = effectsOfCall(context, request.effects);
-    if (effects.mayCollect)
-        emitter<BarrierEmitter>().validateBeforeCollection(context);
-
     B3::PatchpointValue* patchpoint = request.holdsUniqueRecord ? m_out.patchpointWithUniqueRecord(request.resultType) : m_out.patchpoint(request.resultType);
     patchpoint->clobberEarly(request.earlyClobbered);
     patchpoint->clobberLate(request.lateClobbered);
@@ -819,7 +812,6 @@ B3::PatchpointValue* RuntimeCallEmitter::createCallPatchpoint(const OperationCon
 
 void RuntimeCallEmitter::finishCallPatchpoint(const OperationContext& context, B3::PatchpointValue* patchpoint, uint32_t site, const CallPatchpointRequest& request)
 {
-    keepBehindBirthOfFrameCells(patchpoint);
     if (request.effects.mayThrow)
         emitter<ExceptionEmitter>().attachLandingPad(context, patchpoint, site, !request.neverReturns);
     if (request.neverReturns)

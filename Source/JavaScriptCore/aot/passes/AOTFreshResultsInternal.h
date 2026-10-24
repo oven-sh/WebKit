@@ -58,8 +58,6 @@ private:
     unsigned expandProfitableCalls(FunctionID caller, Function&, std::span<const WrapperCallSite>, TaskArenas&) const;
     Vector<WrapperCallSite, 4> chooseProfitableCalls(FunctionID caller, const Function&, std::span<const WrapperCallSite>, TaskArenas&) const;
 
-    void cloneWorkersByReadResults();
-
     ProgramEditor& m_editor;
     const OptimizationInputs& m_inputs;
     const PassRunner& m_runner;

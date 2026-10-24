@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTFlattenInnerObjects.h"
 #include "AOTAddGenericVersion.h"
 #include "AOTAllocateInnerObjects.h"
 #include "AOTBorrowedParameters.h"
@@ -48,7 +47,6 @@
 #include "AOTRemoveUnreadExports.h"
 #include "AOTRemoveUnreadFields.h"
 #include "AOTRemoveUnusedParameters.h"
-#include "AOTRemoveUnusedResults.h"
 #include "AOTSiteCachePlacement.h"
 #include "AOTSlotPlan.h"
 #include "AOTSplitBehindEntryChecks.h"
@@ -307,14 +305,6 @@ PassOutcome Pipeline::removeUnreadFields()
     return m_runner.lastProgramPassOutcome();
 }
 
-PassOutcome Pipeline::removeUnusedResults()
-{
-    edit(PassID::RemoveUnusedResults, [&](ProgramEditor& editor) {
-        Typed::removeUnusedResults(editor, inputsFor(PassID::RemoveUnusedResults), m_runner);
-    });
-    return m_runner.lastProgramPassOutcome();
-}
-
 PassOutcome Pipeline::removeUnusedParameters()
 {
     edit(PassID::RemoveUnusedParameters, [&](ProgramEditor& editor) {
@@ -400,14 +390,6 @@ PassOutcome Pipeline::allocateInFrames()
     }
     *m_output->frameAllocation = edit(PassID::AllocateInFrames, [&](ProgramEditor& editor) {
         return Typed::allocateInFrames(editor, inputsFor(PassID::AllocateInFrames), *m_output->flow, m_build);
-    });
-    return m_runner.lastProgramPassOutcome();
-}
-
-PassOutcome Pipeline::flattenInnerObjects()
-{
-    edit(PassID::FlattenInnerObjects, [&](ProgramEditor& editor) {
-        Typed::flattenInnerObjects(editor, flow(), inputsFor(PassID::FlattenInnerObjects).heat, m_build);
     });
     return m_runner.lastProgramPassOutcome();
 }
@@ -688,8 +670,6 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         return readCapturesFromEnvironments();
     case PassID::RemoveUnreadFields:
         return removeUnreadFields();
-    case PassID::RemoveUnusedResults:
-        return removeUnusedResults();
     case PassID::RemoveUnusedParameters:
         return removeUnusedParameters();
     case PassID::RemoveUnreachableFunctions:
@@ -710,8 +690,6 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         return allocateInFrames();
     case PassID::AllocateInnerObjects:
         return allocateInnerObjects();
-    case PassID::FlattenInnerObjects:
-        return flattenInnerObjects();
     case PassID::NumberLiteralStrings:
         return numberLiteralStrings();
     case PassID::EmbedConstantCollections:

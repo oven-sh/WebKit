@@ -103,6 +103,7 @@ ProgramAnalyses::~ProgramAnalyses()
 {
     BuildContext& build = m_runner.build();
     m_program.setBodyIndex(nullptr);
+    destroyResultLater(build, m_bodyIndex);
     destroyResultLater(build, m_bodyReferences);
     destroyResultLater(build, m_bodyWeights);
     destroyResultLater(build, m_borrowingBodiesOfHeat);

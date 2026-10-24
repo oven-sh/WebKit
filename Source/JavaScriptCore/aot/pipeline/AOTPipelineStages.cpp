@@ -348,12 +348,9 @@ void Pipeline::runOptimizeStage()
     stage.run(FunctionSchedule::Optimize);
     stage.run(PassID::ReadCapturesFromEnvironments);
     stage.run(PassID::RemoveUnreadFields);
-    stage.run(PassID::RemoveUnusedResults);
     stage.run(PassID::RemoveUnusedParameters);
-    stage.run(PassID::FlattenInnerObjects);
     stage.run(PassID::SplitFreshResults);
     stage.run(PassID::SkipAnsweredEntryChecks);
-    stage.run(PassID::RemoveUnusedResults);
     stage.run(PassID::MarkResultsUsedAsKeys);
     stage.run(PassID::EmbedConstantCollections);
     stage.run(PassID::RemoveUnreachableFunctions);

@@ -47,17 +47,6 @@ void CastEmitter::generateAssumeType(const ValueContext& value)
     define(value, get(value->valueOperand()));
 }
 
-// The object is the one that it was, so what was proven of it holds. Where it lies is what the later read has found.
-void CastEmitter::generateReadAgain(const ValueContext& value)
-{
-    define(value, emitter<ConversionEmitter>().inRepresentation(value, get(value->againOperand()), typeOf(value.id()), value.representation()));
-}
-
-void CastEmitter::generateBorrowedParameter(const ValueContext& value)
-{
-    define(value, emitter<ConversionEmitter>().inRepresentation(value, get(value->valueOperand()), typeOf(value.id()), value.representation()));
-}
-
 void CastEmitter::generateReportMismatch(const ValueContext& value)
 {
     ValueID source = value->valueOperand();

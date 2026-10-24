@@ -29,7 +29,6 @@
     v(MarkResultsUsedAsKeys) \
     v(ReadCapturesFromEnvironments) \
     v(RemoveUnreadFields) \
-    v(RemoveUnusedResults) \
     v(RemoveUnusedParameters) \
     v(RemoveUnreachableFunctions) \
     v(SplitBehindEntryChecks) \
@@ -41,7 +40,6 @@
     v(CreateEntrypoints) \
     v(ChooseCallingConventions) \
     v(DeferClosuresInFields) \
-    v(FlattenInnerObjects) \
     v(AllocateInFrames) \
     v(AllocateInnerObjects) \
     v(NumberLiteralStrings) \
@@ -95,7 +93,6 @@
     v(TestNarrowerTypesFirst, testNarrowerTypesFirst) \
     v(ThreadJumps, threadJumps) \
     v(EliminateDeadCode, eliminateDeadCode) \
-    v(MergeDuplicateBlocks, mergeDuplicateBlocks) \
     v(CompactBlocks, compactBlocks) \
     v(RemoveRedundantHandlers, removeRedundantHandlers) \
     v(HoistLoopInvariantReads, hoistLoopInvariantReads) \
@@ -112,9 +109,7 @@
     v(ExpandLongArrayLiterals, expandLongArrayLiterals) \
     v(FinishBirths, finishBirths) \
     v(RestartInGenericVersion, restartInGenericVersion) \
-    v(PlaceAllocationsAtTheirUse, placeAllocationsAtTheirUse) \
     v(Select, select) \
-    v(ChooseRepresentations, chooseRepresentations) \
-    v(RemoveRedundantBarriers, removeRedundantBarriers)
+    v(ChooseRepresentations, chooseRepresentations)
 
 #endif // ENABLE(AOT)

@@ -118,6 +118,7 @@ struct FlowAllocationStamp {
     AllocationSiteID site;
     AllocationClassID allocationClass;
     TypeID elements;
+    ArrayStorage arrayStorage { ArrayStorage::Other };
 };
 
 struct FlowSymbolConstant {

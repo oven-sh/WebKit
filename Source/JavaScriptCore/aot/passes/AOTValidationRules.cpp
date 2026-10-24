@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinCallPlan.h"
+#include "AOTFlowResults.h"
 #include "AOTRegExpSummary.h"
 #include "AOTStringArena.h"
 #include "AOTValidationPlanText.h"
@@ -195,16 +196,12 @@ RuleCode ValidationRuleEmitter::codeFor(const ValidationRule& rule, ResultShape 
         return isText(shape) && rule.as<ValidationRule::MinimumLength>().length > 1 ? RuleCode::CountedCharacters : RuleCode::Inline;
     case ValidationRule::Kind::MaximumLength:
         return isText(shape) ? RuleCode::CountedCharacters : RuleCode::Inline;
-    case ValidationRule::Kind::Pattern:
-    case ValidationRule::Kind::Format: {
-        // A match in compiled code is the last match that RegExp.$1 and its like tell of. The helper's is not.
-        if (m_emission.inputs().flow.mayReadLegacyRegExpStatics())
-            return RuleCode::ByHelper;
-        if (const auto* format = rule.tryAs<ValidationRule::Format>())
-            return hasExpression(format->format) ? RuleCode::RegularExpression : RuleCode::ByHelper;
+    case ValidationRule::Kind::Pattern: {
         Vector<char16_t> bufferForNonASCII;
         return isValidExpression(expressionOf(m_emission.program(), rule, bufferForNonASCII)) ? RuleCode::RegularExpression : RuleCode::ByHelper;
     }
+    case ValidationRule::Kind::Format:
+        return hasExpression(rule.as<ValidationRule::Format>().format) ? RuleCode::RegularExpression : RuleCode::ByHelper;
     case ValidationRule::Kind::Template:
         return RuleCode::ByHelper;
     case ValidationRule::Kind::Message:
@@ -393,6 +390,9 @@ ValueID ValidationRuleEmitter::appendExpressionTest(StringView source, ValueID s
     ValueID regExp = builder.append(WTF::move(literal));
     // Placement keys the cell of a literal by (function, position), and every other value of a derived function has the same position.
     builder.function().edit(regExp, ValueEdit::Definition).setOrigin({ regExp.index(), builder.origin().inlineFrame });
+    // What test matches is the last match that RegExp.$1 and its like tell of.
+    if (m_emission.inputs().flow.mayReadLegacyRegExpStatics())
+        return builder.append(Opcode::MatchesUnrecorded, { regExp, string });
     return appendMatchedBuiltinCall(m_emission, Builtins::RegExpPrototypeTest, BuiltinCallMode::Call, regExp, singleElementSpan(string));
 }
 

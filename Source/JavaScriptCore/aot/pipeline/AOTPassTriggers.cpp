@@ -20,9 +20,7 @@
 #include "AOTHoistTestsIntoPredecessors.h"
 #include "AOTInsertObjectCoercibleChecks.h"
 #include "AOTInt32Conversions.h"
-#include "AOTPlaceAllocationsAtTheirUse.h"
 #include "AOTPlaceTypeTestsPlan.h"
-#include "AOTRemoveRedundantBarriers.h"
 #include "AOTResolveAccesses.h"
 #include "AOTResolveBuiltinsInternal.h"
 #include "AOTResolveCalls.h"
@@ -109,12 +107,10 @@ static constexpr PassTriggers rowOf(PassID id)
         return PassTriggers::anyOf({ Opcode::TypeTest });
     case PassID::ThreadJumps:
         return PassTriggers::anyOf({ Opcode::TypeTest }).orTraits(BodyTrait::BlockParameters);
-    case PassID::MergeDuplicateBlocks:
-        return PassTriggers::anyOf({ }).orTraits(BodyTrait::BlockParameters);
     case PassID::RemoveRedundantHandlers:
         return PassTriggers::anyOf({ }).orTraits(BodyTrait::Handlers);
     case PassID::HoistLoopInvariantReads:
-        return PassTriggers::bothOf(PassTriggers::anyOf({ }).orOpcodes(hoistableReadOpcodes), PassTriggers::anyOf({ }).orTraits(BodyTrait::SeveralBlocks));
+        return PassTriggers::bothOf(PassTriggers::anyOf({ }).orOpcodes(hoistableOpcodes), PassTriggers::anyOf({ }).orTraits(BodyTrait::SeveralBlocks));
     case PassID::SimplifyBuiltinCalls:
         return PassTriggers::bothOf(
             PassTriggers::anyOf({ Opcode::CallBuiltin }).orOpcodes(simplifiedIntrinsics).orOpcodes(constantListSourceOpcodes),
@@ -141,10 +137,6 @@ static constexpr PassTriggers rowOf(PassID id)
         return PassTriggers::anyOf({ Opcode::NewArray });
     case PassID::FinishBirths:
         return PassTriggers::anyOf({ Opcode::PutSlot, Opcode::PutSlotOrAdd, Opcode::NewObject }).orTraits(BodyTrait::UnfinishedThis);
-    case PassID::PlaceAllocationsAtTheirUse:
-        return PassTriggers::anyOf({ }).orOpcodes(allocationsPlacedAtTheirUse);
-    case PassID::RemoveRedundantBarriers:
-        return PassTriggers::anyOf({ }).orOpcodes(operationsThatMayRunBarrier);
     default:
         return PassTriggers::always();
     }

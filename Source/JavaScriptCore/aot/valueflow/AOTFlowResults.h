@@ -94,6 +94,7 @@ struct FlowDataNodeStamp {
     AllocationSiteID site;
     AllocationClassID allocationClass;
     TypeID elements;
+    ArrayStorage arrayStorage { ArrayStorage::Other };
     // What is proven of the array that the node becomes. None for an object with a layout, whose allocation says all there is, and where nothing is proven.
     TypeID type;
 

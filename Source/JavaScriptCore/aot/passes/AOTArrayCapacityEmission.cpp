@@ -661,7 +661,6 @@ PassOutcome planArrayCapacities(FunctionPassContext& context)
         return PassOutcome::Unchanged;
 
     PassOutcome converted = convertIntegerArraysBehindFailedTests(context);
-    unsigned narrowed = narrowStorageOfLocalArrays(context);
     unsigned constructed = chooseStorageOfConstructedArrays(context);
     Vector<CapacityPlan, 4> plans = ArrayCapacityPlanner(context).collectPlans();
     unsigned planned = applyCapacityPlans(context, plans.span());
@@ -673,7 +672,7 @@ PassOutcome planArrayCapacities(FunctionPassContext& context)
     unsigned grown = applyGrowthPlans(context, growthPlans.span());
     if (grown)
         context.build.statistics().count(StatisticID::ArrayGrowthsPlanned, grown);
-    if (converted == PassOutcome::Unchanged && !narrowed && !constructed && !didInsertValues && !grown)
+    if (converted == PassOutcome::Unchanged && !constructed && !didInsertValues && !grown)
         return PassOutcome::Unchanged;
 
     if (constructed)

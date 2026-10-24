@@ -122,6 +122,8 @@ void applyStamps(const FlowBodyApplication& body, const FlowBodyUpdate& update)
             allocation.setAllocationClass(stamp.allocationClass);
         if (stamp.elements)
             allocation.setContents(stamp.elements);
+        if (allocation.opcode == Opcode::NewArray)
+            allocation.setArrayStorage(stamp.arrayStorage);
         if (allocation.opcode == Opcode::NewObject && body.program.at(allocation.layout()).isEnvironment())
             stopListingStartsThatNobodyReads(body, allocation);
     }

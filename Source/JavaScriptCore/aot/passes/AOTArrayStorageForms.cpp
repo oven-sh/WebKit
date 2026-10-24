@@ -36,6 +36,8 @@ ArrayStorage arrayStorageHolding(const Type& elements)
 
 ArrayStorage arrayStorageDeclaredBy(const Program& program, const ClassPart& array)
 {
+    if (array.arrayStorage != ArrayStorage::Other)
+        return array.arrayStorage;
     const Type& elements = program.at(array.contentsAt(program.builtins(), ContentsSlot::Element));
     return elements.isAnything() ? ArrayStorage::Other : arrayStorageHolding(elements);
 }
@@ -63,10 +65,8 @@ ArrayStorage arrayStorageAtAllocation(const Program& program, const Type& array)
 
 ArrayStorage arrayStorageOfLiteral(const Program& program, const Type& array, ArrayLiteralParts parts)
 {
-    if (parts.hasHoles)
-        return ArrayStorage::Contiguous;
     // A literal without an element has the declared kind, or a more general one that the arrays of its site have turned into, and none is more general than Contiguous.
-    if (!parts.hasElements)
+    if (!parts.hasElements && !parts.hasHoles)
         return arrayStorageDeclaredBy(program, array) == ArrayStorage::Contiguous ? ArrayStorage::Contiguous : ArrayStorage::Other;
     // A list of numbers that does not fit its kind is found when code is generated or when the literal runs.
     return arrayStorageAtAllocation(program, array) == ArrayStorage::Contiguous ? ArrayStorage::Contiguous : ArrayStorage::Other;
@@ -158,20 +158,6 @@ Type typeOfElementRead(ArrayStorage kind)
         return Type::anything();
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-std::optional<NarrowStorageChoice> narrowStorageHolding(const Type& elements)
-{
-    if (elements.isBoolean())
-        return NarrowStorageChoice { NarrowElementKind::Boolean, TypeUint8 };
-    if (!elements.isInteger())
-        return std::nullopt;
-
-    for (const NarrowStorageForm& form : narrowStorageForms) {
-        if (elements.integers.isSubsetOf({ form.minimum, form.maximum }))
-            return NarrowStorageChoice { NarrowElementKind::Integer, form.storage };
-    }
-    return std::nullopt;
 }
 
 } } } // namespace JSC::AOT::Typed

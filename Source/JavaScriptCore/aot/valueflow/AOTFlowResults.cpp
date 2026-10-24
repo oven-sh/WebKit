@@ -350,14 +350,13 @@ bool FlowResults::areClosuresAsCreated(FunctionID closureFunction, std::span<con
 
 bool FlowResults::closuresInheritFromFunctionPrototype(FunctionID closureFunction, PropertyKeyID key) const
 {
-    constexpr OptionSet<ObjectMutation> mutationsHidingNames { ObjectMutation::ReachUnknownJavaScript, ObjectMutation::RedefineProperty };
     const Vector<AllocationClass>& classes = m_tables.sites.allocationClasses;
     auto closureClasses = std::ranges::equal_range(m_closureClassesByFunction, closureFunction, { }, [&](AllocationClassID id) {
         return classes[id.index()].closureFunction;
     });
     return !closureClasses.empty() && std::ranges::all_of(closureClasses, [&](AllocationClassID id) {
         const AllocationClass& closures = classes[id.index()];
-        return closures.inheritsFromListedFunctions && closures.addedKeysAreComplete && closures.impossibleMutations.containsAll(mutationsHidingNames) && !closures.addedKeys.contains(key);
+        return closures.inheritsFromListedFunctions && !closures.addedKeys.contains(key);
     });
 }
 

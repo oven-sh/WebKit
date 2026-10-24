@@ -1,8 +1,8 @@
 # A switch that is limited to one function as read holds in that function and in what is derived from it, and nowhere else
 # FORM: Prepared
-# OPTIONS: disable=pass:FoldConstants,pass:RemoveUnusedResults disable-in=1:1
+# OPTIONS: disable=pass:FoldConstants disable-in=1:1
 # RUN: pass FoldConstants
-# RUN(PROGRAM): pass RemoveUnusedResults
+# RUN(PROGRAM): pass
 # CHECK: outcome: Changed
 # PROGRAM: outcome: Changed
 

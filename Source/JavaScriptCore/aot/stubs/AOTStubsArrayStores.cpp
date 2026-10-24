@@ -22,7 +22,7 @@ namespace JSC { namespace AOT {
 static_assert(gprOf(StubRegister::A1) == operationArgumentGPR(1) && gprOf(StubRegister::A2) == operationArgumentGPR(2) && gprOf(StubRegister::A3) == operationArgumentGPR(3));
 
 // What JSObject::putByIndex does for an index inside the vector of an array whose storage is its own and has one of the three kinds: no such array has an accessor, a read-only element or a fixed length, on itself or on its prototypes.
-static void emitStoreInsideVector(StubAssembler& jit, GPRReg kind, GPRReg butterfly, GPRReg length, JumpList& callsOperation)
+static void emitStoreInsideVector(StubAssembler& jit, GPRReg kind, GPRReg butterfly, GPRReg length, JumpList& isBeyondVector, JumpList& callsOperation)
 {
     const GPRReg array = jit.operand(0);
     const GPRReg value = jit.operand(1);
@@ -41,7 +41,7 @@ static void emitStoreInsideVector(StubAssembler& jit, GPRReg kind, GPRReg butter
     auto loadVector = [&] {
         jit.loadPtr(Address(array, JSObject::butterflyOffset()), butterfly);
         jit.load32(Address(butterfly, Butterfly::offsetOfVectorLength()), length);
-        callsOperation.append(jit.branch64(CCallHelpers::AboveOrEqual, position, length));
+        isBeyondVector.append(jit.branch64(CCallHelpers::AboveOrEqual, position, length));
     };
 
     loadVector();
@@ -83,7 +83,7 @@ static void emitFrontEnd(StubAssembler& jit, Entry rawOperation)
     const GPRReg length = jit.allocateScratch(StubRegister::T11);
     JumpList callsOperation;
 
-    emitStoreInsideVector(jit, kind, butterfly, length, callsOperation);
+    emitStoreInsideVector(jit, kind, butterfly, length, callsOperation, callsOperation);
     // The stub that remembers an element takes a register that an operation call preserves, which no front end may. The operation stores the same value again and remembers it.
     Jump isNotCell = jit.branchIfNotCell(jit.operand(1));
     callsOperation.append(branchIfBarrierIsNeeded(jit, jit.operand(0), kind));
@@ -130,10 +130,21 @@ void generateArrayPutAtIndex(StubAssembler& jit)
     const GPRReg kind = jit.allocateScratch(StubRegister::T9);
     const GPRReg butterfly = jit.allocateScratch(StubRegister::T10);
     const GPRReg length = jit.allocateScratch(StubRegister::T11);
+    const GPRReg storage = jit.allocateScratch(StubRegister::T12);
+    const GPRReg allocator = jit.allocateScratch(firstStubOperandRegister);
+    JumpList isBeyondVector;
     JumpList callsOperation;
 
-    emitStoreInsideVector(jit, kind, butterfly, length, callsOperation);
+    Label start = jit.label();
+    emitStoreInsideVector(jit, kind, butterfly, length, isBeyondVector, callsOperation);
     emitElementBarrierAndReturn(jit, jit.operand(0), jit.operand(1));
+
+    // A store at the length of a full vector is a push. No program can observe the capacity, so the value may still turn out not to fit the kind.
+    isBeyondVector.link(&jit);
+    jit.load32(Address(butterfly, Butterfly::offsetOfPublicLength()), length);
+    callsOperation.append(jit.branch64(CCallHelpers::NotEqual, jit.operand(2), length));
+    growFullVector(jit, { jit.operand(0), butterfly, length, storage, allocator, kind }, callsOperation);
+    jit.jump().linkTo(start, &jit);
 
     callsOperation.link(&jit);
     Entry operation = storedValueOf(jit) == ArrayStoredValue::Number ? Entry::operationAOTArrayPutNumberAtIndex : Entry::operationAOTArrayPutAtIndex;

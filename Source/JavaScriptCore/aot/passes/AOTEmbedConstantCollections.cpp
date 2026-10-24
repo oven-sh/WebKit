@@ -717,6 +717,7 @@ static void rewriteFunction(const AnalysisContext& context, Function& function, 
         literal.become(Opcode::Data);
         literal.setData(unwritten.data);
         literal.setAllocationSite(allocationSite);
+        literal.type = resultTypeOf(program, function, literal, types);
     }
     Vector<ValueID> constructions;
     constructions.reserveInitialCapacity(sites.size());

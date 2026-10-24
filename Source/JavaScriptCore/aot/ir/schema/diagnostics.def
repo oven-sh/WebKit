@@ -125,8 +125,6 @@ enum InternalErrorKind (stage: Stage, message: Text) {
     InvalidInlineFrame(Optimize, "inline frame {count} is malformed")
     InvalidCreatorRecord(Optimize, "role, creator record and derivation do not agree")
     ClosureOnDemandWithoutField(Optimize, "a closure that is made on demand is not the initial value of a field that defers it")
-    ObjectOnDemandWithoutRoom(Optimize, "an object that is made on demand is not taken by an operation that lays it into a room of an outer object")
-    BorrowedObjectHeld(Optimize, "an inner object that may still lie in its outer object goes where the object itself is wanted")
 
     FlowMembersInvalid(AnalyzeFlow, "members of {layout} do not ascend or are not allocated")
     MaskCutKnownValue(AnalyzeFlow, "{function}: the type of {value} removed a value flow knows arrives")

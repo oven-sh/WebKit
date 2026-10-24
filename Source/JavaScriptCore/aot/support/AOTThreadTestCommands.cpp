@@ -434,24 +434,6 @@ static bool restingThreadsGoBackToThePool()
     return true;
 }
 
-static bool commitsInIndexOrder(const ParallelLoops& loops, unsigned count)
-{
-    const Thread& caller = Thread::currentSingleton();
-    Vector<std::atomic<uint8_t>> numberOfProductions(count);
-    for (auto& number : numberOfProductions)
-        number.store(0, std::memory_order_relaxed);
-    Vector<unsigned> committed;
-    committed.reserveInitialCapacity(count);
-    bool commitsOnCallerAfterProduction = true;
-    forEachIndexInParallelWithOrderedCommit(loops, count, [&](unsigned index) {
-        numberOfProductions[index].fetch_add(1, std::memory_order_release);
-    }, [&](unsigned index) {
-        commitsOnCallerAfterProduction &= &Thread::currentSingleton() == &caller && numberOfProductions[index].load(std::memory_order_acquire) == 1;
-        committed.append(index);
-    });
-    return commitsOnCallerAfterProduction && std::ranges::equal(committed, std::views::iota(0u, count));
-}
-
 static bool pendingTasksRunByPriority()
 {
     ParallelLoops loops(4, &poolThatHoldsCalls, 0_s);
@@ -619,9 +601,6 @@ void runParallelLoopsTestCommand(TestCommandContext& context)
     printCheck(out, "an array creates and destroys each element once"_s, parallelArrayCreatesAndDestroysEachElementOnce(loops));
     printCheck(out, "resting threads take the next loop"_s, restingThreadsTakeTheNextLoop());
     printCheck(out, "resting threads go back to the pool"_s, restingThreadsGoBackToThePool());
-    printCheck(out, "ordered commit"_s, std::ranges::all_of(loopCounts, [&](unsigned count) {
-        return commitsInIndexOrder(loops, count);
-    }));
     printCheck(out, "pending tasks run by priority"_s, pendingTasksRunByPriority());
     printCheck(out, "a background loop yields to foreground loops"_s, backgroundLoopYieldsToForegroundLoop(words->threads));
     printCheck(out, "tasks run after their dependencies"_s, tasksRunAfterTheirDependencies(loops));

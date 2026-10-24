@@ -241,7 +241,7 @@ static void testReadsAreAccepted()
     });
 }
 
-// RemoveRedundantBarriers takes every edge to a handler for a collection, so an entry that only throws need not say that it allocates.
+// An entry that only throws need not say that it allocates.
 static void testCollectionInCallThatThrowsIsAccepted()
 {
     Realms realms(RuntimeValidation::On);

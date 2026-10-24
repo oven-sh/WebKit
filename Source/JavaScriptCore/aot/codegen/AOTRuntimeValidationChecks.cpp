@@ -112,7 +112,7 @@ void RuntimeValidationEmitter::checkIsSpecified(ValueID id)
 
 bool RuntimeValidationEmitter::hasTestableBits(ValueID id)
 {
-    if (generator().mayBeUnspecified(id) || isDeferredClosure(m_function, id) || generator().mayBeBorrowedInnerObject(id))
+    if (generator().mayBeUnspecified(id) || isDeferredClosure(m_function, id))
         return false;
     Representation representation = representationOf(id);
     return representation != Representation::Void && representation != Representation::LiteralString;

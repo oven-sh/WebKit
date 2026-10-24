@@ -10,11 +10,13 @@
 
 #include "B3BasicBlock.h"
 #include "B3InsertionSetInlines.h"
+#include "B3PatchpointValue.h"
 #include "B3Procedure.h"
 #include "B3SlotBaseValue.h"
 #include "B3UpsilonValue.h"
 #include "B3ValueInlines.h"
 #include <wtf/IndexMap.h>
+#include <wtf/HashSet.h>
 #include <wtf/IndexSet.h>
 #include <wtf/SharedTask.h>
 
@@ -205,6 +207,47 @@ B3::ClientPhase materializeSlotBasesLate()
         "materializeSlotBasesLate"_s,
         createSharedTask<bool(B3::Procedure&)>([](B3::Procedure& proc) {
             return SlotBaseMaterialization(proc).run();
+        })
+    };
+}
+
+// CellAllocationEmitter::allocateInFrame() makes the one patchpoint that has no code.
+static bool isBirth(const B3::Value* value)
+{
+    const auto* patchpoint = value->as<B3::PatchpointValue>();
+    return patchpoint && !patchpoint->generator();
+}
+
+static void checkThatOnlyBirthsTakeSlotsOfCells(B3::Procedure& proc)
+{
+    UncheckedKeyHashSet<B3::Air::StackSlot*> slotsOfCells;
+    for (B3::Value* value : proc.values()) {
+        if (isBirth(value))
+            slotsOfCells.add(value->child(0)->as<B3::SlotBaseValue>()->slot());
+    }
+    for (B3::Value* value : proc.values()) {
+        for (B3::Value* child : value->children())
+            RELEASE_ASSERT(isBirth(value) || child->opcode() != B3::SlotBase || !slotsOfCells.contains(child->as<B3::SlotBaseValue>()->slot()));
+    }
+}
+
+B3::ClientPhase dissolveBirthsOfFrameCells(const bool& hasBirths, bool verifies)
+{
+    return {
+        B3::ClientPhase::Point::AfterOptimization,
+        "dissolveBirthsOfFrameCells"_s,
+        createSharedTask<bool(B3::Procedure&)>([&hasBirths, verifies](B3::Procedure& proc) {
+            if (!hasBirths)
+                return false;
+            if (verifies)
+                checkThatOnlyBirthsTakeSlotsOfCells(proc);
+            for (B3::Value* value : proc.values()) {
+                if (isBirth(value))
+                    value->replaceWithIdentity(value->child(0));
+            }
+            for (B3::Value* value : proc.values())
+                value->performSubstitution();
+            return true;
         })
     };
 }

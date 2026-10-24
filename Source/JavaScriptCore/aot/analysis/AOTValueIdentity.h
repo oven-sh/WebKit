@@ -210,26 +210,6 @@ std::optional<ValueID> constantThroughCasts(const Program&, const Function&, Val
 std::optional<int64_t> integerConstantThroughCasts(const Program&, const Function&, ValueID);
 bool isRematerializable(const Value&);
 bool isDeferredClosure(const Function&, ValueID);
-// What a read gave that takes the outer object for an inner object which is not made yet.
-bool isBorrowedInnerObject(const Function&, ValueID);
-// What such a value passes through and stays what it is. A test for undefined and null looks at the reference alone.
-constexpr bool handsOnBorrowedInnerObject(Opcode opcode)
-{
-    constexpr OpcodeSet others { Opcode::RequireObjectCoercible, Opcode::Box, Opcode::Unbox, Opcode::Decode, Opcode::Compress };
-    return isCastWithoutTest(opcode) || others.contains(opcode);
-}
-// What an operation does with such a value.
-enum class UseOfBorrowedObject : uint8_t {
-    // It hands on what it takes.
-    HandsOn,
-    // It reads or writes a slot, or asks the cell for a state that an object which was never made is in.
-    Borrows,
-    // It wants the object itself.
-    Holds,
-};
-UseOfBorrowedObject useOfBorrowedInnerObject(const Program&, const Function&, const Value& user, uint32_t operandIndex, ValueID borrowed);
-// The parameter that the operation stands for. The choice of representations may have put conversions between them. Null where the parameter has gone and the operation is a cast like any other.
-ValueID parameterOf(const Function&, const Value& borrowedParameter);
 
 } } } // namespace JSC::AOT::Typed
 

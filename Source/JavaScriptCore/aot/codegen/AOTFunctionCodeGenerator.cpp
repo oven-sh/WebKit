@@ -11,6 +11,7 @@
 #include "AOTASANShadowChecks.h"
 #include "AOTBackEndReport.h"
 #include "AOTChooseCallingConventions.h"
+#include "AOTClaimChecks.h"
 #include "AOTCodeDescription.h"
 #include "AOTCodeSizeMap.h"
 #include "AOTElideStackChecks.h"
@@ -231,6 +232,7 @@ bool FunctionCodeGenerator::generateB3()
     FunctionBackEndTraits traits = computeBackEndTraits(m_inputs, m_id, m_function, frameMaps);
     B3::Policy policy = b3PolicyFor(build, traits, m_relocationLowering);
     policy.clientPhases.append(throwWhereTrapsAreCertain(m_records, m_inputs.stubCatalog));
+    policy.clientPhases.append(dissolveBirthsOfFrameCells(m_records.hasBirthsOfFrameCells, options.verifiesAfterEveryPass));
     appendClientPhases(policy, program, m_function, traits);
     if (traits.savesFrameOnSuspend && options.verifiesProgram)
         policy.clientPhases.append(validateFrameAddresses(m_frameAddressViolations, frameMaps.suspensionValues(), findParametersWithoutObjects(program, m_function)));
@@ -247,6 +249,14 @@ bool FunctionCodeGenerator::generateB3()
     }
     if (options.validatesReferences && !options.recorded.useWideReferences())
         policy.clientPhases.append(validateNarrowReferences(m_narrowReferenceFindings, { findNarrowReferences(m_function), frameMaps.suspensionValues(), &m_records.operationsWithCompressedOperand }));
+    if (options.checksClaimsToBackEnd) {
+        checkClaimsAtRunTime(policy, m_id, !traits.savesFrameOnSuspend);
+        m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTReportBrokenClaim));
+    }
+    if (options.checksMovedLoads) {
+        checkMovedLoadsAtRunTime(policy, m_id, m_procedure);
+        m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTReportBrokenClaim));
+    }
 #if AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE
     m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTReportPoisonedAccess));
 #endif

@@ -343,10 +343,16 @@ CellPointer CellAllocationEmitter::allocateObjectCopy(const OperationContext& co
     return CellPointer(callStub(context, copyObject(std::nullopt), { allocation, source.value(), m_out.constInt64(fieldBytes - copyChunkBytes) }).first);
 }
 
+// Readers take this value as they take the result of an allocation, so they stay behind it. dissolveBirthsOfFrameCells() puts the slot's address in its place.
 CellPointer CellAllocationEmitter::allocateInFrame(size_t size)
 {
-    generator().didPlaceCellInFrame();
-    return CellPointer(m_out.lockedStackSlot(size));
+    LValue slot = m_out.lockedStackSlot(size);
+    B3::PatchpointValue* birth = m_out.patchpoint(B3::pointerType());
+    birth->append(slot, B3::ValueRep::SomeRegister);
+    birth->effects = B3::Effects::none();
+    m_heaps.decoratePatchpointWrite(&m_heaps.frameSlots, birth);
+    generator().records().hasBirthsOfFrameCells = true;
+    return CellPointer(birth);
 }
 
 std::pair<CellPointer, Pointer> CellAllocationEmitter::allocateArray(const OperationContext& context, Word32 length, Word32 vectorLength, IndexingType indexingType, LBasicBlock slowPath)

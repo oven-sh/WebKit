@@ -232,7 +232,6 @@ enum class FlatMatchPolicy : uint8_t { HandsOverEarly, RunsToMatchLimit, Remembe
 
 enum class FlatProgramDecline : uint8_t {
     UnicodeMode,
-    Modifiers,
     Lookbehind,
     DuplicateNamedGroups,
     UnsignedLengthPattern,

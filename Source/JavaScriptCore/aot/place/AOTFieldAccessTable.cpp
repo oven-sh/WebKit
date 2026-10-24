@@ -101,7 +101,6 @@ static PlacedSlot slotOfEveryMember(const PlacementContext& context, const SlotA
             slot.mayExistWithoutStorage |= slotOfMember.mayExistWithoutStorage;
         slot.deferredClosureCapturesObject |= slotOfMember.deferredClosureCapturesObject;
         slot.deferredClosureCapturesEnvironment |= slotOfMember.deferredClosureCapturesEnvironment;
-        slot.defersFlattenedObject &= slotOfMember.defersFlattenedObject;
     }
     return slot;
 }

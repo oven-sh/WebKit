@@ -786,7 +786,7 @@ static constexpr bool asksForIdentitiesOnlyBeforeEditing(PassID pass)
 // These passes see the same identities whether the table is completed before they start or when they first ask.
 static constexpr EnumeratorBitSet<PassID, numberOfPasses> passesThatMayCompleteIdentitiesLate {
     PassID::FoldConstants, PassID::PropagateBranchConditions, PassID::HoistTestsIntoPredecessors, PassID::ThreadJumps, PassID::EliminateDeadCode,
-    PassID::EliminateRedundantReads, PassID::RetypeValues, PassID::MergeDuplicateBlocks, PassID::CompactBlocks,
+    PassID::EliminateRedundantReads, PassID::RetypeValues, PassID::CompactBlocks,
 };
 
 // Any other pass may edit the function without reporting it and ask afterwards. It has to get the identities from before its edits.

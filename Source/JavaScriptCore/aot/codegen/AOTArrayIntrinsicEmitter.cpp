@@ -23,8 +23,6 @@ static constexpr const ArrayStorageForm& contiguous = arrayStorageFormOf(ArraySt
 
 static_assert(int32s.hole == contiguous.hole && int32s.element != Representation::Double && contiguous.element == Representation::JSValue);
 static_assert(doubles.element == Representation::Double);
-static_assert(!remembersOwnerOf(Opcode::TryPutByValDirect), "tryStore runs the owner barrier only on the path that stores, so it cannot cover an earlier store");
-static_assert(!remembersOwnerOf(Opcode::TryPutIndex), "tryStoreElement remembers the stored element, not the array");
 
 ArrayIntrinsicEmitter::ArrayIntrinsicEmitter(CodeGenerator& generator)
     : BuiltinFamilyEmitter(generator)

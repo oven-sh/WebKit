@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTCallGraph.h"
-#include "AOTDefinitions.h"
 #include "AOTEffectSummaries.h"
 #include "AOTEffectsDescription.h"
 #include "AOTFlowApply.h"
@@ -673,30 +672,6 @@ static void runHeatGraph(TestCommandContext& context)
     }
 }
 
-void Definitions::dump(PrintStream& out, const Program& program) const
-{
-    IRPrinter printer(out, program);
-    for (const Definition& definition : m_definitions) {
-        printer.print(definition.moduleBody);
-        out.print(" v"_s, definition.allocation.index(), " "_s, nameOf(definition.kind));
-        if (definition.binding) {
-            out.print(" binding="_s);
-            printer.print(definition.binding);
-        }
-        if (definition.holder != Definition::noHolder)
-            out.print(" in=v"_s, m_definitions[definition.holder].allocation.index());
-        out.print(" past="_s, definition.usesThatGoPast, " observedInModuleBodies="_s, definition.observingUsesInModuleBodies, " observedInFunctions="_s, definition.observingUsesInFunctions);
-        out.print(isMadeAtStart(definition) ? " made at start\n"_s : isEverMade(definition) ? " made on demand\n"_s : " never made\n"_s);
-    }
-}
-
-static void runDefinitions(TestCommandContext& context)
-{
-    Definitions definitions(*context.program, context.build);
-    definitions.dump(context.out, *context.program);
-    definitions.dumpCounts(context.out);
-}
-
 static void runFunctionReferences(TestCommandContext& context)
 {
     const Program& program = *context.program;
@@ -768,7 +743,6 @@ std::span<const TestCommand> analysisTestCommands()
         { "demote-return-call"_s, IRForm::Prepared, runOnFunction<demoteReturnCall>, ProgramAsRead::TypedAndVerified },
         { "remove-handler"_s, IRForm::Prepared, runOnFunction<removeHandler>, ProgramAsRead::TypedAndVerified },
         { "heat-graph"_s, IRForm::Prepared, runHeatGraph, ProgramAsRead::TypedAndVerified },
-        { "definitions"_s, IRForm::AsRead, runDefinitions, ProgramAsRead::TypedAndVerified },
         { "function-references"_s, IRForm::Prepared, runFunctionReferences, ProgramAsRead::TypedAndVerified },
         { "functions-seeing"_s, IRForm::Prepared, runFunctionsSeeing, ProgramAsRead::TypedAndVerified },
         { "guards"_s, IRForm::Prepared, runGuardAvailability, ProgramAsRead::TypedAndVerified },

@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTEffects.h"
+#include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTGenericCopy.h"
 #include "AOTHoistLoopInvariantReads.h"
@@ -128,7 +129,7 @@ static std::optional<HoistableLoop> describeHoistableLoop(FunctionPassContext& c
     for (unsigned i = 0; i < loop.size(); ++i) {
         body.quickSet(loop.at(i).index());
         hasRead |= std::ranges::any_of(function.at(loop.at(i)).values, [&](ValueID id) {
-            return isVariableRead(function, function.at(id));
+            return function.at(id).opcode == Opcode::ToBoolean || isVariableRead(function, function.at(id));
         });
     }
     if (!hasRead)
@@ -158,6 +159,8 @@ static bool canHoist(FunctionPassContext& context, const HoistableLoop& loop, bo
 {
     const Program& program = context.program;
     const Value& value = context.function.at(id);
+    if (value.opcode == Opcode::ToBoolean)
+        return !keptReads.get(id.index()) && hasInvariantOperands(value, loop.body, definingBlock) && !mayBeUnspecified(context.analyses, value.operand(0));
     if (!hoistableReadOpcodes.contains(value.opcode))
         return false;
     MemoryAccess access = variableAccessOf(context.function, value);

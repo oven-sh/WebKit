@@ -57,8 +57,6 @@ public:
                 return makeUnexpected(FlatProgramDecline::UnicodeMode);
             givesUpAtSurrogates = true;
         }
-        if (m_pattern.m_containsModifiers)
-            return makeUnexpected(FlatProgramDecline::Modifiers);
         if (m_pattern.hasDuplicateNamedCaptureGroups())
             return makeUnexpected(FlatProgramDecline::DuplicateNamedGroups);
         if (m_pattern.containsUnsignedLengthPattern())
@@ -151,14 +149,11 @@ private:
                 switch (term.type) {
                 case PatternTerm::Type::AssertionBOL:
                 case PatternTerm::Type::AssertionEOL:
-                    break;
                 case PatternTerm::Type::AssertionWordBoundary:
                 case PatternTerm::Type::NumberedBackReference:
                 case PatternTerm::Type::NamedBackReference:
                 case PatternTerm::Type::NumberedForwardReference:
                 case PatternTerm::Type::NamedForwardReference:
-                    if (term.ignoreCase())
-                        return false;
                     break;
                 case PatternTerm::Type::PatternCharacter:
                     if (!isSingleCodeUnit(term.patternCharacter))
@@ -282,7 +277,7 @@ private:
             turns.append(FlatProgram::TurnThatMayTakeNothing { static_cast<uint16_t>(startRegister), turnAround[begin] });
             std::ranges::fill(turnAround.mutableSpan().subspan(begin, end - begin), static_cast<uint16_t>(turns.size() - 1));
         }
-        constexpr unsigned maxRowsOfOp = 64;
+        constexpr unsigned maxRowsOfOp = 1024;
         Vector<uint16_t> loopAround(FillWith { }, ops.size(), 0);
         Vector<unsigned> rowsOfOp(FillWith { }, ops.size(), 1);
         auto& loops = m_program->loopsThatCountTurns;
@@ -1163,7 +1158,7 @@ private:
                 emit(Kind::InputEnd);
             return true;
         case PatternTerm::Type::AssertionWordBoundary:
-            emitWithSet(term.invert() ? Kind::NotWordBoundary : Kind::WordBoundary, internSet(m_pattern.wordcharCharacterClass(), false, 0, 0));
+            emitWithSet(term.invert() ? Kind::NotWordBoundary : Kind::WordBoundary, internSet(m_pattern.eitherUnicode() && term.ignoreCase() ? m_pattern.wordUnicodeIgnoreCaseCharCharacterClass() : m_pattern.wordcharCharacterClass(), false, 0, 0));
             return true;
         default:
             return false;
@@ -1389,7 +1384,7 @@ private:
             return decline(FlatProgramDecline::Lookbehind);
         m_searchDependsOnMoreThanPosition = true;
         auto emitReference = [&] {
-            emit(term.ignoreCase() ? Kind::BackReferenceIgnoringCase : Kind::BackReference, term.backReferenceSubpatternId << 1);
+            emit(term.ignoreCase() ? Kind::BackReferenceIgnoringCase : Kind::BackReference, term.backReferenceSubpatternId << 1, m_pattern.eitherUnicode());
             return true;
         };
         unsigned max = term.quantityMaxCount;
@@ -1528,8 +1523,6 @@ ASCIILiteral description(FlatProgramDecline reason)
     switch (reason) {
     case FlatProgramDecline::UnicodeMode:
         return "unicode mode"_s;
-    case FlatProgramDecline::Modifiers:
-        return "modifiers"_s;
     case FlatProgramDecline::Lookbehind:
         return "lookbehind"_s;
     case FlatProgramDecline::DuplicateNamedGroups:

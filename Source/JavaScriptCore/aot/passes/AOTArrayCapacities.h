@@ -164,7 +164,6 @@ unsigned applyCapacityPlans(FunctionPassContext&, std::span<const CapacityPlan>)
 unsigned applyGrowthPlans(FunctionPassContext&, std::span<const GrowthPlan>);
 unsigned applyCollectionGrowthPlans(FunctionPassContext&, std::span<const GrowthPlan>);
 
-unsigned narrowStorageOfLocalArrays(FunctionPassContext&);
 unsigned chooseStorageOfConstructedArrays(FunctionPassContext&);
 // An array of whole numbers that fails a test for Double storage is converted on the failing edge, so that it passes the test from then on.
 PassOutcome convertIntegerArraysBehindFailedTests(FunctionPassContext&);

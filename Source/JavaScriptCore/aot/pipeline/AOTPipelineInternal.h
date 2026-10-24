@@ -99,7 +99,6 @@ public:
     PassOutcome promoteEnvironmentsToVariables();
     PassOutcome readCapturesFromEnvironments();
     PassOutcome removeUnreadFields();
-    PassOutcome removeUnusedResults();
     PassOutcome removeUnusedParameters();
     PassOutcome removeUnreachableFunctions();
     PassOutcome splitFreshResults();
@@ -110,7 +109,6 @@ public:
     PassOutcome chooseCallingConventions();
     PassOutcome allocateInFrames();
     PassOutcome allocateInnerObjects();
-    PassOutcome flattenInnerObjects();
     PassOutcome numberLiteralStrings();
     PassOutcome embedConstantCollections();
     PassOutcome collectRegExpLiterals();

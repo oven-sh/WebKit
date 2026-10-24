@@ -171,7 +171,7 @@ void PassRunner::prepare(ScheduleRun& run) const
 
 static constexpr PassSet optionalPassesOfGenericVersions {
     PassID::BindGlobalNames, PassID::SimplifyBuiltinCalls, PassID::CallThroughMethodTable, PassID::ResolveCalls, PassID::ResolveAccesses, PassID::SimplifyCasts, PassID::FoldConstants, PassID::SimplifyControlFlow,
-    PassID::RemoveTrivialParameters, PassID::EliminateDeadCode, PassID::MergeDuplicateBlocks, PassID::RemoveRedundantHandlers, PassID::RetypeValues, PassID::CompactBlocks,
+    PassID::RemoveTrivialParameters, PassID::EliminateDeadCode, PassID::RemoveRedundantHandlers, PassID::RetypeValues, PassID::CompactBlocks,
 };
 
 static constexpr PassSet optionalPassesOfColdAsyncFunctions = optionalPassesOfGenericVersions | PassSet { PassID::PlaceTypeTests, PassID::InsertObjectCoercibleChecks, PassID::SinkAllocations, PassID::FinishBirths };

@@ -86,7 +86,7 @@ static bool needsWideReference(const SlotPlanContext& context, FieldReference fi
 
 static bool canHaveExtension(const SlotPlanContext& context, LayoutID id)
 {
-    return context.isCompiledObject(id) && !context.inputs.frameAllocation.mayBeInFrame(id) && !context.layoutsFlattenedInOthers.get(id.index());
+    return context.isCompiledObject(id) && !context.inputs.frameAllocation.mayBeInFrame(id);
 }
 
 static bool isCompressible(const Type& type)
@@ -250,15 +250,6 @@ static SlotClaim claimFor(const SlotPlanContext& context, const FieldInputs& fie
     claim.isSetAtCreation = location.initialization == InitializationState::SetAtCreation;
     claim.existsAtCreation = field.use.initializingSites || claim.isSetAtCreation || isAlwaysFilledByNativeCode;
     claim.isInitializedWithValue = field.use.sitesInitializingWithValue || (claim.isSetAtCreation && !field.use.initializingSites) || isAlwaysFilledByNativeCode;
-
-    // The code is written for this slot already. Nothing that lies in a frame is stored to such a field.
-    if (location.deferral == ClosureDeferral::FlattenedObject) {
-        RELEASE_ASSERT(context.isCompiledObject(field.reference.layout) && !field.members.needsWideReference);
-        claim.needsAbsentState = true;
-        claim.representation = SlotRepresentation::DeferredClosure;
-        claim.defersFlattenedObject = true;
-        return claim;
-    }
 
     if (auto function = deferredFunctionOf(context, field)) {
         claim.needsAbsentState = true;

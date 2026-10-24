@@ -395,6 +395,10 @@ private:
                 m_out.print(" elements="_s);
                 m_printer.print(node.stamp.elements);
             }
+            if (node.stamp.arrayStorage != ArrayStorage::Other) {
+                m_out.print(" arrayStorage="_s);
+                m_printer.print(node.stamp.arrayStorage);
+            }
             if (node.stamp.type) {
                 m_out.print(" type="_s);
                 m_printer.print(node.stamp.type);

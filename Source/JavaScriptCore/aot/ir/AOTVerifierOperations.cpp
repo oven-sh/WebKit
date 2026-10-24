@@ -216,8 +216,6 @@ void FunctionVerifier::verifyOperation(BlockID block, uint32_t indexInBlock, Val
     case OperationFamily::Allocation:
     case OperationFamily::Access:
     case OperationFamily::Class:
-        if (opcode == Opcode::NewObject && value.isMadeOnDemand())
-            verifyObjectMadeOnDemand(block, id, value);
         if (opcodesWithConstructionRules.contains(opcode))
             verifyObjectUnderConstruction(block, id, value);
         else if (opcodesWithClassRules.contains(opcode))
@@ -352,13 +350,6 @@ void FunctionVerifier::verifyCast(BlockID block, ValueID id, const Value& value)
     case Opcode::CheckInitialized:
     case Opcode::RequireObjectCoercible:
     case Opcode::RequireObject:
-        return;
-    case Opcode::ReadAgain:
-        if (!isBorrowedInnerObject(m_function, value.objectOperand()) || !isBorrowedInnerObject(m_function, value.againOperand()))
-            fail(InternalErrorKind::OperandTypeMismatch, block, id);
-        return;
-    case Opcode::BorrowedParameter:
-        verifyUsesOfBorrowedObject(id);
         return;
     default:
         RELEASE_ASSERT_NOT_REACHED();

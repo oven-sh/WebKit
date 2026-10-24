@@ -37,7 +37,7 @@ namespace {
 
 bool mayShareCell(const Program& program, const Value& value)
 {
-    if (value.opcode != Opcode::NewObject || value.storage() != AllocationStorage::Heap || value.prototypeOperand() || value.isMadeOnDemand())
+    if (value.opcode != Opcode::NewObject || value.storage() != AllocationStorage::Heap || value.prototypeOperand())
         return false;
     // What Object.create makes is handed to the run time before it is whole, for what lies above it.
     if (program.at(value.layout()).has(LayoutFlags::IsOfCreatedObject))
@@ -790,11 +790,6 @@ void allocateInnerObjects(ProgramEditor& editor, const FlowResults& flow, const 
     bool logsDecisions = build.options().logging.dumpedPass == PassID::AllocateInnerObjects;
     BitVector isOuter(program.layouts.size());
     BitVector isInner(program.layouts.size());
-    // An object that may lie in the room of another has no cell to offer.
-    for (const Layout& layout : program.layouts) {
-        for (const FlattenedObject& flattened : layout.flattenedObjects)
-            isInner.set(flattened.layout.index());
-    }
     Promises promises;
     std::optional<BitVector> layoutsMadeOtherwise;
     uint64_t numberOfInnerObjects = 0;
@@ -808,7 +803,7 @@ void allocateInnerObjects(ProgramEditor& editor, const FlowResults& flow, const 
         begin = end;
 
         LayoutID layout = ofLayout.front().layout;
-        if (isInner.get(layout.index()) || !program.at(layout).flattenedObjects.isEmpty())
+        if (isInner.get(layout.index()))
             continue;
         bool hasFreshField = std::ranges::any_of(ofLayout, [](const InnerObjectBirth& birth) {
             return !birth.freshFields.isEmpty();

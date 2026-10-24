@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
-#include "AOTFlattenInnerObjects.h"
 #include "AOTSinkAllocationsInternal.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
@@ -132,7 +131,7 @@ static bool mayBeAllocation(FunctionAnalyses& analyses, ValueID value)
     return false;
 }
 
-static FreshResultShape computeShapeOfReturns(FunctionAnalyses& analyses, ObjectsThatBecomeOneCell objectsThatBecomeOneCell)
+static FreshResultShape computeShapeOfReturns(FunctionAnalyses& analyses)
 {
     const Function& function = analyses.function();
     bool hasAllocation = false;
@@ -157,20 +156,20 @@ static FreshResultShape computeShapeOfReturns(FunctionAnalyses& analyses, Object
     if (!sinking.collectCandidates())
         return { .state = FreshResultsState::NotFresh };
     sinking.analyze();
-    return shapeOfReturns(sinking, objectsThatBecomeOneCell);
+    return shapeOfReturns(sinking);
 }
 
 FreshResultShape computeFreshResults(FunctionAnalyses& analyses)
 {
     if (!canReturnParts(analyses.function()))
         return { .state = FreshResultsState::NotFresh };
-    return computeShapeOfReturns(analyses, ObjectsThatBecomeOneCell::StayWhole);
+    return computeShapeOfReturns(analyses);
 }
 
 bool returnsFreshAggregate(FunctionAnalyses& analyses)
 {
     const Function& function = analyses.function();
-    return function.hasBody() && function.results.size() == 1 && computeShapeOfReturns(analyses, ObjectsThatBecomeOneCell::AreFreshLikeOthers).isFresh();
+    return function.hasBody() && function.results.size() == 1 && computeShapeOfReturns(analyses).isFresh();
 }
 
 FreshResultVariant variantOfShape(const AllocationSinking& sinking, VirtualObjectID object, const VirtualShape& shape)
@@ -293,26 +292,7 @@ static void assignParts(const AllocationSinking& sinking, FreshResultShape& shap
     }
 }
 
-// The parts of such an object would leave the function with the inner object made, and the caller would build the outer one around it: two cells for ever.
-static bool listsObjectThatMayLieInIt(const AllocationSinking& sinking, const FreshResultVariant& variant)
-{
-    if (variant.kind != VirtualShapeKind::Fields)
-        return false;
-    const Function& function = sinking.function();
-    const Value& allocation = function.at(variant.description.allocation);
-    if (allocation.opcode != Opcode::NewObject)
-        return false;
-    auto fields = allocation.fields();
-    auto values = allocation.valuesOperands();
-    for (size_t index = 0; index < fields.size(); ++index) {
-        const Value& listed = function.at(sameObjectThroughCasts(function, values[index]));
-        if (listed.opcode == Opcode::NewObject && mayLieInOuterObject(sinking.program(), { allocation.layout(), fields[index] }, listed.layout()))
-            return true;
-    }
-    return false;
-}
-
-FreshResultShape shapeOfReturns(const AllocationSinking& sinking, ObjectsThatBecomeOneCell objectsThatBecomeOneCell)
+FreshResultShape shapeOfReturns(const AllocationSinking& sinking)
 {
     std::span<const VirtualReturn> returns = sinking.virtualReturns();
     if (returns.empty())
@@ -325,11 +305,6 @@ FreshResultShape shapeOfReturns(const AllocationSinking& sinking, ObjectsThatBec
         addVariantsOfReturn(sinking, returned, shape);
 
     if (!hasVariantOfKind(shape, VirtualShapeKind::Fields))
-        return { .state = FreshResultsState::NotFresh };
-    bool mayBecomeOneObject = objectsThatBecomeOneCell == ObjectsThatBecomeOneCell::StayWhole && sinking.context().build.isEnabled(PassID::FlattenInnerObjects, FunctionID()) && std::ranges::any_of(shape.variants, [&](const FreshResultVariant& variant) {
-        return listsObjectThatMayLieInIt(sinking, variant);
-    });
-    if (mayBecomeOneObject)
         return { .state = FreshResultsState::NotFresh };
     if (shape.variants.size() > sinking.limit(LimitID::MaxVirtualObjectVariants)) {
         shape.state = FreshResultsState::Unknown;

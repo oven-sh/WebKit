@@ -20,6 +20,7 @@ public:
     void generateCloneAs(const ValueContext&);
     void generateGetPreparedPlans(const ValueContext&);
     void generateIsThrownValueIgnored(const ValueContext&);
+    void generateMatchesUnrecorded(const ValueContext&);
     void generateExpectRows(const ValueContext&);
 };
 

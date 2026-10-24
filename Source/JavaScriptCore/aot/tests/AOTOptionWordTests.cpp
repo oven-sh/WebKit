@@ -283,7 +283,7 @@ static constexpr OptionWordCase optionWordCases[] = {
         options.bisection.predictionFailure = { .period = 100, .seed = 3 };
     } },
     { "sabotage=InnerCellLetGoKeepsItsHeader"_s, [](WireOptions& options) { options.sabotage = Wire::Sabotage::InnerCellLetGoKeepsItsHeader; } },
-    { "sabotage=room-is-not-in-reference-list"_s, [](WireOptions& options) { options.sabotage = Wire::Sabotage::RoomIsNotInReferenceList; } },
+    { "sabotage=inner-cell-visited-in-place-stays-white"_s, [](WireOptions& options) { options.sabotage = Wire::Sabotage::InnerCellVisitedInPlaceStaysWhite; } },
     { "count-branches"_s, [](WireOptions& options) { options.instrumentation = Wire::Instrumentation::CountBranches; } },
     { "count-arrivals"_s, [](WireOptions& options) { options.instrumentation = Wire::Instrumentation::CountArrivals; } },
     { "drop-guard=TypeTest:2"_s, [](WireOptions& options) {

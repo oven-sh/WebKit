@@ -36,6 +36,7 @@ operation GetOwnDataProperty (object: Object/inspects, guard: Guard/inspects, ke
 operation CloneAs (source: Object/inspects, guard: Guard/inspects, layout: Layout, fields: List<Field>, values...: Declared/retains(result), allocationSite?: AllocationSite, from Placed request?: Request) -> allocation(layout) ; Allocates ReadsObjectGraph ; relies = PlainData ; guarded = source ; runtime = CloneObjectAs ; interpreted = Allocation
 operation GetPreparedPlans () -> unknown ; CreatesConstant ; runtime = GetPreparedPlans
 operation IsThrownValueIgnored () -> natural(boolean) ; UsesRuntime throws ; branches = May ; runtime = IsThrownValueIgnored
+operation MatchesUnrecorded (regExp: Object/inspects, string: String/inspects) -> natural(boolean) ; CreatesString ; branches = May ; runtime = MatchesUnrecorded
 operation ExpectRows (target: Any/inspects, layout: Layout) -> none ; Allocates writes(NamedProperties) ; runtime = ExpectRows
 
 family JSONWrite Prepared..Placed ; base = builder

@@ -128,7 +128,6 @@ static bool canCallWithoutFieldRead(const Program& program, const FieldArmState&
         return false;
     switch (state.deferral) {
     case ClosureDeferral::Unknown:
-    case ClosureDeferral::FlattenedObject:
     // The call has the receiver at hand, not the environment that the object keeps in a hidden slot.
     case ClosureDeferral::CapturesEnvironment:
         return false;

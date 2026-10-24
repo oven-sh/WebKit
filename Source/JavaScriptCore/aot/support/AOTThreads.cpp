@@ -600,65 +600,6 @@ void runTasksInParallel(const ParallelLoops& loops, std::initializer_list<Scoped
     });
 }
 
-void forEachIndexInParallelWithOrderedCommit(const ParallelLoops& loops, unsigned count, NOESCAPE const ScopedLambda<void(unsigned index)>& produce, NOESCAPE const ScopedLambda<void(unsigned index)>& commit)
-{
-    if (count < 2 || loops.width() == 1) {
-        for (unsigned index = 0; index < count; ++index) {
-            produce(index);
-            commit(index);
-        }
-        return;
-    }
-
-    AOT_THRESHOLD(unsigned, maxBlockSize, 64);
-    constexpr uint32_t noBlock = std::numeric_limits<uint32_t>::max();
-    const unsigned blockSize = std::clamp(count / (64 * loops.width()), 1u, maxBlockSize);
-    const unsigned numberOfBlocks = (count + blockSize - 1) / blockSize;
-    Vector<std::atomic<bool>> isProduced(numberOfBlocks);
-    for (auto& flag : isProduced)
-        flag.store(false, std::memory_order_relaxed);
-    alignas(128) std::atomic<unsigned> nextBlock { 0 };
-    alignas(128) Atomic<uint32_t> awaitedBlock { noBlock };
-
-    auto produceNextBlock = [&] {
-        unsigned block = nextBlock.fetch_add(1, std::memory_order_relaxed);
-        if (block >= numberOfBlocks)
-            return false;
-        unsigned end = std::min(count, (block + 1) * blockSize);
-        for (unsigned index = block * blockSize; index < end; ++index)
-            produce(index);
-        isProduced[block].store(true, std::memory_order_seq_cst);
-        if (awaitedBlock.load(std::memory_order_seq_cst) == block)
-            ParkingLot::unparkAll(&awaitedBlock);
-        return true;
-    };
-
-    SharedWork::run(loops, std::min(loops.width(), numberOfBlocks) - 1, [&](Participant participant) {
-        if (participant == Participant::Helper) {
-            while (produceNextBlock()) { }
-            return WorkResult::RanOut;
-        }
-        for (unsigned block = 0; block < numberOfBlocks; ++block) {
-            while (!isProduced[block].load(std::memory_order_acquire)) {
-                if (produceNextBlock())
-                    continue;
-                awaitedBlock.store(block, std::memory_order_seq_cst);
-                BusyThreads::WaitScope waitScope;
-                ParkingLot::parkConditionally(&awaitedBlock, [&] {
-                    return !isProduced[block].load(std::memory_order_seq_cst);
-                }, [] { }, MonotonicTime::infinity());
-                awaitedBlock.store(noBlock, std::memory_order_relaxed);
-            }
-            unsigned end = std::min(count, (block + 1) * blockSize);
-            for (unsigned index = block * blockSize; index < end; ++index)
-                commit(index);
-        }
-        return WorkResult::RanOut;
-    }, [&] {
-        return nextBlock.load(std::memory_order_relaxed) < numberOfBlocks;
-    });
-}
-
 ChunksOfIndices divideIntoChunks(unsigned count, std::span<const uint32_t> longestFirst)
 {
     constexpr unsigned chunkSize = 256;

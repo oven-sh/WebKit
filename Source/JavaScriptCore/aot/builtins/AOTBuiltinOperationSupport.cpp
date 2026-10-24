@@ -18,7 +18,7 @@
 
 namespace JSC { namespace AOT {
 
-JSValue callInEngine(Instance* instance, BuiltinID function, JSValue first, JSValue second)
+JSValue callInEngine(Instance* instance, BuiltinID function, JSValue first, JSValue second, JSValue third)
 {
     JSGlobalObject* globalObject = instance->globalObject;
     VM& vm = *instance->vm;
@@ -39,6 +39,8 @@ JSValue callInEngine(Instance* instance, BuiltinID function, JSValue first, JSVa
     list.append(first);
     if (second)
         list.append(second);
+    if (third)
+        list.append(third);
     // Where the stack has no room for the call, what it answers is not empty.
     JSValue result = call(globalObject, callee, callData, holder, list);
     RETURN_IF_EXCEPTION(scope, { });

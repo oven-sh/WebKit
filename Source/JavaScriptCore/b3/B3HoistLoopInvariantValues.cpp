@@ -34,6 +34,7 @@
 #include "B3LikelyPaths.h"
 #include "B3Limits.h"
 #include "B3LoopUtilities.h"
+#include "B3MovedLoadCheck.h"
 #include "B3NaturalLoops.h"
 #include "B3PhaseScope.h"
 #include "B3ProcedureInlines.h"
@@ -320,7 +321,10 @@ bool hoistLoopInvariantValues(Procedure& proc)
                         for (unsigned inner = 0; inner <= i; ++inner)
                             addLoadLiveThroughLoop(*blockLoops[inner], value);
                     }
-                    value = proc.add<Value>(Nop, Void, value->origin());
+                    if (std::optional<MovedLoad> moved = MovedLoad::of(proc, value))
+                        value = createMovedLoadCheck(proc, *moved, value->lastChild(), value);
+                    else
+                        value = proc.add<Value>(Nop, Void, value->origin());
                     changed = true;
                     hoisted = true;
                     if (hoistsOnlyFromLikelyPaths)

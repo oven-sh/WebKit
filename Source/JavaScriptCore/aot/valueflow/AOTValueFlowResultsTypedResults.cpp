@@ -147,6 +147,7 @@ void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlow
         bool neverChanges;
         TypeID elements;
         TypeID type;
+        ArrayStorage arrayStorage { ArrayStorage::Other };
     };
     const ParallelLoops& loops = inputs.loops();
     Vector<uint32_t> functions = findIndicesInParallel(loops, program.functions.size(), [&](unsigned index) {
@@ -182,6 +183,8 @@ void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlow
                     // Where nothing is ever stored, the record says best which storage to begin with.
                     if (facts && indexOfElements < facts->contents.size() && facts->contents[indexOfElements] != TypeTable::never)
                         node.elements = facts->contents[indexOfElements];
+                    if (facts)
+                        node.arrayStorage = facts->arrayStorageToldToCreator;
                     // The value of the operation gets a cast to what is proven of it. An array further down in the tree has no value until the tree is expanded.
                     if (facts && ordinal && (facts->contentsAreProven || !facts->pristine.isEmpty())) {
                         if (!positions)
@@ -235,7 +238,7 @@ void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlow
                 operation = node.operation;
                 rootSite = { };
             }
-            FlowDataNodeStamp stamp { AllocationSiteID(nextSite++), node.layout ? node.classOfLayout : classOfArray(node), node.elements, node.type };
+            FlowDataNodeStamp stamp { AllocationSiteID(nextSite++), node.layout ? node.classOfLayout : classOfArray(node), node.elements, node.arrayStorage, node.type };
             remap.apply(stamp.type);
             tables.sites.allocationSites[stamp.site.index()] = AllocationSite { FunctionID(index), node.layout, node.builtinClass, stamp.allocationClass, function.locationOf(node.operation) };
             if (!node.ordinal) {

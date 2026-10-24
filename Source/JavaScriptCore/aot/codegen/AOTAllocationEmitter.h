@@ -18,7 +18,6 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 struct PlacedAllocation;
-struct PlacedFlattenedObject;
 struct PlannedLayout;
 struct PlacedSlot;
 
@@ -34,7 +33,6 @@ public:
     void generateFinishObject(const ValueContext&);
     void generateFinishBirth(const ValueContext&);
     void generateTryFinishBirth(const ValueContext&);
-    void generateMakeBorrowedObject(const ValueContext&);
     void generateNewArray(const ValueContext&);
     void generateAppendElement(const ValueContext&);
     void generateAppendHole(const ValueContext&);
@@ -61,11 +59,6 @@ public:
     };
     std::optional<RoomForInnerCell> allocateRoomForInnerCell(const ValueContext&);
     void didFillInnerCell(const RoomForInnerCell&);
-
-    // What the allocation of an object that is not made lists goes into the room of the object that holds it.
-    void storeSlotsOfFlattenedObject(const ValueContext&, CellPointer outerObject, const PlacedFlattenedObject&, const Value& allocation, bool roomIsZero);
-    // For a store of another value to the field: what nobody reads any more keeps nothing alive.
-    void clearReferencesInRoom(CellPointer outerObject, LayoutID outerLayout, uint32_t field);
 
 private:
     enum class EmptySlots : uint8_t { All, HoldingCells, HoldingNoCells };
@@ -113,9 +106,7 @@ private:
     TypedPointer addressOfReferenceToInnerObject(CellPointer outer, LayoutID outerLayout, uint32_t field);
     void storeReferenceTo(CellPointer inner, CellPointer outer, LayoutID outerLayout, uint32_t field);
     void initializeHiddenFields(CellPointer, LayoutID, AllocationStorage, CellBody = CellBody::Unwritten);
-    void storeInitialFields(const ValueContext&, CellPointer, LayoutID, const InitialFields&, CellBody = CellBody::Unwritten);
-    void storeInitialFields(const ValueContext&, CellPointer cellWithSlots, CellPointer cell, LayoutID, const InitialFields&, CellBody);
-    void storeZeroInRoomsLeftEmpty(CellPointer, LayoutID, const InitialFields&);
+    void storeInitialFields(CellPointer, LayoutID, const InitialFields&);
     void storeEmptySlots(CellPointer, LayoutID, const BitVector& isInitialField, EmptySlots = EmptySlots::All, CellBody = CellBody::Unwritten);
     void storeFieldsInExtension(const ValueContext&, CellPointer, LayoutID, const InitialFields&, OwnerBarrier);
     void storePrototype(const ValueContext&, CellPointer, ValueID prototype, std::optional<Word32> numberOfAllocation = std::nullopt);

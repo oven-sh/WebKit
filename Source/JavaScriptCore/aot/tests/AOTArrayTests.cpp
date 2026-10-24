@@ -111,39 +111,6 @@ static void testFormsStoreWithoutConversion()
     AOT_TEST_CHECK(!canStoreWithoutConversion(ArrayStorage::Other, Type::anything()));
 }
 
-static bool isNarrowChoice(const Type& elements, NarrowElementKind kind, TypedArrayType storage)
-{
-    std::optional<NarrowStorageChoice> choice = narrowStorageHolding(elements);
-    return choice && choice->elements == kind && choice->storage == storage;
-}
-
-static void testFormsNarrow()
-{
-    AOT_TEST_CHECK(isNarrowChoice(Type::fromPrimitives(Primitive::Boolean), NarrowElementKind::Boolean, TypeUint8));
-    AOT_TEST_CHECK(isNarrowChoice(Type::fromPrimitives(Primitive::True), NarrowElementKind::Boolean, TypeUint8));
-    AOT_TEST_CHECK(isNarrowChoice(Type::integer({ 0, 255 }), NarrowElementKind::Integer, TypeUint8));
-    AOT_TEST_CHECK(isNarrowChoice(Type::integer({ -1, 100 }), NarrowElementKind::Integer, TypeInt8));
-    AOT_TEST_CHECK(isNarrowChoice(Type::integer({ 0, 256 }), NarrowElementKind::Integer, TypeUint16));
-    AOT_TEST_CHECK(isNarrowChoice(Type::integer({ -129, 0 }), NarrowElementKind::Integer, TypeInt16));
-    AOT_TEST_CHECK(isNarrowChoice(Type::integer({ 0, 70000 }), NarrowElementKind::Integer, TypeInt32));
-    AOT_TEST_CHECK(isNarrowChoice(int32Type(), NarrowElementKind::Integer, TypeInt32));
-
-    AOT_TEST_CHECK(!narrowStorageHolding(Type::integer({ 0, 1ll << 40 })));
-    AOT_TEST_CHECK(!narrowStorageHolding(Type::integer({ 0, static_cast<int64_t>(INT32_MAX) + 1 })));
-    AOT_TEST_CHECK(!narrowStorageHolding(int32Type().withPrimitives(Primitive::Boolean)));
-    AOT_TEST_CHECK(!narrowStorageHolding(Type::integer({ 0, 255 }).withPrimitives(Primitive::Undefined)));
-    AOT_TEST_CHECK(!narrowStorageHolding(Type::fromPrimitives(Primitive::Boolean | Primitive::Absent)));
-    AOT_TEST_CHECK(!narrowStorageHolding(fractionType()));
-    AOT_TEST_CHECK(!narrowStorageHolding(Type::never()));
-    AOT_TEST_CHECK(!narrowStorageHolding(Type::anything()));
-
-    for (size_t index = 0; index < narrowStorageForms.size(); ++index) {
-        const NarrowStorageForm& form = narrowStorageForms[index];
-        AOT_TEST_CHECK(isNarrowChoice(Type::integer({ form.minimum, form.maximum }), NarrowElementKind::Integer, form.storage));
-        AOT_TEST_CHECK(!index || form.maximum - form.minimum >= narrowStorageForms[index - 1].maximum - narrowStorageForms[index - 1].minimum);
-    }
-}
-
 static void testFormsElementReadTypes()
 {
     AOT_TEST_CHECK(typeOfElementRead(ArrayStorage::Int32) == int32Type().withPrimitives(Primitive::Undefined));
@@ -499,7 +466,6 @@ std::span<const NativeTest> arrayTests()
         { "arrays/forms/holding"_s, testFormsHolding },
         { "arrays/forms/at-allocation"_s, testFormsAtAllocation },
         { "arrays/forms/store-without-conversion"_s, testFormsStoreWithoutConversion },
-        { "arrays/forms/narrow"_s, testFormsNarrow },
         { "arrays/forms/element-read-types"_s, testFormsElementReadTypes },
         { "arrays/chains/shape-round-trip"_s, testChainShapeRoundTrip },
         { "arrays/chains/end-operands"_s, testChainEndOperands },

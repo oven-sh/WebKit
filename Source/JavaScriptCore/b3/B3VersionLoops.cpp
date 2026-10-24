@@ -17,6 +17,7 @@
 #include "B3LoopRangeChecks.h"
 #include "B3LoopRegions.h"
 #include "B3LoopVersionPlan.h"
+#include "B3MovedLoadCheck.h"
 #include "B3NaturalLoops.h"
 #include "B3PhaseScope.h"
 #include "B3ProcedureInlines.h"
@@ -259,6 +260,11 @@ private:
                 return;
             Value* hoisted = version.hoistedMap.get(value);
             RELEASE_ASSERT(hoisted);
+            if (std::optional<MovedLoad> moved = MovedLoad::of(m_proc, value)) {
+                Value* clone = m_cloner.appendClone(value, copy, map);
+                copy->values().last() = createMovedLoadCheck(m_proc, *moved, clone->lastChild(), hoisted);
+                m_proc.deleteValue(clone);
+            }
             m_cloner.substitute(map, value, hoisted);
             return;
         }

@@ -88,6 +88,11 @@ void ValidationEmitter::generateIsThrownValueIgnored(const ValueContext& value)
     defineTest(value, isNotZero(callOperation<Integer>(value, RuntimeOperation::IsThrownValueIgnored, { })));
 }
 
+void ValidationEmitter::generateMatchesUnrecorded(const ValueContext& value)
+{
+    defineTest(value, isNotZero(callOperation<Integer>(value, RuntimeOperation::MatchesUnrecorded, { in<CellPointer>(value->regExpOperand()), in<CellPointer>(value->stringOperand()) })));
+}
+
 void ValidationEmitter::generateExpectRows(const ValueContext& value)
 {
     LayoutID layout = value->layout();

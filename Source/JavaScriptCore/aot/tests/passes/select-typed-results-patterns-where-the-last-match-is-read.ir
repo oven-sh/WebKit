@@ -1,4 +1,4 @@
-# The program reads RegExp.$1, which tells of its own last match: no pattern and no format is matched by compiled code, whose matches are recorded. The helper's are not
+# The program reads RegExp.$1, which tells of its own last match: the shared regexp literals of patterns and formats are matched without a record
 # FORM: AsRead
 # OPTIONS: only-passes=ResolveBuiltins,SelectTypedResults
 # RUN: pipeline SelectTypedResults
@@ -30,11 +30,9 @@ function f2 name="parses" parameters=[{type=string}] results=[{type=anything}] {
     v2 = Call v1, -, v0 expectedResult=x0
     Return v2
 }
-# CHECK-NOT: SharedRegExpLiteral
-# CHECK: function {{*}}role=ValidatingParser
-# CHECK: = String string="{\"rule\":\"Pattern\",\"source\":\"^a\"}"
-# CHECK-NEXT: = GetPreparedPlans
-# CHECK: function {{*}}role=Validator
-# CHECK: = String string="{\"rule\":\"Pattern\",\"source\":\"^a\"}"
-# CHECK-NEXT: = GetPreparedPlans
-# CHECK-NOT: SharedRegExpLiteral
+# CHECK-NOT: RegExpPrototypeTest
+# CHECK: [[pattern]]:{{*}}= SharedRegExpLiteral pattern="^a"
+# CHECK-NEXT: = MatchesUnrecorded [[pattern]],
+# CHECK: [[format]]:{{*}}= SharedRegExpLiteral pattern="^([0-9a-fA-F]{8}-
+# CHECK-NEXT: = MatchesUnrecorded [[format]],
+# CHECK-NOT: RegExpPrototypeTest

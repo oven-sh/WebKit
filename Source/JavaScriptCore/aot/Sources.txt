@@ -329,7 +329,6 @@ aot/passes/AOTArrayElementPresence.cpp
 aot/passes/AOTArrayElementTests.cpp
 aot/passes/AOTArrayGrowthPlanner.cpp
 aot/passes/AOTArrayLongLiterals.cpp
-aot/passes/AOTArrayNarrowStorage.cpp
 aot/passes/AOTArrayStorageForms.cpp
 aot/passes/AOTBindGlobalNames.cpp
 aot/passes/AOTCallModules.cpp
@@ -372,7 +371,6 @@ aot/passes/AOTExpandOwnKeysForIn.cpp
 aot/passes/AOTExpandOwnKeysOrders.cpp
 aot/passes/AOTExpandOwnKeysSites.cpp
 aot/passes/AOTFinishBirths.cpp
-aot/passes/AOTFlattenInnerObjects.cpp
 aot/passes/AOTFoldConstantRegExps.cpp
 aot/passes/AOTFoldConstants.cpp
 aot/passes/AOTFrameAllocation.cpp
@@ -380,7 +378,6 @@ aot/passes/AOTFrameAllocationPlanner.cpp
 aot/passes/AOTFrameAllocationPointers.cpp
 aot/passes/AOTFreshResults.cpp
 aot/passes/AOTFreshResultsCallSites.cpp
-aot/passes/AOTFreshResultsClones.cpp
 aot/passes/AOTFreshResultsSplit.cpp
 aot/passes/AOTFreshResultsWorkers.cpp
 aot/passes/AOTFunctionEditing.cpp
@@ -393,7 +390,6 @@ aot/passes/AOTInlineCostModel.cpp
 aot/passes/AOTInsertObjectCoercibleChecks.cpp
 aot/passes/AOTKnownValue.cpp
 aot/passes/AOTMarkResultsUsedAsKeys.cpp
-aot/passes/AOTMergeDuplicateBlocks.cpp
 aot/passes/AOTMethodDispatch.cpp
 aot/passes/AOTMethodTableEntrypoints.cpp
 aot/passes/AOTNameCreatedSymbols.cpp
@@ -403,7 +399,6 @@ aot/passes/AOTNumberLiteralStrings.cpp
 aot/passes/AOTOutlineColdOperations.cpp
 aot/passes/AOTOutliningCandidates.cpp
 aot/passes/AOTOutliningNormalForm.cpp
-aot/passes/AOTPlaceAllocationsAtTheirUse.cpp
 aot/passes/AOTPlaceTypeTests.cpp
 aot/passes/AOTPlaceTypeTestsCloning.cpp
 aot/passes/AOTPlaceTypeTestsEmission.cpp
@@ -423,7 +418,6 @@ aot/passes/AOTRemoveTrivialParameters.cpp
 aot/passes/AOTRemoveUnreachableFunctions.cpp
 aot/passes/AOTRemoveUnreadFields.cpp
 aot/passes/AOTRemoveUnusedParameters.cpp
-aot/passes/AOTRemoveUnusedResults.cpp
 aot/passes/AOTResolveAccesses.cpp
 aot/passes/AOTResolveAccessesElements.cpp
 aot/passes/AOTResolveAccessesSlots.cpp
@@ -542,7 +536,6 @@ aot/place/AOTVariablePlan.cpp
 aot/represent/AOTChooseRepresentations.cpp
 aot/represent/AOTConversionInserter.cpp
 aot/represent/AOTConversions.cpp
-aot/represent/AOTRemoveRedundantBarriers.cpp
 aot/represent/AOTRepresentationCheck.cpp
 aot/represent/AOTRepresentationRules.cpp
 aot/represent/AOTRepresentationRulesOfOperators.cpp
@@ -558,6 +551,7 @@ aot/runtime/AOTArrivalCounts.cpp
 aot/runtime/AOTAsyncOperations.cpp
 aot/runtime/AOTAsyncResumption.cpp
 aot/runtime/AOTAsyncStackTrace.cpp
+aot/runtime/AOTBrokenClaims.cpp
 aot/runtime/AOTBuiltinCells.cpp
 aot/runtime/AOTBuiltinLocationWatch.cpp
 aot/runtime/AOTBuiltinModules.cpp

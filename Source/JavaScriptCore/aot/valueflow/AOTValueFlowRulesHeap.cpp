@@ -832,20 +832,31 @@ void HeapRule::runData()
     struct Pending {
         const DataNode* node;
         ValueFlowNodeID holder;
-        bool isMember { false };
+    };
+    // As for the operation String: a text that is a name of the program is told from the other texts.
+    auto textOf = [&](const DataNode& node) {
+        std::optional<PropertyKeyID> key = m_program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = node.as<DataNode::String>().value });
+        return key ? m_universe.keyConstant(*key) : ValueFlowUniverse::primitive(PrimitiveSet::String);
     };
     // The sites are numbered in preorder, and a primitive takes a number too.
     Vector<Pending, 32> pending { Pending { &m_program.at(operation().data()).root, { } } };
     for (uint32_t ordinal = 0; !pending.isEmpty(); ++ordinal) {
-        auto [node, holder, isMember] = pending.takeLast();
+        auto [node, holder] = pending.takeLast();
         switch (node->kind()) {
         case DataNode::Kind::Array: {
             ClimbingSet array(only(m_universe.siteObject(m_statement, ordinal)));
             add(holder, array);
             ValueFlowNodeID contents = m_context.written(array, elementsName);
             const Vector<DataNode>& items = node->as<DataNode::Array>().elements;
-            for (size_t index = items.size(); index--;)
-                pending.append({ &items[index], contents });
+            // A list may hold thousands of texts: they arrive as one set.
+            Members texts;
+            for (size_t index = items.size(); index--;) {
+                bool isText = items[index].kind() == DataNode::Kind::String;
+                if (isText)
+                    texts.append(textOf(items[index]));
+                pending.append({ &items[index], isText ? ValueFlowNodeID() : contents });
+            }
+            add(contents, m_context.maker().of(texts.span()));
             break;
         }
         case DataNode::Kind::Object: {
@@ -853,7 +864,7 @@ void HeapRule::runData()
             add(holder, object);
             const Vector<DataMember>& members = node->as<DataNode::Object>().members;
             for (size_t index = members.size(); index--;)
-                pending.append({ &members[index].value, m_context.written(object, writtenName(keyNamed(members[index].key), HeapPropertyPart::Value)), true });
+                pending.append({ &members[index].value, m_context.written(object, writtenName(keyNamed(members[index].key), HeapPropertyPart::Value)) });
             break;
         }
         case DataNode::Kind::Undefined:
@@ -869,12 +880,10 @@ void HeapRule::runData()
         case DataNode::Kind::Number:
             add(holder, kinds(static_cast<uint16_t>(primitiveOfNumber(node->as<DataNode::Number>().value))));
             break;
-        case DataNode::Kind::String: {
-            // As for the operation String: the tag of a union is told from the other tags. A list may hold any number of texts, and is left with their kind.
-            std::optional<PropertyKeyID> key = isMember ? m_program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = node->as<DataNode::String>().value }) : std::nullopt;
-            add(holder, key ? only(m_universe.keyConstant(*key)) : kinds(Primitive::String));
+        case DataNode::Kind::String:
+            if (holder)
+                add(holder, only(textOf(*node)));
             break;
-        }
         case DataNode::Kind::BigInt:
             add(holder, kinds(Primitive::BigInt));
             break;

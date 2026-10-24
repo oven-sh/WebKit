@@ -119,7 +119,7 @@ static void stampAllocationsOfBuiltinInstances(const ValueFlowResultInputs& inpu
             AllocationSiteID site(nextSite++);
             tables.sites.allocationSites[site.index()] = AllocationSite { FunctionID(index), { }, instance.builtinClass, allocationClass, function.locationOf(operation) };
             bool hasElements = facts && function.at(operation).opcode == Opcode::NewArray && indexOfElements < facts->contents.size();
-            stamps.append(FlowAllocationStamp { .value = operation, .site = site, .allocationClass = allocationClass, .elements = hasElements ? facts->contents[indexOfElements] : TypeID() });
+            stamps.append(FlowAllocationStamp { .value = operation, .site = site, .allocationClass = allocationClass, .elements = hasElements ? facts->contents[indexOfElements] : TypeID(), .arrayStorage = hasElements ? facts->arrayStorageToldToCreator : ArrayStorage::Other });
         }
         AOT::sort(stamps, { }, &FlowAllocationStamp::value);
     });

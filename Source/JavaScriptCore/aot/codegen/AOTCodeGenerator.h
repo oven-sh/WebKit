@@ -140,7 +140,6 @@ public:
     // Whether a call leaves alone the registers it says it keeps is a question about the back end. The answer takes about a kilobyte of code at each call.
     bool checksKeptRegisters() const { return m_checksKeptRegisters; }
     bool forcesGCSlowPaths() const { return m_forcesGCSlowPaths; }
-    void didPlaceCellInFrame() { m_placesCellsInFrame = true; }
 
     const Type& typeOf(ValueID id) const { return program().at(function().at(id).type); }
     // Of an operand: the form in which the operation that is being generated takes it.
@@ -153,11 +152,6 @@ public:
     Operand getAsDefined(ValueID) const;
     // For the one user of an operation that leaves its code to the user: from here on the user finds the operands of that operation in the forms in which it takes them.
     void takeOperandsOf(ValueID operationLeftToUser);
-    void generateWithOperandsOf(ValueID operationLeftToUser, NOESCAPE const ScopedLambda<void()>&);
-    // Null for any other parameter.
-    LValue slotsOfBorrowedParameter(ValueID parameter) const { return m_slotsOfBorrowedParameters.get(parameter.index() + 1); }
-    // Whether the value may be an outer object that stands for an inner one which was not made.
-    bool mayBeBorrowedInnerObject(ValueID) const;
     void define(const ValueContext&, Operand);
     void defineTest(const ValueContext&, Condition);
     void defineResults(const ValueContext&, std::span<const Operand>);
@@ -258,7 +252,6 @@ private:
     void dispatch(const ValueContext&);
     void dispatch(const TerminatorContext&);
     void finishProcedure();
-    void keepReadsBehindBirthsOfCellsInFrame();
 
     void generate(const ValueContext&);
     void defineValue(ValueID, Operand);
@@ -295,7 +288,6 @@ private:
     PinnedValues m_pinned;
     Vector<LValue> m_values;
     bool m_valuesOutliveNoSuspension { false };
-    bool m_placesCellsInFrame { false };
     const OperationContext* m_operation { nullptr };
     Vector<ConvertedOperand, 4> m_convertedOperands;
     Vector<SharedForm> m_sharedForms;
@@ -305,8 +297,6 @@ private:
     Vector<BlockID> m_blockOfParameter;
     // Takes what the operation that is being generated defines, in place of the table of values.
     Operand* m_definitionTaken { nullptr };
-    // Beside a parameter in which borrowed objects meet: where the slots lie.
-    UncheckedKeyHashMap<uint32_t, LValue> m_slotsOfBorrowedParameters;
     Vector<std::optional<ResultRange>> m_resultRanges;
     Vector<Operand> m_results;
     Vector<LBasicBlock> m_blocks;

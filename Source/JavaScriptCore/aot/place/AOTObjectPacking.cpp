@@ -516,7 +516,6 @@ void ObjectPacker::chooseStorage(LayoutID id)
         slot.deferredFunction = claim.deferredFunction;
         slot.deferredClosureCapturesObject = claim.deferredClosureCapturesObject;
         slot.deferredClosureCapturesEnvironment = claim.deferredClosureCapturesEnvironment;
-        slot.defersFlattenedObject = claim.defersFlattenedObject;
     }
     RowsOutOfLine outOfLine = countInheritedRowsOutOfLine(id);
     chooseOutOfLineRows(id, outOfLine);

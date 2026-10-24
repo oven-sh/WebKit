@@ -147,6 +147,7 @@ static Value makeArray(const DataNode::Array& array, const OpenDataNode& closed,
 {
     Value allocation = IRBuilder::make(Opcode::NewArray);
     allocation.setContents(stamp.elements ? stamp.elements : array.contents);
+    allocation.setArrayStorage(stamp.arrayStorage);
     allocation.setHoles(closed.holes.span());
     allocation.setElementsOperands(closed.values.span());
     allocation.setAllocationSite(stamp.site);

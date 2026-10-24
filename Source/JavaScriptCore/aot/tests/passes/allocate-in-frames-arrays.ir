@@ -106,7 +106,7 @@ function f8 name="holdsNumbers" parameters=[{type=anything}] results=[{type=anyt
   b0(v0: anything):
     v1 = Integer integer=1
     v2 = NewArray v1, v1 contents=number
-    v3 = CallDirect v2 function=f19
+    v3 = CallDirect v2 function=f28
     Return v3
 }
 # CHECK-LABEL: function f8 name="holdsNumbers"
@@ -293,5 +293,12 @@ function f27 name="readsAndGoesRound" parameters=[{type=Array}] results=[{type=a
     v4 = CallDirect v0 function=f27
     ReturnCall v4
   b2():
+    Return v2
+}
+# Beside lists of any value the list of numbers would be given their storage.
+function f28 name="readerOfNumbers" parameters=[{type=Array}] results=[{type=anything}] {
+  b0(v0: Array):
+    v1 = Integer integer=0
+    v2 = ElemGet v0, v1
     Return v2
 }

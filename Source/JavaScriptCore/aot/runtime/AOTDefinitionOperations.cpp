@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinOperationSupport.h"
 #include "AOTClassPrototype.h"
 #include "AOTClosure.h"
 #include "AOTCompiledCallee.h"
@@ -242,7 +243,7 @@ static JSObject* createDescriptorLiteral(JSGlobalObject* globalObject, JSValue v
 {
     VM& vm = globalObject->vm();
     const CommonIdentifiers& names = *vm.propertyNames;
-    JSObject* literal = constructEmptyObject(globalObject);
+    JSObject* literal = bits.inheritsNothing ? constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure()) : constructEmptyObject(globalObject);
     if (bits.hasValue)
         literal->putDirect(vm, names.value, valueOrGetter);
     if (bits.hasWritable)
@@ -266,62 +267,66 @@ static bool descriptorObjectsInheritNoMembers(JSGlobalObject* globalObject)
     return globalObject->propertyDescriptorFastPathWatchpointSet().isStillValid() && globalObject->objectPrototypeChainIsSane();
 }
 
-static void defineOwnPropertyFromBits(JSGlobalObject* globalObject, JSObject* object, PropertyName name, JSValue valueOrGetter, JSValue setter, PropertyDescriptorBits bits)
+// Such an object runs nobody's code when a property is defined, and one that refuses is as it was.
+static bool definesWithoutOtherCode(VM& vm, JSObject* object, PropertyName name)
+{
+    if (compiledObjectOrNull(object) || hasOrdinaryDefineOwnProperty(object->structure()))
+        return true;
+    return isJSArray(object) && name != vm.propertyNames->length;
+}
+
+static bool tryDefineOwnPropertyFromBits(JSGlobalObject* globalObject, JSObject* object, PropertyName name, JSValue valueOrGetter, JSValue setter, PropertyDescriptorBits bits)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     RELEASE_ASSERT(!(bits.hasValue || bits.hasWritable) || !(bits.hasGet || bits.hasSet));
+    if (!bits.inheritsNothing && !descriptorObjectsInheritNoMembers(globalObject)) [[unlikely]]
+        return false;
+    bool isDefined = tryDefineNameOfFunction(globalObject, object, name, valueOrGetter, bits);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (isDefined)
+        return true;
+    if (bits.hasGet && !valueOrGetter.isUndefined() && !valueOrGetter.isCallable())
+        return false;
+    if (bits.hasSet && !setter.isUndefined() && !setter.isCallable())
+        return false;
+    if (tryDefineAbsentProperty(globalObject, object, name, valueOrGetter, setter, bits))
+        return true;
+    if (!definesWithoutOtherCode(vm, object, name))
+        return false;
     PropertyDescriptor descriptor;
-    if (bits.inheritsNothing || descriptorObjectsInheritNoMembers(globalObject)) [[likely]] {
-        bool isDefined = tryDefineNameOfFunction(globalObject, object, name, valueOrGetter, bits);
-        RETURN_IF_EXCEPTION(scope, void());
-        if (isDefined)
-            return;
-        if (bits.hasEnumerable)
-            descriptor.setEnumerable(bits.isEnumerable);
-        if (bits.hasConfigurable)
-            descriptor.setConfigurable(bits.isConfigurable);
-        if (bits.hasValue)
-            descriptor.setValue(valueOrGetter);
-        if (bits.hasWritable)
-            descriptor.setWritable(bits.isWritable);
-        if (bits.hasGet) {
-            if (!valueOrGetter.isUndefined() && !valueOrGetter.isCallable()) {
-                throwException(globalObject, scope, createGetterNotFunctionError(globalObject));
-                return;
-            }
-            descriptor.setGetter(valueOrGetter);
-        }
-        if (bits.hasSet) {
-            if (!setter.isUndefined() && !setter.isCallable()) {
-                throwException(globalObject, scope, createSetterNotFunctionError(globalObject));
-                return;
-            }
-            descriptor.setSetter(setter);
-        }
-        if (tryDefineAbsentProperty(globalObject, object, name, valueOrGetter, setter, bits))
-            return;
-    } else {
-        bool isDescriptor = toPropertyDescriptor(globalObject, createDescriptorLiteral(globalObject, valueOrGetter, setter, bits), descriptor);
-        EXCEPTION_ASSERT(!scope.exception() == isDescriptor);
-        if (!isDescriptor)
-            return;
-    }
-    scope.release();
-    object->methodTable()->defineOwnProperty(object, globalObject, name, descriptor, true);
+    if (bits.hasEnumerable)
+        descriptor.setEnumerable(bits.isEnumerable);
+    if (bits.hasConfigurable)
+        descriptor.setConfigurable(bits.isConfigurable);
+    if (bits.hasValue)
+        descriptor.setValue(valueOrGetter);
+    if (bits.hasWritable)
+        descriptor.setWritable(bits.isWritable);
+    if (bits.hasGet)
+        descriptor.setGetter(valueOrGetter);
+    if (bits.hasSet)
+        descriptor.setSetter(setter);
+    RELEASE_AND_RETURN(scope, object->methodTable()->defineOwnProperty(object, globalObject, name, descriptor, false));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTDefineOwnProperty, void, (Instance* instance, EncodedJSValue encodedObject, EncodedJSValue key, EncodedJSValue valueOrGetter, EncodedJSValue setter, uint32_t descriptorBits))
+JSC_DEFINE_JIT_OPERATION(operationAOTDefineOwnProperty, void, (Instance* instance, EncodedJSValue encodedObject, EncodedJSValue key, EncodedJSValue encodedValueOrGetter, EncodedJSValue encodedSetter, uint32_t descriptorBits))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTDefineOwnProperty);
     JSValue object = JSValue::decode(encodedObject);
-    if (!object.isObject()) {
-        throwException(globalObject, scope, createDefinePropertyOnNonObjectError(globalObject));
-        OPERATION_RETURN(scope);
+    JSValue valueOrGetter = JSValue::decode(encodedValueOrGetter);
+    JSValue setter = JSValue::decode(encodedSetter);
+    auto bits = std::bit_cast<PropertyDescriptorBits>(descriptorBits);
+    if (object.isObject()) [[likely]] {
+        auto name = JSValue::decode(key).toPropertyKey(globalObject);
+        OPERATION_RETURN_IF_EXCEPTION(scope);
+        bool isDefined = tryDefineOwnPropertyFromBits(globalObject, asObject(object), name, valueOrGetter, setter, bits);
+        OPERATION_RETURN_IF_EXCEPTION(scope);
+        if (isDefined) [[likely]]
+            OPERATION_RETURN(scope);
     }
-    auto name = JSValue::decode(key).toPropertyKey(globalObject);
-    OPERATION_RETURN_IF_EXCEPTION(scope);
-    defineOwnPropertyFromBits(globalObject, asObject(object), name, JSValue::decode(valueOrGetter), JSValue::decode(setter), std::bit_cast<PropertyDescriptorBits>(descriptorBits));
+    // Object.defineProperty() itself refuses, and runs the code of others, in a frame of its own.
+    callInEngine(instance, Builtins::ObjectDefineProperty, object, JSValue::decode(key), createDescriptorLiteral(globalObject, valueOrGetter, setter, bits));
     OPERATION_RETURN(scope);
 }
 

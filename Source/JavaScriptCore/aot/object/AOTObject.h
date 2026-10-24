@@ -186,8 +186,6 @@ public:
     void ensureExtensionGranules(VM&, uint64_t granuleBits, bool collectorMayVisit);
 
     JSValue materializeDeferredClosure(VM&, const FieldData&);
-    Object* makeFlattenedObject(VM&, const FieldData&);
-    void clearRoomOfFlattenedObject(const FieldData&);
     void materializeDeferredClosures(VM&);
 
     struct LeavingProperty {

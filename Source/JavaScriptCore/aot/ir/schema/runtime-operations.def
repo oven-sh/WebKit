@@ -55,6 +55,7 @@ runtime IsPlainDataObject : size_t (EncodedJSValue value) ; reads(all)
 runtime GetOwnDataProperty : EncodedJSValue (JSCell* object, uint32_t key) ; RuntimeCreatesConstant
 runtime GetPreparedPlans : EncodedJSValue () ; RuntimeCreatesConstant
 runtime IsThrownValueIgnored : size_t () ; reads(all) writes(RuntimeState) throws
+runtime MatchesUnrecorded : size_t (JSCell* regExp, JSCell* string) ; RuntimeCreatesString
 runtime ExpectRows : void (EncodedJSValue target, uint32_t shape) ; reads(all) writes(NamedProperties, AllocatorState, RuntimeState) collects
 runtime TryPutProperties : size_t (SiteCache cache, EncodedJSValue object, uint32_t request, const EncodedJSValue* values, uint32_t isDefinition) ; reads(all) writes(ShapeWords, MemberGuards, OrderWords, NamedProperties, ObjectFields, AllocatorState, RuntimeState) collects
 runtime MaterializeEnvironment : JSCell* (uint32_t allocation, const EncodedJSValue* source) ; RuntimeAllocates

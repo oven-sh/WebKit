@@ -112,8 +112,6 @@ JS_EXPORT_PRIVATE void forEachIndexInParallel(const ParallelLoops&, unsigned cou
 // For a loop in which a few indices take long: they come first, in the order given. A loop lasts as long as its longest index from the moment that one begins.
 JS_EXPORT_PRIVATE void forEachIndexInParallel(const ParallelLoops&, unsigned count, std::span<const uint32_t> longestFirst, NOESCAPE const ScopedLambda<void(unsigned index)>&);
 JS_EXPORT_PRIVATE void runTasksInParallel(const ParallelLoops&, std::initializer_list<ScopedLambda<void()>>);
-// produce(index) runs on any thread. commit(index) runs on the calling thread, in index order, as soon as every index up to it is produced, while later indices are still being produced.
-JS_EXPORT_PRIVATE void forEachIndexInParallelWithOrderedCommit(const ParallelLoops&, unsigned count, NOESCAPE const ScopedLambda<void(unsigned index)>& produce, NOESCAPE const ScopedLambda<void(unsigned index)>& commit);
 
 // An array whose elements the threads of a loop create.
 template<typename T>

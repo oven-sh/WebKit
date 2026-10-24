@@ -199,6 +199,7 @@ b3/B3MemoryNumbering.cpp @no-unify
 b3/B3MemoryValue.cpp
 b3/B3MergeAdjacentConstantStores.cpp @no-unify
 b3/B3MoveConstants.cpp
+b3/B3MovedLoadCheck.cpp @no-unify
 b3/B3Opcode.cpp
 b3/B3Operations.cpp
 b3/B3OptimizeAssociativeExpressionTrees.cpp

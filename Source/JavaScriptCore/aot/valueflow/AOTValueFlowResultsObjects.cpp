@@ -964,11 +964,11 @@ static void createClassesOfClosures(const ValueFlowResultInputs& inputs, const V
 // `Object.setPrototypeOf(Derived, Base)`: a function below functions of the program still finds what Function.prototype holds, under every name that none of them has got.
 static void noteClosuresBelowFunctions(const ValueFlowResultInputs& inputs, const PrototypeLinks& links, std::span<AllocationClass> classes)
 {
-    constexpr OptionSet<ObjectMutation> mutationsHidingNames { ObjectMutation::ReachUnknownJavaScript, ObjectMutation::RedefineProperty };
     const Program& program = inputs.program;
     const ValueFlowUniverse& universe = inputs.universe();
     auto listsItsNames = [&](const AllocationClass& closures) {
-        return closures.addedKeysAreComplete && closures.impossibleMutations.containsAll(mutationsHidingNames)
+        // What is defined is listed like what is stored.
+        return closures.addedKeysAreComplete && closures.impossibleMutations.contains(ObjectMutation::ReachUnknownJavaScript)
             && !program.at(closures.closureFunction).hasAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator });
     };
     auto findClassOf = [&](FunctionID function) -> const AllocationClass* {
@@ -980,8 +980,12 @@ static void noteClosuresBelowFunctions(const ValueFlowResultInputs& inputs, cons
     ValueFlowObjectID functionPrototype = universe.objectOf(Builtins::FunctionPrototype);
     Vector<std::pair<uint32_t, Vector<PropertyKeyID>>> namesOnTheWay;
     for (uint32_t index = 0; index < classes.size(); ++index) {
-        if (classes[index].impossibleMutations.contains(ObjectMutation::ChangePrototype) || !listsItsNames(classes[index]))
+        if (!listsItsNames(classes[index]))
             continue;
+        if (classes[index].impossibleMutations.contains(ObjectMutation::ChangePrototype)) {
+            classes[index].inheritsFromListedFunctions = true;
+            continue;
+        }
         Vector<PropertyKeyID> names = classes[index].addedKeys;
         Vector<FunctionID, 4> passed { classes[index].closureFunction };
         bool isKnown = true;

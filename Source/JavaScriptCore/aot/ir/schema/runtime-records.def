@@ -10,7 +10,7 @@ enum EvaluationState { | engine SeenTwice PredictedOnce ProvenOnce }
 # Append only: these numbers are immediates in the code of a validated image. `disable`: the word of --aot-disable that takes away the statement which the check holds a run against, where one word does that.
 enum ValidationFailureKind (disable: Text) {
     ValueType("") UnreachableValue("") FrameCellEscaped("") SavedFrameRootMissing("") VisitedCellsDiffer("") OperationEnteredVM("") OperationCollected("")
-    CacheHitDiffers("") CacheEntryDropped("") ImpossibleMutation("") TypeTestsDiffer("") BarrierWasNeeded("") BuiltinNotImmutable("")
+    CacheHitDiffers("") CacheEntryDropped("") ImpossibleMutation("") TypeTestsDiffer("") BuiltinNotImmutable("")
     ArrayNotPristine("flow:PristineInstances") ShapeWordInvalid("") StackTraceDiffers("") FastPathResultDiffers("") OperationPreconditionBroken("")
     NativeCallChangedOperand("") NativeCallWroteHeap("") NativeCallRanCode("") NativeCallThrew("") NativeCallCollected("") NativeCallKeptOperand("") AssumedType("")
     UnlistedCallee("flow:CalleeSets") SecondRun("") ReadsDiffer("") ContainerContents("flow:ProvenContents") ArrayStorageKind("flow:ArrayStorageKinds")

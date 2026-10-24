@@ -64,8 +64,7 @@ bool canReturnParts(const Function&);
 FreshResultShape computeFreshResults(FunctionAnalyses&);
 // Also for a function that cannot return parts: a caller that holds a copy of the body can leave the aggregate unbuilt.
 bool returnsFreshAggregate(FunctionAnalyses&);
-enum class ObjectsThatBecomeOneCell : uint8_t { StayWhole, AreFreshLikeOthers };
-FreshResultShape shapeOfReturns(const AllocationSinking&, ObjectsThatBecomeOneCell = ObjectsThatBecomeOneCell::StayWhole);
+FreshResultShape shapeOfReturns(const AllocationSinking&);
 FreshResultVariant variantOfShape(const AllocationSinking&, VirtualObjectID, const VirtualShape&);
 
 struct ResultWorkerRequest {

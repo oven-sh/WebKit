@@ -315,7 +315,7 @@ A command is registered by the owner of the code it runs, in `aot/**/AOT*TestCom
 
 - `pass <PassID> { <PassID> }` computes the inputs the pass table lists for the pass, runs that one pass, and prints its results, then
   `outcome: Changed` or `outcome: Unchanged`. With several passes it does so for each in turn, and a later pass sees the results of an earlier one
-  (`pass NumberAndEncode ChooseRepresentations RemoveRedundantBarriers` from `Selected` gives the last two the real placement; text in form `Placed` gets an
+  (`pass NumberAndEncode ChooseRepresentations` from `Selected` gives the second the real placement; text in form `Placed` gets an
   empty one, in which no layout has slots). Under `OPTIONS: report=Declines` it then prints one line
   `decline <DeclineKind> f<n> v<n> <LimitID> [<count>] reason=<member>` per decline. The member is one of the enum that belongs to the kind
   (`decodeDeclineReason` in `AOTLosses.cpp`), the flags of `AllocationNotSunk` are joined by `+`, and a decline whose reason is `None`, or

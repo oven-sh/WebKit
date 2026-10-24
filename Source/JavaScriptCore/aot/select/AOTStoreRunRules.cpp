@@ -212,7 +212,7 @@ static void rewriteStoreRun(GroupRewriter& rewriter, const StoreRun& run)
 
 static std::optional<RunMember> slotRunMember(SelectionContext& context, ValueID id, const Value& value)
 {
-    if (!slotStores.contains(value.opcode) || isBorrowedInnerObject(context.function(), value.objectOperand()))
+    if (!slotStores.contains(value.opcode))
         return std::nullopt;
     const SlotAgreement& agreement = context.slots().agreementOf(context.program(), value.key(), value.receivers());
     if (!agreement.hasOneLocation() || !agreement.coversEveryMember())

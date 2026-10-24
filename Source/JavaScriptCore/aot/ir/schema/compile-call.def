@@ -115,15 +115,13 @@ enum ReferenceWidth { Wide Narrow }
 enum ImageForm { Absolute PositionIndependent }
 enum MismatchPolicy { Silent Report }
 enum HeatOverride { None OnlyLoopsAreHot EverythingIsHot EverythingIsCold NothingIsHottest }
-flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards FlowFixpoint FunctionsGetPastEntry UsedValuesAreListed }
+flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards FlowFixpoint FunctionsGetPastEntry UsedValuesAreListed ClaimsToBackEnd MovedLoads }
 flags ReportSet { Flow Declines Symbols Allocations Functions Arrivals }
-flags TestingSwitch { IgnoreBranchHints ForceGCSlowPaths MayEncounterMasqueradesAsUndefined DropGuard IgnoreExpectedTypes DropReferenceGuards ProveEverything NoCallConvertsCells NoLayoutIsMadeSeldom FlattenUntilHeldWhereverLegal DelayFlowRules DelayOtherFlowRules CheckProofsAtRunTime FailPredictions }
+flags TestingSwitch { IgnoreBranchHints ForceGCSlowPaths MayEncounterMasqueradesAsUndefined DropGuard IgnoreExpectedTypes DropReferenceGuards ProveEverything NoCallConvertsCells NoLayoutIsMadeSeldom DelayFlowRules DelayOtherFlowRules CheckProofsAtRunTime FailPredictions }
 enum Sabotage {
     None
     StackNamesNoInnerCell NarrowReferenceOnStackNamesNoInnerCell InnerObjectIsVisitedWithoutItsFields InnerArrayIsVisitedWithoutItsElements InnerCellVisitedInPlaceStaysWhite
     InnerCellIsMarkedWithoutItsOuterCell InnerCellLetGoKeepsItsHeader
-    RoomIsNotInReferenceList RoomsLeftEmptyAreNotZeroed NoBarrierBehindFreshStoreIntoRoom NoBarrierForStoreThroughBorrowedObject StoreLeavesRoomAsItIs
-    FlattenedObjectIsMadeWithoutBarrier MakingLeavesRoomAsItIs
     NoCallCollects
 }
 flags Instrumentation { CountBranches CountArrivals }

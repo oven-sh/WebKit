@@ -343,7 +343,6 @@ export interface Flag {
   readonly name: string;
   readonly bit: number;
   readonly isEngine: boolean;
-  readonly isImplied: boolean;
   readonly location: Location;
 }
 

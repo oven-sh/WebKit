@@ -1161,13 +1161,14 @@ struct Machine {
         return Step::Failed;
     }
 
-    static ALWAYS_INLINE bool areEqualIgnoringCase(char32_t expected, char32_t actual)
+    // As Interpreter::tryConsumeBackReference(). Only outside unicode mode is a character from 128 up never the same as an ASCII one.
+    static ALWAYS_INLINE bool areEqualIgnoringCase(char32_t expected, char32_t actual, bool isUnicodeMode)
     {
         if (expected == actual)
             return true;
-        if (isASCII(expected) || isASCII(actual))
+        if (!isUnicodeMode && (isASCII(expected) || isASCII(actual)))
             return toASCIIUpper(expected) == toASCIIUpper(actual);
-        return areCanonicallyEquivalent(expected, actual, CanonicalMode::UCS2);
+        return areCanonicallyEquivalent(expected, actual, isUnicodeMode ? CanonicalMode::Unicode : CanonicalMode::UCS2);
     }
 
     template<bool ignoresCase>
@@ -1181,7 +1182,7 @@ struct Machine {
         if (length - position < count)
             return Step::Failed;
         for (unsigned i = 0; i < count; ++i) {
-            if (ignoresCase ? !areEqualIgnoringCase(input[begin + i], input[position + i]) : input[begin + i] != input[position + i])
+            if (ignoresCase ? !areEqualIgnoringCase(input[begin + i], input[position + i], op->target) : input[begin + i] != input[position + i])
                 return Step::Failed;
         }
         position += count;

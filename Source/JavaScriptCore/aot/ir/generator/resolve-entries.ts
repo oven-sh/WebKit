@@ -90,7 +90,6 @@ const effectFlags: ReadonlyMap<string, EffectFlag> = new Map<string, EffectFlag>
 ]);
 const plainColumnKinds = ["Bool", "UInt32", "Operand", "Parameters", "Operations", "RuntimeOperation"] as const;
 const enumSetColumnKinds: ReadonlyMap<string, string> = new Map([["Proofs", "Proof"]]);
-const ownerBarrierFlags = ["ownerCannotBeMarked", "laterBarrierCovers"] as const;
 const maximumUInt32 = 0xffffffffn;
 const noResult: Result = { unproven: { rule: "None" }, proven: null };
 
@@ -533,18 +532,8 @@ function writtenColumnsOf(scope: Scope, syntax: EntrySyntax, state: FamilyState)
   });
 }
 
-function resolveFlags(syntax: EntrySyntax, columns: ReadonlyMap<string, EntryColumnValue>): Flag[] {
-  const runsOwnerBarrier = columns.get("runsOwnerBarrier");
-  const hasOwnerBarrier = runsOwnerBarrier?.tag === "Bool" && runsOwnerBarrier.value;
-  const impliedNames: readonly string[] = hasOwnerBarrier ? ownerBarrierFlags : [];
-  const written = syntax.flags.map(({ name, isEngine }) => ({
-    name: name.text,
-    isEngine,
-    isImplied: false,
-    location: name.location,
-  }));
-  const implied = impliedNames.map(name => ({ name, isEngine: true, isImplied: true, location: syntax.name.location }));
-  const flags = [...written, ...implied];
+function resolveFlags(syntax: EntrySyntax): Flag[] {
+  const flags = syntax.flags.map(({ name, isEngine }) => ({ name: name.text, isEngine, location: name.location }));
   const wireFirst = [...flags.filter(flag => !flag.isEngine), ...flags.filter(flag => flag.isEngine)];
   return wireFirst.map((flag, bit) => ({ ...flag, bit }));
 }
@@ -591,7 +580,7 @@ function resolveEntry(scope: Scope, syntax: EntrySyntax, state: FamilyState, fil
     namedOperands: operands.filter(operand => !operand.isVariadic),
     variadicOperand: operands.find(operand => operand.isVariadic) ?? null,
     payload,
-    flags: resolveFlags(syntax, columns),
+    flags: resolveFlags(syntax),
     result: syntax.result === null ? noResult : resolveResult(scope, syntax.result, parts),
     targets: resolveTargets(scope, syntax.targets, parts),
     effects: resolveEffects(scope, syntax.effects, payload, name),

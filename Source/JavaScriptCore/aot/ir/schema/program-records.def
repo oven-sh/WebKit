@@ -10,13 +10,12 @@ record Field wire {
 }
 record StaticField wire { key: PropertyKey? computedKey: UInt32? variable: Variable }
 record InnerObject engine { field: UInt32 layout: Layout? arrayCapacity: UInt32 outerFields: List<UInt32> outerAllocationClass: AllocationClass? isAlwaysInPlace: Bool }
-record FlattenedObject engine { field: UInt32 layout: Layout fields: List<UInt32> allocationClass: AllocationClass? }
 record Layout wire extendedEngine {
     kind: LayoutKind name: String? module: Module(Referrer)? position: UInt32 base: Layout? constructor: Function(Constructor)?
     fields: Span<Field> staticFields: Span<StaticField> supertypes: Span<Layout> sorted computedKeyCount: UInt32 flags: LayoutFlags
     declaredOrder: Span<UInt32>
     | engine builtinLayout: BuiltinLayout? namespaceOf: Module(Referrer)? ownFieldCount: UInt32 flow: LayoutFlow classFlow: ClassFlow
-    innerObjects: List<InnerObject> flattenedObjects: List<FlattenedObject>
+    innerObjects: List<InnerObject>
 }
 
 enum VariableInitialization { Uninitialized Undefined Function }

@@ -149,10 +149,8 @@ void reportRepeatedTests(TestSiteReporter& reporter)
     });
 }
 
-// The earlier test narrows the value as it is defined.
-void rewriteRepeatedTest(TestSiteRewriter& rewriter)
+void rewriteRepeatedTest(TestSiteRewriter&)
 {
-    rewriter.useValue().setValueOperand(rewriter.tests()[0].valueOperand());
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -466,21 +466,26 @@ CellPointer ArrayAllocationEmitter::newArrayOf(const OperationContext& context, 
 
 CellPointer ArrayAllocationEmitter::newLiteralWithHoles(const ValueContext& value)
 {
-    const ArrayStorageForm& form = arrayStorageFormOf(ArrayStorage::Contiguous);
     std::span<const ValueID> elements = value->elementsOperands();
+    const ArrayStorageForm& form = formOfLiteral(elements, typeOf(value.id()));
     unsigned length = elements.size() + value->holes().size();
     Vector<uint32_t, 16> indexes = indexesWithoutHoles(length, value->holes());
-    RawElements rawElements = boxElements<Operand>(generator(), value, elements);
     LBasicBlock slowPath = newBlock();
     Join<CellPointer> join(m_out);
+    RawElements rawElements = form.element == Representation::JSValue ? boxElements<Operand>(generator(), value, elements) : rawElementsOf(elements, form, slowPath);
+    if (rawElements.size() != elements.size()) {
+        fail(value, InternalErrorKind::OpcodeWithoutCode);
+        return CellPointer(m_out.int64Zero);
+    }
     CellPointer newArray = allocateArrayOfHoles(value, integer(length), form, slowPath);
     storeElements(newArray, form, rawElements.span(), indexes.span());
     join.add(newArray);
 
     m_out.appendTo(slowPath);
     CellPointer arrayOfHoles = callOperation<CellPointer>(value, RuntimeOperation::NewArrayWithHoles, { CellPointer(m_out.int64Zero), integer(length), word32(form.indexingType), word32(0) }, { .isOnRarePath = true });
-    for (size_t i = 0; i < rawElements.size(); ++i)
-        callVoidOperation(value, RuntimeOperation::ArrayPutAtIndex, { arrayOfHoles, rawElements[i], integer(indexes[i]) }, { .isOnRarePath = true });
+    RawElements boxedElements = boxElements<Operand>(generator(), value, elements);
+    for (size_t i = 0; i < boxedElements.size(); ++i)
+        callVoidOperation(value, RuntimeOperation::ArrayPutAtIndex, { arrayOfHoles, boxedElements[i], integer(indexes[i]) }, { .isOnRarePath = true });
     join.add(arrayOfHoles);
     return join.finish();
 }

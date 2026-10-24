@@ -11,6 +11,7 @@
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
+#include "AOTRuntimeValidation.h"
 #include "CellVisitValidator.h"
 #include "JSCInlines.h"
 #include "MarkedBlockInlines.h"
@@ -42,6 +43,30 @@ function f1 name="make" parameters=[{type=anything}, {type=anything}] results=[{
     v3 = NewObject -, v2, v0 layout=L1 fields=[0, 1]
     v4 = NewObject -, v2, v3, v0 layout=L0 fields=[0, 1, 2]
     v5 = Call v0, -, v4
+    Return
+}
+)IR"_s;
+
+// The same two layouts, each with a slot of one byte that has two values.
+static constexpr ASCIILiteral programWithBooleansText = R"IR(layout L0 name="Outer" fields=[{key="b" declared={type=number} flags=[IsRequired]}, {key="c" declared={type=L1} flags=[IsRequired]}, {key="t" declared={type=anything} flags=[IsRequired]}, {key="o" declared={type=boolean} flags=[IsRequired]}]
+layout L1 name="Inner" fields=[{key="d" declared={type=number} flags=[IsRequired]}, {key="s" declared={type=anything} flags=[IsRequired]}, {key="p" declared={type=boolean} flags=[IsRequired]}]
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="make" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Check v1 castType=number
+    v4 = Check v2 castType=boolean
+    v5 = NewObject -, v3, v0, v4 layout=L1 fields=[0, 1, 2]
+    v6 = NewObject -, v3, v5, v0, v4 layout=L0 fields=[0, 1, 2, 3]
+    v7 = Call v0, -, v6
     Return
 }
 )IR"_s;
@@ -583,6 +608,68 @@ static void testSabotagedInnerObjectLetGoKeepsItsHeader(LoadedProgram& program)
     AOT_TEST_CHECK(isMarked(vm, hidden->outer) && !isMarked(vm, hidden->inner) && !isMarked(vm, hidden->other) && hasHeader(hidden->inner));
 }
 
+static uint8_t& byteOf(LoadedProgram& program, Object* object, ASCIILiteral name)
+{
+    const FieldData& boolean = field(program, object, name);
+    AOT_TEST_CHECK(traitsOf(boolean.slot.representation()).valueKind == SlotValueKind::Boolean && !boolean.isOutOfLine());
+    return *(reinterpret_cast<uint8_t*>(object) + boolean.slot.offset);
+}
+
+static uint64_t& wordOf(LoadedProgram& program, Object* object, ASCIILiteral name)
+{
+    const FieldData& boxed = field(program, object, name);
+    AOT_TEST_CHECK(boxed.slot.representation() == SlotRepresentation::JSValue && !boxed.isOutOfLine());
+    return *reinterpret_cast<uint64_t*>(reinterpret_cast<uint8_t*>(object) + boxed.slot.offset);
+}
+
+static void checkNamesWordWithoutFollowingIt(LoadedProgram& program, Object* object, ASCIILiteral name, uint64_t bits)
+{
+    std::optional<SlotOutsideType> outside = findSlotOutsideType(program.vm(), *object);
+    AOT_TEST_CHECK(outside && outside->field == &field(program, object, name) && outside->bits == bits && !outside->isFormOfValue && !outside->found);
+}
+
+static void testWordThatIsNoValueIsNamedAndNotFollowed(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    DeferGC deferGC(vm);
+    Pair pair = makePair(program);
+    AOT_TEST_CHECK(!findSlotOutsideType(vm, *pair.inner) && !findSlotOutsideType(vm, *pair.outer));
+
+    AOT_TEST_CHECK(pair.inner->tryStore(vm, field(program, pair.inner, "p"_s), jsBoolean(true)) && !findSlotOutsideType(vm, *pair.inner));
+    byteOf(program, pair.inner, "p"_s) = 8;
+    checkNamesWordWithoutFollowingIt(program, pair.inner, "p"_s, 8);
+    AOT_TEST_CHECK(pair.inner->tryStore(vm, field(program, pair.inner, "p"_s), jsBoolean(false)) && !findSlotOutsideType(vm, *pair.inner));
+
+    // As references these name no cell: the lowest addresses, an address inside a cell, one in no block of the heap.
+    for (Object* object : { pair.inner, pair.outer }) {
+        ASCIILiteral name = object == pair.inner ? "s"_s : "t"_s;
+        for (uint64_t bits : { static_cast<uint64_t>(8), static_cast<uint64_t>(16), std::bit_cast<uint64_t>(pair.outer) + 4, static_cast<uint64_t>(1) << 46 }) {
+            wordOf(program, object, name) = bits;
+            checkNamesWordWithoutFollowingIt(program, object, name, bits);
+        }
+        wordOf(program, object, name) = JSValue::encode(jsNull());
+        AOT_TEST_CHECK(!findSlotOutsideType(vm, *object));
+    }
+}
+
+// Code that does not validate leaves them as they were when the cell was free until the outer object is made.
+static void testSlotsWithoutCellsOfOuterObjectAreNotRead(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    DeferGC deferGC(vm);
+    Pair pair = makePair(program);
+    byteOf(program, pair.outer, "o"_s) = 8;
+    AOT_TEST_CHECK(!findSlotOutsideType(vm, *pair.outer));
+}
+
+static void testSlotsWithoutCellsOfOuterObjectAreReadWhereCodeValidates(LoadedProgram& program)
+{
+    DeferGC deferGC(program.vm());
+    Pair pair = makePair(program);
+    byteOf(program, pair.outer, "o"_s) = 8;
+    checkNamesWordWithoutFollowingIt(program, pair.outer, "o"_s, 8);
+}
+
 template<LoadedProgramTest body>
 static constexpr void (*withProgram)() = runNativeTestWithLoadedProgram<innerObjectTests, programText, body>;
 
@@ -596,6 +683,14 @@ static void runWithSabotagedProgram()
         }
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+template<LoadedProgramTest body>
+static constexpr void (*withBooleans)() = runNativeTestWithLoadedProgram<innerObjectTests, programWithBooleansText, body>;
+
+static void runWithValidatingProgram()
+{
+    runWithLoadedProgram("inner-objects/slots-without-cells-of-an-outer-object-are-read-where-code-validates"_s, programWithBooleansText, testSlotsWithoutCellsOfOuterObjectAreReadWhereCodeValidates, { "validate"_s });
 }
 
 static constexpr ASCIILiteral stackNamesNoInnerCell = "sabotage=StackNamesNoInnerCell"_s;
@@ -619,6 +714,9 @@ std::span<const NativeTest> innerObjectTests()
         { "inner-objects/inner-cells-are-not-counted"_s, withProgram<testInnerCellsAreNotCounted> },
         { "inner-objects/cell-is-used-again"_s, withProgram<testCellIsUsedAgain> },
         { "inner-objects/holder-of-inner-object-is-visited-between-the-two-marks"_s, withProgram<testHolderOfInnerObjectIsVisitedBetweenTheTwoMarks> },
+        { "inner-objects/word-that-is-no-value-is-named-and-not-followed"_s, withBooleans<testWordThatIsNoValueIsNamedAndNotFollowed> },
+        { "inner-objects/slots-without-cells-of-an-outer-object-are-not-read"_s, withBooleans<testSlotsWithoutCellsOfOuterObjectAreNotRead> },
+        { "inner-objects/slots-without-cells-of-an-outer-object-are-read-where-code-validates"_s, runWithValidatingProgram },
         { "inner-objects/sabotaged/stack-names-no-inner-cell"_s, runWithSabotagedProgram<testSabotagedStackScanNamesNoInnerObject, stackNamesNoInnerCell> },
         { "inner-objects/sabotaged/narrow-reference-on-stack-names-no-inner-cell"_s, runWithSabotagedProgram<testSabotagedScanOfHalvesNamesNoInnerObject, narrowReferenceOnStackNamesNoInnerCell> },
         { "inner-objects/sabotaged/inner-object-is-visited-without-its-fields"_s, runWithSabotagedProgram<testSabotagedVisitInPlaceLeavesOutFields, innerObjectIsVisitedWithoutItsFields> },

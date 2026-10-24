@@ -35,10 +35,13 @@
 #include "JSMapInlines.h"
 #include "JSSetInlines.h"
 #include "MarkedBlockInlines.h"
+#include "MarkedSpace.h"
+#include "PreciseAllocation.h"
 #include "Reg.h"
 #include "SubspaceInlines.h"
 #include <wtf/DataLog.h>
 #include <wtf/Lock.h>
+#include <wtf/RawHex.h>
 
 namespace JSC { namespace AOT {
 
@@ -508,18 +511,56 @@ static bool slotMayHoldLiteralString(const Image& image, const RuntimeType& type
     });
 }
 
-[[noreturn]] static void crashOnSlotType(VM& vm, const LayoutData& layout, const FieldData& field, JSValue found)
+// What lies at the address can be read.
+static bool isCellOfHeap(VM& vm, const void* address)
 {
-    const ImageText& text = vm.aotState().image->text();
-    StringID name = text.identifier(field.name).text();
-    dataLogLn("AOT: field ", layout.indexOf(field), " (", name && text.hasText(name) ? text.view(name) : StringView("-"_s), ") of layout ", layout.index, " holds a value outside its type");
-    crashOnValidationFailure(vm, { ValidationFailureKind::HeapSlotType, { }, { }, found });
+    MarkedSpace& space = vm.heap.objectSpace();
+    if (PreciseAllocation::isPreciseAllocation(static_cast<HeapCell*>(const_cast<void*>(address)))) {
+        return space.preciseAllocations().containsIf([&](PreciseAllocation* allocation) {
+            return allocation->cell() == address;
+        });
+    }
+    MarkedBlock* block = MarkedBlock::blockFor(address);
+    return block && MarkedBlock::isAtomAligned(address) && space.blocks().set().contains(block);
 }
 
-void validateSlotTypes(VM& vm, const Object& object)
+// Of bits that are no marker of the representation and no word of a literal string.
+static bool isFormOfValue(VM& vm, SlotRepresentation representation, uint64_t bits, uintptr_t cageBase)
+{
+    SlotTraits traits = traitsOf(representation);
+    switch (traits.valueKind) {
+    case SlotValueKind::Boolean:
+        return traits.hasAbsent ? bits == JSValue::ValueFalse || bits == JSValue::ValueTrue : bits <= 1;
+    case SlotValueKind::SignedInteger:
+        return representation != SlotRepresentation::OptionalInt32 || static_cast<int32_t>(bits) >= minInlineInt32;
+    case SlotValueKind::UnsignedInteger:
+    case SlotValueKind::Float:
+    case SlotValueKind::Double:
+        return true;
+    // A slot that defers a closure holds no cell until something asks for the closure.
+    case SlotValueKind::DeferredClosure:
+        if (bits < minCell32)
+            return true;
+        break;
+    case SlotValueKind::Boxed:
+        if (!JSValue::decode(bits).isCell())
+            return true;
+        break;
+    case SlotValueKind::Cell:
+    case SlotValueKind::LiteralString:
+        break;
+    }
+    if (traits.isNarrowReference)
+        return bits >= minCell32 && isCellOfHeap(vm, MarkedBlockCage::decode(cageBase, static_cast<uint32_t>(bits)));
+    return JSValue::decode(bits).isCell() && isCellOfHeap(vm, JSValue::decode(bits).asCell());
+}
+
+std::optional<SlotOutsideType> findSlotOutsideType(VM& vm, const Object& object)
 {
     State& state = object.state();
     const LayoutData& layout = object.layout();
+    // The cell of both objects is made for the inner one. Until the outer one is made too, code that does not validate has written only those of its slots that hold cells.
+    bool mayBeUnwritten = layout.hasInnerObjects && !vm.aotState().image->header().options.validates;
     for (const FieldData& field : layout.fields()) {
         // A brand is a class token, and what the slot of an accessor holds is not the value of the property. No type describes either.
         if (field.isBrand() || field.isAccessor())
@@ -530,6 +571,8 @@ void validateSlotTypes(VM& vm, const Object& object)
 
         SlotRepresentation representation = field.slot.representation();
         SlotTraits traits = traitsOf(representation);
+        if (mayBeUnwritten && !traits.holdsCell)
+            continue;
         uint64_t bits = readSlotBits(representation, slot);
         // A slot that cannot say "absent" holds zero until its first store.
         if (bits == (traits.hasAbsent ? traits.absentBits : 0))
@@ -540,14 +583,12 @@ void validateSlotTypes(VM& vm, const Object& object)
         const RuntimeType& type = state.objects->layouts.typeOf(field);
         if (traits.valueKind == SlotValueKind::LiteralString && isLiteralStringWord(bits)) {
             if (!slotMayHoldLiteralString(*vm.aotState().image, type, bits))
-                crashOnSlotType(vm, layout, field, { });
+                return SlotOutsideType { &field, bits, true, { } };
             continue;
         }
-        // The words below the smallest integer of such a slot are markers or nothing at all, and readSlot() stops at one that is nothing without saying where it was.
-        if (representation == SlotRepresentation::OptionalInt32 && static_cast<int32_t>(bits) < minInlineInt32)
-            crashOnSlotType(vm, layout, field, { });
+        if (!isFormOfValue(vm, representation, bits, cageBaseOf(&object)))
+            return SlotOutsideType { &field, bits, false, { } };
 
-        // A slot that defers a closure holds no cell until something asks for the closure.
         bool defersClosure = traits.valueKind == SlotValueKind::DeferredClosure;
         JSValue value = defersClosure ? JSValue(cellInSlot(representation, slot, cageBaseOf(&object))) : readSlot(representation, slot, *state.strings);
         if (!value)
@@ -556,8 +597,34 @@ void validateSlotTypes(VM& vm, const Object& object)
         if (value.isCell() && value.asCell()->type() == CompiledEnvironmentType)
             continue;
         if (!slotMayHold(state, type, value))
-            crashOnSlotType(vm, layout, field, value);
+            return SlotOutsideType { &field, bits, true, value };
     }
+    return std::nullopt;
+}
+
+void validateSlotTypes(VM& vm, const Object& object)
+{
+    std::optional<SlotOutsideType> outside = findSlotOutsideType(vm, object);
+    if (!outside) [[likely]]
+        return;
+
+    const LayoutData& layout = object.layout();
+    const FieldData& field = *outside->field;
+    const ImageText& text = vm.aotState().image->text();
+    StringID name = text.identifier(field.name).text();
+    dataLog("AOT: field ", layout.indexOf(field), " (", name && text.hasText(name) ? text.view(name) : StringView("-"_s), ") of layout ", layout.index, ", a slot of the kind ", nameOf(field.slot.representation()), " at ", static_cast<uint32_t>(field.slot.offset));
+    if (outside->isFormOfValue)
+        dataLogLn(", holds a value outside its type");
+    else
+        dataLogLn(", holds ", RawHex(outside->bits), ", which is neither a marker nor a value there");
+    dataLog("AOT: the object has shape ", object.shape(), " and order word ", RawHex(object.orderWord()), "; the allocations of that shape:");
+    std::span<const AllocationData> allocations = object.state().tables.allocations();
+    for (uint32_t number = 0; number < allocations.size(); ++number) {
+        if (allocations[number].shape == object.shape())
+            dataLog(" ", number);
+    }
+    dataLogLn();
+    crashOnValidationFailure(vm, { ValidationFailureKind::HeapSlotType, { }, { }, outside->found });
 }
 
 void CollectionValidator::didFinishCollection(VM& vm, CollectionScope scope)

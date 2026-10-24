@@ -34,6 +34,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <optional>
 #include <span>
 #include <wtf/BitVector.h>
@@ -105,6 +106,8 @@ struct ArrayWrites {
         MeetsObjectThatIsNoArray = 1 << 11,
         // A built-in makes it out of elements of other arrays and of its arguments: `list.slice()`.
         HoldsWhatIsCopied = 1 << 12,
+        // Undefined, null or NaN for certain: what the storages for numbers do not hold.
+        IsGivenMoreThanNumbers = 1 << 13,
     };
 
     bool has(Flag flag) const { return flags.load(std::memory_order_relaxed) & flag; }
@@ -122,11 +125,12 @@ struct ArrayWrites {
     }
 
     // An index that was below the length is below it for good only in an array that never gets shorter.
-    bool isDense() const { return has(IsCreatedDense) && !has(MayGetHole) && !(has(IsStoredWithinLength) && has(MayGetShorter)); }
+    bool getsNoHole() const { return !has(MayGetHole) && !(has(IsStoredWithinLength) && has(MayGetShorter)); }
+    bool isDense() const { return has(IsCreatedDense) && getsNoHole(); }
     // The storage changes only with what is stored.
     // The types of what is stored bound the numbers in it.
     bool everyStoreIsKnown() const { return (has(IsLiteral) || has(IsInData) || has(HoldsWhatIsCopied)) && !has(HasOtherWriter); }
-    bool keepsStorageOfLiteral() const { return (has(IsLiteral) || has(IsPairOfEntries)) && isDense() && !has(ElementsAreMoved); }
+    bool keepsStorageOfLiteral() const { return (has(IsLiteral) || has(IsPairOfEntries)) && getsNoHole() && !has(ElementsAreMoved); }
 
     std::atomic<uint16_t> flags { 0 };
     // The numbers among the operands that are stored and among what the record of a constant lists.
@@ -527,6 +531,13 @@ void ContainerAnalysis::noteStoredOperand(Walker& walker, ValueSetID arrays, Fun
     const Function& body = program().at(function);
     ValueID definition = definitionThroughSameValues(body, stored);
     bool isReadFromArray = body.at(definition).opcode == Opcode::ElemGet;
+    const Type& type = program().typeOf(body, stored);
+    bool isNaN = body.at(definition).opcode == Opcode::Double && std::isnan(body.at(definition).number());
+    if (isNaN || (!type.isNever() && type.hasOnlyPrimitives(Primitive::UndefinedOrNull))) {
+        forEachContainerIn(walker.maker, arrays, m_arrays, [&](uint32_t array) {
+            m_arrayWrites[array].add(ArrayWrites::IsGivenMoreThanNumbers);
+        });
+    }
     // Only an array at which a number arrives has numbers to bound.
     std::optional<ValueFlowNumbers> numbers;
     forEachContainerIn(walker.maker, arrays, m_arrays, [&](uint32_t array) {
@@ -554,11 +565,13 @@ void ContainerAnalysis::noteData(const ValueFlowStatement& statement, const Data
             return;
         ArrayWrites& writes = m_arrayWrites[*array];
         bool hasHole = false;
+        bool holdsMoreThanNumbers = false;
         ValueFlowNumbers numbers;
         for (const DataNode& element : listed->elements) {
             if (element.is<DataNode::Hole>())
                 hasHole = true;
             const auto* number = element.tryAs<DataNode::Number>();
+            holdsMoreThanNumbers |= number ? std::isnan(number->value) : element.is<DataNode::Undefined>() || element.is<DataNode::Null>();
             if (!number)
                 continue;
             if (isTrackedInteger(number->value))
@@ -569,6 +582,8 @@ void ContainerAnalysis::noteData(const ValueFlowStatement& statement, const Data
         writes.add(ArrayWrites::IsInData);
         writes.set(ArrayWrites::IsLiteral, becomesLiterals);
         writes.set(ArrayWrites::IsCreatedDense, !hasHole);
+        if (holdsMoreThanNumbers)
+            writes.add(ArrayWrites::IsGivenMoreThanNumbers);
         Locker locker { lockOf(*array) };
         writes.storedNumbers.unite(numbers);
     });
@@ -1191,7 +1206,7 @@ void ContainerAnalysis::shareStorageWithinComponents()
     const Vector<Vector<uint32_t>>& membersOfComponent = m_membersOfComponent;
     for (uint32_t index = 0; index < m_containers.size(); ++index) {
         if (isArray(index))
-            m_facts[index].arrayStorage = ArrayStorage::Other;
+            m_facts[index].arrayStorage = m_facts[index].arrayStorageToldToCreator = ArrayStorage::Other;
     }
 
     TypeInterningPhase phase(m_types, 1);
@@ -1215,7 +1230,11 @@ void ContainerAnalysis::shareStorageWithinComponents()
     for (auto [component, elements] : elementsOfComponent) {
         remap.apply(elements);
         const Type& type = m_types.at(elements);
-        ArrayStorage storage = arrayStorageHolding(type);
+        // One array of the component turns into the storage that holds everything sooner or later, so all of them begin with it: their creators are told.
+        bool holdsMoreThanNumbers = std::ranges::any_of(membersOfComponent[component], [&](uint32_t array) {
+            return m_arrayWrites[array].has(ArrayWrites::IsGivenMoreThanNumbers);
+        });
+        ArrayStorage storage = holdsMoreThanNumbers ? ArrayStorage::Contiguous : arrayStorageHolding(type);
         if (!hasArrayStorageForm(storage) || !canStoreWithoutConversion(storage, type))
             continue;
         // A reader that expects fractions converts an array that fails its test and holds nothing but numbers: ConvertToDoubleStorage.
@@ -1227,6 +1246,7 @@ void ContainerAnalysis::shareStorageWithinComponents()
         for (uint32_t array : membersOfComponent[component]) {
             m_facts[array].contents[m_indexOfElements] = elements;
             m_facts[array].arrayStorage = storage;
+            m_facts[array].arrayStorageToldToCreator = storage == arrayStorageAtAllocation(type) ? ArrayStorage::Other : storage;
         }
     }
     // The arrays of a component share a kind because a test for numbers that fails may convert the array that it was asked of.

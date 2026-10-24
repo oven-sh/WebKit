@@ -27,6 +27,7 @@ aot/codegen/AOTArrivalSiteNumbers.cpp
 aot/codegen/AOTBranchCounterNumbers.cpp
 aot/codegen/AOTCallEmitterLists.cpp
 aot/codegen/AOTCallMethod.cpp
+aot/codegen/AOTClaimChecks.cpp
 aot/codegen/AOTClassEmitter.cpp
 aot/codegen/AOTCodeSizeMap.cpp
 aot/codegen/AOTCollectionIntrinsicEmitter.cpp
@@ -53,6 +54,7 @@ aot/codegen/AOTRuntimeValidationChecks.cpp
 aot/codegen/AOTRuntimeValidationEmitter.cpp
 aot/codegen/AOTSelectedOperatorEmitter.cpp
 aot/codegen/AOTStackCheckEmitter.cpp
+aot/codegen/AOTStackSlotPoisoning.cpp
 aot/codegen/AOTStringBuilderCursor.cpp
 aot/codegen/AOTStringBuilderPartEmitter.cpp
 aot/codegen/AOTStringBuiltinEmitter.cpp

@@ -58,7 +58,6 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     MaxBlocksSearchedForLiteralStores(Optimize, CompileTime, NotOptimized, 256, 256, 0, "blocks searched to move an array allocation earlier")
     MaxOutlinedOperands(Optimize, CodeSize, NotOptimized, 6, 6, 0, "register arguments of outlined cold code")
     MaxOutlinedRegionValues(Optimize, CompileTime, NotOptimized, 16, 16, 0, "the size of cold code compared for outlining")
-    MaxResultClones(Optimize, CodeSize, NotOptimized, 4, 4, 0, "copies of a function, by how callers use its result")
     MaxForwardingDepth(Optimize, CompileTime, NotOptimized, 4, 4, 0, "calls in a row that only forward another call's result")
     MaxPromotedParameters(Optimize, CodeSize, HeapAllocation, 6, 6, 0, "fields of an object parameter passed in registers")
     MaxParameterWrapperValues(Optimize, CodeSize, NotOptimized, 24, 24, 0, "the size of a wrapper that unpacks an object parameter")
@@ -159,7 +158,6 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     MaxContractedModuleRequests(NumberAndEncode, Memory, NotOptimized, 8, 8, 0, "modules listed in place of a module with nothing of its own to link or run")
 
     MaxFrameSizeInBytes(GenerateCode, BitWidth, BuildError, 1048560, 1048560, 0, "stack frame size")
-    MaxBarrierBlocks(GenerateCode, CompileTime, NotOptimized, 4096, 4096, 0, "the size of a function whose write barriers are optimized")
     MaxFrameMapRoots(GenerateCode, BitWidth, BuildError, 65535, 65535, 0, "live references across an await or yield")
     MaxLandingPadsSearched(GenerateCode, CompileTime, NotOptimized, 4, 4, 0, "exception landing pads compared for sharing")
 

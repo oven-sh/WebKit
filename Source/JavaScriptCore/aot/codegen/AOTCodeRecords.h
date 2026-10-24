@@ -150,6 +150,7 @@ struct CodeRecords {
     CodeGenerationTotals& totals;
     // By the index of the operation: the code generator has compressed an operand in front of it, so the narrow reference has the origin of the operation.
     BitVector operationsWithCompressedOperand;
+    bool hasBirthsOfFrameCells { false };
 };
 
 } } } // namespace JSC::AOT::Typed

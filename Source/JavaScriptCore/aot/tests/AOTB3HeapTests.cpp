@@ -17,7 +17,6 @@
 #include "B3MemoryValue.h"
 #include "B3PatchpointValue.h"
 #include "B3ProcedureInlines.h"
-#include "B3SlotBaseValue.h"
 #include "B3ValueInlines.h"
 #include "GPRInfo.h"
 #include <bit>
@@ -782,45 +781,6 @@ static void testCallsConvertCells()
         AOT_TEST_CHECK(!lookup->effects.writes.overlaps(heaps.rangeOf(heaps.entire(heap))));
 }
 
-static void testLoadsFromStackSlotsAreNotImmutable()
-{
-    HeapFixture fixture;
-    AOTHeaps& heaps = fixture.heaps;
-    B3::Procedure& proc = fixture.proc;
-    B3::BasicBlock* root = fixture.root;
-
-    B3::Value* slot = root->appendNew<B3::SlotBaseValue>(proc, B3::Origin(), proc.addStackSlot(32));
-    B3::Value* argument = root->appendNew<B3::ArgumentRegValue>(proc, B3::Origin(), GPRInfo::argumentGPR0);
-    B3::Value* eight = root->appendIntConstant(proc, B3::Origin(), B3::Int64, 8);
-    B3::Value* insideSlot = root->appendNew<B3::Value>(proc, B3::Add, B3::Origin(), slot, eight);
-    B3::Value* insideArgument = root->appendNew<B3::Value>(proc, B3::Add, B3::Origin(), argument, eight);
-    B3::Value* slotOrArgument = root->appendNew<B3::Value>(proc, B3::Select, B3::Origin(), argument, argument, root->appendNew<B3::Value>(proc, B3::Identity, B3::Origin(), insideSlot));
-
-    auto loadFrom = [&](B3::Value* base, const B3::AbstractHeap& heap) {
-        B3::MemoryValue* load = root->appendNew<B3::MemoryValue>(proc, B3::Load, B3::Int64, B3::Origin(), base, 0);
-        heaps.decorateMemory(&heap, load);
-        return load;
-    };
-    Vector<B3::MemoryValue*> inSlot;
-    Vector<B3::MemoryValue*> outsideSlot;
-    for (const B3::AbstractHeap* heap : std::initializer_list<const B3::AbstractHeap*> { &heaps.AOTSlimClosure_captures[0], &heaps.AOTClosure_captures[1], &heaps.AOTClosure_entry, &heaps.AOTObject_shapeWord, &heaps.JSCell_typeInfoType }) {
-        for (B3::Value* base : { slot, insideSlot, slotOrArgument })
-            inSlot.append(loadFrom(base, *heap));
-        for (B3::Value* base : { argument, insideArgument })
-            outsideSlot.append(loadFrom(base, *heap));
-    }
-    heaps.computeRangesAndDecorateInstructions();
-
-    for (B3::MemoryValue* load : inSlot)
-        AOT_TEST_CHECK(load->readsMutability() == B3::Mutability::Mutable && load->effects().readsMutability == B3::Mutability::Mutable);
-    for (B3::MemoryValue* load : outsideSlot)
-        AOT_TEST_CHECK(load->readsMutability() == B3::Mutability::Immutable && load->effects().readsMutability == B3::Mutability::Immutable);
-
-    B3::MemoryValue* moved = outsideSlot[0];
-    moved->lastChild() = slot;
-    AOT_TEST_CHECK(moved->readsMutability() == B3::Mutability::Mutable);
-}
-
 std::span<const NativeTest> b3HeapTests()
 {
     static constexpr NativeTest tests[] = {
@@ -842,7 +802,6 @@ std::span<const NativeTest> b3HeapTests()
         { "b3-heaps/ranges-of-heaps-that-grow-inside-one-another"_s, testRangesOfHeapsThatGrowInsideOneAnother },
         { "b3-heaps/write-sets-exclude-other-heaps"_s, testWriteSetsExcludeOtherHeaps },
         { "b3-heaps/calls-convert-cells"_s, testCallsConvertCells },
-        { "b3-heaps/loads-from-stack-slots-are-not-immutable"_s, testLoadsFromStackSlotsAreNotImmutable },
     };
     return tests;
 }

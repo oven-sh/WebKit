@@ -1,8 +1,8 @@
 # A pass that is switched off leaves the program alone and other passes still run
 # FORM: Prepared
-# OPTIONS: disable=pass:FoldConstants,pass:RemoveUnusedResults
+# OPTIONS: disable=pass:FoldConstants
 # RUN: pass FoldConstants
-# RUN(PROGRAM): pass RemoveUnusedResults
+# RUN(PROGRAM): pass
 # RUN(OTHER): pass EliminateDeadCode
 # CHECK: outcome: Unchanged
 # PROGRAM: outcome: Unchanged

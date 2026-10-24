@@ -22,7 +22,6 @@
 # CHECK-NEXT: an array creates and destroys each element once: ok
 # CHECK-NEXT: resting threads take the next loop: ok
 # CHECK-NEXT: resting threads go back to the pool: ok
-# CHECK-NEXT: ordered commit: ok
 # CHECK-NEXT: pending tasks run by priority: ok
 # CHECK-NEXT: a background loop yields to foreground loops: ok
 # CHECK-NEXT: tasks run after their dependencies: ok
