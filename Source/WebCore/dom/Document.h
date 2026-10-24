@@ -1493,7 +1493,7 @@ public:
     void dispatchPageshowEvent(PageshowEventPersistence);
     void dispatchPagehideEvent(PageshowEventPersistence);
     // With proceedWithNavigation, a view transition is captured in a later rendering update, and the
-    // navigation proceeds once it has been. Without it, the capture is made before returning.
+    // navigation proceeds once it has been. Without it, no view transition is started.
     WEBCORE_EXPORT void dispatchPageswapEvent(CanTriggerCrossDocumentViewTransition, RefPtr<NavigationActivation>&&, CompletionHandler<void()>&& proceedWithNavigation = { });
     void transferViewTransitionParams(Document&);
     WEBCORE_EXPORT void enqueueSecurityPolicyViolationEvent(SecurityPolicyViolationEventInit&&);
@@ -1859,7 +1859,7 @@ public:
 
     using StartViewTransitionCallbackOptions = Variant<RefPtr<JSViewTransitionUpdateCallback>, StartViewTransitionOptions>;
     RefPtr<ViewTransition> startViewTransition(StartViewTransitionCallbackOptions&&);
-    ViewTransition* LEGACY_NODELETE activeViewTransition() const;
+    WEBCORE_EXPORT ViewTransition* LEGACY_NODELETE activeViewTransition() const;
     bool activeViewTransitionCapturedDocumentElement() const;
     void setActiveViewTransition(RefPtr<ViewTransition>&&);
 
@@ -2089,6 +2089,7 @@ public:
 
     WEBCORE_EXPORT Editor& editor();
     WEBCORE_EXPORT const Editor& editor() const;
+    Editor* editorIfExists() { return m_editor.get(); }
     FrameSelection& selection() { return m_selection; }
     const FrameSelection& selection() const { return m_selection; }
 

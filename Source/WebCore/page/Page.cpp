@@ -1715,10 +1715,14 @@ void Page::setInteractionRegionsEnabled(bool enable)
 
 const VisibleSelection& Page::selection() const
 {
-    auto* focusedOrMainFrame = focusController().focusedOrMainFrame();
-    if (!focusedOrMainFrame)
+    auto* focusedFrame { focusController().focusedFrame() };
+    if (auto* localFocusedFrame { dynamicDowncast<LocalFrame>(focusedFrame) })
+        return localFocusedFrame->selection().selection();
+    if (is<RemoteFrame>(focusedFrame))
         return VisibleSelection::emptySelection();
-    return focusedOrMainFrame->selection().selection();
+    if (auto* localMainFrame { this->localMainFrame() })
+        return localMainFrame->selection().selection();
+    return VisibleSelection::emptySelection();
 }
 
 void Page::setDefersLoading(bool defers)
@@ -2605,10 +2609,6 @@ void Page::updateRendering()
         document.updateIntersectionObservers();
     });
 
-    runProcessingStep(RenderingUpdateStep::CanvasPaintEvent, [] (Document& document) {
-        document.serviceCanvasPaintEvents();
-    });
-
     runProcessingStep(RenderingUpdateStep::Images, [] (Document& document) {
         for (auto& image : protect(document.cachedResourceLoader())->allCachedSVGImages()) {
             if (RefPtr page = image->internalPage())
@@ -2761,6 +2761,9 @@ void Page::doAfterUpdateRendering()
         document.prepareCanvasesForDisplayOrFlushIfNeeded();
     });
 
+    // Canvas paint events are dispatched after the Paint step, in serviceCanvasPaintEvents().
+    m_renderingUpdateRemainingSteps.last().remove(RenderingUpdateStep::CanvasPaintEvent);
+
     if (localMainFrame) {
         ASSERT(!localMainFrame->view() || !localMainFrame->view()->needsLayout());
 #if ASSERT_ENABLED
@@ -2821,6 +2824,13 @@ void Page::finalizeRenderingUpdateForRootFrame(LocalFrame& rootFrame, OptionSet<
 #else
     UNUSED_PARAM(flags);
 #endif
+}
+
+void Page::serviceCanvasPaintEvents()
+{
+    forEachRenderableDocument([](Document& document) {
+        document.serviceCanvasPaintEvents();
+    });
 }
 
 void Page::renderingUpdateCompleted()

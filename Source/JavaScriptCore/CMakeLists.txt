@@ -1340,6 +1340,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/GlobalExecutable.h
     runtime/GlobalObjectMethodTable.h
     runtime/HasOwnPropertyCache.h
+    runtime/HasOwnPropertyCacheInlines.h
     runtime/HashMapHelper.h
     runtime/ISO8601.h
     runtime/Identifier.h

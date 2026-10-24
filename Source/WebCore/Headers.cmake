@@ -498,6 +498,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/model-element/ModelPlayerTransformState.h
     Modules/model-element/ModelPresentationMode.h
     Modules/model-element/PortalAction.h
+    Modules/model-element/PortalInteractionGesture.h
     Modules/model-element/PortalTransform.h
     Modules/model-element/SpatialPortalController.h
 
@@ -1980,7 +1981,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/QuirkBehaviors.h
     page/QuirkMatchPattern.h
     page/QuirkSelectors.h
-    page/QuirkTable.h
     page/Quirks.h
     page/QuirksData.h
     page/RemoteDOMWindow.h
@@ -2517,10 +2517,10 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/ImageDecoder.h
     platform/graphics/ImageDecoderIdentifier.h
     platform/graphics/ImageDrawingExtras.h
+    platform/graphics/ImageDrawingOptions.h
     platform/graphics/ImageFrame.h
     platform/graphics/ImageObserver.h
     platform/graphics/ImageOrientation.h
-    platform/graphics/ImagePaintingOptions.h
     platform/graphics/ImageResolution.h
     platform/graphics/ImageSizingContext.h
     platform/graphics/ImageSource.h

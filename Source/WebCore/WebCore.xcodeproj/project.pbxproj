@@ -102,7 +102,6 @@
 		0562F9611573F88F0031CA16 /* PlatformLayer.h in Headers */ = {isa = PBXBuildFile; fileRef = 0562F9601573F88F0031CA16 /* PlatformLayer.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		056A7AC8256C4F48002F9DDC /* ShadowRootInit.h in Headers */ = {isa = PBXBuildFile; fileRef = 054E3A33256C3BD90072C5B9 /* ShadowRootInit.h */; };
 		056A7AC8256C4F48002F9DDF /* GetHTMLOptions.h in Headers */ = {isa = PBXBuildFile; fileRef = 054E3A33256C3BD90072C5BF /* GetHTMLOptions.h */; };
-		05D4770CFFB4C18C6BA6928C /* QuirkTable.h in Headers */ = {isa = PBXBuildFile; fileRef = 05D4770BFFB4C18C6BA6928C /* QuirkTable.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		05D4770FFFB4C18C6BA6928F /* QuirkMatchPattern.h in Headers */ = {isa = PBXBuildFile; fileRef = 05D4770EFFB4C18C6BA6928E /* QuirkMatchPattern.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		05D47712FFB4C18C6BA69292 /* RuntimeQuirkTable.h in Headers */ = {isa = PBXBuildFile; fileRef = 05D47711FFB4C18C6BA69291 /* RuntimeQuirkTable.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		05D4770FFFB4C18C6BA6928C /* QuirkSelectors.h in Headers */ = {isa = PBXBuildFile; fileRef = 05D4770EFFB4C18C6BA6928C /* QuirkSelectors.h */; settings = {ATTRIBUTES = (Private, ); }; };
@@ -664,6 +663,8 @@
 		1A8A643C1D19FC5300D0E00F /* PaymentMethod.h in Headers */ = {isa = PBXBuildFile; fileRef = 1A8A64391D19FC5300D0E00F /* PaymentMethod.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		1A8A64521D19FCFB00D0E00F /* ApplePayPaymentAuthorizedEvent.h in Headers */ = {isa = PBXBuildFile; fileRef = 1A8A643E1D19FCFB00D0E00F /* ApplePayPaymentAuthorizedEvent.h */; };
 		1A8A64561D19FCFC00D0E00F /* ApplePayPaymentMethodSelectedEvent.h in Headers */ = {isa = PBXBuildFile; fileRef = 1A8A64421D19FCFB00D0E00F /* ApplePayPaymentMethodSelectedEvent.h */; };
+		D707664EBA2DDCDCB7E6F852 /* ApplePayReferenceRequest.h in Headers */ = {isa = PBXBuildFile; fileRef = 1906CFF103D44DE95C6595D1 /* ApplePayReferenceRequest.h */; };
+		73220808CB7ACDDA537AEAC3 /* ApplePayReferenceSession.h in Headers */ = {isa = PBXBuildFile; fileRef = E57F1549871EA40584964D67 /* ApplePayReferenceSession.h */; };
 		1A8A64591D19FCFC00D0E00F /* ApplePaySession.h in Headers */ = {isa = PBXBuildFile; fileRef = 1A8A64451D19FCFB00D0E00F /* ApplePaySession.h */; };
 		1A8A645C1D19FCFC00D0E00F /* ApplePayShippingContactSelectedEvent.h in Headers */ = {isa = PBXBuildFile; fileRef = 1A8A64481D19FCFB00D0E00F /* ApplePayShippingContactSelectedEvent.h */; };
 		1A8A64601D19FCFC00D0E00F /* ApplePayShippingMethodSelectedEvent.h in Headers */ = {isa = PBXBuildFile; fileRef = 1A8A644C1D19FCFB00D0E00F /* ApplePayShippingMethodSelectedEvent.h */; };
@@ -2569,7 +2570,6 @@
 		59B5977511086579007159E8 /* BridgeJSC.h in Headers */ = {isa = PBXBuildFile; fileRef = 59B5977411086579007159E8 /* BridgeJSC.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		59C27F07138D28CF0079B7E2 /* NetworkResourcesData.h in Headers */ = {isa = PBXBuildFile; fileRef = 59C27F06138D28CF0079B7E2 /* NetworkResourcesData.h */; };
 		59C28046138DC2410079B7E2 /* XMLErrors.h in Headers */ = {isa = PBXBuildFile; fileRef = 59C28044138DC2410079B7E2 /* XMLErrors.h */; };
-		5A574F25131DB93900471B88 /* RenderQuote.h in Headers */ = {isa = PBXBuildFile; fileRef = 5A574F23131DB93900471B88 /* RenderQuote.h */; };
 		5A574F29131DB96D00471B88 /* StyleQuotes.h in Headers */ = {isa = PBXBuildFile; fileRef = 5A574F27131DB96D00471B88 /* StyleQuotes.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		5A7CBA0C28B01A1B000A23D9 /* MediaPlayerPrivateWebM.h in Headers */ = {isa = PBXBuildFile; fileRef = 5AEBAD8B283583AE0069741F /* MediaPlayerPrivateWebM.h */; };
 		5B2D767227B1460800F9BA3C /* ScrollAlignment.h in Headers */ = {isa = PBXBuildFile; fileRef = 5B2D767027B1460800F9BA3C /* ScrollAlignment.h */; settings = {ATTRIBUTES = (Private, ); }; };
@@ -3103,7 +3103,7 @@
 		7AF9B20F18CFB5F400C64BEF /* JSVTTRegionList.h in Headers */ = {isa = PBXBuildFile; fileRef = 7AF9B20B18CFB5F300C64BEF /* JSVTTRegionList.h */; };
 		7AFD16C42C63EB6A00B51D1A /* WebNSAttributedStringExtras.h in Headers */ = {isa = PBXBuildFile; fileRef = 7A2701F22C62D5D80047263F /* WebNSAttributedStringExtras.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		7AFD16D32C63F70200B51D1A /* WebLayer.h in Headers */ = {isa = PBXBuildFile; fileRef = 7AFD16D22C63F70200B51D1A /* WebLayer.h */; settings = {ATTRIBUTES = (Private, ); }; };
-		7B0C389F2ACEDEF400F1FDDC /* ImagePaintingOptions.h in Headers */ = {isa = PBXBuildFile; fileRef = 72C18A3F230B04B7006847C7 /* ImagePaintingOptions.h */; settings = {ATTRIBUTES = (Private, ); }; };
+		7B0C389F2ACEDEF400F1FDDC /* ImageDrawingOptions.h in Headers */ = {isa = PBXBuildFile; fileRef = 72C18A3F230B04B7006847C7 /* ImageDrawingOptions.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		7B0C76C02CC8490F0068DAF2 /* IDBIndexIdentifier.h in Headers */ = {isa = PBXBuildFile; fileRef = 7B0C76BE2CC8482D0068DAF2 /* IDBIndexIdentifier.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		7B0E6DCA2AB463E4005189E8 /* NullImageBufferBackend.h in Headers */ = {isa = PBXBuildFile; fileRef = 7B0E6DC82AB463E4005189E8 /* NullImageBufferBackend.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		7B10339E2549721700C8C1AC /* GraphicsContextGLCV.h in Headers */ = {isa = PBXBuildFile; fileRef = 7B10339D2549720100C8C1AC /* GraphicsContextGLCV.h */; settings = {ATTRIBUTES = (Private, ); }; };
@@ -5005,6 +5005,7 @@
 		B6566270120B1227006EA85C /* JSIDBTransaction.h in Headers */ = {isa = PBXBuildFile; fileRef = B656626E120B1227006EA85C /* JSIDBTransaction.h */; };
 		B658FFA21522EF3A00DD5595 /* JSRadioNodeList.h in Headers */ = {isa = PBXBuildFile; fileRef = B658FFA01522EF3A00DD5595 /* JSRadioNodeList.h */; };
 		B658FFA61522EFAA00DD5595 /* RadioNodeList.h in Headers */ = {isa = PBXBuildFile; fileRef = B658FFA41522EFAA00DD5595 /* RadioNodeList.h */; };
+		B65F48F93089162D00E24595 /* PortalInteractionGesture.h in Headers */ = {isa = PBXBuildFile; fileRef = B65F48F73089162D00E24595 /* PortalInteractionGesture.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		B6621299300A6EA900330D60 /* SpatialPortalController.h in Headers */ = {isa = PBXBuildFile; fileRef = B6621297300A6EA900330D60 /* SpatialPortalController.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		B6885C5F0B6BD0CFDBE1DB17 /* StyleFlexLineCount.h in Headers */ = {isa = PBXBuildFile; fileRef = 17E2804C741600AE026FD7D4 /* StyleFlexLineCount.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		B6D814722EE0C6D400397547 /* SpatialImageTypes.h in Headers */ = {isa = PBXBuildFile; fileRef = B6D8146E2EE0C39C00397547 /* SpatialImageTypes.h */; settings = {ATTRIBUTES = (Private, ); }; };
@@ -6263,6 +6264,7 @@
 		DD05637D29B6B88100A98258 /* InlineDisplayContent.h in Headers */ = {isa = PBXBuildFile; fileRef = DD05637C29B6B88100A98258 /* InlineDisplayContent.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		DD05FE0D0B8BA3C6009ACDFE /* WebCoreObjCExtras.h in Headers */ = {isa = PBXBuildFile; fileRef = DD05FE0B0B8BA3C6009ACDFE /* WebCoreObjCExtras.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		DD14265D2F81000000C1D6A8 /* InspectorNativeFunctionParameters.json in Headers */ = {isa = PBXBuildFile; fileRef = DD14265E2F81000000C1D6A8 /* InspectorNativeFunctionParameters.json */; settings = {ATTRIBUTES = (Private, ); }; };
+		DF0A1001314F000000000001 /* InspectorFontData.h in Headers */ = {isa = PBXBuildFile; fileRef = DF0A1003314F000000000001 /* InspectorFontData.h */; };
 		DD17C082286EC57400D60B58 /* build in Copy PDF.js */ = {isa = PBXBuildFile; fileRef = DD17C07C286EC51900D60B58 /* build */; };
 		DD17C083286EC57700D60B58 /* LICENSE in Copy PDF.js */ = {isa = PBXBuildFile; fileRef = DD17C080286EC51B00D60B58 /* LICENSE */; };
 		DD17C084286EC57A00D60B58 /* web in Copy PDF.js */ = {isa = PBXBuildFile; fileRef = DD17C07E286EC51A00D60B58 /* web */; };
@@ -7809,10 +7811,8 @@
 		054E3A35256C3BD90072C5B9 /* ShadowRootInit.idl */ = {isa = PBXFileReference; lastKnownFileType = text; path = ShadowRootInit.idl; sourceTree = "<group>"; };
 		054E3A35256C3BD90072C5BF /* GetHTMLOptions.idl */ = {isa = PBXFileReference; lastKnownFileType = text; path = GetHTMLOptions.idl; sourceTree = "<group>"; };
 		0562F9601573F88F0031CA16 /* PlatformLayer.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PlatformLayer.h; sourceTree = "<group>"; };
-		05D4770AFFB4C18C6BA6928B /* QuirkTable.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = QuirkTable.cpp; sourceTree = "<group>"; };
 		7A1C4E2F2E8B9D0100A1B2C3 /* QuirkTable.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = QuirkTable.json; sourceTree = "<group>"; };
 		7A1C4E2F2E8B9D0100A1B2C5 /* QuirkTableCocoa.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = QuirkTableCocoa.mm; sourceTree = "<group>"; };
-		05D4770BFFB4C18C6BA6928C /* QuirkTable.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = QuirkTable.h; sourceTree = "<group>"; };
 		05D4770DFFB4C18C6BA6928D /* QuirkMatchPattern.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = QuirkMatchPattern.cpp; sourceTree = "<group>"; };
 		05D4770EFFB4C18C6BA6928E /* QuirkMatchPattern.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = QuirkMatchPattern.h; sourceTree = "<group>"; };
 		05D47710FFB4C18C6BA69290 /* RuntimeQuirkTable.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = RuntimeQuirkTable.cpp; sourceTree = "<group>"; };
@@ -8952,6 +8952,11 @@
 		1A8A64401D19FCFB00D0E00F /* ApplePayPaymentMethodSelectedEvent.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ApplePayPaymentMethodSelectedEvent.cpp; sourceTree = "<group>"; };
 		1A8A64421D19FCFB00D0E00F /* ApplePayPaymentMethodSelectedEvent.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ApplePayPaymentMethodSelectedEvent.h; sourceTree = "<group>"; };
 		1A8A64431D19FCFB00D0E00F /* ApplePayPaymentMethodSelectedEvent.idl */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = ApplePayPaymentMethodSelectedEvent.idl; sourceTree = "<group>"; };
+		1906CFF103D44DE95C6595D1 /* ApplePayReferenceRequest.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ApplePayReferenceRequest.h; sourceTree = "<group>"; };
+		A0EECD341218723388F92BAC /* ApplePayReferenceRequest.idl */ = {isa = PBXFileReference; explicitFileType = text; fileEncoding = 4; path = ApplePayReferenceRequest.idl; sourceTree = "<group>"; };
+		0311B6DE02C5842FF30E2072 /* ApplePayReferenceSession.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ApplePayReferenceSession.cpp; sourceTree = "<group>"; };
+		E57F1549871EA40584964D67 /* ApplePayReferenceSession.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ApplePayReferenceSession.h; sourceTree = "<group>"; };
+		8533901A067A923CC592A2D7 /* ApplePayReferenceSession.idl */ = {isa = PBXFileReference; explicitFileType = text; fileEncoding = 4; path = ApplePayReferenceSession.idl; sourceTree = "<group>"; };
 		1A8A64441D19FCFB00D0E00F /* ApplePaySession.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ApplePaySession.cpp; sourceTree = "<group>"; };
 		1A8A64451D19FCFB00D0E00F /* ApplePaySession.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ApplePaySession.h; sourceTree = "<group>"; };
 		1A8A64461D19FCFB00D0E00F /* ApplePaySession.idl */ = {isa = PBXFileReference; explicitFileType = text; fileEncoding = 4; path = ApplePaySession.idl; sourceTree = "<group>"; };
@@ -13482,8 +13487,6 @@
 		59D1C10311EB5DCF00B638C8 /* DeviceOrientationData.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = DeviceOrientationData.cpp; sourceTree = "<group>"; };
 		5A502612288B5CB300D4FC8A /* PlatformMediaError.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = PlatformMediaError.cpp; sourceTree = "<group>"; };
 		5A551F9473B2A7F6783FF6C1 /* UnifiedSource6-header-RenderStyleGetters.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = "UnifiedSource6-header-RenderStyleGetters.cpp"; sourceTree = "<group>"; };
-		5A574F22131DB93900471B88 /* RenderQuote.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = RenderQuote.cpp; sourceTree = "<group>"; };
-		5A574F23131DB93900471B88 /* RenderQuote.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = RenderQuote.h; sourceTree = "<group>"; };
 		5A574F26131DB96D00471B88 /* StyleQuotes.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = StyleQuotes.cpp; sourceTree = "<group>"; };
 		5A574F27131DB96D00471B88 /* StyleQuotes.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = StyleQuotes.h; sourceTree = "<group>"; };
 		5A67F23B284966AC00964D2E /* TrackBuffer.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = TrackBuffer.cpp; sourceTree = "<group>"; };
@@ -14554,7 +14557,7 @@
 		72BEE7CD2E79E3E900026436 /* LayoutIntegrationGridLayout.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = LayoutIntegrationGridLayout.cpp; sourceTree = "<group>"; };
 		72C172102983717500136E02 /* CachedSubimage.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = CachedSubimage.cpp; sourceTree = "<group>"; };
 		72C172112983717500136E02 /* CachedSubimage.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = CachedSubimage.h; sourceTree = "<group>"; };
-		72C18A3F230B04B7006847C7 /* ImagePaintingOptions.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ImagePaintingOptions.h; sourceTree = "<group>"; };
+		72C18A3F230B04B7006847C7 /* ImageDrawingOptions.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ImageDrawingOptions.h; sourceTree = "<group>"; };
 		72C37B9B29650466007E8F52 /* SearchFieldPart.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SearchFieldPart.h; sourceTree = "<group>"; };
 		72C37B9C29650466007E8F52 /* SearchFieldCancelButtonPart.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SearchFieldCancelButtonPart.h; sourceTree = "<group>"; };
 		72C37B9F29650481007E8F52 /* SearchControlMac.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = SearchControlMac.mm; sourceTree = "<group>"; };
@@ -14872,7 +14875,7 @@
 		7AFD16D02C63F64200B51D1A /* ImageAdapterCocoa.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = ImageAdapterCocoa.mm; sourceTree = "<group>"; };
 		7AFD16D12C63F6CB00B51D1A /* WebLayer.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = WebLayer.mm; sourceTree = "<group>"; };
 		7AFD16D22C63F70200B51D1A /* WebLayer.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = WebLayer.h; sourceTree = "<group>"; };
-		7B0C389D2ACED2F000F1FDDC /* ImagePaintingOptions.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ImagePaintingOptions.cpp; sourceTree = "<group>"; };
+		7B0C389D2ACED2F000F1FDDC /* ImageDrawingOptions.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ImageDrawingOptions.cpp; sourceTree = "<group>"; };
 		7B0C76BE2CC8482D0068DAF2 /* IDBIndexIdentifier.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = IDBIndexIdentifier.h; sourceTree = "<group>"; };
 		7B0E6DC82AB463E4005189E8 /* NullImageBufferBackend.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = NullImageBufferBackend.h; sourceTree = "<group>"; };
 		7B0E6DC92AB463E4005189E8 /* NullImageBufferBackend.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = NullImageBufferBackend.cpp; sourceTree = "<group>"; };
@@ -15459,6 +15462,8 @@
 		8231F4A1D94A93E35B0A28F7 /* CookieStorageSessionCocoa.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = CookieStorageSessionCocoa.mm; sourceTree = "<group>"; };
 		82AB176F125C826700C5069D /* InspectorStyleSheet.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = InspectorStyleSheet.cpp; sourceTree = "<group>"; };
 		82AB1770125C826700C5069D /* InspectorStyleSheet.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = InspectorStyleSheet.h; sourceTree = "<group>"; };
+		DF0A1002314F000000000001 /* InspectorFontData.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = InspectorFontData.cpp; sourceTree = "<group>"; };
+		DF0A1003314F000000000001 /* InspectorFontData.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = InspectorFontData.h; sourceTree = "<group>"; };
 		82E3D8DC122EA0D1003AE5BC /* CSSPropertySourceData.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = CSSPropertySourceData.cpp; sourceTree = "<group>"; };
 		82E3D8DD122EA0D1003AE5BC /* CSSPropertySourceData.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = CSSPropertySourceData.h; sourceTree = "<group>"; };
 		830030F31B7D33A600ED3AAC /* GenericCachedHTMLCollection.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = GenericCachedHTMLCollection.cpp; sourceTree = "<group>"; };
@@ -18952,6 +18957,8 @@
 		B65C81DD305DD4BF00DE9CAF /* CSSEnvironmentMapRule.idl */ = {isa = PBXFileReference; lastKnownFileType = text; path = CSSEnvironmentMapRule.idl; sourceTree = "<group>"; };
 		B65C81DE305DD4E200DE9CAF /* EnvironmentMapLoader.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = EnvironmentMapLoader.h; sourceTree = "<group>"; };
 		B65C81DF305DD4E200DE9CAF /* EnvironmentMapLoader.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = EnvironmentMapLoader.cpp; sourceTree = "<group>"; };
+		B65F48F73089162D00E24595 /* PortalInteractionGesture.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PortalInteractionGesture.h; sourceTree = "<group>"; };
+		B65F48F83089162D00E24595 /* PortalInteractionGesture.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = PortalInteractionGesture.cpp; sourceTree = "<group>"; };
 		B6621297300A6EA900330D60 /* SpatialPortalController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SpatialPortalController.h; sourceTree = "<group>"; };
 		B6621298300A6EA900330D60 /* SpatialPortalController.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = SpatialPortalController.cpp; sourceTree = "<group>"; };
 		B6D8146E2EE0C39C00397547 /* SpatialImageTypes.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SpatialImageTypes.h; sourceTree = "<group>"; };
@@ -25497,6 +25504,11 @@
 				95EAD573266EF393004B9CF1 /* ApplePayRecurringPaymentDateUnit.idl */,
 				950FECEC285026390002DE4E /* ApplePayRecurringPaymentRequest.h */,
 				950FECED2850263A0002DE4E /* ApplePayRecurringPaymentRequest.idl */,
+				1906CFF103D44DE95C6595D1 /* ApplePayReferenceRequest.h */,
+				A0EECD341218723388F92BAC /* ApplePayReferenceRequest.idl */,
+				0311B6DE02C5842FF30E2072 /* ApplePayReferenceSession.cpp */,
+				E57F1549871EA40584964D67 /* ApplePayReferenceSession.h */,
+				8533901A067A923CC592A2D7 /* ApplePayReferenceSession.idl */,
 				A1DF5AAB1F8075F00058A477 /* ApplePayRequestBase.cpp */,
 				A1DF5AAA1F8075F00058A477 /* ApplePayRequestBase.h */,
 				A1DF5AAC1F8075F00058A477 /* ApplePayRequestBase.idl */,
@@ -26411,6 +26423,8 @@
 				95AA570E25EEED31004E9283 /* InspectorCanvasCallTracer.h */,
 				BC08A72D2E888B5E005C4CD1 /* InspectorCanvasProcessedArguments.h */,
 				99D1B2D123AC143000811CF0 /* InspectorDebuggableType.h */,
+				DF0A1002314F000000000001 /* InspectorFontData.cpp */,
+				DF0A1003314F000000000001 /* InspectorFontData.h */,
 				994C6039253A277300BDF060 /* InspectorFrontendAPIDispatcher.cpp */,
 				994C6037253A277200BDF060 /* InspectorFrontendAPIDispatcher.h */,
 				F344C7121125B82C00F26EEE /* InspectorFrontendClient.h */,
@@ -31391,8 +31405,6 @@
 				CD9A87FB215D6CF3006F17B5 /* Quirks.h */,
 				7ABB0F5F2CE7C170009A837D /* QuirksData.h */,
 				05D4770EFFB4C18C6BA6928C /* QuirkSelectors.h */,
-				05D4770AFFB4C18C6BA6928B /* QuirkTable.cpp */,
-				05D4770BFFB4C18C6BA6928C /* QuirkTable.h */,
 				7A1C4E2F2E8B9D0100A1B2C3 /* QuirkTable.json */,
 				46B9518D207D632A00A7D2DD /* RemoteDOMWindow.cpp */,
 				46B9518E207D632A00A7D2DD /* RemoteDOMWindow.h */,
@@ -32102,6 +32114,8 @@
 				52597BE62DC6533200CAAF01 /* PlaceholderModelPlayer.cpp */,
 				52597BE52DC6533200CAAF01 /* PlaceholderModelPlayer.h */,
 				1F2E3D4C5B6A79880716253F /* PortalAction.h */,
+				B65F48F83089162D00E24595 /* PortalInteractionGesture.cpp */,
+				B65F48F73089162D00E24595 /* PortalInteractionGesture.h */,
 				329D390B53E4795024178E9D /* PortalTransform.h */,
 				B6621298300A6EA900330D60 /* SpatialPortalController.cpp */,
 				B6621297300A6EA900330D60 /* SpatialPortalController.h */,
@@ -36877,6 +36891,8 @@
 				1D47658D25CCA778007AF312 /* ImageDecoderIdentifier.h */,
 				BC734350306983F500B13901 /* ImageDrawingExtras.cpp */,
 				89AAA5F5CEBC35EFDF20580F /* ImageDrawingExtras.h */,
+				7B0C389D2ACED2F000F1FDDC /* ImageDrawingOptions.cpp */,
+				72C18A3F230B04B7006847C7 /* ImageDrawingOptions.h */,
 				5576A5621D88A70800CCC04C /* ImageFrame.cpp */,
 				5576A5631D88A70800CCC04C /* ImageFrame.h */,
 				72854E5C2B6987B300E0181A /* ImageFrameAnimator.cpp */,
@@ -36885,8 +36901,6 @@
 				72E0375C2FC9323300088DDE /* ImageFrameWorkQueue.h */,
 				BC7F44A70B9E324E00A9D081 /* ImageObserver.h */,
 				A8748D6612CC3763001FBA41 /* ImageOrientation.h */,
-				7B0C389D2ACED2F000F1FDDC /* ImagePaintingOptions.cpp */,
-				72C18A3F230B04B7006847C7 /* ImagePaintingOptions.h */,
 				CA3A4AAB25416E3C006CDAE2 /* ImageResolution.cpp */,
 				CA3A4AAD25416E3E006CDAE2 /* ImageResolution.h */,
 				EA9928B2D3DE85B6F7D270CB /* ImageSizingContext.cpp */,
@@ -42548,8 +42562,6 @@
 				A43BF59A1149292800C643CA /* RenderProgress.cpp */,
 				A43BF59B1149292800C643CA /* RenderProgress.h */,
 				ADE16736181050C300463A2E /* RenderPtr.h */,
-				5A574F22131DB93900471B88 /* RenderQuote.cpp */,
-				5A574F23131DB93900471B88 /* RenderQuote.h */,
 				A871DFDE0A15376B00B12A68 /* RenderReplaced.cpp */,
 				A871DFDF0A15376B00B12A68 /* RenderReplaced.h */,
 				BCA846D40DC67A350026C309 /* RenderReplica.cpp */,
@@ -44305,6 +44317,8 @@
 				950FECEA285026300002DE4E /* ApplePayPaymentTokenContext.h in Headers */,
 				95EAD574266EF394004B9CF1 /* ApplePayRecurringPaymentDateUnit.h in Headers */,
 				950FECEE285026400002DE4E /* ApplePayRecurringPaymentRequest.h in Headers */,
+				D707664EBA2DDCDCB7E6F852 /* ApplePayReferenceRequest.h in Headers */,
+				73220808CB7ACDDA537AEAC3 /* ApplePayReferenceSession.h in Headers */,
 				A1DF5A7F1F7EBD0B0058A477 /* ApplePayRequest.h in Headers */,
 				A1DF5AAD1F8075F00058A477 /* ApplePayRequestBase.h in Headers */,
 				1A8A64591D19FCFC00D0E00F /* ApplePaySession.h in Headers */,
@@ -46279,6 +46293,7 @@
 				1D47658E25CCA778007AF312 /* ImageDecoderIdentifier.h in Headers */,
 				97205AB61239291000B17380 /* ImageDocument.h in Headers */,
 				ECC2B535B9F2983B774A915F /* ImageDrawingExtras.h in Headers */,
+				7B0C389F2ACEDEF400F1FDDC /* ImageDrawingOptions.h in Headers */,
 				5576A5651D88A70800CCC04C /* ImageFrame.h in Headers */,
 				F55B3DC21251F12D003EF269 /* ImageInputType.h in Headers */,
 				281A941CB72C48E5886C9BC1 /* ImageInputTypeSizing.h in Headers */,
@@ -46288,7 +46303,6 @@
 				F46D5386273D7E460009FA80 /* ImageOverlay.h in Headers */,
 				F482434B260C33060022497C /* ImageOverlayController.h in Headers */,
 				F446EDE1265DB1E50031DA8F /* ImageOverlayDataDetectionResultIdentifier.h in Headers */,
-				7B0C389F2ACEDEF400F1FDDC /* ImagePaintingOptions.h in Headers */,
 				B51A2F3F17D7D3AE0072517A /* ImageQualityController.h in Headers */,
 				7915577A65BBC088CFB5EC0D /* ImageRequestState.h in Headers */,
 				CA3A4AAF25416E40006CDAE2 /* ImageResolution.h in Headers */,
@@ -46401,6 +46415,7 @@
 				A5B81CAB1FAA44620037D1E6 /* InspectorDOMAgent.h in Headers */,
 				A5B81CAC1FAA44620037D1E6 /* InspectorDOMDebuggerAgent.h in Headers */,
 				A5B81CAD1FAA44620037D1E6 /* InspectorDOMStorageAgent.h in Headers */,
+				DF0A1001314F000000000001 /* InspectorFontData.h in Headers */,
 				994C603A253A277300BDF060 /* InspectorFrontendAPIDispatcher.h in Headers */,
 				F344C7141125B82C00F26EEE /* InspectorFrontendClient.h in Headers */,
 				F344C75311294D9D00F26EEE /* InspectorFrontendClientLocal.h in Headers */,
@@ -48226,6 +48241,7 @@
 				BC3BE12B0E98092F00835588 /* PopupMenuStyle.h in Headers */,
 				37F567CE165358F400DDE92B /* PopupOpeningObserver.h in Headers */,
 				0A1B2C3D4E5F60718293A4B5 /* PortalAction.h in Headers */,
+				B65F48F93089162D00E24595 /* PortalInteractionGesture.h in Headers */,
 				053F6589A66D76BEEA136C23 /* PortalTransform.h in Headers */,
 				86EB71C0298C0A0F00C1DC77 /* PortIdentifier.h in Headers */,
 				93F199DE08245E59001E9ABC /* Position.h in Headers */,
@@ -48322,7 +48338,6 @@
 				32400DF4AA35A12EDCD8FB9F /* QuirksAccessors.h in Headers */,
 				7ABB0F602CE7C170009A837D /* QuirksData.h in Headers */,
 				05D4770FFFB4C18C6BA6928C /* QuirkSelectors.h in Headers */,
-				05D4770CFFB4C18C6BA6928C /* QuirkTable.h in Headers */,
 				FE7CF1A5010000000000E002 /* QuotaExceededError.h in Headers */,
 				FE7CF1A5010000000000E006 /* QuotaExceededErrorOptions.h in Headers */,
 				379E371713736A6600B9E919 /* QuotedPrintable.h in Headers */,
@@ -48477,7 +48492,6 @@
 				BCFA930810333193007B25D1 /* RenderOverflow.h in Headers */,
 				A43BF59D1149292800C643CA /* RenderProgress.h in Headers */,
 				B5B65874186FDE4C009C26E8 /* RenderPtr.h in Headers */,
-				5A574F25131DB93900471B88 /* RenderQuote.h in Headers */,
 				A871DFE30A15376B00B12A68 /* RenderReplaced.h in Headers */,
 				BCA846D70DC67A350026C309 /* RenderReplica.h in Headers */,
 				BC3BE9940E9C1C7C00835588 /* RenderScrollbar.h in Headers */,

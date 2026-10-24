@@ -160,8 +160,6 @@ public:
         template<typename DestroyFunc>
         void finishSweepKnowingHeapCellType(FreeList*, NOESCAPE const DestroyFunc&);
         
-        void unsweepWithNoNewlyAllocated();
-        
         inline void shrink();
         // Return interior OS pages that hold no live cell to the OS (after a sweep-only sweep); re-commit them
         // before the block is handed to an allocator or freed. No-op when an OS page is not smaller than a block.
@@ -339,10 +337,9 @@ public:
         //   so far; during a Full collection, only what that collection has marked so far.
         // - Stale but still the survivors: only during a Full collection, whose Begin
         //   makes every block's marks stale while the survivors are still live. Marks one
-        //   version behind, or at nullVersion after a wrap, keep recording survivors
-        //   until resetStaleMarks() moves them into m_newlyAllocated (see
-        //   staleMarksStillRecordSurvivors()). An Eden collection never needs this, since
-        //   it does not advance the marking version.
+        //   version behind keep recording survivors until resetStaleMarks() moves them
+        //   into m_newlyAllocated (see staleMarksStillRecordSurvivors()). An Eden collection
+        //   never needs this, since it does not advance the marking version.
         // - Otherwise: meaningless.
         //
         // m_newlyAllocated, usable while current and the block is not free-listed, holds
