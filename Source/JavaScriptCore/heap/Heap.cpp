@@ -100,6 +100,7 @@
 #include "StopIfNecessaryTimer.h"
 #include "StringSplitCache.h"
 #include "StructureAlignedMemoryAllocator.h"
+#include "StructureArrayStorageInlines.h"
 #include "SubspaceInlines.h"
 #include "SuperSampler.h"
 #include "SweepingScope.h"
@@ -470,6 +471,11 @@ void Heap::shutDown()
     if (hadJoined) {
         waitForMembershipChange(m_collector->requestMembershipChange({ Collector::MembershipChange::Kind::Leave, this, nullptr }));
         dataLogIf(Options::logGC(), "left the collector, ");
+    }
+
+    if (m_localCollector) {
+        m_localCollector->shutDown();
+        dataLogIf(Options::logGC(), "stopped the collector's threads, ");
     }
 
     if (Options::dumpHeapStatisticsAtVMDestruction()) [[unlikely]]
@@ -1427,7 +1433,7 @@ static bool exchangeCanAllocate(MarkedBlock::Handle& handle, bool value)
 }
 
 // The live cells of a block that no allocator is in the middle of (no valid newlyAllocated bits): all of them if the block
-// was filled up since the last collection, otherwise the marked ones. This is MarkedBlock::Handle::isLive() outside of
+// is allocated, otherwise the marked ones. This is MarkedBlock::Handle::isLive() outside of
 // marking, decided once per block instead of once per cell.
 template<typename Func>
 static void forEachLiveCellOfSettledBlock(MarkedBlock::Handle& handle, const Func& func)
@@ -2290,7 +2296,7 @@ void Heap::runCollectionEpilogue()
     });
     m_stringsFoundOnStack.clear();
 
-    immutableButterflyToStringCache.clear();
+    vm().immutableButterflyToStringCache.clear();
     
     for (const GCCompletionCallback& callback : m_gcCompletionCallbacks)
         callback.run(vm());

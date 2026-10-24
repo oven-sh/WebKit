@@ -111,6 +111,18 @@ void PageClientImplCocoa::sampledPageTopColorDidChange()
     [webView() didChangeValueForKey:@"_sampledPageTopColor"];
 }
 
+#if PLATFORM(IOS_FAMILY)
+void PageClientImplCocoa::effectivePageAppearanceWillChange()
+{
+    [webView() willChangeValueForKey:@"_effectivePageAppearance"];
+}
+
+void PageClientImplCocoa::effectivePageAppearanceDidChange()
+{
+    [webView() didChangeValueForKey:@"_effectivePageAppearance"];
+}
+#endif
+
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
 void PageClientImplCocoa::allowImmersiveElement(Ref<API::FrameInfo>&& frameInfo, CompletionHandler<void(bool)>&& completion) const
 {
@@ -512,9 +524,9 @@ void PageClientImplCocoa::commitPotentialTapFailed()
     [webView() _commitPotentialTapFailed];
 }
 
-void PageClientImplCocoa::didGetTapHighlightGeometries(WebKit::TapIdentifier requestID, const WebCore::Color& color, const Vector<WebCore::FloatQuad>& highlightedQuads, const WebCore::IntSize& topLeftRadius, const WebCore::IntSize& topRightRadius, const WebCore::IntSize& bottomLeftRadius, const WebCore::IntSize& bottomRightRadius, bool nodeHasBuiltInClickHandling)
+void PageClientImplCocoa::didGetTapHighlightGeometries(WebKit::TapIdentifier requestID, const WebCore::Color& color, const Vector<WebCore::FloatQuad>& highlightedQuads, WebCore::CornerRadii&& cornerRadii, bool nodeHasBuiltInClickHandling)
 {
-    [webView() _didGetTapHighlightGeometries:requestID color:color quads:highlightedQuads topLeftRadius:topLeftRadius topRightRadius:topRightRadius bottomLeftRadius:bottomLeftRadius bottomRightRadius:bottomRightRadius nodeHasBuiltInClickHandling:nodeHasBuiltInClickHandling];
+    [webView() _didGetTapHighlightGeometries:requestID color:color quads:highlightedQuads cornerRadii:WTF::move(cornerRadii) nodeHasBuiltInClickHandling:nodeHasBuiltInClickHandling];
 }
 
 bool PageClientImplCocoa::isPotentialTapInProgress() const

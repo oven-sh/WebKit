@@ -77,6 +77,8 @@ struct BasicBlockRange {
     int m_startOffset;
     int m_endOffset;
     bool m_hasExecuted;
+    // The condition, the increment or the left side of a loop. Not a basic block inside one, as the right side of `&&`.
+    bool m_isInLoopHeader { false };
     size_t m_executionCount;
 };
 

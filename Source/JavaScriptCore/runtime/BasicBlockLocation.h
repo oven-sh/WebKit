@@ -49,6 +49,8 @@ public:
     void setEndOffset(int endOffset) { m_endOffset = endOffset; }
     bool hasExecuted() const { return m_executionCount > 0; }
     size_t executionCount() const { return m_executionCount; }
+    bool isInLoopHeader() const { return m_isInLoopHeader; }
+    void setIsInLoopHeader(bool isInLoopHeader) { m_isInLoopHeader = isInLoopHeader; }
     void insertGaps(const Vector<Gap>&);
     Vector<Gap> getExecutedRanges() const;
     JS_EXPORT_PRIVATE void dumpData() const;
@@ -61,6 +63,7 @@ private:
 
     int m_startOffset;
     int m_endOffset;
+    bool m_isInLoopHeader { false };
     Vector<Gap> m_gaps;
     UCPURegister m_executionCount;
 };
