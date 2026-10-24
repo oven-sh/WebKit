@@ -67,6 +67,21 @@ endif ()
 
 WEBKIT_EXECUTABLE_DECLARE(jsc)
 
+# This regression controls process-wide GC scheduling and helper threads, so it
+# runs in its own process instead of sharing testapi's VM state.
+set(testGCProgress_SOURCES ../API/tests/testGCProgress.cpp)
+set(testGCProgress_PRIVATE_INCLUDE_DIRECTORIES ${jsc_PRIVATE_INCLUDE_DIRECTORIES})
+set(testGCProgress_FRAMEWORKS ${jsc_FRAMEWORKS})
+set(testGCProgress_LIBRARIES ${CMAKE_DL_LIBS})
+if (WIN32)
+    list(APPEND testGCProgress_LIBRARIES Winmm)
+endif ()
+if (USE_EXTERNAL_MIMALLOC)
+    list(APPEND testGCProgress_SOURCES ExternalMimallocShims.cpp)
+    list(APPEND testGCProgress_LIBRARIES $<TARGET_OBJECTS:mimalloc-obj>)
+endif ()
+WEBKIT_EXECUTABLE_DECLARE(testGCProgress)
+
 if (USE_BUN_JSC_ADDITIONS)
     # bun:ffi (JSC FFI) C++ unit / ABI test executable, modeled on the
     # testmasm_* variables below. Build and run it with:
@@ -234,6 +249,7 @@ endif ()
 WEBKIT_INCLUDE_CONFIG_FILES_IF_EXISTS()
 
 WEBKIT_EXECUTABLE(jsc)
+WEBKIT_EXECUTABLE(testGCProgress)
 set_target_properties(jsc PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 if (USE_BUN_JSC_ADDITIONS)
