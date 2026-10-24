@@ -1959,6 +1959,12 @@ static JSArray* availableNumberingSystems(JSGlobalObject* globalObject)
 
 static bool isValidTimeZoneNameFromICUTimeZone(StringView timeZoneName)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    // A zone ID that ICU holds canonical is a time zone, with or without '/'. The tz database has EST5EDT, CST6CDT,
+    // MST7MDT and PST8PDT as zones of their own before 2024b and from 2026d on, and CET, EET, MET and WET before 2024b.
+    // The two exceptions: the tz database has no "SystemV/" zone, and its "Factory" zone is for a clock that is not set.
+    return !timeZoneName.startsWith("SystemV/"_s) && timeZoneName != "Factory"_s;
+#else
     // Some time zone names are included in ICU, but they are not included in the IANA Time Zone Database.
     // We need to filter them out.
     if (timeZoneName.startsWith("SystemV/"_s))
@@ -1970,6 +1976,7 @@ static bool isValidTimeZoneNameFromICUTimeZone(StringView timeZoneName)
     if (!timeZoneName.contains('/'))
         return timeZoneName == "UTC"_s || timeZoneName == "GMT"_s;
     return true;
+#endif
 }
 
 // https://tc39.es/proposal-intl-enumeration/#sec-canonicalizetimezonename
