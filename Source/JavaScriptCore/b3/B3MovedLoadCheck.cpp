@@ -20,11 +20,11 @@ namespace JSC { namespace B3 {
 
 std::optional<MovedLoad> MovedLoad::of(const Procedure& proc, const Value* value)
 {
-    const ValidationPolicy& validation = proc.policy().validation;
-    if (!validation.checksMovedLoadsAtRunTime)
+    const Policy& policy = proc.policy();
+    if (!policy.validation.checksMovedLoadsAtRunTime)
         return std::nullopt;
     const MemoryValue* load = value->as<MemoryValue>();
-    if (load && validation.isWrittenBehindTheBackOfCode && validation.isWrittenBehindTheBackOfCode->run(load->range()))
+    if (load && policy.isWrittenBehindTheBackOfCode && policy.isWrittenBehindTheBackOfCode->run(load->range()))
         return std::nullopt;
     return describe(value);
 }
@@ -65,7 +65,7 @@ static void emitLoad(CCallHelpers& jit, const MovedLoad& load, CCallHelpers::Add
 
 PatchpointValue* createMovedLoadCheck(Procedure& proc, const MovedLoad& load, Value* address, Value* givenToUsers)
 {
-    return createMovedLoadCheck(proc, load, address, givenToUsers, proc.policy().validation.reportMovedLoadThatDiffers);
+    return createMovedLoadCheck(proc, load, address, givenToUsers, proc.policy().reportMovedLoadThatDiffers);
 }
 
 PatchpointValue* createMovedLoadCheck(Procedure& proc, const MovedLoad& load, Value* address, Value* givenToUsers, RefPtr<DifferenceReport> report)

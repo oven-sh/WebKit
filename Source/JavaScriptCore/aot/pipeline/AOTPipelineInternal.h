@@ -99,6 +99,7 @@ public:
     PassOutcome promoteEnvironmentsToVariables();
     PassOutcome readCapturesFromEnvironments();
     PassOutcome removeUnreadFields();
+    PassOutcome removeUnusedResults();
     PassOutcome removeUnusedParameters();
     PassOutcome removeUnreachableFunctions();
     PassOutcome splitFreshResults();

@@ -47,6 +47,7 @@
 #include "AOTRemoveUnreadExports.h"
 #include "AOTRemoveUnreadFields.h"
 #include "AOTRemoveUnusedParameters.h"
+#include "AOTRemoveUnusedResults.h"
 #include "AOTSiteCachePlacement.h"
 #include "AOTSlotPlan.h"
 #include "AOTSplitBehindEntryChecks.h"
@@ -301,6 +302,14 @@ PassOutcome Pipeline::removeUnreadFields()
 {
     edit(PassID::RemoveUnreadFields, [&](ProgramEditor& editor) {
         Typed::removeUnreadFields(editor, inputsFor(PassID::RemoveUnreadFields), m_runner);
+    });
+    return m_runner.lastProgramPassOutcome();
+}
+
+PassOutcome Pipeline::removeUnusedResults()
+{
+    edit(PassID::RemoveUnusedResults, [&](ProgramEditor& editor) {
+        Typed::removeUnusedResults(editor, inputsFor(PassID::RemoveUnusedResults), m_runner);
     });
     return m_runner.lastProgramPassOutcome();
 }
@@ -670,6 +679,8 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         return readCapturesFromEnvironments();
     case PassID::RemoveUnreadFields:
         return removeUnreadFields();
+    case PassID::RemoveUnusedResults:
+        return removeUnusedResults();
     case PassID::RemoveUnusedParameters:
         return removeUnusedParameters();
     case PassID::RemoveUnreachableFunctions:

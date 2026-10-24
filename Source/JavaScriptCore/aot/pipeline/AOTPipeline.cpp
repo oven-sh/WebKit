@@ -155,6 +155,7 @@ constexpr std::array rows {
     programPass(MarkResultsUsedAsKeys, Optional, { Prepared, Prepared }, { }, { }, { }),
     programPass(ReadCapturesFromEnvironments, Optional, { Prepared, Prepared }, { Flow }, { }, resultsAboutBodies),
     takingAway(programPass(RemoveUnreadFields, Optional, { Prepared, Prepared }, simplifyInputs, { }, resultsAboutBodies)),
+    addingOnly({ }, programPass(RemoveUnusedResults, Optional, { Prepared, Prepared }, simplifyInputs | CallGraph, { }, resultsAboutBodies)),
     addingOnly({ }, programPass(RemoveUnusedParameters, Optional, { Prepared, Prepared }, simplifyInputs | CallGraph, { }, resultsAboutBodies)),
     programPass(RemoveUnreachableFunctions, Optional, { Prepared, Selected }, { CallGraph }, { }, { }),
     programPass(SplitBehindEntryChecks, Optional, { Prepared, Prepared }, { Flow, CallGraph, Heat }, { }, resultsAboutBodies | Results { Heat }),
@@ -816,11 +817,13 @@ static_assert(runsUnconditionally(RetypeValues));
 static_assert(scheduleAt(FunctionSchedule::Simplify).inputs == simplifyInputs);
 static_assert(scheduleAt(FunctionSchedule::Optimize).inputs.contains(CallGraph));
 static_assert(canRunSimplify(RemoveUnreadFields));
+static_assert(canRunSimplify(RemoveUnusedResults));
 static_assert(canRunSimplify(RemoveUnusedParameters));
 static_assert(canRunSimplify(SplitFreshResults));
 static_assert(canRunSimplify(SplitCoroutines));
 static_assert(canRunSimplify(ChooseCallingConventions));
 static_assert(canRunFunctionPass(RemoveUnreadFields, RemoveDeadCountedLoops));
+static_assert(canRunFunctionPass(RemoveUnusedResults, RemoveDeadCountedLoops));
 static_assert(canRunFunctionPass(RemoveUnusedParameters, RemoveDeadCountedLoops));
 static_assert(canRunFunctionPass(SplitFreshResults, RemoveDeadCountedLoops));
 static_assert(canRunFunctionPass(ChooseCallingConventions, RemoveDeadCountedLoops));

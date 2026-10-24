@@ -505,9 +505,15 @@ static bool slotMayHoldLiteralString(const Image& image, const RuntimeType& type
     if (!type.primitiveSet().containsAny({ PrimitiveSet::String, PrimitiveSet::LiteralString }))
         return false;
     const ImageText& text = image.text();
-    StringView held = text.view(StringID(image.programTables().literalStrings()[literalStringIndex(static_cast<uint32_t>(word))]));
+    StringID held(image.programTables().literalStrings()[literalStringIndex(static_cast<uint32_t>(word))]);
+    if (std::ranges::find(literals, held.index()) != literals.end())
+        return true;
+    // Only an image that validates has the text of every word.
+    if (!text.hasText(held))
+        return !image.header().options.validates;
+    StringView characters = text.view(held);
     return std::ranges::any_of(literals, [&](uint32_t literal) {
-        return text.equals(StringID(literal), held);
+        return text.equals(StringID(literal), characters);
     });
 }
 

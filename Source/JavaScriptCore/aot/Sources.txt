@@ -418,6 +418,7 @@ aot/passes/AOTRemoveTrivialParameters.cpp
 aot/passes/AOTRemoveUnreachableFunctions.cpp
 aot/passes/AOTRemoveUnreadFields.cpp
 aot/passes/AOTRemoveUnusedParameters.cpp
+aot/passes/AOTRemoveUnusedResults.cpp
 aot/passes/AOTResolveAccesses.cpp
 aot/passes/AOTResolveAccessesElements.cpp
 aot/passes/AOTResolveAccessesSlots.cpp

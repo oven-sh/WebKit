@@ -229,7 +229,6 @@ static void emitHashedProbe(PutByIdBody& body, Jump hasOtherNameInFront)
     hasOtherNameInFront.link(&jit);
     jit.load32(Address(R0, JSCell::structureIDOffset()), structureID);
     loadIdentifier(jit, number, uid, body.miss);
-#if CPU(X86_64)
     JumpList isInNoTable;
     findHashedSlot(jit, accessFor(body.mode), { structureID, uid, entry, header, payload, payload }, isInNoTable);
     jumpToSlotHandler(jit, body.handlerTable(SlotForm::Slot), header, uid);
@@ -246,12 +245,8 @@ static void emitHashedProbe(PutByIdBody& body, Jump hasOtherNameInFront)
         .structure = structureID,
         .size = payload,
         .vector = entry,
-        .index = jit.scratchRegister(),
+        .index = indexRegisterOfObjectLookup(jit),
     }, ObjectLookupName::IsGivenByNumber, body.A1, body.miss);
-#else
-    findHashedSlot(jit, accessFor(body.mode), { structureID, uid, entry, header, payload, payload }, body.miss);
-    jumpToSlotHandler(jit, body.handlerTable(SlotForm::Slot), header, uid);
-#endif
 }
 
 void generatePutById(StubAssembler& jit)

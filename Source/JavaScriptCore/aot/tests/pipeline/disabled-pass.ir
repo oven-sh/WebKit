@@ -1,9 +1,11 @@
 # A pass that is switched off leaves the program alone and other passes still run
 # FORM: Prepared
-# OPTIONS: disable=pass:FoldConstants
+# OPTIONS: disable=pass:FoldConstants,pass:RemoveUnusedResults
 # RUN: pass FoldConstants
+# RUN(PROGRAM): pass RemoveUnusedResults
 # RUN(OTHER): pass EliminateDeadCode
 # CHECK: outcome: Unchanged
+# PROGRAM: outcome: Unchanged
 # OTHER: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
@@ -20,3 +22,35 @@ function f0 name="foldable" results=[{type=number}] {
 # OTHER-LABEL: function f0 name="foldable"
 # OTHER: = Add v0, v1
 # OTHER-NOT: integer=7
+
+function f1 name="triple" role=ResultWrapper parameters=[{type=number}] results=[{type=Array<number>}] creator=ResultWrapper{worker=f4}
+
+function f2 name="readsFirst" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f4
+    v2 = ResultAt v1 index=0
+    Return v2
+}
+
+function f3 name="readsThird" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = CallDirect v0 function=f4
+    v2 = ResultAt v1 index=2
+    Return v2
+}
+# PROGRAM-LABEL: function f3 name="readsThird"
+# PROGRAM: = ResultAt v1 index=2
+
+function f4 name="triple" role=ResultWorker parameters=[{type=number}] results=[{type=number}, {type=number}, {type=number}] derivation={source=f1} creator=ResultWorker{origin=f1} {
+  b0(v0: number):
+    v1 = Integer integer=1
+    v2 = Integer integer=2
+    v3 = Add v1, v2
+    v4 = Mul v0, v0
+    v5 = Sub v0, v0
+    v6 = Results v3, v4, v5
+    Return v6
+}
+# PROGRAM-LABEL: function f4 name="triple" {{*}}results=[{type=number}, {type=number}, {type=number}]
+# PROGRAM: = Mul
+# PROGRAM: = Results v3, v4, v5

@@ -29,6 +29,7 @@
     v(MarkResultsUsedAsKeys) \
     v(ReadCapturesFromEnvironments) \
     v(RemoveUnreadFields) \
+    v(RemoveUnusedResults) \
     v(RemoveUnusedParameters) \
     v(RemoveUnreachableFunctions) \
     v(SplitBehindEntryChecks) \

@@ -267,12 +267,19 @@ static bool descriptorObjectsInheritNoMembers(JSGlobalObject* globalObject)
     return globalObject->propertyDescriptorFastPathWatchpointSet().isStillValid() && globalObject->objectPrototypeChainIsSane();
 }
 
-// Such an object runs nobody's code when a property is defined, and one that refuses is as it was.
-static bool definesWithoutOtherCode(VM& vm, JSObject* object, PropertyName name)
+// These run nobody's code when a property is defined. One that refuses is as it was, but for a list that is cut short, which refuses again where it stopped.
+static bool definesWithoutOtherCode(VM& vm, JSObject* object, PropertyName name, JSValue value, PropertyDescriptorBits bits)
 {
-    if (compiledObjectOrNull(object) || hasOrdinaryDefineOwnProperty(object->structure()))
+    auto define = object->methodTable()->defineOwnProperty;
+    if (define == JSObject::defineOwnProperty || define == Object::info()->methodTable.defineOwnProperty)
         return true;
-    return isJSArray(object) && name != vm.propertyNames->length;
+    if (define == JSArray::info()->methodTable.defineOwnProperty)
+        return name != vm.propertyNames->length || !bits.hasValue || value.isUInt32();
+    for (const ClassInfo* info : { Closure::info(), SlimClosure::info(), ReifiedSlimClosure::info(), ClassPrototype::info(), JSFunction::info() }) {
+        if (define == info->methodTable.defineOwnProperty)
+            return true;
+    }
+    return false;
 }
 
 static bool tryDefineOwnPropertyFromBits(JSGlobalObject* globalObject, JSObject* object, PropertyName name, JSValue valueOrGetter, JSValue setter, PropertyDescriptorBits bits)
@@ -292,7 +299,7 @@ static bool tryDefineOwnPropertyFromBits(JSGlobalObject* globalObject, JSObject*
         return false;
     if (tryDefineAbsentProperty(globalObject, object, name, valueOrGetter, setter, bits))
         return true;
-    if (!definesWithoutOtherCode(vm, object, name))
+    if (!definesWithoutOtherCode(vm, object, name, valueOrGetter, bits))
         return false;
     PropertyDescriptor descriptor;
     if (bits.hasEnumerable)

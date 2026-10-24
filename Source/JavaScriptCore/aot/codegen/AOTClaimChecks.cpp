@@ -119,8 +119,8 @@ void checkClaimsAtRunTime(B3::Policy& policy, Typed::FunctionID function, bool e
 void checkMovedLoadsAtRunTime(B3::Policy& policy, Typed::FunctionID function, const std::unique_ptr<B3::Procedure>& procedure)
 {
     policy.validation.checksMovedLoadsAtRunTime = true;
-    policy.validation.reportMovedLoadThatDiffers = reportOf(BrokenClaim::LoadMayMove, function);
-    policy.validation.isWrittenBehindTheBackOfCode = createSharedTask<bool(const B3::HeapRange&)>([&procedure](const B3::HeapRange& range) {
+    policy.reportMovedLoadThatDiffers = reportOf(BrokenClaim::LoadMayMove, function);
+    policy.isWrittenBehindTheBackOfCode = createSharedTask<bool(const B3::HeapRange&)>([&procedure](const B3::HeapRange& range) {
         AOTHeaps& heaps = AOTHeaps::of(*procedure);
         return range.overlaps(heaps.rangeOf(heaps.collectorState));
     });

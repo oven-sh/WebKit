@@ -38,9 +38,6 @@ struct ValidationPolicy {
     ValidationLevel level { ValidationLevel::FromOptions };
     bool checksKnownPropertiesAtRunTime { false };
     bool checksMovedLoadsAtRunTime { false };
-    // The collector's threads, and writes that no operation's result depends on.
-    RefPtr<SharedTask<bool(const HeapRange&)>> isWrittenBehindTheBackOfCode;
-    RefPtr<SharedTask<void(CCallHelpers&, Origin)>> reportMovedLoadThatDiffers;
 };
 
 enum class RedundancyElimination : uint8_t {
@@ -214,6 +211,9 @@ struct Policy {
     Air::Policy air;
     bool collectsRemarks { false };
     Vector<ClientPhase, 4> clientPhases;
+    // The collector's threads, and writes that no operation's result depends on.
+    RefPtr<SharedTask<bool(const HeapRange&)>> isWrittenBehindTheBackOfCode;
+    RefPtr<SharedTask<void(CCallHelpers&, Origin)>> reportMovedLoadThatDiffers;
 
     JS_EXPORT_PRIVATE static Policy fromProcessOptions();
 
