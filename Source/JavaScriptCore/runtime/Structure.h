@@ -641,6 +641,13 @@ public:
     bool LEGACY_NODELETE canCachePropertyNameEnumerator(VM&) const;
     bool LEGACY_NODELETE canAccessPropertiesQuicklyForEnumeration() const;
 
+    // The class overrides put() or defineOwnProperty(), and not getOwnPropertySlot(). PutByStatus and the property name
+    // enumerator decide a store from the Structure alone, with no PutPropertySlot to ask, so they have to leave such an
+    // object to the method table. A class that also overrides getOwnPropertySlot() is not included: PutByStatus has its
+    // own test for that flag, and a for-in store keeps its fast path for JSArray, JSFunction, RegExpObject and
+    // ErrorInstance, whose put() only guards names that are not enumerable.
+    inline bool classInterceptsOwnPropertyStores() const; // Defined in StructureInlines.h
+
     inline JSCellButterfly* cachedPropertyNames(CachedPropertyNamesKind kind) const; // Defined in StructureInlines.h
     inline JSCellButterfly* cachedPropertyNamesIgnoringSentinel(CachedPropertyNamesKind kind) const; // Defined in StructureInlines.h
     void setCachedPropertyNames(VM&, CachedPropertyNamesKind, JSCellButterfly*);

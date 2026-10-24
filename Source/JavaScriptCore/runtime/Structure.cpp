@@ -1705,6 +1705,9 @@ bool Structure::canAccessPropertiesQuicklyForEnumeration() const
         return false;
     if (typeInfo().overridesGetOwnPropertyNames())
         return false;
+    // A for-in store in OwnStructureMode (op_enumerator_put_by_val) writes the slot of the property and does not call put().
+    if (classInterceptsOwnPropertyStores())
+        return false;
     return true;
 }
 

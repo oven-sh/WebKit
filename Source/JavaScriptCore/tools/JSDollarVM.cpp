@@ -1065,6 +1065,135 @@ public:
     }
 };
 
+// put() converts the value to a string, as ObjectDoingSideEffectPutWithoutCorrectSlotStatus does, and it disables
+// caching. A store that does not call it leaves a value that is not a string.
+class ObjectDoingSideEffectPutWithCorrectSlotStatus : public JSNonFinalObject {
+    using Base = JSNonFinalObject;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesPut;
+public:
+    template<typename CellType, SubspaceAccess>
+    static CompleteSubspace* NODELETE subspaceFor(VM& vm)
+    {
+        return &vm.cellSpace();
+    }
+
+    ObjectDoingSideEffectPutWithCorrectSlotStatus(VM& vm, Structure* structure)
+        : Base(vm, structure)
+    {
+        DollarVMAssertScope assertScope;
+    }
+
+    DECLARE_INFO;
+
+    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+    {
+        DollarVMAssertScope assertScope;
+        return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    }
+
+    static ObjectDoingSideEffectPutWithCorrectSlotStatus* create(VM& vm, Structure* structure)
+    {
+        DollarVMAssertScope assertScope;
+        ObjectDoingSideEffectPutWithCorrectSlotStatus* object = new (NotNull, allocateCell<ObjectDoingSideEffectPutWithCorrectSlotStatus>(vm)) ObjectDoingSideEffectPutWithCorrectSlotStatus(vm, structure);
+        object->finishCreation(vm);
+        return object;
+    }
+
+    static bool put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
+    {
+        DollarVMAssertScope assertScope;
+        auto* thisObject = uncheckedDowncast<ObjectDoingSideEffectPutWithCorrectSlotStatus>(cell);
+        auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
+        slot.disableCaching();
+        auto* string = value.toString(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, false);
+        RELEASE_AND_RETURN(throwScope, Base::put(thisObject, globalObject, propertyName, string, slot));
+    }
+};
+
+// defineOwnProperty() converts the value to a string. The class does not override put().
+class ObjectDoingSideEffectDefineOwnProperty : public JSNonFinalObject {
+public:
+    using Base = JSNonFinalObject;
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+
+    template<typename CellType, SubspaceAccess>
+    static CompleteSubspace* NODELETE subspaceFor(VM& vm)
+    {
+        return &vm.cellSpace();
+    }
+
+    ObjectDoingSideEffectDefineOwnProperty(VM& vm, Structure* structure)
+        : Base(vm, structure)
+    {
+        DollarVMAssertScope assertScope;
+    }
+
+    DECLARE_INFO;
+
+    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+    {
+        DollarVMAssertScope assertScope;
+        return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    }
+
+    static ObjectDoingSideEffectDefineOwnProperty* create(VM& vm, Structure* structure)
+    {
+        DollarVMAssertScope assertScope;
+        ObjectDoingSideEffectDefineOwnProperty* object = new (NotNull, allocateCell<ObjectDoingSideEffectDefineOwnProperty>(vm)) ObjectDoingSideEffectDefineOwnProperty(vm, structure);
+        object->finishCreation(vm);
+        return object;
+    }
+
+    static bool defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
+    {
+        DollarVMAssertScope assertScope;
+        auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
+        if (!descriptor.value())
+            RELEASE_AND_RETURN(throwScope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
+        auto* string = descriptor.value().toString(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, false);
+        PropertyDescriptor stringDescriptor = descriptor;
+        stringDescriptor.setValue(string);
+        RELEASE_AND_RETURN(throwScope, Base::defineOwnProperty(object, globalObject, propertyName, stringDescriptor, shouldThrow));
+    }
+};
+
+// The same, and the class overrides getOwnPropertySlot(). Structure::classInterceptsOwnPropertyStores() is false for it.
+class ObjectDoingSideEffectDefineOwnPropertyOverridingGetOwnPropertySlot final : public ObjectDoingSideEffectDefineOwnProperty {
+public:
+    using Base = ObjectDoingSideEffectDefineOwnProperty;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot;
+
+    ObjectDoingSideEffectDefineOwnPropertyOverridingGetOwnPropertySlot(VM& vm, Structure* structure)
+        : Base(vm, structure)
+    {
+        DollarVMAssertScope assertScope;
+    }
+
+    DECLARE_INFO;
+
+    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+    {
+        DollarVMAssertScope assertScope;
+        return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    }
+
+    static ObjectDoingSideEffectDefineOwnPropertyOverridingGetOwnPropertySlot* create(VM& vm, Structure* structure)
+    {
+        DollarVMAssertScope assertScope;
+        auto* object = new (NotNull, allocateCell<ObjectDoingSideEffectDefineOwnPropertyOverridingGetOwnPropertySlot>(vm)) ObjectDoingSideEffectDefineOwnPropertyOverridingGetOwnPropertySlot(vm, structure);
+        object->finishCreation(vm);
+        return object;
+    }
+
+    static bool getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
+    {
+        DollarVMAssertScope assertScope;
+        return Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
+    }
+};
+
 class DOMJITNode : public JSNonFinalObject {
 public:
     DOMJITNode(VM& vm, Structure* structure)
@@ -1944,6 +2073,9 @@ const ClassInfo StaticCustomAccessor::s_info = { "StaticCustomAccessor"_s, &Base
 const ClassInfo StaticCustomValue::s_info = { "StaticCustomValue"_s, &Base::s_info, &staticCustomValueTable, nullptr, CREATE_METHOD_TABLE(StaticCustomValue) };
 const ClassInfo StaticDontDeleteDontEnum::s_info = { "StaticDontDeleteDontEnum"_s, &Base::s_info, &staticDontDeleteDontEnumTable, nullptr, CREATE_METHOD_TABLE(StaticDontDeleteDontEnum) };
 const ClassInfo ObjectDoingSideEffectPutWithoutCorrectSlotStatus::s_info = { "ObjectDoingSideEffectPutWithoutCorrectSlotStatus"_s, &Base::s_info, &staticCustomAccessorTable, nullptr, CREATE_METHOD_TABLE(ObjectDoingSideEffectPutWithoutCorrectSlotStatus) };
+const ClassInfo ObjectDoingSideEffectPutWithCorrectSlotStatus::s_info = { "ObjectDoingSideEffectPutWithCorrectSlotStatus"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ObjectDoingSideEffectPutWithCorrectSlotStatus) };
+const ClassInfo ObjectDoingSideEffectDefineOwnProperty::s_info = { "ObjectDoingSideEffectDefineOwnProperty"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ObjectDoingSideEffectDefineOwnProperty) };
+const ClassInfo ObjectDoingSideEffectDefineOwnPropertyOverridingGetOwnPropertySlot::s_info = { "ObjectDoingSideEffectDefineOwnPropertyOverridingGetOwnPropertySlot"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ObjectDoingSideEffectDefineOwnPropertyOverridingGetOwnPropertySlot) };
 
 ElementHandleOwner* LEGACY_NODELETE Element::handleOwner()
 {
@@ -2213,6 +2345,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionHaveABadTime);
 static JSC_DECLARE_HOST_FUNCTION(functionIsHavingABadTime);
 static JSC_DECLARE_HOST_FUNCTION(functionMakePropertiesImmutable);
 static JSC_DECLARE_HOST_FUNCTION(functionHasImmutableProperties);
+static JSC_DECLARE_HOST_FUNCTION(functionClassInterceptsOwnPropertyStores);
 static JSC_DECLARE_HOST_FUNCTION(functionCallWithStackSize);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateGlobalObject);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateProxy);
@@ -2239,6 +2372,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionCreateStaticCustomAccessor);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateStaticCustomValue);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateStaticDontDeleteDontEnum);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateObjectDoingSideEffectPutWithoutCorrectSlotStatus);
+static JSC_DECLARE_HOST_FUNCTION(functionCreateObjectDoingSideEffectPutWithCorrectSlotStatus);
+static JSC_DECLARE_HOST_FUNCTION(functionCreateObjectDoingSideEffectDefineOwnProperty);
+static JSC_DECLARE_HOST_FUNCTION(functionCreateObjectDoingSideEffectDefineOwnPropertyOverridingGetOwnPropertySlot);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateEmptyFunctionWithName);
 static JSC_DECLARE_HOST_FUNCTION(functionSetImpureGetterDelegate);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateBuiltin);
@@ -3279,6 +3415,14 @@ JSC_DEFINE_HOST_FUNCTION(functionHasImmutableProperties, (JSGlobalObject*, CallF
     return JSValue::encode(jsBoolean(object && object->hasImmutableProperties()));
 }
 
+// Usage: $vm.classInterceptsOwnPropertyStores(value)
+JSC_DEFINE_HOST_FUNCTION(functionClassInterceptsOwnPropertyStores, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    JSObject* object = callFrame->argument(0).getObject();
+    return JSValue::encode(jsBoolean(object && object->structure()->classInterceptsOwnPropertyStores()));
+}
+
 // Calls the specified test function after adjusting the stack to have the specified
 // remaining size from the end of the physical stack.
 // Usage: $vm.callWithStackSize(funcToCall, desiredStackSize)
@@ -3674,6 +3818,40 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateObjectDoingSideEffectPutWithoutCorrectSlo
     auto* dollarVM = dynamicDowncast<JSDollarVM>(callFrame->thisValue());
     RELEASE_ASSERT(dollarVM);
     auto* result = ObjectDoingSideEffectPutWithoutCorrectSlotStatus::create(vm, dollarVM->objectDoingSideEffectPutWithoutCorrectSlotStatusStructure());
+    return JSValue::encode(result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionCreateObjectDoingSideEffectPutWithCorrectSlotStatus, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+
+    auto* dollarVM = dynamicDowncast<JSDollarVM>(callFrame->thisValue());
+    RELEASE_ASSERT(dollarVM);
+    auto* result = ObjectDoingSideEffectPutWithCorrectSlotStatus::create(vm, dollarVM->objectDoingSideEffectPutWithCorrectSlotStatusStructure());
+    return JSValue::encode(result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionCreateObjectDoingSideEffectDefineOwnProperty, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+
+    auto* dollarVM = dynamicDowncast<JSDollarVM>(callFrame->thisValue());
+    RELEASE_ASSERT(dollarVM);
+    auto* result = ObjectDoingSideEffectDefineOwnProperty::create(vm, dollarVM->objectDoingSideEffectDefineOwnPropertyStructure());
+    return JSValue::encode(result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionCreateObjectDoingSideEffectDefineOwnPropertyOverridingGetOwnPropertySlot, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    Structure* structure = ObjectDoingSideEffectDefineOwnPropertyOverridingGetOwnPropertySlot::createStructure(vm, globalObject, jsNull());
+    auto* result = ObjectDoingSideEffectDefineOwnPropertyOverridingGetOwnPropertySlot::create(vm, structure);
     return JSValue::encode(result);
 }
 
@@ -5964,6 +6142,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "isHavingABadTime"_s, functionIsHavingABadTime, 1);
     addFunction(vm, alwaysAllow, "makePropertiesImmutable"_s, functionMakePropertiesImmutable, 1);
     addFunction(vm, alwaysAllow, "hasImmutableProperties"_s, functionHasImmutableProperties, 1);
+    addFunction(vm, alwaysAllow, "classInterceptsOwnPropertyStores"_s, functionClassInterceptsOwnPropertyStores, 1);
 
     addFunction(vm, allowIfNotFuzz, "callWithStackSize"_s, functionCallWithStackSize, 2);
 
@@ -5998,6 +6177,9 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "createStaticCustomValue"_s, functionCreateStaticCustomValue, 0);
     addFunction(vm, allowIfNotFuzz, "createStaticDontDeleteDontEnum"_s, functionCreateStaticDontDeleteDontEnum, 0);
     addFunction(vm, allowIfNotFuzz, "createObjectDoingSideEffectPutWithoutCorrectSlotStatus"_s, functionCreateObjectDoingSideEffectPutWithoutCorrectSlotStatus, 0);
+    addFunction(vm, allowIfNotFuzz, "createObjectDoingSideEffectPutWithCorrectSlotStatus"_s, functionCreateObjectDoingSideEffectPutWithCorrectSlotStatus, 0);
+    addFunction(vm, allowIfNotFuzz, "createObjectDoingSideEffectDefineOwnProperty"_s, functionCreateObjectDoingSideEffectDefineOwnProperty, 0);
+    addFunction(vm, allowIfNotFuzz, "createObjectDoingSideEffectDefineOwnPropertyOverridingGetOwnPropertySlot"_s, functionCreateObjectDoingSideEffectDefineOwnPropertyOverridingGetOwnPropertySlot, 0);
     addFunction(vm, allowIfNotFuzz, "createEmptyFunctionWithName"_s, functionCreateEmptyFunctionWithName, 1);
     addFunction(vm, allowIfNotFuzz, "getPrivateProperty"_s, functionGetPrivateProperty, 2);
     addFunction(vm, allowIfNotFuzz, "setImpureGetterDelegate"_s, functionSetImpureGetterDelegate, 2);
@@ -6152,6 +6334,8 @@ void JSDollarVM::finishCreation(VM& vm)
 
     if (allowIfNotFuzz) {
         m_objectDoingSideEffectPutWithoutCorrectSlotStatusStructureID.set(vm, this, ObjectDoingSideEffectPutWithoutCorrectSlotStatus::createStructure(vm, globalObject, jsNull()));
+        m_objectDoingSideEffectPutWithCorrectSlotStatusStructureID.set(vm, this, ObjectDoingSideEffectPutWithCorrectSlotStatus::createStructure(vm, globalObject, jsNull()));
+        m_objectDoingSideEffectDefineOwnPropertyStructureID.set(vm, this, ObjectDoingSideEffectDefineOwnProperty::createStructure(vm, globalObject, jsNull()));
         m_testCustomGetterSetterStructureID.set(vm, this, JSTestCustomGetterSetter::createStructure(vm, globalObject));
     }
 }
@@ -6181,6 +6365,8 @@ void JSDollarVM::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSDollarVM* thisObject = uncheckedDowncast<JSDollarVM>(cell);
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_objectDoingSideEffectPutWithoutCorrectSlotStatusStructureID);
+    visitor.append(thisObject->m_objectDoingSideEffectPutWithCorrectSlotStatusStructureID);
+    visitor.append(thisObject->m_objectDoingSideEffectDefineOwnPropertyStructureID);
     visitor.append(thisObject->m_testCustomGetterSetterStructureID);
 }
 

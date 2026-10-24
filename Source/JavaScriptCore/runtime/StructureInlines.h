@@ -200,6 +200,15 @@ inline bool Structure::isValid(JSGlobalObject* globalObject, StructureChain* cac
     return prototype.isNull() && !*cachedStructure;
 }
 
+inline bool Structure::classInterceptsOwnPropertyStores() const
+{
+    TypeInfo typeInfo = this->typeInfo();
+    // JSFinalObject overrides nothing. This is the common case.
+    if (typeInfo.isFinalObject() || !typeInfo.isObject() || typeInfo.overridesGetOwnPropertySlot())
+        return false;
+    return typeInfo.overridesPut() || classInfoForCells()->methodTable.defineOwnProperty != JSObject::defineOwnProperty;
+}
+
 inline void Structure::didCachePropertyReplacement(VM& vm, PropertyOffset offset)
 {
     ASSERT(isValidOffset(offset));
