@@ -773,6 +773,7 @@
 				JavaScriptCore/InspectorConsoleMessage.cpp,
 				JavaScriptCore/JSRunLoopTimer.mm,
 				JavaScriptCore/MarkedVector.cpp,
+				JavaScriptCore/ParserArena.cpp,
 				JavaScriptCore/PropertySlot.cpp,
 				JavaScriptCore/StrongBlock.cpp,
 				Misc/TestRunnerTests.cpp,
