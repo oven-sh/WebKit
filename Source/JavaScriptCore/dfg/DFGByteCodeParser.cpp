@@ -7380,7 +7380,10 @@ Node* ByteCodeParser::load(
                         break;
                     }
                 }
-                if (allAgree) {
+                // An absence condition only says what the Structure knows. knownBase's getOwnPropertySlot() or put() can treat uid in a
+                // way of its own (a JSFunction's lazy length, a RegExpObject's lastIndex), so, as in presenceConditionIfConsistent(),
+                // this access must have executed on knownBase's structure before the condition can stand in for the structure check.
+                if (allAgree && variant.structureSet().contains(knownBase->structure())) {
                     ObjectPropertyCondition condition = ObjectPropertyCondition::absenceWithoutBarrier(
                         knownBase, uid, prototype);
                     if (check(condition))
