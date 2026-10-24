@@ -726,19 +726,39 @@ static EncodedJSValue setNewValueFromTimeArgs(JSGlobalObject* globalObject, Call
         return JSValue::encode(jsNaN());
     }
 
-    double secs = floor(milli / msPerSecond);
-    double ms = milli - secs * msPerSecond;
-
-    auto other = inputTimeType == TimeType::UTCTime
-        ? thisDateObj->gregorianDateTimeUTC(cache)
-        : thisDateObj->gregorianDateTime(cache);
-    if (!other) {
-        applyToNumberToOtherwiseIgnoredArguments(globalObject, callFrame, numArgsToUse);
-        RETURN_IF_EXCEPTION(scope, { });
-        return JSValue::encode(jsNaN());
+    // The new time value is MakeDate(Day(t), MakeTime(hour, min, sec, ms)), where t is the time
+    // value for a UTC setter and its local time for a local one, and each of the four is the
+    // argument or, when it was not given, the field of t. The day and the fields of t are taken
+    // here, before an argument is converted: converting one can run script that sets the Date.
+    PlainGregorianDateTime local;
+    int32_t utcDay = 0;
+    TimeSetterFields fields;
+    if (inputTimeType == TimeType::UTCTime) {
+        // No time zone offset is involved, so the day number and the time within the day come
+        // straight from the time value. Its year, month and day of the month are not needed.
+        ASSERT(std::abs(milli) <= WTF::maxECMAScriptTime);
+        WTF::Int64Milliseconds utcTime(static_cast<int64_t>(milli));
+        utcDay = WTF::msToDays(utcTime);
+        int32_t timeInDay = WTF::timeInDay(utcTime, utcDay);
+        fields = {
+            static_cast<double>(timeInDay / WTF::Int64Milliseconds::msPerHour),
+            static_cast<double>(timeInDay / WTF::Int64Milliseconds::msPerMinute % WTF::Int64Milliseconds::minutesPerHour),
+            static_cast<double>(timeInDay / WTF::Int64Milliseconds::msPerSecond % WTF::Int64Milliseconds::secondsPerMinute),
+            static_cast<double>(timeInDay % WTF::Int64Milliseconds::msPerSecond)
+        };
+    } else {
+        // The local fields are the ones the getters of this Date return: its broken-down form,
+        // cached or shared. Taking them from the time value needs another look-up of the time
+        // zone offset. That scans the offset cache when other Dates were read in between, and
+        // it can disagree with the getters until oven-sh/WebKit#618.
+        local = thisDateObj->gregorianDateTime(cache);
+        if (!local) {
+            applyToNumberToOtherwiseIgnoredArguments(globalObject, callFrame, numArgsToUse);
+            RETURN_IF_EXCEPTION(scope, { });
+            return JSValue::encode(jsNaN());
+        }
+        fields = { static_cast<double>(local.hour()), static_cast<double>(local.minute()), static_cast<double>(local.second()), milli - floor(milli / msPerSecond) * msPerSecond };
     }
-
-    TimeSetterFields fields { static_cast<double>(other.hour()), static_cast<double>(other.minute()), static_cast<double>(other.second()), ms };
     fillStructuresUsingTimeArgs(globalObject, callFrame, numArgsToUse, &fields);
     RETURN_IF_EXCEPTION(scope, { });
 
@@ -750,8 +770,12 @@ static EncodedJSValue setNewValueFromTimeArgs(JSGlobalObject* globalObject, Call
         return JSValue::encode(jsNaN());
     }
 
-    double day = dateToDaysFrom1970(other.year(), other.month(), other.monthDay());
-    double result = timeClip(cache.localTimeToMS(makeDate(day, time), inputTimeType));
+    double date;
+    if (inputTimeType == TimeType::UTCTime)
+        date = makeDate(utcDay, time);
+    else
+        date = cache.localTimeToMS(makeDate(dateToDaysFrom1970(local.year(), local.month(), local.monthDay()), time), TimeType::LocalTime);
+    double result = timeClip(date);
     thisDateObj->setInternalNumber(result);
     return JSValue::encode(jsNumber(result));
 }
