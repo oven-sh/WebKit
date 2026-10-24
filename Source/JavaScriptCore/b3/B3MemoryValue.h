@@ -68,7 +68,7 @@ public:
     const HeapRange& fenceRange() const { return m_fenceRange; }
     void setFenceRange(const HeapRange& range) { m_fenceRange = range; }
 
-    Mutability readsMutability() const { return m_readsMutability; }
+    Mutability readsMutability() const { return m_readsMutability == Mutability::Immutable && addressMayBeInStackSlot() ? Mutability::Mutable : m_readsMutability; }
     void setReadsMutability(Mutability value) { m_readsMutability = value; }
 
     bool controlDependent() const { return m_controlDependent; }
@@ -106,6 +106,7 @@ private:
     friend class Procedure;
     friend class Value;
 
+    bool LEGACY_NODELETE addressMayBeInStackSlot() const;
     inline bool LEGACY_NODELETE isLegalOffsetImpl(int32_t offset) const;
     bool LEGACY_NODELETE isLegalOffsetImpl(int64_t offset) const;
 

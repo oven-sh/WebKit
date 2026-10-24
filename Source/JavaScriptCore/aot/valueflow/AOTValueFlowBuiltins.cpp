@@ -1235,11 +1235,8 @@ private:
         m_context.mark(m_objectsMadeBySpecies, { ObjectMutation::AddProperty, ObjectMutation::StoreAfterCreation });
 
         // Native code fills what the species constructor has made: it defines the elements one by one and stores the length, which may run a setter of the program.
-        auto goesIntoResult = [](const BuiltinTransfer& transfer) {
-            return transfer.to.kind == BuiltinPlaceKind::ResultSlot || transfer.to.kind == BuiltinPlaceKind::ResultField;
-        };
         ClimbingSet made = known(m_objectsMadeBySpecies);
-        if (std::ranges::none_of(m_overload->flow.transfers, goesIntoResult) && m_context.meet(made, m_universe.objects())) {
+        if (m_context.meet(made, m_universe.objects())) {
             m_context.add(escaped(), made);
             m_context.mark(made, ObjectMutation::StoreOfOtherType);
             m_context.add(m_context.written(made, elementsName), unknownValue(m_context, ValueFlowUnknownSource::ContentsOfEscapedObject));

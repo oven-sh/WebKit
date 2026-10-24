@@ -525,6 +525,11 @@ static void testPlacesOfKeyedValues()
         StubRun asked = reads.runner.run(inByValCached(question), { receiver.address(), key.address() });
         AOT_TEST_CHECK(!asked.calledOperation && !asked.result);
     }
+    // A read of a string fills a place as well. `in` throws for a string, so no place answers it.
+    receiver.setHeader(PropertyReads::structureID, StringType);
+    for (PresenceQuestion question : { PresenceQuestion::In, PresenceQuestion::HasOwn })
+        AOT_TEST_CHECK(reads.runner.run(inByValCached(question), { receiver.address(), key.address() }).calledOperation);
+    receiver.setHeader(PropertyReads::structureID, FinalObjectType);
     ++instance.propertyCaches.absenceFilterGeneration;
     AOT_TEST_CHECK(read(key).calledOperation);
 }

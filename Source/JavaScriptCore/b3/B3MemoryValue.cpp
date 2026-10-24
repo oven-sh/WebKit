@@ -40,6 +40,32 @@ bool MemoryValue::isLegalOffsetImpl(int64_t offset) const
     return WTF::isRepresentableAs<OffsetType>(offset) && isLegalOffset(static_cast<OffsetType>(offset));
 }
 
+// A loop fills the same stack slot again on every turn, so a field that never changes in a cell that is filled once does change here.
+static bool mayBeInStackSlot(const Value* pointer, unsigned depth)
+{
+    if (!depth)
+        return true;
+    switch (pointer->opcode()) {
+    case SlotBase:
+        return true;
+    case Identity:
+    case Opaque:
+        return mayBeInStackSlot(pointer->child(0), depth - 1);
+    case Add:
+    case Sub:
+        return mayBeInStackSlot(pointer->child(0), depth - 1) || mayBeInStackSlot(pointer->child(1), depth - 1);
+    case Select:
+        return mayBeInStackSlot(pointer->child(1), depth - 1) || mayBeInStackSlot(pointer->child(2), depth - 1);
+    default:
+        return false;
+    }
+}
+
+bool MemoryValue::addressMayBeInStackSlot() const
+{
+    return mayBeInStackSlot(lastChild(), 6);
+}
+
 Type MemoryValue::accessType() const
 {
     if (isLoad())
