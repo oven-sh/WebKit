@@ -41,7 +41,12 @@ class JSScope;
 class JSValue;
 
 struct CallData {
-    enum class Type : uint8_t { None, Native, JS };
+    // Pointer-sized so that no padding follows it. A CallData is a local of whoever makes a call, and
+    // the stack is scanned conservatively. With a one-byte type the other seven bytes of its word kept
+    // what the slot held before: over a pointer to a live cell that is a new pointer, into whichever
+    // cell lies at (the old address & ~0xff) + type, and that cell was marked for as long as the frame
+    // stayed on the stack.
+    enum class Type : uintptr_t { None, Native, JS };
     Type type { Type::None };
 
     CallData() { } // Needed for the anonymous union below.
