@@ -123,6 +123,7 @@ static Representation wantedByKind(const Program& program, const Function& funct
     case OperandKind::KeyOrder:
     case OperandKind::FlatString:
     case OperandKind::CodeAddress:
+    case OperandKind::SourcePlan:
     case OperandKind::BuilderCursor:
         return representationOf(*opaqueKindOf(kind));
     }

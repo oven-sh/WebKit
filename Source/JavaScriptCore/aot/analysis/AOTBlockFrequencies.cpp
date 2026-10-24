@@ -499,17 +499,23 @@ void BlockFrequencies::computeClassesOfBlocks() const
     const BlockFrequency* edges = m_edges.span().data();
     BlockFrequency* classes = m_blocks.mutableSpan().data();
     Vector<BlockFrequency, 128> likeliestWayIn(FillWith { }, m_blocks.size(), BlockFrequency::Rare);
-    for (uint32_t orderIndex = 0; orderIndex < order.size(); ++orderIndex) {
-        unsigned block = order[orderIndex].index();
-        if (orderIndex)
-            classes[block] = rarerOf(likeliestWayIn[block], classes[block]);
-        BlockFrequency classOfBlock = classes[block];
-        for (uint32_t edge = firstSuccessor[block]; edge < firstSuccessor[block + 1]; ++edge) {
-            BlockID target = successors[edge];
-            if (m_cfg.reversePostOrderIndex(target) <= orderIndex)
-                continue;
-            BlockFrequency& wayIn = likeliestWayIn[target.index()];
-            wayIn = moreFrequentOf(wayIn, rarerOf(classOfBlock, edges[edge]));
+    // A latch is no likelier than its header. In a cycle with several entries, a loop and the copy of its failed tests, the order may reach a join through the copy first: the likely way in comes from a block behind it.
+    // The sweeps end: a way in only gets likelier, and there are three classes.
+    for (bool hasLikelierWayInFromBehind = true; std::exchange(hasLikelierWayInFromBehind, false);) {
+        for (uint32_t orderIndex = 0; orderIndex < order.size(); ++orderIndex) {
+            unsigned block = order[orderIndex].index();
+            if (orderIndex)
+                classes[block] = rarerOf(likeliestWayIn[block], classOfWeightLevel(m_weights[block]));
+            BlockFrequency classOfBlock = classes[block];
+            for (uint32_t edge = firstSuccessor[block]; edge < firstSuccessor[block + 1]; ++edge) {
+                BlockID target = successors[edge];
+                BlockFrequency& wayIn = likeliestWayIn[target.index()];
+                BlockFrequency wayInFromHere = rarerOf(classOfBlock, edges[edge]);
+                if (!isRarerThan(wayIn, wayInFromHere))
+                    continue;
+                wayIn = wayInFromHere;
+                hasLikelierWayInFromBehind |= m_cfg.reversePostOrderIndex(target) <= orderIndex;
+            }
         }
     }
 }
@@ -519,7 +525,8 @@ public:
     using Forest = BlockCycles::Forest;
 
     Counts(const BlockFrequencies& owner, std::span<double> frequencies)
-        : m_forest(owner.cycles().forest())
+        : m_cfg(owner.m_cfg)
+        , m_forest(owner.cycles().forest())
         , m_postOrder(m_forest.nodesInPostOrder().span())
         , m_successors(owner.m_cfg.successorsOfAllBlocks().data())
         , m_firstSuccessor(owner.m_cfg.firstSuccessorOfBlocks().data())
@@ -550,9 +557,9 @@ public:
             bool hasCycleSeldomGoneRound = false;
             for (unsigned cycle = 0; cycle < m_forest.size(); ++cycle) {
                 double returning = m_returningShares[cycle];
-                if (m_forest.depth(cycle) != depth || returning > frequencyConstants.unlikelyEdgeShare)
+                if (m_forest.depth(cycle) != depth || (returning > frequencyConstants.unlikelyEdgeShare && !comesRoundThroughUnlikelyBlocksAlone(cycle)))
                     continue;
-                m_iterations[cycle] = 1 / (1 - returning);
+                m_iterations[cycle] = returning < 1 ? std::min(frequencyConstants.iterationsPerLoop, 1 / (1 - returning)) : frequencyConstants.iterationsPerLoop;
                 hasCycleSeldomGoneRound = true;
             }
             if (hasCycleSeldomGoneRound)
@@ -569,6 +576,15 @@ private:
     };
 
     double weightOfEdge(uint32_t edge) const { return weightOfLevel[weightLevelOfEdge(m_weights[m_successors[edge].index()], m_edges[edge])]; }
+
+    // A loop and the copy of its failed tests that comes back in front of it: no loop of the program.
+    bool comesRoundThroughUnlikelyBlocksAlone(unsigned cycle) const
+    {
+        BlockID header = m_forest[cycle].header();
+        return m_facts[header.index()].isNormal() && std::ranges::none_of(m_cfg.incomingEdges(header), [&](Edge edge) {
+            return m_forest.contains(cycle, edge.from) && m_facts[edge.from.index()].isNormal();
+        });
+    }
 
     double leavingShare(unsigned cycleOfSource, BlockID to) const
     {
@@ -614,9 +630,10 @@ private:
             OutgoingEdge edge { successor, hasCycles ? leavingShare(cycleOfBlock, successor) : 1, 0, m_edges[index] == BlockFrequency::Rare };
             if (edge.isRare)
                 rare += edge.share * constants.rareEdgeShare;
-            else if (edge.share < 1)
+            else if (edge.share < 1) {
+                edge.share *= weightOfEdge(index);
                 leaving += edge.share;
-            else {
+            } else {
                 edge.weight = weightOfEdge(index);
                 stayingWeight += edge.weight;
             }
@@ -692,6 +709,7 @@ private:
         }
     }
 
+    const CFG& m_cfg;
     const Forest& m_forest;
     std::span<const BlockID> m_postOrder;
     const BlockID* m_successors;

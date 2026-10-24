@@ -22,12 +22,12 @@ layout L3 name="Inner" fields=[{key="x" declared={type=number}}]
 # CHECK-NEXT: [[zero]]: 0 = Integer
 # CHECK-NEXT: [[accepted]]: anything = ElemGet [[pair]], [[zero]]
 # CHECK: Branch {{*}} -> taken [[isAccepted]](), notTaken [[isRefused]]()
-# CHECK-NEXT: [[isAccepted]]():
+# CHECK-NEXT: [[isAccepted]]() frequency=Rare:
 # CHECK-NEXT: [[one]]: 1 = Integer integer=1
 # CHECK-NEXT: [[copyOfTree]]: anything = ElemGet [[pair]], [[one]]
 # CHECK: [[isRefused]]() frequency=Rare:
 # CHECK-NEXT: Jump -> next [[rejected]]()
-# CHECK: ([[treeObject]]: object):
+# CHECK: ([[treeObject]]: object) frequency=Rare:
 # CHECK-NEXT: = TypeTest [[n]] testedType=number
 # CHECK: = CallDirect [[inner]] function=[[validatorOfInner]]
 # CHECK-NOT: CompilerHelpersInterpretNode

@@ -189,6 +189,36 @@ static bool advancesLastIndex(RegExpMatchForm form, RegExp* regExp)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// What String.prototype.match answers for a global RegExp whose first match in the subject is known.
+static JSValue collectMatchesFrom(JSGlobalObject* globalObject, VM& vm, RegExpObject* object, JSString* subject, MatchResult match)
+{
+    // Beyond this RegExpObject::matchGlobal() counts the matches before it creates them.
+    constexpr unsigned maxMatchesCreatedUncounted = 100000;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RegExp* regExp = object->regExp();
+    object->setLastIndex(globalObject, 0);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto source = subject->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSArray* array = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    globalObject->regExpGlobalData().recordMatch(vm, globalObject, regExp, subject, match, false);
+    unsigned count = 0;
+    do {
+        if (count == maxMatchesCreatedUncounted) [[unlikely]]
+            RELEASE_AND_RETURN(scope, regExpMatchFast(globalObject, object, subject));
+        array->putDirectIndex(globalObject, count++, jsSubstringOfResolved(vm, subject, match.start, match.end - match.start));
+        RETURN_IF_EXCEPTION(scope, { });
+        uint64_t start = match.empty() ? advanceStringIndex(source, source->length(), match.end, regExp->eitherUnicode()) : match.end;
+        if (start > source->length())
+            break;
+        int* offsets;
+        match = globalObject->regExpGlobalData().performMatch(globalObject, regExp, subject, source, static_cast<int>(start), &offsets);
+        RETURN_IF_EXCEPTION(scope, { });
+    } while (match);
+    return array;
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTRegExpMatchLiteral, EncodedJSValue, (Instance* instance, JSCell* regExp, JSCell* string, uint32_t regExpRecord, uint32_t form))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTRegExpMatchLiteral);
@@ -196,17 +226,17 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRegExpMatchLiteral, EncodedJSValue, (Instan
     auto* subject = cellArgument<JSString>(string, Entry::operationAOTRegExpMatchLiteral);
     RegExp* cell = resolveMatchedRegExp(vm, object, RegExpRecordID(regExpRecord));
 
-    auto matchForm = static_cast<RegExpMatchForm>(form);
-    if (matchForm == RegExpMatchForm::Match) {
-        if (cell->global())
-            OPERATION_RETURN(scope, JSValue::encode(regExpMatchFast(globalObject, object, subject)));
-        matchForm = RegExpMatchForm::Exec;
-    }
-
     ASSERT(static_cast<size_t>(cell->offsetVectorSize()) <= std::max<size_t>(vm.aotState().image->header().counts.maxRegExpOutputSize, 2 * (VMState::maxGroupsInRegExpMatchOutput + 1)));
     auto offsets = unsafeMakeSpan(vm.aotState().regExpMatchOutput.get(), static_cast<size_t>(cell->offsetVectorSize()));
     MatchResult result(offsets[0], offsets[1]);
     RELEASE_ASSERT(result.end >= result.start);
+
+    auto matchForm = static_cast<RegExpMatchForm>(form);
+    if (matchForm == RegExpMatchForm::Match) {
+        if (cell->global())
+            OPERATION_RETURN(scope, JSValue::encode(collectMatchesFrom(globalObject, vm, object, subject, result)));
+        matchForm = RegExpMatchForm::Exec;
+    }
 
     JSValue value = createMatchValue(instance, globalObject, vm, matchForm, { cell, subject, result, offsets });
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());

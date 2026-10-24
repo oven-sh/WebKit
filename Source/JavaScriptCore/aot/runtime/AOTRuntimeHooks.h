@@ -46,6 +46,7 @@ void didCreateRealm(JSGlobalObject*);
 void didCreateClass(JSGlobalObject*, const LazyClassStructure&, Structure*, JSObject* prototype, JSObject* constructorOrNull);
 void didCreateStaticProperty(JSObject* holder, UniquedStringImpl* key, JSValue);
 void didChangePrototypeChain(VM&, JSObject* changed, UniquedStringImpl* nameOrNull);
+void didFlattenObjectOnPrototypeChain(VM&, JSObject* flattened);
 void didFlattenStructure(VM&, Structure*);
 void didChangeMicrotaskQueueing(VM&);
 void didChangeGlobalLexicalBindings(JSGlobalObject*);

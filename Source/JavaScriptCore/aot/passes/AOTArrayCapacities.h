@@ -130,6 +130,7 @@ private:
 
     bool tryAddLoopSites(CapacityPlan&, const PlannedLiteral&, Vector<AppendSite, 2>&);
     bool appendsOncePerIteration(const PlannedLiteral&, const AppendSite&);
+    bool isEnteredOnLikelyPathsFrom(BlockID, const NaturalLoop&);
     bool runsOncePerIteration(const NaturalLoop&, BlockID);
     bool areAlternativesTo(BlockID header, const PlannedLiteral&, std::span<const AppendSite> others);
 

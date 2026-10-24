@@ -223,7 +223,7 @@ static std::optional<OwnKeyWalkPlan> planUnchangedAllocationWalk(FunctionPassCon
 
     ValueID allocation = context.analyses.sameObjectThroughCasts(site.source);
     LayoutID layout = context.function.at(allocation).layout();
-    if (!hasOrdinaryOwnKeys(context.program.at(layout).kind) || !unchanged.contains(allocation, { site.block, site.index }))
+    if (!hasOrdinaryOwnKeys(context.program.at(layout).kind) || (!unchanged.contains(allocation, { site.block, site.index }) && !context.build.isSabotaged(Sabotage::WalkedLiteralsAreAsTheyWereMade)))
         return std::nullopt;
 
     OwnKeyWalkPlan plan { .needsShapeTest = false, .needsKeyOrderTest = false, .needsOriginalCall = false, .unchangedAllocation = allocation };

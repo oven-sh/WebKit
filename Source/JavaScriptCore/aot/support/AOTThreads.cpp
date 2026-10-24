@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCurrentWork.h"
 #include "AOTPhaseTimes.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
@@ -116,6 +117,7 @@ public:
         void (*run)(void* argument) { nullptr };
         void* argument { nullptr };
         TaskPriority priority { TaskPriority::Foreground };
+        InheritedWork work;
     };
 
     static Ref<RestingThreads> create(unsigned numberOfSeats, Seconds restTime)
@@ -248,6 +250,7 @@ private:
     static void run(Task task)
     {
         TaskPriority previousPriority = std::exchange(t_currentPriority, task.priority);
+        CurrentWorkScope workScope(task.work);
         bool isCounted = InstructionCounts::hasBegun() && !t_isCountedAsBusy;
         if (isCounted) [[unlikely]]
             setCurrentThreadIsBusy(true);
@@ -373,7 +376,7 @@ bool ParallelLoops::shouldYield(TaskPriority priority) const
 
 void ParallelLoops::schedule(TaskPriority priority, void (*run)(void* argument), void* argument) const
 {
-    RestingThreads::Task task { run, argument, priority };
+    RestingThreads::Task task { run, argument, priority, InheritedWork::ofCurrentThread() };
     if (m_restingThreads->tryHandOver(task))
         return;
 

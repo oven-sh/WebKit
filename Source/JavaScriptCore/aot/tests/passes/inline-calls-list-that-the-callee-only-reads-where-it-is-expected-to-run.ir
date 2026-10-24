@@ -3,7 +3,7 @@
 # allocation goes away there and sinks into the rare code, which is worth a copy where a loop repeats the call. Not outside a loop, not where the likely code of the callee stores the list,
 # and not for a list that the program itself makes and hands to an ordinary parameter.
 # FORM: Prepared
-# OPTIONS: heat=OnlyLoopsAreHot
+# OPTIONS: heat=OnlyLoopsAreHot limit=InlineBudgetHotBytes:80
 # RUN: pass InlineCalls
 # STATISTIC: InlineBenefitSunkAllocation = 1
 

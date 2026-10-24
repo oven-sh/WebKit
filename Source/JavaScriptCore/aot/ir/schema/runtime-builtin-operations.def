@@ -116,7 +116,7 @@ runtime NewRegExp : JSCell* (JSCell* pattern, uint32_t flags) ; RuntimeCreatesSt
 runtime RegExpFlags, RegExpSource : JSCell* (JSCell* regExp) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime StringReplaceString, StringReplaceAllString : JSCell* (JSCell* string, JSCell* search, JSCell* replacement) ; RuntimeCreatesString
 runtime StringReplaceRegExp, StringReplaceAllRegExp : JSCell* (JSCell* string, JSCell* regExp, EncodedJSValue replacement) ; unknownCode
-runtime StringReplaceRegExpString : JSCell* (JSCell* string, JSCell* regExp, JSCell* replacement) ; unknownCode
+runtime StringReplaceRegExpString : JSCell* (JSCell* string, JSCell* regExp, JSCell* replacement, uint32_t oneBehindStartOfFirstMatch) ; unknownCode
 runtime StringSplitString : JSCell* (JSCell* string, JSCell* separator, uint32_t limit) ; RuntimeCreatesString
 runtime StringSplitRegExp : JSCell* (JSCell* string, JSCell* regExp, uint32_t limit) ; unknownCode
 runtime StringMatchRegExp, StringSearchRegExp : EncodedJSValue (JSCell* string, JSCell* regExp) ; unknownCode

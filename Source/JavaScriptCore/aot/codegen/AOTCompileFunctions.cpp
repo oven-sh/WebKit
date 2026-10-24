@@ -13,6 +13,7 @@
 #include "AOTChooseCallingConventions.h"
 #include "AOTCodeDescription.h"
 #include "AOTCodeSizeEstimate.h"
+#include "AOTCurrentWork.h"
 #include "AOTElideStackChecks.h"
 #include "AOTFunctionCodeGenerator.h"
 #include "AOTFunctionKinds.h"
@@ -353,8 +354,14 @@ void compileFunctions(const CodeGenerationWorker& worker, const CodeGenerationIn
     Vector<B3::Procedure*, 16> procedures;
     const bool comparesWithBackEnd = worker.build.options().validatesBackEnd;
     BitVector isForwardingCode(ids.size());
+    CurrentWorkScope workScope(inputs.program, FunctionID());
+    currentWork().setPass(PassID::GenerateCode);
     for (size_t index = 0; index < ids.size(); ++index) {
         FunctionID id = ids[index];
+        FunctionID idAsRead = findFunctionAsRead(&inputs.program, id);
+        currentWork().setFunction(idAsRead);
+        if (worker.build.recordedOptions().sabotage) [[unlikely]]
+            stopWhereSabotaged(worker.build, inputs.program, inputs.program.at(id), PassID::GenerateCode);
         results[index] = { };
         if (std::optional<ForwardingPlan> plan = planForwarding(worker, inputs, id)) {
             results[index] = generateForwardingCode(worker, inputs, id, *plan, totals);
@@ -367,15 +374,19 @@ void compileFunctions(const CodeGenerationWorker& worker, const CodeGenerationIn
             }
         }
         auto generator = FunctionCodeGenerator::create(worker, inputs, id, totals);
-        if (generator)
+        if (generator) {
+            generator->procedure().setSubjectOfClient(idAsRead.index() + 1);
             procedures.append(&generator->procedure());
+        }
         generators.append(WTF::move(generator));
     }
 
     B3::prepareForGeneration(procedures.span());
+    currentWork().leaveBackEnd();
 
     for (size_t index = 0; index < ids.size(); ++index) {
         if (generators[index]) {
+            currentWork().setFunction(FunctionID(generators[index]->procedure().subjectOfClient() - 1));
             CompiledCode code = generators[index]->finish();
             RELEASE_ASSERT(!isX86_64() || !isForwardingCode.quickGet(index) || isSameCode(results[index], code));
             results[index] = WTF::move(code);

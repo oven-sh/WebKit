@@ -542,8 +542,9 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
     // However often the caller runs, this part of it is not expected to.
     if (caller.at(block).frequency != BlockFrequency::Normal && !isCold(heat))
         heat = HeatClass::Cold;
-    // In a loop within a loop of the caller the call runs more often, for each time that the caller runs, than a loop goes round.
-    if (heat == HeatClass::Warm && context.inputs.heat.callsInLoopsAreHot() && context.analyses.blockFrequencies().frequencyOf(block) >= frequencyConstants.iterationsPerLoop)
+    // In a loop of the caller the call runs more often than the caller. A caller that runs once repeats it often only in a loop within a loop.
+    double leastFrequencyOfHotCall = context.inputs.heat.of(program, context.id) == HeatClass::RunsOnce ? frequencyConstants.iterationsPerLoop : HeatModel::minWeightOfCallInLoop;
+    if (heat == HeatClass::Warm && context.inputs.heat.callsInLoopsAreHot() && context.analyses.blockFrequencies().frequencyOf(block) >= leastFrequencyOfHotCall)
         heat = HeatClass::Hot;
 
     // How often the caller is entered is a product along paths of calls. A loop around the call is in the text.

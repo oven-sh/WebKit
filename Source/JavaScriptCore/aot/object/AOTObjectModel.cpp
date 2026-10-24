@@ -30,6 +30,7 @@ ObjectModel::~ObjectModel() = default;
 
 ObjectModelCaches::ObjectModelCaches(State& state)
     : movePlans(state)
+    , sourcePlans(state)
     , assignmentPlans(state)
     , propertyLists(state)
     , classStructures(state)

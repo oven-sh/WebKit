@@ -224,8 +224,10 @@ static NEVER_INLINE void createClassObject(Closure* classObject)
 void Closure::adoptBoundFunctionStructure(VM& vm)
 {
     ClosureTable& closures = state().objects->closures;
-    if (structure() == closures.closureStructureFor(vm, function()))
-        setStructure(vm, closures.boundClosureStructure(vm, function()));
+    Structure* unbound = closures.closureStructureFor(vm, function());
+    if (structure() != unbound)
+        return;
+    setStructure(vm, closures.boundClosureStructure(vm, function()));
 }
 
 void Closure::ensureClassObject(VM&)

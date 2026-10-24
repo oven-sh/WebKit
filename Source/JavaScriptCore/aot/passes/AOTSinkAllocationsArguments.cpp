@@ -598,7 +598,10 @@ Execution ObjectInterpreter::executeCallOnArguments(ValueID call)
         return listArguments(call);
     if (value.opcode == Opcode::CallBuiltin && value.builtinCallForm() == BuiltinCallForm::List)
         return passListedElements(call);
-    if (value.opcode != Opcode::CallBuiltin || (value.builtinCallForm() != BuiltinCallForm::Whole && value.builtinCallForm() != BuiltinCallForm::AnyReceiver))
+    if (value.opcode != Opcode::CallBuiltin)
+        return executeOther(call);
+    bool forwardsAnyReceiver = value.builtinCallForm() == BuiltinCallForm::AnyReceiver && forwardsCallOfAnyReceiver(program().builtins().at(value.overload()));
+    if (value.builtinCallForm() != BuiltinCallForm::Whole && !forwardsAnyReceiver)
         return executeOther(call);
 
     BuiltinCall builtinCall = builtinCallOf(program(), value);

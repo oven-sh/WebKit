@@ -344,6 +344,7 @@ void FunctionVerifier::verifyOperandKind(BlockID block, ValueID user, uint32_t, 
     case OperandKind::KeyOrder:
     case OperandKind::FlatString:
     case OperandKind::CodeAddress:
+    case OperandKind::SourcePlan:
     case OperandKind::BuilderCursor:
         hasKind = type.isOpaque(*opaqueKindOf(kind));
         break;

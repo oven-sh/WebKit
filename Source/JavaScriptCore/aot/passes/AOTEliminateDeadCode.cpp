@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTCurrentWork.h"
 #include "AOTEffects.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfOperands.h"
@@ -588,6 +589,8 @@ private:
 
 PassOutcome eliminateDeadCode(FunctionPassContext& context)
 {
+    if (context.build.recordedOptions().sabotage) [[unlikely]]
+        stopWhereSabotaged(context.build, context.program, context.function, PassID::EliminateDeadCode);
     DeadCodeEliminator eliminator(context);
     PassOutcome outcome = eliminator.run();
     if (outcome == PassOutcome::Changed) {

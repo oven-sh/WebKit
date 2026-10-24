@@ -476,6 +476,69 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCloneObjectAs, JSCell*, (Instance*
     OPERATION_RETURN(scope, copy);
 }
 
+static int32_t placeOf(PropertyOffset offset)
+{
+    if (isInlineOffset(offset))
+        return static_cast<int32_t>(JSObject::offsetOfInlineStorage() + offsetInInlineStorage(offset) * sizeof(EncodedJSValue));
+    return static_cast<int32_t>(offsetInButterfly(offset) * static_cast<ptrdiff_t>(sizeof(EncodedJSValue)));
+}
+
+static SourcePlans::Words createSourcePlan(VM& vm, Instance& instance, JSCell* source, const CloneAsRequest& request)
+{
+    SourcePlans::Words plan = SourcePlans::createUnusable(request.count);
+    Structure* structure = source->structure();
+    if (!isPlainDataObject(source) || structure->realm() != instance.globalObject)
+        return plan;
+    ObjectModel& objects = *instance.state->objects;
+    const LayoutData& layout = objects.layouts.layoutForShape(request.shape);
+    if (layout.kind() != LayoutKind::Record)
+        return plan;
+
+    constexpr uint32_t notRequested = UINT32_MAX;
+    Vector<uint32_t, 16> memberOfField(FillWith { }, layout.numberOfFields, notRequested);
+    for (uint32_t member = 0; member < request.count; ++member)
+        memberOfField[request.fields[member]] = member;
+
+    uint32_t order = unorderedOrderWord;
+    bool everyKeyIsRequested = true;
+    structure->forEachProperty(vm, [&](const auto& entry) {
+        const FieldData* field = objects.layouts.field(vm, layout, entry.key());
+        uint32_t member = field && field->slot.representation() != SlotRepresentation::DeferredClosure ? memberOfField[layout.indexOf(*field)] : notRequested;
+        std::optional<uint32_t> next = order;
+        if (member != notRequested && !layout.keysAreNeverEnumerated)
+            next = objects.keyOrders.orderAfterCreating(layout, order, layout.indexOf(*field));
+        if (member == notRequested || !next) {
+            everyKeyIsRequested = false;
+            return false;
+        }
+        order = *next;
+        plan[SourcePlan::firstPlaceWord + member] = static_cast<uint32_t>(placeOf(entry.offset()));
+        return true;
+    });
+    if (!everyKeyIsRequested)
+        return plan;
+    for (uint32_t member = 0; member < request.count; ++member) {
+        bool isAbsent = plan[SourcePlan::firstPlaceWord + member] == static_cast<uint32_t>(SourcePlan::absent);
+        if (isAbsent && !(layout.fields()[request.fields[member]].flags & fieldIsOptional))
+            return plan;
+    }
+    plan[SourcePlan::orderWord] = order;
+    plan[SourcePlan::isUsableWord] = 1;
+    return plan;
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindSourcePlan, void*, (Instance* instance, JSCell* source, uint32_t requestOffset))
+{
+    SourcePlans& plans = instance->state->objects->caches->sourcePlans;
+    Structure* structure = source->structure();
+    if (const uint32_t* plan = plans.find(structure, requestOffset)) [[likely]]
+        return const_cast<uint32_t*>(plan);
+    VM& vm = *instance->vm;
+    DeferGCForAWhile deferGC(vm);
+    const CloneAsRequest& request = requestAt<CloneAsRequest>(instance, requestOffset);
+    return const_cast<uint32_t*>(plans.add(structure, requestOffset, request.count, createSourcePlan(vm, *instance, source, request)));
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTIsPlainDataObject, size_t, (Instance*, EncodedJSValue value))
 {
     return isPlainDataObject(JSValue::decode(value));

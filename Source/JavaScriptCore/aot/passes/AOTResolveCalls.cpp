@@ -228,7 +228,7 @@ bool CallResolver::mayHavePlan(const Value& value) const
     }
     case Opcode::CallBuiltin:
         if (value.builtinCallForm() == BuiltinCallForm::AnyReceiver)
-            return m_program.at(value.type).isAnything();
+            return m_program.at(value.type).isAnything() && forwardsCallOfAnyReceiver(m_program.builtins().at(value.overload()));
         if (value.builtinCallForm() != BuiltinCallForm::Whole)
             return false;
         return m_program.at(value.type).isAnything() || m_program.builtins().at(value.overload()).builtin == Builtins::FunctionPrototypeBind;

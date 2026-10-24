@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTOperationArguments.h"
+#include "AOTVMState.h"
 #include "AOTVector.h"
 #include "InterpreterInlines.h"
 #include "JSCInlines.h"
@@ -220,7 +221,146 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringReplaceAllRegExp, JSCell*, (Instance*
     OPERATION_RETURN(scope, replaceMatches(globalObject, vm, subject, regExpObject, JSValue::decode(replacement)));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTStringReplaceRegExpString, JSCell*, (Instance* instance, JSCell* string, JSCell* regExp, JSCell* replacementCell))
+static JSString* replaceOneMatch(JSGlobalObject* globalObject, VM& vm, JSString* string, StringView source, RegExp* regExp, const String& replacement, MatchResult match, const int* offsets)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (replacement.isEmpty()) {
+        if (!match.start)
+            return jsSubstringOfResolved(vm, string, match.end, source.length() - match.end);
+        if (match.end == source.length())
+            return jsSubstringOfResolved(vm, string, 0, match.start);
+    }
+    StringBuilder substituted(OverflowPolicy::RecordOverflow);
+    StringView inserted = replacement;
+    if (size_t dollar = replacement.find('$'); dollar != notFound) {
+        substituteBackreferencesSlow(substituted, replacement, source, offsets, regExp, dollar);
+        if (substituted.hasOverflowed()) [[unlikely]]
+            OUT_OF_MEMORY(globalObject, scope);
+        inserted = substituted;
+    }
+    auto result = tryMakeString(source.left(match.start), inserted, source.substring(match.end));
+    if (!result) [[unlikely]]
+        OUT_OF_MEMORY(globalObject, scope);
+    RELEASE_AND_RETURN(scope, jsString(vm, WTF::move(result)));
+}
+
+// Leaves the next match in match. Without one match is false.
+static ALWAYS_INLINE void findMatchBehind(JSGlobalObject* globalObject, RegExp* regExp, JSString* string, StringView source, MatchResult& match)
+{
+    uint64_t start = match.empty() ? advanceStringIndex(source, source.length(), match.end, regExp->eitherUnicode()) : match.end;
+    if (start > source.length()) {
+        match = MatchResult::failed();
+        return;
+    }
+    int* offsets;
+    match = globalObject->regExpGlobalData().performMatch(globalObject, regExp, string, source, static_cast<int>(start), &offsets);
+}
+
+static JSString* removeEveryMatch(JSGlobalObject* globalObject, VM& vm, JSString* string, StringView source, RegExp* regExp, MatchResult match)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Vector<Range<int32_t>, 64> kept;
+    size_t endOfLastMatch = 0;
+    do {
+        if (endOfLastMatch < match.start) {
+            if (!kept.tryConstructAndAppend(endOfLastMatch, match.start)) [[unlikely]]
+                OUT_OF_MEMORY(globalObject, scope);
+        }
+        endOfLastMatch = match.end;
+        findMatchBehind(globalObject, regExp, string, source, match);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    } while (match);
+    if (!endOfLastMatch)
+        return string;
+    if (endOfLastMatch < source.length()) {
+        if (!kept.tryConstructAndAppend(endOfLastMatch, source.length())) [[unlikely]]
+            OUT_OF_MEMORY(globalObject, scope);
+    }
+    RELEASE_AND_RETURN(scope, jsSpliceSubstrings(globalObject, string, source, kept.span()));
+}
+
+static JSString* replaceEveryMatchWithPlainText(JSGlobalObject* globalObject, VM& vm, JSString* string, StringView source, RegExp* regExp, JSString* replacement, const String& replacementText, MatchResult match)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Vector<Range<int32_t>, 16> kept;
+    size_t endOfLastMatch = 0;
+    int matches = 0;
+    do {
+        if (!kept.tryConstructAndAppend(endOfLastMatch, match.start)) [[unlikely]]
+            OUT_OF_MEMORY(globalObject, scope);
+        ++matches;
+        endOfLastMatch = match.end;
+        findMatchBehind(globalObject, regExp, string, source, match);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    } while (match);
+    if (endOfLastMatch < source.length()) {
+        if (!kept.tryConstructAndAppend(endOfLastMatch, source.length())) [[unlikely]]
+            OUT_OF_MEMORY(globalObject, scope);
+    }
+    RELEASE_AND_RETURN(scope, jsSpliceSubstringsWithSeparator(globalObject, string, source, kept.span().data(), kept.size(), replacement, replacementText, matches));
+}
+
+static JSString* replaceEveryMatchWithTemplate(JSGlobalObject* globalObject, VM& vm, JSString* string, StringView source, RegExp* regExp, const String& replacementText, size_t dollar, MatchResult match, const int* offsets)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    StringReplaceTemplateParts parts;
+    parseReplacementTemplate(parts, replacementText, regExp, dollar);
+
+    MatchResult first = match;
+    StringBuilder firstReplacement(OverflowPolicy::RecordOverflow);
+    appendReplacementUsingTemplate(firstReplacement, parts.span(), replacementText, source, offsets, regExp);
+    if (firstReplacement.hasOverflowed()) [[unlikely]]
+        OUT_OF_MEMORY(globalObject, scope);
+    findMatchBehind(globalObject, regExp, string, source, match);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (!match) {
+        auto resolved = string->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        RELEASE_AND_RETURN(scope, jsString(globalObject, resolved->substringSharingImpl(0, first.start), firstReplacement.toString(), resolved->substringSharingImpl(first.end)));
+    }
+
+    StringBuilder result(OverflowPolicy::RecordOverflow);
+    result.reserveCapacity(source.length());
+    result.append(source.left(first.start));
+    result.append(firstReplacement);
+    size_t endOfLastMatch = first.end;
+    offsets = regExp->ovectorSpan().data();
+    do {
+        result.append(source.substring(endOfLastMatch, match.start - endOfLastMatch));
+        appendReplacementUsingTemplate(result, parts.span(), replacementText, source, offsets, regExp);
+        if (result.hasOverflowed()) [[unlikely]]
+            OUT_OF_MEMORY(globalObject, scope);
+        endOfLastMatch = match.end;
+        findMatchBehind(globalObject, regExp, string, source, match);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    } while (match);
+    result.append(source.substring(endOfLastMatch));
+    if (result.hasOverflowed()) [[unlikely]]
+        OUT_OF_MEMORY(globalObject, scope);
+    RELEASE_AND_RETURN(scope, jsString(vm, result.toString()));
+}
+
+// The caller has searched the subject from its start for a RegExp that is not sticky, and offsets are those of the match. lastIndex of a global RegExp is 0.
+static JSString* replaceFromFirstMatch(JSGlobalObject* globalObject, VM& vm, JSString* string, RegExp* regExp, JSString* replacement, const String& replacementText, const int* offsets)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto source = string->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    MatchResult match(offsets[0], offsets[1]);
+    RELEASE_ASSERT(match.start <= match.end && match.end <= source->length());
+    globalObject->regExpGlobalData().recordMatch(vm, globalObject, regExp, string, match, false);
+    if (!regExp->global())
+        RELEASE_AND_RETURN(scope, replaceOneMatch(globalObject, vm, string, source, regExp, replacementText, match, offsets));
+    if (replacementText.isEmpty())
+        RELEASE_AND_RETURN(scope, removeEveryMatch(globalObject, vm, string, source, regExp, match));
+    size_t dollar = replacementText.find('$');
+    if (dollar == notFound)
+        RELEASE_AND_RETURN(scope, replaceEveryMatchWithPlainText(globalObject, vm, string, source, regExp, replacement, replacementText, match));
+    RELEASE_AND_RETURN(scope, replaceEveryMatchWithTemplate(globalObject, vm, string, source, regExp, replacementText, dollar, match, offsets));
+}
+
+// oneBehindStartOfFirstMatch is 0 where nobody has searched. Else the caller has searched the subject from its start; the code of a pattern has left the offsets of the match in the output of the VM.
+JSC_DEFINE_JIT_OPERATION(operationAOTStringReplaceRegExpString, JSCell*, (Instance* instance, JSCell* string, JSCell* regExp, JSCell* replacementCell, uint32_t oneBehindStartOfFirstMatch))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringReplaceRegExpString);
     auto* subject = cellArgument<JSString>(string, Entry::operationAOTStringReplaceRegExpString);
@@ -231,7 +371,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringReplaceRegExpString, JSCell*, (Instan
     CallData callData;
     auto replacementText = replacement->value(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
-    OPERATION_RETURN(scope, replaceUsingRegExpSearch(vm, globalObject, subject, regExpObject, callData, replacementText, replacement));
+    RegExp* pattern = regExpObject->regExp();
+    bool isAtom = pattern->hasValidAtom();
+    // Every place of a text that is sought as it stands and removed is found in one pass.
+    if (!oneBehindStartOfFirstMatch || (isAtom && pattern->global() && replacementText->isEmpty()))
+        OPERATION_RETURN(scope, replaceUsingRegExpSearch(vm, globalObject, subject, regExpObject, callData, replacementText, replacement));
+    if (!isAtom)
+        OPERATION_RETURN(scope, replaceFromFirstMatch(globalObject, vm, subject, pattern, replacement, replacementText, vm.aotState().regExpMatchOutput.get()));
+    int start = static_cast<int>(oneBehindStartOfFirstMatch - 1);
+    std::array offsets { start, start + static_cast<int>(pattern->atom().length()) };
+    OPERATION_RETURN(scope, replaceFromFirstMatch(globalObject, vm, subject, pattern, replacement, replacementText, offsets.data()));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTStringSplitRegExp, JSCell*, (Instance* instance, JSCell* string, JSCell* regExp, uint32_t limit))

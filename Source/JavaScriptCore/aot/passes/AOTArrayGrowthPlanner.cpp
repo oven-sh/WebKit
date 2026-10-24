@@ -14,6 +14,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTInlineBuiltinForms.h"
 #include "AOTResultRules.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 
@@ -131,6 +132,9 @@ BlockID ArrayCapacityPlanner::findPreheader(const NaturalLoop& loop)
     return preheader;
 }
 
+// The test in front of every addition costs a tenth of the addition, and a small table grows in its stub for little: by runs a plan loses up to 16 additions and wins from 64 on.
+AOT_THRESHOLD(int64_t, minAdditionsWorthPlan, 32);
+
 // The table of a Map or a Set grows by half, and each step leaves the table before it behind.
 std::optional<GrowthPlan> ArrayCapacityPlanner::planCollectionGrowth(const NaturalLoop& loop, ProgramPoint point)
 {
@@ -164,6 +168,15 @@ std::optional<GrowthPlan> ArrayCapacityPlanner::planCollectionGrowth(const Natur
     TripCount remaining = remainingIterations(loop, collection, point);
     TripCount finished = finishedIterations(loop, collection, point);
     if (!isKnown(remaining) || !isKnown(finished))
+        return std::nullopt;
+
+    // What is left and what is finished add up to all the turns of the loop: the counter goes out of the sum.
+    auto rangeOf = [&](const CapacityTerm& term) {
+        return term.kind == CapacityTermKind::Constant ? Range::one(term.constant) : program.typeOf(m_function, term.value).integers;
+    };
+    bool countsUp = remaining.subtracted.kind == CapacityTermKind::Integer && remaining.subtracted.value == finished.added.value;
+    int64_t leastTurns = countsUp ? rangeOf(remaining.added).minimum - rangeOf(finished.subtracted).maximum : rangeOf(finished.added).minimum - rangeOf(remaining.subtracted).maximum;
+    if (leastTurns + remaining.adjustment < minAdditionsWorthPlan)
         return std::nullopt;
     return GrowthPlan { id, collection, loop.header(), remaining, 1, finished, preheader };
 }

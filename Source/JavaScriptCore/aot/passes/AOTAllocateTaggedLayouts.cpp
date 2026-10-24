@@ -274,7 +274,7 @@ static void removeConversionsOfThis(IRBuilder& builder, ValueID thisValue)
 }
 
 // [[Construct]] answers with what the function returns if that is an object, and with the object it allocated otherwise.
-static bool returnConstructedObject(IRBuilder& builder, ValueID object)
+static bool returnConstructedObject(const BuildContext& build, IRBuilder& builder, ValueID object)
 {
     Function& function = builder.function();
     bool mayReturnOtherObject = false;
@@ -288,7 +288,7 @@ static bool returnConstructedObject(IRBuilder& builder, ValueID object)
         ValueID returned = terminator.kind == TerminatorKind::Return ? terminator.valueOperand() : terminator.callOperand();
         builder.setOrigin(terminator.origin());
         reopen(builder, block);
-        if (!returned || function.at(skipRequests(function, returned)).opcode == Opcode::Undefined) {
+        if (!returned || function.at(skipRequests(function, returned)).opcode == Opcode::Undefined || build.isSabotaged(Sabotage::TaggedMakersAnswerWithTheirOwnObject)) {
             builder.emitReturn(object);
             continue;
         }
@@ -403,7 +403,7 @@ Function TaggedLayoutAllocator::createAllocatingCopy(const TaggedFamily& family,
     builder.moveToEndOf(entryBlock);
     emitSwitchOnTag(builder, family, tag, otherTag, addAllocation);
 
-    bool mayReturnOtherObject = returnConstructedObject(builder, object);
+    bool mayReturnOtherObject = returnConstructedObject(m_build, builder, object);
     TypeID constructed = m_types.intern(Type::forLayoutSet(m_program.declaredMembersOf(family.maker)));
     copy.results[0] = DeclaredType { .type = mayReturnOtherObject ? TypeTable::object : constructed, .flags = { PositionFlags::IsFromCompiler } };
 
@@ -426,7 +426,7 @@ void TaggedLayoutAllocator::enterAllocatingCopy(FunctionID constructor, Function
     reopen(builder, entryBlock);
     ValueID isOwnNewTarget = appendTestOfNewTarget(builder, constructor, entryParameters[*function.newTargetParameterIndex()]);
     BlockID construction = builder.addBlock();
-    builder.emitBranch(isOwnNewTarget, Target { construction, { }, { } }, Target { rest, { }, { } });
+    builder.emitBranch(isOwnNewTarget, Target { construction, { }, { } }, Target { m_build.isSabotaged(Sabotage::TaggedMakersAreOnlyConstructed) ? construction : rest, { }, { } });
 
     unsigned thisParameter = *function.thisParameterIndex();
     Vector<ValueID, 8> arguments;

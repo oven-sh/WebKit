@@ -74,7 +74,7 @@ public:
         IRBuilder builder(m_context.analyses.context(), m_function, m_context.types, &m_context.analyses);
         for (const Insertion& insertion : m_insertions) {
             builder.setOrigin(m_function.at(insertion.object).origin());
-            builder.insertBefore(insertion.point, IRBuilder::make(insertion.operation, { insertion.object }));
+            builder.insertBefore(insertion.point, IRBuilder::make(m_context.build.isSabotaged(Sabotage::BirthsEndWithoutALook) ? Opcode::FinishBirth : insertion.operation, { insertion.object }));
         }
         builder.applyInsertions();
         size_t finished = std::ranges::count(m_insertions, Opcode::FinishBirth, &Insertion::operation);

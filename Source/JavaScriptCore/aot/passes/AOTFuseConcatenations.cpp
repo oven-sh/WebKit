@@ -141,7 +141,7 @@ bool ConcatenationFuser::isConcatenation(const Value& value) const
 // A concatenation converts each of its parts as ToString does.
 bool ConcatenationFuser::isConversionOfPrimitive(const Value& value) const
 {
-    return value.opcode == Opcode::ToString && !hasObjectOperand(value) && !hasSymbolOperand(value);
+    return value.opcode == Opcode::ToString && (!hasObjectOperand(value) || m_context.build.isSabotaged(Sabotage::FusedConversionsRunCode)) && !hasSymbolOperand(value);
 }
 
 // A key is looked up by its parts, and no string is made of a number among them.

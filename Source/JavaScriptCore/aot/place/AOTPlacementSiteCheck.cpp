@@ -29,7 +29,7 @@ namespace JSC { namespace AOT { namespace Typed {
 static_assert(Value::opcodesWithAllocation == OpcodeSet { Opcode::NewClosure, Opcode::NewObject, Opcode::MaterializeEnvironment });
 static_assert(Value::opcodesWithGuardBit == OpcodeSet { Opcode::AreMembersUnchanged });
 static_assert(Value::opcodesWithStaticsOffset == OpcodeSet { Opcode::NewArray, Opcode::NewRegExp, Opcode::SharedRegExpLiteral, Opcode::NewTemplateObject });
-static_assert(Value::opcodesWithRequest == OpcodeSet { Opcode::TryPutByIds, Opcode::NewClass, Opcode::CloneAs, Opcode::NewTemplateObject, Opcode::DirectEval, Opcode::Data, Opcode::NewSetFromData, Opcode::NewMapFromData, Opcode::CopyDataProperties, Opcode::CopyObject });
+static_assert(Value::opcodesWithRequest == OpcodeSet { Opcode::TryPutByIds, Opcode::NewClass, Opcode::CloneAs, Opcode::FindSourcePlan, Opcode::NewTemplateObject, Opcode::DirectEval, Opcode::Data, Opcode::NewSetFromData, Opcode::NewMapFromData, Opcode::CopyDataProperties, Opcode::CopyObject });
 
 namespace {
 
@@ -382,7 +382,8 @@ private:
             auto* record = std::get_if<NewClassRecord>(&request);
             return record && record->classLayout == value.layout();
         }
-        case Opcode::CloneAs: {
+        case Opcode::CloneAs:
+        case Opcode::FindSourcePlan: {
             auto* record = std::get_if<CloneAsRecord>(&request);
             return record && isCloneAsRequestOf(*record, value);
         }

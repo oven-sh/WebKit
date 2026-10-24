@@ -21,6 +21,8 @@ struct ForwardedCallPlan {
 };
 
 bool forwardsCall(const BuiltinOverload&);
+// A call by value says of a callee that cannot be called what `call` and `apply` say of such a receiver. Reflect.apply has words of its own.
+bool forwardsCallOfAnyReceiver(const BuiltinOverload&);
 
 // The plan has no list when the call passes none, or one that is always undefined or null.
 std::optional<ForwardedCallPlan> planForwardedCall(const Program&, const Function&, const BuiltinCall&);

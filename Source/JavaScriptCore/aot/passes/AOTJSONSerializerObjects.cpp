@@ -184,6 +184,8 @@ auto JSONSerializerBuilder::emitKeyOrderTests(const TestedObject& tested, const 
 {
     std::span<const uint32_t> longestOrder = arm.orders.longestOrder.span();
     std::span<const uint32_t> counts = arm.orders.descendingCounts.span();
+    if (counts.size() == 1 && tested.guard && inputs().build.isSabotaged(Sabotage::WrittenRecordsHaveTheirKeysInOneOrder))
+        return { tested.guard, { } };
     if (counts.size() == 1)
         return { emitKeyOrderTest(tested, arm.layout, longestOrder, notTaken), { } };
 
@@ -329,6 +331,8 @@ void JSONSerializerBuilder::appendMember(ObjectArm& arm, size_t index, MemberLis
 
 void JSONSerializerBuilder::renewGuards(ObjectArm& arm, size_t nextMember, MemberListState memberList)
 {
+    if (inputs().build.isSabotaged(Sabotage::WrittenRecordsStayAsTheyWere))
+        return;
     commit();
     BlockID stale = builder().addBlock(BlockFrequency::Rare);
     TestedObject tested = emitShapeTest(arm.object.object, singleElementSpan(arm.layout), stale);

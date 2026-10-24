@@ -116,6 +116,11 @@ bool forwardsCall(const BuiltinOverload& overload)
     return !!forwardedOperandsOf(overload);
 }
 
+bool forwardsCallOfAnyReceiver(const BuiltinOverload& overload)
+{
+    return overload.builtin == Builtins::FunctionPrototypeCall || overload.builtin == Builtins::FunctionPrototypeApply;
+}
+
 std::optional<BuiltinOperand> operandCalledBy(const BuiltinOverload& overload)
 {
     std::optional<ForwardedOperands> operands = forwardedOperandsOf(overload);

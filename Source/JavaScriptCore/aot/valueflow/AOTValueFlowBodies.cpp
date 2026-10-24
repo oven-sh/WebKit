@@ -180,6 +180,7 @@ bool carriesProgramValues(OpaqueKind kind)
     case OpaqueKind::Guard:
     case OpaqueKind::FlatString:
     case OpaqueKind::CodeAddress:
+    case OpaqueKind::SourcePlan:
     case OpaqueKind::BuilderCursor:
         return false;
     }
@@ -1044,12 +1045,12 @@ private:
                 if (isThis(block.terminator.operand(operand)))
                     return false;
             }
-            for (const Target& target : block.terminator.targets) {
-                for (ValueID argument : target.arguments) {
-                    if (isThis(argument))
-                        return false;
-                }
-            }
+            bool handsOnThis = false;
+            block.forEachTarget([&](const Target& target) {
+                handsOnThis |= std::ranges::any_of(target.arguments, isThis);
+            });
+            if (handsOnThis)
+                return false;
         }
         return true;
     }

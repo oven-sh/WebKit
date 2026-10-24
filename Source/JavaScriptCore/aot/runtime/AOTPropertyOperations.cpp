@@ -122,7 +122,7 @@ static void putById(Instance* instance, JSGlobalObject* globalObject, VM& vm, JS
         instance->state->propertyCaches->countMiss("store without caches"_s, false, base, identifier.impl());
     if (base.isCell() && base.asCell()->type() == SlimClosureType)
         RELEASE_AND_RETURN(scope, putAndCache({ instance, globalObject, vm, *instance->state->propertyCaches, identifier, name, nullptr }, base.asCell(), value, mode));
-    PutPropertySlot slot(base, mode == PutMode::Strict);
+    PutPropertySlot slot(base, mode == PutMode::Strict, PutPropertySlot::PutById);
     if (Object* object = compiledObjectOrNull(base)) {
         putToCompiledObject(instance, object, identifier, value, slot);
         RETURN_IF_EXCEPTION(scope, void());
@@ -152,6 +152,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutByIdSloppy, void, (Instance* instance, E
 static size_t deleteFromObject(JSGlobalObject* globalObject, VM& vm, JSObject* object, PropertyName property, Typed::ECMAMode mode)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (Structure* structure = object->structure(); object->type() == FinalObjectType && structure->isDictionary() && !structure->isUncacheableDictionary()) {
+        // Every name that a cacheable dictionary gives up makes a Structure and a copy of its table.
+        unsigned attributes;
+        if (isValidOffset(structure->get(vm, property, attributes)) && !(attributes & PropertyAttribute::DontDelete))
+            object->convertToUncacheableDictionary(vm);
+    }
     bool deleted = JSCell::deleteProperty(object, globalObject, property);
     RETURN_IF_EXCEPTION(scope, 0);
     if (deleted)

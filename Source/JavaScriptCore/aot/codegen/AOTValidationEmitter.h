@@ -18,6 +18,8 @@ public:
     void generateIsPlainDataObject(const ValueContext&);
     void generateGetOwnDataProperty(const ValueContext&);
     void generateCloneAs(const ValueContext&);
+    void generateFindSourcePlan(const ValueContext&);
+    void generateGetPlannedProperty(const ValueContext&);
     void generateGetPreparedPlans(const ValueContext&);
     void generateIsThrownValueIgnored(const ValueContext&);
     void generateMatchesUnrecorded(const ValueContext&);

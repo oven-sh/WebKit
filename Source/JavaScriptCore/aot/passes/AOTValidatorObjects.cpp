@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTFlowResults.h"
+#include "AOTRemoveUnreadFields.h"
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -129,7 +130,161 @@ auto ValidatorBuilder::emitPlainObject(ValueID value, const ValidationExits& exi
     return { object, branch.provenOnTaken };
 }
 
+static Emission::ProofsByOrigin proofsByOriginOf(Emission& emission, const ResultMember& member)
+{
+    const EmissionInputs& inputs = emission.inputs();
+    bool createsArrays = createsEveryArrayItself({ inputs.program, inputs.flow, inputs.build }, member.node, NodeUse::CopiedFromValue);
+    return createsArrays ? Emission::ProofsByOrigin::AboutArrays : Emission::ProofsByOrigin::None;
+}
+
+// What holds for every object of a Structure is found out once for the Structure: that it is plain data, that each of its keys is a member, that no required member is missing, where the members lie and in which order.
+bool ValidatorBuilder::canReadByPlan(const ResultNode& node)
+{
+    if (!copiesAsLayout(decisionInputs(), node))
+        return false;
+    return std::ranges::all_of(node.members, [&](const ResultMember& member) {
+        bool isNamedField = member.field && program().at(member.key).kind == PropertyKeyKind::Text && !program().isIndexLike(member.key);
+        return isNamedField && !member.mustBeOwn && !appliesDefault(program(), member.node);
+    });
+}
+
 ValueID ValidatorBuilder::emitObject(ResultNodeRef, const ResultNode& node, ValueID value, const ValidationExits& exits)
+{
+    if (!canReadByPlan(node))
+        return emitObjectMemberByMember(node, value, exits);
+
+    ValueID object = emitTypeTest(value, TypeTable::object, exits.rejected);
+    BlockID otherwise = builder().addBlock(BlockFrequency::Rare);
+    BlockID done = builder().addBlock();
+    ValueID byPlan = emitObjectByPlan(node, object, otherwise, exits);
+    builder().emitJump(done, { byPlan });
+
+    builder().moveToEndOf(otherwise);
+    ValueID memberByMember = emitObjectMemberByMember(node, object, exits);
+    builder().emitJump(done, { memberByMember });
+
+    ValueID copy = builder().addParameter(done, inputs().types.unionOf(function().at(byPlan).type, function().at(memberByMember).type));
+    builder().moveToEndOf(done);
+    return copy;
+}
+
+ValueID ValidatorBuilder::emitObjectByPlan(const ResultNode& node, ValueID object, BlockID otherwise, const ValidationExits& exits)
+{
+    size_t numberOfMembers = node.members.size();
+    Vector<uint32_t, 8> requested;
+    for (const ResultMember& member : node.members)
+        requested.append(*member.field);
+
+    AllocationSiteID site = inputs().flow.typedResultSite(node.layout);
+    Value find = IRBuilder::make(Opcode::FindSourcePlan, { object });
+    find.setLayout(node.layout);
+    find.setFields(requested.span());
+    if (site)
+        find.setAllocationSite(site);
+    ValueID found = builder().append(WTF::move(find));
+    emitJumpUnless(appendResultAt(found, 0), otherwise);
+    ValueID plan = appendResultAt(found, 1);
+    ValueID order = appendResultAt(found, 2);
+
+    Vector<ValueID, 8> values;
+    Vector<ValueID, 8> isPresent;
+    for (size_t index = 0; index < numberOfMembers; ++index) {
+        Value read = IRBuilder::make(Opcode::GetPlannedProperty, { object, plan });
+        read.setMemberIndex(static_cast<uint32_t>(index));
+        ValueID results = builder().append(WTF::move(read));
+        values.append(appendResultAt(results, 0));
+        isPresent.append(appendResultAt(results, 1));
+    }
+
+    for (size_t index = 0; index < numberOfMembers; ++index) {
+        const ResultMember& member = node.members[index];
+        if (!member.isOptional) {
+            values[index] = emitNode(member.node, values[index], exits);
+            continue;
+        }
+
+        BlockID merge = builder().addBlock();
+        IRBuilder::BranchBlocks whetherPresent = builder().emitBranch(isPresent[index]);
+        builder().moveToEndOf(whetherPresent.notTaken);
+        builder().emitJump(merge, { builder().appendUndefined() });
+
+        // A key that holds undefined has a place in the order, and a slot that holds nothing says that there is no such key.
+        builder().moveToEndOf(whetherPresent.taken);
+        IRBuilder::ProvenBranch whetherUndefined = builder().emitBranchWithProof(builder().appendTypeTest(values[index], TypeTable::undefined), 0, BlockFrequency::Rare);
+        builder().emitJump(otherwise);
+
+        builder().moveToEndOf(whetherUndefined.notTaken);
+        ValueID validated = emitNode(member.node, whetherUndefined.provenOnNotTaken, exits);
+        TypeID mergedType = inputs().types.unionOf(TypeTable::undefined, function().at(validated).type);
+        builder().emitJump(merge, { validated });
+
+        values[index] = builder().addParameter(merge, mergedType);
+        builder().moveToEndOf(merge);
+    }
+
+    auto fitsField = [&](size_t index) {
+        const ResultMember& member = node.members[index];
+        TypeID tested = fieldTypeToTest(fieldOf(program(), node, member).declared.type, proofsByOriginOf(*this, member));
+        return !passesOnlyUndefinedIntoStoredType(typeOf(values[index]), tested);
+    };
+    auto emitRequireTypeOfField = [&](size_t index) {
+        const ResultMember& member = node.members[index];
+        return emitRequireFieldType(values[index], fieldOf(program(), node, member).declared.type, proofsByOriginOf(*this, member), exits.unknown);
+    };
+
+    Vector<uint32_t, 8> fields;
+    Vector<ValueID, 8> initialValues;
+    for (size_t index = 0; index < numberOfMembers; ++index) {
+        if (node.members[index].isOptional)
+            continue;
+        fields.append(requested[index]);
+        initialValues.append(emitRequireTypeOfField(index));
+    }
+
+    Value allocation = IRBuilder::make(Opcode::NewObject);
+    allocation.setLayout(node.layout);
+    allocation.setFields(fields.span());
+    allocation.setValuesOperands(initialValues.span());
+    if (site) {
+        allocation.setAllocationSite(site);
+        allocation.setAllocationClass(inputs().flow.at(site).allocationClass);
+    }
+    ValueID copy = builder().append(WTF::move(allocation));
+
+    for (size_t index = 0; index < numberOfMembers; ++index) {
+        if (!node.members[index].isOptional)
+            continue;
+        IRBuilder::BranchBlocks whetherPresent = builder().emitBranch(isPresent[index]);
+        BlockID next = builder().addBlock();
+        builder().moveToEndOf(whetherPresent.notTaken);
+        builder().emitJump(next);
+
+        builder().moveToEndOf(whetherPresent.taken);
+        if (!fitsField(index))
+            builder().emitJump(exits.unknown);
+        else {
+            if (!isRemovedField(program(), { node.layout, requested[index] })) {
+                // The allocation is the guard of its own shape.
+                Value store = IRBuilder::make(Opcode::PutSlot, { copy, copy, emitRequireTypeOfField(index) });
+                store.setKey(fieldOf(program(), node, node.members[index]).key);
+                store.setReceivers(layoutSetOf(singleElementSpan(node.layout)));
+                store.setLevel(KnowledgeLevel::Expected);
+                builder().append(WTF::move(store));
+            }
+            builder().emitJump(next);
+        }
+        builder().moveToEndOf(next);
+    }
+
+    Value finish = IRBuilder::make(Opcode::JSONObjectFinish, { order, copy, builder().appendUndefined() });
+    finish.setLayout(node.layout);
+    BlockID finished = builder().addBlock();
+    emitBranchOnOutcome(builder().append(WTF::move(finish)), finished, exits.unknown, exits.unknown);
+    builder().moveToEndOf(finished);
+    return copy;
+}
+
+ValueID ValidatorBuilder::emitObjectMemberByMember(const ResultNode& node, ValueID value, const ValidationExits& exits)
 {
     PlainObject object = emitPlainObject(value, exits);
 

@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCurrentWork.h"
 #include "AOTLimits.h"
 #include "AOTPassID.h"
 #include "AOTThreads.h"
@@ -48,13 +49,14 @@ public:
     void didFinish(ASCIILiteral phase);
 
 private:
-    PhaseTimes(BuildContext&, ASCIILiteral namePrefix, ASCIILiteral name, std::optional<Stage> timedStage);
+    PhaseTimes(BuildContext&, ASCIILiteral namePrefix, ASCIILiteral name, std::optional<Stage> timedStage, PassID);
 
     BuildContext& m_build;
     const ASCIILiteral m_namePrefix;
     const ASCIILiteral m_name;
     const std::optional<Stage> m_timedStage;
     const MonotonicTime m_start;
+    const CurrentWorkScope m_currentWork;
     MonotonicTime m_phaseStart;
     Seconds m_processCPUTimeAtPhaseStart;
     Seconds m_serialCPUTimeAtPhaseStart;

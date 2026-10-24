@@ -122,6 +122,10 @@ public:
     void setFrontendData(const void* value) { m_frontendData = value; }
     const void* frontendData() const { return m_frontendData; }
 
+    // A number by which the client knows what it compiles here. Nothing in B3 depends on it.
+    void setSubjectOfClient(uint32_t subject) { m_subjectOfClient = subject; }
+    uint32_t subjectOfClient() const { return m_subjectOfClient; }
+
     JS_EXPORT_PRIVATE BasicBlock* addBlock(double frequency = 1);
 
     // Changes the order of basic blocks to be as in the supplied vector. The vector does not
@@ -456,6 +460,7 @@ private:
     std::unique_ptr<AbstractHeapRepository> m_heaps;
     RefPtr<SharedTask<void(PrintStream&, Origin)>> m_originPrinter;
     const void* m_frontendData;
+    uint32_t m_subjectOfClient { 0 };
     String m_name;
     PCToOriginMap m_pcToOriginMap;
     RefPtr<JSON::Array> m_ionGraphPasses;

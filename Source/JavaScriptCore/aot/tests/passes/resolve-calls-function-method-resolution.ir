@@ -194,3 +194,13 @@ function f18 name="bind-of-a-receiver-nobody-knows" parameters=[{type=anything},
 # CHECK-NEXT: = CallBuiltin v0, v1 overload=FunctionPrototypeBind/0 builtinCallForm=AnyReceiver
 # CHECK-NEXT: Return v2
 # CHECK-NEXT: }
+function f19 name="reflect-apply-array-to-a-callee-nobody-knows" parameters=[{type=anything}, {type=anything}, {type=Array}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array):
+    v3 = CallBuiltin -, v0, v1, v2 overload=ReflectApply/0 builtinCallForm=AnyReceiver
+    Return v3
+}
+# CHECK-LABEL: function f19 name="reflect-apply-array-to-a-callee-nobody-knows"
+# CHECK-NEXT: b0(v0: anything, v1: anything, v2: Array):
+# CHECK-NEXT: = CallBuiltin -, v0, v1, v2 overload=ReflectApply/0 builtinCallForm=AnyReceiver
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }

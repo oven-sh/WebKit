@@ -30,7 +30,7 @@ static_assert(Value::opcodesWithAllocation == OpcodeSet { Opcode::NewClosure, Op
 static_assert(Value::opcodesWithStaticsOffset == OpcodeSet { Opcode::NewArray, Opcode::NewRegExp, Opcode::SharedRegExpLiteral, Opcode::NewTemplateObject });
 static_assert(Value::opcodesWithGuardBit == OpcodeSet { Opcode::AreMembersUnchanged });
 static_assert(Value::opcodesWithRequest == OpcodeSet {
-    Opcode::TryPutByIds, Opcode::NewClass, Opcode::CloneAs, Opcode::NewTemplateObject, Opcode::DirectEval, Opcode::Data, Opcode::NewSetFromData,
+    Opcode::TryPutByIds, Opcode::NewClass, Opcode::CloneAs, Opcode::FindSourcePlan, Opcode::NewTemplateObject, Opcode::DirectEval, Opcode::Data, Opcode::NewSetFromData,
     Opcode::NewMapFromData, Opcode::CopyDataProperties, Opcode::CopyObject
 });
 
@@ -383,6 +383,7 @@ std::optional<RequestRecord> FunctionResolver::requestRecordOf(ValueID id, const
     case Opcode::NewClass:
         return RequestRecord { NewClassRecord { value.layout() } };
     case Opcode::CloneAs:
+    case Opcode::FindSourcePlan:
         return cloneAsRecordOf(id, value);
     case Opcode::NewTemplateObject:
         return templateObjectRecordOf(value);
@@ -403,7 +404,8 @@ std::optional<RequestRecord> FunctionResolver::cloneAsRecordOf(ValueID id, const
 {
     LayoutID layout = value.layout();
     auto fields = value.fields();
-    AllocationClassID allocationClass = m_inputs.context.inputs.flow.at(value.allocationSite()).allocationClass;
+    AllocationSiteID site = value.allocationSite();
+    AllocationClassID allocationClass = site ? m_inputs.context.inputs.flow.at(site).allocationClass : AllocationClassID();
     uint32_t shape = placement().shapes().shapeOf(layout, allocationClass);
     bool everyFieldHasRecord = std::ranges::all_of(fields, [&](FieldIndex field) {
         return placement().slot(layout, field).indexInLayoutRecord.has_value();

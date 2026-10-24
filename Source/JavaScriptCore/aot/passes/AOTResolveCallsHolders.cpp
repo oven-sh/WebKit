@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
+#include "AOTFlowResults.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTPropertyAccessInternal.h"
 #include "AOTValueIdentity.h"

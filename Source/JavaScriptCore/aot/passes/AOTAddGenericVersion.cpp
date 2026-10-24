@@ -446,6 +446,7 @@ bool GenericVersionBuilder::isReliedOn(ValueID check, Vector<ValueID, 8>& casts)
         case OperandKind::KeyOrder:
         case OperandKind::FlatString:
         case OperandKind::CodeAddress:
+        case OperandKind::SourcePlan:
         case OperandKind::BuilderCursor:
             return false;
         }
@@ -1078,6 +1079,7 @@ static TypeID typeOfKind(TypeArena& types, OperandKind kind)
     case OperandKind::KeyOrder:
     case OperandKind::FlatString:
     case OperandKind::CodeAddress:
+    case OperandKind::SourcePlan:
     case OperandKind::BuilderCursor:
         return { };
     }

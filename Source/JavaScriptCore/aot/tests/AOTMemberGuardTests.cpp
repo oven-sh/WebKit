@@ -980,6 +980,28 @@ static JSObject* prototypeOfClass(RunningProgram& program, ASCIILiteral classNam
     return asObject(uncheckedDowncast<Closure>(classObject)->prototypeProperty(program.vm()));
 }
 
+static void checkPrototypeWithManyNamesKeepsItsGuards(LoadedProgram& loaded)
+{
+    RunningProgram program(loaded);
+    program.evaluateModule(publishOpenClasses);
+    program.checkClearsNothing("for (let i = 0; i < 600; i++) Base.prototype['added' + i] = i"_s);
+    JSObject* prototype = prototypeOfClass(program, "Base"_s);
+    AOT_TEST_CHECK(prototype->structure()->isDictionary() && !prototype->structure()->isUncacheableDictionary());
+
+    prototype->flattenDictionaryObject(program.vm());
+    AOT_TEST_CHECK(!prototype->structure()->isDictionary());
+    for (const Guard& guard : program.readGuards())
+        AOT_TEST_CHECK(guard.isSet);
+    AOT_TEST_CHECK(!valueOf(program.vm(), RuntimeCounterID::MemberGuardsCleared) && !valueOf(program.vm(), RuntimeCounterID::PrototypeLinkGuardsCleared));
+
+    program.checkClears("Base.prototype.firstStep = function () { }"_s, 3, [](const Guard& guard) {
+        return guard.isOnMember(ClassSide::Prototype, "firstStep"_s);
+    });
+    program.checkClears("delete Base.prototype.secondStep"_s, 3, [](const Guard& guard) {
+        return guard.isOnMember(ClassSide::Prototype, "secondStep"_s);
+    });
+}
+
 static void checkLazyPrototypeKeepsItsBits(LoadedProgram& loaded)
 {
     RunningProgram program(loaded);
@@ -1156,6 +1178,7 @@ std::span<const NativeTest> memberGuardTests()
         { "member-guards/link-of-class-object-changed"_s, withOpenClasses<checkLinkOfClassObjectChanged> },
         { "member-guards/unguarded-name-clears-nothing"_s, withOpenClasses<checkUnguardedNameClearsNothing> },
         { "member-guards/own-property-hides-member"_s, withOpenClasses<checkOwnPropertyHidesMember> },
+        { "member-guards/prototype-with-many-names-keeps-its-guards"_s, withOpenClasses<checkPrototypeWithManyNamesKeepsItsGuards> },
         { "member-guards/instance-gets-another-prototype"_s, withOpenClasses<checkInstanceGetsAnotherPrototype> },
         { "member-guards/instance-prototype-leads-back-to-the-class"_s, withOpenClasses<checkInstancePrototypeLeadsBackToTheClass> },
         { "member-guards/never-set-again"_s, withOpenClasses<checkGuardIsNeverSetAgain> },

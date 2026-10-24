@@ -1,17 +1,18 @@
 # A Map or a Set that a counted loop adds to grows once when its table is full: the run time is told how many additions are left, how many the loop has come by and how large the collection was in front
 # of the loop, and makes room for as many of those that are left as have added an entry so far. So an iteration may skip the addition, and keys may repeat. The second addition of one key counts for nothing.
 # Nothing is planned for a collection that changes in the loop, for a loop without a counter, in rare code, or outside of loops
+# Nor for a loop that is not known to turn some tens of times: the test in front of every addition costs more than a small table's growth
 # FORM: Prepared
 # RUN: pass PlanCollectionCapacities
 # RUN(TWICE): pass PlanCollectionCapacities PlanCollectionCapacities
-# STATISTIC: CollectionGrowthsPlanned = 8
+# STATISTIC: CollectionGrowthsPlanned = 7
 # TWICE: outcome: Changed
 # TWICE-NEXT: outcome: Unchanged
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Holder" fields=[{key="map" declared={type=Map<anything, anything>} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
-function f0 name="setInMap" parameters=[{type=Map<anything, anything>}, {type=int[0, 1000000]}, {type=anything}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: Map<anything, anything>, v1: int[0, 1000000], v2: anything, v3: anything):
+function f0 name="setInMap" parameters=[{type=Map<anything, anything>}, {type=int[100, 1000000]}, {type=anything}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: Map<anything, anything>, v1: int[100, 1000000], v2: anything, v3: anything):
     v4 = Integer integer=0
     Jump -> next b1(v4)
   b1(v5):
@@ -43,8 +44,8 @@ function f0 name="setInMap" parameters=[{type=Map<anything, anything>}, {type=in
 # CHECK-NEXT: ReserveCollectionCapacity v0, [[left0]], [[done0]], [[size0]]
 # CHECK-NEXT: Jump -> next [[adds0]]()
 
-function f1 name="addToSet" parameters=[{type=Set<anything>}, {type=int[0, 1000000]}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: Set<anything>, v1: int[0, 1000000], v2: anything):
+function f1 name="addToSet" parameters=[{type=Set<anything>}, {type=int[100, 1000000]}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: Set<anything>, v1: int[100, 1000000], v2: anything):
     v3 = Integer integer=0
     Jump -> next b1(v3)
   b1(v4):
@@ -68,8 +69,8 @@ function f1 name="addToSet" parameters=[{type=Set<anything>}, {type=int[0, 10000
 # CHECK-NEXT: ReserveCollectionCapacity v0, [[left1]], [[done1]], [[size1]]
 # CHECK-NOT: CallBuiltin
 
-function f2 name="twoAdditionsInEachIteration" parameters=[{type=Map<anything, anything>}, {type=int[0, 1000000]}, {type=anything}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: Map<anything, anything>, v1: int[0, 1000000], v2: anything, v3: anything):
+function f2 name="twoAdditionsInEachIteration" parameters=[{type=Map<anything, anything>}, {type=int[100, 1000000]}, {type=anything}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: Map<anything, anything>, v1: int[100, 1000000], v2: anything, v3: anything):
     v4 = Integer integer=0
     Jump -> next b1(v4)
   b1(v5):
@@ -94,8 +95,8 @@ function f2 name="twoAdditionsInEachIteration" parameters=[{type=Map<anything, a
 # CHECK: [[done2]]:{{*}}= Mul
 # CHECK-NEXT: ReserveCollectionCapacity v0, [[entries2]], [[done2]],
 
-function f3 name="someIterationsSkipIt" parameters=[{type=Map<anything, anything>}, {type=int[0, 1000000]}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Map<anything, anything>, v1: int[0, 1000000], v2: anything, v3: boolean):
+function f3 name="someIterationsSkipIt" parameters=[{type=Map<anything, anything>}, {type=int[100, 1000000]}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Map<anything, anything>, v1: int[100, 1000000], v2: anything, v3: boolean):
     v4 = Integer integer=0
     Jump -> next b1(v4)
   b1(v5):
@@ -119,8 +120,8 @@ function f3 name="someIterationsSkipIt" parameters=[{type=Map<anything, anything
 # CHECK-NEXT: = IsCollectionTableFull v0
 # CHECK: ReserveCollectionCapacity v0,
 
-function f4 name="anotherMapInEachIteration" parameters=[{type=Array<Map<anything, anything>, pristine[Storage, Names]>}, {type=int[0, 1000000]}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: Array<Map<anything, anything>, pristine[Storage, Names]>, v1: int[0, 1000000], v2: anything):
+function f4 name="anotherMapInEachIteration" parameters=[{type=Array<Map<anything, anything>, pristine[Storage, Names]>}, {type=int[100, 1000000]}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: Array<Map<anything, anything>, pristine[Storage, Names]>, v1: int[100, 1000000], v2: anything):
     v3 = Integer integer=0
     Jump -> next b1(v3)
   b1(v4):
@@ -184,12 +185,10 @@ function f7 name="boundIsTheLengthOfAnArrayThatCallsMayChange" parameters=[{type
     Return
 }
 # CHECK-LABEL: function f7 name="boundIsTheLengthOfAnArrayThatCallsMayChange"
-# CHECK: [[left7]]:{{*}}= Sub v6, v4
-# CHECK: [[done7]]:{{*}}= Sub v4,
-# CHECK-NEXT: ReserveCollectionCapacity v0, [[left7]], [[done7]],
+# CHECK-NOT: ReserveCollectionCapacity
 
-function f8 name="countsDown" parameters=[{type=Set<anything>}, {type=int[0, 1000000]}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: Set<anything>, v1: int[0, 1000000], v2: anything):
+function f8 name="countsDown" parameters=[{type=Set<anything>}, {type=int[100, 1000000]}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: Set<anything>, v1: int[100, 1000000], v2: anything):
     v3 = Integer integer=0
     Jump -> next b1(v1)
   b1(v4):
@@ -209,8 +208,8 @@ function f8 name="countsDown" parameters=[{type=Set<anything>}, {type=int[0, 100
 # CHECK: [[done8]]:{{*}}= Sub v1, v4
 # CHECK-NEXT: ReserveCollectionCapacity v0, [[left8]], [[done8]],
 
-function f9 name="oneKeyAddedTwice" parameters=[{type=Map<anything, anything>}, {type=int[0, 1000000]}, {type=anything}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: Map<anything, anything>, v1: int[0, 1000000], v2: anything, v3: anything):
+function f9 name="oneKeyAddedTwice" parameters=[{type=Map<anything, anything>}, {type=int[100, 1000000]}, {type=anything}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: Map<anything, anything>, v1: int[100, 1000000], v2: anything, v3: anything):
     v4 = Integer integer=0
     Jump -> next b1(v4)
   b1(v5):
@@ -231,8 +230,8 @@ function f9 name="oneKeyAddedTwice" parameters=[{type=Map<anything, anything>}, 
 # CHECK-NOT: IsCollectionTableFull
 # CHECK-NOT: = Mul
 
-function f10 name="inRareCode" parameters=[{type=Map<anything, anything>}, {type=int[0, 1000000]}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
-  b0(v0: Map<anything, anything>, v1: int[0, 1000000], v2: anything, v3: boolean):
+function f10 name="inRareCode" parameters=[{type=Map<anything, anything>}, {type=int[100, 1000000]}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: Map<anything, anything>, v1: int[100, 1000000], v2: anything, v3: boolean):
     v4 = Integer integer=0
     Jump -> next b1(v4)
   b1(v5):
@@ -254,8 +253,8 @@ function f10 name="inRareCode" parameters=[{type=Map<anything, anything>}, {type
 # CHECK-LABEL: function f10 name="inRareCode"
 # CHECK-NOT: ReserveCollectionCapacity
 
-function f11 name="theMapIsReadInTheLoop" parameters=[{type=L0}, {type=int[0, 1000000]}, {type=anything}] results=[{type=undefined}] {
-  b0(v0: L0, v1: int[0, 1000000], v2: anything):
+function f11 name="theMapIsReadInTheLoop" parameters=[{type=L0}, {type=int[100, 1000000]}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: L0, v1: int[100, 1000000], v2: anything):
     v3 = Integer integer=0
     Jump -> next b1(v3)
   b1(v4):
@@ -272,4 +271,23 @@ function f11 name="theMapIsReadInTheLoop" parameters=[{type=L0}, {type=int[0, 10
     Return
 }
 # CHECK-LABEL: function f11 name="theMapIsReadInTheLoop"
+# CHECK-NOT: ReserveCollectionCapacity
+
+function f12 name="mayTurnAFewTimes" parameters=[{type=Map<anything, anything>}, {type=int[0, 1000000]}, {type=anything}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: Map<anything, anything>, v1: int[0, 1000000], v2: anything, v3: anything):
+    v4 = Integer integer=0
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = CallBuiltin v0, v2, v3 overload=MapPrototypeSet/0
+    v10 = Integer integer=1
+    v11 = Add v8, v10
+    Jump -> next b1(v11)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f12 name="mayTurnAFewTimes"
 # CHECK-NOT: ReserveCollectionCapacity

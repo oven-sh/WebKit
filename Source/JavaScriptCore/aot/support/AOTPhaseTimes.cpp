@@ -199,14 +199,17 @@ static size_t residentMegabytes()
 #endif
 }
 
-PhaseTimes::PhaseTimes(BuildContext& build, ASCIILiteral namePrefix, ASCIILiteral name, std::optional<Stage> timedStage)
+PhaseTimes::PhaseTimes(BuildContext& build, ASCIILiteral namePrefix, ASCIILiteral name, std::optional<Stage> timedStage, PassID pass)
     : m_build(build)
     , m_namePrefix(namePrefix)
     , m_name(name)
     , m_timedStage(timedStage)
     , m_start(MonotonicTime::now())
+    , m_currentWork(timedStage, pass, m_start)
     , m_phaseStart(m_start)
 {
+    if (m_build.recordedOptions().sabotage) [[unlikely]]
+        stopWhereSabotaged(m_build, timedStage, pass);
     if (!m_build.options().logging.logsPhaseTimes) [[likely]]
         return;
     m_processCPUTimeAtPhaseStart = processCPUTime();
@@ -219,12 +222,12 @@ PhaseTimes::PhaseTimes(BuildContext& build, ASCIILiteral namePrefix, ASCIILitera
 }
 
 PhaseTimes::PhaseTimes(BuildContext& build, Stage stage)
-    : PhaseTimes(build, ""_s, nameOf(stage), stage)
+    : PhaseTimes(build, ""_s, nameOf(stage), stage, PassID::None)
 {
 }
 
 PhaseTimes::PhaseTimes(BuildContext& build, PassID pass)
-    : PhaseTimes(build, "pass "_s, nameOf(pass), std::nullopt)
+    : PhaseTimes(build, "pass "_s, nameOf(pass), std::nullopt, pass)
 {
     ASSERT(pass != PassID::None);
 }
@@ -237,6 +240,7 @@ PhaseTimes::~PhaseTimes()
 
 void PhaseTimes::didFinish(ASCIILiteral phase)
 {
+    currentWork().setFinishedPart(phase);
     if (!m_build.options().logging.logsPhaseTimes) [[likely]]
         return;
     Seconds wallTime = MonotonicTime::now() - m_phaseStart;

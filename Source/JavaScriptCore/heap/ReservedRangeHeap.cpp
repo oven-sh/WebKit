@@ -192,10 +192,14 @@ uintptr_t ReservedRangeHeap::tryReserve(size_t size, const Request& request)
                     return 0;
                 continue;
             }
-            if (reserved == requestedAddress)
+            if (reserved == requestedAddress) {
                 address = reserved;
-            else
-                OSAllocator::releaseDecommitted(reserved, size, 0);
+                break;
+            }
+            OSAllocator::releaseDecommitted(reserved, size, 0);
+            // A system that fills its address space from the top answers below the wish where the wish lies beyond the end.
+            if (reserved < requestedAddress)
+                endWindow = std::min(endWindow, std::bit_cast<uintptr_t>(reserved) / alignment + 1);
         }
     }
     if (!address)

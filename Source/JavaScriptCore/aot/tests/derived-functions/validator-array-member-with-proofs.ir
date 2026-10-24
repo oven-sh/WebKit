@@ -40,8 +40,12 @@ layout L4 name="OptionalCopiedArray" module=m0 position=50 fields=[{key="items" 
 # CHECK-NOT: AssumeType
 # CHECK: function {{*}}creator=Validator{type=L3 layout=L3 expectedResult=x3}
 # CHECK: [[assumed3]]:{{*}}= AssumeType {{*}} castType=null|Array<anything, proven, pristine[Storage, Names]>
-# CHECK: = CloneAs {{*}}, [[assumed3]] layout=L3 fields=[0]
+# CHECK: = NewObject -, [[assumed3]] layout=L3 fields=[0]
+# CHECK: [[assumedAgain3]]:{{*}}= AssumeType {{*}} castType=null|Array<anything, proven, pristine[Storage, Names]>
+# CHECK: = CloneAs {{*}}, [[assumedAgain3]] layout=L3 fields=[0]
 # CHECK: function {{*}}creator=Validator{type=L4 layout=L4 expectedResult=x4}
+# CHECK: [[assumed4]]:{{*}}= AssumeType {{*}} castType=undefined|Array<anything, proven, pristine[Storage, Names]>
+# CHECK-NEXT: PutSlot {{*}}, [[assumed4]] key="items"
 # CHECK-NOT: AssumeType
 # CHECK: PropDefine {{*}} key="items"
 # CHECK-NOT: AssumeType

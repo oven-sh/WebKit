@@ -174,6 +174,8 @@ private:
 };
 
 void didChangeChainObject(VM&, JSObject* changed, UniquedStringImpl* uidOrNull);
+// A cacheable dictionary becomes an ordinary object: every name finds what it found, at the offset where it lay, and the prototype stays.
+void didFlattenChainObject(VM&, JSObject* flattened);
 void didFlattenStructure(VM&, Structure*);
 void didChangeGlobalLexicalBindings(JSGlobalObject*);
 

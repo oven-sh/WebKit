@@ -75,4 +75,6 @@ function f3 name="validatedValue" parameters=[{type=anything}] results=[{type=an
 # CHECK: = NewObject -, [[assumedChecked]] layout=L3 fields=[0]
 # CHECK: function [[validatorOfCheckedPage]] {{*}}role=Validator
 # CHECK: [[assumedCopy]]: {{*}}pristine[Storage, Names]> = AssumeType {{*}} castType=Array<
-# CHECK: = CloneAs {{*}}, [[assumedCopy]] layout=L3 fields=[0]
+# CHECK: = NewObject -, [[assumedCopy]] layout=L3 fields=[0]
+# CHECK: [[assumedCopyAgain]]: {{*}}pristine[Storage, Names]> = AssumeType {{*}} castType=Array<
+# CHECK: = CloneAs {{*}}, [[assumedCopyAgain]] layout=L3 fields=[0]

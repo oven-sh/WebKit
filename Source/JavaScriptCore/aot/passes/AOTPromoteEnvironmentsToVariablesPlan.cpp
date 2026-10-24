@@ -423,6 +423,8 @@ static void appendSourcesOfParameter(const Function& function, ValueID parameter
             continue;
         size_t index = found - parameters.begin();
         for (const Block& from : function.blocks) {
+            if (from.handler && from.handler->block == BlockID(blockIndex) && index < from.handler->arguments.size())
+                sources.append(from.handler->arguments[index]);
             for (const Target& target : from.terminator.targets) {
                 if (target.block != BlockID(blockIndex))
                     continue;

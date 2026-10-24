@@ -205,9 +205,10 @@ static std::optional<PropertyAnswer> classifyNeverCachedReceiver(const FinishedR
     if (prohibitsCaching || isProxyType(structure->typeInfo().type()) || structure->needImpurePropertyWatchpoint())
         return uncacheable();
     if (structure->isDictionary()) {
-        if (!structure->isUncacheableDictionary() && query.slot.isCacheableValue() && query.slot.slotBase() == receiver)
+        bool didFlatten = query.mode == ChainWalkMode::MayAllocate && flattenOnce(read.vm, receiver);
+        if (!didFlatten && !structure->isUncacheableDictionary() && query.slot.isCacheableValue() && query.slot.slotBase() == receiver)
             return std::nullopt;
-        return uncacheable(query.mode == ChainWalkMode::MayAllocate && flattenOnce(read.vm, receiver));
+        return uncacheable(didFlatten);
     }
     if (query.slot.isTaintedByOpaqueObject() && !isModuleNamespace(receiver)) {
         ChainWalk walk = walkChain({ query.globalObject, structure, receiver, query.mode }, query.uid);

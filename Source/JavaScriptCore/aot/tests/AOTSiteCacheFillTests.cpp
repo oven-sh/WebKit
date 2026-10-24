@@ -105,8 +105,23 @@ static void testDictionaryGetsNoRow(LoadedProgram& program)
     SiteOfSharedName fixture(program);
     JSObject* dictionary = createObjectWithSharedName(fixture);
     dictionary->convertToDictionary(program.vm());
+    dictionary->structure()->flattenDictionaryStructure(program.vm(), dictionary);
+    dictionary->convertToDictionary(program.vm());
     AOT_TEST_CHECK(holdsOwnValueOf(fixture.readAndFill(dictionary), dictionary));
-    AOT_TEST_CHECK(!fixture.hasRow(dictionary) && fixture.isInHashedTable(dictionary));
+    AOT_TEST_CHECK(dictionary->structure()->isDictionary() && !fixture.hasRow(dictionary) && fixture.isInHashedTable(dictionary));
+}
+
+static void testDictionaryNeverFlattenedGetsRow(LoadedProgram& program)
+{
+    SiteOfSharedName fixture(program);
+    JSObject* object = createObjectWithSharedName(fixture);
+    object->convertToDictionary(program.vm());
+    PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
+    object->getPropertySlot(program.realm(), fixture.shared, slot);
+    PropertyAnswer first = classifyRead({ program.realm(), object, object->structure(), fixture.shared.impl(), slot });
+    AOT_TEST_CHECK(first.didFlatten && !object->structure()->isDictionary());
+    AOT_TEST_CHECK(holdsOwnValueOf(fixture.readAndFill(object), object));
+    AOT_TEST_CHECK(fixture.hasRow(object));
 }
 
 static void testGlobalProxyFollowsGlobalObject(LoadedProgram& program)
@@ -263,6 +278,7 @@ std::span<const NativeTest> siteCacheFillTests()
     static constexpr NativeTest tests[] = {
         { "site-cache-fill/structure-of-many-objects-gets-row"_s, withProgram<testStructureOfManyObjectsGetsRow> },
         { "site-cache-fill/dictionary-gets-no-row"_s, withProgram<testDictionaryGetsNoRow> },
+        { "site-cache-fill/dictionary-never-flattened-gets-row"_s, withProgram<testDictionaryNeverFlattenedGetsRow> },
         { "site-cache-fill/global-proxy-follows-global-object"_s, withProgram<testGlobalProxyFollowsGlobalObject> },
         { "site-cache-fill/global-proxy-of-another-realm-is-not-followed"_s, withProgram<testGlobalProxyOfAnotherRealmIsNotFollowed> },
         { "site-cache-fill/failed-fills-are-asked-for-more-rarely"_s, withProgram<testFailedFillsAreAskedForMoreRarely> },

@@ -130,8 +130,10 @@ bool ArrayCapacityPlanner::isCandidate(const Value& value) const
 // CFG::blocksReachableFrom(), as far as the questions make it go: an append stands a few blocks behind its literal, and a function may hold thousands of literals.
 class BlocksReachedFrom {
 public:
-    BlocksReachedFrom(const CFG& cfg, BlockID start)
+    BlocksReachedFrom(const CFG& cfg, BlockID start, const BlockFrequencies* frequenciesIfOnlyByLikelyPaths = nullptr)
         : m_cfg(cfg)
+        , m_frequencies(frequenciesIfOnlyByLikelyPaths)
+        , m_start(start)
         , m_isReached(cfg.numNodes())
         , m_isPending(cfg.reversePostOrder().size())
     {
@@ -148,6 +150,8 @@ public:
                 return false;
             m_isPending.quickClear(position);
             for (BlockID successor : m_cfg.successors(m_cfg.reversePostOrder()[position])) {
+                if (m_frequencies && m_frequencies->classOf(m_start) < m_frequencies->classOf(successor))
+                    continue;
                 if (!m_isReached.quickSet(successor.index()))
                     m_isPending.quickSet(m_cfg.reversePostOrderIndex(successor));
             }
@@ -157,6 +161,8 @@ public:
 
 private:
     const CFG& m_cfg;
+    const BlockFrequencies* m_frequencies;
+    BlockID m_start;
     BitVector m_isReached;
     BitVector m_isPending;
 };
@@ -197,11 +203,16 @@ std::optional<CapacityPlan> ArrayCapacityPlanner::plan(ValueID id)
     int64_t numberOfConditionalElements = 0;
     Vector<AppendSite, 2> loopSites;
     const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
+    std::optional<BlocksReachedFrom> blocksBehindLiteralByLikelyPaths;
     for (const AppendSite& site : sites) {
         if (frequencies.classOf(location.block) < frequencies.classOf(site.block) || !mayFollowLiteral(site))
             continue;
         switch (executionOf(literal, chain, site)) {
         case SiteExecution::Unknown:
+            if (!blocksBehindLiteralByLikelyPaths)
+                blocksBehindLiteralByLikelyPaths.emplace(m_analyses.cfg(), location.block, &frequencies);
+            if (!blocksBehindLiteralByLikelyPaths->contains(site.block))
+                continue;
             return std::nullopt;
         case SiteExecution::Always:
             if (site.kind == AppendKind::StoreAtIndex)
@@ -422,7 +433,34 @@ bool ArrayCapacityPlanner::appendsOncePerIteration(const PlannedLiteral& literal
         return false;
 
     const NaturalLoop& loop = loopOf(m_analyses, site);
-    return m_analyses.dominators().dominates(literal.point.block, loop.header()) && runsOncePerIteration(loop, site.block);
+    return isEnteredOnLikelyPathsFrom(literal.point.block, loop) && runsOncePerIteration(loop, site.block);
+}
+
+bool ArrayCapacityPlanner::isEnteredOnLikelyPathsFrom(BlockID block, const NaturalLoop& loop)
+{
+    if (m_analyses.dominators().dominates(block, loop.header()))
+        return true;
+
+    constexpr unsigned maxBlocksBetween = 8;
+    const NaturalLoops& loops = m_analyses.naturalLoops();
+    const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
+    Vector<BlockID, maxBlocksBetween> between { loop.header() };
+    for (size_t i = 0; i < between.size(); ++i) {
+        bool hasLikelyEdge = false;
+        for (Edge edge : m_analyses.cfg().incomingEdges(between[i])) {
+            if (frequencies.classOf(block) < frequencies.classOf(edge.from) || loops.belongsTo(edge.from, loop))
+                continue;
+            hasLikelyEdge = true;
+            if (edge.from == block || between.contains(edge.from))
+                continue;
+            if (between.size() == maxBlocksBetween)
+                return false;
+            between.append(edge.from);
+        }
+        if (!hasLikelyEdge)
+            return false;
+    }
+    return true;
 }
 
 bool ArrayCapacityPlanner::runsOncePerIteration(const NaturalLoop& loop, BlockID block)

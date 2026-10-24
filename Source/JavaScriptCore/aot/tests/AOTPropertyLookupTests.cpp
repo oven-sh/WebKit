@@ -235,7 +235,6 @@ static void testDictionary(LoadedProgram& program)
     object->convertToDictionary(vm);
     AOT_TEST_CHECK(PropertyWalk::hasPropertyOnChain(object->structure(), label.impl()) == Presence::Unknown);
     AOT_TEST_CHECK(isOwn(readAndClassify(program, object, label, ChainWalkMode::AllocatesNothing), PropertyAnswerKind::Value, object->getDirectOffset(vm, label)));
-    AOT_TEST_CHECK(findsOwnValue(program, object, label));
     AOT_TEST_CHECK(isLastingRefusal(readAndClassify(program, object, other, ChainWalkMode::AllocatesNothing)));
     AOT_TEST_CHECK(object->structure()->isDictionary());
 
@@ -243,6 +242,13 @@ static void testDictionary(LoadedProgram& program)
     AOT_TEST_CHECK(answer.kind == PropertyAnswerKind::Uncacheable && answer.didFlatten && !object->structure()->isDictionary());
     AOT_TEST_CHECK(findsOwnValue(program, object, label));
     AOT_TEST_CHECK(isAbsent(readAndClassify(program, object, other)));
+
+    JSObject* readFirstForWhatItHolds = constructEmptyObject(program.realm());
+    readFirstForWhatItHolds->putDirect(vm, label, jsNumber(7));
+    readFirstForWhatItHolds->convertToDictionary(vm);
+    answer = readAndClassify(program, readFirstForWhatItHolds, label);
+    AOT_TEST_CHECK(answer.kind == PropertyAnswerKind::Uncacheable && answer.didFlatten && !readFirstForWhatItHolds->structure()->isDictionary());
+    AOT_TEST_CHECK(findsOwnValue(program, readFirstForWhatItHolds, label));
 
     object->convertToDictionary(vm);
     AOT_TEST_CHECK(findsOwnValue(program, object, label));

@@ -1791,8 +1791,12 @@ Structure* Structure::flattenDictionaryStructure(VM& vm, JSObject* object)
 #if ENABLE(AOT)
     if (vm.hasCompiledCode()) {
         AOT::RuntimeHooks::didFlattenStructure(vm, this);
-        if (mayBePrototype())
-            AOT::RuntimeHooks::didChangePrototypeChain(vm, object, nullptr);
+        if (mayBePrototype()) {
+            if (isUncacheableDictionary())
+                AOT::RuntimeHooks::didChangePrototypeChain(vm, object, nullptr);
+            else
+                AOT::RuntimeHooks::didFlattenObjectOnPrototypeChain(vm, object);
+        }
     }
 #endif
 

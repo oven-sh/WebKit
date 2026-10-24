@@ -112,7 +112,7 @@ layout L3 name="OptionalAndDefault" fields=[{key="n" declared={type=undefined|nu
 # CHECK: [[clone3]]: object ~ L1 = CloneAs {{*}} layout=L1 @
 # CHECK-NEXT: [[hasLayout3]]:{{*}}= TypeTest [[clone3]] testedType=L1
 # CHECK-NEXT: Branch [[hasLayout3]] -> taken [[cloned3]](| 0), notTaken
-# CHECK: [[cloned3]]([[typedClone3]]: L1):
+# CHECK: [[cloned3]]([[typedClone3]]: L1) frequency=Rare:
 # CHECK-NEXT: [[keys3]]: Array<string> = CallBuiltin -, [[typedClone3]] overload=ObjectKeys/0
 # CHECK: LoopHint
 # CHECK: ([[key3]]: string):

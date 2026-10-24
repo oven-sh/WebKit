@@ -275,6 +275,10 @@ void GuardEmitter::generateHasNoFieldOutsideSlot(const ValueContext& value)
 
 void GuardEmitter::generateHasBirthFieldsFilled(const ValueContext& value)
 {
+    if (build().recordedOptions().isSabotaged(Sabotage::UnfinishedObjectsPassForFinished)) {
+        defineTest(value, Condition(m_out.constInt32(1)));
+        return;
+    }
     generateTestOfFlags(value);
 }
 

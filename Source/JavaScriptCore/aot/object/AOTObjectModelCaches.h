@@ -12,6 +12,7 @@
 #include "AOTFieldMovePlanCache.h"
 #include "AOTMemberGuards.h"
 #include "AOTPropertyListCache.h"
+#include "AOTSourcePlans.h"
 #include "AOTVector.h"
 #include <array>
 #include <memory>
@@ -64,6 +65,7 @@ struct ObjectModelCaches {
     static constexpr unsigned numberOfGetterDefinitionPlans = 64;
 
     FieldMovePlanCache movePlans;
+    SourcePlans sourcePlans;
     std::array<GetterDefinitionPlan, numberOfGetterDefinitionPlans> getterDefinitionPlans;
     AssignmentPlanCache assignmentPlans;
     PropertyListCache propertyLists;

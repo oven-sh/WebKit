@@ -69,6 +69,9 @@ private:
 
     PlainObject emitPlainObject(ValueID value, const ValidationExits&);
     ValueID emitObject(ResultNodeRef, const ResultNode&, ValueID value, const ValidationExits&);
+    bool canReadByPlan(const ResultNode&);
+    ValueID emitObjectByPlan(const ResultNode&, ValueID object, BlockID otherwise, const ValidationExits&);
+    ValueID emitObjectMemberByMember(const ResultNode&, ValueID value, const ValidationExits&);
     ValueID emitMember(const PlainObject&, const ResultMember&, const ValidationExits&);
     void emitRejectUndeclaredMembers(const PlainObject&, const ResultNode&, const ValidationExits&);
     void emitValidateUndeclaredMembers(const PlainObject&, const ResultNode&, ValueID copy, const ValidationExits&);

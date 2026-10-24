@@ -382,9 +382,8 @@ Operand SlotEmitter::loadOutOfLine(CellPointer cell, const PlacedSlot& slot, con
     OperandJoin join(m_out, representation);
     Pointer extension = branchUnlessExtensionHolds(cell, extensionWord, granuleBitOf(slot.offset), normalEdge(hasNoStorage));
     Operand loaded = load(addressInExtension(m_heaps.at(m_program, location), extension, slot.offset), slot.representation);
-    // The collector reaches the extension's slots through the cell alone, and B3 may load the extension once in front of a loop and let the cell die.
-    if (traitsOf(slot.representation).holdsCell)
-        ensureStillAliveHere(cell);
+    // The collector reaches the extension through the cell alone, and B3 may load the extension once in front of a loop and let the cell die.
+    ensureStillAliveHere(cell);
     join.add(loaded);
     m_out.appendTo(hasNoStorage);
     join.add(Operand(representation, constantWithBits(b3TypeOf(representation), traitsOf(slot.representation).absentBits)));

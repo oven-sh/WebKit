@@ -80,6 +80,8 @@ private:
     struct PassTimer {
         MonotonicTime wallStart;
         Seconds cpuStart;
+        PassID enclosingPass { PassID::None };
+        double startOfEnclosingPassInSeconds { 0 };
     };
 
     // To read either takes a microsecond, and a build runs millions of function passes, most of them on functions of a few values, where the pass takes no longer than that.

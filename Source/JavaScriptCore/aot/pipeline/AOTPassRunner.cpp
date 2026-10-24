@@ -10,6 +10,7 @@
 
 #include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
+#include "AOTCurrentWork.h"
 #include "AOTEffectSummaries.h"
 #include "AOTExactBuffer.h"
 #include "AOTFlowApply.h"
@@ -26,6 +27,7 @@
 #include <wtf/BitVector.h>
 #include <wtf/CPUTime.h>
 #include <wtf/DataLog.h>
+#include <wtf/Scope.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
@@ -157,6 +159,7 @@ PassOutcome PassRunner::runFunctionPass(PassID id, FunctionPassContext& context)
     prepare(run);
     size_t numberOfValuesAtStart = context.function.values.size();
     run.functionAsRead = context.subject().function;
+    CurrentWorkScope workScope(context.program, run.functionAsRead);
     PassOutcome outcome = runFunctionPass(id, context, run);
     addTotals(run, numberOfValuesAtStart);
     return outcome;
@@ -199,6 +202,7 @@ PassOutcome PassRunner::runSchedule(FunctionSchedule schedule, const Program& pr
     prepare(run);
     size_t numberOfValuesAtStart = function.values.size();
     run.functionAsRead = context.subject().function;
+    CurrentWorkScope workScope(program, run.functionAsRead);
     const bool readsHeat = schedule == FunctionSchedule::Prepare || schedule == FunctionSchedule::Optimize;
     const bool hasNoWarmCode = readsHeat && !inputs.heat.hasWarmCode(program, id);
     run.optionalPassesOfShortSchedule = optionalPassesOfShortScheduleFor(function, hasNoWarmCode, readsHeat && inputs.heat.isCompact(program, id));
@@ -295,13 +299,27 @@ auto PassRunner::beginProgramPass(PassID id, const Program& program) -> std::opt
         return std::nullopt;
     }
     checkFormAndInputs(descriptor, program);
-    return PassTimer { MonotonicTime::now(), CPUTime::forCurrentThread() };
+    PassTimer timer { MonotonicTime::now(), CPUTime::forCurrentThread() };
+    CurrentWork& work = CurrentWork::ofCurrentThread();
+    timer.enclosingPass = work.pass.load(std::memory_order_relaxed);
+    timer.startOfEnclosingPassInSeconds = work.startInSeconds.load(std::memory_order_relaxed);
+    work.program.store(&program, std::memory_order_relaxed);
+    work.startInSeconds.store(timer.wallStart.secondsSinceEpoch().value(), std::memory_order_relaxed);
+    work.finishedPart.store(nullptr, std::memory_order_relaxed);
+    work.setPass(id);
+    if (m_build.recordedOptions().sabotage) [[unlikely]]
+        stopWhereSabotaged(m_build, std::nullopt, id);
+    return timer;
 }
 
 void PassRunner::endProgramPass(PassID id, const Program& program, PassTimer timer, PassOutcome outcome)
 {
     const PassDescriptor& descriptor = descriptorOf(id);
 
+    auto leavePass = makeScopeExit([&] {
+        currentWork().setPass(timer.enclosingPass);
+        currentWork().startInSeconds.store(timer.startOfEnclosingPassInSeconds, std::memory_order_relaxed);
+    });
     m_lastProgramPassOutcome = outcome;
     m_build.statistics().addPassTime(id, { .wall = MonotonicTime::now() - timer.wallStart, .cpu = CPUTime::forCurrentThread() - timer.cpuStart, .runs = 1 });
     if (outcome == PassOutcome::Changed && !descriptor.countsOwnChanges)
@@ -555,6 +573,7 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
         functionBeforeRun.emplace(context.function);
     if (functionBeforeRun || isTimed) [[unlikely]]
         logBeforeRun = context.changes.end();
+    currentWork().setPass(id);
     PassOutcome outcome = descriptor.run(context);
     if (m_build.options().checksThatUsedValuesAreListed && outcome == PassOutcome::Changed) [[unlikely]] {
         if (String problem = findValueListedWrongly(context.function); !problem.isNull()) {
@@ -756,6 +775,7 @@ void PassRunner::verifySkippedFunctionPass(const PassDescriptor& descriptor, con
     FunctionPassContext contextOfCopy { context.program, context.inputs, context.id, copy, analyses, context.types, context.strings, m_build };
     contextOfCopy.pendingTyping = context.pendingTyping.forCopyWith(contextOfCopy.changes, context.changes);
     contextOfCopy.mayDecideTestsAcrossBlocks = run.mayDecideTestsAcrossBlocks;
+    currentWork().setPass(descriptor.id);
     if (descriptor.run(contextOfCopy) == PassOutcome::Unchanged)
         return;
 

@@ -13,6 +13,7 @@
 #include "AOTFlowResults.h"
 #include "AOTIdentifierNumbering.h"
 #include "AOTPlacement.h"
+#include "AOTSourcePlans.h"
 #include "AOTStubsPropertyKeys.h"
 #include "AOTVector.h"
 
@@ -76,6 +77,44 @@ void ValidationEmitter::generateCloneAs(const ValueContext& value)
     Boxed source = boxCell(in<CellPointer>(value->sourceOperand()));
     Pointer values = argumentBuffer(replacedValues.span());
     define(value, callOperation<CellPointer>(value, RuntimeOperation::CloneObjectAs, { source, word32(static_cast<int32_t>(request->value())), values }));
+}
+
+void ValidationEmitter::generateFindSourcePlan(const ValueContext& value)
+{
+    std::optional<Request> request = value->request();
+    if (!request) {
+        fail(value, InternalErrorKind::PlacedPayloadMissing);
+        return;
+    }
+    Pointer plan = callOperation<Pointer>(value, RuntimeOperation::FindSourcePlan, { in<CellPointer>(value->sourceOperand()), word32(static_cast<int32_t>(request->value())) });
+    auto wordAt = [&](unsigned index) {
+        return Word32(m_out.load32(m_out.address(m_heaps.entire(AbstractHeap::RuntimeState), plan.value(), index * sizeof(uint32_t))));
+    };
+    defineResults(value, { isNotZero(wordAt(SourcePlan::isUsableWord)), plan, Pointer(zeroExtended(wordAt(SourcePlan::orderWord)).value()) });
+}
+
+void ValidationEmitter::generateGetPlannedProperty(const ValueContext& value)
+{
+    static_assert(!SourcePlan::absent);
+    CellPointer source = in<CellPointer>(value->sourceOperand());
+    Pointer plan = in<Pointer>(value->planOperand());
+    ptrdiff_t offsetInPlan = (SourcePlan::firstPlaceWord + value->memberIndex()) * sizeof(uint32_t);
+    Integer place = signExtended(Word32(m_out.load32(m_out.address(m_heaps.entire(AbstractHeap::RuntimeState), plan.value(), offsetInPlan))));
+    Condition isPresent = isNotZero(place);
+
+    LBasicBlock present = newBlock();
+    LBasicBlock done = newBlock();
+    ValueFromBlock whenAbsent = m_out.anchor(undefined().value());
+    m_out.branch(isPresent.value(), normalEdge(present), normalEdge(done));
+
+    m_out.appendTo(present);
+    Pointer butterfly = loadField<Pointer>(source, m_heaps.JSObject_butterfly);
+    Pointer base = select(Condition(m_out.greaterThan(place.value(), m_out.int64Zero)), Pointer(source.value()), butterfly);
+    ValueFromBlock whenPresent = m_out.anchor(m_out.load64(m_out.address(m_heaps.entire(AbstractHeap::NamedProperties), m_out.add(base.value(), place.value()), 0)));
+    m_out.jump(done);
+
+    m_out.appendTo(done);
+    defineResults(value, { Boxed(m_out.phi(B3::Int64, whenAbsent, whenPresent)), isPresent });
 }
 
 void ValidationEmitter::generateGetPreparedPlans(const ValueContext& value)

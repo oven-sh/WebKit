@@ -1,7 +1,7 @@
 # A planned capacity is a prediction: what counts in a loop are the paths that are as likely as the loop, not the generic arms and copies that type tests leave beside them
 # FORM: Prepared
 # RUN: pass PlanArrayCapacities
-# STATISTIC: ArrayCapacitiesPlanned = 3
+# STATISTIC: ArrayCapacitiesPlanned = 5
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="pushWithUnlikelyGenericArm" parameters=[{type=int[0, 1000]}, {type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
@@ -175,3 +175,67 @@ function f5 name="loopGoesOnInLikelyCopy" parameters=[{type=int[0, 1000]}, {type
 }
 # CHECK-LABEL: function f5
 # CHECK-NOT: capacity=
+
+function f6 name="unlikelyBlockLeadsIntoLoopOfAnotherLiteral" parameters=[{type=int[0, 1000]}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: int[0, 1000], v1: anything, v2: boolean):
+    v3 = Integer integer=0
+    Branch v2 -> taken b1(v3), notTaken b8(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(| 0), notTaken b14()
+  b2(v7):
+    v8 = NewArray contents=anything
+    v9 = Integer integer=0
+    Jump -> next b3(v9)
+  b3(v10):
+    LoopHint
+    v12 = Less v10, v0
+    Branch v12 -> taken b4(| 0), notTaken b6()
+  b4(v13):
+    Branch v2 -> taken b5(), notTaken b7(v7, v8, v13)
+  b5():
+    v14 = CallBuiltin v8, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v15 = Integer integer=1
+    v16 = Add v13, v15
+    Jump -> next b3(v16)
+  b6():
+    v17 = Integer integer=1
+    v18 = Add v7, v17
+    Jump -> next b1(v18)
+  b7(v19, v20, v21) frequency=Unlikely:
+    Jump -> next b10(v19, v20, v21)
+  b8(v22):
+    LoopHint
+    v24 = Less v22, v0
+    Branch v24 -> taken b9(| 0), notTaken b14()
+  b9(v25):
+    v26 = NewArray contents=anything
+    v27 = Integer integer=0
+    Jump -> next b10(v25, v26, v27)
+  b10(v28, v29, v30):
+    Jump -> next b11(v30)
+  b11(v31):
+    LoopHint
+    v33 = Less v31, v0
+    Branch v33 -> taken b12(| 0), notTaken b13()
+  b12(v34):
+    v35 = CallBuiltin v29, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v36 = Integer integer=1
+    v37 = Add v34, v36
+    Jump -> next b11(v37)
+  b13():
+    v38 = Integer integer=1
+    v39 = Add v28, v38
+    Jump -> next b8(v39)
+  b14():
+    v40 = Undefined
+    Return v40
+}
+# CHECK-LABEL: function f6
+# CHECK: b2(
+# CHECK: [[sum6]]: {{*}} = Add {{*}}v0
+# CHECK-NEXT: = NewArray {{*}}capacity=[[sum6]]
+# CHECK: b9(
+# CHECK: [[otherSum6]]: {{*}} = Add {{*}}v0
+# CHECK-NEXT: = NewArray {{*}}capacity=[[otherSum6]]

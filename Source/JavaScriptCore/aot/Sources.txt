@@ -313,6 +313,7 @@ aot/object/AOTPropertyWalk.cpp
 aot/object/AOTRuntimeLayoutTable.cpp
 aot/object/AOTSlimClosure.cpp
 aot/object/AOTSlotAccess.cpp
+aot/object/AOTSourcePlans.cpp
 aot/object/AOTStaticFields.cpp
 aot/object/AOTStructureTable.cpp
 aot/object/AOTThisAllocation.cpp
@@ -721,6 +722,7 @@ aot/stubs/AOTStubsObjectCopy.cpp
 aot/support/AOTBuildContext.cpp
 aot/support/AOTCompileOptionWords.cpp
 aot/support/AOTCompileOptions.cpp
+aot/support/AOTCurrentWork.cpp
 aot/support/AOTDiagnosticMessages.cpp
 aot/support/AOTDiagnostics.cpp
 aot/support/AOTLimits.cpp

@@ -703,10 +703,12 @@ aotOp(op_in_by_val, OpInByVal, macro (size, get, dispatch, metadata, return)
     dispatch()
 end)
 
-# JSPropertyNameEnumerator::computeNext() for an enumerator that is current for a compiled object, whose mode is always GenericMode.
+# JSPropertyNameEnumerator::computeNext() for an enumerator that is current for a compiled object, whose mode is always GenericMode, and at both ends of a loop, which the ordinary handler leaves to the slow path.
 aotOp(op_enumerator_next, OpEnumeratorNext, macro (size, get, dispatch, metadata, return)
     enumeratorNext(size, get, dispatch, macro ()
         loadVariable(get, m_mode, t0)
+        bbeq t0, constexpr JSPropertyNameEnumerator::InitMode, .first
+        bbeq t0, constexpr JSPropertyNameEnumerator::OwnStructureMode, .last
         bbneq t0, constexpr JSPropertyNameEnumerator::GenericMode, .slow
         get(m_base, t1)
         loadConstantOrVariableCell(size, t1, t0, .slow)
@@ -721,12 +723,45 @@ aotOp(op_enumerator_next, OpEnumeratorNext, macro (size, get, dispatch, metadata
         loadVariable(get, m_index, t2)
         addq 1, t2
         loadi JSPropertyNameEnumerator::m_endStructurePropertyIndex[t1], t3
-        biaeq t2, t3, .slow
+        biaeq t2, t3, .last
 
         storeVariable(get, m_index, t2, t3)
         loadp JSPropertyNameEnumerator::m_propertyNames[t1], t3
         zxi2q t2, t2
         loadp [t3, t2, PtrSize], t3
+        storeVariable(get, m_propertyName, t3, t2)
+        dispatch()
+
+        # The start of a loop over an ordinary object without indexed properties that still has the Structure of the enumerator.
+    .first:
+        loadVariable(get, m_enumerator, t1)
+        btinz JSPropertyNameEnumerator::m_indexedLength[t1], .slow
+        btiz JSPropertyNameEnumerator::m_endStructurePropertyIndex[t1], .slow
+        get(m_base, t2)
+        loadConstantOrVariableCell(size, t2, t0, .slow)
+        bbeq JSCell::m_type[t0], CompiledObjectType, .slow
+        loadi JSPropertyNameEnumerator::m_cachedStructureID[t1], t2
+        bineq t2, JSCell::m_structureID[t0], .slow
+        loadp JSPropertyNameEnumerator::m_propertyNames[t1], t3
+        loadp [t3], t3
+        btpz t3, .slow
+        storeVariable(get, m_propertyName, t3, t2)
+        move constexpr JSPropertyNameEnumerator::OwnStructureMode, t3
+        orq numberTag, t3
+        storeVariable(get, m_mode, t3, t2)
+        storeVariable(get, m_index, numberTag, t2)
+        dispatch()
+
+        # Behind the last name, whatever the object has become.
+    .last:
+        loadVariable(get, m_enumerator, t1)
+        loadVariable(get, m_index, t2)
+        addq 1, t2
+        bib t2, JSPropertyNameEnumerator::m_endGenericPropertyIndex[t1], .slow
+        storeVariable(get, m_index, t2, t3)
+        loadp CodeBlock[cfr], t3
+        loadp CodeBlock::m_vm[t3], t3
+        loadp VM::smallStrings + SmallStrings::m_sentinelString[t3], t3
         storeVariable(get, m_propertyName, t3, t2)
         dispatch()
 

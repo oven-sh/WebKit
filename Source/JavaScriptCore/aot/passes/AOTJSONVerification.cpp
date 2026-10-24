@@ -182,6 +182,7 @@ private:
     bool isReturnedCall(BlockID, ValueID) const;
     bool isUnderMatchingTest(const Value& advance);
     KeyOrderOrigin originOfKeyOrder(LayoutID, ValueID order);
+    bool isNewObjectOf(LayoutID, ValueID object);
     bool usesStalePointer(const PointerSummary&, ValueID, const BitVector& stale) const;
 
     void verifyFunctionReferences();
@@ -499,7 +500,8 @@ KeyOrderOrigin TypedDataVerifier::originOfKeyOrder(LayoutID layout, ValueID orde
                 origin = KeyOrderOrigin::Unknown;
                 break;
             }
-            if (familyOf(row.opcode) != OperationFamily::JSONParse || !Value::opcodesWithLayout.contains(row.opcode) || row.layout() != layout)
+            bool answersKeyOrder = familyOf(row.opcode) == OperationFamily::JSONParse || row.opcode == Opcode::FindSourcePlan;
+            if (!answersKeyOrder || !Value::opcodesWithLayout.contains(row.opcode) || row.layout() != layout)
                 return KeyOrderOrigin::Other;
             if (OperandPosition::order(row.opcode))
                 worklist.append(row.orderOperand());
@@ -510,6 +512,36 @@ KeyOrderOrigin TypedDataVerifier::originOfKeyOrder(LayoutID layout, ValueID orde
     return origin;
 }
 
+// An allocation that is made again on several ways arrives as the parameter of the block where they meet.
+bool TypedDataVerifier::isNewObjectOf(LayoutID layout, ValueID object)
+{
+    const UseLists& useLists = m_analyses.useLists();
+    BitVector isVisited;
+    Vector<ValueID, 4> worklist { object };
+    while (!worklist.isEmpty()) {
+        ValueID id = m_analyses.sameObjectThroughCasts(worklist.takeLast());
+        if (isVisited.set(id.index()))
+            continue;
+
+        ValueLocation location = useLists.locationOf(id);
+        if (location.placement == ValuePlacement::InBlock) {
+            const Value& value = m_function.at(id);
+            if (value.opcode != Opcode::NewObject || value.layout() != layout)
+                return false;
+            continue;
+        }
+        if (location.placement != ValuePlacement::Parameter || location.block == entryBlock)
+            return false;
+        for (Edge edge : m_cfg.incomingEdges(location.block)) {
+            IncomingValue incoming = incomingValueOf(m_function, edge, location.index);
+            if (incoming.kind != IncomingValue::Kind::Argument)
+                return false;
+            worklist.append(incoming.argument);
+        }
+    }
+    return true;
+}
+
 void TypedDataVerifier::verifyKeyOrderObjects()
 {
     if (!m_usedOpcodes.contains(Opcode::JSONObjectFinish))
@@ -518,8 +550,7 @@ void TypedDataVerifier::verifyKeyOrderObjects()
         const Value& finish = m_function.at(id);
         if (finish.opcode != Opcode::JSONObjectFinish)
             return false;
-        const Value& object = m_function.at(m_analyses.sameObjectThroughCasts(finish.objectOperand()));
-        if (object.opcode != Opcode::NewObject || object.layout() != finish.layout())
+        if (!isNewObjectOf(finish.layout(), finish.objectOperand()))
             return true;
         return originOfKeyOrder(finish.layout(), finish.orderOperand()) == KeyOrderOrigin::Other;
     });

@@ -705,11 +705,19 @@ void generateStringReplaceRegExpMayNotMatch(StubAssembler& jit)
     resetLastIndexIfGlobal(jit, flags, regExpObject);
     Jump isTooShort = jit.branch32(CCallHelpers::Below, subjectLength, Address(regExp, RegExp::offsetOfMinimumSize()));
     callMatchingCode(jit, registers, savedOperands, std::nullopt, OffsetVectorOwner::VM);
-    slowCases.append(jit.branch64(CCallHelpers::NotEqual, scratch, TrustedImm64(noMatch)));
+    Jump didNotMiss = jit.branch64(CCallHelpers::NotEqual, scratch, TrustedImm64(noMatch));
     isTooShort.link(&jit);
     Label isMiss = jit.label();
     jit.move(string, jit.result());
     jit.returnToCaller();
+
+    static_assert(operationArgumentGPR(4) == gprOf(StubRegister::A4));
+    const GPRReg oneBehindStartOfFirstMatch = jit.reuseScratch(StubRegister::A4);
+    didNotMiss.link(&jit);
+    slowCases.append(jit.branch64(CCallHelpers::LessThan, scratch, TrustedImm64(0)));
+    Label isFound = jit.label();
+    jit.add32(TrustedImm32(1), scratch, oneBehindStartOfFirstMatch);
+    Jump hasArguments = jit.jump();
 
     isRope.link(&jit);
     JumpList isNotSubstring;
@@ -724,8 +732,11 @@ void generateStringReplaceRegExpMayNotMatch(StubAssembler& jit)
     resetLastIndexIfGlobal(jit, flags, regExpObject);
     searchForAtom(jit, registers, savedOperands);
     jit.branch64(CCallHelpers::Equal, scratch, TrustedImm64(noMatch)).linkTo(isMiss, &jit);
+    jit.jump().linkTo(isFound, &jit);
 
     slowCases.link(&jit);
+    jit.move(TrustedImm32(0), oneBehindStartOfFirstMatch);
+    hasArguments.link(&jit);
     jit.callOperationAndReturn(Entry::operationAOTStringReplaceRegExpString, { });
 }
 

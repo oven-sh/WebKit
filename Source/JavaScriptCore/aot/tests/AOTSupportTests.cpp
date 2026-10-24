@@ -8,7 +8,9 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTCompile.h"
 #include "AOTCompileOptionWords.h"
+#include "AOTCurrentWork.h"
 #include "AOTDerivedFunctions.h"
 #include "AOTDiagnostics.h"
 #include "AOTFlowResults.h"
@@ -20,12 +22,15 @@
 #include "AOTLosses.h"
 #include "AOTNativeTest.h"
 #include "AOTPassID.h"
+#include "AOTPhaseTimes.h"
 #include "AOTSchemaEnums.h"
 #include "AOTSort.h"
 #include "AOTStatistics.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include "AOTWire.h"
+#include "B3PhaseScope.h"
+#include "B3Procedure.h"
 #include "LineColumn.h"
 #include <algorithm>
 #include <array>
@@ -662,6 +667,113 @@ static void testHeapSortBehindTooManyPartitions()
 #endif
 }
 
+static String textOf(size_t (*describe)(std::span<char>))
+{
+    std::array<char, 4096> buffer;
+    return String::fromUTF8(std::span<const char>(buffer).first(describe(buffer)));
+}
+
+static void testCurrentWorkNamesFunctionAndStep()
+{
+    BuildContext build(makeDefaultCompileOptions());
+    std::unique_ptr<Program> program = parseDerivedFunctions(build);
+    AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped).isEmpty());
+    {
+        PhaseTimes times(build, Stage::Optimize);
+        AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling in Optimize.\n"_s);
+        {
+            CurrentWorkScope scope(*program, FunctionID(1u));
+            currentWork().setPass(PassID::EliminateDeadCode);
+            AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling second (a.ts:1) in EliminateDeadCode.\nTo build without that step, add --aot-disable=pass:EliminateDeadCode.\n"_s);
+            AOT_TEST_CHECK(textOf(describeWhatThreadsAreCompiling) == "Still compiling second (a.ts:1) in EliminateDeadCode for 0 s.\n"_s);
+            currentWork().startInSeconds.store(MonotonicTime::now().secondsSinceEpoch().value() - 90.5, std::memory_order_relaxed);
+            AOT_TEST_CHECK(textOf(describeWhatThreadsAreCompiling) == "Still compiling second (a.ts:1) in EliminateDeadCode for 90 s.\nA build that stays this long in one function is stuck, which is a bug in Bun. Please report it with these lines: https://github.com/oven-sh/bun/issues\nTo build without that step, add --aot-disable=pass:EliminateDeadCode.\n"_s);
+            // A pass that every build needs has no way around it.
+            currentWork().setPass(PassID::GenerateCode);
+            AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling second (a.ts:1) in GenerateCode.\n"_s);
+            // A number that no function has.
+            currentWork().setFunction(FunctionID(1000u));
+            AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling in GenerateCode.\n"_s);
+        }
+        times.didFinish("the first part"_s);
+        AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling in Optimize (after: the first part).\n"_s);
+        {
+            PhaseTimes timesOfPass(build, PassID::AnalyzeFlow);
+            AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped).startsWith("Stopped while compiling in AnalyzeFlow.\n"_s));
+        }
+        AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling in Optimize (after: the first part).\n"_s);
+    }
+    AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped).isEmpty());
+    AOT_TEST_CHECK(textOf(describeWhatThreadsAreCompiling).isEmpty());
+}
+
+static void testCurrentWorkNamesPhaseOfBackEnd()
+{
+    BuildContext build(makeDefaultCompileOptions());
+    std::unique_ptr<Program> program = parseDerivedFunctions(build);
+    B3::Procedure first(B3::Policy::fromProcessOptions());
+    B3::Procedure second(B3::Policy::fromProcessOptions());
+    first.setSubjectOfClient(1);
+    second.setSubjectOfClient(2);
+    CurrentWorkScope scope(*program, FunctionID());
+    currentWork().setPass(PassID::GenerateCode);
+    {
+        B3::PhaseScope phase(second, "someB3Phase"_s);
+        AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling second (a.ts:1) in GenerateCode (someB3Phase).\n"_s);
+    }
+    {
+        B3::PhaseScope phase(first, "anotherB3Phase"_s);
+        AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling first (a.ts:1) in GenerateCode (anotherB3Phase).\n"_s);
+    }
+    currentWork().leaveBackEnd();
+    AOT_TEST_CHECK(textOf(describeWhereThisThreadStopped) == "Stopped while compiling first (a.ts:1) in GenerateCode.\n"_s);
+}
+
+static void testCurrentWorkOfPoolThreads()
+{
+    BuildContext build(optionsWith({ "threads=4"_s }));
+    std::unique_ptr<Program> program = parseDerivedFunctions(build);
+    PhaseTimes times(build, PassID::AnalyzeFlow);
+    std::atomic<unsigned> numberOfThreadsAtWork { 0 };
+    std::atomic<bool> isDescribed { false };
+    std::array<String, 2> saidByThread;
+    String saidOfAllThreads;
+    // Both indices are at work at once, so they are on two threads, of which at most one is this one.
+    forEachIndexInParallel(build.parallelLoops(), 2, [&](unsigned index) {
+        saidByThread[index] = textOf(describeWhereThisThreadStopped);
+        CurrentWorkScope scope(*program, FunctionID(index));
+        numberOfThreadsAtWork.fetch_add(1);
+        while (numberOfThreadsAtWork.load() < 2)
+            Thread::yield();
+        if (index) {
+            saidOfAllThreads = textOf(describeWhatThreadsAreCompiling);
+            isDescribed.store(true);
+        }
+        while (!isDescribed.load())
+            Thread::yield();
+    });
+    for (const String& said : saidByThread)
+        AOT_TEST_CHECK(said.startsWith("Stopped while compiling in AnalyzeFlow.\n"_s));
+    AOT_TEST_CHECK(saidOfAllThreads.contains("Still compiling first (a.ts:1) in AnalyzeFlow for 0 s.\n"_s));
+    AOT_TEST_CHECK(saidOfAllThreads.contains("Still compiling second (a.ts:1) in AnalyzeFlow for 0 s.\n"_s));
+}
+
+static void testCurrentWorkFitsItsBuffer()
+{
+    BuildContext build(makeDefaultCompileOptions());
+    std::unique_ptr<Program> program = parseDerivedFunctions(build);
+    CurrentWorkScope scope(*program, FunctionID(1u));
+    currentWork().setPass(PassID::EliminateDeadCode);
+    String whole = textOf(describeWhereThisThreadStopped);
+    for (size_t capacity = 0; capacity <= whole.length(); ++capacity) {
+        std::array<char, 256> buffer;
+        buffer.fill('#');
+        size_t length = describeWhereThisThreadStopped(std::span(buffer).first(capacity));
+        AOT_TEST_CHECK(length == capacity && buffer[capacity] == '#');
+        AOT_TEST_CHECK(String::fromUTF8(std::span<const char>(buffer).first(length)) == whole.left(capacity));
+    }
+}
+
 std::span<const NativeTest> supportTests()
 {
     static constexpr NativeTest tests[] = {
@@ -679,6 +791,10 @@ std::span<const NativeTest> supportTests()
         { "losses/declines-are-collected-on-request"_s, testDeclinesAreCollectedOnRequest },
         { "statistics/many-threads"_s, testStatisticsFromManyThreads },
         { "threads/sort-on-pool-of-lists-of-every-length"_s, testSortOnPoolOfListsOfEveryLength },
+        { "current-work/names-function-and-step"_s, testCurrentWorkNamesFunctionAndStep },
+        { "current-work/names-phase-of-back-end"_s, testCurrentWorkNamesPhaseOfBackEnd },
+        { "current-work/of-pool-threads"_s, testCurrentWorkOfPoolThreads },
+        { "current-work/fits-its-buffer"_s, testCurrentWorkFitsItsBuffer },
         { "losses/lowest-subject"_s, testLossesKeepLowestSubject },
         { "losses/subject-with-location"_s, testLossesPreferSubjectWithLocation },
         { "sort/equal-elements"_s, testSortLeavesEqualElementsWhereTheStandardLibraryDoes },

@@ -84,6 +84,12 @@ JS_EXPORT_PRIVATE std::unique_ptr<CompileOutput> compileProgram(std::span<const 
 JS_EXPORT_PRIVATE std::unique_ptr<CompileOutput> compileParsedProgram(std::unique_ptr<Typed::Program>, BuildContext&);
 JS_EXPORT_PRIVATE size_t imageAlignment();
 
+// For whoever reports that the process stops, or is told to: a signal handler may call them. They write text of whole lines and return its length, nothing where no build is at work.
+// Where the calling thread's part of a build stands, and what gets a build around it.
+JS_EXPORT_PRIVATE size_t describeWhereThisThreadStopped(std::span<char>);
+// A line for each thread that is at work for a build.
+JS_EXPORT_PRIVATE size_t describeWhatThreadsAreCompiling(std::span<char>);
+
 } } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

@@ -108,6 +108,11 @@ void didChangePrototypeChain(VM& vm, JSObject* changed, UniquedStringImpl* nameO
     didChangeChainObject(vm, changed, nameOrNull);
 }
 
+void didFlattenObjectOnPrototypeChain(VM& vm, JSObject* flattened)
+{
+    didFlattenChainObject(vm, flattened);
+}
+
 void didFlattenStructure(VM& vm, Structure* structure)
 {
     AOT::didFlattenStructure(vm, structure);

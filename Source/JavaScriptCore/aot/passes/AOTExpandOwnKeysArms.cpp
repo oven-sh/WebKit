@@ -270,7 +270,7 @@ auto OwnKeyWalkExpander::emitArmTests(ValueID source, const OwnKeyWalkPlan& plan
     TestedObject object { source, { } };
     if (plan.needsShapeTest)
         object = emitShapeTest(source, singleElementSpan(arm.layout), nextArm);
-    if (plan.needsKeyOrderTest) {
+    if (plan.needsKeyOrderTest && !inputs().build.isSabotaged(Sabotage::WalkedKeysStandInTheFirstOrder)) {
         object.guard = emitKeyOrderTest(object, arm.layout, arm.order.span(), nextArm);
         return object;
     }

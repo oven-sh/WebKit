@@ -235,7 +235,9 @@ static void didChangeClassHolder(VM& vm, State& state, JSObject* changed, Unique
     classes.didChangePrototypeLink(*layout, side);
 }
 
-void didChangeChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uidOrNull)
+enum class ChainObjectChange : bool { MayChangeWhatNamesFind, KeepsWhatNamesFind };
+
+static void tellDependentsOfChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uidOrNull, ChainObjectChange change)
 {
     if (vm.aotState().propertyCaches)
         vm.aotState().propertyCaches->didChangeObjectOnSomeChain(changed, uidOrNull);
@@ -249,9 +251,19 @@ void didChangeChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uidOrNul
             continue;
         if (state->chainDependents)
             state->chainDependents->didChange(changed, uidOrNull);
-        if (state->objects)
+        if (state->objects && change == ChainObjectChange::MayChangeWhatNamesFind)
             didChangeClassHolder(vm, *state, changed, uidOrNull);
     }
+}
+
+void didChangeChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uidOrNull)
+{
+    tellDependentsOfChainObject(vm, changed, uidOrNull, ChainObjectChange::MayChangeWhatNamesFind);
+}
+
+void didFlattenChainObject(VM& vm, JSObject* flattened)
+{
+    tellDependentsOfChainObject(vm, flattened, nullptr, ChainObjectChange::KeepsWhatNamesFind);
 }
 
 void didFlattenStructure(VM& vm, Structure* structure)

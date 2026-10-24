@@ -60,6 +60,22 @@ static Vector<VirtualObjectID, 4> collectReachableObjects(const SinkingState& st
     return objects;
 }
 
+static Vector<BlockID, 4> collectBlocksEnteredFromOutside(const Function& function, const CFG& cfg, std::span<const BlockID> region)
+{
+    BitVector isInRegion(function.blocks.size());
+    for (BlockID block : region)
+        isInRegion.quickSet(block.index());
+    Vector<BlockID, 4> entries;
+    for (BlockID block : region) {
+        bool isEnteredFromOutside = std::ranges::any_of(cfg.predecessors(block), [&](BlockID predecessor) {
+            return !isInRegion.quickGet(predecessor.index());
+        });
+        if (isEnteredFromOutside)
+            entries.append(block);
+    }
+    return entries;
+}
+
 Vector<Edge, 2> AllocationSinking::collectCellEdges(VirtualObjectID object, BlockID merge)
 {
     std::span<const Edge> incomingEdges = m_analyses.cfg().incomingEdges(merge);
@@ -309,7 +325,11 @@ bool AllocationSinking::duplicateLiveRange(IRBuilder& builder)
     };
     auto collectClonableRange = [&](const DuplicationPlan& plan) {
         Vector<BlockID> region = collectLiveRange(plan.object, plan.merge);
-        if (!region.isEmpty() && RegionCloner::checkCanDuplicate(m_analyses, region.span()) != CloneCheck::CanClone)
+        if (region.isEmpty())
+            return region;
+        // A way that seldom runs leaves the range where it builds the object, and may come back into the range further down.
+        Vector<BlockID, 4> entries = collectBlocksEnteredFromOutside(m_function, m_analyses.cfg(), region.span());
+        if (RegionCloner::checkCanDuplicate(m_analyses, region.span(), entries.span()) != CloneCheck::CanClone)
             region.clear();
         return region;
     };
