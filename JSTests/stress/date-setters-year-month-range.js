@@ -111,6 +111,10 @@ shouldBe(new Date(0).setUTCFullYear(400000, 0, -45379000), 8639867894400000);
 shouldBe(new Date(2000, 0, 1).setFullYear(275761, 0, -200), new Date(275761, 0, -200).getTime());
 shouldBe(new Date(Date.UTC(275760, 0, 1)).setUTCMonth(12, -200), Date.UTC(275760, 0, 166));
 
+// Date.UTC can see the order of MakeDay's sum, Day(t) + dt - 1, when the hours cancel a day count beyond 2^53.
+shouldBe(Date.UTC(211, 2, 9007199255695816, -216172782121281900), 0);
+shouldBe(Date.UTC(211, 2, 36028797027334450, -864691128640609200), 0);
+
 // days * msPerDay is not added to the milliseconds first: that sum rounds beyond 2^53.
 shouldBe(new Date(8.64e15 - 999).setUTCDate(-199000000), -8553601036800999);
 shouldBe(new Date(8.64e15 - 999).setUTCDate(-199000000), Date.UTC(275760, 8, -199000000, 23, 59, 59, 1));
@@ -136,7 +140,8 @@ shouldBe(new Date(0).setUTCFullYear(2000 - 2 ** 53, 12 * 2 ** 53, 1), 9466848000
 shouldBe(Date.UTC(2000 - 2 ** 53, 12 * 2 ** 53, 1), 946684800000);
 shouldBe(new Date(0).setUTCFullYear(2000 + 2 ** 53, -12 * 2 ** 53, 1), 946684800000);
 shouldBe(Date.UTC(2000 + 2 ** 53, -12 * 2 ** 53, 1), 946684800000);
-// Beyond 12 * 2^53 MakeDay rounds floor(month / 12) to a Number. The answer is NaN there.
+// Beyond 12 * 2^53 ECMA-262 still defines a date: MakeDay rounds floor(month / 12) to a Number there (2000-05-01
+// and 1998-09-01 for these). NaN is JSC's limit, not the specification's.
 shouldBeNaN(new Date(0).setUTCFullYear(2000 - 2 ** 53, 12 * 2 ** 53 + 16, 1));
 shouldBeNaN(Date.UTC(2000 - 2 ** 53, 12 * 2 ** 53 + 16, 1));
 shouldBeNaN(new Date(0).setUTCFullYear(2000 + 2 ** 53, -12 * 2 ** 53 - 16, 1));
@@ -155,6 +160,9 @@ shouldBe(Date.UTC(-(2 ** 31), 0, 784353015833), -86400000);
 shouldBeNaN(new Date(0).setUTCFullYear(-(2 ** 31) - 1, 0, 784353015833));
 shouldBeNaN(new Date(0).setUTCFullYear(-(2 ** 31), -1, 784353015833));
 // A year or a month count beyond int32 does not wrap into range.
+shouldBeNaN(Date.UTC(2 ** 32 + 2000, 0, 1));
+shouldBeNaN(Date.UTC(2000, 12 * 2 ** 32, 1));
+shouldBeNaN(new Date(2 ** 32 + 2000, 0, 1).getTime());
 shouldBeNaN(new Date(0).setUTCMonth(2 ** 53));
 shouldBeNaN(new Date(0).setUTCMonth(-(2 ** 53)));
 shouldBeNaN(new Date(0).setUTCFullYear(2 ** 53));
@@ -186,6 +194,14 @@ shouldBeNaN(new Date(0).setUTCMonth(1, NaN));
 shouldBeNaN(new Date(0).setUTCDate(Infinity));
 shouldBeNaN(new Date(0).setFullYear(Infinity, -Infinity));
 shouldBeNaN(new Date(0).setYear(NaN));
+// A year or a month count that is not an int32 is converted through a Number: truncated, and then split the same way.
+shouldBe(new Date(0).setUTCFullYear(2000.9, 13.7, 1.5), Date.UTC(2001, 1, 1));
+shouldBe(new Date(0).setUTCFullYear(-0.5, -0, 1), startOfYear0);
+shouldBe(new Date(0).setUTCMonth(-7.9), Date.UTC(1969, 5, 1));
+shouldBe(new Date(0).setUTCMonth("17"), Date.UTC(1971, 5, 1));
+shouldBe(new Date(0).setUTCFullYear({ valueOf() { return 2000; } }, { valueOf() { return -7; } }), Date.UTC(1999, 5, 1));
+shouldBe(new Date(2001, 1, 3, 4, 5, 6, 7).setFullYear(1950.5, 14.5, 40.5), new Date(1950, 14, 40, 4, 5, 6, 7).getTime());
+shouldBe(new Date(2001, 1, 3, 4, 5, 6, 7).setYear(99.9), new Date(1999, 1, 3, 4, 5, 6, 7).getTime());
 // Every argument is still converted, in order, when an earlier one made the result NaN.
 {
     let log = [];

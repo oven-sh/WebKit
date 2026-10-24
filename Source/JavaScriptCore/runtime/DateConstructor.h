@@ -59,9 +59,10 @@ constexpr static inline bool isYearOrMonthForMakeDay(double value)
     return std::abs(value) <= 12 * (maxSafeInteger() + 1);
 }
 
-// https://tc39.es/ecma262/#sec-makeday for a year and a month count that pass isYearOrMonthForMakeDay().
-// The split of the month count is exact in 64-bit integers. In a double, month / 12 rounds beyond 2^53.
-constexpr static inline double makeDayForIntegers(int64_t year, int64_t month, double date)
+// https://tc39.es/ecma262/#sec-makeday steps 5 to 7, for a year and a month count that pass isYearOrMonthForMakeDay():
+// year becomes year + floor(month / 12), month becomes month modulo 12. The split is exact in 64-bit integers. In a
+// double, month / 12 rounds beyond 2^53. Returns false when the year does not fit an int32_t.
+constexpr static inline bool normalizeYearAndMonthForMakeDay(int64_t& year, int64_t& month)
 {
     if (month < 0 || month > 11) {
         int64_t additionalYears = month / 12;
@@ -72,17 +73,20 @@ constexpr static inline double makeDayForIntegers(int64_t year, int64_t month, d
         }
         year += additionalYears;
     }
-    if (year != static_cast<int32_t>(year))
-        return PNaN;
-    double days = dateToDaysFrom1970(static_cast<int32_t>(year), static_cast<int32_t>(month), 1);
-    return days + date - 1;
+    return year == static_cast<int32_t>(year);
 }
 
+// https://tc39.es/ecma262/#sec-makeday
 constexpr static inline double makeDay(double year, double month, double date)
 {
     if (!isYearOrMonthForMakeDay(year) || !isYearOrMonthForMakeDay(month))
         return PNaN;
-    return makeDayForIntegers(static_cast<int64_t>(year), static_cast<int64_t>(month), date);
+    int64_t normalizedYear = static_cast<int64_t>(year);
+    int64_t normalizedMonth = static_cast<int64_t>(month);
+    if (!normalizeYearAndMonthForMakeDay(normalizedYear, normalizedMonth))
+        return PNaN;
+    double days = dateToDaysFrom1970(static_cast<int32_t>(normalizedYear), static_cast<int32_t>(normalizedMonth), 1);
+    return days + date - 1;
 }
 
 // https://tc39.es/ecma262/#sec-makedate

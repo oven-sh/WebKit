@@ -221,19 +221,29 @@ static bool fillStructuresUsingDateArgs(JSGlobalObject* globalObject, CallFrame*
 
     // years
     if (maxArgs >= 3 && idx < numArgs) {
-        double years = callFrame->uncheckedArgument(idx++).toIntegerPreserveNaN(globalObject);
-        RETURN_IF_EXCEPTION(scope, false);
-        ok = ok && isYearOrMonthForMakeDay(years);
-        if (ok)
-            fields->year = static_cast<int64_t>(years);
+        JSValue value = callFrame->uncheckedArgument(idx++);
+        // An int32, the usual argument, is in MakeDay's range, and is not converted to a double and back.
+        if (value.isInt32())
+            fields->year = value.asInt32();
+        else {
+            double years = value.toIntegerPreserveNaN(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            ok = ok && isYearOrMonthForMakeDay(years);
+            // Stored also when it is unused, so that the new field does not depend on the one it replaces.
+            fields->year = ok ? static_cast<int64_t>(years) : 0;
+        }
     }
     // months
     if (maxArgs >= 2 && idx < numArgs) {
-        double months = callFrame->uncheckedArgument(idx++).toIntegerPreserveNaN(globalObject);
-        RETURN_IF_EXCEPTION(scope, false);
-        ok = ok && isYearOrMonthForMakeDay(months);
-        if (ok)
-            fields->month = static_cast<int64_t>(months);
+        JSValue value = callFrame->uncheckedArgument(idx++);
+        if (value.isInt32())
+            fields->month = value.asInt32();
+        else {
+            double months = value.toIntegerPreserveNaN(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            ok = ok && isYearOrMonthForMakeDay(months);
+            fields->month = ok ? static_cast<int64_t>(months) : 0;
+        }
     }
     // days
     if (idx < numArgs) {
@@ -249,7 +259,14 @@ static bool fillStructuresUsingDateArgs(JSGlobalObject* globalObject, CallFrame*
 // MakeDate(MakeDay(year, month, date), TimeWithinDay(t)), UTC() for a local time, and TimeClip.
 static ALWAYS_INLINE double dateSetterTimeValue(DateCache& cache, const DateSetterFields& fields, const BrokenDownDate& t, double ms, TimeType inputTimeType)
 {
-    double date = makeDate(makeDayForIntegers(fields.year, fields.month, fields.monthDay), makeTime(t.hour, t.minute, t.second, ms));
+    int64_t year = fields.year;
+    int64_t month = fields.month;
+    if (!normalizeYearAndMonthForMakeDay(year, month))
+        return PNaN;
+    // The date joins the month's days before the year's days are known. A setter cannot see the order: its time of
+    // day is below msPerDay, so a time value needs a day sum of at most 1e8, where every partial sum is exact.
+    double day = std::floor(daysFrom1970ToYear(static_cast<int32_t>(year))) + (dayInYear(static_cast<int32_t>(year), static_cast<int32_t>(month), 1) + (fields.monthDay - 1));
+    double date = makeDate(day, makeTime(t.hour, t.minute, t.second, ms));
     return timeClip(cache.localTimeToMS(date, inputTimeType));
 }
 
