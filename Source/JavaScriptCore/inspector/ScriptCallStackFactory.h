@@ -35,6 +35,7 @@
 #include <wtf/Forward.h>
 
 namespace JSC {
+class ArgList;
 class CallFrame;
 class Exception;
 class JSGlobalObject;
@@ -51,5 +52,8 @@ JS_EXPORT_PRIVATE Ref<ScriptCallStack> createScriptCallStackForConsole(JSC::JSGl
 JS_EXPORT_PRIVATE Ref<ScriptCallStack> createScriptCallStackFromException(JSC::JSGlobalObject*, JSC::Exception*, size_t maxStackSize = ScriptCallStack::maxCallStackSizeToCapture);
 JS_EXPORT_PRIVATE Ref<ScriptCallStack> createScriptCallStackFromStackTrace(JSC::JSGlobalObject*, std::span<const JSC::StackFrame>, JSC::JSValue value, size_t maxStackSize = ScriptCallStack::maxCallStackSizeToCapture);
 JS_EXPORT_PRIVATE Ref<ScriptArguments> createScriptArguments(JSC::JSGlobalObject*, JSC::CallFrame*, unsigned skipArgumentCount);
+#if USE(BUN_JSC_ADDITIONS)
+JS_EXPORT_PRIVATE Ref<ScriptArguments> createScriptArguments(JSC::JSGlobalObject*, const JSC::ArgList&);
+#endif
 
 } // namespace Inspector
