@@ -31,12 +31,18 @@ static bool isBodyThatOnlyStartOfProgramEnters(const Program& program, const Flo
     return program.entries.size() == 1 && program.at(program.entries[0].module).body == id && runsAtMostOnce(flow, id);
 }
 
+static FunctionID entrypointTargetOrSelf(FunctionID id, const Function& function)
+{
+    const auto* entrypoint = function.role == FunctionRole::GenericEntrypoint ? function.creator.tryAs<CreatorRecord::Entrypoint>() : nullptr;
+    return entrypoint ? entrypoint->target : id;
+}
+
 static bool mayBeEnteredByUnknownCode(const Program& program, const FlowResults& flow, FunctionID id, const Function& function, const StoredBodySummary& body)
 {
     bool mayBeResumed = body.onReturn().maySuspend();
     if (mayBeResumed)
         return true;
-    if (callerStateOf(flow, id) == CallerState::AllKnown || isBodyThatOnlyStartOfProgramEnters(program, flow, id))
+    if (callerStateOf(flow, id) == CallerState::AllKnown || isBodyThatOnlyStartOfProgramEnters(program, flow, entrypointTargetOrSelf(id, function)))
         return false;
     return function.mayBeCalledByHost() || !function.hasOnlyDirectCallers();
 }
@@ -124,7 +130,6 @@ bool operator==(const StoredBodySummary& a, const StoredBodySummary& b)
         && a.m_numberOfDependencies == b.m_numberOfDependencies
         && a.m_numberOfWordsOfDependencies == b.m_numberOfWordsOfDependencies
         && a.m_hasWideDependencies == b.m_hasWideDependencies
-        && a.m_witness == b.m_witness
         && (!a.sizeOfLists() || !memcmp(a.m_lists.get(), b.m_lists.get(), a.sizeOfLists()));
 }
 
@@ -367,6 +372,7 @@ void EffectSummarizer::findRecordsThatLookDifferent()
     RELEASE_ASSERT(m_kept.m_stampsOfRecords.size() == m_numberOfFunctionsBefore);
     m_kept.m_stampsOfRecords.grow(numberOfFunctions);
     m_kept.m_stampsOfEntries.grow(numberOfFunctions);
+    m_kept.m_stampsOfRecordsForCallers.grow(numberOfFunctions);
     m_recordLooksDifferent.grow(m_numberOfFunctionsBefore);
     m_recordLooksDifferentToCallers.grow(m_numberOfFunctionsBefore);
     forEachIndexInParallel(m_build.parallelLoops(), numberOfFunctions, [&](unsigned index) {
@@ -374,7 +380,13 @@ void EffectSummarizer::findRecordsThatLookDifferent()
         uint64_t stampOfItsEntry = stampOfEntry(m_program, FunctionID(index));
         if (index < m_numberOfFunctionsBefore) {
             m_recordLooksDifferent[index] = stamp != m_kept.m_stampsOfRecords[index];
-            m_recordLooksDifferentToCallers[index] = stampOfItsEntry != m_kept.m_stampsOfEntries[index] || (m_recordLooksDifferent[index] && m_kept.m_recordSays[index] != BodySummaries::RecordSays::NoLess);
+            m_recordLooksDifferentToCallers[index] = stampOfItsEntry != m_kept.m_stampsOfEntries[index];
+        }
+        if (index >= m_numberOfFunctionsBefore || m_recordLooksDifferent[index]) {
+            uint64_t stampForCallers = stampOfRecordForCallers(m_program.functions[index]);
+            if (index < m_numberOfFunctionsBefore && stampForCallers != m_kept.m_stampsOfRecordsForCallers[index] && m_kept.m_recordSays[index] != BodySummaries::RecordSays::NoLess)
+                m_recordLooksDifferentToCallers[index] = 1;
+            m_kept.m_stampsOfRecordsForCallers[index] = stampForCallers;
         }
         m_kept.m_stampsOfRecords[index] = stamp;
         m_kept.m_stampsOfEntries[index] = stampOfItsEntry;
@@ -586,7 +598,7 @@ void EffectSummarizer::summarizeBodies()
             body.setOnThrow(onThrow);
             if (added.effects != cachedAddedEffects) {
                 cachedAddedEffects = added.effects;
-                cachedMemory = masks.compress(OperandMemory { masks.at(added.effects.reads()).restrictedTo(perObjectHeaps), masks.at(added.effects.writes()).restrictedTo(perObjectHeaps) });
+                cachedMemory = masks.compress(OperandMemory { LocationMasks(), masks.at(added.effects.writes()).restrictedTo(perObjectHeaps) });
             }
             for (StoredParameterSummary& parameter : body.mutableParameters()) {
                 CompactEffects merged = mergedWith(parameter.memory, cachedMemory);
@@ -1690,7 +1702,7 @@ static bool covers(const FunctionSummary& kept, const FunctionSummary& fresh)
         const ParameterSummary& freshParameter = fresh.parameters[parameter];
         if (!covers(keptParameter.operand, freshParameter.operand))
             return false;
-        if (!freshParameter.memory.reads.isSubsetOf(keptParameter.memory.reads) || !freshParameter.memory.writes.isSubsetOf(keptParameter.memory.writes))
+        if (!freshParameter.memory.writes.isSubsetOf(keptParameter.memory.writes))
             return false;
     }
     return true;

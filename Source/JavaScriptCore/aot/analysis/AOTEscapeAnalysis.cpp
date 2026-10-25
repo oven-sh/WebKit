@@ -283,19 +283,26 @@ void EscapeAnalysis::takeSets(PointsToResults& results)
     m_sets.reserveInitialCapacity(results.sets.size());
     BitVector allocations(m_objects.size());
     Vector<size_t, 8> entryParameters;
+    Vector<size_t, 2> superConstructResults;
     for (size_t index = 0; index < m_objects.size(); ++index) {
         if (m_objects[index].kind == ObjectKind::Allocation)
             allocations.quickSet(index);
-        else
+        else {
             entryParameters.append(index);
+            if (m_function.at(m_objects[index].definition).opcode != Opcode::Parameter)
+                superConstructResults.append(index);
+        }
     }
     // Once for each set, not once for each question about two values: the sets of a row of a thousand branches hold hundreds of objects, and each read is held against each store.
     for (ValueSet& set : results.sets) {
-        StoredSet stored { WTF::move(set.objects), { }, set.mayBeUntracked, false };
+        StoredSet stored { WTF::move(set.objects), { }, set.mayBeUntracked, false, false };
         stored.holdsEntryParameter = std::ranges::any_of(entryParameters, [&](size_t index) {
             return stored.objects.get(index);
         });
         if (stored.holdsEntryParameter) {
+            stored.holdsSuperConstructResult = std::ranges::any_of(superConstructResults, [&](size_t index) {
+                return stored.objects.get(index);
+            });
             stored.allocationsBesideEntryParameters = stored.objects;
             stored.allocationsBesideEntryParameters.filter(allocations);
         }
@@ -690,9 +697,9 @@ EscapeAnalysis::AllocationSet EscapeAnalysis::allocationSetOf(ValueID value) con
 {
     ValueSetID id = m_setOfValue[value.index()];
     if (!id)
-        return { m_noObjects, true };
+        return { m_noObjects, true, false };
     const StoredSet& set = m_sets[id.index()];
-    return { set.holdsEntryParameter ? set.allocationsBesideEntryParameters : set.objects, set.mayBeUntracked || set.holdsEntryParameter };
+    return { set.holdsEntryParameter ? set.allocationsBesideEntryParameters : set.objects, set.mayBeUntracked || set.holdsEntryParameter, !set.mayBeUntracked && !set.holdsSuperConstructResult };
 }
 
 AliasResult EscapeAnalysis::alias(ValueID a, ValueID b) const
@@ -743,6 +750,8 @@ AliasResult EscapeAnalysis::aliasAmongAllocations(ValueID a, ValueID b, NOESCAPE
         return AliasResult::NoAlias;
     if (first.mayBeUntracked && second.mayBeUntracked)
         return AliasResult::MayAlias;
+    if ((first.mayBeUntracked ? first : second).existedAtEntryIfUntracked)
+        return AliasResult::NoAlias;
 
     for (ObjectID object : first.mayBeUntracked ? secondObjects : firstObjects) {
         if (at(object).state != EscapeState::DoesNotEscape)

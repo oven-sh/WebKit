@@ -495,7 +495,30 @@ void RuntimeCallEmitter::placeArguments(CallRequest& request, std::span<const LV
     }
 }
 
-LValue RuntimeCallEmitter::callDirectFunction(const OperationContext& context, uint32_t number, std::span<const LValue> arguments, LValue keptAlive, std::optional<HostFrameOfDirectCall> hostFrame)
+RuntimeCallEmitter::CallRequest RuntimeCallEmitter::requestOfDirectFunction(DirectFunctionCall form, uint32_t number, std::span<const LValue> arguments, std::span<const LValue> keptAlive)
+{
+    CallRequest request;
+    request.key = AOT::callDirectFunction(form);
+    request.options.immediate = static_cast<uint32_t>(number * sizeof(BuiltinDirectFunctionBinding) + OBJECT_OFFSETOF(BuiltinDirectFunctionBinding, function));
+    request.effectsOfCallee = inputs().stubCatalog.effectsOf(request.key);
+    request.argumentBufferAccess = ArgumentBufferAccess::Reads;
+    placeArguments(request, arguments, OperationCall::FirstArgument::None);
+    for (LValue cell : keptAlive)
+        request.operands.append({ cell, B3::ValueRep::LateColdAny });
+    return request;
+}
+
+StubCallResult RuntimeCallEmitter::callDirectFunctionReturningFields(const OperationContext& context, uint32_t number, std::span<const LValue> arguments, std::span<const LValue> keptAlive)
+{
+    CallRequest request = requestOfDirectFunction(DirectFunctionCall::LeafReturningFields, number, arguments, keptAlive);
+    Effects memoryAlone = Effects::none();
+    memoryAlone.reads = request.effectsOfCallee.reads;
+    memoryAlone.writes = request.effectsOfCallee.writes;
+    request.effectsOfCallee = memoryAlone;
+    return emitCall(&context, request);
+}
+
+LValue RuntimeCallEmitter::callDirectFunction(const OperationContext& context, uint32_t number, std::span<const LValue> arguments, std::span<const LValue> keptAlive, std::optional<HostFrameOfDirectCall> hostFrame)
 {
     Effects effects = context.effects().onAnyEdge();
     bool isLeaf = !effects.mayThrow && !effects.mayCollect && !effects.mayCallUnknownCode;
@@ -512,15 +535,8 @@ LValue RuntimeCallEmitter::callDirectFunction(const OperationContext& context, u
         arguments = argumentsWithHostFrame.span();
     }
 
-    CallRequest request;
-    request.key = AOT::callDirectFunction(isLeaf ? DirectFunctionCall::Leaf : hostFrame ? DirectFunctionCall::WithHostFrame : DirectFunctionCall::WithFrame);
-    request.options.immediate = static_cast<uint32_t>(number * sizeof(BuiltinDirectFunctionBinding) + OBJECT_OFFSETOF(BuiltinDirectFunctionBinding, function));
-    request.effectsOfCallee = inputs().stubCatalog.effectsOf(request.key);
-    request.argumentBufferAccess = ArgumentBufferAccess::Reads;
-    placeArguments(request, arguments, OperationCall::FirstArgument::None);
-    if (keptAlive)
-        request.operands.append({ keptAlive, B3::ValueRep::LateColdAny });
-    return emitCall(&context, request).first;
+    DirectFunctionCall form = isLeaf ? DirectFunctionCall::Leaf : hostFrame ? DirectFunctionCall::WithHostFrame : DirectFunctionCall::WithFrame;
+    return emitCall(&context, requestOfDirectFunction(form, number, arguments, keptAlive)).first;
 }
 
 RuntimeCallEmitter::CallRequest RuntimeCallEmitter::createRequest(StubKey key, std::span<const LValue> operands, const CallOptions& options, std::optional<BranchTargets> targets, std::optional<Origin> firstRead) const

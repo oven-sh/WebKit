@@ -96,27 +96,6 @@ struct ClosureRequest {
     static constexpr bool isSlim(uint64_t request) { return request >> isSlimBit & 1; }
 };
 
-struct ResumeClosureRequest {
-    static constexpr unsigned frameWordShift = ClosureRequest::executableShift + 3;
-    static constexpr unsigned maxExecutable = (1u << (frameWordShift - ClosureRequest::executableShift)) - 1;
-    static constexpr unsigned maxFrameWord = (1u << (ClosureRequest::isSlimBit - frameWordShift)) - 1;
-    static constexpr bool canEncode(uint32_t function, unsigned executable, uint32_t allocation, unsigned frameWord)
-    {
-        return executable <= maxExecutable && frameWord <= maxFrameWord && ClosureRequest::canEncode(function, executable, allocation);
-    }
-    static uint64_t encode(uint32_t function, unsigned executable, uint32_t allocation, unsigned frameWord)
-    {
-        RELEASE_ASSERT(canEncode(function, executable, allocation, frameWord));
-        return ClosureRequest::encode(function, executable, allocation) | static_cast<uint64_t>(frameWord) << frameWordShift;
-    }
-    static constexpr unsigned executableOf(uint64_t request) { return request >> ClosureRequest::executableShift & maxExecutable; }
-    static constexpr unsigned frameWordOf(uint64_t request) { return request >> frameWordShift & maxFrameWord; }
-    static constexpr unsigned stubFrameWord = 2;
-    static constexpr unsigned allocationShiftForStub = ClosureRequest::executableShift;
-    static constexpr uint32_t maxAllocationForStub = (1u << (32 - allocationShiftForStub)) - 1;
-    static constexpr uint32_t encodeForStub(uint32_t function, uint32_t allocation) { return function | allocation << allocationShiftForStub; }
-};
-
 static_assert(numberOfArgumentGPRs <= numberOfDirectArgumentGPRs);
 static_assert([] {
     for (unsigned index = 0; index < numberOfArgumentGPRs; ++index) {

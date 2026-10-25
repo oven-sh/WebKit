@@ -455,7 +455,7 @@ function buildOverload(context: OverloadContext, constantImplementation: ModelIm
       implementation: constantImplementation ?? resolveImplementation(context, signature.implementation),
       directEntry: signature.directEntry ?? null,
       model: resolveModel(context),
-      fieldsForm: signature.fieldsForm ?? null,
+      fieldsForm: signature.fieldsForm ?? (signature.directEntry?.returnsFields ? "FieldsOfDirectEntry" : null),
       prefixForm: signature.prefixForm ?? null,
       prefixProperties: (signature.prefixProperties ?? []).map(({ name, type }) => ({
         name: context.builder.internComponent(name),

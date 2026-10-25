@@ -991,7 +991,8 @@ bool testReadsOnlySubject(const Program& program, const Function& function, cons
 
     bool mayReadOtherObject = false;
     test.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        if (test.operandKind(operandIndex) == OperandKind::Guard)
+        OperandKind kind = test.operandKind(operandIndex);
+        if (kind == OperandKind::Guard || kind == OperandKind::Integer || kind == OperandKind::Number)
             return;
         const Type& type = program.typeOf(function, operand);
         mayReadOtherObject |= operandIndex == subjectOperandIndex ? !type.isJavaScriptValue() : mayBeReference(type);

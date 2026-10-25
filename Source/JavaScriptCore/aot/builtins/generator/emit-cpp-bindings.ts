@@ -226,13 +226,14 @@ function findDirectFunctions(model: TableModel): DirectFunctionEntry[] {
 }
 
 function formatDirectFunctionBinding({ overload, directEntry }: DirectFunctionEntry): string {
-  const { symbol, parameters, offsetOfNativeObject = null } = directEntry;
+  const { symbol, parameters, offsetOfNativeObject = null, returnsFields = false } = directEntry;
   const values = parameters.map(({ value }) => `BuiltinDirectValue::${value}`);
   return formatAggregate([
     ["overload", formatId("BuiltinOverloadID", overload)],
     ["function", `reinterpret_cast<const void*>(${symbol})`],
     ["parameters", values.length === 0 ? null : `{ ${values.join(", ")} }`],
     ["parameterCount", formatUnlessZero(values.length)],
+    ["returnsFields", returnsFields ? "true" : null],
     ["offsetOfNativeObject", offsetOfNativeObject],
   ]);
 }
@@ -408,9 +409,10 @@ function emitCallListReference(stamp: string): string {
 // Compiled code enters these the way it enters an operation of the engine, so they have the calling convention of one.
 function emitDirectFormAssertions(directFunctions: readonly DirectFunctionEntry[]): string {
   return sortUnique(
-    directFunctions.map(({ directEntry: { symbol, parameters } }) => {
+    directFunctions.map(({ directEntry: { symbol, parameters, returnsFields = false } }) => {
       const types = parameters.map(({ cppType }) => cppType);
-      return `static_assert(std::is_same_v<decltype(&${symbol}), JSC::EncodedJSValue (SYSV_ABI*)(${types.join(", ")})>);`;
+      const result = returnsFields ? "JSC::AOT::BuiltinDirectFields" : "JSC::EncodedJSValue";
+      return `static_assert(std::is_same_v<decltype(&${symbol}), ${result} (SYSV_ABI*)(${types.join(", ")})>);`;
     }),
   ).join("\n");
 }

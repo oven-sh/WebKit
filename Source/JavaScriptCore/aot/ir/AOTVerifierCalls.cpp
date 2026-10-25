@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinCalls.h"
 #include "AOTPropertyAccessReceivers.h"
+#include "AOTSchemaInlineBuiltins.h"
 #include <algorithm>
 #include <initializer_list>
 #include <optional>
@@ -337,6 +338,17 @@ void FunctionVerifier::verifyGeneratorStart()
     }
 }
 
+bool hasValidInlineParameters(InlineBuiltin builtin, std::span<const uint32_t> parameters)
+{
+    if (isFormOnly(builtin) || parameters.size() != numberOfParametersOf(builtin))
+        return false;
+    for (uint32_t index = 0; index < parameters.size(); ++index) {
+        if (!isValidParameter(builtin, index, parameters[index]))
+            return false;
+    }
+    return true;
+}
+
 void FunctionVerifier::verifyBuiltinOperation(BlockID block, ValueID id, const Value& value)
 {
     if (value.opcode == Opcode::Builtin || value.opcode == Opcode::ModuleBuiltin) {
@@ -355,6 +367,10 @@ void FunctionVerifier::verifyBuiltinOperation(BlockID block, ValueID id, const V
 
     if (!isOptimizing() && isCallThatRequiredPassRemoves(m_program, value)) {
         fail(InternalErrorKind::RequiredPassLeftOperation, block, id);
+        return;
+    }
+    if (value.opcode == Opcode::CallInline && !hasValidInlineParameters(value.inlineBuiltin(), value.inlineParameters())) {
+        fail(InternalErrorKind::PayloadOutOfRange, block, id);
         return;
     }
     if (!overloadTakesOperands(typing(), value))

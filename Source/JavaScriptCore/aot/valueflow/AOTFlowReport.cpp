@@ -358,7 +358,7 @@ FlowReport buildFlowReport(const Program& program, const FlowResults& flow, cons
     appendLocaleUses(program, flow, report);
     for (const FlowWorkerEntry& entry : flow.workerEntries()) {
         std::span<const uint8_t> text = program.string(entry.path);
-        report.workerEntries.append(Wire::WorkerEntryRecord { .path = { static_cast<uint32_t>(report.workerEntryPaths.size()), static_cast<uint32_t>(text.size()) }, .isGuess = entry.isGuess, .hasOptions = entry.hasOptions });
+        report.workerEntries.append(Wire::WorkerEntryRecord { .path = { static_cast<uint32_t>(report.workerEntryPaths.size()), static_cast<uint32_t>(text.size()) }, .isGuess = entry.isGuess, .hasOptions = entry.hasOptions, .witness = entry.witness });
         report.workerEntryPaths.append(text);
     }
     if (build.options().collectsAllocationRemarks()) {

@@ -122,10 +122,13 @@ enum class BuiltinHolderState : uint8_t { Unknown, Intact };
 // The path of an embedded file that may be passed to `new Worker()`.
 struct FlowWorkerEntry {
     StringID path;
-    // Flow lost track of the path, and some Worker gets an unknown value. False: flow followed the path to the Worker.
+    // Flow lost track of the path and some Worker gets an unknown value, or another native function looks at the path too.
+    // False: flow followed the path to the Worker and nowhere else.
     bool isGuess { false };
     // The Worker may also get an options object.
     bool hasOptions { false };
+    // One `new Worker()` that may get the path.
+    Witness witness { noWitness };
 
     friend bool operator==(const FlowWorkerEntry&, const FlowWorkerEntry&) = default;
 };

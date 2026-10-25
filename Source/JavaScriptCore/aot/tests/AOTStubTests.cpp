@@ -91,8 +91,6 @@ static constexpr uint32_t maxClosureAllocation = (1u << (ClosureRequest::countSh
 static_assert(ClosureRequest::canEncode(ClosureWord::functionMask, 0, 0) && !ClosureRequest::canEncode(ClosureWord::functionMask + 1, 0, 0));
 static_assert(ClosureRequest::canEncode(0, maxClosureExecutable, 0) && !ClosureRequest::canEncode(0, maxClosureExecutable + 1, 0));
 static_assert(ClosureRequest::canEncode(0, 0, maxClosureAllocation) && !ClosureRequest::canEncode(0, 0, maxClosureAllocation + 1));
-static_assert(ResumeClosureRequest::canEncode(0, ResumeClosureRequest::maxExecutable, 0, 0) && !ResumeClosureRequest::canEncode(0, ResumeClosureRequest::maxExecutable + 1, 0, 0));
-static_assert(ResumeClosureRequest::canEncode(0, 0, 0, ResumeClosureRequest::maxFrameWord) && !ResumeClosureRequest::canEncode(0, 0, 0, ResumeClosureRequest::maxFrameWord + 1));
 
 static_assert(!static_cast<unsigned>(StubFrameKind::Plain) && numberOfStubFrameKinds == 14);
 static_assert(hasSingleReturnSite(StubFrameKind::Adapter) && hasSingleReturnSite(StubFrameKind::ConstructAdapter));
@@ -251,10 +249,6 @@ static void testPackedWords()
     AOT_TEST_CHECK(ClosureRequest::functionOf(request) == 5);
     AOT_TEST_CHECK(ClosureRequest::executableOf(request) == 2);
     AOT_TEST_CHECK(ClosureRequest::allocationOf(request) == 9);
-
-    uint64_t resumeRequest = ResumeClosureRequest::encode(5, 1, 9, 3);
-    AOT_TEST_CHECK(ResumeClosureRequest::executableOf(resumeRequest) == 1);
-    AOT_TEST_CHECK(ResumeClosureRequest::frameWordOf(resumeRequest) == 3);
 }
 
 template<typename Words>

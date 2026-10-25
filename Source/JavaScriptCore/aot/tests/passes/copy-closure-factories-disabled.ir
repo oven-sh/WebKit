@@ -3,8 +3,8 @@
 # RUN: pipeline ApplyFlowResults
 # CHECK-NOT: layout L1 kind=Environment
 # CHECK-LABEL: function f0 name="main"
-# CHECK: v5: undefined|int|"b" = Call {{*}} callees=[f2]
-# CHECK: v6: undefined|int|"b" = Call {{*}} callees=[f2]
+# CHECK: v5: undefined|true|int = Call {{*}} callees=[f2]
+# CHECK: v6: undefined|true|int = Call {{*}} callees=[f2]
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -37,6 +37,6 @@ function f3 name="loadA" module=m0 position=30 kind=Arrow results=[{type=anythin
     Return v0
 }
 function f4 name="loadB" module=m0 position=40 kind=Arrow results=[{type=anything}] {
-    v0 = String string="b"
+    v0 = Boolean boolean=true
     Return v0
 }

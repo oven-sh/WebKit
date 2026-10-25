@@ -3,7 +3,7 @@ enum StatisticID {
     SourceFilesChecked SourceFilesInferred SourceFilesTypesOnly SourceFilesData SourceFilesRuntime SourceFilesDemoted SourceBytes SourceLines
     TypedVersionsUsed CheckerQueries CheckerQueriesGivenUp CheckerMembersGivenUp BuiltinTypesDegradedToViews ModulesBound FunctionsLowered
     KnownHelperFunctions KnownHelperCalls
-    FunctionsDroppedByLink ProgramBytes
+    FunctionsDroppedByLink ProgramBytes EngineRuns
     LoadRuntimeProjectNanoseconds LinkMergeKeysNanoseconds LinkChooseDefinitionsNanoseconds LinkMarkNanoseconds LinkMergeStringsAndTypesNanoseconds
     LinkMergePropertyKeysNanoseconds LinkBuildTypeTableNanoseconds LinkMoveDefinitionsNanoseconds LinkNameProgramNanoseconds
     ReleaseLoadedProjectsNanoseconds EmitNanoseconds EngineCallNanoseconds AfterEngineNanoseconds

@@ -139,6 +139,7 @@ public:
     ValueSetID closures() const { return m_closures; }
     ValueSetID builtinFunctions() const { return m_builtinFunctions; }
     ValueSetID builtinFunctionsOfProtocols() const { return m_builtinFunctionsOfProtocols; }
+    ValueSetID builtinFunctionsThatReadSpecies() const { return m_builtinFunctionsThatReadSpecies; }
     ValueSetID otherCallables() const { return m_otherCallables; }
     std::atomic<uint64_t>& rememberedBoundFunctionsBindingNoArgument() const { return m_boundFunctionsBindingNoArgument[0]; }
     ValueSetID arrays() const { return m_arrays; }
@@ -223,6 +224,7 @@ private:
     ValueSetID m_closures;
     ValueSetID m_builtinFunctions;
     ValueSetID m_builtinFunctionsOfProtocols;
+    ValueSetID m_builtinFunctionsThatReadSpecies;
     ValueSetID m_builtinsThatMayBeAnyLibraryClosure;
     uint32_t m_numberOfRememberedLayoutSets { 0 };
     std::unique_ptr<std::atomic<uint32_t>[]> m_objectsSurelyWithLayoutIn;

@@ -229,6 +229,7 @@ void FlowResults::dump(PrintStream& out, const Program& program) const
             out.print(" guess"_s);
         if (entry.hasOptions)
             out.print(" with-options"_s);
+        printOptionalWitness(entry.witness);
         printer.endLine();
     }
 

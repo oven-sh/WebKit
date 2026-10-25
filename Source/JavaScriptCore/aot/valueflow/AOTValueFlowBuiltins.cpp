@@ -244,6 +244,11 @@ public:
                 noteWhatIsCalledBy(m_builtins.at(overload));
             return;
         }
+        if (m_call.readsOnlySpecies) {
+            for (BuiltinOverloadID overload : selected)
+                readSpeciesFor(m_builtins.at(overload));
+            return;
+        }
         for (BuiltinOverloadID overload : selected)
             apply(m_builtins.at(overload));
         if (mayGetThisThatDeclaredOverloadsLeaveOut())
@@ -602,7 +607,14 @@ private:
         return refused;
     }
 
-    void select(BuiltinDispatchTarget target, Vector<BuiltinOverloadID, 4>& selected)
+    struct NarrowedOperand {
+        BuiltinOperand operand;
+        ValueSetID values;
+        bool mayBeAbsent;
+    };
+    using NarrowedOperands = Vector<NarrowedOperand, 2>;
+
+    void select(BuiltinDispatchTarget target, Vector<BuiltinOverloadID, 4>& selected, const NarrowedOperands& narrowedOperands = { })
     {
         if (target.isOverload()) {
             selected.appendIfNotContains(target.overload);
@@ -613,6 +625,10 @@ private:
         bool isRest = node.operand.kind() == BuiltinOperand::Kind::ArgumentsFrom;
         ValueSetID stillTested = ValueSets::complement(m_context.maker().of(ValueFlowUniverse::primitive(PrimitiveSet::Absent)));
         bool absenceIsStillTested = true;
+        if (auto narrowed = std::ranges::find(narrowedOperands, node.operand, &NarrowedOperand::operand); narrowed != narrowedOperands.end()) {
+            stillTested = m_context.maker().intersect(stillTested, narrowed->values);
+            absenceIsStillTested = narrowed->mayBeAbsent;
+        }
         for (const BuiltinDispatchBranch& branch : node.branches) {
             bool admitsAbsence = m_builtins.at(branch.tested).isAnything() || m_builtins.at(branch.tested).primitives.contains(BuiltinPrimitive::NotPassed);
             ValueSetID tested = m_context.maker().intersect(m_tables.maskOf(branch.tested), stillTested);
@@ -622,8 +638,17 @@ private:
                     throwValue(unknownObjectSet(m_context, ValueFlowUnknownSource::ThrownByRunTime));
                 tested = m_context.maker().intersect(tested, ValueSets::complement(refused));
             }
-            if (mayLieIn(node.operand, tested, admitsAbsence && absenceIsStillTested))
-                select(branch.target, selected);
+            bool mayBeAbsent = admitsAbsence && absenceIsStillTested;
+            if (mayLieIn(node.operand, tested, mayBeAbsent)) {
+                NarrowedOperands narrowedInBranch = narrowedOperands;
+                if (!isRest) {
+                    narrowedInBranch.removeAllMatching([&](const NarrowedOperand& other) {
+                        return other.operand == node.operand;
+                    });
+                    narrowedInBranch.append(NarrowedOperand { node.operand, tested, mayBeAbsent });
+                }
+                select(branch.target, selected, narrowedInBranch);
+            }
             if (isRest)
                 continue;
             stillTested = m_context.maker().intersect(stillTested, ValueSets::complement(m_tables.membersSurelyOf(branch.tested)));
@@ -674,6 +699,22 @@ private:
             || std::ranges::any_of(overload.flow.handlerCalls, [&](const BuiltinHandlerCall& handlerCall) { return mayBeUnknownObject(valueAt(handlerCall.callee)); });
         if (callsValueNobodyKnows)
             letWhateverHasEscapedBeCalled(m_context);
+    }
+
+    void readSpeciesFor(const BuiltinOverload& overload)
+    {
+        if (overload.code.model || !doRecordsDescribe(m_builtins, overload))
+            return;
+        actWithoutResultOf(overload);
+        m_objectsMadeBySpecies = { };
+        auto read = [&](const BuiltinParameter& parameter) {
+            if (parameter.uses != OperandUses::all() && parameter.protocols.contains(Protocol::Species))
+                constructSpecies(parameter.operand);
+        };
+        if (overload.receiver)
+            read(*overload.receiver);
+        for (const BuiltinParameter& parameter : overload.parameters)
+            read(parameter);
     }
 
     void apply(const BuiltinOverload& overload)
@@ -2413,6 +2454,14 @@ void applyBuiltinFoundThroughUnknownObject(BuiltinID builtin, const ValueFlowSta
     ValueFlowBuiltinCall description = describeBuiltinUse(ValueFlowCallKind::Call, call, context);
     description.thisValue = { { }, context.universe().unknownObjectAlone(), ValueSets::anything };
     description.saysOnlyWhatIsCalled = true;
+    BuiltinApplication(builtin, description, context).run();
+}
+
+void readSpeciesOfUnknownObject(BuiltinID builtin, ValueFlowRuleContext& context)
+{
+    ValueFlowOperand unknown { { }, unknownValue(context, ValueFlowUnknownSource::ParameterOfEscapedFunction), ValueSets::anything };
+    ValueFlowBuiltinCall description { .kind = ValueFlowCallKind::CallByNativeCode, .thisValue = unknown, .otherArguments = unknown, .result = ValueFlowProgramNodes::escaped(), .thrown = ValueFlowProgramNodes::escaped() };
+    description.readsOnlySpecies = true;
     BuiltinApplication(builtin, description, context).run();
 }
 

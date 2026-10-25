@@ -1249,12 +1249,8 @@ static ASCIILiteral describeReceiverOfMiss(JSValue receiver)
     }
     if (cell->type() == FinalObjectType)
         return cell->structure()->isDictionary() ? "ordinary object, dictionary"_s : "ordinary object"_s;
-    if (cell->type() == SlimClosureType) {
-        auto* closure = uncheckedDowncast<SlimClosure>(cell);
-        if (closure->isBound())
-            return closure->perCellBit() ? "slim closure, bound, name read before"_s : "slim closure, bound"_s;
-        return closure->perCellBit() ? "slim closure, name read before"_s : "slim closure"_s;
-    }
+    if (cell->type() == SlimClosureType)
+        return uncheckedDowncast<SlimClosure>(cell)->isBound() ? "slim closure, bound"_s : "slim closure"_s;
     return cell->classInfo()->className;
 }
 

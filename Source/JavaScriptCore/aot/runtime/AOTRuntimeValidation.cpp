@@ -14,6 +14,7 @@
 #include "AOTCompiledCallee.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTFunctionTables.h"
+#include "AOTHeapHooks.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTNativeCallValidation.h"
@@ -316,9 +317,17 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteFailedGuard, void, (Instance*,
         dataLogLn("AOT guard failed: f", function, " ", nameOf(static_cast<Typed::Opcode>(opcode)), " ", ordinal);
 }
 
+#if ENABLE(DFG_DOES_GC_VALIDATION)
+thread_local uint64_t placesThatMayCollect;
+#endif
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCountStopsForCollector, uint64_t, (Instance* instance))
 {
+#if ENABLE(DFG_DOES_GC_VALIDATION)
+    return instance->vm->heap.mutatorExecutionVersion() + placesThatMayCollect;
+#else
     return instance->vm->heap.mutatorExecutionVersion();
+#endif
 }
 
 OperationPermissions permissionsOf(Entry entry)

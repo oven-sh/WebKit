@@ -9,7 +9,7 @@ record MemberConditionRecord engine { kind: MemberConditionKind layout: Layout s
 
 family Guard Prepared..Placed ; branches = May ; interpreted = Test
 operation ShapeTest (object: Any/inspects, layouts: LayoutSet) -> natural(boolean) ; reads(ShapeWords[layouts]) ; proves = Shape
-operation IsSlotFilled (object: Object/inspects, guard?: Guard/inspects, with SlotStamp) [holdsDeclaredType] -> natural(boolean) ; reads(ObjectFields[key]) ; proves = SlotFilled ; relies = Shape ; guarded = object ; access = Has ; receiver = object ; accessClass = Slot ; replaces = PropHas, PropHasOwn, PrivateHas
+operation IsSlotFilled (object: Object/inspects, guard?: Guard/inspects, with SlotStamp) [holdsDeclaredType countsFieldsWithoutStorage] -> natural(boolean) ; reads(ObjectFields[key]) ; proves = SlotFilled ; relies = Shape ; guarded = object ; access = Has ; receiver = object ; accessClass = Slot ; replaces = PropHas, PropHasOwn, PrivateHas
 operation HasNoExtraProperties (object: Object/inspects, guard?: Guard/inspects) -> natural(boolean) ; reads(NamedProperties) ; proves = NoExtraProperties ; relies = Shape ; guarded = object
 operation HasNoFieldOutsideSlot (object: Object/inspects, guard?: Guard/inspects) [mayMeetUnfinishedObject] -> natural(boolean) ; reads(NamedProperties) ; proves = NoFieldOutsideSlot ; relies = Shape ; guarded = object
 operation HasBirthFieldsFilled (object: Object/inspects, guard?: Guard/inspects) -> natural(boolean) ; reads(NamedProperties) ; proves = BirthFieldsFilled ; relies = Shape ; guarded = object

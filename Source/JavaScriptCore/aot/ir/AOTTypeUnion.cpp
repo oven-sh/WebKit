@@ -114,17 +114,18 @@ static bool liesInsideDeclaredFamily(const WideningContext& context, const Type&
         return false;
 
     Vector<LayoutID, 16> visited { declaredLayoutOf(program, members[0]) };
+    auto visit = [&](LayoutID above) {
+        if (above && !visited.contains(above))
+            visited.append(above);
+    };
     for (size_t index = 0; index < visited.size(); ++index) {
-        for (LayoutID supertype : program.at(visited[index]).supertypes) {
-            if (visited.contains(supertype))
-                continue;
-            visited.append(supertype);
-            if (program.at(supertype).kind != LayoutKind::Record)
-                continue;
-            const LayoutSet& family = program.at(program.declaredMembersOf(supertype));
-            if (family.members.size() >= members.size() && std::ranges::includes(family.members, members))
-                return true;
-        }
+        const LayoutSet& family = program.at(program.declaredMembersOf(visited[index]));
+        if (family.members.size() >= members.size() && std::ranges::includes(family.members, members))
+            return true;
+        const Layout& layout = program.at(visited[index]);
+        visit(layout.base);
+        for (LayoutID supertype : layout.supertypes)
+            visit(supertype);
     }
     return false;
 }

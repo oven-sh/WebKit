@@ -60,12 +60,25 @@ enum class BuiltinDirectValue : uint8_t {
     Boolean,
     Int32,
     Double,
+    // An address and a count, in two registers. The function has the memory until it returns, and never the cell.
+    Bytes,
+    BytesOfReceiver,
+    Characters,
+};
+
+// Set in the address of characters that have 16 bits each.
+inline constexpr uintptr_t wideCharactersBit = static_cast<uintptr_t>(1) << 63;
+
+// What a function with returnsFields answers: the fields of the layout that its row returns.
+struct BuiltinDirectFields {
+    uint64_t first;
+    uint64_t second;
 };
 
 struct BuiltinDirectFunctionBinding {
     static constexpr unsigned maxParameterCount = 6;
 
-    static constexpr bool takesReceiver(BuiltinDirectValue parameter) { return parameter == BuiltinDirectValue::NativeObjectOfReceiver || parameter == BuiltinDirectValue::Receiver || parameter == BuiltinDirectValue::FrameOfValues; }
+    static constexpr bool takesReceiver(BuiltinDirectValue parameter) { return parameter == BuiltinDirectValue::NativeObjectOfReceiver || parameter == BuiltinDirectValue::Receiver || parameter == BuiltinDirectValue::BytesOfReceiver || parameter == BuiltinDirectValue::FrameOfValues; }
     static constexpr bool takesArgument(BuiltinDirectValue parameter) { return parameter == BuiltinDirectValue::FrameOfValues || (parameter != BuiltinDirectValue::Realm && !takesReceiver(parameter)); }
     bool takesReceiver() const { return std::ranges::any_of(std::span(parameters).first(parameterCount), [](BuiltinDirectValue parameter) { return takesReceiver(parameter); }); }
     bool takesFrame() const { return std::ranges::contains(std::span(parameters).first(parameterCount), BuiltinDirectValue::FrameOfValues); }
@@ -81,6 +94,7 @@ struct BuiltinDirectFunctionBinding {
     const void* function { nullptr };
     std::array<BuiltinDirectValue, maxParameterCount> parameters { };
     uint8_t parameterCount { 0 };
+    bool returnsFields { false };
     uint16_t offsetOfNativeObject { 0 };
 };
 

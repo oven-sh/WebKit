@@ -321,6 +321,11 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedArrayLength, uint64_t, (JSCel
     return cellArgument<JSArrayBufferView>(view, Entry::operationAOTTypedArrayLength)->length();
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTViewByteLength, uint64_t, (JSCell* view))
+{
+    return cellArgument<JSArrayBufferView>(view, Entry::operationAOTViewByteLength)->byteLength();
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedArrayPut, void, (Instance* instance, JSCell* cell, uint64_t index, double number))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTTypedArrayPut);

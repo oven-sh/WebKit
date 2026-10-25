@@ -39,11 +39,15 @@ static void emitLoadExecutable(StubAssembler& jit, GPRReg executable)
 }
 
 // The caller has put the operands where the native function takes its arguments.
-StubSignature signatureOfCallDirectFunction(StubKey)
+StubSignature signatureOfCallDirectFunction(StubKey key)
 {
     StubSignature signature;
     signature.result = StubResult::GPR;
     signature.firstResult = GPRInfo::returnValueGPR;
+    if (static_cast<DirectFunctionCall>(key.form()) == DirectFunctionCall::LeafReturningFields) {
+        signature.result = StubResult::TwoGPRs;
+        signature.secondResult = GPRInfo::returnValueGPR2;
+    }
     signature.immediate = gprOf(stubImmediateRegister);
     return signature;
 }
@@ -66,7 +70,7 @@ void generateCallDirectFunction(StubAssembler& jit)
     const GPRReg function = jit.reuseScratch(StubRegister::Operation);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(builtinBindings.directFunctions)), function);
     jit.loadPtr(CCallHelpers::BaseIndex(function, jit.immediate(), CCallHelpers::TimesOne), function);
-    if (form == DirectFunctionCall::Leaf) {
+    if (form == DirectFunctionCall::Leaf || form == DirectFunctionCall::LeafReturningFields) {
         jit.farJump(function, HostFunctionPtrTag);
         return;
     }

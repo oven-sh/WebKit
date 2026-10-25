@@ -46,6 +46,11 @@ void validateSlotsOf(VM&, const JSCell* compiledObject);
 JS_EXPORT_PRIVATE WTF::Vector<std::unique_ptr<MarkingConstraint>> createMarkingConstraints(VM&);
 JS_EXPORT_PRIVATE void initializeCollectorWords(VM&, Instance&);
 
+#if ENABLE(DFG_DOES_GC_VALIDATION)
+// How many places this thread has passed where a collection may start. A validating image counts them around a call that must not collect.
+extern thread_local uint64_t placesThatMayCollect;
+#endif
+
 // For a validating image. A function cell in a frame is only ever called: its properties would lie on the heap, outlive the frame and point back into it.
 void validateFunctionCellIsNotInFrame(VM&, const JSCell*);
 

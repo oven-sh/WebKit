@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTExpectedTypesByUse.h"
+#include "AOTFlowResults.h"
+#include "AOTHeat.h"
 #include "AOTTypeTestSite.h"
 #include "AOTValueSubstitution.h"
 #include "AOTVector.h"
@@ -86,6 +88,16 @@ static bool hasCalleesToDispatchOver(const Program& program, const Value& call)
     return callees.isComplete || !callees.functions.isEmpty();
 }
 
+// A bound function outlives the code that binds it, and its callers expect the compiled one. Cold code gets no test of the receiver, so the call tests its callee there.
+static bool bindsFunctionSeenByFlowInColdCode(FunctionPassContext& context, const ValueSite& site)
+{
+    const FlowResults& flow = context.inputs.flow;
+    AccessSiteID accessSite = context.function.at(site.value).accessSite();
+    if (!accessSite || !flow.hasResults() || flow.boundFunctionsSeenAt(accessSite, FlowBoundFunctionUseAtSite::Made).size() != 1)
+        return false;
+    return isCold(heatClassOf(context, site.block));
+}
+
 static TypeID calleeTypeOf(TypeArena& types, const MemberOfClasses& method)
 {
     return types.intern(Type::forBuiltin(method.member));
@@ -126,13 +138,16 @@ static std::optional<CalleeSplit> planCalleeSplit(FunctionPassContext& context, 
         return std::nullopt;
     const Type& receiverType = program.typeOf(function, receiver);
     bool knowsReceiver = !knowsNothingAbout(function, receiverType, receiver);
-    if (!receiverType.anyObject && !tailCallRequirementOf(function, site.block, site.value))
+    bool bindsSeenFunction = bindsFunctionSeenByFlowInColdCode(context, site);
+    if (!receiverType.anyObject && !bindsSeenFunction && !tailCallRequirementOf(function, site.block, site.value))
         return std::nullopt;
     if (!knowsReceiver && !hasToStayTailCall && expectsReceiverOfCalledMethod(context, site.block, call))
         return std::nullopt;
 
     Vector<MemberOfClasses, 4> methods = methodsNamed(program, name.name);
     methods.removeAllMatching([&](const MemberOfClasses& method) {
+        if (bindsSeenFunction && method.member == table.canonicalID(Builtins::FunctionPrototypeBind))
+            return !isExpectedToBe(context, callee, method.member);
         bool isFoundByCalleeAlone = !hasToStayTailCall && receiverType.anyObject && hasOperationInFrontOfHostCall(method.member);
         if ((hasToStayTailCall || knowsReceiver) && !passesCallOn(table, method.member) && !isFoundByCalleeAlone)
             return true;

@@ -287,8 +287,7 @@ MethodsAboveEmptySlot findMethodsAboveEmptySlot(const PropertyAccessContext& con
         if (state.isAlwaysFilled && state.form.isEmpty() && !state.hasDeferredMember)
             continue;
         MemberAnswer answer;
-        // A field that lies out of line may hold undefined without storage. It hides the method then, and its slot reads as empty.
-        if (state.form.isEmpty() && !state.hasDeferredMember && !state.mayLieOutOfLine)
+        if (state.form.isEmpty() && !state.hasDeferredMember)
             answer = findMemberOnPrototypes(context, { MemberStart::Instance, layout, key, Access::Read, false });
         if (answer.kind != MemberKind::Method) {
             found.areAllReceivers = false;

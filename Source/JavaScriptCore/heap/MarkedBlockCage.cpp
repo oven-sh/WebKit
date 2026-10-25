@@ -42,6 +42,8 @@ static constexpr size_t reserveDivisor = 64;
 static constexpr size_t smallestReserveSize = 4 * MB;
 static constexpr size_t largestReserveSize = 32 * MB;
 static constexpr size_t reserveChunkSize = MarkedBlock::blockSize;
+// Kept beside the reserve, in one piece, for one cell that is larger than a block.
+static constexpr size_t largeCellReserveSize = MB;
 static constexpr size_t lastReserveDivisor = 4;
 // A full collection is barren if the program can allocate less than 1/64 of the heap before there is no room again.
 static constexpr size_t barrenCollectionDivisor = 64;
@@ -211,6 +213,8 @@ void* MarkedBlockCage::tryAllocate(size_t size)
     if (!m_range)
         return nullptr;
     void* result = m_range->tryAllocate(size);
+    if (!result && m_hasReleasedReserve && size <= largeCellReserveSize)
+        result = std::exchange(m_largeCellReserve, nullptr);
     if (result)
         didAllocate(result, size);
     return result;
@@ -242,7 +246,11 @@ void MarkedBlockCage::keepReserveOnceHalfFull()
     if (!m_range || m_hasReleasedReserve)
         return;
     size_t size = std::clamp(m_range->reservedSize() / reserveDivisor, smallestReserveSize, largestReserveSize);
-    if (reserveSize() >= size || m_endOfHighestAllocation.load(std::memory_order_relaxed) <= m_base + m_range->initialSegmentSize() / 2)
+    if (m_endOfHighestAllocation.load(std::memory_order_relaxed) <= m_base + m_range->initialSegmentSize() / 2)
+        return;
+    if (!m_largeCellReserve && std::exchange(m_shouldKeepLargeCellReserve, false))
+        m_largeCellReserve = m_range->tryAllocateAligned(MarkedBlock::blockSize, largeCellReserveSize);
+    if (reserveSize() >= size)
         return;
     if (void* chunk = m_range->tryAllocateAligned(MarkedBlock::blockSize, reserveChunkSize))
         m_reserve.append(chunk);
@@ -280,6 +288,7 @@ bool MarkedBlockCage::tryKeepReleasedReserveAgain()
     }
     m_numberOfChunksReleased = 0;
     m_hasReleasedReserve = false;
+    m_shouldKeepLargeCellReserve = true;
     return true;
 }
 
@@ -334,8 +343,11 @@ void MarkedBlockCage::clearDeadStack(VM& vm)
 
 bool MarkedBlockCage::releaseLastReserve()
 {
+    void* largeCellReserve = std::exchange(m_largeCellReserve, nullptr);
+    if (largeCellReserve)
+        m_range->free(largeCellReserve);
     if (m_reserve.isEmpty())
-        return false;
+        return largeCellReserve;
     for (void* chunk : std::exchange(m_reserve, { }))
         m_range->free(chunk);
     m_numberOfChunksReleased = 0;
@@ -412,6 +424,7 @@ String MarkedBlockCage::describeExhaustedLimit() const
 void MarkedBlockCage::didThrowOutOfMemoryError()
 {
     m_hasReleasedReserve = false;
+    m_shouldKeepLargeCellReserve = true;
     m_errorWaitsForPoll = false;
     if (std::exchange(m_exhaustedHeap, ExhaustedHeap::Cells) == ExhaustedHeap::Structures)
         StructureAlignedMemoryAllocator::didThrowOutOfMemoryError();

@@ -505,13 +505,18 @@ RegisterID* ArrayNode::emitBytecode(BytecodeGenerator& generator, RegisterID* ds
     auto newArray = [&](RegisterID* dst, ElementNode* elements, unsigned length) {
         if (length && !hadVariableExpression) {
             VM& vm = generator.vm();
+            IndexingType indexingTypeOfElements = recommendedIndexingType;
             recommendedIndexingType |= CopyOnWrite;
 
             Structure* cellButterflyStructure = allDenseStrings ? vm.cellButterflyOnlyAtomStringsStructure.get() : vm.cellButterflyStructure(recommendedIndexingType);
+            // The reserve has room for a small cell. Without room for a large one, the array is built when the code runs.
+            bool isLarge = JSCellButterfly::allocationSize(length).value() > MarkedSpace::largeCutoff;
             std::optional<MarkedBlockCage::InfallibleAllocationScope> infallibleAllocation;
-            if (MarkedBlockCage::isRequired())
+            if (MarkedBlockCage::isRequired() && !isLarge)
                 infallibleAllocation.emplace(vm.heap.cage());
             auto* array = JSCellButterfly::tryCreate(generator.vm(), cellButterflyStructure, length);
+            if (!array && MarkedBlockCage::isRequired() && isLarge)
+                return generator.emitNewArray(dst, elements, length, indexingTypeOfElements);
             RELEASE_ASSERT(array);
 
             ASSERT(elements == m_element);

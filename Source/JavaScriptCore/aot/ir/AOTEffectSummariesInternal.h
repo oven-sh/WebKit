@@ -202,6 +202,7 @@ private:
     Vector<StoredAddedEffects> m_addedEffects;
     Vector<uint64_t> m_stampsOfRecords;
     Vector<uint64_t> m_stampsOfEntries;
+    Vector<uint64_t> m_stampsOfRecordsForCallers;
     BorrowingBodies m_borrowingBodies;
     Vector<uint8_t> m_wasTouchedSinceLatestTable;
     Vector<uint64_t> m_stampsOfRecordsAtLatestTable;

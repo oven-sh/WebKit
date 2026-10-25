@@ -1,15 +1,26 @@
 # the hits of one limit are one loss: their number, and the least subject by location, function, value and layout, whatever the threads and the order of adding
+# The program declares every function and layout that a hit names, so a hit never means something that the build has added to the program.
 # RUN: losses limit-hits MaxLayoutsInType,f1,at=0:10 MaxLayoutsInType,f0,v3,at=0:10 MaxLayoutsInType,f0,v2,at=0:10 MaxLayoutsInType,f2 MaxLiteralsInType MaxLiteralsInType,L7 MaxLayoutsInType,f0,v2,at=0:10
 # RUN: losses limit-hits MaxLayoutsInType,f1,at=0:10 MaxLayoutsInType,f0,v3,at=0:10 MaxLayoutsInType,f0,v2,at=0:10 MaxLayoutsInType,f2 MaxLiteralsInType MaxLiteralsInType,L7 MaxLayoutsInType,f0,v2,at=0:10 threads=16 seed=1
 # RUN: losses limit-hits MaxLayoutsInType,f1,at=0:10 MaxLayoutsInType,f0,v3,at=0:10 MaxLayoutsInType,f0,v2,at=0:10 MaxLayoutsInType,f2 MaxLiteralsInType MaxLiteralsInType,L7 MaxLayoutsInType,f0,v2,at=0:10 threads=16 seed=2
 # CHECK: MaxLayoutsInType Any x5 f0 v2 - 0:10
-# CHECK-NEXT: MaxLiteralsInType Any x2 - - - -
+# CHECK-NEXT: MaxLiteralsInType Any x2 - - L7 0:70
 # RUN(RAW): losses limit-hits MaxLiteralsInType MaxLiteralsInType,L7 MaxLiteralsInType,L9 no-program threads=16 seed=3
 # RAW: MaxLiteralsInType Any x3 - - L7 -
 # RUN(DECLARED): losses limit-hits MaxLayoutsInType,f2 MaxLayoutsInType,f1
 # DECLARED: MaxLayoutsInType Any x2 f1 - - {{*}}
 
 module m0 path="main.js" displayPath="main.js"
+layout L0 name="Record0" module=m0 position=0 fields=[]
+layout L1 name="Record1" module=m0 position=10 fields=[]
+layout L2 name="Record2" module=m0 position=20 fields=[]
+layout L3 name="Record3" module=m0 position=30 fields=[]
+layout L4 name="Record4" module=m0 position=40 fields=[]
+layout L5 name="Record5" module=m0 position=50 fields=[]
+layout L6 name="Record6" module=m0 position=60 fields=[]
+layout L7 name="Record7" module=m0 position=70 fields=[]
+layout L8 name="Record8" module=m0 position=80 fields=[]
+layout L9 name="Record9" module=m0 position=90 fields=[]
 function f0 name="first" results=[{type=undefined}] {
   b0():
     v0 = Undefined

@@ -204,11 +204,13 @@ private:
         BitVector allocationsBesideEntryParameters;
         bool mayBeUntracked { true };
         bool holdsEntryParameter { false };
+        bool holdsSuperConstructResult { false };
     };
     // What a value may be among the allocations of the function. An entry parameter is an object that nobody tracks.
     struct AllocationSet {
         const BitVector& objects;
         bool mayBeUntracked { true };
+        bool existedAtEntryIfUntracked { false };
     };
     struct TypesOfValue {
         TypeID type;

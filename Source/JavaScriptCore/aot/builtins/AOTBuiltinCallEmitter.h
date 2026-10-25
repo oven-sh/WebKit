@@ -9,10 +9,15 @@
 
 #include "AOTBuiltinFamilyEmitter.h"
 #include "AOTBuiltinTableRealm.h"
+#include "AOTVector.h"
 #include <optional>
 #include <span>
 
-namespace JSC { namespace AOT { namespace Typed {
+namespace JSC { namespace AOT {
+
+struct BuiltinDirectFunctionBinding;
+
+namespace Typed {
 
 class BuiltinCallEmitter final : public BuiltinFamilyEmitter {
 public:
@@ -40,7 +45,15 @@ private:
     Boxed readOwnSlot(const ValueContext&, const BuiltinOverload&);
     Boxed loadProperty(CellPointer object, PropertyOffset);
     Boxed callCustomGetter(const OperationContext&, BuiltinOverloadID, Boxed receiver, bool receiverIsMatched);
+    struct DirectOperands {
+        Vector<LValue, 8> words;
+        Vector<LValue, 4> keptAlive;
+        bool takesFrame { false };
+    };
+    DirectOperands directOperandsOf(const ValueContext&, const BuiltinDirectFunctionBinding&);
+    void appendBytesOf(DirectOperands&, ValueID view);
     Boxed callDirectFunction(const ValueContext&, uint32_t number);
+    void generateFieldsOfDirectEntry(const ValueContext&);
     PropertyKeyID keyOf(const BuiltinOverload&) const;
     CellPointer calleeOf(const OperationContext&, const BuiltinOverload&);
     Integer divide(Integer dividend, Range dividends, Integer divisor, Range divisors);

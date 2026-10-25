@@ -868,6 +868,14 @@ static void exposeModuleObjectsOfEntryPoints(ValueFlowRuleContext& context)
         exposeModuleObjectOf(context, entryPoint.module);
 }
 
+// Array.prototype.map and its like read `constructor` from their receiver and `Symbol.species` from that. Nothing else that happens to an escaped object goes that way.
+static void callBuiltinsThatReadSpecies(ValueFlowRuleContext& context, ClimbingSet functions)
+{
+    context.forEachMember(functions, [&](ValueFlowObjectID function) {
+        readSpeciesOfUnknownObject(context.universe().builtinOf(function), context);
+    });
+}
+
 void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
 {
     const Program& program = context.program();
@@ -903,6 +911,8 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
         else if (isHostFlagRaised(context, ValueFlowHostNode::LibraryModulesAreRequiredByName))
             handLibraryModulesTo(context, context.nodes().ofHost(ValueFlowHostNode::HeldByNativeCode));
     }
+    if (callsWhateverHasEscaped)
+        callBuiltinsThatReadSpecies(context, context.restrict(escaped, universe.builtinFunctionsThatReadSpecies()));
     ClimbingSet escapedOfLanguage(context.maker().of(escapedObjectsOfLanguage.span()));
     ClimbingSet used = context.unite(context.valueOf(context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins)), escapedOfLanguage);
     run = context.unite(run, callsWhateverHasEscaped ? escapedOfLanguage : context.valueWithin(escapedOfLanguage, context.nodes().ofHost(ValueFlowHostNode::BuiltinsThatStatementsName)));

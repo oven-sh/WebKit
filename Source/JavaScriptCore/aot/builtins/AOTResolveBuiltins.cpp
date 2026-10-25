@@ -156,7 +156,7 @@ Vector<BuiltinSite> BuiltinResolver::collectSites()
             continue;
         }
 
-        inputs.asksOnlyForProvenPlans = !tailCall;
+        inputs.asksOnlyForProvenPlans = tailCall != TailCallRequirement::Allowed;
         asksAboutPlace = false;
         uint64_t unshareableEventCountBefore = m_context.types.unshareableEventCount();
         BuiltinUsePlan plan = planBuiltinUse(inputs, site.value, site.point());

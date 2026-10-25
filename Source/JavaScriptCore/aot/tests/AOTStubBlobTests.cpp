@@ -42,6 +42,7 @@
 #include <array>
 #include <bit>
 #include <utility>
+#include <wtf/DataLog.h>
 #include <wtf/Noncopyable.h>
 
 namespace JSC { namespace AOT {
@@ -827,6 +828,15 @@ static void checkArrayPushDouble(StubRunner& runner)
     FakeArray integers(Int32Shape, { });
     AOT_TEST_CHECK(runner.run(key, { integers.address(), bitsOf(2.5) }).calledOperation);
 
+    FakeArray values(ContiguousShape, { });
+    checkFastPath(runner.run(key, { values.address(), bitsOf(2.5) }), jsNumber(1));
+    checkFastPath(runner.run(key, { values.address(), bitsOf(4) }), jsNumber(2));
+    AOT_TEST_CHECK(values.publicLength == 2 && values.elements[0] == boxed(jsDoubleNumber(2.5)) && values.elements[1] == boxed(jsNumber(4)));
+
+    FakeArray copyOnWriteIntegers(Int32Shape | CopyOnWrite, { });
+    AOT_TEST_CHECK(runner.run(key, { copyOnWriteIntegers.address(), bitsOf(2.5) }).calledOperation);
+    AOT_TEST_CHECK(!copyOnWriteIntegers.publicLength);
+
     FakeArray arrayThatIsNotPristine(DoubleShape, { }, 0);
     checkFastPath(runner.run(key, { arrayThatIsNotPristine.address(), bitsOf(2.5) }), jsNumber(1));
     AOT_TEST_CHECK(arrayThatIsNotPristine.publicLength == 1 && arrayThatIsNotPristine.elements[0] == bitsOf(2.5));
@@ -848,6 +858,37 @@ static void testPushStubRegisters()
     checkArrayPushDouble(runner);
 }
 
+// What a push of a number that compiled code holds as a double costs in the stubs, counted one by one. A number here may fall.
+static void testInstructionsOfPushedDoubles()
+{
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS
+    StubRunner runner;
+    runner.setCountsInstructions(true);
+
+    struct Push {
+        ASCIILiteral what;
+        double number;
+        uint32_t budget;
+    };
+    const Push pushes[] = {
+        { "a fraction"_s, 2.5, 17 },
+        { "a whole number"_s, 4, 17 },
+        { "negative zero"_s, -0.0, 17 },
+    };
+    bool isWithinBudget = true;
+    for (const Push& push : pushes) {
+        FakeArray array(DoubleShape, { bitsOf(0.5) });
+        StubRun run = runner.run(arrayPushDouble(), { array.address(), bitsOf(push.number) });
+        checkFastPath(run, jsNumber(2));
+        AOT_TEST_CHECK(array.publicLength == 2 && array.elements[1] == bitsOf(push.number) && run.instructionsInStubs);
+        if (*run.instructionsInStubs != push.budget)
+            dataLogLn("a push of ", push.what, " onto an array of doubles: ", *run.instructionsInStubs, " instructions, the budget is ", push.budget);
+        isWithinBudget &= *run.instructionsInStubs <= push.budget;
+    }
+    AOT_TEST_CHECK(isWithinBudget);
+#endif
+}
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 std::span<const NativeTest> stubBlobTests()
@@ -865,6 +906,7 @@ std::span<const NativeTest> stubBlobTests()
         { "stub-blob/layout-seed"_s, testLayoutSeed },
         { "stub-blob/regexp-relocations"_s, testRegExpRelocations },
         { "stub-blob/push-stubs-preserve-fprs"_s, ImageTests::whenExecutable<testPushStubRegisters> },
+        { "stub-blob/instructions-of-pushed-doubles"_s, ImageTests::whenExecutable<testInstructionsOfPushedDoubles> },
     };
     return tests;
 }

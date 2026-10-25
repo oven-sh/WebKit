@@ -1,10 +1,12 @@
 import { describeOverload } from "./check-overloads.ts";
 import type { Problems } from "./declarations.ts";
-import type { ModelOverload, ModelParameter, ModelType, TableModel } from "./model.ts";
+import type { ModelClass, ModelOverload, ModelParameter, ModelType, TableModel } from "./model.ts";
 import {
+  directValuesInTwoRegisters,
   directValueTypes,
   maximumDirectParameterCount,
   type DirectParameterSpec,
+  type OperandUse,
   type Primitive,
 } from "./vocabulary.ts";
 
@@ -45,7 +47,7 @@ function holdsOnlyInstances({
 }
 
 const takesReceiver = ({ value }: DirectParameterSpec) =>
-  value === "NativeObjectOfReceiver" || value === "Receiver" || value === "FrameOfValues";
+  value === "NativeObjectOfReceiver" || value === "Receiver" || value === "BytesOfReceiver" || value === "FrameOfValues";
 const takesArgument = (parameter: DirectParameterSpec) =>
   parameter.value === "FrameOfValues" || (parameter.value !== "Realm" && !takesReceiver(parameter));
 
@@ -62,6 +64,41 @@ function fitsPointer(cppType: string, accepted: ModelType): boolean {
       return primitives.length === 0 && accepted.stringLiterals.length === 0;
     default:
       return primitives.every(primitive => primitive === "String" || primitive === "Symbol");
+  }
+}
+
+const isViewClass = (builtinClass: ModelClass | null): boolean =>
+  builtinClass !== null &&
+  (builtinClass.token === "TypedArray" || builtinClass.token === "DataView" || isViewClass(builtinClass.parent));
+
+function holdsOnlyViews(type: ModelType): boolean {
+  return holdsOnlyInstances(type) && type.parts.every(part => part.part === "Instance" && isViewClass(part.class));
+}
+
+// What a function can do to an operand of which it has nothing but the memory, and only until it returns.
+const usesOfContentsDuringCall: readonly OperandUse[] = ["Inspects", "ReadsContents", "WritesContents"];
+
+function runsNoCodeOf({ protocols, namedMembers, calledMembers, convertedMembers }: ModelParameter): boolean {
+  return [protocols, namedMembers, calledMembers, convertedMembers].every(list => list.length === 0);
+}
+
+// The uses of the row decide. A function that keeps, returns or calls an operand, or reads it after it has returned, gets the operand itself.
+function findContentsProblems({ value }: DirectParameterSpec, parameter: ModelParameter): string[] {
+  const { name, accepted, uses, roles } = parameter;
+  switch (value) {
+    case "Bytes":
+    case "BytesOfReceiver": {
+      const others = uses.filter(use => !usesOfContentsDuringCall.includes(use));
+      if (others.length > 0 || !runsNoCodeOf(parameter))
+        return [`${name}: ${value} hands over memory for the time of the call, and the row says more: ${others.join(", ") || "it runs code of the operand"}`];
+      return holdsOnlyViews(accepted) ? [] : [`${name}: ${value} is for typed arrays and DataViews, and for nothing else`];
+    }
+    case "Characters":
+      if (uses.some(use => use !== "Inspects") || !runsNoCodeOf(parameter) || roles.join() !== "ReadAsCharacters")
+        return [`${name}: Characters is for a string that is read as characters, and for nothing else`];
+      return holdsOnlyPrimitive({ ...accepted, stringLiterals: [] }, "String") ? [] : [`${name}: Characters is for strings`];
+    default:
+      return [];
   }
 }
 
@@ -94,7 +131,7 @@ function findArgumentProblems(direct: DirectParameterSpec, parameter: ModelParam
   }
   if (!isHandedOverAs(direct, parameter))
     problems.push(`${parameter.name} can be something that ${direct.value} does not hand over`);
-  return problems;
+  return [...problems, ...findContentsProblems(direct, parameter)];
 }
 
 function findFormProblems(symbol: string, direct: readonly DirectParameterSpec[]): string[] {
@@ -108,7 +145,7 @@ function findFormProblems(symbol: string, direct: readonly DirectParameterSpec[]
     problems.push(`${symbol} has more than ${maximumDirectParameterCount} parameters`);
   }
   const generalRegisters = direct.reduce(
-    (count, { value }) => count + (value === "Double" ? 0 : value === "RestOfValues" ? 2 : 1),
+    (count, { value }) => count + (value === "Double" ? 0 : directValuesInTwoRegisters.includes(value) ? 2 : 1),
     0,
   );
   if (generalRegisters > maximumGeneralRegisterCount) {
@@ -124,13 +161,36 @@ function findReceiverProblems({ mode, receiver, code: { directEntry } }: ModelOv
     return [`${symbol}: offsetOfNativeObject goes with a parameter that is NativeObjectOfReceiver`];
   }
   if (!parameters.some(takesReceiver)) {
-    return mode === "Call" && receiver === null ? [] : [`${symbol} takes the arguments of a call and no receiver`];
+    // A receiver that the function only tests is tested by whoever picked the overload.
+    const isOnlyTested =
+      receiver !== null && receiver.conversion === "None" && receiver.uses.join() === "Inspects" && holdsOnlyInstances(receiver.accepted);
+    return mode === "Call" && (receiver === null || isOnlyTested)
+      ? []
+      : [`${symbol} takes the arguments of a call and no receiver`];
   }
   if (receiver === null) return [`${symbol} takes the receiver, and the overload has none`];
+  const bytesOfReceiver = parameters.find(({ value }) => value === "BytesOfReceiver");
+  if (bytesOfReceiver !== undefined) return findContentsProblems(bytesOfReceiver, receiver);
   if (takesNativeObject && (receiver.conversion !== "None" || !holdsOnlyInstances(receiver.accepted))) {
     return [`${symbol} takes what the receiver wraps, so the receiver is an instance of a class`];
   }
   return [];
+}
+
+// Two registers come back. Nothing says that the function failed, so it has no realm to throw in or to allocate in.
+function findFieldsProblems({ result, code: { directEntry } }: ModelOverload): string[] {
+  const { symbol, parameters, returnsFields = false } = directEntry!;
+  if (!returnsFields) return [];
+  const [part] = result.type.parts;
+  const isOneLayout = result.type.parts.length === 1 && part.part === "Layout" && result.type.primitives.length === 0;
+  if (!isOneLayout || part.part !== "Layout" || part.layout.isTuple) return [`${symbol} returns fields, so the row returns one layout`];
+  const { fields } = part.layout;
+  const problems: string[] = [];
+  if (fields.length > 2 || fields.some(({ isOptional, type }) => isOptional || type.integers === null || type.primitives.length > 0))
+    problems.push(`${symbol} returns fields in two registers, so the layout has at most two fields, and they are integers`);
+  if (parameters.some(({ value }) => !["Bytes", "BytesOfReceiver", "Characters", "Boolean", "Int32", "Double"].includes(value)))
+    problems.push(`${symbol} returns fields, so it takes nothing with which it could throw, allocate or call`);
+  return problems;
 }
 
 function findProblems(overload: ModelOverload): string[] {
@@ -153,6 +213,7 @@ function findProblems(overload: ModelOverload): string[] {
   }
   if (implementation.how !== "HostCall")
     problems.push(`${symbol} stands in for native code of the host, so the overload is a call of the host`);
+  problems.push(...findFieldsProblems(overload));
   const taken = directEntry.parameters.filter(takesArgument);
   if (taken.length === 1 && taken[0].value === "FrameOfValues") return problems;
   if (taken.length !== parameters.length) {

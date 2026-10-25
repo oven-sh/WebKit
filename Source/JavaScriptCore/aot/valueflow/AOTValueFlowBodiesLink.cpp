@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "AOTValueFlowBodies.h"
+#include "AOTValueFlowBuiltins.h"
 
 #if ENABLE(AOT)
 
@@ -1051,6 +1052,16 @@ private:
         }
         universe.m_builtinFunctionsOfProtocols = builtinObjectsWhere(OfModules::Yes, [&](BuiltinID builtin) {
             return isFunctionOfProtocol.quickGet(builtins.canonicalID(builtin).index());
+        });
+        auto readsSpecies = [](const BuiltinParameter& parameter) {
+            return parameter.uses != OperandUses::all() && parameter.protocols.contains(Protocol::Species);
+        };
+        universe.m_builtinFunctionsThatReadSpecies = builtinObjectsWhere(OfModules::Yes, [&](BuiltinID builtin) {
+            return isCallableBuiltin(builtins, builtin) && std::ranges::any_of(builtins.overloadsOf(builtins.canonicalID(builtin)), [&](const BuiltinOverload& overload) {
+                if (overload.code.model || !doRecordsDescribe(builtins, overload))
+                    return false;
+                return (overload.receiver && readsSpecies(*overload.receiver)) || std::ranges::any_of(overload.parameters, readsSpecies);
+            });
         });
 
         universe.m_isCanonicalEntryOfCallableBuiltin = BitVector(builtins.builtinCount());

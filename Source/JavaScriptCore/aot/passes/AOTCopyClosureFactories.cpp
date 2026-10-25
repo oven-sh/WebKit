@@ -112,8 +112,15 @@ struct CallToCopyFor {
     // The closure that is called, where the caller creates it.
     ValueID closure;
     ReasonToCopy reason;
+    // The field of an environment that the closure was read from: the call gets a copy if the program stores to the field at one place.
+    std::optional<FieldReference> holder { };
     FunctionID copy { };
 };
+
+static uint64_t keyOf(FieldReference field)
+{
+    return static_cast<uint64_t>(field.layout.index()) + 1 << 32 | field.field;
+}
 
 struct Size {
     unsigned numberOfValuesWithClosures { 0 };
@@ -129,8 +136,9 @@ struct Copier {
     BitVector makers;
     // The constants of modules that somebody hands to Object.create.
     BitVector constantsHandedToObjectCreate;
-    // The bodies of the modules of the program.
-    Vector<FunctionID> bodies;
+    // The bodies of the modules of the program, and what they call at one place outside loops.
+    Vector<FunctionID> callersThatRunOnce;
+    BitVector isCallerThatRunsOnce;
     UncheckedKeyHashMap<uint32_t, unsigned> numberOfCopiesOfMaker;
     UncheckedKeyHashMap<uint32_t, unsigned> numberOfCallsOfFactory;
     // By constant of a module: the function whose closure it holds. The constants of a module are entered when the first of them is asked for.
@@ -147,13 +155,19 @@ struct Copier {
 
     bool isConstantOfModule(VariableID variable) const { return program.at(variable).flags.contains(VariableFlags::IsImmutable) && program.at(variable).module; }
 
+    void addCallerThatRunsOnce(FunctionID id)
+    {
+        if (isCodeOfProgram(program.at(id)) && isCallerThatRunsOnce.add(id.index()))
+            callersThatRunOnce.append(id);
+    }
+
     void findBodies()
     {
         for (uint32_t index = 0; index < program.functions.size(); ++index) {
             const Function& function = program.functions[index];
             numberOfValuesAsRead += function.values.size();
             if (isCodeOfProgram(function) && function.isModuleBody())
-                bodies.append(FunctionID(index));
+                addCallerThatRunsOnce(FunctionID(index));
         }
     }
 
@@ -317,26 +331,64 @@ struct Copier {
         FunctionAnalyses analyses(context, caller);
         BitVector resultsHandedToObjectCreate;
         UncheckedKeyHashMap<uint32_t, ValueID> storesToConstants;
-        forEachValueOf(caller, [&](ProgramPoint, ValueID id, const Value& value) {
-            if (value.opcode != Opcode::PutModuleVariable || !isConstantOfModule(value.variable()))
+        // By field of an environment: the store in this function, or no value where there are several.
+        UncheckedKeyHashMap<uint64_t, ValueID> storesToEnvironments;
+        bool didFindStores = false;
+        // Few callers have a call that asks.
+        auto findStores = [&] {
+            if (std::exchange(didFindStores, true))
                 return;
-            storesToConstants.add(value.variable().index() + 1, id);
-            if (!depth && constantsHandedToObjectCreate.get(value.variable().index()))
-                resultsHandedToObjectCreate.set(definitionBehindDeadZoneChecks(caller, value.valueOperand()).index());
-        });
+            forEachValueOf(caller, [&](ProgramPoint, ValueID id, const Value& value) {
+                if (value.opcode == Opcode::PutEnvironmentField) {
+                    auto added = storesToEnvironments.add(keyOf({ value.layout(), value.field() }), id);
+                    if (!added.isNewEntry)
+                        added.iterator->value = ValueID();
+                    return;
+                }
+                if (value.opcode != Opcode::PutModuleVariable || !isConstantOfModule(value.variable()))
+                    return;
+                storesToConstants.add(value.variable().index() + 1, id);
+                if (!depth && constantsHandedToObjectCreate.get(value.variable().index()))
+                    resultsHandedToObjectCreate.set(definitionBehindDeadZoneChecks(caller, value.valueOperand()).index());
+            });
+        };
+        if (!depth && !constantsHandedToObjectCreate.isEmpty())
+            findStores();
         // A read of a `let` or a `const` throws by itself until the store has run. A `var` answers undefined until then, and the call throws.
         auto isReadBehindItsStore = [&](VariableID variable, ProgramPoint read) {
             if (program.at(variable).initialization != VariableInitialization::Undefined)
                 return true;
+            findStores();
             ValueID store = storesToConstants.get(variable.index() + 1);
             return store && analyses.dominates(store, read);
         };
+        // `var make = ..` in a function that has closures: the variable is a field of the environment of the function.
+        auto closureStoredInto = [&](const Value& read, ProgramPoint point) -> ValueID {
+            findStores();
+            ValueID store = storesToEnvironments.get(keyOf({ read.layout(), read.field() }));
+            if (!store || caller.at(store).operand(OperandIndex::PutEnvironmentField::environment) != read.operand(OperandIndex::GetEnvironmentField::environment) || !analyses.dominates(store, point))
+                return { };
+            return definitionBehindDeadZoneChecks(caller, caller.at(store).valueOperand());
+        };
         forEachValueOf(caller, [&](ProgramPoint point, ValueID id, const Value& value) {
+            // The text of a CommonJS module is a function that the body of the module calls.
+            if (value.opcode == Opcode::CallDirect && !depth && !analyses.isInCycle(point.block))
+                addCallerThatRunsOnce(value.function());
             if (value.opcode != Opcode::Call)
                 return;
             ValueID definitionID = definitionBehindDeadZoneChecks(caller, value.calleeOperand());
+            std::optional<FieldReference> holder;
+            if (const Value& read = caller.at(definitionID); read.opcode == Opcode::GetEnvironmentField) {
+                holder = FieldReference { read.layout(), read.field() };
+                definitionID = closureStoredInto(read, point);
+                if (!definitionID)
+                    return;
+            }
             const Value& definition = caller.at(definitionID);
             bool isCreatedByCaller = definition.opcode == Opcode::NewClosure;
+            // `(function () { .. })()`
+            if (isCreatedByCaller && !holder && !depth && analyses.useLists().usesOf(definitionID).size() == 1 && !analyses.isInCycle(point.block))
+                addCallerThatRunsOnce(definition.function());
             FunctionID callee = isCreatedByCaller ? definition.function() : definition.opcode == Opcode::GetModuleVariable ? functionHeldBy(definition.variable()) : FunctionID();
             if (!callee || copies.get(callee.index()) || !canBeCopiedForOneCall(program.at(callee)))
                 return;
@@ -351,7 +403,7 @@ struct Copier {
             Size size = sizeOf(callee);
             if (size.numberOfValuesWithClosures > (isClosureFactory ? maxValuesInCopiedFactory : maxValuesInCopiedMaker) || size.definesWhatStandsAtOnePlace || analyses.isInCycle(point.block))
                 return;
-            calls.append({ point, id, callee, isCreatedByCaller ? definitionID : ValueID(), isClosureFactory ? ReasonToCopy::IsClosureFactory : ReasonToCopy::MakesWhatObjectCreateIsHanded });
+            calls.append({ point, id, callee, isCreatedByCaller ? definitionID : ValueID(), isClosureFactory ? ReasonToCopy::IsClosureFactory : ReasonToCopy::MakesWhatObjectCreateIsHanded, holder });
         });
         return calls;
     }
@@ -400,9 +452,47 @@ struct Copier {
             Value closure = call.closure ? Value(caller.at(call.closure)) : IRBuilder::make(Opcode::NewClosure);
             closure.setFunction(call.copy);
             ValueID created = builder.insertBefore(call.point, WTF::move(closure));
-            caller.edit(call.call).setOperand(OperandIndex::Call::callee, created);
+            Value& edited = caller.edit(call.call);
+            edited.setOperand(OperandIndex::Call::callee, created);
+            // The copy has this one call, so its body moves here and is no second copy.
+            edited.setIsAlwaysInlined(true);
         }
         builder.applyInsertions();
+    }
+
+    // Every function that holds the environment can store to its fields, and so can the text of an eval that sees them.
+    void dropCallsThroughFieldsStoredElsewhere(Vector<Vector<CallToCopyFor>>& callsByCaller)
+    {
+        UncheckedKeyHashMap<uint64_t, unsigned> numberOfStores;
+        for (const Vector<CallToCopyFor>& calls : callsByCaller) {
+            for (const CallToCopyFor& call : calls) {
+                if (call.holder)
+                    numberOfStores.add(keyOf(*call.holder), 0);
+            }
+        }
+        if (numberOfStores.isEmpty())
+            return;
+        Vector<uint64_t> stores = collectInParallel<uint64_t>(build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<uint64_t>& found) {
+            for (const Value& value : program.functions[index].values) {
+                if (value.opcode == Opcode::PutEnvironmentField && numberOfStores.contains(keyOf({ value.layout(), value.field() })))
+                    found.append(keyOf({ value.layout(), value.field() }));
+            }
+        });
+        for (uint64_t key : stores)
+            ++numberOfStores.find(key)->value;
+        for (const EvalScope& scope : program.evalScopes) {
+            for (const EvalBinding& binding : scope.bindings) {
+                if (!binding.layout || !binding.field)
+                    continue;
+                if (auto found = numberOfStores.find(keyOf({ binding.layout, *binding.field })); found != numberOfStores.end())
+                    ++found->value;
+            }
+        }
+        for (Vector<CallToCopyFor>& calls : callsByCaller) {
+            calls.removeAllMatching([&](const CallToCopyFor& call) {
+                return call.holder && numberOfStores.get(keyOf(*call.holder)) != 1;
+            });
+        }
     }
 
     BitVector run()
@@ -422,18 +512,20 @@ struct Copier {
         findBodies();
         findMakers(bodiesAsRead ? bodiesAsRead->functionsThatNameObjectCreate.span() : found.span());
 
-        Vector<Vector<CallToCopyFor>> callsByBody;
-        for (FunctionID body : bodies)
-            callsByBody.append(findCallsIn(body, 0));
-        for (const Vector<CallToCopyFor>& calls : callsByBody) {
+        Vector<Vector<CallToCopyFor>> callsByCaller;
+        // The list grows while it is walked.
+        for (size_t index = 0; index < callersThatRunOnce.size(); ++index)
+            callsByCaller.append(findCallsIn(callersThatRunOnce[index], 0));
+        dropCallsThroughFieldsStoredElsewhere(callsByCaller);
+        for (const Vector<CallToCopyFor>& calls : callsByCaller) {
             for (const CallToCopyFor& call : calls) {
                 if (call.reason == ReasonToCopy::IsClosureFactory)
                     ++numberOfCallsOfFactory.add(call.callee.index() + 1, 0).iterator->value;
             }
         }
-        for (size_t index = 0; index < bodies.size(); ++index) {
-            if (!callsByBody[index].isEmpty())
-                copyForCalls(bodies[index], WTF::move(callsByBody[index]), 0);
+        for (size_t index = 0; index < callersThatRunOnce.size(); ++index) {
+            if (!callsByCaller[index].isEmpty())
+                copyForCalls(callersThatRunOnce[index], WTF::move(callsByCaller[index]), 0);
         }
         return WTF::move(copies);
     }

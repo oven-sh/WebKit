@@ -50,6 +50,7 @@ struct CallWithLiteralParts {
 } // anonymous namespace
 
 static constexpr Range integersUnchangedByToLength { 0, maxExactInteger - 1 };
+static constexpr Range safeIntegers { 1 - maxExactInteger, maxExactInteger - 1 };
 
 static constexpr std::array roundingFunctions { Builtins::MathFloor, Builtins::MathCeil, Builtins::MathRound, Builtins::MathTrunc };
 static constexpr std::array numberConstructorTests { Builtins::NumberIsFinite, Builtins::NumberIsInteger, Builtins::NumberIsNaN, Builtins::NumberIsSafeInteger };
@@ -420,11 +421,15 @@ static KnownBoolean evaluateNumberTest(BuiltinID builtin, const Type& operand)
         return KnownBoolean::False;
     if (!operand.isInteger())
         return KnownBoolean::Unknown;
-    if (builtin == Builtins::NumberIsInteger || builtin == Builtins::NumberIsFinite)
+    if (builtin == Builtins::NumberIsInteger || builtin == Builtins::NumberIsFinite || builtin == Builtins::IsFinite)
         return KnownBoolean::True;
     if (builtin == Builtins::NumberIsNaN || builtin == Builtins::IsNaN)
         return KnownBoolean::False;
-    return KnownBoolean::Unknown;
+    if (builtin != Builtins::NumberIsSafeInteger)
+        return KnownBoolean::Unknown;
+    if (operand.integers.isSubsetOf(safeIntegers))
+        return KnownBoolean::True;
+    return operand.integers.intersectWith(safeIntegers).isEmpty() ? KnownBoolean::False : KnownBoolean::Unknown;
 }
 
 static KnownBoolean evaluateQuestionAboutClass(const Program& program, BuiltinID builtin, const Type& operand)
@@ -487,6 +492,8 @@ static bool returnsOperandUnchanged(BuiltinID builtin, const Type& operand)
         return operand.isInteger();
     if (builtin == Builtins::Boolean)
         return operand.isBoolean();
+    if (builtin == Builtins::String)
+        return operand.isAnyString();
     return builtin == Builtins::Number && operand.isNumber();
 }
 

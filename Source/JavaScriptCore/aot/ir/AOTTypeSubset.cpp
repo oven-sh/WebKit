@@ -150,6 +150,8 @@ bool mayBeClosureOf(const TypeTable& types, BuiltinID builtin, FunctionID functi
 bool mayBeClosureOf(const TypeTable& types, BuiltinID builtin, FunctionID function)
 {
     const Program* program = types.program();
+    if (program && !isLibraryCode(*program, program->at(function)))
+        return false;
     return mayBeClosureOf(types, builtin, function, program ? findTableRecordOf(*program, function) : nullptr);
 }
 

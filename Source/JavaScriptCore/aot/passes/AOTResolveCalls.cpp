@@ -293,6 +293,7 @@ Value makeDirectCall(const ValueInsertion& insertion, const DirectCallRequest& r
         call.setAccessSite(request.accessSite);
     call.setIsConstruction(request.isConstruction);
     call.setIsNeverInlined(request.isNeverInlined);
+    call.setIsAlwaysInlined(request.isAlwaysInlined);
     call.setIsDemotedTailCall(request.isDemotedTailCall);
     call.setOrigin(insertion.origin);
     return call;
@@ -1543,6 +1544,7 @@ struct CallResolver {
             .accessSite = original.accessSite(),
             .isConstruction = !!newTarget,
             .isNeverInlined = original.opcode == Opcode::Call && original.isNeverInlined(),
+            .isAlwaysInlined = original.opcode == Opcode::Call && original.isAlwaysInlined(),
             .isDemotedTailCall = !newTarget && expansion.isTailCall(),
         });
     }
@@ -2001,6 +2003,7 @@ struct CallResolver {
                 .arguments = original.variadicOperands(),
                 .accessSite = original.accessSite(),
                 .isNeverInlined = original.isNeverInlined(),
+                .isAlwaysInlined = original.isAlwaysInlined(),
                 .isDemotedTailCall = FlagMask::isDemotedTailCall(original.opcode) && original.isDemotedTailCall(),
             }));
             RELEASE_ASSERT(typeOf(result).isSubsetOf(program.at(original.type), program) && !typeOf(result).isNever());

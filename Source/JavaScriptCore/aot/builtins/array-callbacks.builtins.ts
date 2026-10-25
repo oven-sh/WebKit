@@ -184,6 +184,10 @@ const sortMethod = (name: string, onArray: SortOutcome, onArrayLike: SortOutcome
   ]);
 
 const itemsProtocols = b.runs("Iterate", "OwnValues", "PrototypeChain", "ToPrimitive", b.named("length"));
+const builtinIterable = b.union(
+  b.string,
+  ...["Set", "Map", "SetIterator", "MapIterator", "StringIterator"].map(name => b.instance(name).pristine("Names")),
+);
 
 const mapperCall = (item: b.PlaceLike) =>
   b.called({
@@ -218,6 +222,15 @@ export default b.declarations(
       uses: { this: b.inspected, items: [b.readsContents()] },
       requiresHolderAsThis: true,
       implementation: b.inline("ArrayFrom", { otherwise: b.compiled("ArrayConstructor", "from") }),
+    },
+    // Only the array-like path of the next overload can read a missing index.
+    {
+      ...operandCodeEffects,
+      args: { items: builtinIterable, mapper: b.undefined.optional },
+      returns: newArrayOf(b.iterated("items")).dense,
+      uses: { this: b.inspected, items: [b.runs("Iterate")] },
+      isSpecialCase: true,
+      implementation: b.compiled("ArrayConstructor", "from"),
     },
     {
       ...operandCodeEffects,

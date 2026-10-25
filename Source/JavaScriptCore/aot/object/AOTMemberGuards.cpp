@@ -727,8 +727,12 @@ static bool tryWatchMemberPassedByStores(VM& vm, State& state, const LayoutData&
     JSGlobalObject* realm = state.instance.globalObject;
     Structure* structureBelow = realm->structureCache().emptyObjectStructureForPrototype(realm, holder, JSFinalObject::defaultInlineCapacity);
     MemberName name { vm, guard.name };
-    ChainWalk walk = walkChain({ realm, structureBelow, nullptr, ChainWalkMode::MayAllocate, ChainWalkUse::KeptForStores }, name.uid());
-    if (walk.didFlatten || storeThroughChain(walk) != StoreThroughChain::CreatesOwnProperty)
+    ChainWalkStart start { realm, structureBelow, nullptr, ChainWalkMode::MayAllocate, ChainWalkUse::KeptForStores };
+    ChainWalk walk = walkChain(start, name.uid());
+    // A walk that stops at a dictionary and flattens it has found nothing out about the name. An object is flattened once, so each further walk gets past one more.
+    while (walk.didFlatten)
+        walk = walkChain(start, name.uid());
+    if (storeThroughChain(walk) != StoreThroughChain::CreatesOwnProperty)
         return false;
     watchpointsOf(state).watchOtherObjects(walk.changeableObjects.span(), layout, guard, name.uid());
     return true;

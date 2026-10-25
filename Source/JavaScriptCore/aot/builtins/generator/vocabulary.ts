@@ -396,8 +396,20 @@ export const directValueTypes = {
   Boolean: ["bool"],
   Int32: ["int32_t"],
   Double: ["double"],
+  // The bytes of a view while the call runs: the address of the first one and how many there are. The function never sees the view, so the row may only let it read and write the contents.
+  Bytes: ["uint8_t*, size_t", "const uint8_t*, size_t"],
+  BytesOfReceiver: ["uint8_t*, size_t", "const uint8_t*, size_t"],
+  // The characters of a string: the address of the first one, with the top bit set where a character has 16 bits, and how many there are.
+  Characters: ["const uint8_t*, size_t"],
 } as const satisfies Record<string, readonly string[]>;
 export type DirectValue = keyof typeof directValueTypes;
+// These take two general registers.
+export const directValuesInTwoRegisters: readonly DirectValue[] = [
+  "RestOfValues",
+  "Bytes",
+  "BytesOfReceiver",
+  "Characters",
+];
 export const maximumDirectParameterCount = 6;
 export const realmParameter: DirectParameterSpec = { value: "Realm", cppType: "JSC::JSGlobalObject*" };
 
@@ -421,6 +433,8 @@ export interface DirectEntrySpec {
   parameters: readonly DirectParameterSpec[];
   /** A C++ expression: where in the cell of the receiver the pointer to what it wraps lies. */
   offsetOfNativeObject?: string;
+  /** The function answers the fields of the layout that the row returns, in registers, and makes no object. Compiled code calls it where the program only reads the fields. */
+  returnsFields?: boolean;
 }
 
 export interface NativeCodeRef {

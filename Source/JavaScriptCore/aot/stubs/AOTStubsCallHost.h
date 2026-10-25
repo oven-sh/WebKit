@@ -22,7 +22,7 @@ constexpr StubKey callHostFunctionWithoutBoxedCall(unsigned count) { return Stub
 constexpr StubKey callProxy(unsigned count) { return StubKey(StubFamily::CallProxy).withCount(count); }
 
 // Leaf: the function neither throws, nor allocates in the heap of the collector, nor looks at the stack.
-enum class DirectFunctionCall : uint8_t { WithFrame, Leaf, WithHostFrame };
+enum class DirectFunctionCall : uint8_t { WithFrame, Leaf, WithHostFrame, LeafReturningFields };
 
 inline constexpr unsigned directThisArgumentIndex = 3;
 inline constexpr unsigned directCalleeArgumentIndex = 4;

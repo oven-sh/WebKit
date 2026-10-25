@@ -92,8 +92,6 @@ struct InliningSummary {
 
     InlineBarrier barrier { InlineBarrier::Unknown };
     uint32_t codeBytes { 0 };
-    // The larger of two parts: the code that is expected to run, without the tests of declared types, and the code that is not.
-    uint32_t likelyCodeBytes { 0 };
     uint32_t headBytes { 0 };
     // The generic version of a function is entered where one of several tests of the parameters fails, so no single test owns its bytes. They go where every one of the tests is decided.
     uint32_t bytesOnlyIfSomeTestFails { 0 };

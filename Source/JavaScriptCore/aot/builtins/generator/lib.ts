@@ -29,6 +29,8 @@ import type {
   ContentsSlot,
   Conversion,
   CppClassRef,
+  DirectEntrySpec,
+  DirectValue,
   EntryColumns,
   FeatureName,
   Freshness,
@@ -656,6 +658,86 @@ export const inline = (name: InlineBuiltinName, options: InlineOptions = {}): Im
   maximumArgumentCount: options.max,
   otherwise: options.otherwise ?? { how: "Nothing" },
 });
+
+export interface TypedEntryOptions {
+  /** The C function that does the work, as the host has it. Where it takes characters there are two, one for each width. */
+  calls: string | { latin1: string; utf16: string };
+  /** They declare what is called. */
+  headers?: readonly string[];
+  declarations?: readonly string[];
+  /** In the order in which the C function takes them. A constant is written into the call as it stands. */
+  parameters: readonly (DirectValue | { constant: string })[];
+  offsetOfNativeObject?: string;
+  /** The C function returns a struct: its members, in the order of the fields of the layout that the row returns. */
+  returnsFields?: readonly string[];
+}
+
+const typesOfTypedParameters: Partial<Record<DirectValue, string>> = {
+  Realm: "JSC::JSGlobalObject*",
+  NativeObjectOfReceiver: "void*",
+  Value: "JSC::EncodedJSValue",
+  Boolean: "bool",
+  Int32: "int32_t",
+  Double: "double",
+  Bytes: "uint8_t*, size_t",
+  BytesOfReceiver: "uint8_t*, size_t",
+  Characters: "const uint8_t*, size_t",
+};
+
+// The function that compiled code enters for a row whose native code works on memory: bytes and characters arrive as an address and a count. It is written here, from the row, so no function needs a second entry by hand: it has the calling convention of an operation, picks the C function for the width of the characters, and hands the fields of a result back in registers.
+export function typedEntry(options: TypedEntryOptions): DirectEntrySpec {
+  const { calls, headers = [], declarations = [], offsetOfNativeObject, returnsFields } = options;
+  const symbol = `AOTTyped__${typeof calls === "string" ? calls : calls.latin1}`;
+  const parameters = options.parameters.flatMap(parameter => {
+    if (typeof parameter !== "string") return [];
+    const cppType = typesOfTypedParameters[parameter];
+    assert(cppType !== undefined, `${symbol}: ${parameter} is not handed to a typed entry`);
+    return [{ value: parameter, cppType }];
+  });
+  const characters = options.parameters.filter(parameter => parameter === "Characters");
+  assert((characters.length === 1) === (typeof calls !== "string"), `${symbol}: one function for each width of one string`);
+
+  let numberOfNames = 0;
+  const written = options.parameters.map(parameter => {
+    if (typeof parameter !== "string") return { declared: [], narrow: [parameter.constant], wide: [parameter.constant] };
+    const name = `p${numberOfNames++}`;
+    const types = typesOfTypedParameters[parameter]!.split(", ");
+    const names = types.length === 1 ? [name] : [name, `${name}Count`];
+    const declared = types.map((type, index) => `${type} ${names[index]}`);
+    if (parameter !== "Characters") return { declared, narrow: names, wide: names };
+    const untagged = `reinterpret_cast<uintptr_t>(${name}) & ~JSC::AOT::wideCharactersBit`;
+    return {
+      declared,
+      narrow: [`reinterpret_cast<const Latin1Character*>(${name})`, names[1]],
+      wide: [`reinterpret_cast<const char16_t*>(${untagged})`, names[1]],
+    };
+  });
+  const call = (callee: string, width: "narrow" | "wide") => `${callee}(${written.flatMap(one => one[width]).join(", ")})`;
+  const tagged = `p${options.parameters.filter(parameter => typeof parameter === "string").indexOf("Characters")}`;
+  const answer =
+    typeof calls === "string"
+      ? call(calls, "narrow")
+      : `reinterpret_cast<uintptr_t>(${tagged}) & JSC::AOT::wideCharactersBit ? ${call(calls.utf16, "wide")} : ${call(calls.latin1, "narrow")}`;
+  const body =
+    returnsFields === undefined
+      ? [`    return ${answer};`]
+      : [`    auto answer = ${answer};`, `    return { ${returnsFields.map(member => `answer.${member}`).join(", ")} };`];
+  const result = returnsFields === undefined ? "JSC::EncodedJSValue" : "JSC::AOT::BuiltinDirectFields";
+  return {
+    symbol,
+    declaration: [
+      ...declarations,
+      `extern "C" SYSV_ABI ${result} ${symbol}(${written.flatMap(one => one.declared).join(", ")})`,
+      "{",
+      ...body,
+      "}",
+    ].join("\n"),
+    headers,
+    parameters,
+    offsetOfNativeObject,
+    returnsFields: returnsFields !== undefined || undefined,
+  };
+}
 
 function conditionOn(name: OperandName, isOneOf: readonly string[], startsWith: readonly string[]): ConditionSpec {
   assert(isOneOf.length + startsWith.length > 0, `a condition on ${name} needs at least one string`);

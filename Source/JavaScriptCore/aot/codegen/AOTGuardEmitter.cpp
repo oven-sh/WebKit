@@ -132,7 +132,7 @@ void GuardEmitter::generateIsSlotFilled(const ValueContext& value)
         if (value->holdsDeclaredType())
             return slots.holdsDeclaredType(base, access.slot, location, &access.extensionWord);
         // A read asks for a value in the slot. A field that is listed and has no storage goes the way of an empty slot, which ends at the same undefined.
-        if (standsInFrontOfReadsAlone(value))
+        if (!value->countsFieldsWithoutStorage() && standsInFrontOfReadsAlone(value))
             return slots.holdsValue(base, access.slot, location, &access.extensionWord);
         return slots.isFilled(base, access.slot, location, &access.extensionWord);
     };

@@ -52,6 +52,7 @@ inline DateGetTime DateGetMilliseconds ; reads(InternalFields) ; family DateBuil
 inline DateSetTime ; writes(InternalFields) ; family DateBuiltin ; optionalSlowPath
 inline FunctionBind ReflectApply ; asOverload ; family FunctionBuiltin
 inline FunctionApply ; asOverload ; family FunctionBuiltin ; optionalSlowPath
+inline FieldsOfDirectEntry ; asOverload ; family FunctionBuiltin ; optionalSlowPath ; formOnly
 
 inline StringRepeat StringPadStart StringPadEnd StringIsWellFormed StringToWellFormed StringNormalize StringFromCodePoint CallStringConstructor StringUTF8ByteLength ; asOverload ; family StringBuiltin
 inline StringLength ; none ; family StringBuiltin ; optionalSlowPath

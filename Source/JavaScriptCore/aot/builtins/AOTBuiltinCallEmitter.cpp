@@ -14,7 +14,9 @@
 #include "AOTBuiltinTableBindings.h"
 #include "AOTCallEmitter.h"
 #include "AOTConstantEmitter.h"
+#include "AOTBuiltinTypes.h"
 #include "AOTConvention.h"
+#include "AOTElementAccessEmitter.h"
 #include "AOTInlineBuiltinEmitter.h"
 #include "AOTInlineBuiltinForms.h"
 #include "AOTOperationData.h"
@@ -22,6 +24,7 @@
 #include "AOTRegExpFlags.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStaticsEmitter.h"
+#include "AOTStringEmitter.h"
 #include "AOTStubsBoxedCalls.h"
 #include "AOTStubsCallHost.h"
 #include "AOTVector.h"
@@ -126,7 +129,7 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
     };
     auto callFunction = [&] {
         std::optional<uint32_t> number = value->builtinCallForm() == BuiltinCallForm::Whole ? BuiltinBindings::directFunctionNumberOf(id, arguments.size()) : std::nullopt;
-        if (number && !BuiltinBindings::directFunctionAt(*number).entersHostFunction() && !(generator().validates() && BuiltinBindings::directFunctionAt(*number).takesFrame())) {
+        if (number && !BuiltinBindings::directFunctionAt(*number).entersHostFunction() && !BuiltinBindings::directFunctionAt(*number).returnsFields && !(generator().validates() && BuiltinBindings::directFunctionAt(*number).takesFrame())) {
             defineResult(callDirectFunction(value, *number));
             return;
         }
@@ -214,6 +217,10 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
         std::optional<InlineBuiltin> builtin = inlineImplementationOf(m_program, value.value());
         if (!builtin) {
             fail(value, InternalErrorKind::OpcodeWithoutCode);
+            return;
+        }
+        if (*builtin == InlineBuiltin::FieldsOfDirectEntry) {
+            generateFieldsOfDirectEntry(value);
             return;
         }
         InlineCall call(value, *builtin, { });
@@ -423,39 +430,72 @@ Boxed BuiltinCallEmitter::callBuiltinFunction(const OperationContext& context, B
     return calls.callValue(context, { callee, thisValue, arguments, calledBuiltin }, options);
 }
 
-Boxed BuiltinCallEmitter::callDirectFunction(const ValueContext& value, uint32_t number)
+// The address of the first byte and the number of bytes, as they are now. A view that has lost its memory has none.
+void BuiltinCallEmitter::appendBytesOf(DirectOperands& operands, ValueID id)
 {
-    const BuiltinDirectFunctionBinding& binding = BuiltinBindings::directFunctionAt(number);
+    CellPointer view = cellOperand(id);
+    TypedArrayType type = typedArrayTypeOf(m_builtins, typeOf(id));
+    auto askView = [&] {
+        return callLeaf<Integer>(RuntimeOperation::ViewByteLength, { view });
+    };
+    Integer size;
+    if (isTypedView(type)) {
+        LBasicBlock isNotFixedLength = newBlock();
+        Join<Integer> join(m_out);
+        Integer length = emitter<ElementAccessEmitter>().typedArrayElementsOf(view, isNotFixedLength).length;
+        join.add(Integer(m_out.shl(length.value(), m_out.constInt32(logElementSize(type)))));
+        m_out.appendTo(isNotFixedLength);
+        join.add(askView());
+        size = join.finish();
+    } else
+        size = askView();
+    operands.words.append(loadField<Pointer>(view, m_heaps.JSArrayBufferView_vector).value());
+    operands.words.append(size.value());
+    operands.keptAlive.append(view.value());
+}
+
+BuiltinCallEmitter::DirectOperands BuiltinCallEmitter::directOperandsOf(const ValueContext& value, const BuiltinDirectFunctionBinding& binding)
+{
     std::span<const ValueID> arguments = value->argumentsOperands();
     RELEASE_ASSERT(arguments.size() >= binding.minArgumentCount());
     RELEASE_ASSERT(!binding.takesReceiver() || value->receiverOperand());
+    std::span<const BuiltinDirectValue> parameters = std::span(binding.parameters).first(binding.parameterCount);
 
-    Vector<LValue, 8> operands;
+    // A rope is resolved first: that allocates, and no address is taken before it.
+    Vector<CharacterView, 1> characters;
     size_t next = 0;
-    bool takesFrame = false;
-    for (BuiltinDirectValue parameter : std::span(binding.parameters).first(binding.parameterCount)) {
+    for (BuiltinDirectValue parameter : parameters) {
+        if (parameter == BuiltinDirectValue::Characters)
+            characters.append(emitter<StringEmitter>().viewOf(value, arguments[next]));
+        next += BuiltinDirectFunctionBinding::takesArgument(parameter) && next < arguments.size();
+    }
+
+    DirectOperands operands;
+    size_t nextCharacters = 0;
+    next = 0;
+    for (BuiltinDirectValue parameter : parameters) {
         switch (parameter) {
         case BuiltinDirectValue::Realm:
-            operands.append(loadImmutablePointer(AOT_INSTANCE_OFFSET(globalObject)).value());
+            operands.words.append(loadImmutablePointer(AOT_INSTANCE_OFFSET(globalObject)).value());
             break;
         case BuiltinDirectValue::NativeObjectOfReceiver:
-            operands.append(m_out.loadPtr(m_out.address(m_heaps.root, cellOperand(value->receiverOperand()).value(), binding.offsetOfNativeObject)));
+            operands.words.append(m_out.loadPtr(m_out.address(m_heaps.root, cellOperand(value->receiverOperand()).value(), binding.offsetOfNativeObject)));
             break;
         case BuiltinDirectValue::Receiver:
-            operands.append(boxedOperand(value, value->receiverOperand()).value());
+            operands.words.append(boxedOperand(value, value->receiverOperand()).value());
             break;
         case BuiltinDirectValue::Value:
-            operands.append(boxedOperand(value, arguments[next++]).value());
+            operands.words.append(boxedOperand(value, arguments[next++]).value());
             break;
         case BuiltinDirectValue::ValueOrEmpty:
-            operands.append(next < arguments.size() ? boxedOperand(value, arguments[next++]).value() : m_out.constInt64(JSValue::encode(JSValue())));
+            operands.words.append(next < arguments.size() ? boxedOperand(value, arguments[next++]).value() : m_out.constInt64(JSValue::encode(JSValue())));
             break;
         case BuiltinDirectValue::RestOfValues: {
             Vector<Boxed, 8> rest;
             for (ValueID argument : arguments.subspan(next))
                 rest.append(boxedOperand(value, argument));
-            operands.append(argumentBuffer(rest.span()).value());
-            operands.append(m_out.constIntPtr(rest.size()));
+            operands.words.append(argumentBuffer(rest.span()).value());
+            operands.words.append(m_out.constIntPtr(rest.size()));
             next = arguments.size();
             break;
         }
@@ -465,28 +505,64 @@ Boxed BuiltinCallEmitter::callDirectFunction(const ValueContext& value, uint32_t
             words.append(boxedOperand(value, value->receiverOperand()));
             for (ValueID argument : arguments.subspan(next))
                 words.append(boxedOperand(value, argument));
-            operands.append(m_out.sub(argumentBuffer(words.span()).value(), m_out.constIntPtr(CallFrameSlot::argumentCountIncludingThis * sizeof(Register))));
+            operands.words.append(m_out.sub(argumentBuffer(words.span()).value(), m_out.constIntPtr(CallFrameSlot::argumentCountIncludingThis * sizeof(Register))));
             next = arguments.size();
-            takesFrame = true;
+            operands.takesFrame = true;
             break;
         }
         case BuiltinDirectValue::Boolean:
-            operands.append(asWord32(booleanOperand(arguments[next++])).value());
+            operands.words.append(asWord32(booleanOperand(arguments[next++])).value());
             break;
         case BuiltinDirectValue::Int32:
-            operands.append(int32Operand(arguments[next++]).value());
+            operands.words.append(int32Operand(arguments[next++]).value());
             break;
         case BuiltinDirectValue::Double:
-            operands.append(numberOperand(arguments[next++]).value());
+            operands.words.append(numberOperand(arguments[next++]).value());
+            break;
+        case BuiltinDirectValue::Bytes:
+            appendBytesOf(operands, arguments[next++]);
+            break;
+        case BuiltinDirectValue::BytesOfReceiver:
+            appendBytesOf(operands, value->receiverOperand());
+            break;
+        case BuiltinDirectValue::Characters: {
+            const CharacterView& view = characters[nextCharacters++];
+            Integer address(view.characters.value());
+            operands.words.append(select(view.is8Bit, address, bitOr(address, integer(static_cast<int64_t>(wideCharactersBit)))).value());
+            operands.words.append(zeroExtended(view.length).value());
+            operands.keptAlive.append(view.owner.value());
+            ++next;
             break;
         }
+        }
     }
+    if (binding.takesReceiver())
+        operands.keptAlive.append(boxedOperand(value, value->receiverOperand()).value());
     build().statistics().count(StatisticID::NativeFunctionsCalledDirectly);
-    LValue keptAlive = binding.takesReceiver() ? boxedOperand(value, value->receiverOperand()).value() : nullptr;
+    return operands;
+}
+
+Boxed BuiltinCallEmitter::callDirectFunction(const ValueContext& value, uint32_t number)
+{
+    DirectOperands operands = directOperandsOf(value, BuiltinBindings::directFunctionAt(number));
     std::optional<RuntimeCallEmitter::HostFrameOfDirectCall> hostFrame;
-    if (takesFrame)
+    if (operands.takesFrame)
         hostFrame = RuntimeCallEmitter::HostFrameOfDirectCall { boxedOperand(value, value->receiverOperand()).value(), calleeOf(value, m_builtins.at(value->overload())).value() };
-    return Boxed(emitter<RuntimeCallEmitter>().callDirectFunction(value, number, operands.span(), keptAlive, hostFrame));
+    return Boxed(emitter<RuntimeCallEmitter>().callDirectFunction(value, number, operands.words.span(), operands.keptAlive.span(), hostFrame));
+}
+
+void BuiltinCallEmitter::generateFieldsOfDirectEntry(const ValueContext& value)
+{
+    std::optional<uint32_t> number = BuiltinBindings::directFunctionNumberOf(value->overload(), value->argumentsOperands().size());
+    std::optional<uint32_t> numberOfFields = numberOfResultsOfOverload(m_program, value.value());
+    if (!number || !BuiltinBindings::directFunctionAt(*number).returnsFields || !numberOfFields || !*numberOfFields || *numberOfFields > 2) {
+        fail(value, InternalErrorKind::OpcodeWithoutCode);
+        return;
+    }
+    DirectOperands operands = directOperandsOf(value, BuiltinBindings::directFunctionAt(*number));
+    StubCallResult fields = emitter<RuntimeCallEmitter>().callDirectFunctionReturningFields(value, *number, operands.words.span(), operands.keptAlive.span());
+    std::array<Operand, 2> results { Integer(fields.first), Integer(fields.second) };
+    finishWithResults(InlineCall(value, InlineBuiltin::FieldsOfDirectEntry, { }), std::span<const Operand>(results).first(*numberOfFields));
 }
 
 void BuiltinCallEmitter::generateNewSetFromData(const ValueContext& value)

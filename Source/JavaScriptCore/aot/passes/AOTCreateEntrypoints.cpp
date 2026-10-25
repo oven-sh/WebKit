@@ -626,7 +626,7 @@ void closeEntrypointsThatNothingEnters(ProgramEditor& editor, const FlowResults&
     BitVector mayBeEntered = functionsCalledByHost(program, loops);
     for (uint32_t index : findIndicesInParallel(loops, program.functions.size(), [&](unsigned index) {
         const Function& function = program.functions[index];
-        bool isFollowedByFlow = index < program.numberOfFunctionsAsRead() && flow.function(FunctionID(index)).callers == CallerState::AllKnown;
+        bool isFollowedByFlow = index < flow.functionCountAsRead() && flow.function(FunctionID(index)).callers == CallerState::AllKnown;
         // The second entrypoint of a constructor function that reads no new.target is entered by the constructions that would enter the first.
         bool readsNewTarget = entrypointVariantsOf(program, function) != EntrypointVariants::WithoutNewTarget && !hasAllocatingConstructEntrypoint(program, function);
         return !isFollowedByFlow || function.kind == FunctionKind::BaseConstructor || function.kind == FunctionKind::DerivedConstructor || readsNewTarget;

@@ -131,6 +131,7 @@ private:
     size_t m_size { 0 };
     bool m_sharesRange { false };
     bool m_hasReleasedReserve { false };
+    bool m_shouldKeepLargeCellReserve { true };
     bool m_owesCollection { false };
     bool m_errorWaitsForPoll { false };
     bool m_hasCollectedAtPoll { false };
@@ -141,6 +142,7 @@ private:
     unsigned m_numberOfBarrenCollections { 0 };
     uint64_t m_bytesAllocatedWhenLastFull { 0 };
     Vector<void*> m_reserve;
+    void* m_largeCellReserve { nullptr };
     std::atomic<uintptr_t> m_lowestAllocation { std::numeric_limits<uintptr_t>::max() };
     std::atomic<uintptr_t> m_endOfHighestAllocation { 0 };
 

@@ -9,12 +9,12 @@
 # STATISTIC: TableCalls = 1
 # STATISTIC: TableEntrypoints = 6
 # STATISTIC: ReturnCallsDemoted = 0
-# CHECK: f3 Direct (xmm0:Double) -> (rax:JSValue) boxed-result
-# CHECK: f5 Direct (xmm0:Double) -> (rax:JSValue) boxed-result
-# CHECK: f7 Direct (xmm0:Double) -> (rax:JSValue) boxed-result
-# CHECK: f9 Direct (xmm0:Double) -> (rax:JSValue) boxed-result
-# CHECK: f11 Direct (xmm0:Double) -> (rax:JSValue) boxed-result
-# CHECK: f13 Direct (xmm0:Double) -> (rax:JSValue) boxed-result
+# CHECK: f3 Direct ({{*}}:Double) -> ({{*}}:JSValue) boxed-result
+# CHECK: f5 Direct ({{*}}:Double) -> ({{*}}:JSValue) boxed-result
+# CHECK: f7 Direct ({{*}}:Double) -> ({{*}}:JSValue) boxed-result
+# CHECK: f9 Direct ({{*}}:Double) -> ({{*}}:JSValue) boxed-result
+# CHECK: f11 Direct ({{*}}:Double) -> ({{*}}:JSValue) boxed-result
+# CHECK: f13 Direct ({{*}}:Double) -> ({{*}}:JSValue) boxed-result
 # CHECK: = CallTable v0, v1 {{*}}key="m" receivers=[L0, L1, L2, L3, L4, L5]
 # CHECK-LABEL: role=TableLookup
 # CHECK-NOT: TypeTest

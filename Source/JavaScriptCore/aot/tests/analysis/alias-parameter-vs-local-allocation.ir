@@ -1,0 +1,29 @@
+# A parameter never aliases an object allocated in this activation, even if that object escapes later. Two parameters may alias, and so may a value loaded from a parameter
+# FORM: AsRead
+# RUN: analyses aliases function=f0 alias-values=v0,v1,v2,v3,v5
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+layout L0 name="Point"
+variable g0 name="published" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="alias" parameters=[{type=L0}, {type=L0}] results=[{type=anything}] {
+  b0(v0: L0, v1: L0):
+    v2 = NewObject layout=L0 fields=[]
+    v3 = NewObject layout=L0 fields=[]
+    PutModuleVariable v3 variable=g0
+    v5 = PropGet v0 key="next"
+    Return v2
+}
+# CHECK: function f0
+# CHECK-NEXT: aliases:
+# CHECK-NEXT: v0 v1 alias: MayAlias
+# CHECK-NEXT: v0 v2 alias: NoAlias
+# CHECK-NEXT: v0 v3 alias: NoAlias
+# CHECK-NEXT: v0 v5 alias: MayAlias
+# CHECK-NEXT: v1 v2 alias: NoAlias
+# CHECK-NEXT: v1 v3 alias: NoAlias
+# CHECK-NEXT: v1 v5 alias: MayAlias
+# CHECK-NEXT: v2 v3 alias: NoAlias
+# CHECK-NEXT: v2 v5 alias: MayAlias
+# CHECK-NEXT: v3 v5 alias: MayAlias
+# CHECK-NOT: error:

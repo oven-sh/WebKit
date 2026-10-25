@@ -144,14 +144,34 @@ void generateArrayPushDouble(StubAssembler& jit)
 {
     const GPRReg array = jit.operand(0);
     const GPRReg value = jit.clobberOperand(1);
+    const GPRReg length = jit.result();
     const GPRReg savedNumber = jit.allocateScratch(arrayPushDoubleSavedNumberRegister);
     const GPRReg integer = jit.allocateScratch(arrayPushDoubleIntegerRegister);
+    const GPRReg kind = savedNumber;
+    const GPRReg butterfly = integer;
     constexpr FPRReg number = FPRInfo::fpRegT0;
     const FPRReg scratch = jit.allocateScratch(FPRInfo::fpRegT1);
+    RELEASE_ASSERT(noOverlap(array, value, length, kind, butterfly));
 
-    jit.load8(Address(array, JSCell::indexingTypeAndMiscOffset()), integer);
-    jit.and32(TrustedImm32(IndexingShapeMask), integer);
-    Jump isInt32Shape = jit.branch32(CCallHelpers::Equal, integer, TrustedImm32(Int32Shape));
+    jit.load8(Address(array, JSCell::indexingTypeAndMiscOffset()), kind);
+    jit.and32(TrustedImm32(IndexingShapeAndWritabilityMask), kind);
+    Jump holdsNoDoubles = jit.branch32(CCallHelpers::NotEqual, kind, TrustedImm32(DoubleShape));
+    jit.move64ToDouble(value, scratch);
+    Jump isNaN = jit.branchIfNaN(scratch);
+    jit.loadPtr(Address(array, JSObject::butterflyOffset()), butterfly);
+    jit.load32(Address(butterfly, Butterfly::offsetOfPublicLength()), length);
+    Jump isFull = jit.branch32(CCallHelpers::AboveOrEqual, length, Address(butterfly, Butterfly::offsetOfVectorLength()));
+    jit.store64(value, BaseIndex(butterfly, length, CCallHelpers::TimesEight));
+    jit.add32(TrustedImm32(1), length);
+    jit.store32(length, Address(butterfly, Butterfly::offsetOfPublicLength()));
+    boxInt32(jit, length, length);
+    jit.returnToCaller();
+
+    holdsNoDoubles.link(&jit);
+    jit.and32(TrustedImm32(IndexingShapeMask), kind);
+    Jump isInt32Shape = jit.branch32(CCallHelpers::Equal, kind, TrustedImm32(Int32Shape));
+    isNaN.link(&jit);
+    isFull.link(&jit);
     jit.saveFPR(number, savedNumber);
     jit.move64ToDouble(value, number);
     JumpList notInt32;

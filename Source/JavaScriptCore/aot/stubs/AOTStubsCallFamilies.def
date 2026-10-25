@@ -41,4 +41,4 @@ v(CallHostFunctionWithoutBoxedCall, CalledByCode, (), CountAxis, 0, 4, AllISAs, 
 v(FindBoxedCall, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, FindBoxedCall)
 v(CallInternalFunction, CalledByCode, (Call, Construct), FormAxis | CountAxis, 0, N, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallInternalFunction)
 v(CallProxy, InternalEntry, (), CountAxis, 0, N, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallProxy)
-v(CallDirectFunction, CalledByCode, (WithFrame, Leaf, WithHostFrame), FormAxis | ImmediateAxis, 0, 0, AllISAs, NoISA, NoChoice, ByPolicy, MayCall, ClobbersLikeCall, AsOperation, CallDirectFunction)
+v(CallDirectFunction, CalledByCode, (WithFrame, Leaf, WithHostFrame, LeafReturningFields), FormAxis | ImmediateAxis, 0, 0, AllISAs, NoISA, NoChoice, ByPolicy, MayCall, ClobbersLikeCall, AsOperation, CallDirectFunction)

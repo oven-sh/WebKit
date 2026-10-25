@@ -134,8 +134,10 @@ unsigned estimatedDirectCallBytes(unsigned numberOfOperands)
     return CodeSize::directCall + CodeSize::perOperand * numberOfOperands;
 }
 
+AOT_THRESHOLD(unsigned, maxDepthOfConstantExpression, 6);
+
 // The back end folds arithmetic on constants, such as `A | B` of two enum members.
-static bool isConstantExpression(const Function& function, const Value& value, unsigned remainingDepth = 6)
+static bool isConstantExpression(const Function& function, const Value& value, unsigned remainingDepth = maxDepthOfConstantExpression)
 {
     static constexpr OpcodeSet foldableOpcodes { Opcode::BitOr, Opcode::BitAnd, Opcode::BitXor, Opcode::Add, Opcode::Sub, Opcode::Mul };
     if (value.opcode == Opcode::Integer || value.opcode == Opcode::Double)
@@ -276,7 +278,7 @@ static unsigned estimateSwitchBytes(Vector<std::pair<int64_t, BlockID>, 8>& case
 static void estimateComparisonChainsAsSwitches(FunctionAnalyses& analyses, Vector<uint32_t>& blockBytes)
 {
     constexpr unsigned linkBytes = CodeSize::simpleOperation + CodeSize::branch;
-    constexpr unsigned minLinks = 3;
+    AOT_THRESHOLD(unsigned, minLinks, 3);
     const Function& function = analyses.function();
     const CFG& cfg = analyses.cfg();
     BitVector isLink(function.blocks.size());
@@ -528,37 +530,6 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
         if (runtimeFunction && program.builtins().at(runtimeFunction).flags.contains(RuntimeFunctionFlag::IsNeverInlined))
             return InlineBarrier::NeverInlined;
         return InlineBarrier::None;
-    };
-
-    auto isLikely = [&](BlockID id) {
-        return function.at(id).frequency == BlockFrequency::Normal;
-    };
-
-    // A declared type has its test in the body already. Without a declared type the same test is placed after the body is copied.
-    auto bytesOfDeclaredTypeTest = [&](const Block& block) -> uint32_t {
-        const Terminator& terminator = block.terminator;
-        if (!terminator.isConditionalBranch() || block.values.isEmpty() || terminator.conditionOperand() != block.values.last())
-            return 0;
-        const Value& test = function.at(block.values.last());
-        if (test.opcode != Opcode::TypeTest || !isLikely(terminator.taken().block) || isLikely(terminator.notTaken().block))
-            return 0;
-        return estimatedCodeBytes(program, function, test) + estimatedCodeBytes(terminator);
-    };
-
-    auto computeLikelyBytes = [&]() -> uint32_t {
-        if (!isLikely(entryBlock) || !function.has(FunctionFlags::IsChecked))
-            return std::numeric_limits<uint32_t>::max();
-        uint32_t likelyBytes = 0;
-        uint32_t otherBytes = 0;
-        for (BlockID id : analyses.cfg().reversePostOrder()) {
-            uint32_t bytes = blockBytes[id.index()];
-            if (isLikely(id))
-                likelyBytes = saturatingSum<uint32_t>(likelyBytes, bytes - std::min(bytes, bytesOfDeclaredTypeTest(function.at(id))));
-            else
-                otherBytes = saturatingSum<uint32_t>(otherBytes, bytes);
-        }
-        // The copy for values that fail a test is about as large as the function without its types.
-        return std::max(likelyBytes, otherBytes);
     };
 
     auto entryParameterBehind = [&](ValueID value) -> std::optional<uint32_t> {
@@ -959,7 +930,6 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
     estimateComparisonChainsAsSwitches(analyses, blockBytes);
     for (uint32_t bytes : blockBytes)
         summary.codeBytes = saturatingSum<uint32_t>(summary.codeBytes, bytes);
-    summary.likelyCodeBytes = computeLikelyBytes();
     summary.hasCycle = cfg.hasCycle();
     summary.isWrapper = isWrapperCreatedByEngine(function);
     // A loop of the library runs once for each element, however seldom the function is entered: a caller asks what it does with a function that it is handed.
@@ -1878,9 +1848,7 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
     bool isRepeatedByCaller = isHot(heat) && context.analyses.isInCycle(block);
     uint32_t foldedBytes = computeFoldedBytes(context, call, summary, isRepeatedByCaller ? DecidedTests::Go : DecidedTests::AreCharged);
     uint32_t removedBytes = saturatingSum<uint32_t>(foldedBytes, estimatedCodeBytes(program, caller, value));
-    // In a loop of the caller, what counts is the code that the loop runs.
-    uint32_t bodyBytes = isRepeatedByCaller ? std::min(summary.codeBytes, summary.likelyCodeBytes) : summary.codeBytes;
-    uint32_t cost = bodyBytes > removedBytes ? bodyBytes - removedBytes : 0;
+    uint32_t cost = summary.codeBytes > removedBytes ? summary.codeBytes - removedBytes : 0;
 
     unsigned depth = depthOfCopies(context, value.inlineFrame, heat);
     // The budget halves with each level and is small where code runs seldom. A bet that did neither let a body in at every level, and what a caller knew of one object cost it many times its size.

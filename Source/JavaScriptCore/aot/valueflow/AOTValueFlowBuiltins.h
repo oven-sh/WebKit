@@ -25,6 +25,7 @@ struct ValueFlowBuiltinCall {
     ValueFlowObjectID contentsObject;
     const ValueFlowStatement* operation { nullptr };
     bool saysOnlyWhatIsCalled { false };
+    bool readsOnlySpecies { false };
 };
 
 inline ValueFlowName cellOfCallsThatRunOtherCode(const BuiltinTable& builtins)
@@ -64,6 +65,7 @@ void settlePromisesThrough(ClimbingSet functions, const ValueFlowBuiltinCall&, V
 void adoptRejectionOf(ValueFlowRuleContext&, ClimbingSet values, ValueFlowNodeID reason);
 void applyBuiltin(BuiltinID, ValueFlowCallKind, const ValueFlowStatement& call, ValueFlowRuleContext&, ValueSetID receivers = ValueSets::anything);
 void applyBuiltinFoundThroughUnknownObject(BuiltinID, const ValueFlowStatement& call, ValueFlowRuleContext&);
+void readSpeciesOfUnknownObject(BuiltinID, ValueFlowRuleContext&);
 void applyBuiltin(BuiltinID, ValueFlowCallKind, const ValueFlowCallGroup&, ValueFlowRuleContext&);
 void applyEntryDescribing(ValueFlowObjectID closure, ValueFlowCallKind, const ValueFlowStatement& call, ValueFlowRuleContext&);
 void applyEntryDescribing(ValueFlowObjectID closure, ValueFlowCallKind, const ValueFlowCallGroup&, ValueFlowRuleContext&);

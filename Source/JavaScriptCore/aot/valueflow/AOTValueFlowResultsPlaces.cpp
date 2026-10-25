@@ -704,7 +704,16 @@ Vector<FlowWorkerEntry> collectWorkerEntries(const ValueFlowResultInputs& inputs
     ValueSetID followedWithOptions = ValueSets::nothing;
     bool getsUnknownValue = false;
     bool getsUnknownValueWithOptions = false;
+    struct Start {
+        Witness witness { noWitness };
+        ValueSetID paths { ValueSets::nothing };
+        bool getsUnknownValue { false };
+    };
+    Vector<Start> starts;
     forEachBuiltinApplication(inputs, heap, constructors, [&](const ValueFlowBuiltinApplication& application) {
+        Start start;
+        if (application.site)
+            start.witness = witnessAt(inputs.program.at(application.function), application.function, application.site);
         for (const BuiltinOverload& overload : builtins.overloadsOf(application.builtin)) {
             bool hasOptions = inputs.sets().meet(application.otherArguments, universe.objects()) || std::ranges::any_of(overload.parameters, [&](const BuiltinParameter& parameter) {
                 return !isEntryPath(parameter) && inputs.sets().meet(application.valueAt(parameter.operand, maker), universe.objects());
@@ -715,15 +724,44 @@ Vector<FlowWorkerEntry> collectWorkerEntries(const ValueFlowResultInputs& inputs
                 ValueSetID passed = application.valueAt(parameter.operand, maker);
                 ValueSetID paths = maker.intersect(passed, universe.embeddedFilePaths());
                 followed = maker.unite(followed, paths);
+                start.paths = maker.unite(start.paths, paths);
                 if (hasOptions)
                     followedWithOptions = maker.unite(followedWithOptions, paths);
                 if (inputs.sets().contains(passed, ValueFlowUniverse::unknownObject())) {
                     getsUnknownValue = true;
+                    start.getsUnknownValue = true;
                     getsUnknownValueWithOptions |= hasOptions;
                 }
             }
         }
+        starts.append(start);
     });
+    AOT::sort(starts, { }, [](const Start& start) {
+        return std::tuple(!hasFunction(start.witness), start.witness.function, start.witness.value);
+    });
+    // A file whose path another native function looks at is more likely a page that the program reads or sends than a Worker:
+    // one function that both kinds of path pass through sends all of them to the constructor.
+    ValueSetID usedElsewhere = ValueSets::nothing;
+    if (followed != ValueSets::nothing) {
+        BitVector otherBuiltins(builtins.builtinCount());
+        for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
+            if (!constructors.quickGet(index))
+                otherBuiltins.quickSet(index);
+        }
+        forEachBuiltinApplication(inputs, heap, otherBuiltins, followed, [&](const ValueFlowBuiltinApplication& application) {
+            auto noteUseOf = [&](BuiltinOperand operand) {
+                usedElsewhere = maker.unite(usedElsewhere, maker.intersect(application.valueAt(operand, maker), followed));
+            };
+            for (const BuiltinOverload& overload : builtins.overloadsOf(application.builtin)) {
+                if (overload.isUndeclared())
+                    noteUseOf(BuiltinOperand::argumentsFrom(0));
+                for (const BuiltinParameter& parameter : overload.parameters) {
+                    if (parameter.uses.contains(OperandUse::Inspects))
+                        noteUseOf(parameter.operand);
+                }
+            }
+        });
+    }
     // An unknown value may be any path that escaped, for example the result of a method called on an unknown receiver.
     ValueSetID escapedPaths = ValueSets::nothing;
     if (getsUnknownValue)
@@ -731,7 +769,11 @@ Vector<FlowWorkerEntry> collectWorkerEntries(const ValueFlowResultInputs& inputs
     Vector<FlowWorkerEntry> entries;
     inputs.sets().forEachMember(maker.unite(followed, escapedPaths), [&](ValueFlowObjectID key) {
         bool isFollowed = inputs.sets().contains(followed, key);
-        entries.append({ inputs.program.at(universe.keyOf(key)).text, !isFollowed, isFollowed ? inputs.sets().contains(followedWithOptions, key) : getsUnknownValueWithOptions });
+        bool isOnlyStarted = isFollowed && !inputs.sets().contains(usedElsewhere, key);
+        auto start = std::ranges::find_if(starts, [&](const Start& start) {
+            return isFollowed ? inputs.sets().contains(start.paths, key) : start.getsUnknownValue;
+        });
+        entries.append({ inputs.program.at(universe.keyOf(key)).text, !isOnlyStarted, isFollowed ? inputs.sets().contains(followedWithOptions, key) : getsUnknownValueWithOptions, start == starts.end() ? noWitness : start->witness });
     });
     AOT::sort(entries, { }, &FlowWorkerEntry::path);
     return entries;

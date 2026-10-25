@@ -257,6 +257,8 @@ private:
     bool m_hasFailed { false };
 };
 
+bool hasValidInlineParameters(InlineBuiltin, std::span<const uint32_t> parameters);
+
 inline bool isAsRead(const FunctionVerifier& verifier)
 {
     return verifier.form() == IRForm::AsRead && !verifier.isOptimizing();

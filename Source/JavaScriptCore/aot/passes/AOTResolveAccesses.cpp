@@ -1444,6 +1444,9 @@ static void addEmptySlotCase(FunctionPassContext& context, IRBuilder& builder, S
     }
     expansion.end();
     builder.redirectEdge(Edge { site.test, 1 }, Target { empty, { }, { } });
+    // A field that lies out of line may hold undefined without storage. It hides the method above it, so the test has to see it.
+    if (std::ranges::contains(plans, AccessForm::Method, &PropertyAccessPlan::form))
+        function.edit(function.at(site.test).values.last(), ValueEdit::Definition).setCountsFieldsWithoutStorage(true);
 }
 
 PassOutcome addEmptySlotCases(FunctionPassContext& context)

@@ -545,6 +545,7 @@ static void checkInfallibleScopeUsesReserve()
     VMTraps& traps = vm.traps();
     constexpr unsigned shortLength = 1;
     constexpr unsigned longLength = 4 * KB / sizeof(JSBigInt::Digit);
+    constexpr unsigned lengthOfLargeCell = 900 * KB / sizeof(JSBigInt::Digit);
     {
         DeferGCForAWhile deferGC(vm);
         while (JSBigInt::tryCreateWithLength(vm, shortLength)) { }
@@ -558,6 +559,8 @@ static void checkInfallibleScopeUsesReserve()
                 JSBigInt* bigInt = JSBigInt::tryCreateWithLength(vm, length);
                 AOT_TEST_CHECK(bigInt && cage.contains(bigInt) && !bigInt->isPreciseAllocation());
             }
+            JSBigInt* large = JSBigInt::tryCreateWithLength(vm, lengthOfLargeCell);
+            AOT_TEST_CHECK(large && cage.contains(large) && large->isPreciseAllocation());
         }
         AOT_TEST_CHECK(!cage.allocationsAreInfallible() && cage.reserveSize() < whole && traps.needsOutOfMemoryError() && cage.owesCollection());
         AOT_TEST_CHECK(!cage.tryTakeBackOutOfMemoryError(vm) && traps.needsOutOfMemoryError());

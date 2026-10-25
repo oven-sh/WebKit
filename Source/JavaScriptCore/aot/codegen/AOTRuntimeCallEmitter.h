@@ -20,6 +20,7 @@
 namespace JSC { namespace AOT {
 
 class StubCatalog;
+enum class DirectFunctionCall : uint8_t;
 
 namespace Typed {
 
@@ -53,7 +54,9 @@ public:
         LValue thisValue { nullptr };
         LValue callee { nullptr };
     };
-    LValue callDirectFunction(const OperationContext&, uint32_t number, std::span<const LValue> arguments, LValue keptAlive, std::optional<HostFrameOfDirectCall> = std::nullopt);
+    LValue callDirectFunction(const OperationContext&, uint32_t number, std::span<const LValue> arguments, std::span<const LValue> keptAlive, std::optional<HostFrameOfDirectCall> = std::nullopt);
+    // The function takes no realm, so it neither throws, allocates nor calls back, whatever the operation does around the call.
+    StubCallResult callDirectFunctionReturningFields(const OperationContext&, uint32_t number, std::span<const LValue> arguments, std::span<const LValue> keptAlive);
 
     StubCallResult callStub(const OperationContext&, StubKey, std::span<const LValue> operands, const CallOptions& = { });
     StubCallResult callStubWithoutSite(StubKey, std::span<const LValue> operands, const CallOptions& = { });
@@ -104,6 +107,7 @@ private:
     bool mayConvertCells(const Effects&);
     CallRequest createRequest(StubKey, std::span<const LValue> operands, const CallOptions&, std::optional<BranchTargets> = std::nullopt, std::optional<Origin> firstRead = std::nullopt) const;
     CallRequest createEntryRequest(AOT::Entry, const CallOptions&) const;
+    CallRequest requestOfDirectFunction(DirectFunctionCall, uint32_t number, std::span<const LValue> arguments, std::span<const LValue> keptAlive);
     void placeArguments(CallRequest&, std::span<const LValue> arguments, OperationCall::FirstArgument) const;
     Operand callChecked(const OperationContext*, RuntimeOperation, std::span<const Operand> arguments, Representation result, const CallOptions&);
     StubCallResult emitEntryCall(const OperationContext*, AOT::Entry, std::span<const LValue> arguments, const CallOptions&);

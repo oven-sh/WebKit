@@ -425,8 +425,11 @@ bool ValueIdentities::receiveSameValues(const PassedValues& passedValues, uint32
 {
     for (size_t edgeIndex = 0; edgeIndex < passedValues.numberOfEdges; ++edgeIndex) {
         ValueID passedToEarlier = m_identities[passedValues.valuePassedOn(edgeIndex, earlierIndex).index()];
-        ValueID passed = m_identities[passedValues.valuePassedOn(edgeIndex, parameterIndex).index()];
-        bool isSame = passedToEarlier == passed || (passedToEarlier == passedValues.parameterAt(earlierIndex) && passed == passedValues.parameterAt(parameterIndex));
+        ValueID passedValue = passedValues.valuePassedOn(edgeIndex, parameterIndex);
+        ValueID passed = m_identities[passedValue.index()];
+        // The parameter that is asked about has no identity yet, so an edge that passes it to itself is known by the value.
+        bool isPassedToItself = passedValue == passedValues.parameterAt(parameterIndex) || passed == passedValues.parameterAt(parameterIndex);
+        bool isSame = passedToEarlier == passed || (passedToEarlier == passedValues.parameterAt(earlierIndex) && isPassedToItself);
         if (!isSame)
             return false;
     }

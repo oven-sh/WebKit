@@ -21,6 +21,7 @@
 #include "AOTProgramTableEncoder.h"
 #include "AOTPropertyAccessReceivers.h"
 #include "AOTRegExpCompiler.h"
+#include "AOTStubCatalog.h"
 #include "AOTTextEncoder.h"
 #include "AOTThreads.h"
 #include "AOTWasmModules.h"
@@ -146,9 +147,9 @@ static GeneratedProgram generateProgram(Typed::PipelineOutput& pipeline, Prepare
     return result;
 }
 
-static WebAssemblyImageInputs compileWebAssembly(const Typed::Program& program, const BitVector& stringsInImage, BuildContext& context)
+static WebAssemblyImageInputs compileWebAssembly(const Typed::Program& program, const CodeGenerationPlan& plan, BuildContext& context)
 {
-    if (!mayHaveWebAssemblyModules(program))
+    if (!plan.stubCatalog->options().imageHasWebAssembly)
         return { };
 
     std::expected<CodeTemplates, LinkFailure> templates = CodeTemplates::create(context.assemblerPolicy(), &context);
@@ -159,7 +160,7 @@ static WebAssemblyImageInputs compileWebAssembly(const Typed::Program& program, 
 
     RefPtr<VM> vm = VM::create(HeapType::Small);
     JSLockHolder locker(*vm);
-    WebAssemblyImageInputs modules = compileWebAssemblyModules(*vm, program, *templates, context, &stringsInImage);
+    WebAssemblyImageInputs modules = compileWebAssemblyModules(*vm, program, *templates, context, &plan.uses.strings.isNamed);
     // The lock holder is left with the last reference, so the VM dies under its lock.
     vm = nullptr;
     return modules;
@@ -171,7 +172,7 @@ static std::optional<ImageParts> createImageParts(const Typed::PipelineOutput& p
     Diagnostics& diagnostics = context.diagnostics();
 
     ImageParts parts;
-    parts.webAssembly = compileWebAssembly(*pipeline.program, plan.uses.strings.isNamed, context);
+    parts.webAssembly = compileWebAssembly(*pipeline.program, plan, context);
     times.didFinish("compile WebAssembly"_s);
     if (diagnostics.hasErrors())
         return std::nullopt;

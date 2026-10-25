@@ -420,7 +420,9 @@ void FunctionVerifier::verifyTerminatorOperation(BlockID block, const Terminator
         return;
     }
     case TerminatorKind::TryCallInline:
-        if (!overloadTakesOperands(typing(), terminator))
+        if (!hasValidInlineParameters(terminator.inlineBuiltin(), terminator.inlineParameters()))
+            fail(InternalErrorKind::PayloadOutOfRange, block);
+        else if (!overloadTakesOperands(typing(), terminator))
             fail(InternalErrorKind::InvalidBuiltinCall, block);
         return;
     case TerminatorKind::Jump:

@@ -327,7 +327,16 @@ void computeTypedResultResults(const ValueFlowResultInputs& inputs, FlowResultTa
         }
         ValueFlowTypedResult result = findTypedResult(program, universe.builtinTables(), function, *uses, call->site);
         RELEASE_ASSERT(result);
-        if (!isFilled.get(universe.siteObject(*call, result.ordinalOfPlainArray()).index()))
+        ValueFlowObjectID plainArray = universe.siteObject(*call, result.ordinalOfPlainArray());
+        if (!isFilled.get(plainArray.index()))
+            continue;
+        // A call whose callee has become unknown since no longer fills its objects, and nothing else says that they exist.
+        bool isFilledByLastRun = false;
+        ValueFlowStatementID id(static_cast<uint32_t>(call - inputs.bodies().statements().data()));
+        inputs.forEachMadeNodeAskedForBy(id, kindsOfMadeNodes({ ValueFlowMadeNodeKind::Written }), false, [&](const ValueFlowNodeKey& key, ValueFlowStatementID) {
+            isFilledByLastRun |= key.kind == ValueFlowMadeNodeKind::Written && key.name().kind == ValueFlowNameKind::Elements && !ValueSets::isComplement(key.set) && inputs.sets().onlyMember(key.set) == plainArray;
+        });
+        if (!isFilledByLastRun)
             continue;
 
         if (functionOfAccessSites != call->function) {
