@@ -2139,6 +2139,10 @@ static const Vector<TimeZoneEntry>& intlAvailableTimeZoneEntries()
                 ASCIILiteral legacyPrimary = StringView(primary) == nameView ? primaryOfLegacyZone(nameView) : ASCIILiteral();
                 if (!legacyPrimary.isNull())
                     primary = legacyPrimary;
+#if !OS(DARWIN)
+                // Where the bundled ICU has a link for the name, primaryOfLegacyZone has a copy of that link.
+                ASSERT(primaryOfLegacyZone(nameView).isNull() || primary == primaryOfLegacyZone(nameView));
+#endif
 #endif
                 if (primary.isNull() || !primaryNameSet.contains(primary))
                     continue;

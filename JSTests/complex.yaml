@@ -104,14 +104,6 @@
           runComplexTest [], [], "TZ=US/Eastern", "--useDollarVM=1", "--useTemporal=1"
       end
 
-- path: complex/intl-default-timezone-etc-unknown.js
-  cmd: |
-      if ($hostOS == "windows")
-          skip
-      else
-          runComplexTest [], [], "TZ=Etc/Unknown", "--useDollarVM=1", "--useTemporal=1"
-      end
-
 # Not on macOS: the system ICU there has time zone files of its own.
 - path: complex/intl-default-timezone-legacy-zone.js
   cmd: |
@@ -120,6 +112,14 @@
       else
           prepareExtraRelativeFiles(["../icu-tz-2024a/timezoneTypes.res"], $collection)
           runComplexTest [], [], ["TZ=EST5EDT", "ICU_TIMEZONE_FILES_DIR=icu-tz-2024a"], "--useDollarVM=1", "--useTemporal=1"
+      end
+
+- path: complex/intl-default-timezone-etc-unknown.js
+  cmd: |
+      if ($hostOS == "windows")
+          skip
+      else
+          runComplexTest [], [], "TZ=Etc/Unknown", "--useDollarVM=1", "--useTemporal=1"
       end
 
 - path: complex/for-in-clobberize.js

@@ -125,14 +125,29 @@ Rules for an edit to an upstream test:
   zone in Temporal, and ICU is asked for the city zone. ECMA-402 TG2 agreed on 2026-10-08 that the four US names stay
   aliases and are not primary identifiers (tc39/ecma402#1103).
 - Fork code, under `USE(BUN_JSC_ADDITIONS)`: `primaryOfLegacyZone` and `TimeZoneEntry::opensAsPrimary`
-  (`runtime/IntlObject.cpp`), and the last step of `retrieveTimeZoneInformation` (`runtime/JSDateMath.cpp`). The city
-  zones there are a copy of the tz database's links, used only where ICU has no link. Read them again when the
-  ECMA-402 change lands, or when a tz release gives one of the names a rule that its city zone does not have.
+  (`runtime/IntlObject.cpp`), and the step of `retrieveTimeZoneInformation` that makes the zone of the process a
+  primary identifier (`runtime/JSDateMath.cpp`).
+- The rows of `primaryOfLegacyZone` are a copy of the tz database's links, used only where ICU has no link. A row is
+  wrong after one of these:
+  - The tz database links the name to another zone. Where the bundled ICU has the link, an `ASSERT` in the table build
+    compares it with the row. Change the row.
+  - The city zone leaves the rule that the name spells. From tz 2026d on the tz database has the four US names on the
+    US rule whatever their city zones do (`USback`). That rule is what the name means, and the alias gives it only
+    while the city zone has it too. `complex/intl-default-timezone-legacy-zone.js` has the rule for 2026 to 2037 and
+    fails when a city zone leaves it. Then point the row at a city zone that still has the rule. If there is none, the
+    name has to be a primary identifier with ICU's own zone for it: with no row it is a RangeError again.
+  - ECMA-402 changes what it says. The thread calls the alias a short-term answer, for as long as each name has such a
+    city zone.
+- A canonical ID with no '/' that has no row has no zone, as in upstream: `TZ` with it gives UTC. No tz data up to
+  2026e has one but `Factory`, which is not a time zone. With the bundled ICU, `test/js/web/intl/intl.test.ts` of
+  oven-sh/bun fails for a new one, and for a row that is wrong.
+- macOS has the tz data of the system, which changes with no new build of this fork. The rows that a build has stay.
 - Recognize: with such data a test expects one of the eight names to be rejected (upstream), or to be a primary
   identifier in `resolvedOptions().timeZone`, `Temporal.Now.timeZoneId()` or `Intl.supportedValuesOf("timeZone")` (what
-  ICU's data says). In this fork it is an alias.
+  ICU's data says). In this fork it is an alias. test262's `intl402/Temporal/ZonedDateTime/links.js` expects the same
+  eight links: if it fails for one of the names with the bundled data, a row is wrong.
 - Not covered: `Intl.Locale.prototype.getTimeZones()` (`runtime/IntlLocale.cpp`) does not use the table. It returns
-  what ICU holds canonical for the region.
+  what ICU holds canonical for the region: with such data, the four US names for the region `001`.
 - Files: none of upstream's. `complex/intl-default-timezone-legacy-zone.js` is this fork's test for it. It runs with
   `ICU_TIMEZONE_FILES_DIR=icu-tz-2024a`: `complex/icu-tz-2024a/timezoneTypes.res` is that file of tz 2024a from
   unicode-org/icu-data, so ICU holds the four US names canonical whatever tz data it was built with.

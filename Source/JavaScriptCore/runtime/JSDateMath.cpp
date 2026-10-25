@@ -538,12 +538,14 @@ static TimeZone retrieveTimeZoneInformation()
             String primary = toPrimaryIanaTimeZoneIdentifier(timeZoneID.span());
             if (auto id = intlResolveTimeZoneID(primary))
                 canonical = TimeZone::fromID(id.value());
-#if USE(BUN_JSC_ADDITIONS)
-            // ICU can hold a legacy zone name canonical (EST5EDT), and the table has it as an alias of its city zone.
-            canonical = TimeZone::fromID(intlPrimaryTimeZoneID(canonical.id()));
-#endif
         }
 
+#if USE(BUN_JSC_ADDITIONS)
+        // The zone of the process is a primary identifier. ICU can hold a legacy zone name canonical (EST5EDT), and the
+        // table has that name as an alias of its city zone.
+        if (canonical.isID())
+            canonical = TimeZone::fromID(intlPrimaryTimeZoneID(canonical.id()));
+#endif
         globalCache.get() = CachedHostTimeZone { canonical, currentID };
     }
     return globalCache->timeZone;
