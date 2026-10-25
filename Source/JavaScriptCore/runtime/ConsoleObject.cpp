@@ -45,6 +45,21 @@ static String valueOrDefaultLabelString(JSGlobalObject* globalObject, CallFrame*
     return value.toWTFString(globalObject);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// The client reads the arguments in the call frame, so a call that only prints them copies nothing.
+static ArgList messageArguments(JSGlobalObject*, CallFrame* callFrame, unsigned skipArgumentCount)
+{
+    if (callFrame->argumentCount() <= skipArgumentCount)
+        return { };
+    return ArgList(callFrame, static_cast<int>(skipArgumentCount));
+}
+#else
+static Ref<Inspector::ScriptArguments> messageArguments(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned skipArgumentCount)
+{
+    return Inspector::createScriptArguments(globalObject, callFrame, skipArgumentCount);
+}
+#endif
+
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(ConsoleObject);
 
 static JSC_DECLARE_HOST_FUNCTION(consoleProtoFuncDebug);
@@ -133,7 +148,7 @@ static EncodedJSValue consoleLogWithLevel(JSGlobalObject* globalObject, CallFram
     if (!client)
         return JSValue::encode(jsUndefined());
 
-    client->logWithLevel(globalObject, Inspector::createScriptArguments(globalObject, callFrame, 0), level);
+    client->logWithLevel(globalObject, messageArguments(globalObject, callFrame, 0), level);
     return JSValue::encode(jsUndefined());
 }
 
@@ -178,7 +193,7 @@ JSC_DEFINE_HOST_FUNCTION(consoleProtoFuncDir, (JSGlobalObject* globalObject, Cal
     if (!client)
         return JSValue::encode(jsUndefined());
 
-    client->dir(globalObject, Inspector::createScriptArguments(globalObject, callFrame, 0));
+    client->dir(globalObject, messageArguments(globalObject, callFrame, 0));
     return JSValue::encode(jsUndefined());
 }
 
@@ -188,7 +203,7 @@ JSC_DEFINE_HOST_FUNCTION(consoleProtoFuncDirXML, (JSGlobalObject* globalObject, 
     if (!client)
         return JSValue::encode(jsUndefined());
 
-    client->dirXML(globalObject, Inspector::createScriptArguments(globalObject, callFrame, 0));
+    client->dirXML(globalObject, messageArguments(globalObject, callFrame, 0));
     return JSValue::encode(jsUndefined());
 }
 
@@ -198,7 +213,7 @@ JSC_DEFINE_HOST_FUNCTION(consoleProtoFuncTable, (JSGlobalObject* globalObject, C
     if (!client)
         return JSValue::encode(jsUndefined());
 
-    client->table(globalObject, Inspector::createScriptArguments(globalObject, callFrame, 0));
+    client->table(globalObject, messageArguments(globalObject, callFrame, 0));
     return JSValue::encode(jsUndefined());
 }
 
@@ -208,7 +223,7 @@ JSC_DEFINE_HOST_FUNCTION(consoleProtoFuncTrace, (JSGlobalObject* globalObject, C
     if (!client)
         return JSValue::encode(jsUndefined());
 
-    client->trace(globalObject, Inspector::createScriptArguments(globalObject, callFrame, 0));
+    client->trace(globalObject, messageArguments(globalObject, callFrame, 0));
     return JSValue::encode(jsUndefined());
 }
 
@@ -226,7 +241,8 @@ JSC_DEFINE_HOST_FUNCTION(consoleProtoFuncAssert, (JSGlobalObject* globalObject, 
     if (condition)
         return JSValue::encode(jsUndefined());
 
-    client->assertion(globalObject, Inspector::createScriptArguments(globalObject, callFrame, 1));
+    scope.release();
+    client->assertion(globalObject, messageArguments(globalObject, callFrame, 1));
     return JSValue::encode(jsUndefined());
 }
 
@@ -345,7 +361,7 @@ JSC_DEFINE_HOST_FUNCTION(consoleProtoFuncTimeLog, (JSGlobalObject* globalObject,
     auto label = valueOrDefaultLabelString(globalObject, callFrame);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-    client->timeLog(globalObject, label, Inspector::createScriptArguments(globalObject, callFrame, 1));
+    client->timeLog(globalObject, label, messageArguments(globalObject, callFrame, 1));
     return JSValue::encode(jsUndefined());
 }
 
@@ -379,7 +395,7 @@ JSC_DEFINE_HOST_FUNCTION(consoleProtoFuncGroup, (JSGlobalObject* globalObject, C
     if (!client)
         return JSValue::encode(jsUndefined());
 
-    client->group(globalObject, Inspector::createScriptArguments(globalObject, callFrame, 0));
+    client->group(globalObject, messageArguments(globalObject, callFrame, 0));
     return JSValue::encode(jsUndefined());
 }
 
@@ -389,7 +405,7 @@ JSC_DEFINE_HOST_FUNCTION(consoleProtoFuncGroupCollapsed, (JSGlobalObject* global
     if (!client)
         return JSValue::encode(jsUndefined());
 
-    client->groupCollapsed(globalObject, Inspector::createScriptArguments(globalObject, callFrame, 0));
+    client->groupCollapsed(globalObject, messageArguments(globalObject, callFrame, 0));
     return JSValue::encode(jsUndefined());
 }
 
@@ -399,7 +415,7 @@ JSC_DEFINE_HOST_FUNCTION(consoleProtoFuncGroupEnd, (JSGlobalObject* globalObject
     if (!client)
         return JSValue::encode(jsUndefined());
 
-    client->groupEnd(globalObject, Inspector::createScriptArguments(globalObject, callFrame, 0));
+    client->groupEnd(globalObject, messageArguments(globalObject, callFrame, 0));
     return JSValue::encode(jsUndefined());
 }
 
