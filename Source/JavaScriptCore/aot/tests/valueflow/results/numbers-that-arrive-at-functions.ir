@@ -5,6 +5,7 @@
 # Where a check fails, the generic version of the function goes on with what the check has turned away. `checked` adds one to what its check lets through: an integer there, and 1.5 in the generic version,
 # so its result stays a number. `clamped` ends in `| 0`, which makes an int32 of anything.
 # The range of an expected number is a guess: `guessed` expects an int32 and gets integers of 33 bits from callers that are all known, so its parameter is proven to hold those, and its check stays
+# OPTIONS: disable=pass:CopyClosureFactories
 # RUN: valueflow-apply
 # CHECK: function f1 name="make" {{*}}parameters=[{type=int[-2147483648, 2147483648]}] results=[{type=f2}]
 # CHECK: function f2 name="add" {{*}}captures=[{type=int[-2147483648, 2147483648]}] {{*}}parameters=[{type=i32}] results=[{type=i32}]

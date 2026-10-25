@@ -34,22 +34,30 @@ namespace JSC { namespace AOT { namespace Typed {
 static_assert(numberOfArgumentGPRs <= StubKey::maxCount);
 static_assert(sizeof(WatchedLocationState) == sizeof(uint8_t));
 
-static StubKey hostFunctionStubFor(const BuiltinTable& builtins, BuiltinID builtin, unsigned count)
+// The built-in's own stub for boxed operands. A call by value finds it through the callee's executable; a call that names the built-in finds it in the table.
+// The stub takes the call's registers and falls back to the host function by itself.
+static std::optional<StubKey> boxedCallStubFor(const BuiltinTable& builtins, BuiltinID builtin, unsigned count)
 {
-    StubKey withoutBoxedCall = callHostFunctionWithoutBoxedCall(count);
-    if (!exists(withoutBoxedCall))
-        return callHostFunction(count);
     std::optional<BuiltinBoxedStub> boxedStub = builtins.boxedCallStubOf(builtin);
-    if (boxedStub && acceptsArgumentCount(boxedCallFormOf(*boxedStub), count))
-        return callHostFunction(count);
-    return withoutBoxedCall;
+    if (!boxedStub || !exists(callBoxedBuiltin(boxedCallFormOf(*boxedStub), count)) || !acceptsArgumentCount(boxedCallFormOf(*boxedStub), count))
+        return std::nullopt;
+    return callBoxedBuiltin(boxedCallFormOf(*boxedStub), count);
 }
 
-static std::optional<StubKey> stubKeyFor(const BuiltinTable& builtins, const BuiltinOverload& overload, unsigned count)
+static StubKey hostFunctionStubFor(unsigned count)
+{
+    StubKey withoutBoxedCall = callHostFunctionWithoutBoxedCall(count);
+    return exists(withoutBoxedCall) ? withoutBoxedCall : callHostFunction(count);
+}
+
+static std::optional<StubKey> stubKeyFor(const BuiltinTable& builtins, const BuiltinOverload& overload, unsigned count, bool validates)
 {
     if (count > numberOfArgumentGPRs)
         return std::nullopt;
     bool constructs = overload.mode == BuiltinCallMode::Construct;
+    // A validating build calls the host function every time, so that each call is compared with the built-in's table entry.
+    if (std::optional<StubKey> boxedCall = constructs || validates ? std::nullopt : boxedCallStubFor(builtins, overload.builtin, count))
+        return boxedCall;
     switch (overload.code.implementation.callee) {
     case BuiltinCallee::None:
     case BuiltinCallee::Function:
@@ -58,7 +66,7 @@ static std::optional<StubKey> stubKeyFor(const BuiltinTable& builtins, const Bui
     case BuiltinCallee::HostFunction:
         if (constructs)
             return std::nullopt;
-        return hostFunctionStubFor(builtins, overload.builtin, count);
+        return hostFunctionStubFor(count);
     case BuiltinCallee::InternalFunction:
         return callInternalFunction(constructs ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall, count);
     }
@@ -404,7 +412,7 @@ Boxed BuiltinCallEmitter::callBuiltinFunction(const OperationContext& context, B
     CallOptions options { .constructs = constructs };
     CalledBuiltin calledBuiltin { id, takesAnyReceiver };
     unsigned count = static_cast<unsigned>(arguments.size());
-    if (std::optional<StubKey> stub = stubKeyFor(m_builtins, overload, count)) {
+    if (std::optional<StubKey> stub = stubKeyFor(m_builtins, overload, count, generator().validates())) {
         Vector<LValue, 8> values;
         for (Boxed argument : arguments)
             values.append(argument.value());

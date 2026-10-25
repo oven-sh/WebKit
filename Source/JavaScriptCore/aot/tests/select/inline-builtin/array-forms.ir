@@ -5,7 +5,7 @@
 # LOSS: MaxInlinePushOperands x1 f35
 # LOSS: MaxInlineConcatOperands x1 f11
 # LOSS: MaxInlineSpliceInsertions x1 f23
-# STATISTIC: InlineBuiltinGroups = 31
+# STATISTIC: InlineBuiltinGroups = 32
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="atNumber" parameters=[{type=Array<anything, pristine[Storage]>}, {type=number}] results=[{type=anything}] {
@@ -163,9 +163,9 @@ function f19 name="sliceBetweenIntegers" parameters=[{type=Array<anything, prist
 function f20 name="sliceFromNumber" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=number}] results=[{type=anything}] {
     v2 = CallBuiltin v0, v1 overload=ArrayPrototypeSlice/0
     Return v2
-# CHECK-NOT: CallInline
-# CHECK: v2:{{*}}= CallBuiltin v0, v1 overload=ArrayPrototypeSlice/0
-# CHECK-NOT: CallInline
+# CHECK: TryCallInline v0, v1 inlineBuiltin=ArraySlice overload=ArrayPrototypeSlice/0 -> done [[done20]](), miss [[miss20]]()
+# CHECK: [[miss20]]()
+# CHECK: = CallBuiltin v0, v1 overload=ArrayPrototypeSlice/0
 }
 function f21 name="spliceRemoves" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=i32}, {type=i32}] results=[{type=anything}] {
     v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/0

@@ -445,8 +445,13 @@ KnownBoolean SlotValueTests::outcomeFromDominatingTests(BlockID block)
 
     const Program& program = m_analyses.program();
     const Type& subject = program.typeOf(m_analyses.function(), test->valueOperand());
-    std::span<const LayoutID> members = membersOf(program, subject);
-    Vector<LayoutID, 8> layouts(members);
+    // A structural type lists every layout with its names. Skip layouts that are never allocated: no object has one, and no slot test could rule them out.
+    Vector<LayoutID, 8> layouts;
+    for (LayoutID layout : membersOf(program, subject)) {
+        if (program.at(layout).flow.allocation != AllocationState::NeverAllocated)
+            layouts.append(layout);
+    }
+    size_t numberOfAllocatedMembers = layouts.size();
     for (TestedRead& tested : std::ranges::equal_range(m_reads, m_analyses.identityOf(test->valueOperand()), { }, &TestedRead::object)) {
         if (!m_analyses.dominators().dominates(tested.target, block))
             continue;
@@ -455,7 +460,7 @@ KnownBoolean SlotValueTests::outcomeFromDominatingTests(BlockID block)
             return std::ranges::binary_search(ruledOut, layout);
         });
     }
-    if (layouts.isEmpty() || layouts.size() == members.size())
+    if (layouts.isEmpty() || layouts.size() == numberOfAllocatedMembers)
         return KnownBoolean::Unknown;
 
     Type narrowed = subject;

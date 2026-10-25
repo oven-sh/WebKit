@@ -16,6 +16,7 @@
 #include "AOTCallModules.h"
 #include "AOTCheckTypesAtEntry.h"
 #include "AOTChooseCallingConventions.h"
+#include "AOTCopyClosureFactories.h"
 #include "AOTCoroutines.h"
 #include "AOTCreateEntrypoints.h"
 #include "AOTCreatedObjectLayouts.h"
@@ -144,6 +145,7 @@ constexpr Results placementInputs { Flow, CallGraph, Heat, CallingConventions, F
 constexpr Results codeGenerationInputs { Flow, EffectSummaries, Heat, CallingConventions, FrameAllocation, EnvironmentReuse, LiteralStrings, ConstantCollections, RegExpRequests, StackChecks, Placement, SiteCaches };
 
 constexpr std::array rows {
+    verifiedAfterNextPass(programPass(CopyClosureFactories, Optional, { AsRead, AsRead }, { }, { }, { })),
     verifiedAfterNextPass(programPass(AllocateTaggedLayouts, Required, { AsRead, AsRead }, { }, { }, { })),
     verifiedAfterNextPass(programPass(CheckTypesAtEntry, Required, { AsRead, AsRead }, { }, { }, { })),
     programPass(VerifyProgram, Required, { AsRead, Placed }, { }, { }, { }),
@@ -1219,10 +1221,14 @@ PassOutcome Pipeline::runProgramPass(PassID id)
 {
     PipelineOutput& output = *m_output;
     switch (id) {
+    case PassID::CopyClosureFactories:
+        m_copiedFunctions = edit(id, copyClosureFactories, m_build);
+        didAddFunctions();
+        return m_runner.lastProgramPassOutcome();
     case PassID::AllocateTaggedLayouts:
         editProgram(id, [&] {
             allocateTaggedLayouts(m_program, m_build);
-            giveLayoutsToCreatedObjects(m_program, m_build);
+            giveLayoutsToCreatedObjects(m_program, std::exchange(m_copiedFunctions, { }), m_build);
         });
         didAddFunctions();
         return m_runner.lastProgramPassOutcome();
@@ -1453,6 +1459,7 @@ void Pipeline::runReadStage()
 {
     TimedStage stage(*this, Stage::ReadAndVerify);
     forgetLongExpectations(m_program, m_build);
+    stage.run(PassID::CopyClosureFactories);
     stage.run(PassID::AllocateTaggedLayouts);
     stage.run(PassID::CheckTypesAtEntry);
     markEnforcedFields(m_program, m_build);

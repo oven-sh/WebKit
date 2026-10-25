@@ -1113,6 +1113,62 @@ static void testInstructionsOfReadsOfFiledFields()
 #endif
 }
 
+// A field that is missing in an instance of a class or of a constructor function: the Structure does not say that nothing above has the name, the cell of the front table does.
+// The slot has been seen to be empty by then, so the handler of the cell, which finds the slot and looks into it, has nothing to add. A number here may fall.
+static void testInstructionsOfReadsOfMissingFieldsBelowClasses()
+{
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64)
+    PropertyReads reads;
+    FieldTable table(reads);
+    table.setFlagsOfStructure({ });
+    table.setNamesOfObjectPrototypes(0);
+    reads.runner.setCountsInstructions(true);
+    struct Read {
+        ASCIILiteral what;
+        uint32_t shape;
+        SlotRepresentation representation;
+        uint32_t budget;
+    };
+    const Read readsByKind[] = {
+        { "a boxed value"_s, FieldTable::shapeWithValue, SlotRepresentation::JSValue, 37 },
+        { "an optional boolean"_s, FieldTable::shapeWithEncodedByte, SlotRepresentation::OptionalBoolean, 51 },
+        { "an integer"_s, FieldTable::shapeWithInt32, SlotRepresentation::OptionalInt32, 72 },
+        { "a narrow reference"_s, FieldTable::shapeWithNarrowCell, SlotRepresentation::OptionalCell32, 83 },
+    };
+    bool isWithinBudget = true;
+    for (const Read& read : readsByKind) {
+        const SlotTraits traits = traitsOf(read.representation);
+        table.field() = { };
+        table.field().name = PropertyReads::name;
+        table.field().slot = SlotData::create(FakeTypedObject::offsetOfField, read.representation);
+        FakeObjectWithShape object(read.shape);
+        object.at<uint32_t>(offsetOfOrderWord) = 0;
+        object.field() = traits.width == sizeof(uint64_t) ? traits.absentBits : untouched << (8 * traits.width) | traits.absentBits;
+        auto fileInFront = [&](uint8_t flags) {
+            reads.clear();
+            reads.fileInFrontBesideOthers(Slot::createField(std::bit_cast<StructureID>(PropertyReads::structureID), Slot::Kind::Field, Slot::isOwn | flags, table.field().slot, 0, 0));
+        };
+        fileInFront(Slot::absentIsUndefined);
+        StubRun run = reads.read(object.address());
+        AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsUndefined()) && run.instructionsInStubs);
+        if (*run.instructionsInStubs != read.budget)
+            dataLogLn("a read by name of ", read.what, " that is missing below a class: ", *run.instructionsInStubs, " instructions, the budget is ", read.budget);
+        isWithinBudget &= *run.instructionsInStubs <= read.budget;
+
+        // A cell that does not say so, a cell of another name and an object with a field outside its slot are left to whoever they were left to.
+        fileInFront(0);
+        AOT_TEST_CHECK(reads.read(object.address()).calledOperation);
+        reads.clear();
+        AOT_TEST_CHECK(reads.read(object.address()).calledOperation);
+        fileInFront(Slot::absentIsUndefined);
+        object.at<uint32_t>(offsetOfOrderWord) = orderWordHasFieldOutsideSlot;
+        run = reads.read(object.address());
+        AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsUndefined()));
+    }
+    AOT_TEST_CHECK(isWithinBudget);
+#endif
+}
+
 static void testLookupsLeftToTheCaches()
 {
     PropertyReads reads;
@@ -1351,6 +1407,44 @@ private:
 
 } // anonymous namespace
 
+// What a read at a site answers without a handler and without an operation: the value or the absence that the site holds, and at a site that holds another Structure's slot what the front table holds.
+static void testReadsAtSites()
+{
+    PropertyReads reads;
+    Instance& instance = reads.runner.instance();
+    constexpr PropertyOffset inlineOffset = 1;
+    const StructureID structureID = std::bit_cast<StructureID>(PropertyReads::structureID);
+    const StructureID otherStructureID = std::bit_cast<StructureID>(PropertyReads::structureIDOfHolder);
+    std::array<SiteCacheState, SiteCacheState::numberOfStates> states;
+    states.fill(SiteCacheState { 0, UINT8_MAX });
+    instance.propertyCaches.siteCacheStates = states.data();
+
+    FakeObject<JSObject::offsetOfInlineStorage() + 2 * sizeof(EncodedJSValue)> receiver;
+    receiver.setHeader(PropertyReads::structureID, FinalObjectType);
+    receiver.at<uint64_t>(JSObject::offsetOfInlineStorage() + inlineOffset * sizeof(EncodedJSValue)) = bitsOf(jsNumber(42));
+    Slot site = Slot::createInStorage(structureID, Slot::Kind::Value, Slot::isOwn, nullptr, inlineOffset);
+    auto readAtSite = [&] { return reads.runner.run(getByIdAtSite(), { receiver.address(), std::bit_cast<uint64_t>(&site) }, PropertyReads::name); };
+    auto isAnswered = [](const StubRun& run, JSValue expected) { return !run.calledOperation && run.result == bitsOf(expected); };
+
+    AOT_TEST_CHECK(isAnswered(readAtSite(), jsNumber(42)));
+    site = Slot::createWithoutPayload(structureID, Slot::Kind::Absent, Slot::dependsOnChain);
+    AOT_TEST_CHECK(isAnswered(readAtSite(), jsUndefined()));
+
+    site = Slot::createWithoutPayload(otherStructureID, Slot::Kind::Absent, Slot::dependsOnChain);
+    reads.clear();
+    reads.fileInFrontBesideOthers(Slot::createInStorage(structureID, Slot::Kind::Value, Slot::isOwn, nullptr, inlineOffset));
+    AOT_TEST_CHECK(isAnswered(readAtSite(), jsNumber(42)));
+    AOT_TEST_CHECK(isAnswered(reads.read(receiver.address()), jsNumber(42)));
+    reads.clear();
+    reads.fileInFrontBesideOthers(Slot::createWithoutPayload(structureID, Slot::Kind::Absent, Slot::dependsOnChain));
+    AOT_TEST_CHECK(isAnswered(readAtSite(), jsUndefined()));
+    AOT_TEST_CHECK(isAnswered(reads.read(receiver.address()), jsUndefined()));
+
+    // The front table has another name in the cell: the hashed table answers.
+    reads.file(Slot::createInStorage(structureID, Slot::Kind::Value, Slot::isOwn, nullptr, inlineOffset));
+    AOT_TEST_CHECK(isAnswered(readAtSite(), jsNumber(42)));
+}
+
 static void testCallsOfClosuresNotCreated()
 {
     constexpr uint64_t maxDistanceInFrame = 128;
@@ -1494,8 +1588,10 @@ std::span<const NativeTest> stubPropertyReadTests()
         { "stubs/get-by-id/missing-fields-answered-by-field-table"_s, ImageTests::whenExecutable<testMissingFieldsAnsweredByFieldTable> },
         { "stubs/get-by-id/instructions-of-reads-by-kind-of-field"_s, ImageTests::whenExecutable<testInstructionsOfReadsByKindOfField> },
         { "stubs/get-by-id/instructions-of-reads-of-filed-fields"_s, ImageTests::whenExecutable<testInstructionsOfReadsOfFiledFields> },
+        { "stubs/get-by-id/instructions-of-reads-of-missing-fields-below-classes"_s, ImageTests::whenExecutable<testInstructionsOfReadsOfMissingFieldsBelowClasses> },
         { "stubs/get-by-id/lookups-left-to-the-caches"_s, ImageTests::whenExecutable<testLookupsLeftToTheCaches> },
         { "stubs/get-by-id/names-outside-layout-are-absent"_s, ImageTests::whenExecutable<testNamesOutsideLayoutAreAbsent> },
+        { "stubs/get-by-id/reads-at-sites"_s, ImageTests::whenExecutable<testReadsAtSites> },
         { "stubs/call-method-by-id/closures-not-created"_s, ImageTests::whenExecutable<testCallsOfClosuresNotCreated> },
         { "stubs/in-by-val/presence-from-leaf-lookup"_s, ImageTests::whenExecutable<testPresenceFromLeafLookup> },
     };

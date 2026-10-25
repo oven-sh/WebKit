@@ -133,6 +133,10 @@ void FramePointerVerifier::verifyOperand(BlockID block, ValueID userID, uint32_t
     const Value& user = m_function.at(userID);
     if (user.operandKind(operandIndex) == OperandKind::Guard)
         return;
+    if (user.opcode == Opcode::Compress) {
+        report(InternalErrorKind::FramePointerRetained, block, userID);
+        return;
+    }
 
     switch (effectRuleOf(user.opcode)) {
     case EffectRule::Call:

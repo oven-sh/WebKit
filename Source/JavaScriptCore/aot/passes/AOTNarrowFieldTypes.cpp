@@ -459,6 +459,17 @@ static bool hasUnprovenInitialValue(const Program& program, const Function& func
 
 std::optional<Value> tryCreateFiller(const Program& program, const Type& type)
 {
+    if (type.primitives & Primitive::Integer && !type.integers.isEmpty()) {
+        Value integer = IRBuilder::make(Opcode::Integer);
+        integer.setInteger(std::clamp<int64_t>(0, type.integers.minimum, type.integers.maximum));
+        return integer;
+    }
+    bool holdsAnyString = type.primitives & Primitive::String;
+    if (holdsAnyString || (type.primitives & Primitive::LiteralString && !type.stringLiterals.isEmpty())) {
+        Value string = IRBuilder::make(Opcode::String);
+        string.setString(holdsAnyString ? program.strings.emptyString() : *type.stringLiterals.begin());
+        return string;
+    }
     if (type.primitives & Primitive::Undefined)
         return IRBuilder::make(Opcode::Undefined);
     if (type.primitives & Primitive::Null)
@@ -468,17 +479,7 @@ std::optional<Value> tryCreateFiller(const Program& program, const Type& type)
         boolean.setBoolean(!(type.primitives & Primitive::False));
         return boolean;
     }
-    if (type.primitives & Primitive::Integer && !type.integers.isEmpty()) {
-        Value integer = IRBuilder::make(Opcode::Integer);
-        integer.setInteger(std::clamp<int64_t>(0, type.integers.minimum, type.integers.maximum));
-        return integer;
-    }
-    bool holdsAnyString = type.primitives & Primitive::String;
-    if (!holdsAnyString && (!(type.primitives & Primitive::LiteralString) || type.stringLiterals.isEmpty()))
-        return std::nullopt;
-    Value string = IRBuilder::make(Opcode::String);
-    string.setString(holdsAnyString ? program.strings.emptyString() : *type.stringLiterals.begin());
-    return string;
+    return std::nullopt;
 }
 
 // Something that fits the slot stands in for the value until the store.

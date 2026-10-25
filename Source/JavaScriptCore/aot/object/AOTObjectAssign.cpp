@@ -621,7 +621,8 @@ static std::optional<AssignmentSource> assignmentSourceFor(JSObject* source, std
     }
     auto* compiledSource = uncheckedDowncast<Object>(source);
     uint32_t orderWord = compiledSource->orderWord();
-    if (orderWord & orderWordIntegrityBits || isOrderStoredOutOfLine(orderWord) || compiledSource->layout().keysAreNeverEnumerated)
+    // A copy only reads its source, so a frozen or sealed source can have a plan too. The order word is part of the plan's key.
+    if (isOrderStoredOutOfLine(orderWord) || compiledSource->layout().keysAreNeverEnumerated)
         return std::nullopt;
     return AssignmentSource { source, compiledSource, compiledSource->extraProperties(), orderWord, excludedNames, defines, compiledSource->extension(), compiledSource->state().strings.get() };
 }

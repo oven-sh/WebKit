@@ -24,10 +24,10 @@ static bool exceeds(const InlineBuiltinSite& site, LimitID limit, size_t amount)
     return site.context.pass().exceeds(limit, amount, site.call);
 }
 
-static bool areIntegers(const InlineBuiltinSite& site, std::span<const ValueID> values)
+static bool areNumbers(const InlineBuiltinSite& site, std::span<const ValueID> values)
 {
     return std::ranges::all_of(values, [&](ValueID value) {
-        return site.typeOf(value).isInteger();
+        return site.typeOf(value).isNumber();
     });
 }
 
@@ -68,7 +68,7 @@ static bool canConcatenateInline(const InlineBuiltinSite& site)
 static bool canSliceInline(const InlineBuiltinSite& site)
 {
     std::span<const ValueID> arguments = site.arguments();
-    return arguments.size() <= 2 && areIntegers(site, arguments);
+    return arguments.size() <= 2 && areNumbers(site, arguments);
 }
 
 static bool canSpliceInline(const InlineBuiltinSite& site)

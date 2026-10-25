@@ -1,0 +1,52 @@
+# pushed = [1, 1]; pushed.pos = 1; pushed.push(1)    popped = [1, 1]; popped.pos = 1; last = popped.pop()    searched = [1, 1]; searched.pos = 1; found = searched.find(isOne)
+# redefined = [1, 1]; Object.defineProperty(redefined, 0, descriptor); lastOfRedefined = redefined.pop()
+# push, pop and find ask for pristine[Storage] of their receiver. A named property does not change the elements, so the overload for any object is not applied:
+# the array keeps Dense and its storage kind, and pop and find answer an element or undefined. A redefined index still selects the overload for any object.
+# RUN: valueflow-apply
+# CHECK: variable g0 name="pushed" {{*}}declared={type=Array<{{*}}, proven, Int32, pristine[Storage, Dense]>}
+# CHECK: variable g1 name="last" {{*}}declared={type=undefined|int
+# CHECK: variable g2 name="found" {{*}}declared={type=undefined|int
+# CHECK: variable g3 name="lastOfRedefined" {{*}}declared={type=anything}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="pushed" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="last" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="found" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="lastOfRedefined" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Integer
+    v2 = NewArray v0, v0 contents=anything
+    PutModuleVariable v2 variable=g0
+    PropSet v2, v0 key="pos" mode=Strict
+    v5 = PropGet v2 key="push"
+    v6 = Call v5, v2, v0 calleeKey="push"
+    v7 = NewArray v0, v0 contents=anything
+    PropSet v7, v0 key="pos" mode=Strict
+    v9 = PropGet v7 key="pop"
+    v10 = Call v9, v7 calleeKey="pop"
+    PutModuleVariable v10 variable=g1
+    v12 = NewArray v0, v0 contents=anything
+    PropSet v12, v0 key="pos" mode=Strict
+    v14 = NewClosure function=f1
+    v15 = PropGet v12 key="find"
+    v16 = Call v15, v12, v14 calleeKey="find"
+    PutModuleVariable v16 variable=g2
+    v18 = NewArray v0, v0 contents=anything
+    v19 = Builtin builtin=GlobalThis
+    v20 = PropGet v19 key="descriptor" [isFreeName]
+    v21 = Builtin builtin=ObjectDefineProperty
+    v22 = Call v21, -, v18, v1, v20
+    v23 = PropGet v18 key="pop"
+    v24 = Call v23, v18 calleeKey="pop"
+    PutModuleVariable v24 variable=g3
+    Return
+}
+function f1 name="isOne" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    v2 = StrictEq v0, v1
+    Return v2
+}

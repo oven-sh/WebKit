@@ -822,15 +822,19 @@ static void emitBoundNameProbe(StubAssembler& jit, uint32_t number)
     jit.move(TrustedImm32(number), T9);
     jit.jumpToStub(getById().withCallerFrame(callerFrame));
 #else
-    returnFieldByTable(jit, { R0, InvalidGPRReg, T11, T12, number }, isNotInFieldTable);
+    Jump isNotCell = jit.branchIfNotCell(R0);
+    returnFieldByTable(jit, { R0, InvalidGPRReg, T11, T12, number, true, true, false, callerFrame }, isNotInFieldTable);
     isNotInFieldTable.link(&jit);
     jit.move(TrustedImm32(number), T9);
-    jit.linkToStub(jit.branchIfNotCell(R0), getById().withCallerFrame(callerFrame));
     jit.load32(Address(R0, JSCell::structureIDOffset()), T11);
     loadFrontRow(jit, SlotAccess::Read, T11, row, T10);
     jit.load64(inCell(0), T12);
     jit.linkToStub(branchUnlessOwnInlineValue(jit, T9, T12, T10), getByIdAfterFrontProbe().withCallerFrame(callerFrame));
     returnOwnInlineValue(jit, R0, T12);
+
+    isNotCell.link(&jit);
+    jit.move(TrustedImm32(number), T9);
+    jit.jumpToStub(getById().withCallerFrame(callerFrame));
 #endif
 }
 
@@ -889,7 +893,13 @@ void generateGetById(StubAssembler& jit)
     loadValueBySlot(jit, CachedSlot(SlotForm::PackedSlot, Slot::Kind::Value, cell, InvalidGPRReg), R0, T13, T11, R0);
     jit.returnToCaller();
 
+    // A name that nothing has needs no handler either.
     isNotValue.link(&jit);
+    Jump isNotAbsent = branchIfSlotKindDiffers(jit, { SlotForm::PackedSlot, cell }, Slot::Kind::Absent, T10);
+    jit.move(TrustedImm64(JSValue::ValueUndefined), R0);
+    jit.returnToCaller();
+
+    isNotAbsent.link(&jit);
 #endif
     jumpToSlotHandler(jit, packedTable, cell, T10);
 

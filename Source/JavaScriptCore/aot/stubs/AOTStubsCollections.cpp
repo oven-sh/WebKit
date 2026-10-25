@@ -564,7 +564,8 @@ void generateGrowCompactTable(StubAssembler& jit)
         const GPRReg allocator = scratch;
         jit.loadPtr(Address(owner, offsetOfHashTableStorage()), table);
         givesUp.append(jit.branchIfNotCell(key));
-        givesUp.append(jit.branchIfNotType(key, StringType));
+        givesUp.append(jit.branchIfType(key, HeapBigIntType));
+        givesUp.append(jit.branchTest64(CCallHelpers::NonZero, key, TrustedImm32(MarkedBlock::atomSize - 1)));
         jit.load32(Address(table, CompactTable::offsetOfUsed()), count);
         givesUp.append(jit.branch32(CCallHelpers::NotEqual, count, Address(table, CompactTable::offsetOfAliveCount())));
         givesUp.append(jit.branch32(CCallHelpers::AboveOrEqual, count, TrustedImm32(CompactTable::maxCountWithGrowthPlan)));
@@ -610,9 +611,19 @@ void generateGrowCompactTable(StubAssembler& jit)
     jit.addPtr(TrustedImm32(index), larger, to);
     jit.load8(Address(larger, CompactTable::offsetOfIndexBits()), scratch);
     Jump getsSlots = jit.branchTest32(CCallHelpers::NonZero, scratch);
+    Jump keyIsNotString = jit.branchIfNotType(key, StringType);
     jit.loadPtr(Address(key, JSString::offsetOfValue()), end);
     jit.load32(Address(end, StringImpl::flagsOffset()), end);
     jit.urshift32(TrustedImm32(StringImpl::s_flagCount + CompactTable::tagShiftOfTags), end);
+    Jump hasTag = jit.jump();
+    keyIsNotString.link(&jit);
+    jit.preserving({ registers.hash, registers.table }, [&] {
+        emitHashOfBits(jit, key, registers.hash, registers.table, end);
+        jit.move(registers.hash, end);
+    });
+    jit.and32(TrustedImm32(CompactTable::hashMask), end);
+    jit.urshift32(TrustedImm32(CompactTable::tagShiftOfTags), end);
+    hasTag.link(&jit);
     jit.lshift32(count, TrustedImm32(3), scratch);
     jit.lshift64(scratch, end);
     jit.load64(Address(table, index), scratch);
@@ -698,15 +709,15 @@ void generateGrowCompactTable(StubAssembler& jit)
             saved.append(*value);
         jit.preserving(saved.span(), [&] {
             jit.recordClobbers(RegisterSet { hash, slot });
-            JumpList isNotString;
             Label nextEntry = jit.label();
             jit.load32(BaseIndex(keys, entry, CCallHelpers::TimesFour), hash);
-            isNotString.append(jit.branch32(CCallHelpers::Below, hash, TrustedImm32(minCell32)));
+            Jump isNotCell = jit.branch32(CCallHelpers::Below, hash, TrustedImm32(minCell32));
             decodeCell32(jit, hash, hash);
-            isNotString.append(jit.branchIfNotType(hash, StringType));
+            Jump isNotString = jit.branchIfNotType(hash, StringType);
             jit.loadPtr(Address(hash, JSString::offsetOfValue()), hash);
             jit.load32(Address(hash, StringImpl::flagsOffset()), hash);
             jit.urshift32(TrustedImm32(StringImpl::s_flagCount), hash);
+            Label hasHash = jit.label();
             jit.and32(hash, mask, position);
             Label probe = jit.label();
             jit.load16(BaseIndex(larger, position, CCallHelpers::TimesTwo, index), slot);
@@ -724,8 +735,18 @@ void generateGrowCompactTable(StubAssembler& jit)
             jit.branch32(CCallHelpers::BelowOrEqual, entry, count).linkTo(nextEntry, &jit);
             Jump isIndexed = jit.jump();
 
-            // The larger table has no entry and nothing names it.
             isNotString.link(&jit);
+            Jump isBigInt = jit.branchIfType(hash, HeapBigIntType);
+            isNotCell.link(&jit);
+            jit.preserving({ entry, keys }, [&] {
+                emitHashOfBits(jit, hash, registers.hash, registers.table, slot);
+                jit.move(registers.hash, hash);
+            });
+            jit.and32(TrustedImm32(CompactTable::hashMask), hash);
+            jit.jump().linkTo(hasHash, &jit);
+
+            // The larger table has no entry and nothing names it.
+            isBigInt.link(&jit);
             jit.move(TrustedImm32(0), count);
             isIndexed.link(&jit);
         });

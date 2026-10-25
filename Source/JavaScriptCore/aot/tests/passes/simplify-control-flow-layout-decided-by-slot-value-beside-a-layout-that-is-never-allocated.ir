@@ -1,0 +1,66 @@
+# A structural type lists every layout that has its names, also one that no code of the program allocates: the context objects of the decorators' library have a `kind` and a `name`. No object has such a layout and no read lists it among its receivers, so it does not stand in the way where a test of a slot's value has ruled out every other layout. One that is allocated does
+# FORM: Prepared
+# RUN: pass SimplifyControlFlow
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Round" fields=[{key="kind" declared={type=1} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}, {key="r" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}]
+layout L1 name="Wide" fields=[{key="kind" declared={type=2} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}, {key="w" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}]
+layout L2 name="NeverMade" fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="name" declared={type=anything} flags=[IsRequired]}] flow={allocation=NeverAllocated}
+layout L3 name="Made" fields=[{key="kind" declared={type=anything} flags=[IsRequired]}, {key="name" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="besideALayoutThatIsNeverAllocated" parameters=[{type=L0|L1|L2}] results=[{type=anything}] {
+  b0(v0: L0|L1|L2):
+    v1 = GetSlot v0 key="kind" receivers=[L0, L1] level=Proven
+    v2 = Integer integer=1
+    v3 = StrictEq v1, v2
+    Branch v3 -> taken b1(), notTaken b4()
+  b1():
+    v4 = TypeTest v0 testedType=L0
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = GetSlot v5 key="r" receivers=[L0] level=Proven
+    Return v6
+  b3():
+    v7 = Undefined
+    Return v7
+  b4():
+    v8 = Null
+    Return v8
+}
+# CHECK-LABEL: function f0 name="besideALayoutThatIsNeverAllocated"
+# CHECK: Branch v3 -> taken
+# CHECK-NOT: Branch
+# CHECK-NOT: = Undefined
+# CHECK: [[round0]]: L0 = AssumeType v0 castType=L0
+# CHECK-NEXT: = GetSlot [[round0]] key="r"
+# CHECK-NOT: Branch
+# CHECK-NOT: = Undefined
+
+function f1 name="besideALayoutThatIsAllocated" parameters=[{type=L0|L1|L3}] results=[{type=anything}] {
+  b0(v0: L0|L1|L3):
+    v1 = TypeTest v0 testedType=L0|L1
+    Branch v1 -> taken b1(| 0), notTaken b6()
+  b1(v2):
+    v3 = GetSlot v2 key="kind" receivers=[L0, L1] level=Proven
+    v4 = Integer integer=1
+    v5 = StrictEq v3, v4
+    Branch v5 -> taken b2(), notTaken b5()
+  b2():
+    v6 = TypeTest v0 testedType=L0
+    Branch v6 -> taken b3(| 0), notTaken b4()
+  b3(v7):
+    v8 = GetSlot v7 key="r" receivers=[L0] level=Proven
+    Return v8
+  b4():
+    v9 = Undefined
+    Return v9
+  b5():
+    v10 = Null
+    Return v10
+  b6():
+    v11 = Null
+    Return v11
+}
+# CHECK-LABEL: function f1 name="besideALayoutThatIsAllocated"
+# CHECK: Branch v6 -> taken b3(| 0), notTaken b4()

@@ -17,7 +17,6 @@
 #include <algorithm>
 #include <limits>
 #include <optional>
-#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -37,7 +36,6 @@ struct RangeOfBytes {
     Vector<ValueID, 4> casts;
     Vector<UseOfRange, 2> encodings;
     Vector<UseOfRange, 4> otherUses;
-    Vector<BlockID, 8> blocksThatHoldIt;
 };
 
 } // anonymous namespace
@@ -78,22 +76,15 @@ static bool isDestinationOfEncoding(FunctionPassContext& context, const Value& u
     return arguments[1] == used && arguments[0] != used && user.receiverOperand() != used && isInstanceOf(context, user.receiverOperand(), BuiltinClasses::TextEncoder);
 }
 
-static void addOnce(auto& list, auto element)
-{
-    if (!list.contains(element))
-        list.append(element);
-}
-
 static std::optional<RangeOfBytes> findValuesAndUses(FunctionPassContext& context, const ValueSite& site)
 {
     const Function& function = context.function;
     const UseLists& useLists = context.analyses.useLists();
-    RangeOfBytes range { site, { }, { }, { }, { }, { }, { } };
+    RangeOfBytes range { site, { }, { }, { }, { }, { } };
     Vector<ValueID, 8> worklist { site.value };
     while (!worklist.isEmpty()) {
         ValueID current = worklist.takeLast();
         for (const Use& use : useLists.usesOf(current)) {
-            addOnce(range.blocksThatHoldIt, use.block);
             if (use.kind == Use::Kind::EdgeArgument) {
                 BlockID target = targetOf(function, use.edge()).block;
                 ValueID parameter = function.at(target).parameters[use.operandIndex];
@@ -101,7 +92,6 @@ static std::optional<RangeOfBytes> findValuesAndUses(FunctionPassContext& contex
                     continue;
                 range.parameters.append(parameter);
                 range.locationsOfParameters.append(useLists.locationOf(parameter));
-                addOnce(range.blocksThatHoldIt, target);
                 worklist.append(parameter);
                 continue;
             }
@@ -127,28 +117,78 @@ static std::optional<RangeOfBytes> findValuesAndUses(FunctionPassContext& contex
     return range;
 }
 
+// Follows the range that a use in the block has seen, and answers whether another use sees the same range later.
+// A value keeps the range while control stays below its definition. A block parameter gets it from an edge argument. So a loop that makes a new range on each turn does not see the old one again.
+static bool isSeenAgainBehind(FunctionPassContext& context, const RangeOfBytes& range, BlockID from)
+{
+    const Function& function = context.function;
+    const UseLists& useLists = context.analyses.useLists();
+    const Dominators& dominators = context.analyses.dominators();
+
+    using Holders = uint32_t;
+    Vector<ValueID, 16> holders { range.call.value };
+    holders.appendVector(range.parameters);
+    holders.appendVector(range.casts);
+    static_assert(1 + maxValuesHoldingRange < 32);
+    auto bitOf = [&](ValueID value) -> Holders {
+        size_t index = holders.find(value);
+        return index == notFound ? 0 : Holders { 1 } << index;
+    };
+
+    auto holdersBehind = [&](Holders held, const Target& target) {
+        Holders next = 0;
+        for (size_t index = 0; index < holders.size(); ++index) {
+            if ((held >> index & 1) && dominators.strictlyDominates(useLists.blockOf(holders[index]), target.block))
+                next |= Holders { 1 } << index;
+        }
+        const Block& block = function.at(target.block);
+        for (size_t index = 0; index < target.arguments.size(); ++index) {
+            if (held & bitOf(target.arguments[index]))
+                next |= bitOf(block.parameters[index]);
+        }
+        // A cast is listed behind the value that it casts.
+        for (ValueID cast : range.casts) {
+            if (useLists.blockOf(cast) == target.block && (next & bitOf(function.at(cast).operand(0))))
+                next |= bitOf(cast);
+        }
+        return next;
+    };
+    auto isUsedIn = [&](BlockID block, Holders held) {
+        auto seesIt = [&](const UseOfRange& use) {
+            return use.point.block == block && (held & bitOf(use.used));
+        };
+        return std::ranges::any_of(range.encodings, seesIt) || std::ranges::any_of(range.otherUses, seesIt);
+    };
+
+    Holders heldAtUse = 0;
+    for (size_t index = 0; index < holders.size(); ++index) {
+        if (dominators.dominates(useLists.blockOf(holders[index]), from))
+            heldAtUse |= Holders { 1 } << index;
+    }
+    Vector<Holders> heldAt;
+    heldAt.fill(0, function.blocks.size());
+    Vector<std::pair<BlockID, Holders>, 16> worklist { { from, heldAtUse } };
+    while (!worklist.isEmpty()) {
+        auto [block, held] = worklist.takeLast();
+        for (uint32_t index = 0; index < numberOfOutgoingEdges(function.at(block)); ++index) {
+            const Target& target = targetOf(function, outgoingEdgeAt(function, block, index));
+            Holders& known = heldAt[target.block.index()];
+            Holders added = holdersBehind(held, target) & ~known;
+            if (!added)
+                continue;
+            known |= added;
+            if (isUsedIn(target.block, added))
+                return true;
+            worklist.append({ target.block, added });
+        }
+    }
+    return false;
+}
+
 static bool isSeenOnceOnEveryWay(FunctionPassContext& context, const RangeOfBytes& range)
 {
-    const CFG& cfg = context.analyses.cfg();
     auto leadsBackToRange = [&](BlockID from) {
-        BitVector seen;
-        Vector<BlockID, 16> worklist;
-        auto visit = [&](BlockID block) {
-            if (!seen.set(block.index()))
-                worklist.append(block);
-        };
-        for (BlockID successor : cfg.successors(from))
-            visit(successor);
-        while (!worklist.isEmpty()) {
-            BlockID block = worklist.takeLast();
-            if (block == range.call.block)
-                continue;
-            if (range.blocksThatHoldIt.contains(block))
-                return true;
-            for (BlockID successor : cfg.successors(block))
-                visit(successor);
-        }
-        return false;
+        return isSeenAgainBehind(context, range, from);
     };
 
     Vector<BlockID, 8> blocksOfUses;

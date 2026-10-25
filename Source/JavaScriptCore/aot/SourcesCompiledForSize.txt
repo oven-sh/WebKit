@@ -77,6 +77,7 @@ aot/ir/AOTVerifierTypes.cpp
 aot/ir/AOTVerifierUnspecifiedValues.cpp
 aot/passes/AOTAllocateTaggedLayouts.cpp
 aot/passes/AOTCalleeVersions.cpp
+aot/passes/AOTCopyClosureFactories.cpp
 aot/passes/AOTCreatedObjectLayouts.cpp
 aot/passes/AOTEliminateTailRecursion.cpp
 aot/passes/AOTFrameAllocationMaterialization.cpp

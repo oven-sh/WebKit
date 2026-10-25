@@ -26,6 +26,7 @@
 #include "AOTVirtualObjectShapes.h"
 #include <algorithm>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <wtf/BitVector.h>
 
@@ -48,7 +49,7 @@ struct Promotion {
     Origin callOrigin;
 };
 
-enum class AliasUse : uint8_t { Unknown, Cast, Read, Test };
+enum class AliasUse : uint8_t { Unknown, Cast, Read, Test, EdgeArgument };
 
 struct Aliases {
     BitVector values;
@@ -239,6 +240,8 @@ AliasUse ParameterPromoter::classifyTest(const Value& test, uint32_t operandInde
 
 AliasUse ParameterPromoter::classifyUse(const Use& use) const
 {
+    if (use.kind == Use::Kind::EdgeArgument)
+        return AliasUse::EdgeArgument;
     if (use.kind != Use::Kind::Operand)
         return AliasUse::Unknown;
     const Value& user = m_function.at(use.user);
@@ -321,6 +324,9 @@ std::optional<Aliases> ParameterPromoter::findAliases(ValueID parameter)
             case AliasUse::Test:
                 addNarrowedAliases(use.user, aliases, worklist);
                 break;
+            case AliasUse::EdgeArgument:
+                worklist.append(m_function.at(targetOf(m_function, use.edge()).block).parameters[use.operandIndex]);
+                break;
             }
         }
     }
@@ -367,6 +373,15 @@ std::optional<EarlyBlocks> ParameterPromoter::findEarlyBlocks(const Aliases& ali
     for (BlockID block : cfg.reversePostOrder()) {
         if (!liveness.liveAtHead(block).empty())
             early.blocks.quickSet(block.index());
+    }
+    for (BlockID block : cfg.reversePostOrder() | std::views::reverse) {
+        bool reachesEarlyBlock = std::ranges::any_of(cfg.successors(block), [&](BlockID successor) {
+            return early.blocks.quickGet(successor.index());
+        });
+        if (!reachesEarlyBlock)
+            continue;
+        early.blocks.quickSet(block.index());
+        hasTerminatorUse.quickSet(block.index());
     }
 
     auto isAliasLiveOut = [&](BlockID block) {

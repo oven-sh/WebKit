@@ -120,6 +120,7 @@ private:
     PlacedTableSizes m_placedTableSizes;
     // From the loop that selects until the bodies are numbered.
     std::unique_ptr<FactsOfSelectedBodies> m_factsOfSelectedBodies;
+    BitVector m_copiedFunctions;
     Vector<Int32ParameterCandidate> m_int32ParameterCandidates;
 };
 

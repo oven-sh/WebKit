@@ -456,7 +456,7 @@ void CompactTable::skipObsoleteSuccessors()
     }
 }
 
-CompactTable* CompactTable::copyWithAbsentKey(VM& vm, JSString* key, JSValue value) const
+CompactTable* CompactTable::copyWithAbsentKey(VM& vm, JSValue key, unsigned hash, JSValue value) const
 {
     uint32_t count = m_used;
     Width valueWidth = m_valueWidth;
@@ -494,7 +494,6 @@ CompactTable* CompactTable::copyWithAbsentKey(VM& vm, JSString* key, JSValue val
             WTF::compilerFence();
         }
     };
-    unsigned hash = key->tryGetValueImpl()->existingHash();
     const uint64_t* from = at<uint64_t>(offsetOfKeys());
     uint64_t* to = larger->at<uint64_t>(offsetOfIndex());
     bool keepsSlots = indexBits && indexBits == m_indexBits;
@@ -532,6 +531,24 @@ static ALWAYS_INLINE bool narrowColumnHolds(JSValue value)
     static_assert((MarkedBlock::atomSize - 1) & PreciseAllocation::halfAlignment);
     uint64_t bits = JSValue::encode(value);
     return value.isCell() ? !(bits & (MarkedBlock::atomSize - 1)) : bits < minCell32;
+}
+
+ALWAYS_INLINE std::optional<unsigned> CompactTable::hashIfAbsent(JSValue key) const
+{
+    if (key.isString()) {
+        if (tryFindQuickly(asString(key)).result != QuickLookup::Absent)
+            return std::nullopt;
+        return asString(key)->tryGetValueImpl()->existingHash();
+    }
+    if (!hasNarrowHeapKeys() || !narrowColumnHolds(key) || key.isHeapBigInt())
+        return std::nullopt;
+    unsigned hash = rapidHashMix64(JSValue::encode(key)) & hashMask;
+    uint32_t narrowKey = encodeNarrow(key);
+    const uint32_t* keys = at<uint32_t>(offsetOfKeys());
+    auto found = findWithHash(hash, [&](uint32_t entry) ALWAYS_INLINE_LAMBDA {
+        return keys[entry] == narrowKey;
+    });
+    return found ? std::nullopt : std::optional(hash);
 }
 
 // The usual addition: the table has room, its columns hold the key and the value, and the key is an object, a symbol or a string that is no rope, so it is found or missed without running anything.
@@ -623,10 +640,12 @@ bool CompactTable::add(JSGlobalObject* globalObject, JSObject* owner, JSValue ke
         if (table->tryAddQuickly(globalObject, key, value))
             return true;
         uint32_t count = table->m_used;
-        if (!key.isString() || count != table->m_capacity || count != table->m_alive || count >= maxCountWithGrowthPlan
-            || table->tryFindQuickly(asString(key)).result != QuickLookup::Absent || !canHold(vm, table->m_valueWidth, value) || !canHold(vm, Width::Narrow, key))
+        if (count != table->m_capacity || count != table->m_alive || count >= maxCountWithGrowthPlan || !canHold(vm, table->m_valueWidth, value) || !canHold(vm, Width::Narrow, key))
             return false;
-        CompactTable* larger = table->copyWithAbsentKey(vm, asString(key), value);
+        std::optional<unsigned> hash = table->hashIfAbsent(key);
+        if (!hash)
+            return false;
+        CompactTable* larger = table->copyWithAbsentKey(vm, key, *hash, value);
         if (validatesRuntime(vm)) [[unlikely]] {
             DeferTerminationForAWhile deferTermination(vm);
             CompactTable* expected = table->tryCopyWithWidths(globalObject, Width::Narrow, table->m_valueWidth);

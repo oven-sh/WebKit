@@ -242,13 +242,13 @@ static void locateOutOfLineValue(StubAssembler& jit, GPRReg receiver, GPRReg ope
 }
 
 // The row of a shape is complete: it has an entry for every field. So behind a mismatch only the state of the object and the names of Object.prototype are left to ask.
-static void branchUnlessNameIsAbsent(StubAssembler& jit, const FieldTableProbe& probe, JumpList& mayBePresent)
+static void branchUnlessNameIsAbsent(StubAssembler& jit, const FieldTableProbe& probe, JumpList& mayBePresent, JumpList* isNotBelowObjectPrototype = nullptr)
 {
     static_assert(std::endian::native == std::endian::little);
     const GPRReg structure = probe.index;
     const GPRReg names = probe.table;
     loadStructure(jit, probe.receiver, structure);
-    mayBePresent.append(jit.branchTest8(CCallHelpers::Zero, Address(structure, CompiledStructure::offsetOfFlags()), TrustedImm32(static_cast<uint8_t>(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype))));
+    (isNotBelowObjectPrototype ? *isNotBelowObjectPrototype : mayBePresent).append(jit.branchTest8(CCallHelpers::Zero, Address(structure, CompiledStructure::offsetOfFlags()), TrustedImm32(static_cast<uint8_t>(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype))));
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.namesOfObjectPrototypes)), names);
     if (probe.boundName) {
         mayBePresent.append(jit.branchTest8(CCallHelpers::NonZero, Address(names, static_cast<int32_t>(*probe.boundName / 8)), TrustedImm32(1 << *probe.boundName % 8)));
@@ -447,9 +447,39 @@ void answerMissingField(StubAssembler& jit, CallerFrame callerFrame, GPRReg obje
     isAbsent.link(&jit);
     jit.bindEntry(getByIdOfEmptySlot().withCallerFrame(callerFrame));
     otherwise.append(jit.branchTest32(CCallHelpers::NonZero, Address(object, offsetOfOrderWord), TrustedImm32(static_cast<int32_t>(orderWordHasFieldOutsideSlot))));
+#if CPU(X86_64)
+    JumpList isNotBelowObjectPrototype;
+    branchUnlessNameIsAbsent(jit, probe, otherwise, &isNotBelowObjectPrototype);
+#else
     branchUnlessNameIsAbsent(jit, probe, otherwise);
+#endif
     jit.move(TrustedImm64(JSValue::ValueUndefined), jit.result());
     jit.returnToCaller();
+
+#if CPU(X86_64)
+    // An instance of a class or of a constructor function. The front table says the same of a pair that a read was filed for: a field whose empty slot reads as undefined, for as long as nothing above changes.
+    // The handler of such a cell finds the slot and looks into it to learn what is known here. This is the probe of the front table, so whatever else the cell says goes on from here as it does from there.
+    constexpr int32_t bitsAsked = PackedSlot::kindMask | PackedSlot::kindFlag;
+    constexpr int32_t bitsOfFieldThatIsUndefinedWhereEmpty = ((static_cast<uint8_t>(Slot::Kind::Field) | PackedSlot::kindFlag) ^ PackedSlot::ownInlineValueBits) & bitsAsked;
+    static_assert(Slot::kindFlagOf(Slot::Kind::Field) == Slot::absentIsUndefined);
+    const SlotOrigin origin = callerFrame == CallerFrame::StubFrame ? SlotOrigin::ByIdInStubFrame : SlotOrigin::ById;
+    const GPRReg cell = T12;
+    RELEASE_ASSERT(cell == gprOf(slotHeaderRegister) && object == gprOf(firstStubOperandRegister) && name == gprOf(slotNameRegister));
+    isNotBelowObjectPrototype.link(&jit);
+    jit.load32(Address(object, JSCell::structureIDOffset()), T11);
+    locateFrontCell(jit, SlotAccess::Read, T11, name, T10);
+    jit.m_assembler.cmpw_rm(name, static_cast<int32_t>(PackedSlot::offsetOfName()), T10, T11, CCallHelpers::TimesEight);
+    jit.linkToStub(Jump(jit.m_assembler.jCC(X86Assembler::ConditionNE)), getByIdHashed().withCallerFrame(callerFrame));
+    jit.load64(BaseIndex(T10, T11, CCallHelpers::TimesEight), cell);
+    jit.urshift64(cell, TrustedImm32(kindShiftInCell), T10);
+    jit.and32(TrustedImm32(bitsAsked), T10);
+    Jump saysSomethingElse = jit.branch32(CCallHelpers::NotEqual, T10, TrustedImm32(bitsOfFieldThatIsUndefinedWhereEmpty));
+    jit.move(TrustedImm64(JSValue::ValueUndefined), jit.result());
+    jit.returnToCaller();
+
+    saysSomethingElse.link(&jit);
+    jumpToSlotHandler(jit, slotHandlerTable(SlotOperation::Read, origin, SlotForm::PackedSlot), cell, T10);
+#endif
 }
 
 void returnFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, JumpList& otherwise)

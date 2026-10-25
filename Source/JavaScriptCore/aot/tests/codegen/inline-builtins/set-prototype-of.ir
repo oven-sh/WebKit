@@ -14,7 +14,7 @@ function f0 name="objectSetPrototypeOf" parameters=[{type=object}, {type=null|ob
 }
 # CHECK-LABEL: f0: size=
 # CHECK-NOT: operation
-# CHECK: stub CallHostFunction.n2 x1
+# CHECK: stub CallBoxedBuiltin.ObjectSetPrototypeOf.n2 x1
 # CHECK: stub WriteBarrier{{*}} x1
 function f1 name="reflectSetPrototypeOf" parameters=[{type=object}, {type=null|object}] results=[{type=boolean}] {
     TryCallInline -, v0, v1 inlineBuiltin=SetPrototypeOf inlineParameters=[1] overload=ReflectSetPrototypeOf/0 -> done b1(), miss b2()
@@ -33,5 +33,5 @@ function f2 name="callWithoutInlineCode" parameters=[{type=object}, {type=null|o
     Return v2
 }
 # CHECK-LABEL: f2: size=
-# CHECK: stub CallHostFunction.n2 x1
+# CHECK: stub CallBoxedBuiltin.ObjectSetPrototypeOf.n2 x1
 # CHECK-NOT: stub WriteBarrier

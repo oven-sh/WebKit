@@ -635,8 +635,13 @@ private:
             ValueSetID whilePristine = m_context.maker().unite(m_tables.membersOfWhilePristine(branch.tested), allocatedByBuiltinsAs(node.operand, m_tables.classesOfWhilePristine(branch.tested), true));
             if (whilePristine == ValueSets::nothing)
                 continue;
-            constexpr OptionSet<ObjectMutation> mutationsOfBuiltinBehavior { ObjectMutation::ReachUnknownJavaScript, ObjectMutation::AddProperty, ObjectMutation::RedefineProperty, ObjectMutation::ChangePrototype };
-            ClimbingSet changed = m_context.markedAmong(m_context.restrict(valueAt(node.operand), whilePristine), mutationsOfBuiltinBehavior);
+            OptionSet<ObjectMutation> mutations { ObjectMutation::ReachUnknownJavaScript, ObjectMutation::RedefineProperty, ObjectMutation::ChangePrototype };
+            bool testsNames = std::ranges::any_of(m_builtins.at(branch.tested).parts, [](const BuiltinTypePart& part) {
+                return part.pristine.containsAny({ PristineAspects::Names, PristineAspects::AsCreated });
+            });
+            if (testsNames)
+                mutations.add(ObjectMutation::AddProperty);
+            ClimbingSet changed = m_context.markedAmong(m_context.restrict(valueAt(node.operand), whilePristine), mutations);
             if (!m_context.meet(changed, ValueSets::anything))
                 stillTested = m_context.maker().intersect(stillTested, ValueSets::complement(whilePristine));
         }

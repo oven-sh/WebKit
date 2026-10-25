@@ -3355,6 +3355,10 @@ PassOutcome placeTypeTests(FunctionPassContext& context)
     // Where a test at the entrance has failed. A test in here would guess again what has just proved wrong, and cost a copy.
     if (context.function.runsOnlyBehindFailedTest())
         return PassOutcome::Unchanged;
+    // The method table calls a selector's lookup only for a receiver that does not match the class definitions, so a guess here would fail.
+    // A guessed direct call would also be one more caller of the method, which keeps the table from naming the method itself.
+    if (context.function.role == FunctionRole::TableLookup)
+        return PassOutcome::Unchanged;
 
     PassOutcome marked = markArmsThatAreSeldomTaken(context);
     ExpectedTypesByUse expectations(context.function);

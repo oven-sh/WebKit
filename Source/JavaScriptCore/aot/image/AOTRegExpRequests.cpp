@@ -498,6 +498,7 @@ private:
         }
         // While it is walked, a variable that is made of itself has no value.
         m_variables.add(variable.index(), ValuesOfVariable { });
+        unsigned walksCutShortBefore = m_walksCutShort;
         bool sawEverythingBefore = std::exchange(m_sawEverything, true);
         Constants values;
         if (m_program.at(variable).initialization == Typed::VariableInitialization::Function)
@@ -508,7 +509,7 @@ private:
         }
         m_sawEverything &= !values.isEmpty();
         // What was read under the choice of one object holds for that choice alone.
-        if (m_bindings.isEmpty() && !m_split)
+        if (m_bindings.isEmpty() && !m_split && m_walksCutShort == walksCutShortBefore)
             m_variables.set(variable.index(), ValuesOfVariable { values, m_sawEverything });
         else
             m_variables.remove(variable.index());

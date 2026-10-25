@@ -17,6 +17,7 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     MaxVariablesFollowedToLoader(Load, CompileTime, NotOptimized, 4, 4, 0, "variables that hand the name of a built-in module on to one another")
     MaxParametersFollowedToLoader(Load, CompileTime, NotOptimized, 4, 4, 0, "parameters that hand the name of a built-in module on to one another")
     MaxProgramsPerBuild(Load, CompileTime, NotOptimized, 128, 128, 0, "entry points that are each compiled as a program of their own")
+    MaxGuessedWorkerFiles(Load, CodeSize, NotOptimized, 4, 4, 0, "embedded code files that are compiled in case a Worker with an unknown path starts them")
     MaxRepeatedSourceBytes(Load, CodeSize, NotOptimized, 262144, 262144, 0, "bytes of source text that entry points compiled on their own have in common")
     MaxRepeatedSourcePercent(Load, CodeSize, NotOptimized, 5, 5, 0, "percent of the source text that entry points compiled on their own have in common")
     MaxDataNodes(Load, Memory, BuildError, 16777216, 16777216, 0, "values in a data module or macro result")

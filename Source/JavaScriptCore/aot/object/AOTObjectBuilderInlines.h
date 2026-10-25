@@ -83,6 +83,15 @@ ALWAYS_INLINE JSObject* ObjectBuilder::tryBuild(VM& vm, const ObjectBuilderPlan&
                         continue;
                     }
                 }
+            } else if (value.isBoolean()) {
+                if (representation == SlotRepresentation::Boolean) {
+                    *static_cast<uint8_t*>(slot) = value.asBoolean();
+                    continue;
+                }
+                if (representation == SlotRepresentation::OptionalBoolean) {
+                    *static_cast<uint8_t*>(slot) = static_cast<uint8_t>(values[index]);
+                    continue;
+                }
             }
         }
         if (!tryStoreSlow(plan, cell, index, value)) [[unlikely]]

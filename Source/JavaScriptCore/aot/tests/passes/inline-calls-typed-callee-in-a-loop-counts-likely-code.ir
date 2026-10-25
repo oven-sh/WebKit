@@ -1,0 +1,115 @@
+# A function with declared types holds, behind each type test, a copy of the rest of the body for a value that fails the test. The copy is not expected to run, and the same function without types has neither
+# the copy nor, yet, the test. In a loop of the caller, what counts is the code that the loop runs: the typed function is inlined where the untyped one is. Outside loops it counts at its whole size, and so does
+# a function without declared types, whatever it holds
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot limit=InlineBudgetHotBytes:200
+# RUN: pass InlineCalls
+
+module m0 path="main.ts" displayPath="main.ts"
+function f0 name="typed" flags=[IsChecked] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="first"
+    v2 = TypeTest v1 testedType=number
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = PropGet v0 key="a"
+    v5 = PropGet v4 key="b"
+    v6 = PropGet v5 key="c"
+    v7 = PropGet v6 key="d"
+    v8 = PropGet v7 key="e"
+    v9 = PropGet v8 key="f"
+    v10 = PropGet v9 key="g"
+    v11 = PropGet v10 key="h"
+    v12 = Add v3, v11
+    Return v12
+  b2() frequency=Unlikely:
+    v13 = PropGet v0 key="a"
+    v14 = PropGet v13 key="b"
+    v15 = PropGet v14 key="c"
+    v16 = PropGet v15 key="d"
+    v17 = PropGet v16 key="e"
+    v18 = PropGet v17 key="f"
+    v19 = PropGet v18 key="g"
+    v20 = PropGet v19 key="h"
+    v21 = Add v1, v20
+    Return v21
+}
+function f1 name="untypedWithTheSameBlocks" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="first"
+    v2 = TypeTest v1 testedType=number
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = PropGet v0 key="a"
+    v5 = PropGet v4 key="b"
+    v6 = PropGet v5 key="c"
+    v7 = PropGet v6 key="d"
+    v8 = PropGet v7 key="e"
+    v9 = PropGet v8 key="f"
+    v10 = PropGet v9 key="g"
+    v11 = PropGet v10 key="h"
+    v12 = Add v3, v11
+    Return v12
+  b2() frequency=Unlikely:
+    v13 = PropGet v0 key="a"
+    v14 = PropGet v13 key="b"
+    v15 = PropGet v14 key="c"
+    v16 = PropGet v15 key="d"
+    v17 = PropGet v16 key="e"
+    v18 = PropGet v17 key="f"
+    v19 = PropGet v18 key="g"
+    v20 = PropGet v19 key="h"
+    v21 = Add v1, v20
+    Return v21
+}
+function f2 name="callsTypedInALoop" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = PropGet v0 key="more"
+    v3 = ToBoolean v2
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    v4 = CallDirect v0 function=f0
+    PropSet v0, v4 key="last" mode=Strict
+    Jump -> next b1()
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f2 name="callsTypedInALoop"
+# CHECK-NOT: function=f0
+
+function f3 name="callsUntypedInALoop" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = PropGet v0 key="more"
+    v3 = ToBoolean v2
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    v4 = CallDirect v0 function=f1
+    PropSet v0, v4 key="last" mode=Strict
+    Jump -> next b1()
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f3 name="callsUntypedInALoop"
+# CHECK: = CallDirect {{*}} function=f1
+
+function f4 name="callsTypedOutsideALoop" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f0
+    Return v1
+}
+# CHECK-LABEL: function f4 name="callsTypedOutsideALoop"
+# CHECK: = CallDirect {{*}} function=f0
+
+function f5 name="callsUntypedOutsideALoop" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = CallDirect v0 function=f1
+    Return v1
+}
+# CHECK-LABEL: function f5 name="callsUntypedOutsideALoop"
+# CHECK: = CallDirect {{*}} function=f1

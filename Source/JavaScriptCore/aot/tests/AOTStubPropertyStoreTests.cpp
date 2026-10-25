@@ -13,6 +13,7 @@
 #include "AOTPrimitives.h"
 #include "AOTPropertyCachesWords.h"
 #include "AOTFieldTable.h"
+#include "AOTHeapHooks.h"
 #include "AOTImageText.h"
 #include "AOTLayoutData.h"
 #include "AOTRuntimeRecords.h"
@@ -20,12 +21,14 @@
 #include "AOTSlotAccess.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTStubRunner.h"
+#include "AOTStubsBarriers.h"
 #include "AOTStubsPropertyKeys.h"
 #include "CompleteSubspace.h"
 #include "GetterSetter.h"
 #include "IndexingHeader.h"
 #include "JSCInlines.h"
 #include "JSObject.h"
+#include "MarkStack.h"
 #include "MarkedBlockCage.h"
 #include "PropertyOffset.h"
 #include "StructureID.h"
@@ -533,6 +536,42 @@ static void testBarriers()
         blackOwner.setCellState(CellState::PossiblyBlack);
         AOT_TEST_CHECK(!stores.store(storeCase, blackOwner.address(), bitsOf(jsNumber(42))).calledOperation);
     });
+}
+
+// While no collector runs beside the program the stub itself remembers a black owner. Only a full segment is left to the operation.
+static void testBarrierRemembersOwnerWithoutOperation()
+{
+#if !ASSERT_ENABLED
+    PropertyStores stores;
+    Instance& instance = stores.runner.instance();
+    MarkStackArray stack;
+    uintptr_t barriersExecuted = 0;
+    instance.heap.mutatorMarkStack = &stack;
+    instance.heap.barriersExecuted = &barriersExecuted;
+    stores.runner.recordCallsOf(Entry::operationAOTBarrierSlow);
+
+    std::array<FakePlainObject, 3> owners { FakePlainObject(PropertyStores::structureID), FakePlainObject(PropertyStores::structureID), FakePlainObject(PropertyStores::structureID) };
+    for (FakePlainObject& owner : owners) {
+        owner.setCellState(CellState::PossiblyBlack);
+        StubRun run = stores.runner.run(writeBarrier(), { owner.address() });
+        AOT_TEST_CHECK(!run.calledOperation && !run.numberOfRecordedCalls);
+        AOT_TEST_CHECK(owner.at<uint8_t>(JSCell::cellStateOffset()) == static_cast<uint8_t>(CellState::PossiblyGrey));
+    }
+    AOT_TEST_CHECK(barriersExecuted == owners.size() && stack.size() == owners.size());
+    for (size_t i = owners.size(); i--;)
+        AOT_TEST_CHECK(std::bit_cast<uint64_t>(stack.removeLast()) == owners[i].address());
+
+    // An owner that is remembered already is not remembered again.
+    AOT_TEST_CHECK(!stores.runner.run(writeBarrier(), { owners[0].address() }).calledOperation && stack.isEmpty() && barriersExecuted == owners.size());
+
+    while (stack.size() < MutatorMarkStackLayout::segmentCapacity)
+        stack.append(std::bit_cast<const JSCell*>(owners[0].address()));
+    owners[1].setCellState(CellState::PossiblyBlack);
+    StubRun atFullSegment = stores.runner.run(writeBarrier(), { owners[1].address() });
+    AOT_TEST_CHECK(atFullSegment.numberOfRecordedCalls == 1 && atFullSegment.recordedArguments[0] == owners[1].address() && stack.size() == MutatorMarkStackLayout::segmentCapacity);
+    instance.heap.mutatorMarkStack = nullptr;
+    instance.heap.barriersExecuted = nullptr;
+#endif
 }
 
 namespace {
@@ -1829,6 +1868,7 @@ std::span<const NativeTest> stubPropertyStoreTests()
         { "stubs/put-by-id/setters"_s, ImageTests::whenExecutable<testSetters> },
         { "stubs/put-by-id/exits"_s, ImageTests::whenExecutable<testExits> },
         { "stubs/put-by-id/barriers"_s, ImageTests::whenExecutable<testBarriers> },
+        { "stubs/write-barrier/remembers-owner-without-operation"_s, ImageTests::whenExecutable<testBarrierRemembersOwnerWithoutOperation> },
         { "stubs/put-by-id/typed-fields"_s, ImageTests::whenExecutable<testTypedFields> },
         { "stubs/put-by-id/fields-that-leave-the-stub"_s, ImageTests::whenExecutable<testFieldsThatLeaveTheStub> },
         { "stubs/put-by-id/created-fields"_s, ImageTests::whenExecutable<testCreatedFields> },

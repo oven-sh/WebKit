@@ -13,7 +13,7 @@
 # CHECK-NEXT: stub CallHostFunction{{*}} x1
 # CHECK-NEXT: f3: size=
 # CHECK-NEXT: stub BuiltinCell{{*}} x1
-# CHECK-NEXT: stub CallHostFunction{{*}} x1
+# CHECK-NEXT: stub CallBoxedBuiltin.ArrayPush.n1 x1
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="withSeparator" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {

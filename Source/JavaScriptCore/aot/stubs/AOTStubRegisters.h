@@ -30,20 +30,8 @@ static constexpr GPRReg faultCallerLinkGPR = InvalidGPRReg;
 static constexpr GPRReg registerWrittenAtFaults = X86Registers::r11;
 #endif
 
-#if CPU(ARM64)
 static constexpr unsigned numberOfOperationArgumentGPRs = GPRInfo::numberOfArgumentRegisters;
 constexpr GPRReg operationArgumentGPR(unsigned index) { return GPRInfo::toArgumentRegister(index); }
-#elif CPU(X86_64)
-static constexpr GPRReg seventhOperationArgumentGPR = X86Registers::r12;
-static constexpr GPRReg eighthOperationArgumentGPR = X86Registers::ebx;
-static constexpr unsigned numberOfOperationArgumentGPRs = GPRInfo::numberOfArgumentRegisters + 2;
-constexpr GPRReg operationArgumentGPR(unsigned index)
-{
-    if (index < GPRInfo::numberOfArgumentRegisters)
-        return GPRInfo::toArgumentRegister(index);
-    return index == GPRInfo::numberOfArgumentRegisters ? seventhOperationArgumentGPR : eighthOperationArgumentGPR;
-}
-#endif
 
 static constexpr unsigned numberOfLeafArgumentGPRs = GPRInfo::numberOfArgumentRegisters;
 constexpr GPRReg leafArgumentGPR(unsigned index) { return GPRInfo::toArgumentRegister(index); }

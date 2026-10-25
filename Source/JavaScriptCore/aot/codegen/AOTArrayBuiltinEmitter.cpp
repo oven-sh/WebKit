@@ -222,10 +222,10 @@ bool ArrayBuiltinEmitter::resultGetsNamedProperties(const InlineCall& call)
 
 void ArrayBuiltinEmitter::generateArraySlice(const InlineCall& call)
 {
-    bool hasIntegerBounds = call.numberOfArguments() <= 2 && std::ranges::all_of(call.arguments(), [&](ValueID bound) {
-        return typeOf(bound).isInteger();
+    bool hasNumberBounds = call.numberOfArguments() <= 2 && std::ranges::all_of(call.arguments(), [&](ValueID bound) {
+        return typeOf(bound).isNumber();
     });
-    if (!checkChosenForm(call, call.canMiss() && hasIntegerBounds))
+    if (!checkChosenForm(call, call.canMiss() && hasNumberBounds))
         return;
     CellPointer array = receiverOf(call);
     bool withPropertyRoom = resultGetsNamedProperties(call);
@@ -233,8 +233,8 @@ void ArrayBuiltinEmitter::generateArraySlice(const InlineCall& call)
     if (!call.numberOfArguments())
         copy = callStub(call.context(), arrayCopy(withPropertyRoom), { array.value() });
     else {
-        Integer start = integerOperand(call.argument(0));
-        Integer end = call.numberOfArguments() > 1 ? integerOperand(call.argument(1)) : integer(arraySliceToEnd);
+        Integer start = wholeNumberOrElse(call.argument(0), missBlockOf(call));
+        Integer end = call.numberOfArguments() > 1 ? wholeNumberOrElse(call.argument(1), missBlockOf(call)) : integer(arraySliceToEnd);
         copy = callStub(call.context(), arraySlice(withPropertyRoom), { array.value(), start.value(), end.value() });
     }
     Boxed copied(copy.first);

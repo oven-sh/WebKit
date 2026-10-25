@@ -203,6 +203,18 @@ static void testCallsOfClosures(bool hasOneInstance)
     }
 }
 
+// In an image with one instance the word of a slim closure that takes the arguments says all there is to know: the header of the cell is not read.
+static void testSlimClosuresAreEnteredByTheirWordAlone()
+{
+    Calls calls(true);
+    FakeSlimClosure slim;
+    calls.initializeSlimClosure(slim, calls.runner.closureWord(countInKey));
+    slim.setHeader(0, SlimClosureType);
+    const std::array passed { firstArgument, secondArgument };
+    for (StubKey key : { callValue(countInKey), callValueCell(countInKey) })
+        checkLandedInFunction(calls.runner.runCall(key, slim.address(), thisValue, { firstArgument, secondArgument }), slim.address(), thisValue, passed);
+}
+
 static void checkCallOfEngineCallee(Calls& calls, uint64_t callee)
 {
     const std::array passed { firstArgument, secondArgument };
@@ -431,6 +443,7 @@ std::span<const NativeTest> stubCallTests()
 {
     static constexpr NativeTest tests[] = {
         { "stubs/call-value/closures"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testCallsOfClosures>> },
+        { "stubs/call-value/slim-closures-are-entered-by-their-word-alone"_s, ImageTests::whenExecutable<testSlimClosuresAreEnteredByTheirWordAlone> },
         { "stubs/call-value/engine-callees"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testCallsOfEngineCallees>> },
         { "stubs/call-value/non-cells"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testCallsOfNonCells>> },
         { "stubs/call-value/host-functions"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testCallsOfHostFunctions>> },

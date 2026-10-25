@@ -1,0 +1,27 @@
+# the hits of one limit are one loss: their number, and the least subject by location, function, value and layout, whatever the threads and the order of adding
+# RUN: losses limit-hits MaxLayoutsInType,f1,at=0:10 MaxLayoutsInType,f0,v3,at=0:10 MaxLayoutsInType,f0,v2,at=0:10 MaxLayoutsInType,f2 MaxLiteralsInType MaxLiteralsInType,L7 MaxLayoutsInType,f0,v2,at=0:10
+# RUN: losses limit-hits MaxLayoutsInType,f1,at=0:10 MaxLayoutsInType,f0,v3,at=0:10 MaxLayoutsInType,f0,v2,at=0:10 MaxLayoutsInType,f2 MaxLiteralsInType MaxLiteralsInType,L7 MaxLayoutsInType,f0,v2,at=0:10 threads=16 seed=1
+# RUN: losses limit-hits MaxLayoutsInType,f1,at=0:10 MaxLayoutsInType,f0,v3,at=0:10 MaxLayoutsInType,f0,v2,at=0:10 MaxLayoutsInType,f2 MaxLiteralsInType MaxLiteralsInType,L7 MaxLayoutsInType,f0,v2,at=0:10 threads=16 seed=2
+# CHECK: MaxLayoutsInType Any x5 f0 v2 - 0:10
+# CHECK-NEXT: MaxLiteralsInType Any x2 - - - -
+# RUN(RAW): losses limit-hits MaxLiteralsInType MaxLiteralsInType,L7 MaxLiteralsInType,L9 no-program threads=16 seed=3
+# RAW: MaxLiteralsInType Any x3 - - L7 -
+# RUN(DECLARED): losses limit-hits MaxLayoutsInType,f2 MaxLayoutsInType,f1
+# DECLARED: MaxLayoutsInType Any x2 f1 - - {{*}}
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="first" results=[{type=undefined}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f1 name="second" results=[{type=undefined}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="third" results=[{type=undefined}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

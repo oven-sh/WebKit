@@ -875,14 +875,14 @@ static GrowthPlans createGrowthPlans(FakeHeap& heap)
 }
 
 struct FullTable {
-    FullTable(Collections& collections, uint32_t capacity, Width keyWidth, Width valueWidth, unsigned numberOfOtherKeys = 0)
+    FullTable(Collections& collections, uint32_t capacity, Width keyWidth, Width valueWidth, unsigned numberOfOtherKeys = 0, JSType typeOfOtherKeys = FinalObjectType)
         : table(collections.heap, capacity, keyWidth, valueWidth)
         , owner(collections.createOwner(valueWidth == Width::None ? JSSetType : JSMapType, table.address()))
     {
         FakeHeap& heap = collections.heap;
         for (uint32_t number = 0; number < capacity; ++number) {
             std::optional<uint64_t> value = createValue(heap, number, valueWidth);
-            entries.append(number < numberOfOtherKeys ? createEntryComparedByBits(heap.createCell(FinalObjectType), value) : createStringEntry(heap, makeString("key"_s, number), value));
+            entries.append(number < numberOfOtherKeys ? createEntryComparedByBits(heap.createCell(typeOfOtherKeys), value) : createStringEntry(heap, makeString("key"_s, number), value));
             table.append(entries.last().key, entries.last().hash, value.value_or(0));
         }
     }
@@ -912,7 +912,7 @@ struct RoomForTable {
     FakeAllocator allocator;
 };
 
-static void checkGrownTable(Collections& collections, GrowthPlans& plans, KeyComparison comparison, uint32_t capacity, Width valueWidth, unsigned numberOfOtherKeys, bool wasWalked)
+static void checkGrownTable(Collections& collections, GrowthPlans& plans, KeyComparison comparison, uint32_t capacity, Width valueWidth, unsigned numberOfOtherKeys, bool wasWalked, std::optional<JSType> typeOfAddedCell = std::nullopt)
 {
     FakeHeap& heap = collections.heap;
     FullTable full(collections, capacity, Width::Narrow, valueWidth, numberOfOtherKeys);
@@ -922,7 +922,8 @@ static void checkGrownTable(Collections& collections, GrowthPlans& plans, KeyCom
     FakeTable expected(heap, largerCapacity, Width::Narrow, valueWidth);
     if (wasWalked)
         expected.markAsWalked();
-    TableEntry added = createStringEntry(heap, "added"_s, createValue(heap, capacity, valueWidth));
+    std::optional<uint64_t> addedValue = createValue(heap, capacity, valueWidth);
+    TableEntry added = typeOfAddedCell ? createEntryComparedByBits(heap.createCell(*typeOfAddedCell), addedValue) : createStringEntry(heap, "added"_s, addedValue);
     full.entries.append(added);
     for (const TableEntry& entry : full.entries)
         expected.append(entry.key, entry.hash, entry.value.value_or(0));
@@ -950,11 +951,11 @@ static void testGrownTables()
         for (uint32_t capacity = 2; capacity < CompactTable::maxCountWithGrowthPlan; capacity += 2) {
             for (KeyComparison comparison : comparisonsOfStrings)
                 checkGrownTable(collections, plans, comparison, capacity, valueWidth, 0, capacity % 4);
+            for (KeyComparison comparison : comparisonsOfBits)
+                checkGrownTable(collections, plans, comparison, capacity, valueWidth, capacity, capacity % 4, FinalObjectType);
+            checkGrownTable(collections, plans, KeyComparison::Bits, capacity, valueWidth, capacity / 2, capacity % 4, SymbolType);
+            checkGrownTable(collections, plans, KeyComparison::AnyValue, capacity, valueWidth, capacity / 2, capacity % 4);
         }
-        // Where the index is not made anew the other keys may be of any kind.
-        checkGrownTable(collections, plans, KeyComparison::AnyValue, 4, valueWidth, 2, false);
-        AOT_TEST_CHECK(CompactTable::indexBitsFor(14) == CompactTable::indexBitsFor(static_cast<uint32_t>(growthPlanFor(plans, valueWidth, 14))));
-        checkGrownTable(collections, plans, KeyComparison::AnyValue, 14, valueWidth, 2, false);
     }
 }
 
@@ -991,8 +992,8 @@ static void testTablesNotGrownByStubs()
         checkTableIsNotGrown(collections, plans, full, stringEntry(object));
         instance.mutatorShouldBeFenced = false;
 
-        checkTableIsNotGrown(collections, plans, full, createEntryComparedByBits(object, object));
         checkTableIsNotGrown(collections, plans, full, createEntryComparedByBits(bitsOf(jsNull()), object));
+        checkTableIsNotGrown(collections, plans, full, createEntryComparedByBits(createCellOutsideMarkedBlocks(heap), object));
         checkTableIsNotGrown(collections, plans, full, stringEntry(bitsOf(jsNumber(42))));
         checkTableIsNotGrown(collections, plans, full, stringEntry(createCellOutsideMarkedBlocks(heap)));
 
@@ -1014,8 +1015,8 @@ static void testTablesNotGrownByStubs()
         checkTableIsNotGrown(collections, plans, full, stringEntry(std::nullopt));
     }
     for (Width valueWidth : { Width::None, Width::Narrow, Width::Wide }) {
-        // The index is made anew from the hashes that strings hold.
-        FullTable full(collections, 8, Width::Narrow, valueWidth, 1);
+        // The index is made anew, and the hash of a BigInt is neither in the cell nor made of its address.
+        FullTable full(collections, 8, Width::Narrow, valueWidth, 1, HeapBigIntType);
         checkTableIsNotGrown(collections, plans, full, stringEntry(createValue(heap, 0, valueWidth)), true);
     }
 }

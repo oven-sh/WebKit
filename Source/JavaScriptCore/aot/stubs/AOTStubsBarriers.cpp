@@ -40,15 +40,9 @@ void returnIfFencedAndNotBlack(StubAssembler& jit, GPRReg owner)
     isBlack.link(&jit);
 }
 
-// What Heap::addToRememberedSet() does while no collector runs beside the program. A full segment is left to it.
-static void returnUnlessOperationRemembers(StubAssembler& jit, GPRReg owner, GPRReg scratch)
+// Does what Heap::addToRememberedSet() does for a black owner while no collector runs concurrently. Falls through when the segment is full, which the operation handles.
+static void returnIfMarkStackTakes(StubAssembler& jit, GPRReg owner, GPRReg scratch)
 {
-    Jump isNotFenced = jit.branchTest8(CCallHelpers::Zero, Address(instanceGPR, AOT_INSTANCE_OFFSET(mutatorShouldBeFenced)));
-    jit.memoryFence();
-    Jump isBlack = jit.barrierBranchWithoutFence(owner, true);
-    jit.returnToCaller();
-
-    isNotFenced.link(&jit);
 #if CPU(X86_64) && !ASSERT_ENABLED
     constexpr GPRReg top = CCallHelpers::s_scratchRegister;
     RELEASE_ASSERT(noOverlap(owner, scratch, top));
@@ -66,9 +60,43 @@ static void returnUnlessOperationRemembers(StubAssembler& jit, GPRReg owner, GPR
     jit.addPtr(TrustedImm32(1), Address(scratch));
     jit.returnToCaller();
     leftToOperation.link(&jit);
+#elif CPU(ARM64) && !ASSERT_ENABLED
+    // An addition to a word in memory and the store of a constant take the macro assembler's scratch register, so neither comes while top is in it.
+    static_assert(MutatorMarkStackLayout::segmentCapacity < 1 << 12, "The capacity is the immediate of one comparison.");
+    const GPRReg top = jit.scratchRegister();
+    RELEASE_ASSERT(noOverlap(owner, scratch, top));
+    JumpList leftToOperation;
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(heap.mutatorMarkStack)), scratch);
+    // The tests of stubs run them on an instance that has no heap.
+    leftToOperation.append(jit.branchTestPtr(CCallHelpers::Zero, scratch));
+    jit.loadPtr(Address(scratch, MutatorMarkStackLayout::offsetOfTop()), top);
+    leftToOperation.append(jit.branch64(CCallHelpers::AboveOrEqual, top, TrustedImm32(MutatorMarkStackLayout::segmentCapacity)));
+    jit.add64(TrustedImm32(1), top);
+    jit.storePtr(top, Address(scratch, MutatorMarkStackLayout::offsetOfTop()));
+    jit.loadPtr(Address(scratch, MutatorMarkStackLayout::offsetOfHeadSegment()), scratch);
+    jit.getEffectiveAddress(BaseIndex(scratch, top, CCallHelpers::TimesEight), scratch);
+    jit.storePtr(owner, Address(scratch, MutatorMarkStackLayout::offsetOfFirstCellInSegment - static_cast<ptrdiff_t>(sizeof(JSCell*))));
+    jit.store8(TrustedImm32(static_cast<int32_t>(CellState::PossiblyGrey)), Address(owner, JSCell::cellStateOffset()));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(heap.barriersExecuted)), scratch);
+    jit.addPtr(TrustedImm32(1), Address(scratch));
+    jit.returnToCaller();
+    leftToOperation.link(&jit);
 #else
+    UNUSED_PARAM(jit);
+    UNUSED_PARAM(owner);
     UNUSED_PARAM(scratch);
 #endif
+}
+
+static void returnUnlessOperationRemembers(StubAssembler& jit, GPRReg owner, GPRReg scratch)
+{
+    Jump isNotFenced = jit.branchTest8(CCallHelpers::Zero, Address(instanceGPR, AOT_INSTANCE_OFFSET(mutatorShouldBeFenced)));
+    jit.memoryFence();
+    Jump isBlack = jit.barrierBranchWithoutFence(owner, true);
+    jit.returnToCaller();
+
+    isNotFenced.link(&jit);
+    returnIfMarkStackTakes(jit, owner, scratch);
     isBlack.link(&jit);
 }
 
@@ -119,7 +147,7 @@ void generateRememberElement(StubAssembler& jit)
 
     Jump isFenced = jit.branchTest8(CCallHelpers::NonZero, Address(instanceGPR, AOT_INSTANCE_OFFSET(mutatorShouldBeFenced)));
     jit.loadPtr(Address(array, JSObject::butterflyOffset()), scratch);
-    slowPath.append(jit.branch32(CCallHelpers::Below, Address(scratch, Butterfly::offsetOfVectorLength()), TrustedImm32(StoredCellLog::minVectorLengthOfOwner)));
+    Jump isTooShortForLog = jit.branch32(CCallHelpers::Below, Address(scratch, Butterfly::offsetOfVectorLength()), TrustedImm32(StoredCellLog::minVectorLengthOfOwner));
     done.append(jit.branchIfNotCell(value));
     done.append(jit.branchTest8(CCallHelpers::Zero, Address(value, JSCell::cellStateOffset())));
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(heap.storedCellLog)), log);
@@ -135,6 +163,10 @@ void generateRememberElement(StubAssembler& jit)
     jit.memoryFence();
     slowPath.append(jit.barrierBranchWithoutFence(array, true));
     jit.returnToCaller();
+
+    // StoredCellLog::tryRemember() declines short arrays, so remember the array like any other owner.
+    isTooShortForLog.link(&jit);
+    returnIfMarkStackTakes(jit, array, scratch);
 
     slowPath.link(&jit);
     jit.callOperationAndReturn(Entry::operationAOTRememberElement,

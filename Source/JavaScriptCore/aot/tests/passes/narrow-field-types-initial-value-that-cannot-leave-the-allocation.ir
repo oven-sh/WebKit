@@ -16,7 +16,7 @@
 # CHECK: NewObject {{*}}layout=L0 fields=[0]
 # CHECK: NewObject {{*}}layout=L0 fields=[0]
 # CHECK: NewObject {{*}}layout=L1 fields=[0, 1]
-# CHECK: undefined = Undefined
+# CHECK: = String
 # CHECK-NEXT: NewObject {{*}}layout=L3 fields=[0]
 # CHECK-NEXT: PropSet {{*}}key="label"
 # CHECK: NewObject {{*}}layout=L4 fields=[0]

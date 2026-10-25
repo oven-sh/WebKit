@@ -135,30 +135,45 @@ StubSignature signatureOfGetByIdAtSite(StubKey)
     return signature;
 }
 
-#if CPU(X86_64)
-// A cell asks the site first: the StructureID is compared where it lies, and an empty site, which has the StructureID of nothing, is told from another Structure's only behind the mismatch.
-static void generateGetByIdAtSiteAskingSiteFirst(StubAssembler& jit)
+// A cell asks the site first: an empty site, which has the StructureID of nothing, is told from another Structure's only behind the mismatch.
+void generateGetByIdAtSite(StubAssembler& jit)
 {
     static constexpr SlotHandlerTable table = SlotHandlerTable::ReadById;
     static constexpr TableStubs tableStubs { getById(), getByIdHashed() };
     const SiteRegisters registers = allocateSiteRegisters(jit, 1);
 
     Jump isNotCell = jit.branchIfNotCell(registers.receiver);
+#if CPU(X86_64)
+    // Each word is compared where it lies.
     jit.load64(Address(registers.site, Slot::offsetOfStructureID()), registers.header);
     Jump hasOtherStructure = jit.branch32(CCallHelpers::NotEqual, registers.header, Address(registers.receiver, JSCell::structureIDOffset()));
     jit.load64(Address(registers.site, Slot::offsetOfPayload()), registers.payload);
     Jump isNotValue = jit.branch8(CCallHelpers::NotEqual, Address(registers.site, Slot::offsetOfKind()), TrustedImm32(static_cast<int32_t>(Slot::Kind::Value)));
+#else
+    static_assert(!Slot::offsetOfStructureID() && Slot::offsetOfPayload() == sizeof(uint64_t));
+    jit.loadPair64(registers.site, registers.header, registers.payload);
+    jit.load32(Address(registers.receiver, JSCell::structureIDOffset()), registers.structureID);
+    Jump hasOtherStructure = jit.branch32(CCallHelpers::NotEqual, registers.header, registers.structureID);
+    loadKindOfSlotAtSite(jit, registers, registers.scratch);
+    Jump isNotValue = jit.branch32(CCallHelpers::NotEqual, registers.scratch, TrustedImm32(static_cast<int32_t>(Slot::Kind::Value)));
+#endif
     loadFromValueSlot(jit, registers, jit.result());
     jit.returnToCaller();
 
     // A name that is asked for and is not there comes next in number: `if (options.signal)`, `payload.aborted`. It needs no handler.
     isNotValue.link(&jit);
+#if CPU(X86_64)
     Jump isNotAbsent = jit.branch8(CCallHelpers::NotEqual, Address(registers.site, Slot::offsetOfKind()), TrustedImm32(static_cast<int32_t>(Slot::Kind::Absent)));
+#else
+    Jump isNotAbsent = jit.branch32(CCallHelpers::NotEqual, registers.scratch, TrustedImm32(static_cast<int32_t>(Slot::Kind::Absent)));
+#endif
     jit.move(TrustedImm64(JSValue::ValueUndefined), jit.result());
     jit.returnToCaller();
 
     isNotAbsent.link(&jit);
+#if CPU(X86_64)
     loadKindOfSlotAtSite(jit, registers, registers.scratch);
+#endif
     jumpToSlotHandlerOfKind(jit, table, registers.header, registers.scratch);
 
     hasOtherStructure.link(&jit);
@@ -170,9 +185,20 @@ static void generateGetByIdAtSiteAskingSiteFirst(StubAssembler& jit)
     // Objects of several Structures come to this place. What the front table holds for this one is answered from here: the table of fields, which answers at an empty site, has its turn behind it.
     JumpList isNotInFront;
     jit.load32(Address(registers.receiver, JSCell::structureIDOffset()), registers.structureID);
+#if CPU(X86_64)
     locateFrontCell(jit, SlotAccess::Read, registers.structureID, registers.identifierNumber, registers.scratch);
     returnByFrontCell(jit, registers.receiver, registers.identifierNumber, registers.scratch, registers.structureID, registers.header, isNotInFront);
     jumpToSlotHandler(jit, slotHandlerTable(SlotOperation::Read, SlotOrigin::ById, SlotForm::PackedSlot), registers.header, registers.scratch);
+#else
+    loadFrontCell(jit, SlotAccess::Read, { registers.structureID, registers.identifierNumber, registers.payload, registers.header, registers.scratch });
+    Jump isNotOwnInlineValue = branchUnlessOwnInlineValue(jit, registers.identifierNumber, registers.header, registers.scratch);
+    loadOwnInlineValue(jit, registers.receiver, registers.header, jit.result());
+    jit.returnToCaller();
+
+    isNotOwnInlineValue.link(&jit);
+    isNotInFront.append(branchIfCellNameDiffers(jit, registers.identifierNumber, registers.header, registers.scratch));
+    jit.jumpToStub(getByIdAfterFrontProbe());
+#endif
     isNotInFront.link(&jit);
     jit.jumpToStub(tableStubs.front);
 
@@ -203,33 +229,6 @@ static void generateGetByIdAtSiteAskingSiteFirst(StubAssembler& jit)
         linkToSlotExit(jit, hasNoStructure, table, SlotExit::Miss);
     });
 }
-#endif
-
-void generateGetByIdAtSite(StubAssembler& jit)
-{
-#if CPU(X86_64)
-    generateGetByIdAtSiteAskingSiteFirst(jit);
-    return;
-#endif
-    static constexpr SlotHandlerTable table = SlotHandlerTable::ReadById;
-    const SiteRegisters registers = allocateSiteRegisters(jit, 1);
-    Box<JumpList> hasNoStructure = Box<JumpList>::create();
-
-    loadStructureIDOfReceiver(jit, registers.receiver, registers.structureID, *hasNoStructure, [&] {
-        JumpList isNotInFieldTable;
-        isNotInFieldTable.append(branchIfSiteIsFilled(jit, registers.site));
-        returnFieldByTable(jit, { registers.receiver, registers.identifierNumber, registers.structureID, registers.header, std::nullopt, false, true }, isNotInFieldTable);
-        isNotInFieldTable.link(&jit);
-    });
-    emitSiteProbe(jit, registers, table);
-    emitSiteMiss(jit, registers, SlotAccess::Read, SiteReceiver::MayBePrimitive, { getById(), getByIdHashed() });
-
-    // loadStructureIDOfReceiver adds to the list in an out-of-line part, which runs after this function has returned.
-    jit.addOutOfLinePart([hasNoStructure](StubAssembler& jit) {
-        linkToSlotExit(jit, *hasNoStructure, table, SlotExit::Miss);
-    });
-}
-
 StubSignature signatureOfGetLengthAtSite(StubKey key)
 {
     return signatureOfGetByIdAtSite(key);

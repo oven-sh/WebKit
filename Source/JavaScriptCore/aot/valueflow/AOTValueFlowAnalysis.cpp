@@ -361,7 +361,7 @@ static void internKeysOfDeclaredStringLiterals(Program& program, const ParallelL
 
 void forEachEmbeddedFilePath(const Program& program, NOESCAPE const ScopedLambda<void(ModuleID, StringID)>& functor)
 {
-    constexpr size_t longestPath = 4096;
+    AOT_THRESHOLD(size_t, longestPath, 4096);
     for (uint32_t index = 0; index < program.modules.size(); ++index) {
         const Module& module = program.modules[index];
         if (module.kind != ModuleKind::Data || module.exports.size() != 1 || !module.body || !program.at(module.body).hasBody())

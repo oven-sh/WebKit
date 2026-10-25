@@ -509,7 +509,8 @@ private:
     bool tryAddQuickly(JSGlobalObject*, JSValue normalizedKey, JSValue);
     void crashUnlessSameEntriesAs(VM&, JSObject* expectedOwner) const;
     CompactTable* tryCopyWithWidths(JSGlobalObject*, Width key, Width value, std::optional<uint32_t> capacity = std::nullopt) const;
-    CompactTable* copyWithAbsentKey(VM&, JSString* key, JSValue) const;
+    std::optional<unsigned> hashIfAbsent(JSValue normalizedKey) const;
+    CompactTable* copyWithAbsentKey(VM&, JSValue key, unsigned hash, JSValue) const;
     void becomeObsolete(VM&, Status, JSCell* successor);
     void skipObsoleteSuccessors();
     void removeAllEntries();

@@ -412,6 +412,7 @@ void Pipeline::dumpResultOf(PassID id, PrintStream& out) const
         output.siteCaches->dump(out, m_program);
         return;
     case PassID::None:
+    case PassID::CopyClosureFactories:
     case PassID::AllocateTaggedLayouts:
     case PassID::CheckTypesAtEntry:
     case PassID::SplitBehindEntryChecks:

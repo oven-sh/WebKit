@@ -23,6 +23,7 @@
 #include "AOTStubsArithmetic.h"
 #include "AOTStubsBoxedCalls.h"
 #include "AOTStubsClosures.h"
+#include "AOTStubsOperations.h"
 #include "AOTStubsPropertyKeys.h"
 #include "AOTVector.h"
 #include "JSCInlines.h"
@@ -37,6 +38,7 @@
 #include <limits>
 #include <span>
 #include <wtf/BitSet.h>
+#include <wtf/DataLog.h>
 #include <wtf/text/StringView.h>
 #include <wtf/text/WTFString.h>
 
@@ -714,6 +716,21 @@ static void testCreatedFieldsRememberedAtTheirPlace()
     }
 }
 
+// Counts the instructions of the stub between compiled code and an operation that saves no registers. The budget may only go down.
+static void testInstructionsOfOperationCall()
+{
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS
+    constexpr uint32_t budget = 10;
+    StubRunner runner;
+    runner.setCountsInstructions(true);
+    StubRun run = runner.run(callOperation(OperationCall::Returns::Value, OperationCall::FirstArgument::Instance), { }, offsetInRuntimeTable(Entry::operationAOTValueAdd));
+    AOT_TEST_CHECK(run.calledOperation && run.instructionsInStubs);
+    if (*run.instructionsInStubs != budget)
+        dataLogLn("a call of an operation: ", *run.instructionsInStubs, " instructions in the stub, the budget is ", budget);
+    AOT_TEST_CHECK(*run.instructionsInStubs <= budget);
+#endif
+}
+
 std::span<const NativeTest> stubRuntimeTests()
 {
     static constexpr NativeTest tests[] = {
@@ -725,6 +742,7 @@ std::span<const NativeTest> stubRuntimeTests()
         { "stubs/binary-operation-string-order"_s, ImageTests::whenExecutable<testBinaryOperationStringOrder> },
         { "stubs/binary-operations-on-numbers"_s, ImageTests::whenExecutable<testBinaryOperationsOnNumbers> },
         { "stubs/unary-operations"_s, ImageTests::whenExecutable<testUnaryOperations> },
+        { "stubs/instructions-of-an-operation-call"_s, ImageTests::whenExecutable<testInstructionsOfOperationCall> },
         { "stubs/boxed-call-handlers"_s, testBoxedCallHandlers },
         { "stubs/boxed-call-table"_s, runNativeTestWithLoadedProgram<stubRuntimeTests, emptyProgramText, testBoxedCallTable> },
     };

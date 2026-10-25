@@ -3,6 +3,7 @@
 # table: its one store comes before the first use of the only closure that reads it. Nobody sees the undefined: the field holds the object alone, is stored at most once, and the allocation leaves it out, as for `let`.
 # late: early() runs in front of the store and sees the undefined.
 # cleared: a store comes before every read, and one of the stores brings undefined
+# OPTIONS: disable=pass:CopyClosureFactories
 # RUN: valueflow-apply
 # CHECK: layout L0 kind=Environment {{*}}{key="table" declared={type=L1} {{*}}stores=AtMostOnce {{*}}initialization=StoredBeforeEveryRead} {{*}}{key="late" declared={type=undefined|1} {{*}}initialization=SetAtCreation} {{*}}{key="cleared" declared={type=undefined|2} {{*}}initialization=StoredBeforeEveryRead}
 # CHECK-LABEL: name="make"

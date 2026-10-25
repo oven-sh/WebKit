@@ -475,8 +475,6 @@ RuntimeCallEmitter::CallRequest RuntimeCallEmitter::createEntryRequest(AOT::Entr
 
 void RuntimeCallEmitter::placeArguments(CallRequest& request, std::span<const LValue> arguments, OperationCall::FirstArgument first) const
 {
-    // Only CallOperation passes on the arguments for which x86-64 has no argument register.
-    unsigned maxNumberOfGPRs = request.key.family() == StubFamily::CallOperation ? numberOfOperationArgumentGPRs : GPRInfo::numberOfArgumentRegisters;
     unsigned nextGPR = first != OperationCall::FirstArgument::None;
     unsigned nextFPR = 0;
     for (LValue argument : arguments) {
@@ -485,7 +483,7 @@ void RuntimeCallEmitter::placeArguments(CallRequest& request, std::span<const LV
             request.operands.append({ argument, B3::ValueRep::reg(FPRInfo::toArgumentRegister(nextFPR++)) });
             continue;
         }
-        RELEASE_ASSERT(nextGPR < maxNumberOfGPRs);
+        RELEASE_ASSERT(nextGPR < numberOfOperationArgumentGPRs);
         GPRReg destination = operationArgumentGPR(nextGPR++);
         if (!request.preservingCall) {
             request.operands.append({ argument, B3::ValueRep::reg(destination) });

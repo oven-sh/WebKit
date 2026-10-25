@@ -105,12 +105,8 @@ Boxed AccessEmitter::getById(const OperationContext& context, Boxed receiver, Pr
     if (cache && m_program.nameClassOf(key) == NameClass::Length)
         return Boxed(callStub(context, getLengthAtSite(), { receiver.value(), siteCacheAddress(cache).value() }, options).first);
     // A site cache pays where one kind of receiver comes again and again.
-#if CPU(X86_64)
     // The tables answer for every Structure alike, in about what a hit at a site and the site's operand cost together.
     bool tablesAnswer = context.shape() != CodeShape::Fast || inputs().stubCatalog.bindsImmediate(AOT::getById(), *identifier);
-#else
-    bool tablesAnswer = context.shape() == CodeShape::Compact || inputs().stubCatalog.bindsImmediate(AOT::getById(), *identifier);
-#endif
     if (cache && (!tablesAnswer || !RowDisplacementTable::hasColumn(*identifier)))
         return Boxed(callStub(context, getByIdAtSite(), { receiver.value(), siteCacheAddress(cache).value() }, options).first);
     return readThroughTables();

@@ -164,20 +164,16 @@ void StubAssembler::emitOperationCallSavingNothing(const CalledOperation& operat
 #endif
     } else
         emitFunctionPrologue();
-#if CPU(X86_64)
-    push(eighthOperationArgumentGPR);
-    push(seventhOperationArgumentGPR);
-#endif
     prepareCallOperation();
     call(function, OperationPtrTag);
     if (callerIsStub) {
 #if CPU(ARM64)
         popToRestore(linkRegister);
 #else
-        addPtr(TrustedImm32(3 * sizeof(CPURegister)), stackPointerRegister);
+        addPtr(TrustedImm32(sizeof(CPURegister)), stackPointerRegister);
 #endif
     } else
-        emitFunctionEpilogue();
+        emitFunctionEpilogueWithEmptyFrame();
     Jump exception;
     if (operationCall.checksException) {
         switch (operationCall.returns) {

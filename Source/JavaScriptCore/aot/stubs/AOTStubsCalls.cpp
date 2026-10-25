@@ -189,6 +189,21 @@ static void emitEnterCodeOfWordAt(StubAssembler& jit, const CallRegisters& regis
     jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.code)), registers.word);
     jit.farJump(registers.word, JSEntryPtrTag);
 }
+#else
+// Leaves in registers.word what lies where a slim closure has its word.
+static Jump branchIfSlimClosureWordRefusesCount(StubAssembler& jit, const CallRegisters& registers, unsigned count)
+{
+    jit.load64(Address(calleeGPR, offsetOfSlimClosureWord), registers.word);
+    jit.move(TrustedImm64(ClosureWord::minWordOfCalleeTaking(count)), registers.scratch);
+    return jit.branch64(CCallHelpers::LessThan, registers.word, registers.scratch);
+}
+
+static void emitEnterCodeOfWord(StubAssembler& jit, const CallRegisters& registers, unsigned count)
+{
+    jit.move(TrustedImm32(count), countGPR);
+    toCodeAddress(jit, registers.word, registers.scratch, StackIsTested::No);
+    jit.farJump(registers.word, JSEntryPtrTag);
+}
 #endif
 
 // The callee is a cell. Where it jumps, registers.word holds the StructureID of the callee.
@@ -222,6 +237,12 @@ static Jump emitEnterClosureCell(StubAssembler& jit, const CallRegisters& regist
     emitEnterClosure(jit, registers, count, isNotCallable);
     return isNeither;
 #else
+    // As above. The whole word is loaded, and compared as the top byte is there.
+    if (jit.options().hasOneInstance) {
+        Jump notCommonCase = branchIfSlimClosureWordRefusesCount(jit, registers, count);
+        emitEnterCodeOfWord(jit, registers, count);
+        notCommonCase.link(&jit);
+    }
     jit.load32(Address(calleeGPR, JSCell::structureIDOffset()), registers.word);
     auto [isSlim, isNeither] = branchIfNotPlainClosureHeader(jit, registers.word, registers.scratch);
     jit.loadPtr(Address(calleeGPR, offsetOfClosureEntry), registers.word);
@@ -453,6 +474,15 @@ void generateCallValueLending(StubAssembler& jit)
         jit.and32(borrowsAll, registers.word);
         doesNotBorrow.append(jit.branch32(CCallHelpers::NotEqual, registers.word, borrowsAll));
         emitEnterCodeOfWordAt(jit, registers, offsetOfSlimClosureWord, count);
+        notCommonCase.link(&jit);
+    }
+#else
+    if (jit.options().hasOneInstance) {
+        Jump notCommonCase = branchIfSlimClosureWordRefusesCount(jit, registers, count);
+        jit.urshift64(registers.word, TrustedImm32(ClosureWord::functionShift), registers.scratch);
+        jit.and32(borrowsAll, registers.scratch);
+        doesNotBorrow.append(jit.branch32(CCallHelpers::NotEqual, registers.scratch, borrowsAll));
+        emitEnterCodeOfWord(jit, registers, count);
         notCommonCase.link(&jit);
     }
 #endif

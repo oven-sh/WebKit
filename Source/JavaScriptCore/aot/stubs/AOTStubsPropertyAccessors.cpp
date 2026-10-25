@@ -78,6 +78,36 @@ void callGetterFunctionAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg get
         jit.call(scratch, JSEntryPtrTag);
     });
     isNotCommonCase.link(&jit);
+#else
+    // The same. The whole word is loaded, and compared as the top byte is there.
+    static_assert(ClosureWord::numberOfOffsetBits == 32);
+    constexpr TrustedImm64 minWord(ClosureWord::minWordOfCalleeTaking(0));
+    JumpList isNotCommonCase;
+    JumpList isNotSlim;
+    if (!jit.options().hasOneInstance) {
+        jit.load32(Address(getter, JSCell::structureIDOffset()), scratch);
+        isNotSlim.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(slimClosureHeaders[0]))));
+    }
+    jit.load64(Address(getter, offsetOfSlimClosureWord), scratch);
+    (jit.options().hasOneInstance ? isNotSlim : isNotCommonCase).append(jit.branch64(CCallHelpers::LessThan, scratch, minWord));
+    Jump hasWord = jit.jump();
+
+    isNotSlim.link(&jit);
+    jit.load32(Address(getter, JSCell::structureIDOffset()), scratch);
+    isNotCommonCase.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.closureHeaders[0]))));
+    jit.load64(Address(getter, offsetOfClosureEntry), scratch);
+    isNotCommonCase.append(jit.branch64(CCallHelpers::LessThan, scratch, minWord));
+
+    hasWord.link(&jit);
+    jit.checkStackBeforeEntering();
+    jit.callAndReturnPreservingRegisters({ .callee = StubCallee::CompiledCode, .returnsValue = true, .checksException = true }, [&] {
+        RELEASE_ASSERT(noOverlap(scratch, thisGPR, calleeGPR, countGPR));
+        jit.shuffleRegisters<GPRReg, 2>({ receiver, getter }, { thisGPR, calleeGPR });
+        jit.move(TrustedImm32(0), countGPR);
+        toCodeAddress(jit, scratch, jit.scratchRegister(), StackIsTested::Yes);
+        jit.call(scratch, JSEntryPtrTag);
+    });
+    isNotCommonCase.link(&jit);
 #endif
     cannot.append(branchIfNotFunctionType(jit, getter, scratch));
     jit.checkStackBeforeEntering();
