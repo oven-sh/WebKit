@@ -130,9 +130,13 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
     };
     auto callFunction = [&] {
         std::optional<uint32_t> number = value->builtinCallForm() == BuiltinCallForm::Whole ? BuiltinBindings::directFunctionNumberOf(id, arguments.size()) : std::nullopt;
+        // A direct entry that answers fields makes no object. Where the program keeps the object and every view is whole, the function itself makes it.
         if (number && BuiltinBindings::directFunctionAt(*number).returnsFields) {
-            defineResult(boxCell(makeObjectOfDirectEntry(value, *number)));
-            return;
+            if (BuiltinBindings::directFunctionAt(*number).numberOfBounds()) {
+                defineResult(boxCell(makeObjectOfDirectEntry(value, *number)));
+                return;
+            }
+            number = std::nullopt;
         }
         if (number && !BuiltinBindings::directFunctionAt(*number).entersHostFunction() && !(generator().validates() && BuiltinBindings::directFunctionAt(*number).takesFrame())) {
             defineResult(callDirectFunction(value, *number));

@@ -362,12 +362,23 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowIfTypedArrayIsDetached, void, (Instanc
 JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectOfBuiltinLayout, JSCell*, (Instance* instance, uint32_t layout, EncodedJSValue first, EncodedJSValue second))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewObjectOfBuiltinLayout);
-    const BuiltinTable& table = BuiltinTable::singleton();
-    std::span<const BuiltinLayoutField> fields = table.at(BuiltinLayoutID(layout)).fields;
-    RELEASE_ASSERT(fields.size() <= 2);
-    JSObject* object = constructEmptyObject(globalObject, globalObject->objectPrototype(), fields.size());
-    for (size_t index = 0; index < fields.size(); ++index)
-        object->putDirect(vm, table.identifierOf(vm, fields[index].name), JSValue::decode(index ? second : first));
+    Structure*& kept = instance->realm.builtinLayoutStructure;
+    if (!kept || instance->realm.builtinLayoutOfStructure != layout) [[unlikely]] {
+        const BuiltinTable& table = BuiltinTable::singleton();
+        std::span<const BuiltinLayoutField> fields = table.at(BuiltinLayoutID(layout)).fields;
+        RELEASE_ASSERT(fields.size() == 1 || fields.size() == 2);
+        Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), fields.size());
+        for (const BuiltinLayoutField& field : fields) {
+            PropertyOffset offset;
+            structure = Structure::addPropertyTransition(vm, structure, table.identifierOf(vm, field.name), 0, offset);
+        }
+        kept = structure;
+        instance->realm.builtinLayoutOfStructure = layout;
+    }
+    JSObject* object = constructEmptyObject(vm, kept);
+    object->putDirectOffset(vm, 0, JSValue::decode(first));
+    if (kept->maxOffset())
+        object->putDirectOffset(vm, 1, JSValue::decode(second));
     OPERATION_RETURN(scope, object);
 }
 

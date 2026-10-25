@@ -861,7 +861,8 @@ static void testPushStubRegisters()
 // What a push of a number that compiled code holds as a double costs in the stubs, counted one by one. A number here may fall.
 static void testInstructionsOfPushedDoubles()
 {
-#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS
+    // A build with assertions puts more instructions into the stubs, so the budget is held against the other builds only.
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && !ASSERT_ENABLED
     StubRunner runner;
     runner.setCountsInstructions(true);
 

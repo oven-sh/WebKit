@@ -876,6 +876,23 @@ static void callBuiltinsThatReadSpecies(ValueFlowRuleContext& context, ClimbingS
     });
 }
 
+// A host function that has escaped may be handed anything else that has escaped, and treats it as its row says.
+static void passUnknownOperandsTo(ValueFlowRuleContext& context, BuiltinID function)
+{
+    const BuiltinTable& builtins = context.program().builtins();
+    ValueSetID unknown = unknownValue(context, ValueFlowUnknownSource::ParameterOfEscapedFunction);
+    auto pass = [&](const BuiltinParameter& parameter) {
+        if (ValueFlowBehaviorID behavior = context.universe().builtinTables().behaviorOf(parameter))
+            context.add(context.hub(behavior), unknown);
+    };
+    for (const BuiltinOverload& overload : builtins.overloadsOf(builtins.canonicalID(function))) {
+        if (overload.receiver)
+            pass(*overload.receiver);
+        for (const BuiltinParameter& parameter : overload.parameters)
+            pass(parameter);
+    }
+}
+
 void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
 {
     const Program& program = context.program();
@@ -917,8 +934,10 @@ void runUsedBuiltins(const ValueFlowStatement&, ValueFlowRuleContext& context)
     ClimbingSet used = context.unite(context.valueOf(context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins)), escapedOfLanguage);
     run = context.unite(run, callsWhateverHasEscaped ? escapedOfLanguage : context.valueWithin(escapedOfLanguage, context.nodes().ofHost(ValueFlowHostNode::BuiltinsThatStatementsName)));
     run = context.unite(run, ClimbingSet(context.maker().of(calledFunctionsOfHost.span())));
-    for (ValueFlowObjectID function : calledFunctionsOfHost)
+    for (ValueFlowObjectID function : calledFunctionsOfHost) {
         context.use(universe.builtinOf(function), BuiltinUse::Called);
+        passUnknownOperandsTo(context, universe.builtinOf(function));
+    }
 
     context.forEachMember(used, [&](ValueFlowObjectID object) {
         BuiltinID builtin = universe.builtinOf(object);

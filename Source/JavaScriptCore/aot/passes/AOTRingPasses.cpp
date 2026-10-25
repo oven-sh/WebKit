@@ -2014,18 +2014,23 @@ struct ControlFlowSimplifier {
 
         const Type& subjectType = program.typeOf(function, subject);
         Vector<uint32_t, 8> remainingIndexes;
+        bool someCaseGoesWhereTheRestGoes = false;
         for (uint32_t index = 0; index < cases.size(); ++index) {
             bool mayMatch = mayStrictlyEqual(subjectType, cases[index]);
             if constexpr (std::is_same_v<Case, int64_t>)
                 mayMatch = mayMatch && !isRuledOutByDefinition(program, function, subject, KnownValue::integer(cases[index]));
             if (mayMatch && terminator.targets[index] != terminator.otherwise())
                 remainingIndexes.append(index);
+            else
+                someCaseGoesWhereTheRestGoes |= mayMatch;
         }
         if (remainingIndexes.isEmpty()) {
             decideTerminator(builder, block, static_cast<uint32_t>(cases.size()));
             return true;
         }
-        if (remainingIndexes.size() == cases.size())
+        // Where the cases list all that the subject may be, whatever the others turn away is the last of them.
+        bool listsEverySubject = remainingIndexes.size() > 1 && !someCaseGoesWhereTheRestGoes && !numberOfEdgeResults(function, block, remainingIndexes.last()) && narrowTypeByOtherwise(subjectType, terminator).isNever();
+        if (remainingIndexes.size() == cases.size() && !listsEverySubject)
             return false;
 
         Terminator& edited = function.edit(block, terminatorAndEdges).terminator;
@@ -2035,7 +2040,10 @@ struct ControlFlowSimplifier {
             remainingCases.append(cases[index]);
             remainingTargets.append(WTF::move(edited.targets[index]));
         }
-        remainingTargets.append(WTF::move(edited.otherwise()));
+        if (listsEverySubject)
+            remainingCases.removeLast();
+        else
+            remainingTargets.append(WTF::move(edited.otherwise()));
         if constexpr (std::is_same_v<Case, int64_t>)
             edited.setCases(remainingCases.span());
         else

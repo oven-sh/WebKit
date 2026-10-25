@@ -474,17 +474,18 @@ void ObjectInterpreter::passRangesOfViews(ValueID call, const BytesOperands& byt
                 return elementSize == 1 ? position : builder.append(Opcode::Mul, { position, builder.appendInteger(elementSize) });
             };
             ValueID base = partAt(OperandIndex::TypedArrayRange::view);
-            ValueID startOfRange = inBytes(partAt(OperandIndex::TypedArrayRange::start));
-            ValueID endOfRange = inBytes(partAt(OperandIndex::TypedArrayRange::end));
+            ValueID startOfRange = partAt(OperandIndex::TypedArrayRange::start);
+            ValueID endOfRange = partAt(OperandIndex::TypedArrayRange::end);
             if (state.isVirtual()) {
                 view = base;
-                start = startOfRange;
-                end = endOfRange;
+                start = inBytes(startOfRange);
+                end = inBytes(endOfRange);
             } else {
+                // The parts have no value on the ways where the view exists, so nothing looks at them before the choice.
                 ValueID isRange = emitTagTest(object, tagBitsOfRanges);
                 view = cursor().emitSelection(isRange, base, values().find(object)->cell, function().at(view).type);
-                start = cursor().emitSelection(isRange, startOfRange, start, typeOfBound);
-                end = cursor().emitSelection(isRange, endOfRange, end, typeOfBound);
+                start = inBytes(cursor().emitSelection(isRange, startOfRange, start, typeOfBound));
+                end = inBytes(cursor().emitSelection(isRange, endOfRange, end, typeOfBound));
             }
             if (index == OperandIndex::CallBuiltin::receiver)
                 value.setReceiverOperand(view);

@@ -1,0 +1,52 @@
+# Where the cases of a switch list all that its subject may be, nothing is left for the otherwise arm: the last case takes its place, and what only that arm passed on is gone from the join
+# FORM: Prepared
+# RUN: pass SimplifyControlFlow RetypeValues
+# RUN(AGAIN): pass SimplifyControlFlow SimplifyControlFlow
+# AGAIN: outcome: Changed
+# AGAIN-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="everyIndex" parameters=[{type=int[0, 2]}, {type=string}, {type=string}, {type=string}] results=[{type=anything}] {
+    v4 = Undefined
+    Switch v0 cases=[0, 1, 2] -> case b1(v1), case b1(v2), case b1(v3), otherwise b1(v4)
+  b1(v5: undefined|string):
+    Return v5
+}
+# CHECK-LABEL: function f0 name="everyIndex"
+# CHECK: Switch v0 cases=[0, 1] -> case b1(v1), case b1(v2), otherwise b1(v3)
+# CHECK-NEXT: b1(v5: string):
+
+# An index past the cases takes the otherwise arm
+function f1 name="oneIndexMore" parameters=[{type=int[0, 3]}, {type=string}, {type=string}, {type=string}] results=[{type=anything}] {
+    v4 = Undefined
+    Switch v0 cases=[0, 1, 2] -> case b1(v1), case b1(v2), case b1(v3), otherwise b1(v4)
+  b1(v5: undefined|string):
+    Return v5
+}
+# CHECK-LABEL: function f1 name="oneIndexMore"
+# CHECK: Switch v0 cases=[0, 1, 2] -> case b1(v1), case b1(v2), case b1(v3), otherwise b1(v4)
+
+# So does negative zero, which is no integer, and so does whatever is no number
+function f2 name="otherValues" parameters=[{type=int[0, 1]|whole}, {type=int[0, 1]|string}, {type=string}, {type=string}] results=[{type=anything}] {
+    v4 = Undefined
+    Switch v0 cases=[1, 0] -> case b1(v2), case b1(v3), otherwise b1(v4)
+  b1(v5: undefined|string):
+    Switch v1 cases=[0, 1] -> case b2(v2), case b2(v3), otherwise b2(v5)
+  b2(v6: undefined|string):
+    Return v6
+}
+# CHECK-LABEL: function f2 name="otherValues"
+# CHECK: Switch v0 cases=[1, 0] -> case b1(v2), case b1(v3), otherwise b1(v4)
+# CHECK: Switch v1 cases=[0, 1] -> case b2(v2), case b2(v3), otherwise b2(v5)
+
+# A case that goes where the rest goes is folded into the otherwise arm, which then stays
+function f3 name="caseThatGoesWhereTheRestGoes" parameters=[{type=int[0, 2]}, {type=string}, {type=string}] results=[{type=anything}] {
+    v3 = Undefined
+    Switch v0 cases=[0, 1, 2] -> case b1(v1), case b1(v2), case b1(v3), otherwise b1(v3)
+  b1(v4: undefined|string):
+    Return v4
+}
+# CHECK-LABEL: function f3 name="caseThatGoesWhereTheRestGoes"
+# CHECK: Switch v0 cases=[0, 1] -> case b1(v1), case b1(v2), otherwise b1(v3)
+# CHECK-NEXT: b1(v4: undefined|string):

@@ -1,0 +1,55 @@
+# A function that runs once repeats only its loops. A check that one of its loops relies on leaves for a generic version, so that the loop runs with the proven type.
+# A check that nothing in a loop relies on becomes a guard at each use, and a function that runs once and has no loop gets no generic version at all
+# FORM: AsRead
+# RUN: pipeline AddGenericVersion
+# STATISTIC: GenericVersionsCreated = 1
+# STATISTIC: GenericVersionsNotCreated = 1
+# STATISTIC: ExitsToGenericVersion = 1
+
+module m0 path="main.js" displayPath="main.js" body=f2
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="withLoop" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Builtin builtin=JSONParse
+    v2 = Call v1, -, v0
+    v3 = Convert v2 declared={type=number} illTypedCause=FromLooseType
+    v4 = Call v1, -, v0
+    v5 = Convert v4 declared={type=number} illTypedCause=FromLooseType
+    v6 = Integer integer=1
+    v7 = Add v5, v6
+    PutModuleVariable v7 variable=g0
+    v9 = Integer integer=0
+    Jump -> next b1(v9)
+  b1(v10: number):
+    LoopHint
+    v12 = Add v10, v3
+    v13 = Less v12, v3
+    Branch v13 -> taken b1(v12), notTaken b2()
+  b2():
+    Return v12
+}
+# CHECK-LABEL: function f0 name="withLoop"
+# CHECK: = TypeTest v2 testedType=number
+# CHECK-NOT: = TypeTest v4
+# CHECK: frequency=Unlikely:
+
+function f1 name="withoutLoop" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Builtin builtin=JSONParse
+    v2 = Call v1, -, v0
+    v3 = Convert v2 declared={type=number} illTypedCause=FromLooseType
+    v4 = Integer integer=1
+    v5 = Add v3, v4
+    Return v5
+}
+# CHECK-LABEL: function f1 name="withoutLoop"
+# CHECK-NOT: TypeTest
+# CHECK-NOT: frequency=Unlikely
+
+function f2 name="main" kind=Module results=[{type=anything}] {
+    v0 = String string="1"
+    v1 = CallDirect v0 function=f0
+    v2 = CallDirect v0 function=f1
+    Return v2
+}
+# CHECK-LABEL: function f2 name="main"

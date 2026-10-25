@@ -719,7 +719,8 @@ static void testCreatedFieldsRememberedAtTheirPlace()
 // Counts the instructions of the stub between compiled code and an operation that saves no registers. The budget may only go down.
 static void testInstructionsOfOperationCall()
 {
-#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS
+    // A build with assertions puts more instructions into the stubs, so the budget is held against the other builds only.
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && !ASSERT_ENABLED
     constexpr uint32_t budget = 10;
     StubRunner runner;
     runner.setCountsInstructions(true);

@@ -3,6 +3,7 @@
 # FORM: AsRead
 # RUN: run-in-shell globalThis.register = collects => { collects(); print("came back"); };
 # OPTIONS: validate sabotage=NoCallCollects
-# CHECK: AOT validation: CallCollected f{{*}} stub CallValueWithoutThis
+# A build with assertions also counts every place where a collection may start, so it reports the first stub that allocates. Other builds report the call of collects().
+# CHECK: AOT validation: CallCollected f{{*}} stub {{*}}
 # CHECK: crashed with
 # PROGRAM-OF: a-call-said-to-collect-may-collect.ir

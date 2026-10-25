@@ -206,15 +206,13 @@ std::unique_ptr<ObjectBuilderPlan> ObjectBuilder::tryCreatePlan(State& state, co
 bool ObjectBuilder::tryStoreSlow(const ObjectBuilderPlan& plan, uint8_t* cell, size_t index, JSValue value)
 {
     std::span<const ObjectBuilderPlan::FastField> fields = plan.m_fastFields.span();
+    for (const ObjectBuilderPlan::FastField& unwritten : fields.subspan(index))
+        clearSlot(unwritten.representation, cell + unwritten.offset);
+
     State& state = plan.m_state;
     const FieldData& field = *plan.m_fields[index].field;
-    // Neither call can start a collection, so the collector does not see the cell before the caller has written the remaining slots.
-    if (!state.objects->layouts.slotAdmits(field, value) || !tryWriteSlot(*state.strings, field.slot.representation(), cell + fields[index].offset, value)) {
-        // The caller abandons the cell, so clear the slots that were not written yet.
-        for (const ObjectBuilderPlan::FastField& unwritten : fields.subspan(index))
-            clearSlot(unwritten.representation, cell + unwritten.offset);
+    if (!state.objects->layouts.slotAdmits(field, value) || !tryWriteSlot(*state.strings, field.slot.representation(), cell + fields[index].offset, value))
         return false;
-    }
     if (value.isObject() && fields[index].acceptedValues & ObjectBuilderPlan::StructureDecidesAcceptance)
         plan.m_acceptedStructureIDs[index] = value.asCell()->structureID().bits();
     return true;

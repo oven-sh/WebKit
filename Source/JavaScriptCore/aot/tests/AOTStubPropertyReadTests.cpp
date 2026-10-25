@@ -1117,7 +1117,8 @@ static void testInstructionsOfReadsOfFiledFields()
 // The slot has been seen to be empty by then, so the handler of the cell, which finds the slot and looks into it, has nothing to add. A number here may fall.
 static void testInstructionsOfReadsOfMissingFieldsBelowClasses()
 {
-#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64)
+    // A build with assertions puts more instructions into the stubs, so the budget is held against the other builds only.
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
     PropertyReads reads;
     FieldTable table(reads);
     table.setFlagsOfStructure({ });

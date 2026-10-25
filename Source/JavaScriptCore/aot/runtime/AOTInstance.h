@@ -222,6 +222,9 @@ struct RealmWords {
     MicrotaskQueue* microtaskQueue;
     // Of the ordinary object { read, written } that an encoder answers with. Null until the first is made.
     Structure* readAndWrittenCountsStructure;
+    // Of the ordinary object that was made last from the fields that a direct entry answered, and the number of its layout in the table of built-ins. Null until the first is made.
+    Structure* builtinLayoutStructure;
+    uint32_t builtinLayoutOfStructure;
 };
 
 struct HeapWords {
@@ -351,7 +354,7 @@ struct Instance : InstanceHeader {
     template<typename Visitor>
     void visitRoots(Visitor& visitor)
     {
-        JSCell* const cells[] = { realm.objectPrototype, realm.functionPrototypeCall, realm.boundFunctionExecutable, realm.emptyExtraPropertiesStructure, realm.emptyArgumentList, realm.readAndWrittenCountsStructure };
+        JSCell* const cells[] = { realm.objectPrototype, realm.functionPrototypeCall, realm.boundFunctionExecutable, realm.emptyExtraPropertiesStructure, realm.emptyArgumentList, realm.readAndWrittenCountsStructure, realm.builtinLayoutStructure };
         for (JSCell* cell : cells) {
             if (cell)
                 visitor.appendUnbarriered(cell);

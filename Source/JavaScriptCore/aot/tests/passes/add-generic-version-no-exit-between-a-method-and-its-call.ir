@@ -1,0 +1,41 @@
+# A method is read before its arguments are evaluated. A check of an argument gets no exit to the generic version: the exit would hand the method on, and a call is
+# resolved by its receiver only where the call alone uses the method. The check in front of the read keeps its exit
+# FORM: Prepared
+# RUN: pass AddGenericVersion
+# STATISTIC: GenericVersionsCreated = 1
+# STATISTIC: ExitsToGenericVersion = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js" body=f2
+entry module=m0
+function f0 name="often" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = Call v0
+    v4 = Check v3 castType=number
+    v5 = PropGet v2 key="scaled"
+    v6 = Call v1
+    v7 = Check v6 castType=number
+    v8 = Call v5, v2, v7 calleeKey="scaled"
+    v9 = Add v8, v4
+    Return v9
+}
+# CHECK-LABEL: function f0 name="often"
+# CHECK: = TypeTest v3 testedType=number
+# CHECK-NOT: = TypeTest v6
+
+function f1 name="drive" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = CallDirect v0, v0, v1 function=f0
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return v4
+}
+# CHECK-LABEL: function f1 name="drive"
+function f2 name="main" kind=Module results=[{type=anything}] {
+    v0 = Undefined
+    v1 = Undefined
+    v2 = Boolean boolean=true
+    v3 = CallDirect v0, v1, v2 function=f1
+    Return v3
+}
