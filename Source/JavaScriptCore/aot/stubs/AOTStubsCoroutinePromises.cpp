@@ -59,7 +59,8 @@ StubSignature signatureOfPromiseThen(StubKey key)
     return StubSignature::withoutResult({ gprOf(StubRegister::A1), gprOf(isOnFulfilled ? StubRegister::A2 : StubRegister::A3), gprOf(StubRegister::A4) });
 }
 
-// JSPromise::performPromiseThen for a pending promise without a reaction, while no async context is to be captured: setInlineHandlerReaction.
+// JSPromise::performPromiseThen while no async context is to be captured. A pending promise without a reaction takes the handler in its own two words: setInlineHandlerReaction.
+// A fulfilled promise queues the job that calls onFulfilled.
 void generatePromiseThen(StubAssembler& jit)
 {
     const bool isOnFulfilled = static_cast<PromiseHandler>(jit.key().form()) == PromiseHandler::OnFulfilled;
@@ -75,17 +76,35 @@ void generatePromiseThen(StubAssembler& jit)
     RELEASE_ASSERT(noOverlap(promise, handler, derived, otherHandler, word, instanceGPR));
 
     JumpList needsOperation;
-    emitBranchUnlessHolds(jit, awaitedTakesInlineReaction, { InvalidGPRReg, promise, word, other }, needsOperation);
+    JumpList takesNoInlineReaction;
     Jump capturesNothing = emitBranchIfTracksNoAsyncContext(jit, other);
     emitLoadCurrentAsyncContext(jit, other);
     needsOperation.append(jit.branch64(CCallHelpers::NotEqual, other, TrustedImm64(JSValue::ValueUndefined)));
     capturesNothing.link(&jit);
+    emitBranchUnlessHolds(jit, awaitedTakesInlineReaction, { InvalidGPRReg, promise, word, other }, takesNoInlineReaction);
     needsOperation.append(branchIfBarrierIsNeeded(jit, promise, other));
     jit.or64(derived, word);
     jit.or64(TrustedImm64(static_cast<int64_t>(reactionBits)), word);
     jit.store64(handler, Address(promise, JSPromise::offsetOfSlot()));
     jit.store64(word, Address(promise, JSPromise::offsetOfPacked()));
     jit.returnToCaller();
+
+    takesNoInlineReaction.link(&jit);
+    if (isOnFulfilled) {
+        // queueMicrotask(vm, PromiseReactionJob, Fulfilled, the derived promise, the handler, the value, undefined).
+        const JobRegisters job { jit.allocateScratch(StubRegister::T9), jit.allocateScratch(StubRegister::R0), jit.allocateScratch(StubRegister::T12), word };
+        RELEASE_ASSERT(noOverlap(promise, handler, derived, other, job.queue, job.slot, job.next, job.scratch, instanceGPR));
+        emitBranchUnlessHolds(jit, awaitedIsFulfilled, { InvalidGPRReg, promise, word, other }, needsOperation);
+        emitReserveJob(jit, job, needsOperation);
+        jit.store64(derived, argumentOfJob(job.slot, 0));
+        jit.store64(handler, argumentOfJob(job.slot, 1));
+        jit.load64(Address(promise, JSPromise::offsetOfSlot()), other);
+        jit.store64(other, argumentOfJob(job.slot, 2));
+        jit.move(TrustedImm64(JSValue::ValueUndefined), other);
+        jit.store64(other, argumentOfJob(job.slot, 3));
+        emitPublishJob(jit, InternalMicrotask::PromiseReactionJob, JSPromise::Status::Fulfilled, job);
+        jit.returnToCaller();
+    }
 
     needsOperation.link(&jit);
     jit.move(TrustedImm64(JSValue::ValueUndefined), otherHandler);

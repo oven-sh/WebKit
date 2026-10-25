@@ -13,6 +13,7 @@
 #include "AOTBuiltinTypes.h"
 #include "AOTBuiltinUses.h"
 #include "AOTCodeShapes.h"
+#include "AOTIRBuilder.h"
 #include "AOTResultRules.h"
 #include "AOTSelectionContext.h"
 #include "AOTTypePropagation.h"
@@ -60,18 +61,51 @@ static PassOutcome clearExpectedTypes(Function& function)
     return outcome;
 }
 
+// A helper of the compiler is no function of the program's, so there is nothing to call with whatever arrives. The pass that wrote the call had a proof for each operand.
+static void assumeTypesOfParameters(FunctionPassContext& pass, IRBuilder& builder, ProgramPoint point, ValueID id)
+{
+    Value call = pass.function.at(id);
+    builder.setOrigin(call.origin());
+    auto assumed = [&](ValueID operand, BuiltinOperand position) {
+        Type accepted = parameterTypeOfOverload(pass.program, call.overload(), position);
+        if (pass.types.at(pass.function.at(operand).type).isSubsetOf(accepted, pass.program))
+            return operand;
+        Value cast = IRBuilder::make(Opcode::AssumeType, { operand });
+        cast.setCastType(pass.types.intern(WTF::move(accepted)));
+        return builder.insertBefore(point, WTF::move(cast));
+    };
+    if (call.receiverOperand())
+        call.setReceiverOperand(assumed(call.receiverOperand(), BuiltinOperand::receiver()));
+    Vector<ValueID, 8> arguments(call.argumentsOperands());
+    for (unsigned index = 0; index < arguments.size(); ++index)
+        arguments[index] = assumed(arguments[index], BuiltinOperand::argument(index));
+    call.setArgumentsOperands(arguments.span());
+    pass.function.edit(id) = WTF::move(call);
+}
+
 // A call is matched with an overload by the types of its operands.
 static PassOutcome callWithAnyReceiverWhereTypesAreLost(FunctionPassContext& pass)
 {
     Function& function = pass.function;
     const BuiltinTable& table = pass.program.builtins();
     TypingContext typing { pass.program, function, pass.types };
+    IRBuilder builder(pass.analyses.context(), function, pass.types, &pass.analyses);
     bool didChange = false;
     bool didChangeType = false;
-    for (const Block& block : function.blocks) {
-        for (ValueID id : block.values) {
+    for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
+        BlockID block { blockIndex };
+        for (uint32_t index = 0; index < function.at(block).values.size(); ++index) {
+            ValueID id = function.at(block).values[index];
+            if (function.at(id).opcode != Opcode::CallBuiltin || overloadTakesOperands(typing, function.at(id)))
+                continue;
+            if (table.at(table.at(function.at(id).overload()).builtin).flags.contains(BuiltinFlag::IsCompilerHelper)) {
+                assumeTypesOfParameters(pass, builder, { block, index }, id);
+                didChange = true;
+                didChangeType = true;
+                continue;
+            }
             Value& call = function.edit(id);
-            if (call.opcode != Opcode::CallBuiltin || call.builtinCallForm() != BuiltinCallForm::Whole || overloadTakesOperands(typing, call))
+            if (call.builtinCallForm() != BuiltinCallForm::Whole)
                 continue;
             if (isCalledOnlyDirectly(table, table.at(call.overload()).builtin))
                 continue;
@@ -86,6 +120,7 @@ static PassOutcome callWithAnyReceiverWhereTypesAreLost(FunctionPassContext& pas
     if (!didChange)
         return PassOutcome::Unchanged;
 
+    builder.applyInsertions();
     pass.analyses.didChangeValues();
     if (didChangeType) {
         TypePropagation propagation(TypePropagationInputs { pass.program, pass.id, function, pass.analyses, pass.types, pass.build, &pass.typingMemo });

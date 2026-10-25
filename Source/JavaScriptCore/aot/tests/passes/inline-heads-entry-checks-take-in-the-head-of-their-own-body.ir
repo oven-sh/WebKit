@@ -1,0 +1,47 @@
+# The tests in front of a body are entered for the body. They take in its head wherever the call is not cold, in a loop or not: how hot the call is hangs on what else the program holds.
+# Another caller of the same body, as warm and in no loop, keeps its call
+# FORM: Selected
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineHeads
+# STATISTIC: SelectedHeadsFound = 1
+# STATISTIC: SelectedHeadsInlined = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="bump" role=EntryChecks parameters=[{type=number flags=[IsExpected]}, {type=function}] results=[{type=anything}] creator=EntryChecks{body=f1 fallback=f2} {
+  b0(v0: anything, v1: function):
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: number):
+    v4 = CallDirect v3, v1 function=f1
+    v5 = Call v1, -, v4
+    Return v5
+  b2() frequency=Unlikely:
+    v6 = CallDirect v0, v1 function=f2
+    Return v6
+}
+function f1 name="bump" parameters=[{type=number}, {type=function}] results=[{type=anything}] derivation={source=f0} {
+    v2 = TypeTest v0 testedType=i32
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2() frequency=Unlikely:
+    v3 = Call v1, -, v0
+    Return v3
+}
+function f2 name="bump" role=GenericVersion parameters=[{type=number flags=[IsExpected]}, {type=function}] results=[{type=anything}] derivation={source=f0} creator=Version{provenVersion=f1} {
+  b0(v0: anything, v1: function):
+    v2 = Call v1, -, v0
+    Return v2
+}
+function f3 name="other" parameters=[{type=number}, {type=function}] results=[{type=anything}] {
+    v2 = CallDirect v0, v1 function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+# CHECK-LABEL: function f0 name="bump"
+# CHECK: = CallDirect v3, v1 function=f1 [isAfterInlinedHead]
+# CHECK: = TypeTest v3 testedType=i32
+# CHECK-LABEL: function f3 name="other"
+# CHECK-NOT: TypeTest
+# CHECK: = CallDirect v0, v1 function=f1
+# CHECK-NOT: isAfterInlinedHead

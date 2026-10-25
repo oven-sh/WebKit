@@ -2046,6 +2046,7 @@ struct TestPlacer {
     Vector<ValueID> adoptedProofs { };
     Vector<EmittedTest> emittedTests { };
     Vector<ValueID> changedValues { };
+    Vector<std::pair<ValueID, TypeID>, 4> ownTypesOfRepresentatives { };
 
     PassOutcome run()
     {
@@ -2885,7 +2886,6 @@ struct TestPlacer {
         });
         wrapAdoptedDefinitions();
 
-        Vector<std::pair<ValueID, TypeID>, 4> typesOfRepresentatives;
         for (const Definitions& proofs : definitions) {
             if (proofs.size() < 2)
                 continue;
@@ -2895,14 +2895,14 @@ struct TestPlacer {
             Type typeOfAll = types.at(typeOfFirst);
             for (ValueID proof : proofs.subspan(1))
                 typeOfAll = typeOfAll.unionWith(types.at(function.at(proof).type), types);
-            typesOfRepresentatives.append({ proofs.first(), typeOfFirst });
+            ownTypesOfRepresentatives.append({ proofs.first(), typeOfFirst });
             function.edit(proofs.first(), ValueEdit::Type).type = types.intern(typeOfAll);
         }
         for (uint32_t useIndex = 0; useIndex < plan.uses.size(); ++useIndex) {
             if (isPlaced(plan.uses[useIndex].stretch))
                 rewriteUse(plan.uses[useIndex], useIndex, usePoints[useIndex]);
         }
-        for (auto [representative, type] : typesOfRepresentatives)
+        for (auto [representative, type] : ownTypesOfRepresentatives)
             function.edit(representative, ValueEdit::Type).type = type;
         builder.applyInsertions();
         // The uses and the guard operands of the tests were written past the builder.
@@ -2913,7 +2913,7 @@ struct TestPlacer {
     ValueID narrowToOperand(ValueID passed, ValueID operand, ProgramPoint point)
     {
         Type passedType = types.at(function.at(passed).type);
-        Type operandType = types.at(function.at(operand).type);
+        Type operandType = types.at(ownTypeOf(operand));
         if (passedType.isSubsetOf(operandType, context.program))
             return passed;
         // An intersection names an object as its second type does: as the test did.
@@ -2921,10 +2921,38 @@ struct TestPlacer {
         if (both.isNever() || both == passedType)
             return passed;
 
-        TypeID castType = types.intern(both);
+        return castBefore(point, passed, types.intern(both));
+    }
+
+    ValueID castBefore(ProgramPoint point, ValueID value, TypeID castType)
+    {
         if (context.build.validates())
-            builder.insertBefore(point, makeValidateType(passed, castType));
-        return builder.insertBefore(point, makeAssumeType(passed, castType));
+            builder.insertBefore(point, makeValidateType(value, castType));
+        return builder.insertBefore(point, makeAssumeType(value, castType));
+    }
+
+    // While the uses are rewritten, a representative has the type of the join that it stands for.
+    TypeID ownTypeOf(ValueID value) const
+    {
+        auto representative = std::ranges::find(ownTypesOfRepresentatives, value, &std::pair<ValueID, TypeID>::first);
+        return representative != ownTypesOfRepresentatives.end() ? representative->second : function.at(value).type;
+    }
+
+    // A use that names a representative by itself was planned with the value's own type.
+    void keepOwnTypesOfOperands(ValueID use, uint32_t useIndex, ProgramPoint point)
+    {
+        if (ownTypesOfRepresentatives.isEmpty())
+            return;
+        auto replacedOperands = std::ranges::equal_range(subjectOperands, useIndex, { }, &SubjectOperand::use);
+        Vector<uint32_t, 2> operandsToCast;
+        function.at(use).forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+            if (ownTypeOf(operand) != function.at(operand).type && !std::ranges::contains(replacedOperands, operandIndex, &SubjectOperand::operandIndex))
+                operandsToCast.append(operandIndex);
+        });
+        for (uint32_t operandIndex : operandsToCast) {
+            ValueID operand = function.at(use).operand(operandIndex);
+            function.edit(use, ValueEdit::Definition).setOperand(operandIndex, castBefore(point, operand, ownTypeOf(operand)));
+        }
     }
 
     void rewriteUse(const PlannedUse& planned, uint32_t useIndex, ProgramPoint point)
@@ -2938,6 +2966,7 @@ struct TestPlacer {
         };
 
         builder.setOrigin(function.at(site.use).origin());
+        keepOwnTypesOfOperands(site.use, useIndex, point);
         for (const SubjectOperand& narrowed : std::ranges::equal_range(subjectOperands, useIndex, { }, &SubjectOperand::use)) {
             ValueID operand = function.at(site.use).operand(narrowed.operandIndex);
             ValueID replacement = narrowToOperand(representativeOf(plan.requirements[narrowed.requirement].condition), operand, point);

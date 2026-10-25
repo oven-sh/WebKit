@@ -491,6 +491,8 @@ void ObjectInterpreter::passRangesOfViews(ValueID call, const BytesOperands& byt
                 start = inBytes(cursor().emitSelection(isRange, startOfRange, start, typeOfBound));
                 end = inBytes(cursor().emitSelection(isRange, endOfRange, end, typeOfBound));
             }
+            if (m_sinking.context().build.isSabotaged(Sabotage::PartsOfViewsEndOneLater))
+                end = builder.append(Opcode::Add, { end, builder.appendInteger(1) });
             if (index == OperandIndex::CallBuiltin::receiver)
                 value.setReceiverOperand(view);
             else

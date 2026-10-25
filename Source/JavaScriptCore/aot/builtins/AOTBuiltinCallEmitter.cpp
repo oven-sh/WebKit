@@ -24,6 +24,7 @@
 #include "AOTPlacement.h"
 #include "AOTRegExpFlags.h"
 #include "AOTRuntimeCallEmitter.h"
+#include "AOTRuntimeValidationEmitter.h"
 #include "AOTStaticsEmitter.h"
 #include "AOTStringEmitter.h"
 #include "AOTStubsBoxedCalls.h"
@@ -32,6 +33,7 @@
 #include "CodeSpecializationKind.h"
 #include "JSCJSValueInlines.h"
 #include "NativeExecutable.h"
+#include "PageCount.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -441,9 +443,13 @@ Boxed BuiltinCallEmitter::callBuiltinFunction(const OperationContext& context, B
 
 // The address of the first byte and the number of bytes, as they are now. A view that has lost its memory has none.
 // Bounds were taken when the program cut the part out. The view had a fixed length then, so since then it can only have lost its memory.
-void BuiltinCallEmitter::appendBytesOf(DirectOperands& operands, ValueID id, std::span<const ValueID> bounds)
+void BuiltinCallEmitter::appendBytesOf(const ValueContext& value, DirectOperands& operands, ValueID id, std::span<const ValueID> bounds)
 {
     CellPointer view = cellOperand(id);
+    bool checksPart = generator().validates() && !bounds.empty();
+    // The pass that moved the call to the overload with bounds had the proof that this is a view.
+    if (checksPart)
+        emitter<RuntimeValidationEmitter>().checkPrecondition(value, hasCellTypeIn(view, { Int8ArrayType, DataViewType }));
     TypedArrayType type = typedArrayTypeOf(m_builtins, typeOf(id));
     auto askView = [&] {
         return callLeaf<Integer>(RuntimeOperation::ViewByteLength, { view });
@@ -464,6 +470,15 @@ void BuiltinCallEmitter::appendBytesOf(DirectOperands& operands, ValueID id, std
         auto atMost = [&](Integer value, Integer limit) {
             return select(below(value, limit), value, limit);
         };
+        if (checksPart) {
+            // A part lies inside its view. A whole view is written as an end that no part reaches.
+            Integer givenStart = integerOperand(bounds[0]);
+            Integer givenEnd = integerOperand(bounds[1]);
+            Condition endsInsideView = logicalOr(belowOrEqual(givenEnd, size), aboveOrEqual(givenEnd, integer(static_cast<int64_t>(MAX_ARRAY_BUFFER_SIZE))));
+            RuntimeValidationEmitter& validation = emitter<RuntimeValidationEmitter>();
+            validation.checkPrecondition(value, belowOrEqual(givenStart, givenEnd));
+            validation.checkPrecondition(value, logicalOr(endsInsideView, isZero(size)));
+        }
         Integer end = atMost(integerOperand(bounds[1]), size);
         Integer start = atMost(integerOperand(bounds[0]), end);
         first = offsetBy(first, start, 0);
@@ -546,16 +561,16 @@ BuiltinCallEmitter::DirectOperands BuiltinCallEmitter::directOperandsOf(const Va
             operands.words.append(numberOperand(arguments[next++]).value());
             break;
         case BuiltinDirectValue::Bytes:
-            appendBytesOf(operands, arguments[next++]);
+            appendBytesOf(value, operands, arguments[next++]);
             break;
         case BuiltinDirectValue::BytesOfReceiver:
-            appendBytesOf(operands, value->receiverOperand());
+            appendBytesOf(value, operands, value->receiverOperand());
             break;
         case BuiltinDirectValue::BytesInRange:
-            appendBytesOf(operands, arguments[next++], takeBounds());
+            appendBytesOf(value, operands, arguments[next++], takeBounds());
             break;
         case BuiltinDirectValue::BytesOfReceiverInRange:
-            appendBytesOf(operands, value->receiverOperand(), takeBounds());
+            appendBytesOf(value, operands, value->receiverOperand(), takeBounds());
             break;
         case BuiltinDirectValue::Characters: {
             const CharacterView& view = characters[nextCharacters++];

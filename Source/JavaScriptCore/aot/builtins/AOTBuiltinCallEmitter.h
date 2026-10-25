@@ -51,7 +51,7 @@ private:
         bool takesFrame { false };
     };
     DirectOperands directOperandsOf(const ValueContext&, const BuiltinDirectFunctionBinding&);
-    void appendBytesOf(DirectOperands&, ValueID view, std::span<const ValueID> bounds = { });
+    void appendBytesOf(const ValueContext&, DirectOperands&, ValueID view, std::span<const ValueID> bounds = { });
     Boxed callDirectFunction(const ValueContext&, uint32_t number);
     StubCallResult callDirectFunctionReturningFields(const ValueContext&, uint32_t number);
     void generateFieldsOfDirectEntry(const ValueContext&);

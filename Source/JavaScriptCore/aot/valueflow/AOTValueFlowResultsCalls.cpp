@@ -327,17 +327,26 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
             receiver.update.accesses.append(FlowAccessStamp { site, receiver.types.intern(WTF::move(*receivers)) });
         FlowSiteLoss loss = lossOfStampedOperand(receiver, [&](FlowSiteLoss& loss) {
             loss.cause = UnprovenCause::NonLayoutObject;
+            bool mayBeBuiltinObject = false;
             sets.forEachMember(receiver.maker.intersect(receiver.held, universe.knownObjects()), [&](ValueFlowObjectID object) {
                 if (universe.layoutOf(object))
                     return;
-                if (hasFunction(loss.witness)) {
-                    loss.hasOtherRoots |= witnessOfAllocation(inputs, object) != loss.witness;
+                Witness witness = witnessOfAllocation(inputs, object);
+                if (!hasFunction(witness)) {
+                    mayBeBuiltinObject = true;
                     return;
                 }
-                loss.witness = witnessOfAllocation(inputs, object);
-                if (hasFunction(loss.witness) && isDataFromOutside(inputs, object))
+                if (hasFunction(loss.witness)) {
+                    loss.hasOtherRoots |= witness != loss.witness;
+                    return;
+                }
+                loss.witness = witness;
+                if (isDataFromOutside(inputs, object))
                     loss.cause = UnprovenCause::DataFromOutside;
             });
+            // No line of the program makes a built-in object, so the access is the place to show.
+            if (mayBeBuiltinObject)
+                loss = { .cause = UnprovenCause::NonLayoutObject, .hasOtherRoots = hasFunction(loss.witness) };
         });
         loss.seesConstructedObject = !ValueSets::isComplement(receiver.held) && sets.meet(receiver.positions.withoutWhatPlaceholdersCover(receiver.held), universe.constructedObjects());
         tables.sites.accessSiteLosses[application.accessSites.siteOfValue(receiver.id, site).index()] = loss;

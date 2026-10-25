@@ -78,10 +78,6 @@ function holdsOnlyViews(type: ModelType): boolean {
   return holdsOnlyInstances(type) && type.parts.every(part => part.part === "Instance" && isViewClass(part.class));
 }
 
-function holdsOnlyObjects({ isAnything, integers, primitives, stringLiterals }: ModelType): boolean {
-  return !isAnything && integers === null && primitives.length === 0 && stringLiterals.length === 0;
-}
-
 // What a function can do to an operand of which it has nothing but the memory, and only until it returns.
 const usesOfContentsDuringCall: readonly OperandUse[] = ["Inspects", "ReadsContents", "WritesContents"];
 
@@ -100,8 +96,6 @@ function findContentsProblems({ value }: DirectParameterSpec, parameter: ModelPa
       const others = uses.filter(use => !usesOfContentsDuringCall.includes(use));
       if (others.length > 0 || !runsNoCodeOf(parameter))
         return [`${name}: ${value} hands over memory for the time of the call, and the row says more: ${others.join(", ") || "it runs code of the operand"}`];
-      // The row that takes whole views was checked, and only calls that matched it move to its form in ranges.
-      if (value === "BytesInRange") return holdsOnlyObjects(accepted) ? [] : [`${name}: ${value} is for objects`];
       return holdsOnlyViews(accepted) ? [] : [`${name}: ${value} is for typed arrays and DataViews, and for nothing else`];
     }
     case "Characters":
@@ -259,12 +253,43 @@ function findProblems(overload: ModelOverload): string[] {
   ];
 }
 
+const columnsOfParameter = (parameter: ModelParameter): Record<string, string> => ({
+  "accepted type": parameter.accepted.key,
+  mode: parameter.mode,
+  conversion: parameter.conversion,
+  uses: parameter.uses.join(),
+  roles: parameter.roles.join(),
+  protocols: parameter.protocols.join(),
+  "named members": [parameter.namedMembers, parameter.calledMembers, parameter.convertedMembers]
+    .map(names => names.map(({ text }) => text).join())
+    .join(" | "),
+});
+
+// Both enter the same C function with the same memory. What the compiler believes about a call must not change when the call moves from one to the other.
+function findProblemsOfFormInRanges({ parameters, effects, result, code: { inRanges } }: ModelOverload): string[] {
+  if (inRanges == null) return [];
+  const form = inRanges.overload;
+  const differs = (what: string, ofRow: string, ofForm: string) =>
+    ofRow === ofForm ? [] : [`its form in ranges has other ${what}: ${ofForm || "none"}, and the row has ${ofRow || "none"}`];
+  return [
+    ...differs("reads", effects.reads.join(), form.effects.reads.join()),
+    ...differs("writes", effects.writes.join(), form.effects.writes.join()),
+    ...differs("capability", effects.capability, form.effects.capability),
+    ...differs("result", result.type.key, form.result.type.key),
+    ...parameters.flatMap((parameter, index) => {
+      const ofRow = columnsOfParameter(parameter);
+      const ofForm = columnsOfParameter(form.parameters[index]);
+      return Object.keys(ofRow).flatMap(column => differs(`${column} of ${parameter.name}`, ofRow[column], ofForm[column]));
+    }),
+  ];
+}
+
 // Compiled code enters the C function where it would have called the function object, which stays the way in for every other caller.
 export function checkDirectEntries({ overloads }: Pick<TableModel, "overloads">, problems: Problems): void {
   for (const overload of overloads) {
     // What is written for a native binding describes the function that it makes, whose entry has the same overloads.
     if (overload.builtin.kind === "NativeBinding") continue;
-    for (const problem of findProblems(overload))
+    for (const problem of [...findProblems(overload), ...findProblemsOfFormInRanges(overload)])
       problems.add(overload.source, `${describeOverload(overload)}: ${problem}`);
   }
 }

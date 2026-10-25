@@ -113,8 +113,9 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
             connect(m_context.lookup(listed, name), m_statement.result);
         readExportsOfListedHolders(object, receivers);
     }
-    if (key.keyClass == HeapKeyClass::Name && mayBeUnknownObject(receivers) && m_statement.function && m_statement.site && m_context.sets().contains(m_tables.under(key.name).holders, m_universe.objectOf(Builtins::Bun))) {
-        BuiltinID named = entryNamedByOperations(m_program, m_program.at(m_statement.function), m_statement.site);
+    if (key.keyClass == HeapKeyClass::Name && mayBeUnknownObject(receivers) && m_context.sets().contains(m_tables.under(key.name).holders, m_universe.objectOf(Builtins::Bun))) {
+        // A read that a built-in makes for its caller, such as Reflect.get(), has no site.
+        BuiltinID named = m_statement.function && m_statement.site ? entryNamedByOperations(m_program, m_program.at(m_statement.function), m_statement.site) : BuiltinID();
         bool isNamed = named && isMemberOfBun(named);
         ClimbingSet bun(only(m_universe.objectOf(Builtins::Bun)));
         if (isNamed && m_context.sets().contains(m_universe.builtinFunctions(), m_universe.objectOf(named))) {

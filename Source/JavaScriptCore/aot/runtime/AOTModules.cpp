@@ -1274,7 +1274,8 @@ unsigned ModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObject, Modul
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     EvaluationContext context { stack, index, referrerAsyncOrder < 0 ? std::nullopt : std::optional(referrerAsyncOrder), dynamicImportPromise };
     modules().innerModuleEvaluation(m_module, context);
-    RETURN_IF_EXCEPTION(scope, invalidIndex);
+    // The module may be evaluated and off the stack by now, so a request to terminate waits for the next check.
+    RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, invalidIndex);
     return context.index;
 }
 
@@ -1288,7 +1289,8 @@ unsigned ModuleRecord::innerModuleLinking(JSGlobalObject* globalObject, ModuleLi
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     LinkContext context { stack, index, WTF::move(scriptFetcher) };
     modules().finishLink(m_module, context);
-    RETURN_IF_EXCEPTION(scope, invalidIndex);
+    // The module may be linked by now, so a request to terminate waits for the next check.
+    RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, invalidIndex);
     return context.index;
 }
 

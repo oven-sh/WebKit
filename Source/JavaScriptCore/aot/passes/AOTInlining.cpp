@@ -2463,13 +2463,15 @@ static Vector<ValueSite> findCallsOfHeads(const AnalysisContext& context, const 
             if (!analyses) {
                 analyses.emplace(context, caller);
                 // Without looking at the blocks: none of them is in a cycle or runs more often than the function is entered, and code that runs that often is not hot.
-                if (!isHot(heat.classOf(heat.activationsOf(program, context.id) * roundingOfFrequencySums)) && runsNoBlockMoreOftenThanEntry(analyses->cfg()))
+                if (caller.role != FunctionRole::EntryChecks && !isHot(heat.classOf(heat.activationsOf(program, context.id) * roundingOfFrequencySums)) && runsNoBlockMoreOftenThanEntry(analyses->cfg()))
                     return sites;
             }
             // A copy buys time where time is spent.
             HeatClass heatOfCall = heatClassOf(heat, *analyses, BlockID(blockIndex));
             bool isInCycle = analyses->isInCycle(BlockID(blockIndex));
-            if (isHot(heatOfCall) || (headOf[value.function().index()]->holdsEveryLikelyPath && isInCycle && !isCold(heatOfCall)))
+            // The tests in front of a body are entered for the body.
+            bool entersOwnBody = caller.role == FunctionRole::EntryChecks && caller.creator.as<CreatorRecord::EntryChecks>().body == value.function();
+            if (isHot(heatOfCall) || (headOf[value.function().index()]->holdsEveryLikelyPath && (isInCycle || entersOwnBody) && !isCold(heatOfCall)))
                 sites.append({ BlockID(blockIndex), valueIndex, call });
         }
     }

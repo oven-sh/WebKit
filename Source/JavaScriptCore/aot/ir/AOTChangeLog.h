@@ -118,7 +118,13 @@ public:
 
     // A pass wrote this value's type, and its users have not been retyped yet.
     bool hasUnpropagatedType(ValueID value) const { return m_valuesWithUnpropagatedType.get(value.index()); }
-    void markTypeAsUnpropagated(ValueID value) { m_valuesWithUnpropagatedType.set(value.index()); }
+    void markTypeAsUnpropagated(ValueID value)
+    {
+        size_t size = m_valuesWithUnpropagatedType.size();
+        if (value.index() >= size) [[unlikely]]
+            m_valuesWithUnpropagatedType.ensureSize(std::max<size_t>(value.index() + 1, size * 2));
+        m_valuesWithUnpropagatedType.quickSet(value.index());
+    }
     void didPropagateTypes() { m_valuesWithUnpropagatedType.clearAll(); }
 
     ALWAYS_INLINE void didEdit(ValueID value, OptionSet<ValueEdit> edits, TypeID typeBefore, TypeID expectedBefore)

@@ -120,7 +120,8 @@ bool ResultRuleCheck::isInside(const Type& narrow, const Type& wide) const
 
 auto ResultRuleCheck::resultsWithOperandTypedAs(ValueID id, ValueID operand, const Type& type) -> Results
 {
-    Value& definition = m_function.edit(operand);
+    // The type is restored below, so this is not logged. An entry would make a checking build retype more values than a normal one.
+    Value& definition = m_function.editAndReportLater(operand);
     TypeID storedType = definition.type;
     auto restore = makeScopeExit([&] {
         definition.type = storedType;
