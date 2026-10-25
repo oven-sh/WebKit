@@ -37,7 +37,6 @@ namespace JSC {
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(TemporalPlainDateConstructor);
 
 static JSC_DECLARE_HOST_FUNCTION(temporalPlainDateConstructorFuncFrom);
-static JSC_DECLARE_HOST_FUNCTION(temporalPlainDateConstructorFuncCompare);
 
 }
 
@@ -183,15 +182,15 @@ JSC_DEFINE_HOST_FUNCTION(temporalPlainDateConstructorFuncCompare, (JSGlobalObjec
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Step 1: one = ToTemporalDate(one).
-    auto* one = TemporalPlainDate::from(globalObject, callFrame->argument(0), jsUndefined());
+    auto one = TemporalPlainDate::toISODateWithCalendar(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
 
     // Step 2: two = ToTemporalDate(two).
-    auto* two = TemporalPlainDate::from(globalObject, callFrame->argument(1), jsUndefined());
+    auto two = TemporalPlainDate::toISODateWithCalendar(globalObject, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, { });
 
     // Step 3: CompareISODate(one.[[ISODate]], two.[[ISODate]]).
-    return JSValue::encode(jsNumber(TemporalCore::isoDateCompare(one->plainDate(), two->plainDate())));
+    return JSValue::encode(jsNumber(TemporalCore::isoDateCompare(one.isoDate, two.isoDate)));
 }
 
 } // namespace JSC

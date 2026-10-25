@@ -57,6 +57,7 @@
 #include "TemporalZonedDateTime.h"
 #include "TemporalZonedDateTimeConstructor.h"
 #include "TemporalZonedDateTimePrototype.h"
+#include "WeakInlines.h"
 #include <wtf/Int128.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/unicode/CharacterNames.h>
@@ -200,44 +201,193 @@ PropertyName temporalUnitSingularPropertyName(VM& vm, TemporalUnit unit)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// Reads key from the structures directly while the prototype chain is ordinary; accessors go through JSObject::get.
+JSValue getFromOrdinaryObjects(JSGlobalObject* globalObject, JSObject* object, PropertyName key)
+{
+    ASSERT(!parseIndex(key));
+    VM& vm = globalObject->vm();
+    for (JSObject* current = object;;) {
+        Structure* structure = current->structure();
+        TypeInfo typeInfo = structure->typeInfo();
+        if (typeInfo.overridesGetOwnPropertySlot() || typeInfo.overridesGetPrototype() || typeInfo.hasStaticPropertyTable()) [[unlikely]]
+            return object->get(globalObject, key);
+        unsigned attributes;
+        PropertyOffset offset = structure->get(vm, key, attributes);
+        if (isValidOffset(offset)) {
+            if (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue) [[unlikely]]
+                return object->get(globalObject, key);
+            return current->getDirect(offset);
+        }
+        JSValue prototype = current->getPrototypeDirect();
+        if (!prototype.isObject())
+            return jsUndefined();
+        current = asObject(prototype);
+    }
+}
+
+WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(TemporalPropertyShapeCache);
+
+TemporalPropertyShapeCache::TemporalPropertyShapeCache(VM& vm)
+{
+    for (size_t i = 0; i < numberOfTemporalUnits; ++i)
+        durationLike.keys[i] = temporalUnitPluralPropertyName(vm, temporalUnitsInTableOrder[i]);
+    auto& names = vm.propertyNames;
+    differenceOptions.keys = { names->largestUnit, names->roundingIncrement, names->roundingMode, names->smallestUnit };
+    durationRoundOptions.keys = { names->largestUnit, names->relativeTo, names->roundingIncrement, names->roundingMode, names->smallestUnit };
+}
+
+// The key offsets are cached per (structure, Object.prototype structure); any shape change gives a new structure.
+template<size_t N>
+TemporalPropertyReader<N>::TemporalPropertyReader(JSGlobalObject* globalObject, JSObject* object, TemporalPropertyShape<N> TemporalPropertyShapeCache::* shapeInCache)
+    : m_globalObject(globalObject)
+    , m_object(object)
+    , m_shape(shapeInCache)
+{
+    if (!object) {
+        m_values.fill(jsUndefined());
+        m_hasValues = true;
+        return;
+    }
+
+    auto& shape = globalObject->temporalPropertyShapeCache().*shapeInCache;
+    JSObject* objectPrototype = globalObject->objectPrototype();
+    Structure* structure = object->structure();
+    Structure* objectPrototypeStructure = objectPrototype->structure();
+    if (shape.structure.get() != structure || shape.objectPrototypeStructure.get() != objectPrototypeStructure) {
+        VM& vm = globalObject->vm();
+        if (object->type() != FinalObjectType
+            || structure->globalObject() != globalObject
+            || structure->isDictionary()
+            || structure->hasPolyProto()
+            || structure->typeInfo().overridesGetOwnPropertySlot()
+            || structure->typeInfo().hasStaticPropertyTable()
+            || structure->storedPrototype() != objectPrototype
+            || objectPrototypeStructure->isDictionary()
+            || objectPrototypeStructure->typeInfo().overridesGetOwnPropertySlot()
+            || objectPrototypeStructure->typeInfo().overridesGetPrototype()
+            || objectPrototypeStructure->typeInfo().hasStaticPropertyTable()
+            || !objectPrototype->getPrototypeDirect().isNull())
+            return;
+
+        std::array<PropertyOffset, N> offsets;
+        for (size_t i = 0; i < N; ++i) {
+            unsigned attributes = 0;
+            offsets[i] = structure->get(vm, shape.keys[i], attributes);
+            if (isValidOffset(offsets[i])) {
+                if (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)
+                    return;
+            } else if (isValidOffset(objectPrototypeStructure->get(vm, shape.keys[i])))
+                return;
+        }
+        // Setting a Weak allocates a new handle, so only replace the one that changed.
+        if (shape.structure.get() != structure)
+            shape.structure.set(vm, structure);
+        if (shape.objectPrototypeStructure.get() != objectPrototypeStructure)
+            shape.objectPrototypeStructure.set(vm, objectPrototypeStructure);
+        shape.offsets = offsets;
+    }
+
+    for (size_t i = 0; i < N; ++i) {
+        m_values[i] = isValidOffset(shape.offsets[i]) ? object->getDirect(shape.offsets[i]) : jsUndefined();
+        if (m_values[i].isObject())
+            return;
+    }
+    m_hasValues = true;
+}
+
+template<size_t N>
+JSValue TemporalPropertyReader<N>::getSlow(size_t index) const
+{
+    // User code may have run since the constructor, and JSGlobalObject::clearRareData frees the cache, so look it up again.
+    auto& shape = m_globalObject->temporalPropertyShapeCache().*m_shape;
+    return getFromOrdinaryObjects(m_globalObject, m_object, shape.keys[index]);
+}
+
+template class TemporalPropertyReader<numberOfTemporalUnits>;
+template class TemporalPropertyReader<4>;
+template class TemporalPropertyReader<5>;
+
+// GetOption ( options, property, ~string~, values, fallback ); by default any string and a null String for undefined.
+String temporalStringOption(JSGlobalObject* globalObject, JSObject* options, PropertyName property, std::initializer_list<ASCIILiteral> values, ASCIILiteral notFound, ASCIILiteral fallback)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!options)
+        return fallback;
+
+    JSValue value = getFromOrdinaryObjects(globalObject, options, property);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, intlStringOptionFromValue(globalObject, value, values, notFound, fallback));
+}
+
+template<typename ResultType>
+static ResultType temporalOption(JSGlobalObject* globalObject, JSObject* options, PropertyName property, std::initializer_list<std::pair<ASCIILiteral, ResultType>> values, ASCIILiteral notFoundMessage, ResultType fallback)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!options)
+        return fallback;
+
+    JSValue value = getFromOrdinaryObjects(globalObject, options, property);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, intlOptionFromValue<ResultType>(globalObject, value, values, notFoundMessage, fallback));
+}
+
 std::optional<TemporalUnit> temporalUnitType(StringView unit)
 {
     StringView singular = singularUnit(unit);
 
-    if (singular == "year"_s)
-        return TemporalUnit::Year;
-    if (singular == "month"_s)
-        return TemporalUnit::Month;
-    if (singular == "week"_s)
-        return TemporalUnit::Week;
-    if (singular == "day"_s)
-        return TemporalUnit::Day;
-    if (singular == "hour"_s)
-        return TemporalUnit::Hour;
-    if (singular == "minute"_s)
-        return TemporalUnit::Minute;
-    if (singular == "second"_s)
-        return TemporalUnit::Second;
-    if (singular == "millisecond"_s)
-        return TemporalUnit::Millisecond;
-    if (singular == "microsecond"_s)
-        return TemporalUnit::Microsecond;
-    if (singular == "nanosecond"_s)
-        return TemporalUnit::Nanosecond;
+    switch (singular.length()) {
+    case 3:
+        if (singular == "day"_s)
+            return TemporalUnit::Day;
+        break;
+    case 4:
+        if (singular == "year"_s)
+            return TemporalUnit::Year;
+        if (singular == "week"_s)
+            return TemporalUnit::Week;
+        if (singular == "hour"_s)
+            return TemporalUnit::Hour;
+        break;
+    case 5:
+        if (singular == "month"_s)
+            return TemporalUnit::Month;
+        break;
+    case 6:
+        if (singular == "minute"_s)
+            return TemporalUnit::Minute;
+        if (singular == "second"_s)
+            return TemporalUnit::Second;
+        break;
+    case 10:
+        if (singular == "nanosecond"_s)
+            return TemporalUnit::Nanosecond;
+        break;
+    case 11:
+        if (singular == "millisecond"_s)
+            return TemporalUnit::Millisecond;
+        if (singular == "microsecond"_s)
+            return TemporalUnit::Microsecond;
+        break;
+    default:
+        break;
+    }
 
     return std::nullopt;
 }
 
 // https://tc39.es/proposal-temporal/#sec-temporal-gettemporalunitvaluedoption
-Variant<TemporalAuto, std::optional<TemporalUnit>> temporalUnitValued(JSGlobalObject* globalObject, JSObject* options, PropertyName key, TemporalUnitDefault defaultValue)
+Variant<TemporalAuto, std::optional<TemporalUnit>> temporalUnitValuedFromValue(JSGlobalObject* globalObject, JSValue value, PropertyName key, TemporalUnitDefault defaultValue)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Steps 1-3: Build allowedStrings (all singular + plural unit names + "auto") and call GetOption.
-    // NOTE: intlStringOption with empty allowed list accepts any string; validation against
-    // the unit table is deferred to temporalUnitType() below, preserving the same observable behavior.
-    String unit = intlStringOption(globalObject, options, key, { }, { }, { });
+    // NOTE: the check against allowedStrings is done by temporalUnitType() below, with the same observable behavior.
+    String unit = intlStringOptionFromValue(globalObject, value, { }, { }, { });
     RETURN_IF_EXCEPTION(scope, std::nullopt);
 
     // Step 4: If value is undefined:
@@ -261,6 +411,16 @@ Variant<TemporalAuto, std::optional<TemporalUnit>> temporalUnitValued(JSGlobalOb
         return std::nullopt;
     }
     return unitType;
+}
+
+Variant<TemporalAuto, std::optional<TemporalUnit>> temporalUnitValued(JSGlobalObject* globalObject, JSObject* options, PropertyName key, TemporalUnitDefault defaultValue)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue value = options ? getFromOrdinaryObjects(globalObject, options, key) : jsUndefined();
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    RELEASE_AND_RETURN(scope, temporalUnitValuedFromValue(globalObject, value, key, defaultValue));
 }
 
 // https://tc39.es/proposal-temporal/#sec-temporal-validatetemporalunitvaluedoption
@@ -319,21 +479,37 @@ std::tuple<TemporalUnit, TemporalUnit, RoundingMode, double> extractDifferenceOp
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // With undefined options every option is unset: steps 2-16 yield the defaults below.
+    if (optionsValue.isUndefined()) {
+        ASSERT(std::ranges::find(disallowedUnits[static_cast<uint8_t>(unitGroup)], fallbackSmallestUnit) == disallowedUnits[static_cast<uint8_t>(unitGroup)].end());
+        return { fallbackSmallestUnit, std::min(smallestLargestDefaultUnit, fallbackSmallestUnit), RoundingMode::Trunc, 1 };
+    }
+
     JSObject* options = intlGetOptionsObject(globalObject, optionsValue);
     RETURN_IF_EXCEPTION(scope, { });
 
     // Step 1: NOTE: Read options in alphabetical order: largestUnit, roundingIncrement, roundingMode, smallestUnit.
+    TemporalPropertyReader<4> reader(globalObject, options, &TemporalPropertyShapeCache::differenceOptions);
+
     // Step 2: Let largestUnit be ? GetTemporalUnitValuedOption(options, "largestUnit", ~unset~).
-    auto largestUnitMaybeAuto = temporalUnitValued(globalObject, options, vm.propertyNames->largestUnit);
+    JSValue largestUnitValue = reader.get(0);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto largestUnitMaybeAuto = temporalUnitValuedFromValue(globalObject, largestUnitValue, vm.propertyNames->largestUnit);
     RETURN_IF_EXCEPTION(scope, { });
     // Step 3: Let roundingIncrement be ? GetRoundingIncrementOption(options).
-    auto roundingIncrement = temporalRoundingIncrement(globalObject, options);
+    JSValue roundingIncrementValue = reader.get(1);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto roundingIncrement = temporalRoundingIncrementFromValue(globalObject, roundingIncrementValue);
     RETURN_IF_EXCEPTION(scope, { });
     // Step 4: Let roundingMode be ? GetRoundingModeOption(options, ~trunc~).
-    auto roundingMode = temporalRoundingMode(globalObject, options, RoundingMode::Trunc);
+    JSValue roundingModeValue = reader.get(2);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto roundingMode = temporalRoundingModeFromValue(globalObject, roundingModeValue, RoundingMode::Trunc);
     RETURN_IF_EXCEPTION(scope, { });
     // Step 5: Let smallestUnit be ? GetTemporalUnitValuedOption(options, "smallestUnit", ~unset~).
-    auto smallestUnitMaybeAuto = temporalUnitValued(globalObject, options, vm.propertyNames->smallestUnit);
+    JSValue smallestUnitValue = reader.get(3);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto smallestUnitMaybeAuto = temporalUnitValuedFromValue(globalObject, smallestUnitValue, vm.propertyNames->smallestUnit);
     RETURN_IF_EXCEPTION(scope, { });
 
     // Step 6: Perform ? ValidateTemporalUnitValue(largestUnit, unitGroup, « ~auto~ »).
@@ -405,7 +581,7 @@ std::optional<unsigned> temporalFractionalSecondDigits(JSGlobalObject* globalObj
     if (!options)
         return std::nullopt;
 
-    JSValue value = options->get(globalObject, vm.propertyNames->fractionalSecondDigits);
+    JSValue value = getFromOrdinaryObjects(globalObject, options, vm.propertyNames->fractionalSecondDigits);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
 
     if (value.isUndefined())
@@ -471,12 +647,26 @@ PrecisionData toSecondsStringPrecisionRecord(std::optional<TemporalUnit> smalles
 }
 
 // https://tc39.es/proposal-temporal/#sec-temporal-getroundingmodeoption
-RoundingMode temporalRoundingMode(JSGlobalObject* globalObject, JSObject* options, RoundingMode fallback)
+// Takes the value of Get(options, "roundingMode").
+RoundingMode temporalRoundingModeFromValue(JSGlobalObject* globalObject, JSValue value, RoundingMode fallback)
 {
-    return intlOption<RoundingMode>(globalObject, options, globalObject->vm().propertyNames->roundingMode, {
+    return intlOptionFromValue<RoundingMode>(globalObject, value, {
         { "ceil"_s, RoundingMode::Ceil }, { "floor"_s, RoundingMode::Floor }, { "expand"_s, RoundingMode::Expand }, { "trunc"_s, RoundingMode::Trunc },
         { "halfCeil"_s, RoundingMode::HalfCeil }, { "halfFloor"_s, RoundingMode::HalfFloor }, { "halfExpand"_s, RoundingMode::HalfExpand }, { "halfTrunc"_s, RoundingMode::HalfTrunc }, { "halfEven"_s, RoundingMode::HalfEven }
         }, "roundingMode must be \"ceil\", \"floor\", \"expand\", \"trunc\", \"halfCeil\", \"halfFloor\", \"halfExpand\", \"halfTrunc\", or \"halfEven\""_s, fallback);
+}
+
+RoundingMode temporalRoundingMode(JSGlobalObject* globalObject, JSObject* options, RoundingMode fallback)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!options)
+        return fallback;
+
+    JSValue value = getFromOrdinaryObjects(globalObject, options, vm.propertyNames->roundingMode);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, temporalRoundingModeFromValue(globalObject, value, fallback));
 }
 
 void formatSecondsStringFraction(StringBuilder& builder, unsigned fraction, std::tuple<Precision, unsigned> precision)
@@ -506,18 +696,12 @@ void formatSecondsStringPart(StringBuilder& builder, unsigned second, unsigned f
     formatSecondsStringFraction(builder, fraction, precision.precision);
 }
 
-static double doubleNumberOption(JSGlobalObject* globalObject, JSObject* options, PropertyName property, double defaultValue)
+static double doubleNumberOption(JSGlobalObject* globalObject, JSValue value, PropertyName property, double defaultValue)
 {
     // https://tc39.es/proposal-temporal/#sec-getoption
     // 'number' case.
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (!options)
-        return defaultValue;
-
-    JSValue value = options->get(globalObject, property);
-    RETURN_IF_EXCEPTION(scope, 0);
 
     if (value.isUndefined())
         return defaultValue;
@@ -535,13 +719,14 @@ static double doubleNumberOption(JSGlobalObject* globalObject, JSObject* options
 }
 
 // https://tc39.es/proposal-temporal/#sec-temporal-getroundingincrementoption
-double temporalRoundingIncrement(JSGlobalObject* globalObject, JSObject* options)
+// Takes the value of Get(options, "roundingIncrement").
+double temporalRoundingIncrementFromValue(JSGlobalObject* globalObject, JSValue value)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Step 1-2: Get "roundingIncrement"; if undefined return 1.
-    double increment = doubleNumberOption(globalObject, options, vm.propertyNames->roundingIncrement, 1);
+    double increment = doubleNumberOption(globalObject, value, vm.propertyNames->roundingIncrement, 1);
     RETURN_IF_EXCEPTION(scope, 0);
 
     // Step 3: ToIntegerWithTruncation — if not finite, throw a RangeError.
@@ -563,10 +748,20 @@ double temporalRoundingIncrement(JSGlobalObject* globalObject, JSObject* options
     return integerIncrement;
 }
 
+double temporalRoundingIncrement(JSGlobalObject* globalObject, JSObject* options)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue value = options ? getFromOrdinaryObjects(globalObject, options, vm.propertyNames->roundingIncrement) : jsUndefined();
+    RETURN_IF_EXCEPTION(scope, 0);
+    RELEASE_AND_RETURN(scope, temporalRoundingIncrementFromValue(globalObject, value));
+}
+
 // https://tc39.es/proposal-temporal/#sec-temporal-totemporaloverflow
 TemporalOverflow toTemporalOverflow(JSGlobalObject* globalObject, JSObject* options)
 {
-    return intlOption<TemporalOverflow>(globalObject, options, globalObject->vm().propertyNames->overflow,
+    return temporalOption<TemporalOverflow>(globalObject, options, globalObject->vm().propertyNames->overflow,
         { { "constrain"_s, TemporalOverflow::Constrain }, { "reject"_s, TemporalOverflow::Reject } },
         "overflow must be either \"constrain\" or \"reject\""_s, TemporalOverflow::Constrain);
 }
@@ -584,8 +779,8 @@ TemporalOverflow toTemporalOverflow(JSGlobalObject* globalObject, JSValue val)
 // https://tc39.es/proposal-temporal/#sec-temporal-gettemporalshowcalendarnameoption
 String temporalShowCalendarName(JSGlobalObject* globalObject, JSObject* options)
 {
-    return intlOption<String>(globalObject, options, globalObject->vm().propertyNames->calendarName,
-        { { "auto"_s, "auto"_s }, { "always"_s, "always"_s }, { "never"_s, "never"_s }, { "critical"_s, "critical"_s } },
+    return temporalStringOption(globalObject, options, globalObject->vm().propertyNames->calendarName,
+        { "auto"_s, "always"_s, "never"_s, "critical"_s },
         "calendarName must be \"auto\", \"always\", \"never\", or \"critical\""_s, "auto"_s);
 }
 
@@ -658,7 +853,7 @@ CalendarID toTemporalCalendarIdentifier(JSGlobalObject* globalObject, JSValue ca
 // https://tc39.es/proposal-temporal/#sec-temporal-totemporaldisambiguation
 TemporalDisambiguation toTemporalDisambiguation(JSGlobalObject* globalObject, JSObject* options)
 {
-    return intlOption<TemporalDisambiguation>(globalObject, options, globalObject->vm().propertyNames->disambiguation,
+    return temporalOption<TemporalDisambiguation>(globalObject, options, globalObject->vm().propertyNames->disambiguation,
         { { "compatible"_s, TemporalDisambiguation::Compatible }, { "earlier"_s, TemporalDisambiguation::Earlier },
             { "later"_s, TemporalDisambiguation::Later }, { "reject"_s, TemporalDisambiguation::Reject } },
         "disambiguation must be one of \"compatible\", \"earlier\", \"later\", or \"reject\""_s,
@@ -668,7 +863,7 @@ TemporalDisambiguation toTemporalDisambiguation(JSGlobalObject* globalObject, JS
 // https://tc39.es/proposal-temporal/#sec-temporal-totemporaloffset
 TemporalOffsetDisambiguation toTemporalOffset(JSGlobalObject* globalObject, JSObject* options, TemporalOffsetDisambiguation fallback)
 {
-    return intlOption<TemporalOffsetDisambiguation>(globalObject, options, globalObject->vm().propertyNames->offset,
+    return temporalOption<TemporalOffsetDisambiguation>(globalObject, options, globalObject->vm().propertyNames->offset,
         { { "use"_s, TemporalOffsetDisambiguation::Use }, { "prefer"_s, TemporalOffsetDisambiguation::Prefer },
             { "ignore"_s, TemporalOffsetDisambiguation::Ignore }, { "reject"_s, TemporalOffsetDisambiguation::Reject } },
         "offset must be one of \"use\", \"prefer\", \"ignore\", or \"reject\""_s,

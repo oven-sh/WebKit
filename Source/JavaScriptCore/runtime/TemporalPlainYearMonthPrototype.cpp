@@ -35,6 +35,7 @@
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
 #include "TemporalDuration.h"
+#include "TemporalObject.h"
 #include "TemporalPlainDate.h"
 #include "TemporalPlainDateTime.h"
 #include "TemporalPlainTime.h"
@@ -364,7 +365,7 @@ JSC_DEFINE_HOST_FUNCTION(temporalPlainYearMonthPrototypeFuncEquals, (JSGlobalObj
         return throwVMTypeError(globalObject, scope, "Temporal.PlainYearMonth.prototype.equals called on value that's not a PlainYearMonth"_s);
 
     // Step 3: Set other to ? ToTemporalYearMonth(other).
-    auto* other = TemporalPlainYearMonth::from(globalObject, callFrame->argument(0), jsUndefined());
+    auto* other = toTemporalObjectForReading<TemporalPlainYearMonth>(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
 
     // Step 4: If CompareISODate(yearMonth.[[ISODate]], other.[[ISODate]]) ≠ 0, return false.

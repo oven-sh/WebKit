@@ -155,33 +155,49 @@ String TemporalZonedDateTime::toString(JSGlobalObject* globalObject, const Preci
 
     // Step 6: Let timeZone be zonedDateTime.[[TimeZone]].
     // Step 7: Let offsetNanoseconds be GetOffsetNanosecondsFor(timeZone, epochNs).
-    auto offsetOpt = TemporalCore::getOffsetNanosecondsFor(m_timeZone, roundedExact);
-    if (!offsetOpt) [[unlikely]] {
-        throwRangeError(globalObject, scope, offsetOpt.error().message);
-        return { };
-    }
-
     // Step 8: Let isoDateTime be GetISODateTimeFor(timeZone, epochNs).
-    auto [date, time] = TemporalCore::exactTimeToLocalDateAndTime(roundedExact, *offsetOpt);
+    int64_t offsetNs;
+    ISO8601::PlainDateTime isoDateTime;
+    if (roundedExact == m_exactTime) {
+        isoDateTime = getLocalDateTime(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+        auto offset = getOffsetNanoseconds(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+        ASSERT(offset);
+        offsetNs = *offset;
+    } else {
+        auto offsetOpt = TemporalCore::getOffsetNanosecondsFor(m_timeZone, roundedExact);
+        if (!offsetOpt) [[unlikely]] {
+            throwTemporalError(globalObject, scope, offsetOpt.error());
+            return { };
+        }
+        offsetNs = *offsetOpt;
+        isoDateTime = TemporalCore::exactTimeToLocalDateAndTime(roundedExact, offsetNs);
+    }
+    auto [date, time] = isoDateTime;
 
     // Step 9: Let dateTimeString be ISODateTimeToString(isoDateTime, "iso8601", precision, ~never~).
-    StringBuilder sb;
-    sb.append(ISO8601::temporalDateTimeToString(date, time, precision.precision));
+    ISO8601::ISODateTimeStringBuilder dateTimeAndOffset;
+    dateTimeAndOffset.appendDate(date.year(), date.month(), date.day());
+    dateTimeAndOffset.append('T');
+    dateTimeAndOffset.appendTime(time, precision.precision);
 
     // Steps 10-11: offsetString = if showOffset is ~never~ then "" else FormatDateTimeUTCOffsetRounded(offsetNs).
-    if (showOffset != "never"_s) {
-        int64_t offsetNs = *offsetOpt;
-        int64_t offsetMinutes = offsetNs / 60'000'000'000;
-        int64_t remainder = offsetNs % 60'000'000'000;
-        if (remainder > 30'000'000'000 || (remainder == 30'000'000'000 && offsetNs > 0))
-            offsetMinutes++;
-        else if (remainder < -30'000'000'000 || (remainder == -30'000'000'000 && offsetNs < 0))
-            offsetMinutes--;
-        sb.append(ISO8601::formatTimeZoneOffsetString(offsetMinutes * 60'000'000'000));
-    }
+    if (showOffset != "never"_s)
+        dateTimeAndOffset.appendOffsetRoundedToMinutes(offsetNs);
+
+    bool appendTimeZone = showTimeZone != "never"_s;
+    bool appendCalendar = showCalendar == "always"_s || showCalendar == "critical"_s
+        || (showCalendar == "auto"_s && !TemporalCore::calendarIsISO(m_calendarID));
+    // Steps 12-13 and 15 for the default options: dateTimeString + offsetString + "[" + timeZone + "]".
+    if (appendTimeZone && showTimeZone != "critical"_s && !appendCalendar)
+        return makeString(dateTimeAndOffset.span(), '[', timeZoneId(), ']');
+
+    StringBuilder sb;
+    sb.append(dateTimeAndOffset.span());
 
     // Steps 12-13: timeZoneString = if showTimeZone is ~never~ then "" else "[" + (critical ? "!" : "") + timeZone + "]".
-    if (showTimeZone != "never"_s) {
+    if (appendTimeZone) {
         sb.append('[');
         if (showTimeZone == "critical"_s)
             sb.append('!');
@@ -190,8 +206,6 @@ String TemporalZonedDateTime::toString(JSGlobalObject* globalObject, const Preci
     }
 
     // Step 14: calendarString = FormatCalendarAnnotation(calendar, showCalendar).
-    bool appendCalendar = showCalendar == "always"_s || showCalendar == "critical"_s
-        || (showCalendar == "auto"_s && !TemporalCore::calendarIsISO(m_calendarID));
     if (appendCalendar) {
         sb.append('[');
         if (showCalendar == "critical"_s)

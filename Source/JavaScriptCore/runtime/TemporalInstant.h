@@ -53,6 +53,7 @@ public:
     DECLARE_INFO;
 
     static TemporalInstant* toInstant(JSGlobalObject*, JSValue);
+    static ISO8601::ExactTime toInstantExactTime(JSGlobalObject*, JSValue);
     static TemporalInstant* fromEpochMilliseconds(JSGlobalObject*, JSValue);
     static TemporalInstant* fromEpochNanoseconds(JSGlobalObject*, JSValue);
     static JSValue compare(JSGlobalObject*, JSValue, JSValue);

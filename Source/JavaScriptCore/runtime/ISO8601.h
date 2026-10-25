@@ -201,11 +201,16 @@ public:
     }
     int64_t floorEpochMilliseconds() const
     {
-        auto div = m_epochNanoseconds / ExactTime::nsPerMillisecond;
-        auto rem = m_epochNanoseconds % ExactTime::nsPerMillisecond;
-        if (rem && m_epochNanoseconds < 0)
-            div -= 1;
-        return static_cast<int64_t>(div);
+        auto floorDivide = [](auto epochNanoseconds) {
+            auto divisor = static_cast<decltype(epochNanoseconds)>(ExactTime::nsPerMillisecond);
+            auto div = epochNanoseconds / divisor;
+            if (epochNanoseconds % divisor < 0)
+                --div;
+            return static_cast<int64_t>(div);
+        };
+        if (m_epochNanoseconds >= std::numeric_limits<int64_t>::min() && m_epochNanoseconds <= std::numeric_limits<int64_t>::max())
+            return floorDivide(static_cast<int64_t>(m_epochNanoseconds));
+        return floorDivide(m_epochNanoseconds);
     }
     constexpr Int128 epochNanoseconds() const
     {
@@ -239,7 +244,7 @@ public:
 
     std::optional<ExactTime> LEGACY_NODELETE add(Duration) const;
     InternalDuration difference(JSGlobalObject*, ExactTime, unsigned, TemporalUnit, RoundingMode) const;
-    ExactTime round(JSGlobalObject*, unsigned, TemporalUnit, RoundingMode) const;
+    ExactTime round(unsigned, TemporalUnit, RoundingMode) const;
 
     static ExactTime now();
 
@@ -554,6 +559,30 @@ uint8_t weekOfYear(PlainDate);
 int32_t yearOfWeek(PlainDate);
 uint8_t LEGACY_NODELETE daysInMonth(int32_t year, uint8_t month);
 uint8_t daysInMonth(uint8_t month);
+
+// Builds Temporal's ISO 8601 strings in one fixed buffer.
+class ISODateTimeStringBuilder {
+public:
+    void append(Latin1Character c)
+    {
+        ASSERT(m_length < m_buffer.size());
+        m_buffer[m_length++] = c;
+    }
+    void appendYearMonth(int32_t year, unsigned month);
+    void appendDate(int32_t year, unsigned month, unsigned day);
+    void appendTime(unsigned hour, unsigned minute, unsigned second, unsigned subSecondNanoseconds, std::tuple<Precision, unsigned>);
+    void appendTime(PlainTime, std::tuple<Precision, unsigned>);
+    void appendOffset(int64_t offsetNanoseconds);
+    void appendOffsetRoundedToMinutes(int64_t offsetNanoseconds);
+    std::span<const Latin1Character> span() const LIFETIME_BOUND { return std::span { m_buffer }.first(m_length); }
+
+private:
+    void appendDigits(unsigned value, unsigned digits);
+    // Longest use: "-271821-04-19T00:00:00.000000001" followed by an offset of up to 19 characters.
+    std::array<Latin1Character, 64> m_buffer;
+    size_t m_length { 0 };
+};
+
 String formatTimeZoneOffsetString(int64_t);
 String temporalTimeToString(PlainTime, std::tuple<Precision, unsigned>);
 String temporalDateToString(PlainDate);

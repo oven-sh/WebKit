@@ -49,7 +49,7 @@ CLASSINFO_KEEP_ADDRESS_UNIQUE(TemporalPlainDate);
 
 TemporalPlainDate* TemporalPlainDate::create(VM& vm, Structure* structure, ISO8601::PlainDate&& plainDate)
 {
-    auto* object = new (NotNull, allocateCell<TemporalPlainDate>(vm)) TemporalPlainDate(vm, structure, WTF::move(plainDate));
+    auto* object = new (NotNull, allocateCell<TemporalPlainDate>(vm)) TemporalPlainDate(vm, structure, WTF::move(plainDate), iso8601CalendarID());
     object->finishCreation(vm);
     return object;
 }
@@ -63,8 +63,7 @@ TemporalPlainDate* TemporalPlainDate::create(VM& vm, Structure* structure, ISO86
 
 TemporalPlainDate* TemporalPlainDate::create(VM& vm, Structure* structure, ISO8601::PlainDate&& plainDate, CalendarID calendarID)
 {
-    auto* object = new (NotNull, allocateCell<TemporalPlainDate>(vm)) TemporalPlainDate(vm, structure, WTF::move(plainDate));
-    object->m_calendarID = calendarID;
+    auto* object = new (NotNull, allocateCell<TemporalPlainDate>(vm)) TemporalPlainDate(vm, structure, WTF::move(plainDate), calendarID);
     object->finishCreation(vm);
     return object;
 }
@@ -74,10 +73,10 @@ Structure* TemporalPlainDate::createStructure(VM& vm, JSGlobalObject* globalObje
     return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
 }
 
-TemporalPlainDate::TemporalPlainDate(VM& vm, Structure* structure, ISO8601::PlainDate&& plainDate)
+TemporalPlainDate::TemporalPlainDate(VM& vm, Structure* structure, ISO8601::PlainDate&& plainDate, CalendarID calendarID)
     : Base(vm, structure)
     , m_plainDate(WTF::move(plainDate))
-    , m_calendarID(iso8601CalendarID())
+    , m_calendarID(calendarID)
 {
 }
 
@@ -298,6 +297,18 @@ static TemporalPlainDate* fromImpl(JSGlobalObject* globalObject, JSValue itemVal
     return { };
 }
 
+// ToTemporalDate steps 2.a and 2.c: the slots of a PlainDate or PlainDateTime.
+static std::optional<TemporalCore::ResolvedCalendarDate> temporalDateSlots(JSValue itemValue)
+{
+    if (!itemValue.isCell())
+        return std::nullopt;
+    if (auto* plainDate = dynamicDowncast<TemporalPlainDate>(itemValue.asCell()))
+        return TemporalCore::ResolvedCalendarDate { plainDate->plainDate(), plainDate->calendarID() };
+    if (auto* plainDateTime = dynamicDowncast<TemporalPlainDateTime>(itemValue.asCell()))
+        return TemporalCore::ResolvedCalendarDate { plainDateTime->plainDate(), plainDateTime->calendarID() };
+    return std::nullopt;
+}
+
 // https://tc39.es/proposal-temporal/#sec-temporal-totemporaldate
 // Entry point from Temporal.PlainDate.from() — handles step 1 (default options).
 TemporalPlainDate* TemporalPlainDate::from(JSGlobalObject* globalObject, JSValue itemValue, JSValue optionsValue)
@@ -309,14 +320,12 @@ TemporalPlainDate* TemporalPlainDate::from(JSGlobalObject* globalObject, JSValue
 
     // Step 2: If item is an Object:
     if (itemValue.isObject()) {
-        // Step 2.a: [[InitializedTemporalDate]] → GetOptionsObject + overflow + CreateTemporalDate.
-        if (itemValue.inherits<TemporalPlainDate>()) {
+        // Steps 2.a / 2.c: [[InitializedTemporalDate]] or [[InitializedTemporalDateTime]] →
+        //   GetOptionsObject + overflow + ! CreateTemporalDate (every PlainDateTime date is within PlainDate limits).
+        if (auto slots = temporalDateSlots(itemValue)) {
             toTemporalOverflow(globalObject, optionsValue);
             RETURN_IF_EXCEPTION(scope, { });
-            auto* existing = uncheckedDowncast<TemporalPlainDate>(itemValue);
-            if (existing->calendarID() != iso8601CalendarID())
-                return TemporalPlainDate::create(vm, globalObject->plainDateStructure(), existing->plainDate(), existing->calendarID());
-            return TemporalPlainDate::create(vm, globalObject->plainDateStructure(), existing->plainDate());
+            return TemporalPlainDate::create(vm, globalObject->plainDateStructure(), ISO8601::PlainDate { slots->isoDate }, slots->calendarId);
         }
 
         // Step 2.b: [[InitializedTemporalZonedDateTime]] →
@@ -330,16 +339,6 @@ TemporalPlainDate* TemporalPlainDate::from(JSGlobalObject* globalObject, JSValue
             if (!TemporalCore::calendarIsISO(zdt->calendarID()))
                 return TemporalPlainDate::create(vm, globalObject->plainDateStructure(), WTF::move(date), String(zdt->calendarId()));
             return TemporalPlainDate::create(vm, globalObject->plainDateStructure(), WTF::move(date));
-        }
-
-        // Step 2.c: [[InitializedTemporalDateTime]] → GetOptionsObject + overflow + CreateTemporalDate.
-        if (itemValue.inherits<TemporalPlainDateTime>()) {
-            toTemporalOverflow(globalObject, optionsValue);
-            RETURN_IF_EXCEPTION(scope, { });
-            auto* pdt = uncheckedDowncast<TemporalPlainDateTime>(itemValue);
-            if (pdt->calendarID() != iso8601CalendarID())
-                return TemporalPlainDate::create(vm, globalObject->plainDateStructure(), pdt->plainDate(), pdt->calendarID());
-            return TemporalPlainDate::create(vm, globalObject->plainDateStructure(), pdt->plainDate());
         }
 
         // Steps 2.d-2.i: property bag → PrepareCalendarFields (before options) + overflow + CalendarDateFromFields.
@@ -395,17 +394,31 @@ TemporalPlainDate* TemporalPlainDate::from(JSGlobalObject* globalObject, JSValue
     return { };
 }
 
+// https://tc39.es/proposal-temporal/#sec-temporal-totemporaldate
+// With undefined options, for callers that read only [[ISODate]] and [[Calendar]].
+TemporalCore::ResolvedCalendarDate TemporalPlainDate::toISODateWithCalendar(JSGlobalObject* globalObject, JSValue itemValue)
+{
+    if (auto slots = temporalDateSlots(itemValue))
+        return *slots;
+
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* plainDate = from(globalObject, itemValue, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, { });
+    return TemporalCore::ResolvedCalendarDate { plainDate->plainDate(), plainDate->calendarID() };
+}
+
 // https://tc39.es/proposal-temporal/#sec-temporal-differencetemporalplaindate
-// Step 1 (ToTemporalDate) done by the prototype host fn via TemporalPlainDate::from().
+// Step 1 (ToTemporalDate) done by the prototype host fn via TemporalPlainDate::toISODateWithCalendar().
 // Uses spec's flip-mode + negate-at-end pattern for Since (unlike PlainTime's operand-swap).
 template<DifferenceOperation op>
-ISO8601::Duration TemporalPlainDate::differenceTemporalPlainDate(JSGlobalObject* globalObject, TemporalPlainDate* other, JSValue optionsValue)
+ISO8601::Duration TemporalPlainDate::differenceTemporalPlainDate(JSGlobalObject* globalObject, const TemporalCore::ResolvedCalendarDate& other, JSValue optionsValue)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Step 2: If CalendarEquals is false, throw RangeError.
-    if (m_calendarID != other->m_calendarID) [[unlikely]] {
+    if (m_calendarID != other.calendarId) [[unlikely]] {
         throwRangeError(globalObject, scope, "cannot compute difference between dates with different calendars"_s);
         return { };
     }
@@ -415,30 +428,34 @@ ISO8601::Duration TemporalPlainDate::differenceTemporalPlainDate(JSGlobalObject*
     RETURN_IF_EXCEPTION(scope, { });
 
     // Step 5: If CompareISODate = 0, return zero duration.
-    if (!TemporalCore::isoDateCompare(plainDate(), other->plainDate()))
+    if (!TemporalCore::isoDateCompare(plainDate(), other.isoDate))
         return ISO8601::Duration();
 
     // Step 6: dateDifference = CalendarDateUntil(calendar, this, other, largestUnit).
-    ISO8601::Duration dateDiff = calendarDateUntil(globalObject, m_calendarID, plainDate(), other->plainDate(), largestUnit);
+    ISO8601::Duration dateDiff = calendarDateUntil(globalObject, m_calendarID, plainDate(), other.isoDate, largestUnit);
     RETURN_IF_EXCEPTION(scope, { });
+
+    // Steps 7-9 without rounding: the date fields are returned unchanged, and are a valid duration.
+    if (smallestUnit == TemporalUnit::Day && increment == 1) {
+        if constexpr (op == DifferenceOperation::Since)
+            return -dateDiff;
+        return dateDiff;
+    }
 
     // Step 7: duration = CombineDateAndTimeDuration(dateDifference, 0).
     ISO8601::InternalDuration duration = ISO8601::InternalDuration::combineDateAndTimeDuration(dateDiff, 0);
 
-    // Step 8: If smallestUnit ≠ ~day~ or increment ≠ 1, RoundRelativeDuration
+    // Step 8: smallestUnit ≠ ~day~ or increment ≠ 1 here, so RoundRelativeDuration
     // (spec sub-steps 8.a-e build isoDateTime + originEpochNs + destEpochNs).
-    if (smallestUnit != TemporalUnit::Day || increment != 1) {
-        auto isoDate = plainDate();
-        Int128 originEpochNs = TemporalCore::getUTCEpochNanoseconds(isoDate, ISO8601::PlainTime());
-        auto isoDateOther = other->plainDate();
-        Int128 destEpochNs = TemporalCore::getUTCEpochNanoseconds(isoDateOther, ISO8601::PlainTime());
-        auto roundResult = TemporalCore::roundRelativeDuration(
-            duration, originEpochNs, destEpochNs, isoDate, ISO8601::PlainTime(),
-            largestUnit, increment, smallestUnit, roundingMode, nullptr, m_calendarID);
-        if (!roundResult) [[unlikely]] {
-            throwTemporalError(globalObject, scope, roundResult.error());
-            return { };
-        }
+    auto isoDate = plainDate();
+    Int128 originEpochNs = TemporalCore::getUTCEpochNanoseconds(isoDate, ISO8601::PlainTime());
+    Int128 destEpochNs = TemporalCore::getUTCEpochNanoseconds(other.isoDate, ISO8601::PlainTime());
+    auto roundResult = TemporalCore::roundRelativeDuration(
+        duration, originEpochNs, destEpochNs, isoDate, ISO8601::PlainTime(),
+        largestUnit, increment, smallestUnit, roundingMode, nullptr, m_calendarID);
+    if (!roundResult) [[unlikely]] {
+        throwTemporalError(globalObject, scope, roundResult.error());
+        return { };
     }
 
     // Step 9: result = ! TemporalDurationFromInternal(duration, ~day~).
@@ -455,19 +472,19 @@ ISO8601::Duration TemporalPlainDate::differenceTemporalPlainDate(JSGlobalObject*
     return result;
 }
 
-template ISO8601::Duration TemporalPlainDate::differenceTemporalPlainDate<DifferenceOperation::Until>(JSGlobalObject*, TemporalPlainDate*, JSValue);
-template ISO8601::Duration TemporalPlainDate::differenceTemporalPlainDate<DifferenceOperation::Since>(JSGlobalObject*, TemporalPlainDate*, JSValue);
+template ISO8601::Duration TemporalPlainDate::differenceTemporalPlainDate<DifferenceOperation::Until>(JSGlobalObject*, const TemporalCore::ResolvedCalendarDate&, JSValue);
+template ISO8601::Duration TemporalPlainDate::differenceTemporalPlainDate<DifferenceOperation::Since>(JSGlobalObject*, const TemporalCore::ResolvedCalendarDate&, JSValue);
 
 // https://tc39.es/proposal-temporal/#sec-temporal.plaindate.prototype.until
 // Step 3: Return ? DifferenceTemporalPlainDate(~until~, this, other, options).
-ISO8601::Duration TemporalPlainDate::until(JSGlobalObject* globalObject, TemporalPlainDate* other, JSValue optionsValue)
+ISO8601::Duration TemporalPlainDate::until(JSGlobalObject* globalObject, const TemporalCore::ResolvedCalendarDate& other, JSValue optionsValue)
 {
     return differenceTemporalPlainDate<DifferenceOperation::Until>(globalObject, other, optionsValue);
 }
 
 // https://tc39.es/proposal-temporal/#sec-temporal.plaindate.prototype.since
 // Step 3: Return ? DifferenceTemporalPlainDate(~since~, this, other, options).
-ISO8601::Duration TemporalPlainDate::since(JSGlobalObject* globalObject, TemporalPlainDate* other, JSValue optionsValue)
+ISO8601::Duration TemporalPlainDate::since(JSGlobalObject* globalObject, const TemporalCore::ResolvedCalendarDate& other, JSValue optionsValue)
 {
     return differenceTemporalPlainDate<DifferenceOperation::Since>(globalObject, other, optionsValue);
 }

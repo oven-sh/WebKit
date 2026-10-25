@@ -38,7 +38,6 @@ STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(TemporalInstantConstructor);
 static JSC_DECLARE_HOST_FUNCTION(temporalInstantConstructorFuncFrom);
 static JSC_DECLARE_HOST_FUNCTION(temporalInstantConstructorFuncFromEpochMilliseconds);
 static JSC_DECLARE_HOST_FUNCTION(temporalInstantConstructorFuncFromEpochNanoseconds);
-static JSC_DECLARE_HOST_FUNCTION(temporalInstantConstructorFuncCompare);
 
 }
 
