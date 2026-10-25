@@ -11,6 +11,7 @@
 #include "AOTBuiltinIDTypes.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinOperationSupport.h"
+#include "AOTBuiltinTable.h"
 #include "AOTInstance.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
@@ -357,93 +358,65 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowIfTypedArrayIsDetached, void, (Instanc
     OPERATION_RETURN(scope);
 }
 
-// A view over the buffer that has lost its memory with it. The constructor refuses such a buffer, so the view loses the memory of a buffer of its own, and is then handed the other.
-static JSValue makeRangeWithoutMemory(JSGlobalObject* globalObject, Structure* structure, ArrayBuffer& buffer)
+// The object that native code would have made of the fields that its direct entry answered: an ordinary object with the names of the layout, in their order.
+JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectOfBuiltinLayout, JSCell*, (Instance* instance, uint32_t layout, EncodedJSValue first, EncodedJSValue second))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewObjectOfBuiltinLayout);
+    const BuiltinTable& table = BuiltinTable::singleton();
+    std::span<const BuiltinLayoutField> fields = table.at(BuiltinLayoutID(layout)).fields;
+    RELEASE_ASSERT(fields.size() <= 2);
+    JSObject* object = constructEmptyObject(globalObject, globalObject->objectPrototype(), fields.size());
+    for (size_t index = 0; index < fields.size(); ++index)
+        object->putDirect(vm, table.identifierOf(vm, fields[index].name), JSValue::decode(index ? second : first));
+    OPERATION_RETURN(scope, object);
+}
+
+template<typename View>
+static JSCell* makeRange(JSGlobalObject* globalObject, JSArrayBufferView* view, size_t start, size_t end)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSUint8Array* range = JSUint8Array::create(globalObject, structure, 1);
-    RETURN_IF_EXCEPTION(scope, { });
+    RefPtr<ArrayBuffer> buffer = view->possiblySharedBuffer();
+    if (!buffer) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    Structure* structure = globalObject->typedArrayStructure(View::TypedArrayStorageType, false);
+    if (!view->isDetached()) [[likely]]
+        RELEASE_AND_RETURN(scope, View::create(globalObject, structure, WTF::move(buffer), view->byteOffsetRaw() + start * View::elementSize, end - start));
+
+    // The buffer was transferred since the bounds were taken, and the range has lost its memory with it. The constructor refuses such a buffer, so the range loses the memory of a buffer of its own, and is then handed the other.
+    View* range = View::create(globalObject, structure, 1);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     RefPtr<ArrayBuffer> own = range->possiblySharedBuffer();
     if (!own) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
-        return { };
+        return nullptr;
     }
     ArrayBufferContents taken;
     bool isTaken = own->transferTo(vm, taken);
     RELEASE_ASSERT(isTaken && range->isDetached());
-    range->butterfly()->indexingHeader()->setArrayBuffer(&buffer);
-    vm.heap.addReference(range, &buffer);
+    range->butterfly()->indexingHeader()->setArrayBuffer(buffer.get());
+    vm.heap.addReference(range, buffer.get());
     return range;
 }
 
-// The range as it would be by now, had it been made when its start was taken.
-static JSValue makeRangeOfBytes(JSGlobalObject* globalObject, JSValue view, int32_t start)
+// The elements from start to end of a view whose length was fixed when the bounds were taken, as a view of the same kind: what `view.subarray(start, end)` made then would be by now.
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedArrayRange, JSCell*, (Instance* instance, JSCell* cell, uint64_t start, uint64_t end))
 {
-    auto* bytes = uncheckedDowncast<JSUint8Array>(view.asCell());
-    RefPtr<ArrayBuffer> buffer = bytes->possiblySharedBuffer();
-    if (!buffer) [[unlikely]] {
-        VM& vm = globalObject->vm();
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        throwOutOfMemoryError(globalObject, scope);
-        return { };
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTTypedArrayRange);
+    auto* view = cellArgument<JSArrayBufferView>(cell, Entry::operationAOTTypedArrayRange);
+    switch (view->type()) {
+#define AOT_MAKE_RANGE(name) \
+    case name ## ArrayType: \
+        OPERATION_RETURN(scope, makeRange<JS ## name ## Array>(globalObject, view, start, end));
+    FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(AOT_MAKE_RANGE)
+#undef AOT_MAKE_RANGE
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
     }
-    Structure* structure = globalObject->typedArrayStructure(TypeUint8, false);
-    if (bytes->isDetached()) [[unlikely]]
-        return makeRangeWithoutMemory(globalObject, structure, *buffer);
-    return JSUint8Array::create(globalObject, structure, WTF::move(buffer), bytes->byteOffsetRaw() + start, bytes->lengthRaw() - start);
 }
 
 } } // namespace JSC::AOT
-
-// view.subarray(begin) that goes into encoder.encodeInto(text, ..) and nowhere else on its way there, in parts: see %CompilerHelpers% in the table of built-ins.
-extern "C" JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__startOfRangeOfBytes(JSC::JSGlobalObject*, JSC::EncodedJSValue encodedView, JSC::EncodedJSValue encodedBegin)
-{
-    using namespace JSC;
-    JSValue begin = JSValue::decode(encodedBegin);
-    JSUint8Array* view = AOT::asFixedBytes(JSValue::decode(encodedView));
-    // As its constructor left it, which is what the call was resolved for: a range of it is a Uint8Array of this realm.
-    if (view && TypeInfo::isPristine(view->inlineTypeFlags()) && begin.isInt32() && static_cast<uint32_t>(begin.asInt32()) <= view->lengthRaw() && begin.asInt32() >= 0) [[likely]]
-        return encodedBegin;
-    return JSValue::encode(jsNumber(-1));
-}
-
-extern "C" JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__viewOrRangeOfBytes(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedView, JSC::EncodedJSValue encodedBegin, JSC::EncodedJSValue encodedStart)
-{
-    using namespace JSC;
-    if (JSValue::decode(encodedStart).asInt32() >= 0) [[likely]]
-        return encodedView;
-    return JSValue::encode(AOT::callMethodInEngine(AOT::Instance::of(globalObject), AOT::Builtins::TypedArrayPrototypeSubarray, JSValue::decode(encodedView), JSValue::decode(encodedBegin)));
-}
-
-extern "C" JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__rangeOfBytes(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedView, JSC::EncodedJSValue encodedStart)
-{
-    using namespace JSC;
-    int32_t start = JSValue::decode(encodedStart).asInt32();
-    if (start < 0)
-        return encodedView;
-    return JSValue::encode(AOT::makeRangeOfBytes(globalObject, JSValue::decode(encodedView), start));
-}
-
-extern "C" JS_EXPORT_PRIVATE JSC::EncodedJSValue SYSV_ABI AOT__encodeIntoRangeOfBytes(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedEncoder, JSC::EncodedJSValue encodedSource, JSC::EncodedJSValue encodedDestination, JSC::EncodedJSValue encodedStart)
-{
-    using namespace JSC;
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue destination = JSValue::decode(encodedDestination);
-    int32_t start = JSValue::decode(encodedStart).asInt32();
-    if (JSUint8Array* bytes = AOT::asFixedBytes(destination)) [[likely]] {
-        size_t first = std::max(start, 0);
-        JSObject* counts = AOT::tryEncodeInto(AOT::Instance::of(globalObject), vm, globalObject, JSValue::decode(encodedSource), bytes->typedVector() + first, bytes->lengthRaw() - first);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (counts) [[likely]]
-            return JSValue::encode(counts);
-    }
-    if (start >= 0) {
-        destination = AOT::makeRangeOfBytes(globalObject, destination, start);
-        RETURN_IF_EXCEPTION(scope, { });
-    }
-    RELEASE_AND_RETURN(scope, JSValue::encode(AOT::callMethodInEngine(AOT::Instance::of(globalObject), AOT::Builtins::TextEncoderPrototypeEncodeInto, JSValue::decode(encodedEncoder), JSValue::decode(encodedSource), destination)));
-}
 
 #endif // ENABLE(AOT)

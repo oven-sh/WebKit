@@ -83,13 +83,13 @@ aot/builtins/AOTResolveBuiltinsListCalls.cpp
 aot/builtins/AOTResolveBuiltinsTailCalls.cpp
 aot/builtins/AOTRuntimeIntrinsicOperations.cpp
 aot/builtins/AOTSimplifyBuiltinCalls.cpp
-aot/builtins/AOTSimplifyBuiltinCallsByteRanges.cpp
 aot/builtins/AOTSimplifyBuiltinCallsConcatenations.cpp
 aot/builtins/AOTSimplifyBuiltinCallsLiterals.cpp
 aot/builtins/AOTSimplifyBuiltinCallsPromises.cpp
 aot/builtins/AOTSimplifyBuiltinCallsRegExps.cpp
 aot/builtins/AOTSimplifyBuiltinCallsStrings.cpp
 aot/builtins/AOTSimplifyBuiltinCallsURLs.cpp
+aot/builtins/AOTSimplifyBuiltinCallsViewRanges.cpp
 aot/builtins/AOTURLBuiltinOperations.cpp
 aot/codegen/AOTAccessEmitter.cpp
 aot/codegen/AOTAccessEmitterDefinitions.cpp

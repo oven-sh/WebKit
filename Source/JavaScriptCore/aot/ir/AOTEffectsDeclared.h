@@ -59,7 +59,7 @@ private:
 };
 
 inline constexpr OpcodeSet opcodesThrowingOnlyForLackOfMemory {
-    Opcode::Data, Opcode::NewSetFromData, Opcode::NewMapFromData, Opcode::LoopHint,
+    Opcode::Data, Opcode::NewSetFromData, Opcode::NewMapFromData, Opcode::LoopHint, Opcode::TypedArrayRange,
     Opcode::GetStringCodeUnit, Opcode::Substring, Opcode::SubstringOrUndefined, Opcode::FlattenString, Opcode::StringOrder, Opcode::StringOrderToCharacter,
     Opcode::StringStartsWithLiteral, Opcode::StringEndsWithLiteral, Opcode::StringIndexOfLiteral, Opcode::StringIndexOfCharacter, Opcode::StringLastIndexOfLiteral,
     Opcode::StringRangeEqualsLiteral, Opcode::StringRangeToNumber, Opcode::StringRangeParseInt, Opcode::StringRangeSubstringOrUndefined,

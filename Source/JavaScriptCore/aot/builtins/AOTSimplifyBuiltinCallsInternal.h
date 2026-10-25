@@ -36,7 +36,7 @@ unsigned simplifyConcatenatingCalls(FunctionPassContext&, const BuiltinCallSites
 unsigned simplifyMatches(FunctionPassContext&, const BuiltinCallSites&);
 unsigned simplifyLastPiecesOfSplits(FunctionPassContext&, const BuiltinCallSites&);
 unsigned leaveURLsUnbuilt(FunctionPassContext&);
-unsigned leaveRangesOfBytesUnmade(FunctionPassContext&, const BuiltinCallSites&);
+unsigned expandRangesOfViews(FunctionPassContext&, const BuiltinCallSites&);
 unsigned simplifySearchesOfLiterals(FunctionPassContext&);
 unsigned takeConstantListsApart(FunctionPassContext&);
 unsigned simplifySplitsOfConstants(FunctionPassContext&, const BuiltinCallSites&);

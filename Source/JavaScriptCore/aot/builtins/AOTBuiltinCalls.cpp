@@ -198,7 +198,8 @@ bool isCallThatRequiredPassRemoves(const Program& program, const Value& call)
     const Builtin& entry = table.at(table.at(call.overload()).builtin);
     if (!entry.flags.contains(BuiltinFlag::IsCompilerHelper) && entry.holder != Builtins::BunBundle)
         return false;
-    if (call.builtinCallForm() != BuiltinCallForm::Whole)
+    bool returnsFieldsOfDirectEntry = call.builtinCallForm() == BuiltinCallForm::Fields && table.at(call.overload()).code.fieldsForm == InlineBuiltin::FieldsOfDirectEntry;
+    if (call.builtinCallForm() != BuiltinCallForm::Whole && !returnsFieldsOfDirectEntry)
         return true;
     if (!BuiltinBindings::hasHost() && table.at(call.overload()).code.implementation.kind == BuiltinImplementationKind::HostCall)
         return false;

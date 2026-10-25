@@ -51,9 +51,11 @@ private:
         bool takesFrame { false };
     };
     DirectOperands directOperandsOf(const ValueContext&, const BuiltinDirectFunctionBinding&);
-    void appendBytesOf(DirectOperands&, ValueID view);
+    void appendBytesOf(DirectOperands&, ValueID view, std::span<const ValueID> bounds = { });
     Boxed callDirectFunction(const ValueContext&, uint32_t number);
+    StubCallResult callDirectFunctionReturningFields(const ValueContext&, uint32_t number);
     void generateFieldsOfDirectEntry(const ValueContext&);
+    CellPointer makeObjectOfDirectEntry(const ValueContext&, uint32_t number);
     PropertyKeyID keyOf(const BuiltinOverload&) const;
     CellPointer calleeOf(const OperationContext&, const BuiltinOverload&);
     Integer divide(Integer dividend, Range dividends, Integer divisor, Range divisors);

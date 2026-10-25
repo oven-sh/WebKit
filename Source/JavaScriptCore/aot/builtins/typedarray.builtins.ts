@@ -381,6 +381,7 @@ export default b.declarations(
           ...viewOfRange,
           this: typedArrayWithDefaultSpecies,
           returns: b.sameClass.fresh,
+          rangeOf: "this",
           capability: "heap",
           uses: { this: [b.retained] },
         },

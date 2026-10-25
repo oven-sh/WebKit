@@ -373,7 +373,8 @@ function layoutsNamedIn(builder: ModelBuilder, spec: TypeSpec): ModelResultLayou
 }
 
 function buildResult(context: OverloadContext): ModelResult {
-  const { range, substringOf, typedResultForm, iterates, prototypeSource, resultsByPlatform = [] } = context.signature;
+  const { range, substringOf, rangeOf, typedResultForm, iterates, prototypeSource, resultsByPlatform = [] } =
+    context.signature;
   const operandOf = (name: OperandName | undefined) =>
     name === undefined ? null : context.operandOf(name, context.source);
   return {
@@ -386,6 +387,7 @@ function buildResult(context: OverloadContext): ModelResult {
     rangeRule: range?.rule ?? "None",
     rangeOperand: resolveRangeOperand(context),
     substringOf: operandOf(substringOf),
+    rangeOf: operandOf(rangeOf),
     typedResultForm: typedResultForm?.form ?? "None",
     typedResultSource: operandOf(typedResultForm?.source),
     iteratedOperand: operandOf(iterates?.operand),
@@ -454,6 +456,7 @@ function buildOverload(context: OverloadContext, constantImplementation: ModelIm
     code: {
       implementation: constantImplementation ?? resolveImplementation(context, signature.implementation),
       directEntry: signature.directEntry ?? null,
+      inRanges: null,
       model: resolveModel(context),
       fieldsForm: signature.fieldsForm ?? (signature.directEntry?.returnsFields ? "FieldsOfDirectEntry" : null),
       prefixForm: signature.prefixForm ?? null,

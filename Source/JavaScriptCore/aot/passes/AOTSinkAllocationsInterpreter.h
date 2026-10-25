@@ -116,7 +116,7 @@ private:
     ObjectState stateAtAllocation(VirtualObjectID, VirtualShapeID);
     uint32_t partOf(VirtualObjectID object, VirtualFieldKind part) const { return *m_sinking.familyOf(object).findField(VirtualField::part(part)); }
     void splitThrowingVariants(ValueID cast, VirtualObjectID, uint32_t throwingTagBits);
-    void requireCellsOfOperands(ValueID);
+    void requireCellsOfOperands(ValueID, BuiltinCallForm formOfCall = BuiltinCallForm::Whole);
     void requireCellsOfOperandsBeside(ValueID, uint32_t operandIndex);
     void forgetFieldsWrittenBy(ValueID);
     BuildCause causeOf(ValueID user, uint32_t operandIndex) const;
@@ -202,6 +202,8 @@ private:
     std::optional<bool> isArgumentPassed(VirtualObjectID arguments, uint32_t index) const;
 
     void executeBuiltinResult(ValueID call, VirtualObjectID);
+    bool isRangeOfView(VirtualObjectID) const;
+    void passRangesOfViews(ValueID call, const BytesOperands&);
     uint32_t prefixLengthNeededBy(VirtualObjectID) const;
     ValueID emitPresenceTag(ValueID isPresent, uint8_t tagBitWhenAbsent);
 
@@ -252,7 +254,7 @@ inline constexpr OpcodeSet interpretedListUses {
 inline constexpr OpcodeSet interpretedAllocations {
     Opcode::Data, Opcode::NewClosure, Opcode::NewObject, Opcode::NewArray, Opcode::NewRegExp, Opcode::CreateUnmappedArguments,
     Opcode::CreateMappedArguments, Opcode::NewPromise, Opcode::CreateRest, Opcode::NewGenerator,
-    Opcode::Substring, Opcode::SubstringOrUndefined, Opcode::CallBuiltin,
+    Opcode::Substring, Opcode::SubstringOrUndefined, Opcode::CallBuiltin, Opcode::TypedArrayRange,
 };
 
 static_assert((interpretedReads | opcodesInterpretedAs(Interpretation::Read)) == interpretedReads);

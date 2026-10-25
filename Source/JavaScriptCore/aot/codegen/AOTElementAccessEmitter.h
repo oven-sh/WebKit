@@ -50,6 +50,8 @@ public:
     void generateReserveArrayCapacity(const ValueContext&);
     void generateConvertToDoubleStorage(const ValueContext&);
     void generateGetTypedArrayLength(const ValueContext&);
+    void generateHasFixedBytes(const ValueContext&);
+    void generateTypedArrayRange(const ValueContext&);
     void generateGetTypedArrayElement(const ValueContext&);
     void generatePutTypedArrayElement(const ValueContext&);
     void generateGetStringLength(const ValueContext&);

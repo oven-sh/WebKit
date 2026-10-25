@@ -86,16 +86,66 @@ StubSignature signatureOfCreateConstant(StubKey)
     return signatureOfConstant();
 }
 
+// Three registers that are given back as they were. They are none of allocateConstantRegisters().
 #if CPU(X86_64)
+static constexpr StubRegister newCellRegister = StubRegister::T10;
+static constexpr StubRegister allocatorRegister = StubRegister::T11;
+static constexpr StubRegister allocationScratchRegister = StubRegister::T12;
+#else
+static constexpr StubRegister newCellRegister = StubRegister::T13;
+static constexpr StubRegister allocatorRegister = StubRegister::T14;
+static constexpr StubRegister allocationScratchRegister = StubRegister::T15;
+#endif
+
+// Takes the lock as LazyStringHeaderLocker does, but does not wait for it.
+static void lockUnlessLocked(StubAssembler& jit, Address lock, GPRReg scratch, JumpList& isLocked)
+{
+#if CPU(X86_64)
+    jit.move(TrustedImm32(1), scratch);
+    jit.atomicXchg32(scratch, lock);
+    isLocked.append(jit.branchTest32(CCallHelpers::NonZero, scratch));
+#else
+    const GPRReg one = jit.scratchRegister();
+    RELEASE_ASSERT(noOverlap(lock.base, scratch, one));
+    Label again = jit.label();
+    jit.loadLinkAcq32(lock, scratch);
+    isLocked.append(jit.branchTest32(CCallHelpers::NonZero, scratch));
+    jit.move(TrustedImm32(1), one);
+    jit.storeCond32(one, lock, scratch);
+    jit.branchTest32(CCallHelpers::NonZero, scratch).linkTo(again, &jit);
+#endif
+}
+
+// Whoever reads the word sees every store made before it. May write the base of the address.
+static void storeRelease32(StubAssembler& jit, GPRReg value, BaseIndex address)
+{
+#if CPU(X86_64)
+    jit.store32(value, address);
+#else
+    RELEASE_ASSERT(noOverlap(value, address.base));
+    jit.getEffectiveAddress(address, address.base);
+    jit.storeRel32(value, Address(address.base));
+#endif
+}
+
+static void unlock(StubAssembler& jit, Address lock)
+{
+#if CPU(X86_64)
+    jit.store32(TrustedImm32(0), lock);
+#else
+    jit.storeRel32(ARM64Registers::zr, lock);
+#endif
+}
+
 // ProgramStrings::createString(), for a string whose StringImpl lies in the image.
 template<typename Functor>
 static void createCellOfHeaderAndReturn(StubAssembler& jit, GPRReg headerAndResult, GPRReg scratch, std::optional<GPRReg> number, JumpList& cannot, const Functor& prepareHeader)
 {
     const GPRReg wordAndResult = headerAndResult;
     const GPRReg header = headerAndResult;
-    const GPRReg cell = gprOf(StubRegister::T10);
-    const GPRReg allocator = gprOf(StubRegister::T11);
-    const GPRReg allocationScratch = gprOf(StubRegister::T12);
+    const GPRReg cell = gprOf(newCellRegister);
+    const GPRReg allocator = gprOf(allocatorRegister);
+    const GPRReg allocationScratch = gprOf(allocationScratchRegister);
     RELEASE_ASSERT(noOverlap(headerAndResult, scratch, number.value_or(InvalidGPRReg), cell, allocator, allocationScratch, instanceGPR, cellCageBaseGPR));
 
     jit.preserving({ cell, allocator, allocationScratch }, [&] {
@@ -137,9 +187,9 @@ static void createCellOfHeaderAndReturn(StubAssembler& jit, GPRReg headerAndResu
 static void createCellOfImageStringAndReturn(StubAssembler& jit, GPRReg wordAndResult, GPRReg scratch, std::optional<GPRReg> number, JumpList& cannot)
 {
     const GPRReg header = wordAndResult;
-    const GPRReg cell = gprOf(StubRegister::T10);
-    const GPRReg allocator = gprOf(StubRegister::T11);
-    const GPRReg allocationScratch = gprOf(StubRegister::T12);
+    const GPRReg cell = gprOf(newCellRegister);
+    const GPRReg allocator = gprOf(allocatorRegister);
+    const GPRReg allocationScratch = gprOf(allocationScratchRegister);
     static_assert(sizeof(ImageStringHeader) == 24 && ImageString::hashMask * sizeof(ImageStringHeader) <= INT32_MAX);
 
     cannot.append(jit.branchTest32(CCallHelpers::Zero, wordAndResult, TrustedImm32(ImageString::hasTextFlag)));
@@ -172,7 +222,11 @@ static void createCellOfImageStringAndReturn(StubAssembler& jit, GPRReg wordAndR
             jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.stringRecords)), record);
             jit.load64(BaseIndex(record, headerNumber, CCallHelpers::TimesEight), record);
             Jump hasInlineRange = jit.branchTest32(CCallHelpers::NonZero, record, TrustedImm32(ImageString::lengthMask));
+#if CPU(X86_64)
             cannotAllocate.append(jit.branchTestBit64(CCallHelpers::Zero, record, TrustedImm32(32 + WTF::fastLog2(ImageStringRecord::isLiteralStringFlag))));
+#else
+            cannotAllocate.append(jit.branchTest64(CCallHelpers::Zero, record, TrustedImm64(static_cast<int64_t>(ImageStringRecord::isLiteralStringFlag) << 32)));
+#endif
             jit.zeroExtend32ToWord(record, word);
             jit.urshift32(TrustedImm32(ImageString::lengthBits), word);
             jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.listedStrings)), literalStringWord);
@@ -186,9 +240,7 @@ static void createCellOfImageStringAndReturn(StubAssembler& jit, GPRReg wordAndR
             jit.move(record, word);
             jit.and32(TrustedImm32(ImageString::lengthMask), word);
             cannotAllocate.append(jit.branch32(CCallHelpers::BelowOrEqual, word, TrustedImm32(1)));
-            jit.move(TrustedImm32(1), word);
-            jit.atomicXchg32(word, Address(lazyHeaders, OBJECT_OFFSETOF(LazyStringHeaderArena, isLocked)));
-            cannotAllocate.append(jit.branchTest32(CCallHelpers::NonZero, word));
+            lockUnlessLocked(jit, Address(lazyHeaders, OBJECT_OFFSETOF(LazyStringHeaderArena, isLocked)), word, cannotAllocate);
             jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.lazyStringHeaderOffsets)), word);
             jit.load32(BaseIndex(word, headerNumber, CCallHelpers::TimesFour), word);
             Jump wasCreatedConcurrently = jit.branchTest32(CCallHelpers::NonZero, word);
@@ -222,12 +274,12 @@ static void createCellOfImageStringAndReturn(StubAssembler& jit, GPRReg wordAndR
             jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(lazyStrings.headers)), lazyHeaders);
             jit.sub64(lazyHeaders, offset);
             jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.lazyStringHeaderOffsets)), word);
-            jit.store32(offset, BaseIndex(word, headerNumber, CCallHelpers::TimesFour));
+            storeRelease32(jit, offset, BaseIndex(word, headerNumber, CCallHelpers::TimesFour));
             Jump isWritten = jit.jump();
             wasCreatedConcurrently.link(&jit);
             jit.move(word, offset);
             isWritten.link(&jit);
-            jit.store32(TrustedImm32(0), Address(lazyHeaders, OBJECT_OFFSETOF(LazyStringHeaderArena, isLocked)));
+            unlock(jit, Address(lazyHeaders, OBJECT_OFFSETOF(LazyStringHeaderArena, isLocked)));
 
             isCreated.link(&jit);
             jit.getEffectiveAddress(BaseIndex(lazyHeaders, offset, CCallHelpers::TimesOne), header);
@@ -282,7 +334,6 @@ static void createCellOfImageStringAndReturn(StubAssembler& jit, GPRReg wordAndR
         jit.move(newHeader, header);
     });
 }
-#endif
 
 static void returnStringConstant(StubAssembler& jit)
 {
@@ -304,7 +355,6 @@ static void returnStringConstant(StubAssembler& jit)
     jit.returnToCaller();
 
     isNotCreated.link(&jit);
-#if CPU(X86_64)
     if (!jit.options().useWideReferences) {
         JumpList cannot;
         jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.stringConstants)), address);
@@ -314,13 +364,11 @@ static void returnStringConstant(StubAssembler& jit)
         createCellOfImageStringAndReturn(jit, result, address, index, cannot);
         cannot.link(&jit);
     }
-#endif
     createConstantAndReturn(jit, Entry::operationAOTStringConstant, index);
 }
 
 static void returnNewStringConstant(StubAssembler& jit)
 {
-#if CPU(X86_64)
     const auto [string, result, address, index] = allocateConstantRegisters(jit);
     JumpList cannot;
 
@@ -330,9 +378,6 @@ static void returnNewStringConstant(StubAssembler& jit)
     createCellOfImageStringAndReturn(jit, result, address, std::nullopt, cannot);
     cannot.link(&jit);
     createConstantAndReturn(jit, Entry::operationAOTNewStringConstant, index);
-#else
-    createConstantAndReturn(jit, Entry::operationAOTNewStringConstant, jit.immediate());
-#endif
 }
 
 // Behind a miss in the cache of such names, which the operation fills.

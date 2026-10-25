@@ -338,6 +338,7 @@ struct BuiltinResult {
     BuiltinRangeRule rangeRule { BuiltinRangeRule::None };
     std::optional<BuiltinOperand> rangeOperand { };
     std::optional<BuiltinOperand> substringOf { };
+    std::optional<BuiltinOperand> rangeOf { };
     TypedResultForm typedResultForm { TypedResultForm::None };
     std::optional<BuiltinOperand> typedResultSource { };
     std::optional<BuiltinOperand> iteratedOperand { };
@@ -391,6 +392,9 @@ struct BuiltinCode {
     std::optional<InlineBuiltin> prefixForm { };
     BuiltinRecordStretch<BuiltinResultProperty, BuiltinRecordPool::ResultProperties> prefixProperties { };
     std::optional<InlineBuiltin> listForm { };
+    // Native code takes nothing but the bytes of these operands. The other overload does the same with a part of each: where the parts start and end, in bytes, are its last arguments.
+    BuiltinOverloadID overloadInRanges { };
+    std::array<std::optional<BuiltinOperand>, 3> operandsTakenAsBytes { };
 };
 
 struct BuiltinOverload {

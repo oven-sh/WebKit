@@ -131,6 +131,7 @@ private:
         bool hasWarmCode { true };
         bool isCompact { false };
         bool isCalledInLoop { false };
+        bool isCalledPerEvent { false };
     };
 
     PerFunction<Entry> m_entries;

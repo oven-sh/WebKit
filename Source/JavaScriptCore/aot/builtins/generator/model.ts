@@ -304,6 +304,7 @@ export interface ModelResult {
   rangeRule: RangeRule;
   rangeOperand: ModelOperand | null;
   substringOf: ModelOperand | null;
+  rangeOf: ModelOperand | null;
   typedResultForm: TypedResultForm;
   typedResultSource: ModelOperand | null;
   iteratedOperand: ModelOperand | null;
@@ -356,6 +357,8 @@ export interface ModelResultProperty {
 export interface ModelCode {
   implementation: ModelImplementation;
   directEntry: DirectEntrySpec | null;
+  /** The overload that does the same with a part of each of these operands, of which native code takes nothing but the bytes. */
+  inRanges: { overload: ModelOverload; views: readonly ModelOperand[] } | null;
   model: ModelFunction | null;
   fieldsForm: InlineBuiltinName | null;
   prefixForm: InlineBuiltinName | null;

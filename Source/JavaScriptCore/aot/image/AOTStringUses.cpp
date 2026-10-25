@@ -51,6 +51,9 @@ static constexpr Typed::TerminatorKindSet keyOrComparisonTerminators { Typed::Te
 static constexpr bool usesOperandsAsKeys(Typed::Opcode opcode) { return keyOrComparisonOpcodes.contains(opcode); }
 static constexpr bool usesOperandsAsKeys(Typed::TerminatorKind kind) { return keyOrComparisonTerminators.contains(kind); }
 
+// The value of `list[i] = "text"` is only stored: nothing compares it or looks it up.
+static constexpr bool isOnlyKept(Typed::OperandUses uses) { return !uses.isEmpty() && uses.containsOnly({ Typed::OperandUse::Retains, Typed::OperandUse::Returns }); }
+
 template<typename Operation>
 static constexpr bool looksUpKeysByName(Operation operation)
 {
@@ -199,6 +202,8 @@ struct FunctionWalk {
         bool usesEveryOperandAsKey = usesOperandsAsKeys(operation);
         instruction.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
             if (!usesEveryOperandAsKey && instruction.operandKind(operandIndex) != Typed::OperandKind::PropertyKey)
+                return;
+            if (isOnlyKept(instruction.operandUses(operandIndex)))
                 return;
             const Typed::Value& definition = function.at(sameObjectThroughCasts(function, operand));
             if (definition.opcode == Typed::Opcode::String)

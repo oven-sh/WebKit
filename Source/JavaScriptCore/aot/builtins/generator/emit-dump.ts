@@ -243,6 +243,7 @@ function dumpResult(result: ModelResult): DumpedResult {
     rangeRule: result.rangeRule,
     rangeOperand: dumpOptionalOperand(result.rangeOperand),
     substringOf: dumpOptionalOperand(result.substringOf),
+    rangeOf: dumpOptionalOperand(result.rangeOf),
     typedResultForm: result.typedResultForm,
     typedResultSource: dumpOptionalOperand(result.typedResultSource),
     iteratedOperand: dumpOptionalOperand(result.iteratedOperand),

@@ -8,10 +8,13 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinTypes.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTFlowApply.h"
 #include "AOTSort.h"
 #include "AOTVector.h"
+#include "PageCount.h"
+#include "TypedArrayType.h"
 #include <algorithm>
 #include <ranges>
 #include <utility>
@@ -404,14 +407,115 @@ ObjectState ObjectInterpreter::stateAtAllocation(VirtualObjectID object, Virtual
     return state;
 }
 
-void ObjectInterpreter::requireCellsOfOperands(ValueID id)
+// The row of the function says that it only reads or writes the contents of these operands while it runs, so its direct entry takes an address and a count.
+std::optional<BytesOperands> findBytesOperands(const Program& program, const Value& call, BuiltinCallForm formOfCall)
+{
+    if (call.opcode != Opcode::CallBuiltin)
+        return std::nullopt;
+    // An earlier round may have taken the result apart already.
+    BuiltinCallForm form = call.builtinCallForm() == BuiltinCallForm::Whole ? formOfCall : call.builtinCallForm();
+    const BuiltinOverload& overload = program.builtins().at(call.overload());
+    bool entersDirectEntry = form == BuiltinCallForm::Whole || (form == BuiltinCallForm::Fields && overload.code.fieldsForm == InlineBuiltin::FieldsOfDirectEntry);
+    // The bounds come behind the arguments, so none of them is left out.
+    if (!overload.code.overloadInRanges || !entersDirectEntry || call.argumentsOperands().size() != overload.parameters.size())
+        return std::nullopt;
+
+    BytesOperands bytes { overload.code.overloadInRanges, { } };
+    for (std::optional<BuiltinOperand> operand : overload.code.operandsTakenAsBytes) {
+        if (operand)
+            bytes.operandIndexes.append(operand->isReceiver() ? OperandIndex::CallBuiltin::receiver : OperandIndex::CallBuiltin::arguments + operand->argumentIndex());
+    }
+    return bytes;
+}
+
+// On every way it is a view that exists, or a part of a view that is not made yet.
+bool ObjectInterpreter::isRangeOfView(VirtualObjectID object) const
+{
+    const ObjectState& state = *stateOf(object);
+    const VirtualFamily& family = m_sinking.familyOf(object);
+    return !state.isCell() && std::ranges::all_of(state.variants, [&](const ObjectVariant& variant) {
+        const VirtualShape& shape = family.at(variant.shape);
+        if (shape.kind == VirtualShapeKind::Cell)
+            return variant.tagBit.has_value();
+        if (shape.kind != VirtualShapeKind::Fields || family.descriptionOf(shape).kind != VirtualObjectKind::ViewRange)
+            return false;
+        return (state.variants.size() == 1 || variant.tagBit) && isTypedView(typedArrayTypeOf(program().builtins(), program().at(family.descriptionOf(shape).type)));
+    });
+}
+
+static constexpr int64_t endOfWholeView = static_cast<int64_t>(MAX_ARRAY_BUFFER_SIZE);
+
+void ObjectInterpreter::passRangesOfViews(ValueID call, const BytesOperands& bytes)
+{
+    IRBuilder& builder = cursor().builder();
+    TypeID typeOfBound = builder.types().intern(Type::integer(Range { 0, static_cast<int64_t>(maxSafeInteger()) }));
+    Value value = function().at(call);
+    Vector<ValueID, 8> arguments(value.argumentsOperands());
+    for (uint32_t index : bytes.operandIndexes) {
+        ValueID view = value.operand(index);
+        ValueID start = builder.appendInteger(0);
+        ValueID end = builder.appendInteger(endOfWholeView);
+        if (VirtualObjectID object = objectOf(view); object && isRangeOfView(object)) {
+            const ObjectState& state = *stateOf(object);
+            const VirtualFamily& family = m_sinking.familyOf(object);
+            uint32_t tagBitsOfRanges = 0;
+            unsigned elementSize = 1;
+            for (const ObjectVariant& variant : state.variants) {
+                const VirtualShape& shape = family.at(variant.shape);
+                if (shape.kind != VirtualShapeKind::Fields)
+                    continue;
+                tagBitsOfRanges |= variant.tagMask();
+                elementSize = JSC::elementSize(typedArrayTypeOf(program().builtins(), program().at(family.descriptionOf(shape).type)));
+            }
+            auto partAt = [&](uint32_t operandIndex) {
+                return valueOfField(object, *family.findField(VirtualField::operand(operandIndex)));
+            };
+            auto inBytes = [&](ValueID position) {
+                return elementSize == 1 ? position : builder.append(Opcode::Mul, { position, builder.appendInteger(elementSize) });
+            };
+            ValueID base = partAt(OperandIndex::TypedArrayRange::view);
+            ValueID startOfRange = inBytes(partAt(OperandIndex::TypedArrayRange::start));
+            ValueID endOfRange = inBytes(partAt(OperandIndex::TypedArrayRange::end));
+            if (state.isVirtual()) {
+                view = base;
+                start = startOfRange;
+                end = endOfRange;
+            } else {
+                ValueID isRange = emitTagTest(object, tagBitsOfRanges);
+                view = cursor().emitSelection(isRange, base, values().find(object)->cell, function().at(view).type);
+                start = cursor().emitSelection(isRange, startOfRange, start, typeOfBound);
+                end = cursor().emitSelection(isRange, endOfRange, end, typeOfBound);
+            }
+            if (index == OperandIndex::CallBuiltin::receiver)
+                value.setReceiverOperand(view);
+            else
+                arguments[index - OperandIndex::CallBuiltin::arguments] = view;
+        }
+        arguments.append(start);
+        arguments.append(end);
+    }
+    if (!program().builtins().at(bytes.overloadInRanges).receiver)
+        value.setReceiverOperand({ });
+    value.setOverload(bytes.overloadInRanges);
+    value.setArgumentsOperands(arguments.span());
+    builder.function().edit(call) = WTF::move(value);
+}
+
+void ObjectInterpreter::requireCellsOfOperands(ValueID id, BuiltinCallForm formOfCall)
 {
     if (m_state.objects.isEmpty())
         return;
 
+    std::optional<BytesOperands> bytes = findBytesOperands(program(), function().at(id), formOfCall);
+    bool passesRange = false;
     Opcode opcode = function().at(id).opcode;
     for (auto [operand, index] : indexedOperandsOf(function().at(id))) {
         bool isGuard = operandKindOf(opcode, index) == OperandKind::Guard;
+        if (VirtualObjectID range = bytes && bytes->operandIndexes.contains(index) ? objectOf(operand) : VirtualObjectID(); range && isRangeOfView(range)) {
+            requireCellOfHeldObject(range, *m_sinking.familyOf(range).findField(VirtualField::operand(OperandIndex::TypedArrayRange::view)), causeOf(id, index));
+            passesRange = true;
+            continue;
+        }
         if (VirtualObjectID object = isGuard ? guardedObjectOf(operand) : objectOf(operand)) {
             if (isGuard && (reliesOnAnswerThatCellDoesNotKeep(id, object) || m_sinking.mayBeListOfNumbers(object)))
                 m_sinking.abandon(object);
@@ -424,6 +528,8 @@ void ObjectInterpreter::requireCellsOfOperands(ValueID id)
         if (VirtualObjectID destructured = destructuredObjectOf(operand))
             m_sinking.abandon(destructured);
     }
+    if (passesRange && isRewriting())
+        passRangesOfViews(id, *bytes);
 }
 
 void ObjectInterpreter::requireCellsOfOperandsBeside(ValueID id, uint32_t operandIndex)
@@ -1296,7 +1402,7 @@ static bool hasOperands(const Value& value)
 static bool canBeBuiltByCaller(const Function& function, const VirtualObjectDescription& description)
 {
     const Value& allocation = function.at(description.allocation);
-    if (description.kind == VirtualObjectKind::Opaque && hasOperands(allocation))
+    if ((description.kind == VirtualObjectKind::Opaque || description.kind == VirtualObjectKind::ViewRange) && hasOperands(allocation))
         return false;
     return description.canBeBuilt && !description.staysInPlace && boundToOf(allocation.opcode) == BoundTo::Nothing;
 }

@@ -181,6 +181,9 @@ static bool leadsToBody(const Function& function)
 
 HeatClass Heat::classOf(const Program& program, FunctionID id, double activations, double frequencyInFunction) const
 {
+    // A share of the program would cut through a handler: its blocks run equally often but for the calls that may throw in between.
+    if (m_thresholds && !m_classOfEverything && frequencyInFunction >= HeatModel::minWeightOfNearlyCertainCall && m_entries.of(program, id).isCalledPerEvent)
+        return HeatClass::Hot;
     double heat = activations * frequencyInFunction;
     HeatClass heatClass = classOf(heat);
     if (!isHot(heatClass) || heat >= frequencyConstants.iterationsPerLoop || frequencyInFunction >= HeatModel::minWeightOfCallInLoop)
@@ -391,6 +394,20 @@ static Vector<uint8_t> followNearlyCertainCalls(const HeatGraph& graph, const Ve
     return runsInLoop;
 }
 
+// What the host calls once for each request, message or tick, and the body behind an entry that the engine has put in front of it.
+static Vector<uint8_t> findFunctionsCalledPerEvent(const Program& program, const HeatGraph& graph)
+{
+    Vector<uint8_t> isCalledPerEvent(FillWith { }, graph.numberOfFunctions(), static_cast<uint8_t>(0));
+    Vector<uint32_t> worklist;
+    followCalls(graph, graph.hostNode(), HeatModel::eventsPerRun, isCalledPerEvent, worklist);
+    while (!worklist.isEmpty()) {
+        FunctionID entry(worklist.takeLast());
+        if (leadsToBody(program.at(entry)))
+            followCalls(graph, graph.nodeOf(entry), HeatModel::minWeightOfNearlyCertainCall, isCalledPerEvent, worklist);
+    }
+    return isCalledPerEvent;
+}
+
 // A caller that runs once, or that waits between its steps, says nothing about how often the callee runs.
 static bool hasManyCallers(const Program& program, const FlowResults& flow, const HeatGraph& graph, FunctionID id)
 {
@@ -550,6 +567,7 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
     heat.m_hasWeights = heatFor == HeatFor::Everything || !isVeryLargeProgram;
     Vector<uint8_t> isCalledInLoop;
     Vector<uint8_t> runsInLoop;
+    Vector<uint8_t> isCalledPerEvent;
     Vector<uint8_t> functionsThatRunOften;
     Vector<uint8_t> isCompact;
     // estimateActivations is serial, so everything that needs only the graph runs next to it.
@@ -566,6 +584,7 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
                 heat.m_layoutsStoredUnderNames = collectLayoutsStoredUnderNames(program, loops, functionsWithBody.span());
             isCalledInLoop = findFunctionsCalledInLoops(loops, graph, functionsWithBody.span());
             runsInLoop = followNearlyCertainCalls(graph, isCalledInLoop);
+            isCalledPerEvent = findFunctionsCalledPerEvent(program, graph);
             if (!isVeryLargeProgram)
                 return;
             functionsThatRunOften.fill(static_cast<uint8_t>(0), graph.numberOfFunctions());
@@ -619,6 +638,7 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
         // Without weights: classifyByCallers gives the entry its activations and its percentile.
         heat.m_entries[id] = heat.m_hasWeights ? Heat::Entry { activations[i], HeatClass::RunsOnce, percentiles[i], activations[i] } : Heat::Entry { 1, HeatClass::RunsOnce };
         heat.m_entries[id].isCalledInLoop = runsInLoop[i];
+        heat.m_entries[id].isCalledPerEvent = !isVeryLargeProgram && isCalledPerEvent[i] && !isLibraryCode(program, program.functions[i]);
         if (!flow.runsAtMostOnce(program, id))
             heat.m_entries[id].heatClass = heat.classOf(program, id, 1);
     });

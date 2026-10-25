@@ -46,11 +46,20 @@ static bool onlyReadsAndCreatesStrings(const Effects& effects)
     return !effects.mayRunOtherCode() && !effects.mayThrowByRule() && effects.writes.containsOnly(stringRangeHeaps) && effects.reads.containsOnly(stringRangeHeaps);
 }
 
+// A view over the memory of another. Its bounds are taken, and the other view keeps its length and its place in the buffer, so it does not matter when the view is made.
+static bool onlyMakesView(const Effects& effects)
+{
+    constexpr AbstractHeapSet viewHeaps = bookkeepingHeaps | AbstractHeapSet { AbstractHeap::TypedArrayStorage };
+    return !effects.mayRunOtherCode() && !effects.mayThrowByRule() && effects.writes.containsOnly(viewHeaps) && effects.reads.containsOnly(viewHeaps);
+}
+
 static bool canBeDeferred(const EffectsOnEdges& effects, VirtualObjectKind kind)
 {
     const Effects& normal = effects.normal;
     if (kind == VirtualObjectKind::StringRange)
         return onlyReadsAndCreatesStrings(normal);
+    if (kind == VirtualObjectKind::ViewRange)
+        return onlyMakesView(normal);
     return normal.isUnobservable() && normal.reads.containsOnly(bookkeepingHeaps);
 }
 
@@ -263,6 +272,9 @@ static DescribedObject describeAllocation(FunctionAnalyses& analyses, const Valu
         description.hasIdentity = false;
         description.absentResult = VirtualConstant::Undefined;
         return supported(description);
+    case Opcode::TypedArrayRange:
+        description.kind = VirtualObjectKind::ViewRange;
+        return supported(description);
     case Opcode::CallBuiltin:
         return describeBuiltinResult(analyses, value, description);
     case Opcode::NewRegExp:
@@ -359,6 +371,7 @@ void forEachInitialField(const VirtualObjectContext& context, const VirtualObjec
         functor(VirtualField::part(VirtualFieldKind::RangeEnd), value.endOperand());
         return;
     case VirtualObjectKind::Opaque:
+    case VirtualObjectKind::ViewRange:
         // An opaque object is built as a copy of its allocation, with what the operands were at the allocation.
         value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
             functor(VirtualField::operand(operandIndex), operand);
@@ -1069,6 +1082,7 @@ Value makeAllocation(const Program& program, const AllocationRequest& request)
     case VirtualObjectKind::Array:
         return makeArray(request);
     case VirtualObjectKind::Opaque:
+    case VirtualObjectKind::ViewRange:
         return makeCopyOfAllocation(request);
     case VirtualObjectKind::ArgumentList:
         return request.prototype;
@@ -1124,6 +1138,7 @@ Value makeFieldRead(const Program& program, const VirtualObjectDescription& desc
         return read;
     }
     case VirtualObjectKind::Opaque:
+    case VirtualObjectKind::ViewRange:
     case VirtualObjectKind::Array:
     case VirtualObjectKind::ArgumentList:
     case VirtualObjectKind::Arguments:
@@ -1156,6 +1171,7 @@ Value makeFieldStore(const Program& program, const VirtualObjectDescription& des
         return store;
     }
     case VirtualObjectKind::Opaque:
+    case VirtualObjectKind::ViewRange:
     case VirtualObjectKind::Closure:
     case VirtualObjectKind::Array:
     case VirtualObjectKind::ArgumentList:
@@ -1224,6 +1240,7 @@ SpeculativeLoad canLoadSpeculatively(const VirtualObjectContext& context, const 
         break;
     }
     case VirtualObjectKind::Opaque:
+    case VirtualObjectKind::ViewRange:
     case VirtualObjectKind::Array:
     case VirtualObjectKind::ArgumentList:
     case VirtualObjectKind::Arguments:
@@ -1263,6 +1280,7 @@ LateStore canStoreLate(const VirtualObjectContext& context, const VirtualObjectD
         return isListedByAllocation(context, description, field) ? LateStore::Unknown : LateStore::CreatesProperty;
     }
     case VirtualObjectKind::Opaque:
+    case VirtualObjectKind::ViewRange:
     case VirtualObjectKind::Closure:
     case VirtualObjectKind::Array:
     case VirtualObjectKind::ArgumentList:

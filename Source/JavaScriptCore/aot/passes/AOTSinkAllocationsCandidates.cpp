@@ -230,7 +230,7 @@ private:
     void addEvent(EventKind, uint32_t object, const Use&, uint32_t other = noObject);
     void materialize(uint32_t object, const Use&);
     bool neverFolds(uint32_t object, const Value& store, BlockID) const;
-    bool mayBeScalarReplacedBy(uint32_t object, const Value& user);
+    bool mayBeScalarReplacedBy(uint32_t object, const Use&, BuiltinCallForm formOfCall);
     bool storesLate(uint32_t holder) const;
     std::optional<uint32_t> candidateReadFrom(ValueID) const;
     KnownBoolean evaluateOnAllocatedShape(uint32_t object, const Use& test) const;
@@ -460,11 +460,14 @@ bool AllocationPrefilter::neverFolds(uint32_t object, const Value& store, BlockI
     return store.opcode != Opcode::PropSet || m_sinking.storesByNameWaitIn(block) || !canHoldUnprovenValue(m_program, description, access.field);
 }
 
-bool AllocationPrefilter::mayBeScalarReplacedBy(uint32_t object, const Value& user)
+bool AllocationPrefilter::mayBeScalarReplacedBy(uint32_t object, const Use& use, BuiltinCallForm formOfCall)
 {
+    const Value& user = m_function.at(use.user);
     EnumSet<VirtualObjectKind> kinds = m_objects[find(object)].kinds;
     if (kinds.contains(VirtualObjectKind::Arguments))
         return true;
+    if (std::optional<BytesOperands> bytes = kinds.contains(VirtualObjectKind::ViewRange) ? findBytesOperands(m_program, user, formOfCall) : std::nullopt)
+        return bytes->operandIndexes.contains(use.operandIndex);
     return kinds.contains(VirtualObjectKind::Array) && user.opcode == Opcode::CallBuiltin && user.builtinCallForm() == BuiltinCallForm::List;
 }
 
@@ -519,7 +522,7 @@ void AllocationPrefilter::classifyAllocationOperand(ValueID name, uint32_t objec
     const Value& user = m_function.at(use.user);
     std::optional<uint32_t> holder = objectNamedBy(use.user);
     if (!holder || !isAllocation(*holder) || m_objects[*holder].definition != use.user) {
-        if (!mayBeScalarReplacedBy(object, user))
+        if (!mayBeScalarReplacedBy(object, use, BuiltinCallForm::Whole))
             materialize(object, use);
         return;
     }
@@ -528,7 +531,7 @@ void AllocationPrefilter::classifyAllocationOperand(ValueID name, uint32_t objec
     if (description.staysInPlace) {
         if (description.isDead)
             m_objects[find(object)].isUnmodeled = true;
-        else
+        else if (description.kind != VirtualObjectKind::BuiltinFields || !mayBeScalarReplacedBy(object, use, BuiltinCallForm::Fields))
             materialize(object, use);
         return;
     }

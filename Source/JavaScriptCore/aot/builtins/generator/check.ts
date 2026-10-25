@@ -691,6 +691,19 @@ function checkRoles(model: TableModel, problems: Problems): void {
 const holdsStrings = (type: ModelType): boolean =>
   type.parts.some(part => part.part === "Instance" && part.contents.some(({ type: held }) => admits(held, "String")));
 
+// Compiled code takes such a call apart: it clamps the bounds itself, and makes the view only for whoever needs one.
+function checkRangeOfView(overload: ModelOverload, problems: Problems): void {
+  const { type, rangeOf } = overload.result;
+  if (rangeOf === null) return;
+  if (type.freshness !== "Yes" || type.parts.length !== 1 || type.parts[0].part !== "InstanceOfReceiverClass" || rangeOf.operand !== "Receiver") {
+    report(problems, overload, "rangeOf is for a method that returns a new view of the class of its receiver");
+  }
+  const takesBounds = overload.parameters.length === 2 && overload.parameters.every(({ mode }) => mode === "Optional");
+  if (!takesBounds || overload.effects.capability === "js") {
+    report(problems, overload, "rangeOf is for a method that takes a start and an end, and runs no JavaScript");
+  }
+}
+
 function checkRangeRules(model: TableModel, problems: Problems): void {
   for (const overload of model.overloads) {
     const { type, rangeRule, rangeOperand, substringOf } = overload.result;
@@ -700,6 +713,7 @@ function checkRangeRules(model: TableModel, problems: Problems): void {
     if (rangeRule !== "None" && (rangeOperand === null || !convertsTo(overload, rangeOperand, "Number"))) {
       report(problems, overload, `the range rule ${rangeRule} applies to an operand that is a number`);
     }
+    checkRangeOfView(overload, problems);
     if (substringOf === null) continue;
     if (!admits(type, "String") && !holdsStrings(type)) {
       report(problems, overload, "substringOf needs a result with strings, or an array that holds them");

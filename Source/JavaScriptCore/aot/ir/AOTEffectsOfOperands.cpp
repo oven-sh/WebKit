@@ -1279,6 +1279,9 @@ ResultFreshness freshnessOf(const EffectContext& context, const Function& functi
 
     if (value.opcode == Opcode::NewClosure && namesClosureOfTable(context.program, value))
         return ResultFreshness::Unknown;
+    // What it writes is where the other view keeps its bytes. Nothing there can hold the new view.
+    if (value.opcode == Opcode::TypedArrayRange)
+        return ResultFreshness::Fresh;
 
     Effects effects = effectsOfValue().onAnyEdge();
     if (!effects.writes.containsOnly(bookkeepingHeaps) || effects.mayCallUnknownCode)

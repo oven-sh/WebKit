@@ -104,6 +104,21 @@ void ElementAccessEmitter::generateGetTypedArrayLength(const ValueContext& value
     define(value, TypedArraySupport(generator()).lengthOf(in<CellPointer>(value->viewOperand())));
 }
 
+// The length cannot change, the memory is there, and a position in it fits 31 bits.
+void ElementAccessEmitter::generateHasFixedBytes(const ValueContext& value)
+{
+    CellPointer view = in<CellPointer>(value->viewOperand());
+    Condition hasFixedLength = hasNoBits(loadByte(view, m_heaps.JSArrayBufferView_mode), resizabilityAndAutoLengthMask);
+    Condition hasMemory = isNotZero(Integer(loadField<Pointer>(view, m_heaps.JSArrayBufferView_vector).value()));
+    Condition isShort = belowOrEqual(loadField<Integer>(view, m_heaps.JSArrayBufferView_length), integer(std::numeric_limits<int32_t>::max()));
+    defineTest(value, logicalAnd(logicalAnd(hasFixedLength, hasMemory), isShort));
+}
+
+void ElementAccessEmitter::generateTypedArrayRange(const ValueContext& value)
+{
+    define(value, callOperation<CellPointer>(value, RuntimeOperation::TypedArrayRange, { in<CellPointer>(value->viewOperand()), integerOf(value->startOperand()), integerOf(value->endOperand()) }));
+}
+
 void ElementAccessEmitter::generateGetTypedArrayElement(const ValueContext& value)
 {
     TypedArrayType type = value->typedArrayType();

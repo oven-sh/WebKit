@@ -798,7 +798,7 @@ PassOutcome simplifyBuiltinCalls(FunctionPassContext& context)
     didRewrite(simplifyPromiseAllOfLiterals(context, calls));
     didRewrite(simplifyPromiseResolve(context, calls));
     didRewrite(leaveURLsUnbuilt(context));
-    didRewrite(leaveRangesOfBytesUnmade(context, calls));
+    didRewrite(expandRangesOfViews(context, calls));
     didRewrite(takeLiteralArgumentsApart(context, calls));
 
     PassOutcome outcome = rewrites ? PassOutcome::Changed : PassOutcome::Unchanged;

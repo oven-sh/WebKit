@@ -289,6 +289,7 @@ static KnownValue knownValueOf(const VirtualObjectDescription& description)
     case VirtualObjectKind::Arguments:
     case VirtualObjectKind::BuiltinFields:
     case VirtualObjectKind::BuiltinPrefix:
+    case VirtualObjectKind::ViewRange:
         return KnownValue::object();
     case VirtualObjectKind::Opaque:
     case VirtualObjectKind::Environment:

@@ -913,7 +913,7 @@ void ObjectInterpreter::executeBuiltinResult(ValueID call, VirtualObjectID objec
     std::optional<uint8_t> tagBitWhenAbsent = m_sinking.at(object).tagBitWhenAbsent;
     ObjectState state = stateAtAllocation(object, family.intern(WTF::move(present)));
 
-    requireCellsOfOperands(call);
+    requireCellsOfOperands(call, form);
     forgetFieldsWrittenBy(call);
     if (!isRewriting()) {
         m_state.add(object, WTF::move(state));

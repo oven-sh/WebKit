@@ -46,6 +46,7 @@ enum class VirtualObjectKind : uint8_t {
     ArgumentList,
     Arguments,
     StringRange,
+    ViewRange,
     BuiltinFields,
     BuiltinPrefix,
 };

@@ -22,6 +22,8 @@ ASCIILiteral nameOf(VirtualObjectKind kind)
     switch (kind) {
     case VirtualObjectKind::Opaque:
         return "Opaque"_s;
+    case VirtualObjectKind::ViewRange:
+        return "ViewRange"_s;
     case VirtualObjectKind::Object:
         return "Object"_s;
     case VirtualObjectKind::Environment:

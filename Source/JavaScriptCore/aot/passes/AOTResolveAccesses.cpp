@@ -1479,7 +1479,6 @@ PassOutcome addEmptySlotCases(FunctionPassContext& context)
     return outcome;
 }
 
-#if ASSERT_ENABLED
 static bool testsCoverPlan(std::span<const Value> tests, const PropertyAccessPlan& plan, PropertyKeyID key)
 {
     bool coverProofs = std::ranges::all_of(allMembersOf<Proof>, [&](Proof proof) {
@@ -1489,7 +1488,30 @@ static bool testsCoverPlan(std::span<const Value> tests, const PropertyAccessPla
     });
     return coverProofs && testsCoverConditions(tests, plan.conditions.span());
 }
-#endif
+
+// An object stored into itself also passed the test of the stored value, so its type may list fewer layouts than its own test did. Effects go by that type.
+static void narrowPlanToReceiverType(FunctionPassContext& context, std::span<const Value> tests, ValueID receiver, PropertyAccessQuery& query, PropertyAccessPlan& plan)
+{
+    ReceiverCandidates byType = candidatesOf(context.program, context.program.typeOf(context.function, receiver), nullptr, { });
+    if (byType.proof != ReceiverProof::Type || byType.hasOtherParts)
+        return;
+    LayoutList layouts = plan.receivers;
+    layouts.intersect(byType.proven);
+    if (layouts.isEmpty() || layouts.size() == plan.receivers.size())
+        return;
+
+    PropertyAccessQuery narrowed = query;
+    narrowed.receivers = ReceiverCandidates::underGuard(layouts.span());
+    // Effects are computed without flow results, so that plan is tried too.
+    for (const FlowResults* flow : { &context.inputs.flow, static_cast<const FlowResults*>(nullptr) }) {
+        PropertyAccessPlan narrower = planPropertyAccess({ context.program, flow }, narrowed);
+        if (!narrower.isResolved() || narrower.receiverTest != ReceiverTest::None || !testsCoverPlan(tests, narrower, query.key))
+            continue;
+        query = WTF::move(narrowed);
+        plan = WTF::move(narrower);
+        return;
+    }
+}
 
 void rewriteTestedPropertyAccess(TestSiteRewriter& rewriter)
 {
@@ -1520,6 +1542,7 @@ void rewriteTestedPropertyAccess(TestSiteRewriter& rewriter)
     RELEASE_ASSERT(plan.isResolved());
     RELEASE_ASSERT(plan.receiverTest == ReceiverTest::None);
     ASSERT(testsCoverPlan(rewriter.tests(), plan, query->key));
+    narrowPlanToReceiverType(context, rewriter.tests(), operands.receiver, *query, plan);
     plan.level = KnowledgeLevel::Expected;
 
     if (plan.stores() && !plan.storedValueFits) {

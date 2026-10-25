@@ -928,6 +928,7 @@ const signatureColumnKeys = [
   "resultIsDeclaredOnly",
   "range",
   "substringOf",
+  "rangeOf",
   "typedResultForm",
   "iterates",
   "prototypeSource",

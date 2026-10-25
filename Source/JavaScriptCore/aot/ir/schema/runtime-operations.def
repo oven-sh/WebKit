@@ -79,6 +79,8 @@ runtime NewTypedArray : JSCell* (uint32_t type, double length) ; reads(all) writ
 runtime TypedArrayPut : void (JSCell* view, uint64_t position, double value) ; reads(all) writes(TypedArrayElements)
 runtime TypedArrayLength : uint64_t (JSCell* view) ; reads(all) ; leaf
 runtime ViewByteLength : uint64_t (JSCell* view) ; reads(all) ; leaf
+runtime NewObjectOfBuiltinLayout : JSCell* (uint32_t layout, EncodedJSValue first, EncodedJSValue second) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
+runtime TypedArrayRange : JSCell* (JSCell* view, uint64_t start, uint64_t end) ; reads(all) writes(TypedArrayStorage, AllocatorState, RuntimeState) throws collects
 runtime ThrowIfTypedArrayIsDetached : void (JSCell* view) ; reads(all) throws
 
 runtime Concat : JSCell* (JSCell* left, JSCell* right) ; reads(all) writes(AllocatorState, RuntimeState) throws collects

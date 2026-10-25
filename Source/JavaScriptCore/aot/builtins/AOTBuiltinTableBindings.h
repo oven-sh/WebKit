@@ -63,6 +63,9 @@ enum class BuiltinDirectValue : uint8_t {
     // An address and a count, in two registers. The function has the memory until it returns, and never the cell.
     Bytes,
     BytesOfReceiver,
+    // A part of a view. Where it starts and ends, in bytes, are the last arguments of the call: two for each such parameter, in their order.
+    BytesInRange,
+    BytesOfReceiverInRange,
     Characters,
 };
 
@@ -78,14 +81,16 @@ struct BuiltinDirectFields {
 struct BuiltinDirectFunctionBinding {
     static constexpr unsigned maxParameterCount = 6;
 
-    static constexpr bool takesReceiver(BuiltinDirectValue parameter) { return parameter == BuiltinDirectValue::NativeObjectOfReceiver || parameter == BuiltinDirectValue::Receiver || parameter == BuiltinDirectValue::BytesOfReceiver || parameter == BuiltinDirectValue::FrameOfValues; }
+    static constexpr bool takesReceiver(BuiltinDirectValue parameter) { return parameter == BuiltinDirectValue::NativeObjectOfReceiver || parameter == BuiltinDirectValue::Receiver || parameter == BuiltinDirectValue::BytesOfReceiver || parameter == BuiltinDirectValue::BytesOfReceiverInRange || parameter == BuiltinDirectValue::FrameOfValues; }
+    static constexpr bool takesBounds(BuiltinDirectValue parameter) { return parameter == BuiltinDirectValue::BytesInRange || parameter == BuiltinDirectValue::BytesOfReceiverInRange; }
     static constexpr bool takesArgument(BuiltinDirectValue parameter) { return parameter == BuiltinDirectValue::FrameOfValues || (parameter != BuiltinDirectValue::Realm && !takesReceiver(parameter)); }
     bool takesReceiver() const { return std::ranges::any_of(std::span(parameters).first(parameterCount), [](BuiltinDirectValue parameter) { return takesReceiver(parameter); }); }
     bool takesFrame() const { return std::ranges::contains(std::span(parameters).first(parameterCount), BuiltinDirectValue::FrameOfValues); }
     bool entersHostFunction() const { return parameterCount == 2 && parameters[0] == BuiltinDirectValue::Realm && parameters[1] == BuiltinDirectValue::FrameOfValues; }
+    size_t numberOfBounds() const { return 2 * std::ranges::count_if(std::span(parameters).first(parameterCount), [](BuiltinDirectValue parameter) { return takesBounds(parameter); }); }
     size_t minArgumentCount() const
     {
-        return std::ranges::count_if(std::span(parameters).first(parameterCount), [](BuiltinDirectValue parameter) {
+        return numberOfBounds() + std::ranges::count_if(std::span(parameters).first(parameterCount), [](BuiltinDirectValue parameter) {
             return takesArgument(parameter) && parameter != BuiltinDirectValue::RestOfValues && parameter != BuiltinDirectValue::FrameOfValues && parameter != BuiltinDirectValue::ValueOrEmpty;
         });
     }

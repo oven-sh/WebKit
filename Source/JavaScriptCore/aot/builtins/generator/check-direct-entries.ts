@@ -6,6 +6,7 @@ import {
   directValueTypes,
   maximumDirectParameterCount,
   type DirectParameterSpec,
+  type DirectValue,
   type OperandUse,
   type Primitive,
 } from "./vocabulary.ts";
@@ -46,8 +47,10 @@ function holdsOnlyInstances({
   );
 }
 
+const bytesOfReceiver: readonly DirectValue[] = ["BytesOfReceiver", "BytesOfReceiverInRange"];
+const bytesInRange: readonly DirectValue[] = ["BytesInRange", "BytesOfReceiverInRange"];
 const takesReceiver = ({ value }: DirectParameterSpec) =>
-  value === "NativeObjectOfReceiver" || value === "Receiver" || value === "BytesOfReceiver" || value === "FrameOfValues";
+  value === "NativeObjectOfReceiver" || value === "Receiver" || bytesOfReceiver.includes(value) || value === "FrameOfValues";
 const takesArgument = (parameter: DirectParameterSpec) =>
   parameter.value === "FrameOfValues" || (parameter.value !== "Realm" && !takesReceiver(parameter));
 
@@ -87,7 +90,9 @@ function findContentsProblems({ value }: DirectParameterSpec, parameter: ModelPa
   const { name, accepted, uses, roles } = parameter;
   switch (value) {
     case "Bytes":
-    case "BytesOfReceiver": {
+    case "BytesOfReceiver":
+    case "BytesInRange":
+    case "BytesOfReceiverInRange": {
       const others = uses.filter(use => !usesOfContentsDuringCall.includes(use));
       if (others.length > 0 || !runsNoCodeOf(parameter))
         return [`${name}: ${value} hands over memory for the time of the call, and the row says more: ${others.join(", ") || "it runs code of the operand"}`];
@@ -169,13 +174,24 @@ function findReceiverProblems({ mode, receiver, code: { directEntry } }: ModelOv
       : [`${symbol} takes the arguments of a call and no receiver`];
   }
   if (receiver === null) return [`${symbol} takes the receiver, and the overload has none`];
-  const bytesOfReceiver = parameters.find(({ value }) => value === "BytesOfReceiver");
-  if (bytesOfReceiver !== undefined) return findContentsProblems(bytesOfReceiver, receiver);
+  const takingBytes = parameters.find(({ value }) => bytesOfReceiver.includes(value));
+  if (takingBytes !== undefined) return findContentsProblems(takingBytes, receiver);
   if (takesNativeObject && (receiver.conversion !== "None" || !holdsOnlyInstances(receiver.accepted))) {
     return [`${symbol} takes what the receiver wraps, so the receiver is an instance of a class`];
   }
   return [];
 }
+
+const valuesWithoutRealm: readonly DirectValue[] = [
+  "Bytes",
+  "BytesOfReceiver",
+  "BytesInRange",
+  "BytesOfReceiverInRange",
+  "Characters",
+  "Boolean",
+  "Int32",
+  "Double",
+];
 
 // Two registers come back. Nothing says that the function failed, so it has no realm to throw in or to allocate in.
 function findFieldsProblems({ result, code: { directEntry } }: ModelOverload): string[] {
@@ -188,7 +204,7 @@ function findFieldsProblems({ result, code: { directEntry } }: ModelOverload): s
   const problems: string[] = [];
   if (fields.length > 2 || fields.some(({ isOptional, type }) => isOptional || type.integers === null || type.primitives.length > 0))
     problems.push(`${symbol} returns fields in two registers, so the layout has at most two fields, and they are integers`);
-  if (parameters.some(({ value }) => !["Bytes", "BytesOfReceiver", "Characters", "Boolean", "Int32", "Double"].includes(value)))
+  if (parameters.some(({ value }) => !valuesWithoutRealm.includes(value)))
     problems.push(`${symbol} returns fields, so it takes nothing with which it could throw, allocate or call`);
   return problems;
 }
@@ -216,14 +232,24 @@ function findProblems(overload: ModelOverload): string[] {
   problems.push(...findFieldsProblems(overload));
   const taken = directEntry.parameters.filter(takesArgument);
   if (taken.length === 1 && taken[0].value === "FrameOfValues") return problems;
-  if (taken.length !== parameters.length) {
-    return [...problems, `${symbol} takes ${taken.length} arguments, and the overload has ${parameters.length}`];
+  // The bounds of each part of a view come last, and go into the address and the count of that view.
+  const numberOfBounds = 2 * directEntry.parameters.filter(({ value }) => bytesInRange.includes(value)).length;
+  if (taken.length + numberOfBounds !== parameters.length) {
+    return [
+      ...problems,
+      `${symbol} takes ${taken.length + numberOfBounds} arguments, and the overload has ${parameters.length}`,
+    ];
   }
   return [
     ...problems,
-    ...parameters.flatMap((parameter, index) =>
-      findArgumentProblems(taken[index], parameter, index === parameters.length - 1),
-    ),
+    ...parameters
+      .slice(0, taken.length)
+      .flatMap((parameter, index) => findArgumentProblems(taken[index], parameter, index === taken.length - 1)),
+    ...parameters
+      .slice(taken.length)
+      .flatMap(({ name, mode, uses }) =>
+        mode === "Required" && uses.join() === "Inspects" ? [] : [`${name}: a bound of a part of a view is only looked at`],
+      ),
   ];
 }
 

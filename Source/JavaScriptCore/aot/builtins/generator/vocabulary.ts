@@ -399,6 +399,9 @@ export const directValueTypes = {
   // The bytes of a view while the call runs: the address of the first one and how many there are. The function never sees the view, so the row may only let it read and write the contents.
   Bytes: ["uint8_t*, size_t", "const uint8_t*, size_t"],
   BytesOfReceiver: ["uint8_t*, size_t", "const uint8_t*, size_t"],
+  // The same for a part of a view. Where the part starts and ends, in bytes, are two more operands behind the others. The generator writes these two: see forms-in-ranges.ts.
+  BytesInRange: ["uint8_t*, size_t", "const uint8_t*, size_t"],
+  BytesOfReceiverInRange: ["uint8_t*, size_t", "const uint8_t*, size_t"],
   // The characters of a string: the address of the first one, with the top bit set where a character has 16 bits, and how many there are.
   Characters: ["const uint8_t*, size_t"],
 } as const satisfies Record<string, readonly string[]>;
@@ -408,6 +411,8 @@ export const directValuesInTwoRegisters: readonly DirectValue[] = [
   "RestOfValues",
   "Bytes",
   "BytesOfReceiver",
+  "BytesInRange",
+  "BytesOfReceiverInRange",
   "Characters",
 ];
 export const maximumDirectParameterCount = 6;
@@ -531,6 +536,8 @@ export interface SignatureColumns {
   resultIsDeclaredOnly?: boolean;
   range?: { rule: RangeRule; operand?: OperandName };
   substringOf?: OperandName;
+  /** The result is a new view of the class of this operand over the same memory: its elements from `start` to `end`, which count from the end where they are negative. */
+  rangeOf?: OperandName;
   typedResultForm?: { form: Exclude<TypedResultForm, "None">; source: OperandName };
   iterates?: { operand: OperandName; kind: IterationKind };
   prototypeSource?: OperandName;

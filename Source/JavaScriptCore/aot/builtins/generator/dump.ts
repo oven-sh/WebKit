@@ -186,6 +186,7 @@ export interface DumpedResult {
   rangeRule: RangeRule;
   rangeOperand: DumpedOperand | null;
   substringOf: DumpedOperand | null;
+  rangeOf: DumpedOperand | null;
   typedResultForm: TypedResultForm;
   typedResultSource: DumpedOperand | null;
   iteratedOperand: DumpedOperand | null;

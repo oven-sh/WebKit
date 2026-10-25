@@ -26,10 +26,12 @@ import {
   type ModelFunction,
   type ModelHostRead,
   type ModelModule,
+  type ModelName,
   type ModelPrototype,
   type ModelStartup,
   type ModelTypeName,
   type NameKind,
+  type PropertyActionKind,
   type TableModel,
 } from "./model.ts";
 import { compareBytes } from "./paths.ts";
@@ -285,6 +287,35 @@ function emitNames(model: TableModel): string {
   ].join("");
 }
 
+const storingActions: readonly PropertyActionKind[] = ["StoresByKey", "DefinesName", "DefinesGetter", "DefinesSetter"];
+
+// An object can have a property under one of these names that no compiled code stored.
+function findNamesStoredByNativeCode(model: TableModel): Set<ModelName> {
+  const stored = new Set<ModelName>();
+  const add = (names: Iterable<ModelName | null>): void => {
+    for (const name of names) if (name !== null) stored.add(name);
+  };
+  add(model.builtins.filter(builtin => builtin.holder !== null).map(builtin => builtin.name));
+  for (const builtinClass of model.classes) add(builtinClass.namesDefinedOnNewInstances ?? []);
+  for (const layout of model.layouts) add(layout.fields.map(field => field.name));
+  for (const hostObject of model.hostObjects) add(hostObject.fields.map(field => field.name));
+  for (const { result, flow } of model.overloads) {
+    add(result.properties.map(property => property.name));
+    for (const { action, key } of flow.propertyActions) {
+      if (key.key === "Names" && storingActions.includes(action)) add(key.names);
+    }
+  }
+  return stored;
+}
+
+// One bit for each name.
+function emitNamesStoredByNativeCode(model: TableModel): string {
+  const bits = new Uint8Array(Math.ceil(model.names.length / 8));
+  for (const { number } of findNamesStoredByNativeCode(model)) bits[number >> 3] |= 1 << (number & 7);
+  const length = "(BuiltinName::COUNT as usize).div_ceil(8)";
+  return `static NAMES_STORED_BY_NATIVE_CODE: [u8; ${length}] = [${bits.join(", ")}];\n`;
+}
+
 function formatTypeName({ path, isView, typeArguments }: ModelTypeName): string {
   const contentsSlots = typeArguments.map(slot => formatOption(slot.contentsSlot, formatContentsSlot));
   return formatStruct("TypeName", [
@@ -428,6 +459,7 @@ export function emitRustTable(model: TableModel): string {
     emitConstants(model),
     emitEntries(model),
     emitNames(model),
+    emitNamesStoredByNativeCode(model),
     emitClassesAndModules(model),
     emitSlice("static RUNTIME_FUNCTIONS: &[RuntimeFunctionData]", model.functions.map(formatRuntimeFunctionData)),
     emitStartup(model.startup),

@@ -300,6 +300,7 @@ function formatResult(result: ModelResult, pools: Pools): string {
     ["rangeRule", formatUnlessDefault("BuiltinRangeRule", result.rangeRule, "None")],
     ["rangeOperand", formatOperand(result.rangeOperand)],
     ["substringOf", formatOperand(result.substringOf)],
+    ["rangeOf", formatOperand(result.rangeOf)],
     ["typedResultForm", formatUnlessDefault("TypedResultForm", result.typedResultForm, "None")],
     ["typedResultSource", formatOperand(result.typedResultSource)],
     ["iteratedOperand", formatOperand(result.iteratedOperand)],
@@ -401,6 +402,8 @@ function formatCode(code: ModelCode, pools: Pools): string | null {
     ["prefixForm", formatInlineBuiltin(code.prefixForm)],
     ["prefixProperties", pools.resultProperties.addStretch(code.prefixProperties.map(formatResultProperty))],
     ["listForm", formatInlineBuiltin(code.listForm)],
+    ["overloadInRanges", formatId("BuiltinOverloadID", code.inRanges === null ? null : code.inRanges.overload)],
+    ["operandsTakenAsBytes", code.inRanges === null ? null : `{ ${code.inRanges.views.map(view => formatOperand(view)).join(", ")} }`],
   ]);
 }
 

@@ -7,6 +7,7 @@ import { TypeInterner } from "./build-types.ts";
 import { checkModel } from "./check.ts";
 import type { SourcedDeclaration } from "./declarations.ts";
 import { buildDispatches } from "./dispatch.ts";
+import { declareFormsInRanges, linkFormsInRanges } from "./forms-in-ranges.ts";
 import type { ModelEngineFile, TableFeature, TableModel } from "./model.ts";
 import { numberModel } from "./number.ts";
 
@@ -37,7 +38,8 @@ function reportOperandsWithoutUses({ operandsWithoutUses }: ModelBuilder): void 
 }
 
 export function buildModel(input: ModelInput): TableModel {
-  const { declarations, schema, features, syntaxUses } = input;
+  const { schema, features, syntaxUses } = input;
+  const declarations = [...input.declarations, ...declareFormsInRanges(input.declarations)];
   const builder = new ModelBuilder(input);
   const types = new TypeInterner(builder);
   const { problems } = builder;
@@ -59,6 +61,7 @@ export function buildModel(input: ModelInput): TableModel {
   }
 
   const model = numberModel(builder, types);
+  linkFormsInRanges(model);
   problems.throwIfAny();
   reportOperandsWithoutUses(builder);
 
