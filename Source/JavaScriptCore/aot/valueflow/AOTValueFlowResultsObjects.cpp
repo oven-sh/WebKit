@@ -152,8 +152,8 @@ PrototypeLinks::PrototypeLinks(const ValueFlowResultInputs& inputs, const ValueF
     }
 
     auto standsForMemberOf = [&](ValueSetID holdingPlaceholder, ValueSetID other) {
-        return (sets.contains(holdingPlaceholder, ValueFlowUniverse::unknownObject()) && sets.meet(other, inputs.solver().valueOf(ValueFlowProgramNodes::escaped())))
-            || (sets.contains(holdingPlaceholder, ValueFlowUniverse::untrackedObject()) && sets.meet(other, inputs.solver().valueOf(ValueFlowProgramNodes::lost())));
+        return (sets.contains(holdingPlaceholder, ValueFlowUniverse::unknownObject()) && sets.meet(other, inputs.solver().possibleValuesOf(ValueFlowProgramNodes::escaped())))
+            || (sets.contains(holdingPlaceholder, ValueFlowUniverse::untrackedObject()) && sets.meet(other, inputs.solver().possibleValuesOf(ValueFlowProgramNodes::lost())));
     };
     auto mayShareObject = [&](ValueSetID first, ValueSetID second) {
         return sets.meet(first, second) || standsForMemberOf(first, second) || standsForMemberOf(second, first);
@@ -237,7 +237,7 @@ static bool mayFallBackToObjectPrototype(const ValueFlowResultInputs& inputs, co
     std::optional<unsigned> newTargetIndex = function.newTargetParameterIndex();
     if (!newTargetIndex || sameObjectThroughCasts(function, read.newTargetOperand()) != function.at(entryBlock).parameters[*newTargetIndex])
         return true;
-    ValueSetID newTargets = inputs.solver().valueOf(inputs.bodies().nodes().entryParameter(id, *newTargetIndex));
+    ValueSetID newTargets = inputs.solver().possibleValuesOf(inputs.bodies().nodes().entryParameter(id, *newTargetIndex));
     return ValueSets::isComplement(newTargets) || inputs.sets().anyMember(newTargets, [&](ValueFlowObjectID newTarget) {
         if (!inputs.universe().isObject(newTarget))
             return false;
@@ -381,7 +381,7 @@ static ObjectsOfLayouts collectObjectsOfLayouts(const ValueFlowResultInputs& inp
             possibleUnderPlaceholder[found.placeholder].add(found.possibleMutations);
     }
     for (uint32_t placeholder = 0; placeholder < std::size(placeholders); ++placeholder) {
-        ValueSetID covered = inputs.solver().valueOf(placeholder ? ValueFlowProgramNodes::lost() : ValueFlowProgramNodes::escaped());
+        ValueSetID covered = inputs.solver().possibleValuesOf(placeholder ? ValueFlowProgramNodes::lost() : ValueFlowProgramNodes::escaped());
         for (uint32_t index = 0; index < program.layouts.size() && !possibleUnderPlaceholder[placeholder].isEmpty(); ++index) {
             const Layout& layout = program.layouts[index];
             if (isClassLayout(layout) && (sets.contains(covered, universe.prototypeOf(LayoutID(index))) || sets.contains(covered, universe.closureOf(layout.constructor))))
@@ -453,7 +453,7 @@ static void recordWitnesses(const ValueFlowResultInputs& inputs, PrototypeLinks&
         HashMap<uint32_t, Witness, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> witnessOfMark;
         ValueFlowNodeID markNode = links.markNodes.get(static_cast<uint32_t>(mutationCauses[position].mutation));
         if (markNode && !objectsAskedAbout[position].isEmpty()) {
-            ValueSetID remaining = maker.intersect(maker.unite(maker.of(objectsAskedAbout[position].span()), universe.placeholdersAlone()), solver.valueOf(markNode));
+            ValueSetID remaining = maker.intersect(maker.unite(maker.of(objectsAskedAbout[position].span()), universe.placeholdersAlone()), solver.possibleValuesOf(markNode));
             Vector<std::pair<Witness, ValueFlowNodeID>> marks;
             solver.graph().forEachPredecessor(markNode, [&](ValueFlowNodeID predecessor) {
                 ValueFlowStatementID id = solver.statementThatLogged({ predecessor, markNode });
@@ -467,7 +467,7 @@ static void recordWitnesses(const ValueFlowResultInputs& inputs, PrototypeLinks&
                 return std::tie(first.first.function, first.first.value) < std::tie(second.first.function, second.first.value);
             });
             for (const auto& [witness, predecessor] : marks) {
-                ValueSetID brought = maker.intersect(solver.valueOf(predecessor), remaining);
+                ValueSetID brought = maker.intersect(solver.possibleValuesOf(predecessor), remaining);
                 inputs.sets().forEachMember(brought, [&, witness = witness](ValueFlowObjectID object) {
                     witnessOfMark.add(object.index(), witness);
                 });

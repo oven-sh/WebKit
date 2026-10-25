@@ -2298,7 +2298,7 @@ void ValueFlowSolver::watch(WatchShard& shard, ValueFlowNodeID node, ValueSetID 
         shard.watches.append(Watch { within, noSolverIndex, noSolverIndex, 0 });
         uint32_t watchedNode = shard.watchedNodeOfNode.ensure(node.index(), [&] {
             bool holdsWhatPlaceholderCovers = this->holdsWhatPlaceholderCovers(node);
-            shard.watchedNodes.append(WatchedNode { node, valueOf(node), { }, { }, holdsWhatPlaceholderCovers });
+            shard.watchedNodes.append(WatchedNode { node, m_graph.valueOf(node), { }, { }, holdsWhatPlaceholderCovers });
             if (!holdsWhatPlaceholderCovers) {
                 m_isWatched.quickSet(node.index());
                 noteListener(node, WatchesNode);
@@ -2346,7 +2346,7 @@ void ValueFlowSolver::listReadersOfWatch(const WatchShard& shard, uint32_t watch
 void ValueFlowSolver::listWatchersOf(ValueFlowNodeID node, ValueSetMaker& maker, Vector<ValueFlowStatementID>& readers, Vector<NewMemberOfWatchedNode>& newMembers, Vector<WatchesToTest>& watchesToTest)
 {
     if (holdsWhatPlaceholderCovers(node)) {
-        ValueSetID value = valueOf(node);
+        ValueSetID value = m_graph.valueOf(node);
         ValueSetID whatIsNew = maker.intersect(value, ValueSets::complement(std::exchange(seenByWatchersOf(node), value)));
         if (!ValueSets::isComplement(whatIsNew)) {
             m_sets.forEachMember(whatIsNew, [&](ValueFlowObjectID member) {
@@ -2372,7 +2372,7 @@ void ValueFlowSolver::listWatchersOf(ValueFlowNodeID node, ValueSetMaker& maker,
     WatchShard& shard = m_watchShards[numberOfShard];
     uint32_t number = shard.watchedNodeOfNode.get(node.index());
     WatchedNode& watchedNode = shard.watchedNodes[number];
-    ValueSetID value = valueOf(node);
+    ValueSetID value = m_graph.valueOf(node);
     ValueSetID whatIsNew = maker.intersect(value, ValueSets::complement(watchedNode.seen));
     watchedNode.seen = value;
     if (ValueSets::isComplement(whatIsNew)) {
@@ -2765,7 +2765,7 @@ ValueFlowStatementID ValueFlowSolver::statementThatLogged(ValueFlowEdge edge) co
 
 Vector<ValueFlowNodeID> ValueFlowSolver::explain(ValueFlowNodeID start, ValueFlowObjectID member) const
 {
-    if (!m_sets.contains(valueOf(start), member))
+    if (!m_sets.contains(m_graph.valueOf(start), member))
         return { };
 
     struct Step {
@@ -2793,7 +2793,7 @@ Vector<ValueFlowNodeID> ValueFlowSolver::explain(ValueFlowNodeID start, ValueFlo
             bool hasHolder = false;
             for (ValueFlowNodeID predecessor : predecessors) {
                 bool hasComeBy = m_sets.contains(m_objectsLookedForBesideUnknownObject, lookedFor) && isMadeForUnknownObject(predecessor);
-                if (!hasComeBy && !m_sets.contains(valueOf(predecessor), lookedFor))
+                if (!hasComeBy && !m_sets.contains(m_graph.valueOf(predecessor), lookedFor))
                     continue;
                 hasHolder = true;
                 if (seen.add(predecessor.index(), lookedFor.index()))
@@ -2924,9 +2924,9 @@ bool ValueFlowSolver::merge()
         return m_isWatched.quickSet(node.index());
     };
     if (m_input.escaped && !watchAlways(m_input.escaped))
-        m_seenByWatchersOfEscaped = valueOf(m_input.escaped);
+        m_seenByWatchersOfEscaped = m_graph.valueOf(m_input.escaped);
     if (m_input.lost && !watchAlways(m_input.lost))
-        m_seenByWatchersOfLost = valueOf(m_input.lost);
+        m_seenByWatchersOfLost = m_graph.valueOf(m_input.lost);
     for (ValueFlowNodeID node : { m_objectsThatAreNotPlain, m_objectsWrittenUnderUnknownKey }) {
         if (node)
             watchAlways(node);
@@ -3050,7 +3050,7 @@ bool ValueFlowSolver::merge()
 
 ValueSetID ValueFlowSolver::withoutWhatOtherMembersCover(ValueFlowNodeID node, ValueSetMaker& maker) const
 {
-    return node == m_input.escaped || node == m_input.lost ? valueOf(node) : withoutWhatOtherMembersCover(valueOf(node), maker);
+    return node == m_input.escaped || node == m_input.lost ? m_graph.valueOf(node) : withoutWhatOtherMembersCover(m_graph.valueOf(node), maker);
 }
 
 ValueSetID ValueFlowSolver::withoutWhatOtherMembersCover(ValueSetID value, ValueSetMaker& maker) const
@@ -3223,7 +3223,7 @@ ValueSetID ValueFlowSolver::findClosuresFollowedTo(ValueFlowNodeID callee, Value
                 predecessors.append(predecessor);
         });
         if (!numberOfPredecessors)
-            closures = maker.unite(closures, maker.intersect(valueOf(visited[next]), m_input.placeholders.closures));
+            closures = maker.unite(closures, maker.intersect(m_graph.valueOf(visited[next]), m_input.placeholders.closures));
         if (numberOfPredecessors > mostPredecessorsFollowed)
             continue;
         for (ValueFlowNodeID predecessor : predecessors) {
@@ -3249,7 +3249,7 @@ void ValueFlowSolver::findClosuresFollowedToConstructions()
             if (statement.kind != ValueFlowStatementKind::Operation || !OperandPosition::newTarget(statement.opcode) || !isReached(statement.function))
                 continue;
             ValueFlowNodeID callee = operandsOf(statement)[0].node;
-            if (callee && m_sets.contains(valueOf(callee), m_input.placeholders.unknown))
+            if (callee && m_sets.contains(m_graph.valueOf(callee), m_input.placeholders.unknown))
                 followedOfShare[share].append(ValueFlowNodeSet { callee, findClosuresFollowedTo(callee, *m_makers[worker]) });
         }
     });
@@ -3302,7 +3302,7 @@ void ValueFlowSolver::saturate(std::span<const ValueFlowNodeID> moved)
     Vector<Vector<ValueFlowNodeID>> nodesToLookAtOfShare((moved.size() + nodesPerShare - 1) / nodesPerShare);
     forEachIndexInParallel(m_loops, nodesToLookAtOfShare.size(), [&](unsigned share) {
         for (ValueFlowNodeID node : moved.subspan(share * nodesPerShare, std::min(nodesPerShare, moved.size() - share * nodesPerShare))) {
-            ValueSetID listed = valueOf(node);
+            ValueSetID listed = m_graph.valueOf(node);
             bool isSmall = !m_counters.isPastEdgeBudget && !ValueSets::isComplement(listed) && m_sets.size(listed) <= m_input.mostSetMembers;
             if (!isSmall && !m_isSaturated.get(node.index()) && maySaturate(node))
                 nodesToLookAtOfShare[share].append(node);
@@ -3332,7 +3332,7 @@ void ValueFlowSolver::spreadMarks()
         std::optional<ValueFlowNodeID> node = findMadeNode(ValueFlowNodeKey::marked(mutation));
         if (!node)
             continue;
-        m_sets.forEachMember(valueOf(*node), [&](ValueFlowObjectID object) {
+        m_sets.forEachMember(m_graph.valueOf(*node), [&](ValueFlowObjectID object) {
             m_marksOfObject[object.index()].add(mutation);
         });
     }
@@ -3342,7 +3342,7 @@ void ValueFlowSolver::spreadMarks()
     OptionSet<ObjectMutation> marksOfUntrackedObject = m_marksOfObject[m_input.placeholders.untracked.index()];
     if (marksOfUntrackedObject.isEmpty())
         return;
-    m_sets.forEachMember(m_makers[0]->intersect(valueOf(m_input.lost), m_objectsThatPlaceholdersMayCover), [&](ValueFlowObjectID object) {
+    m_sets.forEachMember(m_makers[0]->intersect(m_graph.valueOf(m_input.lost), m_objectsThatPlaceholdersMayCover), [&](ValueFlowObjectID object) {
         m_marksOfObject[object.index()].add(marksOfUntrackedObject);
     });
 }
@@ -3379,12 +3379,12 @@ void ValueFlowSolver::findObjectsOutsideFamilies()
             return first;
         };
         for (const ValueFlowNodeSet& mask : masks.subspan(share * masksPerShare, std::min(masksPerShare, masks.size() - share * masksPerShare))) {
-            ValueSetID value = valueOf(mask.node);
+            ValueSetID value = m_graph.valueOf(mask.node);
             ValueFlowObjectID object = firstMemberOutside(value, maker.unite(mask.set, whatIsNotFollowed));
             if (!object && looksAtArrivals && !m_graph.isAtRest(mask.node)) {
                 ValueSetID accountedFor = maker.unite(value, whatMaskMayTakeAway);
                 m_graph.forEachPredecessor(mask.node, [&](ValueFlowNodeID predecessor) {
-                    ValueFlowObjectID takenAway = firstMemberOutside(valueOf(predecessor), accountedFor);
+                    ValueFlowObjectID takenAway = firstMemberOutside(m_graph.valueOf(predecessor), accountedFor);
                     if (takenAway && (!object || takenAway < object))
                         object = takenAway;
                 });
@@ -3441,7 +3441,7 @@ void ValueFlowSolver::findUnknownSources(NOESCAPE const ScopedLambda<void()>& wh
     BitVector holdsUnknownObject(numberOfNodes);
     forEachIndexInParallel(m_loops, numberOfShares, [&](unsigned share) {
         forEachNodeOfShare(share, [&](uint32_t node) {
-            if (m_sets.contains(valueOf(ValueFlowNodeID(node)), unknownObject))
+            if (m_sets.contains(m_graph.valueOf(ValueFlowNodeID(node)), unknownObject))
                 holdsUnknownObject.quickSet(node);
         });
     });
@@ -3715,12 +3715,12 @@ bool ValueFlowSolver::solve()
         m_stepTimes.didFinish("values: the graph solved"_s);
         if (m_saturates && std::max<uint64_t>(m_graph.numberOfEdges(), numberOfReaders()) > m_input.mostEdgesLogged)
             m_counters.isPastEdgeBudget = true;
-        if (m_input.escaped && m_input.lost && m_input.placeholders.untracked && !m_haveLostObjectsEscaped && m_sets.contains(valueOf(m_input.escaped), m_input.placeholders.untracked)) {
+        if (m_input.escaped && m_input.lost && m_input.placeholders.untracked && !m_haveLostObjectsEscaped && m_sets.contains(m_graph.valueOf(m_input.escaped), m_input.placeholders.untracked)) {
             m_haveLostObjectsEscaped = true;
             m_edgesOfRound.append(ValueFlowEdge { m_input.lost, m_input.escaped });
         }
         for (Covering& covering : m_coverings)
-            covering.allButCovered = ValueSets::complement(m_makers[0]->intersect(valueOf(covering.covered), covering.objectsThatMayBeCovered));
+            covering.allButCovered = ValueSets::complement(m_makers[0]->intersect(m_graph.valueOf(covering.covered), covering.objectsThatMayBeCovered));
         m_graph.takeNodesAtWhichPlaceholdersStopped(m_placeholdersStopped);
         for (auto [node, placeholder] : m_placeholdersStopped) {
             ValueSetID taken = m_makers[0]->intersect(m_graph.familyObjectsOf(node), m_graph.maskOf(node));

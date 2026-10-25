@@ -14,7 +14,7 @@ namespace JSC { namespace AOT { namespace Typed {
 Vector<UnseenCodeRecord> unseenCodeRecordsOf(ValueFlowSolution&);
 inline bool isRaised(const ValueFlowSolution& solution, ValueFlowHostNode flag)
 {
-    return solution.sets().contains(solution.solver().valueOf(solution.bodies().nodes().ofHost(flag)), ValueFlowUniverse::unknownObject());
+    return solution.sets().contains(solution.solver().possibleValuesOf(solution.bodies().nodes().ofHost(flag)), ValueFlowUniverse::unknownObject());
 }
 inline bool unseenCodeCanRun(const ValueFlowSolution& solution) { return isRaised(solution, ValueFlowHostNode::UnseenCodeRuns); }
 inline bool unseenCodeChangesRealm(const ValueFlowSolution& solution) { return isRaised(solution, ValueFlowHostNode::UnseenCodeChangesRealm); }

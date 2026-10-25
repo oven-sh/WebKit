@@ -488,7 +488,7 @@ struct FieldResults {
                 if (!facts.contains(FieldFact::MayInheritName))
                     flow.prototypeName = PrototypeNameState::AbsentOnPrototypes;
                 if (hasNodeOfItsOwn(layout.fields[field])) {
-                    contents.stored[index][field] = inputs.solver().valueOf(inputs.bodies().nodes().field(LayoutID(index), field));
+                    contents.stored[index][field] = inputs.solver().possibleValuesOf(inputs.bodies().nodes().field(LayoutID(index), field));
                     contents.storedNumbers[index][field] = ValueFlowNumbers::any();
                     continue;
                 }
@@ -851,7 +851,7 @@ struct FieldResults {
         BitVector layouts(numberOfLayouts);
         Vector<ValueSetID> resultsOfConstructions = collectFromCallGroups<ValueSetID>(inputs, heap, [&](const ValueFlowNodeKey& key, ValueFlowNodeID first, Vector<ValueSetID>& found) {
             if (key.callKind() == ValueFlowCallKind::ConstructByNativeCode)
-                found.append(inputs.solver().valueOf(callGroupAt(first).result));
+                found.append(inputs.solver().possibleValuesOf(callGroupAt(first).result));
         });
         if (resultsOfConstructions.isEmpty())
             return layouts;
@@ -1379,7 +1379,7 @@ static void keepFieldsOnlyCalledWhoseReadsHaveStamps(const ValueFlowResultInputs
             PropertyKeyID key = program.at(statement.function).at(statement.site).key();
             if (!namesFieldOnlyCalled.quickGet(key.index()) || (findByValue(application.bodies[body].accesses.span(), statement.site, &FlowAccessStamp::value) && !isRepeatedWithoutStamp(statement.site)))
                 continue;
-            found.append(Read { key.index(), heap.valueOf(maker, inputs.bodies().operandsOf(statement)[OperandIndex::PropGet::object]).index(), index });
+            found.append(Read { key.index(), heap.possibleValuesOf(maker, inputs.bodies().operandsOf(statement)[OperandIndex::PropGet::object]).index(), index });
         }
     });
     sortAndRemoveDuplicates(loops, readsWithoutStamp, std::less<Read> { }, [](const Read& first, const Read& second) {

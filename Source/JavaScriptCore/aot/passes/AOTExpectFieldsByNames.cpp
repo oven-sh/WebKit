@@ -176,7 +176,7 @@ static Vector<FieldAndGroup> groupFieldsWithSameValue(std::span<const NameAskedO
     for (const NameAskedOfField& entry : asked) {
         if (!entry.namesFieldWithSameValue())
             continue;
-        auto [first, second] = std::minmax(rootOf(entry.field), rootOf(entry.fieldWithSameValue));
+        auto [first, second] = std::minmax({ rootOf(entry.field), rootOf(entry.fieldWithSameValue) });
         parents[second] = first;
     }
     return Vector<FieldAndGroup>(fields.size(), [&](size_t index) { return FieldAndGroup { fields[index], fields[rootOf(fields[index])] }; });

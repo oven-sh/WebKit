@@ -276,7 +276,7 @@ void computeTypedResultResults(const ValueFlowResultInputs& inputs, FlowResultTa
     const ValueFlowUniverse& universe = inputs.universe();
     FlowApplication& application = *tables.application;
 
-    inputs.sets().forEachMember(inputs.solver().valueOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::RecordsMadeByParsers)), [&](ValueFlowObjectID record) {
+    inputs.sets().forEachMember(inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::RecordsMadeByParsers)), [&](ValueFlowObjectID record) {
         application.layouts[universe.layoutOf(record).index()].flow.observedUses.add(ObservedUse::ReachesTypedParse);
     });
 

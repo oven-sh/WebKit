@@ -43,6 +43,7 @@ struct StampedOperand {
     const ValueFlowOperand& operand;
     const Type& family;
     ValueSetID held;
+    ValueSetID seen;
     TypeArena& types;
     ValueFlowPositions& positions;
     ValueSetMaker& maker;
@@ -104,9 +105,10 @@ static void stampOperands(const ValueFlowResultInputs& inputs, TypeTable& types,
             unsigned operandIndex = operandIndexOf(statement.opcode);
             const ValueFlowOperand& operand = inputs.bodies().operandsOf(statement)[operandIndex];
             const Type& family = program.typeOf(function, function.at(statement.site).operand(operandIndex));
-            ValueSetID held = inputs.valueOf(maker, operand);
+            ValueSetID held = inputs.possibleValuesOf(maker, operand);
+            ValueSetID seen = inputs.seenValuesOf(maker, operand);
             numberOfUnknownOperands += inputs.sets().contains(held, ValueFlowUniverse::unknownObject());
-            stamp(StampedOperand { id, function, statement, operand, family, held, arena, positions, maker, application.bodies[index], worker });
+            stamp(StampedOperand { id, function, statement, operand, family, held, seen, arena, positions, maker, application.bodies[index], worker });
         }
         AOT::sort(application.bodies[index].*stamps, { }, [](const auto& entry) { return entry.value; });
         inputs.build.statistics().count(statisticOfUnknownOperands, numberOfUnknownOperands);
@@ -238,16 +240,16 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
     };
     auto listedReceiversOf = [&](const StampedOperand& receiver) -> const ListedReceivers& {
         Listings& listings = listingsOfWorker[receiver.worker];
-        return listedUnder(listings.sets, listedSets, receiver.held.index(), [&](ListedReceivers& listed) {
+        return listedUnder(listings.sets, listedSets, receiver.seen.index(), [&](ListedReceivers& listed) {
             AOT_THRESHOLD(uint32_t, fewestMembersToListByBlock, 128);
-            if (ValueSets::isComplement(receiver.held) || sets.size(receiver.held) < fewestMembersToListByBlock) {
+            if (ValueSets::isComplement(receiver.seen) || sets.size(receiver.seen) < fewestMembersToListByBlock) {
                 uint32_t listing = beginListing(listings);
-                sets.forEachMember(receiver.held, [&](ValueFlowObjectID member) {
+                sets.forEachMember(receiver.seen, [&](ValueFlowObjectID member) {
                     listReceiver(receiver, member, listing, listed);
                 });
             } else {
                 Vector<const ListedReceivers*, 64> blocks;
-                sets.forEachBlock(receiver.held, [&](uint64_t nameOfBlock) {
+                sets.forEachBlock(receiver.seen, [&](uint64_t nameOfBlock) {
                     blocks.append(&listedUnder(listings.blocks, listedBlocks, nameOfBlock, [&](ListedReceivers& listedInBlock) {
                         uint32_t listing = beginListing(listings);
                         sets.forEachMemberOfBlock(nameOfBlock, [&](ValueFlowObjectID member) {
@@ -271,7 +273,7 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
         });
     };
     auto receiversSeenToArrive = [&](const StampedOperand& receiver) -> std::optional<LayoutSet> {
-        if (!PayloadWord::key(receiver.statement.opcode) || ValueSets::isComplement(receiver.held))
+        if (!PayloadWord::key(receiver.statement.opcode) || ValueSets::isComplement(receiver.seen))
             return std::nullopt;
         PropertyKeyID key = receiver.function.at(receiver.statement.site).key();
         if (!key)
@@ -348,7 +350,7 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
             if (mayBeBuiltinObject)
                 loss = { .cause = UnprovenCause::NonLayoutObject, .hasOtherRoots = hasFunction(loss.witness) };
         });
-        loss.seesConstructedObject = !ValueSets::isComplement(receiver.held) && sets.meet(receiver.positions.withoutWhatPlaceholdersCover(receiver.held), universe.constructedObjects());
+        loss.seesConstructedObject = !ValueSets::isComplement(receiver.seen) && sets.meet(receiver.positions.withoutWhatPlaceholdersCover(receiver.seen), universe.constructedObjects());
         tables.sites.accessSiteLosses[application.accessSites.siteOfValue(receiver.id, site).index()] = loss;
     });
 }
@@ -375,7 +377,7 @@ ValueFlowStampedCalls computeCallResults(const ValueFlowResultInputs& inputs, Ty
     FlowApplication& application = *tables.application;
     unsigned numberOfFunctions = inputs.program.functions.size();
     auto stampCall = [&](const StampedOperand& callee) {
-        std::optional<CalleeSet> callees = callee.positions.calleesAt(callee.family, callee.held, OperandPosition::newTarget(callee.statement.opcode) ? &callee.operand : nullptr);
+        std::optional<CalleeSet> callees = callee.positions.calleesAt(callee.family, callee.held, callee.seen, OperandPosition::newTarget(callee.statement.opcode) ? &callee.operand : nullptr);
         AccessSiteID site = application.accessSites.siteOfValue(callee.id, callee.statement.site);
         if (!callees || !callees->isComplete) {
             tables.sites.accessSiteLosses[site.index()] = lossOfStampedOperand(callee, [&](FlowSiteLoss& loss) {

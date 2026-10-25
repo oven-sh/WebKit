@@ -154,7 +154,7 @@ struct LiteralOrderSolver {
             return copied;
         }
 
-        ValueSetID sources = heap.valueOf(inputs.bodies().operandsOf(*statement)[OperandIndex::CopyDataProperties::source]);
+        ValueSetID sources = heap.possibleValuesOf(inputs.bodies().operandsOf(*statement)[OperandIndex::CopyDataProperties::source]);
         if (ValueSets::isComplement(sources))
             return copied;
         bool holdsPlaceholder = inputs.sets().meet(sources, universe.placeholdersAlone());

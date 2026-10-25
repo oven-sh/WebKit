@@ -1468,8 +1468,104 @@ private:
             forms.append(form);
     }
 
+    static constexpr size_t maxFormsComparedInPairs = 32;
+
+    // Adds like addForm() while the list is short. A longer list takes every form, and removeRepeatedForms() leaves what addForm() would have.
+    static void addFormToLongList(Forms& forms, const OperandForm& form)
+    {
+        if (forms.size() < maxFormsComparedInPairs)
+            addForm(forms, form);
+        else
+            forms.append(form);
+    }
+
+    static void keepFormsAt(Forms& forms, NOESCAPE const Invocable<bool(uint32_t)> auto& isKept)
+    {
+        uint32_t numberKept = 0;
+        for (uint32_t position = 0; position < forms.size(); ++position) {
+            if (isKept(position))
+                forms[numberKept++] = forms[position];
+        }
+        forms.shrink(numberKept);
+    }
+
+    static Vector<uint32_t> sortPositionsOfForms(const Forms& forms)
+    {
+        Vector<uint32_t> positions;
+        for (uint32_t position = 0; position < forms.size(); ++position)
+            positions.append(position);
+        AOT::sort(positions, [&](uint32_t a, uint32_t b) {
+            return std::tuple(forms[a].mask, forms[a].node, forms[a].constant, a) < std::tuple(forms[b].mask, forms[b].node, forms[b].constant, b);
+        });
+        return positions;
+    }
+
+    static void removeRepeatedForms(Forms& forms)
+    {
+        if (forms.size() <= maxFormsComparedInPairs)
+            return;
+        Vector<uint32_t> positions = sortPositionsOfForms(forms);
+        BitVector isRepeated(forms.size());
+        for (size_t index = 1; index < positions.size(); ++index) {
+            if (forms[positions[index]] == forms[positions[index - 1]])
+                isRepeated.quickSet(positions[index]);
+        }
+        keepFormsAt(forms, [&](uint32_t position) {
+            return !isRepeated.quickGet(position);
+        });
+    }
+
+    // Does what the loop over pairs does, in its order. Among the forms of one mask, the first takes every form without a node. If it has no node
+    // itself it takes the node of the first form that has one. Every other form joins the first one with its node.
+    void uniteManyFormsWithSameMask(Forms& forms)
+    {
+        Vector<uint32_t> positions = sortPositionsOfForms(forms);
+        Vector<uint32_t> joinedForm;
+        joinedForm.grow(forms.size());
+        for (size_t begin = 0; begin < positions.size();) {
+            uint32_t mask = forms[positions[begin]].mask;
+            size_t end = begin;
+            uint32_t first = positions[begin];
+            std::optional<uint32_t> firstWithNode;
+            for (; end < positions.size() && forms[positions[end]].mask == mask; ++end) {
+                first = std::min(first, positions[end]);
+                if (forms[positions[end]].node)
+                    firstWithNode = std::min(firstWithNode.value_or(positions[end]), positions[end]);
+            }
+            NodeName nodeOfFirst = forms[first].node;
+            if (!nodeOfFirst && firstWithNode)
+                nodeOfFirst = forms[*firstWithNode].node;
+            while (begin < end) {
+                NodeName node = forms[positions[begin]].node;
+                size_t endOfNode = begin;
+                uint32_t firstOfNode = positions[begin];
+                for (; endOfNode < end && forms[positions[endOfNode]].node == node; ++endOfNode)
+                    firstOfNode = std::min(firstOfNode, positions[endOfNode]);
+                for (; begin < endOfNode; ++begin)
+                    joinedForm[positions[begin]] = !node || node == nodeOfFirst ? first : firstOfNode;
+            }
+        }
+
+        Vector<std::pair<uint32_t, uint32_t>> joins;
+        for (uint32_t position = 0; position < forms.size(); ++position) {
+            if (joinedForm[position] != position)
+                joins.append({ joinedForm[position], position });
+        }
+        AOT::sort(joins);
+        for (auto [index, other] : joins) {
+            if (!forms[index].node)
+                forms[index].node = forms[other].node;
+            forms[index].constant = uniteConstants(forms[index].constant, forms[other].constant);
+        }
+        keepFormsAt(forms, [&](uint32_t position) {
+            return joinedForm[position] == position;
+        });
+    }
+
     void uniteFormsWithSameMask(Forms& forms)
     {
+        if (forms.size() > maxFormsComparedInPairs)
+            return uniteManyFormsWithSameMask(forms);
         for (size_t index = 0; index < forms.size(); ++index) {
             for (size_t other = index + 1; other < forms.size();) {
                 bool canUnite = forms[index].mask == forms[other].mask && (!forms[index].node || !forms[other].node || forms[index].node == forms[other].node);
@@ -1649,16 +1745,17 @@ private:
             operandReaders += at(member).operandReaders;
             otherReaders += at(member).otherReaders;
             if (at(member).constant)
-                addForm(forms, { { }, at(member).constant, 0 });
+                addFormToLongList(forms, { { }, at(member).constant, 0 });
             for (const BodySource& source : sourcesOf(member)) {
                 if (isMember(source.value)) {
                     --otherReaders;
                     continue;
                 }
                 for (const OperandForm& form : formsOf(source.value))
-                    addForm(forms, throughMask(form, source.mask));
+                    addFormToLongList(forms, throughMask(form, source.mask));
             }
         }
+        removeRepeatedForms(forms);
         uniteFormsWithSameMask(forms);
 
         uint32_t readers = operandReaders + otherReaders;

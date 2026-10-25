@@ -21,8 +21,8 @@ Vector<FunctionID> functionsHeldButNotCalled(const ValueFlowSolution& solution)
     const ValueSets& sets = solution.sets();
     const ValueFlowSolver& solver = solution.solver();
     const ValueFlowUniverse& universe = solution.bodies().universe();
-    ValueSetID held = solver.valueOf(solution.bodies().nodes().ofHost(ValueFlowHostNode::HeldByNativeCode));
-    ValueSetID escaped = solver.valueOf(ValueFlowProgramNodes::escaped());
+    ValueSetID held = solver.possibleValuesOf(solution.bodies().nodes().ofHost(ValueFlowHostNode::HeldByNativeCode));
+    ValueSetID escaped = solver.possibleValuesOf(ValueFlowProgramNodes::escaped());
 
     BitVector isHeld(solution.program().functions.size());
     auto addClosuresIn = [&](ValueSetID objects) {
@@ -34,7 +34,7 @@ Vector<FunctionID> functionsHeldButNotCalled(const ValueFlowSolution& solution)
     };
     addClosuresIn(held);
     if (sets.contains(held, ValueFlowUniverse::untrackedObject()))
-        addClosuresIn(solver.valueOf(ValueFlowProgramNodes::lost()));
+        addClosuresIn(solver.possibleValuesOf(ValueFlowProgramNodes::lost()));
 
     Vector<FunctionID> functions;
     for (size_t index : isHeld)
@@ -48,10 +48,10 @@ static bool isInSeenCode(const ValueFlowSolution& solution, FunctionID id)
     if (function.role != FunctionRole::Library && function.role != FunctionRole::Model)
         return true;
     const ValueFlowBodies& bodies = solution.bodies();
-    if (solution.sets().contains(solution.solver().valueOf(bodies.nodes().ofHost(ValueFlowHostNode::FunctionsOfSeenCode)), bodies.universe().closureOf(id)))
+    if (solution.sets().contains(solution.solver().possibleValuesOf(bodies.nodes().ofHost(ValueFlowHostNode::FunctionsOfSeenCode)), bodies.universe().closureOf(id)))
         return true;
     return function.module && solution.program().at(function.module).body == id
-        && solution.sets().contains(solution.solver().valueOf(bodies.nodes().ofHost(ValueFlowHostNode::ModulesOfSeenCode)), bodies.universe().namespaceOf(function.module));
+        && solution.sets().contains(solution.solver().possibleValuesOf(bodies.nodes().ofHost(ValueFlowHostNode::ModulesOfSeenCode)), bodies.universe().namespaceOf(function.module));
 }
 
 static bool staysOutsideImage(const Program& program, ModuleID module)
@@ -171,7 +171,7 @@ Vector<UnseenCodeRecord> unseenCodeRecordsOf(ValueFlowSolution& solution)
         if (record.builtin != Wire::none)
             isListed.quickSet(record.builtin);
     }
-    ValueSetID applied = solution.solver().valueOf(bodies.nodes().ofHost(ValueFlowHostNode::FunctionsOfSeenCode));
+    ValueSetID applied = solution.solver().possibleValuesOf(bodies.nodes().ofHost(ValueFlowHostNode::FunctionsOfSeenCode));
     size_t first = records.size();
     solution.sets().forEachMember(makers.of(0).intersect(applied, universe.builtinFunctions()), [&](ValueFlowObjectID object) {
         BuiltinID builtin = builtins.canonicalID(universe.builtinOf(object));

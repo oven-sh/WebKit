@@ -103,6 +103,7 @@ public:
     static constexpr ptrdiff_t offsetOfLastString() { return OBJECT_OFFSETOF(StringBuilderStorage, m_lastString); }
     static constexpr ptrdiff_t offsetOfLengthOfLastString() { return OBJECT_OFFSETOF(StringBuilderStorage, m_lengthOfLastString); }
     static constexpr ptrdiff_t offsetOfMinLengthAppendedByReference() { return OBJECT_OFFSETOF(StringBuilderStorage, m_limits) + OBJECT_OFFSETOF(Limits, minLengthAppendedByReference); }
+    static constexpr ptrdiff_t offsetOfMinLengthAdoptedByFinish() { return OBJECT_OFFSETOF(StringBuilderStorage, m_limits) + OBJECT_OFFSETOF(Limits, minLengthAdoptedByFinish); }
 
 private:
     friend struct StackStringBuilder;

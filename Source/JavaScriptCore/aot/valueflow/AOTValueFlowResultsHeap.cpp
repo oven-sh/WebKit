@@ -78,8 +78,8 @@ void ValueFlowHeapIndex::collectNodesWritten(const ValueFlowResultInputs& inputs
             const ValueFlowNodeKey& key = *solver.keyOfMadeNode(node);
             switch (key.kind) {
             case ValueFlowMadeNodeKind::Written:
-                if (ValueSetID value = solver.valueOf(node); value != ValueSets::nothing)
-                    found.written.append({ numberOf(key.name()), node.index(), { key.set, value } });
+                if (ValueSetID value = solver.possibleValuesOf(node); value != ValueSets::nothing)
+                    found.written.append({ numberOf(key.name()), node.index(), { key.set, value, solver.seenValuesOf(node) } });
                 break;
             case ValueFlowMadeNodeKind::CallGroup:
                 if (solver.firstOfMadeNodesAt(solver.indexOfMadeNodes(key)) == node)
@@ -179,8 +179,8 @@ ValueFlowHeapView::ValueFlowHeapView(const ValueFlowResultInputs& inputs)
     , m_index(inputs.heapIndex ? *inputs.heapIndex : *m_ownIndex)
     , m_makerPool(inputs.makerPool())
     , m_maker(m_makerPool.take())
-    , m_escaped(inputs.solver().valueOf(ValueFlowProgramNodes::escaped()))
-    , m_lost(inputs.solver().valueOf(ValueFlowProgramNodes::lost()))
+    , m_escaped(inputs.solver().possibleValuesOf(ValueFlowProgramNodes::escaped()))
+    , m_lost(inputs.solver().possibleValuesOf(ValueFlowProgramNodes::lost()))
     , m_escapedAndWritable(m_maker.intersect(m_escaped, ValueSets::complement(unseenCodeChangesRealm(inputs.solution) ? inputs.universe().lockedObjects() : inputs.universe().objectsOfRealm())))
 {
 }
@@ -194,16 +194,16 @@ static ValueSetID valueSeenByRulesAt(const ValueFlowResultInputs& inputs, ValueS
 {
     ValueSetID value = operand.constant ? operand.constant : ValueSets::nothing;
     if (operand.node)
-        value = maker.unite(value, inputs.solver().valueOf(operand.node));
+        value = maker.unite(value, inputs.solver().possibleValuesOf(operand.node));
     return ValueFlowRuleContext::throughMaskOf(operand, value, inputs.solver(), maker);
 }
 
-ValueSetID ValueFlowHeapView::valueOf(const ValueFlowOperand& operand)
+ValueSetID ValueFlowHeapView::possibleValuesOf(const ValueFlowOperand& operand)
 {
-    return valueOf(m_maker, operand);
+    return possibleValuesOf(m_maker, operand);
 }
 
-ValueSetID ValueFlowHeapView::valueOf(ValueSetMaker& maker, const ValueFlowOperand& operand) const
+ValueSetID ValueFlowHeapView::possibleValuesOf(ValueSetMaker& maker, const ValueFlowOperand& operand) const
 {
     return valueSeenByRulesAt(m_inputs, maker, operand);
 }
@@ -633,9 +633,9 @@ static void findOperandsOf(const ValueFlowResultInputs& inputs, const ValueFlowH
     const ValueFlowUniverse& universe = inputs.universe();
     std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(call);
     bool hasSecondOperand = !isConstruction(application.kind) || !!inputs.program.at(call.function).at(call.site).operand(1);
-    application.thisValue = heap.valueOf(maker, operands[hasSecondOperand ? 1 : 0]);
+    application.thisValue = heap.possibleValuesOf(maker, operands[hasSecondOperand ? 1 : 0]);
     if (passesList(call.opcode)) {
-        ValueSetID lists = heap.valueOf(maker, operands[2]);
+        ValueSetID lists = heap.possibleValuesOf(maker, operands[2]);
         bool mayBeListOfUnseenCode = inputs.sets().contains(lists, ValueFlowUniverse::unknownObject());
         if (mayBeListOfUnseenCode)
             lists = maker.intersect(lists, ValueSets::complement(universe.unknownObjectAlone()));
@@ -644,7 +644,7 @@ static void findOperandsOf(const ValueFlowResultInputs& inputs, const ValueFlowH
             application.otherArguments = maker.unite(application.otherArguments, maker.unite(universe.anyPrimitive(), universe.unknownObjectAlone()));
     } else {
         for (const ValueFlowOperand& argument : operands.subspan(2))
-            application.arguments.append(heap.valueOf(maker, argument));
+            application.arguments.append(heap.possibleValuesOf(maker, argument));
     }
 }
 
@@ -767,10 +767,10 @@ static void forEachBuiltinAppliedByGroup(const ValueFlowResultInputs& inputs, co
     ValueFlowCallGroup group = callGroupAt(first);
     bool isAccessorCall = kind == ValueFlowCallKind::Get || kind == ValueFlowCallKind::Set;
     ValueFlowBuiltinApplication application;
-    application.thisValue = solver.valueOf(isConstruction(kind) ? group.newTarget : group.thisValue);
+    application.thisValue = solver.possibleValuesOf(isConstruction(kind) ? group.newTarget : group.thisValue);
     for (unsigned index = 0; index < numberOfGroupedArguments; ++index)
-        application.arguments.append(solver.valueOf(group.argument(index)));
-    application.otherArguments = maker.unite(solver.valueOf(group.otherArguments), solver.valueOf(group.laterArguments));
+        application.arguments.append(solver.possibleValuesOf(group.argument(index)));
+    application.otherArguments = maker.unite(solver.possibleValuesOf(group.otherArguments), solver.possibleValuesOf(group.laterArguments));
     if (passesAnyOf(application, wantedOperands)) {
         inputs.sets().forEachMember(builtinCallees, [&](ValueFlowObjectID callee) {
             bool isFunction = inputs.sets().contains(universe.builtinFunctions(), callee);

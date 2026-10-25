@@ -160,7 +160,7 @@ struct ValueFlowAccessesThroughObjects {
 
     bool holdsFewMembers(const ValueFlowOperand& operand) const
     {
-        ValueSetID held = operand.node ? solver.valueOf(operand.node) : ValueSets::nothing;
+        ValueSetID held = operand.node ? solver.possibleValuesOf(operand.node) : ValueSets::nothing;
         return !ValueSets::isComplement(held) && sets.size(held) <= inputs.build.limit(LimitID::MaxValueFlowMembersToldApart);
     }
 
@@ -249,7 +249,7 @@ struct ValueFlowAccessesThroughObjects {
                 return;
             if (kind == ValueFlowNameKind::PrototypeLink) {
                 if (isOperation)
-                    noteTestBy(statement, solver.valueOf(solver.statementAt(made).result), accessOf(ObjectAccessKind::Observation), found);
+                    noteTestBy(statement, solver.possibleValuesOf(solver.statementAt(made).result), accessOf(ObjectAccessKind::Observation), found);
             } else if (isSharedLookup(made) && reachesFollowedObject(made))
                 noteLooksOf(made, accessOf(answersWhatItReads ? ObjectAccessKind::Read : ObjectAccessKind::Observation), found);
         });
@@ -316,7 +316,7 @@ struct ValueFlowAccessesThroughObjects {
     {
         const Program& program = inputs.program;
         bool modulesAreNamedAtRunTime = unseenCodeCanRun(inputs.solution) || modulesAreLoadedByName(inputs.solution);
-        ValueSetID created = solver.valueOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::CreatedNamespaces));
+        ValueSetID created = solver.possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::CreatedNamespaces));
         if (sets.meet(created, inputs.universe().placeholdersAlone()))
             return;
         for (uint32_t index = 0; index < program.modules.size(); ++index) {

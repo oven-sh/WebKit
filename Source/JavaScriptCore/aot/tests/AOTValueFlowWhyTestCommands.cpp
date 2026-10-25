@@ -233,7 +233,7 @@ static void printTimeline(PrintStream& out, ValueFlowSolution& solution)
     const BuiltinTable& builtins = solution.program().builtins();
     auto holdsEvaluator = [&](ValueFlowNodeID node) {
         bool holds = false;
-        ValueSetID value = solver.valueOf(node);
+        ValueSetID value = solver.possibleValuesOf(node);
         if (ValueSets::isComplement(value))
             return true;
         solution.sets().forEachMember(value, [&](ValueFlowObjectID member) {
@@ -269,7 +269,7 @@ static void printTimeline(PrintStream& out, ValueFlowSolution& solution)
         out.print(" <- ");
         printNode(out, solution, logged.edge.from);
         out.print(" holding ");
-        printValue(out, solution, solver.valueOf(logged.edge.from));
+        printValue(out, solution, solver.possibleValuesOf(logged.edge.from));
         out.print("      by ");
         printStatement(out, solver, logged.statement);
         out.println();
@@ -306,7 +306,7 @@ static void printRootsOfEscape(PrintStream& out, ValueFlowSolution& solution)
     const ValueFlowSolver& solver = solution.solver();
     const ValueFlowUniverse& universe = solution.bodies().universe();
     ValueFlowNodeID escapedNode = ValueFlowProgramNodes::escaped();
-    ValueSetID escaped = solver.valueOf(escapedNode);
+    ValueSetID escaped = solver.possibleValuesOf(escapedNode);
 
     HashMap<uint32_t, ValueFlowStatementID, IntHash<uint32_t>, ByNumber> loggerOfEdgeIntoRetiredNode;
     for (const ValueFlowSolver::LoggedEdge& logged : solver.edgesInOrderLogged()) {
@@ -417,7 +417,7 @@ static void printWhatIsAskedFor(PrintStream& out, ValueFlowSolution& solution, V
         printKey(out, solver, key);
         out.print(" of");
         printMembersByName(out, solution, key.set);
-        ValueSetID value = solver.valueOf(first);
+        ValueSetID value = solver.possibleValuesOf(first);
         out.print(" holds ", ValueSets::isComplement(value) ? 0 : solver.sets().size(value), ":");
         printMembersByName(out, solution, value);
         out.println();
@@ -447,7 +447,7 @@ static void printSeeds(PrintStream& out, ValueFlowSolution& solution)
         const ValueFlowStatement& statement = solver.statementAt(id);
         if (statement.kind == ValueFlowStatementKind::Operation && statement.operandCount) {
             out.print(" on");
-            printMembersByName(out, solution, solution.valueOf(solution.bodies().operandsOf(statement)[0]));
+            printMembersByName(out, solution, solution.possibleValuesOf(solution.bodies().operandsOf(statement)[0]));
             return;
         }
         if (!solver.isMadeByRule(id) || statement.kind == ValueFlowStatementKind::Escape)
@@ -498,7 +498,7 @@ static void printSeeds(PrintStream& out, ValueFlowSolution& solution)
 
     ValueFlowNodeID escaped = ValueFlowProgramNodes::escaped();
     uint32_t closures = 0;
-    solver.sets().forEachMember(solver.valueOf(escaped), [&](ValueFlowObjectID object) {
+    solver.sets().forEachMember(solver.possibleValuesOf(escaped), [&](ValueFlowObjectID object) {
         FunctionID function = universe.closureFunction(object);
         if (!function)
             return;
@@ -519,11 +519,11 @@ static void printValuesAt(PrintStream& out, ValueFlowSolution& solution, const V
         out.print("  operand ", index++, " ");
         if (operand.node)
             out.print("n", operand.node.index(), " ");
-        printValue(out, solution, solution.valueOf(operand));
+        printValue(out, solution, solution.possibleValuesOf(operand));
     }
     if (statement.result) {
         out.print("  result n", statement.result.index(), " ");
-        printValue(out, solution, solution.solver().valueOf(statement.result));
+        printValue(out, solution, solution.solver().possibleValuesOf(statement.result));
     }
 }
 
@@ -536,8 +536,8 @@ static void printFalsifiers(PrintStream& out, ValueFlowSolution& solution, std::
     const ValueSets& sets = solution.sets();
     BorrowedValueSetMaker borrowedMaker(solution.makerPool());
     ValueSetMaker& maker = borrowedMaker.get();
-    ValueSetID escaped = solver.valueOf(ValueFlowProgramNodes::escaped());
-    ValueSetID lost = solver.valueOf(ValueFlowProgramNodes::lost());
+    ValueSetID escaped = solver.possibleValuesOf(ValueFlowProgramNodes::escaped());
+    ValueSetID lost = solver.possibleValuesOf(ValueFlowProgramNodes::lost());
 
     auto nameOfKey = [&](PropertyKeyID id) -> String {
         const PropertyKey& key = program.at(id);
@@ -754,10 +754,10 @@ static void printFalsifiers(PrintStream& out, ValueFlowSolution& solution, std::
                     }
                 }
                 if (operandBrought) {
-                    printBrought(solution.valueOf(bodies.operandsOf(statement)[*operandBrought]));
+                    printBrought(solution.possibleValuesOf(bodies.operandsOf(statement)[*operandBrought]));
                     if (operandOfKey) {
                         out.print("\tkey: ");
-                        printBrought(solution.valueOf(bodies.operandsOf(statement)[*operandOfKey]));
+                        printBrought(solution.possibleValuesOf(bodies.operandsOf(statement)[*operandOfKey]));
                     }
                     out.println();
                     continue;
@@ -768,13 +768,13 @@ static void printFalsifiers(PrintStream& out, ValueFlowSolution& solution, std::
                     if (solver.statementThatLogged({ predecessor, first }) != id)
                         return;
                     hasLoggedEdge = true;
-                    brought = maker.unite(brought, solver.valueOf(predecessor));
+                    brought = maker.unite(brought, solver.possibleValuesOf(predecessor));
                 });
                 if (hasLoggedEdge)
                     printBrought(brought);
                 else {
                     out.print("(all that lies there) ");
-                    printBrought(solver.valueOf(first));
+                    printBrought(solver.possibleValuesOf(first));
                 }
                 out.println();
             }
@@ -842,7 +842,7 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
             continue;
         }
         if (word == "evaluators"_s) {
-            solver.sets().forEachMember(solver.valueOf(escaped), [&](ValueFlowObjectID object) {
+            solver.sets().forEachMember(solver.possibleValuesOf(escaped), [&](ValueFlowObjectID object) {
                 BuiltinID builtin = universe.builtinOf(object);
                 if (!builtin || !builtins.letsInUnseenCode(builtin))
                     return;
@@ -876,7 +876,7 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
             universe.appendObjectsOf(named, objects);
             unsigned held = 0;
             for (ValueFlowObjectID object : objects.span().subspan(1)) {
-                if (!solution.sets().contains(solver.valueOf(holding), object))
+                if (!solution.sets().contains(solver.possibleValuesOf(holding), object))
                     continue;
                 if (++held > 6)
                     continue;
@@ -892,7 +892,7 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
             if (!layout || *layout >= program.layouts.size())
                 return printBadArgument(out, word);
             out.println(word);
-            solver.sets().forEachMember(solver.valueOf(escaped), [&](ValueFlowObjectID object) {
+            solver.sets().forEachMember(solver.possibleValuesOf(escaped), [&](ValueFlowObjectID object) {
                 if (universe.layoutOf(object) != LayoutID(*layout))
                     return;
                 printObject(out, solution, object);

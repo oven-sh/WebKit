@@ -946,9 +946,11 @@ struct Copier {
                 continue;
             }
             bool isOtherName = value.opcode == Opcode::Convert || value.opcode == Opcode::Upcast || value.opcode == Opcode::CheckInitialized;
-            if (auto named = readsByName.find(value.numberOfOperands() ? value.operand(0).index() + 1 : 0); isOtherName && named != readsByName.end()) {
-                readsByName.add(id.index() + 1, named->value);
-                continue;
+            if (isOtherName) {
+                if (auto named = readsByName.find(value.operand(0).index() + 1); named != readsByName.end()) {
+                    readsByName.add(id.index() + 1, unsigned { named->value });
+                    continue;
+                }
             }
             if (std::ranges::any_of(value.operands(), [&](ValueID operand) { return operand && readsByName.contains(operand.index() + 1); }))
                 break;
@@ -1038,7 +1040,7 @@ struct Copier {
     // The function is code that runs once, or a copy that one call has to itself.
     void copyForExpectedCallsIn(const Activation& activation, unsigned depth)
     {
-        Vector<ExpectedCall> calls = findExpectedCallsIn(activation, depth);
+        Vector<ExpectedCall> calls = depth < maxDepthOfCopiedCalls ? findExpectedCallsIn(activation, depth) : Vector<ExpectedCall>();
         Vector<ExpectedRead> reads = depth ? findExpectedReadsIn(activation) : Vector<ExpectedRead>();
         if (calls.isEmpty() && reads.isEmpty())
             return;

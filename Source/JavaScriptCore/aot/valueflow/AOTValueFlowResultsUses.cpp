@@ -168,13 +168,13 @@ UsesOfObjects::UsesOfObjects(const ValueFlowResultInputs& inputs, const ValueFlo
         const ValueFlowBehavior& behavior = tables.at(ValueFlowBehaviorID(index));
         bool readsEveryMember = (behavior.protocols.contains(Protocol::Named) && behavior.namedMembers.empty()) || (behavior.protocols.contains(Protocol::CallsNamed) && behavior.calledMembers.empty());
         if (behavior.protocols.containsAny(protocolsListingKeys) || readsEveryMember)
-            m_notes[0].enumerated.add(inputs.solver().valueOf(inputs.bodies().nodes().hub(ValueFlowBehaviorID(index))));
+            m_notes[0].enumerated.add(inputs.solver().possibleValuesOf(inputs.bodies().nodes().hub(ValueFlowBehaviorID(index))));
     }
     for (const Module& module : inputs.program.modules) {
         if (module.kind != ModuleKind::RuntimeSource || module.exportRule == SyntheticExportRule::None || !module.body || !inputs.isReached(module.body))
             continue;
         if (!inputs.program.at(module.body).results.isEmpty())
-            m_notes[0].enumerated.add(inputs.solver().valueOf(inputs.bodies().nodes().result(module.body, 0)));
+            m_notes[0].enumerated.add(inputs.solver().possibleValuesOf(inputs.bodies().nodes().result(module.body, 0)));
     }
     findHostFunctionsThatProgramHasStored(makers);
     times.didFinish("uses of the heap: operations, behaviors, modules"_s);
@@ -506,21 +506,21 @@ void UsesOfObjects::noteOperations(ValueSetMakers& makers)
             std::span<const ValueFlowOperand> operands = m_inputs.bodies().operandsOf(statement);
             for (uint32_t operand = 0; operand < operands.size(); ++operand) {
                 if (protocolsOf(statement.opcode, operand).containsAny(protocolsListingKeys))
-                    noter.notes.enumerated.add(m_heap.valueOf(noter.maker, operands[operand]));
+                    noter.notes.enumerated.add(m_heap.possibleValuesOf(noter.maker, operands[operand]));
             }
             switch (statement.opcode) {
             case Opcode::PropHas:
             case Opcode::ScopeHasBinding:
-                noter.notes.startsOfTestsUnderKey.add(function.at(statement.site).key().index(), m_heap.valueOf(noter.maker, operands[0]));
+                noter.notes.startsOfTestsUnderKey.add(function.at(statement.site).key().index(), m_heap.possibleValuesOf(noter.maker, operands[0]));
                 break;
             case Opcode::ElemHas:
-                noter.notes.observedUnderAnyKey.add(m_heap.valueOf(noter.maker, operands[OperandIndex::ElemHas::object]));
+                noter.notes.observedUnderAnyKey.add(m_heap.possibleValuesOf(noter.maker, operands[OperandIndex::ElemHas::object]));
                 break;
             case Opcode::CopyDataProperties:
-                noter.notes.enumerated.add(m_heap.valueOf(noter.maker, operands[OperandIndex::CopyDataProperties::source]));
+                noter.notes.enumerated.add(m_heap.possibleValuesOf(noter.maker, operands[OperandIndex::CopyDataProperties::source]));
                 break;
             case Opcode::CopyObject:
-                noter.notes.enumerated.add(m_heap.valueOf(noter.maker, operands[OperandIndex::CopyObject::source]));
+                noter.notes.enumerated.add(m_heap.possibleValuesOf(noter.maker, operands[OperandIndex::CopyObject::source]));
                 break;
             default:
                 break;

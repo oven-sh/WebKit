@@ -226,6 +226,8 @@ using JSInstruction = BaseInstruction<JSOpcodeTraits>;
 
         CallFrame* unsafeCallerFrame(EntryFrame*&) const;
         JS_EXPORT_PRIVATE CallFrame* callerFrame(EntryFrame*&) const;
+        // Null where compiled code is the caller: its frames have no callee and no code block.
+        JS_EXPORT_PRIVATE CallFrame* callerFrameUnlessCompiled(VM&, EntryFrame*&) const;
 
         JS_EXPORT_PRIVATE SourceOrigin callerSourceOrigin(VM&);
 

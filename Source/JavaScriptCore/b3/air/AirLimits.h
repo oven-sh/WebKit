@@ -24,6 +24,8 @@ inline constexpr unsigned estimatedBytesPerInst = 4;
 #endif
 
 inline constexpr size_t maxWordsPerLivenessMatrix = 1 << 20;
+// Each slice pays for every block it visits, however narrow it is.
+inline constexpr size_t minWordsPerLivenessSlice = 16;
 inline constexpr size_t maxWordsOfLivenessAtTails = 1 << 24;
 inline constexpr unsigned minBlocksToSolveLivenessInPostOrder = 256;
 

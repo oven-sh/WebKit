@@ -698,7 +698,7 @@ void ValueFlowRuleContext::add(ValueFlowNodeID node, ClimbingSet set)
 
 void ValueFlowRuleContext::addUnlessHeld(ValueFlowNodeID node, ValueFlowObjectID object)
 {
-    if (!sets().contains(m_solver.valueOf(node), object))
+    if (!sets().contains(m_solver.possibleValuesOf(node), object))
         add(node, ClimbingSet(m_maker.of(object)));
 }
 

@@ -272,8 +272,10 @@ auto StringBuilderStorage::append(JSGlobalObject* globalObject, JSString* string
     if (!length)
         return AppendResult::Appended;
     bool wasEmpty = !this->length();
-    bool isAppendedByReference = length >= m_limits.minLengthAppendedByReference || !string->is8Bit();
-    if (isAppendedByReference && length < m_limits.minLengthAppendedByReference) {
+    // What a builder begins with has been built before. Copying it would cost a loop that begins a builder with its own last result the whole text at every turn.
+    uint32_t minLengthAppendedByReference = wasEmpty ? std::min(m_limits.minLengthAdoptedByFinish, m_limits.minLengthAppendedByReference) : m_limits.minLengthAppendedByReference;
+    bool isAppendedByReference = length >= minLengthAppendedByReference || !string->is8Bit();
+    if (isAppendedByReference && length < minLengthAppendedByReference) {
         if (std::optional<std::span<const char16_t>> units = flatUnitsOf(string); units && WTF::charactersAreAllLatin1(*units))
             return append(globalObject, *units);
     }
@@ -604,7 +606,7 @@ JSString* StringBuilderStorage::createStringFromPieces(JSGlobalObject* globalObj
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    uint32_t minFiberLength = m_limits.minLengthAppendedByReference;
+    uint32_t minFiberLength = std::min(m_limits.minLengthAdoptedByFinish, m_limits.minLengthAppendedByReference);
 
     Vector<Piece, 16> pieces;
     forEachPiece([&](const Piece& piece) {

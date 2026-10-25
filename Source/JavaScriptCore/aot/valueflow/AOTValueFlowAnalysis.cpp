@@ -508,11 +508,11 @@ void ValueSetMakerPool::giveBack(ValueSetMaker& maker)
     m_idleMakers.append(&maker);
 }
 
-ValueSetID ValueFlowSolution::valueOf(const ValueFlowOperand& operand)
+ValueSetID ValueFlowSolution::possibleValuesOf(const ValueFlowOperand& operand)
 {
     ValueSetID value = operand.constant ? operand.constant : ValueSets::nothing;
     if (operand.node)
-        value = m_maker.unite(value, m_solver->valueOf(operand.node));
+        value = m_maker.unite(value, m_solver->possibleValuesOf(operand.node));
     return ValueFlowRuleContext::throughMaskOf(operand, value, *m_solver, m_maker);
 }
 

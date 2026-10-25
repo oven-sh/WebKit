@@ -69,7 +69,7 @@ public:
     const ValueFlowSolver& solver() const { return *m_solver; }
     ValueSetMakerPool& makerPool() const { return m_makerPool; }
     bool hasResult() const { return m_hasResult; }
-    ValueSetID valueOf(const ValueFlowOperand&);
+    ValueSetID possibleValuesOf(const ValueFlowOperand&);
 
 private:
     const Program& m_program;

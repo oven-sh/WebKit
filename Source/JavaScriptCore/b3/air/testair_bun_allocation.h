@@ -12,6 +12,7 @@
         RUN(testInterferenceGraphsAgree()); \
         RUN(testDenseInterferenceLimit()); \
         RUN(testManySlotsShareCells()); \
+        RUN(testSlotsLiveAcrossManyBlocks()); \
         RUN(testManySlotsDropMovesToThemselves()); \
         RUN(testManySlotsInRandomGraphs()); \
         RUN(testManySlotsOfMixedSizes()); \
@@ -444,6 +445,41 @@ void testManySlotsShareCells()
         checkLiveSlotsDoNotOverlap(code);
         CHECK(countDistinctOffsets(code) == 1);
     }
+}
+
+// Each slot is stored to in a block of its own and then loaded in a block of its own, so that about half of them are live in each block.
+void testSlotsLiveAcrossManyBlocks()
+{
+    constexpr size_t slotCount = 40000;
+    static_assert(slotCount < slotCountBeyondGraphs);
+    static_assert(slotCount * (slotCount / 64) > B3::AirLimits::maxWordsOfLivenessAtTails);
+    B3::Procedure proc;
+    proc.setOptLevel(2);
+    Code& code = proc.code();
+    Vector<StackSlot*> slots;
+    for (size_t i = 0; i < slotCount; ++i)
+        slots.append(code.addStackSlot(8, StackSlotKind::Spill));
+
+    BasicBlock* block = code.addBlock();
+    auto startNextBlock = [&] {
+        BasicBlock* next = code.addBlock();
+        appendJump(block, next);
+        block = next;
+    };
+    block->append(Move, nullptr, Arg::imm(0), returnTmp());
+    for (StackSlot* slot : slots) {
+        block->append(Move, nullptr, argumentTmp(0), Arg::stack(slot));
+        startNextBlock();
+    }
+    for (StackSlot* slot : slots) {
+        block->append(Move, nullptr, Arg::stack(slot), argumentTmp(1));
+        block->append(Add64, nullptr, argumentTmp(1), returnTmp());
+        startNextBlock();
+    }
+    appendReturn(block);
+    code.resetReachability();
+    allocateStackByGraphColoring(code);
+    CHECK(countDistinctOffsets(code) == slotCount);
 }
 
 void testManySlotsDropMovesToThemselves()

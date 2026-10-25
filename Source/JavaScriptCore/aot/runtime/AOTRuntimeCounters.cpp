@@ -296,7 +296,7 @@ static String countedAsWord(StringView text)
 static std::optional<CompiledFrame> findAllocatingFrame(VM& vm, FunctionID constructor)
 {
     std::optional<CompiledFrameIterator> frames = CompiledFrameIterator::tryCreateAtTop(vm);
-    if (!frames && vm.topCallFrame && isCallerCompiled(vm, vm.topCallFrame))
+    if (!frames && vm.topCallFrame && isCallerCompiled(vm, vm.topCallFrame, vm.topEntryFrame))
         frames = CompiledFrameIterator::tryCreateAtCallerOf(vm, vm.topCallFrame, vm.topEntryFrame);
     if (!frames || frames->isAtEnd())
         return std::nullopt;

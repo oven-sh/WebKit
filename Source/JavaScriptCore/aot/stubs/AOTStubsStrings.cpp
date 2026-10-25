@@ -178,6 +178,9 @@ void generateStringBuilderAppendString(StubAssembler& jit)
     jit.load32(Address(source, StringImpl::lengthMemoryOffset()), length);
     slowPath.append(jit.branch32(CCallHelpers::AboveOrEqual, length, Address(builder, Storage::offsetOfMinLengthAppendedByReference())));
     jit.load32(Address(builder, Storage::offsetOfPosition()), target);
+    Jump hasText = jit.branchTest32(CCallHelpers::NonZero, target);
+    slowPath.append(jit.branch32(CCallHelpers::AboveOrEqual, length, Address(builder, StringBuilderStorage::offsetOfMinLengthAdoptedByFinish())));
+    hasText.link(&jit);
     jit.add64(length, target, first);
     jit.load32(Address(builder, Storage::offsetOfLimit()), second);
     slowPath.append(jit.branch64(CCallHelpers::Above, first, second));

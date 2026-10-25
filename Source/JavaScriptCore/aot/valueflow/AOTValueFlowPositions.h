@@ -108,7 +108,7 @@ public:
     void takeWhatArrives(const DeclaredType&, ValueFlowNodeID, FlowPositionUpdate&);
 
     std::optional<LayoutSet> receiversAt(const Type& family, ValueSetID);
-    std::optional<CalleeSet> calleesAt(const Type& family, ValueSetID, const ValueFlowOperand* calleeOfConstruction);
+    std::optional<CalleeSet> calleesAt(const Type& family, ValueSetID possible, ValueSetID seen, const ValueFlowOperand* calleeOfConstruction);
 
     bool isSurelyInside(ValueSetID, const Type&, std::optional<TypeID> numberOfType = std::nullopt);
     std::optional<Type> typeWhereNothingPasses(ValueSetID, const Type&);

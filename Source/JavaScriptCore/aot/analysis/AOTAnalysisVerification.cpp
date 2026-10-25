@@ -238,7 +238,7 @@ static void checkLiveness(const Function& function, const CFG& graph, const UseL
     options.solver = LivenessOptions::Solver::PerValue;
     Liveness fresh(function, graph, useLists, options);
     for (BlockID block : graph.reversePostOrder())
-        checkEqual(cached.liveAtHead(block), fresh.liveAtHead(block));
+        checkEqual<ValueID>(cached.liveAtHead(block), fresh.liveAtHead(block));
 }
 
 static void checkEffectFacts(Opcode opcode, const Effects& fresh)

@@ -58,6 +58,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #if ASAN_ENABLED && __has_include(<sanitizer/asan_interface.h>)
 #include <sanitizer/asan_interface.h>
 #endif
+#if ASAN_ENABLED && OS(LINUX)
+#include <sanitizer/lsan_interface.h>
+#endif
 
 #endif // CPU(ADDRESS64)
 
@@ -133,10 +136,19 @@ static size_t findUsedGranule(const BitVector& usedGranules, size_t position, si
     return result < usedGranules.size() ? result : granuleCount;
 }
 
+static void resizeGranuleBits(BitVector& bits, size_t size)
+{
+#if ASAN_ENABLED && OS(LINUX)
+    // BitVector stores its pointer shifted, so LeakSanitizer cannot follow it. A range is never destroyed.
+    __lsan::ScopedDisabler disabler;
+#endif
+    bits.ensureSize(size);
+}
+
 static void ensureGranuleBits(BitVector& bits, size_t end, size_t granuleCount)
 {
     if (end > bits.size())
-        bits.ensureSize(std::min(std::max(end, 2 * bits.size()), granuleCount));
+        resizeGranuleBits(bits, std::min(std::max(end, 2 * bits.size()), granuleCount));
 }
 
 static size_t granuleIndexOf(uintptr_t start, size_t size, const void* pointer)
@@ -298,7 +310,7 @@ ReservedRangeHeap::ReservedRangeHeap(uintptr_t start, size_t size, const Backing
     }
 
     size_t prefixGranuleCount = request.unusedPrefixSize / granuleSize;
-    m_usedGranules.ensureSize(prefixGranuleCount);
+    resizeGranuleBits(m_usedGranules, prefixGranuleCount);
     for (size_t index = 0; index < prefixGranuleCount; ++index)
         m_usedGranules.quickSet(index);
     m_firstGranuleToSearch = prefixGranuleCount;

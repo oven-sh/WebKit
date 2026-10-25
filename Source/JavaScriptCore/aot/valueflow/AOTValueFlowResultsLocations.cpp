@@ -335,7 +335,7 @@ static void noteModules(const ValueFlowResultInputs& inputs, std::span<const Mod
             locations.note(locations.of(exports), LocationEvent::ReadOutsideOperations);
     }
     const ValueFlowUniverse& universe = inputs.universe();
-    inputs.sets().forEachMember(inputs.solver().valueOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::ModuleObjectsHandedOut)), [&](ValueFlowObjectID moduleObject) {
+    inputs.sets().forEachMember(inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::ModuleObjectsHandedOut)), [&](ValueFlowObjectID moduleObject) {
         ModuleID module = universe.moduleOf(moduleObject);
         if (VariableID exports = module ? program.at(module).exportsVariable : VariableID())
             locations.noteEverythingOutsideOperations(locations.of(exports));

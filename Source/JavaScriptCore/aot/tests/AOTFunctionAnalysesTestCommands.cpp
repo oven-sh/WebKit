@@ -100,10 +100,14 @@ static void forEachSection(PrintStream& out, Session& session, const AnalysisOpt
     };
     auto reachableBlocks = [&] { return reachableBlocksMatching([](BlockID) { return true; }); };
     auto checkSolversAgree = [&](const Liveness& solved, LivenessOptions livenessOptions) {
-        livenessOptions.solver = LivenessOptions::Solver::PerValue;
-        Liveness perValue(function, analyses.cfg(), analyses.useLists(), livenessOptions);
-        for (BlockID block : analyses.cfg().reversePostOrder())
-            RELEASE_ASSERT(std::ranges::equal(solved.liveAtHead(block), perValue.liveAtHead(block)));
+        for (auto solver : { LivenessOptions::Solver::PerValue, LivenessOptions::Solver::SharedSets }) {
+            livenessOptions.solver = solver;
+            Liveness other(function, analyses.cfg(), analyses.useLists(), livenessOptions);
+            for (BlockID block : analyses.cfg().reversePostOrder()) {
+                RELEASE_ASSERT(std::ranges::equal(solved.liveAtHead(block), other.liveAtHead(block)));
+                RELEASE_ASSERT(solved.isAnyLiveAtHead(block) == other.isAnyLiveAtHead(block));
+            }
+        }
     };
     auto liveness = [&]() -> const Liveness& {
         if (!options.hasLivenessOptions()) {
@@ -194,7 +198,7 @@ static void forEachSection(PrintStream& out, Session& session, const AnalysisOpt
         const Liveness& solved = liveness();
         for (BlockID block : analyses.cfg().reversePostOrder()) {
             if (options.isTracked(block))
-                dumpLine(out, block, " live at head: "_s, solved.liveAtHead(block));
+                dumpLine(out, block, " live at head: "_s, std::span<const ValueID>(solved.liveAtHead(block)));
         }
     });
     section("effects"_s, [&] {

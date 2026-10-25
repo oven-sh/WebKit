@@ -58,6 +58,7 @@ Liveness::Liveness(const Function& function, const CFG& cfg, const UseLists& use
     , m_useLists(useLists)
 {
     AOT_THRESHOLD(size_t, maxWordsForPerBlockSolver, 1 << 18);
+    AOT_THRESHOLD(size_t, maxVisitsOfPerValueSolver, 1 << 22);
     RELEASE_ASSERT(m_function.blocks.size() == m_cfg.numNodes());
     RELEASE_ASSERT(m_function.values.size() == m_useLists.numberOfValues());
     if (options.trackedValues)
@@ -104,8 +105,8 @@ Liveness::Liveness(const Function& function, const CFG& cfg, const UseLists& use
     bool isSmallEnough = numberOfReachableBlocks * ((numberOfValues + 63) / 64) <= maxWordsForPerBlockSolver;
     if (options.solver == LivenessOptions::Solver::ChosenBySize && isDenseEnough && isSmallEnough)
         solvePerBlock(crossBlockValues, additionalPredecessors);
-    else
-        solvePerValue(crossBlockValues, additionalPredecessors);
+    else if (options.solver == LivenessOptions::Solver::SharedSets || !solvePerValue(crossBlockValues, additionalPredecessors, maxVisitsOfPerValueSolver))
+        solveWithSharedSets(crossBlockValues, additionalPredecessors);
 }
 
 ValueID Liveness::baseOf(ValueID id) const
@@ -172,7 +173,7 @@ Liveness::CrossBlockValues Liveness::collectCrossBlockValues(std::span<const Int
     return result;
 }
 
-void Liveness::solvePerValue(const CrossBlockValues& crossBlockValues, const AdditionalPredecessors& additionalPredecessors)
+bool Liveness::solvePerValue(const CrossBlockValues& crossBlockValues, const AdditionalPredecessors& additionalPredecessors, size_t remainingVisits)
 {
     struct LiveValue {
         BlockID block;
@@ -192,6 +193,10 @@ void Liveness::solvePerValue(const CrossBlockValues& crossBlockValues, const Add
             if (block == definingBlock || lastValueLiveInto[block.index()] == value)
                 continue;
             lastValueLiveInto[block.index()] = value;
+            if (!remainingVisits--) {
+                m_firstLiveValue.fill(0, numberOfBlocks + 1);
+                return false;
+            }
             if (isTrackedBlock(block)) {
                 liveValues.append({ block, value });
                 ++m_firstLiveValue[block.index() + 1];
@@ -208,6 +213,7 @@ void Liveness::solvePerValue(const CrossBlockValues& crossBlockValues, const Add
     Vector<uint32_t> next(m_firstLiveValue.span());
     for (const LiveValue& live : liveValues)
         m_liveValues[next[live.block.index()]++] = live.value;
+    return true;
 }
 
 void Liveness::solvePerBlock(const CrossBlockValues& crossBlockValues, const AdditionalPredecessors& additionalPredecessors)
@@ -310,18 +316,187 @@ void Liveness::solvePerBlock(const CrossBlockValues& crossBlockValues, const Add
     }
 }
 
-std::span<const ValueID> Liveness::liveAtHead(BlockID block) const
+void Liveness::SharedSets::setNumberOfKeys(size_t numberOfKeys)
+{
+    m_nodes.shrink(0);
+    m_nodes.append(Node { });
+    m_numberOfInnerLevels = 0;
+    while (numberOfKeys > 1ull << (bitsPerLeafKey + bitsPerSlotIndex * m_numberOfInnerLevels))
+        ++m_numberOfInnerLevels;
+}
+
+auto Liveness::SharedSets::append(const Node& node) -> Set
+{
+    m_nodes.append(node);
+    return m_nodes.size() - 1;
+}
+
+auto Liveness::SharedSets::add(Set set, uint32_t key, unsigned level) -> Set
+{
+    Node node = m_nodes[set];
+    uint32_t& slot = node[level ? slotOf(key, level) : wordOf(key)];
+    uint32_t changed = level ? add(slot, key, level - 1) : slot | maskOf(key);
+    if (changed == slot)
+        return set;
+    slot = changed;
+    return append(node);
+}
+
+auto Liveness::SharedSets::remove(Set set, uint32_t key, unsigned level) -> Set
+{
+    if (!set)
+        return emptySet;
+    Node node = m_nodes[set];
+    uint32_t& slot = node[level ? slotOf(key, level) : wordOf(key)];
+    uint32_t changed = level ? remove(slot, key, level - 1) : slot & ~maskOf(key);
+    if (changed == slot)
+        return set;
+    slot = changed;
+    return node == Node { } ? emptySet : append(node);
+}
+
+auto Liveness::SharedSets::unite(Set first, Set second, unsigned level) -> Set
+{
+    if (first == second || !second)
+        return first;
+    if (!first)
+        return second;
+
+    Node firstNode = m_nodes[first];
+    Node secondNode = m_nodes[second];
+    Node united;
+    for (unsigned slot = 0; slot < slotsPerNode; ++slot)
+        united[slot] = level ? unite(firstNode[slot], secondNode[slot], level - 1) : firstNode[slot] | secondNode[slot];
+    if (united == firstNode)
+        return first;
+    if (united == secondNode)
+        return second;
+    return append(united);
+}
+
+bool Liveness::SharedSets::contains(Set set, uint32_t key) const
+{
+    for (unsigned level = m_numberOfInnerLevels; level && set; --level)
+        set = m_nodes[set][slotOf(key, level)];
+    return m_nodes[set][wordOf(key)] & maskOf(key);
+}
+
+void Liveness::solveWithSharedSets(const CrossBlockValues& crossBlockValues, const AdditionalPredecessors& additionalPredecessors)
+{
+    std::span<const BlockID> order = m_cfg.reversePostOrder();
+    std::span<const CrossBlockValue> values = crossBlockValues.values.span();
+    unsigned numberOfBlocks = m_cfg.numNodes();
+
+    m_sharedSets.setNumberOfKeys(values.size());
+    m_sharedSetAtHead.fill(SharedSets::emptySet, numberOfBlocks);
+    m_valuesInSharedSets.reserveInitialCapacity(values.size());
+    Vector<uint32_t> firstDefinition(FillWith { }, numberOfBlocks + 1, 0u);
+    for (uint32_t index = 0; index < values.size(); ++index) {
+        m_valuesInSharedSets.append(values[index].value);
+        ++firstDefinition[values[index].definingBlock.index() + 1];
+        for (BlockID block : crossBlockValues.useBlocksOf(index)) {
+            if (m_cfg.isReachable(block))
+                m_sharedSetAtHead[block.index()] = m_sharedSets.add(m_sharedSetAtHead[block.index()], index);
+        }
+    }
+    for (unsigned blockIndex = 0; blockIndex < numberOfBlocks; ++blockIndex)
+        firstDefinition[blockIndex + 1] += firstDefinition[blockIndex];
+    Vector<uint32_t> definitions(values.size());
+    Vector<uint32_t> nextDefinition(firstDefinition.span());
+    for (uint32_t index = 0; index < values.size(); ++index)
+        definitions[nextDefinition[values[index].definingBlock.index()]++] = index;
+
+    Vector<uint8_t> isStale(FillWith { }, order.size(), static_cast<uint8_t>(true));
+    for (bool needsAnotherSweep = true; std::exchange(needsAnotherSweep, false);) {
+        for (size_t orderIndex = order.size(); orderIndex--;) {
+            if (!std::exchange(isStale[orderIndex], false))
+                continue;
+
+            BlockID block = order[orderIndex];
+            SharedSets::Set liveThrough = SharedSets::emptySet;
+            for (BlockID successor : m_cfg.successors(block))
+                liveThrough = m_sharedSets.unite(liveThrough, m_sharedSetAtHead[successor.index()]);
+            if (!m_additionalEdges.isEmpty()) {
+                for (auto& edge : std::ranges::equal_range(m_additionalEdges, block, { }, &std::pair<BlockID, BlockID>::first))
+                    liveThrough = m_sharedSets.unite(liveThrough, m_sharedSetAtHead[edge.second.index()]);
+            }
+            for (uint32_t definition : definitions.subspan(firstDefinition[block.index()], firstDefinition[block.index() + 1] - firstDefinition[block.index()]))
+                liveThrough = m_sharedSets.remove(liveThrough, definition);
+
+            SharedSets::Set& live = m_sharedSetAtHead[block.index()];
+            SharedSets::Set united = m_sharedSets.unite(live, liveThrough);
+            if (united == live)
+                continue;
+            live = united;
+
+            auto markStale = [&](BlockID predecessor) {
+                size_t predecessorIndex = m_cfg.reversePostOrderIndex(predecessor);
+                isStale[predecessorIndex] = true;
+                needsAnotherSweep |= predecessorIndex >= orderIndex;
+            };
+            for (BlockID predecessor : m_cfg.predecessors(block))
+                markStale(predecessor);
+            if (!additionalPredecessors.isEmpty()) {
+                for (BlockID predecessor : additionalPredecessors[block.index()])
+                    markStale(predecessor);
+            }
+        }
+    }
+
+    if (!m_trackedBlocks)
+        return;
+    for (BlockID block : order) {
+        if (!isTrackedBlock(block))
+            m_sharedSetAtHead[block.index()] = SharedSets::emptySet;
+    }
+}
+
+void Liveness::forEachLiveAtHead(BlockID block, NOESCAPE const Invocable<void(ValueID)> auto& functor) const
 {
     RELEASE_ASSERT(block.index() < m_cfg.numNodes());
+    if (!m_sharedSetAtHead.isEmpty()) [[unlikely]] {
+        m_sharedSets.forEach(m_sharedSetAtHead[block.index()], [&](uint32_t index) {
+            functor(m_valuesInSharedSets[index]);
+        });
+        return;
+    }
     uint32_t first = m_firstLiveValue[block.index()];
-    return m_liveValues.subspan(first, m_firstLiveValue[block.index() + 1] - first);
+    for (ValueID value : m_liveValues.subspan(first, m_firstLiveValue[block.index() + 1] - first))
+        functor(value);
+}
+
+Liveness::LiveValues Liveness::liveAtHead(BlockID block) const
+{
+    RELEASE_ASSERT(block.index() < m_cfg.numNodes());
+    if (!m_sharedSetAtHead.isEmpty()) [[unlikely]] {
+        Vector<ValueID> values;
+        forEachLiveAtHead(block, [&](ValueID value) {
+            values.append(value);
+        });
+        return LiveValues(WTF::move(values));
+    }
+    uint32_t first = m_firstLiveValue[block.index()];
+    return LiveValues(m_liveValues.subspan(first, m_firstLiveValue[block.index() + 1] - first));
+}
+
+bool Liveness::isAnyLiveAtHead(BlockID block) const
+{
+    RELEASE_ASSERT(block.index() < m_cfg.numNodes());
+    if (!m_sharedSetAtHead.isEmpty()) [[unlikely]]
+        return m_sharedSetAtHead[block.index()] != SharedSets::emptySet;
+    return m_firstLiveValue[block.index()] != m_firstLiveValue[block.index() + 1];
 }
 
 bool Liveness::isLiveAtHead(ValueID id, BlockID block) const
 {
     RELEASE_ASSERT(id.index() < m_useLists.numberOfValues());
     RELEASE_ASSERT(isTrackedValue(id) && isTrackedBlock(block));
-    return std::ranges::binary_search(liveAtHead(block), id);
+    if (!m_sharedSetAtHead.isEmpty()) [[unlikely]] {
+        size_t index = std::ranges::lower_bound(m_valuesInSharedSets, id) - m_valuesInSharedSets.begin();
+        return index < m_valuesInSharedSets.size() && m_valuesInSharedSets[index] == id && m_sharedSets.contains(m_sharedSetAtHead[block.index()], index);
+    }
+    uint32_t first = m_firstLiveValue[block.index()];
+    return std::ranges::binary_search(m_liveValues.subspan(first, m_firstLiveValue[block.index() + 1] - first), id);
 }
 
 LivenessOfAskedValues::LivenessOfAskedValues(const Function& function, const CFG& cfg, const UseLists& useLists)
@@ -395,8 +570,9 @@ Liveness::LocalCalc::LocalCalc(const Liveness& liveness, BlockID block)
 
     auto addLiveAtHead = [&](BlockID successor) {
         RELEASE_ASSERT(liveness.isTrackedBlock(successor));
-        for (ValueID id : liveness.liveAtHead(successor))
+        liveness.forEachLiveAtHead(successor, [&](ValueID id) {
             m_live.quickSet(id.index());
+        });
     };
     for (BlockID successor : liveness.m_cfg.successors(block))
         addLiveAtHead(successor);

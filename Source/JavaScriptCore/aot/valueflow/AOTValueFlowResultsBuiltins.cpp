@@ -28,7 +28,7 @@ static constexpr OptionSet<BuiltinUse> accessingBuiltinUses { BuiltinUse::Read, 
 
 static ValueSetID valueOfHostNode(const ValueFlowResultInputs& inputs, ValueFlowHostNode node)
 {
-    return inputs.solver().valueOf(inputs.bodies().nodes().ofHost(node));
+    return inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(node));
 }
 
 namespace {
@@ -73,8 +73,8 @@ public:
             for (BuiltinID holder : holdersIn(heap.maker(), set))
                 holders.set(holder.index());
         };
-        noteHoldersIn(inputs.solver().valueOf(ValueFlowProgramNodes::escaped()), m_escaped);
-        noteHoldersIn(inputs.solver().valueOf(ValueFlowProgramNodes::lost()), m_lost);
+        noteHoldersIn(inputs.solver().possibleValuesOf(ValueFlowProgramNodes::escaped()), m_escaped);
+        noteHoldersIn(inputs.solver().possibleValuesOf(ValueFlowProgramNodes::lost()), m_lost);
         noteWrites(heap.index());
         if (!m_unseenCodeRuns && isWrittenBehindAnalysis())
             noteHoldersIn(valueOfHostNode(inputs, ValueFlowHostNode::BuiltinsHeldWithoutBeingListed), m_mayBeHeldWithoutBeingListed);
@@ -759,7 +759,7 @@ static Vector<ValueFlowWriteUnderNewName> collectWritesOfLockedLocations(const V
         for (const ValueFlowStatement& statement : bodies.statementsOf(function)) {
             std::optional<unsigned> object = statement.kind == ValueFlowStatementKind::Operation && statement.site && !modeOfCallOperation(statement.opcode) ? OperandPosition::object(statement.opcode) : std::nullopt;
             std::span<const ValueFlowOperand> operands = bodies.operandsOf(statement);
-            if (!object || !listsItsObjects(heap.valueOf(maker, operands[*object])))
+            if (!object || !listsItsObjects(heap.possibleValuesOf(maker, operands[*object])))
                 continue;
             Witness witness = witnessOfStatement(program, statement);
             ValueFlowStatementID id(static_cast<uint32_t>(&statement - bodies.statements().data()));
@@ -769,7 +769,7 @@ static Vector<ValueFlowWriteUnderNewName> collectWritesOfLockedLocations(const V
             });
             const Value& operation = program.at(statement.function).at(statement.site);
             if (std::optional<unsigned> key = computedKeyOfWrite(operation))
-                noteUnderNamesAmong(notes, heap.valueOf(maker, operands[*key]), statement.function, operation.operand(*key), heap.valueOf(maker, operands[*object]), witness);
+                noteUnderNamesAmong(notes, heap.possibleValuesOf(maker, operands[*key]), statement.function, operation.operand(*key), heap.possibleValuesOf(maker, operands[*object]), witness);
         }
     });
 
@@ -913,7 +913,7 @@ ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowR
             ValueFlowObjectID object = mode ? universe.siteObject(call) : ValueFlowObjectID();
             if (!object || universe.layoutOf(object))
                 continue;
-            ValueSetID callees = inputs.valueOf(maker, inputs.bodies().operandsOf(call)[0]);
+            ValueSetID callees = inputs.possibleValuesOf(maker, inputs.bodies().operandsOf(call)[0]);
             if (ValueSets::isComplement(callees) || inputs.sets().meet(callees, universe.otherCallables())) {
                 found.append({ object, { } });
                 continue;

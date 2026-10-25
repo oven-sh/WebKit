@@ -1327,7 +1327,7 @@ static void valueFlowRoundsAgreeWithAnAnalysisObjectByObject()
             ValueFlowSolver solver(input, sets, runToyRule, loops, way.rounds);
             AOT_TEST_CHECK(solver.solve());
             for (uint32_t node = 0; node < program.numberOfNodes(); ++node)
-                AOT_TEST_CHECK(holdsTheSame(sets, solver.valueOf(ValueFlowNodeID(node)), expected.values[node]));
+                AOT_TEST_CHECK(holdsTheSame(sets, solver.possibleValuesOf(ValueFlowNodeID(node)), expected.values[node]));
             for (uint32_t function = 0; function < program.numberOfFunctions; ++function)
                 AOT_TEST_CHECK(solver.isReached(FunctionID(function)) == expected.isReached[function]);
             for (uint32_t object = 0; object < program.numberOfObjects; ++object)
@@ -1343,11 +1343,11 @@ static void valueFlowRoundsAgreeWithAnAnalysisObjectByObject()
                 AOT_TEST_CHECK(sets.contains(solver.keyOf(witness).set, ValueFlowObjectID(function)));
             }
             for (uint32_t node = 0; node < program.numberOfNodes(); node += 3) {
-                sets.forEachMember(solver.valueOf(ValueFlowNodeID(node)), [&](ValueFlowObjectID member) {
+                sets.forEachMember(solver.possibleValuesOf(ValueFlowNodeID(node)), [&](ValueFlowObjectID member) {
                     Vector<ValueFlowNodeID> way = solver.explain(ValueFlowNodeID(node), member);
                     AOT_TEST_CHECK(way.size() >= 2 && way[0] == ValueFlowNodeID(node));
                     for (ValueFlowNodeID step : way)
-                        AOT_TEST_CHECK(sets.contains(solver.valueOf(step), member));
+                        AOT_TEST_CHECK(sets.contains(solver.possibleValuesOf(step), member));
                     const ValueFlowNodeKey* key = solver.keyOfMadeNode(way.last());
                     AOT_TEST_CHECK(key && key->kind == ValueFlowMadeNodeKind::Constant);
                     ValueFlowStatementID allocation = solver.statementThatLogged(ValueFlowEdge { way.last(), way[way.size() - 2] });
@@ -1419,7 +1419,7 @@ static void whatATurnMakesAndReachesRunsInThatTurn()
         AOT_TEST_CHECK(solver.solve());
         for (uint32_t function = 0; function < program.numberOfFunctions; ++function)
             AOT_TEST_CHECK(solver.isReached(FunctionID(function)));
-        AOT_TEST_CHECK(sets.contains(solver.valueOf(program.node(host, 3)), ValueFlowObjectID(4u)));
+        AOT_TEST_CHECK(sets.contains(solver.possibleValuesOf(program.node(host, 3)), ValueFlowObjectID(4u)));
         for (const ValueFlowSolver::Round& round : solver.rounds())
             AOT_TEST_CHECK(round.turns <= 1);
     }
@@ -1493,8 +1493,8 @@ static void valueFlowSolverFindsObjectsOutsideDeclaredTypes()
 
     ValueFlowSolver solver(input, sets, [](const ValueFlowStatement&, ValueFlowRuleContext&) { }, loops);
     AOT_TEST_CHECK(solver.solve());
-    AOT_TEST_CHECK(solver.valueOf(takingStranger) == setOf({ 0, 3, 5 }));
-    AOT_TEST_CHECK(solver.valueOf(takingPlaceholders) == setOf({ 2, 3, 4 }));
+    AOT_TEST_CHECK(solver.possibleValuesOf(takingStranger) == setOf({ 0, 3, 5 }));
+    AOT_TEST_CHECK(solver.possibleValuesOf(takingPlaceholders) == setOf({ 2, 3, 4 }));
     AOT_TEST_CHECK(solver.holdsObjectOutsideFamily(takingStranger) && !solver.holdsObjectOutsideFamily(takingPlaceholders));
     AOT_TEST_CHECK(!solver.holdsObjectOutsideFamily(withStranger));
     AOT_TEST_CHECK(solver.counters().nodesHoldingObjectsOutsideFamily == 1);
@@ -1543,7 +1543,7 @@ static void whatAShorterWayOfARuleLeavesOutIsFound()
             ValueFlowSolver solver(input, sets, leavesOutTheFirstResult, loops, ValueFlowSolver::Rounds::DueWithoutCheck);
             AOT_TEST_CHECK(solver.solve());
             AOT_TEST_CHECK(!solver.addedByGeneralRules().isAnything());
-            AOT_TEST_CHECK(solver.valueOf(statements[0].result) == ValueSets::nothing);
+            AOT_TEST_CHECK(solver.possibleValuesOf(statements[0].result) == ValueSets::nothing);
         }
     }
 }
@@ -1586,8 +1586,8 @@ static void whatIsAskedLastIsAnsweredWhenNothingElseIsDue()
         runsOfStatementThatAsksLast = 0;
         ValueFlowSolver solver(input, sets, rule, loops, ValueFlowSolver::Rounds::DueWithoutCheck);
         AOT_TEST_CHECK(solver.solve());
-        AOT_TEST_CHECK(sets.size(solver.valueOf(statements[0].result)) == numberOfObjects);
-        AOT_TEST_CHECK(solver.valueOf(statements[1].result) == solver.valueOf(statements[0].result));
+        AOT_TEST_CHECK(sets.size(solver.possibleValuesOf(statements[0].result)) == numberOfObjects);
+        AOT_TEST_CHECK(solver.possibleValuesOf(statements[1].result) == solver.possibleValuesOf(statements[0].result));
         AOT_TEST_CHECK(solver.rounds().size() > numberOfObjects);
         AOT_TEST_CHECK(runsOfStatementThatAsksLast == 2);
     }

@@ -303,7 +303,7 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
                 if (ValueSets::isComplement(group.callees))
                     return;
                 bool namesNoEscapedClosure = sets.size(group.callees) > inputs.build.limit(LimitID::MaxValueFlowMembersToldApart);
-                ValueSetID escaped = solver.valueOf(ValueFlowProgramNodes::escaped());
+                ValueSetID escaped = solver.possibleValuesOf(ValueFlowProgramNodes::escaped());
                 sets.forEachMember(group.callees, [&](ValueFlowObjectID callee) {
                     FunctionID entered = universe.closureFunction(callee);
                     if (!entered || throwsBeforeEntry(program.at(entered), group.kind))
@@ -426,7 +426,7 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
     entries.mayBeIntoAnyFunction = mayBeIntoAnyFunction.load(std::memory_order_relaxed);
     stampedCalls.functionsEnteredWithoutRecord = BitVector(numberOfFunctions);
     auto enterClosuresIn = [&](ValueFlowNodeID covered) {
-        sets.forEachMember(solver.valueOf(covered), [&](ValueFlowObjectID member) {
+        sets.forEachMember(solver.possibleValuesOf(covered), [&](ValueFlowObjectID member) {
             if (FunctionID function = universe.closureFunction(member))
                 stampedCalls.functionsEnteredWithoutRecord.quickSet(function.index());
         });
@@ -449,7 +449,7 @@ static void forEachFunctionWithinReachOf(const ValueFlowResultInputs& inputs, Fu
     const ValueFlowUniverse& universe = inputs.universe();
     const ValueFlowProgramNodes& nodes = inputs.bodies().nodes();
     auto forEachClosureIn = [&](ValueFlowNodeID node) {
-        ValueSetID held = inputs.solver().valueOf(node);
+        ValueSetID held = inputs.solver().possibleValuesOf(node);
         if (ValueSets::isComplement(held) || !inputs.sets().meet(held, universe.closures()))
             return;
         inputs.sets().forEachMember(held, [&](ValueFlowObjectID member) {
@@ -597,7 +597,7 @@ static bool isOnlyCalled(const ValueFlowResultInputs& inputs, ValueSetID callabl
 
 static bool mayHold(const ValueFlowResultInputs& inputs, const ValueFlowOperand& operand, ValueFlowObjectID object)
 {
-    return (operand.constant && inputs.sets().contains(operand.constant, object)) || (operand.node && inputs.sets().contains(inputs.solver().valueOf(operand.node), object));
+    return (operand.constant && inputs.sets().contains(operand.constant, object)) || (operand.node && inputs.sets().contains(inputs.solver().possibleValuesOf(operand.node), object));
 }
 
 static Vector<FlowBoundFunctionUse> findBoundFunctionsOnlyCalled(const ValueFlowResultInputs& inputs, ValueSetID callablesLookedInto)
@@ -634,7 +634,7 @@ static Vector<FlowBoundFunctionUse> findBoundFunctionsOnlyCalled(const ValueFlow
             if (!mayHold(inputs, operands[0], bind))
                 continue;
             ValueSetMaker& maker = makers.of(worker);
-            ValueSetID targets = inputs.valueOf(maker, operands[1]);
+            ValueSetID targets = inputs.possibleValuesOf(maker, operands[1]);
             if (ValueSets::isComplement(targets))
                 continue;
             ValueFlowObjectID result = universe.siteObject(statement);
@@ -713,7 +713,7 @@ static Vector<FlowBoundFunctionAtSite> findBoundFunctionsAtSites(const ValueFlow
                 return;
             BorrowedValueSetMaker borrowedMaker(inputs.makerPool());
             ValueSetMaker& maker = borrowedMaker.get();
-            ValueSetID targets = inputs.valueOf(maker, operands[1]);
+            ValueSetID targets = inputs.possibleValuesOf(maker, operands[1]);
             ValueFlowObjectID result = universe.siteObject(statement);
             if (!result || ValueSets::isComplement(targets))
                 return;
@@ -741,11 +741,11 @@ static Vector<FlowBoundFunctionAtSite> findBoundFunctionsAtSites(const ValueFlow
     Vector<FlowBoundFunctionAtSite> result = collectInParallel<FlowBoundFunctionAtSite>(inputs.loops(), program.functions.size(), [&](unsigned index, Vector<FlowBoundFunctionAtSite>& found) {
         forEachCallIn(index, [&](const ValueFlowStatement& statement) {
             const ValueFlowOperand& operand = inputs.bodies().operandsOf(statement)[0];
-            if (!operand.node || !inputs.sets().meet(inputs.solver().valueOf(operand.node), everyObject))
+            if (!operand.node || !inputs.sets().meet(inputs.solver().seenValuesOf(operand.node), everyObject))
                 return;
             BorrowedValueSetMaker borrowedMaker(inputs.makerPool());
             ValueSetMaker& maker = borrowedMaker.get();
-            ValueSetID callees = inputs.valueOf(maker, operand);
+            ValueSetID callees = inputs.seenValuesOf(maker, operand);
             // A call that may get anything would otherwise expect the program's one bound function.
             if (ValueSets::isComplement(callees))
                 return;
@@ -775,7 +775,7 @@ static Vector<Witness> findWitnessesOfEscapes(const ValueFlowResultInputs& input
 
     using SetOfNode = HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
     ValueFlowNodeID escaped = ValueFlowProgramNodes::escaped();
-    ValueSetID remaining = maker.intersect(solver.valueOf(escaped), universe.closures());
+    ValueSetID remaining = maker.intersect(solver.possibleValuesOf(escaped), universe.closures());
     SetOfNode seen;
     seen.add(escaped.index(), remaining);
     Vector<std::pair<uint32_t, ValueSetID>> level { { escaped.index(), remaining } };
@@ -792,7 +792,7 @@ static Vector<Witness> findWitnessesOfEscapes(const ValueFlowResultInputs& input
             });
             AOT::sort(predecessors);
             for (ValueFlowNodeID predecessor : predecessors) {
-                ValueSetID brought = maker.intersect(solver.valueOf(predecessor), lookedFor);
+                ValueSetID brought = maker.intersect(solver.possibleValuesOf(predecessor), lookedFor);
                 if (brought == ValueSets::nothing)
                     continue;
                 Witness witness = noWitness;
@@ -950,7 +950,7 @@ void computeClosuresNeverCompared(const ValueFlowResultInputs& inputs, ValueFlow
             if (!inputs.isReached(compared.function))
                 continue;
             auto sidesOf = [&](const ValueFlowOperand& operand) {
-                return std::array { closuresIn(worker, operand.node ? inputs.solver().valueOf(operand.node) : ValueSets::nothing), closuresIn(worker, operand.constant) };
+                return std::array { closuresIn(worker, operand.node ? inputs.solver().possibleValuesOf(operand.node) : ValueSets::nothing), closuresIn(worker, operand.constant) };
             };
             for (ValueSetID left : sidesOf(compared.left)) {
                 if (left == ValueSets::nothing)
@@ -958,7 +958,7 @@ void computeClosuresNeverCompared(const ValueFlowResultInputs& inputs, ValueFlow
                 for (ValueSetID right : sidesOf(compared.right)) {
                     if (right == ValueSets::nothing)
                         continue;
-                    auto [low, high] = std::minmax(left.index(), right.index());
+                    auto [low, high] = std::minmax({ left.index(), right.index() });
                     if (lookers[worker].pairsMet.add(static_cast<uint64_t>(low) << 32 | high).isNewEntry)
                         keep(worker, left == right ? left : makers.of(worker).intersect(left, right), { compared.function, { }, { } });
                 }
@@ -1105,7 +1105,7 @@ void computeSymbolConstantResults(const ValueFlowResultInputs& inputs, FlowResul
         for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(index)) {
             if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::Call || !statement.result)
                 continue;
-            ValueFlowObjectID result = inputs.sets().onlyMember(inputs.solver().valueOf(statement.result));
+            ValueFlowObjectID result = inputs.sets().onlyMember(inputs.solver().possibleValuesOf(statement.result));
             PropertyKeyID key = result ? inputs.universe().keyOf(result) : PropertyKeyID();
             if (!key || !inputs.symbolsCreatedOnce->get(key.index()))
                 continue;

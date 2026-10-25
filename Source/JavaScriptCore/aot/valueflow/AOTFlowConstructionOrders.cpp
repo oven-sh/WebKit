@@ -679,7 +679,7 @@ struct ConstructionGraphBuilder {
         Vector<ValueSetID, 4> values;
         if (const ValueFlowStatement* statement = construction.findStatement(site)) {
             for (const ValueFlowOperand& operand : inputs.bodies().operandsOf(*statement))
-                values.append(heap.valueOf(operand));
+                values.append(heap.possibleValuesOf(operand));
         }
         return values;
     }
@@ -824,7 +824,7 @@ struct ConstructionGraphBuilder {
             return std::nullopt;
         for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(function.index())) {
             if (statement.kind == ValueFlowStatementKind::Operation && statement.site == site.value)
-                return heap.valueOf(inputs.bodies().operandsOf(statement)[OperandIndex::NewObject::prototype]);
+                return heap.possibleValuesOf(inputs.bodies().operandsOf(statement)[OperandIndex::NewObject::prototype]);
         }
         return std::nullopt;
     }
@@ -1477,7 +1477,7 @@ ValueSetID findNewTargetsOfOtherFunctions(const ValueFlowResultInputs& inputs, V
         });
     };
     if (unseenCodeCanRun(inputs.solution)) {
-        ValueSetID reached = maker.unite(universe.unknownObjectAlone(), inputs.solver().valueOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::ConstructorsAboveEscapedInstances)));
+        ValueSetID reached = maker.unite(universe.unknownObjectAlone(), inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::ConstructorsAboveEscapedInstances)));
         add(reached, reached);
     }
     Vector<const ValueFlowStatement*> constructions = collectInParallel<const ValueFlowStatement*>(inputs.loops(), program.functions.size(), [&](unsigned index, Vector<const ValueFlowStatement*>& found) {
@@ -1494,7 +1494,7 @@ ValueSetID findNewTargetsOfOtherFunctions(const ValueFlowResultInputs& inputs, V
     });
     for (const ValueFlowStatement* statement : constructions) {
         std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(*statement);
-        add(heap.valueOf(operands[0]), heap.valueOf(operands[*OperandPosition::newTarget(statement->opcode)]));
+        add(heap.possibleValuesOf(operands[0]), heap.possibleValuesOf(operands[*OperandPosition::newTarget(statement->opcode)]));
     }
     auto constructsWithNewTarget = [](const BuiltinCallback& callback) {
         return callback.constructs && callback.newTarget.kind != BuiltinPlaceKind::None;

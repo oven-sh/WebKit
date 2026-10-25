@@ -262,7 +262,10 @@ public:
     const ValueSets& sets() const { return m_sets; }
     const ValueFlowGraph& graph() const { return m_graph; }
     std::span<const std::unique_ptr<ValueSetMaker>> makersIdleAfterSolve() const LIFETIME_BOUND { return m_makers.span(); }
-    ValueSetID valueOf(ValueFlowNodeID node) const { return m_graph.valueOf(node); }
+    // Everything that may reach the node. A proof reads this.
+    ValueSetID possibleValuesOf(ValueFlowNodeID node) const { return m_graph.valueOf(node); }
+    // What the program itself brings to the node. A prediction reads this: it may name too few, so nothing is proven from it.
+    ValueSetID seenValuesOf(ValueFlowNodeID node) const { return m_graph.valueOf(node); }
     bool isReached(FunctionID function) const { return m_isReached.get(function.index()); }
     OptionSet<BuiltinUse> usesOf(BuiltinID builtin) const { return builtin.index() < m_usesOfBuiltin.size() ? m_usesOfBuiltin[builtin.index()] : OptionSet<BuiltinUse>(); }
     OptionSet<ObjectMutation> marksOf(ValueFlowObjectID object) const { return m_marksOfObject[object.index()]; }

@@ -195,7 +195,7 @@ std::tuple<CodeBlock*, BytecodeIndex> getBytecodeIndex(VM& vm, CallFrame* startC
 #endif
     if (startCallFrame && vm.topCallFrame == startCallFrame && startCallFrame->isZombieFrame()) {
         auto* entryFrame = vm.topEntryFrame;
-        auto* callerFrame = startCallFrame->callerFrame(entryFrame);
+        auto* callerFrame = startCallFrame->callerFrameUnlessCompiled(vm, entryFrame);
         if (callerFrame)
             startCallFrame = callerFrame;
     }
@@ -386,7 +386,7 @@ Exception* throwTypeError(JSGlobalObject* globalObject, ThrowScope& scope, const
 #if USE(BUN_JSC_ADDITIONS)
 String withAOTErrorNote(const String& message)
 {
-    constexpr ASCIILiteral note = " (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)"_s;
+    constexpr ASCIILiteral note = " (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"_s;
     size_t endOfFirstLine = message.find('\n');
     if (endOfFirstLine == notFound)
         return makeString(message, note);

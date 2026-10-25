@@ -105,7 +105,7 @@ static bool isCalledByForwardingBuiltinItself(const ValueFlowResultInputs& input
             size_t index = operand->isReceiver() ? OperandIndex::Call::thisValue : firstArgument + operand->argumentIndex();
             if (index >= operands.size())
                 return false;
-            called = maker.unite(called, inputs.valueOf(maker, operands[index]));
+            called = maker.unite(called, inputs.possibleValuesOf(maker, operands[index]));
         }
     }
 

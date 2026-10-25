@@ -783,7 +783,7 @@ void StoresByLayout::forEachWriteAmong(std::span<const uint32_t> writes, NOESCAP
             writer.layoutsOfReceiver = program.types.at(writer.familyOfReceiver).members.span();
         }
         for (; first < writes.size() && !(writes[first] & isStatementInListOfWrites); ++first)
-            functor(writer, solver.keyOfMadeNodesAt(writes[first]), solver.valueOf(solver.firstOfMadeNodesAt(writes[first])));
+            functor(writer, solver.keyOfMadeNodesAt(writes[first]), solver.possibleValuesOf(solver.firstOfMadeNodesAt(writes[first])));
     }
 }
 

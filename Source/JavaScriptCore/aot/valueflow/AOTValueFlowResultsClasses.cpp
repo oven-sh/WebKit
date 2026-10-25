@@ -83,12 +83,19 @@ static auto memberOrderOf(const ClassMember& member)
     return std::tuple { member.side, member.key, member.kind, member.function };
 }
 
-static ValueSetID valueOf(const ValueFlowResultInputs& inputs, const ValueFlowOperand& operand, ValueSetMaker& maker)
+static ValueSetID throughMaskOf(const ValueFlowResultInputs& inputs, const ValueFlowOperand& operand, ValueSetID valuesOfNode, ValueSetMaker& maker)
 {
-    ValueSetID value = operand.constant ? operand.constant : ValueSets::nothing;
-    if (operand.node)
-        value = maker.unite(value, inputs.solver().valueOf(operand.node));
-    return ValueFlowRuleContext::throughMaskOf(operand, value, inputs.solver(), maker);
+    return ValueFlowRuleContext::throughMaskOf(operand, operand.constant ? maker.unite(operand.constant, valuesOfNode) : valuesOfNode, inputs.solver(), maker);
+}
+
+static ValueSetID possibleValuesOf(const ValueFlowResultInputs& inputs, const ValueFlowOperand& operand, ValueSetMaker& maker)
+{
+    return throughMaskOf(inputs, operand, operand.node ? inputs.solver().possibleValuesOf(operand.node) : ValueSets::nothing, maker);
+}
+
+static ValueSetID seenValuesOf(const ValueFlowResultInputs& inputs, const ValueFlowOperand& operand, ValueSetMaker& maker)
+{
+    return throughMaskOf(inputs, operand, operand.node ? inputs.solver().seenValuesOf(operand.node) : ValueSets::nothing, maker);
 }
 
 static bool everyUseThroughCasts(const Function& function, const UseLists& useLists, ValueID value, bool mayBeUnused, NOESCAPE const Invocable<bool(const Use&, Opcode, OperandUses)> auto& admits)
@@ -178,7 +185,7 @@ static Vector<ClassDefinition> collectClassDefinitions(const ValueFlowResultInpu
             if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::NewClass || !function.at(statement.site).heritageOperand())
                 continue;
             ValueSetID& heritage = classes[function.at(statement.site).layout().index()].heritage;
-            heritage = maker.unite(heritage, valueOf(inputs, inputs.bodies().operandsOf(statement)[OperandIndex::NewClass::heritage], maker));
+            heritage = maker.unite(heritage, possibleValuesOf(inputs, inputs.bodies().operandsOf(statement)[OperandIndex::NewClass::heritage], maker));
         }
     }
     for (const Variable& variable : program.variables) {
@@ -324,7 +331,7 @@ static ValueSetID findClosuresTakenOutOfMembers(const ValueFlowResultInputs& inp
     ValueSetMakers makers(inputs);
     Vector<Carrier> carriers = collectWithMakers<Carrier>(inputs, makers, solver.graph().numberOfNodes() - firstMadeNode, [&](unsigned position, ValueSetMaker& makerOfThread, Vector<Carrier>& found) {
         const ValueFlowNodeKey* key = solver.keyOfMadeNode(ValueFlowNodeID(firstMadeNode + position));
-        ValueSetID value = solver.valueOf(ValueFlowNodeID(firstMadeNode + position));
+        ValueSetID value = solver.possibleValuesOf(ValueFlowNodeID(firstMadeNode + position));
         if ((kindsOfCarriers >> static_cast<unsigned>(key->kind) & 1) && inputs.sets().meet(value, closuresOfMembers))
             found.append({ solver.indexOfMadeNodes(*key), makerOfThread.intersect(value, closuresOfMembers) });
     });
@@ -598,7 +605,7 @@ static HandedToObjectCreate collectWhatObjectCreateIsHanded(const ValueFlowResul
             for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(id.index())) {
                 if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::SetLiteralPrototype || function.at(statement.site).objectOperand() != site->value)
                     continue;
-                handed = maker.unite(handed, valueOf(inputs, inputs.bodies().operandsOf(statement)[OperandIndex::SetLiteralPrototype::prototype], maker));
+                handed = maker.unite(handed, seenValuesOf(inputs, inputs.bodies().operandsOf(statement)[OperandIndex::SetLiteralPrototype::prototype], maker));
                 isKnown = true;
             }
         });
@@ -636,10 +643,10 @@ static ClassesOfStoredPrototypeObjects collectStoredPrototypeObjects(const Value
         noteObjectsHanded(layout, handed);
     const ValueFlowHeapIndex::NodesWrittenUnderName* written = heapIndex.findNodesWrittenUnder(ValueFlowName::property(inputs.program.keyOf(BuiltinNames::prototype)));
     for (const ValueFlowHeapIndex::WrittenNode& node : written ? written->nodes.span() : std::span<const ValueFlowHeapIndex::WrittenNode>()) {
-        if (ValueSets::isComplement(node.objects) || ValueSets::isComplement(node.value))
+        if (ValueSets::isComplement(node.objects) || ValueSets::isComplement(node.seenValue))
             continue;
         sets.forEachMember(node.objects, [&](ValueFlowObjectID holder) {
-            noteObjectsHanded(findClassOfConstructorFunction(inputs, holder), node.value);
+            noteObjectsHanded(findClassOfConstructorFunction(inputs, holder), node.seenValue);
         });
     }
     return classes;
@@ -877,13 +884,13 @@ static Vector<LayoutID> collectBasesLinkedByProgram(const ValueFlowResultInputs&
     };
     BitVector hasSeveral(program.layouts.size());
     for (const ValueFlowHeapIndex::WrittenNode& node : written->nodes) {
-        if (ValueSets::isComplement(node.objects) || ValueSets::isComplement(node.value))
+        if (ValueSets::isComplement(node.objects) || ValueSets::isComplement(node.seenValue))
             continue;
         inputs.sets().forEachMember(node.objects, [&](ValueFlowObjectID holder) {
             LayoutID derived = classOfPrototypeObject(holder);
             if (!derived || !program.at(derived).has(LayoutFlags::IsConstructorFunction))
                 return;
-            inputs.sets().forEachMember(node.value, [&](ValueFlowObjectID linked) {
+            inputs.sets().forEachMember(node.seenValue, [&](ValueFlowObjectID linked) {
                 LayoutID base = classOfPrototypeObject(linked);
                 // A factory that is handed its own result links two functions of the same text.
                 if (!base || base == derived)

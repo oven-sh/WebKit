@@ -3,7 +3,7 @@
 This folder reads a program as IR, analyzes and optimizes it, generates machine code through B3 and Air, writes the image, and holds the runtime that compiled programs call.
 The front end (resolve, parse, check types, lower to IR) is in oven-sh/bun, `src/aot`.
 
-- How the compiler works: `docs/bundler/aot-internals.mdx` in oven-sh/bun.
+- How the compiler works: `docs/compiler/internals.mdx` in oven-sh/bun.
 - The design rules, how to measure, and what was tried and did not work: `src/aot/CLAUDE.md` in oven-sh/bun. They hold for this folder too: the two repositories are one product.
 - The tests of this folder: [`tests/README.md`](tests/README.md). Checking tools: `Tools/Scripts/aot/README.md`. How to build, and what CI does: `CLAUDE.md` at the root.
 

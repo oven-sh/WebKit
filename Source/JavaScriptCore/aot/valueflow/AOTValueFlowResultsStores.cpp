@@ -358,7 +358,7 @@ void StoresByLayout::listWrites()
             size_t firstWrite = 0;
             HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> nodesListed;
             m_inputs.forEachMadeNodeAskedForBy(id, kindsOfMadeNodes({ ValueFlowMadeNodeKind::Written }), false, [&](const ValueFlowNodeKey& key, ValueFlowStatementID, ValueFlowNodeID node) {
-                if (solver.valueOf(node) == ValueSets::nothing)
+                if (solver.possibleValuesOf(node) == ValueSets::nothing)
                     return;
                 uint32_t index = solver.indexOfMadeNodes(key);
                 RELEASE_ASSERT(!((index | id.index()) & isStatementInListOfWrites));
@@ -502,7 +502,7 @@ bool StoresByLayout::spellsKey(ValueSetMaker& maker, const Writer& writer, Value
         return false;
     if (statement.opcode == Opcode::ElemSet || statement.opcode == Opcode::ElemDefine) {
         static_assert(OperandIndex::ElemSet::property == OperandIndex::ElemDefine::property);
-        ValueSetID keys = std::as_const(m_heap).valueOf(maker, m_inputs.bodies().operandsOf(statement)[OperandIndex::ElemSet::property]);
+        ValueSetID keys = std::as_const(m_heap).possibleValuesOf(maker, m_inputs.bodies().operandsOf(statement)[OperandIndex::ElemSet::property]);
         if (ValueSets::isComplement(keys))
             return false;
         ValueFlowObjectID key = m_inputs.sets().onlyMember(maker.intersect(keys, ValueSets::complement(maker.of(std::array { ValueFlowUniverse::primitive(PrimitiveSet::Undefined), ValueFlowUniverse::primitive(PrimitiveSet::Absent) }))));
@@ -676,7 +676,7 @@ static bool fillsTypedResult(const ValueFlowResultInputs& inputs, const ValueFlo
     const ValueFlowSite* site = object ? inputs.universe().siteOf(object) : nullptr;
     if (!site || site->origin != ValueFlowSiteOrigin::TypedResult || !inputs.universe().isSiteObjectOf(statement, object))
         return false;
-    ValueSetID callees = heap.valueOf(maker, inputs.bodies().operandsOf(statement)[0]);
+    ValueSetID callees = heap.possibleValuesOf(maker, inputs.bodies().operandsOf(statement)[0]);
     return !ValueSets::isComplement(callees) && inputs.sets().onlyMember(callees);
 }
 
@@ -716,7 +716,7 @@ std::optional<ValueSetID> StoresByLayout::descriptorsWrittenOutIn(ValueSetMaker&
     std::span<const ValueFlowOperand> operands = m_inputs.bodies().operandsOf(statement);
     if (statement.opcode != Opcode::Call || operands.size() != positionOfDescriptor + 1)
         return std::nullopt;
-    ValueSetID descriptors = std::as_const(m_heap).valueOf(maker, operands[positionOfDescriptor]);
+    ValueSetID descriptors = std::as_const(m_heap).possibleValuesOf(maker, operands[positionOfDescriptor]);
     const ValueSets& sets = m_inputs.sets();
     if (sets.isEmpty(descriptors) || !sets.isSubset(descriptors, maker.intersect(m_inputs.universe().knownObjects(), ValueSets::complement(m_inputs.universe().builtinObjects()))))
         return std::nullopt;

@@ -19,6 +19,7 @@
 #include "JSCellInlines.h"
 #include "SourceOrigin.h"
 #include "VM.h"
+#include "VMEntryRecord.h"
 #include <utility>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -510,8 +511,10 @@ bool isTopFrameCompiled(VM& vm)
     return isOperationFrameRecord(vm, vm.topCallFrame);
 }
 
-bool isCallerCompiled(VM& vm, const CallFrame* calleeFrame)
+bool isCallerCompiled(VM& vm, const CallFrame* calleeFrame, EntryFrame* entryFrame)
 {
+    if (calleeFrame->callerFrameOrEntryFrame() == entryFrame)
+        return isOperationFrameRecord(vm, vmEntryRecord(entryFrame)->prevTopCallFrame());
     return vm.hasCompiledCode() && findReturnSite(vm, removeCodePtrTag(calleeFrame->rawReturnPC()));
 }
 

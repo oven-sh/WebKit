@@ -1520,7 +1520,7 @@ std::optional<size_t> computeInterferenceEdgeBound(Code& code)
     return numberOfEdges;
 }
 
-bool shouldUseDenseInterferenceGraph(Code& code)
+bool shouldUseDenseInterferenceGraph(Code& code, bool& hasTooManyLiveSlots)
 {
     const size_t numberOfSlots = code.stackSlots().size();
     if (numberOfSlots >= std::numeric_limits<DenseIterableInterferenceGraph::IndexType>::max())
@@ -1530,6 +1530,7 @@ bool shouldUseDenseInterferenceGraph(Code& code)
 
     // Above the limit, use the rows only if the hash sets of the sparse graph would take at least as much memory.
     std::optional<size_t> numberOfEdges = computeInterferenceEdgeBound(code);
+    hasTooManyLiveSlots = !numberOfEdges;
     return numberOfEdges && 2 * *numberOfEdges * AirLimits::bytesPerNeighborInSparseInterference >= numberOfSlots * numberOfSlots / 8;
 }
 
@@ -1555,14 +1556,17 @@ StackColoring allocateStackByGraphColoring(Code& code)
     StackColoring coloring;
     if (!doTrivialStackAllocation(code, placement, coloring)) {
         bool isAllocated = false;
-        if (shouldUseDenseInterferenceGraph(code)) {
+        // The sets of live slots that were too large as rows of bits are larger still as the lists of the sparse graph's liveness.
+        bool hasTooManyLiveSlots = false;
+        if (shouldUseDenseInterferenceGraph(code, hasTooManyLiveSlots)) {
             using DenseAllocator = GraphColoringStackAllocator<DenseIterableInterferenceGraph, StackSlotLivenessInWords>;
             DenseAllocator allocator(code, placement);
             isAllocated = allocator.run(assignedEscapedStackSlots, coloring) == DenseAllocator::Outcome::Allocated;
+            hasTooManyLiveSlots = !isAllocated;
         }
         if (!isAllocated) {
             code.proc().didReachLimit(Limit::MaxSlotsForDenseInterference);
-            if (code.stackSlots().size() < std::numeric_limits<uint16_t>::max()) {
+            if (!hasTooManyLiveSlots && code.stackSlots().size() < std::numeric_limits<uint16_t>::max()) {
                 GraphColoringStackAllocator<LargeIterableInterferenceGraph, StackSlotLiveness> allocator(code, placement);
                 allocator.run(assignedEscapedStackSlots, coloring);
             } else {

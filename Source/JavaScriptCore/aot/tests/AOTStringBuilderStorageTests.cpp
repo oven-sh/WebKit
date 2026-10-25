@@ -273,8 +273,9 @@ static void testLimitIsRoom(LoadedProgram& program)
     }
     {
         Builder builder(program);
+        builder.append("ab"_s);
         builder.append(jsString(vm, repeated('x', byReference - 1)));
-        AOT_TEST_CHECK(builder.position() == byReference - 1 && !builder.lengthOutsideBuffer() && builder.limit() >= builder.position());
+        AOT_TEST_CHECK(builder.position() == byReference + 1 && !builder.lengthOutsideBuffer() && builder.limit() >= builder.position());
         builder->release(program.instance());
     }
 }
@@ -538,6 +539,34 @@ static void testSegmentsByReference(LoadedProgram& program)
     result->methodTable()->visitChildren(result, abstractVisitor);
     AOT_TEST_CHECK(visitor.cells().contains(first) && visitor.cells().contains(second));
     AOT_TEST_CHECK(textOf(program, result) == makeString(repeated('x', 70000), " between "_s, repeated('y', 70000)));
+}
+
+static void testLongFirstStringIsNotCopied(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    uint32_t least = limitValue(program, LimitID::MinLengthAdoptedByFinish);
+    {
+        JSString* first = jsString(vm, repeated('x', least));
+        Builder builder(program);
+        builder.append(first);
+        AOT_TEST_CHECK(!builder.position() && builder.lengthOutsideBuffer() == least);
+        builder.append("tail"_s);
+        builder.append(jsString(vm, repeated('y', least)));
+        AOT_TEST_CHECK(builder.position() == 4 + least && builder.lengthOutsideBuffer() == least);
+        JSString* result = builder.finish();
+        AOT_TEST_CHECK(result->isRope() && result->length() == 2 * least + 4);
+
+        RecordingVisitor visitor(vm);
+        AbstractSlotVisitor& abstractVisitor = visitor;
+        result->methodTable()->visitChildren(result, abstractVisitor);
+        AOT_TEST_CHECK(visitor.cells().contains(first));
+        AOT_TEST_CHECK(textOf(program, result) == makeString(repeated('x', least), "tail"_s, repeated('y', least)));
+    }
+    {
+        Builder builder(program);
+        builder.append(jsString(vm, repeated('x', least - 1)));
+        AOT_TEST_CHECK(builder.position() == least - 1 && !builder.lengthOutsideBuffer());
+    }
 }
 
 static void testSegmentsCap(LoadedProgram& program)
@@ -1228,6 +1257,7 @@ std::span<const NativeTest> stringBuilderStorageTests()
         { "string-builder-storage/finish-gives-large-buffer-away"_s, withInstance<testFinishGivesLargeBufferAway> },
         { "string-builder-storage/segments-flat"_s, withInstance<testSegmentsFlat> },
         { "string-builder-storage/segments-by-reference"_s, withInstance<testSegmentsByReference> },
+        { "string-builder-storage/long-first-string-is-not-copied"_s, withInstance<testLongFirstStringIsNotCopied> },
         { "string-builder-storage/segments-cap"_s, withInstance<testSegmentsCap> },
         { "string-builder-storage/read-with-segments-twice"_s, withInstance<testReadWithSegmentsTwice> },
         { "string-builder-storage/plain-parts-of-wide-strings-lie-in-the-buffer"_s, withInstance<testPlainPartsOfWideStringsLieInTheBuffer> },

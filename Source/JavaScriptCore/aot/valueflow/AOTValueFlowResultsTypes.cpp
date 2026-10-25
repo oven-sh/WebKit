@@ -283,7 +283,7 @@ NumbersOfPositions::NumbersOfPositions(const ValueFlowResultInputs& inputs, Valu
     m_firstEntryParameter = Vector<uint32_t>(program.functions.size(), [&](size_t index) { return take(program.functions[index].numberOfEntryParameters()); });
     m_firstResult = Vector<uint32_t>(program.functions.size(), [&](size_t index) { return take(program.functions[index].results.size()); });
     m_firstMap = next;
-    ValueSetID filledAsRecordsSay = inputs.solver().valueOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::MapsFilledAsRecordsSay));
+    ValueSetID filledAsRecordsSay = inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::MapsFilledAsRecordsSay));
     m_maps = collectInParallel<ValueFlowObjectID>(inputs.loops(), inputs.universe().numberOfObjects(), [&](unsigned index, Vector<ValueFlowObjectID>& maps) {
         ValueFlowObjectID object(index);
         if (classOfFollowedContainer(inputs, object) != BuiltinClasses::Map || inputs.sets().contains(filledAsRecordsSay, object))
@@ -423,7 +423,7 @@ void NumbersOfPositions::collectCalls()
         std::array<ValueSetID, 2> calleeSets { ValueSets::nothing, ValueSets::nothing };
         if (!isMadeByRule && statement.kind == ValueFlowStatementKind::Operation && statement.function && statement.site && (statement.opcode == Opcode::Call || statement.opcode == Opcode::Construct)) {
             const ValueFlowOperand& callee = m_inputs.bodies().operandsOf(statement)[0];
-            calleeSets = { callee.node ? solver.valueOf(callee.node) : ValueSets::nothing, callee.constant ? callee.constant : ValueSets::nothing };
+            calleeSets = { callee.node ? solver.possibleValuesOf(callee.node) : ValueSets::nothing, callee.constant ? callee.constant : ValueSets::nothing };
             callsClosuresAlone = std::ranges::all_of(calleeSets, [&](ValueSetID set) {
                 return sets.isSubset(set, closuresAndPrimitives);
             });
@@ -484,7 +484,7 @@ void NumbersOfPositions::choosePositions(const FlowResultTables& tables)
             ScratchTypeArena arena(program.types);
             ValueFlowPositions positions(m_inputs, arena, counts, 0, &makers.of(worker));
             auto follow = [&](uint32_t position, ValueFlowNodeID node) {
-                ValueSetID held = m_inputs.solver().valueOf(node);
+                ValueSetID held = m_inputs.solver().possibleValuesOf(node);
                 if (!ValueSets::isComplement(held) && !sets.meet(held, numbers))
                     return;
                 ValueFlowPositionResult result = positions.resultAt(anything, held);
@@ -801,7 +801,7 @@ BitVector NumbersOfPositions::collectWritersOfMaps(ValueFlowHeapView& heap)
     };
 
     auto wholeValueOf = [&](Found& found, const ValueFlowOperand& operand) {
-        return found.maker.unite(operand.node ? solver.valueOf(operand.node) : ValueSets::nothing, operand.constant ? operand.constant : ValueSets::nothing);
+        return found.maker.unite(operand.node ? solver.possibleValuesOf(operand.node) : ValueSets::nothing, operand.constant ? operand.constant : ValueSets::nothing);
     };
     ValueSetID getOrPrimitive = maker.unite(maker.of(universe.objectOf(builtins.canonicalID(Builtins::MapPrototypeGet))), universe.primitives());
     ValueSetID mapsOrPrimitives = maker.unite(allMaps, ValueSets::complement(universe.objects()));
@@ -838,13 +838,13 @@ BitVector NumbersOfPositions::collectWritersOfMaps(ValueFlowHeapView& heap)
             std::optional<uint8_t> receiver = receiverOf(statement.opcode);
             std::optional<uint32_t> stored = indexOfValueStoredIntoProperty(statement.opcode);
             for (uint32_t operand = 0; operand < operands.size(); ++operand) {
-                bool mayBeWatched = (operands[operand].constant && found.setsWithWatched.contains(operands[operand].constant)) || (operands[operand].node && found.setsWithWatched.contains(solver.valueOf(operands[operand].node)));
+                bool mayBeWatched = (operands[operand].constant && found.setsWithWatched.contains(operands[operand].constant)) || (operands[operand].node && found.setsWithWatched.contains(solver.possibleValuesOf(operands[operand].node)));
                 if (!mayBeWatched)
                     continue;
                 bool storesIntoProperty = stored && receiver && operand == *receiver;
                 if (!storesIntoProperty && !operandUsesOf(statement.opcode, operand).containsAny(usesWritingObject))
                     continue;
-                ValueSetID written = heap.valueOf(found.maker, operands[operand]);
+                ValueSetID written = heap.possibleValuesOf(found.maker, operands[operand]);
                 if (storesIntoProperty) {
                     noteStoredIntoSources(found, written, id, operation.operand(*stored));
                     continue;
@@ -1339,7 +1339,7 @@ static void replaceUnobservedDefinitions(const ValueFlowResultInputs& inputs, co
         if (!inputs.isReached(definition.initializer) || std::ranges::all_of(fieldsDefined[index], holdsUndefined))
             continue;
         ValueFlowNodeID defined = inputs.bodies().nodes().valueOfUnobservedDefinitions(definition.initializer);
-        if (defined && !inputs.sets().isEmpty(inputs.solver().valueOf(defined)))
+        if (defined && !inputs.sets().isEmpty(inputs.solver().possibleValuesOf(defined)))
             continue;
         ScratchTypeArena scratch(types);
         Type common = types.at(typeOf(fieldsDefined[index].first()));
@@ -1446,7 +1446,7 @@ static LocationsStoredUndefined findLocationsStoredUndefined(const ValueFlowResu
                 found.append(node);
         };
         for (const ValueFlowEdge& edge : bodies.edgesOnceReached(body))
-            note(edge.to, [&] { return inputs.solver().valueOf(edge.from); });
+            note(edge.to, [&] { return inputs.solver().possibleValuesOf(edge.from); });
         for (const ValueFlowNodeSet& seed : bodies.seedsOnceReached(body))
             note(seed.node, [&] { return seed.set; });
     });
@@ -1622,7 +1622,7 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
             continue;
         const Value& operation = function.at(statement.site);
         if (statement.result && !numberOfResultsOf(program, function, operation))
-            prove(statement.site, [&] { return inputs.solver().valueOf(statement.result); });
+            prove(statement.site, [&] { return inputs.solver().possibleValuesOf(statement.result); });
         if (!statement.result && PayloadWord::allocationSite(statement.opcode)) {
             ValueFlowObjectID object = inputs.universe().siteObject(statement);
             const ValueFlowSite* site = object ? inputs.universe().siteOf(object) : nullptr;
@@ -1635,7 +1635,7 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
             continue;
         for (uint32_t index = 0; index < operands.size(); ++index) {
             if (operation.operand(index))
-                prove(operation.operand(index), [&] { return inputs.valueOf(maker, operands[index]); });
+                prove(operation.operand(index), [&] { return inputs.possibleValuesOf(maker, operands[index]); });
         }
     }
 
@@ -1643,7 +1643,7 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
         if (!observed.test)
             continue;
         const Value& test = function.at(observed.test);
-        ValueSetID held = inputs.valueOf(maker, observed.operand);
+        ValueSetID held = inputs.possibleValuesOf(maker, observed.operand);
         prove(test.operand(0), [&] { return held; });
         if (test.opcode != Opcode::Check || !inputs.build.isEnabled(FlowResultKind::NarrowedTypes, id.index()) || inputs.sets().isEmpty(held))
             continue;
@@ -1677,7 +1677,7 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
         });
         if (found == notFound)
             continue;
-        ValueSetID held = inputs.solver().valueOf(statement.result);
+        ValueSetID held = inputs.solver().possibleValuesOf(statement.result);
         if (inputs.sets().isEmpty(held))
             continue;
         bool passesEveryCheck = true;

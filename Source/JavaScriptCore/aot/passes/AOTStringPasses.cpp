@@ -45,6 +45,7 @@
 #include "AOTSplitStringWalk.h"
 #include "AOTStringArena.h"
 #include "AOTStringRanges.h"
+#include "AOTStronglyConnectedComponents.h"
 #include "AOTThreads.h"
 #include "AOTValueIdentity.h"
 #include "YarrFlags.h"
@@ -393,7 +394,7 @@ StringBuilderPlan StringBuilderStep::findWebs()
     // The append that replaces a concatenation completes or leaves the content as it was, so the builder holds the member wherever the block can throw.
     auto isLiveOnlyForHandler = [&](ValueID member, BlockID blockID, uint32_t index) {
         const Block& block = function.at(blockID);
-        if (!block.handler || !block.handler->arguments.contains(member))
+        if (!block.handler || (!block.handler->arguments.contains(member) && !liveness->isLiveAtHead(member, block.handler->block)))
             return false;
         if (std::ranges::any_of(useLists.usesOf(member), [&](const Use& use) { return use.block == blockID && useLists.pointOf(use).index > index; }))
             return false;
@@ -516,6 +517,60 @@ StringBuilderPlan StringBuilderStep::findWebs()
         return false;
     };
 
+    // A text goes from the operands of a concatenation to its result, and from arguments to a parameter.
+    Vector<ValueID> argumentsOfParameters;
+    Vector<std::pair<uint32_t, uint32_t>> argumentRanges;
+    std::optional<StronglyConnectedComponents> textCycles;
+    auto sourcesOfText = [&](unsigned index) -> std::span<const ValueID> {
+        const Value& value = function.at(ValueID(index));
+        if (value.opcode == Opcode::Parameter)
+            return argumentsOfParameters.subspan(argumentRanges[index].first, argumentRanges[index].second);
+        if (value.opcode == Opcode::Upcast || isStringConcatenation(program, function, value))
+            return value.operands();
+        return { };
+    };
+    auto findTextCycles = [&] {
+        argumentRanges.fill({ 0, 0 }, numberOfValues);
+        for (BlockID blockID : cfg.reversePostOrder()) {
+            std::span<const ValueID> parameters = sharedParametersOf(blockID);
+            for (uint32_t index = 0; index < parameters.size(); ++index) {
+                uint32_t start = argumentsOfParameters.size();
+                for (Edge edge : cfg.incomingEdges(blockID))
+                    argumentsOfParameters.append(argumentOn(edge, index));
+                argumentRanges[parameters[index].index()] = { start, argumentsOfParameters.size() - start };
+            }
+        }
+        textCycles = computeStronglyConnectedComponents(numberOfValues, sourcesOfText);
+    };
+    // A text that grows around a loop stays in one builder all the way around. Where any step of the way takes it as a string, a builder would be begun with a copy of the whole text at every turn.
+    auto cutTextsCopiedAroundCycles = [&] {
+        if (!cfg.hasCycle() || !numberOfUndecidedWebs)
+            return false;
+        if (!textCycles)
+            findTextCycles();
+        BitVector cyclesWithCopies;
+        for (ValueID member : candidates) {
+            std::optional<uint32_t> web = undecidedWebOf(member);
+            if (!web || !textCycles->isInCycle.get(member.index()))
+                continue;
+            uint32_t cycle = textCycles->componentOf[member.index()];
+            bool isParameter = function.at(member).opcode == Opcode::Parameter;
+            std::span<const ValueID> sources = sourcesOfText(member.index());
+            for (uint32_t index = 0; index < sources.size(); ++index) {
+                bool staysInBuilder = plan.webOf(sources[index]) == web && (isParameter || index == stateOperandIndex);
+                if (!staysInBuilder && textCycles->componentOf[sources[index].index()] == cycle)
+                    cyclesWithCopies.set(cycle);
+            }
+        }
+        if (cyclesWithCopies.isEmpty())
+            return false;
+        for (ValueID id : candidates) {
+            if (cyclesWithCopies.get(textCycles->componentOf[id.index()]))
+                isCut.quickSet(id.index());
+        }
+        return true;
+    };
+
     for (;;) {
         plan = { };
         candidates.shrink(0);
@@ -624,7 +679,7 @@ StringBuilderPlan StringBuilderStep::findWebs()
             else if (++numberOfWebs > maxWebs)
                 setDecision(index, StringBuilderDeclineReason::WebLimit, web.members.first());
         }
-        if (!numberOfUndecidedWebs || !cutAtInterference())
+        if (!numberOfUndecidedWebs || (!cutAtInterference() && !cutTextsCopiedAroundCycles()))
             break;
     }
 
@@ -1624,6 +1679,71 @@ static StringBuilderPlan analyzeStringBuilders(FunctionPassContext& context)
     return hasConcatenation ? StringBuilderStep { context }.findWebs() : StringBuilderPlan { };
 }
 
+// The parts of an append are written one after the other, and each of them may find that the text gets too long. A handler that goes on with the builder wants the text as it was in front of the append.
+static PassOutcome rollBackAppendsUnderHandlers(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    const CFG& cfg = context.analyses.cfg();
+    auto isRolledBackIn = [&](BlockID handler, ValueID builder) {
+        return std::ranges::any_of(function.at(handler).values, [&](ValueID id) {
+            return function.at(id).opcode == Opcode::StringBuilderRollBack && function.at(id).builderOperand() == builder;
+        });
+    };
+    auto forEachAppendOfSeveralParts = [&](BlockID blockID, const Invocable<void(uint32_t index, ValueID builder)> auto& functor) {
+        const Block& block = function.at(blockID);
+        if (!block.handler)
+            return;
+        for (uint32_t index = block.values.size(); index--;) {
+            const Value& value = function.at(block.values[index]);
+            if (value.opcode == Opcode::StringBuilderAppend && value.partsOperands().size() > 1 && !isRolledBackIn(block.handler->block, value.builderOperand()))
+                functor(index, value.builderOperand());
+        }
+    };
+
+    BitVector builders(function.values.size());
+    for (BlockID blockID : cfg.reversePostOrder()) {
+        forEachAppendOfSeveralParts(blockID, [&](uint32_t, ValueID builder) {
+            builders.quickSet(builder.index());
+        });
+    }
+    if (builders.isEmpty())
+        return PassOutcome::Unchanged;
+
+    Liveness liveness(function, cfg, context.analyses.useLists(), LivenessOptions { .trackedValues = &builders });
+    Vector<ProgramPoint, 4> appends;
+    for (BlockID blockID : cfg.reversePostOrder()) {
+        forEachAppendOfSeveralParts(blockID, [&](uint32_t index, ValueID builder) {
+            const Target& handler = *function.at(blockID).handler;
+            if (handler.arguments.contains(builder) || liveness.isLiveAtHead(builder, handler.block))
+                appends.append(ProgramPoint { blockID, index });
+        });
+    }
+    if (appends.isEmpty())
+        return PassOutcome::Unchanged;
+
+    // The appends of a block come last to first, so the block in front of a split keeps its indexes.
+    IRBuilder builder(context.analyses.context(), function, context.types);
+    for (ProgramPoint point : appends) {
+        ValueID append = function.at(point.block).values[point.index];
+        ValueID handle = function.at(append).builderOperand();
+        builder.setOrigin(function.at(append).origin());
+        builder.setHandler(std::optional<Target> { *function.at(point.block).handler });
+        std::array<uint32_t, 2> indexes { point.index, point.index + 1 };
+        BlockID covered = builder.splitBlock(point.block, indexes).first();
+        ValueID checkpoint = builder.insertBefore(pointBeforeTerminatorOf(function, point.block), IRBuilder::make(Opcode::StringBuilderCheckpoint, { handle }));
+        builder.applyInsertions();
+
+        BlockID failed = builder.addHandlerBlock(BlockRole::CleanupHandler, ValueID());
+        function.edit(covered, { BlockEdit::Edges, BlockEdit::Arguments }).handler = Target { failed, { }, { } };
+        builder.moveToEndOf(failed);
+        ValueID exception = builder.append(Opcode::CatchException, { });
+        builder.append(Opcode::StringBuilderRollBack, { handle, checkpoint });
+        builder.emitRethrow(exception);
+    }
+    context.analyses.didChangeControlFlow();
+    return PassOutcome::Changed;
+}
+
 static PassOutcome createAndJoinBuilders(FunctionPassContext& context)
 {
     PassOutcome outcome = PassOutcome::Unchanged;
@@ -1662,7 +1782,8 @@ static PassOutcome createAndJoinBuilders(FunctionPassContext& context)
     outcome |= StringBuilderStep { context }.joinNestedBuilders();
     if (markLikelyKeys(context))
         outcome = PassOutcome::Changed;
-    return outcome | expandAppendedStringRanges(context);
+    outcome |= expandAppendedStringRanges(context);
+    return outcome | rollBackAppendsUnderHandlers(context);
 }
 
 PassOutcome createStringBuilders(FunctionPassContext& context)

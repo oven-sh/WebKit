@@ -402,7 +402,7 @@ private:
     {
         m_usesSlices = true;
         const unsigned numberOfBlocks = m_code.size();
-        const size_t wordsPerSlice = std::max<size_t>(1, AirLimits::maxWordsPerLivenessMatrix / numberOfBlocks);
+        const size_t wordsPerSlice = std::max(AirLimits::minWordsPerLivenessSlice, AirLimits::maxWordsPerLivenessMatrix / numberOfBlocks);
         if constexpr (requires { this->willComputeInSlices(wordsPerSlice); })
             this->willComputeInSlices(wordsPerSlice);
 
