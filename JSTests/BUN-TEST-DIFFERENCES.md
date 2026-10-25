@@ -124,10 +124,10 @@ Rules for an edit to an upstream test:
   `Europe/Lisbon`. The name is accepted and kept, it is not in `Intl.supportedValuesOf("timeZone")`, it equals its city
   zone in Temporal, and ICU is asked for the city zone. ECMA-402 TG2 agreed on 2026-10-08 that the four US names stay
   aliases and are not primary identifiers (tc39/ecma402#1103).
-- Fork code: `primaryOfLegacyZone` and `TimeZoneEntry::opensAsPrimary` (`runtime/IntlObject.cpp`) under
-  `USE(BUN_JSC_ADDITIONS)`. The city zones there are a copy of the tz database's links, used only where ICU has no
-  link. Read them again when the ECMA-402 change lands, or when a tz release gives one of the names a rule that its
-  city zone does not have.
+- Fork code, under `USE(BUN_JSC_ADDITIONS)`: `primaryOfLegacyZone` and `TimeZoneEntry::opensAsPrimary`
+  (`runtime/IntlObject.cpp`), and the last step of `retrieveTimeZoneInformation` (`runtime/JSDateMath.cpp`). The city
+  zones there are a copy of the tz database's links, used only where ICU has no link. Read them again when the
+  ECMA-402 change lands, or when a tz release gives one of the names a rule that its city zone does not have.
 - Recognize: with such data a test expects one of the eight names to be rejected (upstream), or to be a primary
   identifier in `resolvedOptions().timeZone`, `Temporal.Now.timeZoneId()` or `Intl.supportedValuesOf("timeZone")` (what
   ICU's data says). In this fork it is an alias.

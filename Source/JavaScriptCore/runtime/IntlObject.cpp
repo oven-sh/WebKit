@@ -1982,8 +1982,8 @@ static std::optional<String> canonicalizeTimeZoneNameFromICUTimeZone(String&& ti
 
 #if USE(BUN_JSC_ADDITIONS)
 // The tz database has these names as zones of their own before 2024b, and the four US names again from 2026d on.
-// In between, each is a link to the city zone here. That is what they stay, as tc39/ecma402#1103 has it: an alias
-// of the city zone, not a primary identifier. Null when ICU has the name as a link: ICU then gives the primary.
+// In between, each is a link to the city zone here. That is what they stay where ICU has them as zones of their
+// own: an alias of the city zone, not a primary identifier (tc39/ecma402#1103).
 static ASCIILiteral primaryOfLegacyZone(StringView timeZone)
 {
     static constexpr std::pair<ASCIILiteral, ASCIILiteral> legacyZones[] = {
@@ -1997,13 +1997,8 @@ static ASCIILiteral primaryOfLegacyZone(StringView timeZone)
         { "WET"_s, "Europe/Lisbon"_s },
     };
     for (auto& [zone, primary] : legacyZones) {
-        if (timeZone != zone)
-            continue;
-        auto characters = timeZone.upconvertedCharacters();
-        Vector<char16_t, 32> canonical;
-        if (U_FAILURE(callBufferProducingFunction(ucal_getCanonicalTimeZoneID, characters.get(), static_cast<int32_t>(timeZone.length()), canonical, nullptr)))
-            return { };
-        return StringView(canonical.span()) == timeZone ? primary : ASCIILiteral();
+        if (timeZone == zone)
+            return primary;
     }
     return { };
 }
@@ -2016,10 +2011,6 @@ static ASCIILiteral primaryOfLegacyZone(StringView timeZone)
 // form. UTC-equivalent zones are normalized to "UTC" per ECMA-402.
 String toPrimaryIanaTimeZoneIdentifier(std::span<const char16_t> timeZone)
 {
-#if USE(BUN_JSC_ADDITIONS)
-    if (auto primary = primaryOfLegacyZone(timeZone); !primary.isNull())
-        return primary;
-#endif
     Vector<char16_t, 32> buffer;
     // Bun on macOS links against system libicucore.A.dylib whose version is
     // determined by the macOS deployment target, not the bundled ICU 74 headers.
@@ -2114,6 +2105,9 @@ static const Vector<TimeZoneEntry>& intlAvailableTimeZoneEntries()
         struct AliasRecord {
             String identifier;
             String primaryName;
+#if USE(BUN_JSC_ADDITIONS)
+            bool opensAsPrimary { false };
+#endif
         };
         Vector<AliasRecord> aliases;
         UncheckedKeyHashSet<String> primaryNameSet;
@@ -2140,12 +2134,21 @@ static const Vector<TimeZoneEntry>& intlAvailableTimeZoneEntries()
                 if (primaryNameSet.contains<StringViewHashTranslator>(nameView))
                     continue;
                 String primary = toPrimaryIanaTimeZoneIdentifier(nameSpan);
+#if USE(BUN_JSC_ADDITIONS)
+                // ICU gives the name itself for a zone that it holds canonical, and step 1 dropped it for having no '/'.
+                ASCIILiteral legacyPrimary = StringView(primary) == nameView ? primaryOfLegacyZone(nameView) : ASCIILiteral();
+                if (!legacyPrimary.isNull())
+                    primary = legacyPrimary;
+#endif
                 if (primary.isNull() || !primaryNameSet.contains(primary))
                     continue;
                 String aliasIdentifier = createImmortalThreadSafeString(nameView);
                 if (!seenAliases.add(aliasIdentifier).isNewEntry)
                     continue;
                 aliases.append({ WTF::move(aliasIdentifier), WTF::move(primary) });
+#if USE(BUN_JSC_ADDITIONS)
+                aliases.last().opensAsPrimary = !legacyPrimary.isNull();
+#endif
             }
             std::ranges::sort(aliases, [](auto& a, auto& b) {
                 return WTF::codePointCompareLessThan(a.identifier, b.identifier);
@@ -2169,11 +2172,10 @@ static const Vector<TimeZoneEntry>& intlAvailableTimeZoneEntries()
             auto primaryEntry = nameToIndex.find(alias.primaryName);
             ASSERT(primaryEntry != nameToIndex.end());
             combined.append({ WTF::move(alias.identifier), primaryEntry->value });
-        }
 #if USE(BUN_JSC_ADDITIONS)
-        for (auto& alias : combined.mutableSpan().subspan(primaryTimeZoneCount))
-            alias.opensAsPrimary = !primaryOfLegacyZone(alias.identifier).isNull();
+            combined.last().opensAsPrimary = alias.opensAsPrimary;
 #endif
+        }
 
         entries.construct(WTF::move(combined));
     });
@@ -2255,8 +2257,8 @@ String TimeZone::toICUString() const
 {
     if (!isUTCOffset()) {
 #if USE(BUN_JSC_ADDITIONS)
-        if (intlAvailableTimeZoneEntries()[m_id].opensAsPrimary)
-            return intlTimeZoneIDToString(intlPrimaryTimeZoneID(m_id));
+        if (const auto& entry = intlAvailableTimeZoneEntries()[m_id]; entry.opensAsPrimary)
+            return intlTimeZoneIDToString(entry.primary);
 #endif
         return intlTimeZoneIDToString(m_id);
     }
