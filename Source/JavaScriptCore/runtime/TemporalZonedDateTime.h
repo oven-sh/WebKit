@@ -31,6 +31,7 @@
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/TemporalEnums.h>
 #include <JavaScriptCore/TemporalObject.h>
+#include <JavaScriptCore/TimeZoneICUBridge.h>
 #include <optional>
 #include <wtf/Packed.h>
 
@@ -55,6 +56,21 @@ public:
 
     static TemporalZonedDateTime* from(JSGlobalObject*, JSValue item);
     static TemporalZonedDateTime* from(JSGlobalObject*, JSValue item, JSValue options);
+
+    // https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.equals
+    static bool equals(const TemporalZonedDateTime* zonedDateTime, const TemporalZonedDateTime* other)
+    {
+        // Step 4: If zonedDateTime.[[EpochNanoseconds]] ≠ other.[[EpochNanoseconds]], return false.
+        if (zonedDateTime->exactTime() != other->exactTime())
+            return false;
+
+        // Step 5: If TimeZoneEquals(zonedDateTime.[[TimeZone]], other.[[TimeZone]]) is false, return false.
+        if (!TemporalCore::timeZoneEquals(zonedDateTime->timeZone(), other->timeZone()))
+            return false;
+
+        // Step 6: Return CalendarEquals(zonedDateTime.[[Calendar]], other.[[Calendar]]).
+        return zonedDateTime->calendarID() == other->calendarID();
+    }
 
     DECLARE_INFO;
 

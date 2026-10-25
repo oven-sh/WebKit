@@ -125,22 +125,14 @@ InstanceType* unwrapForLegacyIntlConstructor(JSGlobalObject* globalObject, JSVal
     return dynamicDowncast<InstanceType>(value);
 }
 
+// GetOption (options, property, type="string", values, fallback) after its Get, on the value the Get returned.
 template<typename ResultType>
-ResultType intlOption(JSGlobalObject* globalObject, JSObject* options, PropertyName property, std::initializer_list<std::pair<ASCIILiteral, ResultType>> values, ASCIILiteral notFoundMessage, ResultType fallback)
+ResultType intlOptionFromValue(JSGlobalObject* globalObject, JSValue value, std::initializer_list<std::pair<ASCIILiteral, ResultType>> values, ASCIILiteral notFoundMessage, ResultType fallback)
 {
-    // GetOption (options, property, type="string", values, fallback)
-    // https://tc39.github.io/ecma402/#sec-getoption
-
     ASSERT(values.size() > 0);
 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (!options)
-        return fallback;
-
-    JSValue value = options->get(globalObject, property);
-    RETURN_IF_EXCEPTION(scope, { });
 
     if (!value.isUndefined()) {
         String stringValue = value.toWTFString(globalObject);
@@ -152,6 +144,44 @@ ResultType intlOption(JSGlobalObject* globalObject, JSObject* options, PropertyN
         }
         throwException(globalObject, scope, createRangeError(globalObject, notFoundMessage));
         return { };
+    }
+
+    return fallback;
+}
+
+template<typename ResultType>
+ResultType intlOption(JSGlobalObject* globalObject, JSObject* options, PropertyName property, std::initializer_list<std::pair<ASCIILiteral, ResultType>> values, ASCIILiteral notFoundMessage, ResultType fallback)
+{
+    // GetOption (options, property, type="string", values, fallback)
+    // https://tc39.github.io/ecma402/#sec-getoption
+
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!options)
+        return fallback;
+
+    JSValue value = options->get(globalObject, property);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    RELEASE_AND_RETURN(scope, intlOptionFromValue<ResultType>(globalObject, value, values, notFoundMessage, fallback));
+}
+
+// GetOption (options, property, type="string", values, fallback) after its Get, on the value the Get returned.
+ALWAYS_INLINE String intlStringOptionFromValue(JSGlobalObject* globalObject, JSValue value, std::initializer_list<ASCIILiteral> values, ASCIILiteral notFound, ASCIILiteral fallback)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!value.isUndefined()) {
+        String stringValue = value.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, String());
+
+        if (values.size() && std::ranges::find(values, stringValue) == values.end()) {
+            throwException(globalObject, scope, createRangeError(globalObject, notFound));
+            return { };
+        }
+        return stringValue;
     }
 
     return fallback;

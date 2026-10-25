@@ -51,7 +51,6 @@ static JSC_DECLARE_HOST_FUNCTION(temporalPlainDateTimePrototypeFuncWith);
 static JSC_DECLARE_HOST_FUNCTION(temporalPlainDateTimePrototypeFuncWithCalendar);
 static JSC_DECLARE_HOST_FUNCTION(temporalPlainDateTimePrototypeFuncWithPlainTime);
 static JSC_DECLARE_HOST_FUNCTION(temporalPlainDateTimePrototypeFuncRound);
-static JSC_DECLARE_HOST_FUNCTION(temporalPlainDateTimePrototypeFuncEquals);
 static JSC_DECLARE_HOST_FUNCTION(temporalPlainDateTimePrototypeFuncToPlainDate);
 static JSC_DECLARE_HOST_FUNCTION(temporalPlainDateTimePrototypeFuncToPlainTime);
 static JSC_DECLARE_HOST_FUNCTION(temporalPlainDateTimePrototypeFuncToZonedDateTime);
@@ -414,15 +413,11 @@ JSC_DEFINE_HOST_FUNCTION(temporalPlainDateTimePrototypeFuncEquals, (JSGlobalObje
         return throwVMTypeError(globalObject, scope, "Temporal.PlainDateTime.prototype.equals called on value that's not a PlainDateTime"_s);
 
     // Step 3: Set other to ? ToTemporalDateTime(other).
-    auto* other = TemporalPlainDateTime::from(globalObject, callFrame->argument(0), jsUndefined());
+    auto other = TemporalPlainDateTime::toISODateTimeWithCalendar(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
 
-    // Step 4: If CompareISODateTime(plainDateTime.[[ISODateTime]], other.[[ISODateTime]]) ≠ 0, return false.
-    if (plainDateTime->plainDate() != other->plainDate() || plainDateTime->plainTime() != other->plainTime())
-        return JSValue::encode(jsBoolean(false));
-
-    // Step 5: Return CalendarEquals(plainDateTime.[[Calendar]], other.[[Calendar]]).
-    return JSValue::encode(jsBoolean(plainDateTime->calendarID() == other->calendarID()));
+    // Steps 4-5: CompareISODateTime + CalendarEquals.
+    return JSValue::encode(jsBoolean(TemporalPlainDateTime::equals(plainDateTime, other)));
 }
 
 // https://tc39.es/proposal-temporal/#sec-temporal.plaindatetime.prototype.tozoneddatetime
@@ -857,13 +852,15 @@ JSC_DEFINE_HOST_FUNCTION(temporalPlainDateTimePrototypeFuncUntil, (JSGlobalObjec
         return throwVMTypeError(globalObject, scope, "Temporal.PlainDateTime.prototype.until called on value that's not a PlainDateTime"_s);
 
     // Step 3: Return ? DifferenceTemporalPlainDateTime(~until~, plainDateTime, other, options).
-    auto* other = TemporalPlainDateTime::from(globalObject, callFrame->argument(0), jsUndefined());
+    //   differenceTemporalPlainDateTime's result satisfies IsValidDuration → skip createTemporalDuration.
+    auto other = TemporalPlainDateTime::toISODateTimeWithCalendar(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
 
     auto result = plainDateTime->differenceTemporalPlainDateTime<DifferenceOperation::Until>(globalObject, other, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, { });
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(createTemporalDuration(globalObject, WTF::move(result))));
+    ASSERT(ISO8601::isValidDuration(result));
+    return JSValue::encode(TemporalDuration::create(vm, globalObject->durationStructure(), WTF::move(result)));
 }
 
 // https://tc39.es/proposal-temporal/#sec-temporal.plaindatetime.prototype.since
@@ -878,13 +875,15 @@ JSC_DEFINE_HOST_FUNCTION(temporalPlainDateTimePrototypeFuncSince, (JSGlobalObjec
         return throwVMTypeError(globalObject, scope, "Temporal.PlainDateTime.prototype.since called on value that's not a PlainDateTime"_s);
 
     // Step 3: Return ? DifferenceTemporalPlainDateTime(~since~, plainDateTime, other, options).
-    auto* other = TemporalPlainDateTime::from(globalObject, callFrame->argument(0), jsUndefined());
+    //   differenceTemporalPlainDateTime's result satisfies IsValidDuration → skip createTemporalDuration.
+    auto other = TemporalPlainDateTime::toISODateTimeWithCalendar(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
 
     auto result = plainDateTime->differenceTemporalPlainDateTime<DifferenceOperation::Since>(globalObject, other, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, { });
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(createTemporalDuration(globalObject, WTF::move(result))));
+    ASSERT(ISO8601::isValidDuration(result));
+    return JSValue::encode(TemporalDuration::create(vm, globalObject->durationStructure(), WTF::move(result)));
 }
 
 // https://tc39.es/proposal-temporal/#sec-temporal.plaindatetime.prototype.withcalendar

@@ -40,7 +40,6 @@ namespace JSC {
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(TemporalZonedDateTimeConstructor);
 
 static JSC_DECLARE_HOST_FUNCTION(temporalZonedDateTimeConstructorFuncFrom);
-static JSC_DECLARE_HOST_FUNCTION(temporalZonedDateTimeConstructorFuncCompare);
 
 }
 
@@ -164,11 +163,11 @@ JSC_DEFINE_HOST_FUNCTION(temporalZonedDateTimeConstructorFuncCompare, (JSGlobalO
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Step 1: Set one to ? ToTemporalZonedDateTime(one).
-    auto* one = TemporalZonedDateTime::from(globalObject, callFrame->argument(0));
+    auto* one = toTemporalObjectForReading<TemporalZonedDateTime>(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
     ASSERT(one);
     // Step 2: Set two to ? ToTemporalZonedDateTime(two).
-    auto* two = TemporalZonedDateTime::from(globalObject, callFrame->argument(1));
+    auto* two = toTemporalObjectForReading<TemporalZonedDateTime>(globalObject, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, { });
     ASSERT(two);
 

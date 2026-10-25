@@ -151,8 +151,16 @@ double roundNumberToIncrementDouble(double x, double increment, RoundingMode mod
 Int128 roundNumberToIncrementAsIfPositive(Int128 x, Int128 increment, RoundingMode roundingMode)
 {
     // 1. Let quotient be x / increment.
-    Int128 quotient = x / increment;
-    Int128 remainder = x % increment;
+    Int128 quotient;
+    Int128 remainder;
+    // Most epoch nanoseconds (within int64, about ±292 years around 1970) and increments fit in 64-bit division.
+    if (x >= std::numeric_limits<int64_t>::min() && x <= std::numeric_limits<int64_t>::max() && increment > 0 && increment <= std::numeric_limits<int64_t>::max()) [[likely]] {
+        quotient = static_cast<int64_t>(x) / static_cast<int64_t>(increment);
+        remainder = static_cast<int64_t>(x) % static_cast<int64_t>(increment);
+    } else {
+        quotient = x / increment;
+        remainder = x % increment;
+    }
     // Exact case: x is divisible by increment — return x directly before computing r1/r2.
     // (spec step 1 of ApplyUnsignedRoundingMode: "if x = r1, return r1")
     if (!remainder)
@@ -172,13 +180,12 @@ Int128 roundNumberToIncrementAsIfPositive(Int128 x, Int128 increment, RoundingMo
     return applyUnsignedRoundingMode(x, increment, r1, r2, unsignedRoundingMode) * increment;
 }
 
-// RoundNumberToIncrement (Int128 path) — temporal_rs: IncrementRounder<i128>::round (src/rounding.rs)
-// https://tc39.es/proposal-temporal/#sec-temporal-roundnumbertoincrement
-Int128 roundNumberToIncrementInt128(Int128 x, Int128 increment, RoundingMode mode)
+template<typename Integer>
+static Integer roundNumberToIncrementImpl(Integer x, Integer increment, RoundingMode mode)
 {
     // 1. Let quotient be x / increment.
-    Int128 quotient = x / increment;
-    Int128 remainder = x % increment;
+    Integer quotient = x / increment;
+    Integer remainder = x % increment;
     if (!remainder)
         return x;
     // 2-3. Determine isNegative from x; work with abs(quotient) as unsigned quotient.
@@ -186,16 +193,27 @@ Int128 roundNumberToIncrementInt128(Int128 x, Int128 increment, RoundingMode mod
     // 4. Let unsignedRoundingMode be GetUnsignedRoundingMode(roundingMode, isNegative).
     auto unsignedRoundingMode = getUnsignedRoundingMode(mode, isNegative);
     // 5. Let r1 be the largest integer such that r1 ≤ abs(quotient).
-    Int128 r1 = absInt128(quotient);
+    Integer r1 = quotient < 0 ? -quotient : quotient;
     // 6. Let r2 be the smallest integer such that r2 > abs(quotient).
-    Int128 r2 = r1 + 1;
+    Integer r2 = r1 + 1;
     // 7. Let rounded be ApplyUnsignedRoundingMode(abs(quotient), r1, r2, unsignedRoundingMode).
-    Int128 rounded = applyUnsignedRoundingMode(absInt128(x), increment, r1, r2, unsignedRoundingMode);
+    Integer rounded = static_cast<Integer>(applyUnsignedRoundingMode(isNegative ? -x : x, increment, r1, r2, unsignedRoundingMode));
     // 8. If isNegative is ~negative~, set rounded to -rounded.
     if (isNegative)
         rounded = -rounded;
     // 9. Return rounded × increment.
     return rounded * increment;
+}
+
+// RoundNumberToIncrement (Int128 path) — temporal_rs: IncrementRounder<i128>::round (src/rounding.rs)
+// https://tc39.es/proposal-temporal/#sec-temporal-roundnumbertoincrement
+// NOTE: With |x| and increment below 2^61 every intermediate fits in int64, so the divisions run in int64.
+Int128 roundNumberToIncrementInt128(Int128 x, Int128 increment, RoundingMode mode)
+{
+    constexpr int64_t int64Limit = static_cast<int64_t>(1) << 61;
+    if (x > -int64Limit && x < int64Limit && increment > 0 && increment < int64Limit) [[likely]]
+        return roundNumberToIncrementImpl<int64_t>(static_cast<int64_t>(x), static_cast<int64_t>(increment), mode);
+    return roundNumberToIncrementImpl<Int128>(x, increment, mode);
 }
 
 // ValidateTemporalRoundingIncrement — temporal_rs: RoundingIncrement::validate (src/options/increment.rs)
@@ -221,8 +239,19 @@ TemporalResult<void> validateTemporalRoundingIncrement(double increment, std::op
     if (increment < 1 || increment > maximum)
         return makeUnexpected(TemporalError { TemporalErrorKind::RangeError, "rounding increment is out of range"_s });
     // 4. If dividend modulo increment ≠ 0, throw a RangeError exception.
-    if (dividend && std::fmod(dividend.value(), increment))
-        return makeUnexpected(TemporalError { TemporalErrorKind::RangeError, "roundingIncrement does not divide evenly"_s });
+    //    In int64 when the dividend is an integer in (0, 2^62); a NaN increment takes fmod, whose NaN is a remainder.
+    if (dividend) {
+        constexpr double int64DividendLimit = 0x1p62;
+        double dividendValue = dividend.value();
+        bool isIntegralInt64 = std::trunc(dividendValue) == dividendValue && dividendValue > 0 && dividendValue < int64DividendLimit && increment >= 1;
+        bool hasRemainder;
+        if (isIntegralInt64)
+            hasRemainder = static_cast<int64_t>(dividendValue) % static_cast<int64_t>(increment);
+        else
+            hasRemainder = std::fmod(dividendValue, increment);
+        if (hasRemainder)
+            return makeUnexpected(TemporalError { TemporalErrorKind::RangeError, "roundingIncrement does not divide evenly"_s });
+    }
     // 5. Return ~unused~.
     return { };
 }

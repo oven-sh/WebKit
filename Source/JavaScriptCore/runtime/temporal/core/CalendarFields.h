@@ -68,6 +68,12 @@ struct ResolvedCalendarDate {
     CalendarID calendarId { 0 };
 };
 
+// ISO date-time + calendar ID.
+struct ResolvedCalendarDateTime {
+    ISO8601::PlainDateTime isoDateTime;
+    CalendarID calendarId { 0 };
+};
+
 enum class ResolveType : uint8_t { Date, YearMonth, MonthDay };
 JS_EXPORT_PRIVATE TemporalResult<void> nonISOResolveFields(CalendarID, CalendarFieldsIn&, ResolveType);
 

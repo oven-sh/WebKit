@@ -28,6 +28,7 @@
 
 #include "IntlObjectInlines.h"
 #include "JSCInlines.h"
+#include "TemporalObject.h"
 #include "TemporalPlainYearMonth.h"
 #include "TemporalPlainYearMonthPrototype.h"
 
@@ -36,7 +37,6 @@ namespace JSC {
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(TemporalPlainYearMonthConstructor);
 
 static JSC_DECLARE_HOST_FUNCTION(temporalPlainYearMonthConstructorFuncFrom);
-static JSC_DECLARE_HOST_FUNCTION(temporalPlainYearMonthConstructorFuncCompare);
 
 }
 
@@ -170,11 +170,11 @@ JSC_DEFINE_HOST_FUNCTION(temporalPlainYearMonthConstructorFuncCompare, (JSGlobal
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Step 1: Set one to ? ToTemporalYearMonth(one).
-    auto* one = TemporalPlainYearMonth::from(globalObject, callFrame->argument(0), jsUndefined());
+    auto* one = toTemporalObjectForReading<TemporalPlainYearMonth>(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
 
     // Step 2: Set two to ? ToTemporalYearMonth(two).
-    auto* two = TemporalPlainYearMonth::from(globalObject, callFrame->argument(1), jsUndefined());
+    auto* two = toTemporalObjectForReading<TemporalPlainYearMonth>(globalObject, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, { });
 
     // Step 3: Return 𝔽(CompareISODate(one.[[ISODate]], two.[[ISODate]])).

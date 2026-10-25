@@ -138,8 +138,9 @@ double fractionToDouble(const Int128& numerator, double denominator)
 
     // When the numerator can be represented exactly as a double the algorithm
     // collapses to a simple double division.
-    if (isSafeInteger(static_cast<double>(numerator))) [[likely]]
-        return static_cast<double>(numerator) / denominator;
+    constexpr Int128 maxSafeInt128 = maxSafeIntegerAsUInt64();
+    if (numerator >= -maxSafeInt128 && numerator <= maxSafeInt128) [[likely]]
+        return static_cast<double>(static_cast<int64_t>(numerator)) / denominator;
 
     // Otherwise use double-double precision to compute the result.
     return fractionToDoubleSlow(numerator, denominator);

@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <JavaScriptCore/CalendarFields.h>
 #include <JavaScriptCore/CalendarICUBridge.h>
 #include <JavaScriptCore/ISO8601.h>
 #include <JavaScriptCore/IntlObject.h>
@@ -50,11 +51,21 @@ public:
 
     static ISO8601::PlainDate validateAndCreateISODateRecord(JSGlobalObject*, const ISO8601::Duration&);
     static TemporalPlainDate* from(JSGlobalObject*, JSValue item, JSValue options);
+    static TemporalCore::ResolvedCalendarDate toISODateWithCalendar(JSGlobalObject*, JSValue item);
+
+    // https://tc39.es/proposal-temporal/#sec-temporal.plaindate.prototype.equals
+    static bool equals(const TemporalPlainDate* plainDate, const TemporalCore::ResolvedCalendarDate& other)
+    {
+        // Step 4: If CompareISODate(plainDate.[[ISODate]], other.[[ISODate]]) ≠ 0, return false.
+        if (plainDate->plainDate() != other.isoDate)
+            return false;
+
+        // Step 5: Return CalendarEquals(plainDate.[[Calendar]], other.[[Calendar]]).
+        return plainDate->calendarID() == other.calendarId;
+    }
 
     ISO8601::PlainDate plainDate() const { return m_plainDate; }
     CalendarID calendarID() const { return m_calendarID; }
-    void setCalendarId(StringView id) { m_calendarID = TemporalCore::calendarIDFromString(id); }
-    void setCalendarID(CalendarID id) { m_calendarID = id; }
     String calendarIDAsString() const { return TemporalCore::calendarIDToString(m_calendarID).toString(); }
 
 #define JSC_DEFINE_TEMPORAL_PLAIN_DATE_FIELD(name, capitalizedName) \
@@ -66,19 +77,19 @@ public:
 
     String toString() const;
 
-    ISO8601::Duration until(JSGlobalObject*, TemporalPlainDate*, JSValue options);
-    ISO8601::Duration since(JSGlobalObject*, TemporalPlainDate*, JSValue options);
+    ISO8601::Duration until(JSGlobalObject*, const TemporalCore::ResolvedCalendarDate&, JSValue options);
+    ISO8601::Duration since(JSGlobalObject*, const TemporalCore::ResolvedCalendarDate&, JSValue options);
 
 private:
-    TemporalPlainDate(VM&, Structure*, ISO8601::PlainDate&&);
+    TemporalPlainDate(VM&, Structure*, ISO8601::PlainDate&&, CalendarID);
     TemporalPlainDate(VM&, Structure*, ISO8601::PlainDate&&, String&&);
     DECLARE_DEFAULT_FINISH_CREATION;
 
     template<DifferenceOperation>
-    ISO8601::Duration differenceTemporalPlainDate(JSGlobalObject*, TemporalPlainDate*, JSValue optionsValue);
+    ISO8601::Duration differenceTemporalPlainDate(JSGlobalObject*, const TemporalCore::ResolvedCalendarDate&, JSValue optionsValue);
 
-    ISO8601::PlainDate m_plainDate;
-    CalendarID m_calendarID { 0 };
+    const ISO8601::PlainDate m_plainDate;
+    const CalendarID m_calendarID { 0 };
 };
 
 TemporalPlainDate* createTemporalDate(JSGlobalObject*, ISO8601::PlainDate&&);

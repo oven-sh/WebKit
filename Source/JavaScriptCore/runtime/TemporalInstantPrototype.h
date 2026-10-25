@@ -52,4 +52,6 @@ private:
     void finishCreation(VM&);
 };
 
+JSC_DECLARE_HOST_FUNCTION(temporalInstantPrototypeFuncEquals);
+
 } // namespace JSC

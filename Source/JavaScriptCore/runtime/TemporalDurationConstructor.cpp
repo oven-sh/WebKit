@@ -36,7 +36,6 @@ namespace JSC {
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(TemporalDurationConstructor);
 
 static JSC_DECLARE_HOST_FUNCTION(temporalDurationConstructorFuncFrom);
-static JSC_DECLARE_HOST_FUNCTION(temporalDurationConstructorFuncCompare);
 
 }
 
